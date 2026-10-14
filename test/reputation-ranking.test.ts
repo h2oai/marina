@@ -10,8 +10,8 @@
  *  - the durable re-sort applies the same term to records by OTHER principals
  *    and reports an inspectable `ranking` block
  *  - calibrateMemoryConfidence counts independent WRITERS, not rows
- *  - recap/ask/dig (retrieval-core) and the unified context pay the author of
- *    a cross-entity reflection; self-reads and repeats earn nothing
+ *  - being recalled earns no standing (reflection_recalled is retired:
+ *    standing is earned by verified work)
  */
 
 import { Database } from "bun:sqlite";
@@ -19,12 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { ledgerFor } from "../src/agent/standing";
 import { Engine } from "../src/engine/engine";
 import { MemoryService } from "../src/memory/service";
-import {
-  creditUnifiedReflections,
-  inheritedAuthority,
-  UNIFIED_CONTEXT_SCHEMA,
-  type UnifiedContextResult,
-} from "../src/memory/unified-context";
+import { inheritedAuthority } from "../src/memory/unified-context";
 import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import {
@@ -271,7 +266,7 @@ describe("reputation-weighted shared retrieval", () => {
   });
 });
 
-describe("generational credit on the read paths", () => {
+describe("being recalled earns no standing", () => {
   let db: MarinaDB;
   let engine: Engine;
   let alice: MockConnection;
@@ -308,7 +303,7 @@ describe("generational credit on the read paths", () => {
     cleanupDb(TEST_DB);
   });
 
-  it("recap pays the author of a shared reflection once — never the reader, never for own notes", async () => {
+  it("recap surfaces a shared reflection and credits no one", async () => {
     const lesson = db.addPoolNote(
       "pool_wisdom",
       "Alice",
@@ -330,60 +325,10 @@ describe("generational credit on the read paths", () => {
     const reply = await run(bob, "recap amber rollbacks manifest");
     expect(reply).toContain("Recap");
     expect(reply).toContain("pin Amber rollbacks");
-    const credits = aliceCredits();
-    expect(credits).toHaveLength(1);
-    expect(credits[0]).toMatchObject({ ref: `reflection:${lesson}`, amount: 0.5 });
-
-    // Idempotent per reflection id; the plain fact-tier note earns nothing.
-    await run(bob, "recap amber rollbacks manifest");
-    expect(aliceCredits()).toHaveLength(1);
-
-    // Alice recapping her own lesson is not generational hand-off.
-    await run(alice, "recap amber rollbacks manifest");
-    expect(aliceCredits()).toHaveLength(1);
+    expect(aliceCredits()).toEqual([]);
+    await run(bob, "pool wisdom recall amber rollbacks");
+    await run(bob, "recall amber rollbacks all");
+    expect(ledgerFor(db, "u_alice")).toEqual([]);
     expect(ledgerFor(db, "u_bob")).toEqual([]);
-  });
-
-  it("creditUnifiedReflections pays cross-author reflection hits in the legacy tiers only", () => {
-    const lesson = db.createNote("Alice", "Lesson: verify before scaling", "r_1", {
-      noteType: "episode",
-      tier: "reflection",
-    });
-    const own = db.createNote("Bob", "My own reflection", "r_1", {
-      noteType: "episode",
-      tier: "reflection",
-    });
-    const item = (tier: "trusted" | "unverified" | "skill", id: number, author: string) => ({
-      tier,
-      id: String(id),
-      content: "x",
-      provenance: "",
-      bytes: 1,
-      score: 1,
-      meta: { author, noteTier: "reflection" },
-    });
-    const result: UnifiedContextResult = {
-      schema: UNIFIED_CONTEXT_SCHEMA,
-      entity: "Bob",
-      query: "q",
-      scope: "all",
-      budgetBytes: 2048,
-      usedBytes: 3,
-      truncated: false,
-      degraded: [],
-      tiers: [
-        { tier: "skill", label: "", omitted: 0, items: [item("skill", lesson, "Alice")] },
-        { tier: "trusted", label: "", omitted: 0, items: [item("trusted", lesson, "Alice")] },
-        { tier: "unverified", label: "", omitted: 0, items: [item("unverified", own, "Bob")] },
-      ],
-    };
-    expect(creditUnifiedReflections(db, result)).toBe(1);
-    expect(aliceCredits()).toEqual([
-      expect.objectContaining({ ref: `reflection:${lesson}`, amount: 0.5 }),
-    ]);
-    expect(ledgerFor(db, "u_bob")).toEqual([]);
-    // Second render: idempotent.
-    creditUnifiedReflections(db, result);
-    expect(aliceCredits()).toHaveLength(1);
   });
 });

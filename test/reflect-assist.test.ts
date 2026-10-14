@@ -290,7 +290,7 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
     expect(await run(alice, "reflect jobs")).toContain("adopted");
   });
 
-  it("template reflections inherit the LOWEST authority of their inputs and `--share <pool>` deposits a reflection-tier pool note that pays the author when someone else recalls it", async () => {
+  it("template reflections inherit the LOWEST authority of their inputs and `--share <pool>` deposits a reflection-tier pool note others can recall (being recalled earns no standing)", async () => {
     db.createMemoryPool("pool_wisdom", "wisdom", "Alice");
     const bob = new MockConnection("bob");
     db.createUser({ id: crypto.randomUUID(), name: "Bob" });
@@ -327,17 +327,12 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
     expect(shared!.confidence).toBeCloseTo(0.3, 9);
     expect(shared!.content).toBe(reflection.content);
 
-    // Generational loop: Bob recalling the shared lesson credits Alice's durable key.
+    // Bob can recall the shared lesson; being recalled is not verified work,
+    // so Alice's ledger stays empty (reflection_recalled is retired).
     const aliceKey = db.getUserByName("Alice")!.id;
-    expect(ledgerFor(db, aliceKey).filter((r) => r.kind === "reflection_recalled")).toEqual([]);
     const recalled = await run(bob, "pool wisdom recall amber synthesis");
     expect(recalled).toContain("Synthesis");
-    expect(ledgerFor(db, aliceKey).filter((r) => r.kind === "reflection_recalled")).toEqual([
-      expect.objectContaining({ ref: `reflection:${shared!.id}`, amount: 0.5 }),
-    ]);
-    // Alice recalling herself earns nothing more.
-    await run(alice, "pool wisdom recall amber synthesis");
-    expect(ledgerFor(db, aliceKey).filter((r) => r.kind === "reflection_recalled")).toHaveLength(1);
+    expect(ledgerFor(db, aliceKey).filter((r) => r.kind === "reflection_recalled")).toEqual([]);
   });
 
   it("`reflect adopt <job> --share <pool>` inherits the cited twins' lowest authority and shares the lesson", async () => {

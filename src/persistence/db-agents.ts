@@ -291,6 +291,38 @@ export function getAgentConfigsBySpawnedBy(db: Database, spawnedBy: string): Age
     .all(spawnedBy) as AgentConfigRow[];
 }
 
+/**
+ * The spawn lineage of `name`, lower-cased, starting with `name` itself and
+ * walking up to its root: each hop is the agent config's `spawned_by`, else
+ * the agent principal's owner (which survives `agent delete`). Stops at
+ * "system", a missing parent, a cycle, or `maxHops`. A person (or a
+ * world-seeded agent) is its own root.
+ */
+export function spawnLineage(db: Database, name: string, maxHops = 16): string[] {
+  const chain = [name.toLowerCase()];
+  const configParent = db.query(
+    "SELECT spawned_by FROM agent_configs WHERE name = ? COLLATE NOCASE LIMIT 1",
+  );
+  const principalParent = db.query(
+    `SELECT o.display_name AS parent FROM principals p
+       JOIN principals o ON o.principal_id = p.owner_principal_id
+      WHERE p.principal_type = 'agent' AND p.display_name = ? COLLATE NOCASE
+      LIMIT 1`,
+  );
+  let current = name;
+  for (let hop = 0; hop < maxHops; hop++) {
+    const parent =
+      (configParent.get(current) as { spawned_by: string } | null)?.spawned_by ||
+      (principalParent.get(current) as { parent: string } | null)?.parent;
+    if (!parent || parent.toLowerCase() === "system") break;
+    const key = parent.toLowerCase();
+    if (chain.includes(key)) break;
+    chain.push(key);
+    current = parent;
+  }
+  return chain;
+}
+
 export function deleteAgentConfig(db: Database, name: string): void {
   db.run("DELETE FROM agent_configs WHERE name = ?", [name]);
 }

@@ -229,7 +229,7 @@ Created task #1: "Reconnect eastern exits".
 
 ### Create a task with a bounty
 
-Bounty tasks let multiple people claim the same task. The creator picks a winner, and the winner earns standing.
+Bounty tasks let multiple people claim the same task. The creator picks a winner, and the winner earns the task's standing (at most 10) when the creator is independent of them: approving your own claim, or an agent you spawned, pays nothing.
 
 ```
 > task create Design the eastern rooms | Write descriptions for all 5 empty eastern rooms. Best descriptions win. bounty 50
@@ -313,7 +313,7 @@ When multiple people claim a bounty task:
 Approved Scout's submission for task #2.
 ```
 
-The winner earns standing. Other claimants are auto-rejected.
+The winner earns standing (unless the creator and the winner are one party). Other claimants are auto-rejected.
 
 ### Check the leaderboard
 

@@ -1660,6 +1660,9 @@ export class MarinaDB implements MarinaStores {
   updateUserRank(id: string, rank: number): void {
     usersDb.updateUserRank(this.db, id, rank);
   }
+  setUserRankFloor(id: string, floor: number): void {
+    usersDb.setUserRankFloor(this.db, id, floor);
+  }
 
   /** Rename an account, keeping its id (see `usersDb.renameUser`). */
   renameUser(id: string, name: string): boolean {
@@ -4094,6 +4097,9 @@ export class MarinaDB implements MarinaStores {
   }
   getAgentConfigsBySpawnedBy(spawnedBy: string): AgentConfigRow[] {
     return agentsDb.getAgentConfigsBySpawnedBy(this.db, spawnedBy);
+  }
+  spawnLineage(name: string): string[] {
+    return agentsDb.spawnLineage(this.db, name);
   }
   deleteAgentConfig(name: string): void {
     agentsDb.deleteAgentConfig(this.db, name);

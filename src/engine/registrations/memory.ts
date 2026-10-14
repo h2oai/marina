@@ -59,9 +59,6 @@ export function registerMemoryCommands(engine: Engine): void {
       db: engine.db,
       taskManager: engine.taskManager,
       logEvent: (event) => engine.logEvent(event),
-      resolveEntityIdByName: (name) =>
-        engine.entities.findAgentByName(name)?.id ??
-        engine.entities.all().find((e) => e.name === name)?.id,
     }),
   );
   engine.commands.registerBuiltin(
@@ -112,9 +109,6 @@ export function registerMemoryCommands(engine: Engine): void {
       db: engine.db,
       logEvent: (event) => engine.logEvent(event),
       getCommandVocabulary: () => commandVocabulary(engine),
-      resolveEntityIdByName: (name) =>
-        engine.entities.findAgentByName(name)?.id ??
-        engine.entities.all().find((e) => e.name === name)?.id,
     }),
   );
   engine.commands.registerBuiltin(

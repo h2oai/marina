@@ -37,12 +37,9 @@ export type {
  * service errors — a missing account is a deployment posture, not a failure.
  *
  * This module does not touch notes (last_accessed / recall_count stay with
- * the `recall` command so REST and passthru reads do not mutate memory). Its
- * ONE side effect is generational credit (Phase 3.7): a cross-author
- * reflection-tier note surfacing under `[trusted]` / `[unverified]` pays its
- * author through `creditRecalledReflections` — idempotent per reflection id,
- * never self, never a failure of the read. Legacy tiers are owner-scoped
- * today, so this fires only when a shared reflection reaches those tiers.
+ * the `recall` command so REST and passthru reads do not mutate memory). Being
+ * recalled earns the author no standing (`reflection_recalled` is retired:
+ * standing is earned by verified work, src/agent/standing.ts).
  *
  * `[proposal]` items carry INHERITED authority (TMA-NM non-laundering, Phase
  * 3.7): a helper's summary can be no more trustworthy than the least
@@ -58,7 +55,6 @@ export type {
 
 import { CONTINUITY_JOURNAL_SESSION_PREFIX } from "../agent/durable-memory";
 import { neutralizeAuthoredBlock, neutralizeAuthoredLine } from "../agent/peer-text";
-import { creditRecalledReflections } from "../agent/standing";
 import {
   type AdvisoryOptions,
   advisoryIdentity,
@@ -991,7 +987,6 @@ export async function buildUnifiedContext(
       `context:${result.valueDecision.id}`,
       result.valueDecision,
     );
-  if (opts.creditReflections !== false) creditUnifiedReflections(db, result);
   return result;
 }
 
@@ -1162,38 +1157,6 @@ async function retrieveUnifiedContext(
     ...(valueDecision ? { valueDecision } : {}),
   };
   return result;
-}
-
-/** Legacy tiers whose hits are recalled wisdom (skills are worked examples, not lessons). */
-const CREDITED_TIERS: readonly UnifiedTier[] = ["trusted", "unverified"];
-
-/**
- * Generational credit for the rendered `[trusted]` / `[unverified]` items:
- * every reflection-tier note by ANOTHER author pays that author (durable key
- * via `users.id`). Idempotent per reflection id; self-hits and other tiers
- * are skipped; a failed ledger write never fails the read. Returns the number
- * of cross-author reflections considered.
- */
-export function creditUnifiedReflections(db: MarinaDB, result: UnifiedContextResult): number {
-  const hits: { id: number; tier: string; entity_name: string }[] = [];
-  for (const tier of result.tiers) {
-    if (!CREDITED_TIERS.includes(tier.tier)) continue;
-    for (const item of tier.items) {
-      const author = item.meta?.author;
-      const noteTier = item.meta?.noteTier;
-      const id = Number(item.id);
-      if (typeof author !== "string" || author === result.entity) continue;
-      if (noteTier !== "reflection" || !Number.isInteger(id)) continue;
-      hits.push({ id, tier: "reflection", entity_name: author });
-    }
-  }
-  if (hits.length === 0) return 0;
-  try {
-    creditRecalledReflections(db, result.entity, hits, (name) => db.durableKeyForName(name));
-  } catch {
-    // Standing is a side ledger; reads never fail on it.
-  }
-  return hits.length;
 }
 
 /** Tiers that carry something to show (items or budget-omitted matches). */

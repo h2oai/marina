@@ -82,7 +82,12 @@ export function rankCommand(deps: RankDeps): CommandDef {
       // only and don't unlock any gates.
       if (deps.db) {
         const user = deps.db.getUserByName(target.name);
-        if (user) deps.db.updateUserRank(user.id, level);
+        if (user) {
+          deps.db.updateUserRank(user.id, level);
+          // Below 5 the operator's choice is a floor hourly progression keeps
+          // (standing can still lift the rank above it); 0 clears it.
+          if (level < 5) deps.db.setUserRankFloor(user.id, level);
+        }
         if (level >= 5) grantGatesForRank(deps.db, target.id, level);
       }
 

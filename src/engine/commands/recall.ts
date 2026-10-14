@@ -1,7 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { creditRecalledReflections } from "../../agent/standing";
 import type { TaskManager } from "../../coordination/task-manager";
 import { memoryNoteResults, memoryResult } from "../../memory/command-result";
 import {
@@ -27,7 +26,7 @@ import {
   status,
 } from "../../net/ansi";
 import type { MarinaDB, ScoredNoteRow } from "../../persistence/database";
-import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { DAY_MS } from "../constants";
 import { extractFlags, extractModifiers } from "../parse-input";
 
@@ -78,9 +77,6 @@ export function recallCommand(deps: {
   db?: MarinaDB;
   taskManager?: TaskManager;
   logEvent?: (event: EngineEvent) => void;
-  /** Resolve a note author's entity id so generational credit can flow to the
-   *  WRITER of recalled wisdom, not the reader. */
-  resolveEntityIdByName?: (name: string) => EntityId | undefined;
 }): CommandDef {
   return {
     category: "Memory",
@@ -205,9 +201,6 @@ export function recallCommand(deps: {
             const note = db.getNote(id);
             if (note) legacyRows.push({ ...note, score: scores.get(String(id)) ?? 0 });
           }
-          if (deps.resolveEntityIdByName && legacyRows.length > 0) {
-            creditRecalledReflections(db, entity.name, legacyRows, deps.resolveEntityIdByName);
-          }
           if (legacyRows.length > 0) {
             deps.logEvent?.({
               type: "recall_trace",
@@ -268,15 +261,9 @@ export function recallCommand(deps: {
         trusted: flags.has("trusted"),
       });
 
-      // Touch each returned note to update last_accessed and recall_count,
-      // then flow generational credit to the AUTHORS of any cross-entity
-      // reflections surfaced (see creditRecalledReflections — the writer
-      // earns, never the reader).
+      // Touch each returned note to update last_accessed and recall_count.
       for (const note of results) {
         db.touchNote(note.id);
-      }
-      if (deps.resolveEntityIdByName) {
-        creditRecalledReflections(db, entity.name, results, deps.resolveEntityIdByName);
       }
 
       // Emit recall trace so the dashboard can animate spreading activation on the graph

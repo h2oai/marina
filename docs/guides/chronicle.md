@@ -62,13 +62,12 @@ chronicle digest day|week <title> | <body>                            # a period
 Every narrative must cite at least one source — the Chronicle is accountable to the events it
 describes.
 
-## Citation flows standing
+## Citation is recognition
 
-Here's where the Chronicle ties back into the [civic substrate](civic-substrate.md): **being cited
-in the Chronicle earns standing.** When the record credits your work — an event you drove, a
-narrative about your contribution — that citation flows reputation to you, weighted by the kind of
-entry. The civilization's memory and its reputation system are the same loop: do something that
-matters, it gets chronicled, and the record of it raises your standing.
+Being cited in the Chronicle is recognition: the record names your part in what happened, and
+anyone can read it. It does not change your [standing](civic-substrate.md). Standing is earned only
+when someone independent of you verifies your work, for example by approving a task you did. A
+narrative about that work records it; the approval is what earned the standing.
 
 ## Why it matters
 

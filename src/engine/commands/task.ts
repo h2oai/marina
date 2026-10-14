@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { TASK_STANDING_MAX } from "../../agent/standing";
 import type { TaskClaim, TaskManager } from "../../coordination/task-manager";
 import { parseTaskNodeType, TASK_NODE_TYPE_MEANING } from "../../coordination/task-node-type";
 import { harnessDecisionProvider } from "../../decisions/engines";
@@ -103,7 +104,7 @@ export function taskCommand(
     ],
     name: "task",
     aliases: [],
-    help: "Manage tasks with leased create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing\n  task create <title> | <description> [standing:N] [bounty]   (also !N)\n  task goal <title> | <description> [priority:N]   (also !pN / --priority N)\n  task info <id>   (also show/view)\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector priority:7\n  task progress 3 +20\n  task claim 3\n  task heartbeat 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine",
+    help: "Manage tasks with leased create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing\n  task create <title> | <description> [standing:N] [bounty]   (also !N; N = 0–10, default 1, paid only when someone independent of the claimant approves)\n  task goal <title> | <description> [priority:N]   (also !pN / --priority N)\n  task info <id>   (also show/view)\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector priority:7\n  task progress 3 +20\n  task claim 3\n  task heartbeat 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine",
     handler: (ctx: RoomContext, input) => {
       const self = ctx.getEntity(input.entity);
       if (!self) return;
@@ -178,8 +179,13 @@ export function taskCommand(
             return;
           }
           const claims = tasks.getClaims(task.id);
+          // What approval would actually pay: the capped value, to a claimant
+          // independent of the creator (who approves).
+          const paid = tasks.standingFor(task);
           const standingLabel =
-            task.standing > 0 ? ` | Standing: ${bold(`!${task.standing}`)}` : "";
+            paid.amount > 0
+              ? ` | Standing: ${bold(`!${paid.amount}`)} ${dim("on independent approval")}`
+              : "";
           const statusKind =
             task.status === "completed" ? "done" : task.status === "cancelled" ? "fail" : "active";
           const prioLabel = task.priority > 0 ? ` | Priority: ${bold(`${task.priority}`)}` : "";
@@ -218,8 +224,14 @@ export function taskCommand(
                   : c.releaseReason
                     ? ` — ${c.releaseReason}`
                     : "";
+              const unpaid =
+                paid.amount > 0 &&
+                isActiveClaim(c) &&
+                !tasks.standingFor(task, c.entityName).credited
+                  ? dim(" — approval pays no standing (same party as the creator)")
+                  : "";
               lines.push(
-                `  ${c.entityName}: ${c.status}${c.submissionText ? ` — "${c.submissionText}"` : ""}${lease}`,
+                `  ${c.entityName}: ${c.status}${c.submissionText ? ` — "${c.submissionText}"` : ""}${lease}${unpaid}`,
               );
             }
           }
@@ -250,16 +262,24 @@ export function taskCommand(
           let rawDesc = split.rawDesc;
 
           // Legacy !N standing and bare bounty keyword in the description.
-          let standing = (createMods.values.standing as number | undefined) ?? 0;
+          let standing = createMods.values.standing as number | undefined;
           let isBounty = createMods.values.bounty === true;
           const standingMatch = rawDesc.match(/!(\d+)/);
           if (standingMatch?.[1]) {
-            if (standing === 0) standing = Number.parseInt(standingMatch[1], 10);
+            standing ??= Number.parseInt(standingMatch[1], 10);
             rawDesc = rawDesc.replace(standingMatch[0], "").trim();
           }
           if (/\bbounty\b/i.test(rawDesc)) {
             isBounty = true;
             rawDesc = rawDesc.replace(/\bbounty\b/i, "").trim();
+          }
+
+          if (standing !== undefined && (standing < 0 || standing > TASK_STANDING_MAX)) {
+            ctx.send(
+              input.entity,
+              `task create: standing:${standing} is out of range — a task pays 0–${TASK_STANDING_MAX} standing, and only when someone independent of the claimant approves it.`,
+            );
+            return;
           }
 
           const task = tasks.create({
@@ -268,9 +288,9 @@ export function taskCommand(
             creatorId: input.entity,
             creatorName: self.name,
             validationMode: isBounty ? "bounty" : undefined,
-            standing: standing > 0 ? standing : undefined,
+            standing,
           });
-          const bountyLabel = isBounty ? ` [bounty !${standing}]` : "";
+          const bountyLabel = isBounty ? ` [bounty !${task.standing}]` : "";
           ctx.send(input.entity, `Created task #${task.id}: "${title}"${bountyLabel}.`);
           return;
         }
@@ -564,14 +584,35 @@ export function taskCommand(
             return;
           }
           const id = Number.parseInt(idStr, 10);
-          const target = findEntity(claimantName);
+          // The claim names its claimant, so an offline claimant's submission
+          // can still be approved (and credited to their account).
+          const lower = claimantName.toLowerCase();
+          const claimRow = tasks
+            .getClaims(id)
+            .find((c) => c.status === "submitted" && c.entityName.toLowerCase() === lower);
+          const found = findEntity(claimantName);
+          // Prefix matches are only a fallback when no claim names the claimant.
+          const live = claimRow && found?.name.toLowerCase() !== lower ? undefined : found;
+          const target = claimRow
+            ? { id: claimRow.entityId as EntityId, name: claimRow.entityName }
+            : live
+              ? { id: live.id, name: live.name }
+              : undefined;
           if (!target) {
             ctx.send(input.entity, `Player "${claimantName}" not found.`);
             return;
           }
-          if (tasks.approveSubmission(id, target.id, input.entity)) {
-            ctx.send(input.entity, `Approved ${target.name}'s submission for task #${id}.`);
-            ctx.send(target.id, `Your submission for task #${id} was approved!`);
+          const approved = tasks.approve(id, target.id, input.entity);
+          // Tell the claimant where they are now (a re-login mints a new entity id).
+          const notify = live?.id ?? target.id;
+          if (approved.ok) {
+            const paid = approved.credit.credited
+              ? ` ${target.name} earned ${approved.credit.amount} standing.`
+              : approved.credit.reason
+                ? ` No standing paid: ${approved.credit.reason}.`
+                : "";
+            ctx.send(input.entity, `Approved ${target.name}'s submission for task #${id}.${paid}`);
+            ctx.send(notify, `Your submission for task #${id} was approved!${paid}`);
             logEvent?.({
               type: "task_approved",
               entity: input.entity,
@@ -717,26 +758,28 @@ export function taskCommand(
         }
 
         case "standing": {
-          const leaderboard = tasks.getStandingLeaderboard(10);
-          if (leaderboard.length === 0) {
+          // The same decayed, account-keyed number as `standing top`.
+          const board = tasks.standingBoard(10);
+          if (board.length === 0) {
             ctx.send(input.entity, "No standing earned yet.");
             return;
           }
           const lines = [
             header("Standing Leaderboard"),
             separator(),
-            ...leaderboard.map(
+            ...board.map(
               (e, i) =>
-                `  ${bold(`${i + 1}.`)} ${fmtEntity(e.entityName)}: ${bold(String(e.total))} standing ${dim(`(${e.taskCount} tasks)`)}`,
+                `  ${bold(`${i + 1}.`)} ${fmtEntity(e.name)}: ${bold(e.standing.toFixed(1))} standing ${dim(`(${e.tasks} task${e.tasks === 1 ? "" : "s"} credited)`)}`,
             ),
           ];
-          const myStanding = tasks.getEntityStanding(input.entity);
-          if (myStanding > 0) {
-            lines.push("", `  Your standing: ${bold(String(myStanding))}`);
-          }
-          // Disambiguate: this is the global leaderboard. A single task's bounty
-          // is shown by `task info <id>` (the "Standing: !N" field), not here.
-          lines.push("", dim("A specific task's bounty is shown in `task info <id>`."));
+          const mine = tasks.standingOf(self.name, input.entity);
+          if (mine > 0) lines.push("", `  Your standing: ${bold(mine.toFixed(1))}`);
+          lines.push(
+            "",
+            dim(
+              `Standing decays (60-day half-life) and is earned by verified work; see \`standing\`. A task pays up to ${TASK_STANDING_MAX} when someone independent of the claimant approves it (\`task info <id>\`).`,
+            ),
+          );
           ctx.send(input.entity, lines.join("\n"));
           return;
         }

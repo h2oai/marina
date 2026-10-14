@@ -2,13 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Standing — single blended civic-contribution metric.
+ * Standing — the one civic-contribution score, earned by VERIFIED work.
  *
- * Replaces the prior task-only `entity_standing` view with a unified ledger
- * that absorbs every contribution stream: task completion, pool note
- * deposits, crew leadership, helping acts, recalled reflections. Rank is
- * derived from this number (later phase); safety gates check it as a
- * necessary-but-not-sufficient signal.
+ * A credit lands only when someone independent of the worker verified the
+ * work: a task's approver who is not the claimant's party, a requester
+ * adopting a helper's proposal, an external resolution of a filed forecast, a
+ * Code Mode check run in someone else's session, an independent replication
+ * of an experiment, the engine checking a quest. Recognition (being
+ * chronicled) and volume (pool notes, recalls, self-declared crew stages,
+ * self-reported helping acts) earn nothing: those kinds are RETIRED — their
+ * historical rows stay in the append-only ledger and fade by the normal
+ * decay, but no new row is written (`record` refuses them).
+ *
+ * Independence (`independentParties`): a person and every agent in its spawn
+ * lineage are ONE party — the worker's and the verifier's lineages must not
+ * meet. Credits key on the durable world account (`accountKey`), so people
+ * and external agents earn whether or not they are online.
  *
  * Storage: ledger rows in `entity_standing` (one per event, idempotent on
  * `(entity_id, kind, ref)`), rollup in `entity_standing_cache`. Permission
@@ -21,7 +30,6 @@
  * procedure, not a sub-zero number.
  */
 
-import { createHash } from "node:crypto";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 
@@ -41,9 +49,6 @@ export const STANDING_HALF_LIFE_DAYS = parseStandingHalfLifeDays(
 
 const HALF_LIFE_MS = STANDING_HALF_LIFE_DAYS * 24 * 60 * 60 * 1000;
 
-/** Max `pool_note` credits one entity can earn per UTC day (anti-farming). */
-export const POOL_NOTE_DAILY_CAP = 10;
-
 /** Events older than this don't contribute to the rollup (still ledgered). */
 const ROLLUP_HORIZON_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -51,79 +56,118 @@ const ROLLUP_HORIZON_MS = 365 * 24 * 60 * 60 * 1000;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 /**
- * Contribution kinds. Each carries a different default amount; the credit
- * table at `STANDING_AMOUNTS` is the source of truth. Add new kinds here +
- * in the amounts table together; consumers stay decoupled from the values.
+ * Contribution kinds. Each carries a default amount; the credit table at
+ * `STANDING_AMOUNTS` is the source of truth. Add new kinds here + in the
+ * amounts table together; consumers stay decoupled from the values.
  */
 export type StandingKind =
   | "task_complete"
   | "quest_complete"
+  | "code_verified"
+  | "forecast_resolved"
+  | "experiment_complete"
+  | "assistance_adopted"
+  | "assistance_abstained_confirmed"
+  | "assistance_superseded"
+  | "crew_member_stalled"
+  // Retired (2026-10): readable in history, never credited again.
   | "pool_note"
   | "reflection_recalled"
+  | "chronicled"
   | "crew_complete_member"
   | "crew_complete_lead"
   | "crew_stage_completed"
   | "crew_artifact_deposited"
-  | "helping_act"
-  | "crew_member_stalled"
-  | "experiment_complete"
-  | "chronicled"
-  | "assistance_adopted"
-  | "assistance_abstained_confirmed"
-  | "assistance_superseded";
+  | "helping_act";
+
+/**
+ * Kinds that no longer earn. Each paid for recognition or volume rather than
+ * work someone independent verified:
+ * - `pool_note`, `reflection_recalled`: writing and being read are volume
+ *   (and recall owners were `memory:<uuid>` namespaces that never resolved);
+ * - `chronicled`: being named by the Chronicler is recognition — it stays in
+ *   the chronicle itself;
+ * - `crew_*` (completion, stage, artifact): a crew declares its own result;
+ *   crew work earns through tasks an independent creator approves;
+ * - `helping_act`: completing a canvas intent is self-reported — the intent's
+ *   owner never accepts it.
+ * Historical rows stay in the append-only ledger and decay out normally.
+ */
+export const RETIRED_STANDING_KINDS: ReadonlySet<StandingKind> = new Set<StandingKind>([
+  "pool_note",
+  "reflection_recalled",
+  "chronicled",
+  "crew_complete_member",
+  "crew_complete_lead",
+  "crew_stage_completed",
+  "crew_artifact_deposited",
+  "helping_act",
+]);
+
+/** Largest standing value one task pays (`task create … standing:N`). */
+export const TASK_STANDING_MAX = 10;
+/** What a task pays when its creator named no value. */
+export const TASK_STANDING_DEFAULT = 1;
+/** Most `forecast_resolved` credits one account earns per UTC day. */
+export const FORECAST_DAILY_CAP = 1;
 
 /**
  * Default amounts per kind. Callers can override via the `amount` arg to
- * `record()` (e.g. tasks pass their `task.standing` value). Negatives are
- * penalties — the rollup floors at 0 so a chronic-stall entity won't go
- * sub-zero.
+ * `record()` (tasks pass their capped value, forecasts their skill-scaled
+ * value). Negatives are penalties — the rollup floors at 0.
  */
 export const STANDING_AMOUNTS: Record<StandingKind, number> = {
-  task_complete: 0, // overridden per-task by caller
-  // Completing an onboarding/tutorial quest is a real (if modest) first act of
-  // engagement — it should advance progression so the obvious onboarding path
-  // isn't a dead end. Kept small: it moves a newcomer toward Citizen (rank 1 =
-  // 5) without, on its own, clearing capability gates (e.g. code.exec = 5).
+  // The task's own value, ≤ TASK_STANDING_MAX, paid only when the approver is
+  // independent of the claimant (`TaskManager.approveSubmission`).
+  task_complete: 0,
+  // An onboarding quest the ENGINE checked, once per quest. Kept small: it
+  // moves a newcomer toward Citizen (rank 1 = 5) without clearing gates.
   quest_complete: 3,
-  pool_note: 0.25,
-  reflection_recalled: 0.5,
-  crew_complete_member: 5,
-  crew_complete_lead: 10,
-  crew_stage_completed: 2,
-  crew_artifact_deposited: 1,
-  helping_act: 1,
-  crew_member_stalled: -3,
-  // Running a controlled comparison to a decided outcome is real contribution
-  // (designing arms, gathering samples, recording a reusable result).
+  // Code Mode checks that passed in a coding session someone independent of
+  // the worker created — once per session (`src/outcomes/live.ts`).
+  code_verified: 1,
+  // A filed forecast an external resolver (or an independent market
+  // resolver) settled, paid by skill: up to 0.5, at most FORECAST_DAILY_CAP a
+  // day, never for an evaluation filing (`src/outcomes/forecast.ts`).
+  forecast_resolved: 0.5,
+  // A controlled comparison an independent party replicated (samples on ≥ 2
+  // arms from ≥ 2 independent parties).
   experiment_complete: 3,
-  // Default carries no credit; callers pass amount by chronicle entry kind
-  // (event ≈ 0.25, narrative ≈ 2.0, digest ≈ 1.0, correction ≈ 0.5).
-  // Being chronicled is recognition, not contribution — the entity already
-  // got contribution credit (task_complete, crew_*, pool_note) at the time
-  // of the act. This is the second-order layer.
-  chronicled: 0,
-  // Curation is a civic act (memory roadmap Phase 3). A requester ADOPTING a
-  // helper's cited proposal is the moment the proposal became knowledge, so
-  // the credit lands on the HELPER's durable account (`users.id` == the job's
-  // worker principal id), ref `assistance:<jobId>`. Delegated trees split the
-  // amount: root worker 0.6, every other distinct answered worker shares 0.4
-  // evenly (see `db-memory-adopt.ts:contributionShares`). Idempotent per
-  // (helper, kind, ref).
+  // A requester ADOPTING an independent helper's cited proposal: the credit
+  // lands on the HELPER's durable account, ref `assistance:<jobId>`. Delegated
+  // trees split it: root worker 0.6, every other distinct answered worker
+  // shares 0.4 evenly (`db-memory-adopt.ts:contributionShares`).
   assistance_adopted: 1,
-  // An honest abstention the requester later confirms (`memory adopt <JOB>
-  // confirm-abstention`) is worth a quarter of an adoption: saying "I don't
-  // know" when that is true is a contribution, farming it is not.
+  // An honest abstention the requester later confirms is worth a quarter of
+  // an adoption: saying "I don't know" when that is true is a contribution.
   assistance_abstained_confirmed: 0.25,
-  // An adopted record later superseded by `resolve` debits the same helpers
-  // by half a credit (same split; the rollup floors at 0 like every penalty).
+  // An adopted record later superseded by `resolve` debits the same helpers.
   assistance_superseded: -0.5,
+  // Penalty after repeated stalls (CrewManager decides when to fire).
+  crew_member_stalled: -3,
+  // Retired — see RETIRED_STANDING_KINDS.
+  pool_note: 0,
+  reflection_recalled: 0,
+  chronicled: 0,
+  crew_complete_member: 0,
+  crew_complete_lead: 0,
+  crew_stage_completed: 0,
+  crew_artifact_deposited: 0,
+  helping_act: 0,
 };
+
+/** The kinds that still earn (or debit), for help text and docs. */
+export function liveStandingKinds(): StandingKind[] {
+  return (Object.keys(STANDING_AMOUNTS) as StandingKind[]).filter(
+    (kind) => !RETIRED_STANDING_KINDS.has(kind),
+  );
+}
 
 /**
  * Idempotent ledger write. Re-recording the same `(entity_id, kind, ref)`
- * is a no-op (UNIQUE index + ON CONFLICT IGNORE). Callers can fire freely
- * without dedup logic — the entity completing a task and the same task
- * firing a `task_approved` event both route to the same row.
+ * is a no-op (UNIQUE index + ON CONFLICT IGNORE). A retired kind is refused
+ * (nothing written). Policy — who may be credited — lives with the callers
+ * (`recordVerified`, `TaskManager.approveSubmission`); this is the write.
  */
 export function record(
   db: MarinaDB,
@@ -134,12 +178,9 @@ export function record(
   amount?: number,
   taskId?: number,
 ): void {
+  if (RETIRED_STANDING_KINDS.has(kind)) return;
   const finalAmount = amount ?? STANDING_AMOUNTS[kind];
-  if (finalAmount === 0 && kind !== "task_complete") {
-    // Skip zero-credit events except task_complete (zero is a real value
-    // for task standing — `task !0` means "no civic credit, just done").
-    return;
-  }
+  if (finalAmount === 0) return;
   db.appendStandingEvent({
     entityId,
     entityName,
@@ -148,6 +189,82 @@ export function record(
     taskId: taskId ?? null,
     amount: finalAmount,
   });
+}
+
+// ─── Independence and durable accounts ──────────────────────────────────────
+
+type LineageReader = Pick<MarinaDB, "spawnLineage">;
+
+/**
+ * True when `a` and `b` are different parties: not the same name, and
+ * neither's spawn lineage meets the other's (a person and the agents it
+ * spawned — children, grandchildren, siblings — are one party). Lineage is
+ * read from agent configs and agent principals (`spawnLineage`).
+ */
+export function independentParties(db: LineageReader, a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a.toLowerCase() === b.toLowerCase()) return false;
+  const lineageA = new Set(db.spawnLineage(a));
+  return !db.spawnLineage(b).some((name) => lineageA.has(name));
+}
+
+/**
+ * The ledger key for a participant: the durable world account (`users.id`)
+ * by name, else the live entity id (which the store resolves to its account
+ * when one exists). Undefined when neither is known — nothing to credit.
+ */
+export function accountKey(
+  db: Pick<MarinaDB, "durableKeyForName">,
+  name: string,
+  entityId?: string,
+): string | undefined {
+  return db.durableKeyForName(name) ?? entityId;
+}
+
+export interface VerifiedCredit {
+  credited: boolean;
+  amount: number;
+  /** Why nothing was paid (agent-facing, one line). */
+  reason?: string;
+}
+
+/**
+ * Credit verified work. `verifier` is the independent party (a name), or
+ * `null` when the verification is mechanical or external (an external market
+ * resolution, the engine's own check) — callers decide that, and pass a name
+ * whenever a person or agent made the call. Idempotent per (account, kind, ref).
+ */
+export function recordVerified(
+  db: MarinaDB,
+  input: {
+    kind: StandingKind;
+    ref: string;
+    worker: { name: string; entityId?: string };
+    verifier: string | null;
+    amount?: number;
+    taskId?: number;
+  },
+): VerifiedCredit {
+  const amount = input.amount ?? STANDING_AMOUNTS[input.kind];
+  if (RETIRED_STANDING_KINDS.has(input.kind))
+    return { credited: false, amount: 0, reason: `${input.kind} no longer earns standing` };
+  if (input.verifier !== null && !independentParties(db, input.worker.name, input.verifier))
+    return {
+      credited: false,
+      amount: 0,
+      reason: `${input.verifier} and ${input.worker.name} are one party (same account or spawn lineage); only independent verification earns standing`,
+    };
+  if (amount <= 0) return { credited: false, amount: 0, reason: "no standing value" };
+  const key = accountKey(db, input.worker.name, input.worker.entityId);
+  if (!key) return { credited: false, amount: 0, reason: `no account for ${input.worker.name}` };
+  record(db, key, input.worker.name, input.kind, input.ref, amount, input.taskId);
+  return { credited: true, amount };
+}
+
+/** The standing a task pays when independently approved: its value (unset = default), capped. */
+export function taskStandingValue(standing: number | null | undefined): number {
+  const value = standing ?? TASK_STANDING_DEFAULT;
+  return Math.max(0, Math.min(TASK_STANDING_MAX, value));
 }
 
 /**
@@ -199,128 +316,47 @@ export function leaderboard(
 }
 
 /**
- * Standing credit per chronicle entry kind. Being chronicled is recognition,
- * not contribution — the entity already got contribution credit at the time
- * of the act. This second-order layer just rewards being noted.
- *
- *   event:      0.25 — the engine recorded a fact you were involved in
- *   narrative:  2.00 — the Chronicler interpreted the moment as noteworthy
- *   digest:     1.00 — period summary cited you
- *   correction: 0.50 — a revision still names you (lighter; could be reframing)
+ * The decayed standing of a participant by durable account — the ONE number
+ * every readout shows (`standing`, `task standing`, `standing top`, `/who`),
+ * online or not.
  */
-const CHRONICLED_AMOUNTS: Record<string, number> = {
-  event: 0.25,
-  narrative: 2,
-  digest: 1,
-  correction: 0.5,
-};
-
-/**
- * Fire a `chronicled` standing event for every participant of a chronicle
- * entry. Idempotent via ref=`chronicle:<entryId>` per (entity_id, kind, ref):
- * re-recording the same entry is a no-op.
- *
- * `lookupId` returns the entity id for a participant name; participants that
- * don't resolve to a real entity (offline, never-existed) are skipped
- * silently — the chronicle records names, not ids, so dangling participants
- * are normal and not a bug.
- */
-/**
- * Generational credit: when a reader surfaces someone ELSE's reflection-tier
- * note, the AUTHOR earns `reflection_recalled` — "write for the minds that
- * come after you" only means something if downstream use pays the writer.
- * Self-recall is reading, not contribution, and earns nothing. Idempotent per
- * (author, reflection:<id>), so constant recall traffic can't flood the
- * ledger. Called from every cross-entity recall surface (recall command's
- * inherited/linked results, `pool <name> recall`).
- */
-export function creditRecalledReflections(
-  db: MarinaDB,
-  readerName: string,
-  notes: Array<{ id: number; tier?: string | null; entity_name: string }>,
-  resolveId: (name: string) => string | undefined,
-): void {
-  for (const note of notes) {
-    if (note.tier !== "reflection") continue;
-    if (note.entity_name === readerName) continue;
-    const authorId = resolveId(note.entity_name);
-    if (!authorId) continue;
-    record(db, authorId, note.entity_name, "reflection_recalled", `reflection:${note.id}`);
-  }
+export function standingOf(db: MarinaDB, name: string, entityId?: string, now = Date.now()) {
+  const key = accountKey(db, name, entityId);
+  return key ? getStanding(db, key, now) : 0;
 }
 
-export function recordChronicleCitation(
+/** `leaderboard` with a display name per row (the account's, else the ledger's). */
+export function namedLeaderboard(
   db: MarinaDB,
-  entry: { id: number; kind: string; participants: string[] },
-  lookupId: (name: string) => string | undefined,
-): void {
-  const amount = CHRONICLED_AMOUNTS[entry.kind] ?? 0;
-  if (amount === 0) return;
-  const ref = `chronicle:${entry.id}`;
-  for (const name of entry.participants) {
-    const id = lookupId(name);
-    if (!id) continue;
-    record(db, id, name, "chronicled", ref, amount);
-  }
+  limit = 10,
+  now = Date.now(),
+): { entityId: string; name: string; standing: number }[] {
+  return leaderboard(db, limit, now).map((row) => ({
+    ...row,
+    name:
+      db.getUser(row.entityId)?.name ??
+      db.ledgerForEntity(row.entityId, 1)[0]?.entity_name ??
+      row.entityId,
+  }));
 }
 
 /**
  * Wire from `engine.logEvent` — translate engine events into ledger writes.
- * Idempotent and silent on irrelevant events.
- *
- * Does NOT credit `task_approved` here — that's already handled by
- * `db.recordStandingEarned()` on the task path (preserves task.standing
- * value). Doing it here too would double-count. Crew member/leader
- * completion crediting happens in CrewManager.complete() with full member
- * context; here we only handle agent-name-keyed events that need an
- * entity-id lookup.
+ * Idempotent and silent on irrelevant events. Only the crew stall penalty is
+ * event-driven now: every credit comes from a verified source
+ * (`recordVerified`) at the point of verification.
  */
 export function recordFromEvent(
   db: MarinaDB,
   event: EngineEvent,
-  lookupName: (entityId: string) => string | undefined,
   lookupId: (agentName: string) => string | undefined = () => undefined,
 ): void {
   switch (event.type) {
-    case "pool_note": {
-      // Anti-farming: credit is keyed by normalized CONTENT (re-posting the
-      // same text earns nothing) and capped per UTC day. Before this, one
-      // credit per note id with no cap let ~100 `pool scratch add x` calls
-      // auto-promote an entity to rank 4 (the safety threshold) in an hour.
-      const name = lookupName(event.entity) ?? "unknown";
-      const dayStart = new Date(event.timestamp).setUTCHours(0, 0, 0, 0);
-      const today = db.countStandingEvents(event.entity, "pool_note", dayStart);
-      if (today >= POOL_NOTE_DAILY_CAP) return;
-      const digest = createHash("sha256")
-        .update(`${event.poolName}\n${event.content.trim().toLowerCase().replace(/\s+/g, " ")}`)
-        .digest("hex")
-        .slice(0, 16);
-      record(db, event.entity, name, "pool_note", `pool_note:${digest}`);
-      return;
-    }
-    case "crew_stage_completed": {
-      const id = lookupId(event.agentName);
-      if (!id) return;
-      record(db, id, event.agentName, "crew_stage_completed", `${event.crew}:${event.stage}`);
-      return;
-    }
-    case "crew_artifact_deposited": {
-      const id = lookupId(event.agentName);
-      if (!id) return;
-      record(
-        db,
-        id,
-        event.agentName,
-        "crew_artifact_deposited",
-        `${event.crew}:${event.artifactRef}`,
-      );
-      return;
-    }
     case "crew_member_stalled": {
       // Only record a penalty after repeated offenses — first stalls are
       // signal, not punishment. The CrewManager hook decides when to fire.
       if (event.offenseCount < 3) return;
-      const id = lookupId(event.agentName);
+      const id = accountKey(db, event.agentName, lookupId(event.agentName));
       if (!id) return;
       record(db, id, event.agentName, "crew_member_stalled", `${event.crew}:${event.timestamp}`);
       return;

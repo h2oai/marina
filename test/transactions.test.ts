@@ -68,8 +68,8 @@ describe("multi-statement writes are atomic", () => {
 
     // Fail the LAST write (standing credit). Monkey-patching the delegate keeps
     // the failure inside the transaction the manager opened.
-    const original = db.recordStandingEarned.bind(db);
-    db.recordStandingEarned = () => {
+    const original = db.appendStandingEvent.bind(db);
+    db.appendStandingEvent = () => {
       throw new Error("injected standing failure");
     };
     expect(() => tasks.approveSubmission(task.id, "e_alice", "e_creator")).toThrow(
@@ -84,7 +84,7 @@ describe("multi-statement writes are atomic", () => {
       0,
     );
 
-    db.recordStandingEarned = original;
+    db.appendStandingEvent = original;
     expect(tasks.approveSubmission(task.id, "e_alice", "e_creator")).toBe(true);
     expect(tasks.getClaim(task.id, "e_alice")?.status).toBe("approved");
     expect(tasks.getClaim(task.id, "e_bob")?.status).toBe("rejected");

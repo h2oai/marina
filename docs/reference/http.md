@@ -88,7 +88,7 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `url.pathname.match(/^\/api\/entity\/([^/]+)\/profile\/?$/)`
 
-[Source](../../src/net/api/entity-api.ts#L71)
+[Source](../../src/net/api/entity-api.ts#L75)
 
 - Guard: `match`
 - Guard: `method !== "GET"`

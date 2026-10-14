@@ -77,7 +77,7 @@ describe("CrewManager.complete keeps persisted crews", () => {
     reloaded.stop();
   });
 
-  it("a later completion needs fresh work evidence for standing", () => {
+  it("a persisted crew completes repeatedly and stays", () => {
     const crew = crews.create({
       name: "serving",
       goal: "serve requests",
@@ -87,11 +87,10 @@ describe("CrewManager.complete keeps persisted crews", () => {
     });
     crews.dispatch(crew.id, "task one");
     crews.onMemberPoolDeposit("bob", "crew:serving", "task one result");
-    expect(crews.complete(crew.id, "one", "alice").standingCredited).toBe(true);
+    expect(crews.complete(crew.id, "one", "alice").retained).toBe(true);
 
     crews.dispatch(crew.id, "task two");
     const second = crews.complete(crew.id, "two, with no work", "alice");
-    expect(second.standingCredited).toBe(false);
     expect(second.retained).toBe(true);
   });
 

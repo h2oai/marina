@@ -15,7 +15,6 @@ import {
   getStanding,
   leaderboard,
   ledgerFor,
-  POOL_NOTE_DAILY_CAP,
   record,
   recordFromEvent,
   STANDING_AMOUNTS,
@@ -126,8 +125,7 @@ describe("Standing — durable identity key", () => {
     expect(getStanding(db, "e_11")).toBeCloseTo(2, 5);
   });
 
-  it("pool_note credit is content-keyed and capped per UTC day", () => {
-    const base = Date.UTC(2026, 8, 13, 12, 0, 0);
+  it("pool notes earn nothing, however many or unique", () => {
     const post = (content: string, i: number): EngineEvent => ({
       type: "pool_note",
       entity: entityId("e_1"),
@@ -135,19 +133,10 @@ describe("Standing — durable identity key", () => {
       poolName: "scratch",
       content,
       importance: 5,
-      timestamp: base + i,
+      timestamp: Date.now() + i,
     });
-    const lookup = () => "alice";
-    // Re-posting identical text under new note ids earns exactly once.
-    recordFromEvent(db, post("Same text", 0), lookup);
-    recordFromEvent(db, post("  same   TEXT ", 1), lookup);
-    expect(ledgerFor(db, "e_1", 50)).toHaveLength(1);
-    expect(getStanding(db, "e_1")).toBeCloseTo(STANDING_AMOUNTS.pool_note, 5);
-    // Distinct content is credited only up to the daily cap.
-    for (let i = 2; i < POOL_NOTE_DAILY_CAP + 5; i++)
-      recordFromEvent(db, post(`note ${i}`, i), lookup);
-    expect(ledgerFor(db, "e_1", 50)).toHaveLength(POOL_NOTE_DAILY_CAP);
-    // ~100 quick pool writes can no longer reach the rank-4 threshold (100).
-    expect(getStanding(db, "e_1")).toBeLessThan(5);
+    for (let i = 0; i < 20; i++) recordFromEvent(db, post(`note ${i}`, i));
+    expect(ledgerFor(db, "e_1", 50)).toHaveLength(0);
+    expect(STANDING_AMOUNTS.pool_note).toBe(0);
   });
 });

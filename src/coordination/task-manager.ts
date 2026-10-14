@@ -1,6 +1,15 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  independentParties,
+  namedLeaderboard,
+  recordVerified,
+  standingOf,
+  TASK_STANDING_DEFAULT,
+  taskStandingValue,
+  type VerifiedCredit,
+} from "../agent/standing";
 import type { MarinaDB, TaskClaimRow, TaskRow } from "../persistence/database";
 
 export interface Task {
@@ -104,7 +113,8 @@ export class TaskManager {
       creatorName: opts.creatorName,
       groupId: opts.groupId,
       validationMode: opts.validationMode,
-      standing: opts.standing,
+      // Unset = the default value; the cap is enforced where creators name one.
+      standing: opts.standing ?? TASK_STANDING_DEFAULT,
       parentTaskId: opts.parentTaskId,
       priority: opts.priority,
     });
@@ -194,30 +204,75 @@ export class TaskManager {
   }
 
   approveSubmission(taskId: number, claimantId: string, approverId: string): boolean {
+    return this.approve(taskId, claimantId, approverId).ok;
+  }
+
+  /** The civic leaderboard (decayed, by account) with each row's credited task count. */
+  standingBoard(limit = 10): { name: string; standing: number; tasks: number }[] {
+    return namedLeaderboard(this.db, limit).map((row) => ({
+      name: row.name,
+      standing: row.standing,
+      tasks: this.db.countStandingEvents(row.entityId, "task_complete", 0),
+    }));
+  }
+
+  /** One participant's decayed standing by account (the `standing` command's number). */
+  standingOf(name: string, entityId?: string): number {
+    return standingOf(this.db, name, entityId);
+  }
+
+  /**
+   * What approving `claimantName`'s submission would pay: the task's value
+   * (capped at TASK_STANDING_MAX) when the creator — the approver — is
+   * independent of the claimant, 0 otherwise. `task info` shows this.
+   */
+  standingFor(task: Task, claimantName?: string): VerifiedCredit {
+    const amount = taskStandingValue(task.standing);
+    if (amount <= 0) return { credited: false, amount: 0, reason: "the task carries no standing" };
+    if (claimantName && !independentParties(this.db, claimantName, task.creatorName))
+      return {
+        credited: false,
+        amount: 0,
+        reason: `${task.creatorName} and ${claimantName} are one party (same account or spawn lineage)`,
+      };
+    return { credited: true, amount };
+  }
+
+  /**
+   * Approve a submission (creator only) in any validation mode. Standing is
+   * paid only for independently verified work: the task's capped value when
+   * the approver is not the claimant's party (same account or spawn lineage),
+   * nothing otherwise — the task still completes.
+   */
+  approve(
+    taskId: number,
+    claimantId: string,
+    approverId: string,
+  ): { ok: false } | { ok: true; credit: VerifiedCredit } {
     const task = this.get(taskId);
-    if (!task) return false;
-    if (task.creatorId !== approverId) return false;
+    if (!task) return { ok: false };
+    if (task.creatorId !== approverId) return { ok: false };
 
     const claim = this.getClaim(taskId, claimantId);
-    if (claim?.status !== "submitted") return false;
+    if (claim?.status !== "submitted") return { ok: false };
 
     // Atomic: approval, completion, the bounty rejections and the standing
     // credit are one logical change — a failure on the last write must not
     // leave the task completed with the claim still `submitted`.
-    this.db.transaction(() => {
+    return this.db.transaction(() => {
       this.db.updateTaskClaimStatus(taskId, claimantId, "approved");
       this.db.updateTaskStatus(taskId, "completed");
-
-      // Bounty mode: reject all other claims and record standing
-      if (task.validationMode === "bounty") {
-        this.db.rejectAllOtherClaims(taskId, claimantId);
-        if (task.standing > 0) {
-          this.db.recordStandingEarned(claimantId, claim.entityName, taskId, task.standing);
-        }
-      }
+      if (task.validationMode === "bounty") this.db.rejectAllOtherClaims(taskId, claimantId);
+      const credit = recordVerified(this.db, {
+        kind: "task_complete",
+        ref: String(taskId),
+        worker: { name: claim.entityName, entityId: claimantId },
+        verifier: task.creatorName,
+        amount: taskStandingValue(task.standing),
+        taskId,
+      });
+      return { ok: true as const, credit };
     });
-
-    return true;
   }
 
   rejectSubmission(taskId: number, claimantId: string, approverId: string): boolean {
@@ -270,15 +325,5 @@ export class TaskManager {
       ...rowToTask(row),
       score: row.score,
     }));
-  }
-
-  getEntityStanding(entityId: string): number {
-    return this.db.getEntityStanding(entityId);
-  }
-
-  getStandingLeaderboard(
-    limit?: number,
-  ): { entityName: string; total: number; taskCount: number }[] {
-    return this.db.getStandingLeaderboard(limit);
   }
 }

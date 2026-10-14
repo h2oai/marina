@@ -22,7 +22,7 @@ import { harnessDecisionProvider } from "../../../decisions/engines";
 import { judgeOpinion } from "../../../decisions/policy";
 import { DecisionError, type DecisionProvider } from "../../../decisions/types";
 import { decisionVerifyMode, verifySubmission } from "../../../decisions/verify";
-import { recordTaskOpinion, recordTaskVerdict } from "../../../outcomes/live";
+import { creditVerifiedCode, recordTaskOpinion, recordTaskVerdict } from "../../../outcomes/live";
 import type { CodingArtifactRow, MarinaDB } from "../../../persistence/database";
 import type { CrewId, Entity, EntityId, RoomContext } from "../../../types";
 import { getErrorMessage } from "../../errors";
@@ -766,6 +766,13 @@ export async function reviewCodingRun(
         reviewerKey: deps.db.durableEntityKey(eid),
       },
     });
+    // Checks that passed, approved by an independent reviewer: verified code.
+    if (action === "approve" && meta.verification === "passed" && claim.entity_name)
+      creditVerifiedCode(deps.db, {
+        runId: run.id,
+        worker: { name: claim.entity_name, entityId: claim.entity_id },
+        reviewer: entity.name,
+      });
     deps.logEvent?.({
       type: action === "approve" ? "task_approved" : "task_rejected",
       entity: eid,

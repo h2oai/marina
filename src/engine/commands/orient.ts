@@ -212,10 +212,11 @@ export function orientCommand(deps: {
           lines.push(...myClaims);
         }
 
-        // Entity's earned standing
-        const standing = deps.taskManager.getEntityStanding(input.entity);
+        // Entity's earned standing (decayed, by account — what `standing` shows)
+        const self = ctx.getEntity(input.entity);
+        const standing = self ? deps.taskManager.standingOf(self.name, input.entity) : 0;
         if (standing > 0) {
-          lines.push("", `  Your Standing: ${standing}`);
+          lines.push("", `  Your Standing: ${standing.toFixed(1)}`);
         }
       }
 

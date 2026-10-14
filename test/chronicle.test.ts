@@ -799,32 +799,8 @@ describe("Chronicle — canonical append-only record", () => {
 
   // ─── Pass 4: standing flow + arrival digest ───────────────────────────
 
-  describe("standing flow on citation", () => {
-    it("does not flow standing for engine `event` entries without participants resolver", () => {
-      // FeedPublisher in beforeEach() above was built without
-      // resolveEntityIdByName — so emitting an event-kind entry should NOT
-      // flow standing even though the participant is real. Citation discipline
-      // is preserved; standing is just optional.
-      const publisher = new FeedPublisher({
-        db,
-        resolveEntity: (id) => engine.entities.get(id)?.name,
-      });
-      publisher.handleEvent({
-        type: "rank_change",
-        entity: entityId,
-        name: "Tester",
-        oldRank: 1,
-        newRank: 2,
-        direction: "promoted",
-        timestamp: Date.now(),
-      } as EngineEvent);
-      // Standing should remain at 0 — no chronicled credit flowed
-      const ledger = db.ledgerForEntity(entityId, 10);
-      expect(ledger.filter((r) => r.kind === "chronicled")).toHaveLength(0);
-    });
-
-    it("flows chronicled standing for engine entries when resolver is wired", () => {
-      // Create the agent first so the name resolver finds it
+  describe("being chronicled is recognition, not standing", () => {
+    it("engine `event` entries record participants and credit no one", () => {
       const agent = engine.entities.create({
         name: "Alice",
         short: "Alice",
@@ -832,13 +808,10 @@ describe("Chronicle — canonical append-only record", () => {
         kind: "agent",
         room: "test/start" as RoomId,
       });
-
       const publisher = new FeedPublisher({
         db,
         resolveEntity: (id) => engine.entities.get(id)?.name,
-        resolveEntityIdByName: (name) => engine.entities.findAgentByName(name)?.id,
       });
-
       publisher.handleEvent({
         type: "rank_change",
         entity: agent.id,
@@ -848,16 +821,11 @@ describe("Chronicle — canonical append-only record", () => {
         direction: "promoted",
         timestamp: Date.now(),
       } as EngineEvent);
-
-      const ledger = db.ledgerForEntity(agent.id, 10);
-      const chronicled = ledger.filter((r) => r.kind === "chronicled");
-      expect(chronicled).toHaveLength(1);
-      expect(chronicled[0]?.amount).toBeCloseTo(0.25); // event-kind weight
-      expect(chronicled[0]?.ref).toMatch(/^chronicle:\d+$/);
+      expect(db.queryChronicle({ participant: "Alice", limit: 5 }).length).toBeGreaterThan(0);
+      expect(db.ledgerForEntity(agent.id, 10)).toHaveLength(0);
     });
 
-    it("flows heavier standing for narrative entries than event entries", () => {
-      // Spawn agents whose names will be resolved
+    it("a Chronicler's narrative, correction and digest credit no participant (itself included)", () => {
       const alice = engine.entities.create({
         name: "Alice",
         short: "Alice",
@@ -865,79 +833,23 @@ describe("Chronicle — canonical append-only record", () => {
         kind: "agent",
         room: "test/start" as RoomId,
       });
-
       const chronEntity = engine.entities.get(entityId);
       if (chronEntity) chronEntity.properties.role = "chronicler";
-
-      // Register the chronicle command with the name resolver wired
-      const { chronicleCommand } = require("../src/engine/commands/chronicle");
-      engine.commands.registerBuiltin(
-        chronicleCommand({
-          getEntity: (id: string) => engine.entities.get(id as EntityId),
-          db,
-          resolveEntityIdByName: (name: string) => engine.entities.findAgentByName(name)?.id,
-        }),
-      );
-
       engine.processCommand(
         entityId,
-        "chronicle record Alice's milestone | She shipped it. refs feed:1 participants Alice",
+        "chronicle record Alice's milestone | She shipped it. refs feed:1 participants Alice,Tester",
       );
-
-      const ledger = db.ledgerForEntity(alice.id, 10);
-      const chronicled = ledger.filter((r) => r.kind === "chronicled");
-      expect(chronicled).toHaveLength(1);
-      expect(chronicled[0]?.amount).toBeCloseTo(2.0); // narrative-kind weight
+      expect(db.queryChronicle({ participant: "Alice", kind: "narrative", limit: 5 })).toHaveLength(
+        1,
+      );
+      expect(db.ledgerForEntity(alice.id, 10)).toHaveLength(0);
+      expect(db.ledgerForEntity(entityId, 10)).toHaveLength(0);
     });
 
-    it("is idempotent — re-recording the same chronicle entry credits once", () => {
-      const alice = engine.entities.create({
-        name: "Alice",
-        short: "Alice",
-        long: "Alice the agent.",
-        kind: "agent",
-        room: "test/start" as RoomId,
-      });
-
-      // Append a chronicle entry directly, then call the citation helper
-      // twice with the same id — the second call should not duplicate the
-      // ledger row (idempotent on (entity_id, kind, ref)).
-      const id = db.appendChronicle({
-        kind: "narrative",
-        source: "chronicler",
-        title: "Test",
-        body: "Body",
-        participants: ["Alice"],
-        refs: ["feed:1"],
-      });
-
-      const { recordChronicleCitation } = require("../src/agent/standing");
-      const resolver = (name: string) => engine.entities.findAgentByName(name)?.id;
-      recordChronicleCitation(db, { id, kind: "narrative", participants: ["Alice"] }, resolver);
-      recordChronicleCitation(db, { id, kind: "narrative", participants: ["Alice"] }, resolver);
-
-      const ledger = db.ledgerForEntity(alice.id, 10);
-      const chronicled = ledger.filter((r) => r.kind === "chronicled");
-      expect(chronicled).toHaveLength(1);
-    });
-
-    it("silently skips unresolvable participants", () => {
-      const { recordChronicleCitation } = require("../src/agent/standing");
-      const id = db.appendChronicle({
-        kind: "narrative",
-        source: "chronicler",
-        title: "ghost",
-        participants: ["Phantom"],
-        refs: ["feed:1"],
-      });
-      // No error even when the resolver returns undefined
-      expect(() =>
-        recordChronicleCitation(
-          db,
-          { id, kind: "narrative", participants: ["Phantom"] },
-          () => undefined,
-        ),
-      ).not.toThrow();
+    it("the retired kind is refused at the ledger write", () => {
+      const { record } = require("../src/agent/standing");
+      record(db, entityId, "Tester", "chronicled", "chronicle:1", 2);
+      expect(db.ledgerForEntity(entityId, 10)).toHaveLength(0);
     });
   });
 

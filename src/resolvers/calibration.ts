@@ -351,8 +351,17 @@ export const forecastQuestionFinder: CalibrationFinder = {
   calibrate(db, sample) {
     // One scoring path for every filed answer (src/outcomes/forecast.ts): settle
     // once, record the outcome, and let lessons and history learn from it.
+    // An in-world market names who resolved it: standing for the forecast
+    // then needs that resolver to be independent of the filer.
+    const resolvedBy =
+      parseSampleId(sample.id)?.venue === "inworld"
+        ? ((sample.value as { resolvedBy?: unknown } | undefined)?.resolvedBy ?? "system")
+        : undefined;
     for (const f of db.openForecastsForSample(sample.id)) {
-      resolveForecast(db, f.id, sample.value, sample.ts, { refs: [`sample:${sample.id}`] });
+      resolveForecast(db, f.id, sample.value, sample.ts, {
+        refs: [`sample:${sample.id}`],
+        ...(resolvedBy !== undefined ? { resolvedBy: String(resolvedBy) } : {}),
+      });
     }
   },
 };

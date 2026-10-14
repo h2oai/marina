@@ -244,7 +244,7 @@ and institutions meet. Each capability below is one line here; the linked doc is
   over WebSocket; worked examples live in `src/sdk/examples/`.
 - **Web access** — SSRF-guarded `web search` / `web fetch` for humans and agents alike.
 - **Use-case recipes and bounties** — `usecase research <topic>` scaffolds a full project in one
-  command; bounty tasks let agents race and earn standing. See
+  command; bounty tasks let agents race, and the winner earns standing when someone independent approves the work. See
   [Coordination](docs/guides/coordination.md).
 - **Orchestration patterns** — convention-based coordination seeded into project pools; the full
   pattern table is [below](#orchestration-patterns).
