@@ -252,6 +252,71 @@ async function latestArchivedSnapshot(
   return undefined;
 }
 
+/** Past Fridays the measured nowcast error looks back over. */
+export const ERROR_FLOOR_WEEKS = 8;
+/** Fewer measured weeks than this ⇒ no floor. */
+export const ERROR_FLOOR_MIN_WEEKS = 3;
+/** Pseudo-weeks at the forecast's own sd that the measured RMS is shrunk toward. */
+export const ERROR_FLOOR_PRIOR_WEEKS = 2;
+
+export interface NowcastErrorFloor {
+  sd: number;
+  n: number;
+  rms: number;
+  /** Per past Friday: the published value minus that week's lock-time nowcast. */
+  errors: Array<{ date: string; error: number }>;
+}
+
+/**
+ * How far this series' daily nowcast has actually missed. Civiqs re-estimates
+ * its whole daily history on every model run, so the freshest daily reading
+ * at a lock is off from the Friday value by the run-to-run revision as well as
+ * by the days in between — an error the week-to-week history never shows.
+ * For each recent Friday in the round's own history (known before `asOf`), the
+ * reading that week's Wednesday-lock nowcast would have used (the newest
+ * archived snapshot FETCHED by that lock — exactly the backtest rule) is
+ * compared with the Friday value. The RMS is shrunk toward `sd0` with
+ * `ERROR_FLOOR_PRIOR_WEEKS` pseudo-weeks; fewer than `ERROR_FLOOR_MIN_WEEKS`
+ * measured weeks ⇒ undefined.
+ */
+export async function nowcastErrorFloor(
+  data: ArenaData,
+  seriesId: string,
+  history: Array<{ date: string; value: number }>,
+  asOf: string,
+  sd0: number,
+): Promise<NowcastErrorFloor | undefined> {
+  const series = CIVIQS_SERIES[seriesId];
+  if (!series || !(sd0 > 0)) return undefined;
+  const cutoff = asOf.slice(0, 10);
+  const fridays = history
+    .filter(
+      (p) => Number.isFinite(p.value) && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && p.date < cutoff,
+    )
+    .slice(-ERROR_FLOOR_WEEKS);
+  const errors: NowcastErrorFloor["errors"] = [];
+  for (const f of fridays) {
+    const lockAt = new Date(Date.parse(f.date) - 2 * 86_400_000 + 14 * 3_600_000).toISOString();
+    const found = await latestArchivedSnapshot(data, series, lockAt, 6).catch(() => undefined);
+    const point = found?.snap.points.at(-1);
+    if (!found || !point || point[0] >= f.date) continue;
+    const reading = seriesValue(found.snap, point, series);
+    if (reading === undefined) continue;
+    errors.push({ date: f.date, error: Math.round((f.value - reading) * 1000) / 1000 });
+  }
+  const n = errors.length;
+  if (n < ERROR_FLOOR_MIN_WEEKS) return undefined;
+  const ms = errors.reduce((s, e) => s + e.error ** 2, 0) / n;
+  const k = ERROR_FLOOR_PRIOR_WEEKS;
+  const r3 = (x: number) => Math.round(x * 1000) / 1000;
+  return {
+    sd: r3(Math.sqrt((n * ms + k * sd0 ** 2) / (n + k))),
+    n,
+    rms: r3(Math.sqrt(ms)),
+    errors,
+  };
+}
+
 function eligibleObservationDay(day: string, asOf: string): boolean {
   return (
     /^\d{4}-\d{2}-\d{2}$/.test(day) &&
@@ -408,9 +473,10 @@ export function nowcastForecaster(
     const origins: Record<string, ForecastOrigin> = {};
     const resolve = async (
       seriesId: string,
-      weekly: { date: string; value: number } | undefined,
+      history: Array<{ date: string; value: number }>,
       start: { mean: number; sd: number },
     ) => {
+      const weekly = history.at(-1);
       const n = await reading(seriesId);
       const selected = n && (!weekly || n.date >= weekly.date) ? n : undefined;
       let c: { mean: number; sd: number; detail?: Record<string, unknown> } = selected
@@ -438,6 +504,9 @@ export function nowcastForecaster(
       if (origin) {
         const scoped = !horizon.series || horizon.series.includes(seriesId);
         const detail = c.detail;
+        const errorFloor = selected
+          ? await nowcastErrorFloor(data, seriesId, history, asOf, start.sd)
+          : undefined;
         origins[seriesId] = {
           selected: selected ? "daily" : "weekly",
           reading: { date: origin.date, value: origin.value },
@@ -464,6 +533,7 @@ export function nowcastForecaster(
                       : "no matching horizon snapshot",
           ...(detail ? { projection: detail } : {}),
           start: { mean: c.mean, sd: c.sd },
+          ...(errorFloor ? { errorFloor } : {}),
         };
       }
       if (selected) used[seriesId] = { date: selected.date, value: selected.value };
@@ -472,7 +542,7 @@ export function nowcastForecaster(
     if (f.topline && round.series) {
       const history = lock.answer_history ?? lock.history ?? [];
       const [c, daily] = await Promise.all([
-        resolve(round.series, history.at(-1), f.topline),
+        resolve(round.series, history, f.topline),
         opts.daily
           ? civiqsDailySeries(data, round, { days: opts.daily, live: cachedLive })
           : undefined,
@@ -494,7 +564,7 @@ export function nowcastForecaster(
     if (f.profile) {
       const profile = { ...f.profile };
       for (const cell of Object.keys(profile)) {
-        const c = await resolve(cell, lock.answer_history_by_cell?.[cell]?.at(-1), profile[cell]!);
+        const c = await resolve(cell, lock.answer_history_by_cell?.[cell] ?? [], profile[cell]!);
         profile[cell] = { mean: c.mean, sd: c.sd };
       }
       return checked(

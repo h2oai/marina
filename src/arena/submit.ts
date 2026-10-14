@@ -19,7 +19,7 @@ import type { ArenaStore } from "../persistence/interfaces/arena-store";
 import type { ArenaConfig } from "./config";
 import type { ArenaData } from "./data";
 import type { Forecaster } from "./evaluate";
-import { forecastRound } from "./forecast";
+import { forecastRound, type RoundForecast } from "./forecast";
 import { requireFreshForecast } from "./freshness";
 import {
   arenaTimestamp,
@@ -104,6 +104,41 @@ export async function buildForecastBody(
   return (await prepareForecast(data, entrant, round, forecaster)).body;
 }
 
+/**
+ * Whatever produced the forecast (nowcast, formation, crew, research, routed),
+ * no filed sd is narrower than the series' measured nowcast error
+ * (`ForecastOrigin.errorFloor`). Only ever widens; the mean is untouched.
+ */
+export function applyErrorFloor(round: ArenaRound, f: RoundForecast): RoundForecast {
+  const floorOf = (id: string | undefined) => (id ? f.origins?.[id]?.errorFloor : undefined);
+  const raised: string[] = [];
+  let topline = f.topline;
+  const top = floorOf(round.series);
+  if (topline && top && topline.sd < top.sd) {
+    raised.push(`sd floored to measured nowcast error ${top.sd} (n=${top.n})`);
+    topline = { ...topline, sd: top.sd };
+  }
+  let profile = f.profile;
+  if (profile) {
+    const cells: string[] = [];
+    for (const [cell, d] of Object.entries(profile)) {
+      const floor = floorOf(cell);
+      if (!floor || d.sd >= floor.sd) continue;
+      profile = { ...profile, [cell]: { ...d, sd: floor.sd } };
+      cells.push(cell);
+    }
+    if (cells.length) raised.push(`${cells.length} cell sd(s) floored to measured nowcast error`);
+  }
+  if (!raised.length) return f;
+  return {
+    ...f,
+    ...(topline ? { topline } : {}),
+    ...(profile ? { profile } : {}),
+    note: `${f.note}; ${raised.join("; ")}`,
+    errorFloorApplied: { ...(f.topline ? { fromSd: f.topline.sd } : {}), notes: raised },
+  };
+}
+
 async function prepareForecast(
   data: ArenaData,
   entrant: string,
@@ -111,7 +146,7 @@ async function prepareForecast(
   forecaster: Forecaster,
 ) {
   const lock = await data.lock(round.round_id);
-  const f = await forecaster(round, lock);
+  const f = applyErrorFloor(round, await forecaster(round, lock));
   const body: ArenaForecastBody = {
     round_id: round.round_id,
     entrant,

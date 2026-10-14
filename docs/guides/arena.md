@@ -188,7 +188,8 @@ the same truthful round context as the crew, started from the nowcast:
 Aggregation is deterministic with the crew's clamps: proposals beyond 4 start-sds are dropped, the
 median move is scaled by a trust (0.5 × the proposals' agreement, or the judge's/skeptic's), the
 final move is capped at 2 start-sds, and the sd blends by the same trust with a floor of half the
-start sd. Each round's calls, statuses, trust and cost are kept in the evaluate/shadow record,
+start sd — and of the narrowest member proposal (a blend with a narrow start never files more
+confidence than any member asked for). Each round's calls, statuses, trust and cost are kept in the evaluate/shadow record,
 with the pattern's own audit under `protocol` (delphi's summary, the tournament bracket,
 verification's aspect verdicts and judge record).
 
@@ -252,6 +253,15 @@ arena archives every snapshot it fetches (`civiqs/` in its repo); `MARINA_ARENA_
 reading in a snapshot **fetched before the lock**, keeping the baseline's spread; every other round
 is the baseline.
 Deterministic and leakage-free, so it backtests (see *Integrity* below).
+
+**Measured nowcast error floor.** Civiqs re-estimates its whole daily history on every model run,
+so the freshest daily reading also misses the Friday value by the run-to-run revision — an error
+the week-to-week history never shows. For each of the last 8 Fridays in the round's history, the
+reading that week's Wednesday-lock nowcast would have used (the newest snapshot fetched by that
+lock) is compared with the Friday value; the RMS, shrunk toward the start sd with 2 pseudo-weeks,
+is recorded as `origins.<series>.errorFloor` (at least 3 measured weeks, else none). Whatever
+forecaster produced the answer (nowcast, formation, crew, research, routed), the filed sd is
+raised to that floor when it is narrower, and the note says so; it only ever widens.
 
 **Live reading for open rounds.** For a round whose lock has not passed, the nowcast also reads
 the Civiqs dashboard (`src/arena/research/civiqs-live.ts`, one paced request per tracker) and uses
