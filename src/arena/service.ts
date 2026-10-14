@@ -885,60 +885,24 @@ export async function runArenaAutopilot(
 
 /**
  * File every accepted submission on the outcome path (`src/outcomes/`) and
- * resolve it once the arena publishes its value: the round's mean and sd,
- * scored by CRPS, learned and added to the forecast history. Idempotent: a
- * filed answer is filed once and settled once. Returns how many resolved now.
+ * resolve it once the arena publishes its value — numbers by CRPS, profiles
+ * and rankings by the arena's own scorers (`settle.ts`), each naming its
+ * family and method. Idempotent: a filed answer is filed once and settled
+ * once. Returns how many resolved now.
  */
 export async function resolveArenaFilings(
   db: MarinaDB,
   deps: Pick<SubmitDeps, "config" | "data">,
 ): Promise<number> {
-  const { fileAnswer, resolveFiled } = await import("../outcomes/filing");
-  const resolved = await deps.data.resolutions();
+  const { settleArenaFilings } = await import("./settle");
   const owner = `marina:arena/${deps.config.entrant}`;
-  let settled = 0;
-  const seen = new Set<string>();
-  for (const row of db.listArenaSubmissions({ entrant: deps.config.entrant, limit: 500 })) {
-    const value = resolved[row.round_id]?.value;
-    if (row.status !== "accepted" || typeof value !== "number") continue;
-    if (seen.has(row.round_id)) continue;
-    seen.add(row.round_id);
-    const externalId = `arena:${row.round_id}`;
-    const filed = db.getForecastAnswerByExternalId(owner, externalId);
-    if (filed?.resolved_at != null) {
-      linkArenaAdvice(db, owner, row, filed.id);
-      continue;
-    }
-    if (!filed) {
-      const body = JSON.parse(row.body) as { topline?: { mean: number; sd: number } };
-      const round = await deps.data.round(row.round_id);
-      if (!body.topline || !(body.topline.sd > 0) || !round) continue;
-      fileAnswer(
-        db,
-        {
-          question: round.question,
-          kind: "number",
-          mean: body.topline.mean,
-          sd: body.topline.sd,
-          answer: {
-            roundId: row.round_id,
-            submissionId: row.id,
-            topline: body.topline,
-            forecaster: deps.config.forecaster,
-          },
-        },
-        { owner, source: "arena", externalId, evalMode: "live" },
-      );
-    }
-    // resolvedAt = now: conservative, the resolution is seen live.
-    const r = resolveFiled(db, owner, externalId, { value }, Date.now(), [
-      `arena:${deps.config.entrant}`,
-    ]);
-    if (r && typeof r === "object") settled++;
-    const answer = db.getForecastAnswerByExternalId(owner, externalId);
-    if (answer) linkArenaAdvice(db, owner, row, answer.id);
-  }
-  return settled;
+  const report = await settleArenaFilings(db, deps, {
+    onSettled: ({ roundId, answerId }) => {
+      const row = answerId ? db.acceptedArenaSubmission(deps.config.entrant, roundId) : undefined;
+      if (row && answerId) linkArenaAdvice(db, owner, row, answerId);
+    },
+  });
+  return report.settled;
 }
 
 /** Attribute only the exact filed version. An advisory opinion is not an outcome. */

@@ -15,6 +15,8 @@
  *                                               sign + file (due = every round inside the window);
  *                                               --replace files a newer version of an accepted
  *                                               round (the arena scores the newest on-time one)
+ *   bun run arena settle                        put every resolved filing on the outcome path
+ *                                               (scored once; `submit` runs it first)
  *   bun run arena backtest                      baseline skill vs the arena's persistence
  *   bun run arena research <round_id>           run the research agent once; print dossier + forecast
  *   bun run arena discover [--tracker T] [--proposer provider/model] [--n N]
@@ -46,7 +48,12 @@ import { closeSync, mkdtempSync, openSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { arenaWindowHours, arenaWindowNotice, parseForecasterSpec } from "../src/arena/config";
+import {
+  arenaConfigFromEnv,
+  arenaWindowHours,
+  arenaWindowNotice,
+  parseForecasterSpec,
+} from "../src/arena/config";
 import {
   evaluateResolved,
   evaluateShapes,
@@ -64,7 +71,9 @@ import {
   arenaStatus,
   forecasterFor,
   recordShadow,
+  resolveArenaFilings,
 } from "../src/arena/service";
+import { settleArenaFilings } from "../src/arena/settle";
 import { buildForecastBody, dueRounds, submitRound } from "../src/arena/submit";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { getErrorMessage } from "../src/engine/errors";
@@ -251,6 +260,21 @@ async function main(): Promise<number> {
       }
       return 0;
     }
+    case "settle": {
+      const config = arenaConfigFromEnv(process.env);
+      if (!config) throw new Error("MARINA_ARENA_ENTRANT is not set");
+      const db = openDb();
+      try {
+        const report = await settleArenaFilings(db, { config, data: arenaData() });
+        console.log(
+          `settled ${report.settled} (number ${report.number}, profile ${report.profile}, ranking ${report.ranking})`,
+        );
+        for (const u of report.unscored) console.log(`  not scored: ${u.roundId} — ${u.reason}`);
+      } finally {
+        db.close();
+      }
+      return 0;
+    }
     case "rounds": {
       const now = Date.now();
       for (const r of await arenaData().openRounds()) {
@@ -295,6 +319,12 @@ async function main(): Promise<number> {
           weightFlag(),
         );
         if ("error" in deps) throw new Error(deps.error);
+        if (!values["dry-run"]) {
+          // Resolved filings onto the outcome path first; never blocks filing.
+          await resolveArenaFilings(db, deps).catch((err) =>
+            console.error(`warning: settling resolved filings failed: ${getErrorMessage(err)}`),
+          );
+        }
         const replace = values.replace === true;
         const ids =
           arg === "due"
