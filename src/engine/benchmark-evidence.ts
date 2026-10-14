@@ -65,8 +65,8 @@ export interface RouteEvidenceSettings {
   tolerance?: number;
   /**
    * Also weigh live evidence: what each model (and role) actually got done on
-   * real work, from the outcome path (`MARINA_ROUTE_EVIDENCE_LIVE=on`).
-   * Mechanical outcomes only, families `live:<source>`.
+   * real work, from the outcome path (`MARINA_ROUTE_EVIDENCE_LIVE`, default
+   * on). Mechanical, shared-scope outcomes only, families `live:<source>`.
    */
   live?: boolean;
 }
@@ -97,7 +97,10 @@ export function routeEvidenceSettingsFromEnv(
     objective: obj === "value" || obj === "budget" ? obj : "lcb",
     tolerance:
       Number.isFinite(tol) && tol >= 0 && tol <= 1 ? tol : DEFAULT_ROUTE_EVIDENCE_TOLERANCE,
-    live: env.MARINA_ROUTE_EVIDENCE_LIVE?.trim().toLowerCase() === "on",
+    // On unless explicitly off: live work is more evidence for the same rule,
+    // recorded only under the default `observe`, and person-scoped work never
+    // enters it (`src/outcomes/evidence.ts`).
+    live: env.MARINA_ROUTE_EVIDENCE_LIVE?.trim().toLowerCase() !== "off",
   };
 }
 

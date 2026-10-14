@@ -9,12 +9,16 @@
  * from real work.
  *
  * Only mechanical outcomes count unless asked (a judged outcome is an opinion
- * until its judge has earned agreement); measurement runs never count.
+ * until its judge has earned agreement); measurement runs never count. Only
+ * SHARED work is pooled: a row tagged with an owner's scope (a person's work,
+ * or their agents') or `scope:unscoped` stays out (`./work-refs.ts`).
  */
 
 import { wilsonInterval } from "../../benchmarks/stats";
+import { outcomeRefs } from "../forecast/routing-refs";
 import type { MarinaDB } from "../persistence/database";
 import type { OutcomeBasis, OutcomeKind } from "../persistence/db-outcomes";
+import { sharedEvidence } from "./work-refs";
 
 export interface EvidenceCell {
   source: string;
@@ -59,6 +63,7 @@ export function liveEvidence(
   >();
   for (const o of rows) {
     if (o.eval_mode === "measure" || !o.participants_json) continue;
+    if (!sharedEvidence(outcomeRefs(o.refs_json))) continue;
     let participants: Participant[];
     try {
       participants = JSON.parse(o.participants_json) as Participant[];

@@ -15,6 +15,7 @@ import { batchCommand } from "../commands/batch";
 import { buildCommand } from "../commands/build";
 import { canvasCommand } from "../commands/canvas";
 import { codeCommand } from "../commands/code";
+import { competenceCommand } from "../commands/competence";
 import { connectCommand } from "../commands/connect";
 import { dataCommand } from "../commands/data";
 import { demoCommand } from "../commands/demo";
@@ -251,6 +252,14 @@ export function registerOperationCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       logEvent: (event) => engine.logEvent(event),
       db: engine.db,
+    }),
+  );
+
+  // Competence map — Marina's own resolved record per (family, method); read-only.
+  engine.commands.registerBuiltin(
+    competenceCommand({
+      ...(engine.db ? { db: engine.db } : {}),
+      getEntity: (id) => engine.entities.get(id as EntityId),
     }),
   );
 
