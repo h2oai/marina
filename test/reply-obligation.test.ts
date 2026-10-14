@@ -250,6 +250,7 @@ describe("incoming information tells", () => {
         senderName: "Operator",
         text: "[crew-1] Operator: [crew-task] T1: list the primes",
         message: "[crew-task] T1: list the primes",
+        crewDispatch: true,
       },
     });
     expect(i.outstandingRequests.size).toBe(3);

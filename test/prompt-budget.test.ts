@@ -376,7 +376,15 @@ describe("addressed / crew message exemptions", () => {
     expect(
       isAddressedOrCrewMessage({ channel: "marina:solvers", message: "go" }, "x", "Alice"),
     ).toBe(true);
-    expect(isAddressedOrCrewMessage({ message: "[crew-task] solve #4" }, "x", "Alice")).toBe(true);
+    // Only the engine's flagged dispatch counts; a typed `[crew-task]` is chatter.
+    expect(
+      isAddressedOrCrewMessage(
+        { message: "[crew-task] solve #4", crewDispatch: true },
+        "x",
+        "Alice",
+      ),
+    ).toBe(true);
+    expect(isAddressedOrCrewMessage({ message: "[crew-task] solve #4" }, "x", "Alice")).toBe(false);
     expect(
       isAddressedOrCrewMessage({ channel: "general", message: "hi all" }, "hi all", "Alice"),
     ).toBe(false);

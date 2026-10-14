@@ -10,6 +10,14 @@ import { retryMemoryOperation } from "../sdk/memory-retry";
 import type { MemoryCheckpoint, MemoryReceipt } from "../sdk/memory-types";
 import { type OutstandingRequest, updateRequestLedger } from "./outstanding-requests";
 
+/**
+ * Session prefix of the continuity journal and compaction archives. Those
+ * sources are the agent's raw transcript (World Events, peer text, tool
+ * results): kept for restore and explicit `source_search`, never served as
+ * retrieved evidence (`buildUnifiedContext` excludes them).
+ */
+export const CONTINUITY_JOURNAL_SESSION_PREFIX = "journal:";
+
 type Archive = { source_ids: string[]; manifest_source_id?: string; sha256: string };
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const references = (data: Record<string, unknown> | undefined) => {
@@ -29,7 +37,11 @@ const references = (data: Record<string, unknown> | undefined) => {
  * No inference, goal selection or implicit sharing is performed here. */
 export class DurableResidentMemory {
   private pending: Promise<unknown> = Promise.resolve();
-  private session = crypto.randomUUID();
+  /** Idempotency-key component (unchanged length budget for receipt keys). */
+  private sessionKey = crypto.randomUUID();
+  /** Capture session of every journal/archive source: tagged so retrieval never
+   *  serves the agent's own raw transcript back to it as `[evidence]`. */
+  private session = `${CONTINUITY_JOURNAL_SESSION_PREFIX}${this.sessionKey}`;
   private parts = new Map<string, MemoryReceipt>();
   private hadCheckpoint = false;
   constructor(private client: Pick<MarinaClient, "memoryService">) {}
@@ -208,12 +220,12 @@ export class DurableResidentMemory {
       const receipt = await this.call<MemoryReceipt & { receipts: MemoryReceipt[] }>(
         {
           operation: "capture_batch",
-          key: `archive-batch:${this.session}:${digest(JSON.stringify(batch.map(([id]) => id)))}`,
+          key: `archive-batch:${this.sessionKey}:${digest(JSON.stringify(batch.map(([id]) => id)))}`,
           input: {
             items: batch.map(([id, content]) => ({
               content,
               session_id: this.session,
-              key: `archive:${this.session}:${id}`,
+              key: `archive:${this.sessionKey}:${id}`,
             })),
           },
         },
@@ -225,7 +237,7 @@ export class DurableResidentMemory {
     const manifest = await this.call<MemoryReceipt>(
       {
         operation: "capture",
-        key: `manifest:${this.session}:${operation}:${previous?.version ?? 0}`,
+        key: `manifest:${this.sessionKey}:${operation}:${previous?.version ?? 0}`,
         input: {
           session_id: this.session,
           content: {
@@ -266,7 +278,7 @@ export class DurableResidentMemory {
       {
         operation: "save_checkpoint",
         id: "resident",
-        key: `checkpoint:${this.session}:${operation}:${previous?.version ?? 0}`,
+        key: `checkpoint:${this.sessionKey}:${operation}:${previous?.version ?? 0}`,
         input: {
           expected_version: previous?.version ?? 0,
           source_cursor: kind === "archive" ? manifest.seq! : (previous?.source_cursor ?? 0),

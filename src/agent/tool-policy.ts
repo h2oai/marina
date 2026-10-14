@@ -537,3 +537,76 @@ export function mediateToolCall(
   }
   return policyLanguage ? { risk, label: POLICY_LANGUAGE_LABEL } : { risk };
 }
+
+/**
+ * Where a tool result's TEXT comes from, for the cycle's trust set (the
+ * reference monitor above and the decision gate's `intent.sources`):
+ *
+ * - `external_tool` — content from outside Marina: `web`/`data` egress reads,
+ *   resolver probes, MCP connector calls (`connect call|tools`), local
+ *   process output (`run`, `shell`). Untrusted.
+ * - `world_event` — peer-authored world content: channel history, boards,
+ *   the tell inbox, the feed, a room's description and occupants. First-party
+ *   (as in World Events), but authored by peers, not the harness.
+ * - `memory` — recalled notes, pools, skills, guides.
+ *
+ * Classified by the EFFECTIVE command verb (a `marina_command` running `web
+ * fetch …` is external, whatever the tool's name), every part of a batch
+ * contributing; the old tool-name rule is kept as a floor so no call loses a
+ * label it had.
+ */
+export type ResultTrust = "external_tool" | "world_event" | "memory";
+
+/** Commands whose result text is peer MESSAGES (fenced and labelled). */
+const PEER_MESSAGE_READS: Record<string, (words: string[]) => boolean> = {
+  channel: ([a]) => a === "history",
+  board: ([a]) => !a || has(["list", "read", "search", "history"], a),
+  tell: ([a]) => a === "inbox",
+  feed: () => true,
+};
+
+function commandResultTrust(raw: string): { trust?: ResultTrust; peerMessages: boolean } {
+  const words = raw.trim().split(/\s+/);
+  const verb = (words[0] ?? "").toLowerCase();
+  const canonical = SUBCOMMAND_ALIASES[verb] ?? verb;
+  const tail = words.slice(1, 3).map((w) => w.toLowerCase());
+  const external = { trust: "external_tool" as const, peerMessages: false };
+  if (classifyCommandRisk(raw) === "egress") return external;
+  if (verb === "probe" || verb === "run" || verb === "shell") return external;
+  if ((verb === "connect" || verb === "conn") && has(["call", "tools"], tail[0])) return external;
+  if (PEER_MESSAGE_READS[canonical]?.(tail)) return { trust: "world_event", peerMessages: true };
+  if (has(["look", "l", "examine", "ex", "x", "who", "chronicle"], verb))
+    return { trust: "world_event", peerMessages: false };
+  if (has(["recall", "note", "memory", "pool", "skill", "guide", "lessons"], verb))
+    return { trust: "memory", peerMessages: false };
+  return { peerMessages: false };
+}
+
+/**
+ * The trust sources a completed tool call adds to the cycle, and how its
+ * result is fenced: `external_tool` (untrusted data, never instructions) or
+ * `world_event` (peer messages, not governing instructions).
+ */
+export function toolResultTrust(
+  toolName: string,
+  args: Record<string, unknown>,
+): { sources: ResultTrust[]; fence?: "external_tool" | "world_event" } {
+  const sources = new Set<ResultTrust>();
+  // The historical name rule (a floor — never weakened).
+  if (/web|fetch|search|probe/i.test(toolName)) sources.add("external_tool");
+  else if (/recall|memory/i.test(toolName)) sources.add("memory");
+  if (toolName === "marina_look" || toolName === "marina_examine") sources.add("world_event");
+  let external = false;
+  let peerMessages = false;
+  const command = typedToolCommand(toolName, args);
+  if (command) {
+    for (const part of commandParts(command)) {
+      const result = commandResultTrust(part);
+      if (result.trust) sources.add(result.trust);
+      if (result.trust === "external_tool") external = true;
+      if (result.peerMessages) peerMessages = true;
+    }
+  }
+  const fence = external ? "external_tool" : peerMessages ? "world_event" : undefined;
+  return { sources: [...sources], ...(fence ? { fence } : {}) };
+}

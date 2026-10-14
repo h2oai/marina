@@ -135,8 +135,22 @@ describe("legacy note ↔ durable twin bridge", () => {
     expect(expandMemoryRecall(db, hits, "Alice", { trusted: true }).map((n) => n.id)).not.toContain(
       noteId,
     );
-    // A real source with real credibility still does.
-    db.addNoteSource(noteId, { url: "https://example.test/evidence", credibility: 0.8 });
+    // Nor does the author's own source, whatever credibility it claims
+    // (self-attestation, see `isTrustedNote`) …
+    db.addNoteSource(noteId, {
+      url: "https://example.test/self",
+      capturedBy: "Alice",
+      credibility: 1,
+    });
+    expect(expandMemoryRecall(db, hits, "Alice", { trusted: true }).map((n) => n.id)).not.toContain(
+      noteId,
+    );
+    // … but a real source someone else captured, with real credibility, does.
+    db.addNoteSource(noteId, {
+      url: "https://example.test/evidence",
+      capturedBy: "Bea",
+      credibility: 0.8,
+    });
     expect(expandMemoryRecall(db, hits, "Alice", { trusted: true }).map((n) => n.id)).toContain(
       noteId,
     );

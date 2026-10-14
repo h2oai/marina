@@ -3,6 +3,35 @@
 
 import { FACT_LIKE_TIERS } from "../engine/constants";
 import type { MarinaDB, NoteRow, ScoredNoteRow } from "../persistence/database";
+import type { NoteSourceRow } from "../persistence/db-notes";
+
+/**
+ * A source that is not the note author's own say-so: captured by someone
+ * else, or citing a note someone else wrote. The author's own `note source`
+ * (whatever credibility it claims) is self-attestation.
+ */
+export function isIndependentSource(
+  source: Pick<NoteSourceRow, "captured_by" | "source_entity">,
+  author: string,
+): boolean {
+  const other = (who: string | null) => !!who && who.toLowerCase() !== author.toLowerCase();
+  return other(source.captured_by) || other(source.source_entity);
+}
+
+/**
+ * `[trusted]` is strict and never self-attested: the note was verified by
+ * someone else (`note verify` refuses the author; `pool ratify` is another
+ * resident), OR it carries confidence ≥ 0.7 AND a credible (≥ 0.6) source the
+ * author did not supply themselves. Confidence and a source's credibility are
+ * both author-set, so neither alone — nor together — earns the tier.
+ */
+export function isTrustedNote(db: MarinaDB, note: NoteRow): boolean {
+  if (note.verification_status === "verified") return true;
+  if ((note.confidence ?? 0.5) < 0.7) return false;
+  return db
+    .getNoteSources(note.id)
+    .some((source) => source.credibility >= 0.6 && isIndependentSource(source, note.entity_name));
+}
 
 /** The same eligibility contract applies to seeds and graph-discovered records. */
 export function expandMemoryRecall(
@@ -21,12 +50,7 @@ export function expandMemoryRecall(
       (options.noteType && note.note_type !== options.noteType)
     )
       return false;
-    return (
-      !options.trusted ||
-      note.verification_status === "verified" ||
-      ((note.confidence ?? 0.5) >= 0.7 &&
-        db.getNoteSources(note.id).some((source) => source.credibility >= 0.6))
-    );
+    return !options.trusted || isTrustedNote(db, note);
   }
   const results = initial.filter(eligible);
   if (results.length >= 20) return results.slice(0, 20);

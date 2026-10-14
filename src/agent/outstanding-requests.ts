@@ -127,6 +127,29 @@ function jsonEnvelope(text: string, allowPrefix = false): Record<string, unknown
   }
 }
 
+/**
+ * A measurement request: a `model_request` envelope carrying the `eval`
+ * marker the model API adds for `x-marina-eval` traffic (`evalEnvelope` in
+ * `src/net/model-api/routing.ts`). Its turn is quarantined from memory.
+ */
+export function isEvalModelRequest(p: Perception): boolean {
+  const raw = p.data?.message ?? p.data?.content;
+  if (typeof raw !== "string" || !raw.includes('"type":"model_request"')) return false;
+  const envelope = jsonEnvelope(raw, true);
+  const marker = envelope?.eval as { benchmark?: unknown } | undefined;
+  return (
+    envelope?.type === "model_request" &&
+    !!marker &&
+    typeof marker === "object" &&
+    typeof marker.benchmark === "string"
+  );
+}
+
+/** Text a measurement request is stored under in the durable ledger (never its content). */
+export function withheldEvalRequestText(request: OutstandingRequest): string {
+  return `model_request ${request.modelRequestId ?? request.id} (measurement content withheld from memory)`;
+}
+
 /** Response obligations survive prompt consumption, observations, failures and run yields. */
 export interface OutstandingRequestsOptions extends RequestLimits {
   /** Clock (tests inject one). */

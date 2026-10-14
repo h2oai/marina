@@ -462,6 +462,9 @@ export class CrewManager {
       sender?.id ?? "__crew_manager__",
       sender?.name ?? "crew",
       `[crew-task] ${message}${depositorLine}${startMove ? `\n${startMove}` : ""}`,
+      // The flag members honour (`isCrewDispatch`): only this authorized path
+      // sets it; a typed `[crew-task]` post does not wake a crew.
+      { crewDispatch: true },
     );
     this.postMediatorNudge(crew, (m, view) => m.onDispatch?.(view, message));
     this.armDepositFallback(crew, depositor);
