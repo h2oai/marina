@@ -50,6 +50,18 @@ describe("/mem and the local model-API key", () => {
     expect(await stats({ Authorization: "Bearer wrong" })).toHaveProperty("status", 401);
   });
 
+  it("a request with no credential is told about the local key, never shown it", async () => {
+    setTrustProfile("local");
+    const response = await stats({});
+    expect(response.status).toBe(401);
+    const body = await response.text();
+    expect(body).toContain("local model-API key");
+    expect(body).toContain("X-Agent-Name");
+    expect(body).not.toContain(KEY);
+    setTrustProfile("shared");
+    expect(await (await stats({})).text()).toContain("MEM_API_KEYS or MARINA_OPEN_API=true");
+  });
+
   it("shared and public profiles refuse the same key", async () => {
     for (const profile of ["shared", "public"] as const) {
       setTrustProfile(profile);

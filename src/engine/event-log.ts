@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { providerSetupHint } from "../net/model/provider-setup";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 import { EVENT_LOG_TRIM_SIZE, MAX_EVENT_LOG } from "./constants";
@@ -28,9 +29,14 @@ const EPHEMERAL_EVENT_TYPES = new Set([
   "resource_changed",
 ]);
 
+/** At most one "no model provider" warning per this interval; the rest are counted. */
+export const NO_PROVIDER_NOTICE_INTERVAL_MS = 10 * 60_000;
+
 export class EventLog {
   private events: EngineEvent[] = [];
   private listeners: Array<(event: EngineEvent) => void> = [];
+  /** When the last no-provider warning was logged, and refusals since. */
+  private noProviderNotice = { at: Number.NEGATIVE_INFINITY, suppressed: 0 };
 
   constructor(
     private readonly logger: Logger,
@@ -69,6 +75,12 @@ export class EventLog {
         durationMs: event.durationMs,
         errorKind: event.errorKind,
       };
+      if (event.phase === "failed" && event.errorKind === "unavailable" && !event.target) {
+        // No upstream at all (a configuration state, not a fault): one WARN per
+        // interval with the fix; real provider failures stay ERROR below.
+        this.noteNoProvider(data);
+        return;
+      }
       if (event.phase === "failed")
         this.logger.error("model-request", "Model request failed", data);
       else this.logger.info("model-request", "Model request completed", data);
@@ -82,6 +94,21 @@ export class EventLog {
         toolName: event.toolName,
       });
     }
+  }
+
+  private noteNoProvider(data: Record<string, unknown>, now = Date.now()): void {
+    const notice = this.noProviderNotice;
+    if (now - notice.at < NO_PROVIDER_NOTICE_INTERVAL_MS) {
+      notice.suppressed++;
+      return;
+    }
+    const earlier = notice.suppressed ? ` (${notice.suppressed} more since the last notice)` : "";
+    this.logger.warn(
+      "model-request",
+      `Model request refused: no model provider${earlier}. ${providerSetupHint()}`,
+      data,
+    );
+    this.noProviderNotice = { at: now, suppressed: 0 };
   }
 
   /** Get all in-memory events. */

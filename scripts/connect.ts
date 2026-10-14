@@ -24,6 +24,7 @@ import { sanitizeEntityName } from "../src/engine/entity-name";
 import { formatPerception } from "../src/net/formatter";
 import type { CommandCatalogEntry } from "../src/sdk/capabilities";
 import { MarinaAgent } from "../src/sdk/client";
+import { runCliCommand } from "./connect-command";
 import { cachedParticipantToken, saveParticipantToken } from "./session-cache";
 
 const args = process.argv.slice(2);
@@ -230,11 +231,12 @@ if (scripted) {
 // ── One-shot mode ────────────────────────────────────────────────────────────
 
 if (oneShot) {
-  await agent.command(oneShot);
+  // A refused command (typo, usage error) already printed its reply; exit 1.
+  const ok = await runCliCommand(agent, oneShot);
   // The direct response prints via onPerception; linger for async follow-ups.
-  if (maxLingerMs > 0) await lingerForQuiet(2_500, maxLingerMs);
+  if (ok && maxLingerMs > 0) await lingerForQuiet(2_500, maxLingerMs);
   agent.disconnect();
-  process.exit(0);
+  process.exit(ok ? 0 : 1);
 }
 
 // ── Pipe mode (stdin is not a TTY) ───────────────────────────────────────────
@@ -243,14 +245,16 @@ const isTTY = process.stdin.isTTY;
 
 if (!isTTY) {
   const rl = createInterface({ input: process.stdin });
+  let failed = false;
   for await (const line of rl) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    await agent.command(trimmed);
+    // A refused line is reported and the script continues with the next one.
+    if (!(await runCliCommand(agent, trimmed))) failed = true;
   }
   if (maxLingerMs > 0) await lingerForQuiet(2_500, maxLingerMs);
   agent.disconnect();
-  process.exit(0);
+  process.exit(failed ? 1 : 0);
 }
 
 // ── REPL mode (interactive TTY) ──────────────────────────────────────────────
@@ -297,8 +301,9 @@ rl.on("line", async (line) => {
     return;
   }
   // Output prints via the single onPerception printer (printing the returned
-  // perceptions here as well would duplicate every line).
-  await agent.command(trimmed);
+  // perceptions here as well would duplicate every line). A refusal is just
+  // output at the prompt — never a crash.
+  await runCliCommand(agent, trimmed);
   rl.prompt();
 });
 

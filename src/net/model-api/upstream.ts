@@ -35,6 +35,7 @@ import {
 } from "../model/model-discovery";
 import { openaiErrorBody, UnsupportedParameterError } from "../model/openai-errors";
 import type { InjectionFormat } from "../model/passthru-context";
+import { providerSetupHint } from "../model/provider-setup";
 import {
   defaultRouteReasoningEffort,
   explicitOutputCap,
@@ -1507,7 +1508,7 @@ export async function proxyToUpstream(
   return finish(
     errorJson(
       503,
-      "No upstream LLM providers configured. Set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.) or add one in Admin → Keys.",
+      `No upstream LLM providers configured. ${providerSetupHint()} Admin → Keys also works.`,
     ),
   );
 }

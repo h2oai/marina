@@ -3,7 +3,15 @@
 
 /** Admin panel tab, split out of AdminPanel.tsx without behaviour change. */
 
-import { Activity, AlertTriangle, Bell, Brain, CheckCircle2, TrendingUp } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  Bell,
+  Brain,
+  CheckCircle2,
+  Circle,
+  TrendingUp,
+} from "lucide-react";
 import { useState } from "react";
 import {
   useContradictions,
@@ -13,6 +21,7 @@ import {
   useReadiness,
 } from "../hooks/use-api";
 import { describeApiError, postApi } from "../lib/api";
+import { isOptionalGap } from "./ops/HealthBadge";
 
 export function OperationsTab() {
   const alertsQuery = useOperationalAlerts();
@@ -203,9 +212,15 @@ export function OperationsTab() {
               <div
                 key={check.id}
                 title={`${check.detail}${check.remediation ? `\n${check.remediation}` : ""}`}
-                className={`flex items-center gap-1 rounded px-1.5 py-1 ${check.status === "ok" ? "bg-success/10 text-success" : check.status === "degraded" ? "bg-warning/10 text-warning" : "bg-danger/10 text-danger"}`}
+                className={`flex items-center gap-1 rounded px-1.5 py-1 ${check.status === "ok" ? "bg-success/10 text-success" : isOptionalGap(check) ? "bg-bg-surface/50 text-text-dim" : check.status === "degraded" ? "bg-warning/10 text-warning" : "bg-danger/10 text-danger"}`}
               >
-                {check.status === "ok" ? <CheckCircle2 size={9} /> : <AlertTriangle size={9} />}
+                {check.status === "ok" ? (
+                  <CheckCircle2 size={9} />
+                ) : isOptionalGap(check) ? (
+                  <Circle size={9} aria-label="optional" />
+                ) : (
+                  <AlertTriangle size={9} />
+                )}
                 <span className="truncate">{check.label}</span>
               </div>
             ))}

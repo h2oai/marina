@@ -21,6 +21,7 @@ import {
   looksLikeDirectory,
   parseDispatch,
   readPackageVersion,
+  statusServerUrl,
   USAGE,
 } from "../scripts/marina";
 import type { Perception } from "../src/sdk/client";
@@ -62,9 +63,28 @@ describe("marina dispatcher routing", () => {
   it("routes the explicit subcommands", () => {
     expect(parseDispatch(["init"])).toEqual({ kind: "init" });
     expect(parseDispatch(["status"])).toEqual({ kind: "status" });
+    expect(parseDispatch(["status", "--port", "3420"])).toEqual({
+      kind: "status",
+      url: "ws://localhost:3420",
+    });
+    expect(parseDispatch(["status", "--url", "ws://h:9/ws"])).toEqual({
+      kind: "status",
+      url: "ws://h:9/ws",
+    });
+    expect(parseDispatch(["status", "--port", "x"]).kind).toBe("usage-error");
+    expect(parseDispatch(["status", "--bogus"]).kind).toBe("usage-error");
     expect(parseDispatch(["version"])).toEqual({ kind: "version" });
     expect(parseDispatch(["--version"])).toEqual({ kind: "version" });
     expect(parseDispatch(["-v"])).toEqual({ kind: "version" });
+  });
+
+  it("resolves the status server like connect: flag, MARINA_URL, WS_PORT, default", () => {
+    expect(statusServerUrl("ws://h:9/ws", { MARINA_URL: "ws://m:1" })).toBe("ws://h:9");
+    expect(statusServerUrl(undefined, { MARINA_URL: "ws://m:1", WS_PORT: "3420" })).toBe(
+      "ws://m:1",
+    );
+    expect(statusServerUrl(undefined, { WS_PORT: "3420" })).toBe("ws://localhost:3420");
+    expect(statusServerUrl(undefined, {})).toBe("ws://localhost:3300");
   });
 
   it("reads the package version from package.json", () => {
@@ -322,6 +342,23 @@ describe("marina status helpers", () => {
     expect(text).toMatch(/off\s+LLM provider\s+no key/);
     expect(text).toContain("→ set ANTHROPIC_API_KEY");
     expect(text).toMatch(/ok\s+WebSocket\s+listening/);
+  });
+
+  it("names an ungated profile, marks optional extras, and drops a duplicate world name", () => {
+    const text = formatStatus(
+      "ws://localhost:3300",
+      { status: "ok" },
+      {
+        instanceName: "Workbench",
+        world: "Workbench",
+        trustProfile: { profile: "local", autonomy: "guarded", ungated: true },
+        checks: [{ id: "tabh2o", label: "TabH2O", status: "off", detail: "unset", optional: true }],
+      },
+    );
+    expect(text).toContain("instance   Workbench\n");
+    expect(text).toContain("local · ungated (gates off");
+    expect(text).not.toContain("autonomy guarded");
+    expect(text).toMatch(/optional\s+TabH2O/);
   });
 
   it("reports a readiness error inline instead of failing the whole status", () => {

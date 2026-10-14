@@ -27,7 +27,7 @@ So a working external endpoint needs all three of:
 | Need | How |
 | --- | --- |
 | A default model | `MARINA_DEFAULT_MODEL` env, or the dashboard Admin model picker (DB `default_model`, which overrides the env) |
-| A provider key for it | env (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) or dashboard **Admin → Keys**. Without one you get `503 "No upstream LLM providers configured"`. |
+| A provider key for it | env (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) or dashboard **Admin → Keys**. Without one you get `503 "No upstream LLM providers configured. …"` naming the provider env vars, `key add`, and the local-runtime option. |
 | Caller auth | `MODEL_API_KEYS` (comma-separated bearer tokens), or `MARINA_OPEN_API=true` for local dev |
 
 Two distinct "defaults" exist:

@@ -17,6 +17,7 @@ import {
   sectionHead,
   status,
 } from "../../net/ansi";
+import { providerSetupHint } from "../../net/model/provider-setup";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { describeCommand } from "../command-manifest";
@@ -334,7 +335,7 @@ function sendCompass(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Brie
 
   // Admin signal: no LLM keys configured (show to rank 8+ guardians)
   if (deps.hasLlmKeys === false && getRank(entity) >= 8) {
-    lines.push(dim("[no LLM keys — agents unavailable. Use 'key add' or set ANTHROPIC_API_KEY]"));
+    lines.push(dim(`[no model provider — agents unavailable. ${providerSetupHint()}]`));
   }
 
   if (!hasMemory) {

@@ -179,6 +179,7 @@ marina connect myname -c "agent list"          # check agents
 echo "goto research/lab" | marina connect bot  # pipe mode
 marina connect myname -c "ask why" --wait 60   # linger up to 60 s for a slow reply
 marina status                                  # is a Marina running? health + readiness
+marina status --port 3420                      # same, for another port (or --url; honors WS_PORT)
 ```
 
 `marina <word>` without `connect` is the coding flow and only accepts a directory (`.`, `/abs`,

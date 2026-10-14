@@ -4,21 +4,34 @@
 import type { ProviderProbeResult } from "../../net/model/model-api";
 import type { AutonomyPulseRow } from "../../persistence/db-telemetry";
 import type { CommandContext, CommandDef } from "../../types";
+import { ungatedPostureNote } from "../autonomy";
 import {
   AUTONOMY_REQUIREMENTS,
+  type ReadinessCheck,
   type ReadinessReport,
   type ReadinessStatus,
   type ReadinessTrustProfile,
+  readinessCounts,
 } from "../readiness";
 import { isLocalUngated } from "../trust-profile";
 
 const ICON: Record<ReadinessStatus, string> = { ok: "✓", degraded: "⚠", off: "✗" };
 
-/** One line: `Trust profile: LOCAL — ungated · autonomy: guarded`. */
+/** A non-ok optional extra renders neutrally (○), never as a failure. */
+function checkIcon(c: ReadinessCheck): string {
+  return c.status !== "ok" && c.optional ? "○" : ICON[c.status];
+}
+
+/**
+ * One line: `Trust profile: SHARED — gates enforced (…) · autonomy: guarded`.
+ * Ungated, the autonomy posture is not in force, so the line says gates are
+ * off and how to turn them on instead of naming a posture that does not apply.
+ */
 export function renderTrustProfileLine(trust: ReadinessTrustProfile): string {
-  const state = trust.ungated ? "ungated" : "gates enforced";
+  const profile = trust.profile.toUpperCase();
+  if (trust.ungated) return `Trust profile: ${profile} — ungated · ${ungatedPostureNote()}`;
   const why = trust.reason ? ` (${trust.reason})` : "";
-  return `Trust profile: ${trust.profile.toUpperCase()} — ${state}${why} · autonomy: ${trust.autonomy}`;
+  return `Trust profile: ${profile} — gates enforced${why} · autonomy: ${trust.autonomy}`;
 }
 
 /**
@@ -189,16 +202,20 @@ export function readinessCommand(deps: {
         return;
       }
       const report = deps.readiness();
-      const counts = { ok: 0, degraded: 0, off: 0 };
-      for (const c of report.checks) counts[c.status]++;
+      const counts = readinessCounts(report.checks);
 
       const lines: string[] = [];
-      lines.push(`Marina readiness — ${report.instanceName} · world: ${report.world}`);
+      lines.push(
+        `Marina readiness — ${report.instanceName}${report.world === report.instanceName ? "" : ` · world: ${report.world}`}`,
+      );
       lines.push(renderTrustProfileLine(report.trustProfile));
-      lines.push(`${counts.ok} ok · ${counts.degraded} degraded · ${counts.off} off`);
+      lines.push(
+        `${counts.ok} ok · ${counts.degraded} degraded · ${counts.off} off` +
+          (counts.optional ? ` · ${counts.optional} optional (○, not needed for the core)` : ""),
+      );
       lines.push("");
       for (const c of report.checks) {
-        lines.push(`  ${ICON[c.status]} ${c.label} — ${c.detail}`);
+        lines.push(`  ${checkIcon(c)} ${c.label} — ${c.detail}`);
         if (c.status !== "ok" && c.remediation) lines.push(`      → ${c.remediation}`);
       }
       ctx.send(input.entity, lines.join("\n"));

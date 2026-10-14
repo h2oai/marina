@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { MAX_AGENTS } from "../../agent/agent-runtime";
+import { describeDefaultUpstream } from "../../net/model-api/upstream";
 import type { EntityId } from "../../types";
 import { askCommand } from "../commands/ask";
 import { bankrollCommand } from "../commands/bankroll";
@@ -230,6 +231,7 @@ export function registerMemoryCommands(engine: Engine): void {
         process.env.MARINA_ASK_MODEL === "false"
           ? undefined
           : (query, context) => answerViaLocalModel(query, context),
+      hasModel: () => describeDefaultUpstream(engine) !== undefined,
     }),
   );
   // recap/debrief/share/dig — the named-verb stdlib that sits next to ask.

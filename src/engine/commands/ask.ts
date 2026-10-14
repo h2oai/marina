@@ -12,6 +12,8 @@ export function askCommand(deps: {
   db?: MarinaDB;
   taskManager?: TaskManager;
   answerQuestion?: (query: string, context: string) => Promise<string | undefined>;
+  /** False when no model provider is configured: answer from notes only, and say so. */
+  hasModel?: () => boolean;
 }): CommandDef {
   return {
     category: "Cognition",
@@ -34,7 +36,10 @@ export function askCommand(deps: {
         return;
       }
 
+      const noModel = deps.answerQuestion !== undefined && deps.hasModel?.() === false;
       const lines: string[] = [header(`Ask: ${query}`), separator()];
+      if (noModel)
+        lines.push("No model provider — answering from notes only; see `readiness`.", "");
       const contextLines: string[] = [];
       let sections = 0;
 
@@ -109,7 +114,7 @@ export function askCommand(deps: {
       }
 
       let answered = false;
-      if (deps.answerQuestion) {
+      if (deps.answerQuestion && !noModel) {
         try {
           const answer = await deps.answerQuestion(query, contextLines.slice(0, 16).join("\n"));
           if (answer?.trim()) {

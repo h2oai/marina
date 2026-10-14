@@ -3,8 +3,11 @@
 
 import { bold, dim, header, separator } from "../../net/ansi";
 import { hostedModelsUrl, isHostedProvider } from "../../net/model/hosted-providers";
+import { KEY_PROVIDERS, providerSetupHint } from "../../net/model/provider-setup";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import { closestName } from "../did-you-mean";
+import { getImageProvider } from "../media/providers/image-registry";
 import { requiresPersistence } from "./command-messages";
 
 // ─── Provider Connectivity Testing ─────────────────────────────────────────
@@ -81,6 +84,23 @@ export async function testKeyConnectivity(provider: string, value: string): Prom
   }
 }
 
+/**
+ * A provider `key add` can store a key for: the model/media provider registry,
+ * or an operator-configured image endpoint (`<PROVIDER>_IMAGE_BASE_URL`).
+ */
+export function isKeyProvider(provider: string): boolean {
+  return KEY_PROVIDERS.includes(provider) || getImageProvider(provider) !== undefined;
+}
+
+/** The refusal for an unknown provider: the closest valid name, then the list. */
+export function unknownProviderReply(provider: string): string {
+  const near = closestName(provider, KEY_PROVIDERS);
+  return (
+    `Unknown provider "${provider}".${near ? ` Did you mean "${near}"?` : ""}\n` +
+    `Providers: ${KEY_PROVIDERS.join(", ")}`
+  );
+}
+
 export function keyCommand(deps: {
   db?: MarinaDB;
   getEntity: (id: EntityId) => Entity | undefined;
@@ -107,7 +127,7 @@ Usage:
   key delete <name>                 — remove a key
   key test <name>                   — test key connectivity
 
-Providers: anthropic, openai, google, groq, openrouter, together, nebius, cerebras, xai, mistral, deepseek`,
+Providers: ${KEY_PROVIDERS.join(", ")}`,
     handler: async (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("key management"));
@@ -129,9 +149,7 @@ Providers: anthropic, openai, google, groq, openrouter, together, nebius, cerebr
         if (keys.length === 0 && envKeys.length === 0) {
           ctx.send(
             input.entity,
-            "No API keys configured.\n\n" +
-              "Add a key:  key add <name> <provider> <api-key>\n" +
-              "Or set env: ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY",
+            `No API keys configured.\n${providerSetupHint()}\nProviders: ${KEY_PROVIDERS.join(", ")}`,
           );
           return;
         }
@@ -176,7 +194,14 @@ Providers: anthropic, openai, google, groq, openrouter, together, nebius, cerebr
           const value = tokens[3];
 
           if (!name || !provider || !value) {
-            ctx.send(input.entity, "Usage: key add <name> <provider> <value>");
+            ctx.send(
+              input.entity,
+              `Usage: key add <name> <provider> <value>\nProviders: ${KEY_PROVIDERS.join(", ")}`,
+            );
+            return;
+          }
+          if (!isKeyProvider(provider)) {
+            ctx.send(input.entity, unknownProviderReply(provider));
             return;
           }
 

@@ -59,6 +59,14 @@ export function getAutonomyPosture(env: NodeJS.ProcessEnv = process.env): Autono
   return "guarded";
 }
 
+/**
+ * The posture line when gates are off (`isLocalUngated()`): no posture is in
+ * force, so name the state and the switch that turns enforcement on.
+ */
+export function ungatedPostureNote(): string {
+  return "gates off for this local operator (audit stays on); set MARINA_AUTONOMY=guarded to enforce them";
+}
+
 /** One-line posture description for the boot banner / readiness / prompts. */
 export function describeAutonomyPosture(posture: AutonomyPosture = getAutonomyPosture()): string {
   switch (posture) {

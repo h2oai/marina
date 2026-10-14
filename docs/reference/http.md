@@ -115,28 +115,28 @@ Fields read here: `aspectRatio`, `canvasId`, `duration`, `fps`, `height`, `metad
 
 ### `path === "/mem"`
 
-[Source](../../src/net/api/mem-api.ts#L426)
+[Source](../../src/net/api/mem-api.ts#L430)
 
 - Guard: `path === "/mem" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `path === "/mem/health"`
 
-[Source](../../src/net/api/mem-api.ts#L431)
+[Source](../../src/net/api/mem-api.ts#L435)
 
 - Guard: `path === "/mem/health" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `path === "/mem/keys"`
 
-[Source](../../src/net/api/mem-api.ts#L437)
+[Source](../../src/net/api/mem-api.ts#L441)
 
 - Guard: `path === "/mem/keys" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `path === "/mem/notes"`
 
-[Source](../../src/net/api/mem-api.ts#L463)
+[Source](../../src/net/api/mem-api.ts#L467)
 
 - Guard: `path === "/mem/notes" && method === "POST"`
 - Guard: `method === "POST"`
@@ -145,7 +145,7 @@ Fields read here: `links`.
 
 ### `path === "/mem/notes"`
 
-[Source](../../src/net/api/mem-api.ts#L500)
+[Source](../../src/net/api/mem-api.ts#L504)
 
 - Guard: `path === "/mem/notes" && method === "GET"`
 - Guard: `method === "GET"`
@@ -154,7 +154,7 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `path === "/mem/recall"`
 
-[Source](../../src/net/api/mem-api.ts#L520)
+[Source](../../src/net/api/mem-api.ts#L524)
 
 - Guard: `path === "/mem/recall" && method === "GET"`
 - Guard: `method === "GET"`
@@ -163,7 +163,7 @@ Fields read here: `url.searchParams.get("q")`, `url.searchParams.get("weightImpo
 
 ### `path === "/mem/context"`
 
-[Source](../../src/net/api/mem-api.ts#L569)
+[Source](../../src/net/api/mem-api.ts#L573)
 
 - Guard: `path === "/mem/context" && method === "GET"`
 - Guard: `method === "GET"`
@@ -172,7 +172,7 @@ Fields read here: `url.searchParams.get("budget")`, `url.searchParams.get("q")`,
 
 ### `path.match(/^\/mem\/notes\/(\d+)$/)`
 
-[Source](../../src/net/api/mem-api.ts#L606)
+[Source](../../src/net/api/mem-api.ts#L610)
 
 - Guard: `noteIdMatch`
 - Guard: `method === "GET"`
@@ -180,7 +180,7 @@ Fields read here: `url.searchParams.get("budget")`, `url.searchParams.get("q")`,
 
 ### `path.match(/^\/mem\/notes\/(\d+)\/link$/)`
 
-[Source](../../src/net/api/mem-api.ts#L628)
+[Source](../../src/net/api/mem-api.ts#L632)
 
 - Guard: `linkMatch && method === "POST"`
 - Guard: `method === "POST"`
@@ -189,7 +189,7 @@ Fields read here: `relationship`, `target`.
 
 ### `path.match(/^\/mem\/notes\/(\d+)\/trace$/)`
 
-[Source](../../src/net/api/mem-api.ts#L658)
+[Source](../../src/net/api/mem-api.ts#L662)
 
 - Guard: `traceMatch && method === "GET"`
 - Guard: `method === "GET"`
@@ -198,14 +198,14 @@ Fields read here: `Math.min(Number(url.searchParams.get("depth")) &#124;&#124; 2
 
 ### `path === "/mem/core"`
 
-[Source](../../src/net/api/mem-api.ts#L672)
+[Source](../../src/net/api/mem-api.ts#L676)
 
 - Guard: `path === "/mem/core" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `path.match(/^\/mem\/core\/([^/]+)$/)`
 
-[Source](../../src/net/api/mem-api.ts#L678)
+[Source](../../src/net/api/mem-api.ts#L682)
 
 - Guard: `coreKeyMatch`
 - Guard: `method === "GET"`
@@ -216,7 +216,7 @@ Fields read here: `value`.
 
 ### `path.match(/^\/mem\/core\/([^/]+)\/history$/)`
 
-[Source](../../src/net/api/mem-api.ts#L712)
+[Source](../../src/net/api/mem-api.ts#L716)
 
 - Guard: `coreHistMatch && method === "GET"`
 - Guard: `method === "GET"`
@@ -225,14 +225,14 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 1
 
 ### `path === "/mem/pools"`
 
-[Source](../../src/net/api/mem-api.ts#L724)
+[Source](../../src/net/api/mem-api.ts#L728)
 
 - Guard: `path === "/mem/pools" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `path === "/mem/pools"`
 
-[Source](../../src/net/api/mem-api.ts#L730)
+[Source](../../src/net/api/mem-api.ts#L734)
 
 - Guard: `path === "/mem/pools" && method === "POST"`
 - Guard: `method === "POST"`
@@ -241,7 +241,7 @@ Fields read here: `name`.
 
 ### `path.match(/^\/mem\/pools\/([^/]+)(\/.*)?$/)`
 
-[Source](../../src/net/api/mem-api.ts#L746)
+[Source](../../src/net/api/mem-api.ts#L750)
 
 - Guard: `poolMatch`
 - Guard: `method === "POST"`
@@ -251,7 +251,7 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 1
 
 ### `path === "/mem/stats"`
 
-[Source](../../src/net/api/mem-api.ts#L799)
+[Source](../../src/net/api/mem-api.ts#L803)
 
 - Guard: `path === "/mem/stats" && method === "GET"`
 - Guard: `method === "GET"`

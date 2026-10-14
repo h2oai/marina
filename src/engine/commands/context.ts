@@ -63,6 +63,10 @@ export function contextCommand(deps: {
       { syntax: "context api <JSON>", effect: "read" },
     ],
     handler: async (ctx, input) => {
+      if (!input.args.trim()) {
+        ctx.send(input.entity, "Usage: context <query> | context api <JSON>");
+        return;
+      }
       let requestId: string | undefined;
       try {
         if (input.args.length > 32768) throw new Error("Context request exceeds 32768 characters.");

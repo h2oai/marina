@@ -13,6 +13,7 @@ import { raiseForCommand } from "./challenges";
 import { failCommandResponse } from "./command-response";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
+import { closestName } from "./did-you-mean";
 import { getErrorMessage, tryLog } from "./errors";
 import {
   armGatePass,
@@ -36,7 +37,7 @@ export interface CommandExecutionOptions {
 export interface CommandPhaseHost {
   readonly entities: Pick<EntityManager, "get">;
   readonly rooms: Pick<RoomManager, "get">;
-  readonly commands: Pick<CommandRouter, "parse" | "resolveCommand">;
+  readonly commands: Pick<CommandRouter, "parse" | "resolveCommand" | "allBuiltins">;
   readonly db?: MarinaDB;
   readonly macroManager?: Pick<MacroManager, "getByName">;
   readonly logger: Logger;
@@ -160,7 +161,14 @@ export class CommandPhaseCoordinator {
           return;
         }
       }
-      this.host.sendToEntity(entityId, `Unknown command: ${input.verb}. Type "help" for commands.`);
+      const near = closestName(
+        input.verb,
+        this.host.commands.allBuiltins().flatMap((def) => [def.name, ...(def.aliases ?? [])]),
+      );
+      this.host.sendToEntity(
+        entityId,
+        `Unknown command: ${input.verb}.${near ? ` Did you mean "${near}"?` : ""} Type "help" for commands.`,
+      );
       failCommandResponse(`Unknown command: ${input.verb}`);
       recordUsage(false);
       return;
