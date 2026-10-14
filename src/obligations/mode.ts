@@ -8,7 +8,8 @@ import type { ArgcheckTrigger } from "./argcheck";
  * agent loops (residents, crews, Code Mode coders). Unset: `on` while an agent
  * works a Code Mode task (a coder, a CLI one-shot), `observe` otherwise. `off`:
  * nothing is extracted, no call is made, prompts are unchanged. `observe`
- * extracts and tracks (and logs counts) without showing anything to the model;
+ * tracks (and logs counts) without showing anything to the model, and makes no
+ * model call unless `MARINA_OBLIGATIONS_OBSERVE_SAMPLE` samples it;
  * `on` also lists open obligations in the continuation prompt and nudges a run
  * that would end with one open (once per obligation). The ledger's calls use
  * the decision layer or the agent's own model, so one model is enough.
@@ -31,6 +32,20 @@ export function obligationsMode(
   scope: { coder?: boolean } = {},
 ): ObligationsMode {
   return parseObligationsMode(env.MARINA_OBLIGATIONS) ?? (scope.coder ? "on" : "observe");
+}
+
+/**
+ * `MARINA_OBLIGATIONS_OBSERVE_SAMPLE` — the fraction (0–1) of an agent loop's
+ * `observe`-mode ledger refreshes and pre-write reviews that make their model
+ * calls (extraction, match judging, review). Default 0: `observe` is free —
+ * it queues requests (their text still reaches the argument check's judge as
+ * stated lines) and counts tool calls, with no model call, since nothing it
+ * would learn is shown to the agent. Raise it to measure what `on` would do.
+ * `on` is unaffected; the `/v1` passthru never reads it. Junk → 0; capped at 1.
+ */
+export function obligationsObserveSample(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.MARINA_OBLIGATIONS_OBSERVE_SAMPLE?.trim());
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 1) : 0;
 }
 
 /**

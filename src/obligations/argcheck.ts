@@ -45,6 +45,7 @@ import type { DecisionProvider } from "../decisions/types";
 import type { CompleteText } from "./extract";
 import { idTokens } from "./ledger";
 import { dispatchedCall } from "./tool-call";
+import { writesOwnRecord } from "./tool-effect";
 
 /** Where a piece of conversation text came from. */
 export type EvidenceChannel = "user" | "tool" | "assistant" | "system";
@@ -87,6 +88,17 @@ const OPTION_MAX_WORDS = 4;
  */
 const FREE_TEXT_KEYS =
   /^(reason|reasons|summary|note|notes|message|comment|comments|description|content|text|body|explanation|details|query|title|command|commands|cmd|script|sql)$/i;
+
+/**
+ * Descriptors a caller chooses for a record it writes for itself (its memory,
+ * notes, skills — `writesOwnRecord`): the operation it picks on its own store,
+ * tags, importance, tier, type, title, its own claim, an idempotency key. Not
+ * checked in such a call: they are the
+ * writer's own choices, never values the conversation states. Ids, spaces,
+ * targets and amounts in the same call still are.
+ */
+export const OWN_RECORD_KEYS =
+  /^(action|operation|op|tags?|labels?|importance|priority|tier|category|categories|type|note_?type|kind|confidence|title|name|topics?|skill_(?:name|description|actions)|claim|statement|key|idempotency_?key)$/i;
 
 // ─── Values ──────────────────────────────────────────────────────────────────
 
@@ -210,12 +222,14 @@ export function urlIdTokens(url: string): string[] {
 /**
  * The checkable values in a call's arguments, depth-first, at most
  * {@link MAX_VALUES_PER_CALL}. Booleans, nulls, small integers and free text
- * (long strings, `reason`/`note`-like keys) are skipped.
+ * (long strings, `reason`/`note`-like keys) are skipped; with `ownRecord`, so
+ * are the writer's own descriptors ({@link OWN_RECORD_KEYS}).
  */
-export function argValues(args: unknown): ArgValue[] {
+export function argValues(args: unknown, opts: { ownRecord?: boolean } = {}): ArgValue[] {
   const out: ArgValue[] = [];
   const walk = (v: unknown, path: string, key: string) => {
     if (out.length >= MAX_VALUES_PER_CALL) return;
+    if (opts.ownRecord && OWN_RECORD_KEYS.test(key)) return;
     if (typeof v === "number") {
       if (Number.isFinite(v) && !trivialNumber(v))
         out.push({ path, value: String(v), kind: "number", key });
@@ -506,8 +520,9 @@ function canonicalCandidate(kind: ArgKind, raw: string): string | undefined {
 export function mechanicalCheck(
   args: unknown,
   evidence: EvidenceIndex,
+  opts: { ownRecord?: boolean } = {},
 ): { findings: ArgFinding[]; flagged: ArgFinding[] } {
-  const findings = argValues(args).map((v) => ({ ...v, support: evidence.support(v) }));
+  const findings = argValues(args, opts).map((v) => ({ ...v, support: evidence.support(v) }));
   return { findings, flagged: findings.filter((f) => f.support !== "strong") };
 }
 
@@ -624,8 +639,8 @@ function renderArgs(args: unknown): string {
 
 function supportText(s: Support): string {
   return s === "none"
-    ? "not found in the user's messages or any tool result"
-    : "appears only in the assistant's own messages or the instructions, not from the user or a tool result";
+    ? "not found in the requester's messages or any tool result"
+    : "appears only in the assistant's own messages or the instructions, not from the requester or a tool result";
 }
 
 const SOURCE_TEXT: Record<EvidenceChannel, string> = {
@@ -1085,10 +1100,17 @@ export async function checkCall(
   ctx.memo.checks++;
   // A dispatcher call's values are its inner arguments (the inner tool's name is not a value).
   const inner = dispatchedCall(call.name, call.args, ctx.tools);
-  const { findings, flagged } = mechanicalCheck(inner ? inner.args : call.args, evidence);
+  // A record the caller writes for itself: its own descriptors are not checked.
+  const ownRecord =
+    writesOwnRecord(call.name, ctx.tools) || (!!inner && writesOwnRecord(inner.name, ctx.tools));
+  const { findings, flagged } = mechanicalCheck(inner ? inner.args : call.args, evidence, {
+    ownRecord,
+  });
   const counts = { signature, checked: findings.length, flaggedValues: flagged.length };
   if (flagged.length) ctx.memo.flagged++;
-  if (ctx.trigger !== "all-writes" && flagged.length === 0)
+  // An own-record write with nothing left to check is never judged, whatever the trigger.
+  const judgeAll = ctx.trigger === "all-writes" && !(ownRecord && findings.length === 0);
+  if (!judgeAll && flagged.length === 0)
     return { ...counts, label: findings.length ? "supported" : "no-values" };
   ctx.memo.judged++;
   const judgement = await judgeArguments(
@@ -1136,30 +1158,31 @@ export function flaggedLines(flagged: ArgFinding[]): string[] {
 /**
  * The one-time note for an unsupported call. It names the values not found
  * first-hand and/or the argument the judge doubts, and asks the model to check
- * them against the user's request; it never proposes a value. The same call
- * issued again runs.
+ * them against the request; it never proposes a value. It says "the
+ * requester", never "the user": an autonomous agent's request may come from
+ * another agent, a task or its own goal. The same call issued again runs.
  */
 export function nudgeText(name: string, flagged: ArgFinding[], doubt?: string): string {
-  const lines = ["[Marina argument check — not from the user]"];
+  const lines = ["[Marina argument check — not from the requester]"];
   if (flagged.length) {
     lines.push(
-      `Before ${name} runs: these argument values are not supported by what the user said or what the tools returned:`,
+      `Before ${name} runs: these argument values are not supported by what the requester said or what the tools returned:`,
       ...flaggedLines(flagged),
     );
     if (doubt && !flagged.some((f) => f.path === doubt || f.key === doubt))
       lines.push(`The check also doubts \`${doubt}\`.`);
     lines.push(
-      "Check each against the user's messages and the tool results. If they are right, make the same call again (it will run).",
+      "Check each against the requester's messages and the tool results. If they are right, make the same call again (it will run).",
     );
   } else {
     lines.push(
-      `Before ${name} runs: a check doubts that ${doubt ? `\`${doubt}\` matches` : "its arguments match"} what the user asked for.`,
-      "When the conversation holds several values of a kind (accounts, cards, transactions, options), confirm the call uses the one the user's request points to, and that any amount or flag follows the rules that apply. If it is right, make the same call again (it will run).",
+      `Before ${name} runs: a check doubts that ${doubt ? `\`${doubt}\` matches` : "its arguments match"} what the requester asked for.`,
+      "When the conversation holds several values of a kind (accounts, cards, transactions, options), confirm the call uses the one the request points to, and that any amount or flag follows the rules that apply. If it is right, make the same call again (it will run).",
     );
   }
   lines.push(
-    "If one is wrong, make the call with the value the conversation supports. If the user has not given it, ask them.",
-    "This check changes no rule and appears once for this call. Do not mention it to the user.",
+    "If one is wrong, make the call with the value the conversation supports. If the requester has not given it, ask the requester.",
+    "This check changes no rule and appears once for this call. Do not mention it to the requester.",
   );
   return lines.join("\n");
 }

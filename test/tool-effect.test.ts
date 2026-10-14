@@ -8,6 +8,7 @@ import {
   readOnlyByName,
   type ToolEffectRole,
   toolEffect,
+  writesOwnRecord,
 } from "../src/obligations/tool-effect";
 
 /** An OpenAI-shaped declaration. */
@@ -287,5 +288,24 @@ describe("generic HTTP request tools", () => {
     // No url/path beside the method: not an HTTP call; the name decides as before.
     expect(readOnlyCall("get_report", { method: "POST" })).toBe(true);
     expect(readOnlyCall("get_report", { method: "summary", url: "/r" })).toBe(true);
+  });
+});
+
+describe("writesOwnRecord", () => {
+  it("places the caller's own memory, notes, journal and skills by record-kind words", () => {
+    for (const n of ["memory", "marina_memory_service", "add_note", "journal_write", "skill_store"])
+      expect(writesOwnRecord(n)).toBe(true);
+    for (const n of ["send_payment", "update_order", "transfer", "marina_command", "create_ticket"])
+      expect(writesOwnRecord(n)).toBe(false);
+  });
+
+  it("reads a declaration: someone else's state is never the caller's own record", () => {
+    const tools = [
+      fn("add_note", "Add a note to the customer's order."),
+      fn("save_entry", "Save an entry to your own journal."),
+    ];
+    expect(writesOwnRecord("add_note", tools)).toBe(false);
+    expect(writesOwnRecord("save_entry", tools)).toBe(true);
+    expect(writesOwnRecord("save_entry")).toBe(false);
   });
 });
