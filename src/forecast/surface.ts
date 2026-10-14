@@ -13,8 +13,9 @@
  *               (`MARINA_LESSONS` on / observe / off; leakage rule at the cutoff);
  *   defaults    formation, analysts, checker and selection mode through
  *               `resolveForecastDefaults` (env, then an earned slot, then the
- *               built-in — `src/forecast/defaults.ts`); the formation is routed
- *               by `MARINA_FORECAST_ROUTE` (off = exactly that formation).
+ *               built-in — `src/forecast/defaults.ts`); the method card is
+ *               routed by `MARINA_FORECAST_ROUTE` from tagged outcome evidence
+ *               (`./card-routing.ts`; off = exactly that formation).
  *
  * Callers add only what their surface allows (the API's `runs`,
  * `researchRounds`, `critique`); models stay operator-set.
@@ -79,12 +80,14 @@ export async function typedForecastFor(
   opts: TypedSurfaceOptions = {},
 ): Promise<{ answer: TypedForecastAnswer; scale: ForecastScale } | { error: string }> {
   const env = opts.env ?? process.env;
-  const [defaults, { typedForecastDeps }, routing, { forecastLessonsFor }] = await Promise.all([
-    import("./defaults"),
-    import("./service"),
-    import("./routing"),
-    import("../learning/forecast-bridge"),
-  ]);
+  const [defaults, { typedForecastDeps }, routing, cards, { forecastLessonsFor }] =
+    await Promise.all([
+      import("./defaults"),
+      import("./service"),
+      import("./routing"),
+      import("./card-routing"),
+      import("../learning/forecast-bridge"),
+    ]);
   // Env, then an earned slot, then today's built-in — traced per field.
   const board = opts.board?.trim() || env.MARINA_FORECAST_BOARD?.trim() || undefined;
   const resolved = defaults.resolveForecastDefaults({
@@ -114,11 +117,14 @@ export async function typedForecastFor(
     made = typedForecastDeps(env, surfaceOptions);
   }
   if ("error" in made) return made;
-  const answer = await routing.forecastRouted(
+  // The method card routing earns for this question's class (the operator's
+  // formation and options without evidence); the decision goes on the answer.
+  const answer = await cards.forecastCarded(
     req,
     made.deps,
     resolved.formation,
     routing.routeSettingsFromEnv(env),
+    { ...(opts.db ? { db: opts.db } : {}), ...(board ? { board } : {}), env },
   );
   answer.costUsd = made.costUsd();
   return { answer, scale: made.scale };

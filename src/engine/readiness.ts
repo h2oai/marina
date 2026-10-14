@@ -17,6 +17,7 @@ import {
 import { activeGateQuestions, BASELINE_GATE_QUESTIONS } from "../decisions/gate-questions";
 import { decisionHealth } from "../decisions/health";
 import { describeDecisionSettings } from "../decisions/settings";
+import { competenceMap } from "../forecast/competence";
 import { providerSetupHint } from "../net/model/provider-setup";
 import { localModelApiKey } from "../net/model-api/shared";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
@@ -675,6 +676,32 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   }
   if (arena.configured) checks.push(arenaFilingCheck());
   // Not entered: no check at all — the arena is opt-in, not a missing capability.
+
+  // ── Competence map — what the resolved record says each method is good at ─
+  try {
+    // Readiness is polled: a bounded read of the newest outcomes is enough for the summary.
+    const cells = engine.db ? competenceMap(engine.db, { limit: 2_000 }) : [];
+    const live = cells.reduce((n, c) => n + c.live, 0);
+    const measure = cells.reduce((n, c) => n + c.measure, 0);
+    const families = new Set(cells.map((c) => c.family)).size;
+    checks.push({
+      id: "competence",
+      label: "Competence map",
+      status: cells.length ? "ok" : "off",
+      optional: true,
+      detail: cells.length
+        ? `${cells.length} (family, method) cells over ${families} families: ${live} live and ${measure} measured outcomes — \`forecast competence\` for the table`
+        : "no resolved outcome is tagged with a family and method yet",
+      ...(cells.length
+        ? {}
+        : {
+            remediation:
+              "Rows appear as forecasts, arena rounds and benchmark runs resolve; `bun run outcomes:settle` records the backlog.",
+          }),
+    });
+  } catch {
+    // allow-empty-catch: an unreadable outcome table only omits this informational line
+  }
 
   // ── Demo pulse — measured participation, activity, and request latency ───
   const demoNames = ["Host", "Builder", "Critic", "Chronicler"].filter((name) =>
