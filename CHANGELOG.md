@@ -7,7 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-14
+
+### Upgrade notes
+
+Behaviour changes a living world notices on upgrade (nothing is reset: stored ranks, grants,
+demonstrations and standing rows are kept):
+
+- **Standing is earned only by independently verified work** (#448). `chronicled`, `pool_note`,
+  `reflection_recalled`, `crew_*` and `helping_act` credits are retired: `record()` refuses them
+  and existing rows decay out. A task pays 0–10 (default 1) and only when someone outside the
+  claimant's account and spawn lineage approves it.
+- **Approvals are the gate proof** (#452, #459). Earnable gates have low standing floors
+  (`code.exec` 3; `agent.spawn`/`role.edit`/`world.lineage` 10; `agent.run` 20;
+  `decisions.configure`/`adapter`/`connect`/`gateway` 30) and become solo after held runs a person
+  outside the lineage approved; core gates are operator grants. Only people grant gates.
+- **Only people approve holds** (#447). An agent never answers another's challenge, whatever its
+  rank; the dashboard's rank-9 shortcut is removed (the gate decides). One-shot/pipe CLI and SDK
+  clients count as agents unless they declare `principal: "person"`.
+- **Agent loop** (#435, #438): agents owe replies only to requests addressed to them
+  (`MARINA_FORCED_ACTION_NUDGE=requests` is the default); an idle agent makes no model call when
+  nothing is new, with a 30-minute heartbeat (`MARINA_AGENT_HEARTBEAT_MS`).
+- **Orchestration templates no longer carry static sweep scores** (#432).
+- **Built-in model defaults use each vendor's strong tier** (#401); every env override still wins.
+- Seeded guide notes reconcile on boot: edited or removed seed text is retired (#439, #440).
+
 ### Added
+
+- (pending) explicit sovereign switch `MARINA_AUTONOMY=sovereign`
+- **Schedules** (#419, #422): `schedule add <name> every:|daily:|at:|before: lead: -- <command>`
+  runs an owner's own command later or on a repeat, in the owner's slot with the same rank, gates,
+  challenges and spend caps; `before:<kind>:<id>` follows a registered deadline reference.
+  Migration 165.
+- **Durable challenge holds** (#447, migration 166): holds survive restarts, expire on a 15 s
+  sweep, and owed notices wait until the requester connects; offline approvers get an `ops inbox`
+  item.
+- **Standing readouts** (#448): `code_verified` and `forecast_resolved` credits; an operator-set
+  rank below 5 is a floor progression keeps (`users.rank_floor`, migration 167).
+- **Same-model OpenRouter fallback** (#453, #456): a first-party key's usage limit is a route
+  limit; while it lasts the same model is served via OpenRouter, labelled `openrouter/…` with an
+  `x-marina-route` header, and agents (including discovery turns) retry there.
+  `MARINA_PROVIDER_FALLBACK=off` disables; readiness `provider-routes` reports it.
+- **Providers**: Together AI and Nebius Token Factory keys, catalogs and pricing (#417).
+- **Passthru**: the instrument stack runs on `/v1/responses` and the verify checker sees memory
+  context (#397); an opt-in `ensemble` member drafts a tool-calling turn N times and a checker picks
+  one whole draft (#400), composing with `verify` (#403).
+- **Code Mode**: `code do budget:<duration>` gives a one-shot wall-clock budget that ends in a
+  labelled forced answer (#398); a crew member may submit the tracked attempt for the crew
+  (#404); Python projects without pytest fall back to unittest or a workspace test script (#405);
+  a spend stop submits the attempt's work like any other budget (#406).
+- **CLI**: `/plan` read-only plan mode (#393); a standalone native `marina` binary with embedded
+  version, worlds and settings (#407, #408); first-run polish (#433).
+- **Benchmarks (opt-in operator tools)**: run keys carry an arm, eval context, spend cap and
+  transport guard (#421); `benchmark kit` runs the reproduction kit in-world (#423, #425);
+  `benchmark compare-run` runs a paired two-arm comparison as one command (#427).
+- **Outcomes and competence loop**: arena filings, benchmark runs and live work (task verdicts,
+  Code Mode checks, `POST /v1/outcomes`) settle on the one outcome path tagged by family and
+  method (#444, #450, #454); forecasting gains method cards, earned card routing and a
+  competence map (#451).
+- **Forecasting/arena mechanisms**: learned settings run by default and measurement runs save
+  (#392); a read-only `arena-filing-watch` alert for rounds about to lock (#420); per-(family,
+  method) spread calibration (#445), earned family routes (#449), learned move weights (#458),
+  spike-decay and Wikipedia scheduled-event methods (#457, #460), stale related-series labels
+  (#455), sampling-noise baselines and spread floors (#442, #443).
+- **Operations**: `bun run monitor`, an outside monitor that installs nothing on the host, and
+  tick liveness in `/health` (#428); repeated console lines collapse while the log store keeps
+  every entry (#424).
+- **Tests**: a deterministic fake model for key-free end-to-end plumbing tests
+  (`MARINA_FAKE_MODEL=1`, #410); every Marina concept exercised under shipped defaults (#396).
+- Work view: canvas requests appear in "Your next moves" with one lifecycle history (#426).
 
 - The coding-loop on-ramp (#391, #393): zero-config start (one line names the missing provider
   key and offers `marina init`), `/memory` (remember and recall a folder via the world's
@@ -245,6 +313,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- (pending) Biome lint covers scripts/ and benchmarks/
+- **Agent-facing text is truthful** (#437, #441): prompts and tool descriptions match the live
+  commands; peer text cannot forge harness lines; untrusted results are labelled; evaluation
+  turns are quarantined from the journal; `trusted` needs independent verification.
+- **Seeded knowledge** (#439, #440): keyed guide notes reconcile on boot, the auditor reads the
+  live command manifest, seeded residents are not operators, and seeded tasks have a reviewer —
+  a seeded resident, or else an operator who has not claimed the task (#462).
+- A provider that rejects a key parks the agent and tells the spawner (#431); account/workspace
+  usage limits stop like spend refusals instead of retrying (#414); sampling parameters follow
+  each model's capabilities (#399); reasoning-mandatory defaults still answer short requests
+  (#415).
+- Instrumented passthru conversations stay prompt-cacheable on OpenAI upstreams (#413); the
+  argument check reads ids inside URLs and spares self-authored metadata; observe mode makes no
+  paid calls (#416, #434).
+- `src/net/` is split into subdirectories (#409); dependency upgrades: in-range updates (#446)
+  and majors — pi 1.2, motion 14, Babel 8, Playwright 1.64 (#461).
 - Defaults: the daily spend cap is $50 and shared across every spending process on the same world
   database, with budget scopes and one `SpendGuard` (#275); `MARINA_DEFAULT_MAX_TOKENS` is 16384;
   seeded agents auto-respawn on a local install with a usable provider; the Ollama default is the
@@ -271,6 +355,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A crew dispatch to a member who was not connected is redelivered, still flagged as a crew
+  task, when they connect (#462).
+- Research and memory context keep evidence and resume after interruption (#394); `marina -p`
+  exits 0 when only declared not-machine-checkable requirements remain (#412); budget-forced
+  Code Mode submits reach the ledger (#402); the BrowseComp-Plus grader opts out of the stack
+  (#411); arena filings always use the latest observation (#418).
 - `benchmark run` / `benchmark sweep` rank floors are posture-aware (`rankFloorRefusal`): the
   local profile and `open` pass them, and a refusal raises a challenge instead of a dead end.
 - Delivered-trace bookkeeping is released when an entity is removed (it grew per entity forever).
@@ -587,7 +677,8 @@ runner, TabH2O integration, drop-in compat surfaces (OpenAI, Ollama, ACP), and
 the live-visualization dashboard. The `hermes`/`openclaw` migration worlds and
 their third-party aliases were removed in 0.4.2.
 
-[Unreleased]: https://github.com/h2oai/marina/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/h2oai/marina/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/h2oai/marina/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/h2oai/marina/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/h2oai/marina/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/h2oai/marina/releases/tag/v0.5.0
