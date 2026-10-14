@@ -197,7 +197,10 @@ Aggregation is deterministic with the crew's clamps: proposals beyond 4 start-sd
 median move is scaled by a trust (0.5 × the proposals' agreement, or the judge's/skeptic's), the
 final move is capped at 2 start-sds, and the sd blends by the same trust with a floor of half the
 start sd — and of the narrowest member proposal (a blend with a narrow start never files more
-confidence than any member asked for). Each round's calls, statuses, trust and cost are kept in the evaluate/shadow record,
+confidence than any member asked for) — and of the linear pool of every member reply the protocol
+recorded, √(mean sd² + variance of the means), over every stage so a converged delphi round cannot
+hide the disagreement its members started with (debate advocates, who argue an assigned side, and
+dropped blowups are excluded). Each round's calls, statuses, trust and cost are kept in the evaluate/shadow record,
 with the pattern's own audit under `protocol` (delphi's summary, the tournament bracket,
 verification's aspect verdicts and judge record).
 
@@ -270,6 +273,17 @@ lock) is compared with the Friday value; the RMS, shrunk toward the start sd wit
 is recorded as `origins.<series>.errorFloor` (at least 3 measured weeks, else none). Whatever
 forecaster produced the answer (nowcast, formation, crew, research, routed), the filed sd is
 raised to that floor when it is narrower, and the note says so; it only ever widens.
+
+**Spread calibration per (family, method).** Before the floor, a filed topline's sd passes
+through the general forecaster's sd-scale calibrator (`src/forecast/recalibration.ts`), keyed
+`arena:<tracker>|<method>` (`src/arena/calibration.ts`; the method at pattern level, e.g.
+`formation:delphi+research` or `nowcast`). Its evidence is our own resolved filings — the newest
+accepted version of each round, the sd its forecaster produced, the published value — visible
+only once resolved, never the round being filed. The minimum-CRPS scale is fitted on the older
+60 %, shrunk toward 1, and adopted only when it beats identity on the newer 40 % by 5 %; with
+fewer than 8 records of the key it is identity. Order: forecaster → calibration → error floor.
+The decision is kept under `calibration` in the filing's detail. `MARINA_ARENA_CALIBRATION=observe`
+records without applying; `off` skips it.
 
 **Live reading for open rounds.** For a round whose lock has not passed, the nowcast also reads
 the Civiqs dashboard (`src/arena/research/civiqs-live.ts`, one paced request per tracker) and uses

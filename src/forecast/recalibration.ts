@@ -146,6 +146,12 @@ export interface CalibrationFit extends AdoptionResult<CalibrationMap> {
  * The map for `spec`'s group, fitted on the visible records of that group.
  * `forecastOf` gives each record's forecast as it would reach calibration
  * (after its prior shrink), so the map is fitted on what it will be applied to.
+ *
+ * `key` narrows the pooled records to one evidence key finer than the answer
+ * group — e.g. the arena's `arena:<family>|<method>` — so each (family,
+ * method) is calibrated on its own record; the map's kind still follows the
+ * answer type. `sdShrink` (pseudo-records) shrinks a fitted sd scale toward
+ * 1 in log space by n / (n + sdShrink), so a small history cannot move far.
  */
 export function fitCalibration(input: {
   spec: AnswerSpec;
@@ -154,16 +160,22 @@ export function fitCalibration(input: {
   margin: number;
   minRecords: number;
   score: ProperScore;
+  key?: string;
+  sdShrink?: number;
 }): CalibrationFit | undefined {
   const group = answerGroup(input.spec);
   if (input.spec.type === "ranking" || input.spec.type === "text") return undefined;
-  const records = input.history.filter((r) => r.group === group);
+  const key = input.key ?? group;
+  const records = input.history.filter((r) => r.group === key);
   const lossWith = (rs: ResolvedRecord[], map: CalibrationMap) =>
     meanLoss(rs, (r) => applyCalibration(group, map, input.forecastOf(r)), input.score);
   const fit = (rs: ResolvedRecord[]): CalibrationMap | undefined => {
     if (input.spec.type === "number") {
       const s = gridArgmin(SD_SCALES, (s) => lossWith(rs, { kind: "sd-scale", s }).loss);
-      return s === undefined ? undefined : { kind: "sd-scale", s };
+      if (s === undefined) return undefined;
+      const k = input.sdShrink ?? 0;
+      const w = k > 0 ? rs.length / (rs.length + k) : 1;
+      return { kind: "sd-scale", s: round(Math.exp(Math.log(s) * w), 4) };
     }
     const points = rs.flatMap((r) => events(group, r, input.forecastOf(r)));
     const p = fitPlatt(points);
@@ -176,5 +188,5 @@ export function fitCalibration(input: {
     margin: input.margin,
     minRecords: input.minRecords,
   });
-  return { ...result, group, score: input.spec.type === "number" ? "crps" : input.score };
+  return { ...result, group: key, score: input.spec.type === "number" ? "crps" : input.score };
 }

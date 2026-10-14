@@ -816,6 +816,9 @@
 # or the final two hours before lock require a new forecast. Operator-only, opt-in.
 # MARINA_ARENA_EVIDENCE_REFRESH=off
 
+# Spread calibration of filed arena toplines, per (family, method): a minimum-CRPS sd scale fitted on our own resolved filings (shrunk toward 1) and adopted only when it beats identity on the newer 40 % of that history by 5 %. With too little history it is identity. `on` (default) applies an adopted scale, `observe` records it without applying, `off` skips it. The measured-error floor still runs after it.
+# MARINA_ARENA_CALIBRATION=on
+
 # Bounded evidence gap loop, 1–3 rounds per retrieval (default 1). Values above 1 enable evidence capture. A reviewer names up to three missing or contradictory facts; stop on no new verified evidence or no remaining queries. Typed forecasts already have an outer research loop: keep its research-round setting at 1 when isolating this inner loop. LOOP_MODEL defaults to the caller's lead/first analyst. Model and search spend still use the shared daily/scope ledger.
 # MARINA_RESEARCH_LOOP_ROUNDS=1
 # MARINA_RESEARCH_LOOP_MODEL=

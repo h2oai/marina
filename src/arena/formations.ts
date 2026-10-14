@@ -244,6 +244,48 @@ export function atLeastNarrowestProposal(
   return topline.sd < narrowest ? { ...topline, sd: round3(narrowest) } : topline;
 }
 
+/**
+ * The sd of the equal-weight linear pool (mixture) of members' normals:
+ * √(mean sd² + variance of the means). Under CRPS a pool's gain grows with the
+ * members' disagreement (Krüger, arXiv:2412.09430), and a delphi round that
+ * converges hides the disagreement the members started with — so the pool is
+ * taken over EVERY usable reply the protocol recorded, every stage.
+ */
+export function linearPoolSd(replies: Array<{ mean: number; sd: number }>): number | undefined {
+  const ok = replies.filter((r) => Number.isFinite(r.mean) && Number.isFinite(r.sd) && r.sd > 0);
+  if (!ok.length) return undefined;
+  const mu = ok.reduce((s, r) => s + r.mean, 0) / ok.length;
+  const within = ok.reduce((s, r) => s + r.sd * r.sd, 0) / ok.length;
+  const between = ok.reduce((s, r) => s + (r.mean - mu) ** 2, 0) / ok.length;
+  return Math.sqrt(within + between);
+}
+
+/**
+ * The usable (mean, sd) replies among a protocol's recorded steps — members'
+ * own forecasts. Debate advocates argue an assigned side, so theirs are not
+ * opinions; a dropped blowup is not `ok`.
+ */
+export function recordedReplies(steps: FormationStep[]): Array<{ mean: number; sd: number }> {
+  const out: Array<{ mean: number; sd: number }> = [];
+  for (const s of steps) {
+    const r = s.reply;
+    if (s.status !== "ok" || !r || /(^|\/)advocate/.test(s.stage)) continue;
+    if (typeof r.mean === "number" && typeof r.sd === "number")
+      out.push({ mean: r.mean, sd: r.sd });
+  }
+  return out;
+}
+
+/**
+ * The final sd is at least the linear pool of every recorded member reply:
+ * the trust blend may file a confident centre, never a spread narrower than
+ * the members' own pooled uncertainty. The mean is untouched.
+ */
+export function atLeastLinearPool(topline: Distribution, steps: FormationStep[]): Distribution {
+  const pooled = linearPoolSd(recordedReplies(steps));
+  return pooled !== undefined && topline.sd < pooled ? { ...topline, sd: round3(pooled) } : topline;
+}
+
 /** Median move and median sd of a set of proposals. */
 function centre(base: Distribution, proposals: Proposal[]) {
   return {
@@ -1281,7 +1323,7 @@ export async function formationForecastRound(
   return {
     ...baseline,
     ...common,
-    topline: atLeastNarrowestProposal(out.topline, out.proposals),
+    topline: atLeastLinearPool(atLeastNarrowestProposal(out.topline, out.proposals), ctx.steps),
     proposals: out.proposals,
     trust: out.trust,
     ...(out.agreement !== undefined ? { agreement: out.agreement } : {}),
