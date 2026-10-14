@@ -29,7 +29,7 @@ import { dailyCapRefusal } from "../engine/spend-ledger";
 import type { MarinaDB } from "../persistence/database";
 import { judgeEarned } from "./agreement";
 import { JUDGE_MIN_CONFIDENCE, judgeResolutionMode } from "./judge-resolution";
-import { participantOf, taskBase } from "./live";
+import { participantOf, taskBase, workRefsFor } from "./live";
 import { recordResolved } from "./record";
 
 const logger = new Logger();
@@ -122,7 +122,7 @@ export async function judgeWaitingWork(
           basis: "judged",
           judge: judgeId,
           participants: [participantOf(db, claim.entity_name)],
-          refs: [`task:${claim.task_id}`],
+          refs: [`task:${claim.task_id}`, ...workRefsFor(db, "task", claim.entity_name)],
           resolvedAt: now(),
         },
         { deliverJudged: deliver },

@@ -30,7 +30,7 @@ export function gatewayCommand(deps: {
     aliases: ["gw"],
     minRank: 5,
     gate: "gateway.connect",
-    help: "Bridge to peer Marina instances. Gated capability: earn it via `witness request gateway.connect` or an operator grant (see `standing`). Usage: gateway add <name> <ws-url> | gateway remove <name> | gateway list | gateway status <name> | gateway bridge <name> <channel> | gateway unbridge <name> <channel> | gateway send <name> <entity> <message>",
+    help: "Bridge to peer Marina instances. Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it. Usage: gateway add <name> <ws-url> | gateway remove <name> | gateway list | gateway status <name> | gateway bridge <name> <channel> | gateway unbridge <name> <channel> | gateway send <name> <entity> <message>",
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

@@ -4,8 +4,7 @@
 /**
  * `gate` — grant, revoke and list safety-gate competence in-world.
  *
- * Grants pass capability down the same chain witnessing does, without
- * escalation: you may grant a gate only if you are a sovereign (rank 9) or
+ * Grants pass capability on without escalation: you may grant a gate only if you are a sovereign (rank 9) or
  * hold that gate solo yourself; the destructive core (OPEN_POSTURE_CORE) is
  * sovereign-only; nobody grants themselves; a non-sovereign never grants to
  * an agent they spawned (a grant is not a way to launder your own trust into
@@ -17,23 +16,29 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId } from "../../types";
 import { OPEN_POSTURE_CORE } from "../autonomy";
+import { isOperatorPrincipal, principalKind } from "../challenges";
 import { sanitizeEntityName } from "../entity-name";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
-import { getRank } from "../permissions";
-import { checkUnattendedGate, getGateProgress, grant, revoke, SAFETY_GATES } from "../safety-gates";
+import {
+  checkUnattendedGate,
+  gateNextStep,
+  getGateProgress,
+  grant,
+  revoke,
+  SAFETY_GATES,
+} from "../safety-gates";
 
 const logger = new Logger();
-
-const SOVEREIGN_RANK = 9;
 
 const HELP = `gate — safety-gate competence: who holds what, and passing it on.
 Usage:
   gate list [entity]            — every gate and its status for you (or <entity>)
   gate grant <entity> <gate>    — grant a gate you hold solo (sovereigns: any gate)
   gate revoke <entity> <gate>   — (sovereign) take a gate back
-Core gates (${[...OPEN_POSTURE_CORE].join(", ")}) are granted by sovereigns only; nobody grants themselves.
-Earning a gate instead: \`witness request <gate>\`. Your ladder: \`standing\`.`;
+Operator-grant gates (${[...OPEN_POSTURE_CORE].join(", ")}) are granted by sovereigns only; nobody grants themselves.
+Earning a gate instead: run the gated action — the held run executes once a person approves it, and
+approvals from outside your own lineage build the gate (\`challenge\`).`;
 
 export function gateCommand(deps: {
   db: MarinaDB;
@@ -66,7 +71,7 @@ export function gateCommand(deps: {
             separator(),
             ...rows.map(
               (g) =>
-                `  ${bold(g.id.padEnd(24))} ${g.status}${g.decayed ? " (standing decayed)" : ""} ${dim(`standing ${g.minStanding} · ${g.demonstrations}/${g.demoThreshold} demos · ${g.description}`)}`,
+                `  ${bold(g.id.padEnd(24))} ${g.status} ${gateNextStep(g)} ${dim(`· ${g.description}`)}`,
             ),
           ].join("\n"),
         );
@@ -82,10 +87,13 @@ export function gateCommand(deps: {
       }
       const target = deps.resolveEntity(targetName);
       if (!target) return reply(`No entity named "${targetName}" found.`);
-      const sovereign = getRank(actor) >= SOVEREIGN_RANK;
+      // An operator is a PERSON at sovereign rank (the rule holds use): a
+      // rank-9 agent is not one, and a grant is an approval for good.
+      const sovereign = isOperatorPrincipal(actor);
+      const person = principalKind(actor) === "person";
 
       if (sub === "revoke") {
-        if (!sovereign) return reply("Revoking a gate takes a sovereign (rank 9).");
+        if (!sovereign) return reply("Revoking a gate takes an operator (a person at rank 9).");
         revoke(deps.db, String(target.id), gateId);
         audit(deps.db, "revoke", actor.name, target.name, gateId);
         return reply(`Revoked ${gateId} from ${target.name}.`);
@@ -93,11 +101,18 @@ export function gateCommand(deps: {
 
       if (String(target.id) === String(actor.id)) {
         return reply(
-          `Nobody grants a gate to themselves — earn it: \`witness request ${gateId}\`.`,
+          `Nobody grants a gate to themselves — run the gated action; a person's approval of the held run builds it.`,
+        );
+      }
+      if (!person) {
+        return reply(
+          `Agents don't grant gates — a person does. ${target.name} earns ${gateId} through people's approvals of its held runs.`,
         );
       }
       if (OPEN_POSTURE_CORE.has(gateId) && !sovereign) {
-        return reply(`${gateId} is a core gate — only a sovereign (rank 9) grants it.`);
+        return reply(
+          `${gateId} is an operator-grant gate — only an operator (a person at rank 9) grants it.`,
+        );
       }
       if (!sovereign) {
         if (!checkUnattendedGate(deps.db, String(actor.id), gateId).ok) {
@@ -108,7 +123,7 @@ export function gateCommand(deps: {
         const creator = deps.spawnedBy?.(target.name);
         if (creator && sanitizeEntityName(creator) === sanitizeEntityName(actor.name)) {
           return reply(
-            `${target.name} is an agent you spawned — it earns ${gateId} through a witness other than you, or a sovereign grants it.`,
+            `${target.name} is an agent you spawned — it earns ${gateId} through approvals from outside your lineage, or a sovereign grants it.`,
           );
         }
       }

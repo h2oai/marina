@@ -35,9 +35,15 @@
  * Authority never escalates: an approver must be able to do the thing
  * themselves — an operator, or the owner holding the gate unsupervised (and
  * the rank floor). The requester, and any agent the requester spawned, can
- * never approve (self-attestation is always refused). An approval by a gate
- * holder is a witnessed demonstration; an operator or judge approval without
- * the gate is not.
+ * never approve (self-attestation is always refused).
+ *
+ * APPROVALS ARE THE PROOF (2026-10-14): a person's `once` approval of an
+ * earnable gate's held run is one demonstration toward that gate
+ * (`approvalDemonstrates`), unless the approver is inside the requester's own
+ * lineage — an owner's approval runs its agent's action but never builds the
+ * agent's gate. Operator-grant gates (the open-posture core) are never built
+ * by approvals, and the judge's approvals never count. `always` is a grant and
+ * takes an operator; anyone else's `always` is an approval of this one run.
  *
  * Every answer is a LABEL: a person's verdict on a real held action, recorded
  * append-only in `challenge_outcomes` (migration 139) with the judge's shadow
@@ -75,6 +81,7 @@
  * refusals.
  */
 
+import { independentParties } from "../agent/standing";
 import { harnessDecisionProvider } from "../decisions/engines";
 import { gateToolCall, maskSensitiveText } from "../decisions/gate";
 import { noteWorkFor } from "../learning/work";
@@ -95,7 +102,7 @@ import {
 } from "./gate-context";
 import { Logger } from "./logger";
 import { getRank, rankName } from "./permissions";
-import { checkUnattendedGate, grant, SAFETY_GATES } from "./safety-gates";
+import { checkUnattendedGate, grant, isOperatorGrantGate, SAFETY_GATES } from "./safety-gates";
 
 export type ChallengeKind = "gate" | "rank" | "tool";
 export type ChallengeAnswer = "once" | "always" | "deny";
@@ -676,6 +683,51 @@ function isSelfOrChild(approver: Entity, challenge: Challenge): boolean {
   return !!approverCreator && norm(approverCreator) === norm(challenge.requesterName);
 }
 
+/** True when `name` is anywhere up `requester`'s spawn chain. */
+function inLineage(requester: { name: string }, name: string): boolean {
+  if (!host) return false;
+  const seen = new Set<string>([norm(requester.name)]);
+  let hop = host.creatorOf(requester);
+  for (let i = 0; i < MAX_OWNER_HOPS && isApprovableCreator(hop); i++) {
+    if (norm(hop) === norm(name)) return true;
+    if (seen.has(norm(hop))) return false;
+    seen.add(norm(hop));
+    hop = host.creatorOf({ name: hop });
+  }
+  return false;
+}
+
+/**
+ * APPROVALS ARE THE PROOF: whether a person's approval of `requester`'s held
+ * run of `gateId` counts as a demonstration toward that gate. It counts when
+ * the gate is earnable (operator-grant gates are never built by approvals) and
+ * the approver is a person outside the requester's own lineage. The owner of
+ * an agent — whoever is up its spawn chain — may approve the run (it runs),
+ * but that approval never builds the agent's gate: a person and the agents it
+ * spawned are one party, the same rule `gate grant` applies.
+ */
+export function approvalDemonstrates(
+  approver: Entity,
+  requester: { name: string },
+  gateId: string | undefined,
+): boolean {
+  if (!gateId || !SAFETY_GATES[gateId] || isOperatorGrantGate(gateId)) return false;
+  if (principalKind(approver) !== "person") return false;
+  if (norm(approver.name) === norm(requester.name)) return false;
+  // The same one-party rule verified-work standing uses (agent configs, then
+  // agent principals' owners); the live spawn chain when no store is wired.
+  const db = host?.db;
+  if (db && typeof db.spawnLineage === "function") {
+    return independentParties(db, approver.name, requester.name);
+  }
+  return !inLineage(requester, approver.name);
+}
+
+/** An operator: exported for the compatibility `witness attest` path. */
+export function isOperatorPrincipal(entity: Entity | undefined): boolean {
+  return isOperator(entity);
+}
+
 /** Whether `approver` could do the held thing themselves. */
 function holdsAuthority(approver: Entity, challenge: Challenge): boolean {
   if (isOperator(approver)) return true;
@@ -1045,24 +1097,35 @@ export function settleChallenge(
   }
   let effective = answer;
   let detail: string | undefined;
+  const gateId = challenge.kind === "tool" ? undefined : challenge.gateId;
   if (answer === "always") {
-    const gateId = challenge.gateId;
-    const canGrant =
-      approver !== "judge" &&
-      challenge.kind !== "tool" &&
-      !!gateId &&
-      (isOperator(approver) ||
-        (!OPEN_POSTURE_CORE.has(gateId) &&
-          !!host.db &&
-          checkUnattendedGate(host.db, approver.id, gateId).ok));
+    // A grant comes from an operator, exactly as `gate grant` allows: an
+    // owner who is not an operator never grants its own agent a gate (one
+    // party), so its `always` is an approval of this one run.
+    const canGrant = approver !== "judge" && !!gateId && isOperator(approver);
     if (canGrant && host.db && gateId) {
       grant(host.db, challenge.requesterId, gateId);
     } else {
       effective = "once";
       detail = gateId
-        ? `granting ${gateId} for good needs ${OPEN_POSTURE_CORE.has(gateId) ? "an admin" : "an approver who holds it"}; approved once`
+        ? `granting ${gateId} for good takes an operator; approved once`
         : "a rank floor can't be granted (rank follows standing); approved once";
     }
+  }
+  // APPROVALS ARE THE PROOF: an approved run of an earnable gate, by a person
+  // outside the requester's lineage, is one demonstration toward it.
+  const demonstrates =
+    effective === "once" &&
+    approver !== "judge" &&
+    approvalDemonstrates(approver, { name: challenge.requesterName }, gateId);
+  if (effective === "once" && gateId && approver !== "judge" && host.db) {
+    const gate = SAFETY_GATES[gateId];
+    const note = demonstrates
+      ? `counts toward ${gateId}: ${gate?.demoThreshold} approved runs make it solo`
+      : isOperatorGrantGate(gateId)
+        ? `${gateId} is operator-grant only; this run builds nothing toward it`
+        : `runs once; an approval from inside ${challenge.requesterName}'s own lineage does not build ${gateId}`;
+    detail = detail ? `${detail}; ${note}` : note;
   }
   pending.delete(challenge.token);
   recordOutcome(entry, effective, approver);
@@ -1080,7 +1143,8 @@ export function settleChallenge(
   const approverId = approver === "judge" ? undefined : approver.id;
   host.send(
     challenge.requesterId,
-    `✓ ${approverName} approved challenge ${challenge.token}${effective === "always" ? ` and granted ${challenge.gateId}` : ""}${note ? ` (${note})` : ""} — running it now.`,
+    `✓ ${approverName} approved challenge ${challenge.token}${effective === "always" ? ` and granted ${challenge.gateId}` : ""}${note ? ` (${note})` : ""} — running it now.` +
+      (demonstrates ? ` This approved run counts toward ${gateId}.` : ""),
   );
   if (challenge.kind === "tool" && entry.rerun) {
     const rerun = entry.rerun;
@@ -1104,6 +1168,7 @@ export function settleChallenge(
       rankWaived: challenge.minRank !== undefined,
       ...(challenge.minRank !== undefined ? { waivedRank: challenge.minRank } : {}),
       ...(approverId ? { approverId } : {}),
+      ...(demonstrates ? { demonstrates: true } : {}),
       approverName,
       token: challenge.token,
     });

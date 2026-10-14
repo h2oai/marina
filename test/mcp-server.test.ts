@@ -1172,7 +1172,7 @@ describe("MCP Server", () => {
       // backend is never reached — the old direct path bypassed this entirely.
       await toolCall(url, sid, "login", { name: "FlyBot" });
       const refused = await toolCall(url, sid, "flywheel", { action: "create" });
-      expect(refused).toContain("standing 5");
+      expect(refused).toContain("standing 3");
       expect(flywheelCalls).toHaveLength(0);
     });
 

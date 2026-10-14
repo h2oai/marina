@@ -707,13 +707,13 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       status: cells.length ? "ok" : "off",
       optional: true,
       detail: cells.length
-        ? `${cells.length} (family, method) cells over ${families} families: ${live} live and ${measure} measured outcomes — \`forecast competence\` for the table`
+        ? `${cells.length} (family, method) cells over ${families} families: ${live} live and ${measure} measured outcomes — \`competence\` for the table`
         : "no resolved outcome is tagged with a family and method yet",
       ...(cells.length
         ? {}
         : {
             remediation:
-              "Rows appear as forecasts, arena rounds and benchmark runs resolve; `bun run outcomes:settle` records the backlog.",
+              "Rows appear as forecasts, arena rounds, benchmark runs and work (task verdicts, Code Mode checks) resolve; `bun run outcomes:settle` records the backlog.",
           }),
     });
   } catch {

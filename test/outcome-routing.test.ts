@@ -45,11 +45,17 @@ describe("live evidence in model routing", () => {
     ...over,
   });
 
-  it("is off by default, and on it picks the model that gets more done", () => {
-    expect(routeEvidenceSettingsFromEnv({}).live).toBe(false);
-    expect(routeEvidenceSettingsFromEnv({ MARINA_ROUTE_EVIDENCE_LIVE: "on" }).live).toBe(true);
+  it("is on unless turned off, and picks the model that gets more done", () => {
+    expect(routeEvidenceSettingsFromEnv({}).live).toBe(true);
+    expect(routeEvidenceSettingsFromEnv({ MARINA_ROUTE_EVIDENCE_LIVE: "off" }).live).toBe(false);
     const routed = { route: "cheap", model: "vendor/cheap" };
-    const off = applyRouteEvidence(routed, candidates, "coder", settings({ mode: "on" }), db);
+    const off = applyRouteEvidence(
+      routed,
+      candidates,
+      "coder",
+      settings({ mode: "on", live: false }),
+      db,
+    );
     expect(off).toMatchObject({
       route: "cheap",
       applied: false,

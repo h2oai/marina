@@ -7,7 +7,7 @@ import type { WorldCollectiveManager } from "../../world/world-collective-manage
 import { notFound } from "./command-messages";
 
 const HELP = `Create and operate sovereign Marina descendants through World Collective.
-Gated capability: earn it via \`witness request world.lineage\` or an operator grant (see \`standing\`).
+Gated capability: a held run executes once a person approves it (\`challenge\`); approvals from outside your own lineage build it (\`gate list\`), or an operator grants it.
 Usage:
   marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]
   marina-descend start <descendant-id>

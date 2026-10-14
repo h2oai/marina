@@ -2973,11 +2973,22 @@ export class LeanAgentAdapter implements AgentHandle {
       `starting discovery prompt (${describeModelTransport(this.config.model ?? MARINA_DEFAULT_MODEL, this.model)})`,
       { agent: this.name },
     );
-    await this.agent.prompt(
+    const discoveryText =
       `${discoveryPrompt}${wisdomPart}${checkpointPart}${ownContextPart}${focusPart}\n\n` +
-        (this.outstandingRequests.size ? await this.buildContinuationPrompt() : "Begin."),
-    );
-    const discoveryError = this.lastTurnError();
+      (this.outstandingRequests.size ? await this.buildContinuationPrompt() : "Begin.");
+    await this.agent.prompt(discoveryText);
+    let discoveryError = this.lastTurnError();
+    // A usage-limited direct route: record it now (an idle agent may not call
+    // again for a long time), and when the same model is served via another
+    // route, run the discovery turn there instead of losing it.
+    if (discoveryError && classifyUpstreamRefusal(discoveryError).kind === "usage-limit") {
+      await this.afterRouteRefusal(discoveryError, this.config.model ?? MARINA_DEFAULT_MODEL);
+      const routed = await this.routeFor(this.model, await this.resolveKeyNow());
+      if (routed.via) {
+        await this.agent.prompt(discoveryText);
+        discoveryError = this.lastTurnError();
+      }
+    }
     if (discoveryError === null) {
       this.log.info(
         LEAN_AGENT_LOG_CATEGORY,

@@ -476,6 +476,13 @@ filing's detail as `routing`.
 | `bun run arena routes` | prints every family's decision now (read-only, no model calls) |
 | `bun run arena shadow challengers <round_id\|due>` | runs the challengers the operator lists per family in `MARINA_ARENA_SHADOW_CHALLENGERS` (`civiqs=nowcast\|<spec>;aaii=<spec>`), so exploring costs only what is listed |
 
+`spike-decay` is a free challenger for Trends baskets (`src/arena/spike-decay.ts`): the nowcast,
+except that a cell whose latest share sits more than 3 × its robust weekly change away from the
+median of its previous 8 weeks (an event week) moves halfway back toward that median, and the
+basket is renormalised. Every other family answers as the nowcast. It is not a default: list it
+(`MARINA_ARENA_SHADOW_CHALLENGERS=google_trends=spike-decay`) and it answers the family only once
+earned routing promotes it.
+
 The nowcast refuses rounds with no history (see [no-anchor mode](#the-research-agent-research)).
 To answer them, route their family to research, e.g. `<family>=research:<m>[,<m>…]@<retriever>`;
 routes are per family, so the family's rounds that do have history go through research too
@@ -631,7 +638,10 @@ FRED evidence includes current/previous observations, their same-vintage change,
 vintage date. A comparison with the vintage available at the start reading distinguishes new
 information from a monthly change that was already known. Verification uses the frozen structured
 payload rather than a mutable HTML page;
-the dossier retains the typed observations and failure/skip reasons. Historical intraday cutoffs
+the dossier retains the typed observations and failure/skip reasons. For a monthly round the
+brief carries its target period (the month after the last published value); a related series
+whose latest observation predates it is labelled `STALE` on its line and in the section header,
+so a month-old change is not read as news about the period being forecast. Historical intraday cutoffs
 use the prior UTC day's FRED vintage because its API does not provide exact release instants.
 Live reads use currently available data. Sports odds are excluded from arena research.
 Check each source's publication cadence: [FRED's Michigan sentiment series](https://fred.stlouisfed.org/series/UMCSENT)
@@ -1015,7 +1025,7 @@ not isolate evidence sharing as cleanly.
 | `MARINA_ARENA_WINDOW_HOURS` | `24` | how close to its lock a round is filed (above 168 ⇒ 168, with a warning; invalid ⇒ 24) |
 | `MARINA_ARENA_URL` / `MARINA_ARENA_AUDIENCE` | production | a rehearsal fork's intake |
 | `MARINA_ARENA_DATA_URL` | the arena repo on GitHub | where rounds, locks and resolutions are read |
-| `MARINA_ARENA_FORECASTER` | `nowcast` | no model calls; every non-Civiqs round is the baseline. Or `baseline`, `discovered`, `tabh2o[:forecast][@nowcast]` (experimental, `TABH2O_API_KEY`), `model:<m>`, `crew:<m>[,<m>,<m>]`, `formation:<pattern>:<m>[,…][+then:<pattern>:<m>[,…]][+research@<retriever>[,…]]`, `research:<m>[,<m>,<m>]` |
+| `MARINA_ARENA_FORECASTER` | `nowcast` | no model calls; every non-Civiqs round is the baseline. Or `baseline`, `spike-decay` (Trends shadow challenger), `discovered`, `tabh2o[:forecast][@nowcast]` (experimental, `TABH2O_API_KEY`), `model:<m>`, `crew:<m>[,<m>,<m>]`, `formation:<pattern>:<m>[,…][+then:<pattern>:<m>[,…]][+research@<retriever>[,…]]`, `research:<m>[,<m>,<m>]` |
 | `MARINA_ARENA_MODEL_WEIGHT` | `0.5` | share of the model's move from the baseline that is kept |
 | `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
 | `MARINA_ARENA_TRENDS_PARTIAL` | off | `on` counts a Trends basket's partial current week |

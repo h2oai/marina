@@ -2,43 +2,51 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * `witness` — the earnable path through the safety gates, made walkable.
+ * `witness` — compatibility surface for the retired witness ladder.
  *
- * The gate registry always promised "supervised demonstrations flip a gate to
- * solo use"; this command is where that promise lives. An agent with the
- * standing to attempt a gate asks for supervision; a qualified holder grants
- * a one-demonstration window (guarded posture) or reviews demonstrations that
- * already ran (earned posture); enough attested demonstrations flip the gate.
+ * APPROVALS ARE THE PROOF (2026-10-14): the earnable path through a safety
+ * gate is now the challenge flow (src/engine/challenges.ts). Running a gated
+ * action you don't hold yet holds it as a challenge; the people who may
+ * approve it are asked; an approved run executes, and an approval from
+ * outside your own lineage is one demonstration. `witness` keeps every
+ * subcommand working so existing scripts never break:
  *
- * Witness qualification is unchanged from safety-gates: you may witness only
- * a gate you yourself hold unsupervised (`canWitness`) — capability
- * propagates down a chain that bootstraps from operators, never from
- * self-report.
+ * - `witness` — your gate ladder (same text as `gate list`).
+ * - `witness request <gate>` — explains the path; nothing to open any more.
+ * - `witness grant <entity> <gate>` — supervision windows are retired; lists
+ *   the entity's held runs of that gate you can approve instead.
+ * - `witness queue` / `attest` / `reject` — review the pending demonstrations
+ *   the `earned` posture records for optimistic runs (and any legacy rows in
+ *   `witness_attestations`, which stays readable). Attesting follows the
+ *   challenge rule: an operator (a person), never the requester's own
+ *   lineage, never self.
  */
 
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import type { WitnessRow } from "../../persistence/db-witness";
 import type { CommandDef, Entity, EntityId } from "../../types";
-import { getAutonomyPosture, OPEN_POSTURE_CORE } from "../autonomy";
+import { getAutonomyPosture } from "../autonomy";
+import { approvalDemonstrates, isOperatorPrincipal, listAnswerable } from "../challenges";
+import { sanitizeEntityName } from "../entity-name";
 import {
-  canWitness,
+  gateNextStep,
   getGateProgress,
-  recordWitnessedDemonstration,
+  isOperatorGrantGate,
+  recordApprovedDemonstration,
   SAFETY_GATES,
 } from "../safety-gates";
 
-const WINDOW_TTL_MS = 10 * 60 * 1000; // one supervised demonstration, 10 minutes
-const REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
-
-const HELP = `witness — earn gated capabilities through supervised demonstrations.
+const HELP = `witness — earn gated capabilities (now through challenges).
 Usage:
-  witness                       — your gate ladder + open items you can act on
-  witness request <gate>        — ask a qualified holder to supervise a demonstration
-  witness grant <entity> <gate> — (qualified) open a one-demonstration window (10 min)
-  witness queue                 — open requests + pending demonstrations you can act on
-  witness attest <id>           — (qualified) attest a recorded demonstration
-  witness reject <id> [reason]  — (qualified) reject a recorded demonstration
-Gates and your progress: \`standing\`. Qualification: you can witness only gates you hold solo.`;
+  witness                       — your gate ladder (same as \`gate list\`)
+  witness request <gate>        — how to earn <gate>: run it; a person approves the held run
+  witness grant <entity> <gate> — (retired) lists <entity>'s held runs of <gate> you can approve
+  witness queue                 — pending demonstrations (earned posture) you can review
+  witness attest <id>           — (operator) count a pending demonstration
+  witness reject <id> [reason]  — (operator) decline a pending demonstration
+A gated action you don't hold runs once a person approves it (\`challenge\`); approvals from
+outside your own lineage build the gate. Operator-grant gates are granted, never earned.`;
 
 export function witnessCommand(deps: {
   db: MarinaDB;
@@ -46,6 +54,11 @@ export function witnessCommand(deps: {
   getAllEntities: () => Entity[];
   resolveEntityIdByName: (name: string) => EntityId | undefined;
 }): CommandDef {
+  /** The live entity a witness row belongs to (rows are keyed by account). */
+  const rowEntity = (row: WitnessRow): Entity | undefined =>
+    deps.getEntity(row.entity_id) ??
+    deps.getAllEntities().find((e) => deps.db.durableEntityKey(String(e.id)) === row.entity_id);
+
   return {
     usage: [
       "witness",
@@ -63,202 +76,151 @@ export function witnessCommand(deps: {
       const actor = deps.getEntity(input.entity);
       if (!actor) return;
       const db = deps.db;
+      const reply = (text: string) => ctx.send(input.entity, text);
       const sub = input.tokens[0]?.toLowerCase();
+      const unknownGate = (gateId: string) =>
+        `Unknown gate "${gateId}". Gates: ${Object.keys(SAFETY_GATES).join(", ")}`;
 
       if (sub === "request") {
         const gateId = input.tokens[1] ?? "";
         const gate = SAFETY_GATES[gateId];
-        if (!gate) {
-          ctx.send(
-            input.entity,
-            `Unknown gate "${gateId}". Gates: ${Object.keys(SAFETY_GATES).join(", ")}`,
+        if (!gate) return reply(unknownGate(gateId));
+        if (isOperatorGrantGate(gateId)) {
+          return reply(
+            `${gateId} is operator-grant: an operator grants it (\`gate grant\`), or approves a single held run. ` +
+              "Run the action; the refusal holds it for an operator.",
           );
-          return;
         }
-        const already = db
-          .listOpenWitnessRows({ kind: "request", gate: gateId, entityId: String(actor.id) })
-          .at(0);
-        if (already) {
-          ctx.send(input.entity, `Your request #${already.id} for ${gateId} is already open.`);
-          return;
-        }
-        const row = db.createWitnessRow({
-          entityId: String(actor.id),
-          gate: gateId,
-          kind: "request",
-          expiresAt: Date.now() + REQUEST_TTL_MS,
-        });
-        // Invite every qualified witness currently in the world.
-        let invited = 0;
-        for (const candidate of deps.getAllEntities()) {
-          if (candidate.id === actor.id) continue;
-          if (!canWitness(db, String(candidate.id), gateId)) continue;
-          ctx.send(
-            candidate.id,
-            `${actor.name} is ready to demonstrate "${gate.description}" (${gateId}) and asks for your supervision. Grant a window with: witness grant ${actor.name} ${gateId}`,
-          );
-          invited++;
-        }
-        ctx.send(
-          input.entity,
-          `Request #${row.id} recorded for ${gateId}. ${invited > 0 ? `${invited} qualified witness(es) were invited.` : "No qualified witness is online right now — the request stays open 24h and shows in `witness queue`."}`,
+        return reply(
+          `Nothing to request any more: run the ${gateId} action itself. If you don't hold it, the run is held ` +
+            `as a challenge and the people who can approve it are asked; it runs once approved. ` +
+            `${gate.demoThreshold} approved runs from outside your own lineage make ${gateId} yours to use solo ` +
+            `(standing floor ${gate.minStanding}). Your holds: \`challenge\`.`,
         );
-        return;
       }
 
       if (sub === "grant") {
         const targetName = input.tokens[1] ?? "";
         const gateId = input.tokens[2] ?? "";
-        const gate = SAFETY_GATES[gateId];
-        if (!targetName || !gate) {
-          ctx.send(input.entity, "Usage: witness grant <entity> <gate>");
-          return;
+        if (!targetName || !SAFETY_GATES[gateId]) {
+          return reply("Usage: witness grant <entity> <gate>");
         }
-        if (!canWitness(db, String(actor.id), gateId)) {
-          ctx.send(
-            input.entity,
-            `You can witness only gates you hold solo — you don't hold ${gateId} unsupervised yet.`,
+        const held = listAnswerable(actor).filter(
+          (c) =>
+            c.gateId === gateId &&
+            sanitizeEntityName(c.requesterName).toLowerCase() ===
+              sanitizeEntityName(targetName).toLowerCase(),
+        );
+        const lines = [
+          "Supervision windows are retired: approve the held run itself (it runs at once).",
+        ];
+        if (held.length) {
+          for (const c of held) {
+            lines.push(`  challenge approve ${c.token}  — ${c.summary.slice(0, 120)}`);
+          }
+        } else {
+          lines.push(
+            `No held ${gateId} run from ${targetName} that you can approve. When ${targetName} runs it, the hold is offered to its approvers (\`challenge\`).`,
           );
-          return;
         }
-        const targetId = deps.resolveEntityIdByName(targetName);
-        if (!targetId) {
-          ctx.send(input.entity, `No entity named "${targetName}" found.`);
-          return;
-        }
-        if (String(targetId) === String(actor.id)) {
-          ctx.send(input.entity, "You cannot witness your own demonstration.");
-          return;
-        }
-        const window = db.createWitnessRow({
-          entityId: String(targetId),
-          gate: gateId,
-          kind: "window",
-          witnessId: String(actor.id),
-          expiresAt: Date.now() + WINDOW_TTL_MS,
-        });
-        // Close any open request this window answers.
-        for (const req of db.listOpenWitnessRows({
-          kind: "request",
-          gate: gateId,
-          entityId: String(targetId),
-        })) {
-          db.resolveWitnessRow(req.id, "attested", { witnessId: String(actor.id) });
-        }
-        const threshold = gate.demoThreshold;
-        ctx.send(
-          input.entity,
-          `Window #${window.id} open: ${targetName} may run one supervised "${gateId}" demonstration in the next 10 minutes, credited to you.`,
-        );
-        ctx.send(
-          targetId,
-          `${actor.name} is watching: you have a 10-minute window to demonstrate "${gate.description}" (${gateId}). Run the gated operation now — ${threshold} attested demonstration(s) unlock solo use.`,
-        );
-        return;
+        return reply(lines.join("\n"));
       }
 
       if (sub === "queue") {
         const rows = db.listOpenWitnessRows({ limit: 100 });
-        const actionable = rows.filter(
-          (row) =>
-            row.entity_id !== String(actor.id) &&
-            (row.kind === "request" || row.kind === "pending") &&
-            canWitness(db, String(actor.id), row.gate),
-        );
-        const mine = rows.filter((row) => row.entity_id === String(actor.id));
+        const operator = isOperatorPrincipal(actor);
+        const pending = rows.filter((row) => row.kind === "pending");
+        const actionable = operator
+          ? pending.filter((row) => {
+              const who = rowEntity(row);
+              return !!who && who.id !== actor.id && approvalDemonstrates(actor, who, row.gate);
+            })
+          : [];
+        const mine = rows.filter((row) => row.entity_id === db.durableEntityKey(String(actor.id)));
         const lines = [header("Witness queue"), separator()];
         if (actionable.length === 0 && mine.length === 0) {
-          lines.push(
-            dim("Nothing open. Agents ask for supervision with `witness request <gate>`."),
-          );
+          lines.push(dim("Nothing to review. Held runs waiting for a person: `challenge`."));
         }
         if (actionable.length > 0) {
-          lines.push(bold("You can act on:"));
+          lines.push(bold("You can review:"));
           for (const row of actionable) {
-            const who = deps.getEntity(row.entity_id)?.name ?? row.entity_id;
+            const who = rowEntity(row)?.name ?? row.entity_id;
             lines.push(
-              row.kind === "request"
-                ? `  #${row.id} ${who} requests supervision for ${row.gate} — \`witness grant ${who} ${row.gate}\``
-                : `  #${row.id} ${who} ran ${row.gate} (${row.evidence ?? "no evidence"}) — \`witness attest ${row.id}\` or \`witness reject ${row.id}\``,
+              `  #${row.id} ${who} ran ${row.gate} (${row.evidence ?? "no evidence"}) — \`witness attest ${row.id}\` or \`witness reject ${row.id}\``,
             );
           }
         }
         if (mine.length > 0) {
-          lines.push(bold("Yours, awaiting others:"));
+          lines.push(bold("Yours, awaiting review:"));
           for (const row of mine) {
             lines.push(
               `  #${row.id} ${row.kind} · ${row.gate}${row.evidence ? ` · ${row.evidence}` : ""}`,
             );
           }
         }
-        ctx.send(input.entity, lines.join("\n"));
-        return;
+        return reply(lines.join("\n"));
       }
 
       if (sub === "attest" || sub === "reject") {
         const id = Number(input.tokens[1]);
         if (!Number.isInteger(id)) {
-          ctx.send(
-            input.entity,
-            `Usage: witness ${sub} <id>${sub === "reject" ? " [reason]" : ""}`,
-          );
-          return;
+          return reply(`Usage: witness ${sub} <id>${sub === "reject" ? " [reason]" : ""}`);
         }
         const row = db.getWitnessRow(id);
         if (row?.status !== "open" || row.kind !== "pending") {
-          ctx.send(input.entity, `No open pending demonstration #${id}.`);
-          return;
+          return reply(`No open pending demonstration #${id}.`);
         }
-        if (row.entity_id === String(actor.id)) {
-          ctx.send(input.entity, "You cannot attest your own demonstration.");
-          return;
+        const target = rowEntity(row);
+        if (row.entity_id === db.durableEntityKey(String(actor.id)) || target?.id === actor.id) {
+          return reply("You cannot review your own demonstration.");
         }
-        if (!canWitness(db, String(actor.id), row.gate)) {
-          ctx.send(
-            input.entity,
-            `You can attest only gates you hold solo — you don't hold ${row.gate} unsupervised yet.`,
+        if (!isOperatorPrincipal(actor)) {
+          return reply(
+            "Reviewing a demonstration takes an operator (a person). Held runs you can answer: `challenge`.",
           );
-          return;
+        }
+        if (!target) {
+          return reply(
+            `#${id} belongs to an account that is not in the world right now; review it later.`,
+          );
         }
         if (sub === "reject") {
           const reason = input.tokens.slice(2).join(" ") || undefined;
           db.resolveWitnessRow(id, "rejected", { witnessId: String(actor.id), reason });
-          ctx.send(input.entity, `Demonstration #${id} rejected.`);
-          const target = deps.getEntity(row.entity_id);
-          if (target) {
-            ctx.send(
-              target.id,
-              `${actor.name} reviewed your ${row.gate} demonstration (#${id}) and didn't attest it${reason ? `: ${reason}` : "."} Keep practicing — rejected runs don't count against you.`,
-            );
-          }
-          return;
+          ctx.send(
+            target.id,
+            `${actor.name} reviewed your ${row.gate} run (#${id}) and didn't count it${reason ? `: ${reason}` : "."}`,
+          );
+          return reply(`Demonstration #${id} rejected.`);
+        }
+        if (!approvalDemonstrates(actor, target, row.gate)) {
+          return reply(
+            `${target.name} is in your own lineage (or ${row.gate} is operator-grant): your review cannot build its gate.`,
+          );
         }
         db.resolveWitnessRow(id, "attested", { witnessId: String(actor.id) });
-        const recorded = recordWitnessedDemonstration(
+        const recorded = recordApprovedDemonstration(
           db,
-          row.entity_id,
+          String(target.id),
           row.gate,
           String(actor.id),
         );
-        const comp = db.getCompetence(row.entity_id, row.gate);
+        const comp = db.getCompetence(String(target.id), row.gate);
         const gate = SAFETY_GATES[row.gate];
         const unlocked = comp?.supervised_only === 0;
-        ctx.send(
-          input.entity,
-          recorded
-            ? `Attested #${id}: ${row.entity_id} now has ${comp?.demonstrations ?? "?"}/${gate?.demoThreshold} demonstrations on ${row.gate}${unlocked ? " — UNLOCKED for solo use." : "."}`
-            : `Attestation recorded, but the demonstration could not be credited (qualification changed?).`,
-        );
-        const target = deps.getEntity(row.entity_id);
-        if (target && recorded) {
+        if (recorded) {
           ctx.send(
             target.id,
             unlocked
-              ? `${actor.name} attested your ${row.gate} demonstration — that was your ${gate?.demoThreshold}th: ${row.gate} is now yours to use solo. Welcome to the other side of the gate.`
-              : `${actor.name} attested your ${row.gate} demonstration (${comp?.demonstrations}/${gate?.demoThreshold}). Keep going.`,
+              ? `${actor.name} counted your ${row.gate} run: ${row.gate} is now yours to use solo.`
+              : `${actor.name} counted your ${row.gate} run (${comp?.demonstrations}/${gate?.demoThreshold}).`,
           );
         }
-        return;
+        return reply(
+          recorded
+            ? `Attested #${id}: ${target.name} has ${comp?.demonstrations ?? "?"}/${gate?.demoThreshold} on ${row.gate}${unlocked ? " — solo use unlocked." : "."}`
+            : "Attestation recorded, but it could not count toward the gate.",
+        );
       }
 
       // Default view: the ladder, personalized.
@@ -267,20 +229,10 @@ export function witnessCommand(deps: {
       const lines = [header("Your gate ladder"), separator(), dim(`Autonomy posture: ${posture}`)];
       for (const gate of progress) {
         const marker = gate.status === "unlocked" ? "✓" : gate.status === "supervised" ? "◐" : "🔒";
-        const next =
-          gate.status === "unlocked"
-            ? "yours"
-            : gate.status === "supervised"
-              ? posture === "open"
-                ? "open posture — usable now (unless destructive-core)"
-                : posture === "earned" && !OPEN_POSTURE_CORE.has(gate.id)
-                  ? `run it — a witness attests afterwards (${gate.demonstrations}/${gate.demoThreshold} attested)`
-                  : `witness request ${gate.id} (${gate.demonstrations}/${gate.demoThreshold} demos)`
-              : `standing ${gate.standing.toFixed(0)}/${gate.minStanding} — contribute to grow`;
-        lines.push(`  ${marker} ${gate.id} — ${next}`);
+        lines.push(`  ${marker} ${gate.id} — ${gateNextStep(gate)}`);
       }
-      lines.push("", dim(HELP.split("\n").slice(2, 8).join("\n")));
-      ctx.send(input.entity, lines.join("\n"));
+      lines.push("", dim(HELP.split("\n").slice(-2).join("\n")));
+      reply(lines.join("\n"));
     },
   };
 }

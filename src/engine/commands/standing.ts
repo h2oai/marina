@@ -13,7 +13,7 @@ import {
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
-import { getGateProgress } from "../safety-gates";
+import { gateNextStep, getGateProgress } from "../safety-gates";
 import { requiresPersistence } from "./command-messages";
 
 interface StandingDeps {
@@ -133,8 +133,8 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       } else {
         lines.push(
           `  ${bold("Rank 4 (Builder)")} is the top auto-rank. Beyond it, capability is earned`,
-          "  per-operation: keep building standing, then perform each gated action under",
-          "  supervision until it unlocks. Ranks 5+ are operator-conferred honorifics.",
+          "  per-operation: a held gated action runs once a person approves it, and",
+          "  approved runs unlock it. Ranks 5+ are operator-conferred honorifics.",
         );
       }
 
@@ -142,18 +142,8 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       const gates = getGateProgress(db, target.id);
       lines.push("", dim("Capability gates:"));
       for (const g of gates) {
-        if (g.status === "unlocked") {
-          lines.push(`  ✓ ${g.id.padEnd(18)} unlocked — ${dim(g.description)}`);
-        } else if (g.status === "supervised") {
-          lines.push(
-            `  ◐ ${g.id.padEnd(18)} ${g.demonstrations}/${g.demoThreshold} demos — attempt under supervision to unlock ${dim(`(${g.description})`)}`,
-          );
-        } else {
-          const remaining = (g.minStanding - g.standing).toFixed(1);
-          lines.push(
-            `  🔒 ${g.id.padEnd(18)} standing ${g.standing.toFixed(1)}/${g.minStanding} (${remaining} more) ${dim(`— ${g.description}`)}`,
-          );
-        }
+        const mark = g.status === "unlocked" ? "✓" : g.status === "supervised" ? "◐" : "🔒";
+        lines.push(`  ${mark} ${g.id.padEnd(22)} ${gateNextStep(g)} ${dim(`— ${g.description}`)}`);
       }
 
       if (ledger.length > 0) {

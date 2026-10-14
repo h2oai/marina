@@ -23,6 +23,12 @@ export interface ResearchBrief {
   releaseEvents?: import("../../research/survey").ReleaseEvent[];
   /** ISO date of the latest known reading (nowcast, else last published value) — evidence must be newer. */
   since: string;
+  /**
+   * First day of the period the round asks about, when the history is a
+   * monthly series (the month after its last published value). A related
+   * series whose latest observation is older says nothing new about it.
+   */
+  targetPeriod?: string;
   /** The research request, for a search-capable model. */
   request: string;
   /** Short keyword queries, one per playbook item, for a search API (Tavily). */
@@ -315,12 +321,28 @@ export function buildResearchBrief(
     family === "attention"
       ? [round.question, ...(QUERIES.attention ?? [])]
       : [...(QUERIES[family] ?? [])];
+  const targetPeriod = monthlyTargetPeriod(history);
   return bounded({
     roundId: round.round_id,
     since,
+    ...(targetPeriod ? { targetPeriod } : {}),
     request,
     queries: targetQueries(round, queries),
   });
+}
+
+/**
+ * The month after the last value of a monthly history (every point dated the
+ * first of a month, consecutive points one month apart), else undefined.
+ */
+export function monthlyTargetPeriod(history: Array<{ date: string }>): string | undefined {
+  const tail = history.slice(-4).map((p) => p.date);
+  if (tail.length < 2 || !tail.every((d) => /^\d{4}-\d{2}-01$/.test(d))) return undefined;
+  const index = (d: string) => Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7)) - 1;
+  for (let i = 1; i < tail.length; i++)
+    if (index(tail[i]!) - index(tail[i - 1]!) !== 1) return undefined;
+  const next = index(tail.at(-1)!) + 1;
+  return `${Math.floor(next / 12)}-${String((next % 12) + 1).padStart(2, "0")}-01`;
 }
 
 /**

@@ -187,7 +187,7 @@ describe("trust profile — LOCAL removes friction, SHARED keeps it", () => {
     const shared = run("shared");
     expect(shared.rank).toBe(0);
     // SHARED: the admin.destructive gate is the authority and refuses rank 0.
-    expect(shared.out).toMatch(/Not yet/);
+    expect(shared.out).toMatch(/Operator grant/);
     const local = run("local");
     expect(local.rank).toBe(9);
     expect(local.out).not.toMatch(/must be at least|Not yet/);

@@ -72,7 +72,7 @@ describe("agent.spawn gate sites refuse supervised-only (no self-certification)"
       // Refused (guarded posture, no witness window); the refusal names the
       // walkable path instead of a dead end; nothing was spawned; no
       // demonstration was self-minted.
-      expect(sent.join("\n").toLowerCase()).toContain("witness request agent.spawn");
+      expect(sent.join("\n").toLowerCase()).toContain("approval needed");
       expect(spawned).toBe(0);
       expect(db.getCompetence(acting.id, "agent.spawn")?.demonstrations ?? 0).toBe(0);
     } finally {

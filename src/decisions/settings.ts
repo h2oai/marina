@@ -12,7 +12,7 @@
  *                    `decisions.configure`. An AGENT (internal/workload
  *                    connection, or a spawned agent's config): only
  *                    `decisions.configure` — earned with standing and
- *                    witnessed demonstrations (never self-witnessed), granted,
+ *                    approved runs (never self-approved), granted,
  *                    or passed by the operator's posture (`open`). Supervision
  *                    is a default an agent outgrows by earning trust
  *                    (`authorizeSettingsWrite`).
@@ -394,8 +394,8 @@ export type SettingsAuthorization = { ok: true; gate: string } | { ok: false; re
 /**
  * May this entity change decision settings? A person may with
  * `admin.destructive` or `decisions.configure`; an agent only with
- * `decisions.configure` — earned (standing + witnessed demonstrations, never
- * self-witnessed), granted, or passed by the operator's posture (it is not
+ * `decisions.configure` — earned (standing + approved runs, never
+ * self-approved), granted, or passed by the operator's posture (it is not
  * an open-posture core gate). Records the gate execution it relied on.
  * Pure over its dependency, so every surface (console, CLI, dashboard,
  * agents' tools) applies the same rule.
@@ -426,7 +426,7 @@ export function authorizeSettingsWrite<R extends { ok: boolean; reason?: string 
   return {
     ok: false,
     reason: agentDriven
-      ? `An agent changes decision settings once it has earned the ${DECISIONS_CONFIGURE_GATE} gate (${configure.reason ?? "not yet"}). \`standing\` shows the ladder; \`witness request ${DECISIONS_CONFIGURE_GATE}\` opens a witnessed window.`
+      ? `An agent changes decision settings once it has earned the ${DECISIONS_CONFIGURE_GATE} gate (${configure.reason ?? "not yet"}). \`gate list\` shows the path: a held change runs once a person approves it, and approvals from outside your lineage build the gate.`
       : `Changing decision settings needs admin.destructive or ${DECISIONS_CONFIGURE_GATE} (${configure.reason ?? "not held"}).`,
   };
 }

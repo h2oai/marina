@@ -57,17 +57,23 @@ export interface CommandDef {
   /**
    * Safety gate id (see src/engine/safety-gates.ts SAFETY_GATES). When set, the
    * command phase (`CommandPhaseCoordinator`) calls
-   * `checkGateForExecution(db, entityId, gate)` after the standard `minRank`
-   * check and `recordGateExecution` on a pass. It authorizes unsupervised
-   * competence, the `local` trust profile, `open` posture for non-core gates,
-   * a live witness-granted supervision window, or (under `earned` posture) an
-   * optimistic run recorded as a pending attestation; otherwise a standing-only
-   * holder is REFUSED. Unsupervised competence is earned only via operator
-   * grant, rank promotion (`grantGatesForRank`), or a witnessed demonstration —
-   * never by the router self-recording a demonstration (that self-certification
-   * path is closed).
+   * `checkGateForExecution(db, entityId, gate)` INSTEAD of the `minRank` check
+   * and `recordGateExecution` on a pass. It authorizes unsupervised
+   * competence, a person's approval of this held run (a challenge), the
+   * `local` trust profile, `open` posture for earnable gates, or (under
+   * `earned` posture) an optimistic run recorded as a pending demonstration;
+   * otherwise the run is held for approval. Unsupervised competence comes only
+   * from an operator grant, rank promotion (`grantGatesForRank`), or approved
+   * runs — never from the router self-recording a demonstration.
    */
   gate?: string;
+  /**
+   * Read-only forms of a ranked or gated command (`world list`, `position
+   * list`, `admin decisions`): when this returns true for the parsed input,
+   * the router applies neither `minRank` nor `gate`. The write forms stay
+   * behind both; the handler's own inline checks still apply.
+   */
+  readOnlyForm?: (input: CommandInput) => boolean;
 }
 
 // ─── Room Context (injected into room modules) ──────────────────────────────

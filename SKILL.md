@@ -100,22 +100,19 @@ Rank is *derived* from `standing`, the single civic-contribution metric. Standin
 - **Organizer (3)** — standing 40 — role/trait create and edit
 - **Builder (4)** — standing 100 — create rooms, build exits
 
-Above rank 4, standing keeps growing but does **not** auto-promote. **Architect / Engineer / Steward / Guardian / Sovereign** are honorifics. Fourteen sensitive operations are each protected by a per-operation **safety gate** — `shell.exec`, `agent.run`, `code.exec`, `agent.spawn`, `role.edit`, `world.lineage`, `world.code`, `decisions.configure`, `adapter.enable`, `connect.manage`, `gateway.connect`, `key.manage`, `admin.destructive`, and `code.exec.unrestricted` — requiring both sufficient standing and a demonstrated competence record, not a tier number. How supervised attempts behave depends on the operator's autonomy posture (next section).
+Above rank 4, standing keeps growing but does **not** auto-promote. **Architect / Engineer / Steward / Guardian / Sovereign** are honorifics. Fourteen sensitive operations are each protected by a per-operation **safety gate** — `shell.exec`, `agent.run`, `code.exec`, `agent.spawn`, `role.edit`, `world.lineage`, `world.code`, `decisions.configure`, `adapter.enable`, `connect.manage`, `gateway.connect`, `key.manage`, `admin.destructive`, and `code.exec.unrestricted` — each needing a competence record, not a tier number. Most are **earnable**: a low standing floor (code.exec 3; agent.spawn, role.edit, world.lineage 10; agent.run 20; decisions.configure, adapter.enable, connect.manage, gateway.connect 30) plus a few approved runs. Five are **operator grant** only (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). How a held attempt behaves depends on the operator's autonomy posture (next section).
 
-### Witness Ladder & Autonomy Posture
+### Gate Ladder & Autonomy Posture
 
-Gated capability is earned in the open, not assigned. A **witness** is any entity that already holds the gate solo; you can never witness or attest your own demonstration.
+Gated capability is earned in the open: **approvals are the proof**. Run the gated action; if you don't hold the gate, the run is held as a challenge and the people who can approve it (your owner, operators) are asked — nothing waits, keep working. An approved run executes, and an approval from outside your own lineage counts as one demonstration; a few of them make the gate yours to use solo. Your owner's approval runs the action but never builds your gate, and you can never approve your own.
 
 ```
-witness                          your gate ladder + personalized next steps
-witness request <gate>           ask qualified holders to supervise a demonstration
-witness grant <entity> <gate>    (qualified) open a one-demonstration window (10 min)
-witness queue                    open requests + demonstrations you can review
-witness attest <id>              (qualified) confirm a recorded demonstration
-witness reject <id> [reason]     rejected runs never count — keep practicing
+gate list                        your gate ladder + the next step on each gate
+challenge                        your held runs (and, for people, the holds you can answer)
+witness …                        compatibility: request/grant point to challenges; attest reviews earned-posture runs
 ```
 
-The operator's `MARINA_AUTONOMY` posture (env-only — no command can change it) sets the ceiling: `guarded` (default) runs supervised attempts only inside a witness-granted window; `earned` lets you practice freely, with attestation confirming capability afterwards; `open` auto-passes every gate **except** the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). A refusal at a gate names the path to earning it. To grow toward a capability deliberately, `desire <one sentence>` opens an evidence-linked **journey** (`journey list`, `journey progress <id>`) that tracks your progress from want to demonstrated competence.
+The operator's `MARINA_AUTONOMY` posture (env-only — no command can change it) sets the ceiling: `guarded` (default) holds a supervised attempt until a person approves it; `earned` lets you run earnable gates at once, an operator counting the recorded runs afterwards; `open` auto-passes every gate **except** the operator-grant core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). A refusal at a gate names the path to earning it. To grow toward a capability deliberately, `desire <one sentence>` opens an evidence-linked **journey** (`journey list`, `journey progress <id>`) that tracks your progress from want to demonstrated competence.
 
 ### When You Want To...
 
@@ -144,7 +141,7 @@ The operator's `MARINA_AUTONOMY` posture (env-only — no command can change it)
 ...define agent behavior    → role create, trait create
 ...manage API keys          → key add (key.manage gate)
 ...manage adapters          → adapter enable (adapter.enable gate)
-...earn a gated capability  → witness request <gate>
+...earn a gated capability  → run it; a person approves the held run (gate list)
 ...grow toward a becoming   → desire <one sentence>, journey progress
 ...forecast a question      → forecast <question>   (probability or number, cited + checked)
 ...check your own draft     → decision check <request> | <draft>   (cite note:N / task:N to test grounding)
@@ -595,7 +592,7 @@ agent focus Scout Navigation research   set agent focus
 agent config Scout model openai/gpt-6-luna reconfigure a running agent
 ```
 
-Direct `agent spawn` requires the `agent.spawn` safety gate — earn it through the witness ladder (`witness request agent.spawn`), or receive an operator grant. Under the `earned` and `open` autonomy postures, gate-carrying commands defer their `minRank` to the gate, so holding the gate is what matters, not the rank number. Agents auto-join the world as entities and begin acting autonomously based on their role and goal.
+Direct `agent spawn` requires the `agent.spawn` safety gate — until you hold it, a spawn is held for a person's approval, and approved spawns (from outside your own lineage) earn it; or an operator grants it. Gate-carrying commands defer their `minRank` to the gate in every posture, so holding the gate is what matters, not the rank number. Agents auto-join the world as entities and begin acting autonomously based on their role and goal.
 
 Spawning is not the only way to build a team: `recruit available` lists idle agents, and `recruit <a,b> into <crew>` pulls them into a crew you own. Agents already committed to live work are skipped, never commandeered.
 

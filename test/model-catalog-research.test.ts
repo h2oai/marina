@@ -14,7 +14,10 @@ test("Sol research prompts retain answer capacity and never disable mandatory re
       messages: [{ role: "user", content: "Dated verified evidence. ".repeat(1600), timestamp: 0 }],
     },
     {
-      apiKey: "fixture",
+      // pi-ai 1.2 treats a non-`sk-` key on the OpenAI provider as a ChatGPT
+      // sign-in session and omits fields that transport rejects — use a
+      // realistic key so the request carries the full field set.
+      apiKey: "sk-fixture",
       maxTokens: 4000,
       maxRetries: 0,
       fetch: (async (_url, init) => {

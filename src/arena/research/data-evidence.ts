@@ -75,6 +75,17 @@ export function arenaSignalHints(env: NodeJS.ProcessEnv) {
   };
 }
 
+/**
+ * A reading observed before the target period (`YYYY-MM-01`) is stale for it:
+ * a monthly related series that has not yet published the month being
+ * forecast. Undefined when fresh or when the brief names no target period.
+ */
+export function staleFor(observed: string, targetPeriod: string | undefined): string | undefined {
+  if (!targetPeriod || !/^\d{4}-\d{2}-\d{2}/.test(observed) || observed >= targetPeriod)
+    return undefined;
+  return `STALE: ends ${observed.slice(0, 7)}, target period ${targetPeriod.slice(0, 7)}`;
+}
+
 /** The brief's evidence cutoff: its exact instant, else its last allowed day, else now. */
 export function briefCutoff(brief: ResearchBrief, now: Date): Date {
   const at = brief.untilAt ? Date.parse(brief.untilAt) : Number.NaN;
@@ -107,6 +118,7 @@ export function withDataLookups(
     const query =
       opts.query?.(brief) ?? brief.queries?.slice(0, 2).join(" ") ?? brief.request.slice(0, 200);
     let lines: string[] = [];
+    const staleSeries: string[] = [];
     let evidence: LookupResult[] = [];
     const sources: ResearchReport["sources"] = [];
     const warnings = [...(report.warnings ?? [])];
@@ -169,8 +181,10 @@ export function withDataLookups(
             const update = anchor
               ? `change since anchor vintage ${anchor.asOf.slice(0, 10)}: ${vintageDelta}${vintageDelta === 0 ? " (no new level change)" : ""}`
               : "change since start reading unavailable; do not treat the period change as new evidence";
+            const stale = staleFor(reading.date, brief.targetPeriod);
+            if (stale) staleSeries.push(`${reading.series} (ends ${reading.date.slice(0, 7)})`);
             lines.push(
-              `- ${reading.date} — FRED ${reading.series}: ${reading.value}${reading.unit ? ` ${reading.unit}` : ""}; ${change}; ${update}; vintage ${reading.asOf.slice(0, 10)} [FRED](${url})`,
+              `- observed ${reading.date} — FRED ${reading.series}: ${reading.value}${reading.unit ? ` ${reading.unit}` : ""}; ${change}; ${update}; vintage as of ${reading.asOf.slice(0, 10)}${stale ? `; ${stale}` : ""} [FRED](${url})`,
             );
             sources.push({
               url,
@@ -206,7 +220,11 @@ export function withDataLookups(
     }
     warnings.push(...evidence.filter((r) => r.skipped).map((r) => `${r.name}: ${r.skipped}`));
     if (lines.length === 0) return { ...report, data: evidence, warnings };
-    const head = `STRUCTURED DATA (as of the cutoff; evidence of CHANGES only — the round's own history sets the level${related ? `; related series: ${related}` : ""}):`;
+    const head = `STRUCTURED DATA (as of the cutoff; evidence of CHANGES only — the round's own history sets the level${related ? `; related series: ${related}` : ""}):${
+      staleSeries.length
+        ? `\nSTALE for the target period ${brief.targetPeriod!.slice(0, 7)}: ${staleSeries.join(", ")} — published only through an EARLIER period; their latest change is old news, not evidence about the period being forecast.`
+        : ""
+    }`;
     return {
       ...report,
       data: evidence,

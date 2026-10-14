@@ -47,9 +47,9 @@ type SubHandler = (
 
 /**
  * Room and command code runs inside the engine, so writing, reloading,
- * reverting or destroying it is the `world.code` safety gate — earned
- * (standing + witnessed demonstrations), granted, or passed by the operator's
- * posture; a refusal raises a challenge. Returns true when refused.
+ * reverting or destroying it is the `world.code` safety gate — operator grant
+ * only (never passed by `open`); a refusal raises a challenge an operator may
+ * approve once. Returns true when refused.
  */
 function worldCodeRefused(
   ctx: RoomContext,
@@ -1024,7 +1024,7 @@ export function buildCommand(deps: BuildDeps): CommandDef {
     name: "build",
     aliases: [],
     minRank: 4,
-    help: "In-game building for rooms, templates, and dynamic commands.\nUsage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command\n\nRank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (earn it via `witness request world.code` or an operator grant).\n\nExamples:\n  build room my/garden A Quiet Garden\n  build modify my/garden long Flowers bloom in every direction.\n  build link my/garden north hub/crossroads\n  build command create weather\n  build command reload weather",
+    help: "In-game building for rooms, templates, and dynamic commands.\nUsage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command\n\nRank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (operator grant; an operator may approve a single held run).\n\nExamples:\n  build room my/garden A Quiet Garden\n  build modify my/garden long Flowers bloom in every direction.\n  build link my/garden north hub/crossroads\n  build command create weather\n  build command reload weather",
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

@@ -2,18 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Witness ledger — durable storage for the earnable path through safety gates.
+ * Witness ledger — kept readable for compatibility (2026-10-14: the witness
+ * ladder is folded into challenges; approved held runs are the demonstrations,
+ * src/engine/challenges.ts).
  *
  * Row kinds:
- * - `request`: an agent asked for supervision on a gate ("I'm ready to try —
- *   will someone watch?"). Informational; qualified witnesses see it in
- *   `witness queue`.
- * - `window`:  a qualified witness granted ONE supervised demonstration
- *   (TTL-bounded). The enforcement site consumes it at execution time and
- *   records a witnessed demonstration attributed to the granting witness.
+ * - `request`: legacy — an agent asked for supervision. No longer written.
+ * - `window`:  legacy — a one-demonstration supervision window. No longer
+ *   written, and no longer honoured by `checkGateForExecution`.
  * - `pending`: under the `earned` autonomy posture, a supervised operation ran
- *   optimistically; the demonstration is recorded here and counts toward the
- *   unsupervised flip only when a qualified witness attests it afterwards.
+ *   optimistically; it counts toward the unsupervised flip only when an
+ *   operator outside the requester's lineage attests it (`witness attest`).
  */
 
 import type { Database } from "bun:sqlite";

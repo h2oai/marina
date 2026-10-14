@@ -71,8 +71,8 @@ export interface ExecApprover {
  * `humanApproved` is TRUE only when a real human made an explicit, per-command
  * prompt decision that approved this exact argv (i.e. `settleExecApproval` was
  * reached via `code exec-approve`). It is FALSE for auto-mode approvals and for
- * session-allow-set replays — those must NOT mint competence toward
- * `code.exec.unrestricted`, since no genuine human decision happened per call.
+ * session-allow-set replays. It is an audit fact only: no approval mints
+ * competence toward `code.exec.unrestricted`, which is operator-grant only.
  */
 export type ExecAuditSink = (
   req: ExecApprovalRequest,
@@ -81,9 +81,8 @@ export type ExecAuditSink = (
 ) => void;
 
 /**
- * Provenance stamp a human `code exec-approve` places on the settled decision.
- * The audit sink keys demonstration-recording on this exact reason so that only
- * a genuine per-command human approval counts as a witnessed demonstration.
+ * Provenance stamp a human `code exec-approve` places on the settled decision;
+ * the audit record carries it as `humanApproved`.
  */
 export const OPERATOR_APPROVED_REASON = "operator-approved";
 
@@ -401,7 +400,8 @@ export interface HeadlessGateApproverDeps {
  * Synchronous four-condition chain (no perception). Approves iff ALL hold:
  *  (1) MARINA_CODE_EXEC_UNRESTRICTED is set and the resolved entity id/name is
  *      in that comma list;
- *  (2) `code.exec.unrestricted` competence is unsupervised (ok, not supervised);
+ *  (2) `code.exec.unrestricted` is held — an operator grant (the gate is
+ *      operator-grant only: no standing, demonstration or approval earns it);
  *  (3) the identity is trustworthy — authRequired, OR the acting connection is
  *      genuinely local (resolved per-connection, never from a WS_HOST env).
  * Any failure → `{ approved: false }` (the workspace then throws the allowlist
@@ -432,7 +432,11 @@ export class HeadlessGateApprover implements ExecApprover {
       "code.exec.unrestricted",
     );
     if (!gate.ok || gate.supervisedOnly) {
-      return { approved: false, reason: "code.exec.unrestricted competence not established" };
+      return {
+        approved: false,
+        reason:
+          "code.exec.unrestricted not held — it is operator-grant only (`gate grant <name> code.exec.unrestricted`); standing and approvals never earn it",
+      };
     }
 
     // (3) trustworthy identity — PER CONNECTION, not a process-wide env boolean.

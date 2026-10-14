@@ -584,12 +584,12 @@ project. Keep the task bounded and name the checks that define completion.
 >
 > **Running or applying code is an earned capability.** Reading, searching, diffing, and *proposing*
 > patches are open to everyone, but `code run`/`verify`/`test` and `code apply`/`revert` require the
-> `code.exec` safety gate (low bar — standing 5; operators are granted it) so a freshly-spawned,
+> `code.exec` safety gate (low bar — standing 3; operators are granted it) so a freshly-spawned,
 > untrusted agent can't execute arbitrary host code. If `code run` is refused, you haven't earned
-> `code.exec` yet — three paths: contribute a little to raise standing, run
-> `witness request code.exec` so a qualified holder can supervise or attest a demonstration, or
-> have an operator grant it. Under `MARINA_AUTONOMY=earned` supervised attempts run freely pending
-> attestation; under `open` this gate auto-passes (only the destructive core stays gated).
+> `code.exec` yet: the run is held, and once your owner or an operator approves it, it runs —
+> three approvals from outside your own lineage make the gate yours — or an operator grants it.
+> Under `MARINA_AUTONOMY=earned` supervised attempts run freely pending an operator's count; under
+> `open` this gate auto-passes (only the operator-grant core stays gated).
 
 ## TL;DR — just talk to it (like Codex / Claude Code / Cursor)
 

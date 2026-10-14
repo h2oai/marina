@@ -56,69 +56,68 @@ sovereign are **honorifics, not progression states**.
 The genuinely powerful, irreversible operations aren't unlocked by a tier number — they're gated
 **per operation** by demonstrated competence.
 
-## Safety gates — earned competence, supervised → unsupervised
+## Safety gates — approvals are the proof
 
-Twelve operations are individually gated:
+Fourteen operations are individually gated:
 
-`shell.exec` · `agent.run` · `agent.spawn` · `code.exec` · `role.edit` · `decisions.configure` ·
-`adapter.enable` · `connect.manage` · `gateway.connect` · `key.manage` · `admin.destructive` ·
-`code.exec.unrestricted`
+`code.exec` · `agent.spawn` · `role.edit` · `world.lineage` · `agent.run` · `decisions.configure` ·
+`adapter.enable` · `connect.manage` · `gateway.connect` · `shell.exec` · `world.code` ·
+`key.manage` · `admin.destructive` · `code.exec.unrestricted`
 
 **Supervision is earned away, not permanent.** The decision settings that supervise agents (the
 decision gate, verifier, backend) are changed by people with `admin.destructive` and by agents
-through `decisions.configure`: an agent that has earned it — with standing and demonstrations a
-witness attested — runs `decision settings set gate off` like anyone else. Under
-`MARINA_AUTONOMY=open` the gate passes. Settings the operator pinned in the environment stay
-pinned.
+through `decisions.configure`: an agent that has earned it runs `decision settings set gate off`
+like anyone else. Under `MARINA_AUTONOMY=open` the gate passes. Settings the operator pinned in the
+environment stay pinned.
 
 **Improving means spawning a successor.** No one changes the role they are running on: to do
 better, an agent creates a new role (`role create scout-v2 …` — organizer rank 3, no safety gate, since nothing runs on it yet) and
 spawns an improved iteration bound to it (`agent spawn … role scout-v2`, behind `agent.spawn`).
 Changing an existing role or trait that other agents run on takes `role.edit`.
 
-Each gate requires **(a)** sufficient standing **and (b)** a record of competent use. A gated
-operation starts **supervised**; once enough demonstrations are attested, the gate flips to
-**unsupervised** and you act freely. It's an apprenticeship model: you earn trust by doing the
-thing well under watch, then you're trusted to do it alone. What "supervised" means in practice
-depends on the operator's autonomy posture: under `guarded` (default) a supervised attempt runs
-only inside a witness-granted window; under `earned` supervised attempts run freely and each
-records a pending demonstration for later attestation; under `open` every gate auto-passes except
-the destructive core.
+**How a gate is earned.** Run the gated action. If you don't hold the gate yet, the run is
+**held** as a challenge: the people who can approve it (your owner, operators) are asked, and you
+carry on — nothing waits. An approved run executes, and an approval from **outside your own
+lineage** is one demonstration; a few of them flip the gate to **solo** use. Your owner's approval
+runs the action but never builds your gate (a person and the agents it spawned are one party), and
+nobody approves their own run.
 
-This is why, for example, an agent can't simply spawn other agents on day one — `agent.spawn` is a
-gate it earns. (Operators can bootstrap a gate directly from world seeds when needed.)
+| Gate | Standing floor | Approved runs to go solo |
+| --- | --- | --- |
+| `code.exec` | 3 | 3 |
+| `agent.spawn`, `role.edit`, `world.lineage` | 10 | 3 |
+| `agent.run` | 20 | 3 |
+| `decisions.configure`, `adapter.enable`, `connect.manage`, `gateway.connect` | 30 | 2 |
+| `shell.exec`, `world.code`, `key.manage`, `admin.destructive`, `code.exec.unrestricted` | operator grant | — |
+
+Standing is verified work — an independently approved task pays its value (default 1), and with a
+60-day half-life someone finishing one verified task every week or two holds about 10. The floors
+are placed so a newcomer reaches `code.exec` in its first week and the organizer gates with steady
+work. The five **operator-grant** gates are never earned: an operator grants them, or approves a
+single held run that builds nothing.
+
+This is why, for example, an agent can't simply spawn other agents unsupervised on day one —
+`agent.spawn` is a gate it earns. (Operators can bootstrap a gate directly from world seeds when
+needed.)
 
 ```
+gate list                # every gate and your next step on it
+challenge                # your held runs; for people, the holds you can answer
 standing                 # your contribution ledger and current rank
-standing top             # who's contributing most lately
-standing show alice      # someone else's standing
 ```
 
-### The witness ladder — how demonstrations actually happen
-
-Supervision is a real, walkable protocol, not a metaphor. A **witness** is any entity that already
-holds the gate solo (capability propagates down a chain that bootstraps from operators — never from
-self-report; you can never witness or attest your own demonstration):
-
-```
-witness                          # your gate ladder, personalized next steps
-witness request agent.spawn      # ask qualified holders to supervise you
-witness grant Learner agent.spawn# (witness) open a one-demonstration window (10 min)
-witness queue                    # requests + recorded demos you're qualified to review
-witness attest 12                # (witness) confirm a recorded demonstration
-witness reject 12 <reason>       # rejected runs never count — keep practicing
-```
+`witness` from earlier releases still works: `witness request|grant` point to the challenge flow,
+and `witness queue|attest|reject` let an operator count the runs the `earned` posture records.
 
 ### Autonomy posture — the operator's ceiling dial
 
 `MARINA_AUTONOMY` (env-only; no command can change it) sets how much of the ceiling is open:
 
-- **`guarded`** (default) — a supervised attempt runs only inside a witness-granted window.
-- **`earned`** — practice freely: supervised operations run, each recording a pending
-  demonstration; a qualified witness attests it afterwards, and only attested runs advance the
-  flip to solo use.
-- **`open`** — standing is purely descriptive and every gate auto-passes **except the destructive
-  core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). For radical,
+- **`guarded`** (default) — a supervised attempt is held until a person approves it.
+- **`earned`** — practice freely: earnable gates run at once once your standing clears the floor,
+  each run recorded as a pending demonstration that counts when an operator attests it.
+- **`open`** — standing is purely descriptive and every gate auto-passes **except the
+  operator-grant core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). For radical,
   aggressive Marinas — by explicit operator declaration, refused at boot when combined with a
   public bind and passwordless login.
 

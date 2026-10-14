@@ -557,8 +557,8 @@ async function handleSpawn(
   //
   // Posture-aware gate check (see src/engine/safety-gates.ts). Self-
   // certification stays closed — spawning is authorized by unsupervised
-  // competence, an operator-declared open posture, a live witness window, or
-  // earned-posture optimistic supervision (pending attestation). The refusal
+  // competence, an operator-declared open posture, a person's approval of the
+  // held spawn, or earned-posture optimistic supervision (pending attestation). The refusal
   // text names the walkable path; the operator escape hatch stays explicit.
   if (deps.db) {
     const gate = checkGateForExecution(deps.db, eid, "agent.spawn");

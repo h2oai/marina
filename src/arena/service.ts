@@ -326,6 +326,37 @@ export async function forecasterFor(
       ),
     };
   }
+  if (spec === "spike-decay") {
+    // The nowcast, except that a Trends basket's spiking cells move part of
+    // the way back toward their recent level (spike-decay.ts). Free; shadow
+    // challenger only — it answers a family only once earned-routes.ts says so.
+    const [{ nowcastForecaster, trendsForecastLock }, { spikeDecay }] = await Promise.all([
+      import("./research/civiqs-nowcast"),
+      import("./spike-decay"),
+    ]);
+    const data = arenaData(opts.env ?? process.env);
+    const nowcast = nowcastForecaster(
+      data,
+      forecastRound,
+      await liveCiviqs(opts.env, opts.strictFreshness),
+    );
+    return {
+      forecaster: async (round, lock) => {
+        const f = await nowcast(round, lock);
+        if (round.tracker !== "google_trends" || !f.profile) return f;
+        const inputs = await trendsForecastLock(data, round, lock);
+        const history = inputs.answer_history_by_cell;
+        if (!history) return f;
+        const { profile, decayed } = spikeDecay(f.profile, history);
+        const moved = Object.keys(decayed);
+        return {
+          ...f,
+          profile,
+          note: `${f.note}; spike decay: ${moved.length ? moved.map((c) => `${c} ${decayed[c]!.from.toFixed(1)}→${decayed[c]!.mean.toFixed(1)}`).join(", ") : "no spiking cell"}`,
+        };
+      },
+    };
+  }
   if (spec.startsWith("tabh2o")) return tabh2oForecasterFor(spec, opts);
   if (spec.startsWith("research:")) {
     return researchForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness, opts.notes);

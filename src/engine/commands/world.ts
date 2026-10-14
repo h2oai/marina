@@ -63,6 +63,9 @@ export function worldCommand(deps: {
     category: "Lineage",
     minRank: 5,
     gate: "world.lineage",
+    // Listing child worlds reads; creating, running and adopting stay gated.
+    readOnlyForm: (input) =>
+      canonicalSub(input.tokens[0]?.toLowerCase() ?? "list", SUBS) === "list",
     help: `Child and parallel worlds: create, start, stop, run a command inside one, seed a role into it.\n${USAGE}`,
     handler: async (ctx, input) => {
       const actor = deps.getEntity(input.entity);
