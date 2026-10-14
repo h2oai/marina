@@ -55,7 +55,10 @@ async function callAnthropic(systemMsg: string, userMsg: string): Promise<string
     }
     if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${await resp.text()}`);
     const data = (await resp.json()) as { content: Array<{ type: string; text: string }> };
-    return data.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+    return data.content
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("");
   }
   throw new Error("exhausted retries");
 }
@@ -80,7 +83,8 @@ async function main() {
       if (!item) break;
       const choices = item.choices ?? [];
       const choiceText = choices.map((c, i) => `${LETTERS[i]}) ${c}`).join("\n");
-      const systemMsg = "Answer the multiple-choice question. Reply with ONLY the letter of the correct answer.";
+      const systemMsg =
+        "Answer the multiple-choice question. Reply with ONLY the letter of the correct answer.";
       const userMsg = `${item.question}\n\n${choiceText}\n\nAnswer:`;
 
       const start = performance.now();
@@ -118,11 +122,24 @@ async function main() {
   const overall = correct / results.length;
 
   const output = {
-    config: { name: "MMLU-Pro", dataset: "mmlu-pro", mode: "direct-anthropic", model: MODEL, seed, limit },
+    config: {
+      name: "MMLU-Pro",
+      dataset: "mmlu-pro",
+      mode: "direct-anthropic",
+      model: MODEL,
+      seed,
+      limit,
+    },
     timestamp: Date.now(),
     duration_ms,
     scores: { overall, breakdown: {} },
-    metadata: { total: results.length, answered: results.length - errors, errors, timeouts: 0, avgLatencyMs: 0 },
+    metadata: {
+      total: results.length,
+      answered: results.length - errors,
+      errors,
+      timeouts: 0,
+      avgLatencyMs: 0,
+    },
     items: results,
   };
   const outPath = join(import.meta.dir, "results", `mmlu-pro-direct-${Date.now()}.json`);

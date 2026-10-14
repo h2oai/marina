@@ -475,7 +475,7 @@ async function learnCmd(db: MarinaDB): Promise<number> {
       mkdirSync(roundDir(due), { recursive: true });
       writeFileSync(
         journal,
-        entries
+        `${entries
           .map(({ id, answer }) => {
             const q = byId.get(id);
             const forecasts = q && forecastsFrom(q, answer, null);
@@ -490,7 +490,7 @@ async function learnCmd(db: MarinaDB): Promise<number> {
               : "";
           })
           .filter(Boolean)
-          .join("\n") + "\n",
+          .join("\n")}\n`,
       );
       const r = await resolveRound({
         set,

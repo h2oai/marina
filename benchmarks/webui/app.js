@@ -19,7 +19,6 @@ let detailChart = null;
 let compareBarChart = null;
 let compareRadarChart = null;
 const activeRuns = new Map(); // id -> run state
-let pollInterval = null;
 
 // Chart.js global config
 Chart.defaults.color = "#5a6a7a";
@@ -95,7 +94,7 @@ async function loadResults() {
 }
 
 function startPolling() {
-  pollInterval = setInterval(async () => {
+  setInterval(async () => {
     await pollActiveRuns();
     // Refresh results every 10s
     if (Date.now() % 10000 < 2000) await loadResults();
@@ -912,3 +911,12 @@ function esc(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+// Inline handlers in index.html and in rendered rows call these by name.
+Object.assign(window, {
+  closeDetail,
+  showResultDetail,
+  startBenchmark,
+  switchTab,
+  updateComparison,
+});

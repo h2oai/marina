@@ -85,10 +85,13 @@ try {
     start = range.next_start;
   }
   assert.equal(observed, text);
-  const cleanupSpace=(await client.createSpace("abandoned")).id;
+  const cleanupSpace = (await client.createSpace("abandoned")).id;
   const abandoned = await client.beginTransfer(cleanupSpace, first.header);
-  await cli("transfer-abort", "--space",cleanupSpace,"--transfer", abandoned.id);
-  assert.equal((await cli("transfer-status", "--space",cleanupSpace,"--transfer", abandoned.id)).state, "aborted");
+  await cli("transfer-abort", "--space", cleanupSpace, "--transfer", abandoned.id);
+  assert.equal(
+    (await cli("transfer-status", "--space", cleanupSpace, "--transfer", abandoned.id)).state,
+    "aborted",
+  );
   const report = {
     passed: true,
     bytes: Buffer.byteLength(text),
