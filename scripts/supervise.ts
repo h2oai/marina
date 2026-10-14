@@ -14,7 +14,7 @@ import { httpBaseFromUrl } from "./marina";
 import { routingCachedToken } from "./route";
 
 function shellQuote(value: string): string {
-  return "'" + value.replaceAll("'", "'\\''") + "'";
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 export function participantInstructions(): string {
@@ -48,7 +48,7 @@ export function parseSupervisorArgs(args: string[]) {
       throw new Error(SUPERVISE_USAGE);
     values.set(key, args[i + 1]!);
   }
-  if (!values.has("--root")) throw new Error("An explicit --root is required\n" + SUPERVISE_USAGE);
+  if (!values.has("--root")) throw new Error(`An explicit --root is required\n${SUPERVISE_USAGE}`);
   return {
     root: values.get("--root")!,
     name: values.get("--name"),

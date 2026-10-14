@@ -179,7 +179,8 @@ function loadDocLines(): Array<{ file: string; line: number; text: string }> {
   for (const file of files) {
     const rel = relative(ROOT, file);
     const lines = readFileSync(file, "utf8").split("\n");
-    for (let i = 0; i < lines.length; i++) out.push({ file: rel, line: i + 1, text: lines[i] ?? "" });
+    for (let i = 0; i < lines.length; i++)
+      out.push({ file: rel, line: i + 1, text: lines[i] ?? "" });
   }
   return out;
 }

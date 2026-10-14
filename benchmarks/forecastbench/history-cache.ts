@@ -11,9 +11,9 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  lastVisibleDay,
   type SeriesHistory,
   type SeriesRef,
-  lastVisibleDay,
   seriesHistory,
 } from "../../src/forecast/series-history";
 import { resolvedRounds } from "./backtest";

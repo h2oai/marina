@@ -117,7 +117,7 @@ function report(files: FileCoverage[], minLines: number, strict: boolean): numbe
     .filter((g) => g.found > 0)
     .sort((a, b) => a.dir.localeCompare(b.dir));
 
-  console.log("  Directory".padEnd(46) + "Lines    Files");
+  console.log(`${"  Directory".padEnd(46)}Lines    Files`);
   console.log(`  ${"-".repeat(44)} -------  -----`);
   for (const g of groups) {
     console.log(`  ${g.dir.padEnd(44)}${fmt(pct(g.hit, g.found))}  ${String(g.count).padStart(5)}`);

@@ -514,7 +514,7 @@ export async function downloadHLEVerifiedGoldImages(
 }
 
 /** ARC-Challenge — 1172 grade-school science MC. */
-export async function downloadARC(_dir: string, limit?: number): Promise<DatasetItem[]> {
+export async function downloadARC(_dir: string, _limit?: number): Promise<DatasetItem[]> {
   const name = "arc-challenge";
   const cached = loadCache(name);
   if (cached) {
@@ -575,7 +575,7 @@ export async function downloadHellaSwag(_dir: string, limit?: number): Promise<D
 }
 
 /** GSM8K — 1319 grade-school math word problems (test split). */
-export async function downloadGSM8K(_dir: string, limit?: number): Promise<DatasetItem[]> {
+export async function downloadGSM8K(_dir: string, _limit?: number): Promise<DatasetItem[]> {
   const name = "gsm8k";
   const cached = loadCache(name);
   if (cached) {
@@ -604,7 +604,7 @@ export async function downloadGSM8K(_dir: string, limit?: number): Promise<Datas
 }
 
 /** MATH — competition math problems (test split of MATH-500 subset). */
-export async function downloadMATH(_dir: string, limit?: number): Promise<DatasetItem[]> {
+export async function downloadMATH(_dir: string, _limit?: number): Promise<DatasetItem[]> {
   const name = "math";
   const cached = loadCache(name);
   if (cached) {
@@ -631,7 +631,7 @@ export async function downloadMATH(_dir: string, limit?: number): Promise<Datase
 }
 
 /** SimpleQA — 4326 short-answer factual questions (OpenAI). */
-export async function downloadSimpleQA(_dir: string, limit?: number): Promise<DatasetItem[]> {
+export async function downloadSimpleQA(_dir: string, _limit?: number): Promise<DatasetItem[]> {
   const name = "simpleqa";
   const cached = loadCache(name);
   if (cached) {
@@ -656,7 +656,7 @@ export async function downloadSimpleQA(_dir: string, limit?: number): Promise<Da
 }
 
 /** MuSR — Multi-step soft reasoning (team_allocation task). */
-export async function downloadMuSR(_dir: string, limit?: number): Promise<DatasetItem[]> {
+export async function downloadMuSR(_dir: string, _limit?: number): Promise<DatasetItem[]> {
   const name = "musr";
   const cached = loadCache(name);
   if (cached) {
@@ -697,7 +697,7 @@ export async function downloadMuSR(_dir: string, limit?: number): Promise<Datase
 
 /** FRAMES — multi-hop factual retrieval benchmark. Open-ended questions,
  *  answer requires composing facts from multiple Wikipedia articles. */
-export async function downloadFRAMES(_dir: string, limit?: number): Promise<DatasetItem[]> {
+export async function downloadFRAMES(_dir: string, _limit?: number): Promise<DatasetItem[]> {
   const name = "frames";
   const cached = loadCache(name);
   if (cached) {
@@ -727,7 +727,7 @@ export async function downloadFRAMES(_dir: string, limit?: number): Promise<Data
 }
 
 /** AIME 2024 — American Invitational Math Examination 2024, integer answer 0-999. */
-export async function downloadAIME(_dir: string, limit?: number): Promise<DatasetItem[]> {
+export async function downloadAIME(_dir: string, _limit?: number): Promise<DatasetItem[]> {
   const name = "aime-2024";
   const cached = loadCache(name);
   if (cached) {
@@ -752,7 +752,7 @@ export async function downloadAIME(_dir: string, limit?: number): Promise<Datase
 }
 
 /** AIME 2025 — latest AIME, integer answer 0-999. 30 problems. */
-export async function downloadAIME2025(_dir: string, limit?: number): Promise<DatasetItem[]> {
+export async function downloadAIME2025(_dir: string, _limit?: number): Promise<DatasetItem[]> {
   const name = "aime-2025";
   const cached = loadCache(name);
   if (cached) {
@@ -779,7 +779,7 @@ export async function downloadAIME2025(_dir: string, limit?: number): Promise<Da
 }
 
 /** BIG-Bench Hard — subset (boolean_expressions is MC-like). */
-export async function downloadBBH(_dir: string, limit?: number): Promise<DatasetItem[]> {
+export async function downloadBBH(_dir: string, _limit?: number): Promise<DatasetItem[]> {
   const name = "bbh";
   const cached = loadCache(name);
   if (cached) {
