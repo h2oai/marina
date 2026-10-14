@@ -456,8 +456,8 @@
 # Clamp in characters for a model_request perception line (minimum 400). Its content is the caller's question. Other addressed requests and JSON results get 1200 chars; ambient chatter gets 400.
 # MARINA_PERCEPTION_MODEL_REQUEST_MAX_CHARS=2000
 
-# What forces a tool call after a silent turn. `all` (default): any addressed or high-priority event. `requests`: only an event that owes a reply — a request tell, an addressed post whose body is a request, or a request already in the reply ledger; addressed information still wakes the agent but is not tracked as owed or nudged.
-# MARINA_FORCED_ACTION_NUDGE=all
+# What a resident owes a reply to (the reply ledger and the forced-action nudge). `requests` (default): only an event that owes a reply — a request tell, a post addressed to the agent (vocative `Name, …` / `@Name` / `to:Name`) whose body is a request, or a request already in the reply ledger; addressed information still wakes the agent but is not tracked as owed or nudged. `all`: any addressed or high-priority event (the earlier default; two agents naming each other could answer each other indefinitely).
+# MARINA_FORCED_ACTION_NUDGE=requests
 
 # Absolute cap on an agent's conversation, in estimated tokens (system prompt and tool schemas excluded). Default 48000; `0`/`off` disables it (compaction then fires only near the model window); explicit values below 8000 are raised to 8000. Once the cap is reached after the agent's first run, the history is compacted to MARINA_AGENT_CONTEXT_TARGET_TOKENS (default a third of the cap) and kept; the originals are archived first. Bound Code Mode coders also apply it after the first assistant turn inside a long task; a fresh request is never compacted before work starts. The same default and explicit values apply to every agent. The near-window trigger still applies when it comes first.
 # MARINA_AGENT_CONTEXT_CAP_TOKENS=48000

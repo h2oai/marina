@@ -28,6 +28,45 @@ export type SocialEventType =
   | "group_invite"
   | "trade_request";
 
+// ─── Addressing ─────────────────────────────────────────────────────────────
+
+/** Openers that may precede a vocative ("Hey Name, …", "Thanks Name"). */
+const GREETING = "(?:hey|hi|hello|yo|ok|okay|thanks|thank\\s+you|dear|ping)";
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Whether `message` is addressed TO `name` — a vocative, not a mention:
+ * the name as the first token (`Name, …`, `Name: …`, `Name …`, `@Name …`), after
+ * a greeting (`Hey Name, …`, `Thanks Name`), an `@Name` anywhere, or a
+ * `to:Name` field. Case-insensitive; the name must end
+ * at a word boundary (`Nudged` does not address `Nudged-Bot` or `Nudgedness`).
+ * A post that merely talks ABOUT the agent ("as Nudged said…") is not an
+ * address and owes no reply.
+ */
+export function isAddressedTo(message: string | undefined, name: string): boolean {
+  if (!message || !name) return false;
+  const n = escapeRegExp(name.trim());
+  if (!n) return false;
+  const end = "(?![\\w-])";
+  return (
+    new RegExp(`^\\s*(?:${GREETING}[,!]?\\s+)?@?${n}${end}`, "i").test(message) ||
+    new RegExp(`(?:^|[\\s(\\[])@${n}${end}`, "i").test(message) ||
+    new RegExp(`\\bto:\\s*@?${n}${end}`, "i").test(message)
+  );
+}
+
+/** `message` without a leading vocative to `name` (`Name, ` / `@Name: `), for classifying the body. */
+export function withoutVocative(message: string, name: string): string {
+  const n = escapeRegExp(name.trim());
+  if (!n) return message;
+  return message
+    .replace(new RegExp(`^(\\s*(?:${GREETING}[,!]?\\s+)?)@?${n}(?![\\w-])[,:!]?\\s*`, "i"), "$1")
+    .trim();
+}
+
 // ─── Social Awareness ───────────────────────────────────────────────────────
 
 /** How long a speaker counts as "recently active" (also the eviction horizon). */
@@ -188,9 +227,10 @@ export class SocialAwareness {
   }
 
   shouldRespond(event: SocialEvent, myName: string): boolean {
-    // Always respond to direct messages or name mentions
+    // Always respond to direct messages and to posts addressed to us by name
+    // (a vocative — a mere mention of the name is not an address).
     if (event.type === "player_tells") return true;
-    if (event.message?.toLowerCase().includes(myName.toLowerCase())) return true;
+    if (isAddressedTo(event.message, myName)) return true;
 
     // Relationship-aware response: more likely to respond to known collaborators
     const interactions = event.speaker ? (this.relationships.get(event.speaker) ?? 0) : 0;
@@ -234,7 +274,7 @@ export class SocialAwareness {
     if (event.type === "channel_message" && event.message?.startsWith("[crew-task]")) {
       return 90;
     }
-    if (event.message?.toLowerCase().includes(lowerName)) return 80;
+    if (isAddressedTo(event.message, myName)) return 80;
 
     switch (event.type) {
       case "player_says":
