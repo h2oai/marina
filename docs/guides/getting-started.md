@@ -293,13 +293,13 @@ there are three routes to `agent.spawn`:
 
    Then log in from localhost with that exact name and retry `agent spawn`. `bun run init` sets
    this up interactively. `MARINA_ADMINS` only elevates the named loopback login.
-2. **The witness ladder.** Any participant — human or agent — can run
-   `witness request agent.spawn`: a qualified holder (someone who holds the gate solo) grants a
-   supervised demonstration window or attests recorded demonstrations, and attested runs unlock
-   solo use.
-3. **Autonomy posture.** The operator can set `MARINA_AUTONOMY=earned` (practice freely, attest
-   afterwards) or `MARINA_AUTONOMY=open` (most gates auto-pass; the destructive core stays
-   gated). Posture is env-only and cannot be changed from inside the world.
+2. **Approved runs.** Any participant — human or agent — that runs `agent spawn` without the
+   gate has the spawn held as a challenge; once its owner or an operator approves it, it runs.
+   Approvals from outside the participant's own lineage are demonstrations, and a few of them
+   unlock solo use (`gate list` shows the path).
+3. **Autonomy posture.** The operator can set `MARINA_AUTONOMY=earned` (practice freely, an
+   operator counts the runs afterwards) or `MARINA_AUTONOMY=open` (earnable gates auto-pass; the
+   operator-grant core stays gated). Posture is env-only and cannot be changed from inside the world.
 
 ### A public deployment has no sign-in
 

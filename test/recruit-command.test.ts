@@ -16,6 +16,7 @@ import {
   roomId,
 } from "../src/types";
 import { cleanupDb, stripAnsi } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_recruit_command.db";
 
@@ -164,6 +165,13 @@ describe("recruit command", () => {
     cmd.handler(ctx(), input(newbie, "bob into alpha"));
     expect(sent.join("\n")).toContain("organizer capability");
     expect(crews.getByName("alpha")!.members.some((m) => m.agentName === "bob")).toBe(false);
+  });
+
+  it("the rank-2 floor is the one rank-floor rule: `open` lifts it", () => {
+    using _state = scopeProcessState({ trustProfile: null, env: { MARINA_AUTONOMY: "open" } });
+    const cmd = recruitCommand(makeDeps());
+    cmd.handler(ctx(), input(newbie, "bob into alpha"));
+    expect(sent.join("\n")).not.toContain("organizer capability");
   });
 
   it("recruits an idle agent into a crew the caller owns", () => {

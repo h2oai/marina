@@ -53,7 +53,7 @@ export function refuseOwnRole(
 /**
  * Check the `role.edit` gate for a change to an existing role or trait.
  * Returns a refusal reason, or a `record` callback to call once the change
- * is made (so a witnessed window is consumed only by a change that happened).
+ * is made (so an approved run counts only for a change that happened).
  */
 export function checkRoleEdit(
   db: MarinaDB,

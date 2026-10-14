@@ -79,7 +79,7 @@ export async function startVerification(
       throw new Error("Verification stopped: another participant holds the session's write lock.");
     if (deps.hostExecForbidden || deps.getConnectionProtocol?.(eid) === "telnet")
       throw new Error("Verification stopped: host execution is unavailable over telnet.");
-    // Background checks cannot borrow a live command's challenge pass or witness window.
+    // Background checks cannot borrow a live command's challenge pass.
     if (!isLocalUngated() && !checkUnattendedGate(deps.db, eid, "code.exec").ok)
       throw new Error(
         "Background verification requires unattended code.exec competence. Use code verify for supervised checks.",

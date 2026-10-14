@@ -891,14 +891,13 @@ describe("code command", () => {
       await command.handler(ctx, inputFor(sovereign, `code exec-approve ${token}`));
       await running;
       expect(stripAnsi(sent.join("\n"))).toContain("bound-ok");
-      // The approver does not itself hold code.exec.unrestricted unsupervised,
-      // so it is not a qualified witness: no demonstration is credited.
+      // No demonstration is credited toward the operator-grant gate.
       const demos = () =>
         db.getCompetence(boundAgent.id, "code.exec.unrestricted")?.demonstrations ?? 0;
       expect(demos()).toBe(0);
 
-      // A qualified approver (holds the gate solo) witnessing a DIFFERENT
-      // entity's command credits exactly one demonstration.
+      // code.exec.unrestricted is operator-grant only: even an approver who
+      // holds it solo credits no demonstration (approvals never mint it).
       grant(db, sovereign.id, "code.exec.unrestricted");
       const second = command.handler(ctx, inputFor(boundAgent, "code run echo witnessed-ok"));
       await new Promise((resolve) => setTimeout(resolve, 15));
@@ -906,13 +905,13 @@ describe("code command", () => {
       expect(token2).not.toBe(token);
       await command.handler(ctx, inputFor(sovereign, `code exec-approve ${token2}`));
       await second;
-      expect(demos()).toBe(1);
+      expect(demos()).toBe(0);
 
-      // Same argv again → session allow-set replay, no human decision → still 1.
+      // Same argv again → session allow-set replay, no human decision → still 0.
       const before = notes.length;
       await command.handler(ctx, inputFor(boundAgent, "code run echo witnessed-ok"));
       expect(notes.length).toBe(before);
-      expect(demos()).toBe(1);
+      expect(demos()).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

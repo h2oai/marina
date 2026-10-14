@@ -107,14 +107,18 @@ describe("gates are the authority", () => {
   });
 
   it("world.lineage: a rank-0 holder runs `world` under guarded; a non-holder is refused by the gate", async () => {
+    // Listing is a read-only form: open at rank 0 without the gate.
     await send(bob, "world list");
+    expect(text(bob)).toContain("No child worlds yet");
+    bob.clear();
+    await send(bob, "world stop nowhere");
     expect(text(bob)).toContain("Not yet");
     expect(text(bob)).not.toContain("rank 5");
 
     grant(db, id(bob), "world.lineage");
     bob.clear();
-    await send(bob, "world list");
-    expect(text(bob)).toContain("No child worlds yet");
+    await send(bob, "world stop nowhere");
+    expect(text(bob)).toContain('No child world "nowhere"');
     expect(SAFETY_GATES["world.lineage"]?.minStanding).toBe(
       SAFETY_GATES["agent.spawn"]?.minStanding,
     );
@@ -188,7 +192,7 @@ describe("gates are the authority", () => {
     const refusals = text(alice);
     expect(refusals).toContain("Nobody grants a gate to themselves");
     expect(refusals).toContain("an agent you spawned");
-    expect(refusals).toContain("core gate");
+    expect(refusals).toContain("operator-grant gate");
     expect(checkUnattendedGate(db, id(builder), "agent.spawn").ok).toBe(false);
     expect(checkUnattendedGate(db, id(bob), "shell.exec").ok).toBe(false);
 
@@ -235,7 +239,7 @@ describe("gates are the authority", () => {
     }
     grant(db, id(alice), "world.code");
     await send(alice, "gate grant Bob world.code");
-    expect(text(alice)).toContain("core gate");
+    expect(text(alice)).toContain("operator-grant gate");
   });
 });
 

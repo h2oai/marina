@@ -12,7 +12,7 @@ healthy.
 
 ## From inside the world
 
-Anyone holding the `world.lineage` gate (earned via `witness request world.lineage`, or granted) can
+Anyone holding the `world.lineage` gate (earned through approved runs, or granted) can
 do the same without the dashboard, and use a child
 once it runs:
 

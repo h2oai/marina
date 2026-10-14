@@ -42,7 +42,7 @@ describe("Command Permissions", () => {
       engine.processCommand(conn1.entity!, "admin stats");
       // A gated command's gate is the single authority (no rank floor on top):
       // zero standing and no admin.destructive competence ⇒ the gate refuses.
-      expect(conn1.lastText()).toContain("Not yet");
+      expect(conn1.lastText()).toContain("Operator grant");
       expect(conn1.lastText()).toContain("admin");
       // Verify no state change — rank unchanged
       expect(getRank(entity!)).toBe(0);
@@ -71,7 +71,7 @@ describe("Command Permissions", () => {
       engine.processCommand(conn1.entity!, "admin stats");
       // Rank 4 still blocks — not on rank, but because the admin.destructive
       // gate is not held (rank grants nothing below 5).
-      expect(conn1.lastText()).toContain("Not yet");
+      expect(conn1.lastText()).toContain("Operator grant");
       // Verify rank was not changed by the failed command
       expect(getRank(entity)).toBe(4);
     });
@@ -386,7 +386,7 @@ describe("Command Permissions", () => {
       // window; the refusal names the walkable witness path instead of a
       // dead-end "supervised-only" label)
       expect(conn1.lastText()).not.toContain("Server Stats");
-      expect(conn1.lastText().toLowerCase()).toContain("witness request admin.destructive");
+      expect(conn1.lastText().toLowerCase()).toContain("operator grant");
 
       // …and no demonstration was self-minted.
       expect(db.getCompetence(conn1.entity!, "admin.destructive")).toBeUndefined();

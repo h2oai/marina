@@ -180,10 +180,9 @@ export function authorizePrivileged(
   // promotion grants them), while a resident whose stored rank is 9 does not
   // pass a core gate on rank alone. Posture-aware execution check:
   // self-certification stays closed (a standing-only holder is refused in
-  // guarded posture with no window), but the gate authorizes via unsupervised
-  // competence, an operator-declared open posture (non-core gates), a live
-  // witness window, or earned-posture optimistic supervision — with the
-  // competence consequence recorded.
+  // guarded posture), but the gate authorizes via unsupervised competence, an
+  // operator-declared open posture (earnable gates), or earned-posture
+  // optimistic supervision — with the competence consequence recorded.
   let reason: string | undefined;
   if (db) {
     const gate = checkGateForExecution(db, callerId, gateId);
@@ -197,7 +196,7 @@ export function authorizePrivileged(
     {
       error: `Not authorized: this action needs the "${gateId}" capability.`,
       gate: gateId,
-      // The gate's own path forward (standing, witness window, grant …).
+      // The gate's own path forward (standing floor, approval, operator grant …).
       ...(reason ? { reason } : {}),
     },
     403,

@@ -6,7 +6,9 @@
  * handler (a subcommand stricter than its command's `minRank`). A capability
  * that has a safety gate checks the gate instead; this is for what has none.
  *
- * Posture-aware, like the router's own floor: the operator's LOCAL instance
+ * The router's `minRank` floor for ungated commands goes through this same
+ * function (src/engine/command-phase-coordinator.ts), so there is ONE rank
+ * floor rule. Posture-aware: the operator's LOCAL instance
  * and the `open` posture pass it (rank is descriptive there); otherwise the
  * refusal raises a challenge (src/engine/challenges.ts) so the creator or an
  * admin at that rank can approve the held command, and an approved re-run
@@ -39,6 +41,8 @@ export function rankFloorRefusal(
      * it. The local profile still does, and a refusal still raises a challenge.
      */
     core?: boolean;
+    /** The command's gate, named in the challenge (the router's floor). */
+    gateId?: string;
   } = {},
 ): string | undefined {
   if (getRank(entity as Entity) >= min) return undefined;
@@ -49,6 +53,12 @@ export function rankFloorRefusal(
   if (!command) return message;
   return (
     message +
-    raiseForCommand({ requesterId: entity.id, command, reason: `rank ${min}`, minRank: min })
+    raiseForCommand({
+      requesterId: entity.id,
+      command,
+      reason: `rank ${min}`,
+      minRank: min,
+      ...(opts.gateId ? { gateId: opts.gateId } : {}),
+    })
   );
 }

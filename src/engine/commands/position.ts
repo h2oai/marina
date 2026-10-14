@@ -144,7 +144,9 @@ export function positionCommand(deps: {
     ],
     name: "position",
     aliases: ["pos"],
-    minRank: 2, // anyone past tutorial can size/list/pnl; open/close gated inline
+    minRank: 2, // anyone past tutorial can size/pnl; open/close gated inline
+    // `position list` reads the ledger: open to every rank.
+    readOnlyForm: (input) => input.tokens[0]?.toLowerCase() === "list",
     help: HELP,
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);

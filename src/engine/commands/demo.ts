@@ -102,7 +102,7 @@ export function demoCommand(deps: {
 
       if (action === "warm") {
         // Posture-aware spawn authorization (self-certification stays closed;
-        // witness windows / earned posture / open posture are honored).
+        // approved runs / earned posture / open posture are honored).
         const gate = checkGateForExecution(deps.db, input.entity, "agent.spawn");
         if (!gate.ok) {
           ctx.send(input.entity, gate.reason ?? "agent.spawn capability is unavailable.");
