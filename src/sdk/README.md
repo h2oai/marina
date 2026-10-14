@@ -34,7 +34,7 @@ separate release action; local development can install the tarball from `npm pac
 | `provider.ts` | 244 | LLM bridge — join channel, forward model requests to external provider |
 | `intent-worker.ts` | 68 | Intent worker — poll, claim, and complete canvas intents |
 | `spawner.ts` | 55 | Agent spawner — spawn and list agents via REST API |
-| `evolver.ts` | 363 | Self-evolving agent — mind-room, benchmarking, self-rewrite |
+| `evolver.ts` | 359 | Improvement loop — journal, self-test, advisor, optional workshop room |
 
 Run any example:
 ```bash

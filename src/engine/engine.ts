@@ -932,14 +932,15 @@ export class Engine {
     message: string,
     tag?: string,
     metadata?: Record<string, unknown>,
-  ): void {
+  ): boolean {
     const perception: Perception = {
       kind: "message",
       timestamp: Date.now(),
       ...(tag && { tag }),
       data: { text: message, ...metadata },
     };
-    this._connections.sendToEntity(target, perception);
+    // false = no live connection: the perception was not delivered.
+    return this._connections.sendToEntity(target, perception);
   }
 
   /** Reserved engine-authored control perception. Room code only receives the

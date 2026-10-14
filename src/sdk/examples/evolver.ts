@@ -2,9 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Evolver Agent — a self-evolving agent that builds its own mind-room,
- * runs benchmarks, talks to other agents for advice, and rewrites its
- * own behavior based on results.
+ * Evolver Agent — an external SDK agent that runs an improvement loop:
+ * assess, explore, ask an advisor (or reflect), act, self-test, and journal.
+ * Its state lives in its own core memory and notes; it changes how it works
+ * by updating those, not by editing a role it runs on.
+ *
+ * Optionally it keeps a workshop room that shows its generation, goal and
+ * journal to anyone who visits. Building needs rank 4, and room code also
+ * needs the `world.code` gate (an operator grant). Both pass on a local
+ * Marina (`MARINA_PROFILE=local`); elsewhere an operator raises its rank
+ * and grants the gate, or the agent skips the room and keeps going.
  *
  * Usage:
  *   bun run src/sdk/examples/evolver.ts
@@ -14,7 +21,6 @@
  *   AGENT_NAME   — Character name (default: Evolver)
  *   ADVISOR      — Name of agent to ask for advice (default: none, self-reflects)
  *   CYCLE_SECS   — Seconds between evolution cycles (default: 60)
- *   MARINA_ADMINS — Set to include AGENT_NAME for builder rank
  */
 
 import { MarinaAgent, type Perception, type RoomView } from "../client";
@@ -58,12 +64,12 @@ function waitForMessage(agent: MarinaAgent, fromName: string, timeoutMs = 30_000
   });
 }
 
-// ─── Mind Room Source ──────────────────────────────────────────────────────────
+// ─── Workshop Room Source ──────────────────────────────────────────────────────
 
-/** Generate the mind-room source for this agent. */
-function mindRoomSource(agentName: string, generation: number, goal: string): string {
-  // This is a room that IS the agent's mind — inspectable by anyone.
-  // Items show the agent's state. The room description shows identity.
+/** Generate the workshop room source for this agent. */
+function workshopRoomSource(agentName: string, generation: number, goal: string): string {
+  // A room anyone can visit: items show the agent's state, the description
+  // its generation and goal.
   return `import type { RoomModule } from "../../types";
 
 const room: RoomModule = {
@@ -117,47 +123,33 @@ async function main() {
     }
   });
 
-  // ─── Bootstrap: ensure builder rank ──────────────────────────────────────
+  // Where the agent started: exploration returns here.
+  const start = await agent.look();
+  const homeRoom = "id" in start ? (start as RoomView).id : undefined;
 
-  // Complete tutorial quest to get canvas rank, then create a task to get builder
-  console.log("[evolver] Bootstrapping rank...");
-  await agent.command("quest start First Steps");
-  await agent.look();
-  await agent.move("north");
-  await agent.move("south");
-  await agent.move("east");
-  await agent.command("say Bootstrapping.");
-  const lookResult = await agent.look();
-  if ("entities" in lookResult) {
-    const view = lookResult as RoomView;
-    const other = view.entities?.find((e) => e.name !== session.name);
-    if (other) await agent.command(`examine ${other.name}`);
-  }
-  await agent.command("quest complete");
-  await sleep(500);
+  // ─── Build the workshop room (optional) ──────────────────────────────────
 
-  // Create a task to earn builder rank
-  await agent.command("task create Bootstrap | Earning builder rank");
-  await sleep(500);
+  // Standing comes only from work someone independent verifies, so there is
+  // no rank to farm here: the agent builds if it is allowed to, else skips.
+  const roomId = `workshop/${AGENT_NAME.toLowerCase()}`;
+  console.log(`[evolver] Building workshop room: ${roomId}`);
 
-  // ─── Build mind-room ─────────────────────────────────────────────────────
-
-  const roomId = `mind/${AGENT_NAME.toLowerCase()}`;
-  console.log(`[evolver] Building mind-room: ${roomId}`);
-
-  const initialSource = mindRoomSource(AGENT_NAME, 0, "Improve benchmark scores");
-  await agent.command(`build room ${roomId} ${AGENT_NAME}'s Workshop`);
-  await sleep(300);
-  await agent.command(`build code ${roomId} ${initialSource}`);
-  await sleep(300);
-  const validation = text(await agent.command(`build validate ${roomId}`));
-  console.log(`[evolver] Validation: ${validation}`);
-
-  if (validation.includes("valid") || validation.includes("Valid")) {
-    await agent.command(`build reload ${roomId}`);
-    console.log("[evolver] Mind-room loaded.");
+  const initialSource = workshopRoomSource(AGENT_NAME, 0, "Improve benchmark scores");
+  const created = text(await agent.command(`build room ${roomId} ${AGENT_NAME}'s Workshop`));
+  let hasWorkshop = false;
+  if (/rank|gate|held|challenge|denied/i.test(created)) {
+    console.log(`[evolver] Not building a workshop: ${created.split("\n")[0]}`);
   } else {
-    console.log("[evolver] Mind-room validation failed, continuing with defaults.");
+    await agent.command(`build code ${roomId} ${initialSource}`);
+    const validation = text(await agent.command(`build validate ${roomId}`));
+    console.log(`[evolver] Validation: ${validation}`);
+    if (/valid/i.test(validation) && !/invalid/i.test(validation)) {
+      await agent.command(`build reload ${roomId}`);
+      hasWorkshop = true;
+      console.log("[evolver] Workshop room loaded.");
+    } else {
+      console.log("[evolver] Workshop code not loaded; the room keeps its plain description.");
+    }
   }
 
   // Set initial identity in core memory
@@ -262,9 +254,8 @@ async function main() {
     await agent.typedNote(journalEntry, 8, "episode");
     await agent.memory("set", "generation", String(generation));
 
-    // Update mind-room store if we're in it
-    await agent.command(`goto ${roomId}`);
-    await sleep(200);
+    // End each generation in the workshop, where visitors can read it.
+    if (hasWorkshop) await agent.command(`goto ${roomId}`);
 
     console.log(`[evolver] Generation ${generation} complete. Score: ${benchScore}`);
   }
@@ -283,8 +274,8 @@ async function main() {
       }
       await sleep(500);
     }
-    // Return to center
-    await a.command("goto hub/crossroads");
+    // Return to where the agent started
+    if (homeRoom) await a.command(`goto ${homeRoom}`);
   }
 
   async function organizeMemory(a: MarinaAgent, gen: number) {
@@ -296,7 +287,11 @@ async function main() {
 
   async function buildSomething(a: MarinaAgent, gen: number) {
     console.log("[evolver] Action: building");
-    const buildRoomId = `mind/${AGENT_NAME.toLowerCase()}/gen-${gen}`;
+    if (!hasWorkshop) {
+      await a.typedNote(`Gen ${gen}: no workshop to extend; skipped building`, 4, "observation");
+      return;
+    }
+    const buildRoomId = `${roomId}/gen-${gen}`;
     await a.command(`build room ${buildRoomId} Generation ${gen} Archive`);
     await a.command(`build modify ${buildRoomId} long Notes and artifacts from generation ${gen}.`);
     await a.command(`build link ${roomId} down ${buildRoomId}`);
@@ -327,9 +322,11 @@ async function main() {
     if (noteCount >= 10) score += 1;
     if (noteCount >= 20) score += 1;
 
-    // Building check: does our mind-room exist?
-    const mindResult = text(await a.command(`build audit mind/${AGENT_NAME.toLowerCase()}`));
-    if (mindResult.includes("version") || mindResult.includes("Version")) score += 2;
+    // Building check: does our workshop room exist?
+    if (hasWorkshop) {
+      const auditResult = text(await a.command(`build audit ${roomId}`));
+      if (/version/i.test(auditResult)) score += 2;
+    }
 
     // Social check: have we interacted with others?
     const whoResult = text(await a.who());

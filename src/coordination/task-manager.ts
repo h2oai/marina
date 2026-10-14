@@ -84,6 +84,9 @@ function rowToClaim(row: TaskClaimRow): TaskClaim {
   };
 }
 
+/** The creator name world seeds file tasks under; it never logs in. */
+export const SYSTEM_TASK_CREATOR = "system";
+
 export class TaskManager {
   private readonly leaseMs: number;
 
@@ -273,6 +276,21 @@ export class TaskManager {
       });
       return { ok: true as const, credit };
     });
+  }
+
+  /**
+   * Hand a task the world seeded as `system` to `reviewer` before an operator
+   * reviews it. `system` never logs in, so without a seeded reviewer of record
+   * (`assignSeededTaskReviewer`) its submissions could never be approved; the
+   * caller has checked that `reviewer` is an operator (a person at rank 9).
+   * The handover is durable: the operator is the reviewer of record from then
+   * on. Returns false for any task not created by `system`.
+   */
+  adoptSystemTask(taskId: number, reviewer: { id: string; name: string }): boolean {
+    const task = this.get(taskId);
+    if (task?.creatorName !== SYSTEM_TASK_CREATOR) return false;
+    this.db.setTaskCreator(taskId, reviewer.id, reviewer.name);
+    return true;
   }
 
   rejectSubmission(taskId: number, claimantId: string, approverId: string): boolean {

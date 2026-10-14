@@ -4,7 +4,13 @@
 import type { MarinaDB } from "../src/persistence/database";
 import type { WorldDefinition } from "../src/world/world-definition";
 import marketsWorld from "./markets";
-import { seedBoard, seedChannel, seedProject, seedSystemAgent } from "./seed";
+import {
+  assignSeededTaskReviewer,
+  seedBoard,
+  seedChannel,
+  seedProject,
+  seedSystemAgent,
+} from "./seed";
 
 function seed(db: MarinaDB): void {
   marketsWorld.seed?.(db);
@@ -73,11 +79,17 @@ function seed(db: MarinaDB): void {
     role: "scholar",
     goal: "Challenge base rates, resolution ambiguity, correlated evidence, and unjustified probability updates.",
   });
+  // Forecast-Resolver reviews the sprint: only a task's creator can approve
+  // it, and `system` never logs in.
+  assignSeededTaskReviewer(db, "Calibration Sprint", "Forecast-Resolver");
   seedSystemAgent(db, {
     name: "Forecast-Resolver",
     model,
     role: "general",
-    goal: "Protect resolution criteria, score forecasts, and publish calibration postmortems.",
+    goal:
+      "Protect resolution criteria, score forecasts, and publish calibration postmortems. " +
+      "You review Calibration Sprint tasks and never claim them: " +
+      "`task approve <id> <claimant>` or `task reject <id> <claimant>` with the exact gap.",
   });
 }
 

@@ -541,14 +541,82 @@ describe("[crew-task] wakes a crew only from a real dispatch", () => {
   const TEST_DB = "test_trust_framing_crew.db";
   afterEach(() => cleanupDb(TEST_DB));
 
+  it("a member offline at dispatch gets it later, still flagged", () => {
+    cleanupDb(TEST_DB);
+    const db = new MarinaDB(TEST_DB);
+    const online = new Set<string>(["e_alice"]);
+    const delivered: Array<{ to: string; meta: Record<string, unknown> }> = [];
+    let now = 1;
+    try {
+      const channels = new ChannelManager(db, (id, _text, _channel, meta) => {
+        if (!online.has(id)) return false;
+        delivered.push({ to: id, meta: meta ?? {} });
+        return true;
+      });
+      const crews = new CrewManager({ channels, onEvent: () => {}, now: () => now });
+      const crew = crews.create({
+        name: "alpha",
+        goal: "g",
+        owner: entityId("e_owner"),
+        members: [{ agentName: "alice" }, { agentName: "bob" }],
+      });
+      crews.dispatch(
+        crew.id,
+        "go",
+        { id: "e_owner", name: "Owner" },
+        {
+          beforeFirstPost: (c) => {
+            channels.addMember(c.channelId!, "e_alice");
+            channels.addMember(c.channelId!, "e_bob");
+          },
+        },
+      );
+      const dispatchTo = (to: string) =>
+        delivered.filter((d) => d.to === to && String(d.meta.content).startsWith("[crew-task]"));
+      expect(dispatchTo("e_alice")).toHaveLength(1);
+      expect(dispatchTo("e_bob")).toHaveLength(0);
+
+      crews.tick(now);
+      expect(dispatchTo("e_bob")).toHaveLength(0);
+
+      online.add("e_bob");
+      crews.tick(now);
+      expect(dispatchTo("e_bob")).toHaveLength(1);
+      expect(dispatchTo("e_bob")[0]!.meta.crewDispatch).toBe(true);
+      // Delivered once; Alice, who had it already, is not sent it again.
+      crews.tick(now);
+      expect(dispatchTo("e_bob")).toHaveLength(1);
+      expect(dispatchTo("e_alice")).toHaveLength(1);
+
+      // A deposit ends the wait: an absent member is not woken to redo it.
+      online.delete("e_bob");
+      crews.dispatch(crew.id, "next", { id: "e_owner", name: "Owner" });
+      crews.onMemberPoolDeposit("alice", `crew:${crew.name}`, "done");
+      online.add("e_bob");
+      crews.tick(now);
+      expect(dispatchTo("e_bob")).toHaveLength(1);
+
+      // The wait is bounded.
+      online.delete("e_bob");
+      crews.dispatch(crew.id, "later", { id: "e_owner", name: "Owner" });
+      now += CrewManager.MISSED_DISPATCH_TTL_MS + 1;
+      online.add("e_bob");
+      crews.tick(now);
+      expect(dispatchTo("e_bob")).toHaveLength(1);
+      crews.stop();
+    } finally {
+      db.close();
+    }
+  });
+
   it("crew dispatch flags its post; a typed [crew-task] is chatter", () => {
     cleanupDb(TEST_DB);
     const db = new MarinaDB(TEST_DB);
     const delivered: Record<string, unknown>[] = [];
     try {
-      const channels = new ChannelManager(db, (_id, _text, _channel, meta) =>
-        delivered.push(meta ?? {}),
-      );
+      const channels = new ChannelManager(db, (_id, _text, _channel, meta) => {
+        delivered.push(meta ?? {});
+      });
       const crews = new CrewManager({ channels, onEvent: () => {}, now: () => 1 });
       const crew = crews.create({
         name: "alpha",
