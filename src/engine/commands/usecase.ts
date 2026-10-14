@@ -9,6 +9,8 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import { isGrantedCompetence } from "../../persistence/db-competence";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { BENCHMARK_RUN_MIN_RANK } from "../constants";
+import { rankName } from "../permissions";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import { isLocalUngated } from "../trust-profile";
 import { spawnBudget } from "./agent";
@@ -150,8 +152,8 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
         description: `Set the working identity for this evolution run: 'memory set goal ${topic}' and 'memory set constitution Improve one thing per cycle. Always journal.' Then run 'brief full', 'orient', and 'recall ${topic}' to establish the baseline. Record a Gen 0 note with current capability, constraints, and the first improvement hypothesis.`,
       },
       {
-        title: "Create or request a mind-room",
-        description: `Create an inspectable mind-room for this run with 'build room mind/<name> <name> Workshop' if you have Builder rank. If rank-gated, write the intended room design as a skill note and ask a Builder via 'tell' or channel to create it. The mind-room should expose goal, generation, journal, scorecard, and open threads.`,
+        title: "Draft a successor role",
+        description: `Write the improvement as a new role, never an edit to the role you run on: 'role create <role>-v2 ...' (organizer rank; a refusal raises a challenge to your creator and returns at once — keep working). Record in a note the hypothesis the new role tests and how it will be measured.`,
       },
       {
         title: "Run one improvement cycle",
@@ -160,12 +162,12 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       {
         title: "Measure and compare",
         description:
-          "Run the smallest meaningful benchmark or objective available: 'score', 'novelty stats', a benchmark quest, or a task-specific acceptance check. Compare against the Gen 0 note. Keep changes that improved the score or produced reusable structure; otherwise journal why the attempt failed.",
+          "Run the smallest meaningful measure available: 'score', 'novelty stats', a benchmark quest, or a task-specific acceptance check, and compare against the Gen 0 note. To compare roles, 'evolve trial' runs incumbent and candidate in a child world and 'evolve decide' records the verdict. Keep changes that improved the measure; otherwise journal why the attempt failed.",
       },
       {
         title: "Publish lineage",
         description:
-          "Write a final episode note with: generation, actions taken, macro/skill/room created, score change, what to try next. Add the lesson to the project pool, submit the task result, and tell the requester where future agents should resume.",
+          "Write a final episode note with: generation, actions taken, macro/skill/role created, score change, what to try next. Add the lesson to the project pool, submit the task result, and tell the requester where future agents should resume.",
       },
     ],
     poolNotes: [
@@ -176,7 +178,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       },
       {
         content:
-          "Evolution loop: goal -> baseline -> act -> compose a reusable word/macro/skill/room when repetition appears -> measure -> reflect -> publish lineage. Do not wait for a perfect architecture; use the world and leave traces.",
+          "Evolution loop: goal -> baseline -> act -> compose a reusable macro/skill/role when repetition appears -> measure -> reflect -> publish lineage. Do not wait for a perfect architecture; use the world and leave traces.",
         importance: 10,
         type: "skill",
       },
@@ -194,7 +196,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       },
       {
         content:
-          "Mind-room convention: a mind-room should expose an agent's goal, constitution, generation, journal, scorecard, and next open question. It is inspectable behavior, not decorative space.",
+          "Succession convention: a behavior change is a new role ('role create <role>-v2'), started with 'agent spawn <name> role <role>-v2', compared with 'evolve trial', decided with 'evolve decide'. Nobody edits, deletes or reloads the role they run on.",
         importance: 8,
         type: "skill",
       },
@@ -211,12 +213,12 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
         role: "researcher",
         namePrefix: "evolver",
         // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${} placeholders in seeded template content
-        goal: `You are the Evolver for "${topic}". Join project "evolve: ${topic.slice(0, 60)}", claim the baseline and improvement-cycle tasks, and work through the evolution loop using only Marina primitives. Set a goal, journal Gen 0, ask the Advisor for one concrete suggestion, create or request a mind-room, package one repeated behavior as a macro or skill, measure the result, publish lineage to the project pool, and tell ${"${requester}"} what future agents should inherit.`,
+        goal: `You are the Evolver for "${topic}". Join project "evolve: ${topic.slice(0, 60)}", claim the baseline and improvement-cycle tasks, and work through the evolution loop using only Marina primitives. Set a goal, journal Gen 0, ask the Advisor for one concrete suggestion, draft a successor role, package one repeated behavior as a macro or skill, measure the result, publish lineage to the project pool, and tell ${"${requester}"} what future agents should inherit.`,
       },
       {
         role: "scholar",
         namePrefix: "advisor",
-        goal: `You are the Advisor for the evolution run "${topic}". Join project "evolve: ${topic.slice(0, 60)}". Watch for messages from the Evolver, answer with one specific improvement suggestion at a time, challenge prompt bloat and over-engineering, and help turn useful behavior into notes, skills, macros, or room conventions. Do not take over the run; enrich it.`,
+        goal: `You are the Advisor for the evolution run "${topic}". Join project "evolve: ${topic.slice(0, 60)}". Watch for messages from the Evolver, answer with one specific improvement suggestion at a time, challenge prompt bloat and over-engineering, and help turn useful behavior into notes, skills, macros, or a successor role. Do not take over the run; enrich it.`,
       },
     ],
     requesterCoreMemory: {
@@ -691,7 +693,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       },
       {
         title: "Implement",
-        description: `Build the feature described in the spec for: ${topic}. If in craft room: 'implement <spec-id>' to start. Use 'discover <fact>' to record learnings. If not: use 'build room' or 'build exit' or dynamic commands as needed. Write notes on decisions and discoveries.`,
+        description: `Build the feature described in the spec for: ${topic}. If in craft room: 'implement <spec-id>' to start. Use 'discover <fact>' to record learnings. If not: use 'build room', 'build link' or dynamic commands as needed (building needs the build rank; see 'help build'). Write notes on decisions and discoveries.`,
       },
       {
         title: "Verify and ship",
@@ -712,7 +714,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       },
       {
         content:
-          "Craft room commands (if available): 'interview start', 'spec create <title>', 'implement <id>', 'discover <fact>', 'ship <id>', 'tune'. Standard build commands: 'build room <id> <name>', 'build exit <dir> <target>', 'build describe <text>'.",
+          "Craft room commands (if available): 'interview start', 'spec create <title>', 'implement <id>', 'discover <fact>', 'ship <id>', 'tune'. Standard build commands: 'build room <id> <name>', 'build link <from> <exit> <to>', 'build modify <room> long <text>'.",
         importance: 8,
         type: "skill",
       },
@@ -764,7 +766,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       },
       {
         title: "Configure alerts",
-        description: `Set up a brief watch cycle to periodically check for changes. Use 'brief watch 120' for regular checks. Create a channel 'monitor-${topic.slice(0, 20).replace(/\s+/g, "-").toLowerCase()}' and subscribe to post updates there.`,
+        description: `Set up a brief watch cycle to periodically check for changes. Use 'brief watch 120' for regular checks. Create a channel 'monitor-${topic.slice(0, 20).replace(/\s+/g, "-").toLowerCase()}' for change reports; post there only when something changed.`,
       },
       {
         title: "First report",
@@ -779,7 +781,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       },
       {
         content:
-          "Monitor workflow: (1) Establish baseline with web search. (2) Set up brief watch cycle. (3) On each cycle, check sources and compare. (4) Post changes to channel. (5) Periodically post summary reports.",
+          "Monitor workflow: (1) Establish baseline with web search. (2) Set up brief watch cycle. (3) On each cycle, check sources and compare. (4) Post to the channel only when something changed. (5) With no change, rest: 'memory set rest <why>'.",
         importance: 9,
         type: "skill",
       },
@@ -842,7 +844,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       },
       {
         title: "Execute in parallel",
-        description: `Each agent executes their claimed tasks for ${topic}. Post progress updates to the project channel. Use 'tell' to coordinate handoffs.`,
+        description: `Each agent executes their claimed tasks for ${topic}. Message the project channel only for a handoff, a blocker or a finished stream; use 'tell' to coordinate handoffs.`,
       },
       {
         title: "Integrate and debrief",
@@ -910,49 +912,42 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
     orchestration: "pipeline",
     tasks: [
       {
-        title: `Run benchmark sweep — generation "${topic}"`,
-        description:
-          "Run `benchmark sweep all --limit 50 --seed 42` to fan out across every live `marina:<name>` orchestration × every registered benchmark. Track progress with `benchmark runs --limit 50` and `benchmark orchestrations`. Wait for the full set to finish before moving on — partial sweeps are not comparable to earlier generations' runs in the ledger.",
+        title: `Run a paired comparison — generation "${topic}"`,
+        description: `Pick one benchmark that measures what this generation changed, and run it on purpose: \`benchmark compare-run <name> arms:bare,full cap:<usd> limit:20\` runs both arms on the same items, or \`benchmark run <name> --limit 20 --seed 42\` for one arm. Use the frontier model the operator has configured; keep the limit small and explicit. Runs need rank ${BENCHMARK_RUN_MIN_RANK} (${rankName(BENCHMARK_RUN_MIN_RANK)}) and spend real money. \`benchmark sweep\` fans out across every orchestration × benchmark — only on an operator's request. Track with \`benchmark runs\`.`,
       },
       {
-        title: "Review and write the per-benchmark summary",
+        title: "Review the result",
         description:
-          "For each benchmark in the sweep, run `benchmark leaderboard <name>` — it interleaves the new run with published reference scores from `benchmarks/reference-scores.ts`. Post a one-line summary per benchmark to the project board: score, delta vs reference, delta vs the prior generation's runs (`benchmark runs`, `benchmark compare`). Flag regressions explicitly — a regression on a single benchmark is the loudest signal the harness gives.",
+          "Read `benchmark result <id>`, `benchmark compare <runA> <runB>` for the paired difference, and `benchmark leaderboard <name>` for published reference scores. Record one line per benchmark in the project pool: score, paired difference and its interval, and whether it is distinguishable from noise. Flag a regression explicitly.",
       },
       {
         title: `Request compact snapshot — \`admin snapshot ${topic} --compact\``,
-        description: `When the sweep is complete and the summary is posted, ask an operator with rank 9 to run \`admin snapshot ${topic} --compact\`. The compact flag drops transient process-tier notes (compaction summaries, stale activity) before serializing — keeping recall-quality high for the next generation. Do NOT skip the compact flag; uncompacted snapshots accumulate the same chaff that migration 37 was built to filter out.`,
+        description: `When the review is recorded, ask an operator who holds the admin command's gate (admin.destructive) to run \`admin snapshot ${topic} --compact\`. The compact flag drops transient process-tier notes (compaction summaries, stale activity) before serializing, keeping recall quality high for the next generation.`,
       },
     ],
     poolNotes: [
       {
-        content: `Experiment goal: measure Marina's full benchmark profile at generation "${topic}", produce a publishable comparison vs bare foundation models, and snapshot the post-experiment substrate as the seed for the next generation.`,
+        content: `Experiment goal: measure generation "${topic}" against the previous generation on the same items, and snapshot the post-experiment substrate as the seed for the next generation.`,
         importance: 10,
         type: "fact",
       },
       {
         content:
-          "Sweep workflow: (1) `benchmark sweep all --limit 50 --seed 42` fans out across every live `marina:<name>` orchestration × every registered benchmark. Track via `benchmark runs` / `benchmark orchestrations`. (2) Review per-benchmark with `benchmark leaderboard <name>` (shows reference scores interleaved). (3) Request `admin snapshot <gen-name> --compact` when satisfied — admin-rank only. The compact flag is mandatory for next-gen seeds.",
+          "Run workflow: (1) one benchmark, small explicit limit, both arms on the same items (`benchmark compare-run`). (2) Review with `benchmark compare` and `benchmark leaderboard <name>`. (3) Request `admin snapshot <gen-name> --compact`. A difference inside its interval is noise, not a win.",
         importance: 9,
         type: "skill",
       },
       {
         content:
-          "Snapshot discipline: name snapshots `gen-N` (e.g. `gen-2`) or `gen-N-<bench>` for narrower experiments. Always use `--compact` for next-generation seeds — uncompacted snapshots accumulate process-tier chaff that pollutes recall in the successor generation. The compaction discipline is why migration 37 + `admin snapshot --compact` exist together.",
+          "Snapshot discipline: name snapshots `gen-N` (e.g. `gen-2`) or `gen-N-<bench>` for narrower experiments. Use `--compact` for next-generation seeds — uncompacted snapshots carry process-tier chaff into the successor generation's recall.",
         importance: 9,
         type: "principle",
       },
       {
         content:
-          'Reference comparison: `benchmark reference <model>` shows published frontier-model numbers from `benchmarks/reference-scores.ts`. `benchmark leaderboard <bench>` interleaves them with our actual runs so the CEO summary writes itself: "Marina <gen-N> scores X% on Y, vs published bare-model Z%."',
+          "Reference comparison: `benchmark reference <model>` shows published model numbers; `benchmark leaderboard <bench>` interleaves them with this world's runs. Published numbers come from other harnesses — compare like with like before drawing a conclusion.",
         importance: 8,
         type: "skill",
-      },
-      {
-        content:
-          "Historical context: earlier generations' sweeps stay in the benchmark ledger (`benchmark runs`, `benchmark compare`). Compare each new generation against the previous one and the bare foundation model — the headline question is whether the new substrate matches or beats the prior generation without regressing any single benchmark.",
-        importance: 8,
-        type: "fact",
       },
     ],
     agentCount: 1,
@@ -1446,7 +1441,7 @@ Examples:
         db.addPoolNote(
           poolId,
           entity.name,
-          `DELIVERY: When you complete the final task, send a concise summary of your findings to ${entity.name} using 'tell ${entity.name} <summary>'. Include: key findings (2-3 bullets), confidence level, and where to find the full report (board post ID). This is your most important deliverable — the requester is waiting for results.`,
+          `DELIVERY: When you complete the final task, send a concise summary of your findings to ${entity.name} using 'tell ${entity.name} <summary>'. Include: key findings (2-3 bullets), confidence level, and where to find the full report (board post ID). Send it once, when the work is done; no progress messages before that.`,
           10,
           "principle",
         );

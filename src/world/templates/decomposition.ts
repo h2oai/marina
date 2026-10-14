@@ -25,8 +25,8 @@ export const HTDAG_TEMPLATE: TemplateNote[] = [
   {
     content:
       "HTDAG dependencies: when a child task cannot begin until another sibling completes, " +
-      "record the edge in the task description as 'depends on #<id>' or set a known property " +
-      "via 'task set <id> dependsOn <id1>,<id2>'. Agents check 'task info <id>' before claiming " +
+      'record the edge in the task description as "Depends on: #<id>, #<id>". Agents check ' +
+      "'task info <id>' before claiming " +
       "and skip tasks whose dependencies are still open. Independent siblings run in parallel.",
     importance: 8,
     type: "skill",
@@ -44,7 +44,7 @@ export const HTDAG_TEMPLATE: TemplateNote[] = [
     content:
       "HTDAG traversal: 'task children <id>' walks one level, 'project <name> tasks' shows the " +
       "full flat list. To find ready-to-claim leaves: list children, filter to status=open, " +
-      "skip any whose dependsOn references an open task. Progress rolls up automatically via " +
+      "skip any whose recorded dependencies are still open. Progress rolls up automatically via " +
       "'task progress' — when all children of a bundle complete, the bundle closes.",
     importance: 7,
     type: "skill",
@@ -66,8 +66,8 @@ export const PLAN_EXEC_VERIFY_TEMPLATE: TemplateNote[] = [
     content:
       "This project uses Plan-Execute-Verify decomposition (three-role coordinator pattern). " +
       "One agent plans (decomposes work into non-overlapping subtasks), others execute leaves, " +
-      "a verifier gates completion before the bundle merges. Roles are claimed via trait, not " +
-      "assigned — use 'role set planner' / 'role set executor' / 'role set verifier'.",
+      "a verifier gates completion before the bundle merges. Assign the roles with " +
+      "'agent config <name> role planner' (or executor / verifier).",
     importance: 9,
     type: "skill",
   },
@@ -92,7 +92,8 @@ export const PLAN_EXEC_VERIFY_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Verifier duties: verifiers review submitted tasks against the done-criterion in the " +
-      "description. Approve with 'task approve <id>' or reject with 'task reject <id> <reason>'. " +
+      "description. Only a task's creator can approve it, so the verifier sends the verdict to " +
+      "the planner, who runs 'task approve <id> <claimant>' or 'task reject <id> <claimant>'. " +
       "Verifiers are the merge gate — a bundle is not complete until every child is " +
       "verifier-approved, not just executor-submitted. Aim for fast review cycles.",
     importance: 8,
@@ -132,7 +133,7 @@ export const LAZY_EXPANSION_TEMPLATE: TemplateNote[] = [
     content:
       "Lazy Expansion claim-then-expand: when claiming an [expand] task, the first action is " +
       "to decompose it into its own children using 'task create' + 'task assign <child> " +
-      "<claimed_id>'. Then submit the [expand] task itself as 'expansion complete' and the " +
+      '<claimed_id>\'. Then submit the [expand] task itself as "expansion complete" and the ' +
       "children become the new ready work. Do not execute and decompose in the same step.",
     importance: 8,
     type: "skill",

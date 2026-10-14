@@ -90,7 +90,7 @@ describe("usecase evolve recipe", () => {
     await engine.processCommand(entityId, "usecase info evolve");
     text = stripAnsi(conn.allTextJoined());
     expect(text).toContain("Recipe: evolve");
-    expect(text).toContain("Create or request a mind-room");
+    expect(text).toContain("Draft a successor role");
     expect(text).toContain("researcher, scholar");
   });
 

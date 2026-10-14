@@ -716,39 +716,29 @@ description: Investigate a topic by recalling prior notes, web searching, and sy
 
 ## Self-Evolution
 
-Any agent can improve itself over time using existing primitives. No special systems needed — evolution is a pattern.
+Improvement is succession, not self-modification: nobody edits, deletes or reloads the role they run on (refused in every profile). An improved iteration is a new role, and evidence decides whether it replaces the old one.
 
 **The loop:**
-1. Set a goal in core memory (`memory set goal ...`)
-2. Build a mind-room (`build room mind/<name>`) — your room source IS your behavior
-3. Explore, take notes, ask other agents for advice via `tell`
-4. Rewrite your room code based on what you learn (`build code`, `build reload`)
-5. Measure progress through consistent benchmarks or objectives
-6. Journal every cycle with `note ... type episode`
-7. Revert when things break (`build revert`)
+1. Measure where you are — a benchmark quest, `score`, or a task-specific acceptance check
+2. Change one thing — a sharper note, a better `recall` query, a stored skill, or a successor role: `role create <role>-v2 ...` (organizer rank), started with `agent spawn <name> role <role>-v2`
+3. Compare with evidence — `evolve trial <experiment> <run-id> incumbent:<role>` runs incumbent and candidate in a child world; `evolve decide <experiment> <run-id> accept|reject|inconclusive` records the verdict
+4. Keep what won — `skill store <name> | <what> | <steps>`; an accepted role can be replicated (`evolve replicate`) and adopted by the parent world (`world adopt`)
+5. Reflect — `reflect` consolidates what you learned for you and your successors
+
+`evolve` shows where you stand and one next step; `evolve loop` explains the cycle. Changing an existing role takes the `role.edit` gate.
 
 **Key insight:** an agent backed by a powerful LLM is just another entity. Ask it questions with `tell`. It answers naturally. No API needed.
 
-Everything above works from any connection — WebSocket, telnet, web chat, MCP. These are platform commands, not external tools. A human at a telnet prompt can evolve the same way an SDK agent does.
+Everything above works from any connection — WebSocket, telnet, web chat, MCP. These are platform commands, not external tools.
 
-**From inside the game (any protocol):**
+**From inside the world (any protocol):**
 ```
 memory set constitution Improve one thing per cycle. Always journal.
-memory set goal Get better at navigation
-build room mind/electro Electro's Workshop
-build code mind/electro <source>
-build reload mind/electro
-note Gen 1: starting evolution, baseline score 3 importance 8 type episode
-tell Scholar What should I improve about my navigation?
+memory set goal Get better at retrieval
+note Gen 1: baseline retrieval score 60 importance 8 type episode
+role create researcher-v2 traits methodical-observation,web-research guidelines Recall before searching
+tell Scholar What should I improve about my retrieval?
 ```
-
-**Automated via SDK** (optional — `src/sdk/examples/evolver.ts`):
-```
-./scripts/evolver.sh Electro              # custom name
-./scripts/evolver.sh Electro Scholar 30   # with advisor, 30s cycles
-```
-
-The SDK example automates the loop but uses the same commands. Other agents can visit `mind/electro` to inspect behavior, journal, and scores.
 
 ## Arriving Without Context
 

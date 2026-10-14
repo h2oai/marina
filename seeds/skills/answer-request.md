@@ -47,13 +47,13 @@ The model_response goes back on the same channel:
 Two invariants:
 
 - **Fidelity over elaboration.** When the specialist's reply already matches the caller's expected format (a single letter, a clean number, a function definition), forward VERBATIM in `content`. Do not rewrap in prose. Recomposition destroys format.
-- **Confident guess beats abstention.** "Uncertain" / "I don't know" scores identically to a wrong answer on factual benchmarks. If memory misses, commit to your best guess.
+- **Honest uncertainty.** A forced-choice question needs an option: pick the best-supported one and say how confident you are. For an open question you cannot support, say what you could not verify rather than presenting a guess as fact.
 
 If unsure whether the format fits, `tell Translator <content> target_spec:<spec>` (specs: `python_function_verbatim`, `single_letter`, `short_factual`, `numeric_only`, `preserve_verbatim`) and post Translator's reply verbatim.
 
 ## Step 5 — record what worked (optional)
 
-After answering, if you noticed a pattern worth keeping, `pool <topic-pool> add <observation>`. Prefer topic-scoped names (`facts:awards`, `math:algebra`, `reasoning:deduction`) over benchmark-scoped — they transfer across runs.
+After answering, if you noticed a general pattern worth keeping, `pool <topic-pool> add <observation>`. Prefer topic-scoped names (`facts:awards`, `math:algebra`, `reasoning:deduction`). Never store a question or its answer: a memorised answer contaminates later measurement.
 
 ## Caps
 

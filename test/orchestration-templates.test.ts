@@ -105,7 +105,10 @@ describe("orchestration pattern templates", () => {
       const notes = (TEMPLATES[pattern] ?? []).map(
         (note, index) => ({ id: index + 1, content: note.content }) as NoteRow,
       );
-      const report = auditKnowledgeNotes(notes, { knownCommands: commandNames });
+      const report = auditKnowledgeNotes(notes, {
+        commands: fixture.engine.commands.allBuiltins(),
+        knownCommands: commandNames,
+      });
       expect(report.staleCommands.map((f) => f.detail)).toEqual([]);
       expect(report.duplicateGroups).toEqual([]);
       expect(report.overlong.map((f) => f.detail)).toEqual([]);

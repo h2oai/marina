@@ -38,7 +38,7 @@ Dependent sub-questions (the answer to step 2 is the input to step 3) go sequent
 When all sub-answers are in, combine them deterministically. If they disagree or any specialist returned uncertainty, surface that:
 
 - Two sources disagree → `tell Skeptic <both answers>` for arbitration, OR pick the most-cited.
-- Specialist returned "Uncertain" → fall back to your own best guess based on what you know. Don't propagate "Uncertain" upward.
+- Specialist returned "Uncertain" → answer from what you know if you can support it; otherwise say which part you could not verify. Don't hide the uncertainty.
 
 ## Step 4 — respond once
 
