@@ -9,15 +9,16 @@
  * dial exists so a locked ceiling is always a deliberate operator decision,
  * never an accident of unfinished plumbing:
  *
- * - `guarded` (default) — gates behave as designed: supervised attempts run
- *   only inside a witness-granted supervision window, and unattended use is
- *   earned through witnessed demonstrations or operator grants.
- * - `earned` — optimistic supervision: an agent with sufficient standing may
- *   RUN a supervised operation unattended; the demonstration is recorded as
- *   pending, and the flip to unsupervised competence happens only when a
- *   qualified witness attests the recorded demonstration afterwards.
- *   Practice is free; capability is confirmed by review. The core below gets
- *   NO optimistic mode — it still needs a witness window (or a grant).
+ * - `guarded` (default) — gates behave as designed: a supervised attempt is
+ *   held as a challenge and runs once a person approves it; approvals from
+ *   outside the requester's lineage are the demonstrations that make the gate
+ *   its own (src/engine/safety-gates.ts), or an operator grants it.
+ * - `earned` — `guarded` plus optimistic supervision for the earnable gates:
+ *   an entity whose standing clears a gate's floor RUNS the supervised
+ *   operation at once; the run is recorded as a pending demonstration that
+ *   counts only once an operator attests it (`witness attest`). Practice is
+ *   free; capability is confirmed by review. The core below gets NO
+ *   optimistic mode — it stays operator-grant (a held run, approved once).
  * - `open` — the operator declares standing purely descriptive: every gate
  *   auto-passes EXCEPT the irreducible destructive core below. That includes
  *   `code.exec` — allowlisted, workspace-pinned host execution (`code run`,
@@ -73,8 +74,8 @@ export function describeAutonomyPosture(posture: AutonomyPosture = getAutonomyPo
     case "open":
       return "OPEN — standing is descriptive; every gate auto-passes (incl. allowlisted code.exec) except the core (keys, world erasure, shell, unrestricted exec)";
     case "earned":
-      return "EARNED — supervised operations run freely; unattended capability flips when a qualified witness attests recorded demonstrations";
+      return "EARNED — supervised operations on earnable gates run freely; capability flips when an operator attests the recorded runs or approves held ones; the core stays operator-grant";
     default:
-      return "GUARDED — supervised operations need a witness-granted window; unattended capability is earned through witnessed demonstrations or operator grants";
+      return "GUARDED — supervised operations are held until a person approves them; approved runs (or an operator grant) make a gate solo; the core stays operator-grant";
   }
 }

@@ -13,7 +13,7 @@ import { requiresPersistence } from "./command-messages";
 const ALLOWLIST_FLOOR = "Managing the allowlist requires steward rank (7).";
 
 const HELP = `Shell management and output routing.
-Gated capability: earn it via \`witness request shell.exec\` or an operator grant (see \`standing\`).
+Operator-grant capability: an operator grants it (\`gate grant\`) or approves a single held run; standing and approvals never earn it.
 Usage: shell list | shell allow <binary> | shell deny <binary>
        shell history [n] | shell log [entity] [n]
        shell scratch ls | shell scratch cat <file> | shell scratch rm <file>

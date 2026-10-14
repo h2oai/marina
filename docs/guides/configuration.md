@@ -52,7 +52,7 @@ Marina decides who it is for from how it is bound, and removes friction accordin
 
 | Profile | When (if `MARINA_PROFILE` is unset) | What it means |
 |---|---|---|
-| `local` | every listener binds loopback and `MARINA_AUTH` is off | **Ungated.** All safety gates auto-pass, the witness ladder is bypassed, every loopback login is sovereign, arbitrary host commands run without a prompt (`code exec-mode auto`), rate limits, login caps and memory budgets are off, database durability defaults to `normal`. Audit stays on. |
+| `local` | every listener binds loopback and `MARINA_AUTH` is off | **Ungated.** All safety gates auto-pass, nothing is held for approval, every loopback login is sovereign, arbitrary host commands run without a prompt (`code exec-mode auto`), rate limits, login caps and memory budgets are off, database durability defaults to `normal`. Audit stays on. |
 | `shared` | `MARINA_AUTH=better-auth` is on | Gates, ranks and limits enforced; sign-in identifies people. |
 | `public` | any non-loopback bind without sign-in | Everything enforced; passwordless names carry no authority. |
 

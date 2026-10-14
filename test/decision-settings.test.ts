@@ -158,7 +158,7 @@ describe("console / CLI: admin decisions and decision settings", () => {
   it("an agent without the earned gate is told how to earn it, not refused forever", () => {
     const viaInternal = adminDecisions(deps(true), agentEntity, ["set", "gate", "off"]);
     expect(viaInternal).toContain("once it has earned the decisions.configure gate");
-    expect(viaInternal).toContain("witness request decisions.configure");
+    expect(viaInternal).toContain("`gate list` shows the path");
     db.saveAgentConfig({ name: "Scout", model: "marina/default", spawnedBy: "system" });
     const viaConfig = runDecisionSettings(deps(), agentEntity, ["set", "gate", "off"], {
       personAuthorized: false,

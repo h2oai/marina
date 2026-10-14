@@ -1181,7 +1181,7 @@ async function spawnUseCaseAgents(
     return { names, reason: "none (no model provider configured)" };
   }
   // Posture-aware spawn authorization. Self-certification stays closed
-  // (standing alone never passes in guarded posture), while witness windows,
+  // (standing alone never passes in guarded posture), while
   // the earned posture's reviewed practice, an approved challenge and an
   // operator-declared open posture all authorize with their consequence recorded.
   const gate = checkGateForExecution(db, requesterId, "agent.spawn");

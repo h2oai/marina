@@ -69,7 +69,12 @@ export function adminCommand(deps: AdminDeps): CommandDef {
     name: "admin",
     minRank: 5,
     gate: "admin.destructive",
-    help: "Admin commands. Requires rank 5 and the admin.destructive gate — see `witness` and `standing` for the earnable path.\nUsage: admin kick|ban|unban|bans|stats|announce|reload|export|snapshot|snapshots|decisions\n\nExamples:\n  admin kick Alice\n  admin ban Bob Griefing\n  admin stats\n  admin announce Server restart in 5 minutes\n  admin snapshot default-v1              — clone live DB to seeds/default-v1.db\n  admin snapshot default-v1 --force      — overwrite existing snapshot\n  admin snapshot gen-2 --compact         — clone + prune compaction-chaff before serializing\n  admin snapshots                        — list saved seed snapshots",
+    // Reading the decision settings is open to all (as `decision settings`
+    // is); changing them stays behind the gate.
+    readOnlyForm: (input) =>
+      input.tokens[0]?.toLowerCase() === "decisions" &&
+      ["show", "list", "ls", "history"].includes(input.tokens[1]?.toLowerCase() ?? "show"),
+    help: "Admin commands. Requires the admin.destructive gate (operator grant). `admin decisions` and `admin decisions history` read for everyone.\nUsage: admin kick|ban|unban|bans|stats|announce|reload|export|snapshot|snapshots|decisions\n\nExamples:\n  admin kick Alice\n  admin ban Bob Griefing\n  admin stats\n  admin announce Server restart in 5 minutes\n  admin snapshot default-v1              — clone live DB to seeds/default-v1.db\n  admin snapshot default-v1 --force      — overwrite existing snapshot\n  admin snapshot gen-2 --compact         — clone + prune compaction-chaff before serializing\n  admin snapshots                        — list saved seed snapshots",
     handler(ctx, input) {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

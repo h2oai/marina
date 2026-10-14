@@ -27,8 +27,8 @@ The runtime provides the following capabilities:
 - **Observable execution.** Correlated traces and structured logs are durable, queryable in the
   dashboard, exportable as OTLP JSON, and usable as evaluation and routing evidence.
 - **Governed autonomy.** Standing and per-operation competence gates apply to consequential
-  actions; the witness ladder (`witness request <gate>` → supervised demonstration → attestation)
-  lets any participant earn capability in-world, and the operator's `MARINA_AUTONOMY` posture dial
+  actions; approvals are the proof (a held run a person approves → one demonstration → solo use)
+  so any participant earns capability in-world, and the operator's `MARINA_AUTONOMY` posture dial
   (guarded / earned / open) sets the ceiling. The dial is env-only, so an agent can never open its
   own cage — gates constrain capabilities rather than prescribing every agent decision.
 - **Multiple lenses over one state.** Dashboard, Canvas, web chat, MCP, WebSocket, SDK, REST memory,

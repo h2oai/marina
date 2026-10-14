@@ -9,7 +9,7 @@ import { classifyPrimitive } from "../telemetry/primitive-usage";
 import type { CommandContext, EngineEvent, Entity, EntityId, RoomContext, RoomId } from "../types";
 import type { EntityManager } from "../world/entity-manager";
 import type { RoomManager } from "../world/room-manager";
-import { raiseForCommand } from "./challenges";
+
 import { failCommandResponse } from "./command-response";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
@@ -24,9 +24,9 @@ import {
 } from "./gate-context";
 import type { Logger } from "./logger";
 import { expandMacroBody, macroLimits, roomMacroOwner } from "./macro-expansion";
-import { getRank, rankName } from "./permissions";
+import { rankName } from "./permissions";
+import { rankFloorRefusal } from "./rank-floor";
 import { checkGateForExecution, recordGateExecution } from "./safety-gates";
-import { isLocalUngated } from "./trust-profile";
 
 /** Admission/FIFO/drain belongs to CommandCoordinator; execution policy lives here. */
 export interface CommandExecutionOptions {
@@ -176,8 +176,8 @@ export class CommandPhaseCoordinator {
 
     // Enforce minRank on UNGATED built-in commands. A command that declares a
     // safety gate defers its rank floor to the gate in every posture: the gate
-    // (standing floor, competence row, witness window, challenge approval and
-    // the destructive-core carve-out under `open`) is the single authority.
+    // (standing floor, competence row, a person's approval and the
+    // operator-grant core under `open`) is the single authority.
     // Keeping minRank in front of it double-locked the ladder — auto-derived
     // rank caps at 4 while gated commands demand 5+, so a gate holder below
     // rank 5 could never reach the gate it had earned.
@@ -189,24 +189,25 @@ export class CommandPhaseCoordinator {
     const pass = claimCommandPass(entityId, routedRaw);
     armGatePass(entityId, pass);
 
-    if (def?.minRank && def.minRank > 0 && !pass?.rankWaived) {
-      const rank = getRank(entity);
-      const gateIsAuthority = Boolean(def.gate && this.host.db);
-      // LOCAL profile: rank floors are off for the operator's own instance
-      // (loopback logins are also promoted to sovereign at login).
-      if (rank < def.minRank && !gateIsAuthority && !isLocalUngated()) {
+    // A read-only form of a ranked or gated command (`world list`, `position
+    // list`, `admin decisions`): neither the rank floor nor the gate applies;
+    // the write forms stay behind both.
+    const readOnly = def?.readOnlyForm?.(input) === true;
+
+    // ONE rank-floor rule: the router's floor is `rankFloorRefusal`, the same
+    // function inline subcommand floors use — it passes under the local
+    // operator's instance and the `open` posture, honours an approved rank
+    // challenge for this run, and otherwise refuses and raises a challenge.
+    if (def?.minRank && def.minRank > 0 && !readOnly && !(def.gate && this.host.db)) {
+      const refusal = rankFloorRefusal(
+        entity,
+        def.minRank,
+        `You must be at least ${rankName(def.minRank)} (rank ${def.minRank}) to use "${def.name}".`,
+        def.gate ? { gateId: def.gate } : {},
+      );
+      if (refusal !== undefined) {
         failCommandResponse(`Rank ${def.minRank} required for ${def.name}`);
-        this.host.sendToEntity(
-          entityId,
-          `You must be at least ${rankName(def.minRank)} (rank ${def.minRank}) to use "${def.name}".` +
-            raiseForCommand({
-              requesterId: entityId,
-              command: routedRaw,
-              reason: `rank ${def.minRank}`,
-              minRank: def.minRank,
-              ...(def.gate ? { gateId: def.gate } : {}),
-            }),
-        );
+        this.host.sendToEntity(entityId, refusal);
         recordUsage(false);
         return;
       }
@@ -214,14 +215,14 @@ export class CommandPhaseCoordinator {
 
     // Enforce safety gate if declared. A gate is a per-operation competence
     // proof — see src/engine/safety-gates.ts. Self-certification stays closed
-    // (a standing-only holder is refused in guarded posture with no window),
-    // but the ladder is now walkable: `checkGateForExecution` authorizes via
-    // unsupervised competence, an operator-declared open posture (non-core
-    // gates), a live witness-granted supervision window, or — under the
-    // `earned` posture — optimistic supervision whose demonstration counts
-    // only after a qualified witness attests it. `recordGateExecution`
-    // writes the competence consequence of whichever path authorized us.
-    if (def?.gate && this.host.db) {
+    // (a standing-only holder is refused in guarded posture), but the ladder
+    // is walkable: `checkGateForExecution` authorizes via unsupervised
+    // competence, a person's approval of this held run, the local operator's
+    // instance, an operator-declared open posture (earnable gates), or —
+    // under the `earned` posture — an optimistic run recorded as a pending
+    // demonstration. `recordGateExecution` writes the competence consequence
+    // of whichever path authorized us (an approved run is a demonstration).
+    if (def?.gate && this.host.db && !readOnly) {
       const result = checkGateForExecution(this.host.db, entityId, def.gate);
       if (!result.ok) {
         failCommandResponse(result.reason ?? `Gate "${def.gate}" denied.`);
@@ -280,7 +281,7 @@ export class CommandPhaseCoordinator {
     // unattended dangerous ops (see the gate check above) — self-recording a
     // demonstration on a clean run is exactly the self-certification path that
     // let a standing-only entity auto-unlock a gate. Competence is earned only
-    // via operator grant / rank promotion / witnessed demonstration.
+    // via operator grant / rank promotion / approved runs.
     recordUsage(true);
 
     this.host.logEvent({

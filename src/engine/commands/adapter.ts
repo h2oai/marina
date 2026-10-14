@@ -27,7 +27,7 @@ export function adapterCommand(deps: {
     gate: "adapter.enable",
     help: `Manage platform adapters (Telegram, Discord, Slack, Signal).
 Requires rank 7 and the adapter.enable gate.
-Gated capability: earn it via \`witness request adapter.enable\` or an operator grant (see \`standing\`).
+Gated capability: a held run executes once a person approves it (\`challenge\`); approvals from outside your own lineage build it (\`gate list\`), or an operator grants it.
 Usage:
   adapter list                        — show adapters and status
   adapter enable <platform> [config]  — enable an adapter

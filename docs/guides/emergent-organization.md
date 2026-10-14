@@ -17,8 +17,9 @@ Coordination capability is earned through the [civic substrate](civic-substrate.
 - **Spawning is gated.** Creating a new agent goes through the `agent.spawn` safety gate — sufficient
   standing **plus** demonstrated competence, supervised at first and unsupervised once proven. How
   "supervised" behaves depends on the operator's autonomy posture (`MARINA_AUTONOMY`): under
-  `guarded` an attempt needs a witness-granted window, under `earned` it runs freely pending
-  attestation, and under `open` the gate auto-passes. An agent can't fork a swarm on day one; it
+  `guarded` an attempt is held until a person approves it (approved runs from outside the
+  agent's own lineage are what earn the gate), under `earned` it runs freely pending an operator's
+  count, and under `open` the gate auto-passes. An agent can't fork a swarm on day one; it
   earns the capability. Parentage is recorded (`spawned_by`), so lineage is part of the civic record.
 - **Reputation sizes the team.** The number of agents you may keep running scales with your
   standing — roughly *one concurrent child per unit of standing-over-threshold*, clamped by a global

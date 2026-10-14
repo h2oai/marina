@@ -15,7 +15,7 @@ Machine-readable forms and JSON invocation schemas are emitted to `dist/referenc
 
 Manage platform adapters (Telegram, Discord, Slack, Signal).
 Requires rank 7 and the adapter.enable gate.
-Gated capability: earn it via `witness request adapter.enable` or an operator grant (see `standing`).
+Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it.
 Usage:
   adapter list                        — show adapters and status
   adapter enable <platform> [config]  — enable an adapter
@@ -66,7 +66,7 @@ Effect: unknown.
 
 ## admin
 
-Admin commands. Requires rank 5 and the admin.destructive gate — see `witness` and `standing` for the earnable path.
+Admin commands. Requires the admin.destructive gate (operator grant). `admin decisions` and `admin decisions history` read for everyone.
 Usage: admin kick|ban|unban|bans|stats|announce|reload|export|snapshot|snapshots|decisions
 
 Examples:
@@ -1178,7 +1178,7 @@ Effect: unknown.
 In-game building for rooms, templates, and dynamic commands.
 Usage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command
 
-Rank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (earn it via `witness request world.code` or an operator grant).
+Rank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (operator grant; an operator may approve a single held run).
 
 Examples:
   build room my/garden A Quiet Garden
@@ -3188,7 +3188,7 @@ Effect: unknown.
 
 ## connect
 
-Manage external MCP connectors. Gated capability: earn it via `witness request connect.manage` or an operator grant (see `standing`). Usage: connect add <name> <url> | connect add <name> stdio <cmd> [args] (shell.exec gate; spawns a local process) | connect remove <name> | connect list | connect tools <name> | connect call <name> <tool> [json] | connect auth <name> bearer <token> | connect auth <name> header <key> <value>
+Manage external MCP connectors. Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it. Usage: connect add <name> <url> | connect add <name> stdio <cmd> [args] (shell.exec gate; spawns a local process) | connect remove <name> | connect list | connect tools <name> | connect call <name> <tool> [json] | connect auth <name> bearer <token> | connect auth <name> header <key> <value>
 
 Category: Building. Minimum rank: 5. Gate: `connect.manage`.
 Aliases: `conn`.
@@ -4124,8 +4124,9 @@ Usage:
   gate list [entity]            — every gate and its status for you (or <entity>)
   gate grant <entity> <gate>    — grant a gate you hold solo (sovereigns: any gate)
   gate revoke <entity> <gate>   — (sovereign) take a gate back
-Core gates (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code) are granted by sovereigns only; nobody grants themselves.
-Earning a gate instead: `witness request <gate>`. Your ladder: `standing`.
+Operator-grant gates (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code) are granted by sovereigns only; nobody grants themselves.
+Earning a gate instead: run the gated action — the held run executes once a person approves it, and
+approvals from outside your own lineage build the gate (`challenge`).
 
 Category: Civic. Minimum rank: 0.
 Aliases: `gates`.
@@ -4153,7 +4154,7 @@ Effect: unknown.
 
 ## gateway
 
-Bridge to peer Marina instances. Gated capability: earn it via `witness request gateway.connect` or an operator grant (see `standing`). Usage: gateway add <name> <ws-url> | gateway remove <name> | gateway list | gateway status <name> | gateway bridge <name> <channel> | gateway unbridge <name> <channel> | gateway send <name> <entity> <message>
+Bridge to peer Marina instances. Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it. Usage: gateway add <name> <ws-url> | gateway remove <name> | gateway list | gateway status <name> | gateway bridge <name> <channel> | gateway unbridge <name> <channel> | gateway send <name> <entity> <message>
 
 Category: Federation. Minimum rank: 5. Gate: `gateway.connect`.
 Aliases: `gw`.
@@ -4717,7 +4718,7 @@ Effect: unknown.
 
 Manage LLM API keys.
 Requires rank 8 and the key.manage gate.
-Gated capability: earn it via `witness request key.manage` or an operator grant (see `standing`).
+Operator-grant capability: an operator grants it (`gate grant`) or approves a single held run; standing and approvals never earn it.
 Usage:
   key list                          — show all keys (masked)
   key add <name> <provider> <value> — store a named key
@@ -5063,7 +5064,7 @@ Effect: unknown.
 ## marina-descend
 
 Create and operate sovereign Marina descendants through World Collective.
-Gated capability: earn it via `witness request world.lineage` or an operator grant (see `standing`).
+Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it.
 Usage:
   marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]
   marina-descend start <descendant-id>
@@ -7219,7 +7220,7 @@ Effect: unknown.
 ## run
 
 Execute shell commands.
-Gated capability: earn it via `witness request agent.run` or an operator grant (see `standing`).
+Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it.
 Usage: run <binary> [args...]
        run quiet <binary> [args...]
        run raw <command string>
@@ -7488,7 +7489,7 @@ Effect: unknown.
 ## shell
 
 Shell management and output routing.
-Gated capability: earn it via `witness request shell.exec` or an operator grant (see `standing`).
+Operator-grant capability: an operator grants it (`gate grant`) or approves a single held run; standing and approvals never earn it.
 Usage: shell list | shell allow <binary> | shell deny <binary>
        shell history [n] | shell log [entity] [n]
        shell scratch ls | shell scratch cat <file> | shell scratch rm <file>
@@ -8510,15 +8511,16 @@ Effect: unknown.
 
 ## witness
 
-witness — earn gated capabilities through supervised demonstrations.
+witness — earn gated capabilities (now through challenges).
 Usage:
-  witness                       — your gate ladder + open items you can act on
-  witness request <gate>        — ask a qualified holder to supervise a demonstration
-  witness grant <entity> <gate> — (qualified) open a one-demonstration window (10 min)
-  witness queue                 — open requests + pending demonstrations you can act on
-  witness attest <id>           — (qualified) attest a recorded demonstration
-  witness reject <id> [reason]  — (qualified) reject a recorded demonstration
-Gates and your progress: `standing`. Qualification: you can witness only gates you hold solo.
+  witness                       — your gate ladder (same as `gate list`)
+  witness request <gate>        — how to earn <gate>: run it; a person approves the held run
+  witness grant <entity> <gate> — (retired) lists <entity>'s held runs of <gate> you can approve
+  witness queue                 — pending demonstrations (earned posture) you can review
+  witness attest <id>           — (operator) count a pending demonstration
+  witness reject <id> [reason]  — (operator) decline a pending demonstration
+A gated action you don't hold runs once a person approves it (`challenge`); approvals from
+outside your own lineage build the gate. Operator-grant gates are granted, never earned.
 
 Category: Civic. Minimum rank: 0.
 Aliases: none.

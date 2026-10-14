@@ -11,7 +11,6 @@ import type { CommandDef, Entity, RoomContext } from "../../types";
 import { RECRUIT_MIN_STANDING } from "../constants";
 import { getRank } from "../permissions";
 import { rankFloorRefusal } from "../rank-floor";
-import { isLocalUngated } from "../trust-profile";
 
 /** Runtime states in which a running agent can be pulled into a crew. */
 const RECRUITABLE_STATES = new Set<AgentStatus["state"]>(["autonomous", "connected", "idle"]);
@@ -37,14 +36,18 @@ function recruitPermission(
   eid: string,
   caller: Entity,
 ): { ok: boolean; reason?: string } {
-  // The operator's local instance lifts rank floors, as `rankFloorRefusal` does.
-  if (getRank(caller) >= 2 || isLocalUngated()) return { ok: true };
+  if (getRank(caller) >= 2) return { ok: true };
   if (deps.db && getStanding(deps.db, eid) >= RECRUIT_MIN_STANDING) return { ok: true };
   const have = deps.db ? getStanding(deps.db, eid).toFixed(1) : "n/a";
-  return {
-    ok: false,
-    reason: `Recruiting is an organizer capability (rank 2 / ${RECRUIT_MIN_STANDING} standing) — you have ${have}. Contribute to earn it, or 'crew join' an existing crew instead.`,
-  };
+  // The one rank-floor rule: the local operator's instance and the `open`
+  // posture lift it, an approved challenge passes this run, and otherwise the
+  // refusal raises a challenge.
+  const refusal = rankFloorRefusal(
+    caller,
+    2,
+    `Recruiting is an organizer capability (rank 2 / ${RECRUIT_MIN_STANDING} standing) — you have ${have}. Contribute to earn it, or 'crew join' an existing crew instead.`,
+  );
+  return refusal === undefined ? { ok: true } : { ok: false, reason: refusal };
 }
 
 /**

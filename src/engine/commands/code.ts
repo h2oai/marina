@@ -771,8 +771,8 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         }
         // The narrower gated set (earned competence). patch/propose stay rank 0
         // (read/propose are open per policy) and so are NOT gated here.
-        // Posture-aware check: self-certification stays closed, while witness
-        // windows, earned-posture reviewed practice, and an operator-declared
+        // Posture-aware check: self-certification stays closed, while approved
+        // runs, earned-posture reviewed practice, and an operator-declared
         // open posture authorize with their consequence recorded.
         if (CODE_EXEC_SUBCOMMANDS.has(canonicalSub) || mutatesSandbox || isProject) {
           const gate = checkGateForExecution(depsWithDb.db, input.entity, "code.exec");

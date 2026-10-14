@@ -120,7 +120,7 @@ export function keyCommand(deps: {
     gate: "key.manage",
     help: `Manage LLM API keys.
 Requires rank 8 and the key.manage gate.
-Gated capability: earn it via \`witness request key.manage\` or an operator grant (see \`standing\`).
+Operator-grant capability: an operator grants it (\`gate grant\`) or approves a single held run; standing and approvals never earn it.
 Usage:
   key list                          — show all keys (masked)
   key add <name> <provider> <value> — store a named key

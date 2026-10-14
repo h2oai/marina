@@ -2,24 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Autonomy posture + witness ladder — the earnable path through safety gates.
+ * Autonomy posture — the earnable path through safety gates.
  *
  * Contracts under test:
- * - `open` posture auto-passes non-core gates on ZERO standing, while the
- *   destructive core (key.manage, admin.destructive, shell.exec,
- *   code.exec.unrestricted) stays gated even under `open`.
- * - `guarded` posture refuses a standing-only holder with a refusal that
- *   names the walkable path, honors a witness-granted window exactly once,
- *   credits the granting witness, and flips the gate at demoThreshold.
- * - `earned` posture runs optimistically and records a pending attestation;
- *   only a qualified external witness's attestation advances the flip.
- * - Self-witnessing and unqualified witnessing are refused everywhere.
+ * - `open` posture auto-passes earnable gates on ZERO standing, while the
+ *   operator-grant core (key.manage, admin.destructive, shell.exec,
+ *   code.exec.unrestricted, world.code) stays gated even under `open`.
+ * - `guarded` posture holds a standing-only attempt for approval, naming the
+ *   path; legacy supervision windows no longer authorize anything (approved
+ *   runs are the proof — test/gates-approvals-as-proof.test.ts).
+ * - `earned` posture runs earnable gates optimistically and records a pending
+ *   demonstration; only an operator (a person) may count it.
+ * - `witness` subcommands keep working as compatibility pointers.
  * - The engine router defers minRank to the gate for gated commands in EVERY
  *   posture: the gate is the single authority (no guarded double-lock).
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { getAutonomyPosture, OPEN_POSTURE_CORE } from "../src/engine/autonomy";
+import { resetChallengesForTests } from "../src/engine/challenges";
 import { witnessCommand } from "../src/engine/commands/witness";
 import { Engine } from "../src/engine/engine";
 import {
@@ -55,11 +56,36 @@ function giveStanding(db: MarinaDB, entity: Entity, amount: number): void {
   db.recordStandingEarned(entity.id, entity.name, taskId, amount);
 }
 
+function witnessHarness(db: MarinaDB, people: Entity[]) {
+  const sent: string[] = [];
+  const ctx = { send: (_t: EntityId, m: string) => sent.push(m) } as unknown as RoomContext;
+  const entities = new Map<string, Entity>(people.map((e) => [String(e.id), e]));
+  const command = witnessCommand({
+    db,
+    getEntity: (id) => entities.get(String(id)),
+    getAllEntities: () => [...entities.values()],
+    resolveEntityIdByName: (name) =>
+      [...entities.values()].find((e) => e.name.toLowerCase() === name.toLowerCase())?.id,
+  });
+  const run = (actor: Entity, args: string) =>
+    command.handler(ctx, {
+      raw: `witness ${args}`.trim(),
+      verb: "witness",
+      args,
+      tokens: args ? args.split(/\s+/) : [],
+      entity: actor.id,
+      room: roomId("test/start"),
+    } as CommandInput);
+  return { sent, run };
+}
+
 describe("autonomy posture", () => {
   let db: MarinaDB;
 
   beforeEach(() => {
     delete process.env.MARINA_AUTONOMY;
+    // No challenge host from an earlier file: principal kinds read "agent".
+    resetChallengesForTests();
     db = new MarinaDB(DB_PATH);
   });
 
@@ -98,92 +124,54 @@ describe("autonomy posture", () => {
     expect(db.listOpenWitnessRows({ entityId: agent.id })).toEqual([]);
   });
 
-  it("guarded: standing-only is refused with the walkable path named", () => {
+  it("guarded: standing-only is held for approval with the walkable path named", () => {
     const agent = makeEntity("e_learner", "Learner");
     db.saveEntity(agent);
-    giveStanding(db, agent, 80); // above agent.spawn's 40
+    giveStanding(db, agent, 80); // above agent.spawn's floor
     const result = checkGateForExecution(db, agent.id, "agent.spawn");
     expect(result.ok).toBe(false);
-    expect(result.reason).toContain("witness request agent.spawn");
+    expect(result.reason).toContain("Approval needed");
+    expect(result.reason).toContain("approved run");
+    expect(result.reason).not.toContain("witness request");
   });
 
-  it("guarded: a witness window authorizes exactly one demonstration, credited to the witness, and flips at threshold", () => {
-    const witness = makeEntity("e_mentor", "Mentor");
+  it("guarded: a legacy supervision-window row no longer authorizes a run", () => {
+    const mentor = makeEntity("e_mentor", "Mentor");
     const learner = makeEntity("e_learner", "Learner");
-    db.saveEntity(witness);
+    db.saveEntity(mentor);
     db.saveEntity(learner);
-    grant(db, witness.id, "agent.spawn"); // mentor holds the gate solo
+    grant(db, mentor.id, "agent.spawn");
     giveStanding(db, learner, 80);
-
-    const threshold = SAFETY_GATES["agent.spawn"]!.demoThreshold;
-    for (let demo = 1; demo <= threshold; demo++) {
-      db.createWitnessRow({
-        entityId: learner.id,
-        gate: "agent.spawn",
-        kind: "window",
-        witnessId: witness.id,
-        expiresAt: Date.now() + 60_000,
-      });
-      const result = checkGateForExecution(db, learner.id, "agent.spawn");
-      expect(result.ok).toBe(true);
-      if (demo < threshold) expect(result.mode).toBe("windowed");
-      recordGateExecution(db, learner.id, "agent.spawn", result, `demo ${demo}`);
-    }
-    // Threshold reached — the gate is now unattended, no window needed.
-    expect(db.getCompetence(learner.id, "agent.spawn")?.supervised_only).toBe(0);
-    const solo = checkGateForExecution(db, learner.id, "agent.spawn");
-    expect(solo.ok).toBe(true);
-    expect(solo.mode).toBe("unattended");
-
-    // A window is single-use: without a fresh one, a second learner is refused.
-    const other = makeEntity("e_other", "Other");
-    db.saveEntity(other);
-    giveStanding(db, other, 80);
     db.createWitnessRow({
-      entityId: other.id,
+      entityId: learner.id,
       gate: "agent.spawn",
       kind: "window",
-      witnessId: witness.id,
+      witnessId: mentor.id,
       expiresAt: Date.now() + 60_000,
     });
-    const first = checkGateForExecution(db, other.id, "agent.spawn");
-    expect(first.mode).toBe("windowed");
-    recordGateExecution(db, other.id, "agent.spawn", first, "demo");
-    const second = checkGateForExecution(db, other.id, "agent.spawn");
-    expect(second.ok).toBe(false);
+    const result = checkGateForExecution(db, learner.id, "agent.spawn");
+    expect(result.ok).toBe(false);
+    expect(db.getCompetence(learner.id, "agent.spawn")?.demonstrations ?? 0).toBe(0);
   });
 
-  it("earned: the destructive core gets NO optimistic mode — window, grant or local profile only", () => {
+  it("earned: the operator-grant core gets NO optimistic mode — grant or local profile only", () => {
     process.env.MARINA_AUTONOMY = "earned";
     const learner = makeEntity("e_core_learner", "CoreLearner");
     const mentor = makeEntity("e_core_mentor", "CoreMentor");
     db.saveEntity(learner);
     db.saveEntity(mentor);
-    giveStanding(db, learner, 400); // above every core gate's minStanding
+    giveStanding(db, learner, 400);
     for (const gateId of OPEN_POSTURE_CORE) {
-      expect(400).toBeGreaterThanOrEqual(SAFETY_GATES[gateId]!.minStanding);
+      expect(SAFETY_GATES[gateId]!.operatorGrant).toBe(true);
       const refused = checkGateForExecution(db, learner.id, gateId);
       expect(refused.ok).toBe(false);
       expect(refused.mode).toBeUndefined();
-      expect(refused.reason).toContain(`witness request ${gateId}`);
-      // No "set MARINA_AUTONOMY=earned" hint for a gate earned cannot open.
+      expect(refused.reason).toContain("Operator grant");
+      expect(refused.reason).not.toContain("needs standing");
       expect(refused.reason).not.toContain("MARINA_AUTONOMY=earned");
-
-      // A live witness window still authorizes a supervised run.
       grant(db, mentor.id, gateId);
-      db.createWitnessRow({
-        entityId: learner.id,
-        gate: gateId,
-        kind: "window",
-        witnessId: mentor.id,
-        expiresAt: Date.now() + 60_000,
-      });
-      const windowed = checkGateForExecution(db, learner.id, gateId);
-      expect(windowed.ok).toBe(true);
-      expect(windowed.mode).toBe("windowed");
-      recordGateExecution(db, learner.id, gateId, windowed, "core demo");
     }
-    // Non-core gates keep optimistic supervision under earned.
+    // Earnable gates keep optimistic supervision under earned.
     const spawn = checkGateForExecution(db, learner.id, "agent.spawn");
     expect(spawn.ok).toBe(true);
     expect(spawn.mode).toBe("optimistic");
@@ -193,7 +181,7 @@ describe("autonomy posture", () => {
     expect(granted.mode).toBe("unattended");
   });
 
-  it("earned: runs optimistically, records a pending attestation, and only external attestation advances the flip", () => {
+  it("earned: runs optimistically and records a pending demonstration an agent cannot attest", () => {
     process.env.MARINA_AUTONOMY = "earned";
     const learner = makeEntity("e_learner", "Learner");
     const mentor = makeEntity("e_mentor", "Mentor");
@@ -212,88 +200,38 @@ describe("autonomy posture", () => {
     expect(pending).toHaveLength(1);
     expect(db.getCompetence(learner.id, "agent.spawn")?.demonstrations ?? 0).toBe(0);
 
-    // The witness command attests it — competence advances.
-    const sent = new Map<string, string[]>();
-    const ctx = {
-      send: (target: EntityId, message: string) => {
-        const list = sent.get(String(target)) ?? [];
-        list.push(message);
-        sent.set(String(target), list);
-      },
-    } as unknown as RoomContext;
-    const entities = new Map<string, Entity>([
-      [String(learner.id), learner],
-      [String(mentor.id), mentor],
-    ]);
-    const command = witnessCommand({
-      db,
-      getEntity: (id) => entities.get(String(id)),
-      getAllEntities: () => [...entities.values()],
-      resolveEntityIdByName: (name) =>
-        [...entities.values()].find((e) => e.name.toLowerCase() === name.toLowerCase())?.id,
-    });
-    const invoke = (actor: Entity, args: string) =>
-      command.handler(ctx, {
-        raw: `witness ${args}`,
-        verb: "witness",
-        args,
-        tokens: args.split(/\s+/),
-        entity: actor.id,
-        room: roomId("test/start"),
-      } as CommandInput);
-
-    // Self-attestation is refused.
-    invoke(learner, `attest ${pending[0]!.id}`);
+    const { sent, run } = witnessHarness(db, [learner, mentor]);
+    // Self-review is refused; a gate-holding AGENT is not an operator.
+    run(learner, `attest ${pending[0]!.id}`);
+    run(mentor, `attest ${pending[0]!.id}`);
     expect(db.getCompetence(learner.id, "agent.spawn")?.demonstrations ?? 0).toBe(0);
-
-    // Qualified external attestation counts.
-    invoke(mentor, `attest ${pending[0]!.id}`);
-    expect(db.getCompetence(learner.id, "agent.spawn")?.demonstrations).toBe(1);
-    expect(db.getWitnessRow(pending[0]!.id)?.status).toBe("attested");
-
-    // Rejected demonstrations never count.
-    const again = checkGateForExecution(db, learner.id, "agent.spawn");
-    recordGateExecution(db, learner.id, "agent.spawn", again, "agent spawn Scout2");
-    const pending2 = db.listOpenWitnessRows({ kind: "pending", entityId: learner.id });
-    expect(pending2).toHaveLength(1);
-    invoke(mentor, `reject ${pending2[0]!.id} not a real demonstration`);
-    expect(db.getCompetence(learner.id, "agent.spawn")?.demonstrations).toBe(1);
-    expect(db.getWitnessRow(pending2[0]!.id)?.status).toBe("rejected");
+    expect(db.getWitnessRow(pending[0]!.id)?.status).toBe("open");
+    expect(sent.join("\n")).toContain("takes an operator");
   });
 
-  it("witness grant requires qualification and refuses self-supervision", () => {
+  it("witness subcommands are compatibility pointers: no window or request row is opened", () => {
     const learner = makeEntity("e_learner", "Learner");
-    const poser = makeEntity("e_poser", "Poser");
+    const holder = makeEntity("e_holder", "Holder");
     db.saveEntity(learner);
-    db.saveEntity(poser);
-    giveStanding(db, learner, 80);
-    giveStanding(db, poser, 500); // standing alone does not qualify a witness
-
-    const sent: string[] = [];
-    const ctx = {
-      send: (_t: EntityId, m: string) => sent.push(m),
-    } as unknown as RoomContext;
-    const entities = new Map<string, Entity>([
-      [String(learner.id), learner],
-      [String(poser.id), poser],
-    ]);
-    const command = witnessCommand({
-      db,
-      getEntity: (id) => entities.get(String(id)),
-      getAllEntities: () => [...entities.values()],
-      resolveEntityIdByName: (name) =>
-        [...entities.values()].find((e) => e.name.toLowerCase() === name.toLowerCase())?.id,
-    });
-    command.handler(ctx, {
-      raw: "witness grant Learner agent.spawn",
-      verb: "witness",
-      args: "grant Learner agent.spawn",
-      tokens: ["grant", "Learner", "agent.spawn"],
-      entity: poser.id,
-      room: roomId("test/start"),
-    } as CommandInput);
-    expect(sent.join("\n")).toContain("witness only gates you hold solo");
+    db.saveEntity(holder);
+    grant(db, holder.id, "agent.spawn");
+    const { sent, run } = witnessHarness(db, [learner, holder]);
+    run(holder, "grant Learner agent.spawn");
+    expect(sent.join("\n")).toContain("Supervision windows are retired");
     expect(db.getOpenSupervisionWindow(learner.id, "agent.spawn")).toBeUndefined();
+    sent.length = 0;
+    run(learner, "request agent.spawn");
+    expect(sent.join("\n")).toContain("approved runs");
+    expect(db.listOpenWitnessRows({ entityId: learner.id })).toEqual([]);
+    sent.length = 0;
+    run(learner, "request shell.exec");
+    expect(sent.join("\n")).toContain("operator-grant");
+    sent.length = 0;
+    run(learner, "queue");
+    expect(sent.join("\n")).toContain("Witness queue");
+    sent.length = 0;
+    run(learner, "");
+    expect(sent.join("\n")).toContain("Your gate ladder");
   });
 
   it("router defers minRank to the gate for gated commands in every posture", async () => {

@@ -14,7 +14,7 @@
  *   exact held input; the router claims it when that input is re-dispatched.
  * - ARMED gate passes: while a passed command runs, the approved gate ids are
  *   armed for that entity so the check inside the handler passes once, with
- *   the approver recorded as witness.
+ *   the approver recorded (an approval may count as a demonstration).
  *
  * The current command and its armed pass are scoped to ONE execution through
  * `runCommandScope()` (an AsyncLocalStorage frame per command). A nested
@@ -37,6 +37,11 @@ export interface GatePass {
   waivedRank?: number;
   /** Entity id of the approver, or undefined for the judge. */
   approverId?: string;
+  /**
+   * The approval counts as a demonstration toward the approved gate: a person
+   * outside the requester's lineage approved an earnable gate's run.
+   */
+  demonstrates?: boolean;
   approverName: string;
   token: string;
 }

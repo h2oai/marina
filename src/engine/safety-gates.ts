@@ -16,29 +16,33 @@
  * enforced imperatively inside their commands with the same pair. Under the
  * `local` trust profile (`isLocalUngated()`) every gate auto-passes.
  *
- * Standing is necessary but not sufficient. Even an agent with 1000
- * standing cannot execute shell commands until they've performed N
- * supervised executions and a witness has confirmed each one. After the
- * threshold flips `supervised_only` to 0, unsupervised use is allowed —
- * for as long as standing stays at or above the gate's `minStanding`.
- * Competence is a proof of demonstrations and is never un-flipped; standing
- * is the LIVE prerequisite (60-day half-life decay, penalties). A flipped
- * holder whose standing decays below the bar drops back to supervised-only
- * until it recovers, with no re-demonstration required. Operator grants
- * (`grant()`, `grantGatesForRank`) are admin overrides and are exempt from
- * the re-check; `revoke()` is their revocation path.
+ * APPROVALS ARE THE PROOF (2026-10-14). Two kinds of gate:
  *
- * Witness rules: a witness must be a different entity that itself has
- * `supervised_only=0` on the same gate (`canWitness`) — there is no rank
- * requirement. Operators bootstrap the chain through grants (`grant()`,
- * `grantGatesForRank` on promotion to rank ≥ 5); new entities can grow the
- * chain organically once they have demonstrated.
+ * - Earnable gates: a low standing floor (`minStanding`, reachable through
+ *   independently verified work) admits the attempt; a supervised attempt is
+ *   held as a challenge (src/engine/challenges.ts) and runs once a person
+ *   approves it. An approval from outside the requester's own lineage — an
+ *   operator, never the agent's own owner — is one demonstration
+ *   (`recordGateExecution`, mode `approved`); `demoThreshold` of them flip
+ *   `supervised_only` to 0 and solo use is allowed for as long as standing
+ *   stays at or above `minStanding`. Competence is never un-flipped; standing
+ *   is the LIVE prerequisite (60-day half-life decay). A flipped holder whose
+ *   standing decays below the bar drops back to supervised-only until it
+ *   recovers, with no re-demonstration required.
+ * - Operator-grant gates (`operatorGrant`, exactly `OPEN_POSTURE_CORE`): no
+ *   standing floor, no demonstrations. An operator grants them; an operator
+ *   may approve a single held run, which builds nothing.
+ *
+ * Operator grants (`grant()`, `grantGatesForRank`, `challenge approve …
+ * always`) write the `GRANTED_DEMONSTRATIONS` sentinel and are exempt from the
+ * standing re-check; `revoke()` is their revocation path. Self-approval is
+ * always refused.
  */
 
 import { getStanding } from "../agent/standing";
 import type { MarinaDB } from "../persistence/database";
 import { isGrantedCompetence } from "../persistence/db-competence";
-import { getAutonomyPosture, OPEN_POSTURE_CORE } from "./autonomy";
+import { getAutonomyPosture } from "./autonomy";
 import { onGateRefused, takeArmedGatePass } from "./gate-context";
 import { isLocalUngated } from "./trust-profile";
 
@@ -53,24 +57,60 @@ import { isLocalUngated } from "./trust-profile";
  */
 export interface GateDef {
   id: string;
-  /** Decayed standing required to even attempt the operation. */
+  /**
+   * Decayed standing required to attempt the operation (0 for operator-grant
+   * gates, which standing never opens).
+   */
   minStanding: number;
-  /** Demonstrations needed to flip supervised_only → 0. */
+  /**
+   * Approved runs needed to flip supervised_only → 0 (0 for operator-grant
+   * gates, which demonstrations never open).
+   */
   demoThreshold: number;
   /** What this gate guards, shown in error messages. */
   description: string;
+  /**
+   * Operator grant only — exactly the open-posture core (`OPEN_POSTURE_CORE`).
+   * No standing floor and no demonstrations: an operator grants it
+   * (`gate grant`, `challenge approve <token> always`, a world seed or
+   * `grantGatesForRank`), and an operator may approve a single held run
+   * (`once`), which builds nothing.
+   */
+  operatorGrant?: true;
 }
 
+/**
+ * THE FLOORS (2026-10-14, "approvals are the proof"). Standing is earned by
+ * independently verified work: an approved task pays its value (default 1,
+ * at most 10), a verified Code Mode attempt 1, an experiment 3. With a 60-day
+ * half-life, an entity that earns r points a day settles at
+ * r × 60 / ln 2 ≈ 86.6 r. The earnable floors sit on that curve:
+ *
+ * - 3  — `code.exec`: three approved tasks (a first week of real work).
+ * - 10 — `agent.spawn`, `role.edit`, `world.lineage`: one verified task
+ *   every ~9 days sustained, or one top-value task.
+ * - 20 — `agent.run` (acting as another entity): one every ~4 days.
+ * - 30 — `decisions.configure`, `adapter.enable`, `connect.manage`,
+ *   `gateway.connect` (reaching outside the world or changing what
+ *   supervises it): about two verified tasks a week, sustained.
+ *
+ * The floor only admits the attempt. What makes a gate yours is approvals:
+ * each held run a person approves (`challenge approve <token>` — an operator
+ * or the requester's owner, see src/engine/challenges.ts) runs it, and an
+ * approval from outside the requester's own lineage is one demonstration;
+ * `demoThreshold` of them flip the gate to solo use.
+ */
 export const SAFETY_GATES: Record<string, GateDef> = {
   "shell.exec": {
     id: "shell.exec",
-    minStanding: 100,
-    demoThreshold: 3,
+    minStanding: 0,
+    demoThreshold: 0,
+    operatorGrant: true,
     description: "execute shell commands",
   },
   "agent.run": {
     id: "agent.run",
-    minStanding: 100,
+    minStanding: 20,
     demoThreshold: 3,
     description: "execute world commands as another entity",
   },
@@ -79,27 +119,21 @@ export const SAFETY_GATES: Record<string, GateDef> = {
     // Running or applying code in a workspace can execute arbitrary processes
     // on the host (e.g. `code run bun test <file>` runs that file's JS), so it
     // is a host-execution capability and must be earned — never available to a
-    // freshly-spawned, zero-standing (untrusted) agent.
-    //
-    // THE BAR (post-hardening): minStanding is only the threshold to *attempt*.
-    // A standing-only holder is `supervisedOnly` and is REFUSED unattended
-    // execution — it can NEVER be self-certified by running the op N times
-    // (see `checkUnattendedGate`). Unsupervised code.exec is earned solely by an
-    // operator grant, a rank promotion (`grantGatesForRank`), or an externally
-    // witnessed demonstration (`recordWitnessedDemonstration`). This mirrors
-    // shell.exec's unfarmable behavior; minStanding stays low so a legitimate
-    // grant path is cheap, but standing alone can no longer buy host execution.
-    minStanding: 5,
+    // freshly-spawned, zero-standing (untrusted) agent. The floor only admits
+    // the attempt: a standing-only holder is `supervisedOnly` and is REFUSED
+    // unattended execution (`checkUnattendedGate`) — it can never self-certify
+    // by running the op N times. Solo use comes from approved runs, an
+    // operator grant or a rank promotion (`grantGatesForRank`).
+    minStanding: 3,
     demoThreshold: 3,
     description: "run or apply code in a workspace",
   },
   "agent.spawn": {
     id: "agent.spawn",
-    // Deliberately below the rank-4 (standing 100) ceiling: assembling a
-    // team is an organizer-level act that should emerge from contribution,
-    // not be reserved for the top tier. The supervised-demo requirement is
-    // the real guardrail — first spawns are witnessed before going solo.
-    minStanding: 40,
+    // Assembling a team is an organizer-level act that should emerge from
+    // contribution, not be reserved for the top tier. The approved first
+    // spawns are the real guardrail.
+    minStanding: 10,
     demoThreshold: 3,
     description: "spawn new agents",
   },
@@ -110,9 +144,8 @@ export const SAFETY_GATES: Record<string, GateDef> = {
     // is not gated: nothing runs on it until `agent spawn` (its own gate)
     // binds an agent to it — that is how an agent improves: by spawning an
     // improved iteration, never by rewriting the role it runs on (refused
-    // outright, src/engine/role-guard.ts). Same bar as organizer rank 3; the
-    // first edits are witnessed.
-    minStanding: 40,
+    // outright, src/engine/role-guard.ts). The first edits are approved.
+    minStanding: 10,
     demoThreshold: 3,
     description: "change an existing role or trait that agents run on",
   },
@@ -124,19 +157,19 @@ export const SAFETY_GATES: Record<string, GateDef> = {
     // `role.edit` to replace an existing role) — not destruction, so it sits
     // beside agent.spawn rather than behind admin.destructive. Each child is
     // its own process with its own daily spend cap
-    // (MARINA_CHILD_DAILY_SPEND_CAP_USD); the first launches are witnessed.
-    minStanding: 40,
+    // (MARINA_CHILD_DAILY_SPEND_CAP_USD); the first launches are approved.
+    minStanding: 10,
     demoThreshold: 3,
     description: "create, run and adopt from child worlds",
   },
   "world.code": {
     id: "world.code",
     // Author and hot-reload world room code (`build` code/reload paths). Room
-    // code runs inside the engine process, so this is rank-5-level trust;
-    // unlike shell.exec it is not in the open-posture core — an operator who
-    // declares `open` lets builders shape the world's code.
-    minStanding: 100,
-    demoThreshold: 3,
+    // code runs inside the engine process behind a static validator, not a
+    // process boundary, so it is in the open-posture core: operator grant only.
+    minStanding: 0,
+    demoThreshold: 0,
+    operatorGrant: true,
     description: "author and hot-reload world room code",
   },
   "decisions.configure": {
@@ -145,58 +178,74 @@ export const SAFETY_GATES: Record<string, GateDef> = {
     // backend, the tool gate, the verifier, engines, calibration and question
     // files — the judgement layer that supervises every agent. People reach it
     // with admin.destructive too; an AGENT reaches it only through this gate:
-    // earned (standing + witnessed demonstrations, never self-witnessed),
-    // granted, or passed by an operator-chosen posture (non-core, so
+    // earned (standing + approved runs, never self-approved), granted, or
+    // passed by an operator-chosen posture (non-core, so
     // `MARINA_AUTONOMY=open` passes it). Supervision is a default an agent can
     // outgrow by earning trust, never one it can wave away. Environment-locked
     // settings and env-only base URLs / keys stay out of reach regardless.
-    minStanding: 150,
+    minStanding: 30,
     demoThreshold: 2,
     description: "change the decision settings that supervise agents",
   },
   "adapter.enable": {
     id: "adapter.enable",
-    minStanding: 150,
+    minStanding: 30,
     demoThreshold: 2,
     description: "enable platform adapters (Discord, Telegram)",
   },
   "connect.manage": {
     id: "connect.manage",
-    minStanding: 150,
+    minStanding: 30,
     demoThreshold: 2,
     description: "register external MCP/HTTP connectors",
   },
   "gateway.connect": {
     id: "gateway.connect",
-    minStanding: 150,
+    minStanding: 30,
     demoThreshold: 2,
     description: "federate with peer Marinas",
   },
   "key.manage": {
     id: "key.manage",
-    minStanding: 200,
-    demoThreshold: 2,
+    minStanding: 0,
+    demoThreshold: 0,
+    operatorGrant: true,
     description: "manage LLM provider API keys",
   },
   "admin.destructive": {
     id: "admin.destructive",
-    minStanding: 250,
-    demoThreshold: 1,
+    minStanding: 0,
+    demoThreshold: 0,
+    operatorGrant: true,
     description: "perform destructive admin operations",
   },
   "code.exec.unrestricted": {
     id: "code.exec.unrestricted",
-    // The highest-blast-radius code capability: running ARBITRARY (non-allowlisted)
-    // host commands in a workspace. Deliberately above admin.destructive (250) so
-    // it sorts last on the ladder and is never reachable by accident. This gate is
-    // NEVER added to RANK_GATES — not even a sovereign gets it from rank; it is
-    // earned (standing + demonstrations) or granted explicitly, and every use is
-    // additionally fenced by the exec-approver chain (interactive or headless).
-    minStanding: 251,
-    demoThreshold: 5,
+    // The highest-blast-radius code capability: running ARBITRARY
+    // (non-allowlisted) host commands in a workspace. Operator grant only, and
+    // NEVER in RANK_GATES — not even a sovereign gets it from rank; an operator
+    // grants it explicitly, and every use is additionally fenced by the
+    // exec-approver chain (src/coding/exec-approver.ts).
+    minStanding: 0,
+    demoThreshold: 0,
+    operatorGrant: true,
     description: "run arbitrary (non-allowlisted) host commands in a workspace",
   },
 };
+
+/** True for the operator-grant gates (exactly the open-posture core). */
+export function isOperatorGrantGate(gateId: string): boolean {
+  return SAFETY_GATES[gateId]?.operatorGrant === true;
+}
+
+/** The refusal for an operator-grant gate the entity does not hold. */
+export function operatorGrantReason(gate: GateDef): string {
+  return (
+    `Operator grant: ${gate.description} (${gate.id}) is granted by an operator; standing and ` +
+    `demonstrations never open it. An operator can approve this one run, or grant it ` +
+    `(\`gate grant <name> ${gate.id}\`).`
+  );
+}
 
 export interface GateCheckResult {
   ok: boolean;
@@ -294,6 +343,9 @@ export function checkGate(
     };
   }
 
+  // Operator-grant gates have no standing or demonstration path at all.
+  if (gate.operatorGrant) return { ok: false, reason: operatorGrantReason(gate) };
+
   const standing = getStanding(db, entityId, now);
   if (standing < gate.minStanding) {
     return {
@@ -308,22 +360,21 @@ export function checkGate(
 
 /**
  * Stricter sibling of `checkGate` for UNATTENDED enforcement sites — every
- * host-execution / agent-spawn call path where no co-present witness or
- * per-command human approver is in the loop.
+ * host-execution / agent-spawn call path where no per-command human approver
+ * is in the loop.
  *
  * `checkGate` returns `{ ok: true, supervisedOnly: true }` on standing alone.
  * Historically the call sites treated that as "go ahead, then self-record a
  * demonstration" — which let an entity auto-unlock a dangerous gate by simply
  * running the op N times unwatched (self-certification). That is closed here:
  * a `supervisedOnly` result is downgraded to a refusal. An unattended caller
- * proceeds ONLY when it already holds unsupervised competence — earned by an
- * operator grant, a rank promotion (`grantGatesForRank`), or an externally
- * attested demonstration (`recordWitnessedDemonstration`). Never by self-report.
+ * proceeds ONLY when it already holds unsupervised competence — an operator
+ * grant, a rank promotion (`grantGatesForRank`), or approved runs
+ * (`recordApprovedDemonstration`). Never by self-report.
  *
  * Use this (not `checkGate`) at any site that will EXECUTE the dangerous op
- * without a live witness/approver. `checkGate` remains for read-only progress
- * views and for sites (e.g. the exec-approver) that mint competence from a
- * genuine per-command human approval.
+ * without a live approver. `checkGate` remains for read-only progress views
+ * and the headless exec approver.
  */
 export function checkUnattendedGate(
   db: MarinaDB,
@@ -340,17 +391,16 @@ export function checkUnattendedGate(
     }
     return {
       ok: false,
-      reason: `Supervised-only: you have the standing to ${gate?.description ?? "use this capability"}, but an unattended run is not permitted. This capability cannot be self-certified — an operator must grant it (or a qualified witness must attest a supervised demonstration) before you can run it solo.`,
+      reason: `Supervised-only: you have the standing to ${gate?.description ?? "use this capability"}, but an unattended run is not permitted. This capability cannot be self-certified — runs a person approves build it (${gate?.demoThreshold ?? "a few"} unlock solo use), or an operator grants it.`,
     };
   }
   return { ok: true };
 }
 
-/** How a gated execution was authorized — recorded so witness review and
- *  audit can distinguish the paths. */
+/** How a gated execution was authorized — recorded so review and audit can
+ *  distinguish the paths. */
 export type GateExecutionMode =
   | "unattended"
-  | "windowed"
   | "optimistic"
   | "posture-open"
   | "profile-local"
@@ -360,42 +410,41 @@ export interface GateExecutionResult {
   ok: boolean;
   reason?: string;
   mode?: GateExecutionMode;
-  /** The witness whose supervision window authorized this run (windowed
-   *  mode), or the approver of an answered challenge (approved mode). */
+  /** The approver of an answered challenge (approved mode), when a person. */
   witnessId?: string;
   /** Who answered the challenge that authorized this run (approved mode). */
   approvedBy?: string;
+  /**
+   * Approved mode: the approval counts as a demonstration toward this gate
+   * (decided when the challenge was answered — a person outside the
+   * requester's lineage, on an earnable gate).
+   */
+  demonstrates?: boolean;
   /** Refused because a demonstrated holder's standing decayed below the bar. */
   standingDecayed?: boolean;
 }
 
 /**
  * Posture-aware authorization for a site that is about to EXECUTE a gated
- * operation. This is the walkable version of the ladder the gate registry
- * always promised. Outcomes, by autonomy posture (src/engine/autonomy.ts):
+ * operation. Outcomes, by autonomy posture (src/engine/autonomy.ts):
  *
  * - unsupervised competence → `unattended` (all postures) — a granted row
  *   always; a demonstrated flip only while standing ≥ `minStanding`. A
  *   decayed holder falls through to the rules below exactly like an entity
  *   that never flipped, and its refusal names the decay (not "not yet").
- * - `open` posture, gate outside the destructive core → `posture-open`:
- *   standing is descriptive, the gate auto-passes. Core gates fall through
- *   to normal rules even under `open`.
- * - sufficient standing + a live witness-granted supervision window →
- *   `windowed`: run it; the pre-attesting witness gets the demonstration
- *   credit (all postures — the window IS the guarded path).
- * - sufficient standing, no window, `earned` posture, gate outside the
- *   destructive core → `optimistic`: run it; the demonstration is recorded as
- *   pending and counts toward the flip only when a qualified witness attests
- *   it afterwards. Core gates (`OPEN_POSTURE_CORE`) get no optimistic mode —
- *   "the irreducible core stays gated under every posture".
- * - otherwise → a refusal whose text names the path forward, because a
- *   refusal an agent can't act on is a wall, not a gate.
+ * - an answered challenge for THIS run → `approved` (all postures).
+ * - the local operator's own instance → `profile-local`.
+ * - `open` posture, earnable gate → `posture-open`. Operator-grant gates
+ *   (`OPEN_POSTURE_CORE`) fall through even under `open`.
+ * - `earned` posture, earnable gate, standing ≥ floor → `optimistic`: run it;
+ *   the run lands as a pending demonstration an operator may attest later
+ *   (`witness attest`). Operator-grant gates get no optimistic mode.
+ * - otherwise → a refusal that names the path forward; inside a command the
+ *   refusal raises a challenge (the held run executes once a person approves
+ *   it), because a refusal an agent can't act on is a wall, not a gate.
  *
  * Call `recordGateExecution` with the returned result immediately after a
- * passing check — attempt-based recording, matching the original "first N
- * attempts are supervised" design (a witnessed failure is still a witnessed
- * attempt, and earned-mode attestation reviews outcomes anyway).
+ * passing check.
  */
 export function checkGateForExecution(
   db: MarinaDB,
@@ -406,7 +455,7 @@ export function checkGateForExecution(
   const result = evaluateGateForExecution(db, entityId, gateId, now);
   if (result.ok || !result.reason) return result;
   // A refusal inside a command raises a challenge (src/engine/challenges.ts):
-  // the creator and admins are asked, the caller is told it will run once
+  // the owner and operators are asked, the caller is told it will run once
   // approved, and nothing waits — the refusal returns now.
   return { ...result, reason: onGateRefused(entityId, gateId, result.reason) };
 }
@@ -424,7 +473,7 @@ function evaluateGateForExecution(
   if (holder.kind === "granted") return { ok: true, mode: "unattended" };
   if (holder.kind === "demonstrated" && holder.standingOk) return { ok: true, mode: "unattended" };
 
-  // An answered challenge: the creator or an admin approved THIS run.
+  // An answered challenge: a person approved THIS run.
   const pass = takeArmedGatePass(entityId, gateId);
   if (pass) {
     return {
@@ -432,6 +481,7 @@ function evaluateGateForExecution(
       mode: "approved",
       approvedBy: pass.approverName,
       ...(pass.approverId ? { witnessId: pass.approverId } : {}),
+      ...(pass.demonstrates ? { demonstrates: true } : {}),
     };
   }
 
@@ -444,10 +494,11 @@ function evaluateGateForExecution(
   // makes isLocalUngated() false while local performance defaults stay on.
   if (isLocalUngated()) return { ok: true, mode: "profile-local" };
 
+  // Operator-grant gates: no posture, standing or demonstration opens them.
+  if (gate.operatorGrant) return { ok: false, reason: operatorGrantReason(gate) };
+
   const posture = getAutonomyPosture();
-  if (posture === "open" && !OPEN_POSTURE_CORE.has(gateId)) {
-    return { ok: true, mode: "posture-open" };
-  }
+  if (posture === "open") return { ok: true, mode: "posture-open" };
 
   const standing =
     holder.kind === "demonstrated" ? holder.standing : getStanding(db, entityId, now);
@@ -462,41 +513,31 @@ function evaluateGateForExecution(
     return {
       ok: false,
       reason:
-        `Not yet: ${gate.description} needs standing ${gate.minStanding} (you have ${standing.toFixed(1)}). ` +
-        `Standing grows from real contribution — completed tasks, pool deposits, helping acts. ` +
-        `Check \`standing\` to see your ledger and every gate's path.`,
+        `Not yet: ${gate.description} needs standing ${gate.minStanding} (you have ${standing.toFixed(1)}); ` +
+        `it is earned by independently verified work — approved tasks, verified code, resolved forecasts. ` +
+        `A person can still approve this run. \`gate list\` shows every gate's path.`,
     };
   }
 
-  const window = db.getOpenSupervisionWindow(entityId, gateId, now);
-  if (window) return { ok: true, mode: "windowed", witnessId: window.witness_id ?? undefined };
+  if (posture === "earned") return { ok: true, mode: "optimistic" };
 
-  // The irreducible core never runs ahead of review, under any posture.
-  if (posture === "earned" && !OPEN_POSTURE_CORE.has(gateId)) {
-    return { ok: true, mode: "optimistic" };
-  }
-
-  // Only suggest `earned` where it would actually help (never for the core).
-  const operatorHint =
-    posture === "earned" || OPEN_POSTURE_CORE.has(gateId)
-      ? " (Operators can also grant it directly.)"
-      : " (Operators can also grant it directly, or set MARINA_AUTONOMY=earned to let you practice ahead of review.)";
+  const have = db.getCompetence(entityId, gateId)?.demonstrations ?? 0;
   return {
     ok: false,
     reason:
-      `You have the standing to ${gate.description} — what's missing is a witness. ` +
-      `Run \`witness request ${gateId}\` to ask a qualified holder to supervise a demonstration; ` +
-      `${gate.demoThreshold} attested demonstration(s) unlock solo use.` +
-      operatorHint,
+      `Approval needed: ${gate.description} runs once a person approves it; ` +
+      `${gate.demoThreshold} approved run(s) make it yours to use solo (${Math.min(have, gate.demoThreshold)}/${gate.demoThreshold} so far). ` +
+      `An operator can also grant it.`,
   };
 }
 
 /**
  * Record the competence consequence of a gated execution that
- * `checkGateForExecution` authorized. Windowed runs consume the supervision
- * window and credit the granting witness; optimistic runs land in the witness
- * ledger as pending attestations; unattended and posture-open runs record
- * nothing (the former is already earned, the latter is operator-declared).
+ * `checkGateForExecution` authorized. An approved run counts as a
+ * demonstration when the approval was made to (`demonstrates`); an optimistic
+ * run lands as a pending demonstration an operator may attest; unattended,
+ * posture-open and profile-local runs record nothing (already earned, or
+ * operator-declared).
  */
 export function recordGateExecution(
   db: MarinaDB,
@@ -507,62 +548,48 @@ export function recordGateExecution(
   now = Date.now(),
 ): void {
   if (!result.ok || !SAFETY_GATES[gateId]) return;
-  if (result.mode === "windowed") {
-    const witnessId = db.consumeSupervisionWindow(entityId, gateId, now);
-    if (witnessId) recordWitnessedDemonstration(db, entityId, gateId, witnessId, now);
-    return;
-  }
   if (result.mode === "optimistic") {
     db.createWitnessRow({ entityId, gate: gateId, kind: "pending", evidence, now });
     return;
   }
-  // An approval by someone who holds the gate is a supervised demonstration
-  // they witnessed; an admin or judge approval without the gate is not.
-  if (result.mode === "approved" && result.witnessId) {
-    recordWitnessedDemonstration(db, entityId, gateId, result.witnessId, now);
+  if (result.mode === "approved" && result.demonstrates && result.witnessId) {
+    recordApprovedDemonstration(db, entityId, gateId, result.witnessId, now);
   }
 }
 
 /**
- * Determine whether an entity is qualified to witness a supervised
- * demonstration of a particular gate. They must themselves be unsupervised
- * on the same gate (closing the bootstrapping loop). Sovereigns (rank 9)
- * qualify for every gate in `RANK_GATES` because promotion granted them at
- * unsupervised level — but not `code.exec.unrestricted`, which is never
- * granted by rank.
+ * Record one demonstration because a person approved a supervised run (a
+ * challenge answered `once`, or a legacy pending run attested). The caller
+ * has already decided the approver may make it count — a person outside the
+ * requester's lineage (src/engine/challenges.ts `approvalDemonstrates`). This
+ * refuses what no caller may record: an unknown or operator-grant gate, and
+ * self-approval. Returns true when a demonstration was recorded.
  */
-export function canWitness(db: MarinaDB, witnessId: string, gateId: string): boolean {
-  const competence = db.getCompetence(witnessId, gateId);
-  return Boolean(competence && competence.supervised_only === 0);
-}
-
-/**
- * Record a demonstration ONLY when a qualified, external witness attests it.
- * This is the sole path (besides an operator grant / rank promotion) by which a
- * supervised entity advances toward unsupervised competence — replacing the old
- * self-reported `recordDemonstration` calls at the enforcement sites. The
- * witness must be a different entity that is itself unsupervised on the same
- * gate (`canWitness`); self-witnessing and unqualified witnesses are refused.
- * Returns true when a demonstration was recorded.
- */
-export function recordWitnessedDemonstration(
+export function recordApprovedDemonstration(
   db: MarinaDB,
   entityId: string,
   gateId: string,
-  witnessId: string,
+  approverId: string,
   now = Date.now(),
 ): boolean {
-  if (!SAFETY_GATES[gateId]) return false;
-  if (!witnessId || witnessId === entityId) return false;
-  if (!canWitness(db, witnessId, gateId)) return false;
+  const gate = SAFETY_GATES[gateId];
+  if (!gate || gate.operatorGrant) return false;
+  if (!approverId || approverId === entityId) return false;
+  // The same account under another session id is still self-approval.
+  if (
+    typeof db.durableEntityKey === "function" &&
+    db.durableEntityKey(approverId) === db.durableEntityKey(entityId)
+  ) {
+    return false;
+  }
   recordDemonstration(db, entityId, gateId, now);
   return true;
 }
 
 /**
- * Record a successful demonstration. Called by the gated command on
- * success. Increments the count; once it crosses the threshold,
- * supervised_only flips to 0 and future invocations don't need a witness.
+ * Record a demonstration. Increments the count; once it crosses the
+ * threshold, supervised_only flips to 0. Operator-grant gates have no
+ * demonstrations and are never flipped this way.
  */
 export function recordDemonstration(
   db: MarinaDB,
@@ -571,7 +598,7 @@ export function recordDemonstration(
   now = Date.now(),
 ): void {
   const gate = SAFETY_GATES[gateId];
-  if (!gate) return;
+  if (!gate || gate.operatorGrant) return;
   db.recordDemonstration(entityId, gateId, gate.demoThreshold, now);
 }
 
@@ -594,8 +621,13 @@ export function listGates(): string[] {
 export interface GateProgress {
   id: string;
   description: string;
-  /** unlocked = usable solo; supervised = enough standing, needs demos; locked = needs more standing. */
+  /**
+   * unlocked = usable solo; supervised = enough standing, approved runs build
+   * it; locked = needs more standing, or (operatorGrant) an operator's grant.
+   */
   status: "unlocked" | "supervised" | "locked";
+  /** Operator grant only: no standing floor or demonstrations open it. */
+  operatorGrant?: true;
   /**
    * The competence row is already unsupervised (demonstrated) but standing has
    * decayed below `minStanding`; `status` is `locked` until it recovers.
@@ -610,8 +642,8 @@ export interface GateProgress {
 /**
  * Per-gate advancement view for an entity — the "what's next past rank 4" ladder.
  * Surfaces the otherwise-invisible competence path: how much standing each gate
- * needs and how many supervised demonstrations remain. Ordered by reachability
- * (lowest standing requirement first).
+ * needs and how many approved runs remain. Ordered by reachability (lowest
+ * standing requirement first; operator-grant gates last).
  */
 export function getGateProgress(db: MarinaDB, entityId: string, now = Date.now()): GateProgress[] {
   const standing = getStanding(db, entityId, now);
@@ -625,13 +657,14 @@ export function getGateProgress(db: MarinaDB, entityId: string, now = Date.now()
         ? "locked"
         : flipped
           ? "unlocked"
-          : standing >= gate.minStanding
+          : !gate.operatorGrant && standing >= gate.minStanding
             ? "supervised"
             : "locked";
       return {
         id: gate.id,
         description: gate.description,
         status,
+        ...(gate.operatorGrant ? { operatorGrant: true as const } : {}),
         ...(decayed ? { decayed: true } : {}),
         standing,
         minStanding: gate.minStanding,
@@ -639,7 +672,23 @@ export function getGateProgress(db: MarinaDB, entityId: string, now = Date.now()
         demoThreshold: gate.demoThreshold,
       };
     })
-    .sort((a, b) => a.minStanding - b.minStanding);
+    .sort(
+      (a, b) =>
+        Number(!!a.operatorGrant) - Number(!!b.operatorGrant) || a.minStanding - b.minStanding,
+    );
+}
+
+/** The next step on one gate, in words — shared by `gate list`, `standing` and `witness`. */
+export function gateNextStep(g: GateProgress): string {
+  if (g.status === "unlocked") return "yours to use solo";
+  if (g.operatorGrant) return "operator grant (an operator may approve a single held run)";
+  if (g.decayed) {
+    return `standing ${g.standing.toFixed(1)}/${g.minStanding} — competence intact; solo use resumes when standing recovers`;
+  }
+  if (g.status === "supervised") {
+    return `${Math.min(g.demonstrations, g.demoThreshold)}/${g.demoThreshold} approved runs — run it; a person approves the held run`;
+  }
+  return `standing ${g.standing.toFixed(1)}/${g.minStanding} — earned by verified work; a person can still approve a held run`;
 }
 
 /**

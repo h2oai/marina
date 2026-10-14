@@ -129,7 +129,7 @@ describe("agent spawn command — permission layer (integration)", () => {
     await engine.processCommand(alice.entity!, "agent spawn helper");
     // Refused (guarded posture, no witness window) — cannot be self-certified
     // by spawning; the refusal names the walkable path instead of a dead end.
-    expect(output()).toContain("witness request agent.spawn");
+    expect(output()).toContain("Approval needed");
     // And crucially: no demonstration was minted from the refused attempt.
     expect(db.getCompetence(alice.entity!, "agent.spawn")?.demonstrations ?? 0).toBe(0);
   });

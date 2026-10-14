@@ -265,7 +265,7 @@ export async function doCode(
   // dispatcher's behalf. Otherwise a standing-0 caller drives arbitrary host
   // execution through a plain Code Mode task, never touching a gated subcommand.
   // Posture-aware: the drive-by path still cannot be self-certified, while
-  // witness windows / earned-posture practice / open posture authorize the
+  // approved runs / earned-posture practice / open posture authorize the
   // dispatcher with the consequence recorded. Delegation of code.exec to the
   // coder is only legitimate when the dispatcher is itself authorized.
   const dispatcherGate = checkGateForExecution(deps.db, eid, "code.exec");
@@ -412,8 +412,8 @@ async function ensureSessionAgent(
     ctx.send(eid, "No LLM provider configured — set a provider key, then a coding agent can run.");
     return null;
   }
-  // Posture-aware agent.spawn: self-certification stays closed; witness
-  // windows, earned-posture practice, and open posture authorize with the
+  // Posture-aware agent.spawn: self-certification stays closed; approved
+  // runs, earned-posture practice, and open posture authorize with the
   // consequence recorded.
   const gate = checkGateForExecution(deps.db, eid, "agent.spawn");
   if (!gate.ok) {
