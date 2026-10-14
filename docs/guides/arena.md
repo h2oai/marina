@@ -429,6 +429,31 @@ family unanswered: `submit` reports it as "not answered" rather than a failure, 
 leaves it out of the mean, as the board does. Choose routes from `arena evaluate` per family,
 then shadow them before trusting them — samples per family are small.
 
+#### Earned routes
+
+Each route is its family's **default**, not a fixed choice (`src/arena/earned-routes.ts`). Before
+a routed round is filed, the evidence on record is read: our scored filing of every resolved round
+(matched to the default by method kind, so a model upgrade keeps the record) and the shadow
+ledger's last pre-lock record of every runnable forecaster spec. Only outcomes that were public by
+then count, and rounds whose outcome was public before their lock never count. A challenger
+replaces the default only on the general forecaster's promotion rule (`earnedPick` in
+`src/forecast/routing.ts`):
+
+- at least `MARINA_ARENA_ROUTE_MIN_N` (default 8) rounds that both answered;
+- a paired mean gain whose 95 % lower bound is above 0;
+- a gain past `promotionMargin(tried)`, which grows with every challenger considered.
+
+Short of that, the default answers, so with no evidence routing is the hand map unchanged.
+`MARINA_ARENA_ROUTING=observe` records the pick without acting on it, and `off` skips it.
+`<family>=!<spec>` pins a family, so evidence never replaces it; `skip` is always pinned. Every
+decision (default, chosen, each challenger's paired n, gain, interval and margin) is kept in the
+filing's detail as `routing`.
+
+| Command | What it does |
+|---|---|
+| `bun run arena routes` | prints every family's decision now (read-only, no model calls) |
+| `bun run arena shadow challengers <round_id\|due>` | runs the challengers the operator lists per family in `MARINA_ARENA_SHADOW_CHALLENGERS` (`civiqs=nowcast\|<spec>;aaii=<spec>`), so exploring costs only what is listed |
+
 The nowcast refuses rounds with no history (see [no-anchor mode](#the-research-agent-research)).
 To answer them, route their family to research, e.g. `<family>=research:<m>[,<m>…]@<retriever>`;
 routes are per family, so the family's rounds that do have history go through research too

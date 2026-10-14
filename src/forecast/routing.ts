@@ -131,6 +131,57 @@ function scoresBy(records: ResolvedRecord[]): Map<string, Map<string, number>> {
   return out;
 }
 
+/** One challenger's verdict under {@link earnedPick}, keyed by any method id. */
+export interface PairedChallenger {
+  id: string;
+  n: number;
+  gain?: number;
+  ci?: [number, number];
+  margin?: number;
+  verdict: RouteChallenger["verdict"];
+}
+
+/**
+ * The earned-promotion rule every router shares: a challenger replaces the
+ * default only on at least `minN` questions BOTH answered, with the paired mean
+ * gain's 95 % lower bound above zero AND the gain past `promotionMargin(tried)`
+ * (the margin grows with every challenger considered, so fishing costs). The
+ * best qualifying challenger is picked; with none, the default. Pure.
+ *
+ * `scores`: method id → question id → that method's score on the question
+ * (higher is better), already restricted to evidence visible at the cutoff.
+ */
+export function earnedPick(input: {
+  defaultId: string;
+  candidates: readonly string[];
+  scores: Map<string, Map<string, number>>;
+  minN: number;
+}): { picked: string; challengers: PairedChallenger[]; best?: PairedChallenger } {
+  const incumbent = input.scores.get(input.defaultId) ?? new Map<string, number>();
+  const challengers: PairedChallenger[] = [];
+  let tried = 0;
+  for (const id of input.candidates) {
+    if (id === input.defaultId) continue;
+    const theirs = input.scores.get(id);
+    const ids = theirs ? [...theirs.keys()].filter((q) => incumbent.has(q)) : [];
+    if (ids.length < input.minN) {
+      challengers.push({ id, n: ids.length, verdict: "too few paired" });
+      continue;
+    }
+    const margin = Math.round(promotionMargin(tried) * 10_000) / 10_000;
+    tried++;
+    const { gain, ci } = pairedGain(
+      ids.map((q) => ({ challenger: theirs!.get(q)!, incumbent: incumbent.get(q)! })),
+    );
+    const verdict = ci[0] <= 0 ? "not better" : gain < margin ? "below margin" : "qualifies";
+    challengers.push({ id, n: ids.length, gain, ci, margin, verdict });
+  }
+  const best = challengers
+    .filter((c) => c.verdict === "qualifies")
+    .sort((a, b) => (b.gain ?? 0) - (a.gain ?? 0))[0];
+  return { picked: best?.id ?? input.defaultId, challengers, ...(best ? { best } : {}) };
+}
+
 export function chooseFormation(input: {
   spec: TypedForecastRequest["answer"];
   category?: string;
@@ -146,30 +197,18 @@ export function chooseFormation(input: {
   const useCategory = inCategory.length >= settings.minN;
   const records = useCategory ? inCategory : input.history.filter((r) => r.group === group);
   const cls = useCategory ? `category:${input.category}` : `group:${group}`;
-  const scores = scoresBy(records);
-  const incumbent = scores.get(defaultFormation) ?? new Map<string, number>();
-  const challengers: RouteChallenger[] = [];
-  let tried = 0;
-  for (const f of settings.candidates) {
-    if (f === defaultFormation) continue;
-    const theirs = scores.get(f);
-    const ids = theirs ? [...theirs.keys()].filter((id) => incumbent.has(id)) : [];
-    if (ids.length < settings.minN) {
-      challengers.push({ formation: f, n: ids.length, verdict: "too few paired" });
-      continue;
-    }
-    const margin = Math.round(promotionMargin(tried) * 10_000) / 10_000;
-    tried++;
-    const { gain, ci } = pairedGain(
-      ids.map((id) => ({ challenger: theirs!.get(id)!, incumbent: incumbent.get(id)! })),
-    );
-    const verdict = ci[0] <= 0 ? "not better" : gain < margin ? "below margin" : "qualifies";
-    challengers.push({ formation: f, n: ids.length, gain, ci, margin, verdict });
-  }
-  const best = challengers
-    .filter((c) => c.verdict === "qualifies")
-    .sort((a, b) => (b.gain ?? 0) - (a.gain ?? 0))[0];
-  const picked = best?.formation ?? defaultFormation;
+  const pick = earnedPick({
+    defaultId: defaultFormation,
+    candidates: settings.candidates,
+    scores: scoresBy(records),
+    minN: settings.minN,
+  });
+  const challengers: RouteChallenger[] = pick.challengers.map(({ id, ...c }) => ({
+    formation: id as TypedFormation,
+    ...c,
+  }));
+  const best = pick.best && { ...pick.best, formation: pick.best.id as TypedFormation };
+  const picked = pick.picked as TypedFormation;
   const through = records.at(-1)?.resolvedAt;
   return {
     mode: settings.mode,

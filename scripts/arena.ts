@@ -31,6 +31,8 @@
  *   bun run arena shadow compare <round_id|due> --forecaster formation:delphi:<models>
  *                                               paired start / Delphi / FRED / calibration experiment
  *   bun run arena shadow paired-score           score only matched comparison batches
+ *   bun run arena shadow challengers <round_id|due> run each MARINA_ARENA_SHADOW_CHALLENGERS spec for its family
+ *   bun run arena routes [--out FILE]           each family's earned-route decision from the evidence on record
  *   bun run arena audit <round_id|due> [--fresh] check history and current source dates without model calls
  *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]|formation:<pattern>:<m>[,<m>…]|tabh2o[:forecast][@nowcast]]
  *                          [--no-learn] [--limit N] [--tracker T] [--shape profile|ranking] [--out FILE]
@@ -226,6 +228,48 @@ async function main(): Promise<number> {
         `Add this as entrants/${s.entrant}.json in a fork of Social-Atoms/social-sim-arena and open the PR from ${values.github}.`,
       );
       return 0;
+    }
+    case "routes": {
+      // Read-only: what earned routing decides per family from the evidence on record.
+      const db = openDb();
+      try {
+        const earned = await import("../src/arena/earned-routes");
+        const { isPinned, parseRoutes, routeFor, SKIP } = await import("../src/arena/routing");
+        const config = arenaConfigFromEnv(process.env);
+        if (!config) throw new Error("arena not configured (MARINA_ARENA_ENTRANT)");
+        const spec = config.forecaster;
+        if (spec !== "routed" && !spec.startsWith("route:"))
+          throw new Error(`MARINA_ARENA_FORECASTER is ${spec}, not routed: no family routes`);
+        const routes = parseRoutes(spec, process.env);
+        const data = arenaData();
+        const evidence = await earned.loadRouteEvidence(db, data, config.entrant);
+        const families = [
+          ...new Set([
+            ...(await data.rounds()).map((r) => r.tracker.toLowerCase()),
+            ...routes.byFamily.keys(),
+          ]),
+        ].sort();
+        const mode = earned.arenaRoutingModeFromEnv(process.env);
+        const decisions = families.map((family) => {
+          const target = routeFor(routes, family);
+          if (target === SKIP) return { family, default: SKIP, chosen: SKIP, reason: "skip" };
+          return earned.chooseArenaRoute({
+            family,
+            defaultSpec: target,
+            evidence,
+            now: Date.now(),
+            mode: mode === "off" ? "observe" : mode,
+            minN: earned.arenaRouteMinN(process.env),
+            pinned: isPinned(routes, family),
+          });
+        });
+        const output = JSON.stringify({ mode, evidence: evidence.length, decisions }, null, 2);
+        if (values.out) await Bun.write(values.out, `${output}\n`);
+        console.log(output);
+        return 0;
+      } finally {
+        db.close();
+      }
     }
     case "health": {
       const db = openDb();
@@ -665,6 +709,34 @@ async function main(): Promise<number> {
           );
           return 0;
         }
+        if (action === "challengers") {
+          const target = positionals[2];
+          if (!target) throw new Error("usage: bun run arena shadow challengers <round_id|due>");
+          const { parseShadowChallengers } = await import("../src/arena/earned-routes");
+          const listed = parseShadowChallengers(process.env);
+          if (listed.size === 0) {
+            console.log("No MARINA_ARENA_SHADOW_CHALLENGERS listed: nothing runs.");
+            return 0;
+          }
+          const data = arenaData();
+          const hours = arenaWindowHours();
+          const rounds =
+            target === "due"
+              ? (await data.openRounds()).filter(
+                  (r) => Date.parse(r.lock_at) <= Date.now() + hours * 3_600_000,
+                )
+              : [await data.round(target)];
+          let failed = 0;
+          for (const round of rounds) {
+            if (!round) throw new Error(`unknown round ${target}`);
+            for (const spec of listed.get(round.tracker.toLowerCase()) ?? []) {
+              const [r] = await recordShadow(db, data, spec, [round.round_id]);
+              if (r && !r.recorded) failed++;
+              console.log(`${round.round_id} ${spec}: ${r?.recorded ? "recorded" : r?.error}`);
+            }
+          }
+          return failed ? 1 : 0;
+        }
         if (action === "list") {
           for (const r of db.listArenaShadow({ limit: 200 })) {
             const t = (JSON.parse(r.forecast) as { topline?: { mean: number; sd: number } })
@@ -693,7 +765,9 @@ async function main(): Promise<number> {
           }
           return 0;
         }
-        throw new Error("usage: bun run arena shadow run|horizons|compare|paired-score|list|score");
+        throw new Error(
+          "usage: bun run arena shadow run|horizons|compare|challengers|paired-score|list|score",
+        );
       } finally {
         db.close();
       }
