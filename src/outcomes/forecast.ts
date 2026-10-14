@@ -17,6 +17,7 @@
 
 import { FORECAST_DAILY_CAP, recordVerified, STANDING_AMOUNTS } from "../agent/standing";
 import { crpsNormal } from "../arena/score";
+import { routingRefs } from "../forecast/routing-refs";
 import type { TypedForecastAnswer } from "../forecast/typed";
 import { scoreTypedAnswer } from "../forecast/typed-score";
 import type { MarinaDB } from "../persistence/database";
@@ -225,7 +226,10 @@ export function resolveForecast(
   if (!f || f.resolved_at !== null) return undefined;
   const s = score(f, value);
   if (!s) return undefined;
-  const refs = [`forecast:${f.id}`, ...(opts.refs ?? [])];
+  // The routing record's family / method / question tags, so evidence reads per (family, method).
+  const refs = [
+    ...new Set([`forecast:${f.id}`, ...(opts.refs ?? []), ...routingRefs(f.answer_json)]),
+  ];
   if (
     !db.resolveForecastAnswer(f.id, JSON.stringify({ ...s.outcomeJson, refs }), s.loss, resolvedAt)
   )

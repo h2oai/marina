@@ -33,6 +33,7 @@ import {
   typedFormation,
 } from "./formations";
 import { answerGroup, type ResolvedRecord, visibleRecords } from "./history";
+import { type MethodCard, recipeCard } from "./method-cards";
 import { chooseCutoff, type TypedForecastDeps, type TypedForecastRequest } from "./typed";
 
 export type RouteMode = "off" | "observe" | "on";
@@ -41,6 +42,12 @@ export interface RouteSettings {
   mode: RouteMode;
   /** Formations routing may choose among (the default always included). */
   candidates: TypedFormation[];
+  /**
+   * Method-card ids routing may choose among (`./method-cards.ts`): the plain
+   * formations above plus any variant listed (`ensemble+closed-book`, …).
+   * Absent: the plain `candidates`.
+   */
+  cards?: string[];
   /** Fewest paired questions before a challenger is considered. */
   minN: number;
 }
@@ -52,16 +59,25 @@ export function routeSettingsFromEnv(env: NodeJS.ProcessEnv = process.env): Rout
   // `on` by default: an earned pick answers; without enough paired evidence the
   // pick IS the default formation (falls open). `observe` records the pick only.
   const mode: RouteMode = m === "off" || m === "observe" ? m : "on";
+  // Formation names or method-card specs (`delphi`, `ensemble+closed-book`, …);
+  // an unknown entry is dropped, never mapped to a default.
   const listed = (env.MARINA_FORECAST_ROUTE_CANDIDATES ?? "")
     .split(",")
-    .map((s) => typedFormation(s))
-    .filter((f): f is TypedFormation => !!f);
+    .map((s) => recipeCard(s))
+    .filter((c): c is MethodCard => !!c);
+  const plain = listed
+    .filter((c) => c.verify === undefined && !c.retrieval)
+    .map((c) => c.formation!);
   const n = Number.parseInt(env.MARINA_FORECAST_ROUTE_MIN_N ?? "", 10);
+  const candidates: TypedFormation[] = listed.length
+    ? [...new Set(plain)]
+    : ["ensemble", "delphi", "tournament", "skeptic"];
   return {
     mode,
-    candidates: listed.length
-      ? [...new Set(listed)]
-      : ["ensemble", "delphi", "tournament", "skeptic"],
+    candidates,
+    cards: listed.length
+      ? [...new Set(listed.map((c) => c.id))]
+      : candidates.map((f) => recipeCard(f)!.id),
     minN: Number.isFinite(n) && n >= 5 ? n : DEFAULT_ROUTE_MIN_N,
   };
 }

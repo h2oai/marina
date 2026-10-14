@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type AdvisoryMode = "off" | "observe" | "on";
-export type AdvisoryFamily = "research" | "context" | "deliverable";
+export type AdvisoryFamily = "research" | "context" | "deliverable" | "routing";
 
 /** Measurements of a judgment, never task text or proof of downstream success. */
 export interface DecisionReceipt {

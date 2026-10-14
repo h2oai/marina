@@ -25,6 +25,7 @@ const USAGE = [
   "                                         a typed answer: plan → research rounds → several runs → critique",
   "       forecast list                     your saved forecasts and, once resolved, their scores",
   "       forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves",
+  "       forecast competence [family]      what Marina's resolved record says each method is good at",
 ].join("\n");
 /** Each forecast spends real money (web research + several models): a small per-entity budget. */
 const limiter = new RateLimiter({ maxTokens: 5, refillRate: 1, refillInterval: 12 * 60_000 });
@@ -58,6 +59,7 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       "forecast <question> type:<choice|multi|number|ranking|text> [options:<id,id,…>] [size:<n>] [ends:<iso>]",
       "forecast list",
       "forecast track <id> <venue>/<ticker>",
+      "forecast competence [<family prefix>]",
     ],
     name: "forecast",
     aliases: ["predict"],
@@ -72,6 +74,18 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       if (sub === "list" || sub === "ls") {
         if (!deps.db || !name) return ctx.send(input.entity, "Forecast history needs persistence.");
         return ctx.send(input.entity, renderHistory(deps.db.listForecastAnswers(name, 20)));
+      }
+      if (sub === "competence" && rest.length <= 1) {
+        // Read-only: Marina's own record per (family, method), live from the outcome path.
+        if (!deps.lessonsDb) return ctx.send(input.entity, "The competence map needs persistence.");
+        const db = deps.lessonsDb;
+        return (async () => {
+          const { competenceMap, renderCompetence } = await import("../../forecast/competence");
+          const family = rest[0]?.replace(/^family:/, "");
+          ctx.send(input.entity, renderCompetence(competenceMap(db, family ? { family } : {})));
+        })().catch((err) =>
+          ctx.send(input.entity, `Competence map unavailable: ${getErrorMessage(err)}`),
+        );
       }
       if (sub === "track") {
         const id = Number(rest[0]);

@@ -627,7 +627,7 @@ export declare function runScore(score: Score, deps: RunScoreDeps): Promise<Scor
 
 ```typescript
 export type AdvisoryMode = "off" | "observe" | "on";
-export type AdvisoryFamily = "research" | "context" | "deliverable";
+export type AdvisoryFamily = "research" | "context" | "deliverable" | "routing";
 /** Measurements of a judgment, never task text or proof of downstream success. */
 export interface DecisionReceipt {
     id: string;
