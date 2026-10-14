@@ -69,7 +69,10 @@ export function arenaMethod(notes: string | undefined): ArenaMethod {
   const head = method.split("+")[0]!;
   const parts = head.split(":");
   const methodKind =
-    parts[0] === "formation" && parts[1] ? `formation:${parts[1]}` : (parts[0] ?? "unknown");
+    (parts[0] === "formation" && parts[1]) ||
+    (parts[0] === "research" && parts[1] === "wiki-events")
+      ? `${parts[0]}:${parts[1]}`
+      : (parts[0] ?? "unknown");
   return { method, methodKind: methodKind || "unknown" };
 }
 

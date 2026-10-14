@@ -22,6 +22,10 @@ export function forecastSettings(spec: string, env: NodeJS.ProcessEnv, weight?: 
     judge: env.MARINA_ARENA_RESEARCH_JUDGE ?? "jev",
     researchTrust: env.MARINA_ARENA_RESEARCH_TRUST ?? "0.5",
     weight: weight ?? 0.5,
+    // Only for the wiki-events card, so every other spec keeps its fingerprint.
+    ...(spec.includes("research:wiki-events")
+      ? { wikiEventsMaxInsert: env.MARINA_ARENA_WIKI_EVENTS_MAX_INSERT ?? "3" }
+      : {}),
   };
   return {
     ...settings,

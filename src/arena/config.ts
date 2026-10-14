@@ -57,6 +57,8 @@ const FORECASTER_SPEC = new RegExp(
     // A formation, optionally judged by a second one (`+then:`) and fed a
     // verified dossier by a research crew (`+research@<retrievers>`).
     `|formation:${FORMATION}:${MODELS}(\\+then:${FORMATION}:${MODELS})?(\\+research@${RETRIEVER}(,${RETRIEVER}){0,3})?` +
+    // Wikipedia rankings with mechanically verified scheduled events (one extraction model).
+    `|research:wiki-events:${MODEL_ID}(@${RETRIEVER}(,${RETRIEVER}){0,3})?` +
     // Research takes up to eight analysts, and optionally its own retrievers
     // after `@` (else MARINA_ARENA_RESEARCH_RETRIEVER), so each mix is its own
     // shadow record.
@@ -87,7 +89,7 @@ export function parseForecasterSpec(raw: string | undefined): string {
     return spec;
   }
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, tabh2o[:forecast][@nowcast], model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>:<model>[,…][+then:<pattern>:<model>[,…]][+research@<retriever>[,…]] (up to twelve models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, tabh2o[:forecast][@nowcast], model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>:<model>[,…][+then:<pattern>:<model>[,…]][+research@<retriever>[,…]] (up to twelve models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), research:wiki-events:<model>[@<retriever>[,…]], route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
   );
 }
 

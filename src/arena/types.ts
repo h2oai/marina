@@ -20,7 +20,15 @@ export interface ArenaRound {
   /** Profile rounds: every cell the answer must carry. */
   cells?: string[];
   /** Ranking rounds: `length` and (for a fixed basket) the allowed items. */
-  ranking?: { length: number; kind?: string; items?: string[] };
+  ranking?: {
+    length: number;
+    kind?: string;
+    items?: string[];
+    /** Wikipedia top-N: the target week (YYYY-MM-DD, inclusive). */
+    week_start?: string;
+    week_end?: string;
+    rbo_p?: number;
+  };
 }
 
 export interface ArenaPoint {

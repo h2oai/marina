@@ -491,7 +491,27 @@ against the arena's recorded persistence loss for each round.
 - **Wikipedia top 10**: views are weighted by recency (half-life 3 days) over three weeks of the
   arena's `wikitop/` archive, using days published before the lock (a two-day lag; daily lists are
   final once published, and the archive was partly backfilled); the half-life was chosen by
-  backtest over the archived weeks.
+  backtest over the archived weeks. A per-article trajectory model (power-law decay from each
+  article's own peak, shrunk toward a pooled exponent) was tested walk-forward on the archive
+  and did not win on the held-out weeks, so the recency list stays the default.
+- **Wikipedia scheduled events** (`research:wiki-events:<model>[@<retrievers>]`): the recency
+  list cannot see a release, premiere, execution, final or an event's end that has not happened
+  yet. This card searches for events in the target week (results published before the cutoff),
+  one model call proposes candidates — each naming its source — and only candidates that pass
+  mechanical checks change the list: the cited source was retrieved, predates the cutoff and
+  mentions the article; the event date falls in the week (or up to two days before it; for an
+  ended event, before it); the English Wikipedia article exists (canonical title, redirects
+  followed); and its daily pageviews up to the last published day are read from Wikimedia. A
+  verified upcoming event enters only if its article already draws at least 3 % of the entry
+  bar's daily views — the 25th percentile of what past new top-10 entrants drew before their
+  lock, measured on the archive — and then at the entry bar or its own recent level, whichever is
+  higher, taking the lowest statistical slot if it is still below the cut. A model's "ended" is
+  not evidence: an article is demoted only when the cited source says, next to its mention, that
+  the event ended and its own views are already below half their two-week peak. At most
+  `MARINA_ARENA_WIKI_EVENTS_MAX_INSERT` articles (default 3) are added. Every candidate, verified or rejected, is kept with its reason in the forecast detail
+  (`wikiEvents`). Web search cannot be replayed, so the card runs as a shadow challenger
+  (`MARINA_ARENA_SHADOW_CHALLENGERS="wikipedia=research:wiki-events:<model>@<retrievers>"`,
+  `bun run arena shadow challengers due`) and earned routing decides whether it files.
 - **Google Trends baskets**: Trends re-normalises its index in every snapshot. Forecasts use a
   newer complete basket from `trends/` when available; the original lock still defines the
   scoring baseline. Complete weeks only are used (`MARINA_ARENA_TRENDS_PARTIAL=on` adds the
