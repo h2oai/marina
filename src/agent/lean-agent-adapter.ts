@@ -155,7 +155,9 @@ import {
   defaultLoopPreferences,
   LOOP_PREFERENCE_KEYS,
   type LoopPreferences,
+  parseFocusWrite,
   parseLoopPreferenceCommand,
+  selfWriteCommand,
 } from "./loop-preferences";
 import { PlatformMemoryBackend, type PlatformNoteResult } from "./memory-platform";
 import { assertMarinaRemoteTargetAllowed, normalizeMarinaBaseUrl } from "./model-probe";
@@ -637,6 +639,36 @@ const OBLIGATIONS_CALL_MAX_TOKENS = 2000;
  * cycle waiter at once; this only bounds how long a missed wake can park.
  */
 export const DISCONNECTED_POLL_MS = 10_000;
+
+/** The text of a tool result: a string, or the joined text blocks of `{ content }`. */
+export function toolResultText(result: unknown): string {
+  if (typeof result === "string") return result;
+  const content = (result as { content?: unknown } | null | undefined)?.content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) =>
+      block && typeof (block as { text?: unknown }).text === "string"
+        ? (block as { text: string }).text
+        : "",
+    )
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** Default long heartbeat for an idle or resting resident: one look around per half hour. */
+export const DEFAULT_AGENT_HEARTBEAT_MS = 30 * 60_000;
+
+/**
+ * `MARINA_AGENT_HEARTBEAT_MS`: with nothing new and nothing owed, an idle or
+ * resting resident makes no model call until this long after its last prompt.
+ * `0`/`off` = never (only events wake it); junk keeps the default.
+ */
+export function agentHeartbeatMs(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.MARINA_AGENT_HEARTBEAT_MS?.trim().toLowerCase();
+  if (raw === "off" || raw === "0") return 0;
+  const n = Number(raw);
+  return raw && Number.isFinite(n) && n > 0 ? Math.round(n) : DEFAULT_AGENT_HEARTBEAT_MS;
+}
 
 /** Per-perception hot path — read the env once, not on every channel message. */
 const CHANNEL_REPLY_COOLDOWN_MS = Number(process.env.AGENT_CHANNEL_REPLY_COOLDOWN_MS) || 30_000;
@@ -1286,7 +1318,7 @@ export class LeanAgentAdapter implements AgentHandle {
     reviewMode: () => capReviewMode(this.loopPrefs.review, obligationsReviewMode()),
   });
   /**
-   * Argument check (`MARINA_ARGCHECK=off|observe|on`, default off): before a
+   * Argument check (`MARINA_ARGCHECK=off|observe|on`, default on): before a
    * `mutate`/`consequential` call runs, its ids, amounts, dates and options are
    * looked up in the transcript; an unsupported call is refused once with the
    * values named (the same call issued again runs). Judge on the decision
@@ -1299,6 +1331,14 @@ export class LeanAgentAdapter implements AgentHandle {
   });
 
   private focus: Focus | null = null;
+  /**
+   * Who set the live focus: `config` (spawn goal / operator `setFocus`, never
+   * expires), `agent` (its own goal/focus writes; reviewed at the horizon, kept),
+   * `seed` (the harness default, cleared at the horizon).
+   */
+  private focusSource: "config" | "agent" | "seed" = "agent";
+  /** Last observe-mode obligations summary logged (logged again only on change). */
+  private lastObligationsSummary: string | undefined;
   /** The focus text the action directive last carried in full (see `focusDirective`). */
   private lastDirectiveFocus: string | undefined;
   private autonomousMode = false;
@@ -1399,6 +1439,19 @@ export class LeanAgentAdapter implements AgentHandle {
   private currentTrustSources = new Set<string>();
   /** In-run followUp-based silent recoveries. Resets on agent_start. */
   private inRunRecoveries = 0;
+  /** Forced follow-ups queued this run (silent recovery or obligation nudge): at most one. */
+  private runFollowUps = 0;
+  /** Tool calls the last completed run made; 0 ⇒ it chose quiet (see `idleSkipReason`). */
+  private lastRunToolCalls = 0;
+  /** Wall-clock of the last continuation prompt sent; the heartbeat counts from it. */
+  private lastPromptAt = 0;
+  /** Notes written since the last idle-consolidation prompt (it runs only with material). */
+  private notesSinceConsolidation = 0;
+  /** Arguments of tool calls in flight, keyed by toolCallId (applied on a successful end). */
+  private readonly toolCallArgs = new Map<
+    string,
+    { toolName: string; args: Record<string, unknown> }
+  >();
   private currentRunToolCalls = 0;
   /** Public channel updates this run, against `channelSendsBudget()` (default 1,
    *  agent-set via `channel_sends`, operator ceiling MARINA_CHANNEL_SENDS_PER_RUN).
@@ -1412,6 +1465,8 @@ export class LeanAgentAdapter implements AgentHandle {
    *  (often a reasoning model exhausting its output budget before a tool call)
    *  would otherwise burn tokens forever with no recovery and no surfaced cause. */
   private static readonly SILENT_TURN_BACKOFF_THRESHOLD = 3;
+  /** Ceiling of the silent-turn backoff (it starts at the idle tick and doubles). */
+  private static readonly SILENT_BACKOFF_MAX_MS = 30 * 60_000;
   private recentCommands: string[] = [];
   /** Prevent named channel mentions from creating agent↔agent ping-pong. This
    * is a per-agent channel cadence; direct tells and endpoint requests are never throttled. */
@@ -2696,6 +2751,7 @@ export class LeanAgentAdapter implements AgentHandle {
 
     if (goal) {
       this.focus = { description: goal, startedAt: Date.now() };
+      this.focusSource = "config";
     } else {
       // No explicit goal (e.g. a room agent or an autonomous spawn): seed a
       // default initial focus so the agent has direction from cycle 1 instead of
@@ -2711,6 +2767,7 @@ export class LeanAgentAdapter implements AgentHandle {
         description: `${roleHint} — set your own goal with \`task goal\` or \`memory set goal\` once you know what you want to work on.`,
         startedAt: Date.now(),
       };
+      this.focusSource = "seed";
     }
 
     this.setupActionTracking();
@@ -2755,6 +2812,7 @@ export class LeanAgentAdapter implements AgentHandle {
     const persistedFocus = await this.platformMemory.getFocus();
     if (persistedFocus?.description) {
       this.focus = { description: persistedFocus.description, startedAt: Date.now() };
+      this.focusSource = persistedFocus.description === this.config.goal ? "config" : "agent";
     } else if (this.focus) {
       // First run with a config goal — record it so a later restart resumes it.
       this.platformMemory.saveFocus(this.focus).catch(() => {});
@@ -2889,6 +2947,8 @@ export class LeanAgentAdapter implements AgentHandle {
 
   private async runAutonomousLoop(): Promise<void> {
     let consecutiveErrors = 0;
+    // The discovery turn (or the loop start) counts as the last look around.
+    if (this.lastPromptAt === 0) this.lastPromptAt = Date.now();
 
     while (this.autonomousLoopRunning && this.autonomousMode) {
       try {
@@ -3008,6 +3068,14 @@ export class LeanAgentAdapter implements AgentHandle {
           }
         }
 
+        // Nothing new, nothing owed, nothing due: no model call. The same
+        // quiet prompt replayed over the whole history only spends. An owed
+        // event wakes the waiter; the long heartbeat still looks around.
+        if (this.idleSkipReason()) {
+          this.idleCycles++;
+          continue;
+        }
+
         try {
           const catalog = await this.client.capabilities();
           if (catalog.commands !== this.capabilityEntries) {
@@ -3022,6 +3090,7 @@ export class LeanAgentAdapter implements AgentHandle {
         // events are consumed; outstanding requests stay in the ledger and are
         // restated on the next prompt.
         if (this.connectionUnavailable()) continue;
+        this.lastPromptAt = Date.now();
 
         // Hard-bound the prompt so a hung upstream can't wedge the loop.
         // When the timeout fires we call agent.abort() which propagates
@@ -3186,17 +3255,10 @@ export class LeanAgentAdapter implements AgentHandle {
         // so coding observers see the wait between cycles without changing it.
         this.emitEvent({ type: "operator_status_change" });
 
-        // Periodic heartbeat every 50 cycles
+        // Periodic heartbeat every 50 cycles — metrics and the log only; a
+        // liveness line in the fact tier crowded recall for nothing.
         if (this.loopIterationCount % 50 === 0 && this.loopIterationCount > 0) {
-          const uptime = Math.round((Date.now() - this.metrics.startedAt) / 60000);
-          this.platformMemory
-            .write(
-              "observation",
-              `[Heartbeat] ${this.metrics.toolCalls} tool calls, ${this.metrics.errors} errors, uptime ${uptime}m`,
-              "low",
-              ["heartbeat"],
-            )
-            .catch(() => {});
+          this.noteHeartbeat();
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -3535,26 +3597,25 @@ export class LeanAgentAdapter implements AgentHandle {
   private computeDynamicDelay(): number {
     const rate = this.getTickRate();
 
-    // Circuit-breaker: a persistently-silent agent (model returns prose, no
-    // tool calls) would otherwise re-prompt at full cadence
-    // forever, burning tokens. Back off hard (ramping to 2 min) so it goes
-    // near-dormant; the periodic retry recovers it once the blocker is
-    // addressed. Takes precedence over perceptions
-    // because the failure is structural, not a lack of stimulus.
+    // Circuit-breaker: a persistently-silent agent (a reply is owed and the
+    // model keeps answering in prose) backs off — never faster than the idle
+    // tick, doubling from there up to SILENT_BACKOFF_MAX_MS — instead of
+    // re-prompting the same debt. A delivered reply (or the TTL) clears it.
+    // Takes precedence over perceptions: the failure is structural.
     if (this.silentTurns >= LeanAgentAdapter.SILENT_TURN_BACKOFF_THRESHOLD) {
-      const over = this.silentTurns - LeanAgentAdapter.SILENT_TURN_BACKOFF_THRESHOLD + 1;
-      return Math.min(120_000, 15_000 * over);
+      const over = this.silentTurns - LeanAgentAdapter.SILENT_TURN_BACKOFF_THRESHOLD;
+      return Math.max(
+        rate.idle,
+        Math.min(LeanAgentAdapter.SILENT_BACKOFF_MAX_MS, rate.idle * 2 ** over),
+      );
     }
 
-    // Declared rest: idle cadence unless someone addresses the agent. A NEW
-    // address answers at the fast tick; an owed request the agent has
-    // already been shown re-asks at the normal rate, never the minimum.
+    // Declared rest: idle cadence unless a reply is genuinely OWED (a request
+    // tell, an addressed ask). Addressed information and ambient chatter wait
+    // for the agent's own wake. A NEW owed request answers at the fast tick;
+    // one already shown re-asks at the normal rate, never the minimum.
     if (this.loopPrefs.rest !== null) {
-      if (
-        this.pendingPerceptions.some(
-          (perception) => perception.shouldRespond || perception.addressed,
-        )
-      )
+      if (this.pendingPerceptions.some((perception) => this.perceptionOwes(perception)))
         return rate.min;
       return this.outstandingRequests.size > 0 ? rate.normal : rate.idle;
     }
@@ -3576,6 +3637,59 @@ export class LeanAgentAdapter implements AgentHandle {
 
     // Idle — slow tick (consolidation territory)
     return rate.idle;
+  }
+
+  /** A buffered first-party perception that owes a reply under the current nudge mode. */
+  private perceptionOwes(perception: {
+    owesReply?: boolean;
+    shouldRespond?: boolean;
+    untrusted?: boolean;
+  }): boolean {
+    if (perception.untrusted) return false;
+    return perception.owesReply ?? perception.shouldRespond === true;
+  }
+
+  /**
+   * Why this cycle needs no model call, or null when it does. A resident is
+   * prompted when something is new or owed — a perception (while resting: an
+   * owed one), an outstanding request, its last run did work toward a focus or
+   * goal, idle consolidation or reflection has material, or the long heartbeat
+   * (`MARINA_AGENT_HEARTBEAT_MS`) is due. Otherwise the prompt would be the
+   * same "nothing needs your attention" text replayed over the whole history.
+   * Crew responders and bound coders are handled by their own paths.
+   */
+  private idleSkipReason(now = Date.now()): "idle" | "resting" | null {
+    if (this.crewResponderMode || this.activeCodingTask) return null;
+    if (this.outstandingRequests.size > 0) return null;
+    const resting = this.loopPrefs.rest !== null;
+    const fresh = this.pendingPerceptions.filter(
+      (perception) => perception.id === undefined || !this.deliveredViaSteer.has(perception.id),
+    );
+    if (resting ? fresh.some((p) => this.perceptionOwes(p)) : fresh.length > 0) return null;
+    const heartbeat = agentHeartbeatMs();
+    if (heartbeat > 0 && now - this.lastPromptAt >= heartbeat) return null;
+    if (resting) return "resting";
+    if (this.lastRunToolCalls > 0 && (this.focus || this.config.goal)) return null;
+    // Idle consolidation, offered once per idle stretch and only with new notes.
+    if (this.notesSinceConsolidation > 0 && this.idleCycles + 1 >= 3) return null;
+    if (
+      this.notesSinceReflection >= 3 &&
+      this.loopIterationCount + 1 - this.lastReflectionCycle >= 75
+    )
+      return null;
+    return "idle";
+  }
+
+  /** Periodic liveness record: process metrics and the log, never a fact-tier note. */
+  private noteHeartbeat(): void {
+    const uptime = Math.round((Date.now() - this.metrics.startedAt) / 60000);
+    this.log.info(LEAN_AGENT_LOG_CATEGORY, "heartbeat", {
+      agent: this.name,
+      toolCalls: this.metrics.toolCalls,
+      modelCalls: this.metrics.modelCalls,
+      errors: this.metrics.errors,
+      uptimeMin: uptime,
+    });
   }
 
   private getTickRate(): { min: number; normal: number; idle: number } {
@@ -3661,6 +3775,41 @@ export class LeanAgentAdapter implements AgentHandle {
     const next = { ...this.loopPrefs };
     applyLoopPreference(next, parsed.key, parsed.value);
     this.setLoopPreferences(next);
+  }
+
+  /**
+   * A tool call of the agent's own SUCCEEDED (tool_execution_end, not an
+   * error): apply what it chose for its loop — a loop preference (`memory [kv]
+   * set|delete <key>`, the memory tool's `rest` / `wake`) or its focus
+   * (`memory set focus|goal`, `marina_focus`, `task goal` / `marina_goal`).
+   * A set only applies when the world confirmed the write.
+   */
+  private applySelfWrite(toolName: string, args: Record<string, unknown>, result: unknown): void {
+    const command = selfWriteCommand(toolName, args);
+    if (!command) return;
+    const reply = toolResultText(result);
+    const pref = parseLoopPreferenceCommand(command);
+    if (pref) {
+      const confirmed =
+        toolName === "memory"
+          ? (result as { details?: { success?: unknown } } | undefined)?.details?.success !== false
+          : pref.value === undefined || reply.includes(`Memory "${pref.key}" set.`);
+      if (confirmed) this.applyLoopPreferenceCommand(command);
+      return;
+    }
+    const write = parseFocusWrite(command, reply);
+    if (!write) return;
+    if ("clear" in write) {
+      // The key is already gone; only the live focus follows.
+      this.focus = null;
+      return;
+    }
+    this.focusSource = "agent";
+    const focus = { description: write.set, startedAt: Date.now() };
+    // `memory set focus` already persisted it; a goal is persisted as the focus
+    // so a restart resumes the agent's own direction.
+    if (/^memory\s+(?:kv\s+)?set\s+focus\b/i.test(command)) this.focus = focus;
+    else this.updateFocus(focus);
   }
 
   private setLoopPreferences(next: LoopPreferences): void {
@@ -3750,12 +3899,16 @@ export class LeanAgentAdapter implements AgentHandle {
     // on memory work the coordinator never asked for. Also skipped while a
     // coding task is active — a bound coder that goes quiet needs the task
     // restated, not a detour into memory housekeeping.
+    // Offered only with material — notes written since the last offer — so an
+    // idle agent is not asked to tidy an unchanged memory every cycle.
     if (
       this.idleCycles >= 3 &&
+      this.notesSinceConsolidation > 0 &&
       !this.crewResponderMode &&
       !this.activeCodingTask &&
       this.outstandingRequests.size === 0
     ) {
+      this.notesSinceConsolidation = 0;
       parts.push(
         "[Quiet — nothing needs your attention]\n\n" +
           "Options, if they improve future decisions: resolve a known contradiction, link evidence, evolve a stale belief, or store a genuinely reusable procedure. Notes that only record quiet, repeated orientation, or status broadcasts add noise. If memory is already sharp, run `brief` for new work, or rest (`memory set rest <why>`) and end the turn.",
@@ -3958,10 +4111,11 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     }
 
-    // ── 1c. Obligations ledger (MARINA_OBLIGATIONS, default off) ──
-    // New requests are read into obligations here (one call on the agent's own
-    // model); `on` lists the ones no successful action has settled yet,
-    // `observe` only logs the counts.
+    // ── 1c. Obligations ledger (MARINA_OBLIGATIONS; default on for Code Mode
+    // work, observe otherwise) ──
+    // New requests are read into obligations here; `on` lists the ones no
+    // successful action has settled yet, `observe` only logs the counts —
+    // when they change (DEBUG when nothing was extracted).
     if (this.obligations.mode() !== "off") {
       try {
         const tools = (this.agent?.state.tools ?? this.baseTools).map((t) => ({
@@ -3973,10 +4127,15 @@ export class LeanAgentAdapter implements AgentHandle {
         const section = this.obligations.section();
         if (section) parts.push(section, MANDATORY_SECTION_PRIORITY - 5, "obligations");
         else if (this.obligations.mode() === "observe") {
-          this.log.info(LEAN_AGENT_LOG_CATEGORY, "obligations observed (not shown)", {
-            agent: this.name,
-            ...this.obligations.summary(),
-          });
+          const summary = this.obligations.summary();
+          const key = JSON.stringify(summary);
+          if (key !== this.lastObligationsSummary) {
+            this.lastObligationsSummary = key;
+            const data = { agent: this.name, ...summary };
+            if (summary.total > 0)
+              this.log.info(LEAN_AGENT_LOG_CATEGORY, "obligations observed (not shown)", data);
+            else this.log.debug(LEAN_AGENT_LOG_CATEGORY, "obligations observed (not shown)", data);
+          }
         }
       } catch {
         // best-effort; the agent works without the ledger
@@ -4215,23 +4374,26 @@ export class LeanAgentAdapter implements AgentHandle {
     }
 
     // ── 5. Memory health (every 20th cycle, skipped if agent self-oriented) ──
-    // If the agent ran `memory orient` itself in the last 5 minutes, the
-    // framework already showed it the orient output — pushing stale
-    // orient text back at it wastes ~100-150 tokens. Also skips the DB
-    // round-trip, not just the output.
+    // If the agent ran `orient` itself (the command, or the memory tool's
+    // `orient` action) in the last 5 minutes, the framework already showed it
+    // the orient output — pushing stale orient text back at it wastes
+    // ~100-150 tokens. Also skips the DB round-trip, not just the output.
     // Crew-responder mode: suppressed — specialists don't need cognitive-state
     // awareness, they need to answer the coordinator and shut up. Same for a
     // bound coder mid-task.
     if (cycle % 20 === 0 && !this.crewResponderMode && !this.activeCodingTask) {
       const recentSelfOrient = this.actionHistory
         .getActions(Date.now() - 5 * 60 * 1000)
-        .some(
-          (a) =>
-            a.type === "tool_call" &&
+        .some((a) => {
+          if (a.type !== "tool_call") return false;
+          const args = a.args as { command?: unknown; action?: unknown } | undefined;
+          if (a.toolName === "memory") return args?.action === "orient";
+          return (
             a.toolName === "marina_command" &&
-            typeof (a.args as { command?: unknown })?.command === "string" &&
-            /\bmemory\s+orient\b/i.test((a.args as { command: string }).command),
-        );
+            typeof args?.command === "string" &&
+            /^\s*(?:memory\s+)?orient\b/i.test(args.command)
+          );
+        });
       if (!recentSelfOrient) {
         try {
           const orientResult = await this.platformMemory.orient();
@@ -4266,7 +4428,7 @@ export class LeanAgentAdapter implements AgentHandle {
           }
           if (lines.length > 0) {
             lines.push(
-              "Consider: note <what you learned> type inference, or skill store <procedure> for reliable approaches",
+              "Consider: note <what you learned> type inference, or `skill store <name> | <desc> | <actions>` for a reliable approach",
             );
             parts.push(`[Learning Signal]\n${lines.join("\n")}`);
           }
@@ -4310,9 +4472,16 @@ The goal is a smaller, sharper memory — not more notes.`;
       const elapsed = Date.now() - this.focus.startedAt;
       const elapsedMin = Math.round(elapsed / 60000);
 
-      if (elapsed > this.focusTimeoutMs) {
+      // The horizon asks for a review; it never deletes the agent's own focus.
+      // An operator/config goal and a `focus_persistent` focus never expire;
+      // only the harness's seeded default is cleared.
+      const operatorFocus =
+        this.focusSource === "config" ||
+        (this.config.goal !== undefined && this.focus.description === this.config.goal);
+      if (elapsed > this.focusTimeoutMs && !operatorFocus && !this.loopPrefs.focusPersistent) {
         const expiredFocus = this.focus.description;
-        this.updateFocus(null);
+        if (this.focusSource === "seed") this.updateFocus(null);
+        else this.focus = { ...this.focus, startedAt: Date.now() };
         parts.push(
           `[Focus Review Due] "${expiredFocus}" reached its time horizon; this does not imply completion. Check its success evidence. If complete, preserve the result and choose a new objective. If still valuable, restate a narrower next milestone. If blocked, record the blocker and hand off or deliberately stop.`,
           80,
@@ -4326,9 +4495,9 @@ The goal is a smaller, sharper memory — not more notes.`;
       }
     } else {
       parts.push(
-        "[No Focus] What interests you? Your memory, surroundings, and brief can guide you.\n" +
-          "Set a goal: `task goal <title> | <description>`\n" +
-          "Or: `memory set goal <objective>`",
+        "[No Focus] Pick one concrete objective (`brief` lists open work; set it with " +
+          "`memory set goal <objective>` or `task goal <title> | <description>`), " +
+          "or rest with `memory set rest <why>`.",
         75,
       );
     }
@@ -4356,7 +4525,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       actionDirective = `Your goal: ${this.config.goal}. What's the next step?`;
     } else {
       actionDirective =
-        "What interests you? Follow your curiosity. The world rewards the attentive.";
+        "No focus: choose one concrete objective and take its first step, or rest (`memory set rest <why>`) and end the turn.";
     }
     parts.push(actionDirective, MANDATORY_SECTION_PRIORITY, "action_directive");
 
@@ -4386,13 +4555,13 @@ The goal is a smaller, sharper memory — not more notes.`;
       this.loopPrefs.rest === null ? this.currentPromptActionable : this.currentPromptAddressed;
     if (nudge && this.silentTurns >= 2) {
       parts.push(
-        `[ACTION REQUIRED]\nYou have returned ${this.silentTurns} consecutive turns with zero tool calls while an event awaits action. Pure prose is not delivered to the world. Use the narrow Marina tool that responds to the event or advances its requested outcome. Do not substitute \`think\`, an unrelated \`look\`, or routine narration for the required response.`,
+        `[ACTION REQUIRED]\nYou have returned ${this.silentTurns} consecutive turns with zero tool calls while an event awaits action. Prose is not delivered to the asker. Use the narrow Marina tool that responds to the event or advances its requested outcome. Do not substitute \`think\`, an unrelated \`look\`, or routine narration for the required response.`,
         MANDATORY_SECTION_PRIORITY,
         "action_required",
       );
     } else if (nudge && this.silentTurns > 0) {
       parts.push(
-        "[No tool call was emitted last turn while an event awaited action. Respond through the appropriate Marina tool; private prose is not delivered.]",
+        "[No tool call was emitted last turn while an event awaited action. Respond through the appropriate Marina tool; prose is not delivered to the asker.]",
         MANDATORY_SECTION_PRIORITY,
         "silent_turn_nudge",
       );
@@ -4535,7 +4704,8 @@ The goal is a smaller, sharper memory — not more notes.`;
     const changed = description !== this.lastDirectiveFocus;
     this.lastDirectiveFocus = description;
     const shown = changed ? description : clampText(description, FOCUS_DIRECTIVE_REPEAT_CHARS);
-    return `Focus${changed ? "" : " (unchanged)"}: ${shown}. Next verifiable step; skip completed work.`;
+    const body = shown.replace(/[.\s]+$/, "");
+    return `Focus${changed ? "" : " (unchanged)"}: ${body}. Next verifiable step; skip completed work.`;
   }
 
   /**
@@ -4652,7 +4822,7 @@ The goal is a smaller, sharper memory — not more notes.`;
     // then the harness only suggests, and the focus stays the agent's.
     if (this.stuckCycles >= 5 && this.loopPrefs.focusPersistent) {
       this.stuckCycles = 0;
-      return "[STUCK — SUGGEST RESET] Repeated ineffective actions. You marked this focus persistent, so it stays. Diagnose the failed assumption and change approach: inspect missing evidence, ask a capable peer, try `novelty suggest`, or release it yourself with `focus clear`.";
+      return "[STUCK — SUGGEST RESET] Repeated ineffective actions. You marked this focus persistent, so it stays. Diagnose the failed assumption and change approach: inspect missing evidence, ask a capable peer, try `novelty suggest`, or release it yourself with `memory delete focus`.";
     }
     if (this.stuckCycles >= 5) {
       this.updateFocus(null);
@@ -4660,7 +4830,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       return "[STUCK — RESETTING] Focus cleared after repeated ineffective actions and two unanswered prompts to reconsider it. Do not create unrelated activity. Diagnose the failed assumption, then choose one relevant recovery: inspect missing evidence, ask a capable peer a specific question, use `novelty suggest` for a new angle, or record the blocker and stop.";
     }
     if (this.stuckCycles >= 3) {
-      return "[STUCK?] Your recent actions repeat without visible progress, and your focus may be stale. It is YOURS to keep or release: either state (via `think`) why the current focus is still right and change your approach to it, or release it yourself with `focus clear` and choose better. If the pattern continues unaddressed, the loop will clear it for you (unless you `memory set focus_persistent true`).";
+      return "[STUCK?] Your recent actions repeat without visible progress, and your focus may be stale. It is YOURS to keep or release: either state (via `think`) why the current focus is still right and change your approach to it, or release it yourself with `memory delete focus` and choose better. If the pattern continues unaddressed, the loop will clear it for you (unless you `memory set focus_persistent true`).";
     }
     return (
       "[Pattern] Repeated actions — approach likely not working. Think WHY (not WHAT next): " +
@@ -4722,7 +4892,9 @@ The goal is a smaller, sharper memory — not more notes.`;
       // can attempt followUp-based recovery fresh every cycle.
       if (event.type === "agent_start") {
         this.inRunRecoveries = 0;
+        this.runFollowUps = 0;
         this.currentRunToolCalls = 0;
+        this.toolCallArgs.clear();
         this.currentRunAdmittedTools = 0;
         this.runYielded = false;
         this.spendStopLogged = false;
@@ -4730,6 +4902,10 @@ The goal is a smaller, sharper memory — not more notes.`;
         this.currentRunChannelSends = 0;
         this.currentPromptTurns = 0;
         this.runCapWarned = { tools: false, turns: false };
+      }
+
+      if (event.type === "agent_end") {
+        this.lastRunToolCalls = this.currentRunToolCalls;
       }
 
       // Turn boundaries — relay to our observers so dashboards and other
@@ -4822,13 +4998,54 @@ The goal is a smaller, sharper memory — not more notes.`;
           // prose-only model decisions and must not trigger action nudges.
           return;
         }
-        if (event.toolResults.length === 0 && deliberateRest) {
-          // Declared rest: a quiet turn is the agent's choice — no counter,
-          // no circuit-breaker backoff, no forced-action followUp.
-          this.log.debug(LEAN_AGENT_LOG_CATEGORY, "quiet turn while resting", {
-            agent: this.name,
-          });
-        } else if (event.toolResults.length === 0) {
+        // A run counts as SILENT only when it made no tool call at all while
+        // something was owed. pi ends every run with a tool-less turn, and the
+        // prompt asks for exactly that when there is nothing to do — neither
+        // is a failure. Declared rest is never one.
+        const quietTurn = event.toolResults.length === 0;
+        const silent =
+          quietTurn &&
+          this.currentRunToolCalls === 0 &&
+          this.currentPromptActionable &&
+          !deliberateRest;
+        if (quietTurn) this.growOutputCapAfterLengthStop(event.message);
+        if (quietTurn && !silent) {
+          // The run's natural end (after tool calls), a deliberate quiet turn
+          // with nothing owed, or declared rest: no silent-turn counter, no
+          // backoff.
+          if (this.currentRunToolCalls > 0 || !this.currentPromptActionable) {
+            this.silentTurns = 0;
+            this.metrics.silentTurns = 0;
+          }
+          // At most ONE forced follow-up per run: a reply still owed after the
+          // run's tool calls (observed, never delivered), else
+          // MARINA_OBLIGATIONS=on's nudge for an obligation no action settled.
+          const salvaged =
+            this.currentPromptActionable &&
+            this.inRunRecoveries >= LeanAgentAdapter.MAX_IN_RUN_RECOVERIES &&
+            (await this.salvageOwedModelReply(event.message));
+          if (!salvaged && !this.runYielded && !deliberateRest && this.runFollowUps === 0) {
+            if (
+              this.currentPromptActionable &&
+              this.inRunRecoveries < LeanAgentAdapter.MAX_IN_RUN_RECOVERIES
+            ) {
+              this.inRunRecoveries++;
+              this.runFollowUps++;
+              this.agent.followUp({
+                role: "user",
+                content:
+                  "[Reply still owed] Your tool calls did not deliver the answer. Prose is not delivered to the asker: reply with `marina_tell` (or on the ask's channel), or say you cannot.",
+                timestamp: Date.now(),
+              });
+            } else {
+              const nudge = this.obligations.nudge();
+              if (nudge) {
+                this.runFollowUps++;
+                this.agent.followUp({ role: "user", content: nudge, timestamp: Date.now() });
+              }
+            }
+          }
+        } else if (silent) {
           this.silentTurns++;
           this.metrics.silentTurns = this.silentTurns;
           this.metrics.totalSilentTurns++;
@@ -4838,7 +5055,6 @@ The goal is a smaller, sharper memory — not more notes.`;
               `(LLM returned 0 tool calls; model=${this.model.id})`,
             { agent: this.name },
           );
-          this.growOutputCapAfterLengthStop(event.message);
 
           // Crossing the circuit-breaker threshold: surface the likely cause
           // once (instead of every cycle) so an operator sees WHY the agent
@@ -4868,22 +5084,18 @@ The goal is a smaller, sharper memory — not more notes.`;
             (await this.salvageOwedModelReply(event.message));
           if (
             !salvaged &&
-            this.currentPromptActionable &&
             !this.runYielded &&
+            this.runFollowUps === 0 &&
             this.inRunRecoveries < LeanAgentAdapter.MAX_IN_RUN_RECOVERIES
           ) {
             this.inRunRecoveries++;
+            this.runFollowUps++;
             this.agent.followUp({
               role: "user",
               content:
-                "[ACTION REQUIRED] Your previous turn emitted no tool call while an actionable event awaited a response. Pure text is not delivered anywhere. Use the narrow Marina tool that responds to the event or advances its outcome; do not use `think` or unrelated observation merely to satisfy this requirement.",
+                "[ACTION REQUIRED] A reply is owed and your turn made no tool call. Prose is not delivered to the asker: reply with the narrow Marina tool (`marina_tell`, or the ask's channel), or rest with `memory set rest <why>` if no reply is due.",
               timestamp: Date.now(),
             });
-          } else if (!salvaged && !this.runYielded) {
-            // MARINA_OBLIGATIONS=on: a run about to end with an obligation no
-            // action settled gets one follow-up naming it (once per obligation).
-            const nudge = this.obligations.nudge();
-            if (nudge) this.agent.followUp({ role: "user", content: nudge, timestamp: Date.now() });
           }
         } else {
           this.silentTurns = 0;
@@ -4916,9 +5128,9 @@ The goal is a smaller, sharper memory — not more notes.`;
           trustSources: [...this.currentTrustSources],
         });
 
-        if (event.toolName === "marina_command" && typeof args.command === "string") {
-          this.applyLoopPreferenceCommand(args.command);
-        }
+        // Loop preferences and focus writes apply when the call SUCCEEDS
+        // (tool_execution_end) — a refused or failed write changes nothing.
+        this.toolCallArgs.set(event.toolCallId, { toolName: event.toolName, args });
 
         if (event.toolName === "marina_command" || event.toolName === "marina_move") {
           this.detectCommandLoop(
@@ -4931,6 +5143,10 @@ The goal is a smaller, sharper memory — not more notes.`;
         // afterToolCall hook runs via the framework (AgentOptions.afterToolCall),
         // so we don't fire hookRegistry here — would double-fire.
         if (event.isError) this.metrics.errors++;
+        const started = this.toolCallArgs.get(event.toolCallId);
+        this.toolCallArgs.delete(event.toolCallId);
+        if (started && !event.isError)
+          this.applySelfWrite(started.toolName, started.args, event.result);
         if (/web|fetch|search|probe|recall|memory/i.test(event.toolName)) {
           this.currentTrustSources.add(
             /web|fetch|search|probe/i.test(event.toolName) ? "external_tool" : "memory",
@@ -4957,11 +5173,14 @@ The goal is a smaller, sharper memory — not more notes.`;
         });
 
         // Track note creation and reflection for cognitive scheduling
-        const resultStr = typeof event.result === "string" ? event.result : "";
+        const resultStr = toolResultText(event.result);
         // Count only genuine note creation ("Note #N saved") — not deletes,
         // not-found errors, or evolve/supersede, which also contain "Note #"
         // and would inflate the reflection-scheduling counter.
-        if (/Note #\d+ saved/.test(resultStr)) this.notesSinceReflection++;
+        if (/Note #\d+ saved/.test(resultStr)) {
+          this.notesSinceReflection++;
+          this.notesSinceConsolidation++;
+        }
         if (resultStr.includes("Reflection Created")) {
           this.notesSinceReflection = 0;
           this.lastReflectionCycle = this.loopIterationCount;
@@ -5394,6 +5613,7 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   setFocus(description: string): void {
+    this.focusSource = "config";
     this.updateFocus({ description, startedAt: Date.now() });
   }
 

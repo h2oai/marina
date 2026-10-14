@@ -248,7 +248,7 @@ describe("continuation prompt budget (adapter)", () => {
     expect(bytes(prompt)).toBeLessThanOrEqual(CONTINUATION_PROMPT_BUDGET_BYTES);
     expect(prompt).toContain("[World Events");
     // The action directive (no focus, no goal) is mandatory and survives.
-    expect(prompt).toContain("What interests you? Follow your curiosity.");
+    expect(prompt).toContain("No focus: choose one concrete objective");
     // Every rendered event line was clamped.
     expect(prompt).not.toContain("lorem ipsum ".repeat(60));
     // Events that did not fit were deferred, not dropped.

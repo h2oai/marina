@@ -110,6 +110,9 @@ describe("coding-task mode — continuation prompt assembly", () => {
     );
     const baselineInternals = baseline as unknown as AdapterInternals;
     baselineInternals.idleCycles = 3; // increments to 4 in the build → consolidation path
+    // Consolidation is offered only with material: notes written since the last offer.
+    (baselineInternals as unknown as { notesSinceConsolidation: number }).notesSinceConsolidation =
+      1;
     const quiet = await baselineInternals.buildContinuationPrompt();
     expect(quiet).toContain("[Quiet — nothing needs your attention]");
 
@@ -121,6 +124,7 @@ describe("coding-task mode — continuation prompt assembly", () => {
     tasked.setActiveCodingTask("refactor the parser");
     const taskedInternals = tasked as unknown as AdapterInternals;
     taskedInternals.idleCycles = 3;
+    (taskedInternals as unknown as { notesSinceConsolidation: number }).notesSinceConsolidation = 1;
     const prompt = await taskedInternals.buildContinuationPrompt();
     expect(prompt).not.toContain("[Quiet — nothing needs your attention]");
     expect(prompt).toContain("[Active Coding Task]");
