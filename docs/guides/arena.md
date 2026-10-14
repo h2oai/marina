@@ -98,6 +98,7 @@ detail (`level`).
 Filing stays the operator's act outside the world, but the server watches it. When an entrant is configured, the `arena-filing-watch` job runs about every 10 minutes and reads the open rounds. For every round locking within 24 hours, it compares them with the filings and refresh attempts recorded in the world DB (`arena_submissions`, `arena_attempts`). It raises one operational alert per round in trouble (category `arena-filing`, deadline = the lock) when:
 
 - a round has **no accepted filing** (critical within 6 h of its lock);
+- the standing filing **predates the round's 24-hour refresh window and nothing has tried since** (critical within 6 h of its lock), the trace a runner leaves when it crashes before recording an attempt;
 - a refresh **failed** (error, rejected or skipped) after the standing filing;
 - a refresh **started and never finished** (over 30 minutes);
 - within 45 minutes of the lock, **nothing ran in the last 90 minutes**, meaning the near-lock pass did not run.
@@ -412,7 +413,13 @@ accepted before the lock (up to 120 per round). `bun run arena submit <round|due
 a newer version of an accepted round; an unchanged forecast is not re-sent, and the autopilot never
 replaces.
 
-Keep an early accepted forecast, then schedule an operator refresh closer to the lock. For
+**Filing early.** A first filing is refused for a round locking beyond `MARINA_ARENA_WINDOW_HOURS`
+unless `--early` is passed. The board averages skill over the rounds an entrant answered, so an
+unanswered round costs nothing. A filing that misses its refresh is scored against a persistence
+baseline frozen on fresher data, and it can only lose. Replacing an accepted filing is always
+allowed.
+
+File inside the window, then schedule an operator refresh closer to the lock. For
 example, an hourly `MARINA_ARENA_WINDOW_HOURS=1.1 bun run arena submit due --replace` selects
 rounds locking within 66 minutes, while preserving the five-minute safety margin. Allow enough
 time for the selected formation and any simultaneous deadlines. Runners sharing a checkout or
@@ -881,7 +888,7 @@ match the arena's continuous, profile and ranking targets.
 | `arena shadow [list]` · `arena shadow score` | in-world | the shadow ledger, and its score on outcomes no one had seen |
 | `arena shadow run <round_id\|due> [forecaster:F]` | in-world | record a free forecaster's forecast for rounds about to lock (never filed) |
 | `arena discover [tracker:T] [n:N]` · `arena signals [tracker:T]` | in-world | run signal discovery (one proposer call per family, rate limited), list every attempt |
-| `bun run arena submit <round_id\|due> [--dry-run] [--replace] [--forecaster …] [--weight w]` | operator CLI | sign and file now, optionally replacing an earlier accepted version |
+| `bun run arena submit <round_id\|due> [--dry-run] [--replace] [--early] [--forecaster …] [--weight w]` | operator CLI | sign and file now, optionally replacing an earlier accepted version (`--early`: a first filing outside the window) |
 | `bun run arena settle` | operator CLI | put every resolved filing on the outcome path once (also the first step of a real `submit`) |
 | `bun run arena shadow horizons <round_id\|due>` | operator CLI | compare five statistical horizon policies on shared inputs; never file |
 | `bun run arena shadow horizons <round_id\|due> --weekly-anchor` | operator CLI | add two experimental projections from newer weekly anchors |

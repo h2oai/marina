@@ -489,6 +489,18 @@ describe("filing a round", () => {
     expect((await submitRound(closing, round.round_id)).kind).toBe("skipped");
   });
 
+  it("refuses a first filing outside the window unless --early; replacing is always allowed", async () => {
+    const narrow = { ...deps(), config: { ...config, windowHours: 0.01 } };
+    const out = await submitRound(narrow, round.round_id);
+    expect(out).toMatchObject({ kind: "skipped" });
+    expect(out.kind === "skipped" && out.reason).toContain("outside the 0.01 h filing window");
+    expect(posts).toHaveLength(0);
+    expect((await submitRound(narrow, round.round_id, { early: true })).kind).toBe("accepted");
+    // An accepted filing only gets fresher by replacement, inside the window or not.
+    const replaced = await submitRound(narrow, round.round_id, { replace: true });
+    expect(replaced.kind).toBe("accepted");
+  });
+
   it("records a rejection and does not re-send it", async () => {
     reply = () => Response.json({ error: "round_closed" }, { status: 422 });
     const out = await submitRound(deps(), round.round_id);

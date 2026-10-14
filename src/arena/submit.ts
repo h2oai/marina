@@ -254,6 +254,13 @@ export async function submitRound(
      * is not re-sent. Operator-only: the autopilot files once.
      */
     replace?: boolean;
+    /**
+     * File a FIRST version outside the filing window (`MARINA_ARENA_WINDOW_HOURS`).
+     * Refused by default: an unanswered round scores nothing, while a filing that
+     * misses its refresh is scored against a persistence baseline frozen on fresher
+     * data. Replacing an accepted filing is always allowed (it only gets fresher).
+     */
+    early?: boolean;
   } = {},
 ): Promise<SubmitOutcome> {
   if (opts.dryRun) return submitRoundInner(deps, roundId, opts);
@@ -295,7 +302,7 @@ export async function submitRound(
 async function submitRoundInner(
   deps: SubmitDeps,
   roundId: string,
-  opts: { dryRun?: boolean; replace?: boolean },
+  opts: { dryRun?: boolean; replace?: boolean; early?: boolean },
 ): Promise<SubmitOutcome> {
   const now = deps.now?.() ?? Date.now();
   const { config, store } = deps;
@@ -308,6 +315,14 @@ async function submitRoundInner(
   const accepted = store.acceptedArenaSubmission(config.entrant, roundId);
   if (accepted && !opts.dryRun && !opts.replace) {
     return { kind: "accepted", roundId, row: accepted, already: true };
+  }
+  const lockInHours = (Date.parse(round.lock_at) - now) / 3_600_000;
+  if (!accepted && !opts.dryRun && !opts.early && lockInHours > config.windowHours) {
+    return {
+      kind: "skipped",
+      roundId,
+      reason: `locks in ${lockInHours.toFixed(0)} h, outside the ${config.windowHours} h filing window; an unanswered round scores nothing, a filing that misses its refresh scores below persistence (--early files anyway)`,
+    };
   }
 
   let row: ArenaSubmissionRow;

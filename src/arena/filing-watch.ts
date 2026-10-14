@@ -26,7 +26,12 @@ const NEAR_LOCK_ACTIVITY_MS = 90 * 60_000;
 /** A refresh still "started" after this long is stuck. */
 const STUCK_ATTEMPT_MS = 30 * 60_000;
 
-export type FilingProblem = "unfiled" | "failed-refresh" | "stuck-refresh" | "no-near-lock-refresh";
+export type FilingProblem =
+  | "unfiled"
+  | "not-refreshed"
+  | "failed-refresh"
+  | "stuck-refresh"
+  | "no-near-lock-refresh";
 
 export interface FilingFinding {
   roundId: string;
@@ -61,6 +66,19 @@ export function filingFindings(
     }
     const acceptedAt = h.accepted ? Date.parse(h.accepted.at) : 0;
     const attemptAt = h.lastAttempt ? Date.parse(h.lastAttempt.at) : 0;
+    // Filed before this lock's refresh window and nothing has tried since: a
+    // runner that crashes before recording an attempt (a broken build) leaves
+    // only this trace. The stale filing is scored against a persistence baseline
+    // frozen on fresher data; an unanswered round would have scored nothing.
+    const windowStart = Date.parse(round.lock_at) - WATCH_WINDOW_HOURS * 3_600_000;
+    if (acceptedAt < windowStart && attemptAt < windowStart) {
+      out.push({
+        ...base,
+        severity: lockIn <= CRITICAL_UNFILED_HOURS ? "critical" : "warning",
+        problem: "not-refreshed",
+        detail: `the filing from ${h.accepted?.at} predates this round's refresh window and no refresh has run; locks in ${hours} h`,
+      });
+    }
     if (h.lastAttempt?.unfinished && now - attemptAt > STUCK_ATTEMPT_MS) {
       out.push({
         ...base,

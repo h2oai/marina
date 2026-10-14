@@ -11,8 +11,9 @@
  *   bun run arena status                        config, key, filed record
  *   bun run arena rounds                        open rounds, soonest lock first
  *   bun run arena show <round_id>               what Marina would file, and why
- *   bun run arena submit <round_id|due> [--dry-run] [--replace]
- *                                               sign + file (due = every round inside the window);
+ *   bun run arena submit <round_id|due> [--dry-run] [--replace] [--early]
+ *                                               sign + file (due = every round inside the window;
+ *                                               a first filing outside it needs --early);
  *                                               --replace files a newer version of an accepted
  *                                               round (the arena scores the newest on-time one)
  *   bun run arena settle                        put every resolved filing on the outcome path
@@ -93,6 +94,7 @@ const { positionals, values } = parseArgs({
     out: { type: "string" },
     "dry-run": { type: "boolean" },
     replace: { type: "boolean" },
+    early: { type: "boolean" },
     forecaster: { type: "string" },
     limit: { type: "string" },
     tracker: { type: "string" },
@@ -352,7 +354,9 @@ async function main(): Promise<number> {
     }
     case "submit": {
       if (!arg) {
-        throw new Error("usage: bun run arena submit <round_id|due> [--dry-run] [--replace]");
+        throw new Error(
+          "usage: bun run arena submit <round_id|due> [--dry-run] [--replace] [--early]",
+        );
       }
       const db = openDb();
       try {
@@ -377,7 +381,11 @@ async function main(): Promise<number> {
         if (ids.length === 0) console.log("Nothing due.");
         let failed = 0;
         for (const id of ids) {
-          const outcome = await submitRound(deps, id, { dryRun: values["dry-run"], replace });
+          const outcome = await submitRound(deps, id, {
+            dryRun: values["dry-run"],
+            replace,
+            early: values.early === true,
+          });
           if (outcome.kind === "dry-run") {
             console.log(`${id}: would file ${JSON.stringify(outcome.body)}`);
           } else if (outcome.kind === "accepted") {
