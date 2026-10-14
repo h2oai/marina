@@ -227,6 +227,23 @@ export function settle(
   };
 }
 
+/**
+ * The blend with a narrow start can file an sd narrower than every member
+ * proposed (start 0.148, members 0.18 / 0.2 / 0.3 → 0.174). No member asked
+ * for that confidence: the final sd is at least the narrowest proposal's.
+ */
+export function atLeastNarrowestProposal(
+  topline: Distribution,
+  proposals: Record<string, Proposal> | undefined,
+): Distribution {
+  const sds = Object.values(proposals ?? {})
+    .map((p) => p.sd)
+    .filter((sd) => Number.isFinite(sd) && sd > 0);
+  if (!sds.length) return topline;
+  const narrowest = Math.min(...sds);
+  return topline.sd < narrowest ? { ...topline, sd: round3(narrowest) } : topline;
+}
+
 /** Median move and median sd of a set of proposals. */
 function centre(base: Distribution, proposals: Proposal[]) {
   return {
@@ -1264,7 +1281,7 @@ export async function formationForecastRound(
   return {
     ...baseline,
     ...common,
-    topline: out.topline,
+    topline: atLeastNarrowestProposal(out.topline, out.proposals),
     proposals: out.proposals,
     trust: out.trust,
     ...(out.agreement !== undefined ? { agreement: out.agreement } : {}),

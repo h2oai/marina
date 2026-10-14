@@ -192,6 +192,8 @@ export interface RoundForecast {
   origins?: Record<string, ForecastOrigin>;
   /** Observation freshness at preparation time, rechecked before signing. */
   freshness?: import("./freshness").FreshnessAudit;
+  /** Set when a filed sd was raised to the measured nowcast error (submit.ts). */
+  errorFloorApplied?: { fromSd?: number; notes: string[] };
 }
 
 export interface ForecastOrigin {
@@ -209,6 +211,16 @@ export interface ForecastOrigin {
   reason: string;
   projection?: Record<string, unknown>;
   start: Distribution;
+  /**
+   * The daily nowcast's measured miss on recent Fridays (civiqs-nowcast.ts
+   * `nowcastErrorFloor`): the filed sd is never narrower (submit.ts).
+   */
+  errorFloor?: {
+    sd: number;
+    n: number;
+    rms: number;
+    errors: Array<{ date: string; error: number }>;
+  };
 }
 
 export function forecastRound(round: ArenaRound, lock: ArenaLock): RoundForecast {
