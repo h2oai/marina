@@ -383,6 +383,17 @@ time for the selected formation and any simultaneous deadlines. Runners sharing 
 submission ledger should use one exclusive lock; a refresh failure leaves the earlier accepted
 forecast in place.
 
+**Outcomes.** Every accepted filing the arena has resolved is settled once on Marina's outcome
+path (`src/arena/settle.ts`), however it was filed: the autopilot settles before each pass, and the
+operator CLI settles at the start of every real `submit` (or on demand with `bun run arena
+settle`). The scored version is the newest accepted filing, the one the arena scores. Numbers are
+filed as forecast answers and scored by CRPS; profiles and rankings become one mechanical outcome
+each, scored with the arena's own energy score / rank-biased overlap against its recorded
+persistence loss. Every outcome names its family (`family:<tracker>`) and method
+(`method:<kind>`, from the route in the filing's notes), so lessons, forecast history and
+per-family evidence all read the entry. The resolution time is the arena's published one when it
+gives one, otherwise the time of settling. A settling failure never blocks filing.
+
 Submissions also retain a local `detail` trace (migration 154): the frozen lock and its hash,
 forecast origin, model proposals and fallbacks, research evidence, explicit nonsecret strategy
 settings, and start/completion timestamps. It is separate from the signed wire body and survives
@@ -780,6 +791,7 @@ match the arena's continuous, profile and ranking targets.
 | `arena shadow run <round_id\|due> [forecaster:F]` | in-world | record a free forecaster's forecast for rounds about to lock (never filed) |
 | `arena discover [tracker:T] [n:N]` · `arena signals [tracker:T]` | in-world | run signal discovery (one proposer call per family, rate limited), list every attempt |
 | `bun run arena submit <round_id\|due> [--dry-run] [--replace] [--forecaster …] [--weight w]` | operator CLI | sign and file now, optionally replacing an earlier accepted version |
+| `bun run arena settle` | operator CLI | put every resolved filing on the outcome path once (also the first step of a real `submit`) |
 | `bun run arena shadow horizons <round_id\|due>` | operator CLI | compare five statistical horizon policies on shared inputs; never file |
 | `bun run arena shadow horizons <round_id\|due> --weekly-anchor` | operator CLI | add two experimental projections from newer weekly anchors |
 | `bun run arena shadow compare <round_id\|due>` · `shadow paired-score` | operator CLI | record and score matched statistical/Delphi/FRED/calibration candidates |
