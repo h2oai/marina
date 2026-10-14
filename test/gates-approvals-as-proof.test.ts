@@ -26,6 +26,7 @@ import { rankFloorRefusal } from "../src/engine/rank-floor";
 import {
   checkGateForExecution,
   grant,
+  meetsStandingFloor,
   recordGateExecution,
   SAFETY_GATES,
 } from "../src/engine/safety-gates";
@@ -146,7 +147,7 @@ describe("approvals are the proof", () => {
     // The newcomer has no standing, but held runs count regardless; solo use
     // re-checks standing, so give it the floor's worth of verified work.
     const taskId = w.db.createTask({ title: "t", creatorId: root.entity!, creatorName: "Root" });
-    w.db.recordStandingEarned(newcomer.entity!, "Newcomer", taskId, 10);
+    w.db.recordStandingEarned(newcomer.entity!, "Newcomer", taskId, 12); // above the floor: standing decays continuously
     newcomer.clear();
     await send(newcomer, "breed");
     expect(count("breed")).toBe(threshold + 1);
@@ -274,7 +275,7 @@ describe("approvals are the proof", () => {
     const agent = w.join("Agent");
     w.db.saveAgentConfig({ name: "Agent", model: "x", spawnedBy: "Owner" });
     const taskId = w.db.createTask({ title: "t", creatorId: root.entity!, creatorName: "Root" });
-    w.db.recordStandingEarned(agent.entity!, "Agent", taskId, 10);
+    w.db.recordStandingEarned(agent.entity!, "Agent", taskId, 12); // above the floor: standing decays continuously
 
     await send(agent, "breed"); // runs optimistically under earned
     expect(count("breed")).toBe(1);
@@ -304,7 +305,7 @@ describe("code.exec.unrestricted is operator-grant only", () => {
 
   it("the headless approver's refusal says it is operator-grant, and a grant passes", async () => {
     const taskId = db.createTask({ title: "t", creatorId: "e_x", creatorName: "X" });
-    db.recordStandingEarned("e_bot", "Bot", taskId, 10);
+    db.recordStandingEarned("e_bot", "Bot", taskId, 12); // above the floor: standing decays continuously
     const approver = new HeadlessGateApprover({
       db,
       entityName: "Bot",
@@ -319,5 +320,14 @@ describe("code.exec.unrestricted is operator-grant only", () => {
     expect(refused.reason).toContain("operator-grant only");
     grant(db, "e_bot", "code.exec.unrestricted");
     expect((await approver.requestApproval(req)).approved).toBe(true);
+  });
+});
+
+describe("standing floors are read as shown", () => {
+  it("whole tasks meet their floor despite continuous decay", () => {
+    expect(meetsStandingFloor(2.9999, 3)).toBe(true);
+    expect(meetsStandingFloor(2.96, 3)).toBe(true);
+    expect(meetsStandingFloor(2.94, 3)).toBe(false);
+    expect(meetsStandingFloor(0, 0)).toBe(true);
   });
 });

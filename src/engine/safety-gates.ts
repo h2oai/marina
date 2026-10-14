@@ -100,6 +100,16 @@ export interface GateDef {
  * approval from outside the requester's own lineage is one demonstration;
  * `demoThreshold` of them flip the gate to solo use.
  */
+/**
+ * Whether `standing` meets a gate's floor, read the way `standing` shows it
+ * (one decimal). Standing decays continuously, so points earned a moment ago
+ * are already a hair below their face value; the floors are counted in whole
+ * approved tasks, and three 1-point tasks must meet a floor of 3.
+ */
+export function meetsStandingFloor(standing: number, floor: number): boolean {
+  return Math.round(standing * 10) / 10 >= floor;
+}
+
 export const SAFETY_GATES: Record<string, GateDef> = {
   "shell.exec": {
     id: "shell.exec",
@@ -289,7 +299,11 @@ function unsupervisedHolder(
   if (isGrantedCompetence(competence)) return { kind: "granted" };
   // Same cached read (6 h TTL) the supervised path uses — no extra ledger scan.
   const standing = getStanding(db, entityId, now);
-  return { kind: "demonstrated", standing, standingOk: standing >= gate.minStanding };
+  return {
+    kind: "demonstrated",
+    standing,
+    standingOk: meetsStandingFloor(standing, gate.minStanding),
+  };
 }
 
 function decayedReason(gate: GateDef, standing: number): string {
@@ -347,7 +361,7 @@ export function checkGate(
   if (gate.operatorGrant) return { ok: false, reason: operatorGrantReason(gate) };
 
   const standing = getStanding(db, entityId, now);
-  if (standing < gate.minStanding) {
+  if (!meetsStandingFloor(standing, gate.minStanding)) {
     return {
       ok: false,
       reason: `Not enough standing to ${gate.description}: ${standing.toFixed(1)} / ${gate.minStanding} required`,
@@ -502,7 +516,7 @@ function evaluateGateForExecution(
 
   const standing =
     holder.kind === "demonstrated" ? holder.standing : getStanding(db, entityId, now);
-  if (standing < gate.minStanding) {
+  if (!meetsStandingFloor(standing, gate.minStanding)) {
     if (holder.kind === "demonstrated") {
       return {
         ok: false,
@@ -652,12 +666,13 @@ export function getGateProgress(db: MarinaDB, entityId: string, now = Date.now()
       const comp = db.getCompetence(entityId, gate.id);
       const demonstrations = comp?.demonstrations ?? 0;
       const flipped = comp?.supervised_only === 0;
-      const decayed = flipped && !isGrantedCompetence(comp) && standing < gate.minStanding;
+      const decayed =
+        flipped && !isGrantedCompetence(comp) && !meetsStandingFloor(standing, gate.minStanding);
       const status: GateProgress["status"] = decayed
         ? "locked"
         : flipped
           ? "unlocked"
-          : !gate.operatorGrant && standing >= gate.minStanding
+          : !gate.operatorGrant && meetsStandingFloor(standing, gate.minStanding)
             ? "supervised"
             : "locked";
       return {
