@@ -19,8 +19,10 @@ const memorySchema = Type.Object({
       Type.Literal("orient"),
       Type.Literal("skill_store"),
       Type.Literal("skill_search"),
+      Type.Literal("rest"),
+      Type.Literal("wake"),
     ],
-    { description: "write, search, reflect, orient, skill_store, skill_search" },
+    { description: "Action" },
   ),
   content: Type.Optional(Type.String({ description: "Content (for write/reflect)" })),
   query: Type.Optional(Type.String({ description: "Search query (for search/skill_search)" })),
@@ -63,9 +65,9 @@ export function createMemoryTool(
     name: "memory",
     label: "Platform Memory",
     description:
-      "Platform memory — all data persists on the server across sessions.\n" +
-      "Actions: write (save note), search (recall), reflect (synthesize), orient (health), " +
-      "skill_store (save skill), skill_search (find skills).\n" +
+      "Platform memory, persisted on the server.\n" +
+      "Actions: write, search (recall), reflect, orient (health), skill_store, skill_search, " +
+      "rest (content=why; no model calls until a reply is owed), wake.\n" +
       "Use trusted=true for decisions. For provenance use marina_command: note claim/source/derive/verify/explain.",
     parameters: memorySchema,
     execute: async (_id, params: Static<typeof memorySchema>) => {
@@ -201,6 +203,23 @@ export function createMemoryTool(
                 { type: "text", text: `Found ${r.results.length} skills:\n${lines.join("\n")}` },
               ],
               details: { success: true, count: r.results.length },
+            };
+          }
+
+          case "rest": {
+            const why = params.content?.trim().replace(/\s+/g, " ").slice(0, 200) || "resting";
+            const r = await platformMemory.setCoreValue("rest", why);
+            return {
+              content: [{ type: "text", text: r.success ? `resting: ${why}` : r.text }],
+              details: { success: r.success },
+            };
+          }
+
+          case "wake": {
+            const r = await platformMemory.deleteCoreValue("rest");
+            return {
+              content: [{ type: "text", text: r.success ? "awake" : r.text }],
+              details: { success: r.success },
             };
           }
 

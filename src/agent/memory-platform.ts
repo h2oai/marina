@@ -375,6 +375,10 @@ export class PlatformMemoryBackend {
     const perceptions = await this.client.command("memory get focus");
     const value = coreValue(perceptions);
     if (value === undefined) return null;
+    // `marina_focus set` / `memory set focus <text>` store plain text.
+    if (value.trim() && !value.trim().startsWith("{")) {
+      return { description: value.trim(), startedAt: 0 };
+    }
     try {
       const parsed = JSON.parse(value);
       if (parsed && typeof parsed.description === "string") {
@@ -398,6 +402,27 @@ export class PlatformMemoryBackend {
       if (raw.includes("normal")) return "normal";
     }
     return null;
+  }
+
+  /** Set a core-memory key (`memory kv set`). */
+  async setCoreValue(key: string, value: string): Promise<PlatformMemoryResult> {
+    const perceptions = await this.client.command(`memory kv set ${key} ${value}`);
+    const text = extractText(perceptions);
+    return {
+      success:
+        readMemoryResult(perceptions, "core-set")?.success ?? text.includes(`Memory "${key}" set.`),
+      text,
+    };
+  }
+
+  /** Delete a core-memory key (`memory kv delete`); an absent key is success. */
+  async deleteCoreValue(key: string): Promise<PlatformMemoryResult> {
+    const perceptions = await this.client.command(`memory kv delete ${key}`);
+    const text = extractText(perceptions);
+    return {
+      success: !perceptions.some((p) => p.kind === "error"),
+      text,
+    };
   }
 
   /** Raw core-memory value for `key`, or undefined when unset. */

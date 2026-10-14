@@ -83,7 +83,13 @@ type Internals = {
   sleep(ms: number): Promise<void>;
   lastTurnError(): string | null;
   agent: { prompt(text: string): Promise<void> };
+  pendingPerceptions: Array<{ text: string; priority: number }>;
 };
+
+/** Give the loop something to act on: an idle agent with nothing new makes no model call. */
+function poke(internals: Internals): void {
+  internals.pendingPerceptions.push({ text: "[message] Boss: status?", priority: 50 });
+}
 
 const AUTH_BODY = JSON.stringify({
   type: "error",
@@ -161,6 +167,7 @@ describe("LeanAgentAdapter provider-auth park", () => {
 
     internals.autonomousLoopRunning = true;
     internals.autonomousMode = true;
+    poke(internals);
     const loop = internals.runAutonomousLoop();
     internals.cycleWaiter.wake(); // skip the idle first delay
 
@@ -181,6 +188,7 @@ describe("LeanAgentAdapter provider-auth park", () => {
     // Each wake cuts a parked poll or the next cycle delay short.
     const wakeUntil = (cond: () => boolean) =>
       until(() => {
+        if (internals.pendingPerceptions.length === 0) poke(internals);
         internals.cycleWaiter.wake();
         return cond();
       });
@@ -226,6 +234,7 @@ describe("LeanAgentAdapter provider-auth park", () => {
     };
     internals.autonomousLoopRunning = true;
     internals.autonomousMode = true;
+    poke(internals);
     const loop = internals.runAutonomousLoop();
     internals.cycleWaiter.wake();
     await loop;

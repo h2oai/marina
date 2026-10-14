@@ -411,6 +411,9 @@
 # AGENT_IDLE_TICK_MS=60000
 # AGENT_ACTIVE_TICK_MS=15000
 
+# Long heartbeat for an idle or resting resident, in milliseconds. With no new perception (while resting: no owed reply), no outstanding request, no work in its last run and no consolidation or reflection material, a resident makes no model call until this long after its last prompt. Default 1800000 (30 min); `0`/`off` = only events wake it.
+# MARINA_AGENT_HEARTBEAT_MS=1800000
+
 # Minimum gap between an agent's replies on one channel, in milliseconds.
 # AGENT_CHANNEL_REPLY_COOLDOWN_MS=30000
 

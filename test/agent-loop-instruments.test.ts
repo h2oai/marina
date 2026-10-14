@@ -210,9 +210,10 @@ describe("deliberate rest", () => {
     expect(prompt).toContain("[ACTION REQUIRED]");
   });
 
-  it("without rest, silent turns still count toward the circuit breaker", async () => {
+  it("without rest, an owed reply left unanswered counts toward the circuit breaker", async () => {
     const { i } = makeAdapter("no-rest");
     i.setupActionTracking();
+    (i as unknown as { currentPromptActionable: boolean }).currentPromptActionable = true;
     await emit(i, silentTurnEnd);
     expect(i.silentTurns).toBe(1);
     i.applyLoopPreferenceCommand("memory delete rest");
