@@ -349,7 +349,7 @@ export function getPrimitiveUsageSummary(
            AND pu.created_at BETWEEN ps.started_at AND ps.completed_at
          WHERE ps.completed_at IS NOT NULL AND ps.completed_at>=? ${
            entityName ? "AND ps.entity_name=?" : ""
-}
+         }
          GROUP BY ps.id`,
     )
     .all(...args) as Array<{ outcome: string; meaningful: number }>;
