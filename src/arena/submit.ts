@@ -16,6 +16,12 @@ import { dailySpend } from "../engine/spend-ledger";
 import { guardedFetch } from "../net/url-guard";
 import type { ArenaSubmissionRow } from "../persistence/db-arena";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
+import {
+  arenaCalibrationHistory,
+  type CalibrationMode,
+  calibrateFiledForecast,
+  calibrationModeFromEnv,
+} from "./calibration";
 import type { ArenaConfig } from "./config";
 import type { ArenaData } from "./data";
 import type { Forecaster } from "./evaluate";
@@ -139,14 +145,47 @@ export function applyErrorFloor(round: ArenaRound, f: RoundForecast): RoundForec
   };
 }
 
+type Calibrate = (round: ArenaRound, f: RoundForecast) => RoundForecast;
+
+/**
+ * The (family, method) calibration for a filing (`calibration.ts`): our own
+ * resolved filings and the arena's published values. A read failure leaves
+ * the forecast uncalibrated, never unfiled.
+ */
+async function calibrationFor(
+  deps: Pick<SubmitDeps, "config" | "data" | "store" | "now">,
+  mode: CalibrationMode = calibrationModeFromEnv(),
+): Promise<Calibrate | undefined> {
+  if (mode === "off") return undefined;
+  try {
+    const [resolutions, rounds] = await Promise.all([deps.data.resolutions(), deps.data.rounds()]);
+    const history = arenaCalibrationHistory(
+      deps.store.listArenaSubmissions({ entrant: deps.config.entrant, limit: 500 }),
+      resolutions,
+      Object.fromEntries(rounds.map((r) => [r.round_id, r.tracker])),
+    );
+    const now = deps.now?.() ?? Date.now();
+    return (round, f) => calibrateFiledForecast(round, f, history, { now, mode });
+  } catch (err) {
+    new Logger().warn("arena", "calibration history unavailable", {
+      error: getErrorMessage(err),
+    });
+    return undefined;
+  }
+}
+
 async function prepareForecast(
   data: ArenaData,
   entrant: string,
   round: ArenaRound,
   forecaster: Forecaster,
+  calibrate?: Calibrate,
 ) {
   const lock = await data.lock(round.round_id);
-  const f = applyErrorFloor(round, await forecaster(round, lock));
+  const raw = await forecaster(round, lock);
+  // The forecaster, then the (family, method) calibration, then the
+  // measured-error floor: the floor has the last word on how narrow it may be.
+  const f = applyErrorFloor(round, calibrate ? calibrate(round, raw) : raw);
   const body: ArenaForecastBody = {
     round_id: round.round_id,
     entrant,
@@ -256,6 +295,7 @@ async function submitRoundInner(
         config.entrant,
         round,
         deps.forecaster ?? baselineForecaster,
+        await calibrationFor(deps),
       ));
     } catch (err) {
       return { kind: "skipped", roundId, reason: err instanceof Error ? err.message : String(err) };
