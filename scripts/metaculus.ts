@@ -28,7 +28,7 @@
  * the forecaster's model key (OPENROUTER_API_KEY or a local provider). DB_PATH selects the ledger.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -53,6 +53,7 @@ import {
   BENCHMARK,
   forecastPass,
   OUTCOME_BENCHMARK,
+  type ResolveCheckCache,
   resolvePass,
   spentToday,
 } from "../benchmarks/metaculus/bot";
@@ -208,19 +209,45 @@ async function forecastCmd(db: MarinaDB): Promise<number> {
 async function resolveCmd(db: MarinaDB): Promise<number> {
   if (values.fixture) return 0;
   enableOutcomeLearning(db);
+  const checks = checkCache(join(values["timer-dir"]!, "resolve-checks.json"));
   const r = await resolvePass({
     client: client(),
     db,
     resolveFiled: (id, value, at) => resolveFiled(db, METACULUS_OWNER, id, value, at),
     learn: (o) => noteOutcome(db, o),
+    checks,
     log,
   });
+  checks.save();
   await settleOutcomes(db);
   await settleDelivery(db);
   log(
-    `resolve: checked ${r.checked} · resolved ${r.resolved} · learned ${r.learned} · failed ${r.failed} · pending ${r.pending}${r.rateLimited ? " · rate limited (resumes next pass)" : ""}`,
+    `resolve: checked ${r.checked} · resolved ${r.resolved} · learned ${r.learned} · failed ${r.failed} · pending ${r.pending}${r.recent ? ` · ${r.recent} checked recently` : ""}${r.refused ? ` · ${r.refused} rate limited (retried next pass)` : ""}`,
   );
   return 0;
+}
+
+/**
+ * When each open question was last looked up, kept next to the timer units so
+ * a pass spends its lookups on questions not seen lately (a 429 storm used to
+ * re-fetch the same questions every pass).
+ */
+function checkCache(path: string): ResolveCheckCache & { save(): void } {
+  const seen = new Map<number, number>(
+    existsSync(path)
+      ? Object.entries(JSON.parse(readFileSync(path, "utf8")) as Record<string, number>).map(
+          ([id, at]) => [Number(id), at],
+        )
+      : [],
+  );
+  return {
+    get: (id) => seen.get(id),
+    set: (id, at) => void seen.set(id, at),
+    save: () => {
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, JSON.stringify(Object.fromEntries(seen)));
+    },
+  };
 }
 
 function statusCmd(db: MarinaDB): number {

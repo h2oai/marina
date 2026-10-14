@@ -76,6 +76,12 @@ No benchmark path writes an item's question, expected answer or model answer to 
 - **One outcome per run.** A run teaches through the outcome-learning loop in `src/learning/`, and every path feeds it the same way:
   - The in-world runner calls `noteBenchmarkRun` from `BenchmarkRunner.recordHarnessResult` for a valid, scored run.
   - `bun run benchmark:import` (by default; `--no-learn` opts out) and `POST /v1/benchmarks/runs` call it after recording a ledger run.
+- **A durable record of every run.** `noteBenchmarkRun` also writes one `outcomes` row per completed, valid, scored run (`src/outcomes/benchmark.ts`), whether or not a learner is armed in that process:
+  - The row is subject `bench:<id>`, kind `benchmark`, `eval_mode = measure` (never live evidence).
+  - It holds the score as `quality` and refs `family:<benchmark>` and `method:<target kind>:<model, model+stack or formation>`, the same tagging as arena settles.
+  - It has no delivery consumers, so the lesson still comes only through the path above.
+  - The hourly `outcome-autoresolve` job sweeps up runs another process wrote (ledger importers), and the backlog.
+  - `bun run outcomes:settle` does the same on demand, and optionally runs `futurex learn`, `arena settle` and `metaculus resolve`.
 - **What the outcome carries.** `benchmarkRunOutcome` in `src/learning/intake.ts` builds the outcome from:
   - the run's `bench:<id>` ref, score, n and judge;
   - its cost per item and execution evidence;

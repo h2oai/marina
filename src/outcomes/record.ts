@@ -27,7 +27,9 @@ export function consumersFor(
 ): string[] {
   if (basis === "judged" && !opts.deliverJudged) return [];
   // A reported request carries no text to judge a lesson from: evidence only.
-  if (kind === "request") return [];
+  // A benchmark run's lesson goes through the benchmark learner
+  // (`noteBenchmarkRun`), which owns its leak guard: its row is evidence only.
+  if (kind === "request" || kind === "benchmark") return [];
   return kind === "forecast" ? ["lessons", "history"] : ["lessons"];
 }
 

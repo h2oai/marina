@@ -8,7 +8,9 @@
  */
 
 import { benchmarkExecution } from "../engine/benchmark-execution";
-import { getErrorMessage } from "../engine/errors";
+import { getErrorMessage, tryLog } from "../engine/errors";
+import { Logger } from "../engine/logger";
+import { recordBenchmarkRun } from "../outcomes/benchmark";
 import type { MarinaDB } from "../persistence/database";
 import { familiesForRun, familyDescription, targetSubjects } from "./families";
 import { type CaseGuard, ledgerCaseGuard, mergeGuards } from "./leak-guard";
@@ -27,6 +29,8 @@ import {
  * lessons were all rejected by an EARLIER learner, so a second pass is a no-op.
  */
 export const BENCHMARK_LEARNER = "bench-rule-v2";
+
+const logger = new Logger();
 
 interface RunLike {
   id: string;
@@ -254,8 +258,15 @@ export function noteBenchmarkRun(
   run: RunLike,
   opts: { categories?: CategoryTally[]; guard?: CaseGuard } = {},
 ): void {
+  const stored = db.getBenchmarkRun(run.id);
   // An invalid run measured the infrastructure, not the target: no lesson.
-  if (db.getBenchmarkRun(run.id)?.status === "invalid") return;
+  if (stored?.status === "invalid") return;
+  // The durable record first (ids and numbers only), whether or not a learner
+  // is armed in this process: every completed run is one outcome row.
+  if (stored)
+    tryLog(logger, "main", "Could not record benchmark outcome", () => {
+      recordBenchmarkRun(db, stored);
+    });
   const outcome = benchmarkRunOutcome(db, run, opts);
   if (outcome) noteOutcome(db, outcome);
 }
