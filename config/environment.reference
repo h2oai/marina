@@ -819,6 +819,9 @@
 # Spread calibration of filed arena toplines, per (family, method): a minimum-CRPS sd scale fitted on our own resolved filings (shrunk toward 1) and adopted only when it beats identity on the newer 40 % of that history by 5 %. With too little history it is identity. `on` (default) applies an adopted scale, `observe` records it without applying, `off` skips it. The measured-error floor still runs after it.
 # MARINA_ARENA_CALIBRATION=on
 
+# Learned move weight for formation filings, per (family, method): the filed mean is start + w × (median member proposal − start), w ∈ [0, 1.5] fitted by minimum CRPS on our resolved filings and arena shadows of the same key (shrunk toward the formations' own trust), adopted only when it beats what was filed on the newer 40 % by 5 % AND shuffling the members' moves across rounds does not reach the same gain (placebo). Until then the formation's constant trust stands. `on` (default) applies an adopted weight, `observe` records it without applying, `off` skips it. The spread calibration and the measured-error floor run after it.
+# MARINA_ARENA_MOVE_WEIGHT=on
+
 # Bounded evidence gap loop, 1–3 rounds per retrieval (default 1). Values above 1 enable evidence capture. A reviewer names up to three missing or contradictory facts; stop on no new verified evidence or no remaining queries. Typed forecasts already have an outer research loop: keep its research-round setting at 1 when isolating this inner loop. LOOP_MODEL defaults to the caller's lead/first analyst. Model and search spend still use the shared daily/scope ledger.
 # MARINA_RESEARCH_LOOP_ROUNDS=1
 # MARINA_RESEARCH_LOOP_MODEL=

@@ -63,6 +63,7 @@ import {
   MAX_FINAL_SD_MOVE,
   MAX_PROPOSAL_SD_MOVE,
   median,
+  PROFILE_ANCHOR,
   RESEARCH_CHECKS,
   runCheck,
   SYMBIOSIS_DISAGREEMENT,
@@ -134,8 +135,7 @@ const round3 = (x: number) => Math.round(x * 1000) / 1000;
 const clamp = (x: number, lo: number, hi: number) => Math.min(Math.max(x, lo), hi);
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
-export const PROFILE_SCORING =
-  "This is a live public forecasting benchmark: a profile forecast is one normal {mean, sd} per cell, scored together by the energy score against the published profile, as skill against persistence (each cell's last published value, sd 1.5). The start forecast is the default for every cell: move a cell only for a concrete reason — a pattern in its data or a scheduled event you are confident about; extrapolating a short trend or betting on mean reversion usually loses at a horizon of a few days. Too narrow an sd is punished hard; too wide wastes skill.";
+export const PROFILE_SCORING = `This is a live public forecasting benchmark: a profile forecast is one normal {mean, sd} per cell, scored together by the energy score against the published profile, as skill against persistence (each cell's last published value, sd 1.5). ${PROFILE_ANCHOR} Too narrow an sd is punished hard; too wide wastes skill.`;
 export const PROFILE_REPLY =
   'Reply with ONE JSON object: {"profile": {"<cell>": {"mean": number, "sd": number > 0}, …one entry for EVERY cell, keyed exactly as listed…}, "reason": "<one sentence naming the cells you moved and why>"}.';
 
