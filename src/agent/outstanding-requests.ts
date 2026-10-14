@@ -8,6 +8,9 @@ export interface OutstandingRequest {
   text: string;
   kind: "tell" | "channel" | "say";
   target: string;
+  /** Who asked (a channel ask's `target` is the channel). A tell to the
+   *  speaker settles the ask on any surface. */
+  speaker?: string;
   correlation?: string;
   modelRequestId?: string;
   presented: boolean;
@@ -88,6 +91,7 @@ export function readRequestLedger(value: unknown, now = Date.now()): Outstanding
         typeof r.target !== "string" ||
         !["tell", "channel", "say"].includes(r.kind) ||
         (r.correlation !== undefined && typeof r.correlation !== "string") ||
+        (r.speaker !== undefined && typeof r.speaker !== "string") ||
         (r.modelRequestId !== undefined && typeof r.modelRequestId !== "string") ||
         (r.recordedAt !== undefined &&
           (typeof r.recordedAt !== "number" || !Number.isFinite(r.recordedAt))),
@@ -207,6 +211,7 @@ export class OutstandingRequests {
       typeof p.data.senderName === "string"
         ? p.data.senderName
         : (tell?.[1] ?? clean.match(/^(\S+) says:/)?.[1]);
+    const asker = speaker ?? (typeof p.data.from === "string" ? p.data.from : undefined);
     const kind = channel ? "channel" : tell || p.tag === "tell" || p.data.to ? "tell" : "say";
     const target = channel ?? speaker;
     if (!target) return;
@@ -226,6 +231,7 @@ export class OutstandingRequests {
       kind,
       target,
       text: clean,
+      ...(asker ? { speaker: asker } : {}),
       modelRequestId,
       correlation: /\[re:([a-z0-9]+)\]/i.exec(message)?.[1],
       presented: false,
@@ -241,7 +247,8 @@ export class OutstandingRequests {
     if (request) request.presented = true;
   }
 
-  /** Only server delivery receipts from a durably journaled successful tool can settle work. */
+  /** Only server delivery receipts from a durably journaled successful tool can settle work.
+   *  A delivery to the asker settles: the same surface, or a tell to the speaker. */
   settle(details: unknown, eligible: ReadonlySet<string>): void {
     if (!details || typeof details !== "object") return;
     const deliveries = (details as { deliveries?: unknown }).deliveries;
@@ -249,11 +256,18 @@ export class OutstandingRequests {
     for (const receipt of deliveries) {
       if (!receipt || typeof receipt.message !== "string" || typeof receipt.target !== "string")
         continue;
+      const target = receipt.target.toLowerCase();
+      // Same surface (the channel, the room, a tell to the asker) — or, for a
+      // conversational ask, ANY tell to the person who asked: answering a
+      // channel question privately still answers it.
       const candidates = this.entries().filter(
         (request) =>
           eligible.has(request.id) &&
-          request.kind === receipt.kind &&
-          (request.kind === "say" || request.target.toLowerCase() === receipt.target.toLowerCase()),
+          ((request.kind === receipt.kind &&
+            (request.kind === "say" || request.target.toLowerCase() === target)) ||
+            (receipt.kind === "tell" &&
+              !request.modelRequestId &&
+              (request.speaker ?? request.target).toLowerCase() === target)),
       );
       const envelope = jsonEnvelope(receipt.message);
       const matched = candidates.find((request) => {

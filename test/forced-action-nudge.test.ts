@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * `MARINA_FORCED_ACTION_NUDGE`: `all` (default) keeps today's behaviour — any
- * addressed or high-priority event is owed and nudged; `requests` reserves the
- * reply ledger and the forced-action nudge for events that ask for something.
+ * `MARINA_FORCED_ACTION_NUDGE`: `requests` (default) reserves the reply ledger
+ * and the forced-action nudge for events that ask for something; `all` keeps
+ * the earlier behaviour — any addressed or high-priority event is owed.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -49,19 +49,19 @@ function channelPost(message: string, id: string): Perception {
 }
 
 describe("forcedActionNudgeMode", () => {
-  it("defaults to all; only an explicit `requests` changes it", () => {
-    expect(forcedActionNudgeMode({})).toBe("all");
-    expect(forcedActionNudgeMode({ MARINA_FORCED_ACTION_NUDGE: "all" })).toBe("all");
-    expect(forcedActionNudgeMode({ MARINA_FORCED_ACTION_NUDGE: "junk" })).toBe("all");
-    expect(forcedActionNudgeMode({ MARINA_FORCED_ACTION_NUDGE: " Requests " })).toBe("requests");
+  it("defaults to requests; only an explicit `all` changes it", () => {
+    expect(forcedActionNudgeMode({})).toBe("requests");
+    expect(forcedActionNudgeMode({ MARINA_FORCED_ACTION_NUDGE: " All " })).toBe("all");
+    expect(forcedActionNudgeMode({ MARINA_FORCED_ACTION_NUDGE: "junk" })).toBe("requests");
+    expect(forcedActionNudgeMode({ MARINA_FORCED_ACTION_NUDGE: "requests" })).toBe("requests");
   });
 });
 
 describe("forced-action nudge scope", () => {
   const info = "Nudged: shard 2 total is 4,113, merged into the board.";
 
-  it("all (default): an addressed information post is owed and nudged", async () => {
-    using _state = scopeProcessState({ env: { MARINA_FORCED_ACTION_NUDGE: undefined } });
+  it("all: an addressed information post is owed and nudged", async () => {
+    using _state = scopeProcessState({ env: { MARINA_FORCED_ACTION_NUDGE: "all" } });
     const i = adapter();
     i.client.emit("perception", channelPost(info, "c1"));
     expect(i.pendingPerceptions[0]?.shouldRespond).toBe(true);

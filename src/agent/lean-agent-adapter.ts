@@ -187,7 +187,7 @@ import {
   reasoningHeadroomCap,
   shapeOpenRouterPayload,
 } from "./reasoning-control";
-import { SocialAwareness } from "./social";
+import { isAddressedTo, SocialAwareness, withoutVocative } from "./social";
 import { describeToolProbe } from "./tool-call-probe";
 import {
   classifyToolRisk,
@@ -266,17 +266,18 @@ function noReplyMarker(acknowledgement: boolean, information: boolean): string {
  * that drives the forced-action nudge (§11), the in-run silent recovery, the
  * declared-rest exemption and reply-ledger tracking.
  *
- * - `all` (default): any first-party perception that should be answered or
- *   scored ≥ 80.
- * - `requests`: only a perception that owes a reply — a REQUEST tell, an
- *   addressed post whose body is a request (`classifyIncomingTell`), or a
- *   request already in the ledger. Addressed INFORMATION still wakes the loop
- *   and renders as `[!]`; it never forces a tool call.
+ * - `requests` (default): only a perception that owes a reply — a REQUEST
+ *   tell, an addressed post whose body is a request (`classifyIncomingTell`),
+ *   or a request already in the ledger. Addressed INFORMATION still wakes the
+ *   loop and renders as `[!]`; it never forces a tool call.
+ * - `all`: any first-party perception that should be answered or scored ≥ 80
+ *   (the earlier default: every addressed status post became a reply debt,
+ *   so two agents naming each other answered each other indefinitely).
  */
 export function forcedActionNudgeMode(
   env: Record<string, string | undefined> = process.env,
 ): "all" | "requests" {
-  return env.MARINA_FORCED_ACTION_NUDGE?.trim().toLowerCase() === "requests" ? "requests" : "all";
+  return env.MARINA_FORCED_ACTION_NUDGE?.trim().toLowerCase() === "all" ? "all" : "requests";
 }
 
 export function shouldKeepPerception(
@@ -704,7 +705,7 @@ export function isAddressedOrCrewMessage(
 ): boolean {
   const body = event?.message ?? text;
   if (CORRELATION_TAG_RE.test(body) || CORRELATION_TAG_RE.test(text)) return true;
-  if (name && body.toLowerCase().includes(name.toLowerCase())) return true;
+  if (name && isAddressedTo(body, name)) return true;
   if (event?.channel?.startsWith("marina:")) return true;
   return body.startsWith("[crew-task]");
 }
@@ -2287,9 +2288,10 @@ export class LeanAgentAdapter implements AgentHandle {
             let priority = lastEvent
               ? this.socialAwareness.scorePerception(lastEvent, this.name)
               : 15;
+            // An arrival is a perception, not a request: a guide sees it and
+            // may greet, but owes nothing (a forced reply per visitor).
             let respond =
               priority >= 80 ||
-              (this.config.role === "guide" && lastEvent?.type === "player_entered_room") ||
               (lastEvent ? this.socialAwareness.shouldRespond(lastEvent, this.name) : false);
             // A tell is directed work (priority 100, reply owed) — unless it is
             // a pure acknowledgement ("thanks", "noted", "no reply needed"),
@@ -2327,6 +2329,16 @@ export class LeanAgentAdapter implements AgentHandle {
                 priority = 100;
                 respond = true;
               }
+            } else if (
+              p.kind === "message" &&
+              typeof p.data.message === "string" &&
+              isPureAcknowledgement(withoutVocative(p.data.message, this.name))
+            ) {
+              // The same rule on a room or channel post: "thanks, no reply
+              // needed" addressed to this agent owes nothing.
+              acknowledgement = true;
+              priority = Math.min(priority, ACKNOWLEDGEMENT_PRIORITY);
+              respond = false;
             }
             // Gateway/cross-instance relayed content is untrusted. It stays
             // VISIBLE (federation is a feature) but must never drive auto-action:
@@ -2461,7 +2473,11 @@ export class LeanAgentAdapter implements AgentHandle {
             // steer() here would ALSO be drained into that prompt and the
             // same message would be paid for twice. Mid-run: steer, and mark
             // the buffered copy delivered so the next prompt skips it.
-            if (priority >= 80 && this.agent.state.isStreaming) {
+            // A channel post interrupts only at the dispatch tier (≥ 90: crew
+            // tasks, model requests); an addressed chat post waits for the
+            // next cycle instead of steering every run in flight.
+            const steerFloor = lastEvent?.type === "channel_message" ? 90 : 80;
+            if (priority >= steerFloor && this.agent.state.isStreaming) {
               const speaker = lastEvent?.speaker ?? "Someone";
               this.agent.steer({
                 role: "user",
@@ -3530,22 +3546,27 @@ export class LeanAgentAdapter implements AgentHandle {
       return Math.min(120_000, 15_000 * over);
     }
 
-    // Declared rest: idle cadence unless someone addresses the agent.
+    // Declared rest: idle cadence unless someone addresses the agent. A NEW
+    // address answers at the fast tick; an owed request the agent has
+    // already been shown re-asks at the normal rate, never the minimum.
     if (this.loopPrefs.rest !== null) {
-      return this.outstandingRequests.size > 0 ||
+      if (
         this.pendingPerceptions.some(
           (perception) => perception.shouldRespond || perception.addressed,
         )
-        ? rate.min
-        : rate.idle;
+      )
+        return rate.min;
+      return this.outstandingRequests.size > 0 ? rate.normal : rate.idle;
     }
 
     const hasActionablePerceptions = this.pendingPerceptions.some(
       (perception) => perception.shouldRespond || perception.addressed || perception.priority >= 80,
     );
 
-    // Events incoming — fast tick
-    if (hasActionablePerceptions || this.outstandingRequests.size > 0) return rate.min;
+    // Events incoming — fast tick; an unsettled owed request alone re-asks at
+    // the normal rate (a 1 s re-prompt of the same debt only spends).
+    if (hasActionablePerceptions) return rate.min;
+    if (this.outstandingRequests.size > 0) return rate.normal;
 
     // Actively working on a focus with recent actions
     const recentToolCalls = this.actionHistory
