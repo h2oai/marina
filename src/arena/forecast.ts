@@ -12,6 +12,12 @@
  * nothing.
  */
 
+import {
+  chooseLevelWindow,
+  type LevelEvidence,
+  levelForecast,
+  SAMPLING_NOISE_TRACKERS,
+} from "./sampling-noise";
 import { crpsNormal } from "./score";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "./types";
 
@@ -26,7 +32,11 @@ const MIN_HISTORY = 12;
 const MIN_SD = 0.05;
 const DAY_MS = 86_400_000;
 
-export type SpreadRule = "persistence" | "calibrated" | "robust";
+/**
+ * `level` (sampling-noise profiles only, `sampling-noise.ts`) also moves the
+ * mean: the mean of the last k releases, with the spread of its own misses.
+ */
+export type SpreadRule = "persistence" | "calibrated" | "robust" | "level";
 
 export interface ScalarForecast extends Distribution {
   rule: SpreadRule;
@@ -187,6 +197,8 @@ export interface RoundForecast {
   ranking?: string[];
   /** Per series (or cell): which spread rule was used. */
   rules: Record<string, SpreadRule>;
+  /** The level window chosen for a sampling-noise profile, and the evidence behind it. */
+  level?: LevelEvidence;
   note: string;
   /** Dated inputs and the actual start distribution, retained through model stages. */
   origins?: Record<string, ForecastOrigin>;
@@ -225,14 +237,42 @@ export function forecastRound(round: ArenaRound, lock: ArenaLock): RoundForecast
     if (cells.length < 2) throw new Error(`${round.round_id}: profile round lists no cells`);
     const profile: Record<string, Distribution> = {};
     const rules: Record<string, SpreadRule> = {};
-    for (const cell of cells) {
+    const hists = cells.map((cell) => {
       const hist = lock.answer_history_by_cell?.[cell];
       if (!hist?.length) throw new Error(`${round.round_id}: no history for cell ${cell}`);
+      return hist;
+    });
+    const level = SAMPLING_NOISE_TRACKERS.has(round.tracker)
+      ? chooseLevelWindow(
+          hists,
+          horizonSteps(hists[0]!, round.release_at),
+          (prefix) => forecastScalar(prefix, round.release_at),
+          PERSISTENCE_SD,
+          CALIBRATION_MARGIN,
+        )
+      : undefined;
+    cells.forEach((cell, i) => {
+      const hist = hists[i]!;
+      const steps = horizonSteps(hist, round.release_at);
+      const values = hist.map((p) => p.value).filter((v) => Number.isFinite(v));
+      const l = level ? levelForecast(values, level.k, steps) : undefined;
+      if (l) {
+        profile[cell] = { mean: round3(l.mean), sd: round3(l.sd) };
+        rules[cell] = "level";
+        return;
+      }
       const f = forecastScalar(hist, round.release_at);
       profile[cell] = { mean: f.mean, sd: f.sd };
       rules[cell] = f.rule;
-    }
-    return { profile, rules, note: noteFor(Object.values(rules)) };
+    });
+    if (!level) return { profile, rules, note: noteFor(Object.values(rules)) };
+    const used = Object.values(rules).filter((r) => r === "level").length;
+    return {
+      profile,
+      rules,
+      level,
+      note: `marina-baseline v1 (sampling-noise level): ${level.k === 1 ? "last release" : `mean of the last ${level.k} releases`} per cell, sd from its own recent ${level.steps}-step misses (${used}/${cells.length}; in-sample skill ${round3(level.skill[`k${level.k}`]!)} vs per-cell baseline ${round3(level.skill.baseline!)} over ${level.points})`,
+    };
   }
   const length = round.ranking?.length ?? 10;
   return {
@@ -250,6 +290,8 @@ function noteFor(rules: SpreadRule[]): string {
 function round(x: number): number {
   return Math.round(x * 1000) / 1000;
 }
+/** `round`, where a parameter named `round` shadows it. */
+const round3 = round;
 
 export interface BacktestResult {
   /** Mean skill vs the arena's persistence (sd 1.5) on the held-out half. */

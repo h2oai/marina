@@ -80,8 +80,16 @@ the mean of per-round skill. Everywhere else it files exact persistence.
 | Round shape | Marina's answer |
 |---|---|
 | Number (`continuous_normal`) | persistence mean ± calibrated or 1.5 spread |
-| Profile (`profile_energy`) | the same, per cell |
+| Profile (`profile_energy`) | the same, per cell; a subgroup crosstab (`yougov_xtab`) may instead take the mean of the last k releases (below) |
 | Ranking (`ranking_list`) | last-7-day Wikipedia pageview totals, Main_Page and non-articles excluded |
+
+A crosstab cell is a few hundred respondents of one weekly poll, so last week's value carries last
+week's sampling error. For those profiles (`src/arena/sampling-noise.ts`) the baseline also tries
+the mean of the last k releases (k ∈ 1, 2, 4, 6, 8), each with a spread equal to that mean's own
+recent misses at the round's horizon. It picks one k for the whole profile from the cells' rolling
+record, scored per target date over all cells, and uses it (rule `level`) only when it beats the
+per-cell baseline by the calibration margin. The choice and its evidence are kept in the forecast
+detail (`level`).
 
 `arena show <round_id>` prints exactly what would be filed and which spread rule each series used.
 
