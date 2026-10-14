@@ -168,6 +168,15 @@ export const RANKING_HALF_LIFE_DAYS = 3;
  * a sustained article keeps its place. Ties by title, as the arena breaks them.
  */
 export function forecastRanking(lock: ArenaLock, length: number, allowed?: string[]): string[] {
+  const ranked = rankingScores(lock, allowed).map(([t]) => t);
+  if (ranked.length < length) {
+    throw new Error(`only ${ranked.length} candidates for a top-${length}`);
+  }
+  return ranked.slice(0, length);
+}
+
+/** Every eligible candidate with its recency-weighted score, best first (ties by title). */
+export function rankingScores(lock: ArenaLock, allowed?: string[]): Array<[string, number]> {
   const obs = [...(lock.answer_obs ?? [])].sort((a, b) => a.date.localeCompare(b.date));
   if (obs.length === 0) throw new Error("no ranking observations to forecast from");
   const newest = Date.parse(obs.at(-1)!.date);
@@ -181,14 +190,9 @@ export function forecastRanking(lock: ArenaLock, length: number, allowed?: strin
     });
   }
   const allow = allowed ? new Set(allowed) : undefined;
-  const ranked = [...totals.entries()]
+  return [...totals.entries()]
     .filter(([t]) => !isExcludedTitle(t) && (!allow || allow.has(t)))
-    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-    .map(([t]) => t);
-  if (ranked.length < length) {
-    throw new Error(`only ${ranked.length} candidates for a top-${length}`);
-  }
-  return ranked.slice(0, length);
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
 }
 
 export interface RoundForecast {

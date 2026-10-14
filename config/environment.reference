@@ -923,6 +923,9 @@
 # MARINA_ARENA_ROUTE_MIN_N=8
 # MARINA_ARENA_SHADOW_CHALLENGERS=
 
+# `research:wiki-events:<model>[@<retrievers>]` (Wikipedia top-N with scheduled events): the most articles a run may add to the recency list from mechanically verified events (0 = none, the statistical list only).
+# MARINA_ARENA_WIKI_EVENTS_MAX_INSERT=3
+
 # `off` stops the nowcast reading the live Civiqs dashboard for open rounds (rounds past their lock never do).
 # MARINA_ARENA_CIVIQS_LIVE=on
 

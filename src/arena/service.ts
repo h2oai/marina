@@ -23,7 +23,7 @@ import {
 } from "./filing-watch";
 import { forecastRound } from "./forecast";
 import { forecastSettings } from "./forecast-config";
-import { requireFreshForecast } from "./freshness";
+import { forecastCutoff, requireFreshForecast } from "./freshness";
 import type { Usage } from "./model-backend";
 import { publicKeyBase64 } from "./protocol";
 import {
@@ -358,6 +358,9 @@ export async function forecasterFor(
     };
   }
   if (spec.startsWith("tabh2o")) return tabh2oForecasterFor(spec, opts);
+  if (spec.startsWith(`${WIKI_EVENTS}:`)) {
+    return wikiEventsForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness);
+  }
   if (spec.startsWith("research:")) {
     return researchForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness, opts.notes);
   }
@@ -1050,6 +1053,111 @@ export async function learnFromResolutions(
     written++;
   }
   return written;
+}
+
+// ─── Wikipedia scheduled events ──────────────────────────────────────────────
+
+/** The method key of the Wikipedia event-research card (src/arena/research/wiki-events.ts). */
+export const WIKI_EVENTS = "research:wiki-events";
+
+/**
+ * `research:wiki-events:<model>[@<retriever>[,<retriever>…]]`: the recency
+ * list plus mechanically verified scheduled events (one extraction call to
+ * `<model>`; retrievers as in `research:`, else MARINA_ARENA_RESEARCH_RETRIEVER).
+ * Any other round shape gets the nowcast, so the spec is safe on a route.
+ */
+async function wikiEventsForecasterFor(
+  spec: string,
+  env: NodeJS.ProcessEnv,
+  strictFreshness = false,
+): Promise<{ forecaster: Forecaster; usage?: Usage }> {
+  const [{ modelComplete }, retrieve, events, nowcast, { guardedFetch }] = await Promise.all([
+    import("./model-backend"),
+    import("./research/retrieve"),
+    import("./research/wiki-events"),
+    import("./research/civiqs-nowcast"),
+    import("../net/url-guard"),
+  ]);
+  const rest = spec.slice(`${WIKI_EVENTS}:`.length);
+  const at = rest.indexOf("@");
+  const model = at < 0 ? rest : rest.slice(0, at);
+  const orKey = env.OPENROUTER_API_KEY;
+  const retrieverSpec =
+    (at < 0 ? "" : rest.slice(at + 1)).trim() ||
+    env.MARINA_ARENA_RESEARCH_RETRIEVER?.trim() ||
+    (env.TAVILY_API_KEY?.trim() ? "tavily:basic" : "search:duckduckgo");
+  const retriever = retrieve.retrieverFromSpec(
+    retrieverSpec,
+    {
+      ...(orKey ? { openrouter: orKey } : {}),
+      ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
+      ...(env.EXA_API_KEY?.trim() ? { exa: env.EXA_API_KEY.trim() } : {}),
+    },
+    { env },
+  );
+  const made = modelComplete(model, env);
+  let retrievalUsd = 0;
+  const usage: Usage = {
+    get calls() {
+      return made.usage.calls;
+    },
+    get inputTokens() {
+      return made.usage.inputTokens;
+    },
+    get outputTokens() {
+      return made.usage.outputTokens;
+    },
+    get costUsd() {
+      return made.usage.costUsd + retrievalUsd;
+    },
+  };
+  const wiki = events.wikimediaApi(async (url) => {
+    const res = await guardedFetch(url, {
+      headers: { "User-Agent": "Marina-arena/1.0 (https://github.com/h2oai/marina)" },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) throw new Error(`Wikimedia ${res.status}`);
+    return res.json();
+  });
+  const raw = Number.parseInt(env.MARINA_ARENA_WIKI_EVENTS_MAX_INSERT ?? "", 10);
+  const maxInsert = Number.isFinite(raw) && raw >= 0 ? raw : events.DEFAULT_MAX_INSERT;
+  const data = arenaData(env);
+  const fallback = nowcast.nowcastForecaster(data, forecastRound, {
+    ...(await liveCiviqs(env, strictFreshness)),
+  });
+  return {
+    usage,
+    forecaster: async (round, lock) => {
+      if (round.target_type !== "ranking_list" || round.tracker !== "wikipedia")
+        return fallback(round, lock);
+      const obs = await nowcast.wikitopObservations(data, round);
+      const inputs = obs.length ? { ...lock, answer_obs: obs } : lock;
+      const result = await events.wikiEventsRanking(round, inputs, {
+        retriever,
+        complete: made.complete,
+        wiki,
+        maxInsert,
+      });
+      retrievalUsd += result.costUsd;
+      const verified = result.events.filter((e) => e.verified);
+      const moved = verified.filter((e) => e.action && e.action !== "none").length;
+      const f = {
+        ranking: result.ranking,
+        rules: {},
+        note: `marina wiki-events research (${model.replace(/^openrouter\//, "")}): recency-weighted pageviews (half-life 3 d) + ${moved} verified scheduled event(s) of ${result.events.length} proposed from ${result.sources} source(s)`,
+        wikiEvents: {
+          base: result.base,
+          events: result.events,
+          read: result.read,
+          retriever: retrieverSpec,
+          retrievalUsd: result.costUsd,
+        },
+      };
+      return strictFreshness
+        ? requireFreshForecast(round, inputs, f, forecastCutoff(round.lock_at))
+        : f;
+    },
+  };
 }
 
 // ─── Research agent + shadow mode ────────────────────────────────────────────
