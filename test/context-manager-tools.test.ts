@@ -302,7 +302,7 @@ describe("working transcript instruction excerpts", () => {
   it("preserves source that quotes instructions and deduplicates only the appended excerpt", async () => {
     const first = excerpt("first");
     const second = excerpt("second");
-    const result = second[1] as {
+    const result = second[1] as unknown as {
       content: { text: string }[];
       details: { contextBlocks: { text: string }[] };
     };
