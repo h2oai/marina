@@ -106,10 +106,34 @@ describe("arena filing watch", () => {
     // The standing filing is from long ago, and nothing has run since.
     const now = Date.now() + 40 * H;
     const found = filingFindings([round("outage", now + 30 * 60_000)], db, ENTRANT, now);
-    expect(found.map((f) => f.problem)).toEqual(["no-near-lock-refresh"]);
+    expect(found.map((f) => [f.problem, f.severity])).toEqual([
+      ["not-refreshed", "critical"],
+      ["no-near-lock-refresh", "warning"],
+    ]);
     // A refresh 20 minutes ago is the near-lock pass: fine.
     attempt("outage", "accepted", now - 20 * 60_000);
     expect(filingFindings([round("outage", now + 30 * 60_000)], db, ENTRANT, now)).toEqual([]);
+  });
+
+  it("flags a filing from before the refresh window that nothing has refreshed", () => {
+    // YouGov w42 shape: filed 11 days ahead; the runner crashed before recording
+    // any attempt, so neither failed-refresh nor stuck-refresh can see it.
+    accept("early");
+    accept("current");
+    const now = Date.now() + 11 * 24 * H;
+    attempt("current", "accepted", now - 2 * H);
+    const rounds = [round("early", now + 20 * H), round("current", now + 20 * H)];
+    expect(
+      filingFindings(rounds, db, ENTRANT, now).map((f) => [f.roundId, f.problem, f.severity]),
+    ).toEqual([["early", "not-refreshed", "warning"]]);
+    expect(
+      filingFindings([round("early", now + 5 * H)], db, ENTRANT, now).map((f) => f.severity),
+    ).toEqual(["critical"]);
+    // A refresh that ran inside the window and failed is reported as that, not twice.
+    attempt("early", "error", now - H);
+    expect(
+      filingFindings([round("early", now + 5 * H)], db, ENTRANT, now).map((f) => f.problem),
+    ).toEqual(["failed-refresh"]);
   });
 
   it("reports the last pass in readiness", () => {
