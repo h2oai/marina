@@ -172,7 +172,7 @@
     "monitor": "bun run scripts/monitor.ts"
   },
   "devDependencies": {
-    "@babel/parser": "^7.29.9",
+    "@babel/parser": "^8.0.7",
     "@biomejs/biome": "^2.5.15",
     "@stryker-mutator/core": "10.0.0",
     "@types/bun": "^1.4.3",
