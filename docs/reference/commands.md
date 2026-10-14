@@ -1406,8 +1406,9 @@ Examples:
   calc 42 * 1729
   calc gcd(360, 420)
   calc x = 5; y = x^2 + 3*x; y
-  calc solve(x^2 - 5*x + 6, x)
-  calc simplify(x*2 + 3*x)
+  calc polynomialRoot(6, -5, 1)      (roots of x^2 - 5x + 6; constant term first)
+  calc lusolve([[1,2],[3,4]], [5,6])
+  calc simplify('x*2 + 3*x')
   calc mean([1,2,3,4,5])
   calc derivative('sin(x)', 'x')
 
