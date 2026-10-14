@@ -109,6 +109,7 @@ export const PAUSE_KIND_LABEL: Record<OpsAgentPauseKind, string> = {
   "spend-cap": "spend cap",
   "upstream-errors": "upstream errors",
   "provider-auth": "provider auth",
+  "route-limit": "route usage limit",
 };
 
 export const PAUSE_KIND_CLASS: Record<OpsAgentPauseKind, string> = {
@@ -116,6 +117,7 @@ export const PAUSE_KIND_CLASS: Record<OpsAgentPauseKind, string> = {
   "spend-cap": "border-red-400/60 bg-red-400/10 text-red-300",
   "upstream-errors": "border-amber-400/60 bg-amber-400/10 text-amber-300",
   "provider-auth": "border-red-400/60 bg-red-400/10 text-red-300",
+  "route-limit": "border-amber-400/60 bg-amber-400/10 text-amber-300",
 };
 
 /**

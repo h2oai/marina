@@ -1167,6 +1167,9 @@
 # Deadline in milliseconds for one proxied upstream model call (response headers for a stream, the whole reply otherwise). A non-streaming call is also aborted when its client disconnects.
 # MARINA_UPSTREAM_TIMEOUT_MS=300000
 
+# While a first-party key (Anthropic, OpenAI, Google, xAI, Mistral, DeepSeek) reports a usage/quota limit, serve the SAME model via OpenRouter when OPENROUTER_API_KEY is set and OpenRouter's catalog lists it (labelled openrouter-served; back to the direct key when the limit lifts). Never a different model. `off` keeps the caller paused/refused until the reset instead. Default on.
+# MARINA_PROVIDER_FALLBACK=on
+
 # MCP session creations and login/auth tool calls per client IP per minute. 0 disables.
 # MARINA_MCP_SESSIONS_PER_MIN=10
 

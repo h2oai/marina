@@ -825,6 +825,11 @@ export class AgentRuntime {
       );
       // A provider-auth park ends when env keys OR stored key rows change.
       adapter.setCredentialsFingerprint(() => this.credentialsFingerprint());
+      // While a direct route is usage-limited, the same model is served via
+      // OpenRouter with the OpenRouter key (env or stored key rows).
+      adapter.setRouteKeyResolver((provider) =>
+        provider === "openrouter" ? this.resolveApiKey("openrouter/x") : undefined,
+      );
 
       // Relay per-agent adapter events as engine events (see
       // createAgentEventRelay). Registered BEFORE start() so the initial

@@ -37,6 +37,7 @@ import { memoryAccess } from "../memory/access";
 import { residentMemoryAPI } from "../memory/resident-service";
 import type { AdapterManager } from "../net/adapters/adapter-manager";
 import { connects } from "../net/ansi";
+import { attachRouteHealthStore, coreMemoryRouteStore } from "../net/model/route-health";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import { observeOutcomeEvent } from "../outcomes/live";
 import type { MarinaDB } from "../persistence/database";
@@ -317,6 +318,10 @@ export class Engine {
           ),
         ),
       );
+
+      // Route health: a first-party key's usage limit survives a restart, so
+      // a reboot does not hammer the limited route (src/net/model/route-health.ts).
+      spendDb.onClose(attachRouteHealthStore(coreMemoryRouteStore(spendDb)));
 
       // Benchmark runner — spawns the harness subprocess + persists runs
       this.benchmarkRunner = new BenchmarkRunner(

@@ -19,7 +19,12 @@
 
 export type OpsToolProfile = "full" | "crew" | "minimal";
 
-export type OpsAgentPauseKind = "budget" | "spend-cap" | "upstream-errors" | "provider-auth";
+export type OpsAgentPauseKind =
+  | "budget"
+  | "spend-cap"
+  | "upstream-errors"
+  | "provider-auth"
+  | "route-limit";
 
 /** One running (or in-flight) agent as the operator sees it. */
 export type AgentOperatorRow = {

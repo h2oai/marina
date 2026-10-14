@@ -34,6 +34,9 @@ export type OpenAIErrorCode =
   | "outcome_already_reported"
   // The world's MARINA_DAILY_SPEND_CAP_USD is spent (src/engine/spend-ledger.ts).
   | "spend_cap_reached"
+  // A first-party route (provider + key) reported a usage limit and no other
+  // route serves the same model (src/net/model/route-health.ts).
+  | "route_usage_limit"
   // A ledger write (POST /v1/benchmarks/runs) by the read-only open-API sentinel.
   | "open_api_read_only"
   // A model id the operator's passthru pin does not allow (marina/verify).
