@@ -182,8 +182,43 @@ async function routedForecasterFor(
   spec: string,
   opts: Parameters<typeof forecasterFor>[1],
 ): Promise<{ forecaster: Forecaster; usage?: Usage }> {
-  const { parseRoutes, routeFor, SKIP, SkippedRound } = await import("./routing");
-  const routes = parseRoutes(spec, opts?.env ?? process.env);
+  const { isPinned, parseRoutes, routeFor, SKIP, SkippedRound } = await import("./routing");
+  const env = opts?.env ?? process.env;
+  const routes = parseRoutes(spec, env);
+  const earned = await import("./earned-routes");
+  const mode = earned.arenaRoutingModeFromEnv(env);
+  const minN = earned.arenaRouteMinN(env);
+  // Read once per forecaster build: every family decides from the same evidence.
+  let evidence: Promise<import("./earned-routes").RouteEvidence[]> | undefined;
+  const decide = async (
+    tracker: string,
+    target: string,
+  ): Promise<import("./earned-routes").ArenaRouteDecision | undefined> => {
+    if (mode === "off" || target === SKIP) return undefined;
+    const pinned = isPinned(routes, tracker);
+    let records: import("./earned-routes").RouteEvidence[] = [];
+    let unreadable: string | undefined;
+    if (!pinned && opts?.routeEvidence) {
+      evidence ??= opts.routeEvidence();
+      records = await evidence.catch((err) => {
+        unreadable = getErrorMessage(err);
+        return [];
+      });
+    }
+    const decision = earned.chooseArenaRoute({
+      family: tracker.toLowerCase(),
+      defaultSpec: target,
+      evidence: records,
+      now: Date.now(),
+      mode,
+      minN,
+      pinned,
+    });
+    // Unreadable evidence falls open to the default, and says so.
+    return unreadable
+      ? { ...decision, reason: `evidence unreadable (${unreadable}): the default stands` }
+      : decision;
+  };
   const built = new Map<string, Promise<{ forecaster: Forecaster; usage?: Usage }>>();
   const get = (target: string) => {
     if (!built.has(target)) built.set(target, forecasterFor(target, opts));
@@ -207,13 +242,19 @@ async function routedForecasterFor(
   return {
     usage,
     forecaster: async (round, lock) => {
-      const target = routeFor(routes, round.tracker);
-      if (target === SKIP) throw new SkippedRound(round.tracker);
+      const fallback = routeFor(routes, round.tracker);
+      if (fallback === SKIP) throw new SkippedRound(round.tracker);
+      const routing = await decide(round.tracker, fallback);
+      const target = routing?.chosen ?? fallback;
       const fresh = !built.has(target);
       const made = await get(target);
       if (fresh && made.usage) usages.push(made.usage);
       const f = await made.forecaster(round, lock);
-      return { ...f, note: `route ${round.tracker} → ${target}; ${f.note}`.slice(0, 500) };
+      return {
+        ...f,
+        note: `route ${round.tracker} → ${target}; ${f.note}`.slice(0, 500),
+        ...(routing ? { routing } : {}),
+      };
     },
   };
 }
@@ -236,6 +277,8 @@ export async function forecasterFor(
     formationInputs?: FormationInputs;
     strictFreshness?: boolean;
     previous?: (roundId: string) => import("./formations").ComposedForecast | undefined;
+    /** Scored evidence for earned routes (`earned-routes.ts`); without it routes are the defaults. */
+    routeEvidence?: () => Promise<import("./earned-routes").RouteEvidence[]>;
   } = {},
 ): Promise<{ forecaster: Forecaster; usage?: Usage; learner?: Learner }> {
   if (spec === "baseline")
@@ -712,6 +755,10 @@ export async function arenaDepsWithForecaster(
       env,
       strictFreshness: true,
       ...(notes ? { notes } : {}),
+      routeEvidence: async () => {
+        const { loadRouteEvidence } = await import("./earned-routes");
+        return loadRouteEvidence(store, deps.data, deps.config.entrant);
+      },
       previous: (roundId) => {
         const row = store.acceptedArenaSubmission(deps.config.entrant, roundId);
         if (!row) return undefined;

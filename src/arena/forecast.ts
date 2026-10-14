@@ -206,6 +206,8 @@ export interface RoundForecast {
   freshness?: import("./freshness").FreshnessAudit;
   /** Set when a filed sd was raised to the measured nowcast error (submit.ts). */
   errorFloorApplied?: { fromSd?: number; notes: string[] };
+  /** The earned-route decision for a routed round (`earned-routes.ts`). */
+  routing?: import("./earned-routes").ArenaRouteDecision;
 }
 
 export interface ForecastOrigin {

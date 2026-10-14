@@ -15,6 +15,11 @@
  *
  * Each route is checked with the same grammar as a top-level forecaster (no
  * nested routes).
+ *
+ * A route is the family's DEFAULT: earned routing (`earned-routes.ts`,
+ * `MARINA_ARENA_ROUTING`) may answer with a challenger that beat it on held-out
+ * evidence. `<family>=!<forecaster>` pins the family — no evidence replaces it —
+ * and `skip` is always pinned.
  */
 
 export const SKIP = "skip";
@@ -36,6 +41,8 @@ export const DEFAULT_ROUTES = "*=nowcast";
 export interface Routes {
   byFamily: Map<string, string>;
   fallback: string;
+  /** Families (`*` for the fallback) whose route is pinned with `!`. */
+  pinned: Set<string>;
 }
 
 /** The route list of a `route:` / `routed` spec (without validating sub-specs). */
@@ -48,6 +55,7 @@ export function parseRoutes(spec: string, env: NodeJS.ProcessEnv = process.env):
         : undefined;
   if (body === undefined) throw new Error(`not a routing spec: ${spec}`);
   const byFamily = new Map<string, string>();
+  const pinned = new Set<string>();
   let fallback: string | undefined;
   for (const part of body.split(";")) {
     const entry = part.trim();
@@ -55,7 +63,11 @@ export function parseRoutes(spec: string, env: NodeJS.ProcessEnv = process.env):
     const eq = entry.indexOf("=");
     if (eq <= 0) throw new Error(`route "${entry}" must be <family>=<forecaster>`);
     const family = entry.slice(0, eq).trim().toLowerCase();
-    const target = entry.slice(eq + 1).trim();
+    let target = entry.slice(eq + 1).trim();
+    if (target.startsWith("!")) {
+      target = target.slice(1).trim();
+      pinned.add(family);
+    }
     if (!target) throw new Error(`route "${entry}" names no forecaster`);
     if (target.startsWith("route:") || target === "routed") {
       throw new Error(`route "${entry}": routes do not nest`);
@@ -65,7 +77,14 @@ export function parseRoutes(spec: string, env: NodeJS.ProcessEnv = process.env):
     if (family === "*") fallback = target;
     else byFamily.set(family, target);
   }
-  return { byFamily, fallback: fallback ?? "nowcast" };
+  return { byFamily, fallback: fallback ?? "nowcast", pinned };
+}
+
+/** Whether a family's route is pinned: `!`-marked (its own entry, else the fallback's) or `skip`. */
+export function isPinned(routes: Routes, tracker: string): boolean {
+  const family = tracker.toLowerCase();
+  if (routeFor(routes, family) === SKIP) return true;
+  return routes.byFamily.has(family) ? routes.pinned.has(family) : routes.pinned.has("*");
 }
 
 /** Which forecaster (or `skip`) answers a tracker family. */
