@@ -163,6 +163,28 @@ describe("gates are the authority", () => {
     expect(ran).toEqual(["tinker", "tinker"]);
   });
 
+  it("the yolo switch: local-ungated lifts EVERY gate (core included) and every rank floor", async () => {
+    // A sovereign, self-hosted, no-guest Marina can drop all gating
+    // (MARINA_PROFILE=local, autonomy not guarded). No permission change may
+    // narrow this: every gate passes for a rank-0 agent, no hold is raised.
+    delete process.env.MARINA_AUTONOMY;
+    setTrustProfile("local");
+    const rookie = engine.entities.get(id(builder))!; // an agent, rank 0, no standing
+    for (const gateId of Object.keys(SAFETY_GATES)) {
+      expect(checkGateForExecution(db, String(rookie.id), gateId).ok, gateId).toBe(true);
+    }
+    for (const core of OPEN_POSTURE_CORE) {
+      expect(checkGateForExecution(db, String(rookie.id), core).ok, core).toBe(true);
+    }
+    for (const floor of [1, 2, 3, 4]) expect(rankFloorRefusal(rookie, floor)).toBeUndefined();
+    await send(builder, "tinker");
+    expect(ran).toEqual(["tinker"]);
+    expect(text(builder)).not.toContain("challenge ch_");
+    // `guarded` turns every check back on.
+    process.env.MARINA_AUTONOMY = "guarded";
+    expect(checkGateForExecution(db, String(rookie.id), "shell.exec").ok).toBe(false);
+  });
+
   it("an approved rank waiver never covers a floor above the rank it vouched for", () => {
     const entity = engine.entities.get(id(builder))!;
     armGatePass(String(entity.id), {
@@ -204,12 +226,21 @@ describe("gates are the authority", () => {
 
     // Revoke is sovereign-only; a sovereign grants the core.
     await send(alice, "gate revoke Bob agent.spawn");
-    expect(text(alice)).toContain("sovereign");
+    expect(text(alice)).toContain("operator (a person at rank 9)");
     expect(checkUnattendedGate(db, id(bob), "agent.spawn").ok).toBe(true);
     await send(root, "gate grant Bob shell.exec");
     expect(checkUnattendedGate(db, id(bob), "shell.exec").ok).toBe(true);
     await send(root, "gate revoke Bob agent.spawn");
     expect(checkUnattendedGate(db, id(bob), "agent.spawn").ok).toBe(false);
+
+    // A rank-9 AGENT is not an operator: it grants nothing, core or not.
+    builder.clear();
+    (engine.entities.get(id(builder) as EntityId)!.properties as { rank?: number }).rank = 9;
+    grant(db, id(builder), "agent.spawn");
+    await send(builder, "gate grant Bob world.code");
+    await send(builder, "gate grant Bob agent.spawn");
+    expect(text(builder)).toContain("Agents don't grant gates");
+    expect(checkUnattendedGate(db, id(bob), "world.code").ok).toBe(false);
 
     await send(bob, "gate list");
     expect(text(bob)).toContain("world.lineage");
