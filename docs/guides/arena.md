@@ -285,6 +285,28 @@ fewer than 8 records of the key it is identity. Order: forecaster → calibratio
 The decision is kept under `calibration` in the filing's detail. `MARINA_ARENA_CALIBRATION=observe`
 records without applying; `off` skips it.
 
+**Learned move weight per (family, method).** A formation files its start plus a constant share
+(about one half) of its members' median move. `src/arena/move-weight.ts` learns that share from
+outcomes instead: the filed mean becomes `start + w × (median proposal − start)`, w on a grid from
+0 to 1.5, fitted by minimum CRPS on our resolved filings and arena shadows of the same key
+(`arena:<tracker>|<method>`), shrunk toward the formations' own trust. It is adopted only when it
+beats what was filed on the newer 40 % by 5 % AND a placebo fails: the same fit with the members'
+moves shuffled across rounds must not reach the same gain (else the gain is shrinkage, not
+information in the moves). With fewer than 8 records it does nothing. Order: forecaster → move
+weight → spread calibration → error floor; the decision (w, n, held-out gain, placebo) is kept
+under `moveWeight`. `MARINA_ARENA_MOVE_WEIGHT=observe` records without applying; `off` skips it.
+Formation filings now record their start (`formationStart`) so the move is exact.
+
+**Unanchored formations and typed signals.** `formation:<pattern>~unanchored:<models>` runs the
+same members, dossier and protocol without the instruction that the start forecast is the default,
+and asks every member to list the evidence it relied on as typed signals (claim, direction, signed
+size, unit, observation and source dates), recorded under `signals` with a `stale` flag for
+anything observed before the start reading. It has its own method key, so it is a shadow
+challenger: list it in `MARINA_ARENA_SHADOW_CHALLENGERS` (it is never run automatically) and let
+earned routing and the move weight decide on resolved rounds whether unanchored moves carry
+information. The research dossier's typed measurements (target and change claims) are listed as
+signals in the dossier block too.
+
 **Live reading for open rounds.** For a round whose lock has not passed, the nowcast also reads
 the Civiqs dashboard (`src/arena/research/civiqs-live.ts`, one paced request per tracker) and uses
 whichever reading is fresher. A round whose lock has passed never reads live data, so backtests

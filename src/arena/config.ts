@@ -56,7 +56,7 @@ const FORECASTER_SPEC = new RegExp(
   `^(baseline|nowcast|spike-decay|discovered|tabh2o(:regression|:forecast)?(@nowcast)?|model:${MODEL_ID}|crew:${MODEL_ID}(,${MODEL_ID}){0,2}` +
     // A formation, optionally judged by a second one (`+then:`) and fed a
     // verified dossier by a research crew (`+research@<retrievers>`).
-    `|formation:${FORMATION}:${MODELS}(\\+then:${FORMATION}:${MODELS})?(\\+research@${RETRIEVER}(,${RETRIEVER}){0,3})?` +
+    `|formation:${FORMATION}(~unanchored)?:${MODELS}(\\+then:${FORMATION}(~unanchored)?:${MODELS})?(\\+research@${RETRIEVER}(,${RETRIEVER}){0,3})?` +
     // Research takes up to eight analysts, and optionally its own retrievers
     // after `@` (else MARINA_ARENA_RESEARCH_RETRIEVER), so each mix is its own
     // shadow record.
@@ -75,7 +75,8 @@ export const DEFAULT_ARENA_FORECASTER = "nowcast";
  * role), `formation:<pattern>:<model>[,…]` (up to twelve models; pattern one of
  * ensemble, deliberation, debate, chorus, pipeline/cascade, mapreduce,
  * blackboard, symbiosis, research, delphi, tournament, verification; `+then:<pattern>:<models>` adds a judging
- * formation, `+research@<retrievers>` a verified research dossier), or `research:<model>[,…]`. Validated here; model ids are resolved at use.
+ * formation, `+research@<retrievers>` a verified research dossier; `<pattern>~unanchored` drops the
+ * anchor-to-start instruction and asks for typed signals), or `research:<model>[,…]`. Validated here; model ids are resolved at use.
  */
 export function parseForecasterSpec(raw: string | undefined): string {
   const spec = raw?.trim() || DEFAULT_ARENA_FORECASTER;
@@ -89,7 +90,7 @@ export function parseForecasterSpec(raw: string | undefined): string {
     return spec;
   }
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, spike-decay, tabh2o[:forecast][@nowcast], model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>:<model>[,…][+then:<pattern>:<model>[,…]][+research@<retriever>[,…]] (up to twelve models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, spike-decay, tabh2o[:forecast][@nowcast], model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>[~unanchored]:<model>[,…][+then:<pattern>[~unanchored]:<model>[,…]][+research@<retriever>[,…]] (up to twelve models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
   );
 }
 

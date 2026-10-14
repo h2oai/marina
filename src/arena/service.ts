@@ -571,13 +571,14 @@ async function formationForecasterFor(
     import("./research/civiqs-nowcast"),
   ]);
   const stageOf = (text: string) => {
-    const [, name = "", list = ""] = text.match(/^(?:formation|then):([a-z]+):(.+)$/i) ?? [];
+    const [, name = "", variant, list = ""] =
+      text.match(/^(?:formation|then):([a-z]+)(~unanchored)?:(.+)$/i) ?? [];
     const pattern = formations.formationPattern(name);
     if (!pattern) throw new Error(`unknown formation ${name}`);
     const models = list.split(",");
     // Fail fast on a missing provider key, before any round runs.
     for (const m of models) modelComplete(m, env);
-    return { pattern, models };
+    return { pattern, models, unanchored: Boolean(variant) };
   };
   const stages = [stageOf(head)];
   const then = parts.find((p) => p.startsWith("then:"));
@@ -655,7 +656,13 @@ async function formationForecasterFor(
       const made = stages.map((st) =>
         st.models.map((m) => ({ name: m.replace(/^openrouter\//, ""), ...modelComplete(m, env) })),
       );
-      const members = made.map((ms) => ms.map(({ name, complete }) => ({ name, complete })));
+      const members = made.map((ms, i) =>
+        ms.map(({ name, complete }) =>
+          stages[i]!.unanchored
+            ? formations.unanchoredMember({ name, complete })
+            : { name, complete },
+        ),
+      );
       if (inputs && inputs.roundId !== round.round_id)
         throw new Error("frozen inputs belong to another round");
       const given = inputs ? structuredClone(inputs.start) : await start(round, lock);
