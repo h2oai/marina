@@ -269,6 +269,9 @@ describe("LeanAgentAdapter connection handling", () => {
     i.client.isConnected = () => connected;
     let prompts = 0;
     i.buildContinuationPrompt = async () => "continue";
+    // Something new to act on, so the idle skip never applies (the stubbed
+    // prompt build leaves it buffered).
+    i.pendingPerceptions.push({ text: "[message] news", priority: 50 });
     i.client.capabilities = async () => ({
       schema: "marina.capabilities.v1",
       revision: 1,
