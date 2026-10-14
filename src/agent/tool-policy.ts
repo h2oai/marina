@@ -72,7 +72,6 @@ export const POLICY_LANGUAGE_LABEL = "[policy-language noted]";
 export const READ_TOOL_NAMES: ReadonlySet<string> = new Set([
   "think",
   "marina_look",
-  "marina_recall",
   "marina_examine",
   "marina_inventory",
   "marina_who",
@@ -86,9 +85,7 @@ export const READ_TOOL_NAMES: ReadonlySet<string> = new Set([
   "marina_code_diff",
   "marina_code_history",
   "marina_code_show",
-  "marina_code_summary",
   "marina_code_session_status",
-  "marina_code_observe",
   "marina_code_artifacts",
   "marina_code_doctor",
   "marina_code_thread",
@@ -136,7 +133,6 @@ const READ_CODE_ACTIONS: ReadonlySet<string> = new Set([
   "history",
   "doctor",
   "thread",
-  "observe",
 ]);
 
 /** Platform `memory` tool actions that only read. */
@@ -337,6 +333,37 @@ export function classifyCommandRisk(raw: string): ToolRisk {
 const str = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 const withArgs = (head: string, args: unknown) => (str(args) ? `${head} ${str(args)}` : head);
 
+/** `marina_channel` action → `channel` subcommand (`read` is the tool's alias for `history`). */
+export function channelAction(action: string): string {
+  return action.trim().toLowerCase() === "read" ? "history" : action;
+}
+
+/**
+ * The command `marina_project` sends. `project` parses `project list|create|info …`
+ * and otherwise `project <name> <action> …`, so a per-project action puts the
+ * name first. Without the `project` field the first word of `args` is the name
+ * (the older `action: status, args: Alpha` call shape).
+ */
+export function projectCommand(args: Record<string, unknown>): string {
+  const action = str(args.action).toLowerCase();
+  const project = str(args.project);
+  const rest = str(args.args);
+  if (action === "list") return "project list";
+  if (action === "create") {
+    if (project) return `project create ${project}${rest ? ` | ${rest}` : ""}`;
+    if (!rest) throw new Error("marina_project action=create needs project (a name).");
+    return `project create ${rest}`;
+  }
+  const words = rest ? rest.split(/\s+/) : [];
+  const name = project || words.shift();
+  if (!action || !name)
+    throw new Error(
+      `marina_project action=${action || "(none)"} needs project (a name); action=list shows projects.`,
+    );
+  if (action === "info") return `project info ${name}`;
+  return `project ${name} ${action}${words.length ? ` ${words.join(" ")}` : ""}`;
+}
+
 /**
  * The world command a typed wrapper tool sends (mirrors the builders in
  * tools/world.ts — `test/tool-policy.test.ts` pins them together), or
@@ -359,9 +386,19 @@ export function typedToolCommand(
       if (action === "search" && query) return `web search ${query}`;
       return `web ${action}${query ? ` ${query}` : ""}${url ? ` ${url}` : ""}`;
     }
+    case "marina_project":
+      try {
+        return projectCommand(args);
+      } catch {
+        return undefined; // an unbuildable call sends nothing
+      }
+    case "marina_channel": {
+      const channel = str(args.channel);
+      const message = str(args.message);
+      return `channel ${channelAction(action)}${channel ? ` ${channel}` : ""}${message ? ` ${message}` : ""}`;
+    }
     case "marina_board":
     case "marina_task":
-    case "marina_project":
     case "marina_canvas":
     case "marina_macro":
       return withArgs(`${toolName.slice("marina_".length)} ${action}`, args.args);
@@ -371,7 +408,7 @@ export function typedToolCommand(
       const pool = str(args.pool);
       const content = str(args.content);
       if (action === "list") return "pool list";
-      if (!pool) return `pool ${action}`;
+      if (!pool) return undefined; // the wrapper refuses a call without a pool
       if (action === "create") return `pool create ${pool}`;
       return `pool ${pool} ${action}${content ? ` ${content}` : ""}`;
     }
@@ -380,7 +417,8 @@ export function typedToolCommand(
       const key = toolName === "marina_focus" ? "focus" : "goal";
       // set / clear / progress change the focus or goal; everything else shows it.
       if (action === "set" || action === "clear" || action === "progress") return undefined;
-      return `memory get ${key}`;
+      // `marina_goal show` reads the key, then `task list mine` (also a read).
+      return key === "goal" ? "memory kv get goal" : `memory get ${key}`;
     }
     default:
       return undefined;

@@ -38,6 +38,34 @@ export function formatPerceptions(perceptions: Perception[]): string {
   );
 }
 
+// ─── Handler refusals ───────────────────────────────────────────────────────
+//
+// Command handlers answer a bad call with an ordinary message ("Usage: …",
+// `Unknown task subcommand "x"`, `Pool "x" not found …`), which would otherwise
+// reach the model as a successful tool result. These patterns are anchored
+// to the FIRST line of a short, single-message reply, so listings and reads
+// that merely mention such words stay successes.
+
+const REFUSAL_FIRST_LINE: readonly RegExp[] = [
+  /^usage:/i,
+  /^unknown\b.*\b(command|subcommand|action|verb)\b/i,
+  /^(error|failed|refused|denied)\b/i,
+  /^(cannot|can't|could not|couldn't) /i,
+  /^you must be at least\b/i,
+];
+const NOT_FOUND = /\bnot found\b/i;
+
+/** The refusal text when a command's reply is a usage/unknown/not-found/refusal message. */
+export function handlerRefusal(perceptions: Perception[]): string | undefined {
+  const messages = perceptions.filter((p) => p.kind === "message");
+  if (messages.length !== 1 || perceptions.some((p) => p.kind === "error")) return undefined;
+  const text = formatPerceptions(messages).trim();
+  const first = text.split("\n")[0]!.trim();
+  if (REFUSAL_FIRST_LINE.some((pattern) => pattern.test(first))) return text;
+  if (text.length <= 600 && first.length <= 200 && NOT_FOUND.test(first)) return text;
+  return undefined;
+}
+
 // ─── Command Execution Helper ───────────────────────────────────────────────
 
 export async function execCommand(
@@ -58,6 +86,8 @@ export async function execCommand(
   }
   const failures = perceptions.filter((p) => p.kind === "error");
   if (failures.length) throw new Error(formatPerceptions(failures));
+  const refusal = handlerRefusal(perceptions);
+  if (refusal) throw new Error(refusal);
 
   return {
     content: [{ type: "text", text: formatPerceptions(perceptions) }],

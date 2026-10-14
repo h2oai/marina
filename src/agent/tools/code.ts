@@ -63,6 +63,47 @@ const codeWriteSchema = Type.Object({
   content: Type.String({ description: "For write: full file content, including newlines" }),
 });
 
+/** Every `marina_code` action, in schema order; anything else is refused. */
+const CODE_ACTIONS = [
+  "status",
+  "files",
+  "read",
+  "search",
+  "diff",
+  "run",
+  "verify",
+  "observe",
+  "patch",
+  "edit",
+  "write",
+  "apply",
+  "reject",
+  "show",
+  "patches",
+  "artifacts",
+  "history",
+  "plan",
+  "summary",
+  "blocked",
+  "assume",
+  "handoff",
+  "decision",
+  "workspace",
+  "doctor",
+  "recipe",
+  "checkpoint",
+  "revert",
+  "approval",
+  "approve",
+  "deny",
+  "model",
+  "skill",
+  "thread",
+  "crew",
+  "roles",
+  "external",
+] as const;
+
 // The resident `marina_code` tool keeps these compact (prompt budget); the
 // typed `marina_code_verify` wrapper carries the full enums. Both validate in
 // verificationCommand.
@@ -78,45 +119,7 @@ const codeSchema = Type.Object({
   ),
   scope: Type.Optional(Type.String({ description: "verify: auto, changed, full, changed+full" })),
   action: Type.Union(
-    [
-      Type.Literal("status"),
-      Type.Literal("files"),
-      Type.Literal("read"),
-      Type.Literal("search"),
-      Type.Literal("diff"),
-      Type.Literal("run"),
-      Type.Literal("verify"),
-      Type.Literal("observe"),
-      Type.Literal("patch"),
-      Type.Literal("edit"),
-      Type.Literal("write"),
-      Type.Literal("apply"),
-      Type.Literal("reject"),
-      Type.Literal("show"),
-      Type.Literal("patches"),
-      Type.Literal("artifacts"),
-      Type.Literal("history"),
-      Type.Literal("plan"),
-      Type.Literal("summary"),
-      Type.Literal("blocked"),
-      Type.Literal("assume"),
-      Type.Literal("handoff"),
-      Type.Literal("decision"),
-      Type.Literal("workspace"),
-      Type.Literal("doctor"),
-      Type.Literal("recipe"),
-      Type.Literal("checkpoint"),
-      Type.Literal("revert"),
-      Type.Literal("approval"),
-      Type.Literal("approve"),
-      Type.Literal("deny"),
-      Type.Literal("model"),
-      Type.Literal("skill"),
-      Type.Literal("thread"),
-      Type.Literal("crew"),
-      Type.Literal("roles"),
-      Type.Literal("external"),
-    ],
+    CODE_ACTIONS.map((action) => Type.Literal(action)),
     {
       description:
         "Session action. edit: path/oldText/newText; write: path/content; patch proposes a diff for later apply.",
@@ -135,7 +138,8 @@ const codeSchema = Type.Object({
   query: Type.Optional(Type.String({ description: "Search query for action=search" })),
   command: Type.Optional(
     Type.String({
-      description: "action=run: allowed command; action=workspace: show, list or use",
+      description:
+        "run: the allowed command. Sub-verb for workspace (show|list|use), recipe (list|save|run), model (set|clear), skill (list|add|use), external (link|unlink)",
     }),
   ),
   title: Type.Optional(Type.String({ description: "Artifact title for action=patch" })),
@@ -143,7 +147,12 @@ const codeSchema = Type.Object({
   artifactId: Type.Optional(
     Type.String({ description: "Artifact id for action=apply/reject/show" }),
   ),
-  kind: Type.Optional(Type.String({ description: "Artifact kind filter for action=artifacts" })),
+  kind: Type.Optional(
+    Type.String({
+      description:
+        "artifacts: kind filter; approval: approval kind; recipe/skill: name; external link: system",
+    }),
+  ),
   status: Type.Optional(
     Type.String({
       description: "Patch status filter for action=patches: pending, applied, rejected",
@@ -151,7 +160,8 @@ const codeSchema = Type.Object({
   ),
   text: Type.Optional(
     Type.String({
-      description: "One-line text: plan/summary/blocked/assume/handoff/decision/observe/reject",
+      description:
+        "One line: plan/summary/blocked/assume/handoff/decision/observe/checkpoint text, reject reason, approval reason, recipe/skill body, model target (set), crew request, external id",
     }),
   ),
   to: Type.Optional(Type.String({ description: "handoff: new lock holder" })),
@@ -857,7 +867,9 @@ function buildCodeCommand(params: Record<string, unknown>): string {
         `action=${action} requires text`,
       )}`;
     default:
-      return "code status";
+      throw new Error(
+        `Unknown marina_code action "${String(action)}". Valid: ${CODE_ACTIONS.join(", ")}.`,
+      );
   }
 }
 

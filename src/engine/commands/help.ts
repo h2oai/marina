@@ -79,6 +79,79 @@ export function usageExcerpt(help: string): { text: string; truncated: boolean }
   return { text, truncated: text.trim() !== help.trim() };
 }
 
+/**
+ * `help catalog [<command>] [json] [request_id:<id>]`. The perception's
+ * `capabilities` data is always the full manifest (narrowed to the named
+ * command) for programmatic callers; the TEXT is compact — one summary line
+ * per command, or every syntax form of the named command — unless `json`
+ * asks for the full manifest as text (it is over a megabyte unfiltered).
+ */
+function renderCatalog(
+  ctx: RoomContext,
+  input: { entity: EntityId; tokens: string[] },
+  all: CommandCatalogEntry[],
+): void {
+  let requestId: string | undefined;
+  let json = false;
+  let name: string | undefined;
+  for (const token of input.tokens.slice(1)) {
+    if (token.startsWith("request_id:")) requestId = token.slice("request_id:".length);
+    else if (token.toLowerCase() === "json") json = true;
+    else name ??= token.toLowerCase();
+  }
+  const commands = name
+    ? all.filter((entry) => entry.name === name || entry.aliases.includes(name!))
+    : all;
+  if (name && commands.length === 0) {
+    ctx.send(
+      input.entity,
+      `No command "${name}". \`help catalog\` lists every command; \`help ${name}\` searches categories.`,
+    );
+    return;
+  }
+  const capabilities = {
+    schema: "marina.capabilities.v1",
+    revision: all[0]?.revision ?? 0,
+    commands,
+    ...(requestId ? { request_id: requestId } : {}),
+  };
+  const text = json
+    ? JSON.stringify(capabilities)
+    : name
+      ? commands.map(catalogDetail).join("\n\n")
+      : [
+          ...commands.map(
+            (entry) => `${entry.name}${catalogMarks(entry)}: ${catalogSummary(entry)}`,
+          ),
+          "(`help catalog <command>` lists its forms; `help catalog json` is the full manifest.)",
+        ].join("\n");
+  ctx.send(input.entity, text, "capabilities", { capabilities });
+}
+
+function catalogSummary(entry: CommandCatalogEntry): string {
+  const line = (entry.description ?? entry.help).split("\n")[0]!.replace(/\s+/g, " ").trim();
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
+}
+
+function catalogMarks(entry: CommandCatalogEntry): string {
+  const marks = [
+    ...(entry.minRank > 0 && !entry.gate ? [`rank ${entry.minRank}`] : []),
+    ...(entry.gate ? [`gate ${entry.gate}`] : []),
+  ];
+  return marks.length ? ` [${marks.join(", ")}]` : "";
+}
+
+function catalogDetail(entry: CommandCatalogEntry): string {
+  const forms = (entry.forms ?? []).map((form) => `  ${form.syntax}`);
+  const reasons = entry.availability?.reasons ?? [];
+  return [
+    `${entry.name}${catalogMarks(entry)}: ${catalogSummary(entry)}`,
+    ...(entry.aliases.length ? [`aliases: ${entry.aliases.join(", ")}`] : []),
+    ...reasons.map((reason) => `note: ${reason}`),
+    ...(forms.length ? forms : [`  (no structured forms; see \`help ${entry.name}\`)`]),
+  ].join("\n");
+}
+
 export function helpCommand(
   getAllCommands: () => CommandDef[],
   getEntityRank: (id: string) => number,
@@ -86,21 +159,22 @@ export function helpCommand(
 ): CommandDef {
   return {
     category: "Information",
-    usage: ["help", "help <category>", "help <command> [full]", "help all", "help catalog"],
+    usage: [
+      "help",
+      "help <category>",
+      "help <command> [full]",
+      "help all",
+      "help catalog",
+      "help catalog <command>",
+      "help catalog json",
+    ],
     name: "help",
     aliases: ["?", "commands"],
-    help: "Show available commands. Usage: help [<command> [full] | <category> | all]",
+    help: "Show available commands. Usage: help [<command> [full] | <category> | all | catalog [<command>|json]]",
     handler: (ctx: RoomContext, input) => {
       const all = getAllCommands();
       if (input.tokens[0] === "catalog") {
-        const commands = getCatalog?.(input.entity) ?? all.map(describeCommand);
-        const capabilities = {
-          schema: "marina.capabilities.v1",
-          revision: commands[0]?.revision ?? 0,
-          commands,
-          request_id: input.tokens[1],
-        };
-        ctx.send(input.entity, JSON.stringify(capabilities), "capabilities", { capabilities });
+        renderCatalog(ctx, input, getCatalog?.(input.entity) ?? all.map(describeCommand));
         return;
       }
       const entityRank = getEntityRank(input.entity);

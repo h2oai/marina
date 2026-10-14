@@ -767,7 +767,7 @@ Examples:
   benchmark sweep all --limit 5 --seed 42          # every bench × every orchestration
   benchmark leaderboard aime
   benchmark reference                              # all models we have numbers for
-  benchmark reference anthropic/claude-haiku-4-5
+  benchmark reference anthropic/claude-opus-4-6
   benchmark reference mmlu-pro                    # all models' published scores for mmlu-pro
 
 Category: Growth. Minimum rank: 0.
@@ -4389,7 +4389,7 @@ Effect: unknown.
 
 ## help
 
-Show available commands. Usage: help [<command> [full] | <category> | all]
+Show available commands. Usage: help [<command> [full] | <category> | all | catalog [<command>|json]]
 
 Category: Information. Minimum rank: 0.
 Aliases: `?`, `commands`.
@@ -4418,6 +4418,17 @@ Effect: unknown.
 
 
 ### `help catalog`
+
+Effect: unknown.
+
+
+### `help catalog <command>`
+
+Effect: unknown.
+
+- `field-0` (`command`): text, required.
+
+### `help catalog json`
 
 Effect: unknown.
 
@@ -5185,7 +5196,7 @@ Which verb?
   ask <question>         model-synthesised answer over notes + guide + pools + world search
   dig <topic>            internal notes + web evidence, optional synthesis
   share <pool> <text>    ≡ pool <pool> add <text>
-  note verify <id> …     mark a legacy note verified | memory reaffirm <ID> … re-pin a durable record | skill verify <name> check a skill package
+  note verify <id> …     dispute or retract on your own note (verified comes from another's pool <name> ratify) | memory reaffirm <ID> … re-pin a durable record | skill verify <name> check a skill package
 
 Portable memory service (private to your durable world account):
   memory guide                         practical quickstart and interface examples
@@ -5806,7 +5817,7 @@ Effect: unknown.
 
 ## note
 
-Legacy numeric notes (deprecated for new integrations; use memory remember/query). Usage: note <text> | note claim <text> [confidence:0..1] [source:URL] (also trailing `confidence 0.9 source URL`) | note explain|verify|source|contradictions|consolidate ... | note list (ls) | note delete <id> (rm/remove)
+Private numbered notes, kept as durable records (typed records: memory remember|query). Usage: note <text> | note claim <text> [confidence:0..1] [source:URL] (also trailing `confidence 0.9 source URL`) | note explain|verify|source|contradictions|consolidate ... | note list (ls) | note delete <id> (rm/remove)
 
 Category: Memory. Minimum rank: 0.
 Aliases: none.
@@ -6026,16 +6037,6 @@ Effect: write.
 - Group `option-1`: `rationale`; requires `option-0`.
 
 ### `note verify <your-note-id> unverified [<confidence> [<rationale>]]`
-
-Effect: write.
-
-- `field-0` (`your-note-id`): text, required.
-- `field-1` (`confidence`): number, optional group `option-0`, min 0, max 1.
-- `field-2` (`rationale`): text, optional group `option-1`.
-- Group `option-0`: `confidence rationale`.
-- Group `option-1`: `rationale`; requires `option-0`.
-
-### `note verify <your-note-id> verified [<confidence> [<rationale>]]`
 
 Effect: write.
 

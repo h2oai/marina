@@ -640,6 +640,14 @@ async function handlePublish(
     });
     canvas = db.getCanvas(id)!;
   }
+  if (parentNodeId) {
+    const parent = resolveReplyNode(db, canvas, parentNodeId);
+    if ("error" in parent) {
+      ctx.send(eid, parent.error);
+      return;
+    }
+    parentNodeId = parent.id;
+  }
 
   // Auto-position: place new node below existing ones
   const existingNodes = db.getNodesByCanvas(canvas.id);
@@ -706,6 +714,31 @@ async function handlePublish(
 }
 
 /**
+ * Resolve a `reply:<node_id>` reference on `canvas`: an exact id, or a unique
+ * prefix as `canvas nodes` prints it (`1a2b3c4d..`). An unknown id is a clear
+ * refusal instead of a database foreign-key failure.
+ */
+function resolveReplyNode(
+  db: MarinaDB,
+  canvas: { id: string; name: string },
+  ref: string,
+): { id: string } | { error: string } {
+  const wanted = ref.replace(/\.+$/, "");
+  const exact = wanted ? db.getNode(wanted) : undefined;
+  if (exact?.canvas_id === canvas.id) return { id: exact.id };
+  const matches = wanted
+    ? db.getNodesByCanvas(canvas.id).filter((node) => node.id.startsWith(wanted))
+    : [];
+  if (matches.length === 1) return { id: matches[0]!.id };
+  return {
+    error:
+      matches.length > 1
+        ? `Node id "${ref}" is ambiguous on canvas "${canvas.name}"; give more of it (\`canvas nodes ${canvas.name}\`).`
+        : `Unknown node id "${ref}" on canvas "${canvas.name}". List node ids with \`canvas nodes ${canvas.name}\`.`,
+  };
+}
+
+/**
  * One-shot text post: create a text node straight from inline text — no separate
  * asset-upload step. This is the cheap path agents use to populate canvas content.
  * Usage: canvas post [on:<canvas>] [reply:<node_id>] <text...>
@@ -749,6 +782,13 @@ function handlePost(
     ? named
     : (db.getCanvasByName("global") ??
       db.listCanvases({ limit: 20 }).find((c) => mayReadCanvas(c, access.reader, "write")));
+  if (!canvas && parentNodeId) {
+    ctx.send(
+      eid,
+      `Unknown node id "${parentNodeId}": canvas "${canvasName ?? "global"}" does not exist yet. \`canvas list\` shows canvases.`,
+    );
+    return;
+  }
   if (!canvas) {
     const id = crypto.randomUUID();
     db.createCanvas({
@@ -758,6 +798,14 @@ function handlePost(
       creatorName: entity.name,
     });
     canvas = db.getCanvas(id)!;
+  }
+  if (parentNodeId) {
+    const parent = resolveReplyNode(db, canvas, parentNodeId);
+    if ("error" in parent) {
+      ctx.send(eid, parent.error);
+      return;
+    }
+    parentNodeId = parent.id;
   }
 
   // Auto-position below existing nodes.

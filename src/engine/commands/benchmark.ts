@@ -172,7 +172,7 @@ Examples:
   benchmark sweep all --limit 5 --seed 42          # every bench × every orchestration
   benchmark leaderboard aime
   benchmark reference                              # all models we have numbers for
-  benchmark reference anthropic/claude-haiku-4-5
+  benchmark reference anthropic/claude-opus-4-6
   benchmark reference mmlu-pro                    # all models' published scores for mmlu-pro`;
 
 function formatRunLine(row: BenchmarkRunRow): string {

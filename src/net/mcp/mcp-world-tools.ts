@@ -39,9 +39,10 @@ export function createWorldMcpServer(
 
   function describeTool(name: string): string {
     const command = engine.commands.getDef(name);
+    // The `capabilities` tool description already says named tools are
+    // compatibility adapters; repeating it on every named tool only costs bytes.
     return command
-      ? describeCommand(command).description +
-          "\nThis named tool preserves its existing parameter contract; capabilities and invoke expose all current forms."
+      ? (describeCommand(command).description ?? command.help)
       : "Command unavailable in this world; refresh capabilities.";
   }
 

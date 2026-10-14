@@ -90,12 +90,18 @@ export function deferredToolsEnabled(env: NodeJS.ProcessEnv = process.env): bool
   return (env.MARINA_DEFERRED_TOOLS ?? "").trim().toLowerCase() !== "off";
 }
 
-/** First sentence of a tool description, flattened and clamped — the catalog line. */
+/** First sentence of a tool description, flattened and clamped at a word boundary — the catalog line. */
 function toolCatalogLine(description: string, max = 64): string {
   const first = description.split(/(?<=[.!?])\s|\n/)[0] ?? description;
   const flat = first.replace(/\s+/g, " ").trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:—-]+$/, "")}…`;
 }
+
+/** Typed `marina_code_*` forms duplicate actions of the resident `marina_code`. */
+const CODE_TYPED_PREFIX = "marina_code_";
 
 const toolSearchSchema = Type.Object({
   names: Type.Optional(Type.Array(Type.String(), { description: "Exact tool names to load" })),
@@ -117,8 +123,19 @@ const toolSearchSchema = Type.Object({
 export function createToolSearchTool(
   deferred: readonly AgentTool[],
   onLoad?: (tools: AgentTool[]) => void,
+  residentNames: readonly string[] = [],
 ): AgentTool<typeof toolSearchSchema> {
-  const catalog = deferred.map((t) => `${t.name} — ${toolCatalogLine(t.description)}`).join("\n");
+  // With `marina_code` resident, its typed twins stay loadable by name but are
+  // summarized in one line instead of one catalog line each.
+  const codeResident = residentNames.includes("marina_code");
+  const listed = deferred.filter((t) => !(codeResident && t.name.startsWith(CODE_TYPED_PREFIX)));
+  const codeTwins = deferred.length - listed.length;
+  const catalog = [
+    ...listed.map((t) => `${t.name} — ${toolCatalogLine(t.description)}`),
+    ...(codeTwins > 0
+      ? [`${CODE_TYPED_PREFIX}<action> — typed form of each marina_code action (${codeTwins})`]
+      : []),
+  ].join("\n");
   return {
     name: TOOL_SEARCH_NAME,
     label: "Load Tools",
@@ -206,12 +223,17 @@ export const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "marina_code_diff",
   "marina_code_history",
   "marina_code_show",
-  "marina_code_summary",
   "marina_code_session_status",
-  "marina_code_observe",
   "marina_code_artifacts",
   "marina_code_doctor",
   "marina_code_thread",
+]);
+
+/** Writes a read-only plan session may still make: its proposal (`summary`) and
+ *  observation artifacts. They store session artifacts, so they are NOT read-only. */
+export const PLAN_OUTPUT_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "marina_code_summary",
+  "marina_code_observe",
 ]);
 
 /** Whether a tool by this name may change world state (anything not read-only). */
@@ -382,8 +404,13 @@ export function createProfileToolset(
     ),
   );
   if (profile === "plan") {
-    // Read-only plan mode: only observation tools, no mutating tools.
-    return { resident: all.filter((t) => READ_ONLY_TOOL_NAMES.has(t.name)), deferred: [] };
+    // Plan mode: observation tools plus the session-artifact writes a plan delivers with.
+    return {
+      resident: all.filter(
+        (t) => READ_ONLY_TOOL_NAMES.has(t.name) || PLAN_OUTPUT_TOOL_NAMES.has(t.name),
+      ),
+      deferred: [],
+    };
   }
   if (profile !== "full") {
     const want = new Set(TOOL_PROFILE_NAMES[profile]);
@@ -395,7 +422,11 @@ export function createProfileToolset(
   const deferred = all.filter((t) => !residentNames.has(t.name));
   resident.push(
     ...applyToolExecutionModes([
-      createToolSearchTool(deferred, options?.onLoadTools) as unknown as AgentTool,
+      createToolSearchTool(
+        deferred,
+        options?.onLoadTools,
+        resident.map((t) => t.name),
+      ) as unknown as AgentTool,
     ]),
   );
   return { resident, deferred };

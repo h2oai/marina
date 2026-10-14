@@ -34,6 +34,7 @@ export {
   FULL_RESIDENT_TOOL_NAMES,
   isMutatingToolName,
   isStrictSafeSchema,
+  PLAN_OUTPUT_TOOL_NAMES,
   type ProfileToolset,
   READ_ONLY_TOOL_NAMES,
   replayPolicyFor,

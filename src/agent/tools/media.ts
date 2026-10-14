@@ -6,6 +6,7 @@
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
+import { DEFAULT_VIDEO_MODEL } from "../../engine/media/providers/video-util";
 import { execCommand, type ToolContext } from "./shared";
 
 const imageGenerateSchema = Type.Object({
@@ -41,7 +42,7 @@ const videoGenerateSchema = Type.Object({
   prompt: Type.String({ description: "Describe the video to generate" }),
   model: Type.Optional(
     Type.String({
-      description: "Provider/model ID (default runway/gen3-alpha)",
+      description: `Provider/model ID (default ${DEFAULT_VIDEO_MODEL})`,
     }),
   ),
   duration: Type.Optional(

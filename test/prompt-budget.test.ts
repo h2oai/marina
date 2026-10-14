@@ -48,6 +48,7 @@ import {
   createProfileToolset,
   isStrictSafeSchema,
 } from "../src/agent/tools";
+import { commandManifest } from "../src/engine/command-manifest";
 import {
   CONTEXT_PRUNE_THRESHOLD,
   CONTINUATION_PROMPT_BUDGET_BYTES,
@@ -58,6 +59,7 @@ import {
   PERCEPTION_LINE_MAX_CHARS,
   PERCEPTION_MODEL_REQUEST_MAX_CHARS,
 } from "../src/engine/constants";
+import { createTestEngine } from "./engine-fixture";
 import { scopeProcessState } from "./process-state";
 
 const bytes = (s: string) => Buffer.byteLength(s, "utf8");
@@ -110,6 +112,56 @@ describe("system prompt byte budget", () => {
     expect(p.split("\n# COMMANDS\n").length - 1).toBe(1);
     expect(p).toContain("# COMMANDS");
     expect(p).toContain(COMMAND_ROSTER);
+  });
+
+  it("stays under the cap with the LIVE roster agents get, in every profile and posture", async () => {
+    // Agents receive the live manifest (`client.capabilities()`), not the static
+    // fallback: measure what they actually get, with a busy room's commands and
+    // the full toolset, under every trust profile x autonomy posture.
+    const roomCommands = Object.fromEntries(
+      Array.from({ length: 12 }, (_, i) => [`roomverb${i}`, () => undefined]),
+    );
+    const fixture = createTestEngine({ room: { commands: roomCommands } });
+    try {
+      const fullTools = [
+        "marina_command",
+        "marina_code",
+        "marina_tell",
+        "marina_pool",
+        "marina_brief",
+        "marina_channel",
+        "think",
+        "memory",
+        "marina_memory_service",
+        "marina_tool_search",
+      ];
+      for (const trustProfile of ["local", "shared", "public"] as const) {
+        for (const autonomy of ["guarded", "earned", "open"]) {
+          using _state = scopeProcessState({ trustProfile, env: { MARINA_AUTONOMY: autonomy } });
+          for (const rank of [undefined, 0, 4]) {
+            const entries = commandManifest(fixture.engine.commands, {
+              rank,
+              roomCommands: roomCommands as never,
+            });
+            const p = getLeanSystemPrompt(null, entries, fullTools);
+            expect({
+              trustProfile,
+              autonomy,
+              rank,
+              ok: bytes(p) <= LEAN_SYSTEM_PROMPT_BYTE_CAP,
+            }).toEqual({ trustProfile, autonomy, rank, ok: true });
+            // Room commands and the core work commands are listed; operator surfaces are not.
+            expect(p).toContain("This room: roomverb0");
+            for (const core of ["work:", "task:", "channel:", "web:", "canvas:", "challenge:"])
+              expect(p).toContain(`\n${core}`);
+            for (const operator of ["\nadmin:", "\nkey:", "\nadapter:", "\nquit:", "\narena:"])
+              expect(p).not.toContain(operator);
+          }
+        }
+      }
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it("keeps the four load-bearing rules", () => {

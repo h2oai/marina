@@ -3,6 +3,7 @@
 
 import type { Engine } from "../../engine/engine";
 import { defaultImageModel } from "../../engine/media/providers/image-registry";
+import { DEFAULT_VIDEO_MODEL } from "../../engine/media/providers/video-util";
 import type { MediaJobRow } from "../../persistence/database";
 import type { EntityId } from "../../types";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas/canvas-principal";
@@ -113,7 +114,7 @@ export async function handleMediaApi(
               entityId,
               entityName,
               prompt: body.prompt,
-              model: body.model ?? "runway/gen3-alpha",
+              model: body.model ?? DEFAULT_VIDEO_MODEL,
               duration: body.duration ?? undefined,
               fps: body.fps ?? undefined,
               referenceImage: body.referenceImage ?? undefined,

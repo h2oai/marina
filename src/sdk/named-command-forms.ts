@@ -216,7 +216,7 @@ export const NAMED_COMMAND_FORMS = {
     input: {
       kind: "text",
       placeholder:
-        "Crew subcommand and arguments, e.g. 'create alpha alice,bob formation=pipeline -- ship phase'",
+        "Crew subcommand and arguments, e.g. 'create alpha alice,bob formation:pipeline -- ship phase'",
       required: true,
     },
   }),
@@ -232,7 +232,7 @@ export const NAMED_COMMAND_FORMS = {
     input: {
       kind: "text",
       placeholder:
-        "Market subcommand and arguments, e.g. 'forecast market:tech' or 'list resolved'",
+        "Market subcommand and arguments, e.g. 'forecast <market-id>' or 'list resolved'",
       required: true,
     },
   }),
@@ -247,7 +247,7 @@ export const NAMED_COMMAND_FORMS = {
   build: namedCommandForm("build", {
     input: {
       kind: "text",
-      placeholder: "Build subcommand and arguments, e.g. 'space my/room A Custom Room'",
+      placeholder: "Build subcommand and arguments, e.g. 'room my/garden A Quiet Garden'",
       required: true,
     },
   }),

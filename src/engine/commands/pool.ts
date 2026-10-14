@@ -221,7 +221,7 @@ export function poolCommand(deps: {
       if (!pool || !access.pool(pool)) {
         ctx.send(
           input.entity,
-          `Pool "${poolName}" not found or inaccessible.`,
+          `Pool "${poolName}" not found or inaccessible. List pools with \`pool list\`, or create one with \`pool create ${poolName}\`.`,
           undefined,
           memoryResult("pool-recall", { success: false, error: "Pool not found" }),
         );
