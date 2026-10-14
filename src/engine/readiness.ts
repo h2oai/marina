@@ -19,8 +19,9 @@ import { decisionHealth } from "../decisions/health";
 import { describeDecisionSettings } from "../decisions/settings";
 import { competenceMap } from "../forecast/competence";
 import { providerSetupHint } from "../net/model/provider-setup";
+import { describeRouteHealth } from "../net/model/route-health";
 import { localModelApiKey } from "../net/model-api/shared";
-import { describeDefaultUpstream } from "../net/model-api/upstream";
+import { describeDefaultUpstream, hasProviderKey } from "../net/model-api/upstream";
 import { ALERT_AFTER_FAILURES, schedulesMode } from "../schedules/runner";
 import { autoRespawnEnabled } from "./auto-respawn";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
@@ -179,6 +180,22 @@ export function computeReadiness(engine: Engine): ReadinessReport {
           remediation: `${providerSetupHint()} Admin → Keys also works.`,
         },
   );
+
+  // ── Provider routes — a first-party key's usage limit (not Marina's cap) ──
+  const routeLines = describeRouteHealth({
+    hasOpenRouterKey: hasProviderKey(engine, "openrouter"),
+    env,
+  });
+  if (routeLines.length > 0) {
+    checks.push({
+      id: "provider-routes",
+      label: "Provider routes",
+      status: "degraded",
+      detail: routeLines.join(" · "),
+      remediation:
+        "A provider account limit, not Marina's daily spend cap: wait for the reset (Marina re-probes on its own), raise the limit in the provider console, or add OPENROUTER_API_KEY so the same models are served via OpenRouter meanwhile (MARINA_PROVIDER_FALLBACK=off disables that).",
+    });
+  }
 
   // ── Intelligence scale — Marina sizes every feature to what is configured ──
   // A single model is a working (degraded) tier, never an error: verification

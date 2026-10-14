@@ -34,6 +34,12 @@ import { RESPONSE_CACHE_HEADER } from "../response-cache";
  */
 export const UPSTREAM_MODEL_HEADER = "x-marina-upstream-model";
 export const COST_USD_HEADER = "x-marina-cost-usd";
+/**
+ * Set when a usage-limited direct route was routed around: `via=openrouter;
+ * anthropic:direct=usage-limit; until=<iso>` (`src/net/model/route-health.ts`).
+ * `x-marina-upstream-model` then names the OpenRouter target that served it.
+ */
+export const ROUTE_HEADER = "x-marina-route";
 export const CACHE_READ_TOKENS_HEADER = "x-marina-cache-read-tokens";
 export const CACHE_WRITE_TOKENS_HEADER = "x-marina-cache-write-tokens";
 
@@ -47,6 +53,7 @@ export const MODEL_CORS = corsHeaders(null, {
     MEMORY_RECEIPT_HEADER,
     RESPONSE_CACHE_HEADER,
     UPSTREAM_MODEL_HEADER,
+    ROUTE_HEADER,
     COST_USD_HEADER,
     CACHE_READ_TOKENS_HEADER,
     CACHE_WRITE_TOKENS_HEADER,
@@ -61,6 +68,7 @@ const PASSTHRU_FORWARDED_HEADERS = [
   MEMORY_RECEIPT_HEADER,
   RESPONSE_CACHE_HEADER,
   UPSTREAM_MODEL_HEADER,
+  ROUTE_HEADER,
   COST_USD_HEADER,
   CACHE_READ_TOKENS_HEADER,
   CACHE_WRITE_TOKENS_HEADER,

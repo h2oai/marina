@@ -5,6 +5,8 @@ import { parseExecUnrestricted } from "../../coding/exec-approver";
 import { recoverCodingRuns } from "../../coding/task-run";
 import { VerificationRunner } from "../../coding/verification-runner";
 import { probeConfiguredProviders } from "../../net/model/model-api";
+import { describeRouteHealth } from "../../net/model/route-health";
+import { hasProviderKey } from "../../net/model-api/upstream";
 import type { EntityId } from "../../types";
 import { adapterCommand } from "../commands/adapter";
 import { adminCommand } from "../commands/admin";
@@ -257,6 +259,8 @@ export function registerOperationCommands(engine: Engine): void {
     readinessCommand({
       readiness: () => computeReadiness(engine),
       probeProviders: (providers) => probeConfiguredProviders(engine, { providers }),
+      routeHealth: () =>
+        describeRouteHealth({ hasOpenRouterKey: hasProviderKey(engine, "openrouter") }),
       pulseHistory: (sinceMs) => engine.db?.listAutonomyPulse(sinceMs) ?? [],
     }),
   );

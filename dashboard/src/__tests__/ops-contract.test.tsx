@@ -47,7 +47,7 @@ describe("ops-types (dashboard lib) matches the backend contract", () => {
     expectTypeOf<Lib.AgentPause>().toEqualTypeOf<NonNullable<Backend.AgentOperatorRow["paused"]>>();
     expectTypeOf<"privileged" | "resident">().toEqualTypeOf<Lib.OpsScope>();
     expectTypeOf<
-      "budget" | "spend-cap" | "upstream-errors" | "provider-auth"
+      "budget" | "spend-cap" | "upstream-errors" | "provider-auth" | "route-limit"
     >().toEqualTypeOf<Lib.OpsAgentPauseKind>();
     expectTypeOf<"full" | "crew" | "minimal">().toEqualTypeOf<Lib.OpsToolProfile>();
   });
@@ -59,6 +59,7 @@ describe("ops-types (dashboard lib) matches the backend contract", () => {
     "spend-cap": true,
     "upstream-errors": true,
     "provider-auth": true,
+    "route-limit": true,
   };
   const RETENTION_KINDS: Record<Lib.OpsRetentionKind, true> = {
     telemetry: true,

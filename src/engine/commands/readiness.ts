@@ -80,6 +80,19 @@ export function renderProviderProbe(results: ProviderProbeResult[]): string[] {
 }
 
 /**
+ * Route status after the probe — a provider ACCOUNT's usage limit (direct key
+ * vs OpenRouter), distinct from Marina's own daily spend cap. Empty when every
+ * route is healthy.
+ */
+export function renderRouteHealth(lines: readonly string[]): string[] {
+  if (lines.length === 0) return [];
+  return [
+    "Provider routes (account usage limits — not Marina's daily spend cap):",
+    ...lines.map((l) => `  ⚠ ${l}`),
+  ];
+}
+
+/**
  * The tool-call column: `tool call ok` / `TOOL CALL DROPPED` for probed
  * providers, `tool call not probed` where the passthru path does not
  * translate tool schemas (`toolCallOk` undefined). `error` keeps its own line.
@@ -160,6 +173,8 @@ export function renderAutonomy(report: ReadinessReport): string[] {
 export function readinessCommand(deps: {
   readiness: () => ReadinessReport;
   probeProviders?: (providers?: string[]) => Promise<ProviderProbeResult[]>;
+  /** Route status lines (a first-party key's usage limit, and what serves its models meanwhile). */
+  routeHealth?: () => string[];
   /** 5-minute autonomy snapshots since a time (the `autonomy-pulse` tick job). */
   pulseHistory?: (sinceMs: number) => AutonomyPulseRow[];
 }): CommandDef {
@@ -187,7 +202,12 @@ export function readinessCommand(deps: {
         }
         const only = input.tokens.slice(1).map((a) => a.toLowerCase());
         const results = await deps.probeProviders(only.length > 0 ? only : undefined);
-        ctx.send(input.entity, renderProviderProbe(results).join("\n"));
+        ctx.send(
+          input.entity,
+          [...renderProviderProbe(results), ...renderRouteHealth(deps.routeHealth?.() ?? [])].join(
+            "\n",
+          ),
+        );
         return;
       }
       if (sub === "autonomy") {

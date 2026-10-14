@@ -8,7 +8,12 @@
 
 import { calculateCost, type Usage as PiUsage } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { costFromTokens, defaultModelPrice, type TokenPrice } from "../../agent/provider-cost";
+import {
+  costFromTokens,
+  defaultModelPrice,
+  openRouterIdCandidates,
+  type TokenPrice,
+} from "../../agent/provider-cost";
 import { noteRunKeyCall } from "../../engine/benchmark-run-keys";
 import { localOutputBudget } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
@@ -45,6 +50,19 @@ import {
   reasoningExhaustedMessage,
   reasoningTokens,
 } from "../model/reasoning-effort";
+import {
+  classifyUpstreamRefusal,
+  describeLimit,
+  noteRouteOk,
+  noteRouteRefusal,
+  routeChoice,
+  routeHeaderValue,
+  routeLabel,
+  routeLimitOf,
+  routeNote,
+  sameModelFallback,
+  type UpstreamRefusal,
+} from "../model/route-health";
 import { withoutRejectedSampling } from "../model/sampling-params";
 import {
   normalizeTextualToolCalls,
@@ -72,6 +90,7 @@ import {
   newRequestId,
   openaiStreamChunk,
   openaiStreamRoleChunk,
+  ROUTE_HEADER,
   requestTrace,
   SSE_HEADERS,
   UPSTREAM_MODEL_HEADER,
@@ -195,6 +214,11 @@ function resolveProviderKey(engine: Engine, provider: string): string | undefine
     }
   }
   return engine.db?.getApiKeysByProvider(provider)[0]?.encrypted_value;
+}
+
+/** True when `provider` has a key (env or admin panel) — presence only, never the value. */
+export function hasProviderKey(engine: Engine, provider: string): boolean {
+  return !!resolveProviderKey(engine, provider);
 }
 
 /**
@@ -496,6 +520,7 @@ export async function probeConfiguredProviders(
           buildProviderProbeBody(nonce),
           `${target.provider}/${target.model}`,
           { routeKind: "passthru", requestId },
+          { routeProbe: true },
         ),
         new Promise<never>((_, reject) => {
           timeout = setTimeout(() => reject(new Error(`timeout after ${timeoutMs} ms`)), timeoutMs);
@@ -519,6 +544,10 @@ export async function probeConfiguredProviders(
       const verdict = evaluateProviderProbe(text, nonce);
       const expected = `${target.provider}/${target.model}`;
       const misrouted = servedBy !== undefined && servedBy !== expected;
+      const limit = routeLimitOf(target.provider);
+      if (misrouted && limit)
+        error = `${routeLabel(target.provider)}: ${describeLimit(limit)} — same model served by fallback ${servedBy}`;
+      else if (limit && !error) error = `${routeLabel(target.provider)}: ${describeLimit(limit)}`;
       if (misrouted && !error)
         error = `served by fallback ${servedBy} — ${target.provider} itself failed (see server log)`;
       result = {
@@ -545,6 +574,7 @@ export async function probeConfiguredProviders(
               buildProviderToolProbeBody(toolNonce),
               `${target.provider}/${target.model}`,
               { routeKind: "passthru", requestId: toolRequestId },
+              { routeProbe: true },
             ),
             new Promise<never>((_, reject) => {
               toolTimeout = setTimeout(
@@ -1159,6 +1189,10 @@ export async function proxyToUpstream(
     clientSignal?: AbortSignal;
     /** Verification/evaluation names a provider, so another route cannot answer for it. */
     providerFallback?: boolean;
+    /** A conformance probe (`readiness providers`): always call the direct
+     *  route, even while it is recorded as usage-limited — the probe IS the
+     *  re-probe. A fresh limit still falls back (and is reported as such). */
+    routeProbe?: boolean;
     /** Native Anthropic body to forward verbatim when the upstream is Anthropic. */
     anthropicNative?: Record<string, unknown>;
     /** The LAST system block is the proxy's injected memory addendum (see
@@ -1251,6 +1285,130 @@ export async function proxyToUpstream(
       throw e;
     }
   };
+  // ── Usage-limited direct routes (`src/net/model/route-health.ts`) ────────
+  // A first-party key that reports a usage/quota limit is a limit of that
+  // ROUTE: the SAME model is served via OpenRouter (when its catalog lists it)
+  // and the reply is labelled `openrouter/…` — never credited to the direct
+  // provider. With no same-model route the caller keeps today's behaviour.
+  type Routed = {
+    response: Response;
+    target: string;
+    errorKind?: ProxyTraceMetrics["errorKind"];
+  };
+  const routable = (provider: string): boolean =>
+    PROVIDER_UPSTREAM[provider] !== undefined &&
+    openRouterIdCandidates(provider, "x").length > 0 &&
+    hints?.providerFallback !== false;
+  const refusalOf = async (provider: string, response: Response): Promise<UpstreamRefusal> => {
+    const text = await response
+      .clone()
+      .text()
+      .catch(() => "");
+    let message = text;
+    try {
+      const p = JSON.parse(text) as {
+        error?: string | { message?: unknown; code?: unknown; type?: unknown };
+        message?: unknown;
+      };
+      const e = p.error;
+      const parts =
+        typeof e === "string" ? [e, p.message] : [e?.message, e?.code, e?.type, p.message];
+      message =
+        parts.filter((v): v is string => typeof v === "string" && v.length > 0).join(" ") || text;
+    } catch {
+      // keep the raw text
+    }
+    const refusal = classifyUpstreamRefusal(message, response.status);
+    noteRouteRefusal(provider, refusal);
+    return refusal;
+  };
+  const viaOpenRouter = async (
+    provider: string,
+    upstreamModel: string,
+  ): Promise<Routed | undefined> => {
+    const orKey = resolveProviderKey(engine, "openrouter");
+    const fb = await sameModelFallback(provider, upstreamModel, { hasOpenRouterKey: !!orKey });
+    if (!fb || !orKey || clientSignal?.aborted) return undefined;
+    const target = `openrouter/${fb.model}`;
+    lastTarget = target;
+    const r = await dispatchOpenAICompatible(
+      PROVIDER_UPSTREAM.openrouter!.url,
+      orKey,
+      openAIBody(fb.model, "openrouter"),
+      wantStream,
+      upstreamHeaders,
+      clientSignal,
+    );
+    if (r.response) {
+      noteRouteOk("openrouter");
+      logger.debug("model-api", routeNote(provider, upstreamModel, "openrouter"), {
+        provider,
+        target,
+      });
+      const headers = new Headers(r.response.headers);
+      headers.set(ROUTE_HEADER, routeHeaderValue(provider, "openrouter"));
+      return {
+        response: new Response(r.response.body, {
+          status: r.response.status,
+          statusText: r.response.statusText,
+          headers,
+        }),
+        target,
+      };
+    }
+    if (r.errorResponse) await refusalOf("openrouter", r.errorResponse);
+    return {
+      response:
+        r.errorResponse ??
+        errorJson(
+          r.timedOut ? 504 : 502,
+          `${routeLabel(provider)} is usage-limited and OpenRouter could not complete the request for the same model (${target}).`,
+        ),
+      target,
+      errorKind: r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0),
+    };
+  };
+  /** Before a direct call: a route still inside its limit is not called. */
+  const beforeDirect = async (
+    provider: string,
+    upstreamModel: string,
+  ): Promise<Routed | undefined> => {
+    if (!routable(provider) || hints?.routeProbe) return undefined;
+    if (routeChoice(provider) !== "avoid") return undefined;
+    const served = await viaOpenRouter(provider, upstreamModel);
+    if (served) return served;
+    const limit = routeLimitOf(provider);
+    const hint = resolveProviderKey(engine, "openrouter")
+      ? ""
+      : " (set OPENROUTER_API_KEY to serve it via OpenRouter)";
+    return {
+      response: errorJson(
+        429,
+        `${routeLabel(provider)} ${limit ? describeLimit(limit) : "usage limit"} — no other route serves ${provider}/${upstreamModel}${hint}`,
+        { code: "route_usage_limit" },
+      ),
+      target: `${provider}/${upstreamModel}`,
+      errorKind: "rate_limit",
+    };
+  };
+  /** After a direct reply: a success clears a limit; a fresh usage limit is
+   *  recorded and the same model is tried via OpenRouter. Undefined ⇒ the
+   *  caller keeps the direct reply as today. */
+  const afterDirect = async (
+    provider: string,
+    upstreamModel: string,
+    response: Response | undefined | null,
+  ): Promise<Routed | undefined> => {
+    if (!response || !routable(provider)) return undefined;
+    if (response.ok) {
+      noteRouteOk(provider);
+      return undefined;
+    }
+    const refusal = await refusalOf(provider, response);
+    if (refusal.kind !== "usage-limit") return undefined;
+    return viaOpenRouter(provider, upstreamModel);
+  };
+
   if (requestId) {
     engine.logEvent({
       type: "model_request_lifecycle",
@@ -1330,8 +1488,13 @@ export async function proxyToUpstream(
     if (cfg && (key || localReady) && upstreamModel) {
       attemptedUpstream = true;
       lastTarget = `${provider}/${upstreamModel}`;
+      const avoided = key ? await beforeDirect(provider, upstreamModel) : undefined;
+      if (avoided) return finish(avoided.response, avoided.target, avoided.errorKind);
       if (cfg.anthropic) {
-        return finish(await anthropic(key!, upstreamModel), lastTarget);
+        const resp = await anthropic(key!, upstreamModel);
+        const routed = await afterDirect(provider, upstreamModel, resp);
+        if (routed) return finish(routed.response, routed.target, routed.errorKind);
+        return finish(resp, `${provider}/${upstreamModel}`);
       }
       const r = await dispatchOpenAICompatible(
         cfg.url,
@@ -1341,6 +1504,11 @@ export async function proxyToUpstream(
         upstreamHeaders,
         clientSignal,
       );
+      const routed = key
+        ? await afterDirect(provider, upstreamModel, r.response ?? r.errorResponse)
+        : undefined;
+      if (routed) return finish(routed.response, routed.target, routed.errorKind);
+      lastTarget = `${provider}/${upstreamModel}`;
       if (r.response) return finish(r.response, lastTarget);
       lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
       anyTimedOut ||= r.timedOut === true;
@@ -1381,8 +1549,13 @@ export async function proxyToUpstream(
     if (cfg && (key || localReady) && upstreamModel) {
       attemptedUpstream = true;
       lastTarget = `${provider}/${upstreamModel}`;
+      const avoided = key ? await beforeDirect(provider, upstreamModel) : undefined;
+      if (avoided) return finish(avoided.response, avoided.target, avoided.errorKind);
       if (cfg.anthropic) {
-        return finish(await anthropic(key!, upstreamModel), lastTarget);
+        const resp = await anthropic(key!, upstreamModel);
+        const routed = await afterDirect(provider, upstreamModel, resp);
+        if (routed) return finish(routed.response, routed.target, routed.errorKind);
+        return finish(resp, `${provider}/${upstreamModel}`);
       }
       const r = await dispatchOpenAICompatible(
         cfg.url,
@@ -1392,6 +1565,11 @@ export async function proxyToUpstream(
         upstreamHeaders,
         clientSignal,
       );
+      const routed = key
+        ? await afterDirect(provider, upstreamModel, r.response ?? r.errorResponse)
+        : undefined;
+      if (routed) return finish(routed.response, routed.target, routed.errorKind);
+      lastTarget = `${provider}/${upstreamModel}`;
       if (r.response) return finish(r.response, lastTarget);
       return finish(
         r.errorResponse ??
@@ -1447,8 +1625,19 @@ export async function proxyToUpstream(
     const envKey = cfg.envKeys[0]!;
     const requestModel = isDefault ? getDefaultUpstreamModel(envKey) : (body.model as string);
     lastTarget = `${provider}/${requestModel}`;
+    const avoided = key ? await beforeDirect(provider, requestModel) : undefined;
+    if (avoided && (avoided.response.ok || cfg.anthropic))
+      return finish(avoided.response, avoided.target, avoided.errorKind);
+    if (avoided) {
+      // Limited with no same-model route: the next provider is asked, as for any failure.
+      lastErrorKind = avoided.errorKind;
+      continue;
+    }
     if (cfg.anthropic) {
       const resp = await anthropic(key!, requestModel);
+      const routed = await afterDirect(provider, requestModel, resp);
+      if (routed) return finish(routed.response, routed.target, routed.errorKind);
+      lastTarget = `${provider}/${requestModel}`;
       if (hints?.providerFallback === false || isDefault || resp.status !== 404)
         return finish(resp, lastTarget);
       modelNotFound ??= { response: resp, target: lastTarget };
@@ -1463,6 +1652,11 @@ export async function proxyToUpstream(
       upstreamHeaders,
       clientSignal,
     );
+    const routed = key
+      ? await afterDirect(provider, requestModel, r.response ?? r.errorResponse)
+      : undefined;
+    if (routed?.response.ok) return finish(routed.response, routed.target, routed.errorKind);
+    lastTarget = `${provider}/${requestModel}`;
     if (r.response) return finish(r.response, lastTarget);
     if (hints?.providerFallback === false) {
       return finish(

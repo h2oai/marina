@@ -84,7 +84,62 @@ export function costFromTokens(price: TokenPrice, usage: TokenUsage): number {
 
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const OPENROUTER_PRICES_TTL_MS = 6 * 60 * 60_000;
-let openRouterPrices: { at: number; prices: Promise<Map<string, TokenPrice>> } | undefined;
+const OPENROUTER_EMPTY_RETRY_MS = 5 * 60_000;
+interface OpenRouterCatalog {
+  /** Every listed model id, lowercased. */
+  ids: Set<string>;
+  prices: Map<string, TokenPrice>;
+}
+let openRouterCatalog: { at: number; catalog: Promise<OpenRouterCatalog> } | undefined;
+
+type CatalogFetcher = (url: string) => Promise<Response>;
+const guardedCatalogFetch: CatalogFetcher = async (url) => {
+  const { guardedFetch } = await import("../net/url-guard");
+  return guardedFetch(url, { signal: AbortSignal.timeout(20_000) });
+};
+
+/** OpenRouter's public model catalog — fetched once and cached for six hours. */
+function loadOpenRouterCatalog(fetcher: CatalogFetcher, now: number): Promise<OpenRouterCatalog> {
+  if (!openRouterCatalog || now - openRouterCatalog.at > OPENROUTER_PRICES_TTL_MS) {
+    const entry: { at: number; catalog: Promise<OpenRouterCatalog> } = {
+      at: now,
+      catalog: Promise.resolve({ ids: new Set(), prices: new Map() }),
+    };
+    openRouterCatalog = entry;
+    entry.catalog = (async () => {
+      const ids = new Set<string>();
+      const prices = new Map<string, TokenPrice>();
+      try {
+        const res = await fetcher(OPENROUTER_MODELS_URL);
+        if (!res.ok) return { ids, prices };
+        const body = (await res.json()) as {
+          data?: Array<{ id?: string; pricing?: Record<string, string | undefined> }>;
+        };
+        const perM = (v: string | undefined) => {
+          const n = Number(v ?? 0);
+          return Number.isFinite(n) && n > 0 ? n * 1_000_000 : 0;
+        };
+        for (const m of body.data ?? []) {
+          if (!m.id) continue;
+          ids.add(m.id.toLowerCase());
+          if (!m.pricing) continue;
+          prices.set(m.id.toLowerCase(), {
+            input: perM(m.pricing.prompt),
+            output: perM(m.pricing.completion),
+            cacheRead: perM(m.pricing.input_cache_read),
+            cacheWrite: perM(m.pricing.input_cache_write),
+          });
+        }
+      } catch {
+        // Best effort: an unreachable catalog leaves both empty.
+      }
+      // An unreadable catalog is retried after five minutes, not six hours.
+      if (ids.size === 0) entry.at = now - OPENROUTER_PRICES_TTL_MS + OPENROUTER_EMPTY_RETRY_MS;
+      return { ids, prices };
+    })();
+  }
+  return openRouterCatalog.catalog;
+}
 
 /**
  * OpenRouter's own list price for a model (`provider/model`, with or without
@@ -94,49 +149,75 @@ let openRouterPrices: { at: number; prices: Promise<Map<string, TokenPrice>> } |
  */
 export async function openRouterModelPrice(
   modelId: string,
-  fetcher: (url: string) => Promise<Response> = async (url) => {
-    const { guardedFetch } = await import("../net/url-guard");
-    return guardedFetch(url, { signal: AbortSignal.timeout(20_000) });
-  },
+  fetcher: CatalogFetcher = guardedCatalogFetch,
   now = Date.now(),
 ): Promise<TokenPrice | undefined> {
-  if (!openRouterPrices || now - openRouterPrices.at > OPENROUTER_PRICES_TTL_MS) {
-    const prices = (async () => {
-      const map = new Map<string, TokenPrice>();
-      try {
-        const res = await fetcher(OPENROUTER_MODELS_URL);
-        if (!res.ok) return map;
-        const body = (await res.json()) as {
-          data?: Array<{ id?: string; pricing?: Record<string, string | undefined> }>;
-        };
-        const perM = (v: string | undefined) => {
-          const n = Number(v ?? 0);
-          return Number.isFinite(n) && n > 0 ? n * 1_000_000 : 0;
-        };
-        for (const m of body.data ?? []) {
-          if (!m.id || !m.pricing) continue;
-          map.set(m.id.toLowerCase(), {
-            input: perM(m.pricing.prompt),
-            output: perM(m.pricing.completion),
-            cacheRead: perM(m.pricing.input_cache_read),
-            cacheWrite: perM(m.pricing.input_cache_write),
-          });
-        }
-      } catch {
-        // Pricing is best effort: an unreachable catalog leaves the map empty.
-      }
-      return map;
-    })();
-    openRouterPrices = { at: now, prices };
-  }
   const id = modelId.toLowerCase().replace(/^openrouter\//, "");
-  const price = (await openRouterPrices.prices).get(id);
+  const price = (await loadOpenRouterCatalog(fetcher, now)).prices.get(id);
   return price && (price.input > 0 || price.output > 0) ? price : undefined;
+}
+
+/**
+ * OpenRouter's vendor namespace for a first-party provider's models. Only
+ * vendors whose own API Marina calls directly are listed; OpenRouter spells
+ * some differently (`x-ai`, `mistralai`).
+ */
+const OPENROUTER_VENDOR: Record<string, string> = {
+  anthropic: "anthropic",
+  openai: "openai",
+  google: "google",
+  xai: "x-ai",
+  mistral: "mistralai",
+  deepseek: "deepseek",
+};
+
+/**
+ * The ids OpenRouter could list the SAME model under, most literal first:
+ * `anthropic` + `claude-opus-5-5` → `anthropic/claude-opus-5-5`, then
+ * `anthropic/claude-opus-5.5` (Anthropic's API spells versions with dashes,
+ * OpenRouter with dots — the same mapping {@link defaultModelPrice} uses).
+ * Empty for a provider with no OpenRouter namespace. Never a different model:
+ * no date or tier is dropped or added.
+ */
+export function openRouterIdCandidates(provider: string, modelId: string): string[] {
+  const vendor = OPENROUTER_VENDOR[provider];
+  if (!vendor || !modelId) return [];
+  const bare = modelId.toLowerCase();
+  const ids = [`${vendor}/${bare}`, `${vendor}/${dottedVersion(bare)}`];
+  return [...new Set(ids)];
+}
+
+/**
+ * The OpenRouter id that serves the same model as `provider/modelId`, verified
+ * against OpenRouter's live catalog, or undefined when the catalog does not
+ * list it (or cannot be read — no catalog, no claim it is the same model).
+ */
+export async function openRouterSameModel(
+  provider: string,
+  modelId: string,
+  fetcher: CatalogFetcher = guardedCatalogFetch,
+  now = Date.now(),
+): Promise<string | undefined> {
+  const candidates = openRouterIdCandidates(provider, modelId);
+  if (candidates.length === 0) return undefined;
+  const { ids } = await loadOpenRouterCatalog(fetcher, now);
+  return candidates.find((id) => ids.has(id));
 }
 
 /** Test seam. */
 export function resetOpenRouterPricesForTests(): void {
-  openRouterPrices = undefined;
+  openRouterCatalog = undefined;
+}
+
+/** Test seam: a catalog listing `ids` (unpriced), as if just fetched. */
+export function primeOpenRouterCatalogForTests(ids: readonly string[], now = Date.now()): void {
+  openRouterCatalog = {
+    at: now,
+    catalog: Promise.resolve({
+      ids: new Set(ids.map((id) => id.toLowerCase())),
+      prices: new Map(),
+    }),
+  };
 }
 
 /** True when the model's own catalog price is zero (synthesized or unlisted). */

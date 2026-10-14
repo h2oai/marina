@@ -92,6 +92,20 @@ import {
   localProviderBaseUrl,
   localProviderContextWindow,
 } from "../net/model/model-discovery";
+import {
+  classifyUpstreamRefusal,
+  describeLimit,
+  formatResetUtc,
+  isDirectRoute,
+  noteRouteOk,
+  noteRouteRefusal,
+  routeChoice,
+  routeLabel,
+  routeLimited,
+  routeNote,
+  routeProbeDelayMs,
+  sameModelFallback,
+} from "../net/model/route-health";
 import { AgentObligations } from "../obligations/agent";
 import { AgentArgcheck } from "../obligations/argcheck-agent";
 import { readOnlyByName } from "../obligations/ledger";
@@ -524,7 +538,7 @@ export interface SpendGuard {
 
 /** Why an autonomous loop is currently not calling the model. */
 export interface AgentPauseState {
-  kind: "budget" | "spend-cap" | "upstream-errors" | "provider-auth";
+  kind: "budget" | "spend-cap" | "upstream-errors" | "provider-auth" | "route-limit";
   reason: string;
   since: number;
   /** Wall-clock when the pause lifts on its own; undefined = until the cause clears. */
@@ -1575,6 +1589,17 @@ export class LeanAgentAdapter implements AgentHandle {
   private startupAuthError: string | null = null;
   /** Digest of the visible provider credentials; a change ends a provider-auth park. */
   private credentialsFingerprint: () => string = () => providerCredentialsFingerprint();
+  /**
+   * Key for ANOTHER route to the same model (`openrouter`) while the direct
+   * route is usage-limited (`src/net/model/route-health.ts`). The runtime
+   * supplies its stored key rows; default: the provider's env key.
+   */
+  private routeKey: (provider: string) => string | undefined = (provider) =>
+    provider === "openrouter" ? process.env.OPENROUTER_API_KEY?.trim() || undefined : undefined;
+  /** The route that served (or refused) the last model call. */
+  private lastRoute: { provider: string; via?: string } | null = null;
+  /** Spawner already told about the current route usage limit (reset when the direct route serves again). */
+  private routeOutageNotified = false;
   /** Wall-clock the loop's current sleep ends; 0 before the first cycle. */
   private nextCycleAt = 0;
   private checkpointInterval: ReturnType<typeof setInterval> | null = null;
@@ -1796,7 +1821,8 @@ export class LeanAgentAdapter implements AgentHandle {
         // Summaries are model calls too. A capped agent can still compact
         // deterministically, using the same durable archive path below.
         if (this.checkSpendCaps() || this.budgetExhausted) return fallback;
-        const keyNow = await resolveKeyNow();
+        const routedCall = await this.routeFor(this.model, await resolveKeyNow());
+        const keyNow = routedCall.apiKey;
         signal?.throwIfAborted();
         const llmContext = {
           systemPrompt: COMPACTION_SYSTEM_PROMPT,
@@ -1810,7 +1836,7 @@ export class LeanAgentAdapter implements AgentHandle {
             },
           ] as Message[],
         };
-        const model = this.model;
+        const model = routedCall.model;
         const proxied = isMarinaProxyModel(model);
         const ask = async () => {
           const accounting: {
@@ -2011,15 +2037,25 @@ export class LeanAgentAdapter implements AgentHandle {
       // Proxy accounting: `providerStreamOptions` adds `onResponse` (+ a fetch
       // wrapper) on the marina/* proxy model so `x-marina-cost-usd` and friends
       // are captured per response and settled at the next turn_end.
+      // A direct route under a usage limit is served by the SAME model via
+      // OpenRouter (`routeFor`); the turn is then labelled openrouter-served.
       streamFn: async (model, context, options) => {
-        await prepareHostedModel(
-          model,
+        const routed = await this.routeFor(
+          model as Model<Api>,
           options?.apiKey ?? (await this.resolveKeyNow()),
-          this.providerFetch,
-          options?.signal,
-          { updateContext: false },
+          true,
         );
-        return piModels.streamSimple(model, context, this.providerStreamOptions(model, options));
+        await prepareHostedModel(routed.model, routed.apiKey, this.providerFetch, options?.signal, {
+          updateContext: false,
+        });
+        return piModels.streamSimple(
+          routed.model,
+          context,
+          this.providerStreamOptions(routed.model, {
+            ...options,
+            ...(routed.apiKey === undefined ? {} : { apiKey: routed.apiKey }),
+          }),
+        );
       },
       // Dynamic resolver if a function was passed in; pi-agent-core will
       // re-invoke this for every LLM call, picking up rotated credentials.
@@ -3299,6 +3335,15 @@ export class LeanAgentAdapter implements AgentHandle {
             continue;
           }
 
+          // A ROUTE's usage limit (a first-party key out of quota): the same
+          // model via OpenRouter when it serves (retry at once), else a pause
+          // naming the route and its reset — never Marina's own budget.
+          const routeLimited = await this.afterRouteRefusal(errorMessage, model);
+          if (routeLimited !== undefined) {
+            consecutiveErrors = routeLimited;
+            continue;
+          }
+
           // The provider refused the credentials (401/403): retrying the same
           // key cannot succeed. Park visibly, tell the spawner once, and call
           // again only when the credentials change (or on a slow probe).
@@ -3341,6 +3386,7 @@ export class LeanAgentAdapter implements AgentHandle {
         this.lastErrorReason = null;
         this.metrics.lastActivity = Date.now();
         this.endProviderAuthOutage();
+        this.endRouteOutage();
         // pi keeps isStreaming true through turn_end/agent_end listeners. Only
         // the settled prompt reflects its idle state; publish after bookkeeping
         // so coding observers see the wait between cycles without changing it.
@@ -3381,6 +3427,14 @@ export class LeanAgentAdapter implements AgentHandle {
             { agent: this.name },
           );
           await this.sleep(1000);
+          continue;
+        }
+        const routeLimitedThrown = await this.afterRouteRefusal(
+          msg,
+          this.config.model ?? MARINA_DEFAULT_MODEL,
+        );
+        if (routeLimitedThrown !== undefined) {
+          consecutiveErrors = routeLimitedThrown;
           continue;
         }
         if (isProviderAuthError(msg) && !isSpendRefusal(msg)) {
@@ -3546,20 +3600,17 @@ export class LeanAgentAdapter implements AgentHandle {
         : "";
     if (!prose) return false;
     const shot = async (system: string, user: string): Promise<string> => {
-      await prepareHostedModel(
-        this.model,
-        await this.resolveKeyNow(),
-        this.providerFetch,
-        undefined,
-        { updateContext: false },
-      );
+      const routed = await this.routeFor(this.model, await this.resolveKeyNow());
+      await prepareHostedModel(routed.model, routed.apiKey, this.providerFetch, undefined, {
+        updateContext: false,
+      });
       const result = await piModels.completeSimple(
-        this.model,
+        routed.model,
         {
           systemPrompt: system,
           messages: [{ role: "user", content: user, timestamp: Date.now() }] as Message[],
         },
-        { apiKey: await this.resolveKeyNow(), maxTokens: REPAIR_SHOT_MAX_TOKENS },
+        { apiKey: routed.apiKey, maxTokens: REPAIR_SHOT_MAX_TOKENS },
       );
       this.recordTurnUsage(extractTurnUsage(result), Date.now());
       if (result.stopReason === "error") throw new Error(result.errorMessage ?? "repair failed");
@@ -5886,25 +5937,22 @@ The goal is a smaller, sharper memory — not more notes.`;
 
   /** One obligations-ledger completion on the agent's own model (spend recorded like a turn). */
   private async obligationsComplete(system: string, user: string): Promise<string> {
-    await prepareHostedModel(
-      this.model,
-      await this.resolveKeyNow(),
-      this.providerFetch,
-      undefined,
-      { updateContext: false },
-    );
+    const routed = await this.routeFor(this.model, await this.resolveKeyNow());
+    await prepareHostedModel(routed.model, routed.apiKey, this.providerFetch, undefined, {
+      updateContext: false,
+    });
     const capped = dailyCapRefusal();
     if (capped) throw new Error(capped);
     const result = await piModels.completeSimple(
-      this.model,
+      routed.model,
       {
         systemPrompt: system,
         messages: [{ role: "user", content: user, timestamp: Date.now() }] as Message[],
       },
-      { apiKey: await this.resolveKeyNow(), maxTokens: OBLIGATIONS_CALL_MAX_TOKENS },
+      { apiKey: routed.apiKey, maxTokens: OBLIGATIONS_CALL_MAX_TOKENS },
     );
     // A loopback `marina/*` model's spend was recorded by the passthru already.
-    if (!isMarinaProxyModel(this.model)) recordSpend("agent", extractTurnUsage(result).costUsd);
+    if (!isMarinaProxyModel(routed.model)) recordSpend("agent", extractTurnUsage(result).costUsd);
     if (result.stopReason === "error")
       throw new Error(result.errorMessage ?? "obligations call failed");
     return result.content
@@ -6179,6 +6227,155 @@ The goal is a smaller, sharper memory — not more notes.`;
    */
   setCredentialsFingerprint(fn: () => string): void {
     this.credentialsFingerprint = fn;
+  }
+
+  /** Supply the key for another route to the same model (the runtime adds stored key rows). */
+  setRouteKeyResolver(fn: (provider: string) => string | undefined): void {
+    this.routeKey = fn;
+  }
+
+  /** Resolved `openrouter/<id>` models, so the fallback is built (and warned about) once. */
+  private readonly fallbackModels = new Map<string, Model<Api>>();
+
+  /**
+   * The route for one model call. A first-party model whose direct route is
+   * usage-limited (`src/net/model/route-health.ts`) is served by the SAME
+   * model via OpenRouter when OpenRouter lists it and a key exists; otherwise
+   * the call goes direct as configured. `track` (the agent's own turns) takes
+   * the single re-probe slot when the limit's time is up and records the
+   * route for the loop's refusal handling; auxiliary calls never probe.
+   */
+  private async routeFor(
+    model: Model<Api>,
+    apiKey: string | undefined,
+    track = false,
+  ): Promise<{ model: Model<Api>; apiKey: string | undefined; via?: string }> {
+    const provider = String(model.provider);
+    const direct = { model, apiKey };
+    if (isMarinaProxyModel(model) || !isDirectRoute(provider, model.baseUrl)) {
+      if (track) this.lastRoute = null;
+      return direct;
+    }
+    const choice = track ? routeChoice(provider) : routeLimited(provider) ? "avoid" : "direct";
+    if (choice !== "avoid") {
+      if (track) this.lastRoute = { provider };
+      return direct;
+    }
+    const orKey = this.routeKey("openrouter");
+    const fb = await sameModelFallback(provider, model.id, { hasOpenRouterKey: !!orKey });
+    if (!fb || !orKey) {
+      if (track) this.lastRoute = { provider };
+      return direct;
+    }
+    // Same window and output cap as the direct model; priced at OpenRouter's
+    // list price (or its reported `usage.cost`), never the direct provider's.
+    const cacheKey = `${fb.model}|${this.thinkingLevel}|${model.contextWindow}|${model.maxTokens}`;
+    let routed = this.fallbackModels.get(cacheKey);
+    if (!routed) {
+      const base = resolveModel(`openrouter/${fb.model}`, this.wsPort);
+      routed = applyThinkingLevel(
+        { ...base, contextWindow: model.contextWindow, maxTokens: model.maxTokens } as Model<Api>,
+        this.thinkingLevel,
+      );
+      this.fallbackModels.set(cacheKey, routed);
+    }
+    if (track) {
+      this.lastRoute = { provider, via: "openrouter" };
+      this.lastUpstreamModel = `openrouter/${fb.model}`;
+    }
+    return { model: routed, apiKey: orKey, via: "openrouter" };
+  }
+
+  /**
+   * A route reported a usage limit (`classifyUpstreamRefusal`). The route is
+   * recorded as limited. When the SAME model is served via OpenRouter the loop
+   * retries at once (no pause) and the spawner hears it once per outage;
+   * otherwise the agent pauses (kind `route-limit`) until the reset or the
+   * next re-probe, naming the route — never "model budget exhausted", which
+   * would read as Marina's own budget. Undefined: not a route limit.
+   */
+  private async afterRouteRefusal(
+    errorMessage: string,
+    modelLabel: string,
+  ): Promise<number | undefined> {
+    const refusal = classifyUpstreamRefusal(errorMessage);
+    if (refusal.kind !== "usage-limit") return undefined;
+    const route = this.lastRoute;
+    const routeProvider = route ? (route.via ?? route.provider) : undefined;
+    const limit = routeProvider ? noteRouteRefusal(routeProvider, refusal) : undefined;
+    const orKeyAtStart = !!this.routeKey("openrouter");
+    if (route && !route.via) {
+      const fb = await sameModelFallback(route.provider, this.model.id, {
+        hasOpenRouterKey: orKeyAtStart,
+      });
+      if (fb) {
+        const note = routeNote(route.provider, this.model.id, "openrouter");
+        this.log.warn(LEAN_AGENT_LOG_CATEGORY, `route usage limit — ${note}`, {
+          agent: this.name,
+        });
+        this.emitEvent({
+          type: "error",
+          error: `route usage limit — ${note}`,
+          context: "route-limit",
+        });
+        if (!this.routeOutageNotified) {
+          this.routeOutageNotified = true;
+          this.notifySpawner(`${note} — still working`);
+        }
+        this.consecutiveLoopErrors = 0;
+        return 0;
+      }
+    }
+    const label = routeProvider ? routeLabel(routeProvider) : "the /v1 upstream route";
+    const what = limit
+      ? describeLimit(limit)
+      : refusal.resetAt
+        ? `usage limit until ${formatResetUtc(refusal.resetAt)}`
+        : "usage limit";
+    const reason = `${label} ${what} — no other route serves ${modelLabel}`;
+    const until =
+      limit?.until ??
+      (refusal.resetAt && refusal.resetAt > Date.now()
+        ? refusal.resetAt
+        : Date.now() + routeProbeDelayMs(0));
+    this.enterPause("route-limit", reason, until);
+    this.consecutiveLoopErrors = 0;
+    this.log.warn(LEAN_AGENT_LOG_CATEGORY, `${reason} — paused until ${formatResetUtc(until)}`, {
+      agent: this.name,
+    });
+    this.emitEvent({ type: "error", error: reason, context: "route-limit" });
+    if (!this.routeOutageNotified) {
+      this.routeOutageNotified = true;
+      this.notifySpawner(
+        `${reason} — paused, resumes on its own${routeProvider && routeProvider !== "openrouter" && !orKeyAtStart ? " (OPENROUTER_API_KEY would serve the same model meanwhile)" : ""}. check \`readiness providers\``,
+      );
+    }
+    while (this.autonomousLoopRunning && this.autonomousMode) {
+      const remaining = until - Date.now();
+      if (remaining <= 0) break;
+      // Lifted elsewhere (another caller's successful call), or a key for
+      // another route appeared: ask again now.
+      if (limit && routeProvider && !routeLimited(routeProvider)) break;
+      if (!orKeyAtStart && this.routeKey("openrouter")) break;
+      await this.pauseSleep(Math.min(SPEND_CAP_POLL_MS, remaining));
+    }
+    this.clearPause("route usage limit over — asking again");
+    return 0;
+  }
+
+  /** A served model call: its route is healthy; the spawner hears the direct route is back. */
+  private endRouteOutage(): void {
+    const route = this.lastRoute;
+    if (!route) return;
+    noteRouteOk(route.via ?? route.provider);
+    if (route.via) return;
+    if (!isMarinaProxyModel(this.model)) this.lastUpstreamModel = null;
+    if (!this.routeOutageNotified) return;
+    this.routeOutageNotified = false;
+    this.log.info(LEAN_AGENT_LOG_CATEGORY, `${routeLabel(route.provider)} serving again`, {
+      agent: this.name,
+    });
+    this.notifySpawner(`${routeLabel(route.provider)} serving again — back on the direct route`);
   }
 
   /** errorMessage of the last assistant message when it ended in an error; null otherwise. */

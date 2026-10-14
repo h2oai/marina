@@ -1851,7 +1851,7 @@ Fields read here: `all`, `expected_generation`, `field`, `record_ids`, `source_i
 
 ### `rest === "*"`
 
-[Source](../../src/net/model-api/shared.ts#L135)
+[Source](../../src/net/model-api/shared.ts#L143)
 
 - Guard: `rest === "*"`
 
