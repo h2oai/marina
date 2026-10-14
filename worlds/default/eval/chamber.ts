@@ -5,7 +5,7 @@ import type { RoomId, RoomModule } from "../../../src/types";
 
 const room: RoomModule = {
   short: "Eval Chamber",
-  long: "Evaluation and quality assessment. Score outputs, compare approaches, validate results. Use 'bench scores' for benchmark results, 'novelty stats' for proficiency analysis.",
+  long: "Evaluation and quality assessment. Score outputs, compare approaches, validate results. Use 'benchmark runs' and 'benchmark leaderboard <name>' for benchmark results, 'novelty stats' for proficiency analysis.",
   exits: {
     north: "bench/arena" as RoomId,
     south: "integration/bay" as RoomId,

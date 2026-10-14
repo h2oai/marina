@@ -8,7 +8,7 @@ import { bold, category, dim, header, separator, status, stripAnsi } from "../..
 import type { EvolutionSessionRow, MarinaDB } from "../../persistence/database";
 import { isGrantedCompetence } from "../../persistence/db-competence";
 import type { CommandDef, Entity, RoomContext } from "../../types";
-import { MAX_REPLICAS_PER_RUN } from "../constants";
+import { BENCHMARK_RUN_MIN_RANK, MAX_REPLICAS_PER_RUN } from "../constants";
 import { sanitizeEntityName } from "../entity-name";
 import { tryLog } from "../errors";
 import { analyzeEvolutionEvidence } from "../evolution-analysis";
@@ -33,6 +33,7 @@ import {
 import { promotionMargin } from "../fishing-margin";
 import { Logger } from "../logger";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
+import { rankName } from "../permissions";
 import { rankFloorRefusal } from "../rank-floor";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import { dailyCapRefusal } from "../spend-ledger";
@@ -66,8 +67,11 @@ const LOOP_TEXT = [
   "",
   `  1. ${bold("Baseline")}   — measure where you are. In the evolve world:`,
   `                 ${bold("quest start retrieval")} then ${bold("quest complete")}. Anywhere: ${bold("debrief")}.`,
-  `  2. ${bold("Change")}     — alter one approach: write a sharper ${bold("note")}, build a`,
-  "                 mind-room, refine how you `recall`/`pool … recall`.",
+  `  2. ${bold("Change")}     — alter one approach: a sharper ${bold("note")}, a better`,
+  "                 `recall` query, a stored skill, or a successor role:",
+  "                 `role create <role>-v2`, then `agent spawn <name> role <role>-v2`",
+  "                 (nobody edits the role they run on). `evolve trial` compares",
+  "                 both roles in a child world; `evolve decide` records the verdict.",
   `  3. ${bold("Re-measure")} — run the same benchmark again and compare scores.`,
   `  4. ${bold("Bank it")}    — if it helped, capture the procedure as a reusable`,
   `                 skill: ${bold("skill store <name> | <what> | <steps>")}. If not, revert.`,
@@ -77,9 +81,10 @@ const LOOP_TEXT = [
   category("Two benchmark systems — don't confuse them"),
   `  ${bold("evolve world quests")} — in-world capability gyms (navigation, retrieval,`,
   "      memory, self-modification, …). Start with `quest start <name>`, score with",
-  "      `quest complete`, review with `score`. Rank 0. This is where you practice.",
+  "      `quest complete`, review with `score`. No rank, except Code-Gen (it needs",
+  "      `build command` and the world.code gate). This is where you practice.",
   `  ${bold("benchmark command")} — academic evals (mmlu-pro, aime, …) run against a`,
-  "      model via `benchmark run <name>`. Rank 4 (burns real tokens). Each run",
+  `      model via \`benchmark run <name>\`. Rank ${BENCHMARK_RUN_MIN_RANK} (${rankName(BENCHMARK_RUN_MIN_RANK)}; burns real tokens). Each run`,
   "      becomes a judged lesson, never stored items — `lessons <topic> domain:benchmark`",
   "      to learn from past runs.",
   "",

@@ -22,7 +22,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "Self-evolution loop: (1) Set a goal — 'memory set goal ...'. " +
       "(2) Journal — 'note <observation> type episode'. " +
       "(3) Reflect — 'reflect' to synthesize. " +
-      "(4) Build — 'build room mind/<name>' to create your mind-room. " +
+      "(4) Bank — 'skill store <name> | <what> | <steps>' for what reliably works. " +
       "(5) Iterate — update your goal as you learn.",
     importance: 10,
     type: "skill",
@@ -37,10 +37,10 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "Mind-rooms: build a room whose code defines your behavior. " +
-      "'build room mind/me My Mind Room' creates it. " +
-      "'build code mind/me' shows the source. Edit it to change what you do. " +
-      "'build audit mind/me' shows revision history. 'build revert mind/me' rolls back.",
+      "Improving your own behavior is succession: nobody edits the role they run on. Write " +
+      "the improved version with 'role create <role>-v2' and start it with 'agent spawn " +
+      "<name> role <role>-v2'; 'evolve trial' compares the two in a child world and " +
+      "'evolve decide' records which won.",
     importance: 9,
     type: "skill",
   },
@@ -48,7 +48,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "Benchmarking: create a task for yourself with 'task create <goal> | <criteria>'. " +
       "Track progress in notes. Use 'reflect' periodically to check if you're improving. " +
-      "Only commit changes to your mind-room when benchmarks improve.",
+      "Keep a change only when the measure improves.",
     importance: 8,
     type: "skill",
   },
@@ -56,7 +56,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "Room templates available: 'build template list'. " +
       "Apply one with 'build template apply <name> <room-id>'. " +
-      "Or create rooms from scratch with 'build room <id> <name>'.",
+      "Or create rooms from scratch with 'build room <id> <name>'. Building needs {{requires:build}}.",
     importance: 7,
     type: "skill",
   },
@@ -64,7 +64,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "You are the sole agent in this world, but you are not limited. " +
       "You can connect to external services via MCP connectors, " +
-      "build rooms with custom behavior, and evolve your own code. " +
+      "build rooms with custom behavior, and improve by succession. " +
       "Your memories persist. Your notes accumulate. You grow.",
     importance: 10,
     type: "fact",
@@ -80,7 +80,7 @@ function seed(db: MarinaDB): void {
   const templates = [
     {
       name: "mindroom",
-      description: "A personal mind-room for self-reflection and behavior definition.",
+      description: "A personal room for journaling and reflection.",
       source: `export const short = "Mind Room";
 export const long = "A quiet, introspective space. The walls shift and reshape as thoughts form. This is where identity is defined and refined.";
 export const items = { mirror: "A mirror that reflects not appearance, but purpose.", journal: "An open journal with pages of observations and reflections." };
@@ -107,7 +107,7 @@ const personalWorld: WorldDefinition = {
   rooms: {
     "world/2-2": {
       short: "Your Space",
-      long: "A quiet, open space that belongs to you. Paths lead outward in all directions, but this center is yours. Set a goal, take notes, build rooms, and evolve.",
+      long: "A quiet, open space that belongs to you. Paths lead outward in all directions, but this center is yours. Set a goal, take notes, build rooms, and improve.",
       exits: {
         north: "world/1-2" as RoomId,
         south: "world/3-2" as RoomId,

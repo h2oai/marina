@@ -56,9 +56,9 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
     content:
       "Room templates: themed room blueprints available via 'build template list'. " +
-      "'build template apply <name> <new-room-id>' builds a new room from a template. " +
-      "Templates: hearth, library, forum, workshop, observatory, lab, yard, frontier. " +
-      "At Builder rank (2) or above, you can also create custom rooms with 'build room'.",
+      "'build template apply <name> <new-room-id>' builds a new room from a template; " +
+      "'build room' creates a custom one. Building needs {{requires:build}}. " +
+      "Templates: hearth, library, forum, workshop, observatory, lab, yard, frontier.",
     importance: 8,
     type: "skill",
   },

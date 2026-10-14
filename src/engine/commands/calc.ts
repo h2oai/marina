@@ -11,7 +11,8 @@ import type { CommandDef, Entity, RoomContext } from "../../types";
  * Backed by mathjs — a pure JS/TS library that parses math expressions
  * safely (no eval, no access to JS globals). Supports:
  *   - Arithmetic with arbitrary precision (BigNumber)
- *   - Algebra: solve, simplify, derivative, integrate
+ *   - Algebra: polynomialRoot, lusolve, simplify, derivative (symbolic forms
+ *     take the expression as a string: simplify('x*2 + 3*x'))
  *   - Sequential statements: `x = 5; y = x^2; y` returns 25
  *   - Fractions, complex numbers, units, matrices
  *   - Statistics: mean, median, std, sum, prod
@@ -29,8 +30,8 @@ import type { CommandDef, Entity, RoomContext } from "../../types";
  *   calc gcd(360, 420)
  *   calc x = 5; y = x^2 + 3*x; y
  *   calc sqrt(2024)
- *   calc solve(x^2 - 5*x + 6, x)
- *   calc simplify(x*2 + 3*x)
+ *   calc polynomialRoot(6, -5, 1)
+ *   calc simplify('x*2 + 3*x')
  *   calc mean([1,2,3,4,5])
  */
 
@@ -255,8 +256,9 @@ Examples:
   calc 42 * 1729
   calc gcd(360, 420)
   calc x = 5; y = x^2 + 3*x; y
-  calc solve(x^2 - 5*x + 6, x)
-  calc simplify(x*2 + 3*x)
+  calc polynomialRoot(6, -5, 1)      (roots of x^2 - 5x + 6; constant term first)
+  calc lusolve([[1,2],[3,4]], [5,6])
+  calc simplify('x*2 + 3*x')
   calc mean([1,2,3,4,5])
   calc derivative('sin(x)', 'x')
 

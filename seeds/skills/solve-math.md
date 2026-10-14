@@ -16,9 +16,10 @@ Before you compute anything, `pool math:<subfield> recall <topic>` for prior tec
 Use the `calc` tool for every numeric computation, even simple ones. Mental math is a confidence trap. `calc` is exact and fast. Examples:
 
 - `calc 17 * 23` → 391
-- `calc sqrt(2) ** 2` → 2.0000000000000004 (and now you know this isn't exactly 2 in floating point)
-- `calc factor(120)` → factorization
-- `calc solve(x^2 - 5x + 6 = 0, x)` → roots
+- `calc polynomialRoot(6, -5, 1)` → roots of x^2 − 5x + 6 (coefficients constant term first) → [3, 2]
+- `calc lusolve([[1,2],[3,4]], [5,6])` → solution of a linear system
+- `calc simplify('x*2 + 3*x')`, `calc derivative('x^2', 'x')` → symbolic forms take the expression as a string
+- `calc combinations(10, 3)`, `calc gcd(360, 420)`, `calc 17 mod 5`
 
 ## Step 3 — verify with an independent calc
 
@@ -26,15 +27,15 @@ Before committing to an answer, run a SECOND calc that gets to the same result b
 
 ## Step 4 — answer in the format the caller wants
 
-- Numeric benchmark (AIME, GSM8K, MATH) → bare number, no explanation in the final answer message.
+- Numeric answer requested → bare number, no explanation in the final answer message.
 - Multiple-choice math → letter only.
 - If the caller didn't specify, default to bare answer with a one-line "by <method>" justification.
 
 ## Step 5 — deposit what you learned
 
-If you discovered a useful technique (a substitution, a known identity, a counting trick), `pool math:<subfield> add <one-line summary>`. Future Mathematicians (you or successors) will find it.
+If you discovered a useful technique (a substitution, a known identity, a counting trick), `pool math:<subfield> add <one-line summary>`. Future Mathematicians (you or successors) will find it. Store the technique only — never the problem, its numbers or its answer.
 
 ## Anti-patterns
 
 - Don't show a 5-step worked solution in a `tell Sender` reply unless they asked. They want the answer.
-- Don't apologize or say "I'm not sure" when the problem is solvable. If you got a number from `calc` you verified, that IS your answer.
+- Don't hedge a result you verified with `calc` — that IS your answer. When you could not verify it, say so in one line.

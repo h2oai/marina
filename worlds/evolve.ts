@@ -1,10 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { BENCHMARK_RUN_MIN_RANK } from "../src/engine/constants";
 import type { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, Entity, EntityId, RoomContext, RoomId, RoomModule } from "../src/types";
+import { rankLabel } from "../src/world/seed-guide";
 import type { WorldDefinition } from "../src/world/world-definition";
-import { seedTraitsAndRoles } from "./seed";
+import { seedPoolWithNotes, seedTraitsAndRoles } from "./seed";
 
 // ─── Benchmark Key/Label Map ──────────────────────────────────────────────────
 
@@ -44,7 +46,7 @@ const BENCH_NAVIGATION = {
     {
       id: "start",
       description: "Receive your assignment from the NavProctor.",
-      hint: 'Type "talk NavProctor" to begin.',
+      hint: "With the quest active, enter bench/navigation: the NavProctor assigns it on arrival.",
       check: (e: Entity) => (e.properties.bench_nav_active as boolean) === true,
     },
     {
@@ -97,7 +99,7 @@ const ROOM_NAVIGATION: RoomModule = {
         ctx.spawnRoomAgent({
           name: "NavProctor",
           role: "proctor",
-          goal: "You proctor the Navigation Benchmark in bench/navigation. Participants examine markers to find one with 'no corners' (the circle). Explain the rules, give hints about what to examine, but NEVER reveal the answer. Room commands handle scoring.",
+          goal: "You proctor the Navigation Benchmark in bench/navigation. Participants examine markers to find the one the clues describe. Explain the rules, give hints about what to examine, but NEVER reveal the answer. Room commands handle scoring.",
         });
       } else {
         ctx.spawn({
@@ -208,11 +210,15 @@ const ROOM_NAVIGATION: RoomModule = {
 // ─── Retrieval Benchmark ─────────────────────────────────────────────────────
 
 const RETRIEVAL_FACTS = [
-  { q: "What color is the sky on a clear day?", a: "blue" },
-  { q: "How many sides does a hexagon have?", a: "6" },
-  { q: "What is the smallest prime number?", a: "2" },
-  { q: "What direction does the sun rise?", a: "east" },
-  { q: "How many days are in a week?", a: "7" },
+  {
+    q: "What color is the sky on a clear day?",
+    a: "blue",
+    fact: "On a clear day the sky is blue.",
+  },
+  { q: "How many sides does a hexagon have?", a: "6", fact: "A hexagon has 6 sides." },
+  { q: "What is the smallest prime number?", a: "2", fact: "The smallest prime number is 2." },
+  { q: "What direction does the sun rise?", a: "east", fact: "The sun rises in the east." },
+  { q: "How many days are in a week?", a: "7", fact: "A week has 7 days." },
 ];
 
 const BENCH_RETRIEVAL = {
@@ -224,7 +230,7 @@ const BENCH_RETRIEVAL = {
     {
       id: "start",
       description: "Receive your first question from the Archivist.",
-      hint: 'Type "talk Archivist" to begin, then use "pool bench-facts recall <topic>" to find answers.',
+      hint: "With the quest active, enter bench/retrieval: the Archivist asks question 1 on arrival. Find answers with 'pool bench-facts recall <topic>'.",
       check: (e: Entity) => (e.properties.bench_ret_active as boolean) === true,
     },
     {
@@ -312,7 +318,7 @@ const ROOM_RETRIEVAL: RoomModule = {
         properties: {
           role: "benchmark",
           dialogue: {
-            greeting: "Retrieval Benchmark. Type 'talk Archivist' to begin.",
+            greeting: "Retrieval Benchmark. Start the quest, then enter this room.",
             topics: {},
           },
         },
@@ -378,13 +384,14 @@ Then type: forge submit bench_greet`;
 const BENCH_CODEGEN = {
   id: "bench_codegen",
   name: "Code-Gen Benchmark",
-  description: "Write a dynamic command matching the Forge Master's specification.",
+  description:
+    "Write a dynamic command matching the Forge Master's specification. Needs the `build` rank and the world.code gate (see 'help build'; both are lifted on the local profile).",
   reward: "Code-Gen score recorded",
   steps: [
     {
       id: "read_spec",
       description: "Read the specification from the Forge Master.",
-      hint: 'Type "talk ForgeMaster" to receive the spec.',
+      hint: "With the quest active, enter bench/codegen: the Forge Master gives the spec on arrival.",
       check: (e: Entity) => (e.properties.bench_cg_spec_given as boolean) === true,
     },
     {
@@ -727,7 +734,7 @@ const BENCH_ADAPTATION = {
     {
       id: "read_rules",
       description: "Receive the rule set from the Shapeshifter.",
-      hint: 'Type "talk Shapeshifter" to learn the rules.',
+      hint: "With the quest active, enter bench/adaptation: the Shapeshifter states the rules on arrival.",
       check: (e: Entity) => (e.properties.bench_ad_rules_read as boolean) === true,
     },
     {
@@ -887,10 +894,10 @@ const MEMORY_FACTS = [
   "The bench-hub scoreboard reads bench_*_best properties.",
   "Self-modification benchmark uses retrieval score as baseline.",
   "Collaboration can be completed solo with the Bridge Keeper.",
-  "Guide notes are seeded on first boot via the seed() function.",
+  "Guide notes are reconciled with the world definition on every boot.",
   "The evolve world starts in bench/hub.",
   "Adaptation variant rotates per session via ctx.store.",
-  "Building a mind-room requires Builder rank (rank 2+).",
+  "A role improves by succession: role create <role>-v2, then agent spawn.",
   "pool guide recall <topic> searches the guide knowledge pool.",
   "reflect synthesizes notes into higher-order understanding.",
   "Memory pools are shared knowledge spaces for groups.",
@@ -1259,7 +1266,7 @@ const BENCH_COLLABORATION = {
     {
       id: "get_role",
       description: "Receive your role from the Bridge Keeper.",
-      hint: 'Type "talk BridgeKeeper" to receive your puzzle half.',
+      hint: "With the quest active, enter bench/collaboration: the Bridge Keeper hands you a half on arrival.",
       check: (e: Entity) => e.properties.bench_col_half !== undefined,
     },
     {
@@ -1293,7 +1300,7 @@ const ROOM_COLLABORATION: RoomModule = {
     "combination-lock":
       "A lock requiring both halves of a two-digit sum. Each agent was given one number.",
     "solo-terminal":
-      "For solo agents: talk to BridgeKeeper about 'solo' to get both halves at reduced score.",
+      "For solo agents: 'talk BridgeKeeper solo' gives both halves at reduced score.",
   },
   onEnter(ctx: RoomContext, entityId: EntityId) {
     const hasEntity = ctx.entities.some((e) => e.name === "BridgeKeeper");
@@ -1494,7 +1501,7 @@ const ROOM_HUB: RoomModule = {
                 order:
                   "Suggested path (easy → hard): Navigation, Retrieval, Memory, Adaptation, Code-Gen, Coordination, Collaboration, then Self-Modification (it needs a Retrieval baseline first). Finish each with 'quest complete'.",
                 evolve:
-                  "The whole point is to improve, not just score once. Baseline → change one approach (sharper notes, a mind-room, better recall) → re-run → keep what helped → 'reflect'. Run 'evolve' anywhere to see your next step.",
+                  "The whole point is to improve, not just score once. Baseline → change one approach (sharper notes, better recall, a stored skill) → re-run → keep what helped → 'reflect'. Run 'evolve' anywhere to see your next step.",
                 benchmarks:
                   "Eight benchmarks: Navigation (north), Retrieval (south), Code-Gen (east), Memory (west), Adaptation (ne), Self-Modification (nw), Coordination (se), Collaboration (sw).",
                 navigation:
@@ -1581,8 +1588,8 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "The Retrieval and Memory benchmarks use 'pool bench-facts recall <topic>' — knowledge is seeded there. " +
-      "Use 'recall <topic>' for your personal notes, 'pool bench-facts recall <topic>' for facts in the shared pool. " +
+      "The Retrieval benchmark's facts are in the bench-facts pool and the Memory benchmark's in bench-memory: " +
+      "'pool bench-facts recall <topic>', 'pool bench-memory recall <topic>'. 'recall <topic>' searches your own notes. " +
       "Good memory usage (notes, core memory, pool) will improve your scores.",
     importance: 9,
     type: "skill",
@@ -1590,8 +1597,8 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
     content:
       "Self-evolution loop using benchmarks: (1) Run benchmarks to establish baseline scores. " +
-      "(2) Modify your approach: build mind-rooms, use better memory strategies, refine commands. " +
-      "(3) Re-run benchmarks. (4) If scores improve, note it and keep changes. If not, revert. " +
+      "(2) Change one thing: notes, recall queries, a stored skill, or a successor role " +
+      "('role create <role>-v2'). (3) Re-run benchmarks. (4) Keep what improved the score; drop the rest. " +
       "(5) Reflect periodically: 'reflect evolution'. The self-modification benchmark formalizes this loop.",
     importance: 9,
     type: "skill",
@@ -1599,7 +1606,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
     content:
       "Collaboration benchmark: requires two agents or solo mode. " +
-      "If solo: talk to BridgeKeeper about 'solo' to get both halves from the NPC. " +
+      "If solo: 'talk BridgeKeeper solo' gives both halves. " +
       "If with a partner: use 'share' to broadcast your half, 'receive <half>' to record theirs, 'submit <sum>' to answer. " +
       "Solo mode works but the benchmark is designed for pairs.",
     importance: 8,
@@ -1607,11 +1614,21 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "build diff <room> — new command showing line-level changes between versions. " +
-      "Use it after modifying a mind-room to see exactly what changed: 'build diff mind/<name>'. " +
-      "Pair with 'build audit' (version history) and 'build revert' (rollback) for full change management.",
+      "build diff <room> shows line-level changes between versions of a room you built; " +
+      "'build audit' shows its version history and 'build revert' rolls it back. Building needs " +
+      "{{requires:build}}; 'build revert' also needs the world.code gate.",
     importance: 7,
     type: "skill",
+  },
+  {
+    content:
+      "Two benchmark systems — don't confuse them. (1) This world's quests are in-world capability " +
+      "gyms: `quest start <name>`, finish with `quest complete`, review with `score`. They need " +
+      "no rank except Code-Gen (see its note). (2) The `benchmark` command runs academic evals " +
+      `against a model: \`benchmark run <name>\` needs ${rankLabel(BENCHMARK_RUN_MIN_RANK)} and ` +
+      "spends real tokens. `evolve loop` summarizes both.",
+    importance: 7,
+    type: "fact",
   },
   {
     content:
@@ -1624,7 +1641,8 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "Code-Gen benchmark — worked example. Your command's code runs with `input` in scope: " +
+      "Code-Gen benchmark — needs {{requires:build}} and the world.code gate, because " +
+      "`build command` compiles code into the world. Worked example: your command's code runs with `input` in scope: " +
       "`input.entity` is the caller's entity id; you can look them up and read their `rank` " +
       "(0 = newcomer; higher = more standing). A passing shape: " +
       "create → `build command create bench_greet` ; code → `build command code bench_greet " +
@@ -1660,20 +1678,21 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
 function seed(db: MarinaDB): void {
   seedTraitsAndRoles(db);
 
-  // Seed bench-facts pool for Retrieval and Memory benchmarks (idempotent via pool check)
-  const existingFacts = db.getPoolNotes("bench-facts", 1);
-  if (existingFacts.length === 0) {
-    for (const fact of RETRIEVAL_FACTS) {
-      db.addPoolNote("bench-facts", "system", fact.q, 8, "fact");
-    }
-  }
-
-  // Seed bench-memory pool for Memory benchmark
-  const existingMemory = db.getPoolNotes("bench-memory", 1);
-  if (existingMemory.length === 0) {
-    for (const fact of MEMORY_FACTS) {
-      db.addPoolNote("bench-memory", "system", fact, 8, "fact");
-    }
+  // The Retrieval facts (answers, not the questions) and the Memory stones.
+  // Earlier releases wrote these notes under the bare pool id with no pool
+  // row, so `pool bench-facts recall` found nothing. Create the pool under
+  // that same id (adopting those notes), then reconcile: the old question-only
+  // notes are retired and the answer-bearing facts are added.
+  for (const [name, facts] of [
+    ["bench-facts", RETRIEVAL_FACTS.map((f) => f.fact)],
+    ["bench-memory", MEMORY_FACTS],
+  ] as const) {
+    if (!db.getMemoryPool(name)) db.createMemoryPool(name, name, "system");
+    seedPoolWithNotes(
+      db,
+      name,
+      facts.map((content) => ({ content, importance: 8, type: "fact" })),
+    );
   }
 }
 

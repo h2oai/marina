@@ -234,8 +234,8 @@ export const CHORUS_TEMPLATE: TemplateNote[] = [
       "This project uses Chorus orchestration — research-first, parallel-by-default, with " +
       "adversarial cross-role review as the quality gate. Work moves through three phases " +
       "(Research, Build, Review), but within each phase multiple agents work in parallel. " +
-      "The group channel is the wall: every agent broadcasts progress so siblings don't " +
-      "duplicate. Quality comes from role diversity, not approval — reviewers from different " +
+      "The group channel is the wall: agents post what they take and what they finish so " +
+      "siblings don't duplicate. Quality comes from role diversity, not approval — reviewers from different " +
       "roles critique every output.",
     importance: 9,
     type: "skill",
@@ -252,11 +252,11 @@ export const CHORUS_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Chorus broadcast wall: before claiming a task, consider posting 'starting: <slice>' on the group " +
-      "channel (`channel send <channel> starting: <slice>`). While working, broadcast milestones. Before you pick a slice, reading the " +
-      "channel to confirm no sibling is already on it often helps. Coordination is explicit via " +
-      "broadcast, not handoff. If a sibling claims your target, picking something else tends to keep " +
-      "parallelism alive.",
+      "Chorus wall: before you pick a slice, read the group channel (`channel history <channel>`) " +
+      "to confirm no sibling is already on it, then post one line: `channel send <channel> taking: " +
+      "<slice>`. Post again only when the slice is done or blocked — the wall records state " +
+      "changes, not progress chatter. If a sibling claims your target, picking something else " +
+      "tends to keep parallelism alive.",
     importance: 8,
     type: "skill",
   },
@@ -315,12 +315,12 @@ export const FOUNDRY_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Foundry Patrol and nudges: Patrol runs `observe` and `novelty stats` each cycle " +
-      "looking for stuck workers — no progress in 20 min, repeated identical actions, or " +
-      "failure rate >60% on a task. On detection: `tell <worker> nudge: <specific " +
-      "suggestion>`, or reassign the task and post [stall] on the board with reason. The " +
-      "engine already tracks this in entity_activity — Patrol's job is to act on it, not " +
-      "recompute it.",
+      "Foundry Patrol and nudges: each cycle Patrol checks the workers — `observe <worker>` " +
+      "shows their last command and how long ago, `task info <id>` shows the claim and its " +
+      "lease. Signs of a stall: no progress for ~20 min, the same action repeated, repeated " +
+      "failures. On detection: `tell <worker> nudge: <specific suggestion>`, or reassign the " +
+      "task and post [stall] on the board with the reason. Nothing flags stalls for Patrol; " +
+      "only an expired lease reopens a task on its own.",
     importance: 8,
     type: "skill",
   },
@@ -350,8 +350,8 @@ export const SWARM_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Swarm expertise: on joining, set your expertise with `memory set expertise <skills>`. " +
-      "Before claiming a task, check if another agent's expertise is a better fit by using " +
-      "`observe` to see who is active and `recall expertise` to find specialist knowledge.",
+      "Before claiming a task, check whether another agent is a better fit: `who` shows who " +
+      "is here, and `tell <agent> <task id> — your expertise?` asks directly.",
     importance: 8,
     type: "skill",
   },
@@ -366,9 +366,9 @@ export const SWARM_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Swarm handoff payload: handoffs work best when they carry three things in one " +
-      "`tell <agent> ...` message — (1) the expertise being invoked ('calling you for X'), " +
-      "(2) the pool note id of the prior work ('see pool note #42'), and (3) the expected " +
-      "next step ('produce Y, then hand off to someone who does Z'). Handoffs missing these " +
+      '`tell <agent> ...` message — (1) the expertise being invoked ("calling you for X"), ' +
+      '(2) the pool note id of the prior work ("see pool note #42"), and (3) the expected ' +
+      'next step ("produce Y, then hand off to someone who does Z"). Handoffs missing these ' +
       "often lose context. Consider adding a matching pool note tagged [handoff] linking old work " +
       "to new.",
     importance: 8,
@@ -377,7 +377,7 @@ export const SWARM_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Swarm convergence: periodically check project status with `project <name> tasks`. " +
-      "If tasks are stalling, post to the board to attract attention. Use `reflect` to " +
+      "If a task is stalling, `tell` the best-matched agent directly. Use `reflect` to " +
       "consolidate learnings across handoffs. The swarm self-organizes — no one waits " +
       "for permission.",
     importance: 7,
@@ -578,13 +578,12 @@ export const SYMBIOSIS_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Symbiosis mode triggers: measure coverage with `novelty stats` — the engine already " +
-      "computes action entropy. Any Patrol agent can run this every 20 ticks and post " +
-      "[mediation] to the board when the mode shifts. Thresholds: entropy < 0.3 suggests Recovery " +
-      "(coverage stalling, everyone broadens, drop current focus). 0.3–0.6 suggests Breadth " +
-      "(generalists scan wide, deepening agents pause). 0.6–0.8 suggests Depth (specialists go " +
-      "deep, entropy is healthy). > 0.8 suggests Synergy (both healthy, maximize discernment " +
-      "overlap). Coverage tends to improve when it keeps growing; these thresholds are heuristics, not rules.",
+      "Symbiosis mode triggers: `novelty` shows each member's action-diversity need (high " +
+      "means their recent actions repeat) and the knowledge gap in their room. When most " +
+      "members show high need, shift to Breadth: generalists scan wide, deepening agents " +
+      "pause. When gaps close and needs stay low, shift to Depth: specialists go deep. Post " +
+      "[mediation] to the board only when the mode changes. These are judgement calls, not " +
+      "thresholds the engine enforces.",
     importance: 7,
     type: "skill",
   },
@@ -606,7 +605,7 @@ export const RESEARCH_TEMPLATE: TemplateNote[] = [
       "`memory set hypothesis <what you expect to happen>`. " +
       "Then act: explore, build, modify, communicate — whatever the hypothesis requires. " +
       "After acting, measure: use `orient` for memory health, `score` for standing, " +
-      "`novelty` for exploration coverage, `experiment record <project> <metric> <value>` " +
+      "`novelty` for exploration coverage, `experiment record <experiment> <metric> <value>` " +
       "for structured data. Consider producing a measurement each iteration.",
     importance: 9,
     type: "skill",
@@ -641,7 +640,7 @@ export const RESEARCH_TEMPLATE: TemplateNote[] = [
       "`pool project:<name> recall <topic>`. Avoid duplicating experiments. " +
       "If another agent's finding is relevant to your work, build on it — cite their note ID " +
       "with `note link <yours> <theirs> supports`. " +
-      "Use the project channel to announce major findings or request help. " +
+      "Use the project channel for a finding that changes someone's direction, or to ask for help. " +
       "The pool is the collective memory — everything worth knowing should be there.",
     importance: 7,
     type: "skill",
@@ -831,7 +830,7 @@ export const VERIFICATION_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Verification generation: authors produce candidates as ordinary tasks (`task claim <id>`, " +
-      "then `task submit <id> <candidate and where it lives>`) and announce each one with `board " +
+      "then `task submit <id> <candidate and where it lives>`) and register each one with `board " +
       "post project:<name> [candidate] <title> | <summary>`. Consider stating up front which " +
       "requirements the candidate claims to meet — that list becomes the verifiers' checklist. " +
       "Authors usually leave the verification of their own candidates to others.",

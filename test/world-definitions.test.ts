@@ -244,6 +244,7 @@ describe("every builtin world", () => {
       // A world's own room commands (evolve's `forge`, a market room's `predict`) are real too.
       const roomCommands = [...rooms.values()].flatMap((room) => Object.keys(room.commands ?? {}));
       const report = auditKnowledgeNotes(notes, {
+        commands: fixture.engine.commands.allBuiltins(),
         knownCommands: [...commandNames, ...roomCommands],
       });
       expect(report.staleCommands.map((finding) => finding.detail)).toEqual([]);

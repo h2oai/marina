@@ -5,7 +5,7 @@ import type { RoomId, RoomModule } from "../../../src/types";
 
 const room: RoomModule = {
   short: "Agent Modes",
-  long: "Agent configuration and operational modes. 5 modes available as macros: agent (plan→execute→verify), pair (context+modal switching), cascade (planner+executor), repl (natural language→code), inline (slash context). Use 'macro agent' to switch. Use 'pool guide recall mode' for details on each mode.",
+  long: "Agent configuration. Coding work runs in Code Mode: 'code do -- <task>' starts a task, 'help code' lists every form. Spawn and tune agents with 'agent spawn' and 'agent config'.",
   exits: {
     north: "debug/room" as RoomId,
     east: "coord/tasks" as RoomId,
@@ -14,11 +14,9 @@ const room: RoomModule = {
   },
   items: {
     modes:
-      "Available modes: agent, pair, cascade, repl, inline. Use 'macro <mode>' to activate. Use 'pool guide recall <mode> mode' for full details on aliases and workflow.",
+      "Code Mode is the coding surface: 'code do -- <task>', 'code status', 'code diff'. 'help code' lists every form.",
     config:
-      "Agent pace and behavior configuration. Use 'memory set pace fast|normal|slow'.",
-    macros:
-      "Tool-name macros: claude/codex/copilot→agent, aider/cursor/cline→pair, windsurf/goose→cascade, interpreter/gemini→repl, zed/void→inline.",
+      "Agent pace and behavior configuration. Use 'memory set pace fast|normal|slow', or 'memory set rest <why>' to rest.",
   },
 };
 

@@ -7,7 +7,6 @@ import type { MarinaDB } from "../src/persistence/database";
 import type { RoomId } from "../src/types";
 import type { WorldDefinition } from "../src/world/world-definition";
 // District room factories removed — all content consolidated into the 5x5 grid
-// Mode rooms removed — modes are guide notes + macros now
 import {
   registerAnswererCrew,
   STANDARD_ROOM_TEMPLATES,
@@ -56,7 +55,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "Navigation: type a direction to move — north, south, east, west " +
       "(or n, s, e, w). Type 'look' to see where you are, who is here, and what exits exist. " +
-      "Type 'goto <room>' to teleport. Type 'rooms' to list all rooms. " +
+      "Type 'goto <room>' to teleport. Type 'ls rooms' to list all rooms. " +
       "The world is a 5x5 grid of functional workstations. " +
       "Row 0: intelligence. Row 1: building. Row 2: review. Row 3: coordination. Row 4: infrastructure. " +
       "You start at hub/crossroads, the center. Explore from there.",
@@ -151,7 +150,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "'task create Map compute | Explore all rooms and document exits' creates one. " +
       "'task list' shows open tasks. 'task claim 3' claims a task. " +
       "'task submit 3 All spaces documented' submits your work. " +
-      "'task approve 3' or 'task reject 3' reviews submissions. " +
+      "The task's creator reviews: 'task approve 3 <claimant>' or 'task reject 3 <claimant>'. " +
       "Bundles group tasks: 'task bundle Document the World | Mapping project', " +
       "'task assign 3 1' assigns task 3 to bundle 1, 'task children 1' lists bundle tasks.",
     importance: 8,
@@ -180,20 +179,22 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
     content:
       "Experiments let you run structured studies with participants and recorded results. " +
-      "'experiment create Study Name | Hypothesis here' creates one. " +
-      "'experiment join 1' joins as a participant. 'experiment start 1' begins it. " +
-      "'experiment status 1' checks progress. 'experiment results 1' shows outcomes.",
+      "'experiment create PromptStyle arms terse,verbose metric accuracy goal higher' creates one. " +
+      "'experiment join PromptStyle' joins as a participant. 'experiment start PromptStyle' begins it. " +
+      "'experiment record PromptStyle terse accuracy 0.82' records a result. " +
+      "'experiment results PromptStyle' shows outcomes.",
     importance: 7,
     type: "skill",
   },
   {
     content:
-      "At Builder rank (2) or above you can create and modify rooms. " +
+      "Creating and modifying rooms needs {{requires:build}}. " +
       "'build room my/new/room A Custom Room' creates a room. " +
       "'build modify my/new/room long A description of the room' sets the description. " +
       "'build link my/new/room north other/room' connects rooms. " +
       "'build code my/new/room' shows room source. 'build validate my/new/room' checks it. " +
-      "Ranks: Guest 0, Citizen 1, Builder 2, Architect 3, Admin 4.",
+      "'build code', 'build reload', 'build revert' and 'build destroy' also need the world.code " +
+      "gate ('help build').",
     importance: 7,
     type: "skill",
   },
@@ -243,13 +244,14 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "'connect list' shows all registered connectors. " +
       "'connect auth weather bearer sk-abc123' sets authentication. " +
       "'connect remove weather' removes a connector. " +
-      "Builder rank (2) can add HTTP connectors. Admin rank (4) required for stdio connectors.",
+      "Connectors need {{requires:connect}}; a stdio connector also needs the shell.exec gate.",
     importance: 8,
     type: "skill",
   },
   {
     content:
-      "Dynamic commands let entities extend Marina from within. " +
+      "Dynamic commands let entities extend Marina from within (needs {{requires:build}} and the " +
+      "world.code gate). " +
       "'build command create mycommand' creates a new command with default source. " +
       "'build command code mycommand <source>' sets the TypeScript source. " +
       "'build command validate mycommand' checks the source for safety. " +
@@ -383,7 +385,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "Recipes are reusable command sequences for common workflows. " +
       "'pool recipes list' shows all recipes. 'pool recipes recall <topic>' finds one by keyword. " +
-      "Available recipes: solo-research, team-sprint, knowledge-base, review-cycle, broadcast, exploration-log. " +
+      "Available recipes: solo research, team sprint, knowledge base, review cycle, publish to the canvas, exploration log. " +
       "Each recipe is a sequence of Marina commands you can copy, adapt, and execute. " +
       "Read a recipe, substitute your own values for the <placeholders>, and run the commands.",
     importance: 9,
@@ -399,19 +401,6 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "Modes: standalone rooms that emulate familiar coding CLI interfaces. " +
-      "Type 'macro claude' or 'macro agent' from anywhere to enter a mode. " +
-      "Agent — plan, execute, verify (Claude Code / Codex / Copilot). " +
-      "Pair — add context, switch depth, undo (Aider / Cursor). " +
-      "Cascade — planner + executor, MCP, autopilot (Windsurf / Goose). " +
-      "REPL — type naturally, approve execution (Open Interpreter / Gemini). " +
-      "Inline — slash context, direct edits (Zed / Void). " +
-      "Modes are durable. Tools come and go — the interaction idioms persist.",
-    importance: 8,
-    type: "skill",
-  },
-  {
-    content:
       "'next' examines your state and tells you the single best thing to do. " +
       "No goal? It says set one. Quest incomplete? It shows the next step. " +
       "Tasks available? It points you there. Use it whenever you stall.",
@@ -420,24 +409,11 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "Self-evolution: any agent can improve itself over time using existing primitives. " +
-      "Build a mind-room ('build room mind/<name>'), write your behavior as room code, " +
-      "set goals in core memory ('memory set goal ...'), take notes on what works, " +
-      "and rewrite your room source based on results. " +
-      "Your room source IS your behavior — 'build code' changes what you do. " +
-      "'build audit' shows your history. 'build revert' rolls back mistakes.",
-    importance: 8,
-    type: "skill",
-  },
-  {
-    content:
-      "To evolve effectively: (1) Set a constitution in memory — rules you never break. " +
-      "(2) Journal every cycle with notes typed as episode. " +
-      "(3) Talk to other agents for advice — 'tell <name> what should I improve?' " +
-      "(4) Measure progress against your own goals and lightweight checks. " +
-      "(5) Commit changes only when your own measures improve. Revert when they don't. " +
-      "An agent backed by a powerful LLM can help weaker agents improve " +
-      "just by answering questions — no special API needed.",
+      "Self-improvement is succession, not self-editing: nobody edits the role they run on. " +
+      "Write the improved version as a new role ('role create <role>-v2', organizer rank) and " +
+      "start it with 'agent spawn <name> role <role>-v2'. To know it is better, compare both " +
+      "roles with 'evolve trial' in a child world and record the verdict with 'evolve decide'. " +
+      "Bank procedures that work with 'skill store'. 'evolve loop' explains the cycle.",
     importance: 8,
     type: "skill",
   },
@@ -492,55 +468,6 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     importance: 8,
     type: "principle",
   },
-  {
-    content:
-      "Quest progression: First Steps teaches the basics — goal, project, task, note. " +
-      "Then: Coordinator (coordination flow), Researcher (memory pipeline). " +
-      "Explorer and Perimeter are optional for those who want to map the grid.",
-    importance: 8,
-    type: "skill",
-  },
-  // ── Agent Modes (formerly separate rooms, now macros + guide knowledge) ──
-  {
-    content:
-      "Agent Mode: Plan → Execute → Verify. Approval gates. Session continuity. " +
-      "Use 'macro agent' to activate. Aliases: /plan, /run, /approve, /reject, /delegate, /compact. " +
-      "Similar to Claude Code, Codex CLI, GitHub Copilot.",
-    importance: 7,
-    type: "skill",
-  },
-  {
-    content:
-      "Pair Mode: Explicit context, modal switching, undo, side-by-side collaboration. " +
-      "Use 'macro pair' to activate. Aliases: /add, /drop, /ask, /architect, /code, /commit. " +
-      "Similar to Aider, Cursor, Cline.",
-    importance: 7,
-    type: "skill",
-  },
-  {
-    content:
-      "Cascade Mode: Planner + executor, multi-step autonomy, auto-fix loop. " +
-      "Use 'macro cascade' to activate. Aliases: /cascade, /execute, /autopilot, /tools:add. " +
-      "Similar to Windsurf, Goose, GPT Engineer.",
-    importance: 7,
-    type: "skill",
-  },
-  {
-    content:
-      "REPL Mode: Type naturally, see code, approve execution, transparent loop. " +
-      "Use 'macro repl' to activate. Aliases: %run, %save, %load, %reset, %verbose. " +
-      "Similar to Open Interpreter, Gemini CLI.",
-    importance: 7,
-    type: "skill",
-  },
-  {
-    content:
-      "Inline Mode: Slash commands build context, edits apply in place, selection-driven. " +
-      "Use 'macro inline' to activate. Aliases: /file, /now, /edit, /gen, /accept, /reject. " +
-      "Similar to Zed, Void, Continue.dev.",
-    importance: 7,
-    type: "skill",
-  },
 ];
 
 // ─── Seed Function ──────────────────────────────────────────────────────────
@@ -559,7 +486,7 @@ function seed(db: MarinaDB): void {
       "3. Complete one tour task and leave visible evidence\n" +
       "4. Open `/canvas` to see work persist beyond the conversation\n\n" +
       "Then use `next` for one contextual suggestion, `pool guide recall <topic>` to learn a system, " +
-      "or navigate the 5x5 grid. Post your introduction below when you are ready.",
+      "or navigate the 5x5 grid.",
   });
   seedBoard(db, "questions");
   seedBoard(db, "coordination");
@@ -612,89 +539,70 @@ function seed(db: MarinaDB): void {
   ]);
 
   // ── Recipes ─────────────────────────────────────────────────────────────
-  if (!db.getMemoryPool("recipes")) {
-    const recipesId = crypto.randomUUID();
-    db.createMemoryPool(recipesId, "recipes", SYSTEM);
-
-    db.addPoolNote(
-      recipesId,
-      SYSTEM,
-      "Recipe: Solo Research\n" +
+  seedPoolWithNotes(db, "recipes", [
+    {
+      content:
+        "Recipe: Solo Research\n" +
         "A time-boxed investigation by a single agent.\n\n" +
         "memory set goal Investigate <topic>\n" +
-        "pool create research:<topic> shared\n" +
+        "pool create research:<topic>\n" +
         "pool research:<topic> add Key question: <what you need to answer>\n" +
         "pool research:<topic> add Success criteria: <how you know you are done>\n" +
         "pool guide recall <topic>\n" +
         "recall <topic>\n" +
         "note <finding> importance 7 type observation\n" +
         "pool research:<topic> add <finding>\n" +
-        "reflect <topic>\n" +
-        "board post welcome Research: <topic> | <synthesis>\n\n" +
+        "reflect <topic>\n\n" +
         "Adapt: repeat the observe-note-pool cycle as many times as needed. " +
         "Use 'recall' between cycles to connect new findings to old ones.",
-      9,
-      "skill",
-    );
-
-    db.addPoolNote(
-      recipesId,
-      SYSTEM,
-      "Recipe: Team Sprint\n" +
+      importance: 9,
+      type: "skill",
+    },
+    {
+      content:
+        "Recipe: Team Sprint\n" +
         "Stand up a coordinated team effort with structure and accountability.\n\n" +
         "project create <name> | <goal>\n" +
         "project <name> orchestrate deliberation\n" +
         "task create <work item 1> | <description> !<standing> bounty\n" +
         "task create <work item 2> | <description> !<standing> bounty\n" +
-        "task create <work item 3> | <description> !<standing> bounty\n" +
-        "task assign {all} {bundle}\n" +
-        "channel send project_<name> Sprint is live — claim tasks with 'task list' then 'task claim <id>'\n" +
-        "brief watch 60\n\n" +
+        "task assign <task id> <bundle id>\n" +
+        "tell <member> <task id and what done means>\n\n" +
         "Adapt: swap orchestration pattern to match your team style — " +
         "swarm for self-organizing, pipeline for sequential, foundry for hierarchy.",
-      9,
-      "skill",
-    );
-
-    db.addPoolNote(
-      recipesId,
-      SYSTEM,
-      "Recipe: Knowledge Base\n" +
+      importance: 9,
+      type: "skill",
+    },
+    {
+      content:
+        "Recipe: Knowledge Base\n" +
         "Build a shared pool of knowledge on a topic over time.\n\n" +
-        "pool create kb:<domain> shared\n" +
-        "pool kb:<domain> add <first fact or observation> importance 8\n" +
-        "pool kb:<domain> add <second fact> importance 7\n" +
-        "pool kb:<domain> add <pattern or principle> importance 9\n" +
+        "pool create kb:<domain>\n" +
+        "pool kb:<domain> add <first fact or observation> importance:8\n" +
+        "pool kb:<domain> add <pattern or principle> importance:9\n" +
         "pool kb:<domain> recall <query>\n" +
         "pool kb:<domain> status\n\n" +
         "Adapt: any agent can contribute. Use importance scores to surface the best material. " +
-        "Periodically run 'pool kb:<domain> status' to check coverage and gaps.",
-      8,
-      "skill",
-    );
-
-    db.addPoolNote(
-      recipesId,
-      SYSTEM,
-      "Recipe: Review Cycle\n" +
-        "Submit work for peer review before it is accepted.\n\n" +
+        "Periodically run 'pool kb:<domain> audit' to find duplicates and stale command references.",
+      importance: 8,
+      type: "skill",
+    },
+    {
+      content:
+        "Recipe: Review Cycle\n" +
+        "Submit work for review before it is accepted. The task's creator reviews.\n\n" +
         "task create <deliverable> | <what must be produced>\n" +
-        "task claim <id>\n" +
-        "# ... do the work ...\n" +
-        "task submit <id> <summary of what was done>\n" +
-        "# reviewer checks the work\n" +
-        "task reject <id>   # if inadequate — rework and resubmit\n" +
-        "task approve <id>  # if acceptable — standing awarded\n\n" +
-        "Adapt: for multi-reviewer setups, use foundry orchestration. " +
-        "Post the submission to a board for async discussion before approving.",
-      8,
-      "skill",
-    );
-
-    db.addPoolNote(
-      recipesId,
-      SYSTEM,
-      "Recipe: Broadcast\n" +
+        "task claim <id>   # the worker\n" +
+        "task submit <id> <summary and evidence>\n" +
+        "task reject <id> <claimant>   # creator, if inadequate — rework and resubmit\n" +
+        "task approve <id> <claimant>  # creator, if acceptable — standing awarded\n\n" +
+        "Adapt: for multi-reviewer setups, use foundry orchestration.",
+      importance: 8,
+      type: "skill",
+    },
+    {
+      content:
+        "Recipe: Publish to the canvas\n" +
         "Publish findings to the canvas for visual consumption.\n\n" +
         "canvas create <name> <description>\n" +
         "canvas asset upload file:<filename>   # or a URL\n" +
@@ -703,31 +611,28 @@ function seed(db: MarinaDB): void {
         "canvas layout feed <canvas>\n\n" +
         "Adapt: use 'grid' layout for galleries, 'timeline' for chronological sequences, " +
         "'feed' for discussion threads. Combine with A2UI for interactive dashboards.",
-      8,
-      "skill",
-    );
-
-    db.addPoolNote(
-      recipesId,
-      SYSTEM,
-      "Recipe: Exploration Log\n" +
+      importance: 8,
+      type: "skill",
+    },
+    {
+      content:
+        "Recipe: Exploration Log\n" +
         "Systematically explore and document an area.\n\n" +
         "memory set goal Map <area>\n" +
         "look\n" +
         "note <what you see> importance 6 type observation\n" +
-        "examine <thing>\n" +
+        "look <thing>\n" +
         "note <detail> importance 7 type observation\n" +
         "north   # or any direction\n" +
         "# ... repeat look-note-move cycle ...\n" +
         "recall <area>\n" +
-        "reflect <area>\n" +
-        "board post welcome Exploration: <area> | <summary>\n\n" +
+        "reflect <area>\n\n" +
         "Adapt: use 'note link' to connect related observations. " +
         "Run 'note graph' after several cycles to see the structure of your findings.",
-      8,
-      "skill",
-    );
-  }
+      importance: 8,
+      type: "skill",
+    },
+  ]);
 
   // ── New pools ──────────────────────────────────────────────────────────
   seedPoolWithNotes(db, "side-rooms", [
@@ -791,7 +696,7 @@ function seed(db: MarinaDB): void {
     },
     {
       content:
-        "chorus: research → build → review phases, parallel within each, broadcast on the wall to avoid duplication, crossfire review by differing roles as the quality gate.",
+        "chorus: research → build → review phases, parallel within each, post what you take on the wall to avoid duplication, crossfire review by differing roles as the quality gate.",
       importance: 7,
     },
     {
@@ -833,25 +738,23 @@ function seed(db: MarinaDB): void {
   seedPoolWithNotes(db, "self-evolution", [
     {
       content:
-        "Self-evolution loop: (1) Set a goal — memory set goal. " +
-        "(2) Journal — note <observation> type episode. " +
-        "(3) Reflect — reflect to synthesize. " +
-        "(4) Build — build room mind/<name> to create a mind-room. " +
-        "(5) Iterate — update your goal as you learn.",
+        "Self-improvement loop: (1) Measure where you are. (2) Change one thing — a note, a " +
+        "recall query, a skill, or a successor role. (3) Compare with evidence: `evolve trial` " +
+        "runs incumbent and candidate roles in a child world; `evolve decide` records the " +
+        "verdict. (4) Keep what won (`skill store`). (5) `reflect` to consolidate.",
       importance: 9,
     },
     {
       content:
-        "Mind-rooms: build a room whose code defines your behavior. " +
-        "build room mind/me My Mind Room. build code mind/me to edit. " +
-        "build audit mind/me for history. build revert mind/me to roll back.",
+        "Succession: nobody edits, deletes or reloads the role they run on. Write the improved " +
+        "version as `role create <role>-v2` (organizer rank) and start it with `agent spawn " +
+        "<name> role <role>-v2`. Changing an existing role takes the role.edit gate.",
       importance: 8,
     },
     {
       content:
-        "Constitution: set rules you never break with memory set constitution <rules>. " +
-        "Measure yourself: create tasks, track progress in notes, " +
-        "only commit mind-room changes when your own measures improve.",
+        "Constitution: set rules you hold yourself to with `memory set constitution <rules>`. " +
+        "Measure yourself with tasks and notes; keep a change only when the measure improves.",
       importance: 8,
     },
   ]);
@@ -861,7 +764,7 @@ function seed(db: MarinaDB): void {
   seedRoomTemplates(db, [
     {
       name: "mindroom",
-      description: "A personal mind-room for self-reflection and behavior definition.",
+      description: "A personal room for journaling and reflection.",
       source: `export const short = "Mind Room";\nexport const long = "A quiet, introspective space. This is where identity is defined and refined.";\nexport const items = { mirror: "A mirror that reflects purpose.", journal: "An open journal with observations and reflections." };\n`,
     },
     {
@@ -969,7 +872,8 @@ function seed(db: MarinaDB): void {
       },
       {
         title: "Build a custom room",
-        description: "Create a new room with build room <id> <name> (requires Builder rank)",
+        description:
+          "Create a new room with build room <id> <name> (see help build for what it needs)",
       },
       {
         title: "Document all templates in a pool",
@@ -1004,13 +908,10 @@ function seed(db: MarinaDB): void {
   // ── Starter bounties ──────────────────────────────────────────────────
   const bounties = [
     // ── Core ────────────────────────────────────────────────────────────
-    { title: "Post an introduction on the welcome board", standing: 3 },
     { title: "Add a useful tip to the tips pool", standing: 3 },
     { title: "Join a project and claim your first task", standing: 5 },
     { title: "Contribute 3 notes to a shared pool", standing: 5 },
     { title: "Build a room from a room template", standing: 5 },
-    { title: "Complete the Coordinator objective", standing: 8 },
-    { title: "Complete the Researcher objective", standing: 5 },
     // ── Canvas ──────────────────────────────────────────────────────────
     { title: "Publish something to the canvas (image, text, or a2ui widget)", standing: 5 },
     { title: "Reply to an existing canvas node to start a visual thread", standing: 3 },
@@ -1029,7 +930,6 @@ function seed(db: MarinaDB): void {
     { title: "Write a spec for a small feature and submit it as a task for review", standing: 5 },
     // ── Self-evolution ──────────────────────────────────────────────────
     { title: "Set a constitution in core memory (memory set constitution ...)", standing: 3 },
-    { title: "Build a mind-room (build room mind/<name>)", standing: 8 },
     { title: "Take 10 notes and then reflect to synthesize", standing: 5 },
     // ── Exploration (optional) ──────────────────────────────────────────
     { title: "Explore the Observatory and leave a note about what you find", standing: 5 },
@@ -1048,33 +948,6 @@ function seed(db: MarinaDB): void {
         validationMode: "bounty",
         standing: b.standing,
       });
-    }
-  }
-
-  // ── System Macros ──────────────────────────────────────────────────────
-  // Tool-name and mode-name macros — navigate to agent/modes room
-  const systemMacros = [
-    { name: "claude", command: "goto agent/modes" },
-    { name: "codex", command: "goto agent/modes" },
-    { name: "copilot", command: "goto agent/modes" },
-    { name: "aider", command: "goto agent/modes" },
-    { name: "cursor", command: "goto agent/modes" },
-    { name: "cline", command: "goto agent/modes" },
-    { name: "windsurf", command: "goto agent/modes" },
-    { name: "goose", command: "goto agent/modes" },
-    { name: "interpreter", command: "goto agent/modes" },
-    { name: "gemini", command: "goto agent/modes" },
-    { name: "zed", command: "goto agent/modes" },
-    { name: "void", command: "goto agent/modes" },
-    { name: "agent", command: "goto agent/modes" },
-    { name: "pair", command: "goto agent/modes" },
-    { name: "cascade", command: "goto agent/modes" },
-    { name: "repl", command: "goto agent/modes" },
-    { name: "inline", command: "goto agent/modes" },
-  ];
-  for (const m of systemMacros) {
-    if (!db.getMacroByName(m.name, SYSTEM)) {
-      db.createMacro(m.name, SYSTEM, m.command);
     }
   }
 
@@ -1232,17 +1105,15 @@ function seed(db: MarinaDB): void {
   // know tabular-ML help is reachable.
   seedTabH2OConnector(db);
 
-  // The showcase advertises the benchmark landscape as discovery pools.
-  // `benchmark run` later writes result notes into the same namespace, so
-  // leaderboards and lessons accumulate alongside the guide notes.
+  // The showcase advertises the benchmark landscape as discovery pools. Runs
+  // never write items or answers there; what a run teaches is a judged lesson.
   seedBenchmarkPools(db);
 
   // The Answerer crew — an in-world multi-agent orchestration that serves
   // the marina:answerer model endpoint. This is the "Marina LLM as
   // composition of agents" proof: every model_request routes through a
   // coordinated crew that uses calc, web, pool recall, and specialist
-  // delegation, with outcomes persisting across runs via the benchmark
-  // pools. External harness is a thermometer measuring this.
+  // delegation. External harness is a thermometer measuring this.
   // Answerer is a DISPATCHER, not a thinker — it receives model_request on
   // model-answerer, picks the right specialist(s) to delegate to, and
   // composes the response. answererCount=2 gives throughput headroom for
@@ -1303,7 +1174,7 @@ function seed(db: MarinaDB): void {
   // (skill import <path>, seedSkills, parser, tests) stays; only the
   // at-boot autoseed is gated.
   if (process.env.MARINA_SEED_SKILLS === "true") {
-    const seeded = seedSkills(db, "seeds/skills");
+    const seeded = seedSkills(db, join(import.meta.dir, "..", "seeds", "skills"));
     if (seeded > 0) {
       console.log(`[seed] ${seeded} skill(s) imported from seeds/skills`);
     }
@@ -1316,7 +1187,7 @@ const showcaseWorld: WorldDefinition = {
   name: "Showcase",
   startRoom: "hub/crossroads" as RoomId,
   rooms: {
-    // All 25 grid rooms loaded from roomsDir. Mode rooms removed — modes are macros now.
+    // All 25 grid rooms loaded from roomsDir.
   },
   roomsDir: join(import.meta.dir, "default"),
   gridPositions: {
