@@ -19,23 +19,30 @@ link for validation, HTTP statuses, streaming and deployment-specific availabili
 
 ## src/net/api/asset-api.ts
 
+### `url.pathname === "/api/assets/sign"`
+
+[Source](../../src/net/api/asset-api.ts#L233)
+
+- Guard: `url.pathname === "/api/assets/sign" && method === "POST"`
+- Guard: `method === "POST"`
+
 ### `url.pathname.match(/^\/api\/assets\/(.+)$/)`
 
-[Source](../../src/net/api/asset-api.ts#L243)
+[Source](../../src/net/api/asset-api.ts#L254)
 
 - Guard: `idMatch && method === "DELETE"`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L273)
+[Source](../../src/net/api/asset-api.ts#L284)
 
 - Guard: `url.pathname === "/api/assets" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L278)
+[Source](../../src/net/api/asset-api.ts#L289)
 
 - Guard: `url.pathname === "/api/assets" && method === "GET"`
 - Guard: `method === "GET"`

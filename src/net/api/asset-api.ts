@@ -17,6 +17,14 @@ import {
   securityHeaders,
 } from "../http-utils";
 import { authorizeOwnerOrPrivileged } from "../owner-authorization";
+import {
+  assetIdFromKey,
+  assetKeyFromPath,
+  MAX_SIGN_BATCH,
+  maySignFor,
+  signedAssetUrl,
+  verifyAssetSignature,
+} from "./asset-signing";
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: corsHeaders(null) });
@@ -222,6 +230,9 @@ export async function handleAssetApi(
   // anyone else. Mutations (POST upload, DELETE) require a
   // valid session token: the dev-open sentinel is read-only, and each principal
   // is rate-limited so an authenticated client cannot flood storage.
+  if (url.pathname === "/api/assets/sign" && method === "POST") {
+    return handleSign(req, db, storage, engine);
+  }
   const reader =
     method === "GET"
       ? buildCanvasPrincipal(resolveCanvasHttpPrincipal(req, engine, peerIp), engine, db)
@@ -291,6 +302,60 @@ export async function handleAssetApi(
   }
 
   return json({ error: "Not found" }, 404);
+}
+
+/**
+ * POST /api/assets/sign `{ urls: string[] }` → `{ urls: { [input]: { url, expiresAt } } }`.
+ *
+ * For each `/assets/<key>` path the caller may read, the URL an element without
+ * an `Authorization` header can load: the plain URL (`expiresAt: null`) when
+ * anyone may read the asset or the caller reads without a header anyway (a
+ * sentinel principal), else a signed URL for the caller (see asset-signing.ts).
+ * Inputs the caller may not read, or that are not asset paths, are omitted —
+ * the same "not found" as a direct read.
+ */
+async function handleSign(
+  req: Request,
+  db: MarinaDB,
+  storage: StorageProvider,
+  engine: Engine,
+): Promise<Response> {
+  const auth = authenticateRequest(req, engine);
+  if ("error" in auth) return auth.error;
+  if (!consumeHttpRate("dashboard", auth.entityId)) {
+    return rateLimitedResponse(req.headers.get("Origin"));
+  }
+  const bad = () => json({ error: "Expected a JSON body { urls: string[] }." }, 400);
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return bad();
+  }
+  const urls = (body as { urls?: unknown } | null)?.urls;
+  if (!Array.isArray(urls) || !urls.every((u): u is string => typeof u === "string")) {
+    return bad();
+  }
+  if (urls.length > MAX_SIGN_BATCH) {
+    return json({ error: `At most ${MAX_SIGN_BATCH} URLs per request.` }, 400);
+  }
+  const principal = auth.entityId as string;
+  const reader = buildCanvasPrincipal(principal, engine, db);
+  const host = { db, entities: engine.entities, canvasGrants: engine.canvasGrants };
+  const out: Record<string, { url: string; expiresAt: number | null }> = {};
+  for (const raw of new Set(urls)) {
+    const key = assetKeyFromPath(raw);
+    if (!key) continue;
+    const row = db.getAsset(assetIdFromKey(key));
+    if (!row || !mayReadAsset(host, row, reader, "http sign asset url")) continue;
+    const plain = storage.resolve(row.storage_key);
+    const open =
+      !plain.startsWith("/assets/") ||
+      !maySignFor(principal) ||
+      mayReadAsset(host, row, undefined, "http sign asset url", { log: false });
+    out[raw] = open ? { url: plain, expiresAt: null } : signedAssetUrl(plain, row.id, principal);
+  }
+  return json({ urls: out });
 }
 
 function tooLarge(cap: number): Response {
@@ -394,15 +459,20 @@ export async function handleAssetServing(
 
   // Storage keys are `<asset id><ext>` (see handleUpload), so the row is
   // addressable without a new DB accessor.
-  const row = db?.getAsset(key.replace(/\.[^./]*$/, ""));
+  const row = db?.getAsset(assetIdFromKey(key));
   // A staged request image's bytes follow the shared canvas read check (the
   // owner, operators, or a live grant on its node); without a caller to check,
   // they are refused. Other assets stay capability URLs, so `<img>` tags (which
-  // cannot send a bearer token) keep rendering.
+  // cannot send a bearer token) keep rendering. A valid signature
+  // (asset-signing.ts) names the reader for elements that cannot send a header;
+  // the read check still runs as that principal, and a bad signature reads as
+  // if it were absent.
+  let privateCache: string | undefined;
   if (db && row && isRequestAsset(row)) {
+    const signed = access ? verifyAssetSignature(row.id, url.searchParams) : undefined;
     const reader = access
       ? buildCanvasPrincipal(
-          resolveCanvasHttpPrincipal(access.req, access.engine, access.peerIp),
+          signed?.principal ?? resolveCanvasHttpPrincipal(access.req, access.engine, access.peerIp),
           access.engine,
           db,
         )
@@ -413,6 +483,11 @@ export async function handleAssetServing(
     if (!mayReadAsset(host, row, reader, "http GET asset bytes")) {
       return new Response("Not found", { status: 404 });
     }
+    // A gated read is never kept by a shared cache; a signed one may be reused
+    // by this browser until its signature expires.
+    privateCache = signed
+      ? `private, max-age=${Math.max(0, signed.exp - Math.floor(Date.now() / 1000))}`
+      : "private, no-store";
   }
 
   const result = await storage.get(key);
@@ -423,7 +498,7 @@ export async function handleAssetServing(
   // can never hand a browser an executable content type.
   const mime = normalizeAssetMime(row?.mime_type ?? result.mime, result.data);
 
-  return new Response(result.data.buffer as ArrayBuffer, {
-    headers: assetResponseHeaders(mime, row?.filename),
-  });
+  const headers = assetResponseHeaders(mime, row?.filename);
+  if (privateCache) headers["Cache-Control"] = privateCache;
+  return new Response(result.data.buffer as ArrayBuffer, { headers });
 }

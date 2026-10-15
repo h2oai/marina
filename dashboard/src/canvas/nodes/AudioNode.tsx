@@ -3,11 +3,17 @@
 
 import { Handle, type NodeProps, NodeResizer, Position } from "@xyflow/react";
 import { useEffect, useRef, useState } from "react";
+import { useAssetUrl } from "../../lib/asset-url";
 import { emptyAssetLabel } from "../lib/node-fields";
 import { NodeMeta } from "./NodeMeta";
 
 export function AudioNode({ data, selected }: NodeProps) {
-  const url = (data.url as string) ?? "";
+  const rawUrl = (data.url as string) ?? "";
+  // Private assets need a signed URL for remote viewers; "" while it is fetched.
+  const url = useAssetUrl(rawUrl) ?? "";
+  const pending = !!rawUrl && !url;
+  // The analyser binds the element once; a re-signed URL keeps the same element.
+  const hasUrl = !!url;
   const filename = (data.filename as string) ?? "Audio";
   const mime = (data.mime as string) ?? "audio/mpeg";
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -19,7 +25,7 @@ export function AudioNode({ data, selected }: NodeProps) {
   useEffect(() => {
     const audio = audioRef.current;
     const canvas = canvasRef.current;
-    if (!audio || !canvas || !url) return;
+    if (!audio || !canvas || !hasUrl) return;
 
     let ctx: AudioContext | null = null;
     let analyser: AnalyserNode | null = null;
@@ -82,7 +88,7 @@ export function AudioNode({ data, selected }: NodeProps) {
       audio.removeEventListener("ended", onPause);
       cancelAnimationFrame(animRef.current);
     };
-  }, [url]);
+  }, [hasUrl]);
 
   return (
     <div className="rounded-lg overflow-hidden bg-bg-card border border-green-800/50 shadow-lg shadow-green-900/20 p-3 h-full flex flex-col">
@@ -117,7 +123,7 @@ export function AudioNode({ data, selected }: NodeProps) {
         </>
       ) : (
         <div className="flex flex-col items-center justify-center flex-1 text-text-dim text-sm gap-1 px-2 text-center py-2">
-          <span>{emptyAssetLabel("audio", errored)}</span>
+          <span>{pending ? "Loading…" : emptyAssetLabel("audio", errored)}</span>
           {errored && filename && (
             <span className="text-xs text-text-dim truncate max-w-full" title={filename}>
               {filename}

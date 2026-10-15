@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Handle, type NodeProps, NodeResizer, Position } from "@xyflow/react";
+// Bundled with the dashboard (same origin): works offline and under
+// `script-src 'self'` / `worker-src 'self'` — no CDN grant.
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useEffect, useRef, useState } from "react";
+import { assetAuthHeaders, useAssetUrl } from "../../lib/asset-url";
 import { emptyAssetLabel } from "../lib/node-fields";
 import { NodeMeta } from "./NodeMeta";
 
 export default function PdfNode({ data, selected }: NodeProps) {
   const url = (data.url as string) ?? "";
+  // The "Open" link cannot send a header: a private asset needs a signed URL.
+  const openUrl = useAssetUrl(url);
   const filename = (data.filename as string) ?? "Document.pdf";
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pageNum, setPageNum] = useState(1);
@@ -44,9 +50,12 @@ export default function PdfNode({ data, selected }: NodeProps) {
     async function loadPdf() {
       try {
         const pdfjsLib = await import("pdfjs-dist");
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
-        const pdf = await pdfjsLib.getDocument({ url }).promise;
+        // pdf.js fetches (and range-requests) the file itself, so it sends the
+        // session bearer for this server's own assets instead of a signed URL
+        // that could expire mid-document.
+        const pdf = await pdfjsLib.getDocument({ url, httpHeaders: assetAuthHeaders(url) }).promise;
         if (cancelled) return;
         pdfDocRef.current = pdf;
         setNumPages(pdf.numPages);
@@ -102,9 +111,9 @@ export default function PdfNode({ data, selected }: NodeProps) {
       {selected && (
         <div className="nodrag px-3 py-1.5 bg-red-900/30 text-xs text-red-300 font-medium truncate flex items-center justify-between">
           <NodeMeta filename={filename} data={data} />
-          {url && (
+          {openUrl && (
             <a
-              href={url}
+              href={openUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="text-red-400 hover:text-red-300 ml-2 shrink-0"

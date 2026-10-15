@@ -7,6 +7,7 @@ import { useMemo } from "react";
 import { canvasPermalink } from "../canvas/lib/canvas-links";
 import type { CanvasNodeData } from "../canvas/lib/types";
 import { useCanvasNode } from "../hooks/use-canvas-node";
+import { useAssetUrl } from "../lib/asset-url";
 import { openBoundPanel } from "../lib/panel-bindings";
 import { formatTime } from "../lib/utils";
 import { useAssetViewer, type ViewableAsset } from "./AssetLightbox";
@@ -147,7 +148,7 @@ function renderNodePreview(
             className="block w-full cursor-zoom-in"
             title="Click to view full size"
           >
-            <img src={url} alt={title} className="max-h-48 w-full object-cover" />
+            <PreviewImage url={url} title={title} />
           </button>
           <figcaption className="bg-bg/80 px-2 py-1 text-[10px] text-text-dim">{title}</figcaption>
         </figure>
@@ -237,6 +238,13 @@ function renderNodePreview(
     default:
       return placeholder(`Preview for node type "${node.type}" is not available.`);
   }
+}
+
+/** A preview image; a private asset loads through a signed URL for a remote viewer. */
+function PreviewImage({ url, title }: { url: string; title: string }): ReactElement {
+  const src = useAssetUrl(url);
+  if (!src) return <div className="h-24 w-full animate-pulse bg-border/40" />;
+  return <img src={src} alt={title} className="max-h-48 w-full object-cover" />;
 }
 
 function placeholder(text: string): ReactElement {

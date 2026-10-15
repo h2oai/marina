@@ -158,6 +158,8 @@ export interface DroppedFileResult {
   size: number;
   nodeId: string;
   canvasId: string;
+  /** The uploaded asset's URL (`/assets/<key>`), for a preview. */
+  url?: string;
 }
 
 /**
@@ -628,6 +630,7 @@ export function useCanvasIntegration(
             size: file.size,
             nodeId: newNode.id,
             canvasId: targetCanvasId!,
+            url: asset.url,
           });
         } catch {
           // Continue with remaining files

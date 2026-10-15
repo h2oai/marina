@@ -16,6 +16,7 @@ import { Download, ExternalLink, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { resolveAssetUrl, useAssetUrl } from "../lib/asset-url";
 
 export interface ViewableAsset {
   url: string;
@@ -33,7 +34,9 @@ interface AssetViewerCtx {
 
 const fallback: AssetViewerCtx = {
   open: (a) => {
-    if (typeof window !== "undefined") window.open(a.url, "_blank", "noopener");
+    if (typeof window === "undefined") return;
+    // A private asset needs a signed URL for a remote viewer.
+    void resolveAssetUrl(a.url).then((url) => window.open(url, "_blank", "noopener"));
   },
 };
 
@@ -91,6 +94,8 @@ function AssetLightbox({ asset, onClose }: { asset: ViewableAsset | null; onClos
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [asset, onClose]);
+  // Private assets need a signed URL for a remote viewer (undefined while signing).
+  const src = useAssetUrl(asset?.url);
 
   if (!root) return null;
   const kind = asset ? inferKind(asset) : "";
@@ -128,7 +133,7 @@ function AssetLightbox({ asset, onClose }: { asset: ViewableAsset | null; onClos
               </span>
               <div className="flex items-center gap-2">
                 <a
-                  href={asset.url}
+                  href={src}
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center gap-1 text-[10px] text-text-dim transition-colors hover:text-primary"
@@ -137,7 +142,7 @@ function AssetLightbox({ asset, onClose }: { asset: ViewableAsset | null; onClos
                   <ExternalLink size={12} /> Open
                 </a>
                 <a
-                  href={asset.url}
+                  href={src}
                   download
                   className="flex items-center gap-1 text-[10px] text-text-dim transition-colors hover:text-primary"
                   title="Download"
@@ -158,24 +163,24 @@ function AssetLightbox({ asset, onClose }: { asset: ViewableAsset | null; onClos
             <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-black/30 p-2">
               {kind === "image" && (
                 <img
-                  src={asset.url}
+                  src={src}
                   alt={asset.title ?? "image"}
                   className="mx-auto max-h-[78vh] w-auto object-contain"
                 />
               )}
               {kind === "video" && (
-                <video src={asset.url} controls autoPlay className="mx-auto max-h-[78vh] w-auto">
+                <video src={src} controls autoPlay className="mx-auto max-h-[78vh] w-auto">
                   <track kind="captions" />
                 </video>
               )}
               {kind === "audio" && (
-                <audio src={asset.url} controls className="w-[min(640px,90%)]">
+                <audio src={src} controls className="w-[min(640px,90%)]">
                   <track kind="captions" />
                 </audio>
               )}
               {(kind === "pdf" || kind === "document" || kind === "embed") && (
                 <iframe
-                  src={asset.url}
+                  src={src}
                   title={asset.title ?? "document"}
                   className="h-[78vh] w-full rounded border border-border bg-white"
                   sandbox="allow-scripts allow-same-origin allow-popups"

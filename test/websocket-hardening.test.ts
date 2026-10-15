@@ -231,6 +231,9 @@ describe("HTTP surface hardening (headers, body cap, public-read throttle)", () 
       expect(resp.headers.get("Content-Security-Policy")).toBe(HTML_CSP);
       expect(HTML_CSP).not.toContain("sha256-");
     }
+    // The pdf.js worker is bundled same-origin: scripts come from 'self' only.
+    expect(HTML_CSP).toContain("script-src 'self';");
+    expect(HTML_CSP).not.toContain("cdnjs");
     // The two static pages carry inline <script> blocks: their CSP is the same
     // policy with the scripts' digests appended to script-src — never
     // 'unsafe-inline', and the digest must match the served bytes.

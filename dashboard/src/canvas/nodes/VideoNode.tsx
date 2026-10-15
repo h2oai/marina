@@ -3,11 +3,15 @@
 
 import { Handle, type NodeProps, NodeResizer, Position } from "@xyflow/react";
 import { useState } from "react";
+import { useAssetUrl } from "../../lib/asset-url";
 import { emptyAssetLabel } from "../lib/node-fields";
 import { NodeMeta } from "./NodeMeta";
 
 export function VideoNode({ data, selected }: NodeProps) {
-  const url = (data.url as string) ?? "";
+  const rawUrl = (data.url as string) ?? "";
+  // Private assets need a signed URL for remote viewers; "" while it is fetched.
+  const url = useAssetUrl(rawUrl) ?? "";
+  const pending = !!rawUrl && !url;
   const filename = (data.filename as string) ?? "Video";
   const mime = (data.mime as string) ?? "video/mp4";
   const [errored, setErrored] = useState(false);
@@ -34,7 +38,7 @@ export function VideoNode({ data, selected }: NodeProps) {
         </video>
       ) : (
         <div className="flex flex-col items-center justify-center flex-1 text-text-dim text-sm gap-1 px-2 text-center">
-          <span>{emptyAssetLabel("video", errored)}</span>
+          <span>{pending ? "Loading…" : emptyAssetLabel("video", errored)}</span>
           {errored && filename && (
             <span className="text-xs text-text-dim truncate max-w-full" title={filename}>
               {filename}
