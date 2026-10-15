@@ -6,7 +6,7 @@ import { judgeAgreement } from "../../decisions/agreement";
 import { harnessDecisionProvider } from "../../decisions/engines";
 import type { Evidence } from "../../decisions/evidence";
 import { loadDecisionCases, qualifyBackend, renderBackendReport } from "../../decisions/qualify";
-import type { DecisionProvider } from "../../decisions/types";
+import type { DecisionImagePart, DecisionProvider } from "../../decisions/types";
 import { checkDraft, chooseOption } from "../../decisions/verify";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { DecisionsStore } from "../../persistence/interfaces/decisions-store";
@@ -22,6 +22,7 @@ import { challengeCommand } from "./challenge";
 const USAGE = [
   "Usage: decision check [<request> |] <draft>   — score your own draft before you use it",
   "       decision choose <question> | <option> | <option> [| …]",
+  "         either takes image:asset:<id> or image:node:<id> (up to 4) — images you can read",
   "       decision list | decision approve <token> | decision deny <token> [reason]",
   "       decision qualify   — run the labeled gate + route cases against this world's backend",
   "       decision agreement — how often each judge agreed with task creators' verdicts",
@@ -32,6 +33,27 @@ const USAGE = [
 /** Judge calls cost money: a per-entity budget (burst 10, then one every 6 s). */
 const judgeLimiter = new RateLimiter({ maxTokens: 10, refillRate: 1, refillInterval: 6_000 });
 const MAX_OPTIONS = 8;
+/** Images one `decision check|choose` may attach. */
+const MAX_IMAGES = 4;
+
+/**
+ * Pull `image:<ref>` (also `image=<ref>`, `--image <ref>`) out of the text;
+ * a ref is `asset:<id>` or `node:<id>`. Exported for tests.
+ */
+export function extractImageRefs(text: string): { text: string; refs: string[] } {
+  const refs: string[] = [];
+  // The ref and the whitespace before it go; the whitespace after it stays.
+  const stripped = text.replace(
+    /(?:^|\s+)(?:image[:=]|--image(?:=|\s+))((?:asset|node):\S+)/gi,
+    (_, ref: string) => {
+      refs.push(ref);
+      return "";
+    },
+  );
+  // Text without image refs is returned exactly as written.
+  return refs.length === 0 ? { text, refs } : { text: stripped.trim(), refs };
+}
+
 /** A qualification is ~20 billed calls: two per entity, then one every 30 min, one at a time. */
 const qualifyLimiter = new RateLimiter({
   maxTokens: 2,
@@ -65,6 +87,12 @@ export function decisionCommand(deps: {
   store?: DecisionsStore;
   /** Runtime decision settings (`decision settings`); absent without a database. */
   settings?: DecisionSettingsDeps;
+  /**
+   * Load `asset:<id>` / `node:<id>` as an image part AS the caller: an asset
+   * or canvas node the caller may not read is "not found". Absent ⇒ image
+   * references are refused.
+   */
+  loadImage?: (entityId: EntityId, ref: string) => Promise<DecisionImagePart>;
 }): CommandDef {
   const providerOf = deps.provider ?? (() => harnessDecisionProvider());
   return {
@@ -72,8 +100,8 @@ export function decisionCommand(deps: {
     usage: [
       "decision agreement",
       "decision approve <token>",
-      "decision check [<request> |] <draft>",
-      "decision choose <question> | <option> | <option> [| …]",
+      "decision check [image:<ref>] [<request> |] <draft>",
+      "decision choose [image:<ref>] <question> | <option> | <option> [| …]",
       "decision deny <token> [reason]",
       "decision list",
       "decision qualify",
@@ -84,7 +112,7 @@ export function decisionCommand(deps: {
     aliases: ["decisions"],
     help: `Cheap judgement calls: check your own draft, choose among options, or settle tool calls your agents' decision gate held for you.\n${USAGE}`,
     minRank: 0,
-    handler: (ctx: RoomContext, input) => {
+    handler: async (ctx: RoomContext, input) => {
       const me = deps.getEntity(input.entity);
       if (!me) return;
       const tokens = input.tokens;
@@ -253,14 +281,31 @@ export function decisionCommand(deps: {
           );
           return;
         }
-        const rest = input.args.replace(/^\s*\S+\s*/, "");
+        const { text: rest, refs } = extractImageRefs(input.args.replace(/^\s*\S+\s*/, ""));
         const parts = rest.split("|").map((part) => part.trim());
         if (!rest.trim() || (sub === "choose" && parts.filter(Boolean).length < 3)) {
           ctx.send(input.entity, USAGE);
           return;
         }
+        if (refs.length > MAX_IMAGES) {
+          ctx.send(input.entity, `At most ${MAX_IMAGES} images per judgement.`);
+          return;
+        }
+        if (refs.length > 0 && !deps.loadImage) {
+          ctx.send(input.entity, "Image references need asset storage on this instance.");
+          return;
+        }
         if (!judgeLimiter.consume(input.entity)) {
           ctx.send(input.entity, "Too many judgement calls — wait a few seconds and try again.");
+          return;
+        }
+        // Each image is loaded AS the caller (its asset / canvas ACL); a ref it
+        // cannot read fails the whole call before anything is sent.
+        let images: DecisionImagePart[] = [];
+        try {
+          images = await Promise.all(refs.map((ref) => deps.loadImage!(input.entity, ref)));
+        } catch (err) {
+          ctx.send(input.entity, err instanceof Error ? err.message : String(err));
           return;
         }
         const emit = (event: {
@@ -285,7 +330,7 @@ export function decisionCommand(deps: {
         if (sub === "choose") {
           const [question, ...options] = parts.filter(Boolean);
           const picked = options.slice(0, MAX_OPTIONS);
-          return chooseOption(provider, question!, picked).then((r) => {
+          return chooseOption(provider, question!, picked, undefined, images).then((r) => {
             emit({
               stage: "choose",
               verdict: r.choice ? "picked" : "unavailable",
@@ -312,7 +357,7 @@ export function decisionCommand(deps: {
         const [request, draft] =
           parts.length > 1 ? [parts[0], parts.slice(1).join(" | ")] : [undefined, parts[0]!];
         const evidence = deps.resolveEvidence?.({ name: me.name, id: me.id }, draft!) ?? [];
-        return checkDraft(provider, draft!, evidence, request || undefined).then((v) => {
+        return checkDraft(provider, draft!, evidence, request || undefined, images).then((v) => {
           emit({
             stage: "check",
             verdict: v.error ? "unavailable" : v.action === "accept" ? "meets" : "below",

@@ -9,6 +9,7 @@ import { canvasReaderFor } from "../canvas-access";
 import type { Engine } from "../engine";
 import { getErrorMessage } from "../errors";
 import { dailyCapRefusal, recordSpend } from "../spend-ledger";
+import { startMediaVerify } from "./image-decisions";
 import {
   getImageProvider,
   imageProviderRequiresKey,
@@ -346,6 +347,23 @@ export class MediaManager {
       message: `Image ready (${filename})`,
       assetId: stored.id,
     });
+    // MARINA_MEDIA_VERIFY (default off: no call, no change) — image-decisions.ts.
+    startMediaVerify(
+      this.engine,
+      {
+        db: this.db,
+        logEvent: this.logEvent,
+        regenerate: (metadata) =>
+          this.startJob({ ...params, metadata: { ...params.metadata, ...metadata } }),
+      },
+      {
+        jobId,
+        entityName: params.entityName,
+        prompt: params.prompt,
+        data,
+        metadata: params.metadata,
+      },
+    );
   }
 
   private async handleVideoJob(

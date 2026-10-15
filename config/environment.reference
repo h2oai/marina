@@ -748,6 +748,12 @@
 # Verify `task submit` deliverables: `observe` (default) records the judge's opinion without acting, so its agreement with creators is measured (`decision agreement`); `on` bounces a weak first attempt once (advisory; the creator still approves); `off` never scores. Code Mode submits (which already passed their required checks) get the opinion recorded under both `observe` and `on`, never a bounce. Needs a backend; nothing is scored without one.
 # MARINA_DECISION_VERIFY=observe
 
+# Most images one decision request may carry (`/v1/decisions` and in-world decisions; 1–32). Every image is decoded and prepared to Jev's limits (PNG/JPEG, 256–1568 px a side, 78,400–2,458,624 px, ≤ 16 MiB) before it leaves Marina; together ≤ 30 MiB.
+# MARINA_DECISION_MAX_IMAGES=8
+
+# After an image generation, ask the decision backend whether the image depicts its prompt. `observe` records the numbers and a label on the job and as an `agent_decision` event; `on` also regenerates a mismatch at most once (an ordinary job: quota and spend cap apply); `off` (default) makes no call. An outage is never a mismatch. Needs a backend that reads images (Jev, or a vision chat classifier).
+# MARINA_MEDIA_VERIFY=off
+
 # ── Model routing ────────────────────────────────────────────────────────────
 
 # Tiers for `agent spawn <name> model:route goal:<…>`, chosen once at spawn and persisted. With neither tiers nor MARINA_ROUTES set, model:route has one candidate (this installation's first available model, else marina/default) and says so in the route event; with tiers but no backend or goal, the powerful tier is used.

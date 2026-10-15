@@ -16,8 +16,8 @@
  * cannot make.
  */
 
-import { choice, noul, score } from "./questions";
-import type { DecisionAnswer, DecisionQuestions } from "./types";
+import { choice, noul, presenceId, score } from "./questions";
+import type { Box, DecisionAnswer, DecisionQuestions } from "./types";
 
 // ─── Gate ────────────────────────────────────────────────────────────────────
 
@@ -487,4 +487,81 @@ export function decideArgcheck(
   return p < ARGCHECK_SUPPORTED_MIN
     ? { action: "nudge", label: "unsupported", signals: { supported: p } }
     : { action: "allow", label: "supported", signals: { supported: p } };
+}
+
+// ─── Location (box + presence) ──────────────────────────────────────────────
+
+/** Presence below this probability ⇒ the target is reported absent (one cut). */
+export const LOCATION_PRESENT_MIN = 0.5;
+
+export type LocationVerdict =
+  | { found: true; box: Box; presence: number; confidence?: number }
+  | { found: false; presence?: number };
+
+/**
+ * Read a `locate(id, …)` pair (questions.ts): a box only when the presence
+ * noul clears the cut — a box always comes back, even for something absent,
+ * so the box alone is never evidence. No usable answer ⇒ not found.
+ */
+export function readLocation(
+  answers: Record<string, DecisionAnswer> | undefined,
+  id: string,
+  minPresence = LOCATION_PRESENT_MIN,
+): LocationVerdict {
+  const presence = noulOf(answers, presenceId(id));
+  const answer = answers?.[id];
+  if (presence === undefined || answer?.type !== "box") {
+    return presence === undefined ? { found: false } : { found: false, presence };
+  }
+  if (presence < minPresence) return { found: false, presence };
+  return {
+    found: true,
+    box: answer.box,
+    presence,
+    ...(answer.confidence === undefined ? {} : { confidence: answer.confidence }),
+  };
+}
+
+// ─── Generated-image check ──────────────────────────────────────────────────
+
+/**
+ * After an image generation (`MARINA_MEDIA_VERIFY`): does the image depict
+ * what was asked for, and roughly how good is it? A verifier — no answer ⇒
+ * `unjudged`, never a mismatch (an outage never triggers a regeneration).
+ */
+export function mediaVerifyQuestions(prompt: string): DecisionQuestions {
+  return {
+    depicts: noul(`The image depicts what this request asked for: ${prompt}`, {
+      true: "The main subject and the key details of the request are visible in the image.",
+      false: "The subject is missing, wrong, or the image shows something else.",
+    }),
+    quality: score("How usable is the image as a result?", [
+      "Broken: blank, corrupted, or unreadable.",
+      "Usable with visible flaws (artifacts, distortions, garbled text).",
+      "Clean and usable as is.",
+    ]),
+  };
+}
+
+/** p(depicts) below the cut ⇒ mismatch: 0.35 for a calibrated judge, one cut at 0.5 otherwise. */
+export const MEDIA_DEPICTS_MIN = { calibrated: 0.35, uncalibrated: 0.5 } as const;
+
+export interface MediaVerifyVerdict {
+  label: "match" | "mismatch" | "unjudged";
+  signals: Record<string, number>;
+}
+
+export function decideMediaVerify(
+  answers: Record<string, DecisionAnswer> | undefined,
+  calibrated: boolean,
+): MediaVerifyVerdict {
+  const p = noulOf(answers, "depicts");
+  if (p === undefined) return { label: "unjudged", signals: {} };
+  const quality = answers?.quality;
+  const signals: Record<string, number> = {
+    depicts: p,
+    ...(quality?.type === "score" ? { quality: quality.score } : {}),
+  };
+  const cut = calibrated ? MEDIA_DEPICTS_MIN.calibrated : MEDIA_DEPICTS_MIN.uncalibrated;
+  return { label: p < cut ? "mismatch" : "match", signals };
 }

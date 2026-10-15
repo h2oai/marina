@@ -22,6 +22,7 @@
  * provider always declares `calibrated: false`.
  */
 
+import { splitStateImages } from "./images";
 import type {
   ChoiceAnswer,
   DecisionAnswer,
@@ -65,10 +66,13 @@ export function labelQuestions(
       if (keys.length > LETTERS.length) return undefined;
       const labels = keys.map((_, i) => LETTERS[i]!);
       out[id] = { byLabel: Object.fromEntries(labels.map((l, i) => [l, keys[i]!])), labels };
-    } else {
+    } else if (q.type === "score") {
       // Score levels are capped at 10 (TypeSafe's limit), so 0–9 always fits.
       const labels = q.criteria.map((_, i) => String(i));
       out[id] = { byLabel: Object.fromEntries(labels.map((l) => [l, l])), labels };
+    } else {
+      // A box is four numbers, not a label: the request is answered verbalized.
+      return undefined;
     }
   }
   return out;
@@ -76,8 +80,10 @@ export function labelQuestions(
 
 // ─── Prompts ─────────────────────────────────────────────────────────────────
 
+/** The state as text; image parts become `[image N]` (the images travel as content parts). */
 function stateText(state: unknown): string {
-  return typeof state === "string" ? state : JSON.stringify(state, null, 2);
+  const { text } = splitStateImages(state);
+  return typeof text === "string" ? text : JSON.stringify(text, null, 2);
 }
 
 export const VERBALIZED_SYSTEM = [
@@ -105,6 +111,11 @@ export function verbalizedPrompt(state: unknown, questions: DecisionQuestions): 
       q.criteria.forEach((desc, i) => {
         lines.push(`    level ${i}: ${desc}`);
       });
+    } else if (q.type === "box") {
+      lines.push(
+        '    answer {"box": {"top": t, "bottom": b, "left": l, "right": r}, "confidence": c}:',
+        "    the edges as fractions 0..1 of the image, measured from its top-left corner.",
+      );
     }
   }
   return lines.join("\n");
@@ -139,7 +150,7 @@ export function labeledPrompt(
             : `    ${label}: ${key} — ${desc}`,
         );
       }
-    } else {
+    } else if (q.type === "score") {
       q.criteria.forEach((desc, i) => {
         lines.push(`    ${i}: ${desc}`);
       });
@@ -162,6 +173,9 @@ function verbalizedAnswerSchema(q: DecisionQuestion): Record<string, unknown> {
   if (q.type === "noul") return obj({ noul: num });
   if (q.type === "choice") {
     return obj({ choice: { type: "string", enum: Object.keys(q.criteria) }, confidence: num });
+  }
+  if (q.type === "box") {
+    return obj({ box: obj({ top: num, bottom: num, left: num, right: num }), confidence: num });
   }
   return obj({ score: num, confidence: num });
 }

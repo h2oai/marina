@@ -3550,6 +3550,7 @@ Effect: unknown.
 Cheap judgement calls: check your own draft, choose among options, or settle tool calls your agents' decision gate held for you.
 Usage: decision check [<request> |] <draft>   — score your own draft before you use it
        decision choose <question> | <option> | <option> [| …]
+         either takes image:asset:<id> or image:node:<id> (up to 4) — images you can read
        decision list | decision approve <token> | decision deny <token> [reason]
        decision qualify   — run the labeled gate + route cases against this world's backend
        decision agreement — how often each judge agreed with task creators' verdicts
@@ -3570,23 +3571,27 @@ Effect: unknown.
 
 - `field-0` (`token`): text, required.
 
-### `decision check [<request> |] <draft>`
+### `decision check [image:<ref>] [<request> |] <draft>`
 
 Effect: unknown.
 
-- `field-0` (`request`): text, optional group `option-0`.
-- `field-1` (`draft`): text, required.
-- Group `option-0`: `request |`.
+- `field-0` (`image`): text, optional group `option-0`.
+- `field-1` (`request`): text, optional group `option-1`.
+- `field-2` (`draft`): text, required.
+- Group `option-0`: `image:ref`.
+- Group `option-1`: `request |`.
 
-### `decision choose <question> | <option> | <option> [| …]`
+### `decision choose [image:<ref>] <question> | <option> | <option> [| …]`
 
 Effect: unknown.
 
-- `field-0` (`question`): text, required.
-- `field-1` (`option`): text, required.
+- `field-0` (`image`): text, optional group `option-0`.
+- `field-1` (`question`): text, required.
 - `field-2` (`option`): text, required.
-- `field-3` (`|`): text, optional group `option-0`.
-- Group `option-0`: `| …`.
+- `field-3` (`option`): text, required.
+- `field-4` (`|`): text, optional group `option-1`.
+- Group `option-0`: `image:ref`.
+- Group `option-1`: `| …`.
 
 ### `decision deny <token> [reason]`
 

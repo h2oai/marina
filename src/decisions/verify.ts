@@ -21,7 +21,7 @@ import {
   type VerifyVerdict,
 } from "./policy";
 import { choice, noul, score } from "./questions";
-import type { DecisionProvider, DecisionQuestions } from "./types";
+import type { DecisionImagePart, DecisionProvider, DecisionQuestions } from "./types";
 
 export const TASK_VERIFY_QUESTIONS: DecisionQuestions = {
   quality: score("How well does the submission satisfy the task?", [
@@ -36,6 +36,11 @@ export const TASK_VERIFY_QUESTIONS: DecisionQuestions = {
 };
 
 const MAX_CHARS = 4_000;
+
+/** The state as is, or — with images — `[state, image 1, image 2, …]` (Jev's mixed array). */
+function withImages(state: unknown, images: readonly DecisionImagePart[]): unknown {
+  return images.length === 0 ? state : [state, ...images];
+}
 
 export interface SubmissionVerdict extends VerifyVerdict {
   provider?: string;
@@ -99,15 +104,19 @@ export async function checkDraft(
   draft: string,
   evidence: Evidence[],
   request?: string,
+  images: readonly DecisionImagePart[] = [],
 ): Promise<SubmissionVerdict> {
   const keys = evidence.length ? ["grounded"] : [];
   try {
     const result = await provider.ask({
-      state: {
-        ...(request ? { request: maskSensitiveText(request, MAX_CHARS) } : {}),
-        answer: maskSensitiveText(draft, MAX_CHARS),
-        ...(evidence.length ? { evidence } : {}),
-      },
+      state: withImages(
+        {
+          ...(request ? { request: maskSensitiveText(request, MAX_CHARS) } : {}),
+          answer: maskSensitiveText(draft, MAX_CHARS),
+          ...(evidence.length ? { evidence } : {}),
+        },
+        images,
+      ),
       questions: evidence.length ? VERIFY_QUESTIONS : { quality: VERIFY_QUESTIONS.quality! },
     });
     return {
@@ -147,6 +156,7 @@ export async function chooseOption(
   question: string,
   options: string[],
   context?: string,
+  images: readonly DecisionImagePart[] = [],
 ): Promise<ChoiceResult> {
   // Option keys are positional so free text never has to be a valid id.
   const criteria = Object.fromEntries(
@@ -154,7 +164,7 @@ export async function chooseOption(
   );
   try {
     const result = await provider.ask({
-      state: context ? { context: maskSensitiveText(context, MAX_CHARS) } : {},
+      state: withImages(context ? { context: maskSensitiveText(context, MAX_CHARS) } : {}, images),
       questions: { pick: choice(maskSensitiveText(question, 500), criteria) },
     });
     const answer = result.answers.pick;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  type BoxQuestion,
   type ChoiceQuestion,
   DecisionError,
   type DecisionQuestion,
@@ -26,6 +27,31 @@ export function choice(
 
 export function score(instructions: string, criteria: string[]): ScoreQuestion {
   return { type: "score", instructions, criteria };
+}
+
+export function box(instructions: string): BoxQuestion {
+  return { type: "box", instructions };
+}
+
+/**
+ * Where is `target` in the image — a box question paired with the noul
+ * presence question it needs (a box always comes back, even for something
+ * absent). Ids: `<id>` (box) and `<id>_present` (noul). Read the pair with
+ * `readLocation()` in policy.ts.
+ */
+export function locate(id: string, target: string): DecisionQuestions {
+  return {
+    [presenceId(id)]: noul(`The image shows ${target}.`, {
+      true: `${target} is visible in the image.`,
+      false: `${target} is not in the image.`,
+    }),
+    [id]: box(`Locate ${target}.`),
+  };
+}
+
+/** The presence question id `locate(id, …)` pairs with box `id`. */
+export function presenceId(id: string): string {
+  return `${id}_present`;
 }
 
 const MAX_QUESTIONS = 16;
@@ -134,5 +160,6 @@ function parseQuestion(id: string, value: unknown): DecisionQuestion {
       c.map((level, i) => text(level, `${id}.criteria[${i}]`)),
     );
   }
-  throw new DecisionError(`${id}.type must be noul, choice or score`, "invalid_request", 400);
+  if (q.type === "box") return box(instructions);
+  throw new DecisionError(`${id}.type must be noul, choice, score or box`, "invalid_request", 400);
 }

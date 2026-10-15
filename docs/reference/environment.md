@@ -297,6 +297,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_DECISION_GATE_CONTEXT=on` | With the gate on, also send the agent's operator-set intent and the trust labels of its prompt inputs (never the content). `off` sends the call only. |  |
 | `MARINA_DECISION_APPROVAL_TIMEOUT_MS=3600000` | How long an ask-a-person verdict's challenge stays open, in milliseconds. Defaults to MARINA_CHALLENGE_TTL_MS. |  |
 | `MARINA_DECISION_VERIFY=observe` | Verify `task submit` deliverables: `observe` (default) records the judge's opinion without acting, so its agreement with creators is measured (`decision agreement`); `on` bounces a weak first attempt once (advisory; the creator still approves); `off` never scores. Code Mode submits (which already passed their required checks) get the opinion recorded under both `observe` and `on`, never a bounce. Needs a backend; nothing is scored without one. |  |
+| `MARINA_DECISION_MAX_IMAGES=8` | Most images one decision request may carry (`/v1/decisions` and in-world decisions; 1–32). Every image is decoded and prepared to Jev's limits (PNG/JPEG, 256–1568 px a side, 78,400–2,458,624 px, ≤ 16 MiB) before it leaves Marina; together ≤ 30 MiB. |  |
+| `MARINA_MEDIA_VERIFY=off` | After an image generation, ask the decision backend whether the image depicts its prompt. `observe` records the numbers and a label on the job and as an `agent_decision` event; `on` also regenerates a mismatch at most once (an ordinary job: quota and spend cap apply); `off` (default) makes no call. An outage is never a mismatch. Needs a backend that reads images (Jev, or a vision chat classifier). |  |
 
 ## Model routing
 

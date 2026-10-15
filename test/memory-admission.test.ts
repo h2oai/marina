@@ -82,7 +82,7 @@ function provider(
             choice,
             probabilities: { [choice]: s.relationP ?? 0.9 },
           };
-        } else {
+        } else if (q.type === "score") {
           const top = q.criteria.length - 1;
           const v = (s as Record<string, number | undefined>)[k] ?? top;
           answers[k] = { type: "score", score: Math.min(top, v) };

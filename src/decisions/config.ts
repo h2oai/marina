@@ -58,6 +58,7 @@ import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { LOCAL_PROVIDERS, localProviderBaseUrl } from "../net/model/model-discovery";
 import { selfModelToken } from "../net/model/self-model-token";
 import { type ClassifierMethod, parseClassifierMethod } from "./classifier-methods";
+import { JEV_BOX_MODEL, modelAnswersBox } from "./images";
 import { chatClassifierProvider, decisionsApiProvider } from "./providers";
 import { DecisionError, type DecisionProvider } from "./types";
 
@@ -80,6 +81,8 @@ export interface DecisionConfig {
   /** chat-classifier: how probabilities are obtained; set ⇒ structured output too. */
   method?: ClassifierMethod;
   samples?: number;
+  /** decisions-api: answers `box` questions when `model` is an older Jev (unpinned default only). */
+  boxModel?: string;
 }
 
 /**
@@ -253,6 +256,11 @@ export function decisionConfigFromEnv(
     ...(kind === "decisions-api" && typesafeHost
       ? { inputUsdPerMTok: TYPESAFE_INPUT_USD_PER_MTOK }
       : {}),
+    // The unpinned OpenRouter default (jev-1.13) cannot answer `box`; such a
+    // request goes to 1.14. A model the operator pinned is never swapped.
+    ...(name === "openrouter" && !env.MARINA_DECISION_MODEL?.trim() && !modelAnswersBox(model)
+      ? { boxModel: JEV_BOX_MODEL }
+      : {}),
     ...(kind === "chat-classifier" ? classifierTuning(env) : {}),
   };
 }
@@ -310,6 +318,7 @@ export function providerFromConfig(config: DecisionConfig): DecisionProvider {
     ...(config.inputUsdPerMTok === undefined ? {} : { inputUsdPerMTok: config.inputUsdPerMTok }),
     ...(config.method ? { method: config.method, structured: true } : {}),
     ...(config.samples === undefined ? {} : { samples: config.samples }),
+    ...(config.boxModel ? { boxModel: config.boxModel } : {}),
   };
   return metered(
     config.kind === "decisions-api" ? decisionsApiProvider(opts) : chatClassifierProvider(opts),

@@ -755,7 +755,8 @@ describe("benchmark outcomes and the backfill", () => {
                 choice: "same_as_N1",
                 probabilities: { same_as_N1: 0.9 },
               };
-            else answers[k] = { type: "score", score: q.criteria.length - 1 };
+            else if (q.type === "score")
+              answers[k] = { type: "score", score: q.criteria.length - 1 };
           }
           return { answers, model: "test/jev", provider: "test", latencyMs: 1 };
         },

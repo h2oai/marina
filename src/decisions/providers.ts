@@ -37,6 +37,14 @@ import {
   verbalizedPrompt,
 } from "./classifier-methods";
 import {
+  classifierReadsImages,
+  hasBoxQuestion,
+  modelAnswersBox,
+  prepareStateImages,
+  requestHasImages,
+  splitStateImages,
+} from "./images";
+import {
   DecisionError,
   type DecisionProvider,
   type DecisionRequest,
@@ -71,6 +79,18 @@ export interface ProviderOptions {
    * said cannot disable it (`reasoning-control.ts`). Other targets: unchanged.
    */
   reasoning?: "off";
+  /**
+   * decisions-api: the model that answers a request with `box` questions when
+   * `model` is a Jev older than 1.14 (set only for the unpinned default;
+   * absent ⇒ such a request is refused).
+   */
+  boxModel?: string;
+  /**
+   * chat-classifier: the concrete model whose image support decides whether
+   * images may be sent (default `model`; `marina/default` resolves to the
+   * world's first configured model).
+   */
+  visionModel?: string;
   /** Test seam. */
   fetch?: FetchLike;
 }
@@ -210,10 +230,24 @@ export function decisionsApiProvider(opts: ProviderOptions): DecisionProvider {
     calibrated: true,
     async ask(request: DecisionRequest, signal?: AbortSignal): Promise<DecisionResult> {
       const started = performance.now();
+      // `box` needs Jev ≥ 1.14 (1.13 answers 400): the configured default
+      // moves up for that request; an explicitly pinned older Jev refuses.
+      let model = opts.model;
+      if (hasBoxQuestion(request.questions) && !modelAnswersBox(model)) {
+        if (!opts.boxModel) {
+          throw new DecisionError(
+            `box questions need Jev 1.14 or later; ${model} cannot answer them`,
+            "unsupported_input",
+            400,
+          );
+        }
+        model = opts.boxModel;
+      }
+      const { state } = await prepareStateImages(request.state);
       const body = (await post(
         opts,
         opts.path ?? "/decisions",
-        { model: opts.model, state: request.state, questions: request.questions },
+        { model, state, questions: request.questions },
         signal,
       )) as {
         answers?: unknown;
@@ -232,7 +266,7 @@ export function decisionsApiProvider(opts: ProviderOptions): DecisionProvider {
         typeof body?.usage?.output_tokens === "number" ? body.usage.output_tokens : undefined;
       return {
         answers: normalizeAnswers(request.questions, body?.answers),
-        model: typeof body?.model === "string" ? body.model : opts.model,
+        model: typeof body?.model === "string" ? body.model : model,
         provider: "decisions-api",
         latencyMs: Math.round(performance.now() - started),
         ...(cost === undefined ? {} : { costUsd: cost }),
@@ -361,6 +395,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
     extra: Record<string, unknown>,
     responseFormat: Record<string, unknown> | undefined,
     signal?: AbortSignal,
+    images: readonly string[] = [],
   ): Promise<ChatReply> {
     const base = {
       model: opts.model,
@@ -371,7 +406,18 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
       ...reasoningDirective(),
       messages: [
         { role: "system", content: system },
-        { role: "user", content: user },
+        {
+          role: "user",
+          // Images (already prepared, see `ask`) follow the prompt that names
+          // them `[image N]`; a text-only request keeps its plain string.
+          content:
+            images.length === 0
+              ? user
+              : [
+                  { type: "text", text: user },
+                  ...images.map((url) => ({ type: "image_url", image_url: { url } })),
+                ],
+        },
       ],
       ...extra,
     };
@@ -438,6 +484,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
       { temperature: 0 },
       answerResponseFormat(request.questions),
       signal,
+      splitStateImages(request.state).images,
     );
     const parsed = extractJsonObject(reply.content) as { answers?: unknown };
     return {
@@ -466,6 +513,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
         { temperature: 0, logprobs: true, top_logprobs: top },
         answerResponseFormat(request.questions, labels),
         signal,
+        splitStateImages(request.state).images,
       );
     // A 400/422, or any failure whose reason names logprobs (a relay may
     // report the provider's rejection under another status).
@@ -525,6 +573,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
           { temperature: 1 },
           answerResponseFormat(request.questions, labels),
           signal,
+          splitStateImages(request.state).images,
         ).then((reply) => ({ reply, picks: labeledPicks(reply) })),
       ),
     );
@@ -572,8 +621,22 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
     kind: "chat-classifier",
     model: opts.model,
     calibrated: false,
-    async ask(request: DecisionRequest, signal?: AbortSignal): Promise<DecisionResult> {
+    async ask(asked: DecisionRequest, signal?: AbortSignal): Promise<DecisionResult> {
       const started = performance.now();
+      let request = asked;
+      if (requestHasImages(asked)) {
+        // Images go only to a model known to read them — never sent as text
+        // with the pictures dropped. Then each is prepared to the limits.
+        const vision = opts.visionModel ?? opts.model;
+        if (!classifierReadsImages(vision, opts.baseUrl)) {
+          throw new DecisionError(
+            `classifier model ${vision} is not known to read images; use a vision model (MARINA_DECISION_MODEL) or a Jev decision backend`,
+            "unsupported_input",
+            400,
+          );
+        }
+        request = { ...asked, state: (await prepareStateImages(asked.state)).state };
+      }
       // A choice with more than 26 options cannot be labeled: verbalized only.
       const labels = method === "verbalized" ? undefined : labelQuestions(request.questions);
       let result:

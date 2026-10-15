@@ -13,19 +13,62 @@
  * (`handleModelApi`), which fails closed.
  *
  * Request:  { state: string | object | array, questions: { <id>: { type, instructions, criteria } } }
+ *           `state` may carry image parts — { type: "image_url", image_url: { url: "data:image/png;base64,…" } } —
+ *           as array elements beside text (box questions locate something in them).
  * Response: { answers: { <id>: { type, ... } }, model, provider, latency_ms, usage?: { cost } }
+ *
+ * Sizing: the text of `state` (each image counted as an `[image N]` marker) is
+ * capped at 64 KB; images are counted separately — at most
+ * `MARINA_DECISION_MAX_IMAGES` (default 8), each ≤ 16 MiB decoded, together
+ * ≤ 30 MiB — and every image is prepared to the backend's limits before it
+ * leaves Marina (src/decisions/images.ts).
  */
 
 import { toWireAnswers } from "../../decisions/answers";
 import { type EngineDeps, listEngines, resolveEngine } from "../../decisions/engines";
+import {
+  DECISION_IMAGE_LIMITS,
+  DECISION_MAX_REQUEST_IMAGE_BYTES,
+  dataUrlDecodedBytes,
+  decisionMaxImages,
+  stateImages,
+  stateTextBytes,
+} from "../../decisions/images";
 import { parseQuestions } from "../../decisions/questions";
 import { DecisionError } from "../../decisions/types";
 import { errorJson, json } from "../model-api/shared";
 
 export { acceptsRequestedModel } from "../../decisions/model-ids";
 
-/** Largest serialized `state` accepted (the Jev family's context is 32k tokens). */
+/** Largest serialized `state` text accepted (images excluded; see the module comment). */
 const MAX_STATE_BYTES = 64 * 1024;
+/** Largest request body: Jev's 32 MiB request cap, images included. */
+const MAX_BODY_BYTES = 32 * 1024 * 1024;
+
+/** Why a request's images are refused before any backend is asked; undefined ⇒ acceptable. */
+function imageSizingError(state: unknown, env: NodeJS.ProcessEnv): string | undefined {
+  const images = stateImages(state);
+  if (images.length === 0) return undefined;
+  const max = decisionMaxImages(env);
+  if (images.length > max) return `state carries ${images.length} images; the limit is ${max}.`;
+  const perImage = DECISION_IMAGE_LIMITS.maxBytes ?? 16 * 1024 * 1024;
+  let total = 0;
+  for (const [i, part] of images.entries()) {
+    const url = part.image_url.url;
+    const size = dataUrlDecodedBytes(url);
+    if (size === undefined) {
+      return /^https?:\/\//i.test(url)
+        ? `image ${i + 1}: remote URLs are not fetched; send a base64 data URL.`
+        : `image ${i + 1}: not a base64 data URL (data:image/png;base64,…).`;
+    }
+    if (size > perImage) return `image ${i + 1}: ${size} bytes decoded exceeds ${perImage}.`;
+    total += size;
+  }
+  if (total > DECISION_MAX_REQUEST_IMAGE_BYTES) {
+    return `images total ${total} bytes decoded; the limit is ${DECISION_MAX_REQUEST_IMAGE_BYTES}.`;
+  }
+  return undefined;
+}
 
 /** `GET /v1/decisions/models` (alias `/v1/systemone/models`): the engines served here. */
 export function handleDecisionModels(): Response {
@@ -36,6 +79,12 @@ export function handleDecisionModels(): Response {
 }
 
 export async function handleDecisions(req: Request, deps: EngineDeps = {}): Promise<Response> {
+  const declared = Number(req.headers.get("content-length") ?? 0);
+  if (declared > MAX_BODY_BYTES) {
+    return errorJson(413, `Request body exceeds ${MAX_BODY_BYTES} bytes.`, {
+      code: "payload_too_large",
+    });
+  }
   let body: Record<string, unknown> | undefined;
   try {
     const raw: unknown = await req.json();
@@ -62,11 +111,15 @@ export async function handleDecisions(req: Request, deps: EngineDeps = {}): Prom
   if (state === undefined || state === null || state === "") {
     return errorJson(400, "state is required.", { code: "invalid_request_error", param: "state" });
   }
-  if (new TextEncoder().encode(JSON.stringify(state)).length > MAX_STATE_BYTES) {
+  if (stateTextBytes(state) > MAX_STATE_BYTES) {
     return errorJson(400, `state exceeds ${MAX_STATE_BYTES} bytes.`, {
       code: "invalid_request_error",
       param: "state",
     });
+  }
+  const imageError = imageSizingError(state, process.env);
+  if (imageError) {
+    return errorJson(400, imageError, { code: "unsupported_parameter", param: "state" });
   }
   try {
     const questions = parseQuestions(body.questions);
@@ -107,6 +160,9 @@ function decisionErrorResponse(err: DecisionError): Response {
   switch (err.code) {
     case "invalid_request":
       return errorJson(400, err.message, { code: "invalid_request_error", param: "questions" });
+    case "unsupported_input":
+      // An image the backend cannot take, or a box for a Jev older than 1.14.
+      return errorJson(400, err.message, { code: "unsupported_parameter", param: "state" });
     case "upstream_rejected":
       return errorJson(422, err.message, { code: "invalid_request_error" });
     case "rate_limited":
