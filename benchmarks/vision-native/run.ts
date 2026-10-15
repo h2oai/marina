@@ -9,6 +9,7 @@
  *     --model anthropic/claude-opus-5.5 --per-kind 3 --budget 2 [--set easy|hard]
  *     [--kinds count,code,…] [--modes describe,native] [--describe-model <id>]
  *     [--concurrency 4] [--pilot 5] [--out file.json]
+ *   bun benchmarks/vision-native/run.ts --set hard --per-kind 10 --rescore file.json
  *   bun benchmarks/vision-native/run.ts --set hard --dry --images-dir /tmp/vision-items
  *
  * Each task gives the model a `marina_see` tool and asset references, never
@@ -35,7 +36,7 @@
  * per-mode Wilson intervals and the paired McNemar / bootstrap comparison.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   prepareVisual,
@@ -345,6 +346,25 @@ async function pool<T>(
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const tasks = await loadTasks(args);
+  const rescore = process.argv.indexOf("--rescore");
+  if (rescore >= 0) {
+    // Re-score a saved run's answers with the current scorer (no model calls).
+    const file = process.argv[rescore + 1]!;
+    const saved = JSON.parse(readFileSync(file, "utf8")) as {
+      summary: Record<string, unknown>;
+      rows: Row[];
+    };
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    const rows = saved.rows.map((r) => {
+      const t = byId.get(r.task);
+      return t && !r.error ? { ...r, correct: t.score(String(r.answer ?? "")) } : r;
+    });
+    const family = args.set === "hard" ? HARD_FAMILY : undefined;
+    const summary = { ...saved.summary, stats: summarize(rows, family ? { family } : {}) };
+    writeFileSync(file, JSON.stringify({ summary, rows }, null, 2));
+    process.stdout.write(`${JSON.stringify(summary, null, 2)}\nrescored: ${file}\n`);
+    return;
+  }
   if (args.imagesDir) {
     mkdirSync(args.imagesDir, { recursive: true });
     for (const t of tasks) {

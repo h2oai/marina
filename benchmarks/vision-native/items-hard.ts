@@ -796,15 +796,24 @@ export async function hardTasks(
   return out;
 }
 
-/** Score a final answer against the known one. */
+/**
+ * Score a final answer against the known one. Only the last non-empty line
+ * counts (a reply that shows its working ends with the answer), and a number
+ * is the last one on that line.
+ */
 export function scoreHard(task: Pick<HardTask, "answer" | "scoring">, raw: string): boolean {
   const s = task.scoring;
-  const text = raw.trim();
+  const text =
+    raw
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .at(-1) ?? "";
   switch (s.type) {
     case "number": {
-      const m = /-?\d[\d,]*(?:\.\d+)?/.exec(text);
+      const m = text.match(/-?\d[\d,]*(?:\.\d+)?/g)?.at(-1);
       if (!m) return false;
-      const got = Number(m[0].replace(/,/g, ""));
+      const got = Number(m.replace(/,/g, ""));
       const want = Number(task.answer);
       if (!Number.isFinite(got)) return false;
       const tol = Math.max(s.abs ?? 0, (s.rel ?? 0) * Math.abs(want));
