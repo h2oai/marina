@@ -1612,15 +1612,17 @@ Effect: unknown.
 Effect: unknown.
 
 
-### `canvas look <node_id> [question...] [model:<provider/model>]`
+### `canvas look <node_id> [question...] [model:<provider/model>] [mode:native|describe]`
 
 Effect: unknown.
 
 - `field-0` (`node id`): text, required.
 - `field-1` (`question`): text, optional group `option-0`.
 - `field-2` (`model`): text, optional group `option-1`.
+- `field-3` (`mode`): text, optional group `option-2`, choices `native`, `describe`.
 - Group `option-0`: `question...`.
 - Group `option-1`: `model:provider/model`.
+- Group `option-2`: `mode:native|describe`.
 
 ### `canvas resources [filter]`
 

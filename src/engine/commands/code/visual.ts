@@ -4,7 +4,13 @@
 import { createHash } from "node:crypto";
 import type { MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
-import { admitVisualLook, sniffRaster, visionMaxBytes } from "../../media/vision";
+import {
+  admitVisualLook,
+  sniffRaster,
+  viewHeader,
+  viewVisual,
+  visionMaxBytes,
+} from "../../media/vision";
 import {
   type CodeDeps,
   canAdoptCodingSession,
@@ -24,13 +30,14 @@ export async function seeWorkspaceFile(
   args: string[],
 ): Promise<void> {
   const input = raw.trim().startsWith("{")
-    ? (JSON.parse(raw) as { path?: unknown; question?: unknown })
-    : { path: args[0], question: args.slice(1).join(" ") };
+    ? (JSON.parse(raw) as { path?: unknown; question?: unknown; mode?: unknown })
+    : parsePlainArgs(args);
   if (
     typeof input.path !== "string" ||
     !input.path.trim() ||
     /[\0\r\n]/.test(input.path) ||
-    (input.question !== undefined && typeof input.question !== "string")
+    (input.question !== undefined && typeof input.question !== "string") ||
+    (input.mode !== undefined && input.mode !== "native" && input.mode !== "describe")
   )
     throw new Error("Usage: code see <path> [question]");
   const session = resolveSession(ctx, eid, entity, deps.db);
@@ -52,6 +59,24 @@ export async function seeWorkspaceFile(
     throw new Error("Workspace vision accepts PNG, JPEG, GIF or WebP images, verified by content.");
   const question = (input.question as string | undefined)?.trim() ?? "";
   admitVisualLook(eid);
+  let fallback = "";
+  if (input.mode === "native") {
+    // The caller's own model reads the image: no second model, no artifact.
+    const view = await viewVisual(
+      { ...source, mime, label: source.path },
+      { ref: `workspace:${source.path}` },
+    );
+    if (view.images.length > 0) {
+      ctx.send(
+        eid,
+        viewHeader(source.path, view.images, { question, notes: view.notes, kind: "image" }),
+        "vision",
+        { images: view.images },
+      );
+      return;
+    }
+    fallback = `native view unavailable (${view.notes.join(" ") || "nothing to show"}); described instead.\n`;
+  }
   const result = await deps.describeVisual(
     { ...source, mime, label: source.path },
     question,
@@ -81,7 +106,7 @@ export async function seeWorkspaceFile(
   sendCode(
     ctx,
     eid,
-    `${result.ok ? "" : "[no vision] "}${result.text}\nSaved observation: ${artifact.id}. Reopen with code show ${artifact.id}; no new vision call.`,
+    `${fallback}${result.ok ? "" : "[no vision] "}${result.text}\nSaved observation: ${artifact.id}. Reopen with code show ${artifact.id}; no new vision call.`,
     {
       type: "artifact",
       event: "visual_evidence",
@@ -95,4 +120,16 @@ export async function seeWorkspaceFile(
       commands: [`code show ${artifact.id}`, "code artifacts kind visual_evidence"],
     },
   );
+}
+
+/** `code see <path> [question…] [mode:native|describe]` in plain (non-JSON) form. */
+function parsePlainArgs(args: string[]): { path?: string; question: string; mode?: string } {
+  const words: string[] = [];
+  let mode: string | undefined;
+  for (const token of args.slice(1)) {
+    const m = /^(?:--)?mode[:=](\S+)$/i.exec(token);
+    if (m) mode = m[1]!.toLowerCase();
+    else words.push(token);
+  }
+  return { path: args[0], question: words.join(" "), ...(mode ? { mode } : {}) };
 }

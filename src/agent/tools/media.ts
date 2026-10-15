@@ -1,8 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Media generation tools (`marina_generate_image`, `marina_generate_video`),
-// filtered by the agent's `AgentSupports` in `createProfileToolset`.
+// Media tools. Generation (`marina_generate_image`, `marina_generate_video`) is
+// offered when an image / video provider is configured or the agent's config
+// asks for it (`createProfileToolset`). `marina_see` returns the image itself
+// to a model that reads images (`ToolContext.visionMode` = native) and a second
+// model's description otherwise.
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
@@ -137,12 +140,13 @@ export function createMediaTools(ctx: ToolContext): AgentTool[] {
       name: "marina_see",
       label: "See",
       description:
-        "Inspect a workspace image, canvas source or URL. Workspace observations are saved as coding artifacts: reopen with marina_code show without another vision call. Canvas results link to their source.",
+        "Inspect a workspace image, canvas source or URL. When your model reads images you get the image itself; otherwise a description (workspace descriptions are saved as coding artifacts: reopen with marina_code show; canvas descriptions link to their source).",
       parameters: lookSchema,
       execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
         const p = params as Static<typeof lookSchema>;
         const source = p.source.trim();
         const question = sanitizePrompt(p.question ?? "");
+        const native = ctx.visionMode?.() === "native";
         const workspace =
           source.startsWith("workspace:") ||
           source.startsWith("/") ||
@@ -153,10 +157,18 @@ export function createMediaTools(ctx: ToolContext): AgentTool[] {
           const path = source.replace(/^workspace:/, "");
           if (!path.trim() || /[\0\r\n]/.test(path))
             throw new Error("Invalid workspace image path.");
-          return execCommand(ctx, `code see ${JSON.stringify({ path, question })}`, signal);
+          return execCommand(
+            ctx,
+            `code see ${JSON.stringify({ path, question, ...(native ? { mode: "native" } : {}) })}`,
+            signal,
+          );
         }
         if (!source || /\s/.test(source)) throw new Error("source must be one id or URL.");
-        return execCommand(ctx, `canvas look ${source}${question ? ` ${question}` : ""}`, signal);
+        return execCommand(
+          ctx,
+          `canvas look ${source}${question ? ` ${question}` : ""}${native ? " mode:native" : ""}`,
+          signal,
+        );
       },
     },
   ];

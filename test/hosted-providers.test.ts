@@ -183,7 +183,7 @@ describe("hosted model catalogs", () => {
         ],
       }),
     ).toEqual([
-      { value: "nebius/vision", label: "vision", capabilities: { text: true, image: true } },
+      { value: "nebius/vision", label: "vision", capabilities: { text: true, imageInput: true } },
     ]);
     expect(() => parseProviderResponse("nebius", { invalid: [] })).toThrow("Invalid model catalog");
   });

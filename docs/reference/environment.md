@@ -445,6 +445,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_VERIFY_CHECKER_EFFORT=inherit` | `marina/verify:` checker reasoning effort. `inherit` copies the caller's own effort (`reasoning_effort`, `reasoning`, `thinking`, top level or inside a literal `extra_body`); `low`/`medium`/`high` send that `reasoning_effort`; `off` sends none (the checker model's default, no thinking for Claude). The upstream layer translates it per provider. Default inherit. |  |
 | `MARINA_VISION_MODEL=openai/gpt-6.1-sol` | Vision model for `canvas look` / `image describe` / `video describe` / `marina_see` when the agent's own model cannot read images. Unset: the agent's model, else Marina's default route. |  |
 | `MARINA_VISION_MAX_BYTES=20971520` | Byte cap on an image, PDF, video or text a vision call will load (max 100 MB). Default 20 MB. |  |
+| `MARINA_AGENT_VISION=auto` | How agents see images: `native` returns the image itself in the tool result for the agent's own model; `describe` asks a vision model for a text description (MARINA_VISION_MODEL); `auto` (default) is native when the agent's model accepts image input (for marina/default: its current upstream) and describe otherwise. |  |
+| `MARINA_AGENT_VISION_MAX_IMAGES=4` | Images kept in an agent's live transcript after native looks (1-32, default 4); older ones become a one-line placeholder the agent can reopen with marina_see. Image bytes are never journaled. |  |
 | `MARINA_COMPAT=openai` | Comma-separated drop-in compatibility profiles whose model-id aliases appear in /v1/models (`openai` exposes `assistant`). Default all; `none` disables. |  |
 
 ## HTTP hardening

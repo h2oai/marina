@@ -43,6 +43,7 @@ export {
   type ToolExecutionPolicy,
   type ToolProfile,
   type ToolReplay,
+  type ToolsetOptions,
   toolExecutionPolicy,
 } from "./profiles";
 export type { ToolContext } from "./shared";

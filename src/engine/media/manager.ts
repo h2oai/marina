@@ -64,6 +64,37 @@ export function mediaJobCap(type: MediaJobType, env: NodeJS.ProcessEnv = process
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
 }
 
+/** Cloud image providers whose key alone enables generation. */
+const KEYED_IMAGE_PROVIDERS = ["openai", "stability", "google", "flux"] as const;
+
+/**
+ * Which media generation this installation can serve: an image provider is a
+ * key for a built-in cloud image provider, Automatic1111 (`A1111_BASE_URL`) or
+ * any `<PROVIDER>_IMAGE_BASE_URL` endpoint; a video provider is a key for one
+ * of the video providers. Needs the media manager (storage + persistence).
+ * Generation is a provider capability, so this decides whether agents are
+ * offered the generate tools — whatever model they run on.
+ */
+export function mediaGenerationAvailable(opts: {
+  configured: boolean;
+  hasKey: (provider: string) => boolean;
+  env?: NodeJS.ProcessEnv;
+}): { image: boolean; video: boolean } {
+  if (!opts.configured) return { image: false, video: false };
+  const env = opts.env ?? process.env;
+  const endpoint = Object.entries(env).some(
+    ([key, value]) =>
+      !!value?.trim() &&
+      (key === "A1111_BASE_URL" ||
+        key === "AUTOMATIC1111_BASE_URL" ||
+        /^[A-Z0-9_]+_IMAGE_BASE_URL$/.test(key)),
+  );
+  return {
+    image: endpoint || KEYED_IMAGE_PROVIDERS.some((p) => opts.hasKey(p)),
+    video: knownVideoProviders().some((p) => opts.hasKey(p)),
+  };
+}
+
 interface BaseJobParams {
   entityId: EntityId;
   entityName: string;

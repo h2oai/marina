@@ -35,7 +35,7 @@ import { universalIntentCommands, usecaseCommand } from "../commands/usecase";
 import { webCommand } from "../commands/web";
 import type { Engine } from "../engine";
 import { roomMacroOwner } from "../macro-expansion";
-import { describeVisual, lookAndReply } from "../media/vision";
+import { describeVisual, lookReply } from "../media/vision";
 import { computeReadiness } from "../readiness";
 import { answerCodeViaLocalModel, parseExecApprovalTimeout } from "./model-helpers";
 
@@ -148,7 +148,7 @@ export function registerOperationCommands(engine: Engine): void {
       logEvent: (event) => engine.logEvent(event as import("../../types").EngineEvent),
       scratchRoot: "data/scratch",
       canvasGrants: engine.canvasGrants,
-      look: (who, tokens) => lookAndReply(engine, who, tokens),
+      look: (who, tokens) => lookReply(engine, who, tokens),
     }),
   );
 

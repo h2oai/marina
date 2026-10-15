@@ -17,6 +17,7 @@ import { AgentRuntime, getInternalModelToken } from "../agent/agent-runtime";
 import { applyRankProgression } from "../agent/rank-progression";
 import { isSeedDisabled } from "../agent/seed-registry";
 import { recordFromEvent as recordStandingEvent } from "../agent/standing";
+import { setDefaultUpstreamDescriber } from "../agent/vision-input";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { SessionManager } from "../auth/session-manager";
 import { BoardManager } from "../coordination/board-manager";
@@ -38,6 +39,7 @@ import { residentMemoryAPI } from "../memory/resident-service";
 import type { AdapterManager } from "../net/adapters/adapter-manager";
 import { connects } from "../net/ansi";
 import { attachRouteHealthStore, coreMemoryRouteStore } from "../net/model/route-health";
+import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import { observeOutcomeEvent } from "../outcomes/live";
 import type { MarinaDB } from "../persistence/database";
@@ -79,7 +81,7 @@ import { getErrorMessage, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
 import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
-import { MediaManager } from "./media/manager";
+import { MediaManager, mediaGenerationAvailable } from "./media/manager";
 import { engineSharedWriteHook } from "./memory-dispatch";
 import { getRank, rankName } from "./permissions";
 import { computeReadiness } from "./readiness";
@@ -407,6 +409,16 @@ export class Engine {
         logEvent: (event) => this.logEvent(event),
       });
     }
+    // Generation is a provider capability (any agent model gets the generate
+    // tools when a provider is configured); vision is a model capability, and
+    // `marina/default` agents read images natively when its upstream does.
+    this.agentRuntime.setMediaGenerationProbe(() =>
+      mediaGenerationAvailable({
+        configured: !!this.mediaManager,
+        hasKey: (provider) => !!this.agentRuntime.getProviderKey(provider),
+      }),
+    );
+    setDefaultUpstreamDescriber(() => describeDefaultUpstream(this));
 
     const engine = this;
     this.authCoordinator = new AuthCoordinator({

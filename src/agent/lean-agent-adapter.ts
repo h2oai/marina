@@ -227,8 +227,15 @@ import {
   createEvolutionTool,
   createProfileToolset,
   TOOL_SEARCH_NAME,
+  type ToolContext,
 } from "./tools";
-import { dropOldThinking, dropOldThinkingEnabled } from "./transcript-hygiene";
+import {
+  boundTranscriptImages,
+  dropOldThinking,
+  dropOldThinkingEnabled,
+  transcriptImageLimit,
+} from "./transcript-hygiene";
+import { agentAcceptsImageInput, agentVisionMode, agentVisionPolicy } from "./vision-input";
 
 /** Category under which every adapter log line is emitted (`[lean-agent]`). */
 export const LEAN_AGENT_LOG_CATEGORY = "lean-agent";
@@ -1015,6 +1022,7 @@ function normalizeSupports(supports: AgentSupports | undefined): AgentSupports {
     text: supports.text !== false,
     ...(supports.image ? { image: true } : {}),
     ...(supports.video ? { video: true } : {}),
+    ...(typeof supports.imageInput === "boolean" ? { imageInput: supports.imageInput } : {}),
   };
 }
 
@@ -1782,7 +1790,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // The `full` profile is resident core + deferred rest: the rest are listed
     // one line each inside `marina_tool_search` and loaded by name for the
     // session (`loadDeferredTools`). MARINA_DEFERRED_TOOLS=off = all resident.
-    const toolContext = { client: this.client, gameState: this.gameState };
+    const toolContext = this.toolContext();
     const toolProfile = config.toolProfile ?? "full";
     this.baseToolProfile = toolProfile;
     this.activeToolProfile = toolProfile;
@@ -1791,7 +1799,10 @@ export class LeanAgentAdapter implements AgentHandle {
       this.platformMemory,
       toolProfile,
       config.supports ?? { text: true },
-      { onLoadTools: (loaded) => this.loadDeferredTools(loaded) },
+      {
+        onLoadTools: (loaded) => this.loadDeferredTools(loaded),
+        ...(config.mediaGeneration ? { mediaGeneration: config.mediaGeneration } : {}),
+      },
     );
     const tools = toolset.resident;
     this.baseTools = tools;
@@ -4813,8 +4824,10 @@ The goal is a smaller, sharper memory — not more notes.`;
   ): Promise<AgentLoopTurnUpdate | undefined> {
     const transform = this.contextTransform;
     if (!transform) return undefined;
-    const messages = context.context.messages;
-    if (messages.length === 0) return undefined;
+    const received = context.context.messages;
+    if (received.length === 0) return undefined;
+    // Only the newest images stay in view; older ones become placeholders.
+    const messages = boundTranscriptImages(received, transcriptImageLimit());
     try {
       const gauge = computeContextBudget({
         model: { ...this.model, contextWindow: this.effectiveContextWindow } as Model<Api>,
@@ -4830,7 +4843,9 @@ The goal is a smaller, sharper memory — not more notes.`;
       const compacted = await transform(messages, signal);
       const changed =
         compacted.length !== messages.length || compacted.some((m, i) => m !== messages[i]);
-      if (!changed) return undefined;
+      if (!changed) {
+        return messages === received ? undefined : { context: { ...context.context, messages } };
+      }
       this.metrics.midRunCompactions += 1;
       this.log.info(
         LEAN_AGENT_LOG_CATEGORY,
@@ -4966,6 +4981,7 @@ The goal is a smaller, sharper memory — not more notes.`;
     this.dropQuarantinedMessages();
     const original = this.agent.state.messages;
     let messages = dropOldThinkingEnabled() ? dropOldThinking(original) : original;
+    messages = boundTranscriptImages(messages, transcriptImageLimit());
     // Before the next prompt is appended, a completed earlier run is any
     // assistant turn in the history.
     const cap = messages.some((m) => m.role === "assistant")
@@ -5905,15 +5921,45 @@ The goal is a smaller, sharper memory — not more notes.`;
     const target = profile === "base" ? this.baseToolProfile : profile;
     if (target === this.activeToolProfile) return;
     this.activeToolProfile = target;
-    const toolContext = { client: this.client, gameState: this.gameState };
     const toolset = createProfileToolset(
-      toolContext,
+      this.toolContext(),
       this.platformMemory,
       target,
-      { text: true },
-      { onLoadTools: (loaded) => this.loadDeferredTools(loaded) },
+      this.config.supports ?? { text: true },
+      {
+        onLoadTools: (loaded) => this.loadDeferredTools(loaded),
+        ...(this.config.mediaGeneration ? { mediaGeneration: this.config.mediaGeneration } : {}),
+      },
     );
     this.agent.state.tools = toolset.resident;
+  }
+
+  /** What every tool factory receives: the client, game state and the vision mode. */
+  private toolContext(): ToolContext {
+    return {
+      client: this.client,
+      gameState: this.gameState,
+      visionMode: () => this.visionMode(),
+    };
+  }
+
+  /**
+   * How this agent sees images right now (`MARINA_AGENT_VISION`, the model's
+   * image input — re-read per look, so a reconfigure or a new default
+   * upstream applies). Choosing `native` makes sure the live model lets
+   * tool-result images through (pi-ai drops them for a text-only `input`).
+   */
+  visionMode(): "native" | "describe" {
+    const modelStr = this.config.model ?? MARINA_DEFAULT_MODEL;
+    const mode = agentVisionMode(
+      agentVisionPolicy(),
+      agentAcceptsImageInput(this.config.supports, modelStr, this.model.input),
+    );
+    if (mode === "native" && !this.model.input.includes("image")) {
+      this.model = { ...this.model, input: [...this.model.input, "image"] };
+      if (this.agent) this.agent.state.model = this.model;
+    }
+    return mode;
   }
 
   /** Compact the live transcript now; returns before/after message counts. */

@@ -4,7 +4,7 @@
 import type { CommandDef } from "../../types";
 import type { Engine } from "../engine";
 import { DEFAULT_VIDEO_MODEL } from "../media/providers/video-util";
-import { lookAndReply } from "../media/vision";
+import { lookReply, sendLookReply } from "../media/vision";
 import { resolveMediaCanvas, sendMediaJobStatus } from "./image";
 
 export function videoCommand(_engine: Engine): CommandDef {
@@ -22,9 +22,10 @@ export function videoCommand(_engine: Engine): CommandDef {
       const sub = input.tokens[0];
       if (sub === "describe" || sub === "look") {
         const who = ctx.findEntity(input.entity);
-        ctx.send(
+        sendLookReply(
+          ctx,
           input.entity,
-          await lookAndReply(
+          await lookReply(
             engine,
             { entityId: input.entity, name: who?.name ?? String(input.entity) },
             input.tokens.slice(1),
