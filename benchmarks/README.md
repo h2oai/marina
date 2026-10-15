@@ -265,6 +265,28 @@ OPENROUTER_API_KEY=… bun benchmarks/vision-native/run.ts \
   --model anthropic/claude-opus-5.5 --per-kind 6 --budget 2 [--kinds count,code,chart,grid,dense]
 ```
 
+`--set hard` (`items-hard.ts`) is the set built to separate the two modes. Every
+answer is computed from a seeded scene, never read back from pixels, and each
+kind stresses something a text description tends to lose: exact chart readings
+(`bar-read` ±1, `series-compare` with 2–4 unit gaps, `log-axis` ±10 %), dense
+tables (`table-lookup`, filtered `table-sum`), spatial relations and clutter
+(`inside-count`, `clutter-count` with occlusion among 40+ distractors), several
+images (`spot-diff` across two grids, `match-spec` among three near-misses),
+measurement (`line-length` within 4–6 %, `angle` ±4°) and detail only the small
+print carries (`small-print`). Multi-image tasks name one asset per image. The
+summary has per-mode, per-kind and per-family Wilson intervals and the paired
+comparison (exact McNemar and a paired bootstrap, `benchmarks/stats.ts`).
+`--describe-model` overrides the describe model (default: the agent's own model,
+which `visionModelCandidates` tries first). `--pilot N` runs N tasks spread across
+kinds first and stops when the projected cost passes `--budget`; `--concurrency`
+bounds parallel tasks.
+
+```bash
+bun benchmarks/vision-native/run.ts --set hard --per-kind 10 --dry --images-dir /tmp/vision-hard
+OPENROUTER_API_KEY=… bun benchmarks/vision-native/run.ts --set hard --per-kind 10 \
+  --model anthropic/claude-opus-5.5 --pilot 6 --budget 6 --concurrency 6
+```
+
 Results go to `benchmarks/results/` (gitignored) or `--out`. They hold task ids,
 answers, scores and costs, but no image bytes.
 

@@ -27,7 +27,7 @@ export interface VisualTask {
 }
 
 /** mulberry32 over a string-hashed seed. */
-function rng(seed: string): { next: () => number; int: (lo: number, hi: number) => number } {
+export function rng(seed: string): { next: () => number; int: (lo: number, hi: number) => number } {
   let h = 2166136261;
   for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
   let a = h >>> 0 || 1;
@@ -41,13 +41,13 @@ function rng(seed: string): { next: () => number; int: (lo: number, hi: number) 
   return { next, int: (lo, hi) => lo + Math.floor(next() * (hi - lo + 1)) };
 }
 
-const FONT = "DejaVu Sans, Liberation Sans, Arial, sans-serif";
+export const FONT = "DejaVu Sans, Liberation Sans, Arial, sans-serif";
 
-async function render(svg: string): Promise<Uint8Array> {
+export async function render(svg: string): Promise<Uint8Array> {
   return new Uint8Array(await sharp(Buffer.from(svg)).png().toBuffer());
 }
 
-function svgDoc(width: number, height: number, body: string): string {
+export function svgDoc(width: number, height: number, body: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="#ffffff"/>${body}</svg>`;
 }
 
