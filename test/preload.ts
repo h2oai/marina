@@ -12,3 +12,7 @@
  * value in the environment wins.
  */
 process.env.MARINA_ASSET_DERIVATIVES ??= "off";
+// Memory over media (asset text → canonical memory records) is off unless a
+// test opts in (test/asset-memory.test.ts): the indexer runs in the asset tick
+// job and would otherwise write records into every test world with assets.
+process.env.MARINA_MEDIA_MEMORY ??= "off";

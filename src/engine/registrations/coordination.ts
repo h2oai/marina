@@ -252,7 +252,16 @@ export function registerCoordinationCommands(engine: Engine): void {
     }),
   );
   const resolveCitedEvidence = (actor: { name: string; id: string }, text: string) =>
-    engine.db ? resolveEvidence(engine.db, actor, text) : [];
+    engine.db
+      ? resolveEvidence(engine.db, actor, text, {
+          // Live entities and node grants for the cited `asset:<id>` read check.
+          canvas: {
+            db: engine.db,
+            entities: { get: (id: never) => engine.entities.get(id) },
+            canvasGrants: engine.canvasGrants,
+          },
+        })
+      : [];
   engine.commands.registerBuiltin(
     decisionCommand({
       getEntity: (id) => engine.entities.get(id),

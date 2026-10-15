@@ -212,13 +212,20 @@ export function updateAssetFacts(db: Database, id: string, facts: AssetFacts): b
   return db.run(`UPDATE assets SET ${sets.join(", ")} WHERE id = ?`, values).changes > 0;
 }
 
+/**
+ * `updated_at` after a reader-facing change: now, and always past the previous
+ * value, so a change in the same millisecond as the last one still reads as
+ * newer (the media-memory indexer compares against the stamp it indexed).
+ */
+const BUMP_UPDATED_AT = "updated_at = MAX(?, updated_at + 1)";
+
 /** Set the reader-facing caption and/or alt text (`null` clears). Bumps `updated_at`. */
 export function updateAssetText(
   db: Database,
   id: string,
   text: { caption?: string | null; alt?: string | null },
 ): boolean {
-  const sets: string[] = ["updated_at = ?"];
+  const sets: string[] = [BUMP_UPDATED_AT];
   const values: (string | number | null)[] = [Date.now()];
   if (text.caption !== undefined) {
     sets.push("caption = ?");
@@ -259,6 +266,73 @@ export function listAssetsNeedingFacts(db: Database, limit: number): AssetRow[] 
     .all(limit) as AssetRow[];
 }
 
+/** A top-level `metadata` key this module may set ({@link setAssetMetadataKey}). */
+const METADATA_KEY = /^[a-z][a-z0-9_]{0,39}$/;
+
+/**
+ * Set one top-level `metadata` key to a JSON value (`null` removes it) in one
+ * statement, so two writers of different keys never lose each other's change.
+ * `touch` bumps `updated_at` (a reader-facing text change, e.g. a transcript);
+ * a bookkeeping stamp leaves it alone. Rows whose metadata is not valid JSON
+ * are left untouched. Returns whether a row changed.
+ */
+export function setAssetMetadataKey(
+  db: Database,
+  id: string,
+  key: string,
+  value: unknown,
+  opts: { touch?: boolean } = {},
+): boolean {
+  if (!METADATA_KEY.test(key)) throw new Error(`Invalid asset metadata key: ${key}`);
+  const path = `$.${key}`;
+  const params: (string | number)[] = [];
+  let expr: string;
+  if (value === null || value === undefined) {
+    expr = "json_remove(metadata, ?)";
+    params.push(path);
+  } else {
+    expr = "json_set(metadata, ?, json(?))";
+    params.push(path, JSON.stringify(value));
+  }
+  if (opts.touch) params.push(Date.now());
+  params.push(id);
+  const touch = opts.touch ? `, ${BUMP_UPDATED_AT}` : "";
+  return (
+    db.run(
+      `UPDATE assets SET metadata = ${expr}${touch} WHERE id = ? AND json_valid(metadata)`,
+      params,
+    ).changes > 0
+  );
+}
+
+/**
+ * Originals the media-memory indexer has not indexed at their current
+ * `updated_at` (`metadata.memory_index.updated_at`), least recently changed
+ * first. Request images and derivatives are never indexed. With `vision`,
+ * raster images whose vision pass has not run (or is due a retry) are included.
+ */
+export function listAssetsForMemoryIndex(
+  db: Database,
+  opts: { limit: number; vision: boolean; now: number },
+): AssetRow[] {
+  return db
+    .query(
+      `SELECT * FROM assets
+        WHERE derived_from IS NULL AND origin != 'request' AND json_valid(metadata)
+          AND coalesce(json_extract(metadata, '$.origin'), '') != 'request'
+          AND (
+            json_extract(metadata, '$.memory_index.updated_at') IS NULL
+            OR json_extract(metadata, '$.memory_index.updated_at') < updated_at
+            OR (?1 = 1 AND mime_type LIKE 'image/%' AND mime_type != 'image/svg+xml'
+                AND (json_extract(metadata, '$.memory_index.vision') IS NULL
+                     OR (json_extract(metadata, '$.memory_index.vision') = 'pending'
+                         AND coalesce(json_extract(metadata, '$.memory_index.retry_at'), 0) <= ?2)))
+          )
+        ORDER BY updated_at, id LIMIT ?3`,
+    )
+    .all(opts.vision ? 1 : 0, opts.now, opts.limit) as AssetRow[];
+}
+
 // ─── Tags ─────────────────────────────────────────────────────────────────
 
 /** Add and remove tags (already normalized by the caller). Returns the asset's tags after. */
@@ -276,7 +350,7 @@ export function setAssetTags(
     const del = db.prepare("DELETE FROM asset_tags WHERE asset_id = ? AND tag = ?");
     for (const tag of remove) del.run(id, tag);
     for (const tag of add) ins.run(id, tag, now);
-    db.run("UPDATE assets SET updated_at = ? WHERE id = ?", [now, id]);
+    db.run(`UPDATE assets SET ${BUMP_UPDATED_AT} WHERE id = ?`, [now, id]);
   })();
   return getAssetTags(db, id);
 }

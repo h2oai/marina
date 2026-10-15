@@ -16,6 +16,8 @@ import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { tryLog } from "../errors";
 import { Logger } from "../logger";
+import { assetReadableBy } from "../media/asset-memory-access";
+import { parseAssetRefs } from "../media/asset-text";
 import {
   canonicalSub,
   extractModifiers,
@@ -126,7 +128,7 @@ const VALID_RELATIONSHIPS = new Set([
 /** Subcommands the switch below handles; anything else is free text to save. */
 /** `verified` is never self-assigned: it comes from another resident's `pool <name> ratify`. */
 const NOTE_VERIFY_USAGE =
-  "Usage: note verify <your-note-id> unverified|disputed [confidence 0..1] [rationale]. A note becomes verified only when another resident ratifies it (`pool <name> ratify <id>`); add evidence with `note source <id> <url|note:id>`.";
+  "Usage: note verify <your-note-id> unverified|disputed [confidence 0..1] [rationale]. A note becomes verified only when another resident ratifies it (`pool <name> ratify <id>`); add evidence with `note source <id> <url|note:id|asset:id>`.";
 
 const NOTE_SUBS = [
   "claim",
@@ -234,7 +236,7 @@ export function noteCommand(deps: {
       "note resolve <case-id> right <evidence-backed rationale>",
       "note room",
       "note search <query>",
-      "note source <your-note-id> <url|note:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]",
+      "note source <your-note-id> <url|note:id|asset:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]",
       "note trace <id>",
       "note types",
       "note unlink <id1> <id2> <rel>",
@@ -343,7 +345,7 @@ export function noteCommand(deps: {
           if (!access.write(note) || !reference) {
             ctx.send(
               input.entity,
-              "Usage: note source <your-note-id> <url|note:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]\n" +
+              "Usage: note source <your-note-id> <url|note:id|asset:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]\n" +
                 "(see also: `memory source <source ID> [start end]` reads a durable original source by byte range; `note source` attaches a reference to a legacy note in the canonical record's sources.)",
             );
             return;
@@ -363,6 +365,19 @@ export function noteCommand(deps: {
             ctx.send(input.entity, `Source note ${reference} was not found.`);
             return;
           }
+          // `asset:<id>` cites a stored file; only one the caller may read.
+          const sourceAssetId = reference.startsWith("asset:") ? reference.slice(6) : undefined;
+          if (sourceAssetId !== undefined) {
+            const asset = db.getAsset(sourceAssetId);
+            if (
+              !asset ||
+              !assetReadableBy(db, { name: entity.name, id: entity.id }, asset) ||
+              parseAssetRefs(reference, 1)[0] !== sourceAssetId
+            ) {
+              ctx.send(input.entity, `Source asset ${reference} was not found.`);
+              return;
+            }
+          }
           const credibility =
             modifiers.credibility === undefined ? 0.5 : Number(modifiers.credibility);
           if (!Number.isFinite(credibility) || credibility < 0 || credibility > 1) {
@@ -373,13 +388,15 @@ export function noteCommand(deps: {
           const sourceType =
             sourceNoteId !== undefined
               ? "note"
-              : (modifiers.type as
-                  | "url"
-                  | "message"
-                  | "observation"
-                  | "artifact"
-                  | "dataset"
-                  | undefined);
+              : sourceAssetId !== undefined
+                ? "artifact"
+                : (modifiers.type as
+                    | "url"
+                    | "message"
+                    | "observation"
+                    | "artifact"
+                    | "dataset"
+                    | undefined);
           db.addNoteSource(id, {
             url: reference,
             sourceType,
@@ -440,7 +457,7 @@ export function noteCommand(deps: {
           ) {
             ctx.send(
               input.entity,
-              `Note #${id} is yours: an author can't verify their own note. Cite evidence with \`note source ${id} <url|note:id>\`; in a shared pool another resident can ratify it (\`pool <name> ratify ${id}\`). \`note verify ${id} unverified\` retracts a dispute.`,
+              `Note #${id} is yours: an author can't verify their own note. Cite evidence with \`note source ${id} <url|note:id|asset:id>\`; in a shared pool another resident can ratify it (\`pool <name> ratify ${id}\`). \`note verify ${id} unverified\` retracts a dispute.`,
             );
             return;
           }

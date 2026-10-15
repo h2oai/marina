@@ -3340,6 +3340,19 @@ export class MarinaDB implements MarinaStores {
     return assetsDb.listAssetsNeedingFacts(this.db, limit);
   }
 
+  setAssetMetadataKey(
+    id: string,
+    key: string,
+    value: unknown,
+    opts?: { touch?: boolean },
+  ): boolean {
+    return assetsDb.setAssetMetadataKey(this.db, id, key, value, opts);
+  }
+
+  listAssetsForMemoryIndex(opts: { limit: number; vision: boolean; now: number }): AssetRow[] {
+    return assetsDb.listAssetsForMemoryIndex(this.db, opts);
+  }
+
   setAssetTags(id: string, add: readonly string[], remove: readonly string[]): string[] {
     return assetsDb.setAssetTags(this.db, id, add, remove);
   }

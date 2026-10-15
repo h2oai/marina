@@ -15,6 +15,31 @@ const worldDependencies = new Set([
   "entity_standing_cache",
 ]);
 
+const ALL_EVENTS: readonly [string, string][] = [
+  ["INSERT", "INSERT"],
+  ["UPDATE", "UPDATE"],
+  ["DELETE", "DELETE"],
+];
+
+/**
+ * The asset read rule applied to media-memory records (`asset:<id>`, served
+ * only while the reader may read the asset): a deleted asset, a node placing
+ * it on a private canvas, or a canvas changing scope withdraws access. Only
+ * those writes invalidate — node moves and resizes do not.
+ */
+const assetReadDependencies: Record<string, readonly [string, string][]> = {
+  assets: [["DELETE", "DELETE"]],
+  canvas_nodes: [
+    ["INSERT", "INSERT"],
+    ["DELETE", "DELETE"],
+    ["UPDATE", "UPDATE OF asset_id, canvas_id"],
+  ],
+  canvases: [
+    ["DELETE", "DELETE"],
+    ["UPDATE", "UPDATE OF scope, scope_id, name"],
+  ],
+};
+
 /** Connection-local invalidation: canonical memory, identity, authority and ranking.
  * TEMP triggers never change the persisted schema or migration history. Other
  * connections are covered by data_version; new memory tables are included after DDL.
@@ -31,11 +56,15 @@ export function contextRevision(db: Database): string {
       .query("SELECT name FROM pragma_table_list WHERE schema='main' AND type='table'")
       .all() as { name: string }[];
     for (const { name } of tables) {
-      if (!worldDependencies.has(name) && !name.startsWith("memory_")) continue;
+      const events =
+        worldDependencies.has(name) || name.startsWith("memory_")
+          ? ALL_EVENTS
+          : assetReadDependencies[name];
+      if (!events) continue;
       // Identifiers come from SQLite, but quote them even for locally installed extensions.
       const quote = (value: string) => `"${value.replaceAll('"', '""')}"`;
-      for (const event of ["INSERT", "UPDATE", "DELETE"]) {
-        db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS ${quote(`marina_context_${name}_${event}`)}
+      for (const [label, event] of events) {
+        db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS ${quote(`marina_context_${name}_${label}`)}
           AFTER ${event} ON main.${quote(name)} BEGIN
           UPDATE marina_context_revision SET revision=revision+1; END`);
       }

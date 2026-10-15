@@ -24,6 +24,8 @@ export interface AssetsStore {
   updateAssetText(id: string, text: { caption?: string | null; alt?: string | null }): boolean;
   findAssetByHash(entityName: string, sha256: string, origin: AssetOrigin): AssetRow | undefined;
   listAssetsNeedingFacts(limit: number): AssetRow[];
+  setAssetMetadataKey(id: string, key: string, value: unknown, opts?: { touch?: boolean }): boolean;
+  listAssetsForMemoryIndex(opts: { limit: number; vision: boolean; now: number }): AssetRow[];
   setAssetTags(id: string, add: readonly string[], remove: readonly string[]): string[];
   getAssetTags(id: string): string[];
   getAssetTagsFor(ids: readonly string[]): Map<string, string[]>;
@@ -46,6 +48,8 @@ export const ASSETS_STORE_METHODS = [
   "updateAssetText",
   "findAssetByHash",
   "listAssetsNeedingFacts",
+  "setAssetMetadataKey",
+  "listAssetsForMemoryIndex",
   "setAssetTags",
   "getAssetTags",
   "getAssetTagsFor",

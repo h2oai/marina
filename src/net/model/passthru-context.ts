@@ -8,6 +8,7 @@ import { sanitizeEntityName } from "../../engine/entity-name";
 import { participantOrientation } from "../../engine/onboarding";
 import { isLocalProfile } from "../../engine/trust-profile";
 import {
+  ASSET_CONTENT_MARKER,
   buildUnifiedContext,
   byteLength,
   NO_RELEVANT_MEMORY,
@@ -380,7 +381,7 @@ export async function buildInjectedContext(
         bucket.push({
           tier: tier.tier,
           ref: unifiedRef(tier.tier, item),
-          text: `Own memory ${tier.label} (${item.provenance}): ${item.content}`,
+          text: `Own memory ${tier.label} (${item.provenance})${item.meta?.asset ? ASSET_CONTENT_MARKER : ""}: ${item.content}`,
         });
         own++;
       }
