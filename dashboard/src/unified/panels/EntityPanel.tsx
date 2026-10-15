@@ -733,7 +733,7 @@ const LaunchTab = memo(function LaunchTab(_props: { sendCommand?: (cmd: string) 
                 ✓ generates {kinds} — the agent gets a generate tool.
               </span>
             ) : (
-              "Image/video models (openai/gpt-image-1, runway/gen3-alpha) give the agent a generate tool. Or run `image generate <prompt>`."
+              "Image/video models (openai/gpt-image-2, runway/gen4.5) give the agent a generate tool. Or run `image generate <prompt>`."
             );
           })()}
         </div>

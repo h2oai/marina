@@ -4,15 +4,29 @@
 /**
  * MediaManager end to end against an in-memory store and a mocked network:
  * image jobs (moderation, success, provider failure, unsupported provider),
- * video jobs (immediate success, start failure, polled progress → success,
- * polled failure / cancel / missing key), plus the asset store/publish helpers
- * and the OpenAI and Runway providers they drive. No real network or DNS.
+ * video job starts (left running for the durable poller — see
+ * media-video-poller.test.ts — start failure, no task id), plus the asset
+ * store/publish helpers and the OpenAI and Runway providers they drive
+ * (request shapes per the providers' current APIs). No real network or DNS.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { MediaManager } from "../src/engine/media/manager";
-import { generateOpenAIImage, moderateOpenAIText } from "../src/engine/media/providers/openai";
-import { pollRunwayVideoJob, startRunwayVideoJob } from "../src/engine/media/providers/runway";
+import {
+  flexibleImageSize,
+  generateOpenAIImage,
+  moderateOpenAIText,
+  openAIImageModelKind,
+  openAIImageSize,
+} from "../src/engine/media/providers/openai";
+import {
+  buildRunwayStartRequest,
+  pollRunwayVideoJob,
+  RUNWAY_API_VERSION,
+  runwayCostEstimate,
+  runwayModelId,
+  startRunwayVideoJob,
+} from "../src/engine/media/providers/runway";
 import { publishGeneratedAsset, storeGeneratedAsset } from "../src/engine/media/publish";
 import { resetSpendLedgerForTests, spentTodayUsd } from "../src/engine/spend-ledger";
 import { __setDnsResolverForTest } from "../src/net/url-guard";
@@ -57,17 +71,6 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const PNG_B64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).toString("base64");
 
-/** Capture setInterval callbacks so a poll tick can be driven by hand. */
-function captureIntervals(): Array<() => Promise<void>> {
-  const ticks: Array<() => Promise<void>> = [];
-  globalThis.setInterval = ((fn: () => Promise<void>) => {
-    ticks.push(fn);
-    return ticks.length as unknown as ReturnType<typeof setInterval>;
-  }) as unknown as typeof setInterval;
-  globalThis.clearInterval = (() => {}) as typeof clearInterval;
-  return ticks;
-}
-
 interface Job {
   id: string;
   status: string;
@@ -92,6 +95,12 @@ function fakeWorld(opts: { jobsToday?: number; noStorage?: boolean; noCanvas?: b
     updateMediaJob: (id: string, patch: Partial<Job>) => {
       const job = jobs.get(id);
       if (job) jobs.set(id, { ...job, ...patch });
+    },
+    transitionMediaJob: (id: string, from: string, patch: Partial<Job>) => {
+      const job = jobs.get(id);
+      if (!job || job.status !== from) return false;
+      jobs.set(id, { ...job, ...patch });
+      return true;
     },
     getMediaJob: (id: string) => jobs.get(id),
     getCanvas: (id: string) => canvases.get(id),
@@ -213,7 +222,7 @@ describe("MediaManager image jobs", () => {
       type: "image",
       ...who,
       prompt: "p",
-      model: "openai/dall-e-3",
+      model: "openai/gpt-image-1.5",
     });
     expect(job.status).toBe("failed");
     expect(job.error).toContain("500");
@@ -265,7 +274,8 @@ describe("MediaManager image jobs", () => {
     const cases: Array<[Parameters<MediaManager["startJob"]>[0], number]> = [
       [{ type: "image", ...who, prompt: "p", model: "stability/core" }, 0.04],
       [{ type: "image", ...who, prompt: "p", model: "flux/flux-pro" }, 0.05],
-      [{ type: "video", ...who, prompt: "p", model: "runway/gen4", duration: 10 }, 0.15],
+      [{ type: "video", ...who, prompt: "p", model: "runway/gen4.5", duration: 10 }, 1.2],
+      [{ type: "video", ...who, prompt: "p", model: "runway/gen4_turbo", duration: 5 }, 0.25],
       [{ type: "video", ...who, prompt: "p", model: "luma/ray-2", duration: 5 }, 1.75],
       [{ type: "video", ...who, prompt: "p", model: "google/veo-3", duration: 5 }, 2],
       [{ type: "image", ...who, prompt: "p", model: "flux/x", costHint: 0.5 }, 0.5],
@@ -294,117 +304,51 @@ describe("MediaManager video jobs", () => {
     ).rejects.toThrow(/not yet supported for video generation/);
   });
 
-  it("a start that succeeds immediately completes the job", async () => {
-    mockFetch((url) =>
-      url.includes("generations")
-        ? json({
-            id: "rw1",
-            status: "SUCCEEDED",
-            outputs: [{ id: "o", url: "https://cdn.example/v.mp4" }],
-          })
-        : new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "video/mp4" } }),
-    );
+  it("a started job is left running with its task id — no in-memory timer", async () => {
+    const intervals: unknown[] = [];
+    globalThis.setInterval = ((fn: unknown) => {
+      intervals.push(fn);
+      return 0 as unknown as ReturnType<typeof setInterval>;
+    }) as unknown as typeof setInterval;
+    mockFetch(() => json({ id: "rw2", estimatedCost: { credits: 60 } }));
     const world = fakeWorld();
     const job = await makeManager(world, { runway: "k" }).startJob({
       type: "video",
       ...who,
-      prompt: "waves",
-      model: "runway/gen4",
-      aspectRatio: "16:9",
+      prompt: "p",
+      model: "runway/gen4.5",
     });
-    expect(job.status).toBe("succeeded");
-    expect(world.nodes[0]?.type).toBe("video");
-    expect(kinds(world.events)).toEqual(["media_pending", "video_generated", "media_complete"]);
+    expect(job.status).toBe("running");
+    expect(world.jobs.get(job.id)?.providerJobId).toBe("rw2");
+    expect(intervals).toHaveLength(0);
+    expect(kinds(world.events)).toEqual(["media_pending", "media_rendering"]);
   });
 
   it("a failed start marks the job failed", async () => {
-    mockFetch(() => json({ error: { message: "quota" } }, 402));
+    mockFetch(() => json({ error: "quota" }, 402));
     const world = fakeWorld();
     const job = await makeManager(world, { runway: "k" }).startJob({
       type: "video",
       ...who,
       prompt: "p",
-      model: "runway/gen4",
+      model: "runway/gen4.5",
     });
     expect(job.status).toBe("failed");
     expect(job.error).toBe("quota");
+    expect(spentTodayUsd()).toBe(0);
   });
 
-  it("polls a running job: progress, then success", async () => {
-    const ticks = captureIntervals();
-    let poll = 0;
-    mockFetch((url) => {
-      if (url.endsWith("/generations")) return json({ id: "rw2", status: "QUEUED" });
-      if (url.includes("/generations/rw2")) {
-        poll += 1;
-        return poll === 1
-          ? json({ id: "rw2", status: "RUNNING", progress: 0.5 })
-          : json({
-              id: "rw2",
-              status: "SUCCEEDED",
-              outputs: [
-                {
-                  id: "o",
-                  url: "https://cdn.example/f.mp4",
-                  mime_type: "video/mp4",
-                  file_name: "f.mp4",
-                },
-              ],
-            });
-      }
-      return new Response(new Uint8Array([9, 9]));
-    });
-    const world = fakeWorld();
-    const m = makeManager(world, { runway: "k" });
-    const job = await m.startJob({ type: "video", ...who, prompt: "p", model: "runway/gen4" });
-    expect(job.status).toBe("running");
-    expect(world.jobs.get(job.id)?.providerJobId).toBe("rw2");
-    expect(ticks).toHaveLength(1);
-    await ticks[0]!();
-    expect(world.events.some((e) => (e as { summary?: string }).summary?.includes("(50%)"))).toBe(
-      true,
-    );
-    await ticks[0]!();
-    expect(m.getJob(job.id)?.status).toBe("succeeded");
-    expect(world.assets.get(String(world.jobs.get(job.id)?.assetId))?.filename).toBe("f.mp4");
-    m.stop();
-  });
-
-  it("a polled failure, a cancel and a lost key each fail the job", async () => {
-    for (const [status, keyLost, expected] of [
-      ["FAILED", false, "boom"],
-      ["CANCELED", false, "Runway job was canceled."],
-      ["RUNNING", true, "Missing provider key during polling."],
-    ] as const) {
-      const ticks = captureIntervals();
-      mockFetch((url) =>
-        url.endsWith("/generations")
-          ? json({ id: "rw3", status: "RUNNING" })
-          : json({ id: "rw3", status, error: { message: "boom" } }),
-      );
-      const world = fakeWorld();
-      const keys: Record<string, string> = { runway: "k" };
-      const m = makeManager(world, keys);
-      const job = await m.startJob({ type: "video", ...who, prompt: "p", model: "runway/gen4" });
-      if (keyLost) delete keys.runway;
-      await ticks[0]!();
-      expect(m.getJob(job.id)?.status).toBe("failed");
-      expect(m.getJob(job.id)?.error).toBe(expected);
-    }
-  });
-
-  it("a running start with no provider job id stays running without a poll", async () => {
-    const ticks = captureIntervals();
-    mockFetch(() => json({ status: "RUNNING" }));
+  it("a start with no task id fails instead of hanging in running", async () => {
+    mockFetch(() => json({}));
     const world = fakeWorld();
     const job = await makeManager(world, { runway: "k" }).startJob({
       type: "video",
       ...who,
       prompt: "p",
-      model: "runway/gen4",
+      model: "runway/gen4.5",
     });
-    expect(job.status).toBe("running");
-    expect(ticks).toHaveLength(0);
+    expect(job.status).toBe("failed");
+    expect(job.error).toBe("Runway did not return a task id.");
   });
 });
 
@@ -493,7 +437,7 @@ describe("storeGeneratedAsset / publishGeneratedAsset", () => {
 });
 
 describe("OpenAI image provider", () => {
-  it("clamps size, sends the bare model and decodes b64", async () => {
+  it("gpt-image-2: sends only model/prompt/size, maps size into the flexible space, folds style into the prompt", async () => {
     let body: Record<string, unknown> = {};
     mockFetch((_url, init) => {
       body = JSON.parse(String(init?.body));
@@ -505,14 +449,73 @@ describe("OpenAI image provider", () => {
       model: "openai/gpt-image-2",
       width: 5000,
       height: 10,
+      style: "synthwave",
     });
     expect(res.status).toBe("succeeded");
     expect(res.asset?.mimeType).toBe("image/png");
-    expect(body).toMatchObject({
-      model: "gpt-image-2",
-      size: "2048x256",
-      response_format: "b64_json",
+    expect(Object.keys(body).sort()).toEqual(["model", "prompt", "size"]);
+    expect(body).toMatchObject({ model: "gpt-image-2", prompt: "p\n\nStyle: synthwave" });
+    // 3:1 is the widest aspect; the pixel floor is 655,360.
+    expect(body.size).toBe("1440x480");
+  });
+
+  it("gpt-image-1.x snaps to its three fixed sizes; no dimensions means no size", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    mockFetch((_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return json({ data: [{ b64_json: PNG_B64 }] });
     });
+    await generateOpenAIImage({
+      apiKey: "k",
+      prompt: "p",
+      model: "openai/gpt-image-1.5",
+      width: 1920,
+      height: 1080,
+    });
+    await generateOpenAIImage({ apiKey: "k", prompt: "p", model: "openai/gpt-image-1-mini" });
+    expect(bodies[0]?.size).toBe("1536x1024");
+    expect(bodies[1]).toEqual({ model: "gpt-image-1-mini", prompt: "p" });
+    for (const b of bodies) {
+      expect(b.response_format).toBeUndefined();
+      expect(b.style).toBeUndefined();
+    }
+  });
+
+  it("dall-e is refused locally as retired, with no request", async () => {
+    const urls = mockFetch(() => json({}));
+    const res = await generateOpenAIImage({ apiKey: "k", prompt: "p", model: "openai/dall-e-3" });
+    expect(res.status).toBe("failed");
+    expect(res.error).toContain("retired");
+    expect(urls).toHaveLength(0);
+  });
+
+  it("size mapping", () => {
+    expect(openAIImageModelKind("gpt-image-2-2026-04-21")).toBe("flexible");
+    expect(openAIImageModelKind("gpt-image-2.5-flare")).toBe("flexible");
+    expect(openAIImageModelKind("gpt-image-1")).toBe("fixed");
+    expect(openAIImageModelKind("chatgpt-image-latest")).toBe("fixed");
+    expect(openAIImageSize("gpt-image-2", 1024, 1024)).toBe("1024x1024");
+    expect(openAIImageSize("gpt-image-2", 1536, 1024)).toBe("1536x1024");
+    expect(openAIImageSize("gpt-image-2", 1080, 1920)).toBe("1088x1920");
+    expect(openAIImageSize("gpt-image-2", 256, 256)).toBe("816x816");
+    expect(openAIImageSize("gpt-image-2", 8000, 8000)).toBe("2880x2880");
+    expect(openAIImageSize("gpt-image-2", 512)).toBe("816x816");
+    expect(openAIImageSize("gpt-image-1", 600, 1000)).toBe("1024x1536");
+    for (const [w, h] of [
+      [1, 9999],
+      [3333, 1111],
+      [4096, 2304],
+      [700, 700],
+      [17, 31],
+    ] as const) {
+      const [sw, sh] = flexibleImageSize(w, h).split("x").map(Number) as [number, number];
+      expect(sw % 16).toBe(0);
+      expect(sh % 16).toBe(0);
+      expect(Math.max(sw, sh)).toBeLessThanOrEqual(3840);
+      expect(Math.max(sw, sh) / Math.min(sw, sh)).toBeLessThanOrEqual(3);
+      expect(sw * sh).toBeGreaterThanOrEqual(655_360);
+      expect(sw * sh).toBeLessThanOrEqual(8_294_400);
+    }
   });
 
   it("reports missing data, HTTP errors and thrown errors", async () => {
@@ -550,56 +553,170 @@ describe("OpenAI image provider", () => {
 });
 
 describe("Runway video provider", () => {
-  it("start: running, success without an asset, and thrown errors", async () => {
-    mockFetch(() => json({ id: "r", status: "RUNNING", progress: 0.1 }));
-    expect(await startRunwayVideoJob({ apiKey: "k", model: "gen4", prompt: "p" })).toEqual({
-      status: "running",
-      providerJobId: "r",
-      progress: 0.1,
+  it("text to video: POST /v1/text_to_video with the version header and a bare model", async () => {
+    let seen: { url: string; init?: RequestInit } | undefined;
+    mockFetch((url, init) => {
+      seen = { url, init };
+      return json({ id: "11111111-1111-4111-8111-111111111111", estimatedCost: { credits: 60 } });
     });
-    mockFetch(() => json({ id: "r", status: "SUCCEEDED", outputs: [{ id: "o" }] }));
-    expect((await startRunwayVideoJob({ apiKey: "k", model: "gen4", prompt: "p" })).error).toBe(
-      "Runway returned success without asset.",
-    );
-    mockFetch(() => json({}, 500));
-    expect((await startRunwayVideoJob({ apiKey: "k", model: "gen4", prompt: "p" })).error).toBe(
+    const res = await startRunwayVideoJob({
+      apiKey: "key_x",
+      model: "runway/gen4.5",
+      prompt: "waves",
+      duration: 12,
+      fps: 30,
+      aspectRatio: "9:16",
+    });
+    expect(res).toEqual({
+      status: "running",
+      providerJobId: "11111111-1111-4111-8111-111111111111",
+      progress: 0,
+    });
+    const headers = new Headers(seen?.init?.headers);
+    expect(seen?.init?.method).toBe("POST");
+    expect(new URL(seen!.url).pathname).toBe("/v1/text_to_video");
+    expect(headers.get("host")).toBe("api.dev.runwayml.com");
+    expect(headers.get("x-runway-version")).toBe(RUNWAY_API_VERSION);
+    expect(headers.get("authorization")).toBe("Bearer key_x");
+    // Duration clamps to gen4.5's 2–10 s; no fps parameter exists.
+    expect(JSON.parse(String(seen?.init?.body))).toEqual({
+      model: "gen4.5",
+      promptText: "waves",
+      ratio: "720:1280",
+      duration: 10,
+    });
+  });
+
+  it("image to video: a reference goes to /v1/image_to_video as promptImage", async () => {
+    const bodies: Array<{ path: string; body: Record<string, unknown> }> = [];
+    mockFetch((url, init) => {
+      bodies.push({ path: new URL(url).pathname, body: JSON.parse(String(init?.body)) });
+      return json({ id: "t", estimatedCost: { credits: 25 } });
+    });
+    const dataUri = `data:image/png;base64,${PNG_B64}`;
+    await startRunwayVideoJob({
+      apiKey: "k",
+      model: "runway/gen4_turbo",
+      prompt: "pan",
+      referenceImage: dataUri,
+      aspectRatio: "1:1",
+    });
+    expect(bodies[0]).toEqual({
+      path: "/v1/image_to_video",
+      body: {
+        model: "gen4_turbo",
+        promptText: "pan",
+        ratio: "960:960",
+        duration: 5,
+        promptImage: dataUri,
+      },
+    });
+  });
+
+  it("refuses requests the API cannot take, without a request", async () => {
+    const urls = mockFetch(() => json({}));
+    expect(
+      (await startRunwayVideoJob({ apiKey: "k", model: "runway/gen4_turbo", prompt: "p" })).error,
+    ).toContain("image-to-video only");
+    expect(
+      (
+        await startRunwayVideoJob({
+          apiKey: "k",
+          model: "runway/gen4.5",
+          prompt: "p",
+          referenceImage: "asset-123",
+        })
+      ).error,
+    ).toContain("https URL or an image data URI");
+    expect(urls).toHaveLength(0);
+    expect(buildRunwayStartRequest({ apiKey: "k", model: "runway", prompt: "p" })).toEqual({
+      path: "/text_to_video",
+      body: { model: "gen4.5", promptText: "p", ratio: "1280:720", duration: 5 },
+    });
+    expect(runwayModelId("runway/veo3.1")).toBe("veo3.1");
+    expect(runwayCostEstimate("runway/gen4.5", undefined)).toBeCloseTo(0.6, 3);
+  });
+
+  it("start errors: Runway's error string, issues, and thrown errors", async () => {
+    mockFetch(() => json({ error: "Invalid input", issues: [{ path: ["ratio"] }] }, 400));
+    expect(
+      (await startRunwayVideoJob({ apiKey: "k", model: "gen4.5", prompt: "p" })).error,
+    ).toContain("Invalid input");
+    mockFetch(() => new Response("oops", { status: 500 }));
+    expect((await startRunwayVideoJob({ apiKey: "k", model: "gen4.5", prompt: "p" })).error).toBe(
       "Runway start failed (500)",
     );
     mockFetch(() => {
       throw new Error("offline");
     });
-    expect((await startRunwayVideoJob({ apiKey: "k", model: "gen4", prompt: "p" })).error).toBe(
+    expect((await startRunwayVideoJob({ apiKey: "k", model: "gen4.5", prompt: "p" })).error).toBe(
       "offline",
     );
   });
 
-  it("poll: queued, failed default message, HTTP error, asset fetch failure, thrown", async () => {
-    mockFetch(() => json({ id: "r", status: "QUEUED" }));
-    expect(await pollRunwayVideoJob({ apiKey: "k", providerJobId: "r" })).toEqual({
+  it("poll: GET /v1/tasks/{id}; pending/throttled/running stay running", async () => {
+    let seen: { url: string; init?: RequestInit } | undefined;
+    mockFetch((url, init) => {
+      seen = { url, init };
+      return json({ id: "t1", status: "THROTTLED", createdAt: "x", estimatedCost: { credits: 1 } });
+    });
+    expect(await pollRunwayVideoJob({ apiKey: "k", providerJobId: "t1" })).toEqual({
       status: "running",
       progress: 0,
     });
-    mockFetch(() => json({ id: "r", status: "FAILED" }));
-    expect((await pollRunwayVideoJob({ apiKey: "k", providerJobId: "r" })).error).toBe(
-      "Runway reported failure.",
-    );
-    mockFetch(() => json({ error: { message: "gone" } }, 404));
-    expect((await pollRunwayVideoJob({ apiKey: "k", providerJobId: "r" })).error).toBe("gone");
+    expect(new URL(seen!.url).pathname).toBe("/v1/tasks/t1");
+    expect(new Headers(seen?.init?.headers).get("x-runway-version")).toBe(RUNWAY_API_VERSION);
+    mockFetch(() => json({ id: "t1", status: "RUNNING", progress: 0.4 }));
+    expect((await pollRunwayVideoJob({ apiKey: "k", providerJobId: "t1" })).progress).toBe(0.4);
+  });
+
+  it("poll: success downloads output[0] and reports the credit cost in USD", async () => {
     mockFetch((url) =>
-      url.includes("/generations/")
+      url.includes("/tasks/")
         ? json({
-            id: "r",
+            id: "t1",
             status: "SUCCEEDED",
-            outputs: [{ id: "o", url: "https://cdn.example/x" }],
+            output: ["https://dnznrvs05pmza.cloudfront.net/v.mp4?sig=1"],
+            cost: { credits: 60 },
           })
-        : new Response("no", { status: 404 }),
+        : new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "video/mp4" } }),
     );
+    const res = await pollRunwayVideoJob({ apiKey: "k", providerJobId: "t1" });
+    expect(res.status).toBe("succeeded");
+    expect(res.costUsd).toBeCloseTo(0.6, 4);
+    expect(res.asset?.data.byteLength).toBe(3);
+  });
+
+  it("poll: terminal failures fail; transient ones stay running and retryable", async () => {
+    mockFetch(() => json({ id: "r", status: "FAILED", failure: "bad", failureCode: "SAFETY" }));
     expect((await pollRunwayVideoJob({ apiKey: "k", providerJobId: "r" })).error).toBe(
-      "Runway returned success without asset.",
+      "bad (SAFETY)",
     );
+    mockFetch(() => json({ id: "r", status: "CANCELLED", cost: { credits: 0 } }));
+    expect((await pollRunwayVideoJob({ apiKey: "k", providerJobId: "r" })).error).toBe(
+      "Runway task was cancelled.",
+    );
+    mockFetch(() => json({ error: "not found" }, 404));
+    expect((await pollRunwayVideoJob({ apiKey: "k", providerJobId: "r" })).status).toBe("failed");
+    mockFetch(() => json({ error: "slow down" }, 429));
+    expect(await pollRunwayVideoJob({ apiKey: "k", providerJobId: "r" })).toEqual({
+      status: "running",
+      retryable: true,
+      error: "slow down",
+    });
+    mockFetch((url) =>
+      url.includes("/tasks/")
+        ? json({ id: "r", status: "SUCCEEDED", output: ["https://cdn.example/x"] })
+        : new Response("no", { status: 403 }),
+    );
+    expect((await pollRunwayVideoJob({ apiKey: "k", providerJobId: "r" })).retryable).toBe(true);
     mockFetch(() => {
       throw new Error("offline");
     });
-    expect((await pollRunwayVideoJob({ apiKey: "k", providerJobId: "r" })).error).toBe("offline");
+    expect(await pollRunwayVideoJob({ apiKey: "k", providerJobId: "r" })).toEqual({
+      status: "running",
+      retryable: true,
+      error: "offline",
+    });
   });
 });

@@ -4,6 +4,10 @@
 /**
  * Luma Dream Machine video generation. Models: `luma/ray-2`, `luma/ray-1-6`, …
  * Key: LUMA_API_KEY (Bearer). Async: create a generation, poll until `completed`.
+ *
+ * Luma takes a start frame only as an image URL it can fetch (`keyframes.frame0.url`;
+ * https://docs.lumalabs.ai/docs/video-generation) — no data URI or upload — so a
+ * reference given as a Marina asset id is refused rather than sent as a URL.
  */
 
 import { Buffer } from "node:buffer";
@@ -22,6 +26,13 @@ function headers(apiKey: string): Record<string, string> {
 }
 
 export async function startLumaVideoJob(opts: VideoStartOptions): Promise<VideoResult> {
+  if (opts.referenceImage && !/^https:\/\//i.test(opts.referenceImage)) {
+    return {
+      status: "failed",
+      error:
+        "Luma takes a reference image only as a public https URL; a stored asset cannot be sent to it.",
+    };
+  }
   try {
     const model = bareModel(opts.model);
     const body: Record<string, unknown> = {
@@ -33,7 +44,7 @@ export async function startLumaVideoJob(opts: VideoStartOptions): Promise<VideoR
     if (opts.referenceImage) {
       body.keyframes = { frame0: { type: "image", url: opts.referenceImage } };
     }
-    const res = await fetch(`${BASE}/generations`, {
+    const res = await guardedFetch(`${BASE}/generations`, {
       method: "POST",
       headers: headers(opts.apiKey),
       body: JSON.stringify(body),
@@ -51,17 +62,23 @@ export async function startLumaVideoJob(opts: VideoStartOptions): Promise<VideoR
 
 export async function pollLumaVideoJob(opts: VideoPollOptions): Promise<VideoResult> {
   try {
-    const res = await fetch(`${BASE}/generations/${encodeURIComponent(opts.providerJobId)}`, {
-      headers: headers(opts.apiKey),
-      signal: opts.signal,
-    });
+    const res = await guardedFetch(
+      `${BASE}/generations/${encodeURIComponent(opts.providerJobId)}`,
+      {
+        headers: headers(opts.apiKey),
+        signal: opts.signal,
+      },
+    );
     const json = (await res.json()) as {
       state?: string;
       failure_reason?: string;
       assets?: { video?: string };
     };
     if (!res.ok) {
-      return { status: "failed", error: `Luma poll failed (${res.status})` };
+      const error = `Luma poll failed (${res.status})`;
+      return res.status === 429 || res.status >= 500
+        ? { status: "running", retryable: true, error }
+        : { status: "failed", error };
     }
     if (json.state === "failed") {
       return { status: "failed", error: json.failure_reason ?? "Luma reported failure." };
@@ -71,10 +88,15 @@ export async function pollLumaVideoJob(opts: VideoPollOptions): Promise<VideoRes
     const url = json.assets?.video;
     if (!url) return { status: "failed", error: "Luma completed without a video url." };
     const asset = await download(url, opts.signal);
-    if (!asset) return { status: "failed", error: "Luma video download failed." };
+    if (!asset) return { status: "running", retryable: true, error: "Luma video download failed." };
     return { status: "succeeded", asset };
   } catch (error) {
-    return { status: "failed", error: error instanceof Error ? error.message : String(error) };
+    // Network failure: keep the job and poll again; the job deadline bounds it.
+    return {
+      status: "running",
+      retryable: true,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 

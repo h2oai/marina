@@ -237,6 +237,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `A1111_API_KEY=` | Automatic1111 or SD.Next web UI for `automatic1111/<checkpoint>` images (AUTOMATIC1111_BASE_URL is accepted as an alias). Keyless unless the server requires one. | secret |
 | `TOGETHER_IMAGE_BASE_URL=https://api.together.ai/v1` | Any OpenAI-compatible image server: set &lt;PROVIDER&gt;_IMAGE_BASE_URL and &lt;PROVIDER&gt;_API_KEY, then use `<provider>/<model>`. Together is shown as an example. |  |
 | `MAX_IMAGE_JOBS_PER_DAY=50`<br>`MAX_VIDEO_JOBS_PER_DAY=5` | Image and video jobs per entity per rolling 24 h (defaults 50 and 5). 0 is unlimited. |  |
+| `MARINA_VIDEO_JOB_TIMEOUT_MIN=30` | Minutes a video job may stay rendering before it is failed with a timeout reason (default 30). Running jobs are polled from the database every ~5 s by the `media-video-poll` tick job, so a restart resumes them. Blank or invalid uses the default; there is no unlimited setting. |  |
 
 ## Search
 

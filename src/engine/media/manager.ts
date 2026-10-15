@@ -1,26 +1,53 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
 import type { MarinaDB, MediaJobRow, MediaJobType } from "../../persistence/database";
 import type { StorageProvider } from "../../storage/provider";
 import type { EngineEvent, EntityId } from "../../types";
+import { canvasReaderFor } from "../canvas-access";
 import type { Engine } from "../engine";
+import { getErrorMessage } from "../errors";
 import { dailyCapRefusal, recordSpend } from "../spend-ledger";
 import {
   getImageProvider,
   imageProviderRequiresKey,
   knownImageProviders,
 } from "./providers/image-registry";
-import type { ImageGenerator } from "./providers/image-util";
+import type { GeneratedAsset, ImageGenerator } from "./providers/image-util";
 import { moderateOpenAIText } from "./providers/openai";
+import { runwayCostEstimate } from "./providers/runway";
 import { getVideoProvider, knownVideoProviders } from "./providers/video-registry";
 import type { VideoResult } from "./providers/video-util";
 import { publishGeneratedAsset, storeGeneratedAsset } from "./publish";
+import { loadVisualSource, sniffRaster } from "./vision";
 
-const POLL_INTERVAL_MS = 5_000;
 /** Per-entity rolling-24h job caps when `MAX_{IMAGE,VIDEO}_JOBS_PER_DAY` is unset. */
 export const DEFAULT_MAX_IMAGE_JOBS_PER_DAY = 50;
 export const DEFAULT_MAX_VIDEO_JOBS_PER_DAY = 5;
+/** Minutes a video job may render before it fails, when `MARINA_VIDEO_JOB_TIMEOUT_MIN` is unset. */
+export const DEFAULT_VIDEO_JOB_TIMEOUT_MIN = 30;
+/** Bound on one provider call (start, poll + download) so a hung request never holds the poller. */
+const PROVIDER_CALL_TIMEOUT_MS = 60_000;
+/** Running video jobs examined per poll pass (oldest first). */
+const POLL_BATCH = 50;
+/**
+ * Largest stored image sent inline as a reference: Runway caps a data URI at
+ * 5 MiB of text, and base64 adds a third.
+ */
+const REFERENCE_INLINE_MAX_BYTES = 3_900_000;
+
+/**
+ * The overall deadline for a video job in ms: a positive number of minutes
+ * from `MARINA_VIDEO_JOB_TIMEOUT_MIN`, else the default — a typo or `0` never
+ * makes a render unbounded.
+ */
+export function videoJobTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.MARINA_VIDEO_JOB_TIMEOUT_MIN?.trim();
+  const n = raw ? Number(raw) : Number.NaN;
+  const minutes = Number.isFinite(n) && n > 0 ? n : DEFAULT_VIDEO_JOB_TIMEOUT_MIN;
+  return Math.round(minutes * 60_000);
+}
 
 /**
  * One entity's rolling-24h cap for a media type: a positive integer is the
@@ -73,9 +100,24 @@ interface MediaManagerDeps {
   logEvent: (event: EngineEvent) => void;
 }
 
-interface ActivePoll {
-  provider: string;
-  timer: ReturnType<typeof setInterval>;
+/** What a video job's events and completion need — rebuilt from the row on a resumed poll. */
+interface VideoJobContext {
+  type: "video";
+  entityId: EntityId;
+  entityName: string;
+  prompt: string;
+  model: string;
+  canvasId?: string;
+  duration?: number;
+  costHint?: number | null;
+}
+
+/** The result of one durable poll pass (for tests and operators). */
+export interface VideoPollPass {
+  polled: number;
+  succeeded: number;
+  failed: number;
+  timedOut: number;
 }
 
 export class MediaManager {
@@ -83,7 +125,7 @@ export class MediaManager {
   private db: MarinaDB;
   private resolveApiKey: ProviderKeyResolver;
   private logEvent: (event: EngineEvent) => void;
-  private polls = new Map<string, ActivePoll>();
+  private stopped = false;
 
   constructor(deps: MediaManagerDeps) {
     this.engine = deps.engine;
@@ -185,11 +227,12 @@ export class MediaManager {
     return this.db.getMediaJob(id);
   }
 
+  /**
+   * Stop starting new poll passes. Running jobs stay `running` in the
+   * database; the next process's `media-video-poll` tick job resumes them.
+   */
   stop(): void {
-    for (const poll of this.polls.values()) {
-      clearInterval(poll.timer);
-    }
-    this.polls.clear();
+    this.stopped = true;
   }
 
   private async handleImageJob(
@@ -315,181 +358,275 @@ export class MediaManager {
     if (!vp) {
       throw new Error(`Provider "${provider}" not yet supported for video generation.`);
     }
+    const referenceImage = await this.resolveReferenceImage(params);
     const start: VideoResult = await vp.start({
       apiKey,
       model: params.model,
       prompt: params.prompt,
       duration: params.duration,
       fps: params.fps,
-      referenceImage: params.referenceImage,
+      referenceImage,
       aspectRatio: params.aspectRatio,
+      signal: AbortSignal.timeout(PROVIDER_CALL_TIMEOUT_MS),
     });
-
-    if (start.status === "failed") {
-      this.db.updateMediaJob(jobId, {
-        status: "failed",
-        error: start.error ?? "Video job creation failed",
-        completedAt: Date.now(),
-      });
-      this.emitFeedEvent("media_failed", params, jobId, {
-        status: "failed",
-        message: start.error ?? "Video generation failed to start.",
-      });
-      return;
-    }
+    const ctx = videoContextFromParams(params);
 
     if (start.status === "succeeded" && start.asset) {
-      await this.completeVideoJob(
-        jobId,
-        params,
-        start.asset.data,
-        start.asset.mimeType,
-        start.asset.filename,
-      );
+      await this.finishVideoJob(jobId, "pending", ctx, start.asset, start.costUsd);
+      return;
+    }
+    if (start.status !== "running" || !start.providerJobId) {
+      // A running start with no task id could never be polled to completion.
+      const error =
+        start.status === "running"
+          ? "Video provider returned no task id to poll."
+          : (start.error ?? "Video job creation failed");
+      this.failVideoJob(jobId, "pending", ctx, error, start.costUsd);
       return;
     }
 
+    // From here the job is durable: the `media-video-poll` tick job polls it
+    // by its stored provider task id, across restarts, until its deadline.
     this.db.updateMediaJob(jobId, {
       status: "running",
-      providerJobId: start.providerJobId ?? null,
+      providerJobId: start.providerJobId,
       metadata: { progress: start.progress ?? 0 },
     });
-
-    this.emitFeedEvent("media_rendering", params, jobId, {
+    this.emitFeedEvent("media_rendering", ctx, jobId, {
       status: "running",
       message: "Video render started.",
-      providerJobId: start.providerJobId ?? undefined,
+      providerJobId: start.providerJobId,
     });
-
-    if (!start.providerJobId) {
-      return;
-    }
-
-    this.schedulePoll(jobId, start.providerJobId, params);
   }
 
-  private schedulePoll(jobId: string, providerJobId: string, params: VideoJobParams): void {
-    if (this.polls.has(jobId)) {
-      clearInterval(this.polls.get(jobId)!.timer);
+  /**
+   * A video job's reference image as the providers take it: an `https://`
+   * URL or an image data URI pass through; anything else is a canvas node or
+   * asset reference (`node:<id>`, `asset:<id>`, a bare id) or an http URL,
+   * loaded as the requester — a private asset they may not read is "not
+   * found" — checked to be a raster image, and inlined as a data URI.
+   */
+  private async resolveReferenceImage(params: VideoJobParams): Promise<string | undefined> {
+    const ref = params.referenceImage?.trim();
+    if (!ref) return undefined;
+    if (/^https:\/\//i.test(ref) || /^data:image\//i.test(ref)) return ref;
+    const src = await loadVisualSource(
+      this.engine,
+      ref,
+      canvasReaderFor(this.engine, params.entityId, { inWorld: true }),
+    );
+    const mime = sniffRaster(src.data);
+    if (!mime) throw new Error(`Reference "${ref}" is not a PNG, JPEG, GIF or WebP image.`);
+    if (src.data.byteLength > REFERENCE_INLINE_MAX_BYTES) {
+      throw new Error(
+        `Reference image is too large to send (${src.data.byteLength} bytes; limit ${REFERENCE_INLINE_MAX_BYTES}).`,
+      );
+    }
+    return `data:${mime};base64,${Buffer.from(src.data).toString("base64")}`;
+  }
+
+  /**
+   * One durable poll pass over every `running` video job in the database —
+   * the only video polling path (the `media-video-poll` tick job, so it also
+   * resumes jobs a previous process left running). A job past its deadline
+   * (`MARINA_VIDEO_JOB_TIMEOUT_MIN`) fails with a timeout reason; a transient
+   * provider error keeps it running for the next pass.
+   */
+  async pollRunningVideoJobs(now = Date.now()): Promise<VideoPollPass> {
+    const pass: VideoPollPass = { polled: 0, succeeded: 0, failed: 0, timedOut: 0 };
+    if (this.stopped) return pass;
+    const rows = this.db.listMediaJobsByStatus({
+      status: "running",
+      type: "video",
+      limit: POLL_BATCH,
+    });
+    const timeoutMs = videoJobTimeoutMs();
+    await Promise.all(
+      rows.map(async (row) => {
+        const outcome = await this.pollVideoJob(row, now, timeoutMs).catch((error: unknown) => {
+          // A bug or storage failure in one job never stops the others.
+          const ctx = videoContextFromRow(row);
+          this.failVideoJob(row.id, "running", ctx, getErrorMessage(error));
+          return "failed" as const;
+        });
+        pass.polled += 1;
+        if (outcome === "succeeded") pass.succeeded += 1;
+        else if (outcome === "failed") pass.failed += 1;
+        else if (outcome === "timed-out") pass.timedOut += 1;
+      }),
+    );
+    return pass;
+  }
+
+  private async pollVideoJob(
+    row: MediaJobRow,
+    now: number,
+    timeoutMs: number,
+  ): Promise<"running" | "succeeded" | "failed" | "timed-out"> {
+    const ctx = videoContextFromRow(row);
+    if (now - row.created_at > timeoutMs) {
+      const minutes = Math.round(timeoutMs / 60_000);
+      const task = row.provider_job_id ? ` (provider task ${row.provider_job_id})` : "";
+      this.failVideoJob(
+        row.id,
+        "running",
+        ctx,
+        `Video job timed out: still rendering after ${minutes} min${task}. Raise MARINA_VIDEO_JOB_TIMEOUT_MIN to wait longer.`,
+      );
+      return "timed-out";
+    }
+    if (!row.provider_job_id) {
+      this.failVideoJob(row.id, "running", ctx, "Video job has no provider task id to poll.");
+      return "failed";
+    }
+    const vp = getVideoProvider(row.provider);
+    if (!vp) {
+      this.failVideoJob(row.id, "running", ctx, `Provider "${row.provider}" no longer supported.`);
+      return "failed";
+    }
+    const apiKey = this.resolveApiKey(row.provider);
+    if (!apiKey) {
+      this.failVideoJob(row.id, "running", ctx, "Missing provider key during polling.");
+      return "failed";
     }
 
-    const provider = this.extractProvider(params.model);
-    const timer = setInterval(async () => {
-      try {
-        const apiKey = this.resolveApiKey(provider);
-        if (!apiKey) throw new Error("Missing provider key during polling.");
-        const vp = getVideoProvider(provider);
-        if (!vp) throw new Error(`Provider "${provider}" no longer supported.`);
-        const poll: VideoResult = await vp.poll({ apiKey, providerJobId });
+    const poll = await vp.poll({
+      apiKey,
+      providerJobId: row.provider_job_id,
+      signal: AbortSignal.timeout(PROVIDER_CALL_TIMEOUT_MS),
+    });
 
-        if (poll.status === "running") {
-          this.db.updateMediaJob(jobId, {
-            metadata: { progress: poll.progress ?? null },
-          });
-          if (poll.progress !== undefined) {
-            this.emitFeedEvent("media_rendering", params, jobId, {
-              status: "running",
-              progress: poll.progress,
-            });
-          }
-          return;
-        }
-
-        clearInterval(timer);
-        this.polls.delete(jobId);
-
-        if (poll.status === "failed") {
-          this.db.updateMediaJob(jobId, {
-            status: "failed",
-            error: poll.error ?? "Video generation failed",
-            completedAt: Date.now(),
-          });
-          this.emitFeedEvent("media_failed", params, jobId, {
-            status: "failed",
-            message: poll.error ?? "Video generation failed.",
-          });
-          return;
-        }
-
-        if (poll.status === "succeeded" && poll.asset) {
-          await this.completeVideoJob(
-            jobId,
-            params,
-            poll.asset.data,
-            poll.asset.mimeType,
-            poll.asset.filename,
-          );
-        }
-      } catch (err) {
-        clearInterval(timer);
-        this.polls.delete(jobId);
-        const msg = err instanceof Error ? err.message : String(err);
-        this.db.updateMediaJob(jobId, {
-          status: "failed",
-          error: msg,
-          completedAt: Date.now(),
-        });
-        this.emitFeedEvent("media_failed", params, jobId, {
-          status: "failed",
-          message: msg,
+    if (poll.status === "running") {
+      const prior = parseJson(row.metadata);
+      const progress = poll.progress ?? (prior.progress as number | null | undefined) ?? null;
+      this.db.updateMediaJob(row.id, {
+        metadata: {
+          ...prior,
+          progress,
+          lastPolledAt: now,
+          lastPollError: poll.retryable ? (poll.error ?? "transient provider error") : null,
+        },
+      });
+      if (poll.progress !== undefined && poll.progress !== prior.progress) {
+        this.emitFeedEvent("media_rendering", ctx, row.id, {
+          status: "running",
+          progress: poll.progress,
         });
       }
-    }, POLL_INTERVAL_MS);
-
-    this.polls.set(jobId, { provider, timer });
+      return "running";
+    }
+    if (poll.status === "succeeded" && poll.asset) {
+      return (await this.finishVideoJob(row.id, "running", ctx, poll.asset, poll.costUsd))
+        ? "succeeded"
+        : "running";
+    }
+    this.failVideoJob(
+      row.id,
+      "running",
+      ctx,
+      poll.error ??
+        (poll.status === "succeeded"
+          ? "Video provider returned no asset."
+          : "Video generation failed."),
+      poll.costUsd,
+    );
+    return "failed";
   }
 
-  private async completeVideoJob(
+  /**
+   * Fail a video job if it is still in `from` (compare-and-set). A provider
+   * that reports a charge for a failed task (`costUsd > 0`) has that charge
+   * recorded once, by the caller that made the transition.
+   */
+  private failVideoJob(
     jobId: string,
-    params: VideoJobParams,
-    data: Uint8Array,
-    mimeType: string,
-    filename: string,
-  ): Promise<void> {
-    const stored = await storeGeneratedAsset({
-      engine: this.engine,
-      entityName: params.entityName,
-      filename,
-      mimeType,
-      data,
-      prompt: params.prompt,
-      model: params.model,
-      metadata: { provider: this.extractProvider(params.model) },
-      id: crypto.randomUUID(),
+    from: "pending" | "running",
+    ctx: VideoJobContext,
+    error: string,
+    costUsd?: number,
+  ): void {
+    const claimed = this.db.transitionMediaJob(jobId, from, {
+      status: "failed",
+      error,
+      completedAt: Date.now(),
     });
+    if (!claimed) return;
+    if (costUsd && costUsd > 0) recordSpend("media", costUsd);
+    this.emitFeedEvent("media_failed", ctx, jobId, { status: "failed", message: error });
+  }
+
+  /**
+   * Store the rendered video, then complete the job if it is still in `from`
+   * (compare-and-set). Only the caller that wins the transition records the
+   * spend (the provider's reported charge, else the job's estimate), publishes
+   * the canvas node and emits completion — so a job is never charged or
+   * published twice, even if two passes or two processes observe the same
+   * finished task. Returns whether this call completed the job.
+   */
+  private async finishVideoJob(
+    jobId: string,
+    from: "pending" | "running",
+    ctx: VideoJobContext,
+    asset: GeneratedAsset,
+    costUsd?: number,
+  ): Promise<boolean> {
+    const cost = costUsd ?? this.db.getMediaJob(jobId)?.cost_estimate ?? estimateCost(ctx);
+    let stored: { id: string };
+    try {
+      stored = await storeGeneratedAsset({
+        engine: this.engine,
+        entityName: ctx.entityName,
+        filename: asset.filename,
+        mimeType: asset.mimeType,
+        data: asset.data,
+        prompt: ctx.prompt,
+        model: ctx.model,
+        metadata: { provider: this.extractProvider(ctx.model) },
+        id: crypto.randomUUID(),
+      });
+    } catch (error) {
+      // The render is done and paid for; only keeping it failed.
+      this.failVideoJob(
+        jobId,
+        from,
+        ctx,
+        `Video rendered but storing it failed: ${getErrorMessage(error)}`,
+        cost ?? undefined,
+      );
+      return false;
+    }
+    const claimed = this.db.transitionMediaJob(jobId, from, {
+      status: "succeeded",
+      assetId: stored.id,
+      error: null,
+      completedAt: Date.now(),
+    });
+    if (!claimed) return false;
+    recordSpend("media", cost ?? undefined);
 
     const canvasId =
-      (params.canvasId && this.engine.db?.getCanvas(params.canvasId)?.id) ??
-      this.engine.db?.ensureEntityCanvas(params.entityId, params.entityName, params.entityName)
-        .id ??
+      (ctx.canvasId && this.engine.db?.getCanvas(ctx.canvasId)?.id) ??
+      this.engine.db?.ensureEntityCanvas(ctx.entityId, ctx.entityName, ctx.entityName).id ??
       null;
-
     if (canvasId) {
       publishGeneratedAsset({
         engine: this.engine,
-        entityId: params.entityId,
-        entityName: params.entityName,
+        entityId: ctx.entityId,
+        entityName: ctx.entityName,
         assetId: stored.id,
         nodeType: "video",
-        prompt: params.prompt,
-        model: params.model,
+        prompt: ctx.prompt,
+        model: ctx.model,
         canvasId,
-        summary: `${params.entityName} generated a video.`,
+        summary: `${ctx.entityName} generated a video.`,
       });
     }
-
-    this.recordMediaSpend(params);
-    this.db.updateMediaJob(jobId, {
+    this.emitFeedEvent("media_complete", ctx, jobId, {
       status: "succeeded",
-      assetId: stored.id,
-      completedAt: Date.now(),
-    });
-
-    this.emitFeedEvent("media_complete", params, jobId, {
-      status: "succeeded",
-      message: `Video ready (${filename})`,
+      message: `Video ready (${asset.filename})`,
       assetId: stored.id,
     });
+    return true;
   }
 
   private enforceQuota(entityName: string, type: MediaJobType): void {
@@ -512,7 +649,7 @@ export class MediaManager {
 
   private emitFeedEvent(
     kind: string,
-    params: StartJobParams,
+    params: FeedSubject,
     jobId: string,
     payload: Record<string, unknown>,
   ): void {
@@ -535,9 +672,55 @@ export class MediaManager {
   }
 }
 
+/** What a feed event names: who, which media type, which model, which canvas. */
+type FeedSubject = Pick<BaseJobParams, "entityId" | "entityName" | "model" | "canvasId"> & {
+  type: MediaJobType;
+};
+
+function parseJson(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch {
+    // allow-empty-catch: a malformed stored JSON column reads as empty.
+    return {};
+  }
+}
+
+function videoContextFromParams(params: VideoJobParams): VideoJobContext {
+  return {
+    type: "video",
+    entityId: params.entityId,
+    entityName: params.entityName,
+    prompt: params.prompt,
+    model: params.model,
+    ...(params.canvasId ? { canvasId: params.canvasId } : {}),
+    ...(params.duration !== undefined ? { duration: params.duration } : {}),
+    costHint: params.costHint ?? null,
+  };
+}
+
+/** Rebuild a video job's context from its durable row (a resumed poll has no request params). */
+function videoContextFromRow(row: MediaJobRow): VideoJobContext {
+  const options = parseJson(row.options);
+  const canvasId = typeof options.canvasId === "string" ? options.canvasId : undefined;
+  const duration = typeof options.duration === "number" ? options.duration : undefined;
+  return {
+    type: "video",
+    entityId: (row.entity_id ?? row.entity_name) as EntityId,
+    entityName: row.entity_name,
+    prompt: row.prompt,
+    model: row.model,
+    ...(canvasId ? { canvasId } : {}),
+    ...(duration !== undefined ? { duration } : {}),
+    costHint: row.cost_estimate,
+  };
+}
+
 function summarizeFeed(
   kind: string,
-  params: StartJobParams,
+  params: FeedSubject,
   payload: Record<string, unknown>,
 ): string {
   const base = `${params.entityName} ${params.type} (${params.model})`;
@@ -557,12 +740,17 @@ function summarizeFeed(
   }
 }
 
-function estimateCost(params: StartJobParams): number | null {
+type CostSubject = { type: MediaJobType; model: string; costHint?: number | null } & Partial<
+  Pick<ImageJobParams, "width" | "height"> & Pick<VideoJobParams, "duration">
+>;
+
+function estimateCost(params: CostSubject): number | null {
+  if (params.costHint != null) return params.costHint;
   const provider = params.model.split(/[:/]/)[0] ?? "";
   if (params.type === "image") {
     if (provider === "openai") {
-      const width = (params as ImageJobParams).width ?? 1024;
-      const height = (params as ImageJobParams).height ?? 1024;
+      const width = params.width ?? 1024;
+      const height = params.height ?? 1024;
       const megapixels = (width * height) / 1_000_000;
       return Number((0.04 * megapixels).toFixed(3));
     }
@@ -577,10 +765,11 @@ function estimateCost(params: StartJobParams): number | null {
     }
   }
   if (params.type === "video") {
-    const duration = (params as VideoJobParams).duration ?? 10;
     if (provider === "runway") {
-      return Number((0.015 * duration).toFixed(3));
+      // Runway's published credit price per model (gen4.5: 12 credits/s at $0.01).
+      return runwayCostEstimate(params.model, params.duration);
     }
+    const duration = params.duration ?? 8;
     if (provider === "google") {
       // Veo is priced per second; rough order-of-magnitude estimate.
       return Number((0.4 * duration).toFixed(2));

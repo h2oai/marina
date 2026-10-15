@@ -796,6 +796,9 @@ export class Engine {
         get flywheel() {
           return engine.flywheel;
         },
+        get mediaManager() {
+          return engine.mediaManager;
+        },
         readiness: () => computeReadiness(engine),
         cleanupOrphanedAgents: () => engine.cleanupOrphanedAgents(),
         applyRankProgression: (db) => engine.applyRankProgressionToOnlineEntities(db),

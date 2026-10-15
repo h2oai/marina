@@ -228,6 +228,8 @@ describe("Engine tick schedule", () => {
       { name: "rank-progression", every: 3600, phase: 3000 },
       { name: "lessons-from-work", every: 3600, phase: 3300 },
       { name: "outcome-delivery", every: 300, phase: 150 },
+      // ~5 s, floored at 2 ticks so it has a phase of its own (this engine ticks every 60 s).
+      { name: "media-video-poll", every: 2, phase: 1 },
       { name: "schedules", every: 10, phase: 3 },
       { name: "outcome-autoresolve", every: 3600, phase: 3450 },
       { name: "outcome-judge", every: 3600, phase: 3150 },
