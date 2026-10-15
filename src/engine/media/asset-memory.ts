@@ -29,10 +29,16 @@
  * the old one stays readable as history); a part that disappears, an asset
  * its owner can no longer read, and a deleted asset RETIRE their records (a
  * tombstone revision closing `valid_time`, as `note delete` does) — never a
- * silent orphan and never an erasure. Deletion through any path is caught by
- * the orphan sweep (every {@link ORPHAN_SWEEP_EVERY} passes); until then the
- * read path already refuses to serve a record whose asset is gone or
- * unreadable (`assetReadableBy`).
+ * silent orphan and never an erasure. Deletion through any path is queued by
+ * the `assets_memory_deleted` trigger (migration 169) and retired on the next
+ * pass; until then the read path already refuses to serve a record whose
+ * asset is gone or unreadable (`assetReadableBy`).
+ *
+ * Incremental: each pass walks only assets changed since a durable watermark
+ * (`(updated_at, id)` over `idx_assets_updated`, kept per mode in the
+ * `core_memory` state of `media:memory`), so a world of unchanged assets costs
+ * one indexed range read per pass. Any `updated_at` bump (a caption, tag or
+ * `setAssetText` edit, or any other writer that bumps it) re-indexes the asset.
  *
  * Access: a record is served only while its reader may read the asset
  * (`asset-memory-access.ts`). Request-staged images and derivatives are never
@@ -54,7 +60,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { residentMemoryOperation } from "../../memory/resident-service";
 import type { MarinaDB } from "../../persistence/database";
-import { type AssetRow, assetTypeOf } from "../../persistence/db-assets";
+import { type AssetCursor, type AssetRow, assetTypeOf } from "../../persistence/db-assets";
 import { MemoryClientError } from "../../sdk/memory-client";
 import type { MemoryOperationRequest } from "../../sdk/memory-operations";
 import type { StorageProvider } from "../../storage/provider";
@@ -104,16 +110,12 @@ export function mediaMemoryMode(
   return "text";
 }
 
-/** Assets indexed per pass. */
-export const ASSET_MEMORY_BATCH = 4;
+/** Assets indexed per pass at most ({@link MEMORY_OPS_PER_PASS} usually binds first). */
+export const ASSET_MEMORY_BATCH = 16;
 /** Vision calls per pass (vision mode). */
 export const VISION_CALLS_PER_PASS = 1;
 /** Vision calls per rolling hour in this process (vision mode). */
 export const VISION_CALLS_PER_HOUR = 60;
-/** Passes between sweeps for records whose asset was deleted. */
-export const ORPHAN_SWEEP_EVERY = 4;
-/** Orphaned assets retired per sweep. */
-export const ORPHAN_SWEEP_LIMIT = 20;
 /** Records made from one asset at most (later chunks are dropped and the stamp says so). */
 export const MAX_RECORDS_PER_ASSET = 120;
 /** PDF pages read by `pdftotext`. */
@@ -159,18 +161,25 @@ export interface AssetMemoryHost {
 export interface AssetMemoryOptions {
   env?: Record<string, string | undefined>;
   now?: number;
-  /** Assets examined (default {@link ASSET_MEMORY_BATCH}). */
+  /** Assets indexed per pass (default {@link ASSET_MEMORY_BATCH}). */
   limit?: number;
-  /** The vision call (default: `describeVisual` through the engine's model proxy). */
+  /** Memory requests per pass before no new asset starts (default {@link MEMORY_OPS_PER_PASS}). */
+  maxMemoryOps?: number;
+  /** The vision call; without one, vision mode records `unavailable` (the server passes `engineAssetDescriber`). */
   describe?: (src: VisualSource) => Promise<VisualDescription>;
-  /** Run the orphan sweep this pass regardless of the counter. */
-  sweep?: boolean;
 }
 
 export interface AssetMemoryReport {
+  /** Asset rows read from the change walk (unchanged assets are never re-read). */
   examined: number;
+  /** Assets that ended `indexed` or `empty`. */
   indexed: number;
+  /** Assets handed to the per-asset indexer (the per-asset work done). */
+  indexedAssets: number;
+  /** Records of deleted assets retired. */
   orphansRetired: number;
+  /** The memory store asked the pass to back off; it resumes next pass. */
+  busy?: boolean;
   visionCalls: number;
 }
 
@@ -441,13 +450,11 @@ export async function extractPdfText(
 
 let hourStart = 0;
 let hourCalls = 0;
-let passes = 0;
 
 /** For tests. */
 export function resetAssetMemoryForTests(): void {
   hourStart = 0;
   hourCalls = 0;
-  passes = 0;
 }
 
 function isRasterImage(row: Pick<AssetRow, "mime_type">): boolean {
@@ -456,7 +463,19 @@ function isRasterImage(row: Pick<AssetRow, "mime_type">): boolean {
 
 interface PassBudget {
   visionCalls: number;
+  /** Memory requests made on owners' credentials this pass. */
+  memoryOps: number;
 }
+
+/**
+ * Memory requests one pass makes at most before it stops starting new assets.
+ * The indexer spends the OWNER's memory request budget (100 burst, 25/s per
+ * principal), so a pass leaves most of it to the owner's own work.
+ */
+export const MEMORY_OPS_PER_PASS = 40;
+
+/** The memory store asked the pass to back off (429/503); the asset is retried next pass. */
+export class AssetMemoryBusy extends Error {}
 
 async function visionStep(
   host: AssetMemoryHost,
@@ -526,7 +545,7 @@ export async function indexAssetMemory(
   host: AssetMemoryHost,
   assetId: string,
   opts: AssetMemoryOptions = {},
-  budget: PassBudget = { visionCalls: 0 },
+  budget: PassBudget = { visionCalls: 0, memoryOps: 0 },
 ): Promise<AssetMemoryStamp | undefined> {
   const db = host.db;
   if (!db) return undefined;
@@ -542,7 +561,10 @@ export async function indexAssetMemory(
     return full;
   };
   if (mode === "off") return undefined;
-  const run: Run = (request) => residentMemoryOperation(db, row!.entity_name, request);
+  const run: Run = (request) => {
+    budget.memoryOps++;
+    return residentMemoryOperation(db, row!.entity_name, request);
+  };
   try {
     // The owner reads its own asset's memory, so it must be able to read the asset.
     if (!assetReadableBy(db, { name: row.entity_name }, row, dbCanvasHost(db))) {
@@ -577,8 +599,17 @@ export async function indexAssetMemory(
       0,
       32,
     );
-    // Nothing changed since the last index (a facts-only or tag-neutral update): no memory call.
-    if (prior?.hash === hash && prior.state === "indexed") {
+    // Nothing changed since the last index (a facts-only or tag-neutral update),
+    // or a never-indexed asset with no text (no records can exist): no memory call.
+    if ((prior?.hash === hash && prior.state === "indexed") || (!prior && chunks.length === 0)) {
+      if (!prior)
+        return stamp({
+          state: "empty",
+          records: 0,
+          hash,
+          ...visionFields(vision),
+          ...(notes.length ? { note: notes.join("; ").slice(0, 300) } : {}),
+        });
       return stamp({
         state: "indexed",
         records: prior.records,
@@ -599,6 +630,11 @@ export async function indexAssetMemory(
     const code = error instanceof MemoryClientError ? error.code : undefined;
     if (code === "world_identity_required")
       return stamp({ state: "skipped", records: 0, note: "owner has no world account" });
+    // The owner's memory request budget (or a busy store): not a failure of
+    // this asset — leave it unstamped and stop the pass; writes are keyed, so
+    // the retry continues where this one stopped.
+    const status = error instanceof MemoryClientError ? error.status : undefined;
+    if (status === 429 || status === 503) throw new AssetMemoryBusy(getErrorMessage(error));
     logger.warn("media", "Asset memory indexing failed", {
       id: assetId,
       error: getErrorMessage(error),
@@ -620,51 +656,42 @@ function visionFields(
   };
 }
 
-// ─── Orphans (deleted assets) ──────────────────────────────────────────────
+// ─── Deleted assets ────────────────────────────────────────────────────────
 
-/** Spaces holding current asset-text records whose asset no longer exists. */
-export function findAssetMemoryOrphans(
+/**
+ * Retire the records of deleted assets (all modes). Every delete path queues
+ * the asset through the `assets_memory_deleted` trigger (migration 169) as a
+ * `deleted:<id>` state entry naming its owner; this reads at most `limit` of
+ * them (a primary-key range read, never a memory scan), retires the asset's
+ * records in the owner's resident space (an indexed subject query) and clears
+ * the entry. Returns records retired.
+ */
+export async function retireDeletedAssetMemory(
   db: MarinaDB,
-  now: number,
-  limit = ORPHAN_SWEEP_LIMIT,
-): { spaceId: string; ownerId: string; assetId: string }[] {
-  try {
-    const rows = db
-      .memoryRepository()
-      .raw.query(
-        `SELECT r.space_id AS space_id, s.owner_id AS owner_id, substr(r.subject, 7) AS asset_id
-           FROM memory_records r JOIN memory_spaces s ON s.id = r.space_id
-          WHERE r.status = 'active' AND r.subject GLOB 'asset:*'
-            AND (r.valid_until IS NULL OR r.valid_until > ?)
-            AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.id = substr(r.subject, 7))
-          GROUP BY r.space_id, r.subject
-          LIMIT ?`,
-      )
-      .all(now, limit) as { space_id: string; owner_id: string; asset_id: string }[];
-    return rows.map((r) => ({ spaceId: r.space_id, ownerId: r.owner_id, assetId: r.asset_id }));
-  } catch (error) {
-    logger.warn("media", "Asset memory orphan query failed", { error: getErrorMessage(error) });
-    return [];
-  }
-}
-
-/** Retire the records of deleted assets (all modes). Returns records retired. */
-export async function sweepAssetMemoryOrphans(db: MarinaDB, now = Date.now()): Promise<number> {
+  now = Date.now(),
+  limit = DELETED_PER_PASS,
+): Promise<number> {
   let retired = 0;
-  for (const o of findAssetMemoryOrphans(db, now)) {
-    const owner = db.getUser(o.ownerId)?.name;
-    if (!owner) continue;
+  for (const entry of db.listAssetMemoryState(DELETED_PREFIX, limit)) {
+    const assetId = entry.key.slice(DELETED_PREFIX.length);
+    // Re-created under the same id (an import): nothing to retire.
+    if (db.getAsset(assetId)) {
+      db.deleteAssetMemoryState(entry.key);
+      continue;
+    }
     try {
-      retired += await retireAssetRecords(
-        (request) => residentMemoryOperation(db, owner, request),
-        o.assetId,
-        "asset deleted",
-        now,
-        o.spaceId,
-      );
+      if (canHoldMemory(db, entry.value))
+        retired += await retireAssetRecords(
+          (request) => residentMemoryOperation(db, entry.value, request),
+          assetId,
+          "asset deleted",
+          now,
+        );
+      db.deleteAssetMemoryState(entry.key);
     } catch (error) {
+      // Kept for the next pass.
       logger.warn("media", "Retiring a deleted asset's memory failed", {
-        id: o.assetId,
+        id: assetId,
         error: getErrorMessage(error),
       });
     }
@@ -672,13 +699,79 @@ export async function sweepAssetMemoryOrphans(db: MarinaDB, now = Date.now()): P
   return retired;
 }
 
+/** An owner the resident binding accepts (no account ⇒ it never had records). */
+function canHoldMemory(db: MarinaDB, name: string): boolean {
+  const user = db.getUserByName(name);
+  const principal = db.getPrincipal("human", name);
+  return !!user && !!principal && user.id === principal.principal_id;
+}
+
 // ─── The pass ──────────────────────────────────────────────────────────────
 
+const DELETED_PREFIX = "deleted:";
+const PENDING_PREFIX = "vision-pending:";
+/** Deleted assets retired per pass. */
+export const DELETED_PER_PASS = 20;
+/** Rows read from the change walk per pass (only changed rows are ever read). */
+export const WALK_PER_PASS = 200;
 /**
- * One bounded indexing pass (the `asset-backfill` tick job): the orphan sweep
- * every {@link ORPHAN_SWEEP_EVERY} passes, then up to `limit` assets whose
- * text changed since they were indexed (or, in vision mode, whose image has
- * not been looked at yet).
+ * The watermark never passes a row changed this recently: a row bumped to the
+ * same millisecond as the watermark (with a smaller id) is still read next pass.
+ */
+export const WATERMARK_SETTLE_MS = 2_000;
+
+function watermarkKey(mode: MediaMemoryMode): string {
+  return `watermark:${mode}`;
+}
+
+function readWatermark(db: MarinaDB, mode: MediaMemoryMode): AssetCursor | undefined {
+  const raw = db.getAssetMemoryState(watermarkKey(mode));
+  if (!raw) return undefined;
+  try {
+    const v = JSON.parse(raw) as { updatedAt?: unknown; id?: unknown };
+    return typeof v.updatedAt === "number" && typeof v.id === "string"
+      ? { updatedAt: v.updatedAt, id: v.id }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `vision-pending:<retry ms, 15 digits>:<asset>` — key order is due order. */
+function pendingKey(retryAt: number, assetId: string): string {
+  return `${PENDING_PREFIX}${String(Math.max(0, Math.floor(retryAt))).padStart(15, "0")}:${assetId}`;
+}
+
+/** Does this row need the indexer (or, in vision mode, its vision pass)? Row-local, no I/O. */
+function needsIndexing(row: AssetRow, mode: MediaMemoryMode): boolean {
+  if (row.derived_from || row.origin === "request") return false;
+  const stamp = readMemoryStamp(row);
+  if (!stamp || stamp.updated_at < row.updated_at) return true;
+  return mode === "vision" && isRasterImage(row) && stamp.vision === undefined;
+}
+
+async function indexAndQueue(
+  host: AssetMemoryHost,
+  db: MarinaDB,
+  assetId: string,
+  opts: AssetMemoryOptions,
+  budget: PassBudget,
+  report: AssetMemoryReport,
+): Promise<void> {
+  report.indexedAssets++;
+  const s = await indexAssetMemory(host, assetId, opts, budget);
+  if (s?.state === "indexed" || s?.state === "empty") report.indexed++;
+  if (s?.vision === "pending")
+    db.setAssetMemoryState(pendingKey(s.retry_at ?? Date.now(), assetId), "1");
+}
+
+/**
+ * One bounded, incremental pass (the `asset-backfill` tick job):
+ *  1. retire the records of deleted assets queued by the delete trigger;
+ *  2. in vision mode, retry images whose vision pass is due (`vision-pending:`);
+ *  3. walk assets changed since this mode's durable watermark
+ *     (`idx_assets_updated`), indexing at most `limit` of them; unchanged
+ *     assets are never read again once the watermark has passed them.
  */
 export async function runAssetMemoryPass(
   host: AssetMemoryHost,
@@ -687,27 +780,61 @@ export async function runAssetMemoryPass(
   const report: AssetMemoryReport = {
     examined: 0,
     indexed: 0,
+    indexedAssets: 0,
     orphansRetired: 0,
     visionCalls: 0,
   };
   const db = host.db;
   if (!db) return report;
   const now = opts.now ?? Date.now();
-  if (opts.sweep || passes++ % ORPHAN_SWEEP_EVERY === 0)
-    report.orphansRetired = await sweepAssetMemoryOrphans(db, now);
+  report.orphansRetired = await retireDeletedAssetMemory(db, now);
   const mode = mediaMemoryMode(opts.env ?? process.env);
   if (mode === "off") return report;
-  const budget: PassBudget = { visionCalls: 0 };
-  const rows = db.listAssetsForMemoryIndex({
-    limit: opts.limit ?? ASSET_MEMORY_BATCH,
-    vision: mode === "vision",
-    now,
-  });
-  for (const row of rows) {
-    report.examined++;
-    const s = await indexAssetMemory(host, row.id, opts, budget);
-    if (s?.state === "indexed" || s?.state === "empty") report.indexed++;
+  const budget: PassBudget = { visionCalls: 0, memoryOps: 0 };
+  const limit = opts.limit ?? ASSET_MEMORY_BATCH;
+
+  const maxOps = opts.maxMemoryOps ?? MEMORY_OPS_PER_PASS;
+  const room = () => report.indexedAssets < limit && budget.memoryOps < maxOps;
+
+  let watermark = readWatermark(db, mode);
+  const start = watermark;
+  try {
+    if (mode === "vision") {
+      for (const entry of db.listAssetMemoryState(PENDING_PREFIX, limit)) {
+        const due = Number(entry.key.slice(PENDING_PREFIX.length, PENDING_PREFIX.length + 15));
+        if (due > now || !room()) break;
+        const assetId = entry.key.slice(PENDING_PREFIX.length + 16);
+        await indexAndQueue(host, db, assetId, opts, budget, report);
+        // Cleared only once handled (a busy store leaves it for the next pass).
+        db.deleteAssetMemoryState(entry.key);
+      }
+    }
+
+    let cursor = watermark;
+    let frozen = false;
+    const settled = now - WATERMARK_SETTLE_MS;
+    walk: for (;;) {
+      const rows = db.listAssetsChangedSince(cursor, WALK_PER_PASS);
+      for (const row of rows) {
+        report.examined++;
+        if (needsIndexing(row, mode)) {
+          if (!room()) break walk; // the watermark stays before it
+          await indexAndQueue(host, db, row.id, opts, budget, report);
+        }
+        cursor = { updatedAt: row.updated_at, id: row.id };
+        // Advance only past settled rows; a fresh one (and every later one) is
+        // read again next pass, where its stamp makes it a no-op.
+        if (row.updated_at >= settled) frozen = true;
+        if (!frozen) watermark = cursor;
+      }
+      if (rows.length < WALK_PER_PASS || report.examined >= WALK_PER_PASS) break;
+    }
+  } catch (error) {
+    if (!(error instanceof AssetMemoryBusy)) throw error;
+    report.busy = true;
   }
+  if (watermark && (watermark.updatedAt !== start?.updatedAt || watermark.id !== start?.id))
+    db.setAssetMemoryState(watermarkKey(mode), JSON.stringify(watermark));
   report.visionCalls = budget.visionCalls;
   return report;
 }

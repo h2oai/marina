@@ -3349,8 +3349,24 @@ export class MarinaDB implements MarinaStores {
     return assetsDb.setAssetMetadataKey(this.db, id, key, value, opts);
   }
 
-  listAssetsForMemoryIndex(opts: { limit: number; vision: boolean; now: number }): AssetRow[] {
-    return assetsDb.listAssetsForMemoryIndex(this.db, opts);
+  listAssetsChangedSince(after: assetsDb.AssetCursor | undefined, limit: number): AssetRow[] {
+    return assetsDb.listAssetsChangedSince(this.db, after, limit);
+  }
+
+  getAssetMemoryState(key: string): string | undefined {
+    return assetsDb.getAssetMemoryState(this.db, key);
+  }
+
+  setAssetMemoryState(key: string, value: string): void {
+    assetsDb.setAssetMemoryState(this.db, key, value);
+  }
+
+  deleteAssetMemoryState(key: string): void {
+    assetsDb.deleteAssetMemoryState(this.db, key);
+  }
+
+  listAssetMemoryState(prefix: string, limit: number): { key: string; value: string }[] {
+    return assetsDb.listAssetMemoryState(this.db, prefix, limit);
   }
 
   setAssetTags(id: string, add: readonly string[], remove: readonly string[]): string[] {

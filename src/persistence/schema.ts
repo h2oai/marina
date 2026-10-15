@@ -916,6 +916,26 @@ CREATE TRIGGER asset_tags_fts_ad AFTER DELETE ON asset_tags BEGIN
 END;
 `,
   },
+  // Migration 169 — memory over media (src/engine/media/asset-memory.ts).
+  // `idx_assets_updated` serves the indexer's incremental `(updated_at, id)`
+  // walk from its durable watermark, so a pass reads only changed assets.
+  // `assets_memory_deleted` queues every deleted original (any delete path:
+  // `asset delete`, retention, the canvas API) as a `deleted:<id>` entry in the
+  // indexer's `core_memory` state (owner `media:memory`, value = the asset's
+  // owner), so its memory records are retired without scanning memory.
+  {
+    version: 169,
+    sql: `
+CREATE INDEX idx_assets_updated ON assets(updated_at, id);
+CREATE TRIGGER assets_memory_deleted AFTER DELETE ON assets
+  WHEN old.derived_from IS NULL AND old.origin != 'request' BEGIN
+  INSERT INTO core_memory (entity_name, key, value, version, created_at, updated_at)
+  VALUES ('media:memory', 'deleted:' || old.id, old.entity_name, 1,
+          CAST(unixepoch('subsec') * 1000 AS INTEGER), CAST(unixepoch('subsec') * 1000 AS INTEGER))
+  ON CONFLICT(entity_name, key) DO UPDATE SET value = excluded.value;
+END;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

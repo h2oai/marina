@@ -305,32 +305,84 @@ export function setAssetMetadataKey(
   );
 }
 
+/** A position in the `(updated_at, id)` order of assets. */
+export interface AssetCursor {
+  updatedAt: number;
+  id: string;
+}
+
 /**
- * Originals the media-memory indexer has not indexed at their current
- * `updated_at` (`metadata.memory_index.updated_at`), least recently changed
- * first. Request images and derivatives are never indexed. With `vision`,
- * raster images whose vision pass has not run (or is due a retry) are included.
+ * Assets changed after `after` in `(updated_at, id)` order — the media-memory
+ * indexer's incremental walk. Served by `idx_assets_updated` (migration 169),
+ * so a pass reads only what changed since its watermark.
  */
-export function listAssetsForMemoryIndex(
+export function listAssetsChangedSince(
   db: Database,
-  opts: { limit: number; vision: boolean; now: number },
+  after: AssetCursor | undefined,
+  limit: number,
 ): AssetRow[] {
+  const from = after ?? { updatedAt: Number.MIN_SAFE_INTEGER, id: "" };
   return db
     .query(
       `SELECT * FROM assets
-        WHERE derived_from IS NULL AND origin != 'request' AND json_valid(metadata)
-          AND coalesce(json_extract(metadata, '$.origin'), '') != 'request'
-          AND (
-            json_extract(metadata, '$.memory_index.updated_at') IS NULL
-            OR json_extract(metadata, '$.memory_index.updated_at') < updated_at
-            OR (?1 = 1 AND mime_type LIKE 'image/%' AND mime_type != 'image/svg+xml'
-                AND (json_extract(metadata, '$.memory_index.vision') IS NULL
-                     OR (json_extract(metadata, '$.memory_index.vision') = 'pending'
-                         AND coalesce(json_extract(metadata, '$.memory_index.retry_at'), 0) <= ?2)))
-          )
+        WHERE updated_at > ?1 OR (updated_at = ?1 AND id > ?2)
         ORDER BY updated_at, id LIMIT ?3`,
     )
-    .all(opts.vision ? 1 : 0, opts.now, opts.limit) as AssetRow[];
+    .all(from.updatedAt, from.id, limit) as AssetRow[];
+}
+
+/**
+ * The media-memory indexer's durable state, in the existing `core_memory` KV
+ * under the system owner {@link ASSET_MEMORY_STATE_OWNER} (a name login cannot
+ * produce): `watermark:<mode>`, `vision-pending:<asset>` (retry time) and
+ * `deleted:<asset>` (the deleted asset's owner, queued by the
+ * `assets_memory_deleted` trigger, migration 169). Written directly — no
+ * `core_memory_history` row for bookkeeping.
+ */
+export const ASSET_MEMORY_STATE_OWNER = "media:memory";
+
+export function getAssetMemoryState(db: Database, key: string): string | undefined {
+  return (
+    (
+      db
+        .query("SELECT value FROM core_memory WHERE entity_name = ? AND key = ?")
+        .get(ASSET_MEMORY_STATE_OWNER, key) as { value: string } | null
+    )?.value ?? undefined
+  );
+}
+
+export function setAssetMemoryState(db: Database, key: string, value: string): void {
+  const now = Date.now();
+  db.run(
+    `INSERT INTO core_memory (entity_name, key, value, version, created_at, updated_at)
+     VALUES (?, ?, ?, 1, ?, ?)
+     ON CONFLICT(entity_name, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    [ASSET_MEMORY_STATE_OWNER, key, value, now, now],
+  );
+}
+
+export function deleteAssetMemoryState(db: Database, key: string): void {
+  db.run("DELETE FROM core_memory WHERE entity_name = ? AND key = ?", [
+    ASSET_MEMORY_STATE_OWNER,
+    key,
+  ]);
+}
+
+/** State entries whose key starts with `prefix` (primary-key range scan), at most `limit`. */
+export function listAssetMemoryState(
+  db: Database,
+  prefix: string,
+  limit: number,
+): { key: string; value: string }[] {
+  return db
+    .query(
+      `SELECT key, value FROM core_memory
+        WHERE entity_name = ? AND key >= ? AND key < ? ORDER BY key LIMIT ?`,
+    )
+    .all(ASSET_MEMORY_STATE_OWNER, prefix, `${prefix}￿`, limit) as {
+    key: string;
+    value: string;
+  }[];
 }
 
 // ─── Tags ─────────────────────────────────────────────────────────────────

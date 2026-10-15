@@ -399,8 +399,10 @@ says, and `marina_see asset:<id>` opens it.
   pixels. `MARINA_VISION_MODEL` chooses the model.
 - `off` indexes nothing. Records of assets deleted later are still retired.
 
-Indexing runs in the background `asset-backfill` job, a few assets every 30
-seconds, never on an upload or an edit. External tools follow
+Indexing runs in the background `asset-backfill` job every 30 seconds, never
+on an upload or an edit. Each pass reads only the assets changed since the last
+one, and indexes up to 16 of them. It stops sooner if it has used 40 of the
+owner's memory requests. External tools follow
 `MARINA_ASSET_DERIVATIVES`: with `off`, `pdftotext` is not started and the PDF
 gets a note instead. A missing tool or model is a note on the asset, shown as
 `Memory:` in `asset show`, not an error. Long text is split into chunks of
@@ -412,7 +414,7 @@ new tags make a new version of the matching record; the old version stays
 readable as history. Text that disappears, an asset its owner can no longer
 read, and a deleted asset retire their records. A retired record is closed,
 not erased. A deleted asset's text is never served again from the moment the
-asset is gone, and its records are retired within a few minutes.
+asset is gone, and its records are retired on the next pass.
 
 **Who sees it.** A record is served only to readers who can read the asset,
 under the same check as its bytes. Records live only in the owner's private

@@ -24,7 +24,6 @@ import {
 import {
   ASSET_MEMORY_KIND,
   desiredAssetChunks,
-  findAssetMemoryOrphans,
   indexAssetMemory,
   mediaMemoryMode,
   parseVisionIndexReply,
@@ -264,8 +263,12 @@ describe("memory over media", () => {
       .all(`asset:${asset.id}`) as { name: string; owner: string }[];
     expect(spaces).toEqual([{ name: "resident", owner: fixture.db.getUserByName("Owner")!.id }]);
 
-    // A second pass with nothing changed makes no memory write.
-    expect((await runAssetMemoryPass(fixture.engine, { env: TEXT })).examined).toBe(0);
+    // Passes with nothing changed do no per-asset work: the still-fresh row is
+    // re-read once (its stamp makes it a no-op), then the watermark passes it.
+    const later = Date.now() + 10_000;
+    const again = await runAssetMemoryPass(fixture.engine, { env: TEXT, now: later });
+    expect(again.indexedAssets).toBe(0);
+    expect((await runAssetMemoryPass(fixture.engine, { env: TEXT, now: later })).examined).toBe(0);
   });
 
   it("an edit supersedes (new version, old readable as history); removed text and deletion retire", async () => {
@@ -308,16 +311,79 @@ describe("memory over media", () => {
     await removeAsset(fixture.engine, fixture.db.getAsset(asset.id)!);
     const after = await buildUnifiedContext(fixture.db, "Owner", "back again lighthouse");
     expect(evidenceIds(after).some((i) => i.meta?.asset === asset.id)).toBe(false);
-    expect(findAssetMemoryOrphans(fixture.db, Date.now()).map((o) => o.assetId)).toEqual([
-      asset.id,
+    // The delete trigger queued it; the next pass (any mode) retires it and clears the queue.
+    expect(fixture.db.listAssetMemoryState("deleted:", 10)).toEqual([
+      { key: `deleted:${asset.id}`, value: "Owner" },
     ]);
-    const swept = await runAssetMemoryPass(fixture.engine, {
-      env: { MARINA_MEDIA_MEMORY: "off" },
-      sweep: true,
-    });
+    const swept = await runAssetMemoryPass(fixture.engine, { env: { MARINA_MEDIA_MEMORY: "off" } });
     expect(swept.orphansRetired).toBe(1);
     expect(await assetRecords("Owner", asset.id)).toHaveLength(0);
-    expect(findAssetMemoryOrphans(fixture.db, Date.now())).toEqual([]);
+    expect(fixture.db.listAssetMemoryState("deleted:", 10)).toEqual([]);
+
+    // A delete that bypasses the library (retention, the canvas API) is caught too.
+    const other = await upload(owner, "other.png", PNG, "image/png");
+    editAsset(fixture.engine, other, { caption: "Second lighthouse keeper" });
+    await runAssetMemoryPass(fixture.engine, { env: TEXT });
+    expect(await assetRecords("Owner", other.id)).toHaveLength(1);
+    fixture.db.deleteAsset(other.id);
+    expect((await runAssetMemoryPass(fixture.engine, { env: TEXT })).orphansRetired).toBe(1);
+    expect(await assetRecords("Owner", other.id)).toHaveLength(0);
+  });
+
+  it("incremental: a pass over many unchanged assets reads none of them and does no per-asset work", async () => {
+    const N = 30;
+    for (let i = 0; i < N; i++) {
+      const a = await upload(owner, `f${i}.png`, PNG, "image/png");
+      editAsset(fixture.engine, a, { caption: `Unchanged caption number ${i}` });
+    }
+    // Index everything once; a `now` past the settle window lets the watermark pass them all.
+    const later = Date.now() + 10_000;
+    // The owner's memory request budget is shared: a pass stops starting assets at its op cap.
+    let first = (
+      await runAssetMemoryPass(fixture.engine, {
+        env: TEXT,
+        now: later,
+        limit: 50,
+        maxMemoryOps: 5,
+      })
+    ).indexedAssets;
+    expect(first).toBeGreaterThan(0);
+    expect(first).toBeLessThanOrEqual(3);
+    for (let i = 0; i < 40 && first < N; i++)
+      first += (
+        await runAssetMemoryPass(fixture.engine, {
+          env: TEXT,
+          now: later,
+          limit: 50,
+          maxMemoryOps: 90,
+        })
+      ).indexedAssets;
+    expect(first).toBe(N);
+    const watermark = fixture.db.getAssetMemoryState("watermark:text");
+    expect(watermark).toBeDefined();
+
+    // Steady state: nothing read, nothing indexed, the watermark untouched.
+    for (let i = 0; i < 3; i++) {
+      const r = await runAssetMemoryPass(fixture.engine, { env: TEXT, now: later + i });
+      expect(r).toMatchObject({ examined: 0, indexedAssets: 0, visionCalls: 0 });
+    }
+    expect(fixture.db.getAssetMemoryState("watermark:text")).toBe(watermark!);
+
+    // One edit (any updated_at bump, as editAsset does) ⇒ exactly that asset is read and re-indexed.
+    const one = fixture.db.listAssetsChangedSince(undefined, 1)[0]!;
+    editAsset(fixture.engine, one, { caption: "A changed caption" });
+    const r = await runAssetMemoryPass(fixture.engine, { env: TEXT, now: Date.now() + 10_000 });
+    expect(r).toMatchObject({ examined: 1, indexedAssets: 1 });
+    expect((await assetRecords("Owner", one.id))[0]!.content).toContain("A changed caption");
+
+    // The walk is served by the index, not a table scan.
+    const plan = fixture.db
+      .memoryRepository()
+      .raw.query(
+        "EXPLAIN QUERY PLAN SELECT * FROM assets WHERE updated_at > 1 OR (updated_at = 1 AND id > '') ORDER BY updated_at, id LIMIT 5",
+      )
+      .all() as { detail: string }[];
+    expect(plan.map((p) => p.detail).join(" ")).toContain("idx_assets_updated");
   });
 
   it("ACL: a stranger never recalls it; a private canvas the owner cannot read is not indexed; evidence follows the asset read rule", async () => {
