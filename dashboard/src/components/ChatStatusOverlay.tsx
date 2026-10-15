@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from "react";
-import { useMediaJobs } from "../hooks/use-api";
+import { isForbiddenApiError, useMediaJobs } from "../hooks/use-api";
 import { useChatState } from "../hooks/use-chat-state";
 import { type useCodingSessionDetail, useCodingSessionsSnapshot } from "../hooks/use-coding";
 import { useFeedState } from "../hooks/use-feed-state";
@@ -410,8 +410,14 @@ export function ChatStatusOverlay({
           </div>
         )}
         {mediaQuery.isError && (
-          <div className="rounded border border-border bg-bg px-2 py-3 text-[11px] text-danger">
-            Failed to load media jobs.
+          <div
+            className={`rounded border border-border bg-bg px-2 py-3 text-[11px] ${
+              isForbiddenApiError(mediaQuery.error) ? "text-text-dim" : "text-danger"
+            }`}
+          >
+            {isForbiddenApiError(mediaQuery.error)
+              ? "Media jobs are visible to their owner, the agent's owner and operators."
+              : "Failed to load media jobs."}
           </div>
         )}
         {!mediaQuery.isLoading && !mediaQuery.isError && (

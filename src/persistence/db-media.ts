@@ -173,9 +173,20 @@ export function getMediaJob(db: Database, id: string): MediaJobRow | undefined {
 
 export function listMediaJobs(
   db: Database,
-  opts: { limit?: number; entityName?: string } = {},
+  opts: { limit?: number; entityName?: string; entityNames?: readonly string[] } = {},
 ): MediaJobRow[] {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  if (opts.entityNames) {
+    // An explicit owner set (the caller's own scope); empty => nothing.
+    const names = [...new Set(opts.entityNames.filter(Boolean))];
+    if (names.length === 0) return [];
+    return db
+      .query(
+        `SELECT * FROM media_jobs WHERE entity_name COLLATE NOCASE IN (${names.map(() => "?").join(",")})
+          ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(...names, limit) as MediaJobRow[];
+  }
   if (opts.entityName) {
     return db
       .query("SELECT * FROM media_jobs WHERE entity_name = ? ORDER BY created_at DESC LIMIT ?")

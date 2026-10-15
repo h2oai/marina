@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * WebChat's persisted media: the viewer's own library assets and media jobs,
- * read under the viewer's credential and kept live by invalidation — the
+ * WebChat's persisted media: the conversation's library assets and media jobs
+ * (`scope=chat`, resolved server-side: the viewer, its agents and the agents
+ * in its room), read under the viewer's credential and kept live by invalidation — the
  * `["assets", …]` key rereads on `asset_created|updated|deleted`, the
  * `["media-jobs", …]` key on `media_*` feed events (use-realtime-invalidations.ts).
  * A slow poll runs only while a job is still pending/running, as a safety net

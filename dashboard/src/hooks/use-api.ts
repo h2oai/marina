@@ -443,6 +443,16 @@ export function useModels() {
   });
 }
 
+/** True for the 403 `/api/media-jobs` returns for someone else's jobs. */
+export function isForbiddenApiError(error: unknown): boolean {
+  return error instanceof Error && error.message === "API error: 403";
+}
+
+/**
+ * Media jobs: an entity's (its owner, the owner of the agent, or an operator
+ * may read them — others get a 403), or with no name everything for an
+ * operator and the caller's own and its agents' otherwise.
+ */
 export function useMediaJobs(entityName?: string, enabled = true) {
   return useQuery({
     queryKey: ["media-jobs", entityName ?? "all"],
@@ -450,7 +460,9 @@ export function useMediaJobs(entityName?: string, enabled = true) {
       fetchApi<MediaJob[]>(
         `/api/media-jobs${entityName ? `?entity=${encodeURIComponent(entityName)}` : ""}`,
       ),
-    refetchInterval: enabled ? 15_000 : false,
+    refetchInterval: (query) =>
+      enabled && !isForbiddenApiError(query.state.error) ? 15_000 : false,
+    retry: (failures, error) => !isForbiddenApiError(error) && failures < 3,
     enabled,
   });
 }

@@ -45,6 +45,11 @@ export interface LibraryViewer {
   reader?: CanvasReader;
   /** The viewer's entity name (`owner=me`). */
   name?: string;
+  /**
+   * Owner names for a server-resolved scope (`owner=me+agents` → `owned`,
+   * `scope=chat` → `chat`; src/net/media-scope.ts). Absent ⇒ the scope is empty.
+   */
+  scopeOwners?: (scope: "owned" | "chat") => string[];
 }
 
 export interface LibraryContext {
@@ -199,7 +204,19 @@ export function parseLibraryQuery(
     q.type = type as AssetType;
   }
   const owner = params.get("owner");
-  if (owner && owner !== "all") {
+  const scope = params.get("scope");
+  if (scope) {
+    // A conversation's media: the viewer, its agents and the agents in its
+    // room — resolved from the session, never from client-sent names.
+    if (scope !== "chat") return "scope must be chat";
+    const owners = viewer.scopeOwners?.("chat") ?? [];
+    if (owners.length) q.owners = owners;
+    else q.empty = true;
+  } else if (owner === "me+agents") {
+    const owners = viewer.scopeOwners?.("owned") ?? [];
+    if (owners.length) q.owners = owners;
+    else q.empty = true;
+  } else if (owner && owner !== "all") {
     if (owner === "me") {
       if (viewer.name) q.owner = viewer.name;
       else q.empty = true;

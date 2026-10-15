@@ -104,8 +104,10 @@ export interface LibraryPage {
 
 export interface LibraryFilters {
   type?: AssetType;
-  /** `me`, an entity name, or undefined/`all` for everyone visible. */
+  /** `me`, `me+agents`, an entity name, or undefined/`all` for everyone visible. */
   owner?: string;
+  /** `chat`: the viewer, its agents and the agents in its conversation (resolved server-side). */
+  scope?: "chat";
   origin?: string;
   tags?: string[];
   q?: string;
@@ -126,6 +128,7 @@ export function libraryQueryString(
   const p = new URLSearchParams({ view: "library" });
   if (filters.type) p.set("type", filters.type);
   if (filters.owner && filters.owner !== "all") p.set("owner", filters.owner);
+  if (filters.scope) p.set("scope", filters.scope);
   if (filters.origin) p.set("origin", filters.origin);
   for (const tag of filters.tags ?? []) if (tag.trim()) p.append("tag", tag.trim());
   if (filters.canvas) p.set("canvas", filters.canvas);

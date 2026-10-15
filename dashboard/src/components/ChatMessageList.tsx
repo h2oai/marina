@@ -49,8 +49,9 @@ export function ChatMessageList({
   const feedEvents = useFeedState((s) => s.events);
   const viewer = useChatState((s) => (s.loggedIn ? s.entityName : null));
   const rich = viewMode === "rich";
-  // Persisted media (the viewer's own assets and jobs, read under its
-  // credential) plus a short-lived live fallback for other canvas activity.
+  // Persisted conversation media (the viewer's, its agents' and the room
+  // agents', scoped server-side and read under the viewer's credential) plus
+  // a short-lived live fallback for other canvas activity.
   const media = useChatMedia(viewer, rich);
   const mediaEntries = useMemo(
     () =>
@@ -420,6 +421,7 @@ export function ChatMessageList({
                 entry={entry}
                 collection={collection}
                 index={collectionIndex.get(entry.key)}
+                viewer={viewer}
               />
             );
           })}

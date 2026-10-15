@@ -29,7 +29,10 @@ vi.mock("../hooks/use-status-cards", () => ({
   useChannelsSnapshot: () => q("channels"),
   useGroupsSnapshot: () => q("groups"),
 }));
-vi.mock("../hooks/use-api", () => ({ useMediaJobs: () => q("media") }));
+vi.mock("../hooks/use-api", () => ({
+  useMediaJobs: () => q("media"),
+  isForbiddenApiError: (e: unknown) => e instanceof Error && e.message === "API error: 403",
+}));
 vi.mock("../hooks/use-coding", () => ({ useCodingSessionsSnapshot: () => q("sessions") }));
 
 const draftCommand = vi.fn();
@@ -243,6 +246,19 @@ describe("ChatStatusOverlay", () => {
     queries.media = { isError: true, refetch: async () => ({}) };
     show(overlayOf("media"));
     expect(screen.getByText("Failed to load media jobs.")).toBeInTheDocument();
+  });
+
+  it("explains someone else's media jobs are not visible (403) rather than failing", () => {
+    queries.media = {
+      isError: true,
+      error: new Error("API error: 403"),
+      refetch: async () => ({}),
+    };
+    show(overlayOf("media"));
+    expect(
+      screen.getByText(/visible to their owner, the agent's owner and operators/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Failed to load media jobs.")).toBeNull();
   });
 
   it("resumes a coding session", () => {

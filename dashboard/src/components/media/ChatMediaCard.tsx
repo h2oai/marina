@@ -175,9 +175,11 @@ export interface ChatMediaCardProps {
   collection: readonly ViewableAsset[];
   /** This card's index in `collection` (-1 / omitted when it is not openable yet). */
   index?: number;
+  /** The logged-in viewer; media by anyone else (its agents, room agents) names its author. */
+  viewer?: string | null;
 }
 
-export function ChatMediaCard({ entry, collection, index = -1 }: ChatMediaCardProps) {
+export function ChatMediaCard({ entry, collection, index = -1, viewer }: ChatMediaCardProps) {
   const { open } = useAssetViewer();
   const boxRef = useRef<HTMLDivElement>(null);
   const near = useNearViewport(boxRef);
@@ -200,6 +202,9 @@ export function ChatMediaCard({ entry, collection, index = -1 }: ChatMediaCardPr
         ? `uploaded ${asset.type}`
         : asset.type
     : (job?.type ?? "media");
+  const author = asset?.owner ?? job?.entityName;
+  const byline =
+    author && viewer && author.toLowerCase() !== viewer.toLowerCase() ? author : undefined;
 
   const preview = (
     <div
@@ -246,7 +251,10 @@ export function ChatMediaCard({ entry, collection, index = -1 }: ChatMediaCardPr
       )}
       <figcaption className="flex min-w-0 flex-1 flex-col gap-1 text-[11px] text-text-dim">
         <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wide">
-          <span className="truncate">{kindLabel}</span>
+          <span className="truncate">
+            {kindLabel}
+            {byline && <span className="normal-case"> · by {byline}</span>}
+          </span>
           <span className="shrink-0">{cardTime(entry.timestamp)}</span>
         </div>
         <span className="truncate text-[12px] text-text-bright" title={title}>

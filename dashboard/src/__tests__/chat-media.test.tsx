@@ -216,14 +216,15 @@ describe("chat media helpers", () => {
     expect(merged.map((x) => x.id)).toEqual(["c0", "m1", "c1", "m2", "c2"]);
   });
 
-  it("reads only the viewer's own media, resolved server-side", () => {
+  it("asks for the conversation scope, never naming entities (resolved server-side)", () => {
     const q = new URLSearchParams(
       libraryQueryString(CHAT_MEDIA_FILTERS, { limit: CHAT_MEDIA_PAGE_SIZE }),
     );
-    expect(q.get("owner")).toBe("me");
+    expect(q.get("scope")).toBe("chat");
+    expect(q.get("owner")).toBeNull();
     expect(q.get("view")).toBe("library");
     expect(q.get("limit")).toBe(String(CHAT_MEDIA_PAGE_SIZE));
-    expect(chatMediaJobsPath()).toBe("/api/media-jobs?entity=me&limit=20");
+    expect(chatMediaJobsPath()).toBe("/api/media-jobs?scope=chat&limit=20");
   });
 
   it("knows when a job is still moving", () => {
@@ -264,6 +265,21 @@ describe("ChatMediaCard", () => {
     const [asset, opts] = open.mock.calls[0]!;
     expect(asset.id).toBe("b");
     expect(opts).toEqual({ collection, index: 1 });
+  });
+
+  it("names the author of media the viewer did not make (its agent, a room agent)", () => {
+    const entry = {
+      type: "asset",
+      key: "asset-p",
+      timestamp: T0,
+      asset: item("p", { owner: "Painter", origin: "generated" }),
+    } as const;
+    const { rerender } = renderWithProviders(
+      <ChatMediaCard entry={entry} collection={[]} viewer="Ada" />,
+    );
+    expect(screen.getByText(/by Painter/)).toBeInTheDocument();
+    rerender(<ChatMediaCard entry={{ ...entry, asset: item("p") }} collection={[]} viewer="ada" />);
+    expect(screen.queryByText(/ by /)).toBeNull();
   });
 
   it("a pending or rendering job shows its status and nothing to open", () => {
@@ -338,7 +354,7 @@ describe("ChatMessageList persisted media", () => {
   it("re-renders the viewer's media after a reload (no live events), in transcript order", async () => {
     const { ChatMessageList } = await import("../components/ChatMessageList");
     authFetch.mockImplementation(async (url: string) => {
-      expect(url).toContain("owner=me");
+      expect(url).toContain("scope=chat");
       return new Response(
         JSON.stringify({
           items: [
@@ -351,7 +367,7 @@ describe("ChatMessageList persisted media", () => {
       );
     });
     fetchApi.mockImplementation(async (path: string) => {
-      expect(path).toBe("/api/media-jobs?entity=me&limit=20");
+      expect(path).toBe("/api/media-jobs?scope=chat&limit=20");
       return [job("r", { status: "running", createdAt: T0 + 30_000 })];
     });
     const messages = [{ html: "hello", text: "hello", kind: "message", timestamp: T0 + 10_000 }];

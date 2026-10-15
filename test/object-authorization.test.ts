@@ -378,31 +378,122 @@ describe("HTTP owner checks (shared instance)", () => {
     expect(started).toEqual(["Alice", "Alice"]);
   });
 
-  it("GET /api/media-jobs?entity=me: only the authenticated caller's own jobs", async () => {
-    for (const [id, name, entityId] of [
-      ["job-me-a", "Alice", t.alice.entityId],
-      ["job-me-b", "Bob", t.bob.entityId],
-    ] as const) {
+  describe("media scopes (jobs carry prompts)", () => {
+    // Alice owns the agent Painter (spawn lineage). Muse is an agent in the
+    // room Bob is chatting in. Root is a rank-9 person (an operator).
+    let muse: Resident;
+    const job = (id: string, name: string, over: { status?: string; assetId?: string } = {}) => {
       t.world.db.createMediaJob({
         id,
         type: "image",
         entityName: name,
-        entityId,
+        entityId: null,
         provider: "openai",
         model: "openai/gpt-image-1",
-        prompt: `${name} prompt`,
+        prompt: `${name} secret prompt`,
         options: {},
       });
-    }
-    const mine = async (who: Resident) => {
-      const res = (await handleCoordinationRoutes(
-        ctx(who, "/api/media-jobs?entity=me", { headers: bearer(who.token) }),
-      ))!;
-      expect(res.status).toBe(200);
-      return ((await res.json()) as { id: string }[]).map((j) => j.id);
+      if (over.status || over.assetId)
+        t.world.db.updateMediaJob(id, {
+          status: (over.status ?? "succeeded") as "succeeded",
+          assetId: over.assetId ?? null,
+        });
     };
-    expect(await mine(t.alice)).toEqual(["job-me-a"]);
-    expect(await mine(t.bob)).toEqual(["job-me-b"]);
+    const asset = (id: string, owner: string, metadata: Record<string, unknown> = {}) =>
+      t.world.db.createAsset({
+        id,
+        entityName: owner,
+        filename: `${id}.png`,
+        mimeType: "image/png",
+        size: 10,
+        storageKey: `${id}.png`,
+        origin: "generated",
+        metadata,
+      });
+    beforeEach(() => {
+      t.world.db.saveAgentConfig({ name: "Painter", model: "m", spawnedBy: "Alice" });
+      t.world.db.saveAgentConfig({ name: "Muse", model: "m", spawnedBy: "system" });
+      muse = resident(t.world, "Muse");
+      asset("asset-painter", "Painter");
+      asset("asset-bob", "Bob");
+      asset("asset-muse", "Muse");
+      // A private (request-staged) asset only its owner reads.
+      asset("asset-muse-private", "Muse", { origin: "request", owner: muse.entityId });
+      job("job-alice", "Alice");
+      job("job-bob", "Bob");
+      job("job-painter", "Painter", { assetId: "asset-painter" });
+      job("job-muse-done", "Muse", { assetId: "asset-muse" });
+      job("job-muse-private", "Muse", { assetId: "asset-muse-private" });
+      job("job-muse-running", "Muse", { status: "running" });
+    });
+
+    const jobs = async (who: Resident, query: string) => {
+      const res = (await handleCoordinationRoutes(
+        ctx(who, `/api/media-jobs${query}`, { headers: bearer(who.token) }),
+      ))!;
+      const body = (await res.json()) as { id: string }[] | { code?: string };
+      return {
+        status: res.status,
+        ids: Array.isArray(body) ? body.map((j) => j.id).sort() : [],
+        code: Array.isArray(body) ? undefined : body.code,
+      };
+    };
+
+    it("no entity: a non-operator sees its own and its agents' jobs; an operator sees all", async () => {
+      expect((await jobs(t.alice, "")).ids).toEqual(["job-alice", "job-painter"]);
+      expect((await jobs(t.bob, "")).ids).toEqual(["job-bob"]);
+      expect((await jobs(t.root, "")).ids).toHaveLength(6);
+    });
+
+    it("entity=<name>: the caller, the owner of that agent, or an operator; else 403", async () => {
+      const refused = await jobs(t.alice, "?entity=Bob");
+      expect(refused.status).toBe(403);
+      expect(refused.code).toBe("media_jobs_forbidden");
+      expect((await jobs(t.bob, "?entity=Painter")).status).toBe(403);
+      expect((await jobs(t.alice, "?entity=painter")).ids).toEqual(["job-painter"]);
+      expect((await jobs(t.alice, "?entity=Alice")).ids).toEqual(["job-alice"]);
+      expect((await jobs(t.root, "?entity=Bob")).ids).toEqual(["job-bob"]);
+    });
+
+    it("entity=me: only the authenticated caller's own jobs", async () => {
+      expect((await jobs(t.alice, "?entity=me")).ids).toEqual(["job-alice"]);
+      expect((await jobs(t.bob, "?entity=me")).ids).toEqual(["job-bob"]);
+    });
+
+    it("scope=chat: owned jobs plus a room agent's FINISHED jobs whose asset the viewer may read", async () => {
+      // Bob shares a room with Muse: its finished public result, never its
+      // in-progress prompt or a result Bob may not read.
+      expect((await jobs(t.bob, "?scope=chat")).ids).toEqual(["job-bob", "job-muse-done"]);
+      // Alice: her own, her agent's (anywhere), and the room agent's public result.
+      expect((await jobs(t.alice, "?scope=chat")).ids).toEqual([
+        "job-alice",
+        "job-muse-done",
+        "job-painter",
+      ]);
+      expect((await jobs(t.bob, "?scope=bogus")).status).toBe(400);
+    });
+
+    it("library: owner=me+agents and scope=chat resolve owners from the session", async () => {
+      const storage = new LocalStorageProvider(ASSET_DIR);
+      await storage.init();
+      const library = async (who: Resident, query: string) => {
+        const path = `/api/assets?view=library&${query}`;
+        const res = await handleAssetApi(
+          new URL(`http://localhost:3300${path}`),
+          "GET",
+          new Request(`http://localhost:3300${path}`, { headers: bearer(who.token) }),
+          t.world.db,
+          storage,
+          t.world.engine,
+          "127.0.0.1",
+        );
+        expect(res.status).toBe(200);
+        return ((await res.json()) as { items: { id: string }[] }).items.map((i) => i.id).sort();
+      };
+      expect(await library(t.alice, "owner=me%2Bagents")).toEqual(["asset-painter"]);
+      expect(await library(t.bob, "owner=me%2Bagents")).toEqual(["asset-bob"]);
+      expect(await library(t.bob, "scope=chat")).toEqual(["asset-bob", "asset-muse"]);
+    });
   });
 
   it("POST /api/coordination/projects/:id/orchestration: creator or admin; malformed JSON is a 400 with a code", async () => {

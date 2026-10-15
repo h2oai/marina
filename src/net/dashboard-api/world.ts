@@ -12,7 +12,7 @@
 import { join, resolve } from "node:path";
 import { getStanding } from "../../agent/standing";
 import { listWorkItems } from "../../coordination/work-loop";
-import { canvasReaderFor } from "../../engine/canvas-access";
+import { canvasReaderFor, mayReadAsset } from "../../engine/canvas-access";
 import { allRecipeNames, getRecipe } from "../../engine/commands/usecase";
 import type { Engine } from "../../engine/engine";
 import { evolutionSessionsWithEvidence } from "../../engine/evolution-qualification";
@@ -22,6 +22,7 @@ import { ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
 import { isSentinelPrincipal, refuseOpenApiWrite } from "../auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas/canvas-principal";
 import { authorizeCanvasSubscription } from "../canvas/canvas-ws";
+import { isMediaOperator, mayReadMediaJob, resolveMediaScope } from "../media-scope";
 import type { memoryObserver } from "../memory/memory-visibility";
 import { authorizeOwnerOrPrivileged } from "../owner-authorization";
 import {
@@ -581,22 +582,58 @@ export async function handleCoordinationRoutes(
 
   if (url.pathname === "/api/media-jobs" && method === "GET" && db) {
     const limitParam = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
-    const requested = url.searchParams.get("entity") ?? undefined;
+    const requested = url.searchParams.get("entity") || undefined;
+    const scopeParam = url.searchParams.get("scope") || undefined;
     const limit =
       Number.isFinite(limitParam) && limitParam > 0 && limitParam <= 200 ? limitParam : 100;
-    // `entity=me` is the AUTHENTICATED caller's own jobs (WebChat's media
-    // cards): resolved server-side, never a client-chosen name; a caller with
-    // no live entity (the dev-open sentinel, an operator credential) gets none.
-    let entity = requested;
+    // Jobs carry prompts: every listing is scoped to the AUTHENTICATED caller
+    // (src/net/media-scope.ts), never to names the client chooses.
+    //   entity=me        → the caller's own jobs
+    //   scope=owned      → the caller's and its agents' (spawn lineage)
+    //   scope=chat       → owned + the agents in the caller's conversation
+    //                      (a participant's job only once its asset is readable)
+    //   entity=<name>    → an operator, the caller itself, or an agent it owns; else 403
+    //   (neither)        → everything for an operator, else scope=owned
+    if (scopeParam && !["owned", "chat"].includes(scopeParam))
+      return json({ error: "scope must be owned or chat", code: "invalid_media_scope" }, 400);
+    const operator = isMediaOperator(engine, db, callerId);
+    const owned = resolveMediaScope(engine, db, callerId, "owned");
+    let rows: MediaJobRow[];
+    let scope = owned;
     if (requested === "me") {
-      entity = engine.entities.get(callerId)?.name;
-      if (!entity) return json([]);
+      scope = resolveMediaScope(engine, db, callerId, "self");
+      rows = db.listMediaJobs({ limit, entityNames: scope.names });
+    } else if (scopeParam) {
+      scope = scopeParam === "chat" ? resolveMediaScope(engine, db, callerId, "chat") : owned;
+      rows = db.listMediaJobs({ limit, entityNames: scope.names });
+    } else if (requested) {
+      if (!operator && !owned.owned.has(requested.toLowerCase())) {
+        return json(
+          {
+            error: "Not authorized to read another entity's media jobs.",
+            reason:
+              "Media jobs are visible to their owner, the owner of the requesting agent, and operators.",
+            code: "media_jobs_forbidden",
+          },
+          403,
+        );
+      }
+      rows = db.listMediaJobs({ limit, entityNames: [requested] });
+    } else if (operator) {
+      rows = db.listMediaJobs({ limit });
+    } else {
+      rows = db.listMediaJobs({ limit, entityNames: owned.names });
     }
-    const jobs = db.listMediaJobs({
-      limit,
-      entityName: entity ?? undefined,
-    });
-    return json(jobs.map((job) => serializeMediaJob(job, engine)));
+    if (!operator) {
+      const reader = buildCanvasPrincipal(callerId, engine, db);
+      const host = { db, entities: engine.entities, canvasGrants: engine.canvasGrants };
+      const readable = (assetId: string) => {
+        const asset = db.getAsset(assetId);
+        return !!asset && mayReadAsset(host, asset, reader, "media jobs", { log: false });
+      };
+      rows = rows.filter((job) => mayReadMediaJob(scope, job, readable));
+    }
+    return json(rows.map((job) => serializeMediaJob(job, engine)));
   }
 
   const mediaRetryMatch = url.pathname.match(/^\/api\/media-jobs\/([^/]+)\/retry$/);

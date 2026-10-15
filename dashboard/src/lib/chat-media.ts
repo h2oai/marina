@@ -4,14 +4,17 @@
 /**
  * WebChat's media timeline — pure derivation, no fetching.
  *
- * The durable source is the viewer's OWN media, read under the viewer's
- * credential: library assets (`GET /api/assets?view=library&owner=me`, every
- * row read-checked server-side) and media jobs (`GET /api/media-jobs?entity=me`,
- * resolved server-side to the authenticated caller). Both survive a reload
- * and any delay, so a card stays where it appeared. Live feed events that
- * carry a canvas node (other participants' generations, canvas activity) stay
- * a short-lived fallback: they render only inside {@link LIVE_FALLBACK_WINDOW_MS}
- * and never when a persisted card already shows the same asset or job.
+ * The durable source is the conversation's media, read under the viewer's
+ * credential with `scope=chat`, which the SERVER resolves from the session
+ * (src/net/media-scope.ts): the viewer, the agents it owns (spawn lineage)
+ * and the agents in its current room. Library assets
+ * (`GET /api/assets?view=library&scope=chat`) are read-checked row by row;
+ * media jobs (`GET /api/media-jobs?scope=chat`) include a participant's job
+ * only once its result asset is readable. Both survive a reload and any
+ * delay, so a card stays where it appeared. Live feed events that carry a
+ * canvas node (other canvas activity) stay a short-lived fallback: they
+ * render only inside {@link LIVE_FALLBACK_WINDOW_MS} and never when a
+ * persisted card already shows the same asset or job.
  */
 
 import type { LibraryFilters, LibraryItem } from "./asset-library";
@@ -26,12 +29,12 @@ export const LIVE_FALLBACK_WINDOW_MS = 30 * 60 * 1000;
 /** At most this many live fallback embeds. */
 export const LIVE_FALLBACK_MAX = 40;
 
-/** Library filters for the chat cards: the viewer's own assets, resolved server-side. */
-export const CHAT_MEDIA_FILTERS: LibraryFilters = Object.freeze({ owner: "me" });
+/** Library filters for the chat cards: the conversation scope, resolved server-side. */
+export const CHAT_MEDIA_FILTERS: LibraryFilters = Object.freeze({ scope: "chat" as const });
 
-/** The jobs endpoint for the chat cards: `entity=me` is the authenticated caller, never a name. */
+/** The jobs endpoint for the chat cards: `scope=chat` is resolved from the session, never names. */
 export function chatMediaJobsPath(limit = CHAT_MEDIA_JOB_LIMIT): string {
-  return `/api/media-jobs?entity=me&limit=${limit}`;
+  return `/api/media-jobs?scope=chat&limit=${limit}`;
 }
 
 /** Job states that are still moving (drive the in-progress card). */
