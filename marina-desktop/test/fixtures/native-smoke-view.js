@@ -61,6 +61,58 @@
         ?.textContent.includes("carrying nothing"),
     "resident inventory",
   );
+  // Asset library through the native bridge: chunked upload with progress,
+  // dedupe, library view, bytes into an element, edit and delete.
+  const png = Uint8Array.from(
+    atob(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    ),
+    (c) => c.charCodeAt(0),
+  );
+  const uploadPng = async () => {
+    const form = new FormData();
+    form.append("file", new File([png], "smoke.png", { type: "image/png" }));
+    const progress = [];
+    const res = await window.marinaDesktop.sendBody({
+      url: "http://marina.desktop.invalid/api/assets",
+      method: "POST",
+      headers,
+      body: form,
+      onProgress: (f) => progress.push(f),
+    });
+    if (progress.at(-1) !== 1) throw new Error(`Native upload progress: ${progress}`);
+    return { status: res.status, body: await res.json() };
+  };
+  const first = await uploadPng();
+  if (first.status !== 201) throw new Error(`Native upload: ${first.status}`);
+  const again = await uploadPng();
+  if (again.status !== 200 || !again.body.deduplicated) throw new Error("Native dedupe missing");
+  const library = await (
+    await fetch("/api/assets?view=library&type=image&facets=1", { headers })
+  ).json();
+  if (!library.items?.some((item) => item.id === first.body.id) || !library.facets) {
+    throw new Error("Native library view missing the upload");
+  }
+  const bytes = await fetch(first.body.url, { headers });
+  const blobUrl = URL.createObjectURL(await bytes.blob());
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = () => reject(new Error("Native asset bytes did not render"));
+    img.src = blobUrl;
+  });
+  if (img.naturalWidth !== 1) throw new Error("Native asset image size");
+  const patched = await fetch(`/api/assets/${first.body.id}`, {
+    method: "PATCH",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ caption: "native smoke" }),
+  });
+  if (!patched.ok || (await patched.json()).caption !== "native smoke") {
+    throw new Error("Native asset edit");
+  }
+  const removed = await fetch(`/api/assets/${first.body.id}`, { method: "DELETE", headers });
+  if (!removed.ok) throw new Error(`Native asset delete: ${removed.status}`);
+  console.log("[native-smoke] Asset library passed");
   await until(() => !document.getElementById("splash"), "splash dismissed");
   if (document.getElementById("__err")) throw new Error("Native startup error overlay");
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(
