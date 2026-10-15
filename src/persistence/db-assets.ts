@@ -212,13 +212,20 @@ export function updateAssetFacts(db: Database, id: string, facts: AssetFacts): b
   return db.run(`UPDATE assets SET ${sets.join(", ")} WHERE id = ?`, values).changes > 0;
 }
 
+/**
+ * `updated_at` after a reader-facing change: now, and always past the previous
+ * value, so a change in the same millisecond as the last one still reads as
+ * newer (the media-memory indexer compares against the stamp it indexed).
+ */
+const BUMP_UPDATED_AT = "updated_at = MAX(?, updated_at + 1)";
+
 /** Set the reader-facing caption and/or alt text (`null` clears). Bumps `updated_at`. */
 export function updateAssetText(
   db: Database,
   id: string,
   text: { caption?: string | null; alt?: string | null },
 ): boolean {
-  const sets: string[] = ["updated_at = ?"];
+  const sets: string[] = [BUMP_UPDATED_AT];
   const values: (string | number | null)[] = [Date.now()];
   if (text.caption !== undefined) {
     sets.push("caption = ?");
@@ -259,6 +266,125 @@ export function listAssetsNeedingFacts(db: Database, limit: number): AssetRow[] 
     .all(limit) as AssetRow[];
 }
 
+/** A top-level `metadata` key this module may set ({@link setAssetMetadataKey}). */
+const METADATA_KEY = /^[a-z][a-z0-9_]{0,39}$/;
+
+/**
+ * Set one top-level `metadata` key to a JSON value (`null` removes it) in one
+ * statement, so two writers of different keys never lose each other's change.
+ * `touch` bumps `updated_at` (a reader-facing text change, e.g. a transcript);
+ * a bookkeeping stamp leaves it alone. Rows whose metadata is not valid JSON
+ * are left untouched. Returns whether a row changed.
+ */
+export function setAssetMetadataKey(
+  db: Database,
+  id: string,
+  key: string,
+  value: unknown,
+  opts: { touch?: boolean } = {},
+): boolean {
+  if (!METADATA_KEY.test(key)) throw new Error(`Invalid asset metadata key: ${key}`);
+  const path = `$.${key}`;
+  const params: (string | number)[] = [];
+  let expr: string;
+  if (value === null || value === undefined) {
+    expr = "json_remove(metadata, ?)";
+    params.push(path);
+  } else {
+    expr = "json_set(metadata, ?, json(?))";
+    params.push(path, JSON.stringify(value));
+  }
+  if (opts.touch) params.push(Date.now());
+  params.push(id);
+  const touch = opts.touch ? `, ${BUMP_UPDATED_AT}` : "";
+  return (
+    db.run(
+      `UPDATE assets SET metadata = ${expr}${touch} WHERE id = ? AND json_valid(metadata)`,
+      params,
+    ).changes > 0
+  );
+}
+
+/** A position in the `(updated_at, id)` order of assets. */
+export interface AssetCursor {
+  updatedAt: number;
+  id: string;
+}
+
+/**
+ * Assets changed after `after` in `(updated_at, id)` order — the media-memory
+ * indexer's incremental walk. Served by `idx_assets_updated` (migration 169),
+ * so a pass reads only what changed since its watermark.
+ */
+export function listAssetsChangedSince(
+  db: Database,
+  after: AssetCursor | undefined,
+  limit: number,
+): AssetRow[] {
+  const from = after ?? { updatedAt: Number.MIN_SAFE_INTEGER, id: "" };
+  return db
+    .query(
+      `SELECT * FROM assets
+        WHERE updated_at > ?1 OR (updated_at = ?1 AND id > ?2)
+        ORDER BY updated_at, id LIMIT ?3`,
+    )
+    .all(from.updatedAt, from.id, limit) as AssetRow[];
+}
+
+/**
+ * The media-memory indexer's durable state, in the existing `core_memory` KV
+ * under the system owner {@link ASSET_MEMORY_STATE_OWNER} (a name login cannot
+ * produce): `watermark:<mode>`, `vision-pending:<asset>` (retry time) and
+ * `deleted:<asset>` (the deleted asset's owner, queued by the
+ * `assets_memory_deleted` trigger, migration 169). Written directly — no
+ * `core_memory_history` row for bookkeeping.
+ */
+export const ASSET_MEMORY_STATE_OWNER = "media:memory";
+
+export function getAssetMemoryState(db: Database, key: string): string | undefined {
+  return (
+    (
+      db
+        .query("SELECT value FROM core_memory WHERE entity_name = ? AND key = ?")
+        .get(ASSET_MEMORY_STATE_OWNER, key) as { value: string } | null
+    )?.value ?? undefined
+  );
+}
+
+export function setAssetMemoryState(db: Database, key: string, value: string): void {
+  const now = Date.now();
+  db.run(
+    `INSERT INTO core_memory (entity_name, key, value, version, created_at, updated_at)
+     VALUES (?, ?, ?, 1, ?, ?)
+     ON CONFLICT(entity_name, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    [ASSET_MEMORY_STATE_OWNER, key, value, now, now],
+  );
+}
+
+export function deleteAssetMemoryState(db: Database, key: string): void {
+  db.run("DELETE FROM core_memory WHERE entity_name = ? AND key = ?", [
+    ASSET_MEMORY_STATE_OWNER,
+    key,
+  ]);
+}
+
+/** State entries whose key starts with `prefix` (primary-key range scan), at most `limit`. */
+export function listAssetMemoryState(
+  db: Database,
+  prefix: string,
+  limit: number,
+): { key: string; value: string }[] {
+  return db
+    .query(
+      `SELECT key, value FROM core_memory
+        WHERE entity_name = ? AND key >= ? AND key < ? ORDER BY key LIMIT ?`,
+    )
+    .all(ASSET_MEMORY_STATE_OWNER, prefix, `${prefix}￿`, limit) as {
+    key: string;
+    value: string;
+  }[];
+}
+
 // ─── Tags ─────────────────────────────────────────────────────────────────
 
 /** Add and remove tags (already normalized by the caller). Returns the asset's tags after. */
@@ -276,7 +402,7 @@ export function setAssetTags(
     const del = db.prepare("DELETE FROM asset_tags WHERE asset_id = ? AND tag = ?");
     for (const tag of remove) del.run(id, tag);
     for (const tag of add) ins.run(id, tag, now);
-    db.run("UPDATE assets SET updated_at = ? WHERE id = ?", [now, id]);
+    db.run(`UPDATE assets SET ${BUMP_UPDATED_AT} WHERE id = ?`, [now, id]);
   })();
   return getAssetTags(db, id);
 }

@@ -31,6 +31,7 @@ import type { Engine, EngineConfig } from "./engine";
 import { getErrorMessage, tryLog } from "./errors";
 import type { Logger } from "./logger";
 import { backfillAssets } from "./media/asset-library";
+import { engineAssetDescriber, runAssetMemoryPass } from "./media/asset-memory";
 import type { MediaManager } from "./media/manager";
 import { MEMORY_ACCUMULATION_PHASE, runEngineAccumulationDispatch } from "./memory-dispatch";
 import { MEMORY_HYGIENE_PHASE, runEngineMemoryHygiene } from "./memory-hygiene";
@@ -442,6 +443,13 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     run: async () => {
       if (!host.db) return;
       await backfillAssets(host.engine);
+      // Then memory over media (MARINA_MEDIA_MEMORY): a few assets' text into
+      // their owners' canonical memory, and deleted assets' records retired.
+      await runAssetMemoryPass(host.engine, {
+        describe: engineAssetDescriber(host.engine),
+      }).catch((error: unknown) =>
+        host.logger.warn("media", `asset memory pass failed: ${getErrorMessage(error)}`),
+      );
     },
   });
 }

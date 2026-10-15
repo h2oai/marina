@@ -1169,6 +1169,9 @@
 # Asset derivatives (thumbnails, video posters, PDF previews; src/engine/media/asset-library.ts). `on` (default) makes them in the background, one at a time; `sync` makes them before an upload returns (tests, short-lived scripts); `off` never starts `sharp`, `ffmpeg` or `pdftoppm` for assets (hashes and header dimensions are still recorded, and the backfill leaves derivatives for a later pass).
 # MARINA_ASSET_DERIVATIVES=on
 
+# Memory over media (src/engine/media/asset-memory.ts): text that describes or is inside an asset becomes canonical memory records in the asset owner's own memory, cited as `asset:<id>`, so `recall … all` and the agent's context find files by what they say. `text` (default) indexes the text an asset already has — caption, alt text, tags, generation prompt, PDF text via `pdftotext`, stored transcripts and OCR — with no model call; `vision` also asks a vision model once per raster image for a suggested caption and the text in it (spend recorded and capped by the daily spend cap, at most 1 call per pass and 60 per hour); `off` indexes nothing (records of deleted assets are still retired). Runs in the background asset job and reads only assets changed since the last pass; external tools follow MARINA_ASSET_DERIVATIVES.
+# MARINA_MEDIA_MEMORY=text
+
 # Byte cap on an image, PDF, video or text a vision call will load (max 100 MB). Default 20 MB.
 # MARINA_VISION_MAX_BYTES=20971520
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  AssetCursor,
   AssetFacts,
   AssetLinkRow,
   AssetOrigin,
@@ -24,6 +25,12 @@ export interface AssetsStore {
   updateAssetText(id: string, text: { caption?: string | null; alt?: string | null }): boolean;
   findAssetByHash(entityName: string, sha256: string, origin: AssetOrigin): AssetRow | undefined;
   listAssetsNeedingFacts(limit: number): AssetRow[];
+  setAssetMetadataKey(id: string, key: string, value: unknown, opts?: { touch?: boolean }): boolean;
+  listAssetsChangedSince(after: AssetCursor | undefined, limit: number): AssetRow[];
+  getAssetMemoryState(key: string): string | undefined;
+  setAssetMemoryState(key: string, value: string): void;
+  deleteAssetMemoryState(key: string): void;
+  listAssetMemoryState(prefix: string, limit: number): { key: string; value: string }[];
   setAssetTags(id: string, add: readonly string[], remove: readonly string[]): string[];
   getAssetTags(id: string): string[];
   getAssetTagsFor(ids: readonly string[]): Map<string, string[]>;
@@ -46,6 +53,12 @@ export const ASSETS_STORE_METHODS = [
   "updateAssetText",
   "findAssetByHash",
   "listAssetsNeedingFacts",
+  "setAssetMetadataKey",
+  "listAssetsChangedSince",
+  "getAssetMemoryState",
+  "setAssetMemoryState",
+  "deleteAssetMemoryState",
+  "listAssetMemoryState",
   "setAssetTags",
   "getAssetTags",
   "getAssetTagsFor",

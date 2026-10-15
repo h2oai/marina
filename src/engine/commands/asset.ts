@@ -12,6 +12,7 @@
  * here (`runAssetCommand`).
  */
 
+import { residentMemoryOperation } from "../../memory/resident-service";
 import { dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import {
@@ -40,10 +41,13 @@ import {
   type AssetLibraryHost,
   checkAssetEdit,
   editAsset,
+  MAX_CAPTION_CHARS,
   parseProvenance,
   parseTagEdits,
   removeAsset,
 } from "../media/asset-library";
+import { ASSET_MEMORY_KIND, mediaMemoryMode, readMemoryStamp } from "../media/asset-memory";
+import { storedAssetText } from "../media/asset-text";
 import { ownershipRefusal } from "../ownership";
 import { canonicalSub, parseModifiers, splitOnTerminator, unknownSubcommand } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
@@ -76,13 +80,17 @@ ${USAGE}
   asset list owner:me type:image            your images, newest first
   asset list tag:moodboard sort:name        everything tagged moodboard you can see
   asset show <id>                           facts, provenance, tags, derivatives, parents/children, canvases
-  asset search red fox                      filename, caption, alt text, prompt and tags
+  asset search red fox                      filename, caption, alt text, prompt and tags,
+                                            plus text inside your own files (memory)
   asset tag <id> +moodboard -draft          add/remove tags (owner or operator)
   asset caption <id> -- A fox at dusk       set the caption (empty after -- clears it)
+  asset caption <id> accept                 take the model's suggested caption (vision memory)
   asset alt <id> -- Red fox in snow         set the alt text read by screen readers
   asset delete <id>                         delete it and its thumbnails (owner or operator)
 
-Private assets (on private canvases, or staged from model-API requests) are listed and shown only to people who can read them. Upload with \`canvas asset upload\` or the dashboard.`;
+Private assets (on private canvases, or staged from model-API requests) are listed and shown only to people who can read them. Upload with \`canvas asset upload\` or the dashboard.
+
+Your files' text (captions, tags, PDF text, transcripts, OCR) is indexed into your own memory (MARINA_MEDIA_MEMORY), so \`recall <words> all\` finds it as \`asset:<id>\` — open the file with \`marina_see asset:<id>\`.`;
 
 interface Access {
   host: CanvasAccessHost;
@@ -201,7 +209,12 @@ function list(db: MarinaDB, access: Access, entity: Entity, tokens: string[]): s
     .join("\n");
 }
 
-function search(db: MarinaDB, access: Access, tokens: string[]): string {
+async function search(
+  db: MarinaDB,
+  access: Access,
+  entity: Entity,
+  tokens: string[],
+): Promise<string> {
   const { values, rest, errors } = parseModifiers(tokens, { limit: { type: "int" } });
   if (errors.length) return `asset search: ${errors.join("; ")}`;
   const text = rest.join(" ").trim();
@@ -211,13 +224,90 @@ function search(db: MarinaDB, access: Access, tokens: string[]): string {
     LIST_MAX,
   );
   const rows = readablePage(db, access, { text }, limit);
-  if (rows.length === 0) return `No assets match "${text}".`;
+  const inText = await memoryHits(db, access, entity, text, new Set(rows.map((r) => r.id)));
+  if (rows.length === 0 && inText.length === 0) return `No assets match "${text}".`;
   const tags = db.getAssetTagsFor(rows.map((r) => r.id));
   return [
     header(`Assets matching "${text}" (${rows.length})`),
     separator(),
     ...rows.map((a) => line(a, tags.get(a.id) ?? [])),
+    ...(inText.length
+      ? ["", dim("Text inside your files (memory; untrusted content):"), ...inText]
+      : []),
   ].join("\n");
+}
+
+const MEMORY_HITS = 5;
+
+/**
+ * Assets whose indexed text (PDF text, OCR, transcripts — MARINA_MEDIA_MEMORY)
+ * matches, from the caller's own memory, beyond the filename/caption/tag hits.
+ * Each is re-checked against the asset read rule. Best effort: no account or a
+ * memory error simply adds nothing.
+ */
+async function memoryHits(
+  db: MarinaDB,
+  access: Access,
+  entity: Entity,
+  text: string,
+  shown: ReadonlySet<string>,
+): Promise<string[]> {
+  let results: { content?: string; metadata?: Record<string, unknown> }[];
+  try {
+    const reply = await residentMemoryOperation(db, entity.name, {
+      operation: "search",
+      input: { query: text, limit: 20 },
+    });
+    results =
+      (reply.result as { results?: { content?: string; metadata?: Record<string, unknown> }[] })
+        .results ?? [];
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  const seen = new Set(shown);
+  for (const r of results) {
+    const id = r.metadata?.kind === ASSET_MEMORY_KIND ? r.metadata.asset_id : undefined;
+    if (typeof id !== "string" || seen.has(id)) continue;
+    seen.add(id);
+    const asset = db.getAsset(id);
+    if (!asset || !mayReadAsset(access.host, asset, access.reader, "asset search", { log: false }))
+      continue;
+    const body = (r.content ?? "").split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim();
+    out.push(
+      `  ${asset.id.slice(0, 8)}.. ${asset.filename} [${String(r.metadata?.part ?? "text")}] ${body.slice(0, 100)}${body.length > 100 ? "…" : ""}`,
+    );
+    if (out.length >= MEMORY_HITS) break;
+  }
+  return out;
+}
+
+/** Stored machine-made text (OCR, PDF text, transcript): kinds and sizes, never the text. */
+function textSummary(asset: AssetRow): string | undefined {
+  const kinds: [string, "ocr" | "pdf_text" | "transcript"][] = [
+    ["OCR", "ocr"],
+    ["PDF text", "pdf_text"],
+    ["transcript", "transcript"],
+  ];
+  const have = kinds
+    .map(([label, kind]) => {
+      const t = storedAssetText(asset, kind);
+      return t ? `${label} ${t.text.length} chars${t.model ? ` (${t.model})` : ""}` : "";
+    })
+    .filter(Boolean);
+  return have.length ? have.join(", ") : undefined;
+}
+
+/** The media-memory index state (`MARINA_MEDIA_MEMORY`). */
+function memorySummary(asset: AssetRow): string | undefined {
+  if (asset.derived_from) return undefined;
+  const s = readMemoryStamp(asset);
+  if (!s) return mediaMemoryMode() === "off" ? "not indexed (MARINA_MEDIA_MEMORY=off)" : "pending";
+  const stale = s.updated_at < asset.updated_at ? ", re-index pending" : "";
+  const vision = s.vision ? `, vision ${s.vision}` : "";
+  return `${s.state}, ${s.records} record${s.records === 1 ? "" : "s"}${vision}${stale}${
+    s.note ? ` — ${s.note}` : ""
+  } (recall finds them as asset:${asset.id.slice(0, 8)}..)`;
 }
 
 function show(db: MarinaDB, access: Access, ref: string | undefined): string {
@@ -236,6 +326,7 @@ function show(db: MarinaDB, access: Access, ref: string | undefined): string {
   const parents = links.parents.filter((l) => readable(l.asset));
   const usedIn = db.listAssetCanvasUsage(asset.id).filter((c) => mayReadCanvas(c, access.reader));
   const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+  const suggestion = asset.caption ? undefined : storedAssetText(asset, "caption_suggestion");
   const rows: [string, string | undefined][] = [
     ["ID", asset.id],
     ["File", asset.filename],
@@ -253,6 +344,14 @@ function show(db: MarinaDB, access: Access, ref: string | undefined): string {
     ["Tags", tags.length ? tags.join(", ") : undefined],
     ["Caption", asset.caption ?? undefined],
     ["Alt", asset.alt ?? undefined],
+    [
+      "Suggested",
+      suggestion
+        ? `${suggestion.text} (${suggestion.model ?? "model"}; \`asset caption ${asset.id.slice(0, 8)} accept\`)`
+        : undefined,
+    ],
+    ["Text", textSummary(asset)],
+    ["Memory", memorySummary(asset)],
     ["Prompt", p.prompt],
     ["Model", p.model ? `${p.model}${p.provider ? ` (${p.provider})` : ""}` : undefined],
     ["Cost", typeof p.costUsd === "number" ? `$${p.costUsd.toFixed(4)}` : undefined],
@@ -357,7 +456,7 @@ export async function runAssetCommand(
       ctx.send(eid, list(db, access, entity, rest));
       return;
     case "search":
-      ctx.send(eid, search(db, access, rest));
+      ctx.send(eid, await search(db, access, entity, rest));
       return;
     case "show":
       ctx.send(eid, show(db, access, rest[0]));
@@ -400,6 +499,18 @@ export async function runAssetCommand(
         return;
       }
       const [, tail] = splitOnTerminator(args);
+      // `asset caption <id> accept` takes the model's suggestion (MARINA_MEDIA_MEMORY=vision).
+      if (sub === "caption" && tail === undefined && rest.length === 2 && rest[1] === "accept") {
+        const suggestion = storedAssetText(asset, "caption_suggestion");
+        if (!suggestion) {
+          ctx.send(eid, `No caption suggestion on ${asset.id.slice(0, 8)}.. to accept.`);
+          return;
+        }
+        const caption = suggestion.text.trim().slice(0, MAX_CAPTION_CHARS);
+        editAsset(library, asset, { caption }, eid);
+        ctx.send(eid, `Caption set on ${asset.id.slice(0, 8)}.. from the suggestion: ${caption}`);
+        return;
+      }
       const text = tail ?? rest.slice(1).join(" ");
       if (tail === undefined && !text) {
         ctx.send(eid, `Usage: asset ${sub} <id> -- <text>   (nothing after -- clears it)`);
@@ -489,6 +600,7 @@ export function assetCommand(deps: AssetCommandDeps): CommandDef {
       "asset search <text> [limit:N]",
       "asset tag <id> <changes...>",
       "asset caption <id> -- <text>",
+      "asset caption <id> accept",
       "asset alt <id> -- <text>",
       "asset delete <id>",
     ],

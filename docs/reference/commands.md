@@ -507,13 +507,17 @@ Usage: asset list [type:image|video|audio|pdf|document|other] [owner:me|<name>|a
   asset list owner:me type:image            your images, newest first
   asset list tag:moodboard sort:name        everything tagged moodboard you can see
   asset show <id>                           facts, provenance, tags, derivatives, parents/children, canvases
-  asset search red fox                      filename, caption, alt text, prompt and tags
+  asset search red fox                      filename, caption, alt text, prompt and tags,
+                                            plus text inside your own files (memory)
   asset tag <id> +moodboard -draft          add/remove tags (owner or operator)
   asset caption <id> -- A fox at dusk       set the caption (empty after -- clears it)
+  asset caption <id> accept                 take the model's suggested caption (vision memory)
   asset alt <id> -- Red fox in snow         set the alt text read by screen readers
   asset delete <id>                         delete it and its thumbnails (owner or operator)
 
 Private assets (on private canvases, or staged from model-API requests) are listed and shown only to people who can read them. Upload with `canvas asset upload` or the dashboard.
+
+Your files' text (captions, tags, PDF text, transcripts, OCR) is indexed into your own memory (MARINA_MEDIA_MEMORY), so `recall <words> all` finds it as `asset:<id>` — open the file with `marina_see asset:<id>`.
 
 Category: Canvas & Media. Minimum rank: 0.
 Aliases: `assets`.
@@ -566,6 +570,12 @@ Effect: unknown.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`text`): text, required.
+
+### `asset caption <id> accept`
+
+Effect: unknown.
+
+- `field-0` (`id`): text, required.
 
 ### `asset alt <id> -- <text>`
 
@@ -6118,12 +6128,12 @@ Effect: unknown.
 
 - `field-0` (`query`): text, required.
 
-### `note source <your-note-id> <url|note:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]`
+### `note source <your-note-id> <url|note:id|asset:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]`
 
 Effect: unknown.
 
 - `field-0` (`your-note-id`): text, required.
-- `field-1` (`url|note:id`): text, required, choices `url`, `note:id`.
+- `field-1` (`url|note:id|asset:id`): text, required, choices `url`, `note:id`, `asset:id`.
 - `field-2` (`type`): text, optional group `option-0`.
 - `field-3` (`credibility`): number, optional group `option-1`.
 - `field-4` (`observed`): text, optional group `option-2`.

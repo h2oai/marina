@@ -17,6 +17,10 @@
  *    origin `derived`, `derived_from` = the parent, linked by kind; it inherits
  *    the parent's read check (canvas-access.ts) and is deleted with it. A
  *    missing tool means no derivative and a recorded note, never an error.
+ *  - `setAssetText` stores machine-made text (transcript, OCR, PDF text, a
+ *    caption suggestion) under `metadata.<kind>`; the media-memory indexer
+ *    (asset-memory.ts, `MARINA_MEDIA_MEMORY`) turns an asset's text into
+ *    canonical memory records in the owner's memory.
  *  - `backfillAssets` (tick job `asset-backfill`) fills facts and derivatives
  *    for rows written before migration 168 or by a writer that skipped them,
  *    a bounded batch per pass — boot never waits for it.
@@ -40,6 +44,7 @@ import type { StorageProvider } from "../../storage/provider";
 import type { EngineEvent, EntityId } from "../../types";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
+import { ASSET_TEXT_KINDS, type AssetTextKind, capAssetText } from "./asset-text";
 import { imageProcessingAvailable, probeImage, thumbnail, toDataUrl } from "./image-ops";
 import { hasTool, runTool } from "./vision";
 
@@ -684,6 +689,52 @@ export function editAsset(
   const asset = db.getAsset(row.id) as AssetRow;
   emit(host, "asset_updated", asset, actor);
   return { asset, tags };
+}
+
+/**
+ * Store (or with `null` clear) one machine-made text of an asset under
+ * `metadata.<kind>` — the ONE write path for transcripts, OCR text, PDF text
+ * and caption suggestions (`asset-text.ts`). Shape stored:
+ * `{ text, ...meta, createdAt: <ms>, truncated? }`, text cut at
+ * `MAX_ASSET_TEXT_CHARS`. Bumps `updated_at`, so the media-memory indexer
+ * (`MARINA_MEDIA_MEMORY`) re-indexes the asset off the request path, and emits
+ * `asset_updated` (ids only). Never touches the person-set `caption`/`alt`.
+ * Accepts the engine-side host or a bare `MarinaDB` (no event then).
+ *
+ * Audio transcription calls it as
+ * `setAssetText(host, assetId, "transcript", text, { model, language })`.
+ * Returns the updated row, or undefined when the asset is gone (or is a
+ * derivative — text belongs to the original).
+ */
+export function setAssetText(
+  hostOrDb: AssetLibraryHost | MarinaDB,
+  assetId: string,
+  kind: AssetTextKind,
+  text: string | null,
+  meta: Record<string, unknown> = {},
+  actor?: EntityId,
+): AssetRow | undefined {
+  const host: AssetLibraryHost =
+    "getAsset" in hostOrDb ? { db: hostOrDb as MarinaDB } : (hostOrDb as AssetLibraryHost);
+  const db = host.db;
+  if (!db || !ASSET_TEXT_KINDS.includes(kind)) return undefined;
+  const row = db.getAsset(assetId);
+  if (!row || row.derived_from) return undefined;
+  let value: Record<string, unknown> | null = null;
+  if (text?.trim()) {
+    const capped = capAssetText(text.trim());
+    const { text: _t, createdAt: _c, truncated: _x, ...rest } = meta;
+    value = {
+      text: capped.text,
+      ...rest,
+      createdAt: Date.now(),
+      ...(capped.truncated ? { truncated: true } : {}),
+    };
+  }
+  if (!db.setAssetMetadataKey(assetId, kind, value, { touch: true })) return undefined;
+  const updated = db.getAsset(assetId) as AssetRow;
+  emit(host, "asset_updated", updated, actor);
+  return updated;
 }
 
 /**
