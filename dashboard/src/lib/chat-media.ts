@@ -94,7 +94,7 @@ export function deriveChatMedia({
   const jobByAsset = new Map<string, MediaJob>();
   const seenJobs = new Set<string>();
   for (const job of jobs) {
-    if (seenJobs.has(job.id)) continue;
+    if (!job?.id || seenJobs.has(job.id)) continue;
     seenJobs.add(job.id);
     if (job.assetId) jobByAsset.set(job.assetId, job);
   }
@@ -102,7 +102,7 @@ export function deriveChatMedia({
   const out: ChatMediaEntry[] = [];
   const assetIds = new Set<string>();
   for (const asset of assets) {
-    if (assetIds.has(asset.id)) continue;
+    if (!asset?.id || assetIds.has(asset.id)) continue;
     assetIds.add(asset.id);
     const job = jobByAsset.get(asset.id);
     out.push({
@@ -117,7 +117,7 @@ export function deriveChatMedia({
   const coveredJobs = new Set<string>();
   const listedJobs = new Set<string>();
   for (const job of jobs) {
-    if (listedJobs.has(job.id)) continue;
+    if (!job?.id || listedJobs.has(job.id)) continue;
     listedJobs.add(job.id);
     if (job.assetId && assetIds.has(job.assetId)) {
       coveredJobs.add(job.id);
@@ -132,14 +132,15 @@ export function deriveChatMedia({
   const live: ChatMediaEntry[] = [];
   const liveSeen = new Set<string>();
   for (const event of feed) {
-    if (event.timestamp < cutoff) continue;
+    if (!event || event.timestamp < cutoff) continue;
     const payload = event.payload;
-    if (!payload) continue;
+    if (!payload || typeof payload !== "object") continue;
     const canvasId = str(payload.canvasId);
     const nodeId = str(payload.nodeId);
     if (!canvasId || !nodeId) continue;
     const assetId = str(payload.assetId);
-    const jobId = str(payload.jobId) ?? (event.kind.startsWith("media_") ? event.ref : undefined);
+    const jobId =
+      str(payload.jobId) ?? (String(event.kind ?? "").startsWith("media_") ? event.ref : undefined);
     if (assetId && assetIds.has(assetId)) continue;
     if (jobId && coveredJobs.has(jobId)) continue;
     const dedupe = `${canvasId}:${nodeId}:${event.timestamp}`;
@@ -189,6 +190,19 @@ export function mergeByTimestamp<M extends { timestamp: number }, C extends { ti
     }
   }
   return out;
+}
+
+/** Jobs the UI may rely on, whatever came back (a non-array or malformed rows read as none). */
+export function normalizeMediaJobs(body: unknown): MediaJob[] {
+  if (!Array.isArray(body)) return [];
+  return body.filter(
+    (j): j is MediaJob =>
+      !!j &&
+      typeof j === "object" &&
+      typeof (j as MediaJob).id === "string" &&
+      typeof (j as MediaJob).status === "string" &&
+      typeof (j as MediaJob).createdAt === "number",
+  );
 }
 
 /** True while any job still needs a status update. */

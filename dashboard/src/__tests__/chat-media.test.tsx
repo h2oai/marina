@@ -396,6 +396,39 @@ describe("ChatMessageList persisted media", () => {
     expect(opts.collection.map((v: { id?: string }) => v.id)).toEqual(["early", "late"]);
   });
 
+  it.each([
+    ["the legacy asset array (an older desktop bridge)", [{ id: "x", filename: "x.png" }], {}],
+    ["an error body", { error: "nope" }, "not an array"],
+    ["null", null, null],
+    ["malformed rows", { items: [null, { id: 3 }, { nope: true }] }, [null, { id: 1 }]],
+  ])(
+    "never throws while rendering when the transport answers %s",
+    async (_label, library, jobs) => {
+      const { ChatMessageList } = await import("../components/ChatMessageList");
+      authFetch.mockResolvedValue(
+        new Response(JSON.stringify(library), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      fetchApi.mockResolvedValue(jobs);
+      renderWithProviders(
+        <ChatMessageList
+          messages={[{ html: "hello", text: "hello", kind: "message", timestamp: T0 }]}
+          viewMode="rich"
+          copy={async () => {}}
+          copied={null}
+          sendCommandWithOverlay={() => true}
+        />,
+      );
+      await waitFor(() => expect(authFetch).toHaveBeenCalled());
+      await waitFor(() => expect(fetchApi).toHaveBeenCalled());
+      await new Promise((r) => setTimeout(r, 20));
+      expect(screen.getByText("hello")).toBeInTheDocument();
+      expect(screen.queryAllByTestId("chat-media-card")).toHaveLength(0);
+    },
+  );
+
   it("reads nothing before login", async () => {
     const { useChatState } = await import("../hooks/use-chat-state");
     useChatState.setState({ loggedIn: false, entityName: null });

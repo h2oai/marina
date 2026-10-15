@@ -18,6 +18,7 @@ type Query = {
   data?: unknown;
   isLoading?: boolean;
   isError?: boolean;
+  error?: unknown;
   refetch?: () => Promise<unknown>;
 };
 const queries: Record<string, Query> = {};

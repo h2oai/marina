@@ -20,6 +20,7 @@ import {
   CHAT_MEDIA_PAGE_SIZE,
   chatMediaJobsPath,
   hasActiveJob,
+  normalizeMediaJobs,
 } from "../lib/chat-media";
 import type { MediaJob } from "../lib/types";
 
@@ -63,7 +64,7 @@ export function useChatMedia(viewer: string | null, enabled = true): ChatMedia {
   });
   const jobs = useQuery({
     queryKey: chatMediaJobsKey(viewer),
-    queryFn: () => fetchApi<MediaJob[]>(chatMediaJobsPath()),
+    queryFn: async () => normalizeMediaJobs(await fetchApi<unknown>(chatMediaJobsPath())),
     enabled: on,
     retry: false,
     refetchInterval: (query) =>
