@@ -3,15 +3,18 @@
 
 /**
  * One asset upload (`POST /api/assets`, multipart `file`), with progress and
- * cancel. XHR reports upload progress; the desktop shell (`views:`) routes
- * HTTP through its native adapter, which only patches `fetch`, so there the
- * upload falls back to `authFetch` without byte progress. The server answers
- * 201 for a new asset and 200 + `deduplicated: true` when the same owner
- * already stored the same bytes.
+ * cancel. XHR reports upload progress in a browser; the desktop shell
+ * (`views:`) routes HTTP through its native adapter, whose bridge
+ * (`desktop-bridge.ts`) reports the bytes handed to the native process. Without
+ * either, the upload goes through `authFetch` and reports no byte progress
+ * (`uploadTracksProgress()` is false — show an indeterminate state). The
+ * server answers 201 for a new asset and 200 + `deduplicated: true` when the
+ * same owner already stored the same bytes.
  */
 
 import { authFetch, getToken } from "./api";
 import { apiOrigin } from "./api-origin";
+import { desktopBridge, type MarinaDesktopBridge } from "./desktop-bridge";
 
 export interface UploadedAsset {
   id: string;
@@ -25,6 +28,8 @@ export interface UploadedAsset {
 export interface UploadOptions {
   onProgress?: (fraction: number) => void;
   signal?: AbortSignal;
+  /** The page location (tests); defaults to `window.location`. */
+  location?: Pick<Location, "protocol" | "origin">;
 }
 
 export class UploadError extends Error {
@@ -64,12 +69,24 @@ function parse(text: string): unknown {
   }
 }
 
+/** Whether `uploadAsset` reports byte progress on this page (else: indeterminate). */
+export function uploadTracksProgress(
+  location: Pick<Location, "protocol"> = window.location,
+): boolean {
+  if (location.protocol === "views:") return !!desktopBridge(location);
+  return typeof XMLHttpRequest !== "undefined";
+}
+
 export function uploadAsset(file: File, opts: UploadOptions = {}): Promise<UploadedAsset> {
-  const url = `${apiOrigin()}/api/assets`;
+  const location = opts.location ?? window.location;
+  const url = `${apiOrigin(location)}/api/assets`;
   const form = new FormData();
   form.append("file", file, file.name);
-  const useXhr = typeof XMLHttpRequest !== "undefined" && window.location.protocol !== "views:";
-  if (!useXhr) return uploadWithFetch(url, form, opts);
+  if (location.protocol === "views:") {
+    const bridge = desktopBridge(location);
+    return bridge ? uploadWithBridge(bridge, url, form, opts) : uploadWithFetch(url, form, opts);
+  }
+  if (typeof XMLHttpRequest === "undefined") return uploadWithFetch(url, form, opts);
   return new Promise<UploadedAsset>((resolve, reject) => {
     if (opts.signal?.aborted) {
       reject(new UploadError("Cancelled.", 0, true));
@@ -98,14 +115,37 @@ export function uploadAsset(file: File, opts: UploadOptions = {}): Promise<Uploa
   });
 }
 
-async function uploadWithFetch(
+function uploadWithFetch(url: string, form: FormData, opts: UploadOptions): Promise<UploadedAsset> {
+  return settle(() => authFetch(url, { method: "POST", body: form, signal: opts.signal }), opts);
+}
+
+/** The desktop shell's native upload: real byte progress and cancel. */
+function uploadWithBridge(
+  bridge: MarinaDesktopBridge,
   url: string,
   form: FormData,
   opts: UploadOptions,
 ): Promise<UploadedAsset> {
+  const token = getToken();
+  return settle(
+    () =>
+      bridge.sendBody({
+        url,
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+        onProgress: opts.onProgress,
+        signal: opts.signal,
+      }),
+    opts,
+  );
+}
+
+async function settle(send: () => Promise<Response>, opts: UploadOptions): Promise<UploadedAsset> {
+  if (opts.signal?.aborted) throw new UploadError("Cancelled.", 0, true);
   let res: Response;
   try {
-    res = await authFetch(url, { method: "POST", body: form, signal: opts.signal });
+    res = await send();
   } catch (err) {
     if (opts.signal?.aborted) throw new UploadError("Cancelled.", 0, true);
     throw new UploadError(err instanceof Error ? err.message : "Network error.", 0);

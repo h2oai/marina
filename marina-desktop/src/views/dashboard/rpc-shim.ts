@@ -8,11 +8,18 @@
  * (which expects HTTP/WS to localhost) transparently routes through
  * Electrobun's RPC instead.
  *
- * The dashboard source code is completely unaware of this shim.
+ * The dashboard is unaware of this shim except where `fetch` cannot express
+ * what it needs: upload byte progress (`window.marinaDesktop`, see
+ * dashboard/src/lib/desktop-bridge.ts) and asset bytes for elements, which
+ * dashboard/src/lib/asset-url.ts reads through the patched `fetch` into blob
+ * URLs. Asset APIs and bytes are forwarded to the embedded server under the
+ * viewer's own credential (or the native operator credential, which never
+ * reaches the webview), so the server's authorization and events apply.
  */
 
 import { Electroview } from "electrobun/view";
 import { apiOrigin } from "../../../../dashboard/src/lib/api-origin";
+import type { DesktopBodyRequest } from "../../../../dashboard/src/lib/desktop-bridge";
 import type {
   AgentSpawnParams,
   ApiKeyParams,
@@ -118,6 +125,153 @@ function dispatchWsMessage(data: unknown): void {
 
 const originalFetch = window.fetch.bind(window);
 
+/** Raw bytes per upload chunk sent over the RPC (base64 adds a third). */
+const UPLOAD_CHUNK_BYTES = 512 * 1024;
+
+/** The local path (`/api/...` or `/assets/...` with query) for a reserved-origin URL. */
+function localPath(url: string): { pathname: string; apiPath: string } | undefined {
+  try {
+    const parsed = new URL(url, apiOrigin());
+    if (parsed.origin !== apiOrigin()) return undefined;
+    return { pathname: parsed.pathname, apiPath: `${parsed.pathname}${parsed.search}` };
+  } catch {
+    return { pathname: url, apiPath: url };
+  }
+}
+
+function headerRecord(headers: HeadersInit | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  new Headers(headers).forEach((value, key) => {
+    out[key] = value;
+  });
+  return out;
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function fromBase64(base64: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(base64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+function abortError(): DOMException {
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+/** A Response for a proxied answer (null-body statuses carry no body). */
+function proxyResponse(result: { status: number; contentType: string; body: string }): Response {
+  const nullBody = [101, 103, 204, 205, 304].includes(result.status);
+  return new Response(nullBody ? null : result.body, {
+    status: result.status,
+    headers: { "Content-Type": result.contentType },
+  });
+}
+
+/**
+ * Send a binary request body to the embedded server in chunks, reporting the
+ * fraction of bytes handed to the native process. The server sees one ordinary
+ * request, so its caps, dedupe answer (200 `deduplicated`) and errors pass
+ * through unchanged.
+ */
+async function uploadBytes(
+  path: string,
+  method: string,
+  headers: Record<string, string>,
+  bytes: Uint8Array,
+  onProgress?: (fraction: number) => void,
+  signal?: AbortSignal,
+): Promise<Response> {
+  if (signal?.aborted) throw abortError();
+  const begin = await rpc.request.proxyUploadBegin({
+    path,
+    method,
+    headers,
+    size: bytes.byteLength,
+  });
+  if ("error" in begin) return proxyResponse(begin.error);
+  const id = begin.id;
+  try {
+    for (let offset = 0; offset < bytes.byteLength; offset += UPLOAD_CHUNK_BYTES) {
+      if (signal?.aborted) throw abortError();
+      const chunk = bytes.subarray(offset, offset + UPLOAD_CHUNK_BYTES);
+      const sent = await rpc.request.proxyUploadChunk({
+        id,
+        offset,
+        dataBase64: toBase64(chunk),
+      });
+      if ("error" in sent) throw new Error(sent.error);
+      onProgress?.(sent.received / bytes.byteLength);
+    }
+    if (signal?.aborted) throw abortError();
+    return proxyResponse(await rpc.request.proxyUploadFinish(id));
+  } catch (err) {
+    rpc.request.proxyTransferAbort(id).catch(() => {});
+    throw err;
+  }
+}
+
+/** Serialize any fetch body (FormData, Blob, buffers) with the headers a browser would send. */
+async function serializeBody(
+  method: string,
+  body: BodyInit,
+  headers: HeadersInit | undefined,
+): Promise<{ headers: Record<string, string>; bytes: Uint8Array }> {
+  const request = new Request(`${apiOrigin()}/`, { method, body, headers });
+  return {
+    headers: headerRecord(request.headers),
+    bytes: new Uint8Array(await request.arrayBuffer()),
+  };
+}
+
+/** `window.marinaDesktop.sendBody` — uploads with byte progress and cancel. */
+async function sendBody(request: DesktopBodyRequest): Promise<Response> {
+  const local = localPath(request.url);
+  if (!local?.pathname.startsWith("/api/") || !rpcConnected) {
+    throw new TypeError(`Not a local API URL: ${request.url}`);
+  }
+  const method = request.method.toUpperCase();
+  const { headers, bytes } = await serializeBody(method, request.body, request.headers);
+  return uploadBytes(local.apiPath, method, headers, bytes, request.onProgress, request.signal);
+}
+
+/** Read `GET /assets/<key>` bytes through the native adapter, in chunks. */
+async function downloadAsset(apiPath: string, init?: RequestInit): Promise<Response> {
+  const begin = await rpc.request.proxyDownloadBegin({
+    path: apiPath,
+    headers: headerRecord(init?.headers),
+  });
+  const parts: Uint8Array<ArrayBuffer>[] = [];
+  if (begin.bodyBase64 !== undefined) parts.push(fromBase64(begin.bodyBase64));
+  else if (begin.id) {
+    let offset = 0;
+    while (offset < begin.size) {
+      if (init?.signal?.aborted) {
+        rpc.request.proxyTransferAbort(begin.id).catch(() => {});
+        throw abortError();
+      }
+      const chunk = await rpc.request.proxyDownloadChunk({ id: begin.id, offset });
+      if ("error" in chunk) throw new Error(chunk.error);
+      const bytes = fromBase64(chunk.dataBase64);
+      if (bytes.byteLength === 0) throw new Error("Asset read ended early");
+      parts.push(bytes);
+      offset += bytes.byteLength;
+    }
+  }
+  const nullBody = [101, 103, 204, 205, 304].includes(begin.status);
+  return new Response(nullBody ? null : new Blob(parts, { type: begin.contentType }), {
+    status: begin.status,
+    headers: { "Content-Type": begin.contentType },
+  });
+}
+
 // Cast the LHS: the bound original fetch is a plain function type, while
 // `window.fetch` (lib.dom) now carries a `preconnect` static the polyfill
 // doesn't implement. Assigning through the original's type is correct here.
@@ -132,47 +286,59 @@ const originalFetch = window.fetch.bind(window);
   const url =
     typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
-  // Extract pathname — handle both relative (/api/...) and absolute URLs
-  let pathname: string;
-  let apiPath: string;
-  try {
-    const parsed = new URL(url, apiOrigin());
-    if (parsed.origin !== apiOrigin()) return originalFetch(input, init);
-    pathname = parsed.pathname;
-    apiPath = `${parsed.pathname}${parsed.search}`;
-  } catch {
-    pathname = url;
-    apiPath = url;
-  }
+  // Only intercept the reserved origin's /api/* and /assets/* when RPC is connected.
+  const local = localPath(url);
+  if (!local || !rpcConnected) return originalFetch(input, init);
+  const { pathname, apiPath } = local;
+  const isAssetBytes = pathname.startsWith("/assets/");
+  if (!pathname.startsWith("/api/") && !isAssetBytes) return originalFetch(input, init);
 
-  // Only intercept /api/* paths when RPC is connected
-  if (!pathname.startsWith("/api/") || !rpcConnected) {
-    return originalFetch(input, init);
-  }
-
-  const method = init?.method?.toUpperCase() ?? "GET";
+  const method = (
+    init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET")
+  ).toUpperCase();
 
   try {
-    // Special case: asset upload via multipart or raw body
-    if (pathname === "/api/assets" && method === "POST") {
-      const data = await handleAssetUpload(input, init);
-      return new Response(JSON.stringify(data), {
-        status: 201,
-        headers: { "Content-Type": "application/json" },
-      });
+    // Stored asset bytes (elements get them as blob: URLs, see asset-url.ts).
+    if (isAssetBytes) {
+      if (method !== "GET" && method !== "HEAD") {
+        return proxyResponse({
+          status: 405,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Method not allowed" }),
+        });
+      }
+      return await downloadAsset(apiPath, init);
     }
 
-    // Parse JSON body for POST/PATCH requests
+    // Binary bodies (multipart uploads, blobs, buffers) go to the server as-is.
+    const rawBody = init?.body;
+    if (rawBody != null && typeof rawBody !== "string") {
+      const { headers, bytes } = await serializeBody(method, rawBody, init?.headers);
+      return await uploadBytes(
+        apiPath,
+        method,
+        headers,
+        bytes,
+        undefined,
+        init?.signal ?? undefined,
+      );
+    }
+
+    // Parse JSON body for POST/PATCH/PUT requests; other text passes through.
     let body: unknown;
-    if ((method === "POST" || method === "PATCH" || method === "PUT") && init?.body) {
+    let text: string | undefined;
+    if ((method === "POST" || method === "PATCH" || method === "PUT") && rawBody) {
       try {
-        body = JSON.parse(init.body as string);
+        body = JSON.parse(rawBody);
       } catch {
-        body = undefined;
+        text = rawBody;
       }
     }
 
-    const data = await routeApiRequest(pathname, method, body, init, apiPath);
+    const data =
+      text !== undefined
+        ? await proxyApiRequest(apiPath, method, undefined, init, text)
+        : await routeApiRequest(pathname, method, body, init, apiPath);
     if (data instanceof Response) return data;
     const failed =
       !!data && typeof data === "object" && "error" in data && typeof data.error === "string";
@@ -181,6 +347,10 @@ const originalFetch = window.fetch.bind(window);
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
+    // A cancelled request rejects like fetch does.
+    if (init?.signal?.aborted || (err instanceof DOMException && err.name === "AbortError")) {
+      throw err;
+    }
     // Silently return 503 — React Query handles retries/error states.
     // RPC timeouts are expected when native dialogs block the event loop.
     console.warn(
@@ -194,47 +364,9 @@ const originalFetch = window.fetch.bind(window);
   }
 };
 
-/** Convert multipart or raw asset upload into a base64 RPC call. */
-async function handleAssetUpload(input: RequestInfo | URL, init?: RequestInit): Promise<unknown> {
-  const contentType =
-    (init?.headers as Record<string, string>)?.["Content-Type"] ??
-    (init?.headers as Record<string, string>)?.["content-type"] ??
-    "";
-
-  let filename: string;
-  let mime: string;
-  let dataBase64: string;
-  let entity = "system";
-
-  if (contentType.includes("multipart/form-data") && init?.body) {
-    // Reconstruct FormData from the body
-    const res = new Response(init.body, { headers: { "Content-Type": contentType } });
-    const formData = await res.formData();
-    const file = formData.get("file");
-    if (!file || !(file instanceof File)) throw new Error("Missing file field");
-    filename = file.name;
-    mime = file.type || "application/octet-stream";
-    const buf = await file.arrayBuffer();
-    dataBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-    entity = (formData.get("entity") as string) ?? "system";
-  } else {
-    // Raw body upload
-    const url =
-      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const parsed = new URL(url, window.location.origin);
-    filename = parsed.searchParams.get("filename") ?? "upload";
-    mime = contentType || "application/octet-stream";
-    entity = parsed.searchParams.get("entity") ?? "system";
-    const buf = init?.body
-      ? typeof init.body === "string"
-        ? new TextEncoder().encode(init.body)
-        : new Uint8Array(init.body as ArrayBuffer)
-      : new Uint8Array(0);
-    dataBase64 = btoa(String.fromCharCode(...buf));
-  }
-
-  return rpc.request.uploadAsset({ filename, mime, dataBase64, entity });
-}
+// Native helpers the dashboard reaches for where `fetch` cannot express them
+// (dashboard/src/lib/desktop-bridge.ts).
+if (rpcConnected) window.marinaDesktop = { sendBody };
 
 async function routeApiRequest(
   pathname: string,
@@ -265,11 +397,8 @@ async function routeApiRequest(
     if (canvasDeleteMatch) {
       return rpc.request.deleteCanvas(decodeURIComponent(canvasDeleteMatch[1]!));
     }
-    // DELETE /api/assets/:id
-    const assetDeleteMatch = pathname.match(/^\/api\/assets\/([^/]+)$/);
-    if (assetDeleteMatch) {
-      return rpc.request.deleteAsset(decodeURIComponent(assetDeleteMatch[1]!));
-    }
+    // Assets (DELETE /api/assets/:id) go to the server: it authorizes the
+    // caller, removes derivatives and emits `asset_deleted`.
     return proxyApiRequest(apiPath, method, body, init);
   }
 
@@ -334,7 +463,8 @@ async function routeApiRequest(
     if (pathname === "/api/canvases") {
       return rpc.request.createCanvas(body as CreateCanvasParams);
     }
-    // POST /api/assets — upload asset (handled separately in fetch interceptor)
+    // POST /api/assets (uploads arrive as binary bodies) and /api/assets/sign
+    // go to the server unchanged.
     return proxyApiRequest(apiPath, method, body, init);
   }
 
@@ -352,7 +482,6 @@ async function routeApiRequest(
   if (pathname === "/api/commands") return rpc.request.getCommands();
   if (pathname === "/api/memory/pools") return rpc.request.getMemoryPools();
   if (pathname === "/api/canvases") return rpc.request.getCanvases();
-  if (pathname === "/api/assets") return rpc.request.getAssets();
   if (pathname === "/api/keys") return rpc.request.getKeys();
   if (pathname === "/api/models") return rpc.request.getModels();
   if (pathname === "/api/default-model") return rpc.request.getDefaultModel();
@@ -415,12 +544,9 @@ async function routeApiRequest(
     return rpc.request.getCanvasDetail(decodeURIComponent(canvasDetailMatch[1]!));
   }
 
-  // GET /api/assets/:id
-  const assetDetailMatch = pathname.match(/^\/api\/assets\/([^/]+)$/);
-  if (assetDetailMatch) {
-    return rpc.request.getAssetDetail(decodeURIComponent(assetDetailMatch[1]!));
-  }
-
+  // Every /api/assets read (the library view with its filters, cursor and
+  // facets, the legacy list, detail) is the server's, read under the viewer's
+  // own credential.
   return proxyApiRequest(apiPath, method, body, init);
 }
 
@@ -430,22 +556,17 @@ async function proxyApiRequest(
   method: string,
   body: unknown,
   init?: RequestInit,
+  text?: string,
 ): Promise<Response> {
-  const headers: Record<string, string> = {};
-  new Headers(init?.headers).forEach((value, key) => {
-    headers[key] = value;
-  });
+  const headers = headerRecord(init?.headers);
   if (body !== undefined && !headers["content-type"]) headers["content-type"] = "application/json";
   const result = await rpc.request.proxyApi({
     path,
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: text ?? (body === undefined ? undefined : JSON.stringify(body)),
   });
-  return new Response(result.body, {
-    status: result.status,
-    headers: { "Content-Type": result.contentType },
-  });
+  return proxyResponse(result);
 }
 
 // ─── Game WebSocket Message Relay ──────────────────────────────────────────

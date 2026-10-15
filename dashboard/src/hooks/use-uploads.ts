@@ -12,7 +12,13 @@
 import { QueryClientContext } from "@tanstack/react-query";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { apiOrigin } from "../lib/api-origin";
-import { formatMb, UploadError, type UploadedAsset, uploadAsset } from "../lib/upload";
+import {
+  formatMb,
+  UploadError,
+  type UploadedAsset,
+  uploadAsset,
+  uploadTracksProgress,
+} from "../lib/upload";
 
 export type UploadStatus = "queued" | "uploading" | "done" | "duplicate" | "error" | "cancelled";
 
@@ -22,6 +28,8 @@ export interface UploadEntry {
   size: number;
   mime: string;
   progress: number;
+  /** True while uploading on a transport that reports no byte progress. */
+  indeterminate?: boolean;
   status: UploadStatus;
   error?: string;
   asset?: UploadedAsset;
@@ -34,6 +42,8 @@ export interface UseUploadsOptions {
   concurrency?: number;
   /** Override the server cap (tests). */
   maxBytes?: number;
+  /** The page location (tests); defaults to `window.location`. */
+  location?: Pick<Location, "protocol" | "origin">;
 }
 
 interface UiConfig {
@@ -109,9 +119,11 @@ export function useUploads(opts: UseUploadsOptions = {}) {
       const controller = new AbortController();
       controllers.current.set(id, controller);
       active.current++;
-      patch(id, { status: "uploading" });
+      const location = optsRef.current.location ?? window.location;
+      patch(id, { status: "uploading", indeterminate: !uploadTracksProgress(location) });
       let last = 0;
       uploadAsset(file, {
+        location,
         signal: controller.signal,
         onProgress: (fraction) => {
           // Coalesce progress events to whole percents.
@@ -125,6 +137,7 @@ export function useUploads(opts: UseUploadsOptions = {}) {
           patch(id, {
             status: asset.deduplicated ? "duplicate" : "done",
             progress: 1,
+            indeterminate: false,
             asset,
           });
           void qc?.invalidateQueries({ queryKey: ["assets"] });

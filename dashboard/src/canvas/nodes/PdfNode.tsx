@@ -6,7 +6,7 @@ import { Handle, type NodeProps, NodeResizer, Position } from "@xyflow/react";
 // `script-src 'self'` / `worker-src 'self'` — no CDN grant.
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useEffect, useRef, useState } from "react";
-import { assetAuthHeaders, useAssetUrl } from "../../lib/asset-url";
+import { assetAuthHeaders, desktopAssetPath, useAssetUrl } from "../../lib/asset-url";
 import { emptyAssetLabel } from "../lib/node-fields";
 import { NodeMeta } from "./NodeMeta";
 
@@ -14,6 +14,9 @@ export default function PdfNode({ data, selected }: NodeProps) {
   const url = (data.url as string) ?? "";
   // The "Open" link cannot send a header: a private asset needs a signed URL.
   const openUrl = useAssetUrl(url);
+  // The desktop shell has no origin for pdf.js to fetch `/assets/` from: it
+  // reads the blob URL the native adapter produced instead.
+  const docUrl = desktopAssetPath(url) ? openUrl : url;
   const filename = (data.filename as string) ?? "Document.pdf";
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pageNum, setPageNum] = useState(1);
@@ -27,6 +30,8 @@ export default function PdfNode({ data, selected }: NodeProps) {
       setLoading(false);
       return;
     }
+    // Still reading the bytes through the desktop adapter.
+    if (!docUrl) return;
     let cancelled = false;
     setError(null);
 
@@ -55,7 +60,10 @@ export default function PdfNode({ data, selected }: NodeProps) {
         // pdf.js fetches (and range-requests) the file itself, so it sends the
         // session bearer for this server's own assets instead of a signed URL
         // that could expire mid-document.
-        const pdf = await pdfjsLib.getDocument({ url, httpHeaders: assetAuthHeaders(url) }).promise;
+        const pdf = await pdfjsLib.getDocument({
+          url: docUrl,
+          httpHeaders: assetAuthHeaders(docUrl),
+        }).promise;
         if (cancelled) return;
         pdfDocRef.current = pdf;
         setNumPages(pdf.numPages);
@@ -72,7 +80,7 @@ export default function PdfNode({ data, selected }: NodeProps) {
     return () => {
       cancelled = true;
     };
-  }, [url]);
+  }, [url, docUrl]);
 
   useEffect(() => {
     if (!pdfDocRef.current || pageNum < 1) return;

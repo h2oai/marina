@@ -206,7 +206,18 @@ export function UploadTray({
                     <X size={11} aria-hidden="true" />
                   </button>
                 </div>
-                {live && (
+                {live && e.status === "uploading" && e.indeterminate ? (
+                  // No byte progress on this transport: an honest busy bar, no value.
+                  <div
+                    role="progressbar"
+                    aria-label={`Uploading ${e.name}`}
+                    aria-valuetext="Uploading, progress unavailable"
+                    data-indeterminate="true"
+                    className="mt-1 h-1 overflow-hidden rounded bg-bg-hover"
+                  >
+                    <div className="h-full w-full bg-primary/60 motion-safe:animate-pulse" />
+                  </div>
+                ) : live ? (
                   <div
                     role="progressbar"
                     aria-label={`Uploading ${e.name}`}
@@ -220,7 +231,7 @@ export function UploadTray({
                       style={{ width: `${Math.max(2, e.progress * 100)}%` }}
                     />
                   </div>
-                )}
+                ) : null}
                 <p
                   className={`mt-0.5 ${e.status === "error" ? "text-danger" : "text-text-dim"}`}
                   role={e.status === "error" ? "alert" : undefined}

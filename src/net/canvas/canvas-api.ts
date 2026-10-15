@@ -393,19 +393,14 @@ export async function handleCanvasApi(
     }
 
     if (method === "DELETE") {
-      // Fetch the node first so we can clean up its asset
       const node = db.getNode(nodeId);
       if (!node || node.canvas_id !== canvasId) return json({ error: "Node not found" }, 404);
       const deleted = db.deleteNode(nodeId);
       if (!deleted) return json({ error: "Node not found" }, 404);
-      // Clean up associated asset file and DB row
-      if (node.asset_id && storage) {
-        const asset = db.getAsset(node.asset_id);
-        if (asset) {
-          await storage.delete(asset.storage_key);
-          db.deleteAsset(node.asset_id);
-        }
-      }
+      // A node only shows an asset; the asset library owns its lifetime. One
+      // asset can sit on many nodes and canvases, and the node's deleter need
+      // not own it — deleting the asset is `DELETE /api/assets/:id` / `asset
+      // delete` (owner or operator; derivatives, `asset_deleted`).
       broadcaster?.broadcast({ type: "node_deleted", canvasId, nodeId });
       return json({ ok: true, id: nodeId });
     }

@@ -33,6 +33,10 @@ the adapter handles those requests locally. External HTTP requests retain their
 original destination.
 Signed-in API calls retain the resident's identity, including private streams
 and inventory. The native operator credential stays in the main process.
+Asset APIs and upload bodies go to the embedded server unchanged, so its
+authorization, upload cap, dedupe answer and asset events apply; binary bodies
+and asset bytes cross the RPC in bounded chunks (`src/bun/proxy-transfers.ts`),
+which gives uploads real byte progress and elements `blob:` URLs.
 
 ```bash
 bun run build:dev       # native development bundle, no launch
