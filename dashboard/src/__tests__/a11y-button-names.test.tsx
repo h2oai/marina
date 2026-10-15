@@ -315,6 +315,7 @@ describe("accessible button names", () => {
     const { MediaViewerProvider } = await import("../components/media/MediaViewer");
     const { UploadTray } = await import("../components/media/UploadControls");
     const { MediaJobsList } = await import("../components/MediaJobsList");
+    const { ChatMediaCard } = await import("../components/media/ChatMediaCard");
     const { container } = renderWithProviders(
       <MediaViewerProvider>
         <AssetLibrary />
@@ -353,8 +354,43 @@ describe("accessible button names", () => {
             },
           ]}
         />
+        <section aria-label="Chat media cards">
+          <ChatMediaCard
+            entry={{
+              type: "asset",
+              key: "asset-a1",
+              timestamp: 0,
+              asset: libraryItem("a1", "image") as never,
+            }}
+            collection={[]}
+          />
+          <ChatMediaCard
+            entry={{
+              type: "job",
+              key: "job-j2",
+              timestamp: 0,
+              job: {
+                id: "j2",
+                type: "video",
+                status: "succeeded",
+                provider: "runway",
+                model: "gen4",
+                prompt: "tide",
+                entityName: "Ada",
+                assetId: "v1",
+                assetUrl: "/assets/v1.mp4",
+                createdAt: 0,
+                updatedAt: 0,
+                completedAt: 0,
+              },
+            }}
+            collection={[]}
+          />
+        </section>
       </MediaViewerProvider>,
     );
+    const cards = screen.getByRole("region", { name: "Chat media cards" });
+    expect(expectAllButtonsNamed(cards, "chat media cards")).toBe(2);
     const grid = await screen.findByRole("listbox", { name: /Assets/ });
     fireEvent.keyDown(grid, { key: "a", ctrlKey: true });
     expect(screen.getByRole("toolbar", { name: "Selected assets" })).toBeInTheDocument();

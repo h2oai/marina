@@ -43,7 +43,12 @@ export interface MediaStore {
     limit?: number;
   }): mediaDb.MediaJobRow[];
   getMediaJob(id: string): mediaDb.MediaJobRow | undefined;
-  listMediaJobs(opts?: { limit?: number; entityName?: string }): mediaDb.MediaJobRow[];
+  listMediaJobs(opts?: {
+    limit?: number;
+    entityName?: string;
+    /** Any of these owners (case-insensitive); an empty list matches nothing. */
+    entityNames?: readonly string[];
+  }): mediaDb.MediaJobRow[];
   countMediaJobsSince(opts: {
     entityName?: string;
     type?: mediaDb.MediaJobType;

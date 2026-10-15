@@ -397,6 +397,8 @@ export interface AssetQuery {
   type?: AssetType;
   /** Exact owner name (case-insensitive). */
   owner?: string;
+  /** Any of these owners (case-insensitive); an empty list matches nothing. */
+  owners?: readonly string[];
   origin?: AssetOrigin;
   /** Every listed tag must be present. */
   tags?: readonly string[];
@@ -457,6 +459,14 @@ function whereFor(q: AssetQuery): { sql: string; params: (string | number)[] } {
   if (q.owner) {
     where.push("a.entity_name = ? COLLATE NOCASE");
     params.push(q.owner);
+  }
+  if (q.owners) {
+    const names = [...new Set(q.owners.filter(Boolean))];
+    if (names.length === 0) where.push("0");
+    else {
+      where.push(`a.entity_name COLLATE NOCASE IN (${names.map(() => "?").join(",")})`);
+      params.push(...names);
+    }
   }
   if (q.origin) {
     where.push("a.origin = ?");

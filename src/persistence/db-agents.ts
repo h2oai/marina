@@ -323,6 +323,51 @@ export function spawnLineage(db: Database, name: string, maxHops = 16): string[]
   return chain;
 }
 
+/**
+ * Every agent `name` owns through its spawn lineage, lower-cased, nearest
+ * first and excluding `name`: the inverse of {@link spawnLineage} (agent
+ * configs' `spawned_by`, then agent principals' owners), breadth-first,
+ * bounded by `maxHops` levels and `maxAgents` names.
+ */
+export function spawnDescendants(
+  db: Database,
+  name: string,
+  maxHops = 16,
+  maxAgents = 500,
+): string[] {
+  const configChildren = db.query(
+    "SELECT name FROM agent_configs WHERE spawned_by = ? COLLATE NOCASE ORDER BY name",
+  );
+  const principalChildren = db.query(
+    `SELECT p.display_name AS name FROM principals p
+       JOIN principals o ON o.principal_id = p.owner_principal_id
+      WHERE p.principal_type = 'agent' AND o.display_name = ? COLLATE NOCASE
+      ORDER BY p.display_name`,
+  );
+  const seen = new Set<string>([name.toLowerCase()]);
+  const out: string[] = [];
+  let frontier = [name];
+  for (let hop = 0; hop < maxHops && frontier.length > 0; hop++) {
+    const next: string[] = [];
+    for (const parent of frontier) {
+      const rows = [
+        ...(configChildren.all(parent) as { name: string }[]),
+        ...(principalChildren.all(parent) as { name: string }[]),
+      ];
+      for (const row of rows) {
+        const key = row.name?.toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(key);
+        next.push(row.name);
+        if (out.length >= maxAgents) return out;
+      }
+    }
+    frontier = next;
+  }
+  return out;
+}
+
 export function deleteAgentConfig(db: Database, name: string): void {
   db.run("DELETE FROM agent_configs WHERE name = ?", [name]);
 }

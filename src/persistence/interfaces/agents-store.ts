@@ -58,6 +58,8 @@ export interface AgentsStore {
   getAgentConfigsBySpawnedBy(spawnedBy: string): AgentConfigRow[];
   /** `name` and its spawn ancestors, lower-cased, nearest first (`db-agents.ts:spawnLineage`). */
   spawnLineage(name: string): string[];
+  /** Every agent `name` owns down its spawn lineage, lower-cased (`db-agents.ts:spawnDescendants`). */
+  spawnDescendants(name: string): string[];
   deleteAgentConfig(name: string): void;
   updateAttentionPolicy(
     name: string,
@@ -108,6 +110,7 @@ export const AGENTS_STORE_METHODS = [
   "getAllAgentConfigs",
   "getAgentConfigsBySpawnedBy",
   "spawnLineage",
+  "spawnDescendants",
   "deleteAgentConfig",
   "updateAttentionPolicy",
   "recordAttentionFeedback",

@@ -104,8 +104,10 @@ export interface LibraryPage {
 
 export interface LibraryFilters {
   type?: AssetType;
-  /** `me`, an entity name, or undefined/`all` for everyone visible. */
+  /** `me`, `me+agents`, an entity name, or undefined/`all` for everyone visible. */
   owner?: string;
+  /** `chat`: the viewer, its agents and the agents in its conversation (resolved server-side). */
+  scope?: "chat";
   origin?: string;
   tags?: string[];
   q?: string;
@@ -126,6 +128,7 @@ export function libraryQueryString(
   const p = new URLSearchParams({ view: "library" });
   if (filters.type) p.set("type", filters.type);
   if (filters.owner && filters.owner !== "all") p.set("owner", filters.owner);
+  if (filters.scope) p.set("scope", filters.scope);
   if (filters.origin) p.set("origin", filters.origin);
   for (const tag of filters.tags ?? []) if (tag.trim()) p.append("tag", tag.trim());
   if (filters.canvas) p.set("canvas", filters.canvas);
@@ -168,12 +171,48 @@ export async function fetchLibraryPage(
   filters: LibraryFilters,
   cursor?: string | null,
   facets = false,
+  limit?: number,
 ): Promise<LibraryPage> {
   const res = await authFetch(
-    `${apiOrigin()}/api/assets?${libraryQueryString(filters, { cursor, facets })}`,
+    `${apiOrigin()}/api/assets?${libraryQueryString(filters, { cursor, facets, limit })}`,
   );
   if (!res.ok) throw await readError(res);
-  return (await res.json()) as LibraryPage;
+  return normalizeLibraryPage(await res.json());
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * A library page as the UI may rely on it, whatever came back: a transport
+ * that answers another shape (an older desktop bridge returning the legacy
+ * asset array, a proxy error body) reads as an empty last page, and items
+ * missing an id or url are dropped — rendering never throws on a bad reply.
+ */
+export function normalizeLibraryPage(body: unknown): LibraryPage {
+  if (!isRecord(body) || !Array.isArray(body.items)) return { items: [], nextCursor: null };
+  const items: LibraryItem[] = [];
+  for (const raw of body.items) {
+    if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.url !== "string") continue;
+    items.push({
+      ...(raw as unknown as LibraryItem),
+      filename: typeof raw.filename === "string" ? raw.filename : raw.id,
+      mime: typeof raw.mime === "string" ? raw.mime : "application/octet-stream",
+      type: (ASSET_TYPES as readonly unknown[]).includes(raw.type)
+        ? (raw.type as AssetType)
+        : "other",
+      tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : [],
+      thumbs: isRecord(raw.thumbs) ? (raw.thumbs as LibraryItem["thumbs"]) : {},
+      thumb: isRecord(raw.thumb) ? (raw.thumb as unknown as LibraryThumb) : null,
+      provenance: isRecord(raw.provenance) ? (raw.provenance as AssetProvenance) : null,
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : 0,
+    });
+  }
+  return {
+    items,
+    nextCursor: typeof body.nextCursor === "string" ? body.nextCursor : null,
+    ...(isRecord(body.facets) ? { facets: body.facets as unknown as LibraryFacets } : {}),
+  };
 }
 
 export async function fetchAssetDetail(id: string): Promise<LibraryDetail> {

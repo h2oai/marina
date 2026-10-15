@@ -3429,7 +3429,9 @@ export class MarinaDB implements MarinaStores {
     return mediaDb.getMediaJob(this.db, id);
   }
 
-  listMediaJobs(opts: { limit?: number; entityName?: string } = {}): mediaDb.MediaJobRow[] {
+  listMediaJobs(
+    opts: { limit?: number; entityName?: string; entityNames?: readonly string[] } = {},
+  ): mediaDb.MediaJobRow[] {
     return mediaDb.listMediaJobs(this.db, opts);
   }
 
@@ -4163,6 +4165,10 @@ export class MarinaDB implements MarinaStores {
   }
   spawnLineage(name: string): string[] {
     return agentsDb.spawnLineage(this.db, name);
+  }
+
+  spawnDescendants(name: string): string[] {
+    return agentsDb.spawnDescendants(this.db, name);
   }
   deleteAgentConfig(name: string): void {
     agentsDb.deleteAgentConfig(this.db, name);

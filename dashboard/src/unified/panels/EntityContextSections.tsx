@@ -11,7 +11,12 @@ import { apiOrigin } from "../../lib/api-origin";
 import { useQueryClient } from "@tanstack/react-query";
 import { memo, useCallback, useMemo } from "react";
 import { MediaJobsList } from "../../components/MediaJobsList";
-import { useEntityBrief, useMediaJobs, useNoteGraph } from "../../hooks/use-api";
+import {
+  isForbiddenApiError,
+  useEntityBrief,
+  useMediaJobs,
+  useNoteGraph,
+} from "../../hooks/use-api";
 import { useInvalidateOnEvent } from "../../hooks/use-realtime";
 import { useWorldState } from "../../hooks/use-world-state";
 import { authFetch } from "../../lib/api";
@@ -332,7 +337,12 @@ export const MediaSection = memo(function MediaSection({
   return (
     <CascadeSection title={`Media (${jobs?.length ?? 0})`} defaultOpen={false}>
       {isLoading && <div style={{ fontSize: "11px", color: "#888" }}>Loading media activity…</div>}
-      {isError && (
+      {isError && isForbiddenApiError(mediaQuery.error) && (
+        <div className="rounded border border-border bg-bg px-2 py-2 text-[11px] text-text-dim">
+          Media jobs are visible to their owner, the agent's owner and operators.
+        </div>
+      )}
+      {isError && !isForbiddenApiError(mediaQuery.error) && (
         <div className="flex items-center justify-between gap-2 rounded border border-border bg-bg px-2 py-2 text-[11px] text-danger">
           <span>Failed to load media jobs.</span>
           <button

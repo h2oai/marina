@@ -123,6 +123,18 @@ export function useGlobalRealtimeInvalidations(): void {
     ),
   );
 
+  // ── Media jobs: status cards (WebChat, media overlays) ─────────────
+  // The media pipeline's `media_pending|rendering|complete|failed|blocked`
+  // feed events carry ids and a status only; every ["media-jobs", …] query
+  // rereads under the viewer's credential (`entity=me` for chat cards).
+  useInvalidateOnEvent(
+    ["media-jobs"],
+    useCallback(
+      (e: DashboardEvent) => e.type === "feed_event" && (e.kind ?? "").startsWith("media_"),
+      [],
+    ),
+  );
+
   // ── Admin: adapters ────────────────────────────────────────────────
   useInvalidateOnEvent(
     ["adapters"],

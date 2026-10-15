@@ -32,6 +32,7 @@ import {
   rateLimitedResponse,
   securityHeaders,
 } from "../http-utils";
+import { resolveMediaScope } from "../media-scope";
 import { authorizeOwnerOrPrivileged } from "../owner-authorization";
 import {
   type LibraryContext,
@@ -220,7 +221,7 @@ export async function handleAssetApi(
       return rateLimitedResponse(req.headers.get("Origin"));
     }
     const viewerName = readerName(engine, readerPrincipal);
-    const ctx = libraryContext(db, storage, host, readerPrincipal, reader, viewerName);
+    const ctx = libraryContext(db, storage, host, readerPrincipal, reader, viewerName, engine);
     const q = parseLibraryQuery(url.searchParams, ctx.viewer);
     if (typeof q === "string") return json({ error: q, code: "invalid_asset_query" }, 400);
     const page = q.empty ? { rows: [], nextCursor: null } : libraryPage(ctx, q);
@@ -262,6 +263,7 @@ function libraryContext(
   principal: string | undefined,
   reader: LibraryContext["viewer"]["reader"],
   name: string | undefined,
+  engine?: Engine,
 ): LibraryContext {
   return {
     db,
@@ -271,6 +273,12 @@ function libraryContext(
       ...(principal ? { principal } : {}),
       ...(reader ? { reader } : {}),
       ...(name ? { name } : {}),
+      ...(principal && engine
+        ? {
+            scopeOwners: (scope: "owned" | "chat") =>
+              resolveMediaScope(engine, db, principal as EntityId, scope).names,
+          }
+        : {}),
     },
   };
 }
