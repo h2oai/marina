@@ -499,6 +499,87 @@ Effect: unknown.
 
 - `field-0` (`question`): text, required.
 
+## asset
+
+Asset library — files stored in this world (uploads, generated images and video, request images, tool output).
+Usage: asset list [type:image|video|audio|pdf|document|other] [owner:me|<name>|all] [origin:upload|generated|request|derived|tool] [tag:<t>] [canvas:<c>] [since:7d] [limit:N] [sort:new|old|size|name] | asset show <id> | asset search <text> | asset tag <id> +a -b | asset caption <id> -- <text> | asset alt <id> -- <text> | asset delete <id>
+
+  asset list owner:me type:image            your images, newest first
+  asset list tag:moodboard sort:name        everything tagged moodboard you can see
+  asset show <id>                           facts, provenance, tags, derivatives, parents/children, canvases
+  asset search red fox                      filename, caption, alt text, prompt and tags
+  asset tag <id> +moodboard -draft          add/remove tags (owner or operator)
+  asset caption <id> -- A fox at dusk       set the caption (empty after -- clears it)
+  asset alt <id> -- Red fox in snow         set the alt text read by screen readers
+  asset delete <id>                         delete it and its thumbnails (owner or operator)
+
+Private assets (on private canvases, or staged from model-API requests) are listed and shown only to people who can read them. Upload with `canvas asset upload` or the dashboard.
+
+Category: Canvas & Media. Minimum rank: 0.
+Aliases: `assets`.
+
+### `asset list [type:image|video|audio|pdf|document|other] [owner:<owner>] [origin:upload|generated|request|derived|tool] [tag:<tag>] [canvas:<canvas>] [since:<window>] [limit:N] [sort:new|old|size|name]`
+
+Effect: unknown.
+
+- `field-0` (`type`): text, optional group `option-0`, choices `image`, `video`, `audio`, `pdf`, `document`, `other`.
+- `field-1` (`owner`): text, optional group `option-1`.
+- `field-2` (`origin`): text, optional group `option-2`, choices `upload`, `generated`, `request`, `derived`, `tool`.
+- `field-3` (`tag`): text, optional group `option-3`.
+- `field-4` (`canvas`): text, optional group `option-4`.
+- `field-5` (`since`): text, optional group `option-5`.
+- `field-6` (`limit`): number, optional group `option-6`.
+- `field-7` (`sort`): text, optional group `option-7`, choices `new`, `old`, `size`, `name`.
+- Group `option-0`: `type:image|video|audio|pdf|document|other`.
+- Group `option-1`: `owner:owner`.
+- Group `option-2`: `origin:upload|generated|request|derived|tool`.
+- Group `option-3`: `tag:tag`.
+- Group `option-4`: `canvas:canvas`.
+- Group `option-5`: `since:window`.
+- Group `option-6`: `limit:N`.
+- Group `option-7`: `sort:new|old|size|name`.
+
+### `asset show <id>`
+
+Effect: unknown.
+
+- `field-0` (`id`): text, required.
+
+### `asset search <text> [limit:N]`
+
+Effect: unknown.
+
+- `field-0` (`text`): text, required.
+- `field-1` (`limit`): number, optional group `option-0`.
+- Group `option-0`: `limit:N`.
+
+### `asset tag <id> <changes...>`
+
+Effect: unknown.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`changes...`): text, required.
+
+### `asset caption <id> -- <text>`
+
+Effect: unknown.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`text`): text, required.
+
+### `asset alt <id> -- <text>`
+
+Effect: unknown.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`text`): text, required.
+
+### `asset delete <id>`
+
+Effect: unknown.
+
+- `field-0` (`id`): text, required.
+
 ## association
 
 Association — open, attributable relationships across Marina primitives and worlds.

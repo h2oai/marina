@@ -21,28 +21,37 @@ link for validation, HTTP statuses, streaming and deployment-specific availabili
 
 ### `url.pathname === "/api/assets/sign"`
 
-[Source](../../src/net/api/asset-api.ts#L96)
+[Source](../../src/net/api/asset-api.ts#L113)
 
 - Guard: `url.pathname === "/api/assets/sign" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/assets\/(.+)$/)`
 
-[Source](../../src/net/api/asset-api.ts#L125)
+[Source](../../src/net/api/asset-api.ts#L147)
 
 - Guard: `idMatch && method === "DELETE"`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L155)
+[Source](../../src/net/api/asset-api.ts#L207)
 
 - Guard: `url.pathname === "/api/assets" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L160)
+[Source](../../src/net/api/asset-api.ts#L214)
+
+- Guard: `url.pathname === "/api/assets" && method === "GET" && url.searchParams.get("view") === "library"`
+- Guard: `method === "GET"`
+
+Fields read here: `["1", "true"].includes(url.searchParams.get("facets") ?? "")`, `url.searchParams.get("facets")`, `url.searchParams.get("view")`.
+
+### `url.pathname === "/api/assets"`
+
+[Source](../../src/net/api/asset-api.ts#L236)
 
 - Guard: `url.pathname === "/api/assets" && method === "GET"`
 - Guard: `method === "GET"`

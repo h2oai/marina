@@ -626,9 +626,18 @@ In live feed rooms (Kalshi/Polymarket):
 
 > canvas asset upload https://example.com/diagram.png    Upload from URL
 > canvas asset upload file:sketch.png                    Upload from scratch directory
-> canvas asset list                                      List your assets
-> canvas asset info <id>                                 Asset metadata
-> canvas asset delete <id>                               Remove an asset
+> canvas asset list                                      List assets (same as `asset list`)
+> canvas asset info <id>                                 Asset metadata (same as `asset show`)
+> canvas asset delete <id>                               Remove an asset (same as `asset delete`)
+
+> asset list owner:me type:image                         Your images, newest first
+> asset list tag:moodboard sort:name since:7d            Filter by tag, origin, canvas, age
+> asset show <id>                                        Facts, provenance, tags, thumbnails, lineage
+> asset search red fox                                   Filename, caption, alt, prompt, tags
+> asset tag <id> +moodboard -draft                       Add/remove tags (owner or operator)
+> asset caption <id> -- A fox at dusk                    Caption (empty after -- clears)
+> asset alt <id> -- Red fox in snow                      Alt text
+> asset delete <id>                                      Delete it and its thumbnails
 
 > canvas publish image <asset_id> my-canvas              Publish asset as image node
 > canvas publish text <asset_id> my-canvas               Text node

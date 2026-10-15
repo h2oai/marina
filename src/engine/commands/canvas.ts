@@ -21,9 +21,11 @@ import {
 import { canvasDocumentData } from "../canvas-document";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
+import { ingestAsset } from "../media/asset-library";
 import { type LookReply, sendLookReply } from "../media/vision";
 import { type OwnershipSubject, ownershipRefusal } from "../ownership";
 import { rankFloorRefusal } from "../rank-floor";
+import { type AssetCommandDeps, runAssetCommand } from "./asset";
 import { handleCanvasIntent } from "./canvas-intent";
 import { requiresPersistence } from "./command-messages";
 
@@ -104,6 +106,8 @@ export function canvasCommand(deps: {
     who: { entityId: EntityId; name: string },
     tokens: string[],
   ) => Promise<string | LookReply>;
+  /** The `asset` command's deps: `canvas asset list|info|delete` delegate to it. */
+  assets?: AssetCommandDeps;
 }): CommandDef {
   return {
     category: "Canvas & Media",
@@ -192,11 +196,15 @@ export function canvasCommand(deps: {
             ctx,
             eid,
             entity,
-            db,
             deps.storage,
             tokens.slice(1),
             deps.scratchRoot,
-            access,
+            deps.assets ?? {
+              getEntity: deps.getEntity,
+              db,
+              ...(deps.storage ? { storage: deps.storage } : {}),
+              ...(deps.canvasGrants ? { canvasGrants: deps.canvasGrants } : {}),
+            },
           );
           return;
         case "create":
@@ -1267,20 +1275,45 @@ function handleLayout(
 
 // ─── Asset Handling ──────────────────────────────────────────────────────
 
+/** Store an upload through the asset library (dedupe: the same bytes return the owner's copy). */
+async function uploadReply(
+  assets: AssetCommandDeps,
+  entity: Entity,
+  file: { filename: string; mime: string; ext: string; data: Uint8Array; eid: EntityId },
+): Promise<string> {
+  const { asset, deduplicated } = await ingestAsset(
+    {
+      ...(assets.db ? { db: assets.db } : {}),
+      ...(assets.storage ? { storage: assets.storage } : {}),
+      ...(assets.logEvent ? { logEvent: assets.logEvent } : {}),
+      ...(assets.trackBackground ? { trackBackground: assets.trackBackground } : {}),
+    },
+    {
+      owner: entity.name,
+      filename: file.filename,
+      mime: file.mime,
+      data: file.data,
+      ext: file.ext,
+      origin: "upload",
+      dedupe: true,
+      actor: file.eid,
+    },
+  );
+  const sizeKb = Math.round(file.data.byteLength / 1024);
+  return deduplicated
+    ? `Already uploaded: ${asset.id} (${asset.filename}, same content) — returning the existing asset.`
+    : `Asset uploaded: ${asset.id} (${file.filename}, ${sizeKb}KB, ${file.mime})`;
+}
+
 async function handleAsset(
   ctx: RoomContext,
   eid: EntityId,
   entity: Entity,
-  db: MarinaDB,
   storage: StorageProvider | undefined,
   tokens: string[],
   scratchRoot: string | undefined,
-  access: Access,
+  assets: AssetCommandDeps,
 ): Promise<void> {
-  // Private assets (shown only on private canvases, or request images) follow
-  // the shared read check: hidden from listings, "not found" by id.
-  const canRead = (a: { id: string; metadata: string }, via: string, log = true) =>
-    mayReadAsset(access.host, a, access.reader, via, { log });
   const action = tokens[0]?.toLowerCase();
 
   if (!action) {
@@ -1325,21 +1358,10 @@ async function handleAsset(
           }
           const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")) : "";
           const mime = assetMimeForFile(ext, bodyBytes);
-          const id = crypto.randomUUID();
-          const storageKey = `${id}${ext}`;
-
-          await storage.put(storageKey, bodyBytes, mime);
-          db.createAsset({
-            id,
-            entityName: entity.name,
-            filename,
-            mimeType: mime,
-            size: bodyBytes.byteLength,
-            storageKey,
-          });
-
-          const sizeKb = Math.round(bodyBytes.byteLength / 1024);
-          ctx.send(eid, `Asset uploaded: ${id} (${filename}, ${sizeKb}KB, ${mime})`);
+          ctx.send(
+            eid,
+            await uploadReply(assets, entity, { filename, mime, ext, data: bodyBytes, eid }),
+          );
         } catch (err) {
           ctx.send(eid, `Upload failed: ${getErrorMessage(err)}`);
         }
@@ -1399,126 +1421,26 @@ async function handleAsset(
         const filename = url.split("/").pop()?.split("?")[0] ?? "download";
         const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")) : "";
         const mime = assetMimeForFile(ext, bodyBytes);
-        const id = crypto.randomUUID();
-        const storageKey = `${id}${ext}`;
-
-        await storage.put(storageKey, bodyBytes, mime);
-        db.createAsset({
-          id,
-          entityName: entity.name,
-          filename,
-          mimeType: mime,
-          size: bodyBytes.byteLength,
-          storageKey,
-        });
-
-        const sizeKb = Math.round(bodyBytes.byteLength / 1024);
-        ctx.send(eid, `Asset uploaded: ${id} (${filename}, ${sizeKb}KB, ${mime})`);
+        ctx.send(
+          eid,
+          await uploadReply(assets, entity, { filename, mime, ext, data: bodyBytes, eid }),
+        );
       } catch (err) {
         ctx.send(eid, `Upload failed: ${getErrorMessage(err)}`);
       }
       return;
     }
 
-    case "list": {
-      const mine = tokens[1]?.toLowerCase() === "mine";
-      const assets = (
-        mine ? db.getAssetsByEntity(entity.name, 20) : db.listAssets({ limit: 20 })
-      ).filter((a) => canRead(a, "canvas asset list", false));
-      if (assets.length === 0) {
-        ctx.send(eid, "No assets found.");
-        return;
-      }
-      const lines = [
-        header("Assets"),
-        separator(),
-        ...assets.map((a) => {
-          const sizeKb = Math.round(a.size / 1024);
-          const date = new Date(a.created_at).toISOString().slice(0, 10);
-          return `  ${a.id.slice(0, 8)}.. ${date} ${a.filename} (${sizeKb}KB, ${a.mime_type}) by ${a.entity_name}`;
-        }),
-      ];
-      ctx.send(eid, lines.join("\n"));
+    // The library verbs live in the `asset` command (src/engine/commands/asset.ts).
+    case "list":
+      await runAssetCommand(assets, ctx, eid, ["list", ...tokens.slice(1)], "");
       return;
-    }
-
-    case "info": {
-      const id = tokens[1];
-      if (!id) {
-        ctx.send(eid, "Usage: canvas asset info <id>");
-        return;
-      }
-      const exact = db.getAsset(id);
-      const asset = exact
-        ? canRead(exact, "canvas asset info")
-          ? exact
-          : undefined
-        : db
-            .listAssets({ limit: 100 })
-            .find((a) => a.id.startsWith(id) && canRead(a, "canvas asset info", false));
-      if (!asset) {
-        ctx.send(eid, `Asset "${id}" not found.`);
-        return;
-      }
-      const sizeKb = Math.round(asset.size / 1024);
-      const date = new Date(asset.created_at).toISOString().slice(0, 16).replace("T", " ");
-      const lines = [
-        header("Asset Info"),
-        separator(),
-        `  ID:       ${asset.id}`,
-        `  File:     ${asset.filename}`,
-        `  Type:     ${asset.mime_type}`,
-        `  Size:     ${sizeKb}KB`,
-        `  Owner:    ${asset.entity_name}`,
-        `  Created:  ${date}`,
-        `  Key:      ${asset.storage_key}`,
-      ];
-      ctx.send(eid, lines.join("\n"));
+    case "info":
+      await runAssetCommand(assets, ctx, eid, ["show", ...tokens.slice(1)], "");
       return;
-    }
-
-    case "delete": {
-      const id = tokens[1];
-      if (!id) {
-        ctx.send(eid, "Usage: canvas asset delete <id>");
-        return;
-      }
-      // Deletion takes the exact id: a prefix could name a different asset
-      // than the one listed. Offer the full ids a prefix matches instead.
-      const exact = db.getAsset(id);
-      const asset = exact && canRead(exact, "canvas asset delete") ? exact : undefined;
-      if (!asset) {
-        const matches =
-          !exact && id.length >= 4
-            ? db
-                .listAssets({ limit: 100 })
-                .filter((a) => a.id.startsWith(id) && canRead(a, "canvas asset delete", false))
-                .slice(0, 5)
-            : [];
-        ctx.send(
-          eid,
-          matches.length > 0
-            ? `Asset delete needs the full id. Matching: ${matches.map((a) => `${a.id} (${a.filename})`).join(", ")}`
-            : `Asset "${id}" not found.`,
-        );
-        return;
-      }
-      const refusal = ownershipRefusal(
-        entity,
-        { owners: [asset.entity_name], creatorOf: agentCreatorOf(db) },
-        `Only the asset's owner (${asset.entity_name}) or an admin can delete it.`,
-      );
-      if (refusal) {
-        ctx.send(eid, refusal);
-        return;
-      }
-      if (storage) {
-        await storage.delete(asset.storage_key);
-      }
-      db.deleteAsset(asset.id);
-      ctx.send(eid, `Asset ${asset.id.slice(0, 8)}.. deleted.`);
+    case "delete":
+      await runAssetCommand(assets, ctx, eid, ["delete", ...tokens.slice(1)], "");
       return;
-    }
 
     default:
       ctx.send(

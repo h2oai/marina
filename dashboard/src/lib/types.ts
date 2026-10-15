@@ -273,6 +273,10 @@ export interface DashboardEvent {
   artifactRef?: string;
   resultNoteId?: number;
   owner?: string;
+  // Asset lifecycle (asset_created / asset_updated / asset_deleted): ids,
+  // owner and MIME only — reread the asset for anything else.
+  assetId?: string;
+  mime?: string;
   // Coordination container lifecycle (coordination_change): project / group /
   // channel / pool / board / connector / command create / update / delete.
   /** Identifier carried by content-free coding/participant invalidation hints. */

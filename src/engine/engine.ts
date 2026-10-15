@@ -81,6 +81,7 @@ import { getErrorMessage, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
 import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
+import { assetDerivativesPending, drainAssetDerivatives } from "./media/asset-library";
 import { MediaManager, mediaGenerationAvailable } from "./media/manager";
 import { engineSharedWriteHook } from "./memory-dispatch";
 import { getRank, rankName } from "./permissions";
@@ -1993,8 +1994,21 @@ export class Engine {
     const pending =
       this.roomTickCoordinator.pendingCount +
       this.background.size +
-      this.tickScheduler.pendingCount;
-    const drain = () => Promise.all([this.roomTickCoordinator.drain(), this.drainBackground()]);
+      this.tickScheduler.pendingCount +
+      assetDerivativesPending();
+    // Asset derivative jobs (sharp/ffmpeg/pdftoppm) never outlive the
+    // database: queued ones are skipped, the running one is awaited.
+    const drain = () =>
+      Promise.all([
+        this.roomTickCoordinator.drain(),
+        this.drainBackground(),
+        Promise.race([
+          drainAssetDerivatives(),
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, BACKGROUND_DRAIN_TIMEOUT_MS).unref?.();
+          }),
+        ]),
+      ]);
     const learn = this.db !== undefined && pendingWorkPatterns(this.db) > 0;
     if (!pending && !learn) return finish();
     return (pending ? drain() : Promise.resolve())

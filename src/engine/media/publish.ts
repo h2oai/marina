@@ -5,6 +5,7 @@ import { extname } from "node:path";
 import { normalizeAssetMime } from "../../storage/asset-mime";
 import type { EntityId } from "../../types";
 import type { Engine } from "../engine";
+import { ingestAsset } from "./asset-library";
 
 const DEFAULT_IMAGE_EXT = ".png";
 const DEFAULT_VIDEO_EXT = ".mp4";
@@ -49,17 +50,31 @@ export async function storeGeneratedAsset({
     filename?.trim() && filename.trim().length > 0
       ? filename.trim()
       : `${assetId}${inferExt(mimeType)}`;
-  const storageKey = `${assetId}${inferExt(mimeType, safeFilename)}`;
-
-  await engine.storage.put(storageKey, data, mimeType);
-
-  engine.db.createAsset({
+  // Provenance columns (migration 168): prompt, model, provider, job and its
+  // cost — the job's recorded estimate when the caller passed no charge.
+  const jobId = typeof metadata?.jobId === "string" ? metadata.jobId : undefined;
+  const costUsd =
+    typeof metadata?.costUsd === "number"
+      ? metadata.costUsd
+      : jobId
+        ? (engine.db.getMediaJob(jobId)?.cost_estimate ?? undefined)
+        : undefined;
+  const provider = typeof metadata?.provider === "string" ? metadata.provider : undefined;
+  const { asset } = await ingestAsset(engine, {
     id: assetId,
-    entityName,
+    owner: entityName,
     filename: safeFilename,
-    mimeType,
-    size: data.byteLength,
-    storageKey,
+    mime: mimeType,
+    data,
+    ext: inferExt(mimeType, safeFilename),
+    origin: "generated",
+    provenance: {
+      prompt,
+      model,
+      ...(provider ? { provider } : {}),
+      ...(jobId ? { jobId } : {}),
+      ...(typeof costUsd === "number" ? { costUsd } : {}),
+    },
     metadata: {
       origin: "generated",
       prompt,
@@ -68,7 +83,7 @@ export async function storeGeneratedAsset({
     },
   });
 
-  return { id: assetId, filename: safeFilename, storageKey };
+  return { id: assetId, filename: safeFilename, storageKey: asset.storage_key };
 }
 
 interface PublishGeneratedAssetParams {

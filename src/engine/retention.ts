@@ -69,7 +69,8 @@ export const RETENTION_OVERRIDES_ENV = "MARINA_RETENTION_OVERRIDES";
 
 /** How long images staged from model-API requests are kept (`assets` / `canvas_nodes`). */
 export const REQUEST_IMAGE_KEEP_MS = 7 * DAY_MS;
-const REQUEST_IMAGE_ASSET_WHERE = "json_extract(metadata, '$.origin') = 'request'";
+const REQUEST_IMAGE_ASSET_WHERE =
+  "(origin = 'request' OR (json_valid(metadata) AND json_extract(metadata, '$.origin') = 'request'))";
 
 /** Join-derived timestamp for a table with no time column of its own. */
 const ASSISTANCE_ACTION_TIME =
@@ -150,7 +151,7 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     kind: "telemetry",
     keepMs: REQUEST_IMAGE_KEEP_MS,
     where: REQUEST_IMAGE_ASSET_WHERE,
-    note: "ONLY images staged from model-API requests (metadata.origin = request); their blobs are deleted first by pruneRequestImageBlobs",
+    note: "ONLY images staged from model-API requests (origin = request); their blobs and their derivatives' blobs are deleted first by pruneRequestImageBlobs. Uploaded, generated, tool and derived assets are people's files: never aged out (deleted by their owner); asset_tags / asset_links rows cascade with their asset",
   },
   {
     table: "canvas_nodes",
@@ -696,6 +697,10 @@ export async function pruneRequestImageBlobs(
   const before = (opts.now ?? Date.now()) - policy.effectiveKeepMs;
   let removed = 0;
   for (const asset of db.listAssetsByOrigin("request", before, REQUEST_IMAGE_BLOB_BATCH)) {
+    // Thumbnails show the same pixels: their bytes go first, their rows cascade.
+    for (const d of db.listDerivatives([asset.id])) {
+      await storage.delete(d.storage_key).catch(() => false);
+    }
     await storage.delete(asset.storage_key).catch(() => false);
     if (db.deleteAsset(asset.id)) removed++;
   }

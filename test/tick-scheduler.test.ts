@@ -233,6 +233,8 @@ describe("Engine tick schedule", () => {
       { name: "schedules", every: 10, phase: 3 },
       { name: "outcome-autoresolve", every: 3600, phase: 3450 },
       { name: "outcome-judge", every: 3600, phase: 3150 },
+      // ~30 s, floored at 2 ticks; phase 0 at this interval (clear of the video poller's 1).
+      { name: "asset-backfill", every: 2, phase: 0 },
     ]);
   });
 

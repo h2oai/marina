@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import sharp from "sharp";
 import {
   imageProcessingAvailable,
@@ -16,6 +16,10 @@ import {
 const make = (width: number, height: number) =>
   sharp({ create: { width, height, channels: 3, background: "#336699" } });
 const bytes = async (p: Promise<Buffer>) => new Uint8Array(await p);
+
+// Run sharp's native buffer finalizers while this file's realm is alive
+// (`bun test --isolate` tears the realm down before the next file).
+afterAll(() => Bun.gc(true));
 
 describe("probeImage", () => {
   it("reads dimensions of PNG, JPEG, WebP (lossy + lossless) and GIF headers", async () => {

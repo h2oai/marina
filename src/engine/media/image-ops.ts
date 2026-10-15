@@ -202,7 +202,18 @@ type SharpLoader = () => Promise<SharpFactory | undefined>;
 const defaultLoader: SharpLoader = async () => {
   try {
     const mod = await import("sharp");
-    return (mod.default ?? mod) as unknown as SharpFactory;
+    const factory = (mod.default ?? mod) as unknown as SharpFactory & {
+      concurrency?: (n: number) => number;
+      cache?: (options: boolean) => unknown;
+    };
+    // One libvips thread per image (sharp's own default on glibc Linux
+    // without jemalloc; elsewhere it is one per core) and no libvips operation
+    // cache: Marina processes one asset at a time and never repeats an
+    // operation on the same input, so neither buys anything in a server, and
+    // both keep native threads and memory alive between calls.
+    factory.concurrency?.(1);
+    factory.cache?.(false);
+    return factory;
   } catch (error) {
     log.info("media", "Image processing unavailable (optional `sharp` not installed)", {
       error: getErrorMessage(error),

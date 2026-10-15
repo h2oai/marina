@@ -317,18 +317,42 @@ export function isRequestAsset(asset: Pick<AssetRow, "metadata">): boolean {
 }
 
 /**
+ * Whose bytes (`GET /assets/:key`) are read-checked rather than capability
+ * URLs: a request image, and any derivative of one (its thumbnail shows the
+ * same pixels).
+ */
+export function isGatedAssetBytes(
+  db: Pick<MarinaDB, "getAsset"> | undefined,
+  asset: Pick<AssetRow, "metadata"> & { derived_from?: string | null },
+): boolean {
+  if (isRequestAsset(asset)) return true;
+  if (!asset.derived_from) return false;
+  const parent = db?.getAsset(asset.derived_from);
+  // An orphaned derivative is gated (nobody can be shown to read it).
+  return !parent || isGatedAssetBytes(db, parent);
+}
+
+/**
  * May `reader` read this asset? Public unless it is a request image or every
  * node showing it is on a private canvas; then the reader must be able to read
  * one of those nodes (owner, operator, or a grant), or own the request.
  */
 export function mayReadAsset(
   host: CanvasAccessHost,
-  asset: Pick<AssetRow, "id" | "metadata">,
+  asset: Pick<AssetRow, "id" | "metadata"> & { derived_from?: string | null },
   reader: CanvasReader | undefined,
   via: string,
   opts: { log?: boolean } = {},
 ): boolean {
   if (reader?.isOperator) return true;
+  // A derivative (thumbnail, poster, preview) is exactly as readable as the
+  // asset it was made from — never more. An orphan (parent gone) is refused.
+  if (asset.derived_from) {
+    const parent = host.db?.getAsset(asset.derived_from);
+    const ok = !!parent && mayReadAsset(host, parent, reader, via, { log: false });
+    if (!ok && opts.log !== false) refused("asset", asset.id, reader, via);
+    return ok;
+  }
   const owner = requestOwner(asset);
   const nodes = host.db?.listAssetNodeScopes(asset.id) ?? [];
   if (owner === undefined && nodes.every((n) => !isPrivateCanvas(n))) return true;

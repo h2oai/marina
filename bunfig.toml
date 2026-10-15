@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [test]
+# Test-wide environment defaults (asset derivatives off unless a test opts in).
+preload = ["./test/preload.ts"]
 # Keep plain `bun test` on the backend; the other workspaces own their runners.
 # Local, gitignored state (`data/`, `marina-data/`, benchmark datasets/results) can hold
 # third-party checkouts with their own *.test.* files; never collect them.

@@ -123,6 +123,8 @@ export const EXPORT_TABLES = [
   "dynamic_command_history",
   "connectors",
   "assets",
+  "asset_tags",
+  "asset_links",
   "canvases",
   "canvas_nodes",
   "chronicle",

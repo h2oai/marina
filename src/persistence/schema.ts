@@ -821,6 +821,101 @@ CREATE INDEX idx_challenge_holds_notice ON challenge_holds(requester_name)
 ALTER TABLE users ADD COLUMN rank_floor INTEGER NOT NULL DEFAULT 0;
 `,
   },
+  // Migration 168: asset record v2 (src/engine/media/asset-library.ts). Facts
+  // (sha256, dimensions, duration, pages), reader text (alt, caption), origin
+  // and provenance become columns; derivatives (thumbnails, posters, previews)
+  // are assets with `derived_from` set — they inherit the parent's read check
+  // and are deleted with it. Tags and lineage are their own tables for facets;
+  // `assets_fts` is a standalone FTS5 table (assets have TEXT ids, so an
+  // external-content table would hang on an unstable implicit rowid). Existing
+  // rows get origin/provenance from their metadata here; hashes, dimensions
+  // and derivatives are filled by the bounded `asset-backfill` tick job.
+  {
+    version: 168,
+    sql: `
+ALTER TABLE assets ADD COLUMN origin TEXT NOT NULL DEFAULT 'upload'
+  CHECK (origin IN ('upload', 'generated', 'request', 'derived', 'tool'));
+ALTER TABLE assets ADD COLUMN sha256 TEXT;
+ALTER TABLE assets ADD COLUMN width INTEGER;
+ALTER TABLE assets ADD COLUMN height INTEGER;
+ALTER TABLE assets ADD COLUMN duration_ms INTEGER;
+ALTER TABLE assets ADD COLUMN pages INTEGER;
+ALTER TABLE assets ADD COLUMN alt TEXT;
+ALTER TABLE assets ADD COLUMN caption TEXT;
+ALTER TABLE assets ADD COLUMN provenance TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE assets ADD COLUMN derived_from TEXT REFERENCES assets(id) ON DELETE CASCADE;
+ALTER TABLE assets ADD COLUMN placeholder TEXT;
+ALTER TABLE assets ADD COLUMN derivative_state TEXT;
+ALTER TABLE assets ADD COLUMN derivative_note TEXT;
+ALTER TABLE assets ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+
+UPDATE assets SET
+  origin = CASE
+    WHEN json_valid(metadata) AND json_extract(metadata, '$.origin') IN ('generated', 'request', 'tool')
+      THEN json_extract(metadata, '$.origin')
+    ELSE 'upload' END,
+  updated_at = created_at;
+UPDATE assets SET provenance = json_patch('{}', json_object(
+    'prompt', json_extract(metadata, '$.prompt'),
+    'model', json_extract(metadata, '$.model'),
+    'provider', json_extract(metadata, '$.provider')))
+  WHERE origin = 'generated' AND json_valid(metadata);
+
+CREATE INDEX idx_assets_owner_hash ON assets(entity_name, sha256);
+CREATE INDEX idx_assets_origin ON assets(origin, created_at);
+CREATE INDEX idx_assets_derived_from ON assets(derived_from) WHERE derived_from IS NOT NULL;
+CREATE INDEX idx_assets_unprobed ON assets(created_at) WHERE sha256 IS NULL;
+
+CREATE TABLE asset_tags (
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  tag TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (asset_id, tag)
+) WITHOUT ROWID;
+CREATE INDEX idx_asset_tags_tag ON asset_tags(tag, asset_id);
+
+CREATE TABLE asset_links (
+  from_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  to_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (from_id, to_id, kind)
+) WITHOUT ROWID;
+CREATE INDEX idx_asset_links_to ON asset_links(to_id, kind);
+
+CREATE VIRTUAL TABLE assets_fts USING fts5(asset_id UNINDEXED, filename, caption, alt, prompt, tags);
+INSERT INTO assets_fts(asset_id, filename, caption, alt, prompt, tags)
+  SELECT id, filename, '', '', coalesce(json_extract(provenance, '$.prompt'), ''), ''
+    FROM assets WHERE derived_from IS NULL;
+
+CREATE TRIGGER assets_fts_ai AFTER INSERT ON assets WHEN new.derived_from IS NULL BEGIN
+  INSERT INTO assets_fts(asset_id, filename, caption, alt, prompt, tags)
+  VALUES (new.id, new.filename, coalesce(new.caption, ''), coalesce(new.alt, ''),
+          coalesce(json_extract(new.provenance, '$.prompt'), ''), '');
+END;
+CREATE TRIGGER assets_fts_ad AFTER DELETE ON assets BEGIN
+  DELETE FROM assets_fts WHERE asset_id = old.id;
+END;
+CREATE TRIGGER assets_fts_au AFTER UPDATE OF filename, caption, alt, provenance ON assets
+  WHEN new.derived_from IS NULL BEGIN
+  DELETE FROM assets_fts WHERE asset_id = old.id;
+  INSERT INTO assets_fts(asset_id, filename, caption, alt, prompt, tags)
+  VALUES (new.id, new.filename, coalesce(new.caption, ''), coalesce(new.alt, ''),
+          coalesce(json_extract(new.provenance, '$.prompt'), ''),
+          coalesce((SELECT group_concat(tag, ' ') FROM asset_tags WHERE asset_id = new.id), ''));
+END;
+CREATE TRIGGER asset_tags_fts_ai AFTER INSERT ON asset_tags BEGIN
+  UPDATE assets_fts
+     SET tags = coalesce((SELECT group_concat(tag, ' ') FROM asset_tags WHERE asset_id = new.asset_id), '')
+   WHERE asset_id = new.asset_id;
+END;
+CREATE TRIGGER asset_tags_fts_ad AFTER DELETE ON asset_tags BEGIN
+  UPDATE assets_fts
+     SET tags = coalesce((SELECT group_concat(tag, ' ') FROM asset_tags WHERE asset_id = old.asset_id), '')
+   WHERE asset_id = old.asset_id;
+END;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

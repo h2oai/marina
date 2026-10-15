@@ -857,6 +857,17 @@ export type EngineEvent =
       payload?: Record<string, unknown>;
       timestamp: number;
     }
+  // Asset record lifecycle (src/engine/media/asset-library.ts). Ids, owner
+  // name and MIME only — never captions, prompts or bytes; viewers reread the
+  // asset under their own credential. Delivered to the owner and operators.
+  | {
+      type: "asset_created" | "asset_updated" | "asset_deleted";
+      entity?: EntityId;
+      assetId: string;
+      owner: string;
+      mime: string;
+      timestamp: number;
+    }
   | {
       type: "canvas_edge_created";
       entity: EntityId;

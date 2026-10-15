@@ -11,6 +11,7 @@ import type { EntityId } from "../../types";
 import { adapterCommand } from "../commands/adapter";
 import { adminCommand } from "../commands/admin";
 import { agentCommand } from "../commands/agent";
+import { type AssetCommandDeps, assetCommand } from "../commands/asset";
 import { batchCommand } from "../commands/batch";
 import { buildCommand } from "../commands/build";
 import { canvasCommand } from "../commands/canvas";
@@ -138,9 +139,21 @@ export function registerOperationCommands(engine: Engine): void {
     }),
   );
 
+  // Asset library (`asset`); `canvas asset list|info|delete` delegate to it.
+  const assetDeps: AssetCommandDeps = {
+    getEntity: (id) => engine.entities.get(id as EntityId),
+    db: engine.db,
+    storage: engine.storage,
+    logEvent: (event) => engine.logEvent(event),
+    trackBackground: (work) => engine.trackBackground(work),
+    canvasGrants: engine.canvasGrants,
+  };
+  engine.commands.registerBuiltin(assetCommand(assetDeps));
+
   // Canvas command (asset management + canvas)
   engine.commands.registerBuiltin(
     canvasCommand({
+      assets: assetDeps,
       getEntity: (id) => engine.entities.get(id as EntityId),
       findEntityGlobal: (name) => engine.findEntityGlobal(name),
       db: engine.db,

@@ -283,10 +283,16 @@ describe("asset API — writes, sentinel, limits", () => {
     const restated = await multipartUpload(token, "owner");
     expect(restated.status).toBe(201);
     expect(((await restated.json()) as { entity_name: string }).entity_name).toBe("Owner");
+    // The same bytes again are the owner's existing asset (dedupe), not a copy.
     const omitted = await multipartUpload(token);
-    expect(omitted.status).toBe(201);
-    const body = (await omitted.json()) as { entity_name: string; id: string };
+    expect(omitted.status).toBe(200);
+    const body = (await omitted.json()) as {
+      entity_name: string;
+      id: string;
+      deduplicated?: boolean;
+    };
     expect(body.entity_name).toBe("Owner");
+    expect(body.deduplicated).toBe(true);
 
     // The owner deletes its own upload.
     const del = await handleAssetApi(
