@@ -11,15 +11,18 @@ Generation calls out to a provider, so you need that provider's key:
 
 | Media | Provider | Key | Example models |
 |-------|----------|-----|----------------|
-| Image | OpenAI Images | `OPENAI_API_KEY` | `openai/gpt-image-1`, `openai/dall-e-3` |
+| Image | OpenAI Images (GPT Image models) | `OPENAI_API_KEY` | `openai/gpt-image-2` (default), `openai/gpt-image-1.5`, `openai/gpt-image-1-mini` |
 | Image | Stability AI (Stable Image v2) | `STABILITY_API_KEY` | `stability/core`, `stability/sd3`, `stability/ultra` |
 | Image | Google Imagen | `GEMINI_API_KEY` *(reused)* | `google/imagen-3.0-generate-002` |
 | Image | Flux (Black Forest Labs) | `BFL_API_KEY` | `flux/flux-pro-1.1`, `flux/flux-dev` |
 | Image | **Local Stable Diffusion** (Automatic1111 / SD.Next) | — *(keyless; `A1111_API_KEY` optional)* | `automatic1111/<checkpoint>`, `a1111` |
 | Image | **Any OpenAI-compatible image server** (Together, Fireworks, DeepInfra, LocalAI, …) | `<PROVIDER>_API_KEY` *(optional)* | `<provider>/<model>` |
-| Video | Runway | `RUNWAY_API_KEY` | `runway/gen4.5` (default) |
-| Video | Google Veo | `GEMINI_API_KEY` *(reused)* | `google/veo-3.0-generate-preview` |
-| Video | Luma Dream Machine | `LUMA_API_KEY` | `luma/ray-2` |
+| Video | Runway (developer API) | `RUNWAY_API_KEY` | `runway/gen4.5` (default, text or image to video), `runway/gen4_turbo` (image to video only), `runway/veo3.1` |
+| Video | Google Veo | `GEMINI_API_KEY` *(reused)* | `google/veo-3.1-generate-preview`, `google/veo-3.1-fast-generate-preview` |
+| Video | Luma Dream Machine | `LUMA_API_KEY` | `luma/ray-2`, `luma/ray-flash-2` |
+
+OpenAI retired `dall-e-2` and `dall-e-3` on 2026-05-12; Marina refuses them with a
+pointer to `openai/gpt-image-2` and no longer treats them as image models.
 
 ### Local & custom image models
 
@@ -57,9 +60,27 @@ Notes:
   regardless of the image provider; without one it's skipped (generation still
   works).
 - **Sizes** snap to each provider's supported aspect ratios — `--width/--height`
-  are a hint, not exact pixels, for Stability/Imagen.
-- **Video** is async (rendered server-side, then polled) — Runway and Google Veo
-  are supported; other providers return a clear "not supported" error.
+  are a hint, not exact pixels, for Stability/Imagen. OpenAI: `gpt-image-2` (and
+  its snapshots, `gpt-image-2.5-*`) takes any size with both edges multiples of 16,
+  aspect 1:3–3:1, no edge above 3840 and 655,360–8,294,400 pixels, so a request is
+  mapped into that space keeping its aspect; `gpt-image-1`, `-1.5` and `-1-mini`
+  take only 1024x1024, 1536x1024 or 1024x1536 (nearest aspect). With no
+  dimensions the model chooses.
+- **Style** — GPT Image models reject the legacy `style` parameter, so `--style`
+  is written into the prompt (`Style: …`) instead.
+- **Video** is async (rendered server-side, then polled) — Runway, Google Veo and
+  Luma are supported; other providers return a clear "not supported" error.
+- **Video limits per provider** — Runway takes `ratio` as an output resolution
+  (`--aspect 16:9` becomes `1280:720`, `9:16` becomes `720:1280`) and 2–10 s
+  for `gen4.5`/`gen4_turbo`; Veo takes 4, 6 or 8 s (8 with a reference image) at
+  16:9 or 9:16. No provider API takes a frame rate: `--fps` is recorded on the
+  job but not sent.
+- **`--reference`** — an `https://` URL is passed to the provider as is. A
+  stored asset or canvas node (`<asset id>`, `asset:<id>`, `node:<id>`) is read
+  as you (a private asset you cannot read is "not found"), must be a PNG, JPEG,
+  GIF or WebP up to ~3.9 MB, and is sent inline (Runway `promptImage`, Veo
+  first frame). Luma takes only a public image URL, so a stored asset is
+  refused for Luma rather than sent.
 
 ## Generate
 
@@ -83,7 +104,7 @@ An agent gets the `marina_generate_image` / `marina_generate_video` tools **only
 if its model is image/video-capable** — the tools are gated by the agent's
 `supports` flags, which are inferred from the model at spawn. So:
 
-- Spawn the agent on a media model (e.g. `openai/gpt-image-1` for image) and it
+- Spawn the agent on a media model (e.g. `openai/gpt-image-2` for image) and it
   gains the matching generate tool. The **Launch** panel shows a hint under the
   model picker telling you whether the selected model can generate.
 - Or, regardless of model, an agent can run the `image generate` / `video
@@ -95,7 +116,7 @@ if its model is image/video-capable** — the tools are gated by the agent's
 curl -X POST http://localhost:3300/v1/media \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MARINA_MODEL_KEY" \
-  -d '{"type":"image","prompt":"a futuristic city at dawn","model":"openai/gpt-image-1"}'
+  -d '{"type":"image","prompt":"a futuristic city at dawn","model":"openai/gpt-image-2"}'
 # → poll GET /v1/media/<jobId>
 ```
 
@@ -131,8 +152,17 @@ answers only the job's owner (or such a trusted caller); anyone else gets 404.
    it appear inline in Rich chat.
 5. The job flips to `succeeded` (or `failed`) and emits a final feed event.
 
-Video is asynchronous: Runway is polled every few seconds and the job's
-`progress` updates until the render completes.
+Video is asynchronous and durable. Starting a render stores the provider's
+task id on the job (`provider_job_id`) and leaves it `running`; the
+`media-video-poll` tick job (about every 5 s) polls every `running` video job
+from the database, so a restart resumes jobs in flight. `progress` updates as
+the provider reports it. A transient provider error (network, throttling, a
+5xx, a failed download of a finished render) keeps the job running for the
+next pass and is shown as `lastPollError` in its metadata. A job still
+rendering after `MARINA_VIDEO_JOB_TIMEOUT_MIN` minutes (default 30) fails with
+a timeout reason naming the provider task. A finished job records its spend
+once: the provider's reported charge when it gives one (Runway's
+`cost.credits`), else the job's estimate.
 
 ## Seeing images and video
 
@@ -206,6 +236,9 @@ without a shell, in a private temporary directory, with a 30-second timeout.
   `<PROVIDER>_IMAGE_BASE_URL` first (see *Local & custom*).
 - **Job stuck `pending` / errors immediately** — the provider key is missing
   (`OPENAI_API_KEY` / `RUNWAY_API_KEY`) or the daily cap is hit.
+- **Video job `running` for a long time** — check its `lastPollError` in
+  `media jobs`; `readiness` lists a failing `media-video-poll` tick job. The job
+  fails on its own at `MARINA_VIDEO_JOB_TIMEOUT_MIN`.
 - **Agent has no generate tool** — its model isn't image/video-capable. Spawn it
   on a media model, or have it run the `image generate` command instead.
 - **Nothing appears in chat** — make sure you're in **Rich** view (Compact view

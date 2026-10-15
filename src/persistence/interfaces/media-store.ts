@@ -32,6 +32,16 @@ export interface MediaStore {
       completedAt: number | null;
     }>,
   ): void;
+  transitionMediaJob(
+    id: string,
+    from: mediaDb.MediaJobStatus,
+    patch: mediaDb.MediaJobPatch,
+  ): boolean;
+  listMediaJobsByStatus(opts: {
+    status: mediaDb.MediaJobStatus;
+    type?: mediaDb.MediaJobType;
+    limit?: number;
+  }): mediaDb.MediaJobRow[];
   getMediaJob(id: string): mediaDb.MediaJobRow | undefined;
   listMediaJobs(opts?: { limit?: number; entityName?: string }): mediaDb.MediaJobRow[];
   countMediaJobsSince(opts: {
@@ -45,6 +55,8 @@ export interface MediaStore {
 export const MEDIA_STORE_METHODS = [
   "createMediaJob",
   "updateMediaJob",
+  "transitionMediaJob",
+  "listMediaJobsByStatus",
   "getMediaJob",
   "listMediaJobs",
   "countMediaJobsSince",

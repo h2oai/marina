@@ -3362,6 +3362,22 @@ export class MarinaDB implements MarinaStores {
     mediaDb.updateMediaJob(this.db, id, patch);
   }
 
+  transitionMediaJob(
+    id: string,
+    from: mediaDb.MediaJobStatus,
+    patch: mediaDb.MediaJobPatch,
+  ): boolean {
+    return mediaDb.transitionMediaJob(this.db, id, from, patch);
+  }
+
+  listMediaJobsByStatus(opts: {
+    status: mediaDb.MediaJobStatus;
+    type?: mediaDb.MediaJobType;
+    limit?: number;
+  }): mediaDb.MediaJobRow[] {
+    return mediaDb.listMediaJobsByStatus(this.db, opts);
+  }
+
   getMediaJob(id: string): mediaDb.MediaJobRow | undefined {
     return mediaDb.getMediaJob(this.db, id);
   }

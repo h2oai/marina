@@ -107,7 +107,9 @@ describe("default image model", () => {
     expect(defaultImageModel("openai/gpt-6-luna")).toBe(DEFAULT_IMAGE_MODEL);
     // An instance default that IS an image model is honoured.
     expect(defaultImageModel("stability/sd3.5-large")).toBe("stability/sd3.5-large");
-    expect(defaultImageModel("openai/dall-e-3")).toBe("openai/dall-e-3");
+    expect(defaultImageModel("openai/gpt-image-1.5")).toBe("openai/gpt-image-1.5");
+    // dall-e was retired by OpenAI on 2026-05-12: not an image model any more.
+    expect(defaultImageModel("openai/dall-e-3")).toBe(DEFAULT_IMAGE_MODEL);
     expect(isImageModel("google/imagen-4")).toBe(true);
     expect(isImageModel("google/gemini-3.1-flash-lite")).toBe(false);
   });

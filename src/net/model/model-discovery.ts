@@ -371,8 +371,7 @@ interface CapabilityRule {
 
 const CAPABILITY_RULES: CapabilityRule[] = [
   {
-    test: (entry) =>
-      /^openai\/gpt-image-/i.test(entry.value) || /^openai\/dall-e/i.test(entry.value),
+    test: (entry) => /^openai\/(gpt-image-|chatgpt-image-)/i.test(entry.value),
     capabilities: { text: false, image: true },
   },
   {

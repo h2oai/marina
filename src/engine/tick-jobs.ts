@@ -30,6 +30,7 @@ import {
 import type { Engine, EngineConfig } from "./engine";
 import { getErrorMessage, tryLog } from "./errors";
 import type { Logger } from "./logger";
+import type { MediaManager } from "./media/manager";
 import { MEMORY_ACCUMULATION_PHASE, runEngineAccumulationDispatch } from "./memory-dispatch";
 import { MEMORY_HYGIENE_PHASE, runEngineMemoryHygiene } from "./memory-hygiene";
 import {
@@ -67,6 +68,7 @@ export interface TickJobHost {
   readonly taskManager?: TaskManager;
   readonly agentRuntime: AgentRuntime;
   readonly flywheel?: FlywheelToolBackend;
+  readonly mediaManager?: Pick<MediaManager, "pollRunningVideoJobs">;
   /** `() => computeReadiness(engine)` — the alert sync needs the live report. */
   readonly readiness: () => ReturnType<typeof import("./readiness").computeReadiness>;
   cleanupOrphanedAgents(): void;
@@ -358,6 +360,21 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
+  // Every ~5 s: poll the `running` video jobs in the database (the only video
+  // polling path). Durable: a restart resumes them on its first pass, and each
+  // job fails past MARINA_VIDEO_JOB_TIMEOUT_MIN. Async — the scheduler never
+  // overlaps it with itself and shutdown drains it before the DB closes.
+  const mediaPollEvery = mediaVideoPollTicks(host.config.tickInterval);
+  s.register({
+    name: "media-video-poll",
+    every: mediaPollEvery,
+    phase: mediaVideoPollPhase(mediaPollEvery),
+    failureMessage: "Video job poll failed",
+    run: async () => {
+      await host.mediaManager?.pollRunningVideoJobs();
+    },
+  });
+
   // Every ~10 s: run due schedules (src/schedules/runner.ts). Next-run times
   // are wall-clock and durable, so a restart or a slow tick never shifts them;
   // each run is detached, so a slow command never delays the others.
@@ -411,6 +428,17 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       await judgeWaitingWork(host.db);
     },
   });
+}
+
+/** Wall-clock cadence of the durable video-job poller. */
+export const MEDIA_VIDEO_POLL_MS = 5_000;
+/** The video poller's interval in ticks (at least 2, so it can take a phase of its own). */
+export function mediaVideoPollTicks(tickIntervalMs: number): number {
+  return Math.max(2, Math.round(MEDIA_VIDEO_POLL_MS / Math.max(1, tickIntervalMs)));
+}
+/** Its phase: 4 when the interval allows (clear of the schedules job's 3), else 1. */
+export function mediaVideoPollPhase(every: number): number {
+  return every > 4 ? 4 : 1;
 }
 
 /** The hourly phase of judged resolution of unlinked answers (src/outcomes/judge-resolution.ts). */

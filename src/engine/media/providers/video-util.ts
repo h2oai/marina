@@ -9,7 +9,10 @@
 
 import type { GeneratedAsset } from "./image-util";
 
-/** Built-in video model when a request names none (Runway's current text-to-video model). */
+/**
+ * Built-in video model when a request names none: Runway's `gen4.5` (text- and
+ * image-to-video on Runway's developer API, https://docs.dev.runwayml.com/api/).
+ */
 export const DEFAULT_VIDEO_MODEL = "runway/gen4.5";
 
 export interface VideoStartOptions {
@@ -18,7 +21,12 @@ export interface VideoStartOptions {
   model: string;
   prompt: string;
   duration?: number;
+  /** Requested frame rate. No current provider API takes one; providers ignore it. */
   fps?: number;
+  /**
+   * First-frame image, already resolved by the manager: an `https://` URL or a
+   * `data:image/…;base64,` URI — never a Marina asset id.
+   */
   referenceImage?: string;
   aspectRatio?: string;
   signal?: AbortSignal;
@@ -38,6 +46,14 @@ export interface VideoResult {
   /** 0–1 progress, when the provider reports it. */
   progress?: number;
   error?: string;
+  /**
+   * With `status: "running"`: this poll hit a transient failure (network,
+   * throttle, server error, a paid output that failed to download). The job
+   * stays running and is polled again; its overall deadline bounds retries.
+   */
+  retryable?: boolean;
+  /** The provider's own final charge in USD, when it reports one (recorded instead of the estimate). */
+  costUsd?: number;
   asset?: GeneratedAsset;
 }
 

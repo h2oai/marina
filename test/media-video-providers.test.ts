@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { pollVeoVideoJob, startVeoVideoJob } from "../src/engine/media/providers/veo";
+import {
+  pollVeoVideoJob,
+  startVeoVideoJob,
+  veoDurationSeconds,
+} from "../src/engine/media/providers/veo";
 import {
   getVideoProvider,
   knownVideoProviders,
@@ -140,7 +144,8 @@ describe("Luma video", () => {
       prompt: "ocean waves",
       aspectRatio: "9:16",
     });
-    expect(capturedUrl).toBe("https://api.lumalabs.ai/dream-machine/v1/generations");
+    // Through the SSRF guard: pinned to the resolved IP, path unchanged.
+    expect(new URL(capturedUrl).pathname).toBe("/dream-machine/v1/generations");
     expect(body.model).toBe("ray-2");
     expect(body.aspect_ratio).toBe("9:16");
     expect(res.status).toBe("running");
@@ -170,5 +175,73 @@ describe("Luma video", () => {
     const failed = await pollLumaVideoJob({ apiKey: "k", providerJobId: "x" });
     expect(failed.status).toBe("failed");
     expect(failed.error).toContain("nsfw");
+    mockFetch(() => new Response("busy", { status: 503 }));
+    expect((await pollLumaVideoJob({ apiKey: "k", providerJobId: "x" })).retryable).toBe(true);
+  });
+
+  it("sends an https reference as keyframe 0 and refuses anything else", async () => {
+    let body: Record<string, unknown> = {};
+    const cap = mockFetch((_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json({ id: "g" });
+    });
+    await startLumaVideoJob({
+      apiKey: "k",
+      model: "luma/ray-2",
+      prompt: "p",
+      referenceImage: "https://cdn.example/a.png",
+    });
+    expect(body.keyframes).toEqual({
+      frame0: { type: "image", url: "https://cdn.example/a.png" },
+    });
+    const refused = await startLumaVideoJob({
+      apiKey: "k",
+      model: "luma/ray-2",
+      prompt: "p",
+      referenceImage: "data:image/png;base64,AAAA",
+    });
+    expect(refused.status).toBe("failed");
+    expect(refused.error).toContain("public https URL");
+    expect(cap.calls()).toBe(1);
+  });
+});
+
+describe("Veo limits", () => {
+  it("sends durationSeconds (4/6/8, 8 with an image) and the key as a header, never fps", async () => {
+    let body: { instances: Array<Record<string, unknown>>; parameters: Record<string, unknown> } = {
+      instances: [],
+      parameters: {},
+    };
+    let headers = new Headers();
+    let url = "";
+    mockFetch((u, init) => {
+      url = u;
+      headers = new Headers(init?.headers);
+      body = JSON.parse(String(init?.body));
+      return Response.json({ name: "models/veo-3.1-generate-preview/operations/1" });
+    });
+    await startVeoVideoJob({
+      apiKey: "AIza",
+      model: "google/veo-3.1-generate-preview",
+      prompt: "p",
+      duration: 5,
+      fps: 60,
+    });
+    expect(url).not.toContain("key=");
+    expect(headers.get("x-goog-api-key")).toBe("AIza");
+    expect(body.parameters).toEqual({ aspectRatio: "16:9", durationSeconds: "4" });
+    await startVeoVideoJob({
+      apiKey: "AIza",
+      model: "google/veo-3.1-generate-preview",
+      prompt: "p",
+      duration: 4,
+      referenceImage: "data:image/png;base64,iVBORw0KGgo=",
+    });
+    expect(body.parameters.durationSeconds).toBe("8");
+    expect(body.instances[0]?.image).toEqual({
+      inlineData: { mimeType: "image/png", data: "iVBORw0KGgo=" },
+    });
+    expect(veoDurationSeconds(undefined, false)).toBe("8");
+    expect(veoDurationSeconds(7, false)).toBe("6");
   });
 });

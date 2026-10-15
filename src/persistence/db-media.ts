@@ -66,20 +66,66 @@ export function insertMediaJob(
   );
 }
 
-export function updateMediaJob(
+export type MediaJobPatch = Partial<{
+  status: MediaJobStatus;
+  assetId: string | null;
+  error: string | null;
+  costEstimate: number | null;
+  providerJobId: string | null;
+  metadata: Record<string, unknown> | null;
+  options: Record<string, unknown>;
+  completedAt: number | null;
+}>;
+
+export function updateMediaJob(db: Database, id: string, patch: MediaJobPatch): void {
+  const { fields, values } = patchColumns(patch);
+  values.push(id);
+  db.run(`UPDATE media_jobs SET ${fields.join(", ")} WHERE id = ?`, values);
+}
+
+/**
+ * Compare-and-set: apply `patch` only while the job is still in `from`.
+ * Returns whether this caller made the transition — the one caller that does
+ * owns the job's terminal side effects (spend, asset, events), so a job is
+ * never completed twice by overlapping pollers or across a restart.
+ */
+export function transitionMediaJob(
   db: Database,
   id: string,
-  patch: Partial<{
-    status: MediaJobStatus;
-    assetId: string | null;
-    error: string | null;
-    costEstimate: number | null;
-    providerJobId: string | null;
-    metadata: Record<string, unknown> | null;
-    options: Record<string, unknown>;
-    completedAt: number | null;
-  }>,
-): void {
+  from: MediaJobStatus,
+  patch: MediaJobPatch,
+): boolean {
+  const { fields, values } = patchColumns(patch);
+  values.push(id, from);
+  const res = db.run(
+    `UPDATE media_jobs SET ${fields.join(", ")} WHERE id = ? AND status = ?`,
+    values,
+  );
+  return res.changes === 1;
+}
+
+/** Jobs in one status, oldest first — e.g. the `running` video jobs the durable poller resumes. */
+export function listMediaJobsByStatus(
+  db: Database,
+  opts: { status: MediaJobStatus; type?: MediaJobType; limit?: number },
+): MediaJobRow[] {
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+  if (opts.type) {
+    return db
+      .query(
+        "SELECT * FROM media_jobs WHERE status = ? AND type = ? ORDER BY created_at ASC LIMIT ?",
+      )
+      .all(opts.status, opts.type, limit) as MediaJobRow[];
+  }
+  return db
+    .query("SELECT * FROM media_jobs WHERE status = ? ORDER BY created_at ASC LIMIT ?")
+    .all(opts.status, limit) as MediaJobRow[];
+}
+
+function patchColumns(patch: MediaJobPatch): {
+  fields: string[];
+  values: (string | number | null)[];
+} {
   const fields: string[] = [];
   const values: (string | number | null)[] = [];
   if (patch.status !== undefined) {
@@ -116,9 +162,7 @@ export function updateMediaJob(
   }
   fields.push("updated_at = ?");
   values.push(Date.now());
-  values.push(id);
-  const sql = `UPDATE media_jobs SET ${fields.join(", ")} WHERE id = ?`;
-  db.run(sql, values);
+  return { fields, values };
 }
 
 export function getMediaJob(db: Database, id: string): MediaJobRow | undefined {

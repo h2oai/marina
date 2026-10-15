@@ -31,7 +31,7 @@ export const DEFAULT_IMAGE_MODEL = "openai/gpt-image-2";
 
 /**
  * True when `model` is an image-generation model this registry can serve:
- * an OpenAI image id (`gpt-image-*`, `dall-e-*`) or any id on a non-OpenAI
+ * an OpenAI GPT Image id (`gpt-image-*`, `chatgpt-image-*`) or any id on a non-OpenAI
  * image provider (stability, google, flux, a local endpoint).
  */
 export function isImageModel(model: string): boolean {
@@ -39,7 +39,8 @@ export function isImageModel(model: string): boolean {
   if (slash <= 0) return false;
   const provider = model.slice(0, slash);
   const id = model.slice(slash + 1);
-  if (provider === "openai") return /^(gpt-image-|dall-e)/i.test(id);
+  // dall-e-* was retired by OpenAI on 2026-05-12, so it is not an image model here.
+  if (provider === "openai") return /^(gpt-image-|chatgpt-image-)/i.test(id);
   if (provider === "google") return /image|imagen/i.test(id);
   return getImageProvider(provider) !== undefined;
 }
