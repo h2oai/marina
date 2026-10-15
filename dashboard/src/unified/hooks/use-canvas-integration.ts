@@ -586,7 +586,6 @@ export function useCanvasIntegration(
           // 1. Upload file as asset
           const form = new FormData();
           form.append("file", file);
-          form.append("entity", "canvas-drop");
 
           const uploadRes = await authFetch(`${API_BASE}/api/assets`, {
             method: "POST",

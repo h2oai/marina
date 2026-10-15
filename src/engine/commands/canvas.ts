@@ -6,6 +6,7 @@ import { header, separator } from "../../net/ansi";
 import { guardedFetch } from "../../net/url-guard";
 import type { MarinaDB } from "../../persistence/database";
 import { PANEL_RESOURCE_CATALOG } from "../../sdk/panel-resource-catalog";
+import { assetMimeForFile } from "../../storage/asset-mime";
 import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import {
@@ -1315,7 +1316,7 @@ async function handleAsset(
             return;
           }
           const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")) : "";
-          const mime = guessMime(ext);
+          const mime = assetMimeForFile(ext, bodyBytes);
           const id = crypto.randomUUID();
           const storageKey = `${id}${ext}`;
 
@@ -1389,7 +1390,7 @@ async function handleAsset(
         }
         const filename = url.split("/").pop()?.split("?")[0] ?? "download";
         const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")) : "";
-        const mime = guessMime(ext);
+        const mime = assetMimeForFile(ext, bodyBytes);
         const id = crypto.randomUUID();
         const storageKey = `${id}${ext}`;
 
@@ -1517,26 +1518,4 @@ async function handleAsset(
         "Usage: canvas asset upload <url> | canvas asset list | canvas asset info <id> | canvas asset delete <id>",
       );
   }
-}
-
-function guessMime(ext: string): string {
-  const map: Record<string, string> = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".svg": "image/svg+xml",
-    ".mp4": "video/mp4",
-    ".webm": "video/webm",
-    ".mp3": "audio/mpeg",
-    ".wav": "audio/wav",
-    ".ogg": "audio/ogg",
-    ".pdf": "application/pdf",
-    ".json": "application/json",
-    ".txt": "text/plain",
-    ".md": "text/markdown",
-    ".html": "text/html",
-  };
-  return map[ext.toLowerCase()] ?? "application/octet-stream";
 }

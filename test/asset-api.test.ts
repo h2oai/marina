@@ -14,6 +14,7 @@ import {
 } from "../src/net/api/asset-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
+import { assetMimeForFile, mimeFromExtension } from "../src/storage/asset-mime";
 import { LocalStorageProvider } from "../src/storage/local-provider";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
@@ -40,6 +41,17 @@ describe("asset API — MIME policy", () => {
     expect(normalizeAssetMime(undefined, HTML_PAYLOAD)).toBe(OCTET_STREAM);
     // Undeclared bytes that ARE a PNG are recognised.
     expect(normalizeAssetMime(OCTET_STREAM, PNG_MAGIC)).toBe("image/png");
+    // A mislabelled but genuine raster image gets its real type.
+    expect(normalizeAssetMime("image/jpeg", PNG_MAGIC)).toBe("image/png");
+  });
+
+  it("extension hints go through the same policy (command and generated write paths)", () => {
+    expect(mimeFromExtension(".HTML")).toBe(OCTET_STREAM);
+    expect(assetMimeForFile(".html", HTML_PAYLOAD)).toBe(OCTET_STREAM);
+    expect(assetMimeForFile(".svg", HTML_PAYLOAD)).toBe("image/svg+xml");
+    expect(assetMimeForFile(".png", HTML_PAYLOAD)).toBe(OCTET_STREAM);
+    expect(assetMimeForFile(".png", PNG_MAGIC)).toBe("image/png");
+    expect(assetMimeForFile(".py", HTML_PAYLOAD)).toBe("text/plain");
   });
 
   it("serves every asset with nosniff + a no-script CSP, and non-media as attachment", () => {
@@ -226,5 +238,68 @@ describe("asset API — writes, sentinel, limits", () => {
     // Under the cap still works.
     const ok = await upload(token, PNG_MAGIC, "image/png", "small.png");
     expect(ok.status).toBe(201);
+  });
+
+  function multipartUpload(token: string, entity?: string) {
+    const form = new FormData();
+    form.append("file", new File([PNG_MAGIC.slice()], "pic.png", { type: "image/png" }));
+    if (entity !== undefined) form.append("entity", entity);
+    const url = new URL("http://localhost:3300/api/assets");
+    const req = new Request(url.toString(), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    return handleAssetApi(url, "POST", req, db, storage, engine);
+  }
+
+  it("refuses a client-chosen owner (multipart `entity` / `?entity=`) naming someone else", async () => {
+    loginToken("Victim");
+    const token = loginToken("Spoofer");
+
+    const viaForm = await multipartUpload(token, "Victim");
+    expect(viaForm.status).toBe(403);
+    expect(((await viaForm.json()) as { code: string }).code).toBe("asset_owner_mismatch");
+
+    const url = new URL("http://localhost:3300/api/assets?filename=x.png&entity=Victim");
+    const viaQuery = await handleAssetApi(
+      url,
+      "POST",
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "image/png" },
+        body: new Blob([PNG_MAGIC.slice()]),
+      }),
+      db,
+      storage,
+      engine,
+    );
+    expect(viaQuery.status).toBe(403);
+    expect(db.listAssets({ limit: 50 })).toHaveLength(0);
+  });
+
+  it("attributes an upload to the authenticated writer (own name restated or omitted)", async () => {
+    const token = loginToken("Owner");
+    const restated = await multipartUpload(token, "owner");
+    expect(restated.status).toBe(201);
+    expect(((await restated.json()) as { entity_name: string }).entity_name).toBe("Owner");
+    const omitted = await multipartUpload(token);
+    expect(omitted.status).toBe(201);
+    const body = (await omitted.json()) as { entity_name: string; id: string };
+    expect(body.entity_name).toBe("Owner");
+
+    // The owner deletes its own upload.
+    const del = await handleAssetApi(
+      new URL(`http://localhost:3300/api/assets/${body.id}`),
+      "DELETE",
+      new Request(`http://localhost:3300/api/assets/${body.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      db,
+      storage,
+      engine,
+    );
+    expect(del.status).toBe(200);
   });
 });

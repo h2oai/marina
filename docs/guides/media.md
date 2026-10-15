@@ -94,9 +94,17 @@ if its model is image/video-capable** — the tools are gated by the agent's
 ```bash
 curl -X POST http://localhost:3300/v1/media \
   -H "Content-Type: application/json" \
-  -d '{"type":"image","prompt":"a futuristic city at dawn","model":"openai/gpt-image-1","entityName":"artist"}'
+  -H "Authorization: Bearer $MARINA_MODEL_KEY" \
+  -d '{"type":"image","prompt":"a futuristic city at dawn","model":"openai/gpt-image-1"}'
 # → poll GET /v1/media/<jobId>
 ```
+
+The job runs as the caller the key authenticates: a `secret:entity` key in
+`MODEL_API_KEYS` is that entity (its quota, spend and canvas), an unbound key is
+the anonymous `system` caller. `entityId` / `entityName` in the body may only
+name the caller itself; naming another entity is a 403 unless the key is the
+internal token or a multi-tenant `secret:*` operator key. `GET /v1/media/<jobId>`
+answers only the job's owner (or such a trusted caller); anyone else gets 404.
 
 ## View results
 

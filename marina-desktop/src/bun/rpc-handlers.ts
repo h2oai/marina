@@ -11,6 +11,7 @@ import {
   handleParticipantMessage,
   type ParticipantMessage,
 } from "../../../src/net/participant-messages";
+import { normalizeAssetMime } from "../../../src/storage/asset-mime";
 import type { Connection, EntityId, Perception, RoomId } from "../../../src/types";
 import type { EngineHost } from "./engine-host";
 import type {
@@ -854,12 +855,14 @@ export function createRpcHandlers(
         ? params.filename.slice(params.filename.lastIndexOf("."))
         : "";
       const storageKey = `${id}${ext}`;
-      await storage.put(storageKey, data, params.mime);
+      // Same allowlist + magic-byte policy as POST /api/assets.
+      const mime = normalizeAssetMime(params.mime, data);
+      await storage.put(storageKey, data, mime);
       db.createAsset({
         id,
         entityName: params.entity ?? "system",
         filename: params.filename,
-        mimeType: params.mime,
+        mimeType: mime,
         size: data.byteLength,
         storageKey,
       });

@@ -243,6 +243,32 @@ describe("Canvas — Phase 1: Asset Store", () => {
       expect(db.getAsset("del-id")).toBeUndefined();
     });
 
+    it("upload applies the HTTP upload policy: allowlist + magic bytes (no text/html)", async () => {
+      const { mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+      const dir = `data/scratch/${entityId}`;
+      mkdirSync(dir, { recursive: true });
+      try {
+        const html = "<script>alert(document.cookie)</script>";
+        writeFileSync(`${dir}/evil.html`, html);
+        writeFileSync(`${dir}/fake.png`, html);
+        writeFileSync(
+          `${dir}/real.png`,
+          new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
+        );
+        for (const name of ["evil.html", "fake.png", "real.png"]) {
+          await engine.processCommand(entityId, `canvas asset upload file:${name}`);
+        }
+        const byName = new Map(
+          db.listAssets({ limit: 10 }).map((a) => [a.filename, a.mime_type] as const),
+        );
+        expect(byName.get("evil.html")).toBe("application/octet-stream");
+        expect(byName.get("fake.png")).toBe("application/octet-stream");
+        expect(byName.get("real.png")).toBe("image/png");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it("reports error for missing asset delete", () => {
       engine.processCommand(entityId, "canvas asset delete nonexistent");
       const text = stripAnsi(conn.lastText());

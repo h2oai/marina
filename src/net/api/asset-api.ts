@@ -2,11 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isRequestAsset, mayReadAsset } from "../../engine/canvas-access";
+import { isOperatorPrincipal as isOperatorPerson } from "../../engine/challenges";
 import type { Engine } from "../../engine/engine";
 import type { MarinaDB } from "../../persistence/database";
+import { isInlineMime, normalizeAssetMime, OCTET_STREAM } from "../../storage/asset-mime";
 import type { StorageProvider } from "../../storage/provider";
 import type { EntityId } from "../../types";
-import { authenticateRequest, refuseOpenApiWrite } from "../auth-middleware";
+import {
+  authenticateRequest,
+  isOperatorPrincipal,
+  OPEN_API_ENTITY_ID,
+  refuseOpenApiWrite,
+} from "../auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas/canvas-principal";
 import { corsHeaders } from "../cors";
 import {
@@ -32,161 +39,17 @@ function json(data: unknown, status = 200): Response {
 
 // ─── MIME policy ─────────────────────────────────────────────────────────────
 //
-// The upload MIME is CLIENT-SUPPLIED. Echoing it verbatim from `/assets/:key`
-// would let any logged-in entity store `text/html` (or `image/svg+xml`) and get
-// a same-origin document that runs script — stored XSS against every dashboard
-// viewer. So: only allowlisted types are kept, raster images are checked against
-// their magic bytes, and everything else is stored as `application/octet-stream`.
-// Serving adds nosniff + a no-op CSP, and non-media types are `attachment`.
+// The pure policy lives in src/storage/asset-mime.ts so every write path (this
+// endpoint, `canvas asset upload`, `exec publish`, generated media) stores
+// assets under the same rules; re-exported here for existing importers.
 
-/** Fallback for anything not on the allowlist (or failing its magic check). */
-export const OCTET_STREAM = "application/octet-stream";
-
-/** Allowlisted upload MIME types (lower-cased, no parameters). */
-export const ALLOWED_ASSET_MIMES: ReadonlySet<string> = new Set([
-  // raster images (magic-byte verified)
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-  "image/bmp",
-  "image/avif",
-  // vector image — kept as a type, but never served inline (see isInlineMime)
-  "image/svg+xml",
-  // audio
-  "audio/mpeg",
-  "audio/mp4",
-  "audio/ogg",
-  "audio/wav",
-  "audio/x-wav",
-  "audio/webm",
-  "audio/flac",
-  "audio/aac",
-  // video
-  "video/mp4",
-  "video/webm",
-  "video/ogg",
-  "video/quicktime",
-  // documents & data
-  "application/pdf",
-  "application/json",
-  "text/csv",
-  "text/markdown",
-  "text/plain",
-  // fonts
-  "font/woff",
-  "font/woff2",
-  "font/ttf",
-  "font/otf",
-  // wasm
-  "application/wasm",
-]);
-
-/** Image types whose magic bytes we can verify cheaply. */
-const IMAGE_MAGIC: ReadonlyArray<{ mime: string; test: (b: Uint8Array) => boolean }> = [
-  {
-    mime: "image/png",
-    test: (b) =>
-      b.length >= 8 &&
-      b[0] === 0x89 &&
-      b[1] === 0x50 &&
-      b[2] === 0x4e &&
-      b[3] === 0x47 &&
-      b[4] === 0x0d &&
-      b[5] === 0x0a &&
-      b[6] === 0x1a &&
-      b[7] === 0x0a,
-  },
-  {
-    mime: "image/jpeg",
-    test: (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
-  },
-  {
-    mime: "image/gif",
-    test: (b) =>
-      b.length >= 6 &&
-      b[0] === 0x47 &&
-      b[1] === 0x49 &&
-      b[2] === 0x46 &&
-      b[3] === 0x38 &&
-      (b[4] === 0x37 || b[4] === 0x39) &&
-      b[5] === 0x61,
-  },
-  {
-    mime: "image/webp",
-    test: (b) =>
-      b.length >= 12 &&
-      b[0] === 0x52 &&
-      b[1] === 0x49 &&
-      b[2] === 0x46 &&
-      b[3] === 0x46 &&
-      b[8] === 0x57 &&
-      b[9] === 0x45 &&
-      b[10] === 0x42 &&
-      b[11] === 0x50,
-  },
-  { mime: "image/bmp", test: (b) => b.length >= 2 && b[0] === 0x42 && b[1] === 0x4d },
-  {
-    // ISO BMFF: size(4) + "ftyp" + brand "avif"/"avis"
-    mime: "image/avif",
-    test: (b) =>
-      b.length >= 12 &&
-      b[4] === 0x66 &&
-      b[5] === 0x74 &&
-      b[6] === 0x79 &&
-      b[7] === 0x70 &&
-      b[8] === 0x61 &&
-      b[9] === 0x76 &&
-      b[10] === 0x69 &&
-      (b[11] === 0x66 || b[11] === 0x73),
-  },
-];
-
-const MAGIC_VERIFIED_IMAGES: ReadonlySet<string> = new Set(IMAGE_MAGIC.map((m) => m.mime));
-
-/** Detect a raster image type from its leading bytes, or `null`. */
-export function sniffImageMime(data: Uint8Array): string | null {
-  for (const { mime, test } of IMAGE_MAGIC) if (test(data)) return mime;
-  return null;
-}
-
-/**
- * Decide the MIME type an upload is STORED and SERVED as.
- *
- *  - declared type on the allowlist and (for raster images) matching its magic
- *    bytes → kept;
- *  - declared raster image whose bytes disagree → `application/octet-stream`
- *    (a disguised payload never gets an image content type);
- *  - undeclared / off-list type whose bytes ARE a known raster image → sniffed
- *    type (clients that send `application/octet-stream` for a PNG still work);
- *  - anything else → `application/octet-stream`.
- */
-export function normalizeAssetMime(declared: string | null | undefined, data: Uint8Array): string {
-  const mime = (declared ?? "").split(";")[0]!.trim().toLowerCase();
-  const sniffed = sniffImageMime(data);
-  if (mime && ALLOWED_ASSET_MIMES.has(mime)) {
-    if (MAGIC_VERIFIED_IMAGES.has(mime)) return sniffed === mime ? mime : OCTET_STREAM;
-    return mime;
-  }
-  return sniffed ?? OCTET_STREAM;
-}
-
-/**
- * Types a browser may render INLINE from `/assets/:key`. Raster images, audio,
- * video and PDF (the dashboard shows PDFs in an iframe — `attachment` would turn
- * that into a download). SVG, text, JSON, fonts, wasm and octet-stream are
- * always downloaded.
- */
-export function isInlineMime(mime: string): boolean {
-  const m = mime.toLowerCase();
-  if (m === "image/svg+xml") return false;
-  return (
-    m.startsWith("image/") ||
-    m.startsWith("audio/") ||
-    m.startsWith("video/") ||
-    m === "application/pdf"
-  );
-}
+export {
+  ALLOWED_ASSET_MIMES,
+  isInlineMime,
+  normalizeAssetMime,
+  OCTET_STREAM,
+  sniffImageMime,
+} from "../../storage/asset-mime";
 
 /** Strip characters that could break the `Content-Disposition` header. */
 function safeFilename(name: string): string {
@@ -240,6 +103,7 @@ export async function handleAssetApi(
   const host = { db, entities: engine.entities, canvasGrants: engine.canvasGrants };
   let writerName: string | undefined;
   let writerId: EntityId | undefined;
+  let writerIsOperator = false;
   if (method !== "GET") {
     const auth = authenticateRequest(req, engine);
     if ("error" in auth) return auth.error;
@@ -247,8 +111,15 @@ export async function handleAssetApi(
     const refused = refuseOpenApiWrite(auth.entityId, origin);
     if (refused) return refused;
     if (!consumeHttpRate("mutation", auth.entityId)) return rateLimitedResponse(origin);
-    writerName = engine.entities.get(auth.entityId)?.name;
+    const writer = engine.entities.get(auth.entityId);
+    writerName = writer?.name;
     writerId = auth.entityId;
+    // The desktop capability token, a rank-9 person, or (local profile only —
+    // `refuseOpenApiWrite` passed it) the loopback dev sentinel.
+    writerIsOperator =
+      isOperatorPrincipal(auth.entityId) ||
+      auth.entityId === OPEN_API_ENTITY_ID ||
+      isOperatorPerson(writer);
   }
   // DELETE /api/assets/:id
   const idMatch = url.pathname.match(/^\/api\/assets\/(.+)$/);
@@ -282,7 +153,7 @@ export async function handleAssetApi(
 
   // POST /api/assets (multipart upload)
   if (url.pathname === "/api/assets" && method === "POST") {
-    return handleUpload(req, db, storage, writerName);
+    return handleUpload(req, db, storage, writerName, writerIsOperator);
   }
 
   // GET /api/assets (list)
@@ -367,6 +238,7 @@ async function handleUpload(
   db: MarinaDB,
   storage: StorageProvider,
   writerName: string | undefined,
+  writerIsOperator: boolean,
 ): Promise<Response> {
   const contentType = req.headers.get("content-type") ?? "";
   const cap = maxUploadBytes();
@@ -379,7 +251,11 @@ async function handleUpload(
   let filename: string;
   let declaredMime: string;
   let data: Uint8Array;
-  let entityName = writerName ?? "system";
+  // The owner is the AUTHENTICATED writer — the name DELETE authorizes by. The
+  // legacy client-supplied `entity` field / `?entity=` may only restate it;
+  // naming anyone else is refused (an operator may still attribute).
+  const entityName = writerName ?? "system";
+  let declaredEntity: string | undefined;
 
   if (contentType.includes("multipart/form-data")) {
     let formData: FormData;
@@ -395,15 +271,18 @@ async function handleUpload(
     filename = file.name;
     declaredMime = file.type || OCTET_STREAM;
     data = new Uint8Array(await file.arrayBuffer());
-    const declaredEntity = formData.get("entity");
-    if (typeof declaredEntity === "string" && declaredEntity) entityName = declaredEntity;
+    const field = formData.get("entity");
+    if (typeof field === "string" && field) declaredEntity = field;
   } else {
     // Raw body upload — use Content-Type header and query params
     filename = new URL(req.url).searchParams.get("filename") ?? "upload";
     declaredMime = contentType || OCTET_STREAM;
     data = new Uint8Array(await req.arrayBuffer());
-    entityName = new URL(req.url).searchParams.get("entity") ?? entityName;
+    declaredEntity = new URL(req.url).searchParams.get("entity") || undefined;
   }
+
+  const owner = uploadOwner(entityName, declaredEntity, writerIsOperator);
+  if ("error" in owner) return owner.error;
 
   if (data.byteLength > cap) return tooLarge(cap);
 
@@ -421,7 +300,7 @@ async function handleUpload(
 
   db.createAsset({
     id,
-    entityName,
+    entityName: owner.name,
     filename,
     mimeType: mime,
     size: data.byteLength,
@@ -437,6 +316,34 @@ async function handleUpload(
     },
     201,
   );
+}
+
+/**
+ * The name an upload is attributed to: always the authenticated writer. A
+ * legacy `entity` value that names the writer (case-insensitively) is
+ * accepted; one that names anyone else is a 403 — attribution is what DELETE
+ * authorizes by, so a client-chosen owner would hand out delete rights —
+ * unless the writer is an operator, who may attribute on someone's behalf.
+ */
+function uploadOwner(
+  writerName: string,
+  declared: string | undefined,
+  writerIsOperator: boolean,
+): { name: string } | { error: Response } {
+  const wanted = declared?.trim();
+  if (!wanted || wanted.toLowerCase() === writerName.toLowerCase()) return { name: writerName };
+  if (writerIsOperator) return { name: wanted };
+  return {
+    error: json(
+      {
+        error:
+          `An upload is owned by the authenticated uploader (${writerName}); ` +
+          `the "entity" field cannot name another entity. Omit it.`,
+        code: "asset_owner_mismatch",
+      },
+      403,
+    ),
+  };
 }
 
 /**

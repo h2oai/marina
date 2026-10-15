@@ -474,6 +474,22 @@ describe("storeGeneratedAsset / publishGeneratedAsset", () => {
     const feed = world.events.filter((e) => e.type === "feed_event") as Array<{ kind: string }>;
     expect(feed.map((e) => e.kind)).toEqual(["image_generated", "video_generated"]);
   });
+
+  it("stores the provider-reported MIME only through the upload allowlist + magic bytes", async () => {
+    const world = fakeWorld();
+    const engine = world.engine as never;
+    const common = { engine, entityName: "P", prompt: "p", model: "m" };
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+    const html = new TextEncoder().encode("<script>alert(1)</script>");
+    await storeGeneratedAsset({ ...common, data: png, mimeType: "image/png", id: "g1" });
+    await storeGeneratedAsset({ ...common, data: html, mimeType: "text/html", id: "g2" });
+    await storeGeneratedAsset({ ...common, data: html, mimeType: "image/png", id: "g3" });
+    await storeGeneratedAsset({ ...common, data: png, mimeType: "image/webp", id: "g4" });
+    expect(world.assets.get("g1")?.mime_type).toBe("image/png");
+    expect(world.assets.get("g2")?.mime_type).toBe("application/octet-stream");
+    expect(world.assets.get("g3")?.mime_type).toBe("application/octet-stream");
+    expect(world.assets.get("g4")?.mime_type).toBe("image/png");
+  });
 });
 
 describe("OpenAI image provider", () => {

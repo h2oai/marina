@@ -3,6 +3,7 @@
 
 import { dim, error as fmtError, header, separator, success } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import { assetMimeForFile } from "../../storage/asset-mime";
 import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { rankFloorRefusal } from "../rank-floor";
@@ -388,7 +389,7 @@ async function handleSave(
         if (!fileData) continue;
 
         const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")) : ".txt";
-        const mime = guessMime(ext);
+        const mime = assetMimeForFile(ext, fileData.data);
         const nodeType = mimeToNodeType(mime);
         if (!nodeType) continue;
 
@@ -461,36 +462,6 @@ async function handleSave(
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-function guessMime(ext: string): string {
-  const map: Record<string, string> = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".svg": "image/svg+xml",
-    ".mp4": "video/mp4",
-    ".webm": "video/webm",
-    ".mp3": "audio/mpeg",
-    ".wav": "audio/wav",
-    ".ogg": "audio/ogg",
-    ".pdf": "application/pdf",
-    ".json": "application/json",
-    ".txt": "text/plain",
-    ".md": "text/markdown",
-    ".html": "text/html",
-    ".csv": "text/csv",
-    ".xml": "text/xml",
-    ".yaml": "text/yaml",
-    ".yml": "text/yaml",
-    ".sh": "text/plain",
-    ".py": "text/plain",
-    ".ts": "text/plain",
-    ".js": "text/plain",
-  };
-  return map[ext.toLowerCase()] ?? "application/octet-stream";
-}
 
 function mimeToNodeType(mime: string): string | null {
   if (mime.startsWith("image/")) return "image";
