@@ -797,18 +797,30 @@ export async function hardTasks(
 }
 
 /**
- * Score a final answer against the known one. Only the last non-empty line
- * counts (a reply that shows its working ends with the answer), and a number
- * is the last one on that line.
+ * The text a reply's final answer is read from. A short last line (a bare
+ * answer after shown working) wins; otherwise the last bold span holding a
+ * digit or a short code (an answer stated, then explained); otherwise the
+ * last line.
  */
-export function scoreHard(task: Pick<HardTask, "answer" | "scoring">, raw: string): boolean {
-  const s = task.scoring;
-  const text =
+export function finalAnswerText(raw: string): string {
+  const last =
     raw
       .split("\n")
       .map((l) => l.trim())
       .filter(Boolean)
       .at(-1) ?? "";
+  if (last.length <= 24) return last;
+  const bold = [...raw.matchAll(/\*\*([^*]+)\*\*/g)]
+    .map((m) => m[1]!.trim())
+    .filter((t) => /\d/.test(t) || /^[A-Z0-9]{1,4}$/i.test(t))
+    .at(-1);
+  return bold ?? last;
+}
+
+/** Score a final answer against the known one; a number is the last one in the answer text. */
+export function scoreHard(task: Pick<HardTask, "answer" | "scoring">, raw: string): boolean {
+  const s = task.scoring;
+  const text = finalAnswerText(raw);
   switch (s.type) {
     case "number": {
       const m = text.match(/-?\d[\d,]*(?:\.\d+)?/g)?.at(-1);

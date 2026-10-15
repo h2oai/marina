@@ -184,6 +184,13 @@ describe("scoreHard", () => {
     expect(scoreHard(exact, "297")).toBe(false);
     expect(scoreHard(exact, "38+41+43+35+42+97 = 296\n\n296")).toBe(true);
     expect(scoreHard(exact, "296\n\nWait, 297")).toBe(false);
+    const angle = { answer: "127", scoring: { type: "number", abs: 4 } } as const;
+    expect(scoreHard(angle, "- **Angle between them:** 185° − 58° ≈ 127°.\n\n127")).toBe(true);
+    expect(scoreHard(angle, "- **Angle:** 300\n\n127")).toBe(true);
+    const log = { answer: "950", scoring: { type: "number", rel: 0.1 } } as const;
+    expect(
+      scoreHard(log, "Point H is about **955**.\n\nAnything from 955 to 1,000 is within ±10%."),
+    ).toBe(true);
   });
 
   it("refuses hedged choices and reads cells either way round", () => {
