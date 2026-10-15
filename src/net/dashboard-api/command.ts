@@ -12,7 +12,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { Connection, EntityId, Perception } from "../../types";
 import { federationSigningAvailable, signFederationDocument } from "../federation-crypto";
 import { formatPerception } from "../formatter";
-import { clientIp, consumeHttpRate } from "../http-utils";
+import { clientIp, consumeHttpRate, maxUploadBytes } from "../http-utils";
 import {
   bearerToken,
   type CommandApiBody,
@@ -181,7 +181,11 @@ export async function handlePreAuthRoutes(
   // Pre-auth UI capability flags. The Unified Canvas is a retired alternate
   // interface — off unless an operator opts in with MARINA_UNIFIED_CANVAS=true.
   if (url.pathname === "/api/ui-config" && method === "GET") {
-    return json({ unifiedCanvas: process.env.MARINA_UNIFIED_CANVAS === "true" });
+    return json({
+      unifiedCanvas: process.env.MARINA_UNIFIED_CANVAS === "true",
+      // The asset upload cap, so upload surfaces refuse oversized files before sending.
+      maxUploadBytes: maxUploadBytes(),
+    });
   }
 
   // Command-native ingress for alternate renderers and external agents.

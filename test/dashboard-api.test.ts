@@ -836,6 +836,21 @@ describe("dashboard-api HTTP surface hardening", () => {
     expect(fresh?.status).toBe(200);
   });
 
+  it("publishes the asset upload cap on the open /api/ui-config", async () => {
+    const prior = process.env.MARINA_MAX_UPLOAD_BYTES;
+    process.env.MARINA_MAX_UPLOAD_BYTES = String(3 * 1024 * 1024);
+    try {
+      const resp = await get("/api/ui-config", {});
+      expect(resp?.status).toBe(200);
+      const body = (await resp!.json()) as { unifiedCanvas: boolean; maxUploadBytes: number };
+      expect(body.maxUploadBytes).toBe(3 * 1024 * 1024);
+      expect(typeof body.unifiedCanvas).toBe("boolean");
+    } finally {
+      if (prior === undefined) delete process.env.MARINA_MAX_UPLOAD_BYTES;
+      else process.env.MARINA_MAX_UPLOAD_BYTES = prior;
+    }
+  });
+
   it("masks stored provider keys to the last four characters only", async () => {
     db.saveApiKey({
       name: "primary",

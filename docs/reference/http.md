@@ -470,7 +470,7 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `url.pathname === "/api/command"`
 
-[Source](../../src/net/dashboard-api/command.ts#L191)
+[Source](../../src/net/dashboard-api/command.ts#L195)
 
 - Guard: `url.pathname === "/api/command" && method === "POST"`
 - Guard: `method === "POST"`
@@ -479,7 +479,7 @@ Fields read here: `command`, `error`.
 
 ### `url.pathname === "/api/ask"`
 
-[Source](../../src/net/dashboard-api/command.ts#L203)
+[Source](../../src/net/dashboard-api/command.ts#L207)
 
 - Guard: `url.pathname === "/api/ask" && method === "POST"`
 - Guard: `method === "POST"`
@@ -488,7 +488,7 @@ Fields read here: `error`, `query`.
 
 ### `url.pathname === "/api/federation/manifest"`
 
-[Source](../../src/net/dashboard-api/command.ts#L215)
+[Source](../../src/net/dashboard-api/command.ts#L219)
 
 - Guard: `url.pathname === "/api/federation/manifest" && method === "GET" && db`
 - Guard: `method === "GET"`
