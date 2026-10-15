@@ -233,3 +233,35 @@ test("a signed-in resident keeps its own identity and authority through the brid
     401,
   );
 });
+
+test("deleting native canvas nodes never deletes the asset they show", async () => {
+  using _state = scopeProcessState({
+    env: { MARINA_DESKTOP_API_TOKEN: "desktop-bridge-secret".repeat(3), MARINA_OPEN_API: "false" },
+  });
+  const uploaded = await upload(new File([PNG], "shared.png", { type: "image/png" }));
+  const asset = world.db.getAsset(uploaded.body.id)!;
+  const nodes = ["board-a", "board-b"].map((canvas) => {
+    world.db.createCanvas({ id: canvas, name: canvas, creatorName: "desktop" });
+    return rpc.createNode({ canvas_id: canvas, type: "image", asset_id: asset.id }) as {
+      id: string;
+    };
+  });
+  // A node is deleted only from its own canvas.
+  expect(rpc.deleteNode({ canvas_id: "board-b", id: nodes[0]!.id })).toEqual({
+    error: "Node not found",
+  });
+  expect(rpc.deleteNode({ canvas_id: "board-a", id: nodes[0]!.id })).toEqual({
+    ok: true,
+    id: nodes[0]!.id,
+  });
+  expect(world.db.getAsset(asset.id)).toBeDefined();
+  expect(await storage.get(asset.storage_key)).not.toBeNull();
+  const other = rpc.getNode({ canvas_id: "board-b", node_id: nodes[1]!.id }) as {
+    data: { url?: string };
+  };
+  expect(other.data.url).toBe(storage.resolve(asset.storage_key));
+  rpc.deleteNode({ canvas_id: "board-b", id: nodes[1]!.id });
+  expect(world.db.getAsset(asset.id)).toBeDefined();
+  expect(await storage.get(asset.storage_key)).not.toBeNull();
+  expect(events.some((e) => e.type === "asset_deleted")).toBe(false);
+});

@@ -823,17 +823,10 @@ export function createRpcHandlers(
 
     deleteNode(params: DeleteNodeParams): unknown {
       const { db } = requireEngine();
-      const storage = requireStorage();
       const node = db.getNode(params.id);
-      if (!node) return { error: "Node not found" };
-      // Clean up associated asset
-      if (node.asset_id && storage) {
-        const asset = db.getAsset(node.asset_id);
-        if (asset) {
-          storage.delete(asset.storage_key);
-          db.deleteAsset(node.asset_id);
-        }
-      }
+      if (!node || node.canvas_id !== params.canvas_id) return { error: "Node not found" };
+      // As on the server (canvas-api.ts): the asset library owns the asset's
+      // lifetime; deleting a node never deletes the asset it shows.
       db.deleteNode(params.id);
       canvasPush({ type: "node_deleted", canvasId: params.canvas_id, nodeId: params.id });
       return { ok: true, id: params.id };

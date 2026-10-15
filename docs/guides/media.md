@@ -364,7 +364,10 @@ or 404 when they cannot read the asset at all. The plain `GET /api/assets`
 array is unchanged.
 
 **Retention.** Only request images age out (7 days). Uploaded, generated and
-tool assets are kept until someone deletes them.
+tool assets are kept until someone deletes them. Deleting a canvas node or a
+whole canvas never deletes the asset it shows: one asset can sit on many nodes
+and canvases, and whoever removes a node need not own the asset. Delete the
+asset itself from the library, with `asset delete` or `DELETE /api/assets/<id>`.
 
 ## Troubleshooting
 
