@@ -50,6 +50,19 @@ export function normalizeAnswer(
     if (p === undefined) throw new DecisionError(`answer ${id}: missing noul`, "invalid_response");
     return { type: "noul", noul: clamp01(p) };
   }
+  if (question.type === "box") {
+    // Jev: `{ box: { top, bottom, left, right }, confidence }`, fractions of
+    // the image from the top-left. Edges clamp to 0..1 and an inverted pair is
+    // put back in order; a missing edge is a malformed answer.
+    const b = (a.box && typeof a.box === "object" ? a.box : a) as Record<string, unknown>;
+    const [top, bottom, left, right] = [b.top, b.bottom, b.left, b.right].map(num);
+    if (top === undefined || bottom === undefined || left === undefined || right === undefined) {
+      throw new DecisionError(`answer ${id}: missing box edge`, "invalid_response");
+    }
+    const [t, bo] = [clamp01(top), clamp01(bottom)].sort((x, y) => x - y) as [number, number];
+    const [l, r] = [clamp01(left), clamp01(right)].sort((x, y) => x - y) as [number, number];
+    return { type: "box", box: { top: t, bottom: bo, left: l, right: r }, ...withConfidence };
+  }
   if (question.type === "choice") {
     const pick = typeof a.choice === "string" ? a.choice.trim() : "";
     if (!Object.hasOwn(question.criteria, pick)) {
@@ -109,6 +122,10 @@ export function toWireAnswer(
   answer: DecisionAnswer,
 ): Record<string, unknown> {
   if (answer.type === "noul" || question.type === "noul") return { ...answer };
+  if (answer.type === "box" && question.type === "box") {
+    // Jev always reports a confidence; a backend that did not is uninformative (0.5).
+    return { type: "box", box: { ...answer.box }, confidence: answer.confidence ?? 0.5 };
+  }
   if (answer.type === "choice" && question.type === "choice") {
     const options = Object.keys(question.criteria);
     let probabilities = answer.probabilities && complete(answer.probabilities, options);

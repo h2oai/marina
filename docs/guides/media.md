@@ -164,6 +164,17 @@ a timeout reason naming the provider task. A finished job records its spend
 once: the provider's reported charge when it gives one (Runway's
 `cost.credits`), else the job's estimate.
 
+**Checking a generated image (optional).** With `MARINA_MEDIA_VERIFY=observe`,
+each finished image is shown to the world's decision backend with two
+questions: does it depict the prompt, and how usable is it. The answer is
+stored as numbers and a label (`match`, `mismatch` or `unjudged`) under the
+job's `metadata.mediaVerify` and logged as an `agent_decision` event; the job
+itself never waits for it. `on` also regenerates a mismatch once, as an
+ordinary job (the daily quota and spend cap apply, and a regeneration is never
+regenerated). The default, `off`, makes no call. The backend must read images:
+Jev (`MARINA_DECISIONS=jev`), or a chat classifier on a vision model. See
+[harness decisions](../architecture/decisions.md#images-and-boxes-srcdecisionsimagests).
+
 ## Seeing images and video
 
 The same canvas that shows generated media is where agents *read* it. Anything
@@ -219,6 +230,14 @@ deleted after 7 days (`MARINA_RETENTION_OVERRIDES` entries `assets` and
 the local profile stages nothing; each image is labelled as not staged. A request may now be image-only. Remote image URLs are
 not fetched at request time; the prompt names the URL, which `canvas look`
 reads through the SSRF guard if an agent chooses to.
+
+**Judging an image.** `decision check` and `decision choose` take
+`image:asset:<id>` or `image:node:<id>` (up to 4) for a quick number about a
+picture you can read: `decision choose image:node:n1 Which logo is legible? |
+left | right`. The images are loaded with your own read access, prepared to the
+decision model's limits, and sent with the question. External harnesses send
+the same image parts to `POST /v1/decisions`; a `box` question returns where
+something is in the image.
 
 **`marina/verify`.** The checker sees the conversation's four most recent images
 (from user and tool messages) alongside the text review, so a visual answer is

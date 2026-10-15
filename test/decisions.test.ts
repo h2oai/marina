@@ -345,7 +345,17 @@ describe("config", () => {
       path: "/decisions",
       apiKey: "or",
       timeoutMs: 2000,
+      // The unpinned default answers `box` questions with 1.14 (1.13 cannot).
+      boxModel: "typesafe/jev-1.14",
     });
+    // A pinned model is never swapped.
+    expect(
+      decisionConfigFromEnv({
+        MARINA_DECISIONS: "jev",
+        OPENROUTER_API_KEY: "or",
+        MARINA_DECISION_MODEL: "typesafe/jev-1.13",
+      })?.boxModel,
+    ).toBeUndefined();
     // chat-classifier defaults to a current strong model on the hosts Marina
     // knows (OpenRouter, the HF router); any other base URL must name one.
     expect(

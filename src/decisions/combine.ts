@@ -16,7 +16,7 @@
  */
 
 import { toWireAnswer } from "./answers";
-import type { DecisionAnswer, DecisionQuestions } from "./types";
+import type { BoxAnswer, DecisionAnswer, DecisionQuestions } from "./types";
 
 const clamp = (p: number) => Math.min(0.99, Math.max(0.01, p));
 const logit = (p: number) => Math.log(clamp(p) / (1 - clamp(p)));
@@ -40,6 +40,21 @@ export function combineAnswers(
       const z =
         answers.reduce((s, a) => s + logit(a.type === "noul" ? a.noul : 0.5), 0) / answers.length;
       out[id] = { type: "noul", noul: sigmoid(z) };
+      continue;
+    }
+    if (q.type === "box") {
+      // Confidence-weighted mean of each edge (an unreported confidence weighs 0.5).
+      const boxes = answers.flatMap((a) => (a.type === "box" ? [a] : []));
+      if (boxes.length === 0) throw new Error(`combineAnswers: no box for ${id}`);
+      const w = boxes.map((a) => Math.max(0.01, a.confidence ?? 0.5));
+      const total = w.reduce((s, x) => s + x, 0);
+      const edge = (k: keyof BoxAnswer["box"]) =>
+        boxes.reduce((s, a, i) => s + a.box[k] * w[i]!, 0) / total;
+      out[id] = {
+        type: "box",
+        box: { top: edge("top"), bottom: edge("bottom"), left: edge("left"), right: edge("right") },
+        confidence: boxes.reduce((s, a) => s + (a.confidence ?? 0.5), 0) / boxes.length,
+      };
       continue;
     }
     const keys =
@@ -78,6 +93,7 @@ export function unsureAnswers(
     const a = answers[id];
     if (!a) return [id];
     if (a.type === "noul") return Math.abs(a.noul - 0.5) < UNSURE.noulBand ? [id] : [];
+    if (a.type === "box") return (a.confidence ?? 0) < UNSURE.minConfidence ? [id] : [];
     const top = Math.max(...Object.values(distribution(q, a)));
     return top < UNSURE.minConfidence ? [id] : [];
   });

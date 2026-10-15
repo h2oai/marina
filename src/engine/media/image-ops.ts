@@ -40,13 +40,17 @@ export interface ImageLimits {
   refuseAnimated?: boolean;
 }
 
-/** Jev 1.14 image input (OpenRouter multimodal decisions guide, 2026-10). */
+/**
+ * Jev image input (OpenRouter multimodal decisions guide, 2026-10). PNG and JPEG
+ * only: the live Decisions API refuses WebP ("accepts only base64 data URL
+ * images in PNG or JPEG format"), whatever the guide's format list says.
+ */
 export const JEV_IMAGE_LIMITS: ImageLimits = {
   minSide: 256,
   maxSide: 1568,
   minPixels: 78_400,
   maxPixels: 2_458_624,
-  formats: ["image/png", "image/jpeg", "image/webp"],
+  formats: ["image/png", "image/jpeg"],
   maxBytes: 16 * 1024 * 1024,
   refuseAnimated: true,
 };

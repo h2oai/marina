@@ -11,7 +11,7 @@
  */
 
 import { toWireAnswers } from "./answers";
-import { parseQuestions } from "./questions";
+import { locate, parseQuestions } from "./questions";
 import type { DecisionProvider, DecisionQuestions, DecisionRequest } from "./types";
 
 /** Probability mass may miss 1 by this much (rounding in the backend's reply). */
@@ -57,6 +57,18 @@ export function wireViolations(questions: DecisionQuestions, answers: unknown): 
         out.push(`${id}: choice is not a listed option`);
       }
       out.push(...distributionViolations(id, ans.probabilities, keys));
+      continue;
+    }
+    if (q.type === "box") {
+      const b = ans.box as Record<string, unknown> | undefined;
+      if (!b || !["top", "bottom", "left", "right"].every((k) => in01(b[k]))) {
+        out.push(`${id}: box edges are not fractions in 0..1`);
+      } else if (
+        (b.top as number) > (b.bottom as number) ||
+        (b.left as number) > (b.right as number)
+      ) {
+        out.push(`${id}: box edges are out of order`);
+      }
       continue;
     }
     const levels = q.criteria.map((_, i) => String(i));
@@ -137,16 +149,60 @@ export const CONFORMANCE_REQUESTS: ReadonlyArray<{ name: string; request: Decisi
   },
 ];
 
+/**
+ * A 288×288 PNG (inside Jev's pixel range, so it is sent unchanged): a red
+ * circle (r 45) centred at (216, 72) on white — box ≈ top 0.09, bottom 0.41,
+ * left 0.59, right 0.91.
+ */
+export const CONFORMANCE_IMAGE_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASAAAAEgAgMAAABp7UYTAAAADFBMVEX/AQH/////cHD/yMiOo3omAAAACXBIWXMAAAsTAAALEwEAmpwYAAABsUlEQVR42u3ZPU7DQBCG4YmjFIBc+gipqOlzhBQhSYEQR/ARfIn0XII+l0hPyTFAiJ+1M0LKzCfZSO8c4JG1a69nvrV7URkQEBAQEBDQxKDdm9ntKQ/tnu2jrk9p6NU+6yYL7e2rlkmo+4aqHPTzQINHuhg6/kLzDPRoRb0koLaE6gTUlVAVhzbWqyYMtX2oDkPHPjSPQjsb1CkIPQyhuyC0HkKLILQaQrMg1A2hKgadrXWx2pZa62K1LXiEnB0llnive++2pTat2DZLbVqxbRdB5lQE2nrQIQBtPKgJQHsPWgagtQctAlDrQXUAevKgqwC08qBZADp60DwAdR5UjQmZ/fGNWOp8LM7IMaCtDx3GgzY+1AAB/W9oet/a9M4j2VE7wb+I7Acp+2XLmghZWyNrtGStn6wZlbXHsoZdN0LIhhrZmCUb/GSjqGw4lo3rugBBFmnIQhZZ7CMLonTRmCysk8WHukBTFrHKQl9dDC0LxnVRvezyQHedIbtg4TYLCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICOjSegc51u8hMx1OtwAAAABJRU5ErkJggg==";
+
+/**
+ * Image requests (Jev ≥ 1.14, or a vision classifier): an image noul and a
+ * box paired with its presence question. Run with `runConformance(p, { images: true })`.
+ */
+export const IMAGE_CONFORMANCE_REQUESTS: ReadonlyArray<{ name: string; request: DecisionRequest }> =
+  [
+    {
+      name: "image-noul",
+      request: {
+        state: [
+          "A generated image.",
+          { type: "image_url", image_url: { url: CONFORMANCE_IMAGE_PNG } },
+        ],
+        questions: parseQuestions({
+          depicts: { type: "noul", instructions: "The image depicts a red circle." },
+        }),
+      },
+    },
+    {
+      name: "image-box",
+      request: {
+        state: [{ type: "image_url", image_url: { url: CONFORMANCE_IMAGE_PNG } }],
+        questions: locate("circle", "a red circle"),
+      },
+    },
+  ];
+
 export interface ConformanceResult {
   passed: number;
   total: number;
   failures: Array<{ name: string; problems: string[] }>;
 }
 
-/** Run every conformance request through a provider (real, billed calls for a live backend). */
-export async function runConformance(provider: DecisionProvider): Promise<ConformanceResult> {
+/**
+ * Run every conformance request through a provider (real, billed calls for a
+ * live backend); `images` adds {@link IMAGE_CONFORMANCE_REQUESTS}.
+ */
+export async function runConformance(
+  provider: DecisionProvider,
+  opts: { images?: boolean } = {},
+): Promise<ConformanceResult> {
   const failures: ConformanceResult["failures"] = [];
-  for (const { name, request } of CONFORMANCE_REQUESTS) {
+  const requests = opts.images
+    ? [...CONFORMANCE_REQUESTS, ...IMAGE_CONFORMANCE_REQUESTS]
+    : CONFORMANCE_REQUESTS;
+  for (const { name, request } of requests) {
     try {
       const result = await provider.ask(request);
       const problems = wireViolations(
@@ -159,8 +215,8 @@ export async function runConformance(provider: DecisionProvider): Promise<Confor
     }
   }
   return {
-    passed: CONFORMANCE_REQUESTS.length - failures.length,
-    total: CONFORMANCE_REQUESTS.length,
+    passed: requests.length - failures.length,
+    total: requests.length,
     failures,
   };
 }

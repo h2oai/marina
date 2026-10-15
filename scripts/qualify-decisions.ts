@@ -21,7 +21,8 @@
  * Marina's `/v1/systemone`, end to end; key: the first of MODEL_API_KEYS).
  * `--method` sets how chat backends get probabilities (auto | logprobs |
  * sampled | verbalized; default verbalized). `--conformance` also checks every
- * backend against TypeSafe's response shape (src/decisions/conformance.ts).
+ * backend against TypeSafe's response shape (src/decisions/conformance.ts);
+ * `--conformance-images` adds the image and box requests (Jev ≥ 1.14 or a vision classifier).
  * `--calibrate <file>` scores the gate on RAW probabilities, fits each
  * backend's gate calibration and writes the file `MARINA_DECISION_CALIBRATION`
  * reads (src/decisions/calibrate.ts) — mode 0644; only EARNED fits are used.
@@ -149,6 +150,7 @@ async function main() {
       out: { type: "string" },
       method: { type: "string" },
       conformance: { type: "boolean" },
+      "conformance-images": { type: "boolean" },
       calibrate: { type: "string" },
       variants: { type: "string" },
       adopt: { type: "string" },
@@ -190,7 +192,10 @@ async function main() {
         questionSetHash(incumbent),
       );
     }
-    if (values.conformance) conformance[spec] = await runConformance(provider);
+    if (values.conformance || values["conformance-images"])
+      conformance[spec] = await runConformance(provider, {
+        images: values["conformance-images"] === true,
+      });
     if (variants.length > 0) {
       process.stderr.write(`trialing ${variants.length} question variant(s) on ${spec}…\n`);
       trials.push(await trialGateQuestions(provider, cases, incumbent, variants));
@@ -263,7 +268,7 @@ async function main() {
           cases: casesPath,
           ...(method ? { method } : {}),
           reports,
-          ...(values.conformance ? { conformance } : {}),
+          ...(Object.keys(conformance).length > 0 ? { conformance } : {}),
         },
         null,
         2,

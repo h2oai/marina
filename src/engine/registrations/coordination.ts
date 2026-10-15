@@ -31,6 +31,7 @@ import { traceCommand } from "../commands/trace";
 import { witnessCommand } from "../commands/witness";
 import type { Engine } from "../engine";
 import { tryLog } from "../errors";
+import { loadDecisionImage } from "../media/image-decisions";
 
 export function registerCoordinationCommands(engine: Engine): void {
   // Project command (requires task + group managers)
@@ -257,6 +258,7 @@ export function registerCoordinationCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id),
       resolveEvidence: resolveCitedEvidence,
       logEvent: (event) => engine.logEvent(event),
+      loadImage: (entityId, ref) => loadDecisionImage(engine, entityId, ref),
       get store() {
         return engine.db;
       },

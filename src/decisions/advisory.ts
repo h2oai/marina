@@ -199,7 +199,9 @@ export async function askAdvisory(
             ? answer.choice
             : answer.type === "score"
               ? answer.score
-              : answer.noul;
+              : answer.type === "box"
+                ? (answer.confidence ?? 0.5)
+                : answer.noul;
       }
       return finish(result);
     } catch (error) {

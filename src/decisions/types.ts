@@ -40,7 +40,18 @@ export interface ScoreQuestion {
   criteria: string[];
 }
 
-export type DecisionQuestion = NoulQuestion | ChoiceQuestion | ScoreQuestion;
+/**
+ * Locate something in an image: the answer is a bounding box in fractions of
+ * the image (from the top-left). Jev ≥ 1.14 only. There is no "not found"
+ * answer — a box always comes back — so pair it with a noul presence question
+ * (`locate()` in questions.ts, `readLocation()` in policy.ts).
+ */
+export interface BoxQuestion {
+  type: "box";
+  instructions: string;
+}
+
+export type DecisionQuestion = NoulQuestion | ChoiceQuestion | ScoreQuestion | BoxQuestion;
 export type DecisionQuestions = Record<string, DecisionQuestion>;
 
 export interface NoulAnswer {
@@ -67,10 +78,39 @@ export interface ScoreAnswer {
   probabilities?: Record<string, number>;
 }
 
-export type DecisionAnswer = NoulAnswer | ChoiceAnswer | ScoreAnswer;
+/** Edges as fractions 0..1: left/right of the width, top/bottom of the height. */
+export interface Box {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+export interface BoxAnswer {
+  type: "box";
+  box: Box;
+  confidence?: number;
+}
+
+export type DecisionAnswer = NoulAnswer | ChoiceAnswer | ScoreAnswer | BoxAnswer;
+
+/**
+ * An image in the decision `state`: the OpenAI chat content part with a
+ * base64 `data:` URL (PNG or JPEG). Put image parts as elements of a
+ * top-level `state` array, beside text strings or objects. Every image is
+ * prepared to the backend's limits (`src/decisions/images.ts`) before it
+ * leaves Marina; remote URLs are never fetched.
+ */
+export interface DecisionImagePart {
+  type: "image_url";
+  image_url: { url: string; detail?: string };
+}
 
 export interface DecisionRequest {
-  /** The situation to judge: a string, object or array. */
+  /**
+   * The situation to judge: a string, object or array. An array may mix text
+   * with {@link DecisionImagePart}s.
+   */
   state: unknown;
   questions: DecisionQuestions;
   /**
@@ -152,6 +192,12 @@ export class DecisionError extends Error {
       | "overloaded"
       | "invalid_response"
       | "invalid_request"
+      /**
+       * Input this backend cannot take: an image that cannot be prepared, a
+       * classifier model not known to read images, a box question for a Jev
+       * older than 1.14. Refused, never silently dropped.
+       */
+      | "unsupported_input"
       | "spend_cap",
     readonly status = 502,
   ) {

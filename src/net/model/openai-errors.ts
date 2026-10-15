@@ -46,7 +46,9 @@ export type OpenAIErrorCode =
   // A benchmark run key's run spent its cap / stopped on repeated network failures
   // (src/engine/benchmark-run-keys.ts).
   | "run_budget_exhausted"
-  | "run_transport_failed";
+  | "run_transport_failed"
+  // A request body over a route's own ceiling (POST /v1/decisions with images).
+  | "payload_too_large";
 
 export type OpenAIErrorType =
   | "invalid_request_error"
