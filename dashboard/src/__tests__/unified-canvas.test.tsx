@@ -114,6 +114,7 @@ vi.mock("../unified/panels/EntityPanel", () => ({
 vi.mock("../unified/panels/WorldNav", () => ({ WorldNav: () => null }));
 
 const { UnifiedCanvas } = await import("../unified/UnifiedCanvas");
+const { MediaViewerProvider } = await import("../components/media/MediaViewer");
 
 function seedWorld() {
   useWorldState.setState({
@@ -233,13 +234,22 @@ describe("UnifiedCanvas", () => {
       },
     ];
     authFetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
-    const { container } = renderWithProviders(<UnifiedCanvas embedded />);
+    const { container } = renderWithProviders(
+      <MediaViewerProvider>
+        <UnifiedCanvas embedded />
+      </MediaViewerProvider>,
+    );
     const node = await waitFor(() => nodeEl(container, "canvas-n3"));
 
     fireEvent.contextMenu(node);
     fireEvent.click(screen.getByRole("button", { name: "Open in viewer" }));
-    expect(await screen.findByAltText("Viewer content")).toHaveAttribute("src", "/a.png");
-    fireEvent.keyDown(document, { key: "Escape" });
+    // Media opens in the shared media viewer (a modal dialog), not the overlay.
+    const dialog = await screen.findByRole("dialog", { name: /Photo/ });
+    expect(within(dialog).getByAltText("Photo")).toHaveAttribute("src", "/a.png");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Photo/ })).toBeNull());
+    // The viewer's detail read is not part of the node actions below.
+    authFetch.mockClear();
 
     fireEvent.contextMenu(node);
     fireEvent.click(screen.getByRole("button", { name: "Set intent" }));

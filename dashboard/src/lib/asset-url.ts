@@ -215,6 +215,55 @@ export function useAssetUrl(
   return state.entry.url;
 }
 
+/**
+ * Seed the signature cache with a URL the server already signed for this
+ * viewer (library items carry `url` + `urlExpiresAt`), so `useAssetUrl` does
+ * not ask again until it nears expiry. Plain URLs (`expiresAt` null) and URLs
+ * that are not this server's assets are ignored.
+ */
+export function primeAssetUrl(
+  url: string | undefined | null,
+  expiresAt: number | null | undefined,
+  location: Pick<Location, "protocol" | "origin" | "hostname"> = window.location,
+): void {
+  if (!url || expiresAt == null || !/[?&]sig=/.test(url)) return;
+  const path = signablePath(url, location);
+  const token = getToken();
+  if (!path || !token) return;
+  const key = `${token}\n${path}`;
+  const entry: Entry = {
+    url: url.startsWith("/") ? `${apiOrigin(location)}${url}` : url,
+    expiresAt,
+  };
+  if (fresh(entry) && !fresh(cache.get(key))) cache.set(key, entry);
+}
+
+/**
+ * `useAssetUrl` for a URL that may carry a server-issued signature
+ * (`expiresAt`, unix seconds). A fresh signature is reused; one at or near
+ * expiry is dropped, so a signing viewer re-signs it and a local viewer reads
+ * the plain path.
+ */
+export function useSignedAssetUrl(
+  url: string | undefined | null,
+  expiresAt: number | null | undefined,
+  location: Pick<Location, "protocol" | "origin" | "hostname"> = window.location,
+): string | undefined {
+  primeAssetUrl(url, expiresAt, location);
+  const stale = expiresAt != null && expiresAt * 1000 - REFRESH_MARGIN_MS <= Date.now();
+  return useAssetUrl(stale && url ? stripSignature(url) : url, location);
+}
+
+/** `url` without the `p` / `exp` / `sig` signature parameters. */
+export function stripSignature(url: string): string {
+  const q = url.indexOf("?");
+  if (q < 0) return url;
+  const params = new URLSearchParams(url.slice(q + 1));
+  for (const key of ["p", "exp", "sig"]) params.delete(key);
+  const rest = params.toString();
+  return rest ? `${url.slice(0, q)}?${rest}` : url.slice(0, q);
+}
+
 /** Drop every cached signature (tests; logout). */
 export function clearAssetUrlCache(): void {
   cache.clear();

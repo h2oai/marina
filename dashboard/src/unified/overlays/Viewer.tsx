@@ -2,21 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Viewer -- Full-screen overlay for media viewing.
+ * Viewer -- Full-screen overlay for canvas node content that is not media.
  *
- * Opens on double-click of canvas nodes. Renders type-appropriate content:
- * image, video player, audio waveform, PDF pages, document editor,
- * A2UI components, intent detail.
+ * Opens on double-click of canvas nodes. Renders the document editor, A2UI
+ * components and intent detail. Image, video, audio and PDF content goes to
+ * the one shared media viewer (components/media/MediaViewer.tsx); a media
+ * type opened here hands off to it.
  *
  * Close via the X button or Escape key.
- * This is currently a shell with placeholder content per type.
  */
 
 import { AnimatePresence, motion } from "motion/react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { A2UIRenderer } from "../../canvas/nodes/a2ui/A2UIRenderer";
+import { useAssetViewer } from "../../components/media/MediaViewer";
 import { useChatState } from "../../hooks/use-chat-state";
-import { useAssetUrl } from "../../lib/asset-url";
+import { useFocusTrap } from "../../hooks/use-focus-trap";
 import { sanitizeDocHtml } from "../../lib/sanitize";
 import { claimIntent, completeIntent, failIntent } from "../hooks/use-canvas-integration";
 
@@ -58,153 +59,36 @@ const TYPE_COLORS: Record<ViewerContentType, string> = {
   unknown: "var(--color-text-dim)",
 };
 
-// ── Content Renderers (shells) ──────────────────────────────────────────────
+// ── Content Renderers ───────────────────────────────────────────────────────
 
-const ImageViewer = memo(function ImageViewer({ content }: { content?: string }) {
-  // A private asset loads through a signed URL for a remote viewer.
-  const src = useAssetUrl(content);
-  return (
-    <div className="flex items-center justify-center">
-      {src ? (
-        <img
-          src={src}
-          alt="Viewer content"
-          className="max-w-full max-h-[70vh]"
-          style={{ border: "1px solid var(--color-border)", borderRadius: "4px" }}
-        />
-      ) : (
-        <PlaceholderContent type="image" />
-      )}
-    </div>
-  );
-});
+/** Media types are shown by the one shared media viewer, not here. */
+const MEDIA_TYPES: readonly ViewerContentType[] = ["image", "video", "audio", "pdf"];
 
-const VideoViewer = memo(function VideoViewer({ content }: { content?: string }) {
-  // A private asset loads through a signed URL for a remote viewer.
-  const src = useAssetUrl(content);
-  return (
-    <div
-      className="w-full"
-      style={{
-        aspectRatio: "16/9",
-        background: "var(--color-bg)",
-        border: "1px solid var(--color-border)",
-        borderRadius: "4px",
-      }}
-    >
-      {src ? (
-        <video src={src} controls className="w-full h-full" style={{ borderRadius: "4px" }}>
-          <track kind="captions" />
-        </video>
-      ) : (
-        <div className="flex items-center justify-center h-full">
-          <PlaceholderContent type="video" />
-        </div>
-      )}
-    </div>
-  );
-});
-
-const AudioViewer = memo(function AudioViewer({ content }: { content?: string }) {
-  // A private asset loads through a signed URL for a remote viewer.
-  const src = useAssetUrl(content);
-  // Placeholder waveform bars (deterministic heights based on index)
-  const bars = Array.from({ length: 40 }, (_, i) => ({
-    id: `bar-${i}`,
-    height: 20 + Math.sin(i * 0.4) * 30 + ((i * 17) % 20),
-  }));
-
-  return (
-    <div
-      className="w-full p-6"
-      style={{
-        background: "var(--color-bg)",
-        border: "1px solid var(--color-border)",
-        borderRadius: "4px",
-      }}
-    >
-      {src && (
-        <audio src={src} controls className="w-full mb-4">
-          <track kind="captions" />
-        </audio>
-      )}
-      <div className="flex items-end gap-[3px]" style={{ height: "80px" }}>
-        {bars.map((bar) => (
-          <div
-            key={bar.id}
-            className="flex-1 cursor-pointer"
-            style={{
-              height: `${bar.height}%`,
-              background: "var(--color-primary)",
-              borderRadius: "2px",
-              opacity: 0.3,
-            }}
-          />
-        ))}
-      </div>
-    </div>
-  );
-});
-
-const PdfViewer = memo(function PdfViewer({ content }: { content?: string }) {
-  // A private asset loads through a signed URL for a remote viewer.
-  const src = useAssetUrl(content);
-  return (
-    <div
-      className="w-full flex flex-col"
-      style={{
-        background: "var(--color-bg-card)",
-        border: "1px solid var(--color-border)",
-        borderRadius: "4px",
-      }}
-    >
-      <div className="flex-1 p-6 overflow-y-auto max-h-[65vh]">
-        {src ? (
-          <iframe
-            src={src}
-            title="PDF Viewer"
-            className="w-full h-full min-h-[400px]"
-            style={{ border: "none" }}
-          />
-        ) : (
-          <PlaceholderContent type="pdf" />
-        )}
-      </div>
-      <div
-        className="flex items-center justify-between px-4 py-2"
-        style={{ borderTop: "1px solid var(--color-border)" }}
-      >
-        <button
-          type="button"
-          className="px-3 py-1 text-xs cursor-pointer"
-          style={{
-            border: "1px solid var(--color-border)",
-            color: "var(--color-text-dim)",
-            fontFamily: "var(--font-mono)",
-            background: "none",
-          }}
-        >
-          &larr; Prev
-        </button>
-        <span className="text-xs" style={{ color: "var(--color-text-dim)" }}>
-          Page 1 of 1
-        </span>
-        <button
-          type="button"
-          className="px-3 py-1 text-xs cursor-pointer"
-          style={{
-            border: "1px solid var(--color-border)",
-            color: "var(--color-text-dim)",
-            fontFamily: "var(--font-mono)",
-            background: "none",
-          }}
-        >
-          Next &rarr;
-        </button>
-      </div>
-    </div>
-  );
-});
+/**
+ * A media type opened through this overlay hands off to the shared media
+ * viewer (components/media/MediaViewer.tsx) and closes itself; with no
+ * content there is nothing to hand off, so the placeholder stays.
+ */
+function MediaHandoff({
+  contentType,
+  content,
+  title,
+  onClose,
+}: {
+  contentType: ViewerContentType;
+  content?: string;
+  title: string;
+  onClose: () => void;
+}) {
+  const { open } = useAssetViewer();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: hand off once per mount.
+  useEffect(() => {
+    if (!content) return;
+    open({ url: content, kind: contentType, title });
+    onClose();
+  }, []);
+  return content ? null : <PlaceholderContent type={contentType} />;
+}
 
 const DOC_TOOLS: { label: string; cmd: string; value?: string; title: string }[] = [
   { label: "B", cmd: "bold", title: "Bold" },
@@ -725,17 +609,24 @@ function ViewerInner({ title, contentType, content, onClose }: Omit<ViewerProps,
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, true);
 
   return (
     <motion.div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      tabIndex={-1}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.18, ease: "easeOut" }}
-      className="fixed inset-0 flex flex-col"
+      className="fixed inset-0 flex flex-col outline-none"
       style={{
         zIndex: 100,
-        background: "rgba(3,3,6,0.92)",
+        background: "color-mix(in srgb, var(--color-bg) 92%, transparent)",
         backdropFilter: "blur(12px)",
       }}
     >
@@ -783,10 +674,14 @@ function ViewerInner({ title, contentType, content, onClose }: Omit<ViewerProps,
       {/* Body */}
       <div className="flex-1 overflow-auto flex items-center justify-center p-8">
         <div className="w-full max-w-[900px] min-h-[200px]">
-          {contentType === "image" && <ImageViewer content={content} />}
-          {contentType === "video" && <VideoViewer content={content} />}
-          {contentType === "audio" && <AudioViewer content={content} />}
-          {contentType === "pdf" && <PdfViewer content={content} />}
+          {MEDIA_TYPES.includes(contentType) && (
+            <MediaHandoff
+              contentType={contentType}
+              content={content}
+              title={title}
+              onClose={onClose}
+            />
+          )}
           {contentType === "document" && <DocumentViewer content={content} />}
           {contentType === "a2ui" && <A2uiViewer content={content} />}
           {contentType === "intent" && <IntentViewer content={content} />}

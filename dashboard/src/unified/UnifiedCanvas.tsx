@@ -33,6 +33,7 @@ import "./unified-canvas.css";
 import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FetchErrorNotice } from "../components/FetchErrorNotice";
+import { useAssetViewer } from "../components/media/MediaViewer";
 import { useSetupStatus, useSystem } from "../hooks/use-api";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
 import { useEntityActivity } from "../hooks/use-entity-activity";
@@ -77,11 +78,13 @@ import { ContextPanel, type ContextType } from "./panels/ContextPanel";
 import { EntityPanel } from "./panels/EntityPanel";
 import { WorldNav } from "./panels/WorldNav";
 import {
+  canvasMediaCollection,
   edgeTypes,
   isCanvasContentNode,
   loadLayerPref,
   nodeTypes,
   saveLayerPref,
+  viewableForNode,
   viewerTargetFor,
 } from "./unified-canvas-config";
 
@@ -365,14 +368,28 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     [openContext],
   );
 
-  /** Open a canvas content node in the Viewer overlay. */
-  const openInViewer = useCallback((node: Node) => {
-    const target = viewerTargetFor(node);
-    setViewerTitle(target.title);
-    setViewerContentType(target.contentType);
-    setViewerContent(target.content);
-    setViewerOpen(true);
-  }, []);
+  /**
+   * Open a canvas content node: media (image/video/audio/pdf) in the shared
+   * media viewer with this canvas's media nodes as its ←/→ collection;
+   * documents, A2UI and intents in the Viewer overlay.
+   */
+  const { open: openMedia } = useAssetViewer();
+  const canvasNodesRef = useRef<Node[]>([]);
+  const openInViewer = useCallback(
+    (node: Node) => {
+      const media = viewableForNode(node);
+      if (media) {
+        openMedia(media, { collection: canvasMediaCollection(canvasNodesRef.current) });
+        return;
+      }
+      const target = viewerTargetFor(node);
+      setViewerTitle(target.title);
+      setViewerContentType(target.contentType);
+      setViewerContent(target.content);
+      setViewerOpen(true);
+    },
+    [openMedia],
+  );
 
   // ── Double-click node -> open Viewer overlay or detail ──────────────────
   const onNodeDoubleClick = useCallback(
@@ -752,6 +769,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     selectedCanvasId,
     handleCanvasDeleted,
   );
+  canvasNodesRef.current = canvasNodes;
 
   // ── Per-room latest in-room message (say / emote) ─────────────────────
   // Content-over-motion on the map: the pedestal gets a small glass pill
@@ -1377,7 +1395,17 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
       }
 
       try {
-        const results = await canvasDrop(files, position);
+        const results = await canvasDrop(files, position, (filename, message) =>
+          cmdBar?.addMessage(null, `Upload of "${filename}" failed: ${message}`, true, "system"),
+        );
+        const reused = results.filter((r) => r.deduplicated).length;
+        if (reused > 0)
+          cmdBar?.addMessage(
+            null,
+            `${reused} file${reused === 1 ? " was" : "s were"} already in your library — reused, not copied.`,
+            true,
+            "system",
+          );
         if (results.length === 0) {
           cmdBar?.addMessage(null, "Drop produced no canvas nodes.", true, "system");
           return;

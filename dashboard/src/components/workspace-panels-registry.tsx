@@ -13,6 +13,7 @@ import { ConversationInsights } from "./ConversationInsights";
 import { CoordinationCard } from "./CoordinationCard";
 import { EntityRoster } from "./EntityRoster";
 import { GlassPanel } from "./GlassPanel";
+import { AssetLibraryPanel } from "./media/AssetLibraryPanel";
 import { NarrativePlayback } from "./NarrativePlayback";
 import { ParticipantStreamsPanel } from "./ParticipantStreams";
 import { PublishedPanel } from "./PublishedPanel";
@@ -69,6 +70,14 @@ unregisterBuiltins.push(
     modes: [],
     slot: "grid",
     repeatable: { fromView: "streams", actionLabel: "Open streams below" },
+  }),
+  dashboardPanels.register({
+    id: "library",
+    title: "Library",
+    component: AssetLibraryPanel,
+    modes: [],
+    slot: "grid",
+    repeatable: { fromView: "library", actionLabel: "Open library below" },
   }),
 );
 if (import.meta.hot)

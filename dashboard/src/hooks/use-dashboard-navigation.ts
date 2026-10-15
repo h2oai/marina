@@ -25,12 +25,20 @@ export function useDashboardNavigation(
       useWorkspaceState.setState({ fullscreen: url.pathname.startsWith("/canvas") });
       if (canvas) openView("canvas");
       else if (
-        ["work", "map", "observe", "admin", "streams"].includes(url.searchParams.get("view") ?? "")
+        ["work", "map", "observe", "admin", "streams", "library"].includes(
+          url.searchParams.get("view") ?? "",
+        )
       )
         useWorkspaceState
           .getState()
           .setView(
-            url.searchParams.get("view") as "work" | "map" | "observe" | "admin" | "streams",
+            url.searchParams.get("view") as
+              | "work"
+              | "map"
+              | "observe"
+              | "admin"
+              | "streams"
+              | "library",
           );
     };
     const navigate = (event: MouseEvent) => {

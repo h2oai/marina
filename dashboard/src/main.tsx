@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { AuthGate } from "./components/AuthGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { MediaViewerProvider } from "./components/media/MediaViewer";
 import { initTheme } from "./hooks/use-theme";
 import "./index.css";
 
@@ -115,7 +116,9 @@ function RootContent() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RootContent />
+      <MediaViewerProvider>
+        <RootContent />
+      </MediaViewerProvider>
     </QueryClientProvider>
   </StrictMode>,
 );

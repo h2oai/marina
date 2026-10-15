@@ -21,6 +21,8 @@ import "@xyflow/react/dist/style.css";
 import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { UploadTray } from "../components/media/UploadControls";
+import { useUploads } from "../hooks/use-uploads";
 import { useWorkspaceState } from "../hooks/use-workspace-state";
 import { authFetch } from "../lib/api";
 import { CreateCanvasDialog, CreateRelationshipDialog } from "./components/CanvasDialogs";
@@ -68,6 +70,17 @@ function suggestIntent(mime: string): string | undefined {
     if (mime.startsWith(prefix)) return prompt;
   }
   return undefined;
+}
+
+/** The server's `error` text for a failed response, else `fallback (status)`. */
+async function responseError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    if (typeof body.error === "string" && body.error) return body.error;
+  } catch {
+    // allow-empty-catch: a non-JSON error body falls back to the status line.
+  }
+  return `${fallback} (${response.status}).`;
 }
 
 function guessNodeType(mime: string): string {
@@ -672,87 +685,83 @@ function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
     setDropping(false);
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: setNodes from useNodesState is stable
+  // Dropped files go through the shared upload queue (progress, per-file
+  // errors, cancel, dedupe) and become nodes where they were dropped.
+  const dropPlacements = useRef(
+    new WeakMap<
+      File,
+      { canvasId: string; x: number; y: number; w: number; h: number; last: boolean }
+    >(),
+  );
+  const detailNodeRef = useRef(detailNode);
+  detailNodeRef.current = detailNode;
+  const uploads = useUploads({
+    onUploaded: async (asset, file) => {
+      const place = dropPlacements.current.get(file);
+      if (!place) return;
+      const nodeType = guessNodeType(asset.mime_type ?? file.type);
+      const response = await authFetch(`${API_BASE}/api/canvases/${place.canvasId}/nodes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: nodeType,
+          asset_id: asset.id,
+          x: place.x,
+          y: place.y,
+          width: place.w,
+          height: place.h,
+          creator_name: "canvas-drop",
+          data: { url: asset.url, filename: file.name, mime: asset.mime_type ?? file.type },
+        }),
+      });
+      if (!response.ok) throw new Error(await responseError(response, "Could not add to canvas"));
+      // The node arrives via the canvas WebSocket. Suggest an intent for the
+      // last dropped file and open its detail panel once it appears.
+      if (!place.last) return;
+      const suggestion = suggestIntent(file.type);
+      if (!suggestion) return;
+      setSuggestedPrompt(suggestion);
+      setTimeout(() => {
+        setNodes((cur) => {
+          const newNode = cur.find(
+            (nd) =>
+              (nd.data as Record<string, unknown>).filename === file.name && !detailNodeRef.current,
+          );
+          if (newNode) setDetailNode(newNode);
+          return cur;
+        });
+      }, 500);
+    },
+  });
+
   const onDrop = useCallback(
-    async (e: React.DragEvent) => {
+    (e: React.DragEvent) => {
       e.preventDefault();
       setDropping(false);
 
-      if (!selectedId) return;
-      const files = e.dataTransfer.files;
+      const files = Array.from(e.dataTransfer.files);
       if (!files.length) return;
+      if (!selectedId) {
+        setNotice({ tone: "error", message: "Choose or create a canvas before dropping files." });
+        return;
+      }
 
       // Convert screen position to flow coordinates
-      const position = screenToFlowPosition({
-        x: e.clientX,
-        y: e.clientY,
+      const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      files.forEach((file, i) => {
+        const size = defaultSize(guessNodeType(file.type));
+        dropPlacements.current.set(file, {
+          canvasId: selectedId,
+          x: position.x + i * (size.w + 20),
+          y: position.y,
+          w: size.w,
+          h: size.h,
+          last: i === files.length - 1,
+        });
       });
-
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]!;
-        const nodeType = guessNodeType(file.type);
-        const size = defaultSize(nodeType);
-        const dropX = position.x + i * (size.w + 20);
-        const dropY = position.y;
-
-        try {
-          // 1. Upload file as asset
-          const form = new FormData();
-          form.append("file", file);
-
-          const uploadRes = await authFetch(`${API_BASE}/api/assets`, {
-            method: "POST",
-            body: form,
-          });
-          if (!uploadRes.ok) continue;
-          const asset = await uploadRes.json();
-
-          // 2. Create node on canvas at drop position with type-aware size
-          await authFetch(`${API_BASE}/api/canvases/${selectedId}/nodes`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              type: nodeType,
-              asset_id: asset.id,
-              x: dropX,
-              y: dropY,
-              width: size.w,
-              height: size.h,
-              creator_name: "canvas-drop",
-              data: {
-                url: asset.url,
-                filename: file.name,
-                mime: file.type,
-              },
-            }),
-          });
-          // Node will appear via WebSocket broadcast
-          // Auto-suggest intent for the last dropped file
-          if (i === files.length - 1) {
-            const suggestion = suggestIntent(file.type);
-            if (suggestion) {
-              setSuggestedPrompt(suggestion);
-              // Open detail panel for the new node once it appears via WS
-              const checkForNode = () => {
-                setNodes((cur) => {
-                  const newNode = cur.find(
-                    (nd) =>
-                      (nd.data as Record<string, unknown>).filename === file.name && !detailNode,
-                  );
-                  if (newNode) setDetailNode(newNode);
-                  return cur;
-                });
-              };
-              // Small delay for WS event to arrive
-              setTimeout(checkForNode, 500);
-            }
-          }
-        } catch {
-          // Continue with remaining files
-        }
-      }
+      uploads.upload(files);
     },
-    [selectedId, screenToFlowPosition, detailNode],
+    [selectedId, screenToFlowPosition, uploads.upload],
   );
 
   return (
@@ -889,6 +898,13 @@ function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
             </button>
           </div>
         )}
+        <UploadTray
+          entries={uploads.entries}
+          onCancel={uploads.cancel}
+          onDismiss={uploads.dismiss}
+          onClearFinished={uploads.clearFinished}
+          className="absolute bottom-3 left-3 z-[60] w-72 rounded border border-border bg-bg-card p-2 text-[11px] text-text shadow-xl"
+        />
         {/* Drop overlay */}
         {dropping && (
           <div className="absolute inset-0 z-50 pointer-events-none flex items-center justify-center bg-primary/10 border-2 border-dashed border-primary/50 rounded-lg m-2">

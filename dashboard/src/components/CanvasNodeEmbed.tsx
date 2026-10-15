@@ -10,10 +10,9 @@ import { useCanvasNode } from "../hooks/use-canvas-node";
 import { useAssetUrl } from "../lib/asset-url";
 import { openBoundPanel } from "../lib/panel-bindings";
 import { formatTime } from "../lib/utils";
-import { useAssetViewer, type ViewableAsset } from "./AssetLightbox";
-
 import { parseCanvasReference, ReferenceContent } from "./CanvasReference";
 import { InteractivePanel } from "./InteractivePanel";
+import { useAssetViewer, type ViewableAsset } from "./media/MediaViewer";
 
 interface CanvasNodeEmbedProps {
   canvasId: string;
