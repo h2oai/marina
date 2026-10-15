@@ -167,7 +167,7 @@ export async function handleModelApi(
   }
 
   if (url.pathname.startsWith("/v1/media")) {
-    return await handleMediaApi(url, method, req, engine, server);
+    return await handleMediaApi(url, method, req, engine, server, authResult);
   }
 
   // Benchmark runs file themselves into this Marina's ledger — src/net/benchmarks-api.ts.

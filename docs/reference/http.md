@@ -21,28 +21,28 @@ link for validation, HTTP statuses, streaming and deployment-specific availabili
 
 ### `url.pathname === "/api/assets/sign"`
 
-[Source](../../src/net/api/asset-api.ts#L233)
+[Source](../../src/net/api/asset-api.ts#L96)
 
 - Guard: `url.pathname === "/api/assets/sign" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/assets\/(.+)$/)`
 
-[Source](../../src/net/api/asset-api.ts#L254)
+[Source](../../src/net/api/asset-api.ts#L125)
 
 - Guard: `idMatch && method === "DELETE"`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L284)
+[Source](../../src/net/api/asset-api.ts#L155)
 
 - Guard: `url.pathname === "/api/assets" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L289)
+[Source](../../src/net/api/asset-api.ts#L160)
 
 - Guard: `url.pathname === "/api/assets" && method === "GET"`
 - Guard: `method === "GET"`
@@ -104,7 +104,7 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `url.pathname === "/v1/media"`
 
-[Source](../../src/net/api/media-api.ts#L54)
+[Source](../../src/net/api/media-api.ts#L59)
 
 - Guard: `url.pathname === "/v1/media" && method === "POST"`
 - Guard: `method === "POST"`
@@ -113,7 +113,7 @@ Fields read here: `aspectRatio`, `canvasId`, `duration`, `fps`, `height`, `metad
 
 ### `url.pathname.match(/^\/v1\/media\/([^/]+)$/)`
 
-[Source](../../src/net/api/media-api.ts#L133)
+[Source](../../src/net/api/media-api.ts#L145)
 
 - Guard: `match && method === "GET"`
 - Guard: `method === "GET"`

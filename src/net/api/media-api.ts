@@ -1,14 +1,17 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isOperatorPrincipal as isOperatorPerson } from "../../engine/challenges";
 import type { Engine } from "../../engine/engine";
 import { defaultImageModel } from "../../engine/media/providers/image-registry";
 import { DEFAULT_VIDEO_MODEL } from "../../engine/media/providers/video-util";
+import { isOwnershipEnforced } from "../../engine/ownership";
 import type { MediaJobRow } from "../../persistence/database";
 import type { EntityId } from "../../types";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas/canvas-principal";
 import { authorizeCanvasSubscription } from "../canvas/canvas-ws";
 import { corsHeaders } from "../cors";
+import type { PassthruAuthResult } from "../model-api/shared";
 
 /** Minimal socket-peer accessor — the real, unspoofable `server.requestIP`. */
 type PeerAddr = { requestIP?: (req: Request) => { address: string } | null };
@@ -42,6 +45,8 @@ export async function handleMediaApi(
   req: Request,
   engine: Engine,
   server?: PeerAddr,
+  /** The model-API authentication outcome (`handleModelApi`); undefined = anonymous. */
+  auth?: PassthruAuthResult,
 ): Promise<Response> {
   if (method === "OPTIONS") {
     return new Response(null, { status: 204, headers: MEDIA_CORS });
@@ -68,8 +73,6 @@ export async function handleMediaApi(
       return mediaError(400, 'type must be "image" or "video".');
     }
 
-    const { entityId, entityName } = resolveEntity(engine, body);
-
     // Canvas-write authorization. The media pipeline appends an output node to a
     // caller-supplied `canvasId` — but that append happens ASYNCHRONOUSLY after
     // this request returns (during provider polling). Enforce the shared canvas
@@ -93,6 +96,15 @@ export async function handleMediaApi(
         return mediaError(404, "Canvas not found.");
       }
     }
+
+    // The acting entity (quotas, spend, job + asset ownership) is the
+    // AUTHENTICATED caller. Body identity fields may only restate it; a trusted
+    // caller (internal token, multi-tenant operator key, operator) may still
+    // act for a named entity.
+    const caller = resolveCaller(engine, req, auth);
+    const acting = actingEntity(engine, caller, body);
+    if ("error" in acting) return acting.error;
+    const { entityId, entityName } = acting;
 
     try {
       const job =
@@ -134,14 +146,108 @@ export async function handleMediaApi(
   if (match && method === "GET") {
     const jobId = decodeURIComponent(match[1]!);
     const job = engine.mediaManager.getJob(jobId);
-    if (!job) return mediaError(404, "Media job not found.");
+    // Only the job's owner (or a trusted caller) sees it; anyone else gets the
+    // same 404 as a missing id, so job ids do not leak existence.
+    if (!job || !mayReadJob(job, resolveCaller(engine, req, auth))) {
+      return mediaError(404, "Media job not found.");
+    }
     return mediaJson(serializeJob(job, engine));
   }
 
   return mediaError(404, "Not found.");
 }
 
-function resolveEntity(
+interface MediaCaller {
+  entityId: EntityId;
+  entityName: string;
+  /** May act for, and read the jobs of, any entity. */
+  trusted: boolean;
+}
+
+const SYSTEM_IDENTITY = { entityId: "system" as EntityId, entityName: "system" };
+
+/**
+ * Who is calling, from the model-API credential: the internal token or a
+ * multi-tenant `secret:*` operator key is trusted; a `secret:entity` key (or a
+ * run key) IS its bound entity; otherwise a Marina session bearer token
+ * resolves to its entity (an operator person is trusted); anything else (a
+ * shared unbound key, dev-open mode) is the anonymous `system` caller.
+ */
+function resolveCaller(engine: Engine, req: Request, auth?: PassthruAuthResult): MediaCaller {
+  if (auth && (auth.internal || (auth.canNameMap && !auth.openMode))) {
+    return { ...SYSTEM_IDENTITY, trusted: true };
+  }
+  if (auth?.boundEntityName) {
+    const name = auth.boundEntityName;
+    const bound = findEntityByName(engine, name);
+    return bound
+      ? { entityId: bound.id, entityName: bound.name, trusted: false }
+      : { entityId: name as EntityId, entityName: name, trusted: false };
+  }
+  const header = req.headers.get("Authorization");
+  const token = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+  const sessionId = token ? engine.authenticate(token) : null;
+  if (sessionId) {
+    const entity = engine.entities.get(sessionId);
+    return {
+      entityId: sessionId,
+      entityName: entity?.name ?? sessionId,
+      trusted: isOperatorPerson(entity),
+    };
+  }
+  return { ...SYSTEM_IDENTITY, trusted: false };
+}
+
+function findEntityByName(engine: Engine, name: string) {
+  const lower = name.toLowerCase();
+  return (
+    engine.entities.findAgentByName(name) ??
+    engine.entities.all().find((e) => e.name.toLowerCase() === lower)
+  );
+}
+
+/**
+ * The entity a job runs as. A trusted caller may name any entity in the body
+ * (the historical contract); any other caller acts as itself, and a body
+ * identity naming someone else is refused rather than silently rewritten.
+ */
+function actingEntity(
+  engine: Engine,
+  caller: MediaCaller,
+  body: MediaRequest,
+): { entityId: EntityId; entityName: string } | { error: Response } {
+  if (caller.trusted) {
+    return body.entityId || body.entityName
+      ? resolveBodyEntity(engine, body)
+      : { entityId: caller.entityId, entityName: caller.entityName };
+  }
+  const otherId =
+    typeof body.entityId === "string" && body.entityId !== "" && body.entityId !== caller.entityId;
+  const otherName =
+    typeof body.entityName === "string" &&
+    body.entityName !== "" &&
+    body.entityName.toLowerCase() !== caller.entityName.toLowerCase();
+  if (otherId || otherName) {
+    return {
+      error: mediaError(
+        403,
+        `Media jobs run as the authenticated caller (${caller.entityName}); ` +
+          "entityId/entityName cannot name another entity. Omit them.",
+      ),
+    };
+  }
+  return { entityId: caller.entityId, entityName: caller.entityName };
+}
+
+/** A job is visible to its owner, a trusted caller, or anyone when ownership is not enforced. */
+function mayReadJob(job: MediaJobRow, caller: MediaCaller): boolean {
+  if (caller.trusted || !isOwnershipEnforced()) return true;
+  if (job.entity_id && job.entity_id === caller.entityId) return true;
+  return job.entity_name.toLowerCase() === caller.entityName.toLowerCase();
+}
+
+/** Body-named identity — honored only for a trusted caller. */
+function resolveBodyEntity(
   engine: Engine,
   body: MediaRequest,
 ): { entityId: EntityId; entityName: string } {
@@ -153,15 +259,13 @@ function resolveEntity(
     return { entityId: body.entityId as EntityId, entityName: body.entityName ?? body.entityId };
   }
   if (body.entityName) {
-    const match =
-      engine.entities.findAgentByName(body.entityName) ??
-      engine.entities.all().find((e) => e.name === body.entityName);
+    const match = findEntityByName(engine, body.entityName);
     if (match) {
       return { entityId: match.id, entityName: match.name };
     }
     return { entityId: body.entityName as EntityId, entityName: body.entityName };
   }
-  return { entityId: "system" as EntityId, entityName: "system" };
+  return { ...SYSTEM_IDENTITY };
 }
 
 function serializeJob(job: MediaJobRow, engine: Engine): Record<string, unknown> {
