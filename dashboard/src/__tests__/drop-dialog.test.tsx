@@ -120,4 +120,22 @@ describe("DropDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /Skip/i }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
+  it("previews a dropped image from its own asset URL, never a nonexistent route", () => {
+    render(
+      <DropDialog
+        files={[mkFile({ mime: "image/png", filename: "a.png", url: "/assets/a1.png" })]}
+        onClose={() => {}}
+      />,
+    );
+    const img = screen.getByAltText("a.png") as HTMLImageElement;
+    expect(img.getAttribute("src")).toBe("/assets/a1.png");
+    expect(img.getAttribute("src")).not.toContain("/preview");
+  });
+
+  it("shows no preview when the asset URL is unknown", () => {
+    render(
+      <DropDialog files={[mkFile({ mime: "image/png", filename: "a.png" })]} onClose={() => {}} />,
+    );
+    expect(screen.queryByAltText("a.png")).toBeNull();
+  });
 });

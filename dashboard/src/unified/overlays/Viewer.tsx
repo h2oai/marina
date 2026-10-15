@@ -16,6 +16,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { A2UIRenderer } from "../../canvas/nodes/a2ui/A2UIRenderer";
 import { useChatState } from "../../hooks/use-chat-state";
+import { useAssetUrl } from "../../lib/asset-url";
 import { sanitizeDocHtml } from "../../lib/sanitize";
 import { claimIntent, completeIntent, failIntent } from "../hooks/use-canvas-integration";
 
@@ -60,11 +61,13 @@ const TYPE_COLORS: Record<ViewerContentType, string> = {
 // ── Content Renderers (shells) ──────────────────────────────────────────────
 
 const ImageViewer = memo(function ImageViewer({ content }: { content?: string }) {
+  // A private asset loads through a signed URL for a remote viewer.
+  const src = useAssetUrl(content);
   return (
     <div className="flex items-center justify-center">
-      {content ? (
+      {src ? (
         <img
-          src={content}
+          src={src}
           alt="Viewer content"
           className="max-w-full max-h-[70vh]"
           style={{ border: "1px solid var(--color-border)", borderRadius: "4px" }}
@@ -77,6 +80,8 @@ const ImageViewer = memo(function ImageViewer({ content }: { content?: string })
 });
 
 const VideoViewer = memo(function VideoViewer({ content }: { content?: string }) {
+  // A private asset loads through a signed URL for a remote viewer.
+  const src = useAssetUrl(content);
   return (
     <div
       className="w-full"
@@ -87,8 +92,8 @@ const VideoViewer = memo(function VideoViewer({ content }: { content?: string })
         borderRadius: "4px",
       }}
     >
-      {content ? (
-        <video src={content} controls className="w-full h-full" style={{ borderRadius: "4px" }}>
+      {src ? (
+        <video src={src} controls className="w-full h-full" style={{ borderRadius: "4px" }}>
           <track kind="captions" />
         </video>
       ) : (
@@ -101,6 +106,8 @@ const VideoViewer = memo(function VideoViewer({ content }: { content?: string })
 });
 
 const AudioViewer = memo(function AudioViewer({ content }: { content?: string }) {
+  // A private asset loads through a signed URL for a remote viewer.
+  const src = useAssetUrl(content);
   // Placeholder waveform bars (deterministic heights based on index)
   const bars = Array.from({ length: 40 }, (_, i) => ({
     id: `bar-${i}`,
@@ -116,8 +123,8 @@ const AudioViewer = memo(function AudioViewer({ content }: { content?: string })
         borderRadius: "4px",
       }}
     >
-      {content && (
-        <audio src={content} controls className="w-full mb-4">
+      {src && (
+        <audio src={src} controls className="w-full mb-4">
           <track kind="captions" />
         </audio>
       )}
@@ -140,6 +147,8 @@ const AudioViewer = memo(function AudioViewer({ content }: { content?: string })
 });
 
 const PdfViewer = memo(function PdfViewer({ content }: { content?: string }) {
+  // A private asset loads through a signed URL for a remote viewer.
+  const src = useAssetUrl(content);
   return (
     <div
       className="w-full flex flex-col"
@@ -150,9 +159,9 @@ const PdfViewer = memo(function PdfViewer({ content }: { content?: string }) {
       }}
     >
       <div className="flex-1 p-6 overflow-y-auto max-h-[65vh]">
-        {content ? (
+        {src ? (
           <iframe
-            src={content}
+            src={src}
             title="PDF Viewer"
             className="w-full h-full min-h-[400px]"
             style={{ border: "none" }}

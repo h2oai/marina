@@ -17,6 +17,7 @@ import { apiOrigin } from "../../lib/api-origin";
 import { motion } from "motion/react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { authFetch } from "../../lib/api";
+import { useAssetUrl } from "../../lib/asset-url";
 import type { DroppedFileResult } from "../hooks/use-canvas-integration";
 
 const API_BASE = apiOrigin();
@@ -137,6 +138,9 @@ export const DropDialog = memo(function DropDialog({ files, onClose }: DropDialo
     return () => window.removeEventListener("keydown", onKey);
   }, [current, prompt, advance, setIntent]);
 
+  // The uploaded asset itself is the preview (signed for a remote viewer).
+  const previewUrl = useAssetUrl(current?.url);
+
   if (!current) return null;
 
   const isImage = current.mime.startsWith("image/");
@@ -233,9 +237,9 @@ export const DropDialog = memo(function DropDialog({ files, onClose }: DropDialo
               )}
             </div>
           </div>
-          {isImage && (
+          {isImage && previewUrl && (
             <img
-              src={`${API_BASE}/api/canvases/${current.canvasId}/nodes/${current.nodeId}/preview`}
+              src={previewUrl}
               alt={current.filename}
               style={{
                 width: 64,

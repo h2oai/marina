@@ -322,12 +322,10 @@ export function serverMaxRequestBodyBytes(): number {
  *   (Orbitron, Share Tech Mono) and `dashboard/src/unified/unified-canvas.css`
  *   `@import` (VT323, Orbitron, Press Start 2P); the fonts themselves come from
  *   `https://fonts.gstatic.com` (`font-src`).
- * - `script-src https://cdnjs.cloudflare.com/ajax/libs/pdf.js/` — path-scoped:
- *   `dashboard/src/canvas/nodes/PdfNode.tsx` points `GlobalWorkerOptions.workerSrc`
- *   at the pdf.js CDN; pdf.js wraps a cross-origin worker in a `blob:` worker
- *   that `import()`s that URL (hence `worker-src blob:`), and its main-thread
- *   "fake worker" fallback `import()`s it too. Self-hosting the worker would
- *   remove this grant.
+ * - The pdf.js worker is bundled with the dashboard (`PdfNode.tsx` imports
+ *   `pdf.worker.min.mjs?url`), so it loads under `script-src 'self'` /
+ *   `worker-src 'self'` with no CDN grant and works offline. `worker-src blob:`
+ *   is kept for blob-constructed workers.
  * - `frame-src https:`               — the `embed` canvas node / asset kind
  *   (`CanvasNodeEmbed.tsx`, `AssetLightbox.tsx`) embeds an operator-supplied
  *   URL in a sandboxed iframe; `'self'` covers the in-app PDF viewer iframes.
@@ -350,7 +348,7 @@ export function serverMaxRequestBodyBytes(): number {
  */
 export const HTML_CSP = [
   "default-src 'self'",
-  "script-src 'self' https://cdnjs.cloudflare.com/ajax/libs/pdf.js/",
+  "script-src 'self'",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "img-src 'self' data: blob:",
   "media-src 'self' blob: data:",
