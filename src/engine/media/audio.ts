@@ -535,7 +535,12 @@ export interface StoredTranscript {
   model: string;
   createdAt: number;
   segments?: TranscriptSegment[];
+  /** Set when the text was cut at {@link TRANSCRIPT_MAX_CHARS}. */
+  truncated?: true;
 }
+
+/** Longest transcript text stored on an asset (the memory-over-media contract's cap). */
+export const TRANSCRIPT_MAX_CHARS = 100_000;
 
 /**
  * Store a transcript on its asset as `metadata.transcript` through the asset
@@ -548,12 +553,16 @@ export function saveTranscript(
   outcome: Pick<TranscriptOutcome, "text" | "language" | "model" | "segments">,
   actor?: EntityId,
 ): StoredTranscript {
+  // Same shape as the asset library's `setAssetText(…, "transcript", …)`
+  // (memory-over-media, PR #478); switch to it once that lands.
+  const truncated = outcome.text.length > TRANSCRIPT_MAX_CHARS;
   const transcript: StoredTranscript = {
-    text: outcome.text,
+    text: truncated ? outcome.text.slice(0, TRANSCRIPT_MAX_CHARS) : outcome.text,
     ...(outcome.language ? { language: outcome.language } : {}),
     model: outcome.model,
     createdAt: Date.now(),
     ...(outcome.segments?.length ? { segments: outcome.segments } : {}),
+    ...(truncated ? { truncated: true as const } : {}),
   };
   editAsset(engine, asset, { metadata: { transcript } }, actor);
   return transcript;
