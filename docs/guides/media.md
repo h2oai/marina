@@ -228,6 +228,13 @@ checked against the same pixels the proposer saw.
 (default 20 MB), URLs go through the SSRF guard, and the PDF and video tools run
 without a shell, in a private temporary directory, with a 30-second timeout.
 
+**Image processing.** Marina reads an image's format, size, EXIF orientation and
+animation from its header without extra software. Rotating, resizing,
+re-encoding and thumbnails use the optional `sharp` package, which a normal
+`bun install` includes. Without it, an image that already meets a destination's
+limits is sent unchanged, and one that needs processing is refused with a reason
+that names the missing package. It is never sent out of spec.
+
 ## Troubleshooting
 
 - **"Provider not yet supported"** — built-in image providers are `openai`,
