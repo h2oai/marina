@@ -82,7 +82,12 @@ function normalizeSupports(supports: SupportsLike): AgentSupports {
 }
 
 /** Which media generation this installation offers (set by the engine; none by default). */
-export type MediaGenerationProbe = () => { image: boolean; video: boolean };
+export type MediaGenerationProbe = () => {
+  image: boolean;
+  video: boolean;
+  transcribe?: boolean;
+  speak?: boolean;
+};
 
 function supportsFromModel(model: string | undefined): AgentSupports {
   if (!model) return DEFAULT_SUPPORTS;
@@ -493,13 +498,17 @@ export class AgentRuntime {
     this.mediaGenerationProbe = probe;
   }
 
-  private mediaGenerationFor(): { image?: boolean; video?: boolean } | undefined {
+  private mediaGenerationFor():
+    | { image?: boolean; video?: boolean; transcribe?: boolean; speak?: boolean }
+    | undefined {
     try {
       const found = this.mediaGenerationProbe?.();
       if (!found) return undefined;
       return {
         ...(found.image ? { image: true } : {}),
         ...(found.video ? { video: true } : {}),
+        ...(found.transcribe ? { transcribe: true } : {}),
+        ...(found.speak ? { speak: true } : {}),
       };
     } catch (error) {
       logger.warn("agents", `media generation probe failed: ${getErrorMessage(error)}`);

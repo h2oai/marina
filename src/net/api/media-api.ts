@@ -157,7 +157,7 @@ export async function handleMediaApi(
   return mediaError(404, "Not found.");
 }
 
-interface MediaCaller {
+export interface MediaCaller {
   entityId: EntityId;
   entityName: string;
   /** May act for, and read the jobs of, any entity. */
@@ -173,7 +173,11 @@ const SYSTEM_IDENTITY = { entityId: "system" as EntityId, entityName: "system" }
  * resolves to its entity (an operator person is trusted); anything else (a
  * shared unbound key, dev-open mode) is the anonymous `system` caller.
  */
-function resolveCaller(engine: Engine, req: Request, auth?: PassthruAuthResult): MediaCaller {
+export function resolveCaller(
+  engine: Engine,
+  req: Request,
+  auth?: PassthruAuthResult,
+): MediaCaller {
   if (auth && (auth.internal || (auth.canNameMap && !auth.openMode))) {
     return { ...SYSTEM_IDENTITY, trusted: true };
   }

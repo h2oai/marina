@@ -12,6 +12,7 @@ import { runKeyRefusal, withRunKey } from "../../engine/benchmark-run-keys";
 import type { Engine } from "../../engine/engine";
 import { EVAL_HEADER } from "../../learning/eval-context";
 import { handleAnthropicMessages } from "../adapters/anthropic-inbound";
+import { handleAudioApi } from "../api/audio-api";
 import { handleBenchmarkFile } from "../api/benchmarks-api";
 import { handleDecisionModels, handleDecisions } from "../api/decisions-api";
 import { handleForecast } from "../api/forecast-api";
@@ -164,6 +165,11 @@ export async function handleModelApi(
     }
   } else if (method === "GET" && !consumeHttpRate("modelRead", ip)) {
     return errorJson(429, "Rate limited. Please slow down.");
+  }
+
+  // OpenAI-compatible speech-to-text / text-to-speech — src/net/api/audio-api.ts.
+  if (url.pathname.startsWith("/v1/audio/")) {
+    return await handleAudioApi(url, method, req, engine, authResult);
   }
 
   if (url.pathname.startsWith("/v1/media")) {

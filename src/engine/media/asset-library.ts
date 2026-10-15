@@ -670,7 +670,7 @@ export function checkAssetEdit(
   return undefined;
 }
 
-/** Apply caption/alt/tag changes (already authorized + checked); emits `asset_updated`. */
+/** Apply caption/alt/tag/metadata changes (already authorized + checked); emits `asset_updated`. */
 export function editAsset(
   host: AssetLibraryHost,
   row: AssetRow,

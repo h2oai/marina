@@ -9,6 +9,7 @@ import { canvasReaderFor } from "../canvas-access";
 import type { Engine } from "../engine";
 import { getErrorMessage } from "../errors";
 import { dailyCapRefusal, recordSpend } from "../spend-ledger";
+import type { AudioHost } from "./audio";
 import { startMediaVerify } from "./image-decisions";
 import {
   getImageProvider,
@@ -26,6 +27,20 @@ import { loadVisualSource, sniffRaster } from "./vision";
 /** Per-entity rolling-24h job caps when `MAX_{IMAGE,VIDEO}_JOBS_PER_DAY` is unset. */
 export const DEFAULT_MAX_IMAGE_JOBS_PER_DAY = 50;
 export const DEFAULT_MAX_VIDEO_JOBS_PER_DAY = 5;
+/** Per-entity rolling-24h audio caps when `MAX_{TRANSCRIPTION,SPEECH}_JOBS_PER_DAY` is unset. */
+export const DEFAULT_MAX_TRANSCRIPTION_JOBS_PER_DAY = 100;
+export const DEFAULT_MAX_SPEECH_JOBS_PER_DAY = 100;
+
+/** Each job type's cap variable and default. */
+export const MEDIA_JOB_CAPS: Record<MediaJobType, { env: string; fallback: number }> = {
+  image: { env: "MAX_IMAGE_JOBS_PER_DAY", fallback: DEFAULT_MAX_IMAGE_JOBS_PER_DAY },
+  video: { env: "MAX_VIDEO_JOBS_PER_DAY", fallback: DEFAULT_MAX_VIDEO_JOBS_PER_DAY },
+  transcription: {
+    env: "MAX_TRANSCRIPTION_JOBS_PER_DAY",
+    fallback: DEFAULT_MAX_TRANSCRIPTION_JOBS_PER_DAY,
+  },
+  speech: { env: "MAX_SPEECH_JOBS_PER_DAY", fallback: DEFAULT_MAX_SPEECH_JOBS_PER_DAY },
+};
 /** Minutes a video job may render before it fails, when `MARINA_VIDEO_JOB_TIMEOUT_MIN` is unset. */
 export const DEFAULT_VIDEO_JOB_TIMEOUT_MIN = 30;
 /** Bound on one provider call (start, poll + download) so a hung request never holds the poller. */
@@ -56,12 +71,31 @@ export function videoJobTimeoutMs(env: NodeJS.ProcessEnv = process.env): number 
  * never lifts the cap).
  */
 export function mediaJobCap(type: MediaJobType, env: NodeJS.ProcessEnv = process.env): number {
-  const raw = (type === "image" ? env.MAX_IMAGE_JOBS_PER_DAY : env.MAX_VIDEO_JOBS_PER_DAY)?.trim();
-  const fallback =
-    type === "image" ? DEFAULT_MAX_IMAGE_JOBS_PER_DAY : DEFAULT_MAX_VIDEO_JOBS_PER_DAY;
+  const { env: name, fallback } = MEDIA_JOB_CAPS[type];
+  const raw = env[name]?.trim();
   if (!raw) return fallback;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
+/**
+ * Refuse a job past the entity's rolling-24h cap for its type (`mediaJobCap`);
+ * the message names the variable an operator raises.
+ */
+export function enforceMediaJobQuota(
+  db: Pick<MarinaDB, "countMediaJobsSince">,
+  entityName: string,
+  type: MediaJobType,
+): void {
+  const cap = mediaJobCap(type);
+  if (cap <= 0) return;
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  const count = db.countMediaJobsSince({ entityName, since, type });
+  if (count >= cap) {
+    throw new Error(
+      `Daily ${type} quota reached (${count}/${cap} in the last 24 h). Try again later, or an operator can raise ${MEDIA_JOB_CAPS[type].env} (0 = unlimited).`,
+    );
+  }
 }
 
 /** Cloud image providers whose key alone enables generation. */
@@ -253,6 +287,16 @@ export class MediaManager {
     }
 
     return this.db.getMediaJob(jobId)!;
+  }
+
+  /** What the audio path (`audio.ts`: transcription, speech) runs with. */
+  audioHost(): AudioHost {
+    return {
+      engine: this.engine,
+      db: this.db,
+      resolveApiKey: (provider) => this.resolveApiKey(provider),
+      logEvent: this.logEvent,
+    };
   }
 
   getJob(id: string): MediaJobRow | undefined {
@@ -683,16 +727,7 @@ export class MediaManager {
   }
 
   private enforceQuota(entityName: string, type: MediaJobType): void {
-    const cap = mediaJobCap(type);
-    if (cap <= 0) return;
-    const since = Date.now() - 24 * 60 * 60 * 1000;
-    const count = this.db.countMediaJobsSince({ entityName, since, type });
-    if (count >= cap) {
-      const envVar = type === "image" ? "MAX_IMAGE_JOBS_PER_DAY" : "MAX_VIDEO_JOBS_PER_DAY";
-      throw new Error(
-        `Daily ${type} quota reached (${count}/${cap} in the last 24 h). Try again later, or an operator can raise ${envVar} (0 = unlimited).`,
-      );
-    }
+    enforceMediaJobQuota(this.db, entityName, type);
   }
 
   /** A completed job's estimated price goes into the daily spend ledger. */

@@ -11,6 +11,7 @@ import type { EntityId, RoomId } from "../../types";
 import { collectiveManager } from "../../world/world-collective-manager";
 import { commandManifest } from "../command-manifest";
 import { associationCommand } from "../commands/association";
+import { audioCommand } from "../commands/audio";
 import { bookmarkCommand } from "../commands/bookmark";
 import { briefCommand } from "../commands/brief";
 import { calcCommand } from "../commands/calc";
@@ -189,6 +190,7 @@ export function registerGeneralCommands(engine: Engine): void {
   );
   engine.commands.registerBuiltin(imageCommand(engine));
   engine.commands.registerBuiltin(videoCommand(engine));
+  engine.commands.registerBuiltin(audioCommand(engine));
   engine.commands.registerBuiltin(inventoryCommand((id) => engine.entities.get(id)));
   engine.commands.registerBuiltin(emoteCommand((id) => engine.entities.get(id)));
   engine.commands.registerBuiltin(

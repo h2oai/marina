@@ -4,7 +4,8 @@
 import type { Database } from "bun:sqlite";
 
 export type MediaJobStatus = "pending" | "running" | "succeeded" | "failed" | "blocked";
-export type MediaJobType = "image" | "video";
+/** Generation (`image`, `video`) and audio (`transcription`, `speech`) jobs. */
+export type MediaJobType = "image" | "video" | "transcription" | "speech";
 
 export interface MediaJobRow {
   id: string;

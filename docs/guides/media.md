@@ -437,6 +437,78 @@ fields such as `{ model, language }`. It stores
 `metadata.<kind> = { text, ...meta, createdAt }` and marks the asset for
 re-indexing.
 
+## Audio: speech to text and text to speech
+
+Marina transcribes audio and video (`audio transcribe`) and turns text into
+speech (`audio speak`). Both run on any configured provider:
+
+| Direction | Provider | Key | Models |
+|-----------|----------|-----|--------|
+| Speech → text | OpenAI | `OPENAI_API_KEY` | `openai/gpt-transcribe` (default; several language hints), `openai/gpt-4o-transcribe`, `openai/gpt-4o-mini-transcribe`, `openai/gpt-4o-transcribe-diarize` (speaker labels), `openai/whisper-1` (timed segments) |
+| Text → speech | OpenAI | `OPENAI_API_KEY` | `openai/gpt-4o-mini-tts` (default, voice `marin`), `openai/tts-1`, `openai/tts-1-hd` |
+| Both | **Any OpenAI-compatible audio server** (LocalAI, speaches, Kokoro-FastAPI, whisper.cpp `--inference-path /v1/audio/transcriptions`) | `<PROVIDER>_API_KEY` *(optional)* | `<provider>/<model>` |
+
+A local server needs only its base URL, for example
+`KOKORO_AUDIO_BASE_URL=http://localhost:8880/v1` and then
+`audio speak model:kokoro/kokoro voice:af_heart -- Hello`. With no OpenAI key, the
+first configured server is the default as `<provider>/whisper-1` and
+`<provider>/tts-1` (the aliases LocalAI and Kokoro-FastAPI map); pin others with
+`MARINA_TRANSCRIBE_MODEL`, `MARINA_SPEECH_MODEL` and `MARINA_SPEECH_VOICE`.
+Gemini is not a transcription provider here: it transcribes only by prompting a
+chat model, with no transcription endpoint or timestamps of its own.
+
+```
+> audio transcribe <asset|node|url> [model:<provider/model>] [language:en[,fr]] [-- <context>]
+> audio transcript <asset> [segments]
+> audio speak [voice:<voice>] [model:<provider/model>] [format:mp3|wav|opus|aac|flac] [speed:1.2] [canvas:<name>] -- <text>
+```
+
+**Transcripts live on the asset.** `audio transcribe` stores the result as
+`metadata.transcript = { text, language?, model, createdAt, segments? }` on the
+audio or video asset (segments are `{ start, end, text, speaker? }` in seconds).
+Only someone who may change the asset (its owner, the creator of an owning
+agent, or an operator) stores it; any reader may transcribe it for themselves. A
+URL is downloaded through the SSRF guard and kept as the caller's own asset
+(origin `tool`). `asset show` notes a stored transcript; `audio transcript`
+prints it.
+
+**Video and long audio.** Video is transcribed from its audio track, extracted
+with `ffmpeg`. Audio longer than `MARINA_AUDIO_CHUNK_SECONDS` (default 600 s, the
+length OpenAI's own guide splits at), larger than the provider's upload limit
+(OpenAI: 25 MB) or in a format the provider does not take (OpenAI takes mp3, mp4,
+mpeg, mpga, m4a, wav, webm) is cut into 16 kHz mono WAV pieces. The pieces'
+texts are joined and their segments shifted by each piece's start. Without
+`ffmpeg`, audio within the upload limit is sent as is; video and oversize files
+are refused with the reason. `MARINA_AUDIO_MAX_SECONDS` (default
+3600, measured with `ffprobe`) and `MARINA_AUDIO_MAX_BYTES` (default 100 MiB)
+bound one input.
+
+**Speech** becomes an audio asset (origin `generated`, provenance: the text,
+model, provider, job and price) and an `audio` node on your canvas, or on
+`canvas:<name>`. One request takes at most 4096 characters (OpenAI's limit;
+`MARINA_SPEECH_MAX_CHARS`). OpenAI's usage policies ask you to tell listeners
+the voice is AI-generated.
+
+**Agents** get `marina_transcribe` and `marina_speak` (deferred tools, loaded
+through `marina_tool_search`) whenever an audio provider is configured, on any
+model. They run the `audio` command, so the same caps and checks apply.
+
+**Caps and spend.** Each call is a media job (`transcription` / `speech`),
+counted against `MAX_TRANSCRIPTION_JOBS_PER_DAY` and `MAX_SPEECH_JOBS_PER_DAY`
+(default 100 each per entity per rolling 24 h; 0 is unlimited). OpenAI calls are
+refused once the daily spend cap is spent and recorded once at OpenAI's
+published prices: transcription per audio minute (gpt-transcribe $0.0045,
+gpt-4o-transcribe $0.006, gpt-4o-mini-transcribe $0.003, diarize $0.006,
+whisper-1 $0.006), `tts-1` $15 and `tts-1-hd` $30 per million characters,
+`gpt-4o-mini-tts` $0.60 per million text tokens plus an estimated $0.015 per
+minute of speech (its reply carries no usage). A configured local server is
+unpriced.
+
+**HTTP.** `POST /v1/audio/transcriptions` (multipart) and `POST
+/v1/audio/speech` (JSON) follow OpenAI's API; see
+[passthru](../architecture/passthru.md#audio-endpoints-2026-10-15). They are
+compute endpoints: nothing is stored as an asset.
+
 ## Troubleshooting
 
 - **"Provider not yet supported"** — built-in image providers are `openai`,

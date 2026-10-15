@@ -693,6 +693,58 @@ Effect: unknown.
 
 - `field-0` (`association`): text, required.
 
+## audio
+
+Speech to text and text to speech. Usage: audio transcribe <asset|node|url> [model:<provider/model>] [language:<code>[,<code>]] [-- <context>] | audio transcript <asset> [segments] | audio speak [voice:<voice>] [model:<provider/model>] [format:mp3|wav|opus|aac|flac] [speed:<0.25-4>] [canvas:<name>] -- <text>
+
+Category: Canvas & Media. Minimum rank: 0.
+Aliases: none.
+
+### `audio transcribe <source> [model:<provider/model>] [language:<code>]`
+
+Effect: unknown.
+
+- `field-0` (`source`): text, required.
+- `field-1` (`model`): text, optional group `option-0`.
+- `field-2` (`language`): text, optional group `option-1`.
+- Group `option-0`: `model:provider/model`.
+- Group `option-1`: `language:code`.
+
+### `audio transcribe <source> [model:<provider/model>] [language:<code>] -- <context>`
+
+Effect: unknown.
+
+- `field-0` (`source`): text, required.
+- `field-1` (`model`): text, optional group `option-0`.
+- `field-2` (`language`): text, optional group `option-1`.
+- `field-3` (`context`): text, required.
+- Group `option-0`: `model:provider/model`.
+- Group `option-1`: `language:code`.
+
+### `audio transcript <asset> [segments]`
+
+Effect: unknown.
+
+- `field-0` (`asset`): text, required.
+- `field-1` (`segments`): text, optional group `option-0`.
+- Group `option-0`: `segments`.
+
+### `audio speak [voice:<voice>] [model:<provider/model>] [format:mp3|wav|opus|aac|flac] [speed:<number>] [canvas:<name>] -- <text>`
+
+Effect: unknown.
+
+- `field-0` (`voice`): text, optional group `option-0`.
+- `field-1` (`model`): text, optional group `option-1`.
+- `field-2` (`format`): text, optional group `option-2`, choices `mp3`, `wav`, `opus`, `aac`, `flac`.
+- `field-3` (`speed`): number, optional group `option-3`.
+- `field-4` (`canvas`): text, optional group `option-4`.
+- `field-5` (`text`): text, required.
+- Group `option-0`: `voice:voice`.
+- Group `option-1`: `model:provider/model`.
+- Group `option-2`: `format:mp3|wav|opus|aac|flac`.
+- Group `option-3`: `speed:number`.
+- Group `option-4`: `canvas:name`.
+
 ## bankroll
 
 Bankroll & risk gates for trading. State stored in core memory; the 'position' command reads these before placing any order.
