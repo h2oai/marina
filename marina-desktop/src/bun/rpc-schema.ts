@@ -12,6 +12,14 @@
  */
 import type { ElectrobunRPCSchema } from "electrobun/main";
 import type { EngineEvent, Perception } from "../../../src/types";
+import type {
+  DownloadBeginParams,
+  DownloadBeginResult,
+  DownloadChunkParams,
+  ProxyResult,
+  UploadBeginParams,
+  UploadChunkParams,
+} from "./proxy-transfers";
 
 // ─── Data shapes ────────────────────────────────────────────────────────────
 
@@ -124,14 +132,6 @@ export interface DeleteNodeParams {
   canvas_id: string;
 }
 
-export interface UploadAssetParams {
-  filename: string;
-  mime: string;
-  /** Base64-encoded file data */
-  dataBase64: string;
-  entity?: string;
-}
-
 export interface ApiKeyParams {
   name: string;
   provider: string;
@@ -217,7 +217,26 @@ export interface DashboardRPCSchema extends ElectrobunRPCSchema {
       };
       proxyApi: {
         params: ApiProxyParams;
-        response: { status: number; contentType: string; body: string };
+        response: ProxyResult;
+      };
+      /** Open a chunked binary request body (multipart uploads). */
+      proxyUploadBegin: {
+        params: UploadBeginParams;
+        response: { id: string } | { error: ProxyResult };
+      };
+      proxyUploadChunk: {
+        params: UploadChunkParams;
+        response: { received: number } | { error: string };
+      };
+      /** Send the assembled body to the embedded server; its answer verbatim. */
+      proxyUploadFinish: { params: string; response: ProxyResult };
+      /** Drop an open upload or download. */
+      proxyTransferAbort: { params: string; response: void };
+      /** Read `GET /assets/<key>` bytes; large bodies continue in chunks. */
+      proxyDownloadBegin: { params: DownloadBeginParams; response: DownloadBeginResult };
+      proxyDownloadChunk: {
+        params: DownloadChunkParams;
+        response: { dataBase64: string } | { error: string };
       };
 
       // ── Canvas ──
@@ -229,12 +248,6 @@ export interface DashboardRPCSchema extends ElectrobunRPCSchema {
       updateNode: { params: UpdateNodeParams; response: unknown };
       deleteNode: { params: DeleteNodeParams; response: unknown };
       getNode: { params: { canvas_id: string; node_id: string }; response: unknown };
-
-      // ── Assets ──
-      getAssets: { params: undefined; response: unknown[] };
-      getAssetDetail: { params: string; response: unknown };
-      uploadAsset: { params: UploadAssetParams; response: unknown };
-      deleteAsset: { params: string; response: unknown };
     };
     messages: {
       /** Webview signals it's ready to receive data */

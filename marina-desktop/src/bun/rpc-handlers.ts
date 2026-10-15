@@ -11,9 +11,18 @@ import {
   handleParticipantMessage,
   type ParticipantMessage,
 } from "../../../src/net/participant-messages";
-import { normalizeAssetMime } from "../../../src/storage/asset-mime";
 import type { Connection, EntityId, Perception, RoomId } from "../../../src/types";
 import type { EngineHost } from "./engine-host";
+import {
+  createProxyTransfers,
+  type DownloadBeginParams,
+  type DownloadChunkParams,
+  isLocalApiPath,
+  type LocalFetch,
+  type ProxyResult,
+  type UploadBeginParams,
+  type UploadChunkParams,
+} from "./proxy-transfers";
 import type {
   AgentSpawnParams,
   ApiKeyParams,
@@ -25,7 +34,6 @@ import type {
   PreferencesData,
   SystemData,
   UpdateNodeParams,
-  UploadAssetParams,
   WorldData,
 } from "./rpc-schema";
 
@@ -66,6 +74,29 @@ export function createRpcHandlers(
     if (value.length <= 8) return "****";
     return `${value.slice(0, 4)}...${value.slice(-4)}`;
   }
+
+  /**
+   * Forward a request to the embedded HTTP server. A signed-in resident must
+   * retain its own identity for private streams, context, inventory and its
+   * own assets; the operator sentinel has no world account. Explicit
+   * credentials (including expired tokens) go through normal auth — never
+   * silently replaced with the native operator credential, which the webview
+   * can neither supply nor read.
+   */
+  const localFetch: LocalFetch = (path, init) => {
+    const prefs = appActions.getPreferences();
+    const headers = new Headers(init.headers);
+    headers.delete("x-marina-desktop-token");
+    if (!headers.has("authorization")) {
+      headers.set("x-marina-desktop-token", process.env.MARINA_DESKTOP_API_TOKEN ?? "");
+    }
+    return fetch(`http://127.0.0.1:${prefs.wsPort}${path}`, {
+      method: init.method,
+      headers,
+      body: init.body,
+    });
+  };
+  const transfers = createProxyTransfers(localFetch);
 
   return {
     getWorld(): WorldData {
@@ -676,29 +707,17 @@ export function createRpcHandlers(
       return { ok: true };
     },
 
-    async proxyApi(
-      params: ApiProxyParams,
-    ): Promise<{ status: number; contentType: string; body: string }> {
-      if (!params.path.startsWith("/api/") || params.path.includes("://")) {
+    async proxyApi(params: ApiProxyParams): Promise<ProxyResult> {
+      if (!isLocalApiPath(params.path)) {
         return {
           status: 400,
           contentType: "application/json",
           body: JSON.stringify({ error: "Invalid local API path" }),
         };
       }
-      const prefs = appActions.getPreferences();
-      const headers = new Headers(params.headers);
-      headers.delete("x-marina-desktop-token");
-      // A signed-in resident must retain its own identity for private streams,
-      // context and inventory. The operator sentinel has no world account.
-      // Explicit credentials (including expired tokens) go through normal auth;
-      // never silently replace them with the native operator credential.
-      if (!headers.has("authorization")) {
-        headers.set("x-marina-desktop-token", process.env.MARINA_DESKTOP_API_TOKEN ?? "");
-      }
-      const response = await fetch(`http://127.0.0.1:${prefs.wsPort}${params.path}`, {
+      const response = await localFetch(params.path, {
         method: params.method,
-        headers,
+        headers: params.headers,
         body: params.body,
       });
       return {
@@ -707,6 +726,15 @@ export function createRpcHandlers(
         body: await response.text(),
       };
     },
+
+    // Binary bodies (uploads, asset bytes) cross the RPC in bounded chunks and
+    // reach the embedded server as one ordinary request (proxy-transfers.ts).
+    proxyUploadBegin: (params: UploadBeginParams) => transfers.uploadBegin(params),
+    proxyUploadChunk: (params: UploadChunkParams) => transfers.uploadChunk(params),
+    proxyUploadFinish: (id: string) => transfers.uploadFinish(id),
+    proxyTransferAbort: (id: string): void => transfers.abort(id),
+    proxyDownloadBegin: (params: DownloadBeginParams) => transfers.downloadBegin(params),
+    proxyDownloadChunk: (params: DownloadChunkParams) => transfers.downloadChunk(params),
 
     // ── Canvas handlers ──
 
@@ -817,73 +845,6 @@ export function createRpcHandlers(
       const node = db.getNode(params.node_id);
       if (!node || node.canvas_id !== params.canvas_id) return { error: "Node not found" };
       return enrichNode(node, db, storage);
-    },
-
-    // ── Asset handlers ──
-
-    getAssets(): unknown[] {
-      const { db } = requireEngine();
-      const storage = requireStorage();
-      return db.listAssets({ limit: 50 }).map((a) => ({
-        ...a,
-        metadata: JSON.parse(a.metadata),
-        url: storage?.resolve(a.storage_key),
-      }));
-    },
-
-    getAssetDetail(id: string): unknown {
-      const { db } = requireEngine();
-      const storage = requireStorage();
-      const asset = db.getAsset(id);
-      if (!asset) return { error: "Asset not found" };
-      return {
-        ...asset,
-        metadata: JSON.parse(asset.metadata),
-        url: storage?.resolve(asset.storage_key),
-      };
-    },
-
-    async uploadAsset(params: UploadAssetParams): Promise<unknown> {
-      const { db } = requireEngine();
-      const storage = requireStorage();
-      if (!storage) return { error: "Storage not available" };
-      const data = Uint8Array.from(atob(params.dataBase64), (c) => c.charCodeAt(0));
-      if (data.byteLength === 0) return { error: "Empty file" };
-      if (data.byteLength > 50 * 1024 * 1024) return { error: "File too large (max 50MB)" };
-      const id = crypto.randomUUID();
-      const ext = params.filename.includes(".")
-        ? params.filename.slice(params.filename.lastIndexOf("."))
-        : "";
-      const storageKey = `${id}${ext}`;
-      // Same allowlist + magic-byte policy as POST /api/assets.
-      const mime = normalizeAssetMime(params.mime, data);
-      await storage.put(storageKey, data, mime);
-      db.createAsset({
-        id,
-        entityName: params.entity ?? "system",
-        filename: params.filename,
-        mimeType: mime,
-        size: data.byteLength,
-        storageKey,
-      });
-      const asset = db.getAsset(id)!;
-      return {
-        ...asset,
-        metadata: JSON.parse(asset.metadata),
-        url: storage.resolve(asset.storage_key),
-      };
-    },
-
-    async deleteAsset(id: string): Promise<unknown> {
-      const { db } = requireEngine();
-      const storage = requireStorage();
-      const asset = db.getAsset(id);
-      if (!asset) return { error: "Asset not found" };
-      if (storage) {
-        await storage.delete(asset.storage_key);
-      }
-      db.deleteAsset(id);
-      return { ok: true, id };
     },
   };
 }
