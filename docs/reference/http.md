@@ -330,7 +330,7 @@ Fields read here: `data`, `height`, `revision`, `width`, `x`, `y`.
 
 ### `url.pathname.match(/^\/api\/canvases\/([^/]+)\/nodes$/)`
 
-[Source](../../src/net/canvas/canvas-api.ts#L499)
+[Source](../../src/net/canvas/canvas-api.ts#L494)
 
 - Guard: `nodesMatch && method === "POST"`
 - Guard: `method === "POST"`
@@ -339,7 +339,7 @@ Fields read here: `asset_id`, `data`, `height`, `parent_node_id`, `type`, `width
 
 ### `url.pathname.match(/^\/api\/canvases\/([^/]+)$/)`
 
-[Source](../../src/net/canvas/canvas-api.ts#L598)
+[Source](../../src/net/canvas/canvas-api.ts#L593)
 
 - Guard: `canvasMatch`
 - Guard: `method === "DELETE"`
@@ -347,7 +347,7 @@ Fields read here: `asset_id`, `data`, `height`, `parent_node_id`, `type`, `width
 
 ### `url.pathname === "/api/canvases"`
 
-[Source](../../src/net/canvas/canvas-api.ts#L633)
+[Source](../../src/net/canvas/canvas-api.ts#L628)
 
 - Guard: `url.pathname === "/api/canvases" && method === "POST"`
 - Guard: `method === "POST"`
@@ -356,7 +356,7 @@ Fields read here: `description`, `name`, `scope`, `scope_id`.
 
 ### `url.pathname === "/api/canvases"`
 
-[Source](../../src/net/canvas/canvas-api.ts#L680)
+[Source](../../src/net/canvas/canvas-api.ts#L675)
 
 - Guard: `url.pathname === "/api/canvases" && method === "GET"`
 - Guard: `method === "GET"`
