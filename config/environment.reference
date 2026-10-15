@@ -603,6 +603,24 @@
 # MAX_IMAGE_JOBS_PER_DAY=50
 # MAX_VIDEO_JOBS_PER_DAY=5
 
+# Audio: speech-to-text and text-to-speech (`audio` command, `marina_transcribe` / `marina_speak` tools, POST /v1/audio/transcriptions and /v1/audio/speech). OpenAI uses OPENAI_API_KEY. Any OpenAI-compatible audio server (LocalAI, speaches, Kokoro-FastAPI, whisper.cpp with --inference-path /v1/audio/transcriptions): set <PROVIDER>_AUDIO_BASE_URL (and <PROVIDER>_API_KEY if it needs one), then use `<provider>/<model>`. See docs/guides/media.md → Audio.
+# KOKORO_AUDIO_BASE_URL=http://localhost:8880/v1
+
+# Default audio models and voice. Unset: openai/gpt-transcribe and openai/gpt-4o-mini-tts (voice marin) with an OpenAI key; otherwise the first <PROVIDER>_AUDIO_BASE_URL server as <provider>/whisper-1 and <provider>/tts-1.
+# MARINA_TRANSCRIBE_MODEL=openai/gpt-transcribe
+# MARINA_SPEECH_MODEL=openai/gpt-4o-mini-tts
+# MARINA_SPEECH_VOICE=marin
+
+# Audio limits. MAX_BYTES caps one input (default 100 MiB; HTTP uploads are also held to MARINA_MAX_UPLOAD_BYTES), MAX_SECONDS its length (default 3600, needs ffprobe to measure). Audio longer than CHUNK_SECONDS (default 600, minimum 30), larger than the provider's upload limit (OpenAI: 25 MB) or in a format the provider does not take is cut into 16 kHz mono WAV pieces by ffmpeg and the transcripts are joined with their timestamps; video is transcribed from its audio track (needs ffmpeg). SPEECH_MAX_CHARS caps one speech request (default 4096, OpenAI's own limit). Blank or invalid values use the defaults.
+# MARINA_AUDIO_MAX_BYTES=104857600
+# MARINA_AUDIO_MAX_SECONDS=3600
+# MARINA_AUDIO_CHUNK_SECONDS=600
+# MARINA_SPEECH_MAX_CHARS=4096
+
+# Transcription and speech jobs per entity per rolling 24 h (defaults 100 each). 0 is unlimited.
+# MAX_TRANSCRIPTION_JOBS_PER_DAY=100
+# MAX_SPEECH_JOBS_PER_DAY=100
+
 # Minutes a video job may stay rendering before it is failed with a timeout reason (default 30). Running jobs are polled from the database every ~5 s by the `media-video-poll` tick job, so a restart resumes them. Blank or invalid uses the default; there is no unlimited setting.
 # MARINA_VIDEO_JOB_TIMEOUT_MIN=30
 

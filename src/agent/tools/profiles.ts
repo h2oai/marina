@@ -183,7 +183,7 @@ export interface ToolsetOptions {
   /** How loaded deferred schemas reach the agent's live tool list. */
   onLoadTools?: (tools: AgentTool[]) => void;
   /** Media generation this installation serves (`mediaGenerationAvailable`). */
-  mediaGeneration?: { image?: boolean; video?: boolean };
+  mediaGeneration?: { image?: boolean; video?: boolean; transcribe?: boolean; speak?: boolean };
 }
 
 export interface ProfileToolset {
@@ -410,6 +410,9 @@ export function createProfileToolset(
         createAllTools(ctx, platformMemory).filter((tool) => {
           if (tool.name === "marina_generate_image") return !!(supports.image || generation?.image);
           if (tool.name === "marina_generate_video") return !!(supports.video || generation?.video);
+          // Audio is a provider capability only (an OpenAI key or *_AUDIO_BASE_URL).
+          if (tool.name === "marina_transcribe") return !!generation?.transcribe;
+          if (tool.name === "marina_speak") return !!generation?.speak;
           return true;
         }),
       ),

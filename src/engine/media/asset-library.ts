@@ -652,6 +652,11 @@ export interface AssetEdit {
   alt?: string | null;
   addTags?: readonly string[];
   removeTags?: readonly string[];
+  /**
+   * Top-level `metadata` keys to set (`null` removes one) — derived text such
+   * as `transcript` (`{ text, language?, model, createdAt, segments? }`).
+   */
+  metadata?: Record<string, unknown>;
 }
 
 /** Validate an edit; a string is the reason it is refused. */
@@ -670,7 +675,7 @@ export function checkAssetEdit(
   return undefined;
 }
 
-/** Apply caption/alt/tag changes (already authorized + checked); emits `asset_updated`. */
+/** Apply caption/alt/tag/metadata changes (already authorized + checked); emits `asset_updated`. */
 export function editAsset(
   host: AssetLibraryHost,
   row: AssetRow,
@@ -682,6 +687,8 @@ export function editAsset(
   if (edit.caption !== undefined) text.caption = edit.caption?.trim() || null;
   if (edit.alt !== undefined) text.alt = edit.alt?.trim() || null;
   if (Object.keys(text).length > 0) db.updateAssetText(row.id, text);
+  if (edit.metadata && Object.keys(edit.metadata).length > 0)
+    db.mergeAssetMetadata(row.id, edit.metadata);
   const tags =
     edit.addTags?.length || edit.removeTags?.length
       ? db.setAssetTags(row.id, edit.addTags ?? [], edit.removeTags ?? [])

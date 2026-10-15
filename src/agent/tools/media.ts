@@ -5,7 +5,9 @@
 // offered when an image / video provider is configured or the agent's config
 // asks for it (`createProfileToolset`). `marina_see` returns the image itself
 // to a model that reads images (`ToolContext.visionMode` = native) and a second
-// model's description otherwise.
+// model's description otherwise. Audio (`marina_transcribe`, `marina_speak`)
+// is offered when an audio provider is configured (an OpenAI key or a
+// `<PROVIDER>_AUDIO_BASE_URL` server) and runs the `audio` command.
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
@@ -87,6 +89,45 @@ const lookSchema = Type.Object({
   question: Type.Optional(Type.String({ description: "What to look for or answer" })),
 });
 
+const transcribeSchema = Type.Object({
+  source: Type.String({
+    description: "Audio or video to transcribe: asset id, canvas node id, or http(s) URL",
+  }),
+  model: Type.Optional(
+    Type.String({ description: "Provider/model ID (default openai/gpt-transcribe)" }),
+  ),
+  language: Type.Optional(
+    Type.String({ description: "ISO-639-1 language hint(s), comma-separated (e.g. en or en,fr)" }),
+  ),
+  context: Type.Optional(
+    Type.String({ description: "Names, terms or topic that help the model spell things right" }),
+  ),
+});
+
+const speakSchema = Type.Object({
+  text: Type.String({ description: "The text to speak (up to 4096 characters)" }),
+  voice: Type.Optional(
+    Type.String({ description: "Voice name (OpenAI: marin, cedar, alloy, coral, …)" }),
+  ),
+  model: Type.Optional(
+    Type.String({ description: "Provider/model ID (default openai/gpt-4o-mini-tts)" }),
+  ),
+  format: Type.Optional(
+    Type.Union([Type.Literal("mp3"), Type.Literal("wav"), Type.Literal("opus")], {
+      description: "Audio format (default mp3)",
+    }),
+  ),
+  canvas: Type.Optional(Type.String({ description: "Canvas name or id to publish the audio to" })),
+});
+
+/** One whitespace-free command token, or an error naming the field. */
+function token(field: string, value: string | undefined): string | undefined {
+  const v = value?.trim();
+  if (!v) return undefined;
+  if (/\s/.test(v)) throw new Error(`${field} must be a single value without spaces.`);
+  return v;
+}
+
 function sanitizePrompt(prompt: string): string {
   return prompt.replace(/\s+/g, " ").trim();
 }
@@ -134,6 +175,47 @@ export function createMediaTools(ctx: ToolContext): AgentTool[] {
         if (p.aspect) command += ` --aspect ${p.aspect}`;
         if (p.canvas) command += ` --canvas ${p.canvas}`;
         return execCommand(ctx, command, signal);
+      },
+    },
+    {
+      name: "marina_transcribe",
+      label: "Transcribe",
+      description:
+        "Transcribe speech in an audio or video asset, canvas node or URL to text (stored on the asset). Requires an audio provider.",
+      parameters: transcribeSchema,
+      execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
+        const p = params as Static<typeof transcribeSchema>;
+        const source = token("source", p.source);
+        if (!source) throw new Error("source is required.");
+        let command = `audio transcribe ${source}`;
+        const model = token("model", p.model);
+        const language = token("language", p.language);
+        if (model) command += ` model:${model}`;
+        if (language) command += ` language:${language}`;
+        const context = sanitizePrompt(p.context ?? "");
+        if (context) command += ` -- ${context}`;
+        return execCommand(ctx, command, signal);
+      },
+    },
+    {
+      name: "marina_speak",
+      label: "Speak",
+      description:
+        "Turn text into speech: stores an audio asset and publishes it to a canvas. Requires an audio provider.",
+      parameters: speakSchema,
+      execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
+        const p = params as Static<typeof speakSchema>;
+        const text = sanitizePrompt(p.text);
+        if (!text) throw new Error("text is required.");
+        let command = "audio speak";
+        const voice = token("voice", p.voice);
+        const model = token("model", p.model);
+        const canvas = token("canvas", p.canvas);
+        if (voice) command += ` voice:${voice}`;
+        if (model) command += ` model:${model}`;
+        if (p.format) command += ` format:${p.format}`;
+        if (canvas) command += ` canvas:${canvas}`;
+        return execCommand(ctx, `${command} -- ${text}`, signal);
       },
     },
     {

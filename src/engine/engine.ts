@@ -83,6 +83,7 @@ import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
 import { assetDerivativesPending, drainAssetDerivatives } from "./media/asset-library";
 import { MediaManager, mediaGenerationAvailable } from "./media/manager";
+import { audioAvailable } from "./media/providers/audio-registry";
 import { engineSharedWriteHook } from "./memory-dispatch";
 import { getRank, rankName } from "./permissions";
 import { computeReadiness } from "./readiness";
@@ -413,12 +414,13 @@ export class Engine {
     // Generation is a provider capability (any agent model gets the generate
     // tools when a provider is configured); vision is a model capability, and
     // `marina/default` agents read images natively when its upstream does.
-    this.agentRuntime.setMediaGenerationProbe(() =>
-      mediaGenerationAvailable({
+    this.agentRuntime.setMediaGenerationProbe(() => {
+      const probe = {
         configured: !!this.mediaManager,
-        hasKey: (provider) => !!this.agentRuntime.getProviderKey(provider),
-      }),
-    );
+        hasKey: (provider: string) => !!this.agentRuntime.getProviderKey(provider),
+      };
+      return { ...mediaGenerationAvailable(probe), ...audioAvailable(probe) };
+    });
     setDefaultUpstreamDescriber(() => describeDefaultUpstream(this));
 
     const engine = this;

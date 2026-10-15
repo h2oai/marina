@@ -9,6 +9,7 @@ import { ingestAsset } from "./asset-library";
 
 const DEFAULT_IMAGE_EXT = ".png";
 const DEFAULT_VIDEO_EXT = ".mp4";
+const DEFAULT_AUDIO_EXT = ".mp3";
 
 interface StoreGeneratedAssetParams {
   engine: Engine;
@@ -91,7 +92,7 @@ interface PublishGeneratedAssetParams {
   entityId: EntityId;
   entityName: string;
   assetId: string;
-  nodeType: "image" | "video";
+  nodeType: "image" | "video" | "audio";
   prompt: string;
   model: string;
   canvasId?: string;
@@ -163,7 +164,7 @@ export function publishGeneratedAsset({
 
   engine.logEvent({
     type: "feed_event",
-    kind: nodeType === "video" ? "video_generated" : "image_generated",
+    kind: `${nodeType}_generated`,
     entity: entityId,
     ref: assetId,
     summary: summary ?? `${entityName} generated ${nodeType} "${asset.filename}" with ${model}`,
@@ -189,6 +190,9 @@ function inferExt(mime: string, fallbackFilename?: string): string {
   }
   if (mime.startsWith("video/")) {
     return fallback || DEFAULT_VIDEO_EXT;
+  }
+  if (mime.startsWith("audio/")) {
+    return fallback || DEFAULT_AUDIO_EXT;
   }
   return fallback || DEFAULT_IMAGE_EXT;
 }

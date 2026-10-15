@@ -23,6 +23,7 @@ export interface AssetsStore {
   deleteAsset(id: string): boolean;
   updateAssetFacts(id: string, facts: AssetFacts): boolean;
   updateAssetText(id: string, text: { caption?: string | null; alt?: string | null }): boolean;
+  mergeAssetMetadata(id: string, patch: Record<string, unknown>): boolean;
   findAssetByHash(entityName: string, sha256: string, origin: AssetOrigin): AssetRow | undefined;
   listAssetsNeedingFacts(limit: number): AssetRow[];
   setAssetMetadataKey(id: string, key: string, value: unknown, opts?: { touch?: boolean }): boolean;
@@ -51,6 +52,7 @@ export const ASSETS_STORE_METHODS = [
   "deleteAsset",
   "updateAssetFacts",
   "updateAssetText",
+  "mergeAssetMetadata",
   "findAssetByHash",
   "listAssetsNeedingFacts",
   "setAssetMetadataKey",

@@ -639,6 +639,11 @@ In live feed rooms (Kalshi/Polymarket):
 > asset alt <id> -- Red fox in snow                      Alt text
 > asset delete <id>                                      Delete it and its thumbnails
 
+> audio transcribe <asset|node|url> language:en         Speech to text; stored on the asset (metadata.transcript)
+> audio transcribe <id> model:openai/whisper-1 -- Names  Pick a model; text after -- is context for spelling
+> audio transcript <id> [segments]                       Read a stored transcript (timed segments)
+> audio speak voice:cedar format:wav -- Hello there      Text to speech: an audio asset + canvas node
+
 > canvas publish image <asset_id> my-canvas              Publish asset as image node
 > canvas publish text <asset_id> my-canvas               Text node
 > canvas publish a2ui <asset_id> my-canvas               Interactive A2UI widget
