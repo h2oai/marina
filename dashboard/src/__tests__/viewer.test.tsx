@@ -3,8 +3,10 @@
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MediaViewerProvider } from "../components/media/MediaViewer";
 import { useChatState } from "../hooks/use-chat-state";
 import { Viewer } from "../unified/overlays/Viewer";
+import { renderWithProviders } from "./test-utils";
 
 const claimIntent = vi.fn(async (..._args: unknown[]) => {});
 const completeIntent = vi.fn(async (..._args: unknown[]) => {});
@@ -43,10 +45,13 @@ describe("Viewer", () => {
 
   it("shows the title and type badge, and closes on the button and on Escape", () => {
     const onClose = vi.fn();
-    render(<Viewer open title="Sunset" contentType="image" content="/a.png" onClose={onClose} />);
+    render(
+      <Viewer open title="Sunset" contentType="document" content="<p>x</p>" onClose={onClose} />,
+    );
     expect(screen.getByText("Sunset")).toBeInTheDocument();
-    expect(screen.getByText("image")).toBeInTheDocument();
-    expect(screen.getByAltText("Viewer content")).toHaveAttribute("src", "/a.png");
+    expect(screen.getByText("document")).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Sunset" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: /Close/ }));
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(2);
@@ -63,15 +68,24 @@ describe("Viewer", () => {
     expect(screen.getByText(new RegExp(text))).toBeInTheDocument();
   });
 
-  it("renders video, audio and pdf sources", () => {
-    const { rerender } = render(
-      <Viewer open title="V" contentType="video" content="/v.mp4" onClose={() => {}} />,
+  it.each([
+    ["image", "/a.png"],
+    ["video", "/v.mp4"],
+    ["audio", "/a.mp3"],
+    ["pdf", "/p.pdf"],
+  ] as const)("hands %s content to the shared media viewer and closes", (type, url) => {
+    const onClose = vi.fn();
+    renderWithProviders(
+      <MediaViewerProvider>
+        <Viewer open title="Media" contentType={type} content={url} onClose={onClose} />
+      </MediaViewerProvider>,
     );
-    expect(document.querySelector("video")).toHaveAttribute("src", "/v.mp4");
-    rerender(<Viewer open title="A" contentType="audio" content="/a.mp3" onClose={() => {}} />);
-    expect(document.querySelector("audio")).toHaveAttribute("src", "/a.mp3");
-    rerender(<Viewer open title="P" contentType="pdf" content="/p.pdf" onClose={() => {}} />);
-    expect(screen.getByTitle("PDF Viewer")).toHaveAttribute("src", "/p.pdf");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    // (onClose is a mock here, so the overlay itself stays mounted too.)
+    const dialog = screen
+      .getAllByRole("dialog")
+      .find((d) => d.getAttribute("aria-labelledby") === "media-viewer-title");
+    expect(dialog).toHaveAttribute("aria-modal", "true");
   });
 
   it("sanitizes document HTML before editing", () => {

@@ -5,12 +5,15 @@ import { Lock, Send } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { getChatWs, useChatState } from "../hooks/use-chat-state";
 import { useCommandFavorites } from "../hooks/use-command-favorites";
+import { useUploads } from "../hooks/use-uploads";
 import { attachedCommand, openCanvas, useWorkspaceState } from "../hooks/use-workspace-state";
 import { useWorldState } from "../hooks/use-world-state";
+import type { UploadedAsset } from "../lib/upload";
 import type { CodeContextData } from "../lib/webchat-format";
 import { CodingPalette, ContextualCompass } from "./ChatInputGuidance";
 import { CommandFavorites } from "./CommandFavorites";
 import { CommandInputAssistance } from "./CommandInputAssistance";
+import { UploadButton, UploadDropZone, UploadTray } from "./media/UploadControls";
 
 export function ChatInputBar({
   codePrompt,
@@ -74,6 +77,22 @@ export function ChatInputBar({
     });
     return () => cancelAnimationFrame(frame);
   }, [externalDraft, loggedIn, applyDraft]);
+
+  // Attach: upload (picker, paste or drop), then put a reference to the
+  // stored asset into the draft for review — nothing is sent automatically.
+  const insertAssetReference = useCallback((asset: UploadedAsset) => {
+    const el = inputRef.current;
+    if (!el) return;
+    const current = el.value;
+    const next = current.trim()
+      ? `${current.replace(/\s*$/, "")} asset:${asset.id}`
+      : `asset show ${asset.id}`;
+    el.value = next;
+    el.rows = Math.min(6, next.split("\n").length);
+    cmdValueRef.current = next;
+    el.focus();
+  }, []);
+  const uploads = useUploads({ onUploaded: insertAssetReference });
 
   const doLogin = useCallback(() => {
     const name = nameRef.current?.value.trim();
@@ -358,9 +377,16 @@ export function ChatInputBar({
             </button>
           </div>
         ) : (
-          <>
+          <UploadDropZone onFiles={uploads.upload} label="Drop files to attach">
             {renderCodeContextStrip()}
             <CommandInputAssistance input={inputRef} codeMode={!!codePrompt} />
+            <UploadTray
+              entries={uploads.entries}
+              onCancel={uploads.cancel}
+              onDismiss={uploads.dismiss}
+              onClearFinished={uploads.clearFinished}
+              className="mb-1 rounded border border-border bg-bg-card p-1.5 text-[11px] text-text"
+            />
             <div className="flex items-center gap-1.5">
               <span
                 className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-success" : "bg-danger"}`}
@@ -389,6 +415,13 @@ export function ChatInputBar({
                 }
                 className="min-w-0 flex-1 resize-y rounded border border-border bg-bg px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
               />
+              <UploadButton
+                onFiles={uploads.upload}
+                label="Attach files"
+                iconOnly
+                icon="attach"
+                className="text-text-dim transition-colors hover:text-primary"
+              />
               <button
                 type="button"
                 aria-label="Pin current draft"
@@ -413,7 +446,7 @@ export function ChatInputBar({
                 <Send size={14} aria-hidden="true" />
               </button>
             </div>
-          </>
+          </UploadDropZone>
         )}
       </div>
     </>

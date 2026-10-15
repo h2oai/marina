@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Node } from "@xyflow/react";
-import { CheckCircle2, Hand, XCircle } from "lucide-react";
+import { CheckCircle2, Hand, Maximize2, XCircle } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
 import { parseCanvasReference, ReferenceContent } from "../../components/CanvasReference";
+import { canvasMediaCollection, canvasNodeViewable } from "../../components/media/canvas-media";
+import { useAssetViewer } from "../../components/media/MediaViewer";
 import { useWorkspaceState } from "../../hooks/use-workspace-state";
 import { authFetch } from "../../lib/api";
 import { apiOrigin } from "../../lib/api-origin";
@@ -90,6 +92,8 @@ function NodeDetailPanelInner({
   relationships = [],
   onConnect,
 }: Props & { node: Node }) {
+  const { open: openMedia } = useAssetViewer();
+  const viewable = canvasNodeViewable(node);
   const [promptText, setPromptText] = useState("");
   const [editText, setEditText] = useState("");
   const [chatText, setChatText] = useState("");
@@ -252,7 +256,16 @@ function NodeDetailPanelInner({
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-bg-hover border-b border-border">
-        <h2 className="text-sm font-bold text-primary truncate">Node Detail</h2>
+        <h2 className="text-sm font-bold text-primary truncate flex-1">Node Detail</h2>
+        {viewable && (
+          <button
+            type="button"
+            onClick={() => openMedia(viewable, { collection: canvasMediaCollection(nodes) })}
+            className="mr-2 flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs text-text hover:border-primary hover:text-primary"
+          >
+            <Maximize2 size={12} aria-hidden="true" /> View
+          </button>
+        )}
         <motion.button
           type="button"
           onClick={onClose}

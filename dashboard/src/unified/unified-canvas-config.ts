@@ -101,6 +101,15 @@ export function viewerTargetFor(node: Node): ViewerTarget {
 }
 
 /**
+ * Media nodes (image/video/audio/pdf) open in the shared media viewer; the
+ * rest use the Viewer overlay (viewerTargetFor).
+ */
+export {
+  canvasMediaCollection,
+  canvasNodeViewable as viewableForNode,
+} from "../components/media/canvas-media";
+
+/**
  * Load a boolean layer-visibility preference from localStorage.
  * If the key has never been set (first visit), returns `firstVisitDefault`.
  */

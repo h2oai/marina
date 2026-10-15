@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { writeFile } from "node:fs/promises";
+import { deflateSync } from "node:zlib";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { reviewTextContrast } from "./contrast-review";
@@ -105,6 +106,85 @@ test("dashboard participation and discovery are accessible", async ({ page }) =>
   await expect(page.getByRole("dialog")).toBeVisible();
   await audit(page, "command-discovery-dialog");
   await page.keyboard.press("Escape");
+});
+
+/** A valid 2×2 PNG in one colour (distinct bytes per colour, so uploads do not dedupe). */
+function png(rgb: [number, number, number]): Buffer {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buf: Buffer) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = (crcTable[(c ^ b) & 0xff] as number) ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const sum = Buffer.alloc(4);
+    sum.writeUInt32BE(crc(body));
+    return Buffer.concat([len, body, sum]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(2, 0);
+  ihdr.writeUInt32BE(2, 4);
+  ihdr.set([8, 2, 0, 0, 0], 8);
+  const row = Buffer.from([0, ...rgb, ...rgb]);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(Buffer.concat([row, row]))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+test("asset library, uploads and the media viewer are accessible", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/dashboard?view=library");
+  await page.getByRole("button", { name: "Dismiss getting-started guide" }).click();
+  await page.getByPlaceholder("Enter your name...").fill("MediaBrowser");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.locator("#marina-command-input")).toBeVisible();
+  await page.getByRole("tab", { name: "Library", exact: true }).click();
+  const library = page.getByRole("tabpanel", { name: "Library" });
+  const stamp = Date.now() % 200;
+  const files = [
+    { name: "harbour-red.png", mimeType: "image/png", buffer: png([200, stamp, 40]) },
+    { name: "harbour-blue.png", mimeType: "image/png", buffer: png([30, stamp, 210]) },
+  ];
+  await library.getByTestId("upload-input").first().setInputFiles(files);
+  const uploads = library.getByRole("region", { name: "Uploads" });
+  await expect(uploads.getByText("Uploaded")).toHaveCount(2);
+  // The same bytes again are reported, not copied.
+  await library.getByTestId("upload-input").first().setInputFiles([files[0]!]);
+  await expect(uploads.getByText("Already in your library")).toBeVisible();
+  const grid = library.getByRole("listbox", { name: /Assets/ });
+  await expect(grid.getByRole("option", { name: /harbour-blue\.png/ })).toBeVisible();
+  await audit(page, "asset-library");
+
+  // Open from the keyboard; ←/→ move through the current results.
+  await grid.getByRole("option", { name: /harbour-red\.png/ }).click();
+  await grid.press("Enter");
+  const viewer = page.getByRole("dialog", { name: /harbour-red\.png/ });
+  await expect(viewer).toBeVisible();
+  await expect(viewer.getByRole("button", { name: "Close viewer" })).toBeFocused();
+  await viewer.getByRole("button", { name: "Details" }).click();
+  await expect(viewer.getByRole("complementary", { name: "Asset details" })).toContainText("2 × 2");
+  await page.screenshot({ path: test.info().outputPath("media-viewer.png") });
+  await audit(page, "media-viewer");
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByRole("dialog", { name: /harbour-blue\.png/ })).toBeVisible();
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(page.locator("html")).toHaveAttribute("data-theme-scheme", "light");
+  await audit(page, "media-viewer-light");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(grid).toBeFocused();
+  await page.screenshot({ path: test.info().outputPath("asset-library-light.png") });
 });
 
 test("mobile dashboard is accessible", async ({ page }) => {

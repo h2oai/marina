@@ -28,6 +28,7 @@ import { WorldNav } from "../unified/panels/WorldNav";
 import { renderWithProviders, resetWorldState } from "./test-utils";
 
 const useLogs = vi.fn();
+const mediaFetch = vi.fn();
 vi.mock("../hooks/use-api", async () => {
   const actual = await vi.importActual<Record<string, unknown>>("../hooks/use-api");
   return {
@@ -51,6 +52,7 @@ vi.mock("../lib/api", async () => {
     postApi: vi.fn().mockResolvedValue({}),
     describeApiError: (error: unknown) => String(error),
     downloadApi: vi.fn(),
+    authFetch: (...args: unknown[]) => mediaFetch(...args),
   };
 });
 
@@ -249,5 +251,119 @@ describe("accessible button names", () => {
     expect(expectAllButtonsNamed(container, "unified panels")).toBeGreaterThan(4);
     expect(screen.getByRole("button", { name: "Close context panel" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close entity panel" })).toBeInTheDocument();
+  });
+
+  it("media: library (with bulk bar), viewer (with details), upload tray, media jobs", async () => {
+    const libraryItem = (id: string, type: "image" | "audio") => ({
+      id,
+      filename: `${id}.${type === "image" ? "png" : "mp3"}`,
+      mime: type === "image" ? "image/png" : "audio/mpeg",
+      type,
+      size: 10,
+      owner: "Ada",
+      origin: "upload",
+      createdAt: 0,
+      updatedAt: 0,
+      sha256: null,
+      width: 10,
+      height: 10,
+      durationMs: null,
+      pages: null,
+      caption: null,
+      alt: null,
+      tags: ["t1"],
+      provenance: { prompt: "p", model: "m" },
+      url: `/assets/${id}.png`,
+      urlExpiresAt: null,
+      thumbs: {},
+      thumb: null,
+      placeholder: null,
+      derivativeState: "unavailable",
+      derivativeNote: "no tool",
+      derivedFrom: null,
+    });
+    const facets = {
+      type: { image: 1 },
+      origin: { upload: 1 },
+      owner: { Ada: 1 },
+      tag: { t1: 1 },
+      total: 1,
+      truncated: false,
+    };
+    mediaFetch.mockImplementation(async (url: string) => {
+      if (url.includes("/api/assets?"))
+        return new Response(
+          JSON.stringify({
+            items: [libraryItem("a1", "image"), libraryItem("a2", "audio")],
+            nextCursor: null,
+            facets,
+          }),
+        );
+      const id = /\/api\/assets\/([^/?]+)$/.exec(url)?.[1] ?? "a1";
+      return new Response(
+        JSON.stringify({
+          ...libraryItem(id, "image"),
+          parents: [{ id: "p1", kind: "edit", filename: "p.png", mime: "image/png" }],
+          children: [],
+          usedIn: [{ canvasId: "c1", name: "Board", nodes: 1 }],
+        }),
+      );
+    });
+    const { useChatState } = await import("../hooks/use-chat-state");
+    useChatState.setState({ entityName: "Ada" });
+    const { AssetLibrary } = await import("../components/media/AssetLibrary");
+    const { MediaViewerProvider } = await import("../components/media/MediaViewer");
+    const { UploadTray } = await import("../components/media/UploadControls");
+    const { MediaJobsList } = await import("../components/MediaJobsList");
+    const { container } = renderWithProviders(
+      <MediaViewerProvider>
+        <AssetLibrary />
+        <UploadTray
+          entries={[
+            { id: "u1", name: "a.png", size: 1, mime: "", progress: 0.2, status: "uploading" },
+            {
+              id: "u2",
+              name: "b.png",
+              size: 1,
+              mime: "",
+              progress: 1,
+              status: "error",
+              error: "x",
+            },
+          ]}
+          onCancel={vi.fn()}
+          onDismiss={vi.fn()}
+          onClearFinished={vi.fn()}
+        />
+        <MediaJobsList
+          jobs={[
+            {
+              id: "j1",
+              type: "image",
+              status: "succeeded",
+              provider: "openai",
+              model: "gpt-image",
+              prompt: "fox",
+              entityName: "Ada",
+              assetId: "a1",
+              assetUrl: "/assets/a1.png",
+              createdAt: 0,
+              updatedAt: 0,
+              completedAt: 0,
+            },
+          ]}
+        />
+      </MediaViewerProvider>,
+    );
+    const grid = await screen.findByRole("listbox", { name: /Assets/ });
+    fireEvent.keyDown(grid, { key: "a", ctrlKey: true });
+    expect(screen.getByRole("toolbar", { name: "Selected assets" })).toBeInTheDocument();
+    expect(expectAllButtonsNamed(container, "asset library")).toBeGreaterThan(10);
+
+    fireEvent.keyDown(grid, { key: "Enter" });
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Details" }));
+    await within(dialog).findByRole("button", { name: "p.png" });
+    expect(expectAllButtonsNamed(dialog, "media viewer")).toBeGreaterThan(8);
   });
 });

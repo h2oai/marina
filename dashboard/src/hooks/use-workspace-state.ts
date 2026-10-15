@@ -5,7 +5,7 @@ import { create } from "zustand";
 import type { DetailView } from "../components/CoordinationCard";
 import type { PanelInstanceId } from "../lib/workspace-panel-instances";
 
-export type WorkspaceView = "work" | "canvas" | "map" | "observe" | "admin" | "streams";
+export type WorkspaceView = "work" | "canvas" | "map" | "observe" | "admin" | "streams" | "library";
 export type WorkspacePane = "webchat" | "workspace" | "context" | PanelInstanceId;
 export type CanvasReference =
   | { kind: "task" | "note"; id: string }

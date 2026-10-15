@@ -26,6 +26,7 @@ import {
   normalizeNodeType,
 } from "../../canvas/lib/types";
 import { authFetch } from "../../lib/api";
+import { uploadAsset } from "../../lib/upload";
 import { collisionRepulse, ringPosition } from "../lib/layout-utils";
 
 /** Intent metadata attached to a canvas node's data field. */
@@ -140,9 +141,14 @@ interface UseCanvasIntegrationResult {
   /**
    * Handle file drop onto the canvas. Uploads each file as an asset, creates
    * a canvas node, and returns one descriptor per successfully-created node so
-   * the caller can prompt for follow-up intents.
+   * the caller can prompt for follow-up intents. A file that fails (upload
+   * refused, too large, node not created) is reported through `onError`.
    */
-  onDrop: (files: FileList, position: { x: number; y: number }) => Promise<DroppedFileResult[]>;
+  onDrop: (
+    files: FileList,
+    position: { x: number; y: number },
+    onError?: (filename: string, message: string) => void,
+  ) => Promise<DroppedFileResult[]>;
   /** Remove a canvas node from local state (after server delete). */
   removeNode: (nodeId: string) => void;
 }
@@ -160,6 +166,8 @@ export interface DroppedFileResult {
   canvasId: string;
   /** The uploaded asset's URL (`/assets/<key>`), for a preview. */
   url?: string;
+  /** The same bytes were already in the uploader's library (reused, not copied). */
+  deduplicated?: boolean;
 }
 
 /**
@@ -550,7 +558,11 @@ export function useCanvasIntegration(
   // Drag-drop upload handler. Returns one descriptor per successfully-created
   // node so the caller can prompt the user for an intent on each.
   const onDrop = useCallback(
-    async (files: FileList, position: { x: number; y: number }): Promise<DroppedFileResult[]> => {
+    async (
+      files: FileList,
+      position: { x: number; y: number },
+      onError?: (filename: string, message: string) => void,
+    ): Promise<DroppedFileResult[]> => {
       let targetCanvasId = canvasId;
 
       // Auto-create a canvas if none exists — drag-and-drop is a first-class
@@ -583,16 +595,8 @@ export function useCanvasIntegration(
         const dropY = position.y;
 
         try {
-          // 1. Upload file as asset
-          const form = new FormData();
-          form.append("file", file);
-
-          const uploadRes = await authFetch(`${API_BASE}/api/assets`, {
-            method: "POST",
-            body: form,
-          });
-          if (!uploadRes.ok) continue;
-          const asset = (await uploadRes.json()) as { id: string; url: string };
+          // 1. Upload file as asset (shared upload path: readable errors, dedupe).
+          const asset = await uploadAsset(file);
 
           // 2. Create node on canvas
           const res = await authFetch(`${API_BASE}/api/canvases/${targetCanvasId}/nodes`, {
@@ -617,7 +621,10 @@ export function useCanvasIntegration(
               },
             }),
           });
-          if (!res.ok) continue;
+          if (!res.ok) {
+            onError?.(file.name, `could not add to canvas (${res.status})`);
+            continue;
+          }
 
           const newNode = (await res.json()) as CanvasNodeData;
           setRawNodes((prev) =>
@@ -630,9 +637,11 @@ export function useCanvasIntegration(
             nodeId: newNode.id,
             canvasId: targetCanvasId!,
             url: asset.url,
+            ...(asset.deduplicated ? { deduplicated: true } : {}),
           });
-        } catch {
-          // Continue with remaining files
+        } catch (err) {
+          // Report and continue with the remaining files.
+          onError?.(file.name, err instanceof Error ? err.message : String(err));
         }
       }
       return results;

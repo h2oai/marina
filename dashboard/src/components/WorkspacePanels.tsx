@@ -23,6 +23,7 @@ import { EntityRoster } from "./EntityRoster";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { MemoryContextCard } from "./MemoryContextCard";
 import { MyInventory } from "./MyInventory";
+import { AssetLibrary } from "./media/AssetLibrary";
 import { NarrativePlayback } from "./NarrativePlayback";
 import { ParticipantStreams } from "./ParticipantStreams";
 import { PublishedPanelLibrary } from "./PublishedPanelLibrary";
@@ -37,6 +38,7 @@ const VIEWS: Array<[WorkspaceView, string]> = [
   ["map", "Map"],
   ["observe", "Observe"],
   ["streams", "Streams"],
+  ["library", "Library"],
   ["admin", "Admin"],
 ];
 export function WorkspacePanel({
@@ -162,6 +164,7 @@ export function WorkspacePanel({
                 onTargetChange={(id) => onBindingChange?.(id ? { kind: "participant", id } : null)}
               />
             )}
+            {id === "library" && <AssetLibrary active={active && view === "library"} />}
             {id === "admin" && <AdminPanel />}
           </div>
         ))}

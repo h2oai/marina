@@ -9,7 +9,6 @@ import { useCodingSessionDetail } from "../hooks/use-coding";
 import { useWorldState } from "../hooks/use-world-state";
 import { type OverlayState, overlayForCommand } from "../lib/chat-overlay";
 import { type CodeContextData, messageText, writeClipboard } from "../lib/webchat-format";
-import { AssetViewerProvider } from "./AssetLightbox";
 import { ChatInputBar } from "./ChatInputBar";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatStatusOverlay } from "./ChatStatusOverlay";
@@ -143,7 +142,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     viewMode === "rich" && overlay?.type === "coding-artifacts",
   );
   return (
-    <AssetViewerProvider>
+    <>
       <ChatStatusOverlay
         overlay={viewMode === "rich" ? overlay : null}
         closeOverlay={closeOverlay}
@@ -210,7 +209,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
           />
         </div>
       </GlassPanel>
-    </AssetViewerProvider>
+    </>
   );
 }
 
