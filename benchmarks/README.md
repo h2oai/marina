@@ -246,6 +246,28 @@ bun run bench:native --task bugs --seed 7 --setup-only --port 40400 --db world.d
 bun run bench:native --task bugs --seed 7 --score-only --db world.db --workspace …
 ```
 
+## Native vs described vision
+
+`benchmarks/vision-native/` compares the two ways an agent can see an image: its
+own model reading the image in the tool result (`native`), or a text description
+from a vision model (`describe`). The tasks are rendered deterministically from
+SVG with `sharp` and have known answers: counting coloured shapes among
+distractors (`count`, the denser `dense`), reading a small code in a large page
+(`code`), ranking unlabeled bars (`chart`) and locating a mark in a grid (`grid`).
+Each task is one agent turn with a `marina_see` tool. The tool answers as Marina
+does in each mode (`viewVisual`/`viewHeader`, or the `visionRequest` body
+`describeVisual` sends). The run reports accuracy and the OpenRouter-reported
+cost per mode, and stops before `--budget` USD.
+
+```bash
+bun benchmarks/vision-native/run.ts --dry --images-dir /tmp/vision-items   # tasks and answers, no calls
+OPENROUTER_API_KEY=… bun benchmarks/vision-native/run.ts \
+  --model anthropic/claude-opus-5.5 --per-kind 6 --budget 2 [--kinds count,code,chart,grid,dense]
+```
+
+Results go to `benchmarks/results/` (gitignored) or `--out`. They hold task ids,
+answers, scores and costs, but no image bytes.
+
 ## Datasets
 
 Datasets are auto-downloaded from HuggingFace on first run and cached in `benchmarks/datasets/` (gitignored). The retention benchmark ships in-repo (generated at runtime). Gated datasets (GPQA) need `HF_TOKEN` (or `HUGGINGFACE_TOKEN`) for an account that has accepted the dataset's terms. Benchmark items are never committed.
