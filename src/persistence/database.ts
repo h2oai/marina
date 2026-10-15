@@ -3328,10 +3328,6 @@ export class MarinaDB implements MarinaStores {
     return assetsDb.updateAssetText(this.db, id, text);
   }
 
-  mergeAssetMetadata(id: string, patch: Record<string, unknown>): boolean {
-    return assetsDb.mergeAssetMetadata(this.db, id, patch);
-  }
-
   findAssetByHash(
     entityName: string,
     sha256: string,

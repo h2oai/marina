@@ -33,7 +33,7 @@ import type { EngineEvent, EntityId } from "../../types";
 import type { Engine } from "../engine";
 import { getErrorMessage } from "../errors";
 import { dailyCapRefusal, recordSpend } from "../spend-ledger";
-import { editAsset } from "./asset-library";
+import { setAssetText } from "./asset-library";
 import { enforceMediaJobQuota } from "./manager";
 import {
   audioProviderOf,
@@ -544,8 +544,8 @@ export const TRANSCRIPT_MAX_CHARS = 100_000;
 
 /**
  * Store a transcript on its asset as `metadata.transcript` through the asset
- * library's write path (`editAsset`, emits `asset_updated`). The caller has
- * already decided the actor may change the asset.
+ * library's `setAssetText` (bumps `updated_at` for the memory index, emits
+ * `asset_updated`). The caller has already decided the actor may change the asset.
  */
 export function saveTranscript(
   engine: Engine,
@@ -553,8 +553,6 @@ export function saveTranscript(
   outcome: Pick<TranscriptOutcome, "text" | "language" | "model" | "segments">,
   actor?: EntityId,
 ): StoredTranscript {
-  // Same shape as the asset library's `setAssetText(…, "transcript", …)`
-  // (memory-over-media, PR #478); switch to it once that lands.
   const truncated = outcome.text.length > TRANSCRIPT_MAX_CHARS;
   const transcript: StoredTranscript = {
     text: truncated ? outcome.text.slice(0, TRANSCRIPT_MAX_CHARS) : outcome.text,
@@ -564,7 +562,18 @@ export function saveTranscript(
     ...(outcome.segments?.length ? { segments: outcome.segments } : {}),
     ...(truncated ? { truncated: true as const } : {}),
   };
-  editAsset(engine, asset, { metadata: { transcript } }, actor);
+  setAssetText(
+    engine,
+    asset.id,
+    "transcript",
+    transcript.text,
+    {
+      model: transcript.model,
+      ...(transcript.language ? { language: transcript.language } : {}),
+      ...(transcript.segments ? { segments: transcript.segments } : {}),
+    },
+    actor,
+  );
   return transcript;
 }
 

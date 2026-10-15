@@ -239,43 +239,6 @@ export function updateAssetText(
   return db.run(`UPDATE assets SET ${sets.join(", ")} WHERE id = ?`, values).changes > 0;
 }
 
-/**
- * Merge top-level keys into an asset's `metadata` JSON (a `null` value
- * removes the key) in one transaction. Bumps `updated_at`. A row whose stored
- * metadata is not a JSON object starts from `{}`.
- */
-export function mergeAssetMetadata(
-  db: Database,
-  id: string,
-  patch: Record<string, unknown>,
-): boolean {
-  return db.transaction(() => {
-    const row = db.query("SELECT metadata FROM assets WHERE id = ?").get(id) as {
-      metadata: string | null;
-    } | null;
-    if (!row) return false;
-    let current: Record<string, unknown> = {};
-    try {
-      const parsed = JSON.parse(row.metadata || "{}") as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-        current = parsed as Record<string, unknown>;
-    } catch {
-      // allow-empty-catch: malformed stored metadata is replaced by the merge
-    }
-    for (const [key, value] of Object.entries(patch)) {
-      if (value === null) delete current[key];
-      else if (value !== undefined) current[key] = value;
-    }
-    return (
-      db.run("UPDATE assets SET metadata = ?, updated_at = ? WHERE id = ?", [
-        JSON.stringify(current),
-        Date.now(),
-        id,
-      ]).changes > 0
-    );
-  })();
-}
-
 /** The owner's existing asset of `origin` with the same content hash (upload dedupe). */
 export function findAssetByHash(
   db: Database,

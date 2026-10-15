@@ -176,7 +176,7 @@ describe("audio — commands, storage, spend and the /v1/audio endpoints", () =>
     expect(await run(owner, `audio transcript ${asset.id}`)).toContain(
       "The harbour light turns green.",
     );
-    expect(await run(owner, `asset show ${asset.id}`)).toContain("Transcript");
+    expect(await run(owner, `asset show ${asset.id}`)).toContain("transcript 30 chars");
   });
 
   it("lets a reader transcribe someone else's asset without changing it", async () => {
