@@ -1166,6 +1166,9 @@
 # Vision model for `canvas look` / `image describe` / `video describe` / `marina_see` when the agent's own model cannot read images. Unset: the agent's model, else Marina's default route.
 # MARINA_VISION_MODEL=openai/gpt-6.1-sol
 
+# Asset derivatives (thumbnails, video posters, PDF previews; src/engine/media/asset-library.ts). `on` (default) makes them in the background, one at a time; `sync` makes them before an upload returns (tests, short-lived scripts); `off` never starts `sharp`, `ffmpeg` or `pdftoppm` for assets (hashes and header dimensions are still recorded, and the backfill leaves derivatives for a later pass).
+# MARINA_ASSET_DERIVATIVES=on
+
 # Byte cap on an image, PDF, video or text a vision call will load (max 100 MB). Default 20 MB.
 # MARINA_VISION_MAX_BYTES=20971520
 

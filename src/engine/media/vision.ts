@@ -35,6 +35,7 @@ import { guardedFetch } from "../../net/url-guard";
 import type { EntityId } from "../../types";
 import { type CanvasReader, canvasReaderFor, mayReadAsset, readableNode } from "../canvas-access";
 import type { Engine } from "../engine";
+import { recordAssetWrite } from "./asset-library";
 import { type ImageLimits, prepareImage } from "./image-ops";
 
 /** The kinds of visual input a source can be prepared into. */
@@ -1121,6 +1122,8 @@ export async function stageRequestImages(
       storageKey,
       metadata: { origin: REQUEST_IMAGE_ORIGIN, canvas: canvasName, owner: principal.ownerId },
     });
+    // Asset record v2: hash, dimensions, `asset_created`, thumbnails (read-checked like the image).
+    await recordAssetWrite(engine, assetId, decoded.data);
     const maxY = db.getNodesByCanvas(canvasId).reduce((acc, n) => Math.max(acc, n.y + n.height), 0);
     const nodeId = crypto.randomUUID();
     db.createNode({

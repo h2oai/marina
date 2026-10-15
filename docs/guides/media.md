@@ -332,7 +332,10 @@ hidden from anyone who cannot read the original, and its bytes are signed or
 refused the same way. Deleting an asset deletes its derivatives. Assets stored
 before this record existed get their facts and thumbnails from the
 `asset-backfill` tick job, a few every 30 seconds, so startup never waits for
-them.
+them. `MARINA_ASSET_DERIVATIVES` controls this: `on` (default) makes them in
+the background, `sync` makes them before the upload returns, and `off` never
+starts `sharp`, `ffmpeg` or `pdftoppm` for assets. Shutdown waits for the job
+in flight and skips queued ones; the backfill picks those up later.
 
 **In world.** The `asset` command lists, shows, searches, tags, captions and
 deletes. Anyone can read with it, subject to the asset read check. Only the

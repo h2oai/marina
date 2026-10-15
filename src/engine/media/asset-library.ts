@@ -210,20 +210,22 @@ export async function ingestAsset(
   });
   const asset = db.getAsset(id) as AssetRow;
   emit(host, "asset_created", asset, input.actor);
-  scheduleDerivatives(host, id, input.data);
+  // `sync` waits here; `on` queues and returns; `off` makes none.
+  await scheduleDerivatives(host, id, input.data);
   return { asset, deduplicated: false };
 }
 
 /**
  * For writers that store the row themselves: record sha256 + dimensions now
- * and schedule derivatives. Never throws (a failure leaves it to the backfill).
+ * and schedule derivatives. Never rejects (a failure leaves it to the
+ * backfill); settles at once unless `MARINA_ASSET_DERIVATIVES=sync`.
  */
-export function recordAssetWrite(
+export async function recordAssetWrite(
   host: AssetLibraryHost,
   id: string,
   data: Uint8Array,
   actor?: EntityId,
-): void {
+): Promise<void> {
   const db = host.db;
   if (!db) return;
   try {
@@ -235,7 +237,7 @@ export function recordAssetWrite(
       ...(probed ? { width: probed.width, height: probed.height } : {}),
     });
     emit(host, "asset_created", row, actor);
-    scheduleDerivatives(host, id, data);
+    await scheduleDerivatives(host, id, data);
   } catch (error) {
     logger.warn("media", "Recording asset facts failed", { id, error: getErrorMessage(error) });
   }
@@ -243,16 +245,46 @@ export function recordAssetWrite(
 
 // ─── Derivatives ─────────────────────────────────────────────────────────────
 
+/**
+ * `MARINA_ASSET_DERIVATIVES`: `on` (default) queues derivative work off the
+ * request path; `sync` makes it inline before the write returns (tests,
+ * scripts that exit right after); `off` makes none — no `sharp`, `ffmpeg` or
+ * `pdftoppm` is ever started (facts are still recorded). Read per call.
+ */
+export type DerivativeMode = "on" | "off" | "sync";
+export function derivativeMode(
+  env: Record<string, string | undefined> = process.env,
+): DerivativeMode {
+  const raw = env.MARINA_ASSET_DERIVATIVES?.trim().toLowerCase();
+  if (raw === "off" || raw === "false" || raw === "0") return "off";
+  if (raw === "sync") return "sync";
+  return "on";
+}
+
 let chain: Promise<void> = Promise.resolve();
 let queued = 0;
+/** Set while `drainAssetDerivatives` runs: queued jobs that have not started are skipped. */
+let closing = false;
 
-/** Queue derivative generation for an asset (one job at a time per process). */
-export function scheduleDerivatives(host: AssetLibraryHost, id: string, data?: Uint8Array): void {
-  if (queued >= DERIVATIVE_QUEUE_MAX) return; // the backfill job picks it up later
+/**
+ * Queue derivative generation for an asset (one job at a time per process).
+ * Every job is part of `chain`, which `drainAssetDerivatives` (engine
+ * shutdown) awaits, so derivative work never outlives the database it writes.
+ * The returned promise settles when the job does in `sync` mode, at once
+ * otherwise; it never rejects.
+ */
+export function scheduleDerivatives(
+  host: AssetLibraryHost,
+  id: string,
+  data?: Uint8Array,
+): Promise<void> {
+  const mode = derivativeMode();
+  if (mode === "off" || closing) return Promise.resolve();
+  if (mode === "on" && queued >= DERIVATIVE_QUEUE_MAX) return Promise.resolve(); // backfill later
   queued++;
   const job = chain.then(async () => {
     try {
-      await generateDerivatives(host, id, data);
+      if (!closing) await generateDerivatives(host, id, data);
     } catch (error) {
       logger.warn("media", "Asset derivatives failed", { id, error: getErrorMessage(error) });
     } finally {
@@ -261,11 +293,34 @@ export function scheduleDerivatives(host: AssetLibraryHost, id: string, data?: U
   });
   chain = job;
   if (host.trackBackground) void host.trackBackground(job);
+  return mode === "sync" ? job : Promise.resolve();
 }
 
-/** Settles when every queued derivative job has finished (tests, shutdown). */
+/** Derivative jobs queued or running in this process. */
+export function assetDerivativesPending(): number {
+  return queued;
+}
+
+/** Settles when every queued derivative job has finished. */
 export function derivativesIdle(): Promise<void> {
   return chain;
+}
+
+/**
+ * Stop starting derivative jobs and wait for the one in flight (engine
+ * shutdown, before the database closes). Later writes queue again.
+ */
+export async function drainAssetDerivatives(): Promise<void> {
+  closing = true;
+  try {
+    let tail: Promise<void>;
+    do {
+      tail = chain;
+      await tail;
+    } while (tail !== chain);
+  } finally {
+    closing = false;
+  }
 }
 
 export type DerivativeState = "done" | "partial" | "unavailable" | "failed" | "none" | "skipped";
@@ -578,7 +633,9 @@ export async function backfillAssets(
         ...(probed ? { width: probed.width, height: probed.height } : {}),
       });
     }
-    if (row.derivative_state === null) await generateDerivatives(host, row.id, stored.data);
+    // `off` leaves the state null so a later pass (once enabled) makes them.
+    if (row.derivative_state === null && derivativeMode() !== "off")
+      await generateDerivatives(host, row.id, stored.data);
   }
   return rows.length;
 }

@@ -10,7 +10,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,15 +19,18 @@ import { canvasReaderFor, mayReadAsset } from "../src/engine/canvas-access";
 import { runAssetCommand } from "../src/engine/commands/asset";
 import {
   backfillAssets,
+  derivativeMode,
   derivativesIdle,
+  drainAssetDerivatives,
   generateDerivatives,
   ingestAsset,
   normalizeTag,
   parseTagEdits,
   recordAssetWrite,
+  scheduleDerivatives,
 } from "../src/engine/media/asset-library";
 import { setImageBackendForTests } from "../src/engine/media/image-ops";
-import { hasTool } from "../src/engine/media/vision";
+import { hasTool, stageRequestImages } from "../src/engine/media/vision";
 import { pruneRequestImageBlobs, RETENTION_POLICIES } from "../src/engine/retention";
 import { grant as grantGate } from "../src/engine/safety-gates";
 import { handleAssetApi, handleAssetServing } from "../src/net/api/asset-api";
@@ -42,6 +45,20 @@ import { createTestEngine } from "./engine-fixture";
 import { MockConnection, stripAnsi } from "./helpers";
 
 const REMOTE = "203.0.113.9";
+
+// Derivatives inline and awaited (the preload defaults tests to `off`), so no
+// sharp/ffmpeg work is ever in flight when a test — or this file — ends.
+const priorDerivatives = process.env.MARINA_ASSET_DERIVATIVES;
+beforeAll(() => {
+  process.env.MARINA_ASSET_DERIVATIVES = "sync";
+});
+afterAll(async () => {
+  await drainAssetDerivatives();
+  if (priorDerivatives === undefined) delete process.env.MARINA_ASSET_DERIVATIVES;
+  else process.env.MARINA_ASSET_DERIVATIVES = priorDerivatives;
+  // Run sharp's native buffer finalizers while this file's realm is alive.
+  Bun.gc(true);
+});
 
 async function png(width: number, height: number, color = "#c03020"): Promise<Uint8Array> {
   return new Uint8Array(
@@ -313,6 +330,33 @@ describe("asset library — ingest, derivatives, access, command, REST", () => {
     expect(row.derivative_note).toContain("sharp");
     expect(row.placeholder).toBeNull();
     expect(fixture.db.listDerivatives([asset.id])).toEqual([]);
+  });
+
+  it("MARINA_ASSET_DERIVATIVES: off makes none, on queues, shutdown drains before the DB closes", async () => {
+    expect(derivativeMode({})).toBe("on");
+    expect(derivativeMode({ MARINA_ASSET_DERIVATIVES: "OFF" })).toBe("off");
+    expect(derivativeMode({ MARINA_ASSET_DERIVATIVES: "sync" })).toBe("sync");
+    try {
+      process.env.MARINA_ASSET_DERIVATIVES = "off";
+      const off = (await ingest(owner, await png(300, 200), "off.png")).asset;
+      expect(fixture.db.getAsset(off.id)!.width).toBe(300); // facts still recorded
+      expect(fixture.db.getAsset(off.id)!.derivative_state).toBeNull();
+      expect(await backfillAssets(fixture.engine)).toBe(1);
+      expect(fixture.db.listDerivatives([off.id])).toEqual([]);
+
+      process.env.MARINA_ASSET_DERIVATIVES = "on";
+      const on = (await ingest(owner, await png(310, 200), "on.png")).asset;
+      // Queued, not awaited by the write: shutdown is what waits for it.
+      await fixture.engine.shutdown();
+      expect(fixture.db.getAsset(on.id)!.derivative_state).toBe("done");
+      // A job queued while draining is skipped, never started on a closing DB.
+      const pending = scheduleDerivatives(fixture.engine, off.id);
+      const drained = drainAssetDerivatives();
+      await pending;
+      await drained;
+    } finally {
+      process.env.MARINA_ASSET_DERIVATIVES = "sync";
+    }
   });
 
   it("documents and other files get facts but no derivatives", async () => {
@@ -687,6 +731,25 @@ describe("asset library — ingest, derivatives, access, command, REST", () => {
     expect(events.map((e) => e.type)).toContain("asset_created");
     await derivativesIdle();
     expect(fixture.db.getAsset("own1")!.derivative_state).toBe("done");
+  });
+
+  it("staged model-API request images get the v2 record: origin request, facts, a private thumbnail", async () => {
+    const bytes = await png(400, 300);
+    const url = `data:image/png;base64,${Buffer.from(bytes).toString("base64")}`;
+    const lines = await stageRequestImages(
+      fixture.engine,
+      [{ type: "image_url", image_url: { url } }],
+      { ownerId: owner.id, name: owner.name },
+    );
+    expect(lines).toHaveLength(1);
+    const staged = fixture.db.listAssets({ limit: 5 }).find((a) => a.origin === "request")!;
+    expect(staged.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect([staged.width, staged.height]).toEqual([400, 300]);
+    expect(events.some((e) => e.type === "asset_created" && e.assetId === staged.id)).toBe(true);
+    const thumb = fixture.db.listDerivatives([staged.id])[0]!;
+    expect(
+      mayReadAsset(fixture.engine, thumb, canvasReaderFor(fixture.engine, stranger.id), "t"),
+    ).toBe(false);
   });
 
   it("the backfill fills facts and derivatives for rows written without them", async () => {
