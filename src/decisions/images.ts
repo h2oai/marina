@@ -38,10 +38,7 @@ import {
  * Jev's limits, PNG and JPEG only: the live Decisions API refuses WebP ("accepts
  * only base64 data URL images in PNG or JPEG format"), so WebP is re-encoded.
  */
-export const DECISION_IMAGE_LIMITS: ImageLimits = {
-  ...JEV_IMAGE_LIMITS,
-  formats: ["image/png", "image/jpeg"],
-};
+export const DECISION_IMAGE_LIMITS: ImageLimits = JEV_IMAGE_LIMITS;
 
 /** Jev caps the request body at 32 MiB; leave room for the text and JSON framing. */
 export const DECISION_MAX_REQUEST_IMAGE_BYTES = 30 * 1024 * 1024;
