@@ -1852,7 +1852,7 @@ Fields read here: `all`, `expected_generation`, `field`, `record_ids`, `source_i
 
 ### `pathname.startsWith("/v1/")`
 
-[Source](../../src/net/model-api/ollama.ts#L528)
+[Source](../../src/net/model-api/ollama.ts#L612)
 
 ## src/net/model-api/shared.ts
 

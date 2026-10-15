@@ -427,3 +427,61 @@ describe("OpenAI upstream passthru correlation", () => {
     expect(completed).toMatchObject({ requestId, cacheReadTokens: 896, inputTokens: 1000 });
   });
 });
+
+describe("Ollama images", () => {
+  const PNG_B64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+  it("passthru sends /api/chat and /api/generate images upstream as image_url parts", async () => {
+    process.env.OPENAI_API_KEY = "sk-openai";
+    setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-5.5" });
+    const bodies: Array<{ messages: Array<{ role: string; content: unknown }> }> = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      bodies.push((await new Request(input, init).json()) as (typeof bodies)[number]);
+      return Response.json({
+        id: "c",
+        object: "chat.completion",
+        model: "gpt-5.5",
+        choices: [
+          { index: 0, message: { role: "assistant", content: "a dot" }, finish_reason: "stop" },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      });
+    }) as typeof fetch;
+    const part = { type: "image_url", image_url: { url: `data:image/png;base64,${PNG_B64}` } };
+    const chat = await call("/api/chat", "POST", {
+      model: "marina",
+      stream: false,
+      messages: [{ role: "user", content: "what?", images: [PNG_B64] }],
+    });
+    expect(chat!.status).toBe(200);
+    const sentChat = bodies.at(-1)!.messages.at(-1)!;
+    expect(sentChat.content).toEqual([{ type: "text", text: "what?" }, part]);
+    expect("images" in sentChat).toBe(false);
+    const gen = await call("/api/generate", "POST", {
+      model: "marina",
+      stream: false,
+      prompt: "what?",
+      images: [PNG_B64],
+    });
+    expect(gen!.status).toBe(200);
+    expect(bodies.at(-1)!.messages.at(-1)!.content).toEqual([
+      { type: "text", text: "what?" },
+      part,
+    ]);
+  });
+
+  it("the agent route refuses images instead of dropping them", async () => {
+    answeringAgent("ok");
+    const resp = await call("/api/chat", "POST", {
+      model: "marina",
+      stream: false,
+      messages: [{ role: "user", content: "what?", images: [PNG_B64] }],
+    });
+    expect(resp!.status).toBe(400);
+    expect((await resp!.json()).error).toMatchObject({
+      code: "unsupported_parameter",
+      param: "messages[].images",
+    });
+  });
+});
