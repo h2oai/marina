@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import { version as MARINA_VERSION } from "../../../package.json";
 import type { Engine } from "../../engine/engine";
+import { sniffRaster, visionMaxBytes } from "../../engine/media/vision";
 import { getEnabledProfiles } from "../adapters/compat-profiles";
 import { getEndpointConfig } from "../model/model-endpoint";
 import type { OpenAIMessage } from "../model/passthru-context";
@@ -87,10 +88,78 @@ function present(value: unknown): boolean {
   return true;
 }
 
+/** Ollama sends images as bare base64 strings (no `data:` prefix). */
+function decodeOllamaImage(raw: unknown): { mime: string; data: string; bytes: number } | string {
+  if (typeof raw !== "string" || !raw.trim()) return "each image must be a base64 string";
+  const b64 = raw.replace(/^data:[^,]*;base64,/i, "").replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return "images must be base64-encoded";
+  const bytes = new Uint8Array(Buffer.from(b64, "base64"));
+  const mime = sniffRaster(bytes);
+  if (!mime) return "images must be PNG, JPEG, GIF or WebP (checked by content)";
+  const cap = visionMaxBytes();
+  if (bytes.byteLength > cap) return `an image of ${bytes.byteLength} bytes exceeds ${cap}`;
+  return { mime, data: b64, bytes: bytes.byteLength };
+}
+
+/** Why these Ollama `images` cannot be sent, or undefined when every one can. */
+export function ollamaImagesProblem(images: unknown): string | undefined {
+  if (!Array.isArray(images)) return "images must be an array of base64 strings";
+  for (const raw of images) {
+    const decoded = decodeOllamaImage(raw);
+    if (typeof decoded === "string") return decoded;
+  }
+  return undefined;
+}
+
+/** Validated Ollama `images` as OpenAI `image_url` parts (data URLs). */
+export function ollamaImageParts(
+  images: unknown,
+): Array<{ type: "image_url"; image_url: { url: string } }> {
+  if (!Array.isArray(images)) return [];
+  const parts: Array<{ type: "image_url"; image_url: { url: string } }> = [];
+  for (const raw of images) {
+    const decoded = decodeOllamaImage(raw);
+    if (typeof decoded === "string") continue;
+    parts.push({
+      type: "image_url",
+      image_url: { url: `data:${decoded.mime};base64,${decoded.data}` },
+    });
+  }
+  return parts;
+}
+
+/** An Ollama chat message in the OpenAI shape: `images` become `image_url` parts. */
+export function ollamaMessageToOpenai(message: unknown): OpenAIMessage {
+  const m = (message ?? {}) as { role?: unknown; content?: unknown; images?: unknown };
+  const role = typeof m.role === "string" ? m.role : "user";
+  const text = typeof m.content === "string" ? m.content : "";
+  const parts = present(m.images) ? ollamaImageParts(m.images) : [];
+  // A message without images passes through exactly as the caller sent it.
+  if (parts.length === 0) {
+    if (!("images" in m)) return message as OpenAIMessage;
+    const { images: _images, ...rest } = m;
+    return rest as OpenAIMessage;
+  }
+  const { images: _images, content: _content, ...rest } = m;
+  return { ...rest, role, content: [...(text ? [{ type: "text", text }] : []), ...parts] };
+}
+
+/** True when any message (or the generate body) carries images. */
+function hasOllamaImages(body: Record<string, unknown>): boolean {
+  if (present(body.images)) return true;
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  return messages.some(
+    (m) => !!m && typeof m === "object" && present((m as { images?: unknown }).images),
+  );
+}
+
 /**
  * Refuse Ollama request fields Marina cannot honor with `400
  * unsupported_parameter` instead of silently dropping them: tool schemas,
- * structured `format`, images, thinking, raw/template/suffix/context on
+ * structured `format`, images that are not base64 PNG/JPEG/GIF/WebP within
+ * `MARINA_VISION_MAX_BYTES` (valid images are translated into OpenAI
+ * `image_url` parts on the passthru route — `ollamaImageParts`), thinking,
+ * raw/template/suffix/context on
  * `/api/generate`, and any `options` key without a mapping. `think: false`
  * (Marina never returns a thinking trace) and runtime-only options pass.
  */
@@ -118,19 +187,18 @@ export function validateOllamaRequest(
       return errorJson(400, "messages must be an array", { param: "messages" });
     }
     for (const message of (body.messages as unknown[] | undefined) ?? []) {
-      if (
-        message &&
-        typeof message === "object" &&
-        present((message as { images?: unknown }).images)
-      ) {
-        return unsupportedParam(
-          "messages[].images",
-          "Image inputs are not supported on this route.",
-        );
-      }
+      if (!message || typeof message !== "object") continue;
+      const images = (message as { images?: unknown }).images;
+      if (!present(images)) continue;
+      const problem = ollamaImagesProblem(images);
+      if (problem) return unsupportedParam("messages[].images", problem);
     }
   } else {
-    for (const param of ["images", "suffix", "template", "raw", "context"]) {
+    if (present(body.images)) {
+      const problem = ollamaImagesProblem(body.images);
+      if (problem) return unsupportedParam("images", problem);
+    }
+    for (const param of ["suffix", "template", "raw", "context"]) {
       if (present(body[param])) {
         return unsupportedParam(param, `'${param}' is not supported on this route.`);
       }
@@ -188,9 +256,10 @@ export function ollamaTagList(models: ModelInfo[]): unknown {
 /** `POST /api/show` body for a model: the Modelfile/parameters/template are
  *  empty strings (there is no local weight file), `details` and `model_info`
  *  describe the route, `capabilities` advertise what the Ollama routes honor:
- *  plain completion only — `tools`, `format`, `images` and thinking are
- *  refused with `unsupported_parameter` (see `validateOllamaRequest`), so
- *  advertising them would invite requests that can only fail. */
+ *  plain completion only — `tools`, `format` and thinking are refused with
+ *  `unsupported_parameter` (see `validateOllamaRequest`), and `images` reach
+ *  the model only on the passthru route, so advertising them would invite
+ *  requests that can fail. */
 export function ollamaShowResponse(m: ModelInfo, engine: Engine): unknown {
   const upstream = describeDefaultUpstream(engine);
   return {
@@ -274,15 +343,22 @@ async function runOllamaPassthru(
     wantStream: boolean;
     messages?: OpenAIMessage[];
     prompt?: string;
+    /** `/api/generate` images (validated base64). */
+    images?: unknown;
     system?: string;
     options?: Record<string, unknown>;
   },
 ): Promise<Response> {
   const ec = getEndpointConfig(engine.db);
   const isChat = input.kind === "chat";
+  const generateUser = ollamaMessageToOpenai({
+    role: "user",
+    content: input.prompt ?? "",
+    images: input.images,
+  });
   const inbound: OpenAIMessage[] = isChat
-    ? (input.messages ?? [])
-    : [{ role: "user", content: input.prompt ?? "" }];
+    ? (input.messages ?? []).map(ollamaMessageToOpenai)
+    : [generateUser];
   const prep = await preparePassthru(
     engine,
     req,
@@ -295,10 +371,7 @@ async function runOllamaPassthru(
   // (`passthruUpstreamHints`), so the caller's prompt is the stable prefix.
   const messages: OpenAIMessage[] = isChat
     ? [...inbound]
-    : [
-        ...(input.system ? [{ role: "system", content: input.system }] : []),
-        { role: "user", content: input.prompt ?? "" },
-      ];
+    : [...(input.system ? [{ role: "system", content: input.system }] : []), generateUser];
   const options = input.options ?? {};
   const body: Record<string, unknown> = {
     model: input.model,
@@ -358,6 +431,14 @@ async function runOllamaPassthru(
   );
 }
 
+/** The agent (channel) route hears text only: images are refused, never dropped. */
+function refuseRoutedImages(param: string): Response {
+  return unsupportedParam(
+    param,
+    "Images reach the model on the passthru route only; this request is routed to Marina's agents, which hear text.",
+  );
+}
+
 export async function handleOllamaChat(
   req: Request,
   engine: Engine,
@@ -392,6 +473,7 @@ export async function handleOllamaChat(
         options: body.options && typeof body.options === "object" ? body.options : undefined,
       });
     }
+    if (hasOllamaImages(body)) return refuseRoutedImages("messages[].images");
 
     const contextParts: string[] = [];
     for (const msg of messages) {
@@ -463,10 +545,12 @@ export async function handleOllamaGenerate(
         model,
         wantStream: body.stream !== false,
         prompt: String(prompt),
+        images: body.images,
         system: typeof body.system === "string" ? body.system : undefined,
         options: body.options && typeof body.options === "object" ? body.options : undefined,
       });
     }
+    if (hasOllamaImages(body)) return refuseRoutedImages("images");
 
     const context = body.system ? `system: ${body.system}` : undefined;
     const conversationId = extractConversationId(req, body);

@@ -21,6 +21,7 @@ import {
 import { canvasDocumentData } from "../canvas-document";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
+import { type LookReply, sendLookReply } from "../media/vision";
 import { type OwnershipSubject, ownershipRefusal } from "../ownership";
 import { rankFloorRefusal } from "../rank-floor";
 import { handleCanvasIntent } from "./canvas-intent";
@@ -99,7 +100,10 @@ export function canvasCommand(deps: {
   /** Expiring read grants on private nodes (the engine's `canvasGrants`). */
   canvasGrants?: CanvasReadGrants;
   /** `canvas look` — see a node's image, document or video (src/engine/media/vision.ts). */
-  look?: (who: { entityId: EntityId; name: string }, tokens: string[]) => Promise<string>;
+  look?: (
+    who: { entityId: EntityId; name: string },
+    tokens: string[],
+  ) => Promise<string | LookReply>;
 }): CommandDef {
   return {
     category: "Canvas & Media",
@@ -129,7 +133,7 @@ export function canvasCommand(deps: {
       "canvas layout <grid|timeline|feed> <canvas_name>",
       "canvas layout <grid|timeline|feed> <name>",
       "canvas list",
-      "canvas look <node_id> [question...] [model:<provider/model>]",
+      "canvas look <node_id> [question...] [model:<provider/model>] [mode:native|describe]",
       "canvas resources [filter]",
       "canvas nodes <name>",
       "canvas post [on:<canvas>] [reply:<node_id>] <text>",
@@ -260,7 +264,11 @@ export function canvasCommand(deps: {
             ctx.send(eid, "Looking at canvas nodes is not available on this server.");
             return;
           }
-          ctx.send(eid, await deps.look({ entityId: eid, name: entity.name }, tokens.slice(1)));
+          sendLookReply(
+            ctx,
+            eid,
+            await deps.look({ entityId: eid, name: entity.name }, tokens.slice(1)),
+          );
           return;
         }
         case "connect":

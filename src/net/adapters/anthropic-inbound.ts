@@ -16,11 +16,16 @@ type Block = {
   input?: unknown;
   tool_use_id?: string;
   content?: unknown;
+  source?: { type?: string; media_type?: string; data?: string; url?: string };
 };
+
+type OpenAIContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
 
 type OpenAIMessage = {
   role: string;
-  content: string | null;
+  content: string | OpenAIContentPart[] | null;
   tool_calls?: Array<{
     id: string;
     type: "function";
@@ -49,22 +54,92 @@ export function anthropicSystemToText(system: unknown): string {
     .join("\n\n");
 }
 
-function blockText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((item) => {
-      if (typeof item === "string") return item;
-      const block = item as Block;
-      return block?.type === "text" ? (block.text ?? "") : "";
-    })
-    .filter(Boolean)
-    .join("\n\n");
+/**
+ * A content block this route cannot carry. The bridge refuses it with a 400
+ * naming the block (`messages[i].content[j]`) rather than dropping it.
+ */
+export class AnthropicTranslationError extends Error {
+  constructor(
+    readonly param: string,
+    message: string,
+  ) {
+    super(`${param}: ${message}`);
+    this.name = "AnthropicTranslationError";
+  }
 }
 
+/** Placeholder tool text when a tool result carries only images (pi-ai's convention). */
+const TOOL_IMAGE_PLACEHOLDER = "(see attached image)";
+/** Lead text of the user message that carries a tool result's images. */
+const TOOL_IMAGES_LEAD = "Attached image(s) from tool result:";
+
+/**
+ * An Anthropic `image` block as an OpenAI `image_url` part: a base64 source
+ * becomes a `data:` URL, a url source is passed as is. Any other source kind
+ * (a Files API `file` id, ...) is refused.
+ */
+function imagePart(block: Block, param: string): OpenAIContentPart {
+  const src = block.source;
+  if (src?.type === "base64" && typeof src.data === "string" && src.data) {
+    const mediaType = typeof src.media_type === "string" ? src.media_type : "";
+    if (!/^image\/(png|jpeg|gif|webp)$/i.test(mediaType)) {
+      throw new AnthropicTranslationError(
+        param,
+        `image media_type "${mediaType}" is not supported (png, jpeg, gif or webp)`,
+      );
+    }
+    return { type: "image_url", image_url: { url: `data:${mediaType};base64,${src.data}` } };
+  }
+  if (src?.type === "url" && typeof src.url === "string" && /^https?:\/\//i.test(src.url)) {
+    return { type: "image_url", image_url: { url: src.url } };
+  }
+  throw new AnthropicTranslationError(
+    param,
+    `image source type "${src?.type ?? "missing"}" is not supported on this route (use base64 or an http(s) url)`,
+  );
+}
+
+function refuseDocument(param: string): never {
+  throw new AnthropicTranslationError(
+    param,
+    "document blocks are not supported on this route; send PDF pages as images, or store the file and read it with `canvas look`",
+  );
+}
+
+/** A tool_result's content: its text and its images (as `image_url` parts). */
+function toolResultContent(
+  content: unknown,
+  param: string,
+): { text: string; images: OpenAIContentPart[] } {
+  if (typeof content === "string") return { text: content, images: [] };
+  if (!Array.isArray(content)) return { text: "", images: [] };
+  const texts: string[] = [];
+  const images: OpenAIContentPart[] = [];
+  for (const [j, item] of content.entries()) {
+    if (typeof item === "string") {
+      if (item) texts.push(item);
+      continue;
+    }
+    const block = (item ?? {}) as Block;
+    if (block.type === "text" && block.text) texts.push(block.text);
+    else if (block.type === "image") images.push(imagePart(block, `${param}.content[${j}]`));
+    else if (block.type === "document") refuseDocument(`${param}.content[${j}]`);
+  }
+  return { text: texts.join("\n\n"), images };
+}
+
+/**
+ * Anthropic messages -> OpenAI chat messages. Text, tool calls and tool
+ * results translate one to one; `image` blocks become `image_url` parts (the
+ * user message's content turns into a parts array); a tool result's images,
+ * which an OpenAI `tool` message cannot carry, follow it in a user message
+ * (`Attached image(s) from tool result:` + the parts) merged with that turn's
+ * own user content. `document` blocks and image sources other than base64 or
+ * an http(s) url throw `AnthropicTranslationError` — never a silent drop.
+ */
 export function translateMessages(messages: unknown[]): OpenAIMessage[] {
   const result: OpenAIMessage[] = [];
-  for (const raw of messages) {
+  for (const [i, raw] of messages.entries()) {
     const message = (raw ?? {}) as { role?: string; content?: unknown };
     const role = message.role === "assistant" ? "assistant" : "user";
     if (typeof message.content === "string") {
@@ -76,11 +151,23 @@ export function translateMessages(messages: unknown[]): OpenAIMessage[] {
       continue;
     }
     const texts: string[] = [];
+    const parts: OpenAIContentPart[] = [];
+    const toolImages: OpenAIContentPart[] = [];
     const calls: NonNullable<OpenAIMessage["tool_calls"]> = [];
     const toolResults: OpenAIMessage[] = [];
-    for (const item of message.content) {
+    for (const [j, item] of message.content.entries()) {
       const block = (item ?? {}) as Block;
-      if (block.type === "text") texts.push(block.text ?? "");
+      const param = `messages[${i}].content[${j}]`;
+      if (block.type === "text") {
+        texts.push(block.text ?? "");
+        parts.push({ type: "text", text: block.text ?? "" });
+      }
+      if (block.type === "image") {
+        if (role === "assistant")
+          throw new AnthropicTranslationError(param, "assistant messages cannot carry images");
+        parts.push(imagePart(block, param));
+      }
+      if (block.type === "document") refuseDocument(param);
       if (block.type === "tool_use") {
         calls.push({
           id: block.id ?? id("toolu"),
@@ -89,10 +176,12 @@ export function translateMessages(messages: unknown[]): OpenAIMessage[] {
         });
       }
       if (block.type === "tool_result") {
+        const out = toolResultContent(block.content, param);
+        toolImages.push(...out.images);
         toolResults.push({
           role: "tool",
           tool_call_id: block.tool_use_id ?? "",
-          content: blockText(block.content),
+          content: out.text || (out.images.length ? TOOL_IMAGE_PLACEHOLDER : ""),
         });
       }
     }
@@ -103,7 +192,18 @@ export function translateMessages(messages: unknown[]): OpenAIMessage[] {
     } else {
       result.push(...toolResults);
       const text = texts.join("\n\n");
-      if (text || toolResults.length === 0) result.push({ role: "user", content: text });
+      const own = parts.filter((p) => p.type === "image_url" || p.text);
+      if (toolImages.length > 0) {
+        // Tool images first (they answer the calls), then this turn's own content.
+        result.push({
+          role: "user",
+          content: [{ type: "text", text: TOOL_IMAGES_LEAD }, ...toolImages, ...own],
+        });
+      } else if (own.some((p) => p.type === "image_url")) {
+        result.push({ role: "user", content: own });
+      } else if (text || toolResults.length === 0) {
+        result.push({ role: "user", content: text });
+      }
     }
   }
   return result;
@@ -259,7 +359,13 @@ export async function handleAnthropicMessages(
     return errorResponse(400, "messages must contain at least one message");
   }
   const model = typeof raw.model === "string" ? raw.model : "marina";
-  const body = anthropicRequestToOpenai(raw);
+  let body: Record<string, unknown>;
+  try {
+    body = anthropicRequestToOpenai(raw);
+  } catch (e) {
+    if (e instanceof AnthropicTranslationError) return errorResponse(400, e.message);
+    throw e;
+  }
   const internal = await deps.runInternal(body, { stream: raw.stream === true, model });
   if (!internal.ok) {
     let message = internal.statusText || "Upstream request failed";

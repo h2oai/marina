@@ -6,7 +6,7 @@ import type { CommandDef, EntityId, RoomContext } from "../../types";
 import { canvasReaderFor, mayReadCanvasRow } from "../canvas-access";
 import type { Engine } from "../engine";
 import { defaultImageModel } from "../media/providers/image-registry";
-import { lookAndReply } from "../media/vision";
+import { lookReply, sendLookReply } from "../media/vision";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 
 interface GenerateOptions {
@@ -40,9 +40,10 @@ export function imageCommand(engine: Engine): CommandDef {
       }
       if (sub === "describe" || sub === "look") {
         const who = ctx.findEntity(input.entity);
-        ctx.send(
+        sendLookReply(
+          ctx,
           input.entity,
-          await lookAndReply(
+          await lookReply(
             engine,
             { entityId: input.entity, name: who?.name ?? String(input.entity) },
             input.tokens.slice(1),

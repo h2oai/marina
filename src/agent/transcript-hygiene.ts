@@ -70,3 +70,83 @@ export function dropOldThinking(messages: AgentMessage[]): AgentMessage[] {
   });
   return changed ? result : messages;
 }
+
+// ─── Image bound ────────────────────────────────────────────────────────────
+//
+// A native look puts an image (base64, up to a few MB) in a tool result. Left
+// alone, every look would ride on every later request and accumulate without
+// limit, so only the most recent images stay; older ones become a one-line
+// placeholder naming the source, which `marina_see` reopens on demand. The
+// journal and compaction archives never store image bytes either
+// (`src/agent/durable-memory.ts`).
+
+/** Default number of images kept in an agent's live transcript. */
+export const DEFAULT_TRANSCRIPT_IMAGES = 4;
+
+/** `MARINA_AGENT_VISION_MAX_IMAGES` (≥ 1; unset/invalid = 4). */
+export function transcriptImageLimit(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const n = Number(env.MARINA_AGENT_VISION_MAX_IMAGES);
+  return Number.isInteger(n) && n >= 1 ? Math.min(n, 32) : DEFAULT_TRANSCRIPT_IMAGES;
+}
+
+interface ImageRef {
+  ref?: unknown;
+  width?: unknown;
+  height?: unknown;
+}
+
+/** The text an image is replaced with once it leaves the live transcript. */
+export function imagePlaceholder(ref?: ImageRef): string {
+  const name = typeof ref?.ref === "string" && ref.ref ? ref.ref : "image";
+  const dims =
+    typeof ref?.width === "number" && typeof ref?.height === "number" && ref.width > 0
+      ? ` ${ref.width}x${ref.height}`
+      : "";
+  return `[${name}${dims} — no longer in view; call marina_see ${name} to view it again]`;
+}
+
+/**
+ * Keep the newest `keep` images in tool results and user messages; replace
+ * every older one with {@link imagePlaceholder}. Returns the SAME array when
+ * nothing changed, so an unchanged prefix stays cache-stable.
+ */
+export function boundTranscriptImages(messages: AgentMessage[], keep: number): AgentMessage[] {
+  let budget = Math.max(0, keep);
+  let out: AgentMessage[] | undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i] as AgentMessage & { content?: unknown; details?: unknown };
+    if (message.role !== "toolResult" && message.role !== "user") continue;
+    if (!Array.isArray(message.content)) continue;
+    const blocks = message.content as ContentBlock[];
+    const count = blocks.filter((block) => block.type === "image").length;
+    if (count === 0) continue;
+    if (count <= budget) {
+      budget -= count;
+      continue;
+    }
+    const details = message.details as { images?: unknown } | undefined;
+    const refs = Array.isArray(details?.images) ? (details.images as ImageRef[]) : [];
+    // Within one message the LAST images are the newest: keep those.
+    let index = count;
+    const content: ContentBlock[] = [];
+    for (let j = blocks.length - 1; j >= 0; j--) {
+      const block = blocks[j]!;
+      if (block.type !== "image") {
+        content.unshift(block);
+        continue;
+      }
+      index -= 1;
+      if (budget > 0) {
+        budget -= 1;
+        content.unshift(block);
+      } else {
+        content.unshift({ type: "text", text: imagePlaceholder(refs[index]) } as ContentBlock);
+      }
+    }
+    out ??= messages.slice();
+    out[i] = { ...message, content } as AgentMessage;
+  }
+  return out ?? messages;
+}

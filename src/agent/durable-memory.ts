@@ -18,6 +18,24 @@ import { type OutstandingRequest, updateRequestLedger } from "./outstanding-requ
  */
 export const CONTINUITY_JOURNAL_SESSION_PREFIX = "journal:";
 
+/**
+ * JSON replacer for the journal and archives: an image part (base64 bytes from
+ * a native look) is recorded as a short text marker, never as its bytes. The
+ * source stays reopenable through the look that produced it.
+ */
+export function withoutImageBytes(_key: string, value: unknown): unknown {
+  if (
+    value &&
+    typeof value === "object" &&
+    (value as { type?: unknown }).type === "image" &&
+    typeof (value as { data?: unknown }).data === "string"
+  ) {
+    const mime = (value as { mimeType?: unknown }).mimeType;
+    return { type: "text", text: `[image ${typeof mime === "string" ? mime : ""} not recorded]` };
+  }
+  return value;
+}
+
 type Archive = { source_ids: string[]; manifest_source_id?: string; sha256: string };
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const references = (data: Record<string, unknown> | undefined) => {
@@ -150,7 +168,7 @@ export class DurableResidentMemory {
   }
   archive(messages: unknown[], summary: string, signal?: AbortSignal): Promise<void> {
     // Snapshot before entering the asynchronous queue: callers may keep appending.
-    const originals = JSON.stringify(messages),
+    const originals = JSON.stringify(messages, withoutImageBytes),
       count = messages.length;
     return this.serialize(() => this.persist(originals, count, summary, "archive", signal), signal);
   }
@@ -159,7 +177,7 @@ export class DurableResidentMemory {
     signal?: AbortSignal,
     completedRequests: readonly string[] = [],
   ): Promise<void> {
-    const original = JSON.stringify([message]);
+    const original = JSON.stringify([message], withoutImageBytes);
     const completed = [...completedRequests];
     return this.serialize(
       () => this.persist(original, 1, "", "journal", signal, completed),

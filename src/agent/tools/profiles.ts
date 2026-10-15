@@ -178,6 +178,14 @@ export function createToolSearchTool(
   };
 }
 
+/** Toolset construction options. */
+export interface ToolsetOptions {
+  /** How loaded deferred schemas reach the agent's live tool list. */
+  onLoadTools?: (tools: AgentTool[]) => void;
+  /** Media generation this installation serves (`mediaGenerationAvailable`). */
+  mediaGeneration?: { image?: boolean; video?: boolean };
+}
+
 export interface ProfileToolset {
   /** Schemas sent on every request. */
   resident: AgentTool[];
@@ -390,14 +398,18 @@ export function createProfileToolset(
   platformMemory: PlatformMemoryBackend,
   profile: ToolProfile,
   supports: AgentSupports = { text: true },
-  options?: { onLoadTools?: (tools: AgentTool[]) => void },
+  options?: ToolsetOptions,
 ): ProfileToolset {
+  // Generation is a provider capability: offered when an image / video
+  // provider is configured, or when the agent's config asks for it — never
+  // tied to whether the agent's own model reads or makes images.
+  const generation = options?.mediaGeneration;
   const all = applyStrictToolSchemas(
     applyToolReplayPolicy(
       applyToolExecutionModes(
         createAllTools(ctx, platformMemory).filter((tool) => {
-          if (!supports.image && tool.name === "marina_generate_image") return false;
-          if (!supports.video && tool.name === "marina_generate_video") return false;
+          if (tool.name === "marina_generate_image") return !!(supports.image || generation?.image);
+          if (tool.name === "marina_generate_video") return !!(supports.video || generation?.video);
           return true;
         }),
       ),
@@ -441,7 +453,7 @@ export function createScopedTools(
   platformMemory: PlatformMemoryBackend,
   profile: ToolProfile,
   supports: AgentSupports = { text: true },
-  options?: { onLoadTools?: (tools: AgentTool[]) => void },
+  options?: ToolsetOptions,
 ): AgentTool[] {
   return createProfileToolset(ctx, platformMemory, profile, supports, options).resident;
 }

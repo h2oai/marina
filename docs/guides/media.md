@@ -100,15 +100,18 @@ Omit `--canvas` and the result publishes to your own canvas.
 
 ### 2. An agent generates it
 
-An agent gets the `marina_generate_image` / `marina_generate_video` tools **only
-if its model is image/video-capable** — the tools are gated by the agent's
-`supports` flags, which are inferred from the model at spawn. So:
+Generation is a **provider** capability, not a property of the agent's model.
+Any agent, on any model, is offered `marina_generate_image` when an image
+provider is configured (a key for `openai`, `stability`, `google` or `flux`,
+`A1111_BASE_URL`, or a `<PROVIDER>_IMAGE_BASE_URL` endpoint) and
+`marina_generate_video` when a video provider key is set (`runway`, `google`,
+`luma`). Both are deferred tools (find them with `marina_tool_search`) and run
+under the same per-entity job caps and the daily spend cap as the command.
 
-- Spawn the agent on a media model (e.g. `openai/gpt-image-2` for image) and it
-  gains the matching generate tool. The **Launch** panel shows a hint under the
-  model picker telling you whether the selected model can generate.
-- Or, regardless of model, an agent can run the `image generate` / `video
-  generate` **command** via its `marina_command` escape hatch.
+- An agent config that sets `supports.image` / `supports.video` explicitly is
+  still offered the tool even when no provider is detected at spawn.
+- Without either, an agent can still run the `image generate` / `video
+  generate` **command** through `marina_command`; it reports what is missing.
 
 ### 3. HTTP (external integrations)
 
@@ -188,7 +191,42 @@ video describe <node|asset|url> [question...]
 ```
 
 Agents have the same thing as the `marina_see` tool (a deferred tool; find it
-with `marina_tool_search`). What the model receives depends on the source:
+with `marina_tool_search`).
+
+**Agents see with their own model.** When the agent's model accepts image
+input, `marina_see` returns the image itself in the tool result, with a short
+header (source reference, dimensions, type, the question) that marks the
+content as untrusted. No second model is called. A model that cannot read
+images gets the text description instead, exactly as before.
+`MARINA_AGENT_VISION` chooses:
+
+| Value | Behaviour |
+| --- | --- |
+| `auto` (default) | native when the model accepts images, otherwise describe |
+| `native` | always return the image (the operator asserts the model reads it) |
+| `describe` | always ask a vision model for text |
+
+Image input is read from the model registry and the provider catalogs; for
+`marina/default` it is the upstream the default route uses at the moment of
+the look. An agent config can set `supports.imageInput` to `true` or `false`
+explicitly. The command form is `mode:native` on `canvas look`,
+`image describe` and `video describe`, and `"mode":"native"` on `code see`.
+A native view uses the same access checks and rate limit as a description.
+
+Native images are prepared for model input: rotated upright, long side at most
+1568 px, at most 1.6 megapixels and 3.75 MB, as PNG, JPEG or WebP (an animated
+GIF sends its first frame). A PDF returns its first pages as images plus the
+extracted text, a video up to 4 keyframes, a text node its text. When an image
+cannot be prepared (for example it needs resizing and `sharp` is missing), the
+look falls back to a description and says why.
+
+Only the newest images stay in the agent's live transcript
+(`MARINA_AGENT_VISION_MAX_IMAGES`, default 4). Older ones are replaced by a
+one-line placeholder such as `[asset:<id> 1024x768 — no longer in view; call
+marina_see asset:<id> to view it again]`. The continuity journal and
+compaction archives never store image bytes.
+
+What a description is built from depends on the source:
 
 | Source | Sent to the model |
 | --- | --- |

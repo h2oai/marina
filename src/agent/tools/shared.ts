@@ -9,6 +9,7 @@
 // (`../acknowledgement`).
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { stripAnsi } from "../../net/ansi";
 import type { MarinaClient } from "../../sdk/client";
 import type { Perception } from "../../types";
@@ -22,6 +23,59 @@ import { toolResultTrust } from "../tool-policy";
 export interface ToolContext {
   client: MarinaClient;
   gameState: GameStateManager;
+  /**
+   * How a look reaches the agent: `native` returns the image to its own model,
+   * `describe` asks a second model for text (`src/agent/vision-input.ts`).
+   * Absent = `describe`.
+   */
+  visionMode?: () => "native" | "describe";
+}
+
+// ─── Images in tool results ─────────────────────────────────────────────────
+
+/** At most this many images ride on one tool result. */
+export const TOOL_RESULT_MAX_IMAGES = 4;
+
+/** What the transcript keeps about each image, for a later text placeholder. */
+export interface ToolResultImageRef {
+  ref: string;
+  width: number;
+  height: number;
+  mime: string;
+}
+
+const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+
+/**
+ * Images a native look delivered (`data.images` on a `vision` perception —
+ * see `src/engine/media/vision.ts`), as pi-ai image parts plus their refs.
+ * Anything malformed is skipped.
+ */
+export function perceptionImages(perceptions: Perception[]): {
+  parts: ImageContent[];
+  refs: ToolResultImageRef[];
+} {
+  const parts: ImageContent[] = [];
+  const refs: ToolResultImageRef[] = [];
+  for (const p of perceptions) {
+    const images = p.data?.images;
+    if (!Array.isArray(images)) continue;
+    for (const raw of images) {
+      if (parts.length >= TOOL_RESULT_MAX_IMAGES) break;
+      const img = raw as Partial<Record<"ref" | "mime" | "data", unknown>> &
+        Partial<Record<"width" | "height", unknown>>;
+      if (typeof img.data !== "string" || !img.data || typeof img.mime !== "string") continue;
+      if (!IMAGE_MIMES.has(img.mime)) continue;
+      parts.push({ type: "image", data: img.data, mimeType: img.mime });
+      refs.push({
+        ref: typeof img.ref === "string" ? img.ref : "image",
+        width: typeof img.width === "number" ? img.width : 0,
+        height: typeof img.height === "number" ? img.height : 0,
+        mime: img.mime,
+      });
+    }
+  }
+  return { parts, refs };
 }
 
 // ─── Perception Formatting ──────────────────────────────────────────────────
@@ -74,7 +128,10 @@ export async function execCommand(
   ctx: ToolContext,
   command: string,
   signal?: AbortSignal,
-): Promise<{ content: [{ type: "text"; text: string }]; details: Record<string, unknown> }> {
+): Promise<{
+  content: [TextContent, ...ImageContent[]];
+  details: Record<string, unknown>;
+}> {
   if (!ctx.client.isConnected()) {
     throw new Error("Not connected to Marina.");
   }
@@ -91,10 +148,15 @@ export async function execCommand(
   const refusal = handlerRefusal(perceptions);
   if (refusal) throw new Error(refusal);
 
+  const images = perceptionImages(perceptions);
   return {
-    content: [{ type: "text", text: renderCommandResult(command, formatPerceptions(perceptions)) }],
+    content: [
+      { type: "text", text: renderCommandResult(command, formatPerceptions(perceptions)) },
+      ...images.parts,
+    ],
     details: {
       command,
+      ...(images.refs.length > 0 ? { images: images.refs } : {}),
       perceptionCount: perceptions.length,
       deliveries: perceptions.flatMap((p) => (p.data.delivery ? [p.data.delivery] : [])),
       contextBlocks: perceptions.flatMap((p) => {

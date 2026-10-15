@@ -1169,6 +1169,12 @@
 # Byte cap on an image, PDF, video or text a vision call will load (max 100 MB). Default 20 MB.
 # MARINA_VISION_MAX_BYTES=20971520
 
+# How agents see images: `native` returns the image itself in the tool result for the agent's own model; `describe` asks a vision model for a text description (MARINA_VISION_MODEL); `auto` (default) is native when the agent's model accepts image input (for marina/default: its current upstream) and describe otherwise.
+# MARINA_AGENT_VISION=auto
+
+# Images kept in an agent's live transcript after native looks (1-32, default 4); older ones become a one-line placeholder the agent can reopen with marina_see. Image bytes are never journaled.
+# MARINA_AGENT_VISION_MAX_IMAGES=4
+
 # Comma-separated drop-in compatibility profiles whose model-id aliases appear in /v1/models (`openai` exposes `assistant`). Default all; `none` disables.
 # MARINA_COMPAT=openai
 

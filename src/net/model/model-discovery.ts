@@ -15,9 +15,13 @@ import { HOSTED_PROVIDERS, hostedModelsUrl, isHostedProvider } from "./hosted-pr
 
 export interface ModelCapabilities {
   text?: boolean;
+  /** Generates images (an image-generation model). */
   image?: boolean;
+  /** Generates video. */
   video?: boolean;
   audio?: boolean;
+  /** Accepts images as INPUT (vision) — distinct from generating them. */
+  imageInput?: boolean;
 }
 
 export interface ModelEntry {
@@ -376,7 +380,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   },
   {
     test: (entry) => /^openai\/gpt-4o(-mini)?-vision/i.test(entry.value),
-    capabilities: { text: true, image: true },
+    capabilities: { text: true, imageInput: true },
   },
   {
     test: (entry) => /^openai\/gpt-4o-mini-audio/i.test(entry.value),
@@ -436,9 +440,13 @@ function applyCapabilityHints(entry: ModelEntry): void {
 
 export interface CapabilitySnapshot {
   text: boolean;
+  /** Generates images. */
   image?: boolean;
+  /** Generates video. */
   video?: boolean;
   audio?: boolean;
+  /** Reads images as input (vision). */
+  imageInput?: boolean;
 }
 
 /** Infer coarse modality support for a model identifier. */
@@ -452,6 +460,7 @@ export function inferModelCapabilities(modelId: string): CapabilitySnapshot {
     image: caps.image ? true : undefined,
     video: caps.video ? true : undefined,
     audio: caps.audio ? true : undefined,
+    imageInput: caps.imageInput ? true : undefined,
   };
 }
 

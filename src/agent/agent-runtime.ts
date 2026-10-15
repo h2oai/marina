@@ -23,6 +23,7 @@ import {
   positiveNumberFromEnv,
   reflectorIdleStopMs,
 } from "../engine/constants";
+import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { classifyToolError, softFailureClass } from "../learning/tool-errors";
 import {
@@ -70,14 +71,18 @@ const logger = new Logger();
 
 const KNOWN_PROVIDERS = new Set<string>([...MODEL_DISCOVERY_PROVIDERS, "marina"]);
 const DEFAULT_SUPPORTS: AgentSupports = { text: true };
-type SupportsLike = Partial<Record<"text" | "image" | "video", unknown>> | undefined;
+type SupportsLike = Partial<Record<"text" | "image" | "video" | "imageInput", unknown>> | undefined;
 
 function normalizeSupports(supports: SupportsLike): AgentSupports {
   const normalized: AgentSupports = { text: supports?.text !== false };
   if (supports?.image === true) normalized.image = true;
   if (supports?.video === true) normalized.video = true;
+  if (typeof supports?.imageInput === "boolean") normalized.imageInput = supports.imageInput;
   return normalized;
 }
+
+/** Which media generation this installation offers (set by the engine; none by default). */
+export type MediaGenerationProbe = () => { image: boolean; video: boolean };
 
 function supportsFromModel(model: string | undefined): AgentSupports {
   if (!model) return DEFAULT_SUPPORTS;
@@ -460,6 +465,7 @@ export class AgentRuntime {
   private spawnedByOf = new Map<string, string>();
   private readonly spendLimits: SpendLimits;
   private readonly toolProbeComplete?: ProbeComplete;
+  private mediaGenerationProbe?: MediaGenerationProbe;
   /** Spawn-time tool-calling probes still running (tests await them). */
   private readonly toolProbes = new Set<Promise<void>>();
 
@@ -477,6 +483,28 @@ export class AgentRuntime {
     this.wsPort = opts.wsPort ?? 3300;
     this.onEvent = opts.onEvent;
     this.spendLimits = opts.spendLimits ?? spendLimitsFromEnv();
+  }
+
+  /**
+   * Media generation is a PROVIDER capability: an agent on any model is
+   * offered the generate tools when this reports an image / video provider.
+   */
+  setMediaGenerationProbe(probe: MediaGenerationProbe | undefined): void {
+    this.mediaGenerationProbe = probe;
+  }
+
+  private mediaGenerationFor(): { image?: boolean; video?: boolean } | undefined {
+    try {
+      const found = this.mediaGenerationProbe?.();
+      if (!found) return undefined;
+      return {
+        ...(found.image ? { image: true } : {}),
+        ...(found.video ? { video: true } : {}),
+      };
+    } catch (error) {
+      logger.warn("agents", `media generation probe failed: ${getErrorMessage(error)}`);
+      return undefined;
+    }
   }
 
   /** The spend ceilings this runtime enforces. */
@@ -725,6 +753,7 @@ export class AgentRuntime {
         model: resolvedModel,
         crewResponder: config.crewResponder ?? inferCrewResponder(config.role),
         supports,
+        mediaGeneration: config.mediaGeneration ?? this.mediaGenerationFor(),
         ...((config.contextWindow ?? detectedContextWindow)
           ? { contextWindow: config.contextWindow ?? detectedContextWindow }
           : {}),

@@ -64,7 +64,7 @@ export function parseHostedModels(provider: HostedProvider, body: unknown): Mode
             : m.id,
       ...(context && Number.isInteger(context) ? { contextLength: context } : {}),
       ...(typeof m.description === "string" ? { description: m.description } : {}),
-      capabilities: { text: true, ...(inputModes.includes("image") ? { image: true } : {}) },
+      capabilities: { text: true, ...(inputModes.includes("image") ? { imageInput: true } : {}) },
       ...(pricing ? { pricing } : {}),
     });
   }

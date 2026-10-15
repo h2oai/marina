@@ -6,8 +6,18 @@ import type { PromptMetrics, TraceLink, TraceParent } from "./execution-trace";
 
 export interface AgentSupports {
   text: boolean;
+  /**
+   * Explicitly offer image GENERATION tools. Generation is otherwise offered
+   * whenever an image provider is configured (`AgentConfig.mediaGeneration`).
+   */
   image?: boolean;
+  /** Explicitly offer video generation tools (see `image`). */
   video?: boolean;
+  /**
+   * Explicit image INPUT support (vision). Unset = inferred from the model at
+   * call time (`src/agent/vision-input.ts`); `false` forces text descriptions.
+   */
+  imageInput?: boolean;
 }
 
 // ─── Agent Configuration ────────────────────────────────────────────────────
@@ -186,6 +196,12 @@ export interface AgentConfig {
    * { text: true } when unknown.
    */
   supports?: AgentSupports;
+  /**
+   * Media generation available on this installation (an image / video
+   * provider is configured), computed at spawn and never persisted. Offers
+   * `marina_generate_image` / `marina_generate_video` to any model.
+   */
+  mediaGeneration?: { image?: boolean; video?: boolean };
   /**
    * Override the model's context window (tokens, prompt+output) the compactor
    * budgets against. Normally autodetected at spawn for local models (see

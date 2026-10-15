@@ -49,5 +49,5 @@ export async function prepareHostedModel(
   // Running agents own their operator/adaptive context limits after startup.
   if (options.updateContext !== false && info?.contextLength)
     model.contextWindow = info.contextLength;
-  if (info?.capabilities?.image) model.input = ["text", "image"];
+  if (info?.capabilities?.imageInput) model.input = ["text", "image"];
 }
