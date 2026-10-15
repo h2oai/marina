@@ -168,9 +168,10 @@ export async function fetchLibraryPage(
   filters: LibraryFilters,
   cursor?: string | null,
   facets = false,
+  limit?: number,
 ): Promise<LibraryPage> {
   const res = await authFetch(
-    `${apiOrigin()}/api/assets?${libraryQueryString(filters, { cursor, facets })}`,
+    `${apiOrigin()}/api/assets?${libraryQueryString(filters, { cursor, facets, limit })}`,
   );
   if (!res.ok) throw await readError(res);
   return (await res.json()) as LibraryPage;

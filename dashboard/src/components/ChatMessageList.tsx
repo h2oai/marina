@@ -3,8 +3,10 @@
 
 import { Check, Copy } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
-import type { ChatMessage, StoredPerception } from "../hooks/use-chat-state";
+import { useChatMedia } from "../hooks/use-chat-media";
+import { type ChatMessage, type StoredPerception, useChatState } from "../hooks/use-chat-state";
 import { useFeedState } from "../hooks/use-feed-state";
+import { type ChatMediaEntry, deriveChatMedia, mergeByTimestamp } from "../lib/chat-media";
 import { linkifyHtml } from "../lib/linkify";
 import { parseSpeech } from "../lib/perception";
 import { sanitizeChatHtml } from "../lib/sanitize";
@@ -17,16 +19,8 @@ import {
 import { CanvasNodeEmbed } from "./CanvasNodeEmbed";
 import { createCodeRenderers } from "./ChatCodeRenderers";
 import { renderChatText as renderTextContent } from "./chat-render-text";
-
-interface CanvasTimelineItem {
-  id: number | string;
-  timestamp: number;
-  canvasId: string;
-  nodeId: string;
-  summary?: string;
-  actor?: string | null;
-  kind: string;
-}
+import { ChatMediaCard, viewableForEntry } from "./media/ChatMediaCard";
+import type { ViewableAsset } from "./media/MediaViewer";
 
 type TimelineItem =
   | {
@@ -36,12 +30,7 @@ type TimelineItem =
       message: ChatMessage;
       index: number;
     }
-  | {
-      type: "canvas";
-      key: string;
-      timestamp: number;
-      event: CanvasTimelineItem;
-    };
+  | { type: "media"; key: string; timestamp: number; entry: ChatMediaEntry };
 
 export function ChatMessageList({
   messages,
@@ -58,36 +47,32 @@ export function ChatMessageList({
 }) {
   const outputRef = useRef<HTMLDivElement>(null);
   const feedEvents = useFeedState((s) => s.events);
-  const canvasTimeline = useMemo<CanvasTimelineItem[]>(() => {
-    const cutoff = Date.now() - 30 * 60 * 1000;
-    const seen = new Set<string>();
-    const entries: CanvasTimelineItem[] = [];
-    for (const event of feedEvents) {
-      if (event.timestamp < cutoff) continue;
-      const payload = event.payload as Record<string, unknown> | null;
-      if (!payload) continue;
-      const canvasId = payload.canvasId;
-      const nodeId = payload.nodeId;
-      if (!canvasId || !nodeId) continue;
-      const entry: CanvasTimelineItem = {
-        id: event.id,
-        timestamp: event.timestamp,
-        canvasId: String(canvasId),
-        nodeId: String(nodeId),
-        summary: event.summary,
-        actor: event.entity ?? null,
-        kind: event.kind,
-      };
-      const dedupeKey = `${entry.canvasId}:${entry.nodeId}:${entry.timestamp}`;
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-      entries.push(entry);
+  const viewer = useChatState((s) => (s.loggedIn ? s.entityName : null));
+  const rich = viewMode === "rich";
+  // Persisted media (the viewer's own assets and jobs, read under its
+  // credential) plus a short-lived live fallback for other canvas activity.
+  const media = useChatMedia(viewer, rich);
+  const mediaEntries = useMemo(
+    () =>
+      rich ? deriveChatMedia({ assets: media.assets, jobs: media.jobs, feed: feedEvents }) : [],
+    [rich, media.assets, media.jobs, feedEvents],
+  );
+  // The conversation's openable media, in transcript order: ←/→ in the viewer.
+  const { collection, collectionIndex } = useMemo(() => {
+    const list: ViewableAsset[] = [];
+    const indexOf = new Map<string, number>();
+    for (const entry of mediaEntries) {
+      if (entry.type === "live") continue;
+      const v = viewableForEntry(entry);
+      if (!v) continue;
+      indexOf.set(entry.key, list.length);
+      list.push(v);
     }
-    return entries.sort((a, b) => a.timestamp - b.timestamp).slice(-40);
-  }, [feedEvents]);
+    return { collection: list, collectionIndex: indexOf };
+  }, [mediaEntries]);
 
   const timelineItems = useMemo<TimelineItem[]>(() => {
-    if (viewMode !== "rich") return [];
+    if (!rich) return [];
     const chatItems: TimelineItem[] = messages.map((m, idx) => ({
       type: "chat",
       key: `chat-${idx}-${m.timestamp ?? idx}`,
@@ -95,20 +80,22 @@ export function ChatMessageList({
       message: m,
       index: idx,
     }));
-    const canvasItems: TimelineItem[] = canvasTimeline.map((event) => ({
-      type: "canvas",
-      key: `canvas-${event.id}-${event.nodeId}`,
-      timestamp: event.timestamp,
-      event,
+    const mediaItems: TimelineItem[] = mediaEntries.map((entry) => ({
+      type: "media",
+      key: entry.key,
+      timestamp: entry.timestamp,
+      entry,
     }));
-    return [...chatItems, ...canvasItems].sort((a, b) => a.timestamp - b.timestamp);
-  }, [messages, canvasTimeline, viewMode]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: autoscroll fires on content-length change (and mode switch), keyed on the lengths rather than the ref or full arrays
+    return mergeByTimestamp(chatItems, mediaItems);
+  }, [messages, mediaEntries, rich]);
+  // Follow the newest item only: paging in earlier media must not jump the view.
+  const lastKey = timelineItems[timelineItems.length - 1]?.key;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: autoscroll fires when the newest item changes (and on mode switch), keyed on it rather than the ref or full arrays
   useEffect(() => {
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
-  }, [viewMode, timelineItems.length, messages.length]);
+  }, [viewMode, lastKey, messages.length]);
 
   const msgStyle = (kind: string, tag?: string) => {
     if (tag === "tell") return "border-l-2 border-fuchsia-500 pl-2 bg-fuchsia-950/20";
@@ -396,23 +383,48 @@ export function ChatMessageList({
         viewMode === "compact" ? "font-mono text-[12px] leading-relaxed" : "font-sans text-[13px]"
       }`}
     >
-      {viewMode === "compact"
-        ? messages.map((m, i) => renderCompactMessage(m, i))
-        : timelineItems.map((item) =>
-            item.type === "chat" ? (
-              renderRichMessage(item.message, item.index)
-            ) : (
-              <CanvasNodeEmbed
-                key={item.key}
-                canvasId={item.event.canvasId}
-                nodeId={item.event.nodeId}
-                actor={item.event.actor}
-                summary={item.event.summary}
-                kind={item.event.kind}
-                timestamp={item.event.timestamp}
-              />
-            ),
+      {viewMode === "compact" ? (
+        messages.map((m, i) => renderCompactMessage(m, i))
+      ) : (
+        <>
+          {media.hasEarlier && (
+            <div className="flex justify-center py-1">
+              <button
+                type="button"
+                onClick={media.loadEarlier}
+                disabled={media.loadingEarlier}
+                className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-text-dim transition-colors hover:border-primary hover:text-primary disabled:opacity-60"
+              >
+                {media.loadingEarlier ? "Loading earlier media…" : "Show earlier media"}
+              </button>
+            </div>
           )}
+          {timelineItems.map((item) => {
+            if (item.type === "chat") return renderRichMessage(item.message, item.index);
+            const entry = item.entry;
+            if (entry.type === "live")
+              return (
+                <CanvasNodeEmbed
+                  key={item.key}
+                  canvasId={entry.event.canvasId}
+                  nodeId={entry.event.nodeId}
+                  actor={entry.event.actor}
+                  summary={entry.event.summary}
+                  kind={entry.event.kind}
+                  timestamp={entry.event.timestamp}
+                />
+              );
+            return (
+              <ChatMediaCard
+                key={item.key}
+                entry={entry}
+                collection={collection}
+                index={collectionIndex.get(entry.key)}
+              />
+            );
+          })}
+        </>
+      )}
     </div>
   );
 }

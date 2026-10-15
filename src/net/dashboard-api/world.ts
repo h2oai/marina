@@ -581,9 +581,17 @@ export async function handleCoordinationRoutes(
 
   if (url.pathname === "/api/media-jobs" && method === "GET" && db) {
     const limitParam = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
-    const entity = url.searchParams.get("entity") ?? undefined;
+    const requested = url.searchParams.get("entity") ?? undefined;
     const limit =
       Number.isFinite(limitParam) && limitParam > 0 && limitParam <= 200 ? limitParam : 100;
+    // `entity=me` is the AUTHENTICATED caller's own jobs (WebChat's media
+    // cards): resolved server-side, never a client-chosen name; a caller with
+    // no live entity (the dev-open sentinel, an operator credential) gets none.
+    let entity = requested;
+    if (requested === "me") {
+      entity = engine.entities.get(callerId)?.name;
+      if (!entity) return json([]);
+    }
     const jobs = db.listMediaJobs({
       limit,
       entityName: entity ?? undefined,

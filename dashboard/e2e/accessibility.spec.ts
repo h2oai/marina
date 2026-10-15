@@ -185,6 +185,30 @@ test("asset library, uploads and the media viewer are accessible", async ({ page
   await expect(page.getByRole("dialog")).toBeHidden();
   await expect(grid).toBeFocused();
   await page.screenshot({ path: test.info().outputPath("asset-library-light.png") });
+
+  // The uploads are durable chat media: after a reload (no live events) the
+  // transcript still shows them as cards that open the viewer, with ←/→
+  // moving through the conversation's media.
+  await page.reload();
+  await expect(page.locator("#marina-command-input")).toBeVisible();
+  const card = page
+    .getByTestId("chat-media-card")
+    .filter({ hasText: "harbour-red.png" })
+    .first();
+  await expect(card).toBeVisible();
+  await expect(
+    page.getByTestId("chat-media-card").filter({ hasText: "harbour-blue.png" }).first(),
+  ).toBeVisible();
+  await card.scrollIntoViewIfNeeded();
+  await card.screenshot({ path: test.info().outputPath("chat-media-card.png") });
+  await audit(page, "chat-media-cards");
+  await card.getByRole("button", { name: "Open harbour-red.png in the media viewer" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog", { name: /harbour-red\.png/ })).toBeVisible();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("dialog", { name: /harbour-blue\.png/ })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
 });
 
 test("mobile dashboard is accessible", async ({ page }) => {

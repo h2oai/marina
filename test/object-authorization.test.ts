@@ -378,6 +378,33 @@ describe("HTTP owner checks (shared instance)", () => {
     expect(started).toEqual(["Alice", "Alice"]);
   });
 
+  it("GET /api/media-jobs?entity=me: only the authenticated caller's own jobs", async () => {
+    for (const [id, name, entityId] of [
+      ["job-me-a", "Alice", t.alice.entityId],
+      ["job-me-b", "Bob", t.bob.entityId],
+    ] as const) {
+      t.world.db.createMediaJob({
+        id,
+        type: "image",
+        entityName: name,
+        entityId,
+        provider: "openai",
+        model: "openai/gpt-image-1",
+        prompt: `${name} prompt`,
+        options: {},
+      });
+    }
+    const mine = async (who: Resident) => {
+      const res = (await handleCoordinationRoutes(
+        ctx(who, "/api/media-jobs?entity=me", { headers: bearer(who.token) }),
+      ))!;
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { id: string }[]).map((j) => j.id);
+    };
+    expect(await mine(t.alice)).toEqual(["job-me-a"]);
+    expect(await mine(t.bob)).toEqual(["job-me-b"]);
+  });
+
   it("POST /api/coordination/projects/:id/orchestration: creator or admin; malformed JSON is a 400 with a code", async () => {
     t.world.db.createProject({ id: "proj-1", name: "Beacon", createdBy: "Alice" });
     const post = (who: Resident, body: string) =>
