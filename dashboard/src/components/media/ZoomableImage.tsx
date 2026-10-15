@@ -62,7 +62,7 @@ export const ZoomableImage = forwardRef<ZoomableImageHandle, Props>(function Zoo
   { src, alt, placeholder, onError, onZoomChange },
   ref,
 ) {
-  const stageRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [zoom, setZoomState] = useState<ZoomState>(FIT);
   const [loaded, setLoaded] = useState(false);
@@ -170,12 +170,13 @@ export const ZoomableImage = forwardRef<ZoomableImageHandle, Props>(function Zoo
 
   const zoomed = zoom.scale !== 1;
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: pointer zoom/pan; the zoom toolbar and +/−/0 keys are the keyboard equivalents.
-    <div
+    // Pointer zoom/pan; the zoom toolbar and the +/−/0 keys are the keyboard equivalents.
+    <figure
       ref={stageRef}
+      aria-label="Zoomable image"
       data-testid="zoom-stage"
       data-scale={zoom.scale.toFixed(3)}
-      className={`relative flex h-full w-full touch-none select-none items-center justify-center overflow-hidden ${
+      className={`relative m-0 flex h-full w-full touch-none select-none items-center justify-center overflow-hidden ${
         zoomed ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in"
       }`}
       onPointerDown={onPointerDown}
@@ -208,7 +209,7 @@ export const ZoomableImage = forwardRef<ZoomableImageHandle, Props>(function Zoo
           }}
         />
       )}
-    </div>
+    </figure>
   );
 });
 

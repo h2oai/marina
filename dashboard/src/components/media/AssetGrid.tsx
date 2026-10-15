@@ -38,6 +38,13 @@ export function gridGeometry(width: number, view: GridView) {
   return { columns, cell, rowHeight: cell + LABEL_H, thumb: Math.floor(cell) };
 }
 
+/** The index of the option an event happened in (`data-index`), if any. */
+function optionIndex(target: EventTarget): number | undefined {
+  const el = (target as HTMLElement).closest<HTMLElement>("[data-index]");
+  const index = el ? Number(el.dataset.index) : Number.NaN;
+  return Number.isInteger(index) ? index : undefined;
+}
+
 export function AssetGrid({
   items,
   view,
@@ -148,6 +155,19 @@ export function AssetGrid({
       aria-activedescendant={active ? `asset-opt-${active.id}` : undefined}
       tabIndex={0}
       onKeyDown={onKeyDown}
+      onClick={(e) => {
+        // Options are clicked through the listbox, which also owns the keyboard.
+        const index = optionIndex(e.target);
+        const item = index === undefined ? undefined : items[index];
+        if (index === undefined || !item) return;
+        onActiveIndex(index);
+        if ((e.target as HTMLElement).closest("[data-select-mark]")) onToggle(item.id);
+        else onSelect(item.id, { shift: e.shiftKey, toggle: e.ctrlKey || e.metaKey });
+      }}
+      onDoubleClick={(e) => {
+        const index = optionIndex(e.target);
+        if (index !== undefined) onOpen(index);
+      }}
       onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
       className="relative h-full min-h-0 overflow-auto outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
     >
@@ -159,7 +179,6 @@ export function AssetGrid({
           const isSelected = selected.has(item.id);
           const isActive = index === activeIndex;
           return (
-            // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard is handled by the listbox (aria-activedescendant).
             <div
               key={item.id}
               id={`asset-opt-${item.id}`}
@@ -168,14 +187,8 @@ export function AssetGrid({
               aria-selected={isSelected}
               aria-setsize={items.length}
               aria-posinset={index + 1}
+              data-index={index}
               data-active={isActive || undefined}
-              onClick={(e) => {
-                onActiveIndex(index);
-                const toggleMark = (e.target as HTMLElement).closest("[data-select-mark]");
-                if (toggleMark) onToggle(item.id);
-                else onSelect(item.id, { shift: e.shiftKey, toggle: e.ctrlKey || e.metaKey });
-              }}
-              onDoubleClick={() => onOpen(index)}
               className={`group absolute cursor-pointer select-none rounded-md border p-1 transition-colors ${
                 isSelected
                   ? "border-primary bg-primary/10"

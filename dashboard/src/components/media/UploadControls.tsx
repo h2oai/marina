@@ -86,8 +86,9 @@ export function UploadDropZone({
   const hasFiles = (e: React.DragEvent) =>
     Array.from(e.dataTransfer?.types ?? []).includes("Files");
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: a drop/paste target around focusable content; the upload button is the keyboard path.
-    <div
+    // A labelled region: drop and paste targets; the upload button is the keyboard path.
+    <section
+      aria-label="Upload area"
       className={`relative ${className ?? ""}`}
       onDragOver={(e) => {
         if (!hasFiles(e)) return;
@@ -119,7 +120,7 @@ export function UploadDropZone({
           {label}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 

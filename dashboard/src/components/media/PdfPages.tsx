@@ -10,7 +10,7 @@
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { assetAuthHeaders } from "../../lib/asset-url";
 
 interface PdfPage {
@@ -96,6 +96,16 @@ export function PdfPages({
 
   const pages = doc?.numPages ?? 0;
   const go = (n: number) => setPage((cur) => Math.min(Math.max(1, n), pages || cur));
+  // PageUp/PageDown page while focus is on the page controls.
+  const pageKeys = (e: KeyboardEvent) => {
+    if (e.key === "PageDown") {
+      e.preventDefault();
+      go(page + 1);
+    } else if (e.key === "PageUp") {
+      e.preventDefault();
+      go(page - 1);
+    }
+  };
 
   if (error)
     return (
@@ -105,19 +115,7 @@ export function PdfPages({
     );
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: PageUp/PageDown paging while focus is on the page controls.
-    <div
-      className="flex h-full w-full flex-col items-center gap-2"
-      onKeyDown={(e) => {
-        if (e.key === "PageDown") {
-          e.preventDefault();
-          go(page + 1);
-        } else if (e.key === "PageUp") {
-          e.preventDefault();
-          go(page - 1);
-        }
-      }}
-    >
+    <div className="flex h-full w-full flex-col items-center gap-2">
       <div className="min-h-0 w-full flex-1 overflow-auto text-center">
         {!doc && (
           <div
@@ -141,6 +139,7 @@ export function PdfPages({
             type="button"
             className="rounded border border-border px-2 py-0.5 hover:text-primary disabled:opacity-40"
             onClick={() => go(page - 1)}
+            onKeyDown={pageKeys}
             disabled={page <= 1}
             aria-label="Previous page"
           >
@@ -153,6 +152,7 @@ export function PdfPages({
             type="button"
             className="rounded border border-border px-2 py-0.5 hover:text-primary disabled:opacity-40"
             onClick={() => go(page + 1)}
+            onKeyDown={pageKeys}
             disabled={page >= pages}
             aria-label="Next page"
           >
