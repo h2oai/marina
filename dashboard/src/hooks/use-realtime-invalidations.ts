@@ -110,6 +110,19 @@ export function useGlobalRealtimeInvalidations(): void {
     ),
   );
 
+  // ── Assets: library lists and details ──────────────────────────────
+  // asset_created / asset_updated / asset_deleted carry ids, owner and
+  // MIME only (delivered to the owner and operators); every ["assets", …]
+  // query rereads under the viewer's own credential.
+  useInvalidateOnEvent(
+    ["assets"],
+    useCallback(
+      (e: DashboardEvent) =>
+        e.type === "asset_created" || e.type === "asset_updated" || e.type === "asset_deleted",
+      [],
+    ),
+  );
+
   // ── Admin: adapters ────────────────────────────────────────────────
   useInvalidateOnEvent(
     ["adapters"],

@@ -342,7 +342,7 @@ export class MediaManager {
       data,
       prompt: params.prompt,
       model: params.model,
-      metadata: { provider: this.extractProvider(params.model) },
+      metadata: { provider: this.extractProvider(params.model), jobId },
       id: crypto.randomUUID(),
     });
 
@@ -630,7 +630,11 @@ export class MediaManager {
         data: asset.data,
         prompt: ctx.prompt,
         model: ctx.model,
-        metadata: { provider: this.extractProvider(ctx.model) },
+        metadata: {
+          provider: this.extractProvider(ctx.model),
+          jobId,
+          ...(typeof cost === "number" ? { costUsd: cost } : {}),
+        },
         id: crypto.randomUUID(),
       });
     } catch (error) {

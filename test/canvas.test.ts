@@ -250,7 +250,8 @@ describe("Canvas — Phase 1: Asset Store", () => {
       try {
         const html = "<script>alert(document.cookie)</script>";
         writeFileSync(`${dir}/evil.html`, html);
-        writeFileSync(`${dir}/fake.png`, html);
+        // Distinct bytes: identical content would dedupe to the first upload.
+        writeFileSync(`${dir}/fake.png`, `${html}\n`);
         writeFileSync(
           `${dir}/real.png`,
           new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),

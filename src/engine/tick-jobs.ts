@@ -30,6 +30,7 @@ import {
 import type { Engine, EngineConfig } from "./engine";
 import { getErrorMessage, tryLog } from "./errors";
 import type { Logger } from "./logger";
+import { backfillAssets } from "./media/asset-library";
 import type { MediaManager } from "./media/manager";
 import { MEMORY_ACCUMULATION_PHASE, runEngineAccumulationDispatch } from "./memory-dispatch";
 import { MEMORY_HYGIENE_PHASE, runEngineMemoryHygiene } from "./memory-hygiene";
@@ -428,6 +429,32 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       await judgeWaitingWork(host.db);
     },
   });
+
+  // Every ~30 s: fill sha256/dimensions and derivatives (thumbnails, posters,
+  // previews) for a few assets that lack them — rows from before migration
+  // 168 and writers that skip the library. Bounded per pass; boot never waits.
+  const assetEvery = assetBackfillTicks(host.config.tickInterval);
+  s.register({
+    name: "asset-backfill",
+    every: assetEvery,
+    phase: assetBackfillPhase(assetEvery),
+    failureMessage: "Asset backfill failed",
+    run: async () => {
+      if (!host.db) return;
+      await backfillAssets(host.engine);
+    },
+  });
+}
+
+/** Wall-clock cadence of the asset backfill. */
+export const ASSET_BACKFILL_MS = 30_000;
+/** The asset backfill's interval in ticks (at least 2). */
+export function assetBackfillTicks(tickIntervalMs: number): number {
+  return Math.max(2, Math.round(ASSET_BACKFILL_MS / Math.max(1, tickIntervalMs)));
+}
+/** Its phase: 7 when the interval allows, else 0 (clear of the video poller's 1 and 4). */
+export function assetBackfillPhase(every: number): number {
+  return every > 7 ? 7 : 0;
 }
 
 /** Wall-clock cadence of the durable video-job poller. */

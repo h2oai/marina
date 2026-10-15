@@ -3296,15 +3296,7 @@ export class MarinaDB implements MarinaStores {
 
   // ─── Assets ─────────────────────────────────────────────────────────────
 
-  createAsset(asset: {
-    id: string;
-    entityName: string;
-    filename: string;
-    mimeType: string;
-    size: number;
-    storageKey: string;
-    metadata?: Record<string, unknown>;
-  }): void {
+  createAsset(asset: assetsDb.CreateAssetInput): void {
     assetsDb.createAsset(this.db, asset);
   }
 
@@ -3326,6 +3318,61 @@ export class MarinaDB implements MarinaStores {
 
   deleteAsset(id: string): boolean {
     return assetsDb.deleteAsset(this.db, id);
+  }
+
+  updateAssetFacts(id: string, facts: assetsDb.AssetFacts): boolean {
+    return assetsDb.updateAssetFacts(this.db, id, facts);
+  }
+
+  updateAssetText(id: string, text: { caption?: string | null; alt?: string | null }): boolean {
+    return assetsDb.updateAssetText(this.db, id, text);
+  }
+
+  findAssetByHash(
+    entityName: string,
+    sha256: string,
+    origin: assetsDb.AssetOrigin,
+  ): AssetRow | undefined {
+    return assetsDb.findAssetByHash(this.db, entityName, sha256, origin);
+  }
+
+  listAssetsNeedingFacts(limit: number): AssetRow[] {
+    return assetsDb.listAssetsNeedingFacts(this.db, limit);
+  }
+
+  setAssetTags(id: string, add: readonly string[], remove: readonly string[]): string[] {
+    return assetsDb.setAssetTags(this.db, id, add, remove);
+  }
+
+  getAssetTags(id: string): string[] {
+    return assetsDb.getAssetTags(this.db, id);
+  }
+
+  getAssetTagsFor(ids: readonly string[]): Map<string, string[]> {
+    return assetsDb.getAssetTagsFor(this.db, ids);
+  }
+
+  linkAssets(fromId: string, toId: string, kind: string): void {
+    assetsDb.linkAssets(this.db, fromId, toId, kind);
+  }
+
+  getAssetLinks(id: string): {
+    parents: assetsDb.AssetLinkRow[];
+    children: assetsDb.AssetLinkRow[];
+  } {
+    return assetsDb.getAssetLinks(this.db, id);
+  }
+
+  listDerivatives(ids: readonly string[]): (AssetRow & { kind: string })[] {
+    return assetsDb.listDerivatives(this.db, ids);
+  }
+
+  listAssetCanvasUsage(id: string): ReturnType<typeof assetsDb.listAssetCanvasUsage> {
+    return assetsDb.listAssetCanvasUsage(this.db, id);
+  }
+
+  queryAssets(query: assetsDb.AssetQuery): AssetRow[] {
+    return assetsDb.queryAssets(this.db, query);
   }
 
   // ─── Media Jobs ──────────────────────────────────────────────────────────

@@ -115,6 +115,12 @@ export function memoryObserver(engine: Engine, principal?: string) {
         case "rank_change":
         case "coordination_change":
           return true;
+        // Asset ids can name a private asset, so the hint goes to the writer
+        // and the owner only (operators passed above); others reread on poll.
+        case "asset_created":
+        case "asset_updated":
+        case "asset_deleted":
+          return own || (!!entity && entity.name.toLowerCase() === event.owner.toLowerCase());
         case "feed_event": {
           if (event.kind === "note_created" || event.kind === "pool_note")
             return (

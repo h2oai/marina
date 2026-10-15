@@ -6,6 +6,7 @@ import type { MarinaDB } from "../../persistence/database";
 import { assetMimeForFile } from "../../storage/asset-mime";
 import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import { ingestAsset } from "../media/asset-library";
 import { rankFloorRefusal } from "../rank-floor";
 import type { ShellRuntime } from "../shell-runtime";
 import { requiresPersistence } from "./command-messages";
@@ -394,18 +395,21 @@ async function handleSave(
         if (!nodeType) continue;
 
         // Upload to asset storage
-        const assetId = crypto.randomUUID();
-        const storageKey = `${assetId}${ext}`;
-        await storage.put(storageKey, fileData.data, mime);
-
-        db.createAsset({
-          id: assetId,
-          entityName: entity.name,
-          filename,
-          mimeType: mime,
-          size: fileData.size,
-          storageKey,
-        });
+        const { asset: stored } = await ingestAsset(
+          { db, storage, ...(deps.logEvent ? { logEvent: deps.logEvent } : {}) },
+          {
+            owner: entity.name,
+            filename,
+            mime,
+            data: fileData.data,
+            ext,
+            origin: "tool",
+            provenance: { source: "exec publish" },
+            actor: eid,
+          },
+        );
+        const assetId = stored.id;
+        const storageKey = stored.storage_key;
 
         // Publish to canvas
         let canvas = db.getCanvasByName(canvasName);

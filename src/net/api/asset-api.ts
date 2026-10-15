@@ -1,9 +1,18 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isRequestAsset, mayReadAsset } from "../../engine/canvas-access";
+import { isGatedAssetBytes, mayReadAsset } from "../../engine/canvas-access";
 import { isOperatorPrincipal as isOperatorPerson } from "../../engine/challenges";
 import type { Engine } from "../../engine/engine";
+import {
+  type AssetEdit,
+  type AssetLibraryHost,
+  checkAssetEdit,
+  editAsset,
+  ingestAsset,
+  normalizeTag,
+  removeAsset,
+} from "../../engine/media/asset-library";
 import type { MarinaDB } from "../../persistence/database";
 import { isInlineMime, normalizeAssetMime, OCTET_STREAM } from "../../storage/asset-mime";
 import type { StorageProvider } from "../../storage/provider";
@@ -24,6 +33,14 @@ import {
   securityHeaders,
 } from "../http-utils";
 import { authorizeOwnerOrPrivileged } from "../owner-authorization";
+import {
+  type LibraryContext,
+  libraryDetail,
+  libraryFacets,
+  libraryItems,
+  libraryPage,
+  parseLibraryQuery,
+} from "./asset-library-view";
 import {
   assetIdFromKey,
   assetKeyFromPath,
@@ -96,11 +113,16 @@ export async function handleAssetApi(
   if (url.pathname === "/api/assets/sign" && method === "POST") {
     return handleSign(req, db, storage, engine);
   }
-  const reader =
-    method === "GET"
-      ? buildCanvasPrincipal(resolveCanvasHttpPrincipal(req, engine, peerIp), engine, db)
-      : undefined;
+  const readerPrincipal =
+    method === "GET" ? resolveCanvasHttpPrincipal(req, engine, peerIp) : undefined;
+  const reader = method === "GET" ? buildCanvasPrincipal(readerPrincipal, engine, db) : undefined;
   const host = { db, entities: engine.entities, canvasGrants: engine.canvasGrants };
+  const library: AssetLibraryHost = {
+    db,
+    storage,
+    logEvent: (event) => engine.logEvent(event),
+    trackBackground: (work) => engine.trackBackground(work),
+  };
   let writerName: string | undefined;
   let writerId: EntityId | undefined;
   let writerIsOperator = false;
@@ -132,31 +154,85 @@ export async function handleAssetApi(
       const denied = authorizeOwnerOrPrivileged(engine, db, writerId, [asset.entity_name]);
       if (denied) return denied;
     }
-    await storage.delete(asset.storage_key);
-    db.deleteAsset(id);
+    // Bytes of the asset and its derivatives, then the row (derivatives cascade).
+    await removeAsset(library, asset, writerId);
     return json({ ok: true, id });
   }
 
-  // GET /api/assets/:id (metadata)
+  // PATCH /api/assets/:id — { caption?, alt?, tags?, addTags?, removeTags? }
+  if (idMatch && method === "PATCH") {
+    const id = decodeURIComponent(idMatch[1]!);
+    const asset = db.getAsset(id);
+    const patchReader = writerId ? buildCanvasPrincipal(writerId, engine, db) : undefined;
+    // A private asset the writer cannot read is "not found", never "forbidden".
+    if (
+      !asset ||
+      asset.derived_from ||
+      !mayReadAsset(host, asset, patchReader, "http PATCH asset")
+    ) {
+      return json({ error: "Asset not found" }, 404);
+    }
+    if (writerId) {
+      const denied = authorizeOwnerOrPrivileged(engine, db, writerId, [asset.entity_name]);
+      if (denied) return denied;
+    }
+    const current = db.getAssetTags(id);
+    const edit = await parseAssetPatch(req, current);
+    if (typeof edit === "string") return json({ error: edit, code: "invalid_asset_patch" }, 400);
+    const problem = checkAssetEdit(edit, current);
+    if (problem) return json({ error: problem, code: "invalid_asset_patch" }, 400);
+    const updated = editAsset(library, asset, edit, writerId);
+    const ctx = libraryContext(db, storage, host, writerId, patchReader, writerName);
+    return json(libraryDetail(ctx, updated.asset));
+  }
+
+  // GET /api/assets/:id (metadata + library detail)
   if (idMatch && method === "GET") {
     const id = decodeURIComponent(idMatch[1]!);
     const asset = db.getAsset(id);
     if (!asset || !mayReadAsset(host, asset, reader, "http GET asset")) {
       return json({ error: "Asset not found" }, 404);
     }
+    const viewerName = readerName(engine, readerPrincipal);
+    const ctx = libraryContext(db, storage, host, readerPrincipal, reader, viewerName);
+    // The raw row (legacy fields, parsed metadata, plain `url`) plus the library detail.
     return json({
       ...asset,
-      metadata: JSON.parse(asset.metadata),
+      ...libraryDetail(ctx, asset),
       url: storage.resolve(asset.storage_key),
     });
   }
 
   // POST /api/assets (multipart upload)
   if (url.pathname === "/api/assets" && method === "POST") {
-    return handleUpload(req, db, storage, writerName, writerIsOperator);
+    return handleUpload(req, library, storage, writerName, writerId, writerIsOperator);
   }
 
-  // GET /api/assets (list)
+  // GET /api/assets?view=library — { items, nextCursor, facets? }: filters,
+  // keyset pages, thumbnails, per-viewer read checks (asset-library-view.ts).
+  if (
+    url.pathname === "/api/assets" &&
+    method === "GET" &&
+    url.searchParams.get("view") === "library"
+  ) {
+    const rateKey = readerPrincipal ?? `ip:${peerIp ?? "unknown"}`;
+    if (!consumeHttpRate(readerPrincipal ? "dashboard" : "publicRead", rateKey)) {
+      return rateLimitedResponse(req.headers.get("Origin"));
+    }
+    const viewerName = readerName(engine, readerPrincipal);
+    const ctx = libraryContext(db, storage, host, readerPrincipal, reader, viewerName);
+    const q = parseLibraryQuery(url.searchParams, ctx.viewer);
+    if (typeof q === "string") return json({ error: q, code: "invalid_asset_query" }, 400);
+    const page = q.empty ? { rows: [], nextCursor: null } : libraryPage(ctx, q);
+    const wantFacets = ["1", "true"].includes(url.searchParams.get("facets") ?? "");
+    return json({
+      items: libraryItems(ctx, page.rows),
+      nextCursor: page.nextCursor,
+      ...(wantFacets ? { facets: libraryFacets(ctx, q) } : {}),
+    });
+  }
+
+  // GET /api/assets (legacy list: a plain array)
   if (url.pathname === "/api/assets" && method === "GET") {
     const limit = Math.min(Number(url.searchParams.get("limit")) || 50, 200);
     const mime = url.searchParams.get("mime") ?? undefined;
@@ -173,6 +249,76 @@ export async function handleAssetApi(
   }
 
   return json({ error: "Not found" }, 404);
+}
+
+function readerName(engine: Engine, principal: string | undefined): string | undefined {
+  return principal ? engine.entities.get(principal as EntityId)?.name : undefined;
+}
+
+function libraryContext(
+  db: MarinaDB,
+  storage: StorageProvider,
+  host: LibraryContext["host"],
+  principal: string | undefined,
+  reader: LibraryContext["viewer"]["reader"],
+  name: string | undefined,
+): LibraryContext {
+  return {
+    db,
+    storage,
+    host,
+    viewer: {
+      ...(principal ? { principal } : {}),
+      ...(reader ? { reader } : {}),
+      ...(name ? { name } : {}),
+    },
+  };
+}
+
+/**
+ * The body of `PATCH /api/assets/:id`. `tags` replaces the set; `addTags` /
+ * `removeTags` edit it; `caption` / `alt` set it (empty or null clears).
+ * A string is the 400 reason.
+ */
+async function parseAssetPatch(
+  req: Request,
+  current: readonly string[],
+): Promise<AssetEdit | string> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return "Expected a JSON body.";
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "Expected a JSON object.";
+  const b = body as Record<string, unknown>;
+  const edit: AssetEdit = {};
+  for (const key of ["caption", "alt"] as const) {
+    if (!(key in b)) continue;
+    const v = b[key];
+    if (v !== null && typeof v !== "string") return `${key} must be a string or null.`;
+    edit[key] = v as string | null;
+  }
+  const tagList = (key: string): string[] | string | undefined => {
+    if (!(key in b)) return undefined;
+    const v = b[key];
+    if (!Array.isArray(v) || !v.every((t) => typeof t === "string"))
+      return `${key} must be an array of strings.`;
+    return v.map((t: string) => normalizeTag(t)).filter((t): t is string => !!t);
+  };
+  const tags = tagList("tags");
+  const add = tagList("addTags");
+  const remove = tagList("removeTags");
+  for (const v of [tags, add, remove]) if (typeof v === "string") return v;
+  if (Array.isArray(tags)) {
+    edit.addTags = tags;
+    edit.removeTags = current.filter((t) => !tags.includes(t));
+  }
+  if (Array.isArray(add)) edit.addTags = [...(edit.addTags ?? []), ...add];
+  if (Array.isArray(remove)) edit.removeTags = [...(edit.removeTags ?? []), ...remove];
+  if (Object.keys(edit).length === 0)
+    return "Nothing to change: send caption, alt, tags, addTags or removeTags.";
+  return edit;
 }
 
 /**
@@ -235,9 +381,10 @@ function tooLarge(cap: number): Response {
 
 async function handleUpload(
   req: Request,
-  db: MarinaDB,
+  library: AssetLibraryHost,
   storage: StorageProvider,
   writerName: string | undefined,
+  writerId: EntityId | undefined,
   writerIsOperator: boolean,
 ): Promise<Response> {
   const contentType = req.headers.get("content-type") ?? "";
@@ -292,29 +439,26 @@ async function handleUpload(
 
   const mime = normalizeAssetMime(declaredMime, data);
 
-  const id = crypto.randomUUID();
-  const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")) : "";
-  const storageKey = `${id}${ext}`;
-
-  await storage.put(storageKey, data, mime);
-
-  db.createAsset({
-    id,
-    entityName: owner.name,
+  // The same owner uploading the same bytes again gets the existing asset
+  // back (200, `deduplicated: true`) instead of a second copy.
+  const { asset, deduplicated } = await ingestAsset(library, {
+    owner: owner.name,
     filename,
-    mimeType: mime,
-    size: data.byteLength,
-    storageKey,
+    mime,
+    data,
+    origin: "upload",
+    dedupe: true,
+    ext: filename.includes(".") ? filename.slice(filename.lastIndexOf(".")) : "",
+    ...(writerId ? { actor: writerId } : {}),
   });
-
-  const asset = db.getAsset(id)!;
   return json(
     {
       ...asset,
       metadata: JSON.parse(asset.metadata),
       url: storage.resolve(asset.storage_key),
+      ...(deduplicated ? { deduplicated: true } : {}),
     },
-    201,
+    deduplicated ? 200 : 201,
   );
 }
 
@@ -375,7 +519,7 @@ export async function handleAssetServing(
   // the read check still runs as that principal, and a bad signature reads as
   // if it were absent.
   let privateCache: string | undefined;
-  if (db && row && isRequestAsset(row)) {
+  if (db && row && isGatedAssetBytes(db, row)) {
     const signed = access ? verifyAssetSignature(row.id, url.searchParams) : undefined;
     const reader = access
       ? buildCanvasPrincipal(

@@ -292,6 +292,77 @@ re-encoding and thumbnails use the optional `sharp` package, which a normal
 limits is sent unchanged, and one that needs processing is refused with a reason
 that names the missing package. It is never sent out of spec.
 
+## Assets
+
+Every stored file (an upload, a generated image or video, a model-API request
+image, a file published from `exec`) is an **asset**. Besides its bytes, the
+record keeps:
+
+- **Origin:** `upload`, `generated`, `request`, `tool`, or `derived` for a
+  thumbnail, poster or preview made from another asset.
+- **Facts:** the SHA-256 of the bytes and, for images, width and height. These
+  are read from the file header when it is stored. Video and audio duration,
+  video size and PDF page counts are filled in afterwards when `ffprobe` or
+  `pdfinfo` is installed.
+- **Provenance:** for generated media, the prompt, model, provider, media job
+  and its cost.
+- **Reader text:** caption, alt text and tags.
+- **Lineage:** links to the assets it was made from or made into.
+
+**Upload dedupe.** If you upload bytes you have already uploaded, with the same
+type, you get your existing asset back instead of a second copy:
+`POST /api/assets` answers `200` with `deduplicated: true`, and
+`canvas asset upload` says "Already uploaded". Two people uploading the same
+file still get separate assets.
+
+**Thumbnails.** After an asset is stored, Marina makes its thumbnails in the
+background, one asset at a time, so an upload never waits for them:
+
+| Source | Made | Needs |
+|---|---|---|
+| PNG, JPEG, WebP, GIF | WebP thumbnails (256 px and 1024 px long side) and a 16 px inline placeholder | `sharp` |
+| Video | a poster frame, then its thumbnails | `ffmpeg` (+ `sharp` for thumbnails) |
+| PDF | a first-page preview, then its thumbnails | `pdftoppm` (+ `sharp` for thumbnails) |
+
+A missing tool means no derivative. The reason is recorded on the asset
+(`derivative_state` `unavailable`, with a note naming the tool). It is not an
+error. Derivatives are assets with origin `derived`. They are exactly as
+readable as the asset they were made from. A thumbnail of a private asset is
+hidden from anyone who cannot read the original, and its bytes are signed or
+refused the same way. Deleting an asset deletes its derivatives. Assets stored
+before this record existed get their facts and thumbnails from the
+`asset-backfill` tick job, a few every 30 seconds, so startup never waits for
+them.
+
+**In world.** The `asset` command lists, shows, searches, tags, captions and
+deletes. Anyone can read with it, subject to the asset read check. Only the
+owner, an agent's creator or an operator can change or delete an asset.
+
+```
+asset list owner:me type:image sort:new
+asset list tag:moodboard origin:generated since:7d
+asset show <id>
+asset search red fox
+asset tag <id> +moodboard -draft
+asset caption <id> -- A fox at dusk
+asset alt <id> -- Red fox standing in snow
+asset delete <id>
+```
+
+**Over HTTP.** `GET /api/assets?view=library` returns
+`{ items, nextCursor, facets? }`. Each item carries its thumbnail URLs, the
+placeholder, dimensions, origin, tags and caption. URLs for private assets come
+back signed for the caller. The query accepts `type`, `owner`, `origin`, `tag`,
+`canvas`, `since`, `q`, `sort`, `limit`, `cursor` and `facets=1`.
+`GET /api/assets/<id>` adds provenance, lineage and the canvases that show the
+asset. `PATCH /api/assets/<id>` sets `caption`, `alt`, `tags`, `addTags` or
+`removeTags`. It is allowed for the owner or an operator. Anyone else gets 403,
+or 404 when they cannot read the asset at all. The plain `GET /api/assets`
+array is unchanged.
+
+**Retention.** Only request images age out (7 days). Uploaded, generated and
+tool assets are kept until someone deletes them.
+
 ## Troubleshooting
 
 - **"Provider not yet supported"** — built-in image providers are `openai`,
