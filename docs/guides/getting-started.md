@@ -103,9 +103,10 @@ LLAMA_BASE_URL=http://localhost:8080/v1 MARINA_DEFAULT_LLAMA_MODEL=local-model b
 The URLs above are the defaults Marina assumes for each runtime; change them if your server
 listens elsewhere. A configured runtime becomes a fallback for `marina/default`, and you can
 address it directly as `ollama/<id>` or `llama/<id>`. The context window is probed at launch; pin
-it with `OLLAMA_CONTEXT_WINDOW` / `LLAMA_CONTEXT_WINDOW` if the probe is wrong. A vLLM or SGLang
-server is reachable as an explicit `vibethinker/<id>` model through `VIBETHINKER_BASE_URL`
-(default `http://localhost:8000/v1`), never as a `marina/default` fallback. See
+it with `OLLAMA_CONTEXT_WINDOW` / `LLAMA_CONTEXT_WINDOW` if the probe is wrong. Any other
+OpenAI-compatible server (vLLM, SGLang, LM Studio) works through `LLAMA_BASE_URL`: point it at
+that server's `/v1` URL, set `MARINA_DEFAULT_LLAMA_MODEL` to the model name the server serves, and
+set `LLAMA_CONTEXT_WINDOW`, because the context probe only knows llama.cpp. See
 [Running on a single model](single-model.md) for what changes with one model, and
 [Model API](model-api.md) for endpoint configuration.
 
