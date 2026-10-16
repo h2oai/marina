@@ -1,0 +1,49 @@
+{
+  "tag": "v0.8.0",
+  "commit": "737dd53ee3691e7fa77ce293c0ca4101e8e80ef7",
+  "schemaVersion": 167,
+  "bun": "1.4.2",
+  "sqlite": "3.53.2",
+  "world": "default",
+  "generator": "scripts/generate-upgrade-fixture.ts",
+  "seeded": {
+    "user": {
+      "id": "fixture-account-alice",
+      "name": "Alice",
+      "rank": 2
+    },
+    "entity": {
+      "id": "e_fixture_alice",
+      "name": "Alice"
+    },
+    "note": {
+      "id": 3,
+      "entityName": "Alice",
+      "content": "upgrade fixture: this note must survive every upgrade"
+    },
+    "coreMemory": {
+      "entityName": "Alice",
+      "key": "fixture-belief",
+      "value": "upgrades keep data"
+    },
+    "task": {
+      "id": 4,
+      "title": "upgrade fixture task"
+    },
+    "channel": {
+      "id": "fixture-channel",
+      "messageId": 1,
+      "content": "upgrade fixture channel message"
+    },
+    "boardPost": {
+      "boardId": "fixture-board",
+      "id": 3,
+      "body": "upgrade fixture board post"
+    },
+    "canvas": {
+      "id": "fixture-canvas",
+      "name": "Fixture canvas"
+    },
+    "worldSeeded": true
+  }
+}

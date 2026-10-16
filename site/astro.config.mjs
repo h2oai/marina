@@ -155,6 +155,7 @@ export default defineConfig({
             { label: "Running on a Single Model", slug: "docs/guides/single-model" },
             { label: "Backup and Recovery", slug: "docs/guides/recovery" },
             { label: "Compatibility and Upgrades", slug: "docs/guides/compatibility" },
+            { label: "Upgrading a Server", slug: "docs/guides/upgrading" },
             { label: "Contributor Workflows", slug: "docs/guides/contributor-workflows" },
             { label: "Supply Chain", slug: "docs/guides/supply-chain" },
             { label: "Scripts Reference", slug: "docs/guides/scripts" },

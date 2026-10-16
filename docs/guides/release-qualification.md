@@ -25,6 +25,11 @@ bun run qualify:evolution
 bun run qualify:flywheel
 ```
 
+After tagging, add the release's upgrade fixture with
+`bun scripts/generate-upgrade-fixture.ts vX.Y.Z` and commit `test/fixtures/upgrade/vX.Y.Z.*`, so
+every later release proves it upgrades that release's real database (see
+[persistence](../architecture/persistence.md#baseline-refresh-policy)).
+
 Do not describe an unavailable or skipped live gate as passed. Preserve its output, relevant trace
 IDs, artifacts, environment prerequisites (never secret values), source commit, and evidence
 checkpoint with the release record. World Collective comparisons should cite the exact baseline and
