@@ -16,7 +16,7 @@ const workflow = Bun.YAML.parse(
   readFileSync(new URL("../.github/workflows/deploy-ec2.yml", import.meta.url), "utf8"),
 ) as {
   on: Record<string, unknown>;
-  jobs: Record<string, { needs?: string; steps: Step[] }>;
+  jobs: Record<string, { needs?: string; if?: string; steps: Step[] }>;
 };
 const sha = "a".repeat(40);
 const later = "b".repeat(40);
@@ -173,5 +173,16 @@ describe("production deployment qualification", () => {
     expect(gate([successful], { FIXTURE_MAIN: later, ROLLBACK: "true" }, true).output).toBe(
       "deploy=true\n",
     );
+  });
+});
+
+describe("deployment is opt-in", () => {
+  it("runs only where the ECR_ACCOUNT_ID variable is configured, never in a fork or clone", () => {
+    // The guard must wrap every trigger: a fork's own main-branch CI also
+    // satisfies head_repository == github.repository.
+    const guard = (workflow.jobs.qualify?.if ?? "").replace(/\s+/g, " ").trim();
+    expect(guard.startsWith("vars.ECR_ACCOUNT_ID != '' && (")).toBe(true);
+    expect(guard.endsWith(")")).toBe(true);
+    expect(workflow.jobs.deploy?.needs).toBe("qualify");
   });
 });

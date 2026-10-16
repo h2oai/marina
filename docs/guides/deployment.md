@@ -12,7 +12,11 @@ Everything below follows from this: pick a single durable volume, put the databa
 
 ## What you're deploying
 
-The repository's EC2 workflow starts after successful main-branch CI. It verifies
+Marina needs no particular cloud: the setups below run anywhere Docker or Bun runs. The
+repository also carries the maintainers' own EC2 workflow (`.github/workflows/deploy-ec2.yml`).
+It is opt-in: it runs only in a repository that sets the `ECR_ACCOUNT_ID` Actions variable (plus
+the AWS role secret it assumes), so a fork or clone never runs it. Where it is configured, it
+starts after successful main-branch CI. It verifies
 the exact revision before checkout and uses that same SHA for the image tag and
 server checkout. Failed, cancelled, fork, and pull-request runs cannot deploy.
 Superseded revisions are skipped before building and again before production

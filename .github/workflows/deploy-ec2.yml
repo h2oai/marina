@@ -26,15 +26,19 @@ env:
 
 jobs:
   qualify:
+    # Opt-in: only a repository that configures the ECR_ACCOUNT_ID variable
+    # deploys. A fork or a fresh clone has none, so this workflow never runs
+    # there (no qualification minutes, no AWS credentials, no failed runs).
     # workflow_run also fires for failed/cancelled CI and for PR runs. Neither
     # may reach checkout, AWS credentials, or production.
     if: >-
+      vars.ECR_ACCOUNT_ID != '' && (
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.head_repository.full_name == github.repository) ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
