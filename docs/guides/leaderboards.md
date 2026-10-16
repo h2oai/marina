@@ -79,11 +79,10 @@ A placement is claimable in public only when it is a *result*, not a candidate:
 3. Run the full official split through the official grader.
 4. Disclose the selection split, N, seed, method, and cost per query.
 
-Until then, describe it as a candidate ("a subset sweep suggests #2 territory"), not a placement.
-The distinction is what keeps a Marina claim from being the thing this project criticizes in
-others: a number without a reproduction.
+Until then, describe it as a candidate from a subset sweep, not a placement. A number without a
+reproduction is not a result.
 
-## Grading notes for internal academic runs
+## Grading notes
 
 GSM8K, MATH and AIME are graded by numerical equivalence, not exact LaTeX
 (`benchmarks/adapters/numeric.ts`). A correct answer written as a decimal, a fraction (`1/2`,

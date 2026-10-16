@@ -1,0 +1,8 @@
+# Example sweep config for benchmarks/sweep.sh: one run per line.
+# Format: orchestrator | benchmark | limit | seed | extra_env_pairs
+# extra_env_pairs uses ";" between K=V pairs (values may contain commas).
+# A passthrough row names its model with MODEL=…; other orchestrators and their
+# settings are listed at the top of benchmarks/sweep.sh.
+
+passthrough | mmlu-pro | 20 | 42 | MODEL=marina:sonnet
+debate      | mmlu-pro | 20 | 42 | DEBATE_PROPOSER_A=marina:haiku;DEBATE_PROPOSER_B=marina:qwen;DEBATE_JUDGE=marina:sonnet
