@@ -63,8 +63,6 @@ export const THUMBNAIL_SIZES = [
   { size: 256, kind: "thumbnail-256" },
   { size: 1024, kind: "thumbnail-1024" },
 ] as const;
-/** Link kinds of generated derivatives. */
-export const DERIVATIVE_KINDS = ["thumbnail-256", "thumbnail-1024", "poster", "preview"] as const;
 /** Long side of the inline placeholder (`assets.placeholder`). */
 export const PLACEHOLDER_SIZE = 16;
 /** Larger sources are not decoded for derivatives (recorded as `skipped`). */

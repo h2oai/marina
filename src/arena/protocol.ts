@@ -24,7 +24,6 @@ export const DEFAULT_ORIGIN = "https://social-simulation-arena.com";
 /** Domain separation, not a secret: must equal the deployment's SSA_INTAKE_AUDIENCE. */
 export const DEFAULT_AUDIENCE = "ssa-production-v1";
 export const MAX_BODY_BYTES = 65_536;
-const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
 
 export interface SignedMeta {
   entrant: string;
@@ -78,10 +77,6 @@ export function signingBytes(meta: SignedMeta, body: Uint8Array, audience: strin
       body_sha256: sha256Hex(body),
     }),
   );
-}
-
-export function assertSafeId(label: string, value: string): void {
-  if (!SAFE_ID.test(value)) throw new Error(`${label} "${value}" is not a valid arena identifier`);
 }
 
 // ─── Keys ────────────────────────────────────────────────────────────────────
