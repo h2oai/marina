@@ -27,12 +27,12 @@
 # are already running. Use launch-stack.sh to bring those up first.
 #
 # Usage:
-#   ./benchmarks/sweep.sh benchmarks/sweep-configs/main.tsv
+#   ./benchmarks/sweep.sh benchmarks/sweep-configs/example.tsv
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-CONFIG=${1:-benchmarks/sweep-configs/main.tsv}
+CONFIG=${1:-benchmarks/sweep-configs/example.tsv}
 SWEEP_LOG=/tmp/sweep-$(date +%Y%m%d-%H%M%S).log
 CSV=${SWEEP_LOG%.log}.csv
 

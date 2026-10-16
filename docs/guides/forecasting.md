@@ -500,10 +500,10 @@ anchor is kept as `anchor` (value, date, horizon in days and steps, spread).
 
 ## How good is it?
 
-The same pipeline, pointed at the Social Simulation Arena's questions, is measured in
-[docs/guides/arena.md](arena.md): structured data (the Civiqs nowcast) beat every leaderboard
-entry on backtests; the value of the web-research agents is being measured forward, on questions
-that had not resolved when they answered. Treat a single forecast as a well-sourced opinion, not a
-guarantee.
+Measure it on your own questions: every answer is kept with its evidence, and a resolved question
+is scored once. The [Social Simulation Arena guide](arena.md) shows how the same pipeline is
+backtested and scored forward, and
+[what a backtest can and cannot claim](arena.md#integrity-what-the-backtest-numbers-can-and-cannot-claim).
+Treat a single forecast as a well-sourced opinion, not a guarantee.
 
 If every run in a grounding follow-up fails, Marina retains the earlier usable cohort and records the failed attempts in `groundingFollowUp.failedRuns`. A failed single-run replacement also preserves its predecessor. The answer explicitly says that the retained predictions use the original dossier; the failed attempts never gain voting weight.
