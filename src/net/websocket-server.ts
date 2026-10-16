@@ -47,11 +47,7 @@ import {
   OPEN_API_ENTITY_ID,
 } from "./auth-middleware";
 import { type CanvasNodeCreatedEvent, handleCanvasApi } from "./canvas/canvas-api";
-import {
-  buildCanvasPrincipal,
-  isLoopbackPeer,
-  LOOPBACK_PRINCIPAL,
-} from "./canvas/canvas-principal";
+import { buildCanvasPrincipal, LOOPBACK_PRINCIPAL } from "./canvas/canvas-principal";
 import { CanvasBroadcaster, type CanvasSubscriptionPrincipal } from "./canvas/canvas-ws";
 import { corsHeaders, isTrustedBrowserOrigin } from "./cors";
 import { handleDashboardApi } from "./dashboard-api";
@@ -69,6 +65,7 @@ import {
   withSecurityHeaders,
 } from "./http-utils";
 import { recordListenPort } from "./listen-ports";
+import { isLoopbackHostname, isLoopbackIp } from "./loopback";
 import { handleMemoryServiceApi } from "./memory/memory-service-api";
 import { handleModelApi, isModelApiPath } from "./model/model-api";
 import { modelRequestIdleSeconds } from "./model-api/routing";
@@ -197,9 +194,6 @@ interface WSData {
 
 let wsIdCounter = 0;
 
-/** Loopback host tokens that count as a secure, local-only bind. */
-const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
-
 /**
  * Sentinel principal attached to a dashboard/canvas socket that was admitted
  * purely because it arrived over a genuine loopback peer with no session token.
@@ -224,12 +218,6 @@ export function resolveWsBindHostname(env: NodeJS.ProcessEnv = process.env): str
   if (explicit) return explicit;
   if ((env.MARINA_PUBLIC ?? "").trim().toLowerCase() === "true") return "0.0.0.0";
   return "127.0.0.1";
-}
-
-/** True when a resolved bind hostname is loopback-only (secure local default). */
-export function isLoopbackHostname(host: string): boolean {
-  const h = host.trim().toLowerCase();
-  return LOOPBACK_HOSTNAMES.has(h) || h.startsWith("127.");
 }
 
 export class WebSocketServer {
@@ -342,7 +330,7 @@ export class WebSocketServer {
     // Zero-config desktop: a genuine loopback peer (never header-derived) is
     // admitted as an unauthenticated-but-local principal. A remote peer that
     // forges X-Forwarded-For does NOT set peerIp, so it stays rejected.
-    if (isLoopbackPeer(peerIp)) return LOOPBACK_PRINCIPAL;
+    if (isLoopbackIp(peerIp)) return LOOPBACK_PRINCIPAL;
 
     return null;
   }

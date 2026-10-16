@@ -19,6 +19,7 @@ import {
   DESKTOP_OPERATOR_ENTITY_ID,
   OPEN_API_ENTITY_ID,
 } from "../auth-middleware";
+import { isLoopbackIp } from "../loopback";
 import type { CanvasSubscriptionPrincipal } from "./canvas-ws";
 
 /**
@@ -28,23 +29,6 @@ import type { CanvasSubscriptionPrincipal } from "./canvas-ws";
  * for the local desktop owner.
  */
 export const LOOPBACK_PRINCIPAL = "loopback-anon";
-
-/**
- * True when a REAL socket peer address (from `server.requestIP`, never headers)
- * is loopback. Undefined fails closed (untrusted). Handles IPv4, IPv6 loopback,
- * and IPv4-mapped IPv6 loopback.
- */
-export function isLoopbackPeer(peerIp: string | undefined): boolean {
-  if (!peerIp) return false;
-  const ip = peerIp.trim().toLowerCase();
-  return (
-    ip === "::1" ||
-    ip === "localhost" ||
-    ip.startsWith("127.") ||
-    ip === "::ffff:127.0.0.1" ||
-    ip.startsWith("::ffff:127.")
-  );
-}
 
 /**
  * Translate a string principal (resolved at WS upgrade OR from an HTTP request)
@@ -103,6 +87,6 @@ export function resolveCanvasHttpPrincipal(
   // authenticateRequest only errors when there is no valid token / desktop token
   // and dev-open is off. Fall back to the loopback trust anchor for the
   // zero-config local desktop reader; otherwise the caller is anonymous.
-  if (isLoopbackPeer(peerIp)) return LOOPBACK_PRINCIPAL;
+  if (isLoopbackIp(peerIp)) return LOOPBACK_PRINCIPAL;
   return undefined;
 }

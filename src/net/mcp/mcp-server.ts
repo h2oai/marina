@@ -17,8 +17,9 @@ import { handleConnectRoutes, healthResponse, registerConnectEndpoint } from "..
 import { isTrustedBrowserOrigin } from "../cors";
 import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "../http-utils";
 import { recordListenPort } from "../listen-ports";
+import { isLoopbackHostname } from "../loopback";
 import { RequestDrain } from "../request-drain";
-import { isLoopbackHostname, resolveWsBindHostname } from "../websocket-server";
+import { resolveWsBindHostname } from "../websocket-server";
 import { mcpAdmission } from "./mcp-admission";
 import type { McpSession } from "./mcp-types";
 import { createWorldMcpServer } from "./mcp-world-tools";

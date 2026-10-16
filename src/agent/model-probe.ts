@@ -15,6 +15,7 @@
  */
 
 import { isLocalProfile } from "../engine/trust-profile";
+import { isLoopbackHostname } from "../net/loopback";
 import {
   isLocalProvider,
   LOCAL_PROVIDERS,
@@ -64,12 +65,6 @@ export function marinaRemoteTarget(modelStr: string): string | undefined {
   return remote ? normalizeMarinaBaseUrl(remote) : undefined;
 }
 
-/** True for the loopback hostnames the local operator may legitimately target. */
-function isLoopbackHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  return h === "localhost" || h === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
-}
-
 /**
  * SSRF check for a `marina@<host>` model target. The host is agent/operator
  * supplied (an `agent spawn ... model marina@...` argument), so it goes through
@@ -97,7 +92,7 @@ export async function validateMarinaRemoteTarget(modelStr: string): Promise<stri
     const shape = validateOperatorLanUrl(baseUrl);
     return shape ? `Remote Marina target "${baseUrl}" is blocked: ${shape}` : null;
   }
-  if (isLoopbackHost(parsed.hostname)) {
+  if (isLoopbackHostname(parsed.hostname)) {
     return `Remote Marina target "${baseUrl}" points at loopback — only allowed under the local trust profile (MARINA_PROFILE=local)`;
   }
   const blocked = await validateFetchUrl(baseUrl);

@@ -58,6 +58,7 @@ import { summarizeFlywheelEvents, WorkspaceGateway } from "../../../coding/works
 import { lessonsBlock, recallForWork } from "../../../learning/service";
 import { noteWorkFor, workScopeFor } from "../../../learning/work";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
+import { isLoopbackIp } from "../../../net/loopback";
 import { recordVerification } from "../../../outcomes/live";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Connection, Entity, EntityId, RoomContext } from "../../../types";
@@ -994,8 +995,6 @@ async function executeWorkspaceCommand(
 
 // ─── Arbitrary-exec approver wiring ──────────────────────────────────────────
 
-const LOOPBACK_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"]);
-
 // Per-session exec policy. Explicit off overrides the profile default.
 // In-memory only; a restart drops overrides and re-applies the instance's policy.
 const execModes = new Map<string, "prompt" | "auto" | "off">();
@@ -1014,9 +1013,7 @@ export function isLoopbackConnection(conn: Connection | undefined): boolean {
   // to claim 127.0.0.1). A remote WebSocket peer sending `X-Forwarded-For: 127.0.0.1`
   // sets conn.ip but not conn.peerIp, so this stays false. Undefined peerIp (real
   // peer unknown) fails closed.
-  const ip = conn.peerIp;
-  if (!ip) return false;
-  return LOOPBACK_IPS.has(ip) || ip.startsWith("127.") || ip.startsWith("::ffff:127.");
+  return isLoopbackIp(conn.peerIp);
 }
 
 /**

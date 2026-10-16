@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { getAllowedOrigins, isLoopbackOriginHost, isTrustedBrowserOrigin } from "../src/net/cors";
+import { getAllowedOrigins, isTrustedBrowserOrigin } from "../src/net/cors";
 
 describe("isTrustedBrowserOrigin (shared WS-upgrade / pre-auth POST rule)", () => {
   const prevAllowed = process.env.ALLOWED_ORIGINS;
@@ -67,13 +67,16 @@ describe("isTrustedBrowserOrigin (shared WS-upgrade / pre-auth POST rule)", () =
     ).toBe(false);
   });
 
-  it("isLoopbackOriginHost classifies URL.hostname forms", () => {
-    expect(isLoopbackOriginHost("localhost")).toBe(true);
-    expect(isLoopbackOriginHost("127.0.0.1")).toBe(true);
-    expect(isLoopbackOriginHost("[::1]")).toBe(true);
-    expect(isLoopbackOriginHost("::1")).toBe(true);
-    expect(isLoopbackOriginHost("0.0.0.0")).toBe(false);
-    expect(isLoopbackOriginHost("localhost.evil.example")).toBe(false);
-    expect(isLoopbackOriginHost("10.0.0.1")).toBe(false);
+  it("a DNS name that only looks like a loopback address is a foreign origin", () => {
+    // Any site can serve a page from these names; a loopback bind must not
+    // treat them as the local operator's own browser.
+    for (const origin of [
+      "http://127.attacker.example",
+      "http://127.0.0.1.nip.io",
+      "https://127.0.0.1.attacker.example:3300",
+      "http://localhost.attacker.example",
+    ]) {
+      expect(isTrustedBrowserOrigin(origin, "127.0.0.1:3300", { loopbackBind: true })).toBe(false);
+    }
   });
 });

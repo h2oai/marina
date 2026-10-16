@@ -22,6 +22,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { isLoopbackHostname } from "../../../src/net/loopback";
 import { authFetch, getToken } from "./api";
 import { apiOrigin } from "./api-origin";
 
@@ -41,11 +42,6 @@ const inflight = new Map<string, Promise<Entry>>();
 let queue: { path: string; token: string; resolve: (e: Entry) => void }[] = [];
 let flushScheduled = false;
 
-function isLoopbackHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  return h === "localhost" || h === "[::1]" || h === "::1" || h.startsWith("127.");
-}
-
 /**
  * This server's `/assets/<key>` path for `url`, when a signature could matter
  * for the current viewer; else undefined (use the URL as given).
@@ -55,7 +51,7 @@ export function signablePath(
   location: Pick<Location, "protocol" | "origin" | "hostname"> = window.location,
   token: string | null = getToken(),
 ): string | undefined {
-  if (!token || isLoopbackHost(location.hostname)) return undefined;
+  if (!token || isLoopbackHostname(location.hostname)) return undefined;
   // An already-signed URL passed back in is re-signed from its bare path.
   return ownAssetPath(url, location);
 }
