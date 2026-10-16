@@ -100,6 +100,9 @@ budget flag. Write their reports outside the public checkout.
 | `qualify:sdk` | Build, pack and install the SDK into a temporary consumer project and check its exports. |
 | `qualify:server` | Build the server bundle and boot it from a temporary instance directory (assets, settings, SDK command, shutdown). See [Release qualification](release-qualification.md). |
 | `qualify:native` | Build `dist/marina` and test it outside the checkout with only Git on `PATH`. See [Release qualification](release-qualification.md). |
+| `qualify:investigations [dir]` | Key-free qualification of the investigation service on a disposable database: content and admission limits, recovery and erasure. Never calls a provider. |
+| `qualify:investigations:live` | Bounded live investigation qualification (`--model`, `--budget-usd`); a dry run prints the plan, `--live` permits paid work. Never opens an existing database. |
+| `qualify:investigations:replay <report>` | Replay the attempts saved by a live run in the browser, dashboard, chat, CLI and terminal workspace. Needs `dashboard:build` and Chromium. |
 | `qualify:image <image>` | Check a packaged server container image (`CONTAINER_RUNTIME`, default `docker`). See [Compatibility](compatibility.md). |
 | `qualify:participation:load --directory PATH [--participants 16 --records 64 --operations 30]` | Real local MCP HTTP concurrency, private automatic context, FULL SQLite durability, bounded overflow and recovery; emits report.json without model calls. |
 | `bench:context` | Offline old/new term-statistics comparison on 1,000 canonical records; verifies equal results and reports median/p95, without caching retrieved memory. |
