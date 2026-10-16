@@ -240,13 +240,31 @@ export default function App() {
           legacy ? "worldmap" : "workspace",
           target.kind === "canvas-node"
             ? "published"
-            : target.kind === "coding"
-              ? "coding-desk"
-              : "streams",
+            : target.kind === "investigation"
+              ? "investigation"
+              : target.kind === "coding"
+                ? "coding-desk"
+                : "streams",
           target,
         );
     };
     window.addEventListener("marina:open-panel", open);
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("inquiry")) {
+      open(
+        new CustomEvent("marina:open-panel", {
+          detail: {
+            kind: "investigation",
+            caseId: query.get("inquiry"),
+            ...(query.get("attempt") ? { attemptId: query.get("attempt") } : {}),
+          },
+        }),
+      );
+      const url = new URL(window.location.href);
+      url.searchParams.delete("inquiry");
+      url.searchParams.delete("attempt");
+      window.history.replaceState(null, "", url);
+    }
     return () => window.removeEventListener("marina:open-panel", open);
   }, [legacy]);
   const effectiveLayouts = focused

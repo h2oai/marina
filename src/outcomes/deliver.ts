@@ -312,6 +312,11 @@ export async function deliverOutcomes(
   const history = historyFromEnv(env);
   for (const o of db.pendingOutcomes("history", max)) {
     const t = tally("history");
+    if (o.kind === "forecast" && db.isPrivateForecast(forecastId(o.subject) ?? -1)) {
+      db.setOutcomeDelivery(o.id, "history", "skipped", "private investigation");
+      t.skipped++;
+      continue;
+    }
     if (o.eval_mode === "measure") {
       db.setOutcomeDelivery(o.id, "history", "skipped", "measurement");
       t.skipped++;
@@ -342,6 +347,11 @@ export async function deliverOutcomes(
   const pending = db.pendingOutcomes("lessons", max);
   for (const o of pending) {
     const t = tally("lessons");
+    if (o.kind === "forecast" && db.isPrivateForecast(forecastId(o.subject) ?? -1)) {
+      db.setOutcomeDelivery(o.id, "lessons", "skipped", "private investigation");
+      t.skipped++;
+      continue;
+    }
     const unnamed = o.eval_mode === "measure" && !measuredBoardNamed(o);
     if (unnamed || lessonsOff) {
       db.setOutcomeDelivery(

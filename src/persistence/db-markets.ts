@@ -267,7 +267,7 @@ export function listForecastAnswers(
 ): ForecastAnswerRow[] {
   return db
     .query(
-      "SELECT * FROM forecast_answers WHERE entity_name = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+      "SELECT * FROM forecast_answers WHERE entity_name = ? AND (source IS NULL OR source != 'investigation') ORDER BY created_at DESC, id DESC LIMIT ?",
     )
     .all(entityName, limit) as ForecastAnswerRow[];
 }
@@ -278,6 +278,7 @@ export function openUnlinkedForecasts(db: Database, limit: number): ForecastAnsw
     .query(
       `SELECT * FROM forecast_answers
        WHERE sample_id IS NULL AND resolved_at IS NULL AND (eval_mode IS NULL OR eval_mode = 'live')
+         AND (source IS NULL OR source != 'investigation')
        ORDER BY created_at, id LIMIT ?`,
     )
     .all(Math.max(0, limit)) as ForecastAnswerRow[];

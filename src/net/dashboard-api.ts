@@ -16,6 +16,7 @@ import { handleAgentRoutes } from "./dashboard-api/agents";
 import { handlePreAuthRoutes } from "./dashboard-api/command";
 import { handleDiscoveryRoutes } from "./dashboard-api/discovery";
 import { handleKeyRoutes } from "./dashboard-api/keys";
+import { handleInvestigationRoutes } from "./dashboard-api/investigations";
 import {
   handleMemoryGraphRoutes,
   handleMemoryNoteRoutes,
@@ -137,6 +138,7 @@ async function dispatchDashboardApi(
     (await handleKeyRoutes(ctx)) ??
     (await handleWorldCatalogRoutes(ctx)) ??
     (await handleRoutingRoutes(ctx)) ??
+    (await handleInvestigationRoutes(ctx)) ??
     (url.pathname.startsWith("/api/") ? json({ error: "Not found" }, 404) : undefined)
   );
 }

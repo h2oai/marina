@@ -377,6 +377,25 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "forecast track record: each answer's audit trail and, once resolved, its score",
   },
   {
+    table: "investigation_content",
+    timeColumn: "created_at",
+    kind: "telemetry",
+    keepMs: 30 * DAY_MS,
+    note: "private captured inputs and outputs; expired references remain visibly unavailable",
+  },
+  ...[
+    "investigation_instance",
+    "investigations",
+    "investigation_attempts",
+    "investigation_events",
+    "investigation_grants",
+    "investigation_admissions",
+  ].map((table) => ({
+    table,
+    kind: "append-only" as const,
+    note: "durable investigation identity, results, access and replay; owner erasure is explicit",
+  })),
+  {
     table: "learned_artifacts",
     kind: "append-only",
     note: "imported learned-bundle versions; the downgrade check reads the highest generation",

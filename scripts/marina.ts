@@ -70,6 +70,7 @@ export type Dispatch =
   | { kind: "code-connected"; url: string; name: string; session: string; tui?: boolean }
   | { kind: "attach"; url?: string; name?: string; session?: string; tui?: boolean }
   | { kind: "route"; rest: string[] }
+  | { kind: "inquiry"; mode: "predict" | "research" | "inquiry"; rest: string[] }
   | { kind: "supervise"; rest: string[] }
   | { kind: "start" };
 
@@ -148,6 +149,7 @@ export function parseDispatch(
   if (first === "status") return parseStatus(argv.slice(1));
   if (first === "supervise") return { kind: "supervise", rest: argv.slice(1) };
   if (first === "route") return { kind: "route", rest: argv.slice(1) };
+  if (first === "predict" || first === "research" || first === "inquiry") return { kind: "inquiry", mode: first, rest: argv.slice(1) };
   if (first === "connect") return { kind: "connect", rest: argv.slice(1) };
   if (first === "attach") return parseAttach(argv.slice(1));
   if (first === "start") return { kind: "start" };
@@ -331,6 +333,9 @@ Usage:
                                the same, with every piece given explicitly
   marina connect <name> [...]  connect to a running Marina (-c "cmd" for one-shot)
   marina supervise [...]       manage local coding agents from the dashboard
+  marina predict <question>    prediction workspace (or --plain / --json)
+  marina research <question>   deep research with captured evidence
+  marina inquiry [...]        saved answers, collaboration and standalone TUI
   marina route [...]           join, publish, and exchange participant messages
   marina start                 run the full server in the foreground
   marina status [--url <ws-url> | --port <n>]
@@ -666,6 +671,11 @@ if (import.meta.main) {
     case "route": {
       const { runRoute } = await import("./route");
       process.exit(await runRoute(dispatch.rest));
+      break;
+    }
+    case "inquiry": {
+      const { runInquiry } = await import("./inquiry");
+      process.exit(await runInquiry(dispatch.mode, dispatch.rest));
       break;
     }
     case "connect":

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 export type PanelBinding =
+  | { kind: "investigation"; caseId: string; attemptId?: string }
   | { kind: "canvas-node"; canvasId: string; nodeId: string }
   | { kind: "coding"; id: string }
   | { kind: "participant"; id: string };
@@ -15,6 +16,16 @@ const identifier = (value: unknown): value is string =>
 export function parsePanelBinding(value: unknown): PanelBinding | null {
   if (!value || typeof value !== "object") return null;
   const b = value as Record<string, unknown>;
+  if (
+    b.kind === "investigation" &&
+    identifier(b.caseId) &&
+    (b.attemptId === undefined || identifier(b.attemptId))
+  )
+    return {
+      kind: "investigation",
+      caseId: b.caseId,
+      ...(typeof b.attemptId === "string" ? { attemptId: b.attemptId } : {}),
+    };
   if (b.kind === "canvas-node" && identifier(b.canvasId) && identifier(b.nodeId))
     return { kind: b.kind, canvasId: b.canvasId, nodeId: b.nodeId };
   if (b.kind === "participant" && identifier(b.id)) return { kind: b.kind, id: b.id };

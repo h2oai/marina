@@ -48,6 +48,10 @@ import * as feedDb from "./db-feed";
 import * as flywheelDb from "./db-flywheel";
 import * as gatewaysDb from "./db-gateways";
 import * as intellectsDb from "./db-intellects";
+import * as investigationJournalDb from "./db-investigation-journal";
+import * as investigationCollaborationDb from "./db-investigation-collaboration";
+import * as investigationLifecycleDb from "./db-investigation-lifecycle";
+import * as investigationsDb from "./db-investigations";
 import * as journeysDb from "./db-journeys";
 import * as learnedDb from "./db-learned";
 import * as logsDb from "./db-logs";
@@ -78,6 +82,7 @@ import * as usersDb from "./db-users";
 import * as witnessDb from "./db-witness";
 import * as worldVariantsDb from "./db-world-variants";
 import type { MarinaStores } from "./interfaces";
+import type { StoreArguments } from "./interfaces/investigations-store";
 
 export type {
   AdapterRow,
@@ -4449,5 +4454,92 @@ export class MarinaDB implements MarinaStores {
 
   listRoutingOverview(ownerId: string, after: string, limit: number, attention: boolean) {
     return routingDb.listRoutingOverview(this.db, ownerId, after, limit, attention);
+  }
+  // Private, durable prediction and research services.
+  createInvestigation(...args: StoreArguments<typeof investigationsDb.createInvestigation>) {
+    return investigationsDb.createInvestigation(this.db, ...args);
+  }
+  reviewInvestigation(
+    ...args: StoreArguments<typeof investigationCollaborationDb.reviewInvestigation>
+  ) {
+    return investigationCollaborationDb.reviewInvestigation(this.db, ...args);
+  }
+  investigationResolutionTarget(
+    ...args: StoreArguments<typeof investigationCollaborationDb.investigationResolutionTarget>
+  ) {
+    return investigationCollaborationDb.investigationResolutionTarget(this.db, ...args);
+  }
+  recordInvestigationResolution(
+    ...args: StoreArguments<typeof investigationCollaborationDb.recordInvestigationResolution>
+  ) {
+    return investigationCollaborationDb.recordInvestigationResolution(this.db, ...args);
+  }
+  settleInvestigation(
+    ...args: StoreArguments<typeof investigationLifecycleDb.settleInvestigation>
+  ) {
+    return investigationLifecycleDb.settleInvestigation(this.db, ...args);
+  }
+  getInvestigation(...args: StoreArguments<typeof investigationsDb.getInvestigation>) {
+    return investigationsDb.getInvestigation(this.db, ...args);
+  }
+  getInvestigationAttempt(
+    ...args: StoreArguments<typeof investigationsDb.getInvestigationAttempt>
+  ) {
+    return investigationsDb.getInvestigationAttempt(this.db, ...args);
+  }
+  listInvestigations(...args: StoreArguments<typeof investigationsDb.listInvestigations>) {
+    return investigationsDb.listInvestigations(this.db, ...args);
+  }
+  grantInvestigation(...args: StoreArguments<typeof investigationsDb.grantInvestigation>) {
+    return investigationsDb.grantInvestigation(this.db, ...args);
+  }
+  selectInvestigationAttempt(
+    ...args: StoreArguments<typeof investigationsDb.selectInvestigationAttempt>
+  ) {
+    return investigationsDb.selectInvestigationAttempt(this.db, ...args);
+  }
+  appendInvestigationEvent(
+    ...args: StoreArguments<typeof investigationJournalDb.appendInvestigationEvent>
+  ) {
+    return investigationJournalDb.appendInvestigationEvent(this.db, ...args);
+  }
+  storeInvestigationContent(
+    ...args: StoreArguments<typeof investigationJournalDb.storeInvestigationContent>
+  ) {
+    return investigationJournalDb.storeInvestigationContent(this.db, ...args);
+  }
+  getInvestigationContent(
+    ...args: StoreArguments<typeof investigationJournalDb.getInvestigationContent>
+  ) {
+    return investigationJournalDb.getInvestigationContent(this.db, ...args);
+  }
+  readInvestigationEvents(
+    ...args: StoreArguments<typeof investigationJournalDb.readInvestigationEvents>
+  ) {
+    return investigationJournalDb.readInvestigationEvents(this.db, ...args);
+  }
+  claimInvestigation(...args: StoreArguments<typeof investigationLifecycleDb.claimInvestigation>) {
+    return investigationLifecycleDb.claimInvestigation(this.db, ...args);
+  }
+  finishInvestigation(
+    ...args: StoreArguments<typeof investigationLifecycleDb.finishInvestigation>
+  ) {
+    return investigationLifecycleDb.finishInvestigation(this.db, ...args);
+  }
+  cancelInvestigation(
+    ...args: StoreArguments<typeof investigationLifecycleDb.cancelInvestigation>
+  ) {
+    return investigationLifecycleDb.cancelInvestigation(this.db, ...args);
+  }
+  recoverInvestigations(
+    ...args: StoreArguments<typeof investigationLifecycleDb.recoverInvestigations>
+  ) {
+    return investigationLifecycleDb.recoverInvestigations(this.db, ...args);
+  }
+  isPrivateForecast(...args: StoreArguments<typeof investigationLifecycleDb.isPrivateForecast>) {
+    return investigationLifecycleDb.isPrivateForecast(this.db, ...args);
+  }
+  eraseInvestigation(...args: StoreArguments<typeof investigationLifecycleDb.eraseInvestigation>) {
+    return investigationLifecycleDb.eraseInvestigation(this.db, ...args);
   }
 }

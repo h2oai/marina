@@ -31,4 +31,6 @@ Object.assign(process.env, {
   MARINA_CODE_DEFAULT_ROOT: codingRoot,
 });
 
+const { seedInvestigationBrowserFixture } = await import("./investigation-fixture");
+seedInvestigationBrowserFixture(dbPath);
 await import("../../src/main.ts");

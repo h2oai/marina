@@ -54,3 +54,6 @@ export type {
 export type { RoutingClientOptions } from "./routing-client";
 export { MarinaRoutingClient, RoutingApiError } from "./routing-client";
 export type * from "./routing-types";
+export * from "./investigation-client";
+export * from "./investigation-text";
+export { INVESTIGATION_SCHEMA, investigationTerminal } from "./investigation-types";

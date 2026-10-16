@@ -28,6 +28,7 @@ import { MacroManager } from "../coordination/macro-manager";
 import { TaskManager } from "../coordination/task-manager";
 import { extensionGatewayProof } from "../extensions/loader";
 import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
+import { closeInvestigationService } from "../investigations/service";
 import {
   flushWorkLessons,
   observeWorkEvent,
@@ -1983,6 +1984,7 @@ export class Engine {
 
   /** Save world state and stop the engine */
   shutdown(): Promise<void> {
+    closeInvestigationService(this.db);
     this.stop();
     const finish = () => {
       this.saveWorldState();
