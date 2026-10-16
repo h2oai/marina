@@ -40,7 +40,9 @@ beforeEach(() => {
   fetchMock = vi.fn(async (url: string) => {
     if (String(url).endsWith("/api/ui-config")) return Response.json({ maxUploadBytes: 5000 });
     if (String(url).includes("/missing")) return new Response("Not found", { status: 404 });
-    return new Response(new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
+    // Bytes, not a jsdom Blob: Node 22's Response streams a Blob body via Blob.stream(),
+    // which jsdom's Blob lacks.
+    return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/png" } });
   });
   vi.stubGlobal("fetch", fetchMock);
   vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:views://dashboard/${++blobs}`);
