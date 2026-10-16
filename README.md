@@ -142,10 +142,12 @@ await agent.quit();
 bun run hello.ts
 ```
 
-**4. MCP** — add to your Claude Desktop/Code config, then ask Claude to say hello:
-```json
-{ "mcpServers": { "marina": { "url": "http://localhost:3301/mcp" } } }
+**4. MCP** — register Marina's Streamable HTTP endpoint with Claude Code, then ask Claude to say hello:
+```bash
+claude mcp add --transport http marina http://localhost:3301/mcp
 ```
+A default local install (loopback bind, no `MODEL_API_KEYS`, no external sign-in) needs no bearer
+token. For Codex, Cursor, Claude Desktop and other clients, see [MCP integration](docs/guides/mcp-integration.md).
 
 **5. Memory API** — no world participation needed, just REST. A local install accepts the key it
 prints at startup (stored next to the database in `marina.db.local-api-key`); name the agent whose
@@ -174,6 +176,15 @@ ANTHROPIC_API_KEY=sk-ant-... bun run start
 (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, and others work too — see
 the [environment reference](docs/reference/environment.md#model-provider-keys).) A local install starts the seeded Workbench population on boot
 (`AGENT_AUTORESPAWN=false` keeps it off; shared/public deployments need `AGENT_AUTORESPAWN=true`). Verify actual state with `readiness`, `agent list`, and `who`.
+
+**Local model instead of a key** — Marina uses a running Ollama or llama.cpp server only when you
+point it there; setting the base URL (or key) opts the runtime in:
+```bash
+OLLAMA_BASE_URL=http://localhost:11434/v1 bun run start   # Ollama (keyless)
+LLAMA_BASE_URL=http://localhost:8080/v1 bun run start     # llama.cpp llama-server
+```
+`MARINA_DEFAULT_OLLAMA_MODEL` / `MARINA_DEFAULT_LLAMA_MODEL` pick the model id (Ollama otherwise uses
+the first installed model). See [Running on a single model](docs/guides/single-model.md).
 
 **2. From the dashboard** — open `http://localhost:3300/`:
 - **Admin → Keys**: click **+ Add**, choose a provider, paste the key, and click **Save Key**. Use **Test** to verify connectivity; no restart is required.
@@ -208,7 +219,7 @@ keep a focused view. Drafts and scroll positions survive switching and resizing.
 F6 switches Coding/World, F7 opens pending requests, and F8 opens your panel views. `/panel desk` opens a personal coding desk; `/panel publish <canvas-id>` shares one. One coding
 session is enough; other conversations and autonomous agents continue alongside your work.
 `/model`, `/fast`, `/plan`, `/compact`, `/cost`, `/continue`, and `/memory` cover the session's
-day-to-day controls — see the [coding guide](docs/guides/coding.md#session-controls-at-hand).
+day-to-day controls — see the [coding guide](docs/guides/coding.md#start-in-your-project-folder).
 
 In the dashboard, select a session in **Work** to open a personal desk for Marina itself or an external repository. **Workspace → Canvas → Published panels → Create coding desk** publishes an
 existing coding session, recorded checks, optional task evidence and participant messages, and

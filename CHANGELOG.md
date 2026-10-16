@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Private predictions and research**: `marina predict` / `marina research`, the `/predict` and
+  `/research` dashboard pages and chat cards, the `inquiry` command, and an SDK client keep each
+  question as a durable private case with its answer, sources and captured work, reopenable from
+  web or terminal; migration 170 adds the investigation tables (#480).
+- **Audio**: `audio transcribe`, `audio transcript` and `audio speak`, the `marina_transcribe` /
+  `marina_speak` agent tools, and `POST /v1/audio/transcriptions` / `POST /v1/audio/speech`, with
+  OpenAI or any OpenAI-compatible local audio server; long audio is chunked (#479).
+- **Memory over media**: an asset's caption, alt text, tags, prompt, PDF text and transcript
+  become private memory records for its owner citing `asset:<id>`; `MARINA_MEDIA_MEMORY=off|text|vision`
+  (default `text`) (#478).
+- **Asset library**: assets record origin, hash (same-owner uploads deduplicate), dimensions,
+  provenance, tags, lineage and thumbnails; an `asset` command and a library query (#473).
+- **Dashboard media**: one media viewer for images, video, audio and PDFs, an Asset Library panel,
+  and upload from anywhere (#474); media cards in WebChat persist across reloads (#476).
+- **Native vision**: agents whose model reads images see them directly (`MARINA_AGENT_VISION`,
+  default `auto`); image and video generation is offered by configured provider; inbound images on
+  `/v1/messages` and the Ollama routes are translated instead of dropped (#472).
+- **Image decisions**: harness decisions accept images in their state and a `box` question type
+  (#471).
+- **Image preparation**: images are probed, rotated, resized and re-encoded to a model's limits,
+  with `sharp` as an optional dependency (#470).
+- **Vision benchmark**: `benchmarks/vision-native --set hard` compares native and described vision
+  with paired statistics; opt-in (#475).
+
+### Changed
+
+- **Arena**: a first filing for a round outside the filing window is refused unless `--early` is
+  passed; `arena-filing-watch` alerts on a filing that was never refreshed (#466).
+
+### Fixed
+
+- Asset ownership and media job identity come from the authenticated caller, not a request field
+  (#467).
+- Private assets display for remote dashboard viewers through short-lived signed URLs; the drop
+  dialog preview works; the pdf.js worker is bundled instead of loaded from a CDN (#468).
+- Runway, OpenAI image and Veo requests match the providers' current APIs; video jobs resume after
+  a restart and time out (`MARINA_VIDEO_JOB_TIMEOUT_MIN`) (#469).
+- The media library, viewer and uploads work in the desktop shell (#477).
+
 ## [0.8.0] — 2026-10-14
 
 ### Upgrade notes
