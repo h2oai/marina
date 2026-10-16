@@ -21,6 +21,8 @@ export function registerMemoryResources(
   mcp: McpServer,
   profile: "native" | "knowledge-graph",
   runCmd: Run,
+  /** How often a subscription re-reads the space generation (tests shorten it). */
+  pollMs = 1000,
 ) {
   const uri = profile === "knowledge-graph" ? "memory://knowledge-graph" : "memory://space";
   let timer: ReturnType<typeof setInterval> | undefined,
@@ -95,7 +97,7 @@ export function registerMemoryResources(
           polling = false;
         }
       })();
-    }, 1000);
+    }, pollMs);
     timer.unref();
     return {};
   });
