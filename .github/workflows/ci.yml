@@ -68,6 +68,12 @@ jobs:
           bun-version-file: .bun-version
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      - name: Install media tools
+        # ffmpeg/ffprobe and poppler (pdftotext, pdftoppm): the media, asset
+        # library and asset memory tests skip their tool paths without them.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg poppler-utils
       - name: Check shard coverage
         # Every test file lands in exactly one shard (time-balanced from
         # test/timing.json, name-hash fallback for files without a timing).
