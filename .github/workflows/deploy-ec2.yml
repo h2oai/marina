@@ -86,6 +86,14 @@ jobs:
         if: steps.target.outputs.sha != ''
         with:
           ref: ${{ steps.target.outputs.sha }}
+      # Qualification runs the same Node/Vitest dashboard suite as PR CI.
+      # The runner's default Node can behave differently in VM blob tests.
+      - name: Set up dashboard test runtime
+        if: steps.target.outputs.sha != ''
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: dashboard/.node-version
+          package-manager-cache: false
       - uses: oven-sh/setup-bun@v2.2.0
         if: steps.target.outputs.sha != ''
         with:

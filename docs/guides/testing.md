@@ -119,8 +119,9 @@ Install current Node 24 LTS alongside Bun for dashboard development. The dashboa
 the supported range: Node 22.22.2+, 24.15.0+, or 26+ (excluding 23 and 25).
 The installed JSDOM requires this newer baseline than Vitest's Node 22.12 minimum.
 Bun manages packages; `bun run test:ui` (or `cd dashboard && bun run test`) explicitly
-launches Vitest with Node. CI installs that runtime instead of relying on the runner
-image's preinstalled version. See the [Vitest runtime requirements](https://vitest.dev/guide/).
+launches Vitest with Node. CI and EC2 release qualification install that runtime instead
+of relying on the runner image's preinstalled version. See the
+[Vitest runtime requirements](https://vitest.dev/guide/).
 
 Do not use `bun --bun run test` or `bun test` inside the dashboard: those force the
 wrong runtime/runner. With Bun 1.4.2, Vitest 5.0.1 and JSDOM 30.1.1, both `vmThreads`

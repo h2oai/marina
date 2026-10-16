@@ -102,6 +102,14 @@ describe("production deployment qualification", () => {
       "${{ steps.target.outputs.sha }}",
     );
     expect(steps.some((step) => step.run === "bun run qualify:release")).toBe(true);
+    const nodeSetup = steps.findIndex((step) => step.uses?.startsWith("actions/setup-node"));
+    expect(nodeSetup).toBeGreaterThan(
+      steps.findIndex((step) => step.uses?.startsWith("actions/checkout")),
+    );
+    expect(nodeSetup).toBeLessThan(
+      steps.findIndex((step) => step.run === "bun install --frozen-lockfile"),
+    );
+    expect(steps[nodeSetup]?.with?.["node-version-file"]).toBe("dashboard/.node-version");
     expect(steps.some((step) => step.run === "bun run qualify:image marina-qualification")).toBe(
       true,
     );
