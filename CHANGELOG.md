@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Private predictions and research**: `marina predict` / `marina research`, the `/predict` and
+  `/research` dashboard pages and chat cards, the `inquiry` command, and an SDK client keep each
+  question as a durable private case with its answer, sources and captured work, reopenable from
+  web or terminal; migration 170 adds the investigation tables (#480).
 - **Audio**: `audio transcribe`, `audio transcript` and `audio speak`, the `marina_transcribe` /
   `marina_speak` agent tools, and `POST /v1/audio/transcriptions` / `POST /v1/audio/speech`, with
   OpenAI or any OpenAI-compatible local audio server; long audio is chunked (#479).
