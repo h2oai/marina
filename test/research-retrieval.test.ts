@@ -49,6 +49,7 @@ import {
   type ModelPart,
   type TypedRun,
 } from "../src/forecast/typed";
+import { scopeProcessState } from "./process-state";
 
 afterEach(() => {
   resetSearchHealthForTests();
@@ -317,6 +318,8 @@ describe("search backends", () => {
   });
 
   it("Exa sends its key in a header, prices each search, and refuses at the daily cap", async () => {
+    // The default daily cap, whatever the operator configured.
+    using _state = scopeProcessState({ env: { MARINA_DAILY_SPEND_CAP_USD: undefined } });
     const seen: RequestInit[] = [];
     const exa = exaSearchProvider("exa-key", async (_url, init) => {
       seen.push(init);

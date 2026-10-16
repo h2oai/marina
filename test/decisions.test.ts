@@ -422,7 +422,7 @@ describe("POST /v1/decisions", () => {
     );
 
   it("404s with decisions_disabled while MARINA_DECISIONS is off", async () => {
-    delete process.env.MARINA_DECISIONS;
+    process.env.MARINA_DECISIONS = "off";
     const res = await post({ state: "x", questions: { d: { type: "noul", instructions: "?" } } });
     expect(res.status).toBe(404);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe(

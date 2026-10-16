@@ -18,6 +18,7 @@ import type { DecisionProvider } from "../src/decisions/types";
 import { Engine } from "../src/engine/engine";
 import { computeReadiness } from "../src/engine/readiness";
 import { roomId } from "../src/types";
+import { providerEnvironmentKeys } from "./hermetic-env";
 
 const KEYS = [
   "MARINA_DECISIONS",
@@ -31,13 +32,15 @@ const KEYS = [
   "MARINA_DECISION_GATE",
   "OPENROUTER_API_KEY",
 ] as const;
-const saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+// Every provider credential: any one of them turns the default `auto` decisions on.
+const CLEARED = [...new Set<string>([...KEYS, ...providerEnvironmentKeys()])];
+const saved = Object.fromEntries(CLEARED.map((k) => [k, process.env[k]]));
 function setEnv(env: Partial<Record<(typeof KEYS)[number], string>>) {
-  for (const k of KEYS) delete process.env[k];
+  for (const k of CLEARED) delete process.env[k];
   Object.assign(process.env, env);
 }
 afterEach(() => {
-  for (const k of KEYS) {
+  for (const k of CLEARED) {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];
   }

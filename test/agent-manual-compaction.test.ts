@@ -183,7 +183,11 @@ describe("manual compaction through the real context manager and provider parser
   );
 
   it("uses provider-reported costs when the catalog cannot price the model", async () => {
-    using _state = scopeProcessState({ trustProfile: "shared" });
+    // The default daily cap, whatever the operator configured.
+    using _state = scopeProcessState({
+      trustProfile: "shared",
+      env: { MARINA_DAILY_SPEND_CAP_USD: undefined },
+    });
     resetSpendLedgerForTests();
     const { adapter } = setup({ unpriced: true });
     await adapter.compactNow();
@@ -192,7 +196,11 @@ describe("manual compaction through the real context manager and provider parser
   });
 
   it("does not charge a proxied call to the daily ledger a second time", async () => {
-    using _state = scopeProcessState({ trustProfile: "shared" });
+    // The default daily cap, whatever the operator configured.
+    using _state = scopeProcessState({
+      trustProfile: "shared",
+      env: { MARINA_DAILY_SPEND_CAP_USD: undefined },
+    });
     resetSpendLedgerForTests();
     const { adapter } = setup({ proxy: true, unpriced: true });
     await adapter.compactNow();
