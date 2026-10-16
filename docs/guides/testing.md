@@ -83,12 +83,19 @@ bun run docs:api --check       # generated builtin API reference matches current
 make help                     # optional task shortcuts, all delegate to package scripts
 ```
 
-If your local `.env` enables live services, run the backend without loading it:
-`bun --no-env-file scripts/test-backend.ts --no-env-file`. Invoke the runner directly:
-the package script launches another Bun process which can reload `.env`. The first
-flag applies to the runner and the second to its Bun test child. Shell-exported variables still apply;
-mock-provider tests should scope every setting that can select a live backend with
-`scopeProcessState()` rather than relying on an operator's configuration being absent.
+**Hermetic environment.** Bun loads the repository's `.env` into `bun test`, so the
+test preload (`test/preload.ts` → `test/hermetic-env.ts`) removes leaked configuration
+before any test file loads: every `MARINA_*` variable, every server variable in
+`config/environment.reference`, every provider credential and local-runtime setting model
+discovery knows (`CLOUD_PROVIDER_KEY_ENVS`, `HUGGINGFACE_ENV_KEYS`, `LOCAL_PROVIDERS`), and
+every key defined in a `.env` file Bun loads for tests. Shell exports are removed the same
+way, so a developer machine runs the suite as CI does and no test reaches a live provider
+or a running local Marina. Kept: `MARINA_TEST_*` opt-ins (such as
+`MARINA_TEST_CONTAINER_IMAGE`), `NODE_ENV` and proxy settings. A test that depends on a
+setting scopes it with `scopeProcessState()` (for example `MARINA_DECISIONS: "off"`, or
+`MARINA_DAILY_SPEND_CAP_USD: undefined` for the default cap) and clears provider keys with
+`noProviderEnv()` rather than a hand-written list. For a deliberate live check, set
+`MARINA_TEST_KEEP_ENV=1` to keep the whole environment.
 
 The test wrappers forward everything after `--` to `bun test`
 (`bun run test:fast -- --bail`, `bun run test:shard 1 3 -- --only-failures`).

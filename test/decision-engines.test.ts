@@ -517,7 +517,7 @@ describe("engines", () => {
   });
 
   it("POST /v1/systemone answers with an engine even when MARINA_DECISIONS is off", async () => {
-    delete process.env.MARINA_DECISIONS;
+    process.env.MARINA_DECISIONS = "off";
     process.env.MARINA_DECISION_ENGINES = "z-ai/glm-5.3-flash";
     const up = fakeUpstream({ logprobs: true });
     const res = await handleDecisions(
@@ -551,7 +551,7 @@ describe("engines", () => {
   });
 
   it("still 404s with nothing configured, before looking at the body", async () => {
-    delete process.env.MARINA_DECISIONS;
+    process.env.MARINA_DECISIONS = "off";
     delete process.env.MARINA_DECISION_ENGINES;
     const res = await handleDecisions(
       new Request("http://x/v1/systemone", { method: "POST", body: "nope" }),

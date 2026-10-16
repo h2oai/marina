@@ -14,23 +14,13 @@ import { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, EntityId, RoomContext } from "../src/types";
 import { roomId } from "../src/types";
 import { cleanupDb } from "./helpers";
+import { providerEnvironmentKeys } from "./hermetic-env";
 import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_readiness.db";
 
-// Provider key env vars that gate agentRuntime.isAvailable().
-const KEY_VARS = [
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
-  "GEMINI_API_KEY",
-  "GOOGLE_API_KEY",
-  "GROQ_API_KEY",
-  "OPENROUTER_API_KEY",
-  "CEREBRAS_API_KEY",
-  "XAI_API_KEY",
-  "MISTRAL_API_KEY",
-  "DEEPSEEK_API_KEY",
-];
+// Provider credentials and local runtimes that gate agentRuntime.isAvailable().
+const KEY_VARS = providerEnvironmentKeys();
 const OTHER_VARS = [
   "AGENT_AUTORESPAWN",
   "MARINA_ROOM_AGENTS",
@@ -39,12 +29,14 @@ const OTHER_VARS = [
   "MARINA_OPEN_API",
   "MARINA_PROFILE",
   "MARINA_AUTONOMY",
-  "LLAMA_BASE_URL",
-  "OLLAMA_BASE_URL",
-  "LLAMA_API_KEY",
-  "OLLAMA_API_KEY",
-  "HUGGINGFACE_API_KEY",
-  "HF_TOKEN",
+  "GOOGLE_API_KEY",
+  "MARINA_DECISIONS",
+  "MARINA_DECISION_ENGINE",
+  "MARINA_DECISION_ENGINES",
+  "MARINA_DECISION_ENSEMBLE",
+  "MARINA_DECISION_GATE",
+  "MARINA_DECISION_GATE_CONTEXT",
+  "MARINA_DECISION_VERIFY",
 ];
 
 describe("computeReadiness", () => {

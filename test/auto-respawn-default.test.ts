@@ -48,6 +48,8 @@ describe("presets", () => {
   });
 
   it("init tells the operator about the spend cap", () => {
+    // An unset cap falls back to the process environment; pin it to the default.
+    using _state = scopeProcessState({ env: { MARINA_DAILY_SPEND_CAP_USD: undefined } });
     expect(spendCapNotice({})).toContain("$50 per UTC day (default)");
     expect(spendCapNotice({ MARINA_DAILY_SPEND_CAP_USD: "5" })).toContain("$5 per UTC day;");
     expect(spendCapNotice({ MARINA_DAILY_SPEND_CAP_USD: "0" })).toContain("UNCAPPED");

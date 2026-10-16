@@ -14,6 +14,7 @@ import { MODEL_DISCOVERY_PROVIDERS } from "../src/net/model/model-discovery";
 import { cloudKeyEnvs, KEY_PROVIDERS, providerSetupHint } from "../src/net/model/provider-setup";
 import { createTestEngine } from "./engine-fixture";
 import { stripAnsi } from "./helpers";
+import { noProviderEnv } from "./hermetic-env";
 import { scopeProcessState } from "./process-state";
 
 describe("did you mean", () => {
@@ -65,12 +66,7 @@ describe("first-run commands", () => {
         trustProfile: "local",
         env: {
           MARINA_AUTONOMY: undefined,
-          ANTHROPIC_API_KEY: undefined,
-          OPENAI_API_KEY: undefined,
-          OPENROUTER_API_KEY: undefined,
-          GEMINI_API_KEY: undefined,
-          LLAMA_BASE_URL: undefined,
-          OLLAMA_BASE_URL: undefined,
+          ...noProviderEnv(),
         },
       }),
     );

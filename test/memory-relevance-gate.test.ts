@@ -542,7 +542,7 @@ describe("relevance gate inside buildUnifiedContext", () => {
       env: {
         MARINA_MEMORY_RELEVANCE_GATE: "on",
         MARINA_MEMORY_RELEVANCE_GATE_MODEL: "none",
-        MARINA_DECISIONS: undefined,
+        MARINA_DECISIONS: "off",
         MARINA_DECISION_ENGINE: undefined,
       },
     });

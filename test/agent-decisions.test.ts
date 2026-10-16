@@ -202,7 +202,7 @@ describe("decision tools in the world", () => {
   });
 
   it("says so when the world has no decision backend", () => {
-    delete process.env.MARINA_DECISIONS;
+    process.env.MARINA_DECISIONS = "off";
     delete process.env.MARINA_DECISION_BASE_URL;
     engine.processCommand(bob.entity!, "decision check anything");
     expect(stripAnsi(bob.lastText())).toContain("No decision backend");
