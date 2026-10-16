@@ -1,7 +1,7 @@
 # Releasing Marina
 
 A maintainer checklist for cutting a Marina release, in order. It describes the tooling that
-exists today; steps without tooling are listed under [Gaps before 1.0](#gaps-before-10).
+exists today; steps without tooling are listed under [Release steps without tooling](#release-steps-without-tooling).
 [Release qualification](release-qualification.md) defines the test gate this checklist runs;
 [Compatibility and upgrades](compatibility.md) defines what a release may change.
 
@@ -220,7 +220,7 @@ A security fix may shorten a deprecation window only with an explicit upgrade ad
   version bump. The next release PR moves the version.
 - Every user-visible PR adds a line under `[Unreleased]` (the PR template asks).
 
-## Gaps before 1.0
+## Release steps without tooling
 
 These release steps have no tooling today:
 
