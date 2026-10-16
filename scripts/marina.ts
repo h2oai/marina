@@ -11,6 +11,8 @@
  *   marina start                 run the full server in the foreground
  *   marina status [--url|--port] is a Marina running? health + capability readiness
  *   marina init                  interactive .env setup
+ *   marina supervise [...]       manage local coding agents from the dashboard
+ *   marina route [...]           join, publish, and exchange participant messages
  *   marina version               print the package version
  *   marina --help | -h           usage
  *

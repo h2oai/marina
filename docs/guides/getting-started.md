@@ -90,7 +90,24 @@ Environment keys are read at runtime and are not written into Marina's database.
 
 Marina supports configured local OpenAI-compatible runtimes such as llama.cpp and Ollama. A local
 runtime must already be installed, running, and reachable; Marina does not download a model
-silently. See [Model API](model-api.md) for endpoint configuration.
+silently, and it does not probe for one: set the runtime's base URL (or key) to opt it in.
+
+```bash
+# Ollama (keyless); the first installed model is used unless MARINA_DEFAULT_OLLAMA_MODEL is set
+OLLAMA_BASE_URL=http://localhost:11434/v1 bun run start
+
+# llama.cpp llama-server; LLAMA_API_KEY only when the server runs with --api-key
+LLAMA_BASE_URL=http://localhost:8080/v1 MARINA_DEFAULT_LLAMA_MODEL=local-model bun run start
+```
+
+The URLs above are the defaults Marina assumes for each runtime; change them if your server
+listens elsewhere. A configured runtime becomes a fallback for `marina/default`, and you can
+address it directly as `ollama/<id>` or `llama/<id>`. The context window is probed at launch; pin
+it with `OLLAMA_CONTEXT_WINDOW` / `LLAMA_CONTEXT_WINDOW` if the probe is wrong. A vLLM or SGLang
+server is reachable as an explicit `vibethinker/<id>` model through `VIBETHINKER_BASE_URL`
+(default `http://localhost:8000/v1`), never as a `marina/default` fallback. See
+[Running on a single model](single-model.md) for what changes with one model, and
+[Model API](model-api.md) for endpoint configuration.
 
 ## Start the Workbench agents
 

@@ -15,6 +15,12 @@ scripts print their own `--help`; the linked guide is the long form.
 | `build` | Bundle the server, the memory importer and the browser memory SDK into `dist/`. |
 | `dashboard:dev` / `dashboard:build` | Vite dev server / production build for the dashboard. |
 | `usecase-ui:dev` / `usecase-ui:build` | The example use-case UI (`examples/usecase-ui`). |
+| `setup:cli` | Put `marina` on your `PATH` by linking it into Bun's global bin folder; prints the line to add when that folder is not on `PATH` (`--force` replaces another link). |
+| `build:native` | Compile the `marina` dispatcher into a standalone `dist/marina` executable. See [Compatibility](compatibility.md). |
+| `build:sdk` | Build the `@marina/agent-sdk` package into `src/sdk/dist`. |
+| `create:agent <new-dir>` | Scaffold a minimal SDK agent project in a new directory (never overwrites files). |
+| `monitor` | Outside health monitor: checks `/health`, alerts once per outage (`--desktop`, webhook), pings a heartbeat URL while healthy, installs nothing on the host. See [Operations](../operations.md). |
+| `recovery create\|restore\|unlock` | Create or restore a private recovery bundle, or release the lease of a stopped database. See [Recovery](recovery.md). |
 
 The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for one-shot,
 `--port 3400` or `--url ws://host:3400` for another instance). See [Connecting](connecting.md).
@@ -32,6 +38,16 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `mind2web2 run\|cache\|judge\|score\|record` | Mind2Web 2: answer live-web research tasks with the research agent (`--cap-usd` required), export the pages it read in the judge's cache layout, run the official judge locally under a spend cap, score, and record to the ledger and lessons. Never submits. See [Mind2Web 2](mind2web2.md). |
 | `repro doctor\|list\|<setup>` | Reproduce a published benchmark setup (`hle-verified`, `swebench-verified`, `tau2`, `futurex-backtest`, `arena-backtest`): prerequisite checks with fixes, `--dry-run` plans with estimated spend, replicated arms, a pooled comparison from the ledger. See [Reproduce](reproduce.md). |
 | `leaderboards` | Print a markdown snapshot of the public-competition record — external submissions, arena filings, and the benchmark ledger — from the append-only tables. See [Leaderboards](leaderboards.md). |
+| `futurex fetch\|run\|backtest\|watch\|learn\|status` | FutureX weekly prediction benchmark: download a batch, forecast every row and write the submission file, backtest resolved rows, learn from resolved weeks. Never submits. See [FutureX](futurex.md). |
+| `swebench export\|subset\|run\|score\|file` | SWE-bench through the one-shot coding entry point: seeded subsets, runs per arm and replicate, scoring with the official harness, filing to the benchmark ledger. See [SWE-bench](swebench.md). |
+| `browsecomp-plus run\|compare` | BrowseComp-Plus over a local corpus: runs formations with a hard `--max-usd` stop, judges answers, and compares two arms. See [BrowseComp-Plus](browsecomp-plus.md). |
+| `longmemeval summary\|convert` | Summarize LongMemEval-V2 run folders and convert them into a ledger file. See [LongMemEval](longmemeval.md). |
+| `arena:research capture\|run\|score` | Checkpointed arena research qualification on frozen inputs. Never signs or submits. See [Arena](arena.md). |
+| `arena:portfolio` | Shadow comparison of arena formations on a disposable database. No signing, submission or route writes. See [Arena](arena.md). |
+| `corpus build\|list\|search\|get\|embed\|vectors` | Build and inspect offline BM25 corpora that agents search with `web search engines:corpus:<name>`; optional dense vectors. See [Search](search.md). |
+| `benchmark:import` | Import harness result files into a world's benchmark ledger; also regroups, invalidates or revalidates runs (`DB_PATH`). |
+| `outcomes:settle` | Settle measured results onto the outcome path: ledger runs without an outcome, plus optional FutureX, arena and Metaculus resolutions. Files nothing. |
+| `lessons backfill\|rank\|replay\|backfill-work` | Operator tools for the judged lesson pool: teach unlessoned ledger runs, rank and replay lessons, backfill lessons from recorded work (`DB_PATH`). |
 
 ## Memory service
 
@@ -40,6 +56,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `memory <sub>` | Standalone memory service admin: `init`, `serve`, `revoke`, `backup`, `restore`, `rotate-backups`, `compact-receipts`, transfers. See [Memory Service](memory-service.md). |
 | `memory:mcp` | Memory as a stdio MCP server for coding clients. See [Memory extensions](memory-extensions.md). |
 | `build:memory` | Build the browser memory SDK (`dist/memory.js`). |
+| `memory:compatibility status\|upgrade <db>` | Report numeric-memory integrity for a database, or upgrade it. See [Compatibility](compatibility.md). |
 
 ## Develop and test
 
@@ -51,6 +68,12 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `test:explorer` | Build the documentation site and verify API explorer search, schemas, deep links and mobile layout in Chromium. |
 | `test:properties` | Run shrinking, seeded cache invalidation, command scheduling/cancellation and context security properties (`FC_SEED`, `FC_RUNS`, `FC_PATH`). |
 | `docs:api [--check]` | Generate builtin commands, live MCP tool schemas, published SDK declarations, HTTP dispatch references and API explorer data, or check them for drift. |
+| `docs:env [--check]` | Regenerate `docs/reference/environment.md` from `config/environment.reference` alone (`docs:api` also does this). |
+| `schema:check` | Check that the generated fresh-database schema baseline is current. |
+| `test:mutation` | Stryker mutation tests over the cache and admission contracts. See [Testing](testing.md#mutation-testing-and-session-model-checks). |
+| `check:model` | Model-check the bounded MCP session specification with TLC (needs Java 21). See [Testing](testing.md#mutation-testing-and-session-model-checks). |
+| `check:a11y` / `test:a11y` | Dashboard accessibility lint contract; `test:a11y` adds a dashboard build and axe-core browser checks. See [Dashboard accessibility](dashboard-accessibility.md). |
+| `check:context-performance --baseline <dir>` | Compare context-retrieval p99 latency against a base checkout. See [Testing](testing.md#context-latency-regression-gate). |
 | `test:serial` | The same suite in one process (for order-dependent debugging). |
 | `test:fast` | Engine-free subset, ~10 s — the pre-commit loop (`--check` reports drift). |
 | `test:shard I N` | Time-balanced shard I of N (CI runs 3). See [Testing](testing.md). |
@@ -68,6 +91,16 @@ budget flag. Write their reports outside the public checkout.
 | Script | What it does |
 |---|---|
 | `bench` / `bench:ui` | Academic benchmark harness; web UI on port 3303. See [Benchmarks](../../benchmarks/README.md). |
+| `bench:compare <a> <b>` | Paired comparison of two harness result files or tier-0 directories: Wilson intervals, McNemar test, paired bootstrap, reported cost. |
+| `bench:tier0` | A small fixed hard slice (HLE verified gold, GPQA, FRAMES) for crew and formation sweeps against any endpoint. |
+| `bench:native` | Native world tasks: print a seeded task, or run and score it against a live server. |
+| `bench:participation-context` | Measure automatic-context retrieval latency on seeded records. See [Testing](testing.md#context-latency-regression-gate). |
+| `qualify:coding` | Live Code Mode qualification on small fixture projects (`--directory`, `--budget-usd`). See [Testing](testing.md). |
+| `qualify:agents:handoff` | Live, bounded resident handoff qualification (needs `OPENAI_API_KEY`, `--directory`). See [Execution evidence](execution-evidence.md). |
+| `qualify:sdk` | Build, pack and install the SDK into a temporary consumer project and check its exports. |
+| `qualify:server` | Build the server bundle and boot it from a temporary instance directory (assets, settings, SDK command, shutdown). See [Release qualification](release-qualification.md). |
+| `qualify:native` | Build `dist/marina` and test it outside the checkout with only Git on `PATH`. See [Release qualification](release-qualification.md). |
+| `qualify:image <image>` | Check a packaged server container image (`CONTAINER_RUNTIME`, default `docker`). See [Compatibility](compatibility.md). |
 | `qualify:participation:load --directory PATH [--participants 16 --records 64 --operations 30]` | Real local MCP HTTP concurrency, private automatic context, FULL SQLite durability, bounded overflow and recovery; emits report.json without model calls. |
 | `bench:context` | Offline old/new term-statistics comparison on 1,000 canonical records; verifies equal results and reports median/p95, without caching retrieved memory. |
 | `eval-prompt` / `qualify:prompt` | Fast 15-item prompt A/B against a running model endpoint; `qualify:prompt` gates the answerer at ≥ 13. In-world: `benchmark run smoke`. See [Prompt architecture](agent-prompt-architecture.md). |
