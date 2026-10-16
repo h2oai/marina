@@ -1,5 +1,8 @@
 # Release qualification
 
+This is the test gate. The full maintainer checklist (version bump, changelog, tag, artifacts)
+is [Releasing Marina](releasing.md).
+
 Run the deterministic public-release gate from the repository root:
 
 Install the pinned Syft scanner described in [Supply-chain verification](supply-chain.md)

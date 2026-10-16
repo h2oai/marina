@@ -25,11 +25,12 @@ checks its web assets and settings catalog, and connects a Node SDK agent.
 with its server, built-in worlds and settings embedded. `qualify:native` tests it
 outside the checkout with no Bun on PATH; browser assets remain a sidecar. See
 [artifact scope](release-qualification.md#standalone-terminal-executable).
-Deployment qualifies its selected revision
-before obtaining cloud credentials.
-Promotion transfers that qualified image between jobs, verifies its image ID and pushes
-it without rebuilding. Production selects the registry digest. Rollback also qualifies
-and scans the existing registry artifact before changing production.
+Where you deploy a released revision is your choice; nothing in a release requires a
+cloud account. The maintainers' own optional deployment workflow follows the same rule
+of qualifying first: it qualifies its selected revision before obtaining cloud
+credentials, transfers that qualified image between jobs without rebuilding, and
+qualifies and scans an existing image before a rollback. The release steps are in
+[Releasing Marina](releasing.md).
 
 Numeric commands and `/mem` write the canonical record history synchronously.
 A successful response means the whole operation committed; failures roll back.
@@ -92,6 +93,47 @@ A stability declaration does not enable experimental mechanisms. Promote default
 only with paired held-out evidence, including missing-provider/JEV behavior, false
 positives, cost and latency. Deterministic tests and a single live success cannot
 establish that evidence.
+
+## What 1.0 will guarantee
+
+This is the **planned** 1.0 contract. Marina is still 0.x, and until 1.0 ships the
+[version policy above](#public-contract-and-version-policy) governs. It extends that
+policy; it does not replace it: deprecation still needs a replacement, a changelog notice
+and a migration example, and after 1.0 removal needs a major version with at least two
+minor releases and 90 days of notice.
+
+Each public surface will carry one of three tiers:
+
+- **Stable**: covered by the guarantees below. Breaking changes only in a major version.
+- **Preview**: documented and usable, but may change in a minor release with a changelog
+  notice. Opt-in and experimental mechanisms are preview until promoted.
+- **Internal**: no compatibility promise, whether or not it is reachable.
+
+Surfaces planned as stable at 1.0:
+
+| Surface | What stays compatible | Reference |
+| --- | --- | --- |
+| SDK exports | `@marina/agent-sdk` root, `/memory` and `/routing` exports, their parameters, errors and authorization | [SDK reference](../reference/sdk.md) |
+| HTTP routes and shapes | Documented routes, request and response shapes, error codes and authentication, including the OpenAI-compatible `/v1` surface, `/v1/memory` and the deprecated-but-supported `/mem` | [HTTP reference](../reference/http.md), [Model API](model-api.md), [Memory API](memory-api.md) |
+| World commands | Command names, documented usage forms and their rank and gate requirements | [Command reference](../reference/commands.md) |
+| Environment variables | The meaning and accepted values of every documented `MARINA_*` variable | [Environment reference](../reference/environment.md) |
+| MCP named tools | Published parameter names, bounds, enums and defaults, as frozen in `test/fixtures/mcp-named-contracts.json` | [MCP reference](../reference/mcp.md) |
+| Panel SDK | Documents with schema `marina.panel.v1` keep rendering and validating; a new incompatible shape gets a new schema name | [Published panels](published-panels.md) |
+| Database | A database written by any released version upgrades in place through forward migrations; a future schema is refused, never silently opened | [Verified upgrade and rollback](#verified-upgrade-and-rollback) |
+| CLI | Documented dispatch, exit status and approval behaviour, as in the version policy table | [Scripts reference](scripts.md) |
+
+Not covered at 1.0:
+
+- world-simulation internals: tick phases and timing, prompt text, scoring weights,
+  room-agent behaviour and anything under `src/` that is not an SDK export;
+- experimental and opt-in mechanisms and flags, observe/on postures, learned promotions and
+  model-specific judgments (preview until promoted with held-out evidence);
+- dashboard layout, styling and its internal APIs;
+- display text, which must never be parsed for authority.
+
+Today the database guarantee is qualified from the populated schema-131/132 fixtures and the
+migration chain, not from a snapshot of every released version; see
+[Releasing Marina](releasing.md#gaps-before-10) for what 1.0 still needs.
 
 ## Verified upgrade and rollback
 
