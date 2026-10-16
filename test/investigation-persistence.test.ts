@@ -198,6 +198,42 @@ describe("durable investigations", () => {
     raw.close();
   });
 
+  for (const [table, operation] of [
+    ["forecast_answers", "INSERT"],
+    ["investigation_attempts", "UPDATE"],
+    ["investigations", "UPDATE"],
+  ] as const) {
+    it(`rolls the whole publication back on ${table} failure`, () => {
+      const { attempt } = db.createInvestigation(owner, request, `fault-${table}`);
+      const generation = db.claimInvestigation(attempt.id)!;
+      const before = db.getInvestigation(owner.key, attempt.caseId);
+      const raw = db.memoryRepository().raw;
+      raw.exec(
+        `CREATE TRIGGER fault_publication BEFORE ${operation} ON ${table} BEGIN SELECT RAISE(ABORT,'injected crash boundary'); END`,
+      );
+      expect(() => db.finishInvestigation(attempt.id, generation, completion())).toThrow(
+        "injected crash boundary",
+      );
+      expect(db.getInvestigation(owner.key, attempt.caseId)).toEqual(before);
+      expect(raw.query("SELECT count(*) AS n FROM forecast_answers").get()).toEqual({ n: 0 });
+      raw.exec("DROP TRIGGER fault_publication");
+      expect(db.finishInvestigation(attempt.id, generation, completion())).toBe(true);
+      expect(raw.query("SELECT count(*) AS n FROM forecast_answers").get()).toEqual({ n: 1 });
+    });
+  }
+
+  it("uses account IDs across rename and rejects a different account reusing the old name", () => {
+    const { attempt } = db.createInvestigation(owner, request, "rename");
+    db.memoryRepository().raw.run("UPDATE users SET name=? WHERE id=?", [
+      "renamed-owner",
+      owner.key,
+    ]);
+    db.createUser({ id: "replacement-owner", name: owner.name });
+    expect(db.getInvestigation(owner.key, attempt.caseId).attempt.id).toBe(attempt.id);
+    expect(() => db.getInvestigation("replacement-owner", attempt.caseId)).toThrow("not found");
+    expect(() => db.getInvestigationAttempt("replacement-owner", attempt.id)).toThrow("not found");
+  });
+
   it("cancels owned descendants without stopping unrelated episodes or allowing late publication", () => {
     const root = db.createInvestigation(owner, request, "root").attempt;
     const generation = db.claimInvestigation(root.id)!;

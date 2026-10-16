@@ -13,6 +13,21 @@ import type { InvestigationAttempt, InvestigationEvent } from "../sdk/investigat
 import type { InvestigationCapacity } from "./capacity";
 import { InvestigationError } from "./validation";
 
+/** Detach locally on cancellation without claiming the upstream operation stopped. */
+async function awaitStage<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+  let abort: (() => void) | undefined;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  });
+  try {
+    return await Promise.race([pending, cancelled]);
+  } finally {
+    if (abort) signal.removeEventListener("abort", abort);
+  }
+}
+
 /** Keep secrets out of persisted input/output/error payloads, with an explicit capture gap. */
 export function redactInvestigationValue(value: unknown, onRedaction: () => void): unknown {
   if (typeof value === "string") {
@@ -122,12 +137,13 @@ export class InvestigationObservation {
       }
     };
     try {
+      const signal = AbortSignal.any([this.controller.signal, this.budget.signal]);
       const value = consumesWork
         ? await this.budget.run(
             (signal) => (this.capacity ? this.capacity.run(execute, signal) : execute(signal)),
             this.controller.signal,
           )
-        : await execute(AbortSignal.any([this.controller.signal, this.budget.signal]));
+        : await awaitStage(execute(signal), signal);
       this.check();
       const outputId = this.capture(`${label}:output`, value ?? null);
       this.event({ kind: "stage_completed", actor, stageId, inputId, outputId, message: label });

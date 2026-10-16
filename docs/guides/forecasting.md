@@ -78,6 +78,51 @@ work calls per episode and a ten-minute timeout; these are work limits, not a do
 Private crew transport and historical research cutoffs are not supported by this adapter.
 Research produces a report and citations, without a forecast probability.
 
+Research requires mechanically verifiable passages. A summary-only retriever can return useful
+links while supplying no verifiable evidence; in that case the report fails with a recorded
+reason. Use the `search` retriever (for example `MARINA_FORECAST_RETRIEVER=search:openrouter`)
+to retain quoted page passages. An exhausted search-provider allowance is a provider failure,
+not an empty search result. Predictions may still return a clearly marked partial answer.
+
+Service admission is limited to 128 active attempts overall, 32 per owner and 1,000 retained
+attempts per owner. At most 16 capacity-limited calls run simultaneously. Captured JSON is
+limited to 2 MiB per object, 24 MiB per attempt and 128 MiB per owner. Journals allow 10,000
+ordinary entries, with terminal and settlement entries still available after that limit;
+event reads return at most 200 entries per page. Erase unneeded cases to reclaim logical quotas.
+Saved cases remain until the owner erases them or the account is deleted; no automatic expiry
+is applied. Backup retention is controlled separately by the operator.
+
+### Qualifying an installation
+
+From a source checkout, run `bun run qualify:investigations /tmp/investigation-qualification`
+for a provider-free scale, journal, quota and erasure check. Its JSON report includes hardware,
+thresholds and measurements for 1, 10 and 100 simulated actors. These are service measurements,
+not evidence of live forecast quality or 100 simultaneously running models.
+
+Prepare a small live pilot with an explicitly chosen model, retriever and spend target:
+
+```sh
+bun run qualify:investigations:live --model PROVIDER/MODEL --retriever search:openrouter --budget-usd 2
+```
+
+Without `--live`, this only prints the plan. Add `--live` to permit provider calls. The pilot
+creates a fresh database, records prediction/research/cancellation results, and checks private
+SDK, CLI and world-chat reads. Spend targets check known charges before further work; upstream
+calls and unreported costs can exceed them. Preserve failed pilots alongside successful ones.
+
+After a successful pilot, build the dashboard and replay its report on a separate database:
+
+```sh
+bun run dashboard:build
+bun run qualify:investigations:replay /path/to/live/report.json
+```
+
+Replay needs Chromium and opens a local server without provider credentials. It checks the same
+saved revisions and citations in the web UI, dashboard, private chat, CLI and native terminal,
+including narrow screens and reloads, and rejects new admissions or spend during those reads.
+Keep pilot databases, screenshots, captured evidence and qualification reports private; project
+qualification records belong in `marina-internal`.
+
 ## What happens
 
 1. **Research** — a search-grounded model (OpenRouter's web search) gathers dated, sourced facts:

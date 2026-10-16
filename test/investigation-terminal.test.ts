@@ -2,50 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, it } from "bun:test";
-import { StdinBuffer, type Terminal } from "@earendil-works/pi-tui";
 import { InvestigationTerminal } from "../scripts/inquiry-terminal";
 import { MarinaInvestigationClient } from "../src/sdk/investigation-client";
 import { investigationPlainText } from "../src/sdk/investigation-text";
 import { investigationSnapshot } from "./fixtures/investigations";
 import { until } from "./helpers";
-
-class Screen implements Terminal {
-  columns = 110;
-  rows = 30;
-  kittyProtocolActive = false;
-  output = "";
-  stops = 0;
-  private buffer = new StdinBuffer();
-  resize = () => {};
-  start(input: (text: string) => void, resize: () => void) {
-    this.resize = resize;
-    this.buffer.on("data", input);
-    this.buffer.on("paste", (text) => input(`\x1b[200~${text}\x1b[201~`));
-  }
-  send(text: string) {
-    this.buffer.process(text);
-  }
-  stop() {
-    this.stops++;
-    this.buffer.destroy();
-  }
-  async drainInput() {}
-  write(text: string) {
-    this.output += text;
-  }
-  moveBy() {}
-  hideCursor() {}
-  showCursor() {}
-  clearLine() {}
-  clearFromCursor() {}
-  clearScreen() {}
-  setTitle() {}
-  setProgramStatus() {}
-  setProgress() {}
-}
+import { InvestigationScreen } from "./investigation-screen";
 
 it("renders a native private answer without a coding folder, preserves drafts, and detaches without cancelling", async () => {
-  const screen = new Screen();
+  const screen = new InvestigationScreen();
   const snapshot = investigationSnapshot();
   snapshot.attempt.result!.summary += "\x1b]52;c;clipboard-attack\x07\u202e";
   const requests: Array<{ method: string; path: string }> = [];
