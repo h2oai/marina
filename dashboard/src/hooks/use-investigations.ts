@@ -8,10 +8,11 @@ import {
   investigationTerminal,
 } from "../../../src/sdk/investigation-types";
 import { getToken } from "../lib/api";
+import { apiOrigin } from "../lib/api-origin";
 import { useChatState } from "./use-chat-state";
 
 export const investigations = new MarinaInvestigationClient({
-  url: window.location.origin,
+  url: apiOrigin(),
   token: () => getToken() ?? "",
 });
 

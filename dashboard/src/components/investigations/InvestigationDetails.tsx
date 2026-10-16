@@ -76,6 +76,7 @@ export function InvestigationDetails({
             {result?.reasons.length ? (
               result.reasons.map((reason, i) => (
                 <article
+                  // biome-ignore lint/suspicious/noArrayIndexKey: a completed answer's reasons keep a fixed order
                   key={`${i}:${reason.actor}`}
                   className="rounded-xl border border-border p-4"
                 >
@@ -177,12 +178,14 @@ export function InvestigationDetails({
             {result?.report?.split(/\n\s*\n/).map((paragraph, i) =>
               /^#{1,6} /.test(paragraph) ? (
                 <h3
+                  // biome-ignore lint/suspicious/noArrayIndexKey: report paragraphs keep their written order
                   key={`${i}:${paragraph.slice(0, 40)}`}
                   className="font-display text-lg font-medium text-primary"
                 >
                   {paragraph.replace(/^#{1,6} /, "")}
                 </h3>
               ) : (
+                // biome-ignore lint/suspicious/noArrayIndexKey: report paragraphs keep their written order
                 <div key={`${i}:${paragraph.slice(0, 40)}`}>{renderChatText(paragraph)}</div>
               ),
             )}
