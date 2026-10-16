@@ -35,6 +35,7 @@ export type { FeedStore } from "./feed-store";
 export type { FlywheelStore } from "./flywheel-store";
 export type { GatewaysStore } from "./gateways-store";
 export type { IntellectsStore } from "./intellects-store";
+export type { InvestigationsStore } from "./investigations-store";
 export type { JourneysStore } from "./journeys-store";
 export type { LearnedStore } from "./learned-store";
 export type { LogsStore } from "./logs-store";
@@ -118,6 +119,8 @@ import type { GatewaysStore } from "./gateways-store";
 import { GATEWAYS_STORE_METHODS } from "./gateways-store";
 import type { IntellectsStore } from "./intellects-store";
 import { INTELLECTS_STORE_METHODS } from "./intellects-store";
+/** Every store the facade implements, as one structural type. */
+import { INVESTIGATIONS_STORE_METHODS, type InvestigationsStore } from "./investigations-store";
 import type { JourneysStore } from "./journeys-store";
 import { JOURNEYS_STORE_METHODS } from "./journeys-store";
 import type { LearnedStore } from "./learned-store";
@@ -169,7 +172,6 @@ import { WITNESS_STORE_METHODS } from "./witness-store";
 import type { WorldVariantsStore } from "./world-variants-store";
 import { WORLD_VARIANTS_STORE_METHODS } from "./world-variants-store";
 
-/** Every store the facade implements, as one structural type. */
 export interface MarinaStores
   extends AgentsStore,
     AlertsStore,
@@ -199,6 +201,7 @@ export interface MarinaStores
     FlywheelStore,
     GatewaysStore,
     IntellectsStore,
+    InvestigationsStore,
     JourneysStore,
     LearnedStore,
     LogsStore,
@@ -256,6 +259,7 @@ export const STORE_METHOD_MANIFEST: Readonly<Record<string, readonly string[]>> 
   FlywheelStore: FLYWHEEL_STORE_METHODS,
   GatewaysStore: GATEWAYS_STORE_METHODS,
   IntellectsStore: INTELLECTS_STORE_METHODS,
+  InvestigationsStore: INVESTIGATIONS_STORE_METHODS,
   JourneysStore: JOURNEYS_STORE_METHODS,
   LearnedStore: LEARNED_STORE_METHODS,
   LogsStore: LOGS_STORE_METHODS,

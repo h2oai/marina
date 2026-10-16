@@ -16,6 +16,11 @@ const LazyUnifiedCanvas = lazy(() =>
 );
 
 const LazyWhoPage = lazy(() => import("./who/WhoPage").then((m) => ({ default: m.WhoPage })));
+const LazyInvestigationPage = lazy(() =>
+  import("./components/investigations/InvestigationPage").then((m) => ({
+    default: m.InvestigationPage,
+  })),
+);
 const LazyTerminalWorkspace = lazy(() =>
   import("./components/TerminalWorkspace").then((m) => ({ default: m.TerminalWorkspace })),
 );
@@ -99,7 +104,15 @@ function RootContent() {
   // All interactive surfaces sit behind the optional sign-in gate (no-op when
   // auth is off).
   let surface: ReactNode;
-  if (isUnified) {
+  if (/^\/(predict|research)(\/|$)/.test(window.location.pathname)) {
+    surface = (
+      <ErrorBoundary fallbackTitle="Investigation view crashed">
+        <Suspense fallback={<RouteFallback label="prediction workspace" />}>
+          <LazyInvestigationPage />
+        </Suspense>
+      </ErrorBoundary>
+    );
+  } else if (isUnified) {
     surface = <UnifiedSurface />;
   } else {
     // The workspace canvas is one React tree of live panels; a throw in any of

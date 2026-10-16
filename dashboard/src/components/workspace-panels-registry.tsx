@@ -13,6 +13,7 @@ import { ConversationInsights } from "./ConversationInsights";
 import { CoordinationCard } from "./CoordinationCard";
 import { EntityRoster } from "./EntityRoster";
 import { GlassPanel } from "./GlassPanel";
+import { InvestigationPanel } from "./investigations/InvestigationPanel";
 import { AssetLibraryPanel } from "./media/AssetLibraryPanel";
 import { NarrativePlayback } from "./NarrativePlayback";
 import { ParticipantStreamsPanel } from "./ParticipantStreams";
@@ -47,6 +48,14 @@ const unregisterBuiltins = (
   }),
 );
 unregisterBuiltins.push(
+  dashboardPanels.register({
+    id: "investigation",
+    title: "Prediction & research",
+    component: InvestigationPanel,
+    modes: [],
+    slot: "grid",
+    repeatable: { fromView: "work", actionLabel: "Open prediction view below" },
+  }),
   dashboardPanels.register({
     id: "coding-desk",
     title: "Coding desk",

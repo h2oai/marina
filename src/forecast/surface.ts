@@ -28,7 +28,7 @@ import { TYPED_FORMATIONS, typedFormation } from "./formations";
 import type { ForecastAnswer, ForecastKind, ForecastRequest } from "./question";
 import { inferKind } from "./question";
 import type { ForecastScale } from "./service";
-import type { TypedForecastAnswer, TypedForecastRequest } from "./typed";
+import type { TypedForecastAnswer, TypedForecastDeps, TypedForecastRequest } from "./typed";
 
 export interface TypedSurfaceOptions {
   /** The world database (the lesson pool). Without it, no lessons are recalled. */
@@ -52,6 +52,12 @@ export interface TypedSurfaceOptions {
   board?: string;
   /** `false`: recall no lessons (the database still supplies earned defaults). */
   lessons?: boolean;
+  /** Optional service instrumentation. Absent on legacy paths; never changes global defaults. */
+  observe?: (
+    deps: TypedForecastDeps,
+    scale: ForecastScale,
+    costUsd: () => number,
+  ) => TypedForecastDeps;
 }
 
 const logger = new Logger();
@@ -117,11 +123,12 @@ export async function typedForecastFor(
     made = typedForecastDeps(env, surfaceOptions);
   }
   if ("error" in made) return made;
+  const deps = opts.observe ? opts.observe(made.deps, made.scale, made.costUsd) : made.deps;
   // The method card routing earns for this question's class (the operator's
   // formation and options without evidence); the decision goes on the answer.
   const answer = await cards.forecastCarded(
     req,
-    made.deps,
+    deps,
     resolved.formation,
     routing.routeSettingsFromEnv(env),
     { ...(opts.db ? { db: opts.db } : {}), ...(board ? { board } : {}), env },

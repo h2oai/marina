@@ -19,6 +19,7 @@ import {
 import { CanvasNodeEmbed } from "./CanvasNodeEmbed";
 import { createCodeRenderers } from "./ChatCodeRenderers";
 import { renderChatText as renderTextContent } from "./chat-render-text";
+import { InvestigationCard, investigationReference } from "./investigations/InvestigationCard";
 import { ChatMediaCard, viewableForEntry } from "./media/ChatMediaCard";
 import type { ViewableAsset } from "./media/MediaViewer";
 
@@ -359,6 +360,8 @@ export function ChatMessageList({
   const renderRichMessage = (m: ChatMessage, i: number) => {
     const perception = m.perception;
     if (!perception) return renderCompactMessage(m, i);
+    const investigation = investigationReference(perception.data?.investigation);
+    if (investigation) return <InvestigationCard key={i} {...investigation} />;
     const code = perception.data?.code as CodeMessageData | undefined;
     if (code?.type) return renderCodeMessage(m, i, perception, code);
     switch (perception.kind) {

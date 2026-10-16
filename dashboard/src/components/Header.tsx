@@ -178,6 +178,12 @@ export function Header({
           </span>
         )}
       </button>
+      <a
+        href="/predict"
+        className="rounded border border-primary/30 bg-primary/10 px-2 py-1 text-primary"
+      >
+        Predict
+      </a>
       <details className="relative">
         <summary
           className="cursor-pointer rounded border border-border px-2 py-1 text-text-dim"
@@ -194,6 +200,9 @@ export function Header({
           </button>
           <a href="/canvas" className="text-primary">
             Canvas · full screen
+          </a>
+          <a href="/research" className="text-primary">
+            Deep research
           </a>
           <button
             type="button"

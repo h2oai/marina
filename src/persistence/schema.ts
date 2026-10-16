@@ -936,6 +936,83 @@ CREATE TRIGGER assets_memory_deleted AFTER DELETE ON assets
 END;
 `,
   },
+  // Migration 170 — durable private prediction and research investigations.
+  {
+    version: 170,
+    sql: `
+CREATE TABLE investigation_instance (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  uuid TEXT NOT NULL
+);
+INSERT INTO investigation_instance VALUES (1, lower(hex(randomblob(16))));
+CREATE TABLE investigations (
+  id TEXT PRIMARY KEY,
+  owner_key TEXT NOT NULL,
+  owner_name TEXT NOT NULL,
+  parent_case_id TEXT REFERENCES investigations(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('prediction', 'research')),
+  question TEXT NOT NULL,
+  selected_attempt_id TEXT NOT NULL,
+  current_attempt_id TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_investigations_owner ON investigations(owner_key, updated_at DESC);
+CREATE TABLE investigation_attempts (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL REFERENCES investigations(id) ON DELETE CASCADE,
+  actor_key TEXT NOT NULL,
+  actor_name TEXT NOT NULL,
+  parent_attempt_id TEXT,
+  root_attempt_id TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('queued','running','completed','failed','cancelled','interrupted')),
+  generation TEXT,
+  sequence INTEGER NOT NULL DEFAULT 0,
+  result_json TEXT,
+  accounting_json TEXT NOT NULL DEFAULT '{"knownUsd":0,"complete":false,"outstanding":0}',
+  answer_id INTEGER REFERENCES forecast_answers(id),
+  error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_investigation_attempts_case ON investigation_attempts(case_id, created_at);
+CREATE INDEX idx_investigation_attempts_root ON investigation_attempts(root_attempt_id, state);
+CREATE TABLE investigation_admissions (
+  actor_key TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  attempt_id TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(actor_key, idempotency_key)
+);
+CREATE TABLE investigation_grants (
+  case_id TEXT NOT NULL REFERENCES investigations(id) ON DELETE CASCADE,
+  principal TEXT NOT NULL,
+  access TEXT NOT NULL CHECK (access IN ('read','work')),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(case_id, principal)
+);
+CREATE INDEX idx_investigation_grants_principal ON investigation_grants(principal);
+CREATE TABLE investigation_content (
+  id TEXT PRIMARY KEY,
+  attempt_id TEXT NOT NULL REFERENCES investigation_attempts(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  value_json TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_investigation_content_attempt ON investigation_content(attempt_id);
+CREATE TABLE investigation_events (
+  attempt_id TEXT NOT NULL REFERENCES investigation_attempts(id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL,
+  event_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(attempt_id, sequence)
+);
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

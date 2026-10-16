@@ -18,6 +18,7 @@ import { forecastCommand } from "../commands/forecast";
 import { gateCommand } from "../commands/gate";
 import { groupCommand } from "../commands/group";
 import { inheritanceCommand } from "../commands/inheritance";
+import { inquiryCommand } from "../commands/inquiry";
 import { intellectCommand } from "../commands/intellect";
 import { journeyCommand } from "../commands/journey";
 import { macroCommand } from "../commands/macro";
@@ -92,6 +93,9 @@ export function registerCoordinationCommands(engine: Engine): void {
       }),
     );
     engine.commands.registerBuiltin(provenanceCommand(engine.db));
+    engine.commands.registerBuiltin(
+      inquiryCommand({ db: engine.db, getEntity: (id) => engine.entities.get(id as EntityId) }),
+    );
     engine.commands.registerBuiltin(
       journeyCommand({
         db: engine.db,

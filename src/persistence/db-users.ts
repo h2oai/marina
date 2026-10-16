@@ -3,6 +3,7 @@
 
 import type { Database } from "bun:sqlite";
 import { appendChronicle } from "./db-chronicle";
+import { eraseOwnerInvestigations } from "./db-investigation-lifecycle";
 import * as principalsDb from "./db-principals";
 
 // ─── Users, bans, adapter links ────────────────────────────────────────────
@@ -86,6 +87,7 @@ export const ERASED_ACCOUNT = "[erased]";
 
 /** Rows touched by one account erasure, per table (also the audit body). */
 export interface AccountErasure {
+  investigations?: number;
   decision_receipts: number;
   entity_standing: number;
   entity_standing_cache: number;
@@ -118,6 +120,7 @@ export interface AccountErasure {
  */
 export function deleteUser(db: Database, id: string): AccountErasure {
   return db.transaction(() => {
+    const investigations = eraseOwnerInvestigations(db, id);
     const decisionReceipts = db.run("DELETE FROM decision_receipts WHERE owner = ?", [
       `user:${id}`,
     ]).changes;
@@ -140,6 +143,7 @@ export function deleteUser(db: Database, id: string): AccountErasure {
       return n;
     };
     const counts: AccountErasure = {
+      ...(investigations ? { investigations } : {}),
       decision_receipts: decisionReceipts,
       entity_standing: del("entity_standing"),
       entity_standing_cache: del("entity_standing_cache"),

@@ -34,7 +34,7 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
       - name: Typecheck verification tools
-        run: bunx tsc --ignoreConfig --noEmit --target ESNext --module ESNext --moduleResolution bundler --types bun --strict --skipLibCheck scripts/check-session-model.ts scripts/check-context-benchmark.ts benchmarks/participation-context.ts
+        run: bunx tsc --ignoreConfig --noEmit --target ESNext --module ESNext --moduleResolution bundler --types bun --strict --skipLibCheck scripts/check-session-model.ts scripts/check-context-benchmark.ts benchmarks/participation-context.ts scripts/qualify-investigations.ts scripts/qualify-investigations-live.ts scripts/qualify-investigation-replay.ts
       - name: Check workspace versions
         run: bun run check:versions
       - name: Check fast-test selection drift
@@ -45,6 +45,15 @@ jobs:
         run: bun run qualify:native
       - name: Qualify concurrent MCP participation and admission recovery
         run: bun run qualify:participation:load --directory "$RUNNER_TEMP/participation-load" --participants 4 --records 8 --operations 4
+      - name: Qualify private investigation resource limits without providers
+        run: bun run qualify:investigations "$RUNNER_TEMP/investigation-qualification"
+      - name: Preserve investigation qualification report
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: investigation-qualification-report
+          path: ${{ runner.temp }}/investigation-qualification/run-*/report.json
+          if-no-files-found: ignore
       - name: Preserve participation qualification report
         if: always()
         uses: actions/upload-artifact@v7.0.1

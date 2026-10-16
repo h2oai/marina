@@ -158,7 +158,9 @@ export interface OutcomeFilter {
 
 /** Newest first, at most `limit` (default 50, at most 10 000). */
 export function listOutcomes(db: Database, opts: OutcomeFilter = {}): OutcomeRow[] {
-  const where: string[] = [];
+  // General outcome/strategy readers have no case ACL. Private case results are
+  // read through their authorized case projection, never pooled into method selection.
+  const where: string[] = ["source NOT LIKE 'investigation:%'"];
   const args: Array<string | number> = [];
   if (opts.kind) {
     where.push("kind = ?");

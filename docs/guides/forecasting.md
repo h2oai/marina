@@ -23,6 +23,106 @@ answer is kept under the entity your API key is bound to (a `secret:name` entry 
 `saved: false`. Saving is refused (400) for a key bound to no entity, and for a measurement run
 (`x-marina-eval: …; mode=measure`), whose outcomes must not teach.
 
+## Saved private predictions and research
+
+Open `/predict` or `/research` in the dashboard and connect a Marina account to start a saved
+investigation. Each attempt keeps its answer, sources and captured execution history. You can
+reopen the same attempt from the dashboard, a private chat card, the CLI or the native terminal.
+Reading a saved result does not start another model call.
+
+```bash
+marina connect Analyst
+marina predict --name Analyst --plain "Will the release ship by October 31?"
+marina research --name Analyst --plain "What evidence would support releasing this change?"
+marina inquiry list --name Analyst --json
+marina inquiry show CASE_ID --name Analyst
+marina inquiry tui --name Analyst
+```
+
+`marina predict` and `marina research` open the native terminal on an interactive TTY.
+Use `--plain` to wait for text, `--json` for machine output, or `--detach` to return the case and
+attempt IDs immediately. `--url` selects the existing server; authentication uses its cached
+account token or `MARINA_TOKEN`. Ctrl+C detaches from a wait; `marina inquiry cancel ATTEMPT_ID`
+requests cancellation of server work. Terminal reads and cancellation do not require a coding
+workspace.
+
+In world chat, use `inquiry predict -- <question>` or `inquiry research -- <question>`, then
+`inquiry show CASE_ID`. Predictions accept `type:binary`, `type:number unit:points` or
+`type:choice options:A,B,C`; the CLI equivalents are `--type`, `--unit` and `--options`.
+`case:CASE_ID` (`--case`) starts another attempt for the saved question, while
+`parent:ATTEMPT_ID` (`--parent`) links child work. Reuse `key:REQUEST_KEY` (`--key`) when retrying
+an uncertain submission; a deliberate new attempt needs a new key.
+
+Cases are private to their durable account owner. The owner can use
+`inquiry grant CASE_ID ACCOUNT read` or `work` to permit reading or contributing, and
+`inquiry revoke CASE_ID ACCOUNT` to remove that grant. People and agents use the same account
+permissions. `inquiry review ATTEMPT_ID -- <text>` records a review; `inquiry resolve ATTEMPT_ID
+-- <outcome-json>` records an authorized outcome through the existing forecast scorer. Private
+results do not enter shared forecast histories or teach shared lessons. `inquiry delete CASE_ID`
+erases the case and its owned evidence; the CLI spelling is `marina inquiry erase CASE_ID`.
+Operator database backups and logical exports include private cases, evidence and access grants,
+alongside other private world content. Keep these archives private. Erasing a case from the live
+instance cannot erase copies already downloaded or held in an older backup.
+
+Programs use the exported `MarinaInvestigationClient` or authenticated `/api/investigations`
+routes. Start requests contain `kind`, `question`, an optional prediction `answer` shape and an
+`idempotencyKey`. Attempts expose separate execution, answer-availability, evidence-capture and
+accounting states. An interrupted attempt is retained after restart and is not automatically
+replayed. A new attempt is required to retry it.
+
+The current direct-model adapter captures supplied model inputs and returned outputs. Source
+bytes, retriever-internal calls and hidden model reasoning may be unavailable; the answer reports
+capture gaps. Accounting remains partial, and cancellation cannot guarantee that an already
+running provider stops or stops billing. Defaults are 80 admitted work calls, four concurrent
+work calls per episode and a ten-minute timeout; these are work limits, not a dollar ceiling.
+Private crew transport and historical research cutoffs are not supported by this adapter.
+Research produces a report and citations, without a forecast probability.
+
+Research requires mechanically verifiable passages. A summary-only retriever can return useful
+links while supplying no verifiable evidence; in that case the report fails with a recorded
+reason. Use the `search` retriever (for example `MARINA_FORECAST_RETRIEVER=search:openrouter`)
+to retain quoted page passages. An exhausted search-provider allowance is a provider failure,
+not an empty search result. Predictions may still return a clearly marked partial answer.
+
+Service admission is limited to 128 active attempts overall, 32 per owner and 1,000 retained
+attempts per owner. At most 16 capacity-limited calls run simultaneously. Captured JSON is
+limited to 2 MiB per object, 24 MiB per attempt and 128 MiB per owner. Journals allow 10,000
+ordinary entries, with terminal and settlement entries still available after that limit;
+event reads return at most 200 entries per page. Erase unneeded cases to reclaim logical quotas.
+Saved cases remain until the owner erases them or the account is deleted; no automatic expiry
+is applied. Backup retention is controlled separately by the operator.
+
+### Qualifying an installation
+
+From a source checkout, run `bun run qualify:investigations /tmp/investigation-qualification`
+for a provider-free scale, journal, quota and erasure check. Its JSON report includes hardware,
+thresholds and measurements for 1, 10 and 100 simulated actors. These are service measurements,
+not evidence of live forecast quality or 100 simultaneously running models.
+
+Prepare a small live pilot with an explicitly chosen model, retriever and spend target:
+
+```sh
+bun run qualify:investigations:live --model PROVIDER/MODEL --retriever search:openrouter --budget-usd 2
+```
+
+Without `--live`, this only prints the plan. Add `--live` to permit provider calls. The pilot
+creates a fresh database, records prediction/research/cancellation results, and checks private
+SDK, CLI and world-chat reads. Spend targets check known charges before further work; upstream
+calls and unreported costs can exceed them. Preserve failed pilots alongside successful ones.
+
+After a successful pilot, build the dashboard and replay its report on a separate database:
+
+```sh
+bun run dashboard:build
+bun run qualify:investigations:replay /path/to/live/report.json
+```
+
+Replay needs Chromium and opens a local server without provider credentials. It checks the same
+saved revisions and citations in the web UI, dashboard, private chat, CLI and native terminal,
+including narrow screens and reloads, and rejects new admissions or spend during those reads.
+Keep pilot databases, screenshots, captured evidence and qualification reports private; project
+qualification records belong in `marina-internal`.
+
 ## What happens
 
 1. **Research** — a search-grounded model (OpenRouter's web search) gathers dated, sourced facts:
