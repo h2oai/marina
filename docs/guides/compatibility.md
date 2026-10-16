@@ -8,7 +8,7 @@
 | Memory API | `/v1/memory` and `@marina/agent-sdk/memory` are the canonical durable interface | Memory API/client tests and recovery qualification |
 | Deprecated numeric memory | `/mem/*`, `note`, `recall`, numeric references, tiers and pool ACLs remain supported | Cross-interface lifecycle and restart tests |
 | Extension API | Manifest `apiVersion: 1` | Permissions, collision, lifecycle and package fixture tests |
-| Database | Append-only migrations through the current binary's schema | Populated schema-131 upgrade fixture; newer schemas rejected |
+| Database | Append-only migrations through the current binary's schema | Every release's real database upgrades to a fresh-install schema; populated schema-131/132 fixtures; newer schemas rejected |
 
 The server is Bun-only. Docker is the portable server deployment path; the SDK has
 no Bun server-module dependency. Node server support would require additional database,
@@ -76,7 +76,7 @@ specific compatibility tests below and is not a blanket support promise.
 | Named MCP tools | Published parameter names, bounds, enums and defaults; new world commands use command discovery | Frozen `test/fixtures/mcp-named-contracts.json` and `mcp-named-contracts.test.ts` |
 | Durable memory HTTP and numeric compatibility | Record identity, ownership, explicit erasure, version conflicts and numeric-ID projection | Memory cross-interface, canonical-upgrade and portable suites |
 | CLI | Documented dispatch, version, successful exit zero, failure nonzero, explicit verification/approval | Dispatcher, one-shot, terminal journeys and standalone qualification |
-| Persistence | Append-only forward migrations; reject unsupported future schemas; verified restore into a new path | `upgrade-compatibility.test.ts`, schema baseline and memory recovery suites |
+| Persistence | Append-only forward migrations; every released version upgrades to the fresh-install schema with its rows; reject unsupported future schemas; verified restore into a new path | `upgrade-from-releases.test.ts`, `upgrade-compatibility.test.ts`, schema baseline and memory recovery suites |
 | Experimental behavior | Advisory policy, learned promotions, model-specific judgments, opt-in providers and internal dashboard APIs may evolve; observe/on is an operator choice, not an API version | Mechanism-specific tests and held-out qualification before default promotion |
 
 A patch release must not remove or rename a documented stable operation, reinterpret
@@ -95,14 +95,17 @@ establish that evidence.
 
 ## Verified upgrade and rollback
 
+The step-by-step operator runbook is [Upgrading a server](upgrading.md).
+
 1. Stop writers, record the deployed revision and schema, and create a snapshot:
    `bun run memory backup --db /instance/world.db --output /backups/pre-upgrade.db`.
    Retain its verified manifest/hash and test restoration before changing the service.
 2. Upgrade a restored copy first. Fresh databases start at the schema-137 baseline;
-   existing databases replay their pending historical and forward migrations. The
-   populated schema-131/132 fixtures explicitly qualify older memory identities.
-   Other starting versions use the migration chain; qualify an actual backup before
-   treating an untested starting version as supported for your deployment.
+   existing databases replay their pending historical and forward migrations. A
+   database created by each release (v0.5.0 onward, `test/fixtures/upgrade/`) is
+   upgraded in CI and must match a fresh install's schema; the populated
+   schema-131/132 fixtures qualify older memory identities. Still qualify an actual
+   backup before upgrading a deployment.
 3. Start the new binary, check readiness, authenticate an existing client and check
    durable records and task state. A failed migration halts startup; it does not skip
    the migration. Earlier successful migrations may already have committed.

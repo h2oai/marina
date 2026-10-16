@@ -253,6 +253,66 @@ was served (`served`) or recalled without being shown (`observed`), with the run
 (`measure` excludes lessons learned from the same benchmark, `live` does not). Ids only, never lesson
 or item text. See [benchmarks.md](benchmarks.md).
 
+## Upgrades from real releases
+
+`test/upgrade-from-releases.test.ts` loads, for every release, a database that release's
+own code created (`test/fixtures/upgrade/<tag>.sql`, with a `<tag>.json` manifest of tag,
+commit, schema version and seeded rows), opens it with today's `MarinaDB`, and asserts:
+the schema version is the latest; the normalized schema — every column's type, `NOT
+NULL`, default and key, foreign keys, indexes (automatic ones included), each table's
+definition, views, triggers and FTS tables — equals a fresh install's, with a readable
+line diff on failure; the seeded user, entity, note, core memory, task, channel message,
+board post and canvas read back through today's API; `PRAGMA integrity_check`,
+`foreign_key_check` and every FTS5 `integrity-check` pass; and the database reopens.
+`KNOWN_DRIFT` in that file is the reviewed allowlist of accepted differences (empty).
+This complements the schema-131/132 fixtures in `upgrade-compatibility.test.ts`, which
+are built by replaying today's history and pin memory-identity conversions.
+
+`bun scripts/generate-upgrade-fixture.ts <tag>` builds a fixture: it checks the tag out
+in a temporary worktree, installs that release's own lockfile, opens a fresh database
+through the release's `MarinaDB` constructor, runs its default world `seed(db)`, writes
+the representative rows through the release's own `MarinaDB` methods (fixed clock, no
+`.env`, no network) and dumps the result as plain SQL. The dump loads under SQLite's
+defensive mode: FTS5 tables (all external-content) are recreated and rebuilt from their
+content tables instead of copying shadow tables, and triggers are created after the rows.
+`test/fixtures/upgrade/README.md` lists the fixtures and any release that could not be
+booted.
+
+## Baseline refresh policy
+
+The schema-137 baseline is a cache of historical replay, never a second definition:
+`schema-history.ts` plus `FORWARD_MIGRATIONS` define the schema, and
+`bun run schema:check` proves the baseline equals replay.
+
+- **Every released version keeps an upgrade fixture.** After tagging a release, run
+  `bun scripts/generate-upgrade-fixture.ts vX.Y.Z` and commit
+  `test/fixtures/upgrade/vX.Y.Z.{sql,json}`. A fixture is never deleted to make a change
+  pass; ending support for upgrades from an old version is an explicit compatibility
+  decision recorded in [compatibility](../guides/compatibility.md) and the release
+  notes.
+- **Refresh only at a release boundary**, and only for migrations that already
+  shipped in a tagged release — never for a migration still on `main`, whose SQL may
+  still change before release.
+- **Refresh only when it pays**: fresh-install time or the size of the forward list is
+  a measured problem. The baseline exists to spare empty databases the historical
+  rebuilds and data conversions; it is not tidied for its own sake.
+- **Fold a contiguous prefix of pure-SQL migrations.** The generator runs only each
+  migration's `sql`; a migration with an `apply` hook (138 converts numeric memory, 143
+  hashes `mem_api_keys` secrets) cannot be folded until the generator also runs hooks
+  and the hook is shown to be a no-op on an empty database. Today migration 138 is the
+  first forward migration and has a hook, so the baseline stays at 137.
+- **How**: move the folded entries verbatim (same versions, same SQL) from
+  `FORWARD_MIGRATIONS` to the end of `schema-history.ts`, raise
+  `SCHEMA_BASELINE_VERSION` in `schema-baseline.ts`, regenerate with
+  `bun scripts/generate-schema-baseline.ts`, and run `bun run schema:check`,
+  `test/schema-baseline.test.ts` and `test/upgrade-from-releases.test.ts`. The schema
+  counter never resets: `SCHEMA_VERSION` and every database's `schema_version` are
+  unchanged by a refresh, and every release fixture must still upgrade to exactly the
+  fresh-install schema.
+
+The operator side — backup, first-boot migration, verification, rollback and the
+newer-schema refusal — is in [Upgrading a server](../guides/upgrading.md).
+
 ## Asset record v2 (migration 168)
 
 `assets` gains `origin` (`upload|generated|request|derived|tool`), `sha256`, `width`, `height`, `duration_ms`, `pages`, `alt`, `caption`, `provenance` (JSON: prompt, model, provider, cost, job id), `derived_from`, `placeholder`, `derivative_state` / `derivative_note` and `updated_at`. Tags live in `asset_tags(asset_id, tag)` (facets, AND filters) and lineage in `asset_links(from_id, to_id, kind)` (`thumbnail-256`, `thumbnail-1024`, `poster`, `preview`, and later edits/variations). Both cascade with their asset. A derivative is an `assets` row with `derived_from` set (origin `derived`): the `ON DELETE CASCADE` foreign key deletes its row with the parent, and the read check follows `derived_from` (see security.md). `assets_fts` is a standalone FTS5 table (`asset_id UNINDEXED, filename, caption, alt, prompt, tags`) kept by insert/update/delete triggers on `assets` and `asset_tags`. Assets have TEXT ids, so an external-content table would hang on an implicit rowid that `VACUUM` may renumber. The upgrade sets `origin`/`provenance` from legacy `metadata` and seeds the FTS rows. Hashes, dimensions and derivatives are filled by the bounded `asset-backfill` tick job (~30 s, `BACKFILL_BATCH` rows a pass), never at boot. The owner stays `entity_name`. That is the account name the ownership checks already use; it is not a transient entity id, so no durable-key rekey applies. Writes go through `src/engine/media/asset-library.ts` (`ingestAsset`, `editAsset`, `removeAsset`), which emits the content-free `asset_created|asset_updated|asset_deleted` events.
