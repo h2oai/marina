@@ -16,6 +16,7 @@
 - [ ] `bun run typecheck` passes
 - [ ] `bun run lint` passes (`bun run format` run before committing)
 - [ ] Tests added/updated for new behavior
+- [ ] User-visible change? Add a line under `## [Unreleased]` in `CHANGELOG.md` (see `docs/guides/releasing.md`)
 - [ ] Docs updated if commands, env vars, or architecture rules changed (README, CLAUDE.md, AGENTS.md)
 - [ ] Screenshots included for UI/dashboard changes
 - [ ] No credentials, generated databases, private data, or internal-only assets are included

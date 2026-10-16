@@ -150,6 +150,7 @@ export default defineConfig({
             { label: "Federation Discovery", slug: "docs/guides/federation-discovery" },
             { label: "World Collective", slug: "docs/guides/world-collective" },
             { label: "Release Qualification", slug: "docs/guides/release-qualification" },
+            { label: "Releasing", slug: "docs/guides/releasing" },
             { label: "Troubleshooting", slug: "docs/guides/troubleshooting" },
             { label: "Extending Marina", slug: "docs/guides/extending" },
             { label: "Running on a Single Model", slug: "docs/guides/single-model" },

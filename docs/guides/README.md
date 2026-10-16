@@ -46,6 +46,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Create portable intellects and associations | [Intellect Lifecycle](intellect-lifecycle.md) | [Associations](associations.md) |
 | Reproduce cognition or a Marina | [Reproduction and Meshes](reproduction-and-meshes.md) | [Economics, Simulation, and Recursion](economics-simulation-and-recursion.md) |
 | Qualify a public release without skipped claims | [Release qualification](release-qualification.md) | [Troubleshooting](troubleshooting.md) |
+| Cut a release: version, changelog, tag, artifacts | [Releasing](releasing.md) | [Compatibility and upgrades](compatibility.md) |
 | Investigate execution or export OTLP | [Execution Traces](observability.md) | [Configuration](configuration.md) |
 
 ### Benchmarks & competitions
@@ -89,6 +90,7 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [World Collective](world-collective.md) | Local child worlds, isolated A/B variants, readiness, and explicit promotion |
 | [Federation discovery](federation-discovery.md) | Passive peer manifests, local trust decisions, and current cryptographic boundaries |
 | [Release qualification](release-qualification.md) | Deterministic local gate plus explicit provider-backed qualification boundaries |
+| [Releasing](releasing.md) | Maintainer checklist: version bump, changelog, tag, workflow artifacts, SDK, desktop, site, advisories |
 | [Supply-chain verification](supply-chain.md) | CycloneDX inventories, signed artifacts and verification commands |
 | [Connecting](connecting.md) | Dashboard, WebSocket, Telnet, MCP, SDK, CLI, and REST boundaries |
 | [Commands Quick Reference](commands.md) | Every command organized by category |

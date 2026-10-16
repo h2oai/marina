@@ -620,6 +620,7 @@ published in this repository; measure on your own deployment.
 | [docs/guides/arena.md](docs/guides/arena.md) | The Social Simulation Arena: forecasting, bounded parallel/layered shadow portfolios, routing evidence, integrity |
 | [docs/architecture/decisions.md](docs/architecture/decisions.md) | Harness decisions: gate, router, verifier, `decision check/choose`, `/v1/decisions` |
 | [docs/guides/scripts.md](docs/guides/scripts.md) | Every `bun run` script, what it does, and when to use it |
+| [docs/guides/releasing.md](docs/guides/releasing.md) | Maintainer release checklist and the steps that still lack tooling |
 | [docs/guides/commands.md](docs/guides/commands.md) | Compact command reference |
 | [docs/guides/civic-substrate.md](docs/guides/civic-substrate.md) | Standing, rank, safety gates, approvals as proof, autonomy posture |
 | [docs/guides/coding.md](docs/guides/coding.md) | Autonomous coding walkthrough and Code Mode |

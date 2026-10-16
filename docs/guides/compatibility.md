@@ -25,11 +25,12 @@ checks its web assets and settings catalog, and connects a Node SDK agent.
 with its server, built-in worlds and settings embedded. `qualify:native` tests it
 outside the checkout with no Bun on PATH; browser assets remain a sidecar. See
 [artifact scope](release-qualification.md#standalone-terminal-executable).
-Deployment qualifies its selected revision
-before obtaining cloud credentials.
-Promotion transfers that qualified image between jobs, verifies its image ID and pushes
-it without rebuilding. Production selects the registry digest. Rollback also qualifies
-and scans the existing registry artifact before changing production.
+Where you deploy a released revision is your choice; nothing in a release requires a
+cloud account. The maintainers' own optional deployment workflow follows the same rule
+of qualifying first: it qualifies its selected revision before obtaining cloud
+credentials, transfers that qualified image between jobs without rebuilding, and
+qualifies and scans an existing image before a rollback. The release steps are in
+[Releasing Marina](releasing.md).
 
 Numeric commands and `/mem` write the canonical record history synchronously.
 A successful response means the whole operation committed; failures roll back.
