@@ -39,18 +39,16 @@ it("reuses the request key after an uncertain submission and allocates one after
   fireEvent.change(screen.getByLabelText("What shall we predict?"), {
     target: { value: "Will we ship?" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Predict", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Predict" }));
   await screen.findByRole("alert");
-  fireEvent.click(screen.getByRole("button", { name: "Predict", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Predict" }));
   await waitFor(() => expect(start).toHaveBeenCalledTimes(2));
   expect(start.mock.calls[0]![1]).toBe(start.mock.calls[1]![1]);
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Predict", exact: true })).not.toBeDisabled(),
-  );
+  await waitFor(() => expect(screen.getByRole("button", { name: "Predict" })).not.toBeDisabled());
   fireEvent.change(screen.getByLabelText("What shall we predict?"), {
     target: { value: "Will we ship next month?" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Predict", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Predict" }));
   await waitFor(() => expect(start).toHaveBeenCalledTimes(3));
   expect(start.mock.calls[2]![1]).not.toBe(start.mock.calls[0]![1]);
 });

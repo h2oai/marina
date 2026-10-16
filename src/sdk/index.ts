@@ -26,6 +26,9 @@ export { commandInputSchema } from "./command-schema";
 export type { CodingCommandTarget } from "./command-target";
 export type * from "./extensions";
 export { EXTENSION_API_VERSION } from "./extensions";
+export * from "./investigation-client";
+export * from "./investigation-text";
+export { INVESTIGATION_SCHEMA, investigationTerminal } from "./investigation-types";
 export type { UnifiedContextResult } from "./memory-context";
 export type { DurableMemoryAPI, MemoryOperationRequest } from "./memory-operations";
 export type { ParticipantOrientation } from "./onboarding";
@@ -54,6 +57,3 @@ export type {
 export type { RoutingClientOptions } from "./routing-client";
 export { MarinaRoutingClient, RoutingApiError } from "./routing-client";
 export type * from "./routing-types";
-export * from "./investigation-client";
-export * from "./investigation-text";
-export { INVESTIGATION_SCHEMA, investigationTerminal } from "./investigation-types";

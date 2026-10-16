@@ -10,12 +10,64 @@ import { parseInvestigationRequest } from "../src/investigations/validation";
 import { deliverOutcomes } from "../src/outcomes/deliver";
 import { resolveForecast } from "../src/outcomes/forecast";
 import { MarinaDB } from "../src/persistence/database";
+import { exportState, importState } from "../src/persistence/export-import";
+import { FORWARD_MIGRATIONS, SCHEMA_BASELINE } from "../src/persistence/schema";
 import type { InvestigationRequest } from "../src/sdk/investigation-types";
 import { binaryInvestigation } from "./fixtures/investigations";
 
 const owner = { key: "owner-id", name: "owner" };
 const agent = { key: "agent-id", name: "external-agent" };
 const request: InvestigationRequest = { kind: "prediction", question: "Will the release ship?" };
+
+it("upgrades an existing media schema without replacing its migration or losing data", () => {
+  const directory = mkdtempSync(join(tmpdir(), "marina-investigation-upgrade-"));
+  const path = join(directory, "world.db");
+  try {
+    const previous = new Database(path);
+    let mediaTrigger: unknown;
+    try {
+      previous.exec(SCHEMA_BASELINE);
+      for (const migration of FORWARD_MIGRATIONS.filter((entry) => entry.version <= 169)) {
+        previous.transaction(() => {
+          previous.exec(migration.sql);
+          migration.apply?.(previous);
+          previous.run("INSERT INTO schema_version(version) VALUES (?)", [migration.version]);
+        })();
+      }
+      previous.run(
+        "INSERT INTO core_memory(entity_name, key, value, version, created_at, updated_at) VALUES (?, ?, ?, 1, 1, 1)",
+        ["media:memory", "upgrade-fixture", "preserved"],
+      );
+      mediaTrigger = previous
+        .query("SELECT sql FROM sqlite_schema WHERE name='assets_memory_deleted'")
+        .get();
+      expect(mediaTrigger).not.toBeNull();
+    } finally {
+      previous.close();
+    }
+    const upgraded = new MarinaDB(path);
+    try {
+      const raw = upgraded.memoryRepository().raw;
+      expect(raw.query("SELECT MAX(version) AS version FROM schema_version").get()).toEqual({
+        version: 170,
+      });
+      expect(
+        raw.query("SELECT sql FROM sqlite_schema WHERE name='assets_memory_deleted'").get(),
+      ).toEqual(mediaTrigger);
+      expect(raw.query("SELECT value FROM core_memory WHERE key='upgrade-fixture'").get()).toEqual({
+        value: "preserved",
+      });
+      upgraded.createUser({ id: owner.key, name: owner.name });
+      const { attempt } = upgraded.createInvestigation(owner, request, "after-upgrade");
+      expect(upgraded.getInvestigation(owner.key, attempt.caseId).attempt.id).toBe(attempt.id);
+      expect(raw.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      upgraded.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 describe("durable investigations", () => {
   let directory: string;
@@ -42,6 +94,39 @@ describe("durable investigations", () => {
       probability: 0.65,
       answerJson: JSON.stringify({ private: "secret release details" }),
     },
+  });
+
+  it("restores private answers, evidence, grants and admission keys from an operator backup", () => {
+    const { attempt } = db.createInvestigation(owner, request, "exported-request");
+    const generation = db.claimInvestigation(attempt.id)!;
+    const contentId = db.storeInvestigationContent(attempt.id, generation, "evidence", {
+      text: "private release evidence",
+    });
+    db.finishInvestigation(attempt.id, generation, completion());
+    db.grantInvestigation(owner.key, attempt.caseId, agent.key, "work");
+    const original = db.getInvestigation(owner.key, attempt.caseId);
+    const restoredPath = join(directory, "restored.db");
+    const empty = new MarinaDB(restoredPath);
+    empty.close();
+    expect(importState(restoredPath, exportState(path)).errors).toEqual([]);
+    const restored = new MarinaDB(restoredPath);
+    try {
+      expect(restored.getInvestigation(owner.key, attempt.caseId)).toEqual(original);
+      expect(restored.getInvestigation(agent.key, attempt.caseId).case.access).toBe("work");
+      expect(restored.getInvestigationContent(agent.key, contentId)).toEqual(
+        db.getInvestigationContent(agent.key, contentId),
+      );
+      expect(() => restored.getInvestigation("unrelated-account", attempt.caseId)).toThrow(
+        "not found",
+      );
+      expect(restored.createInvestigation(owner, request, "exported-request").created).toBe(false);
+      expect(restored.readInvestigationEvents(owner.key, attempt.id)).toEqual(
+        db.readInvestigationEvents(owner.key, attempt.id),
+      );
+      expect(restored.memoryRepository().raw.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      restored.close();
+    }
   });
 
   it("deduplicates admission while preserving deliberate new iterations", () => {

@@ -15,8 +15,8 @@ import { authenticateRequest, isSentinelPrincipal } from "./auth-middleware";
 import { handleAgentRoutes } from "./dashboard-api/agents";
 import { handlePreAuthRoutes } from "./dashboard-api/command";
 import { handleDiscoveryRoutes } from "./dashboard-api/discovery";
-import { handleKeyRoutes } from "./dashboard-api/keys";
 import { handleInvestigationRoutes } from "./dashboard-api/investigations";
+import { handleKeyRoutes } from "./dashboard-api/keys";
 import {
   handleMemoryGraphRoutes,
   handleMemoryNoteRoutes,

@@ -149,7 +149,8 @@ export function parseDispatch(
   if (first === "status") return parseStatus(argv.slice(1));
   if (first === "supervise") return { kind: "supervise", rest: argv.slice(1) };
   if (first === "route") return { kind: "route", rest: argv.slice(1) };
-  if (first === "predict" || first === "research" || first === "inquiry") return { kind: "inquiry", mode: first, rest: argv.slice(1) };
+  if (first === "predict" || first === "research" || first === "inquiry")
+    return { kind: "inquiry", mode: first, rest: argv.slice(1) };
   if (first === "connect") return { kind: "connect", rest: argv.slice(1) };
   if (first === "attach") return parseAttach(argv.slice(1));
   if (first === "start") return { kind: "start" };

@@ -18,8 +18,8 @@ import {
 } from "../lib/webchat-format";
 import { CanvasNodeEmbed } from "./CanvasNodeEmbed";
 import { createCodeRenderers } from "./ChatCodeRenderers";
-import { InvestigationCard, investigationReference } from "./investigations/InvestigationCard";
 import { renderChatText as renderTextContent } from "./chat-render-text";
+import { InvestigationCard, investigationReference } from "./investigations/InvestigationCard";
 import { ChatMediaCard, viewableForEntry } from "./media/ChatMediaCard";
 import type { ViewableAsset } from "./media/MediaViewer";
 

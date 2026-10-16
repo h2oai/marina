@@ -4734,6 +4734,157 @@ Effect: unknown.
 
 - `field-0` (`bundle-token`): text, required.
 
+## inquiry
+
+Private predictions and deep research, with durable evidence and agent delegation.
+inquiry predict [type:binary|number|choice] [unit:<unit>] [options:<a,b,c>] [runs:<n>] [case:<id>] [parent:<attempt>] [key:<key>] [horizon:<date>] [asof:<date>] -- <question>
+inquiry research [case:<id>] [parent:<attempt>] [key:<key>] -- <question>
+inquiry list
+inquiry show <case-id> [attempt-id]
+inquiry why <case-id> [attempt-id]
+inquiry sources <case-id> [attempt-id]
+inquiry report <case-id> [attempt-id]
+inquiry events <attempt-id> [cursor]
+inquiry cancel <attempt-id>
+inquiry select <attempt-id>
+inquiry grant <case-id> <account> <read|work>
+inquiry revoke <case-id> <account>
+inquiry delete <case-id>
+inquiry review <attempt-id> -- <review>
+inquiry resolve <attempt-id> -- <outcome-json>
+Work runs in the background. Inspect it with show/events. A grant permits an account (human or agent) to read or initiate work; it never broadcasts private evidence to a room. New attempts use configured forecast/research providers and work limits; costs may be incomplete.
+
+Category: Cognition. Minimum rank: 0.
+Aliases: none.
+
+### `inquiry predict [type:binary|number|choice] [unit:<unit>] [options:<a,b,c>] [runs:<n>] [case:<id>] [parent:<attempt>] [key:<key>] [horizon:<date>] [asof:<date>] -- <question>`
+
+Effect: unknown.
+
+- `field-0` (`type`): text, optional group `option-0`, choices `binary`, `number`, `choice`.
+- `field-1` (`unit`): text, optional group `option-1`.
+- `field-2` (`options`): text, optional group `option-2`.
+- `field-3` (`runs`): number, optional group `option-3`.
+- `field-4` (`case`): text, optional group `option-4`.
+- `field-5` (`parent`): text, optional group `option-5`.
+- `field-6` (`key`): text, optional group `option-6`.
+- `field-7` (`horizon`): text, optional group `option-7`.
+- `field-8` (`asof`): text, optional group `option-8`.
+- `field-9` (`question`): text, required.
+- Group `option-0`: `type:binary|number|choice`.
+- Group `option-1`: `unit:unit`.
+- Group `option-2`: `options:a,b,c`.
+- Group `option-3`: `runs:n`.
+- Group `option-4`: `case:id`.
+- Group `option-5`: `parent:attempt`.
+- Group `option-6`: `key:key`.
+- Group `option-7`: `horizon:date`.
+- Group `option-8`: `asof:date`.
+
+### `inquiry research [case:<id>] [parent:<attempt>] [key:<key>] -- <question>`
+
+Effect: unknown.
+
+- `field-0` (`case`): text, optional group `option-0`.
+- `field-1` (`parent`): text, optional group `option-1`.
+- `field-2` (`key`): text, optional group `option-2`.
+- `field-3` (`question`): text, required.
+- Group `option-0`: `case:id`.
+- Group `option-1`: `parent:attempt`.
+- Group `option-2`: `key:key`.
+
+### `inquiry list`
+
+Effect: unknown.
+
+
+### `inquiry show <case-id> [attempt-id]`
+
+Effect: unknown.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`attempt-id`): text, optional group `option-0`.
+- Group `option-0`: `attempt-id`.
+
+### `inquiry why <case-id> [attempt-id]`
+
+Effect: unknown.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`attempt-id`): text, optional group `option-0`.
+- Group `option-0`: `attempt-id`.
+
+### `inquiry sources <case-id> [attempt-id]`
+
+Effect: unknown.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`attempt-id`): text, optional group `option-0`.
+- Group `option-0`: `attempt-id`.
+
+### `inquiry report <case-id> [attempt-id]`
+
+Effect: unknown.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`attempt-id`): text, optional group `option-0`.
+- Group `option-0`: `attempt-id`.
+
+### `inquiry events <attempt-id> [cursor]`
+
+Effect: unknown.
+
+- `field-0` (`attempt-id`): text, required.
+- `field-1` (`cursor`): text, optional group `option-0`.
+- Group `option-0`: `cursor`.
+
+### `inquiry cancel <attempt-id>`
+
+Effect: unknown.
+
+- `field-0` (`attempt-id`): text, required.
+
+### `inquiry select <attempt-id>`
+
+Effect: unknown.
+
+- `field-0` (`attempt-id`): text, required.
+
+### `inquiry grant <case-id> <account> <read|work>`
+
+Effect: unknown.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`account`): text, required.
+- `field-2` (`read|work`): text, required, choices `read`, `work`.
+
+### `inquiry revoke <case-id> <account>`
+
+Effect: unknown.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`account`): text, required.
+
+### `inquiry delete <case-id>`
+
+Effect: unknown.
+
+- `field-0` (`case-id`): text, required.
+
+### `inquiry review <attempt-id> -- <review>`
+
+Effect: unknown.
+
+- `field-0` (`attempt-id`): text, required.
+- `field-1` (`review`): text, required.
+
+### `inquiry resolve <attempt-id> -- <outcome-json>`
+
+Effect: unknown.
+
+- `field-0` (`attempt-id`): text, required.
+- `field-1` (`outcome-json`): json, required.
+
 ## intellect
 
 Intellect — portable cognitive identity and append-only lifecycle claims.

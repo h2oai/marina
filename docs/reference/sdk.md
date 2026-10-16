@@ -784,6 +784,9 @@ export { commandInputSchema } from "./command-schema.js";
 export type { CodingCommandTarget } from "./command-target.js";
 export type * from "./extensions.js";
 export { EXTENSION_API_VERSION } from "./extensions.js";
+export * from "./investigation-client.js";
+export * from "./investigation-text.js";
+export { INVESTIGATION_SCHEMA, investigationTerminal } from "./investigation-types.js";
 export type { UnifiedContextResult } from "./memory-context.js";
 export type { DurableMemoryAPI, MemoryOperationRequest } from "./memory-operations.js";
 export type { ParticipantOrientation } from "./onboarding.js";
@@ -797,6 +800,255 @@ export type { BroadcastPerception, Entity, EntityId, EntityKind, EntityRank, Err
 export type { RoutingClientOptions } from "./routing-client.js";
 export { MarinaRoutingClient, RoutingApiError } from "./routing-client.js";
 export type * from "./routing-types.js";
+```
+
+## investigation-client
+
+[Source](../../src/sdk/investigation-client.ts)
+
+```typescript
+import type { InvestigationAccess, InvestigationAttempt, InvestigationCase, InvestigationContent, InvestigationEventPage, InvestigationRequest, InvestigationSnapshot } from "./investigation-types.js";
+export type * from "./investigation-types.js";
+export declare class InvestigationApiError extends Error {
+    readonly status: number;
+    readonly code: string;
+    constructor(status: number, code: string, message: string);
+}
+export interface InvestigationClientOptions {
+    url: string;
+    /** Authenticated Marina session, never a provider credential. */
+    token: string | (() => string);
+    fetch?: typeof fetch;
+}
+/** Reads and replay never dispatch work. Starting/retrying always needs an explicit request key. */
+export declare class MarinaInvestigationClient {
+    private readonly options;
+    private readonly base;
+    private readonly fetcher;
+    constructor(options: InvestigationClientOptions);
+    private request;
+    start(request: InvestigationRequest, idempotencyKey: string, signal?: AbortSignal): Promise<{
+        attempt: InvestigationAttempt;
+        created: boolean;
+    }>;
+    list(before?: number, signal?: AbortSignal): Promise<{
+        cases: InvestigationCase[];
+    }>;
+    get(caseId: string, attemptId?: string, signal?: AbortSignal): Promise<InvestigationSnapshot>;
+    attempt(id: string, signal?: AbortSignal): Promise<InvestigationAttempt>;
+    events(id: string, after?: number, signal?: AbortSignal): Promise<InvestigationEventPage>;
+    content(id: string, signal?: AbortSignal): Promise<InvestigationContent>;
+    cancel(id: string, signal?: AbortSignal): Promise<{
+        cancelled: string[];
+    }>;
+    select(id: string, signal?: AbortSignal): Promise<InvestigationSnapshot>;
+    grant(caseId: string, name: string, access: InvestigationAccess | null, signal?: AbortSignal): Promise<{
+        name: string;
+        access: InvestigationAccess | null;
+    }>;
+    erase(caseId: string, signal?: AbortSignal): Promise<{
+        erased: boolean;
+    }>;
+    review(id: string, text: string, signal?: AbortSignal): Promise<import("./investigation-types.js").InvestigationEvent>;
+    resolve(id: string, value: unknown, signal?: AbortSignal): Promise<{
+        answerId: number;
+        loss: number | null;
+    }>;
+}
+```
+
+## investigation-text
+
+[Source](../../src/sdk/investigation-text.ts)
+
+```typescript
+import type { InvestigationAttempt, InvestigationResult, PredictionEstimate } from "./investigation-types.js";
+/** Browser/terminal-safe plain text. Escape sequences in evidence are data, never instructions. */
+export declare function investigationPlainText(value: string): string;
+export declare function investigationEstimate(estimate?: PredictionEstimate): string | undefined;
+export type InvestigationView = "answer" | "why" | "sources" | "report";
+export declare function investigationResultText(result: InvestigationResult, view?: InvestigationView): string;
+export declare function investigationAttemptText(attempt: InvestigationAttempt, view?: InvestigationView): string;
+```
+
+## investigation-types
+
+[Source](../../src/sdk/investigation-types.ts)
+
+```typescript
+/** Client-safe service envelopes. They describe recorded work, not an agent's strategy. */
+export declare const INVESTIGATION_SCHEMA: "marina.investigation.v1";
+export type InvestigationKind = "prediction" | "research";
+export type InvestigationState = "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+export type InvestigationAccess = "read" | "work";
+export type PredictionShape = {
+    type: "binary";
+} | {
+    type: "number";
+    unit?: string;
+} | {
+    type: "choice";
+    options: Array<{
+        id: string;
+        label: string;
+    }>;
+};
+export interface InvestigationLimits {
+    calls: number;
+    concurrency: number;
+    timeoutMs: number;
+}
+export interface InvestigationRequest {
+    kind: InvestigationKind;
+    question: string;
+    answer?: PredictionShape;
+    context?: string;
+    horizon?: string;
+    asOf?: string;
+    /** Existing case for a new attempt; prior results remain immutable. */
+    caseId?: string;
+    /** An owned child while its parent runs; otherwise a new episode referencing prior work. */
+    parentAttemptId?: string;
+    runs?: number;
+    limits?: Partial<InvestigationLimits>;
+}
+export interface InvestigationActor {
+    /** Authenticated durable account, never a caller-supplied display name. */
+    key: string;
+    name: string;
+}
+export interface InvestigationSource {
+    id: string;
+    url: string;
+    title?: string;
+}
+export interface InvestigationReason {
+    actor: string;
+    text: string;
+    /** Only declared citations; proximity to a source is not entailment. */
+    sourceIds: string[];
+}
+export type PredictionEstimate = {
+    type: "binary";
+    probability?: number;
+} | {
+    type: "number";
+    value?: number;
+    sd?: number;
+    unit?: string;
+} | {
+    type: "choice";
+    selected?: string;
+    options: Array<{
+        id: string;
+        label: string;
+        probability?: number;
+    }>;
+};
+export interface InvestigationResult {
+    schema: typeof INVESTIGATION_SCHEMA;
+    kind: InvestigationKind;
+    summary: string;
+    availability: "final" | "partial" | "none";
+    estimate?: PredictionEstimate;
+    report?: string;
+    reasons: InvestigationReason[];
+    sources: InvestigationSource[];
+    limitations: string[];
+    horizon?: string;
+    cutoff?: string;
+    answerId?: number;
+    /** Raw executor output is private content, loaded separately from a compact result. */
+    outputId?: string;
+    capture: {
+        status: "complete" | "partial";
+        gaps: string[];
+    };
+    accounting: {
+        knownUsd: number;
+        complete: boolean;
+        outstanding: number;
+    };
+}
+export interface InvestigationAttempt {
+    id: string;
+    caseId: string;
+    actor: InvestigationActor;
+    parentAttemptId?: string;
+    rootAttemptId: string;
+    request: InvestigationRequest;
+    state: InvestigationState;
+    generation?: string;
+    sequence: number;
+    createdAt: number;
+    updatedAt: number;
+    /** Mutable settlement, separate from the immutable answer (including after cancellation). */
+    accounting: InvestigationResult["accounting"];
+    result?: InvestigationResult;
+    error?: string;
+}
+export interface InvestigationCase {
+    schema: typeof INVESTIGATION_SCHEMA;
+    id: string;
+    instanceId: string;
+    owner: InvestigationActor;
+    kind: InvestigationKind;
+    question: string;
+    selectedAttemptId: string;
+    currentAttemptId?: string;
+    createdAt: number;
+    updatedAt: number;
+    access: "owner" | InvestigationAccess;
+}
+export interface InvestigationSnapshot {
+    case: InvestigationCase;
+    attempt: InvestigationAttempt;
+    attempts: Array<Pick<InvestigationAttempt, "id" | "state" | "createdAt" | "actor">>;
+    /** Cursor and state are read in one transaction. */
+    cursor: number;
+    children: Array<{
+        caseId: string;
+        attemptId: string;
+        question: string;
+        state: InvestigationState;
+    }>;
+    resolution?: {
+        at: number;
+        value: unknown;
+        loss: number | null;
+    };
+    grants?: Array<{
+        name: string;
+        access: InvestigationAccess;
+    }>;
+}
+export interface InvestigationEvent {
+    attemptId: string;
+    sequence: number;
+    at: number;
+    kind: string;
+    actor: string;
+    stageId?: string;
+    inputId?: string;
+    outputId?: string;
+    message?: string;
+}
+export interface InvestigationContent {
+    id: string;
+    attemptId: string;
+    label: string;
+    value: unknown;
+    bytes: number;
+    hash: string;
+    createdAt: number;
+}
+export interface InvestigationEventPage {
+    events: InvestigationEvent[];
+    cursor: number;
+    more: boolean;
+    reset: boolean;
+}
+export declare function investigationTerminal(state: InvestigationState): boolean;
 ```
 
 ## memory

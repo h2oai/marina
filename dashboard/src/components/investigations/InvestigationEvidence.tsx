@@ -91,9 +91,8 @@ export function InvestigationEvidence({ events }: { events: InvestigationEvent[]
         Connections mean “supplied” or “returned”, not proof that a source supports a claim.
       </p>
       {graph.nodes.length ? (
-        <div
+        <section
           className="h-[420px] overflow-hidden rounded-xl border border-border bg-bg"
-          role="region"
           aria-label="Evidence canvas"
         >
           <ReactFlow
@@ -110,7 +109,7 @@ export function InvestigationEvidence({ events }: { events: InvestigationEvent[]
             <Background />
             <Controls showInteractive={false} />
           </ReactFlow>
-        </div>
+        </section>
       ) : (
         <p className="py-8 text-center text-sm text-text-dim">
           Captured stages will appear here as work begins.

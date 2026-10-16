@@ -250,7 +250,9 @@ export default function App() {
     };
     window.addEventListener("marina:open-panel", open);
     const query = new URLSearchParams(window.location.search);
-    if (query.get("inquiry")) {
+    // Bind private links only after reconnect restores the account. A binding
+    // created for the anonymous resident is deliberately hidden after login.
+    if (resident && query.get("inquiry")) {
       open(
         new CustomEvent("marina:open-panel", {
           detail: {
@@ -266,7 +268,7 @@ export default function App() {
       window.history.replaceState(null, "", url);
     }
     return () => window.removeEventListener("marina:open-panel", open);
-  }, [legacy]);
+  }, [legacy, resident]);
   const effectiveLayouts = focused
     ? Object.fromEntries(
         (["lg", "md"] as const).map((bp) => {

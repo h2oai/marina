@@ -367,35 +367,35 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `url.pathname === "/api/panel-resources"`
 
-[Source](../../src/net/dashboard-api.ts#L102)
+[Source](../../src/net/dashboard-api.ts#L103)
 
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/traces"`
 
-[Source](../../src/net/dashboard-api.ts#L105)
+[Source](../../src/net/dashboard-api.ts#L106)
 
 - Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 
 ### `url.pathname === "/api/logs"`
 
-[Source](../../src/net/dashboard-api.ts#L106)
+[Source](../../src/net/dashboard-api.ts#L107)
 
 - Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 
 ### `url.pathname.startsWith("/api/evidence/")`
 
-[Source](../../src/net/dashboard-api.ts#L107)
+[Source](../../src/net/dashboard-api.ts#L108)
 
 - Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 
 ### `url.pathname === "/api/extensions/widgets"`
 
-[Source](../../src/net/dashboard-api.ts#L112)
+[Source](../../src/net/dashboard-api.ts#L113)
 
 - Guard: `url.pathname === "/api/extensions/widgets" && method === "GET"`
 - Guard: `method === "GET"`
@@ -403,7 +403,7 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `url.pathname.startsWith("/api/")`
 
-[Source](../../src/net/dashboard-api.ts#L140)
+[Source](../../src/net/dashboard-api.ts#L142)
 
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 - Guard: `url.pathname === "/api/extensions/widgets" && method === "GET"`
@@ -515,6 +515,14 @@ Fields read here: `error`, `query`.
 
 - Guard: `previewMatch`
 - Guard: `method !== "GET"`
+
+## src/net/dashboard-api/investigations.ts
+
+### `url.pathname.startsWith("/api/investigations/")`
+
+[Source](../../src/net/dashboard-api/investigations.ts#L24)
+
+- Guard: `url.pathname !== "/api/investigations" && !url.pathname.startsWith("/api/investigations/")`
 
 ## src/net/dashboard-api/keys.ts
 
@@ -2226,18 +2234,18 @@ Fields read here: `server.upgrade(req, { data: { connId, isCanvas: true, canvasI
 
 ### `url.pathname === "/"`
 
-[Source](../../src/net/websocket-server.ts#L749)
+[Source](../../src/net/websocket-server.ts#L750)
 
 - Guard: `url.pathname === "/"`
 
 ### `url.pathname === "/chat"`
 
-[Source](../../src/net/websocket-server.ts#L753)
+[Source](../../src/net/websocket-server.ts#L754)
 
 - Guard: `url.pathname === "/chat"`
 
 ### `url.pathname === "/ask"`
 
-[Source](../../src/net/websocket-server.ts#L757)
+[Source](../../src/net/websocket-server.ts#L758)
 
 - Guard: `url.pathname === "/ask"`

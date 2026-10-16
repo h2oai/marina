@@ -136,6 +136,15 @@ export const EXPORT_TABLES = [
   "market_positions",
   "market_scores",
   "forecast_answers",
+  // Private case records are part of an operator's full logical backup, just
+  // like private notes/messages. Restore ownership, grants and evidence together.
+  "investigation_instance",
+  "investigations",
+  "investigation_attempts",
+  "investigation_admissions",
+  "investigation_grants",
+  "investigation_content",
+  "investigation_events",
   // The outcome path (migration 162): what resolved, and each consumer's delivery state.
   "outcomes",
   "outcome_deliveries",

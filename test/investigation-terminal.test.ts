@@ -1,8 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { StdinBuffer, type Terminal } from "@earendil-works/pi-tui";
 import { expect, it } from "bun:test";
+import { StdinBuffer, type Terminal } from "@earendil-works/pi-tui";
 import { InvestigationTerminal } from "../scripts/inquiry-terminal";
 import { MarinaInvestigationClient } from "../src/sdk/investigation-client";
 import { investigationPlainText } from "../src/sdk/investigation-text";

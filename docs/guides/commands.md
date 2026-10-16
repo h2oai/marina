@@ -758,6 +758,7 @@ and silent turns. Recruitment remains explicit: recommendations never pull an ag
 | Command | Description |
 |---------|-------------|
 | `forecast <question>` | A probability or a number for any question, with cited and checked evidence from several models ([guide](forecasting.md)). Alias: `predict`. Rate-limited per entity (each call costs money). |
+| `inquiry predict -- <question>` / `inquiry research -- <question>` | Start a saved private prediction or research report. Inspect with `inquiry list`, `show`, `why`, `sources`, `report` and `events`; manage attempts with `cancel`, `select`, `review`, `resolve`, `grant`, `revoke` and `delete`. See [private investigations](forecasting.md#saved-private-predictions-and-research). |
 
 ## Benchmarks
 
