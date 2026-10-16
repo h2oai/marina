@@ -24,6 +24,7 @@
  */
 
 import type { MarinaDB } from "../persistence/database";
+import { parseDuration } from "./commands/format-duration";
 import { EVENT_LOG_DB_RETENTION } from "./constants";
 
 export type RetentionKind = "telemetry" | "ledger" | "audit" | "append-only";
@@ -426,18 +427,18 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
 
 export type RetentionOverride = { keepMs: number } | { keepRows: number } | { disabled: true };
 
-/** Parse `30d` / `12h` / `2w` / `90m` / `45s` to ms; a bare integer is a row count. */
+/**
+ * Parse a duration (`30d` / `12h` / `2w` / `90m` / `45s`, any `parseDuration`
+ * form) to ms; a bare integer is a row count.
+ */
 export function parseRetentionValue(raw: string): RetentionOverride | undefined {
   const value = raw.trim().toLowerCase();
   if (value === "0" || value === "off" || value === "never") return { disabled: true };
-  const match = /^(\d+)([smhdw])?$/.exec(value);
-  if (!match) return undefined;
-  const n = Number(match[1]);
+  const n = Number(/^\d+/.exec(value)?.[0]);
   if (!Number.isSafeInteger(n) || n <= 0) return undefined;
-  const unit = match[2];
-  if (!unit) return { keepRows: n };
-  const mult = { s: 1_000, m: 60_000, h: HOUR_MS, d: DAY_MS, w: 7 * DAY_MS }[unit];
-  return { keepMs: n * (mult as number) };
+  if (/^\d+$/.test(value)) return { keepRows: n };
+  const keepMs = parseDuration(value);
+  return keepMs === undefined ? undefined : { keepMs };
 }
 
 /**

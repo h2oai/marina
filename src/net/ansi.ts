@@ -312,12 +312,6 @@ export function table(rows: string[][], gap = 2): string {
     .join("\n");
 }
 
-/** Key-value pair for room items */
-export function item(name: string, desc: string, maxDesc = 60): string {
-  const truncated = desc.length > maxDesc ? `${desc.slice(0, maxDesc - 3)}...` : desc;
-  return `  ${A.yellow}${name}${R} ${A.dim}— ${truncated}${R}`;
-}
-
 /** Strip ANSI escape codes — single source of truth */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape stripping requires ESC control char
 const ANSI_RE = /\x1b\[[0-9;]*m/g;

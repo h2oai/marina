@@ -22,6 +22,7 @@
 // supersedes_id points back at this spec. `listActiveWatches` filters those
 // out.
 
+import { parseDuration } from "../engine/commands/format-duration";
 import type { MarinaDB } from "../persistence/database";
 import { type Cadence, parseCadence, renderCadence } from "./cadence";
 
@@ -67,13 +68,11 @@ export function parseRetirement(raw: string | undefined): RetirementParseResult 
     if (n <= 0) return { ok: false, error: "retirement count must be positive" };
     return { ok: true, rule: { kind: "samples", n } };
   }
-  // Duration form (matches cadence syntax)
-  const m = trimmed.match(/^(\d+)([smhdw])$/);
-  if (m) {
-    const n = Number.parseInt(m[1]!, 10);
-    const unitMs = DURATION_UNITS[m[2]!];
-    if (!unitMs || n <= 0) return { ok: false, error: `unknown retirement duration: ${raw}` };
-    return { ok: true, rule: { kind: "duration", ms: n * unitMs } };
+  // Duration form (the shared `parseDuration` grammar, as for cadence)
+  const ms = parseDuration(trimmed);
+  if (ms !== undefined) {
+    if (ms <= 0) return { ok: false, error: `unknown retirement duration: ${raw}` };
+    return { ok: true, rule: { kind: "duration", ms } };
   }
   return {
     ok: false,

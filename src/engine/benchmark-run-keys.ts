@@ -116,11 +116,6 @@ export function withRunKey<T>(state: RunKeyState, fn: () => T): T {
   return current.run(state, fn);
 }
 
-/** The run key the current request authenticated with, if any. */
-export function currentRunKey(): RunKeyState | undefined {
-  return current.getStore();
-}
-
 /** An upstream call finished: attribute its cost, reset or count transport strikes. */
 export function noteRunKeyCall(outcome: {
   ok: boolean;

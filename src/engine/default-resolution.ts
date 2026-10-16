@@ -154,11 +154,6 @@ export function recentResolutions(): DefaultResolution<unknown>[] {
   return [...recent.values()];
 }
 
-/** Test hook: forget the recent resolutions. */
-export function resetRecentResolutionsForTests(): void {
-  recent.clear();
-}
-
 function readSlot(
   db: DefaultSlotReader,
   key: string,

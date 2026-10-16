@@ -49,22 +49,6 @@ export const OPENAI_TRANSCRIBE_MAX_BYTES = 25 * 1024 * 1024;
 /** OpenAI's `input` limit for speech. */
 export const OPENAI_SPEECH_MAX_CHARS = 4096;
 
-/** The voices OpenAI's speech models take by name. */
-export const OPENAI_VOICES = [
-  "alloy",
-  "ash",
-  "ballad",
-  "coral",
-  "echo",
-  "fable",
-  "nova",
-  "onyx",
-  "sage",
-  "shimmer",
-  "verse",
-  "marin",
-  "cedar",
-] as const;
 /** The subset `tts-1` / `tts-1-hd` support. */
 const LEGACY_TTS_VOICES = new Set([
   "alloy",

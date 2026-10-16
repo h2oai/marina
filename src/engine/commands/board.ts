@@ -12,7 +12,7 @@ import {
   separator,
 } from "../../net/ansi";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
-import { getRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 
 export function boardCommand(
   boards: BoardManager,
@@ -106,8 +106,13 @@ export function boardCommand(
             ctx.send(input.entity, `Board "${boardName}" not found.`);
             return;
           }
-          if (getRank(entity) < board.readRank) {
-            ctx.send(input.entity, "You don't have permission to read this board.");
+          const readRefusal = rankFloorRefusal(
+            entity,
+            board.readRank,
+            "You don't have permission to read this board.",
+          );
+          if (readRefusal) {
+            ctx.send(input.entity, readRefusal);
             return;
           }
           const posts = boards.listPosts(board.id);
@@ -139,8 +144,13 @@ export function boardCommand(
             ctx.send(input.entity, `Board "${boardName}" not found.`);
             return;
           }
-          if (getRank(entity) < board.writeRank) {
-            ctx.send(input.entity, "You don't have permission to post on this board.");
+          const writeRefusal = rankFloorRefusal(
+            entity,
+            board.writeRank,
+            "You don't have permission to post on this board.",
+          );
+          if (writeRefusal) {
+            ctx.send(input.entity, writeRefusal);
             return;
           }
           const rest = tokens.slice(2).join(" ");
@@ -315,8 +325,15 @@ export function boardCommand(
             return;
           }
           const board = boards.getBoard(post.boardId);
-          if (board && getRank(entity) < board.pinRank) {
-            ctx.send(input.entity, "You don't have permission to pin posts on this board.");
+          const pinRefusal =
+            board &&
+            rankFloorRefusal(
+              entity,
+              board.pinRank,
+              "You don't have permission to pin posts on this board.",
+            );
+          if (pinRefusal) {
+            ctx.send(input.entity, pinRefusal);
             return;
           }
           boards.pinPost(postId);

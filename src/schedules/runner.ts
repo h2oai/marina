@@ -61,11 +61,6 @@ function flying(engine: Engine): Set<number> {
   return s;
 }
 
-/** The schedules running right now (for overlap checks and tests). */
-export function runningSchedules(engine: Engine): number[] {
-  return [...flying(engine)];
-}
-
 /**
  * Start every due schedule. Runs are detached (`trackBackground`), so a slow
  * command never delays other schedules; a schedule still running when it comes

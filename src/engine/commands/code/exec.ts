@@ -67,7 +67,6 @@ import {
   findStoredRecipe,
   parseRecipeCommands,
   resolveRecipeCommands,
-  resolveVerificationCommands,
   showArtifact,
 } from "./artifacts";
 import {
@@ -494,14 +493,6 @@ export async function verifyWorkspace(
     undefined,
     plan,
   );
-}
-
-export async function verificationCommands(
-  deps: CodeDeps & { db: MarinaDB },
-  session: CodingSessionRow,
-): Promise<string[]> {
-  const workspace = workspaceForSession(deps, session);
-  return resolveVerificationCommands(deps.db, session, workspace);
 }
 
 /** What `code verify` will do: preparation, then ordered steps, with the reasons. */

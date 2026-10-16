@@ -3,13 +3,16 @@
 
 // Cadence parser — voice-friendly duration syntax for watch specs.
 //
-// Accepts: "1h", "30s", "5m", "7d", "1w", "once" (case-insensitive).
+// Accepts: "1h", "30s", "5m", "7d", "1w", "once" (case-insensitive) — the
+// shared `parseDuration` grammar, so `1mo` and long spellings work too.
 // Rejects hyphens, underscores, "every-1h", "every 1h" — the user-facing
 // surface is bare-duration only. Storage in the spec note can render as
 // "every 1h" for readability since that is machine-only.
 //
 // Voice test: "cadence one hour", "cadence thirty seconds", "cadence once"
 // all read cleanly via TTS.
+
+import { parseDuration } from "../engine/commands/format-duration";
 
 const UNITS_MS: Record<string, number> = {
   s: 1_000,
@@ -36,18 +39,15 @@ export function parseCadence(raw: string | undefined): CadenceParseResult {
   }
   if (trimmed === "once") return { ok: true, cadence: { kind: "once" } };
 
-  const m = trimmed.match(/^(\d+)\s*([smhdw])$/);
-  if (!m) {
+  const ms = parseDuration(trimmed);
+  if (ms === undefined) {
     return {
       ok: false,
       error: `unrecognized cadence "${raw}" — try 30s, 5m, 1h, 7d, 1w, or once`,
     };
   }
-  const n = Number.parseInt(m[1]!, 10);
-  if (n <= 0) return { ok: false, error: "cadence must be positive" };
-  const unitMs = UNITS_MS[m[2]!];
-  if (!unitMs) return { ok: false, error: `unknown cadence unit: ${m[2]}` };
-  return { ok: true, cadence: { kind: "interval", ms: n * unitMs } };
+  if (ms <= 0) return { ok: false, error: "cadence must be positive" };
+  return { ok: true, cadence: { kind: "interval", ms } };
 }
 
 /** Render cadence in the spec-note storage form. Machine-only — humans

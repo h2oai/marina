@@ -7,6 +7,7 @@ import { setRank } from "../src/engine/permissions";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_boards.db";
 
@@ -125,6 +126,49 @@ describe("Boards", () => {
     conn1.clear();
     engine.processCommand(conn1.entity!, "board archive 1");
     expect(conn1.lastText()).toContain("Archived post #1");
+  });
+
+  describe("board rank floors", () => {
+    function restrictedBoard(): void {
+      engine.boardManager!.createBoard({ name: "council", readRank: 3, writeRank: 3, pinRank: 3 });
+      engine.boardManager!.createPost({
+        boardId: engine.boardManager!.getBoardByName("council")!.id,
+        authorId: conn1.entity!,
+        authorName: "Alice",
+        title: "Agenda",
+        body: "",
+      });
+      setRank(engine.entities.get(conn2.entity!)!, 0);
+      conn2.clear();
+    }
+
+    it("refuses read, post and pin below the board's rank in the shared profile", () => {
+      using _state = scopeProcessState({
+        trustProfile: "shared",
+        env: { MARINA_AUTONOMY: undefined },
+      });
+      restrictedBoard();
+      engine.processCommand(conn2.entity!, "board read council");
+      expect(conn2.lastText()).toContain("You don't have permission to read this board.");
+      engine.processCommand(conn2.entity!, "board post council Hi | there");
+      expect(conn2.lastText()).toContain("You don't have permission to post on this board.");
+      engine.processCommand(conn2.entity!, "board pin 1");
+      expect(conn2.lastText()).toContain("You don't have permission to pin posts on this board.");
+    });
+
+    it("passes the same floors under the local ungated profile", () => {
+      using _state = scopeProcessState({
+        trustProfile: "local",
+        env: { MARINA_AUTONOMY: undefined },
+      });
+      restrictedBoard();
+      engine.processCommand(conn2.entity!, "board read council");
+      expect(stripAnsi(conn2.lastText())).toContain("Agenda");
+      engine.processCommand(conn2.entity!, "board post council Hi | there");
+      expect(stripAnsi(conn2.lastText())).toContain("Posted #");
+      engine.processCommand(conn2.entity!, "board pin 1");
+      expect(conn2.lastText()).toContain("Pinned post #1");
+    });
   });
 
   it("should prevent duplicate board names", () => {

@@ -101,6 +101,7 @@ export function createMemoryMcpServer(
   client: MarinaMemoryClient,
   defaultSpace: string,
   profile: "native" | "knowledge-graph" = "native",
+  opts: { resourcePollMs?: number } = {},
 ): McpServer {
   const mcp = new McpServer(
     { name: "marina-memory", version: MARINA_VERSION },
@@ -126,7 +127,7 @@ export function createMemoryMcpServer(
   }
   if (profile === "knowledge-graph") registerKnowledgeGraphTools(mcp, runCmd);
   else registerMemoryTools(mcp, runCmd);
-  registerMemoryResources(mcp, profile, runCmd);
+  registerMemoryResources(mcp, profile, runCmd, opts.resourcePollMs);
   return mcp;
 }
 

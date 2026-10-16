@@ -15,6 +15,8 @@ import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";
 import { MEMORY_GRAPH_ACTIONS } from "../src/sdk/memory-knowledge-graph";
+import { until } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -34,7 +36,15 @@ async function fixture() {
     db.close();
     rmSync(dir, { recursive: true });
   });
-  return { db, http, space, owner, token, raw: (db as unknown as { db: Database }).db };
+  return {
+    db,
+    http,
+    service,
+    space,
+    owner,
+    token,
+    raw: (db as unknown as { db: Database }).db,
+  };
 }
 const alice = { name: "Alice", entityType: "person", observations: ["Speaks Spanish α🙂"] };
 const marina = { name: "Marina", entityType: "project", observations: ["Portable memory"] };
@@ -208,8 +218,20 @@ it("preserves profile data through native transfer and requires explicit review 
 });
 
 it("serves the reference resource, notices external writes and stops notifications on revocation", async () => {
-  const { db, http, space, token } = await fixture();
-  const mcp = createMemoryMcpServer(http, space, "knowledge-graph"),
+  // Polls fast; the bypass keeps the per-connection limiter from ending the
+  // subscription for a reason other than the revocation under test.
+  using _state = scopeProcessState({ rateLimitBypass: true });
+  const POLL_MS = 20;
+  const { db, http, service, space, token } = await fixture();
+  let requests = 0,
+    denied = 0;
+  const watched = new MarinaMemoryClient("http://memory.test", token, 35000, async (req) => {
+    requests++;
+    const res = await handleMemoryServiceApi(req, service);
+    if (!res.ok) denied++;
+    return res;
+  });
+  const mcp = createMemoryMcpServer(watched, space, "knowledge-graph", { resourcePollMs: POLL_MS }),
     client = new Client({ name: "resources", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await mcp.connect(a);
@@ -227,8 +249,7 @@ it("serves the reference resource, notices external writes and stops notificatio
     );
     await client.subscribeResource({ uri });
     await http.knowledgeGraph(space, "create_entities", { entities: [alice] });
-    const until = Date.now() + 4000;
-    while (!notifications.length && Date.now() < until) await Bun.sleep(20);
+    await until(() => notifications.length > 0, { timeoutMs: 4000 });
     expect(notifications).toEqual([uri]);
     const resource = await client.readResource({ uri });
     expect(JSON.parse((resource.contents[0]! as { text: string }).text).entities[0].name).toBe(
@@ -236,7 +257,12 @@ it("serves the reference resource, notices external writes and stops notificatio
     );
     db.revokeWorkloadCredential(db.verifyMemoryCredential(token)!.credentialId);
     await expect(client.readResource({ uri })).rejects.toThrow("Memory resource unavailable");
-    await Bun.sleep(1200);
+    // The read above is one denial; the next poll is the second, and ends the subscription.
+    await until(() => denied >= 2);
+    const afterStop = requests;
+    // Ten poll intervals with no further request: the poller stopped.
+    await Bun.sleep(POLL_MS * 10);
+    expect(requests).toBe(afterStop);
     expect(notifications).toEqual([uri]);
     await client.unsubscribeResource({ uri });
   } finally {

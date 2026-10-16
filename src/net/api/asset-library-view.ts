@@ -16,6 +16,7 @@ import {
   mayReadAsset,
   mayReadCanvas,
 } from "../../engine/canvas-access";
+import { parseDuration } from "../../engine/commands/format-duration";
 import { parseProvenance } from "../../engine/media/asset-library";
 import type { MarinaDB } from "../../persistence/database";
 import {
@@ -174,18 +175,11 @@ export function libraryItems(ctx: LibraryContext, rows: readonly AssetRow[]): Li
 // ─── Query parsing ───────────────────────────────────────────────────────────
 
 const SORTS: readonly AssetSort[] = ["new", "old", "size", "name"];
-const DURATION_MS: Record<string, number> = {
-  m: 60_000,
-  h: 3_600_000,
-  d: 86_400_000,
-  w: 604_800_000,
-};
-
-/** `since` as epoch ms, ISO date, or a look-back window (`30m`, `12h`, `7d`, `2w`). */
+/** `since` as epoch ms, ISO date, or a look-back window (`30m`, `12h`, `7d`, `2w`; `parseDuration`). */
 export function parseSince(raw: string | null | undefined, now = Date.now()): number | undefined {
   if (!raw) return undefined;
-  const window = /^(\d+)([mhdw])$/i.exec(raw.trim());
-  if (window) return now - Number(window[1]) * (DURATION_MS[window[2]!.toLowerCase()] as number);
+  const window = parseDuration(raw.trim());
+  if (window !== undefined) return now - window;
   if (/^\d{10,}$/.test(raw.trim())) return Number(raw.trim());
   const t = Date.parse(raw);
   return Number.isFinite(t) ? t : undefined;
