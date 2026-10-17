@@ -8,6 +8,7 @@ import {
   validateProjectArchiveManifest,
 } from "../src/coding/project-manager";
 import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
+import { __setDnsResolverForTest } from "../src/net/url-guard";
 import { MarinaDB } from "../src/persistence/database";
 import { entityId } from "../src/types";
 import { cleanupDb } from "./helpers";
@@ -15,7 +16,10 @@ import { cleanupDb } from "./helpers";
 const DB_PATH = "test_coding_projects.db";
 const OWNER = entityId("entity-1");
 
-afterEach(() => cleanupDb(DB_PATH));
+afterEach(() => {
+  cleanupDb(DB_PATH);
+  __setDnsResolverForTest(null);
+});
 
 describe("CodingProjectManager", () => {
   test("rejects unsafe, special, oversized, and suspicious archive manifests", () => {
@@ -73,6 +77,8 @@ describe("CodingProjectManager", () => {
     const db = databaseWithBinding();
     const calls: Array<{ command: string[]; cwd?: string }> = [];
     const manager = new CodingProjectManager(db, unusedLocal(), backend(calls));
+    // The clone guard resolves names; stub DNS so the test never needs the network.
+    __setDnsResolverForTest(async () => ["140.82.112.3"]);
 
     const project = await manager.clone(OWNER, "https://github.com/h2oai/Marina.git?token=nope");
     expect(project.source_locator).toBe("https://github.com/h2oai/Marina.git");
@@ -90,6 +96,32 @@ describe("CodingProjectManager", () => {
     await expect(manager.clone(OWNER, "https://127.0.0.1/repo.git")).rejects.toThrow(
       "private network",
     );
+    db.close();
+  });
+
+  test("refuses every local, private, link-local and metadata spelling of a clone host", async () => {
+    const db = databaseWithBinding();
+    const calls: Array<{ command: string[]; cwd?: string }> = [];
+    const manager = new CodingProjectManager(db, unusedLocal(), backend(calls));
+    __setDnsResolverForTest(async (host) =>
+      host === "internal.example" ? ["10.1.2.3"] : ["93.184.216.34"],
+    );
+    for (const url of [
+      "https://localhost/repo.git",
+      "https://127.0.0.1/repo.git",
+      "https://[::1]/repo.git",
+      "https://[::ffff:127.0.0.1]/repo.git",
+      "https://10.0.0.5/repo.git",
+      "https://172.16.0.1/repo.git",
+      "https://192.168.1.10/repo.git",
+      "https://169.254.169.254/latest/meta-data",
+      "https://[fe80::1]/repo.git",
+      "https://internal.example/repo.git", // a public-looking name that resolves privately
+    ]) {
+      await expect(manager.clone(OWNER, url)).rejects.toThrow("private network");
+    }
+    // Nothing reached the sandbox.
+    expect(calls.some((call) => call.command[0] === "git")).toBe(false);
     db.close();
   });
 
