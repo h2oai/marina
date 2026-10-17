@@ -216,6 +216,9 @@ A security fix may shorten a deprecation window only with an explicit upgrade ad
 ## 10. After the release
 
 - Confirm the tag, the GitHub release and its assets, the Supply Chain attestations and the site.
+- Add the release's upgrade fixture: `bun scripts/generate-upgrade-fixture.ts vX.Y.Z`, then commit
+  `test/fixtures/upgrade/vX.Y.Z.*` in a PR, so every later release proves it upgrades this
+  release's real database (see [Release qualification](release-qualification.md)).
 - `main` stays at the released version with an empty `## [Unreleased]`; there is no `-dev`
   version bump. The next release PR moves the version.
 - Every user-visible PR adds a line under `[Unreleased]` (the PR template asks).
@@ -235,5 +238,3 @@ These release steps have no tooling today:
 - **Version bump and notes.** No script bumps versions or extracts release notes.
 - **Desktop.** Windows signing, a desktop update feed and target-OS install-over-upgrade
   acceptance are not configured; desktop tags (`desktop-v*`) are separate from server tags.
-- **Upgrade fixtures per release.** Database upgrades are qualified from fixed fixtures, not from
-  a snapshot of every released version.
