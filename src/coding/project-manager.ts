@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
+import { validateFetchUrl } from "../net/url-guard";
 import type { CodingProjectRow, MarinaDB } from "../persistence/database";
 import type { EntityId } from "../types";
 import type { WorkspaceRuntime } from "./local-workspace";
@@ -70,7 +71,7 @@ export class CodingProjectManager {
 
   async clone(entityId: EntityId, locator: string, name?: string): Promise<CodingProjectRow> {
     const workspace = this.requireWorkspace(entityId);
-    const sourceLocator = sanitizePublicGitUrl(locator);
+    const sourceLocator = await sanitizePublicGitUrl(locator);
     const normalized = normalizeName(name ?? inferredName(sourceLocator));
     if (this.db.getCodingProjectForEntity(entityId, normalized)) {
       throw new Error(`Project already exists: ${normalized}`);
@@ -406,7 +407,12 @@ function inferredName(locator: string): string {
   return segment.replace(/\.git$/i, "").toLowerCase();
 }
 
-function sanitizePublicGitUrl(locator: string): string {
+/**
+ * A public clone source: credential-free HTTPS whose host is not loopback,
+ * private, link-local or cloud metadata, by the shared SSRF guard (literal
+ * addresses in every spelling, plus the addresses a name resolves to).
+ */
+async function sanitizePublicGitUrl(locator: string): Promise<string> {
   let parsed: URL;
   try {
     parsed = new URL(locator);
@@ -418,16 +424,9 @@ function sanitizePublicGitUrl(locator: string): string {
       "Public Git clone requires credential-free HTTPS; embedded credentials are refused.",
     );
   }
-  const host = parsed.hostname.toLowerCase();
-  if (
-    host === "localhost" ||
-    host === "::1" ||
-    host.startsWith("127.") ||
-    host.startsWith("10.") ||
-    host.startsWith("192.168.") ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
-  ) {
-    throw new Error("Public Git clone refuses local and private network targets.");
+  const blocked = await validateFetchUrl(parsed.toString());
+  if (blocked) {
+    throw new Error(`Public Git clone refuses local and private network targets (${blocked}).`);
   }
   parsed.hash = "";
   parsed.search = "";

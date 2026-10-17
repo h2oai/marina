@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Code Mode clone sources** go through the shared SSRF guard: `code project clone` now also
+  refuses `[::1]`, IPv4-mapped, link-local and cloud-metadata hosts, and names that resolve to a
+  private address.
 - Asset ownership and media job identity come from the authenticated caller, not a request field
   (#467).
 - Private assets display for remote dashboard viewers through short-lived signed URLs; the drop
