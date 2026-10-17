@@ -42,6 +42,7 @@ import {
 import { getTrustProfile, isLocalUngated, isOpenApiMode } from "../../engine/trust-profile";
 import type { EngineEvent, EntityId } from "../../types";
 import { HTTP_RATE_LIMITS } from "../http-utils";
+import { isLoopbackHostname } from "../loopback";
 import { memoryObserver } from "../memory/memory-visibility";
 import { getLastProviderProbe } from "../model/model-api";
 import type {
@@ -437,9 +438,9 @@ export function providerProbeSummary(): ProviderProbeSummary[] | null {
 // ─── Security posture ───────────────────────────────────────────────────────
 
 /**
- * Same resolution as `resolveWsBindHostname` + `isLoopbackHostname` in
- * websocket-server.ts, kept local so this module does not join the
- * websocket-server → dashboard-api import cycle.
+ * Same resolution as `resolveWsBindHostname` in websocket-server.ts, kept local
+ * so this module does not join the websocket-server → dashboard-api import
+ * cycle; loopback itself is the shared `isLoopbackHostname`.
  */
 export function loopbackBindFromEnv(env: NodeJS.ProcessEnv = process.env): boolean {
   const explicit = (env.WS_HOST ?? env.MARINA_HOST ?? "").trim();
@@ -448,8 +449,7 @@ export function loopbackBindFromEnv(env: NodeJS.ProcessEnv = process.env): boole
     : (env.MARINA_PUBLIC ?? "").trim().toLowerCase() === "true"
       ? "0.0.0.0"
       : "127.0.0.1";
-  const h = host.toLowerCase();
-  return h === "localhost" || h === "::1" || h.startsWith("127.");
+  return isLoopbackHostname(host);
 }
 
 /**

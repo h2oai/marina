@@ -58,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   served from a name such as `127.attacker.example` was trusted as the local operator's own
   browser on `/ws`, `/dashboard-ws`, `/canvas-ws` and `/api/command`. Loopback now means
   `localhost`, `::1` or an IPv4 literal in 127.0.0.0/8, through one shared check
-  (`src/net/loopback.ts`) that replaces six copies.
+  (`src/net/loopback.ts`) that replaces every local copy.
 
 ## [0.8.0] — 2026-10-14
 
