@@ -268,7 +268,7 @@
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 
-# One directory for everything this instance writes. When set, every path setting below that is unset moves under it (DB_PATH → <dir>/marina.db, ASSETS_DIR → <dir>/assets, MARINA_SCRATCH_DIR → <dir>/scratch, BETTER_AUTH_DB_PATH, the embedding model caches), the dashboard settings editor reads and writes <dir>/.env, and keys from that file fill only variables the process environment leaves unset. Nothing is written to the working directory. An explicit path setting still wins. Created (mode 700) when missing.
+# One directory for everything this instance writes. When set, every path setting below that is unset moves under it (DB_PATH → <dir>/marina.db, ASSETS_DIR → <dir>/assets, MARINA_SCRATCH_DIR → <dir>/scratch, BETTER_AUTH_DB_PATH, the embedding model caches), the dashboard settings editor reads and writes <dir>/.env, a running instance publishes <dir>/endpoint.json (url, MCP url, pid, local key; mode 600; removed on clean exit — written only with this setting), and keys from that file fill only variables the process environment leaves unset. Nothing is written to the working directory. An explicit path setting still wins. Created (mode 700) when missing.
 # @restart
 # MARINA_DATA_DIR=
 

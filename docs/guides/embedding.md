@@ -17,7 +17,7 @@ compiled `marina` binary and the source checkout behave the same way.
 
 ## Finding a running instance
 
-Once it is listening, Marina writes `<MARINA_DATA_DIR>/endpoint.json` (mode 600, replaced
+With `MARINA_DATA_DIR` set, once it is listening Marina writes `<MARINA_DATA_DIR>/endpoint.json` (mode 600, replaced
 atomically, removed on a clean exit):
 
 ```json

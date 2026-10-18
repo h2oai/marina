@@ -121,9 +121,9 @@ describe("idle shutdown", () => {
 });
 
 describe("endpoint.json", () => {
-  test("lives in the data directory, else beside the database", () => {
-    expect(endpointFilePath("/data/marina", "x.db")).toBe("/data/marina/endpoint.json");
-    expect(endpointFilePath(undefined, "/srv/world.db")).toBe("/srv/world.db.endpoint.json");
+  test("lives in the data directory; none without one (opt-in)", () => {
+    expect(endpointFilePath("/data/marina")).toBe("/data/marina/endpoint.json");
+    expect(endpointFilePath(undefined)).toBeUndefined();
   });
 
   test("written 0600, read back while the pid lives, removed only by its owner", () => {

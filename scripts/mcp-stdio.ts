@@ -28,13 +28,14 @@ export interface McpTarget {
   token?: string;
 }
 
-/** The live instance for a data directory (or `DB_PATH`), or undefined. */
+/** The live instance for a data directory, or undefined (no directory, or nothing running there). */
 export function discoverEndpoint(
   dataDirFlag: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): EndpointInfo | undefined {
   const dir = dataDirFlag ?? configuredDataDir(env);
-  return readEndpointFile(endpointFilePath(dir, env.DB_PATH || "marina.db"));
+  const path = endpointFilePath(dir);
+  return path ? readEndpointFile(path) : undefined;
 }
 
 export function resolveMcpTarget(

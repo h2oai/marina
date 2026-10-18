@@ -14,7 +14,7 @@
  */
 
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { parseDuration } from "../engine/commands/format-duration";
 
 /** Counts in-flight external requests and remembers when the last one ended. */
@@ -144,9 +144,12 @@ export interface EndpointInfo {
   idleShutdownMs: number;
 }
 
-/** `<MARINA_DATA_DIR>/endpoint.json`, else `<DB_PATH>.endpoint.json`. */
-export function endpointFilePath(dataDir: string | undefined, dbPath: string): string {
-  return dataDir ? join(dataDir, "endpoint.json") : `${resolve(dbPath)}.endpoint.json`;
+/**
+ * `<MARINA_DATA_DIR>/endpoint.json`, or undefined without a data directory:
+ * the file is an embedding feature, so a plain run writes nothing new.
+ */
+export function endpointFilePath(dataDir: string | undefined): string | undefined {
+  return dataDir ? join(dataDir, "endpoint.json") : undefined;
 }
 
 /** Write atomically (temp file + rename), mode 0600: it may carry the API key. */

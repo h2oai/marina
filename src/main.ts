@@ -874,10 +874,11 @@ if (
 }
 
 // ─── Embedding: endpoint file, idle shutdown, parent watch ─────────────────────
-// endpoint.json tells a host where this instance listens and with which key, so
-// an on-demand caller adopts a running Marina instead of starting a second one.
-const ENDPOINT_FILE = endpointFilePath(DATA_DIR, DB_PATH);
-{
+// endpoint.json (only with MARINA_DATA_DIR) tells a host where this instance
+// listens and with which key, so an on-demand caller adopts a running Marina
+// instead of starting a second one.
+const ENDPOINT_FILE = endpointFilePath(DATA_DIR);
+if (ENDPOINT_FILE) {
   const urlHost =
     LOOPBACK_ONLY_BIND || RESOLVED_WS_HOST === "0.0.0.0" || RESOLVED_WS_HOST === "::"
       ? "127.0.0.1"
@@ -966,7 +967,7 @@ async function shutdown(code = 0) {
   await otlpExporter?.stop();
   await otlpLogExporter?.stop();
   logServer?.stop();
-  removeEndpointFile(ENDPOINT_FILE);
+  if (ENDPOINT_FILE) removeEndpointFile(ENDPOINT_FILE);
   db.close();
   releaseDatabaseLease();
   process.exit(code);
