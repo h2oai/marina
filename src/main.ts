@@ -8,6 +8,7 @@ import { getInternalModelToken } from "./agent/agent-runtime";
 import { RateLimiter } from "./auth/rate-limiter";
 import { parseExecUnrestricted } from "./coding/exec-approver";
 import { ensureConfiguredRoots } from "./coding/workspace-registry";
+import { applyDataDir } from "./config/data-dir";
 import { applyStoredDecisionSettings } from "./decisions/settings";
 import { describeAutonomyPosture, getAutonomyPosture, ungatedPostureNote } from "./engine/autonomy";
 import {
@@ -58,6 +59,10 @@ import { loadRooms } from "./world/room-loader";
 import { seedGuidePool } from "./world/seed-guide";
 import type { WorldDefinition } from "./world/world-definition";
 import { loadWorld } from "./world/world-loader";
+
+// MARINA_DATA_DIR roots every unset path default (database, keys, assets,
+// scratch, model caches) before anything below reads them (src/config/data-dir.ts).
+const DATA_DIR = applyDataDir(process.env);
 
 // Port semantics: unset/empty/non-numeric env keeps the default; an explicit 0
 // (or negative) DISABLES that listener so multiple instances can share a host.
@@ -605,12 +610,23 @@ startListener("WebSocket/HTTP", "WS_PORT", WS_PORT, () => wsServer.start());
 // log server default to it +1 / +2, so a custom or ephemeral WS_PORT never
 // collides on a hard-coded 3301/3302.
 const boundWsPort = wsServer.getPort();
-const MCP_PORT = MCP_PORT_SETTING ?? boundWsPort + 1;
-const LOG_PORT = LOG_PORT_SETTING ?? boundWsPort + 2;
+// MARINA_SINGLE_PORT=true: one listener for everything an embedder needs — /mcp is
+// served on the WebSocket/HTTP port and the log viewer stays off unless LOG_PORT
+// is set explicitly. An explicit MCP_PORT=0 still disables MCP.
+const SINGLE_PORT = process.env.MARINA_SINGLE_PORT === "true";
+const MCP_PORT = SINGLE_PORT
+  ? MCP_PORT_SETTING !== undefined && MCP_PORT_SETTING <= 0
+    ? 0
+    : boundWsPort
+  : (MCP_PORT_SETTING ?? boundWsPort + 1);
+const LOG_PORT = LOG_PORT_SETTING ?? (SINGLE_PORT ? 0 : boundWsPort + 2);
 if (telnetServer) startListener("telnet", "TELNET_PORT", TELNET_PORT, () => telnetServer.start());
 const mcpServer = MCP_PORT > 0 ? new McpServerAdapter(engine, MCP_PORT, rateLimiter) : undefined;
 if (!mcpServer) logger.info("engine", "MCP server disabled (MCP_PORT <= 0)");
-if (mcpServer) startListener("MCP", "MCP_PORT", MCP_PORT, () => mcpServer.start());
+if (mcpServer && SINGLE_PORT) {
+  mcpServer.mount(boundWsPort);
+  wsServer.mountMcp((req, server) => mcpServer.handle(req, server));
+} else if (mcpServer) startListener("MCP", "MCP_PORT", MCP_PORT, () => mcpServer.start());
 
 // ─── Live Log Server ────────────────────────────────────────────────────────
 
@@ -828,9 +844,12 @@ if (
       `${hasUpstream ? "" : " · NO upstream key yet (returns 503 until a provider key is set)"} · auth: ${authMode}`,
   );
   if (LOCAL_API_KEY) {
-    // Printed once per boot for the local operator: paste into any OpenAI-compatible client.
+    // Printed once per boot for the local operator: paste into any OpenAI-compatible
+    // client. The key itself never reaches stdout — an embedder or a log collector
+    // capturing this stream must not capture the credential — so the line reads it
+    // from its 0600 file instead.
     process.stdout.write(
-      `  Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:${boundWsPort}/v1 OPENAI_API_KEY=${LOCAL_API_KEY}\n`,
+      `  Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:${boundWsPort}/v1 OPENAI_API_KEY="$(cat '${resolve(localApiKeyPath(DB_PATH))}')"\n`,
     );
   }
   logger.info(

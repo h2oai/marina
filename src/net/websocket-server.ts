@@ -286,6 +286,12 @@ export class WebSocketServer {
     this.authProvider = provider;
   }
 
+  /** `MARINA_SINGLE_PORT`: `/mcp` requests on this listener go to the mounted MCP adapter. */
+  private mcpHandler?: (req: Request, server: Server<WSData>) => Promise<Response>;
+  mountMcp(handler: (req: Request, server: Server<unknown>) => Promise<Response>): void {
+    this.mcpHandler = handler as (req: Request, server: Server<WSData>) => Promise<Response>;
+  }
+
   /**
    * Resolve the authenticated principal for a dashboard/canvas WebSocket UPGRADE.
    * Returns the principal string to attach to the socket, or `null` to REJECT
@@ -415,6 +421,10 @@ export class WebSocketServer {
               }),
             });
           }
+
+          // MCP mounted on this listener (MARINA_SINGLE_PORT): the adapter applies
+          // its own origin, bearer, session-throttle and DNS-rebinding checks.
+          if (url.pathname === "/mcp" && self.mcpHandler) return await self.mcpHandler(req, server);
 
           // ─── WebSocket upgrade paths (with connection limits) ────────────
           const isWsUpgrade =

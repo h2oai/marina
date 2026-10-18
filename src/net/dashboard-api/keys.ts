@@ -7,7 +7,7 @@
 // editor. Reads never return secret plaintext (`projectEnvValueForRead`), and
 // every write is behind `key.manage`, `adapter.enable` or `admin.destructive`.
 
-import { join } from "node:path";
+import { instanceEnvPath } from "../../config/data-dir";
 import {
   encodeEnvironmentValue,
   environmentCatalog,
@@ -371,7 +371,7 @@ function envCatalog(): SettingDescriptor[] {
 }
 
 function parseEnvFile(): Map<string, string> {
-  const envPath = join(process.cwd(), ".env");
+  const envPath = instanceEnvPath();
   let content: string;
   try {
     content = require("node:fs").readFileSync(envPath, "utf-8");
@@ -531,7 +531,7 @@ async function handleEnvPut(req: Request): Promise<Response> {
 
   // Persist only requested changes. Unrelated interpolation and comments stay intact.
   try {
-    if (Object.keys(changes).length) writeEnvironment(join(process.cwd(), ".env"), changes);
+    if (Object.keys(changes).length) writeEnvironment(instanceEnvPath(), changes);
   } catch {
     return json({ error: "Failed to write instance .env" }, 500);
   }

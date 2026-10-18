@@ -20,6 +20,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `TELNET_PORT=0` | Telnet port. 0 (the default) is off. Telnet is plaintext and unauthenticated, and telnet sessions can never run host commands. | restart |
 | `MCP_PORT=3301` | MCP (Model Context Protocol) port. Default: the bound WebSocket port + 1 (also with WS_PORT=0). 0 disables. | restart |
 | `LOG_PORT=3302` | Real-time log viewer port. Default: the bound WebSocket port + 2 (also with WS_PORT=0). 0 disables. | restart |
+| `MARINA_SINGLE_PORT=false` | One listener for everything: `/mcp` is served on the WebSocket/HTTP port instead of MCP_PORT, and the log viewer stays off unless LOG_PORT is set explicitly. For embedders that need exactly one port per instance. MCP_PORT=0 still disables MCP. | restart |
 | `WS_MAX_CONNECTIONS_PER_IP=100` | Maximum concurrent WebSocket connections per client IP. | restart |
 | `MARINA_TRUST_PROXY=false` | Trust X-Forwarded-For when resolving the client IP for every per-IP rate limiter. Enable only behind a trusted reverse proxy. | protected |
 | `NODE_ENV=production`<br>`REVERSE_PROXY=1`<br>`HTTPS_PROXY=` | When NODE_ENV=production and neither HTTPS_PROXY nor REVERSE_PROXY is set, Marina logs a hint that no TLS proxy was detected. Only presence matters. Bun's fetch also honours HTTPS_PROXY, HTTP_PROXY and NO_PROXY for outbound requests. | restart |
@@ -101,9 +102,11 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 
 | Variable | Description | Flags |
 |---|---|---|
+| `MARINA_DATA_DIR=` | One directory for everything this instance writes. When set, every path setting below that is unset moves under it (DB_PATH → &lt;dir&gt;/marina.db, ASSETS_DIR → &lt;dir&gt;/assets, MARINA_SCRATCH_DIR → &lt;dir&gt;/scratch, BETTER_AUTH_DB_PATH, the embedding model caches), the dashboard settings editor reads and writes &lt;dir&gt;/.env, and keys from that file fill only variables the process environment leaves unset. Nothing is written to the working directory. An explicit path setting still wins. Created (mode 700) when missing. | restart |
 | `DB_PATH=marina.db` | SQLite world database path. | restart |
 | `MARINA_DB_DURABILITY=full` | World database durability: `full` (fsync per commit) or `normal` (WAL, crash-safe, small power-loss window). Default `normal` under the local profile, `full` otherwise. | restart |
 | `ASSETS_DIR=data/assets` | Directory for uploaded assets. | restart |
+| `MARINA_SCRATCH_DIR=data/scratch` | Per-entity scratch directory (`run` output, canvas `file:` uploads). | restart |
 
 ## Model provider keys
 

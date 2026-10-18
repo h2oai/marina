@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { scratchRoot } from "../config/data-dir";
 import { localHttpBase } from "../net/listen-ports";
 import { MARINA_ROOT } from "../runtime-paths";
 import { AuthCoordinator, type LoginIdentity, type LoginResult } from "./auth-coordinator";
@@ -276,7 +277,7 @@ export class Engine {
     }
 
     // Initialize shell runtime
-    this.shellRuntime = new ShellRuntime(this.db);
+    this.shellRuntime = new ShellRuntime(this.db, scratchRoot());
     this.shellRuntime.init();
 
     // Initialize coordination managers if db is available
