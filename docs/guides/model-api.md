@@ -530,8 +530,48 @@ curl http://localhost:3300/v1/chat/completions \
 | `POST` | `/v1/messages` | Anthropic Messages (Claude Code, Anthropic SDKs) |
 | `GET` | `/v1/health` | Liveness |
 | `POST` | `/v1/forecast` | Forecast any question: `{question, kind?, resolveBy?, unit?}` → probability or number with analysts, grounding, sources ([guide](forecasting.md)) |
+| `POST` | `/v1/patterns/run` | Run one free-text task under a named orchestration pattern: `{pattern, task, members?, budgetUsd?}` → `{message, success, pattern, trace}` ([below](#running-one-task-under-a-pattern)) |
 | `POST` | `/v1/decisions`, `/v1/systemone` | Decision questions (`noul` / `choice` / `score` / `box`, with optional image parts in `state`) for any harness; TypeSafe-compatible ([decisions](../architecture/decisions.md)) |
 | `POST` | `/v1/embeddings`, `/v1/completions` | **Not served** — explicit 404 `{ error: { code: "not_found" } }` |
+
+### Running one task under a pattern
+
+`POST /v1/patterns/run` runs ONE free-text task under a named orchestration pattern and
+returns the chosen answer with a trace of every stage:
+
+```bash
+curl -s http://localhost:3300/v1/patterns/run \
+  -H "Authorization: Bearer $MODEL_API_KEY" -H "Content-Type: application/json" \
+  -d '{"pattern":"debate","task":"Should we shard the events table?","members":["openrouter/openai/gpt-6.1-sol","openrouter/anthropic/claude-opus-5.5"],"budgetUsd":0.5}'
+# → {"message":"…","success":true,"pattern":"debate",
+#    "trace":{"steps":[{"stage":"opening:advocate-1","member":"…","status":"ok","text":"…","costUsd":0.01},…],"costUsd":0.05}}
+```
+
+Runnable patterns (`src/orchestration/text-patterns.ts`): `ensemble` (parallel drafts, a checker
+picks one), `debate` (the first two members argue and rebut, the checker judges), `delphi`
+(independent drafts, an anonymous summary, one revision each, a pick), `tournament` (pairwise
+picks in a bracket), `verification` (the first member drafts, the checker reviews, one revision),
+`deliberation` (proposals, revision after seeing anonymous peers, a pick), `chorus` (proposals,
+each critiques one peer, revision, a pick) and `pipeline` (each member refines the previous
+handoff; the last output wins). The legacy name `nsed` runs `deliberation`. These are text
+protocols that share names with the numeric arena and forecast formations; they are not those
+formations. A checker always picks ONE whole answer; answers are never merged.
+
+Crew-only patterns (`foundry`, `swarm`, `mapreduce`, `blackboard`, `symbiosis`, `research`,
+`auction`, `ledger`, `sharding`, `custom`) need a persistent crew and are refused with `400
+unsupported_parameter` (`param: "pattern"`); run them as a crew and call it as model
+`marina:<crew>`. An unknown pattern is `400` listing the supported ones.
+
+`members` takes 2–5 reachable upstream ids (repeats allowed; never a `marina…` id). It defaults
+to the installation's first available model, repeated `MARINA_ENSEMBLE_SIZE` times (default 3).
+Under a passthru pin every member must be the pin. The checker follows the verify checker
+resolution for the first member (`MARINA_VERIFY_CHECKER_MODEL`, else the member itself).
+`task` is at most 16,000 characters. The route uses the same auth, per-IP limit, run-key
+handling and daily spend cap as the rest of `/v1`. A spent cap is `429 spend_cap_reached`,
+and `503 pattern_unavailable` means no model is configured. Before each stage, the run checks
+the caller's `budgetUsd`, the daily cap, the caller's connection and a 10-minute deadline. If
+any of them stops the run, it returns `200` with the best answer so far, `success: false` and
+`trace.fallback` naming the reason.
 
 ### Ollama-compatible
 
