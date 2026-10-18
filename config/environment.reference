@@ -511,6 +511,10 @@
 # @protected
 # MARINA_CHILD_DAILY_SPEND_CAP_USD=50
 
+# Shared daily spend ledger: a SQLite file (created with mode 0600, its directory if missing) that several Marina processes record into and check MARINA_DAILY_SPEND_CAP_USD and MARINA_SPEND_SCOPE caps against, so a host running one process per world gets ONE daily total and ONE cap instead of one per world database. Spend is still written to each world database too (per-world history); every cap check and the readiness/Ops readouts use the shared total. Command-line runs that attach a ledger use it as well, even without DB_PATH. An unusable path refuses to start rather than falling back to a per-world cap. With it set, a World Collective child world shares the parent's cap and gets its own budget as scope `child:<name>` capped at MARINA_CHILD_DAILY_SPEND_CAP_USD. Unset = one ledger per world database.
+# @protected
+# MARINA_SPEND_LEDGER=/var/lib/marina/spend-ledger.db
+
 # Rolling one-hour USD caps on agent model spend, across all agents and per agent. Unset or 0 is unlimited. At a cap the agent pauses, tells its spawner, and resumes once last-hour spend drops. Local models count as $0.
 # @protected
 # MARINA_MAX_COST_USD_PER_HOUR=5
