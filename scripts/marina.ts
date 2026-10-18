@@ -9,6 +9,15 @@
  *   marina connect <name> [...]  connect to a running Marina (REPL / -c one-shot / pipe)
  *   marina attach [url] [...]    code in an existing coding session on a running Marina
  *   marina start                 run the full server in the foreground
+  marina worlds [--json]       list the worlds built into this binary
+  marina endpoint [--data-dir <dir>] [--show-key]
+                               where the running instance for a data directory
+                               listens (its endpoint.json; the key stays masked)
+  marina acp <name>            Agent Client Protocol over stdio for editors
+                               (targets MARINA_URL, else the instance in MARINA_DATA_DIR)
+  marina mcp-stdio [--url <mcp-url>] [--token <t>] [--data-dir <dir>]
+                               stdio MCP bridge to a running Marina's /mcp
+  marina memory-mcp [...]      stdio MCP server for one Marina memory space
  *   marina status [--url|--port] is a Marina running? health + capability readiness
  *   marina init                  interactive .env setup
  *   marina supervise [...]       manage local coding agents from the dashboard
@@ -77,7 +86,12 @@ export type Dispatch =
   | { kind: "route"; rest: string[] }
   | { kind: "inquiry"; mode: "predict" | "research" | "inquiry"; rest: string[] }
   | { kind: "supervise"; rest: string[] }
-  | { kind: "start" };
+  | { kind: "start" }
+  | { kind: "acp"; rest: string[] }
+  | { kind: "mcp-stdio"; rest: string[] }
+  | { kind: "memory-mcp"; rest: string[] }
+  | { kind: "worlds"; json: boolean }
+  | { kind: "endpoint"; dataDir?: string; showKey: boolean };
 
 /** Default directory probe for `parseDispatch` — an existing directory on disk. */
 function isExistingDirectory(path: string): boolean {
@@ -141,6 +155,22 @@ function missingConnectedPieces(connected: { url?: string; name?: string; sessio
   return `Connected coding is missing ${list}. Or let Marina find them: ${ATTACH_USAGE}`;
 }
 
+/** `marina endpoint [--data-dir <dir>] [--show-key]`. */
+function parseEndpoint(argv: string[]): Dispatch {
+  let dataDir: string | undefined;
+  let showKey = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "--show-key") showKey = true;
+    else if (arg === "--data-dir") {
+      const value = argv[++i];
+      if (!value || value.startsWith("-")) return { kind: "usage-error", arg };
+      dataDir = value;
+    } else return { kind: "usage-error", arg };
+  }
+  return { kind: "endpoint", ...(dataDir ? { dataDir } : {}), showKey };
+}
+
 /** Pure routing: argv (after the script path) → which flow to run. */
 export function parseDispatch(
   argv: string[],
@@ -159,6 +189,11 @@ export function parseDispatch(
   if (first === "connect") return { kind: "connect", rest: argv.slice(1) };
   if (first === "attach") return parseAttach(argv.slice(1));
   if (first === "start") return { kind: "start" };
+  if (first === "acp") return { kind: "acp", rest: argv.slice(1) };
+  if (first === "mcp-stdio") return { kind: "mcp-stdio", rest: argv.slice(1) };
+  if (first === "memory-mcp") return { kind: "memory-mcp", rest: argv.slice(1) };
+  if (first === "worlds") return { kind: "worlds", json: argv.includes("--json") };
+  if (first === "endpoint") return parseEndpoint(argv.slice(1));
   // Coding flow: [dir] plus optional --fresh, -p/--print "<task>", and the
   // exec-approval flags, in any order.
   let dir: string | undefined;
@@ -721,6 +756,54 @@ if (import.meta.main) {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
       }
+      break;
+    }
+    case "acp": {
+      // acp.ts reads process.argv.slice(2) at module load, like connect.ts.
+      if (!process.env.MARINA_URL) {
+        const { discoverEndpoint } = await import("./mcp-stdio");
+        const endpoint = discoverEndpoint(undefined);
+        if (endpoint) process.env.MARINA_URL = endpoint.url.replace(/^http/, "ws");
+      }
+      process.argv = [process.argv[0] ?? "bun", join(import.meta.dir, "acp.ts"), ...dispatch.rest];
+      await import("./acp");
+      break;
+    }
+    case "mcp-stdio": {
+      const { runMcpStdio } = await import("./mcp-stdio");
+      process.exitCode = await runMcpStdio(dispatch.rest);
+      break;
+    }
+    case "memory-mcp":
+      process.argv = [
+        process.argv[0] ?? "bun",
+        join(import.meta.dir, "memory-mcp.ts"),
+        ...dispatch.rest,
+      ];
+      await import("./memory-mcp");
+      break;
+    case "worlds": {
+      const { BUILTIN_WORLD_SLUGS, BUILTIN_WORLD_SUMMARIES } = await import("../worlds");
+      const worlds = [...BUILTIN_WORLD_SLUGS]
+        .sort()
+        .map((name) => ({ name, description: BUILTIN_WORLD_SUMMARIES[name] ?? "" }));
+      if (dispatch.json) console.log(JSON.stringify(worlds, null, 2));
+      else for (const w of worlds) console.log(`${w.name.padEnd(20)} ${w.description}`);
+      break;
+    }
+    case "endpoint": {
+      const { discoverEndpoint } = await import("./mcp-stdio");
+      const endpoint = discoverEndpoint(dispatch.dataDir);
+      if (!endpoint) {
+        console.error("No running Marina for this data directory.");
+        process.exitCode = 1;
+        break;
+      }
+      const shown =
+        dispatch.showKey || !endpoint.apiKey
+          ? endpoint
+          : { ...endpoint, apiKey: `${endpoint.apiKey.slice(0, 9)}…` };
+      console.log(JSON.stringify(shown, null, 2));
       break;
     }
     case "start":

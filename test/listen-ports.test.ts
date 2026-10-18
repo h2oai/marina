@@ -7,6 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { selfDecisionBaseUrl } from "../src/decisions/config";
 import {
   localHttpBase,
   localMcpPort,
@@ -57,5 +58,13 @@ describe("listen ports", () => {
     }
     expect(localWsPort({})).toBe(15300);
     expect(localMcpPort({})).toBe(15301);
+  });
+});
+
+describe("self-URLs under WS_PORT=0 (SRV-6)", () => {
+  it("the decision backend's own /v1 follows the bound port, not 3300", () => {
+    const env = { WS_PORT: "0" } as NodeJS.ProcessEnv;
+    recordListenPort("websocket", 45678);
+    expect(selfDecisionBaseUrl(env)).toBe("http://localhost:45678/v1");
   });
 });

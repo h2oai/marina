@@ -64,6 +64,14 @@
 # @restart
 # MARINA_SINGLE_PORT=false
 
+# Shut down gracefully after this long with no external HTTP, WebSocket or MCP request, no open agent turn and no pending background work (`15m`, `900s`, `1h`; 0 or unset = never). Health probes and Marina's own agents calling its /v1 are not activity, and autonomous agent turns never reset the clock. For on-demand instances that a host starts when needed (see endpoint.json under MARINA_DATA_DIR).
+# @restart
+# MARINA_IDLE_SHUTDOWN=0
+
+# Exit gracefully when this process id no longer exists — for a Marina owned by a host process that may die without stopping it.
+# @restart
+# MARINA_PARENT_PID=
+
 # Maximum concurrent WebSocket connections per client IP.
 # @restart
 # WS_MAX_CONNECTIONS_PER_IP=100

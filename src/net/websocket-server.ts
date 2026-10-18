@@ -64,6 +64,7 @@ import {
   serverMaxRequestBodyBytes,
   withSecurityHeaders,
 } from "./http-utils";
+import { instanceActivity } from "./instance-lifecycle";
 import { recordListenPort } from "./listen-ports";
 import { isLoopbackHostname, isLoopbackIp } from "./loopback";
 import { handleMemoryServiceApi } from "./memory/memory-service-api";
@@ -397,6 +398,7 @@ export class WebSocketServer {
 
       async fetch(req, server) {
         const leave = self.requestDrain.enter();
+        let endActivity: (() => void) | undefined;
         try {
           // Draining: only the internal model token (room agents finishing
           // their turn) still gets through — compared in constant time.
@@ -406,6 +408,14 @@ export class WebSocketServer {
               { status: 503, headers: { "Retry-After": "5" } },
             );
           const url = new URL(req.url);
+          // External use keeps an idle-shutdown instance alive; Marina's own agents
+          // (internal bearer) and health probes do not (instance-lifecycle.ts).
+          if (
+            url.pathname !== "/health" &&
+            url.pathname !== "/v1/health" &&
+            !hasInternalBearer(req)
+          )
+            endActivity = instanceActivity.begin();
           // Every route below may percent-decode a path segment; refuse a path
           // with a malformed escape (`%E0`) once, before any route matcher.
           if (safeDecodeURIComponent(url.pathname) === null) {
@@ -764,6 +774,7 @@ export class WebSocketServer {
             { status: 404, headers: securityHeaders("api") },
           );
         } finally {
+          endActivity?.();
           leave();
         }
       },
@@ -852,6 +863,7 @@ export class WebSocketServer {
         },
 
         message(ws, message) {
+          instanceActivity.touch();
           // Dashboard WS clients don't send game commands
           if (ws.data.isDashboard) return;
 

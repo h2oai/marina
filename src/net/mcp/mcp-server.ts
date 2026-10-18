@@ -17,6 +17,7 @@ import type { Connection, Perception } from "../../types";
 import { handleConnectRoutes, healthResponse, registerConnectEndpoint } from "../api/connect-api";
 import { isTrustedBrowserOrigin } from "../cors";
 import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "../http-utils";
+import { instanceActivity } from "../instance-lifecycle";
 import { recordListenPort } from "../listen-ports";
 import { isLoopbackHostname } from "../loopback";
 import { RequestDrain } from "../request-drain";
@@ -239,7 +240,14 @@ export class McpServerAdapter {
           const connectResp = await handleConnectRoutes(req, url, self.engine);
           if (connectResp) return connectResp;
 
-          if (url.pathname === "/mcp") return await self.handleMcp(req, server);
+          if (url.pathname === "/mcp") {
+            const endActivity = instanceActivity.begin();
+            try {
+              return await self.handleMcp(req, server);
+            } finally {
+              endActivity();
+            }
+          }
 
           return new Response("Marina MCP Server — connect via MCP protocol at /mcp", {
             status: 200,

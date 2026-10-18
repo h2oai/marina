@@ -2043,6 +2043,11 @@ export class Engine {
    * trial or replication). `shutdown()` drains it — with async tick jobs —
    * before the host closes persistence.
    */
+  /** Tracked background work or an async tick job is still running (idle shutdown waits for it). */
+  hasBackgroundWork(): boolean {
+    return this.background.size > 0 || this.tickScheduler.pendingCount > 0;
+  }
+
   trackBackground<T>(work: Promise<T>): Promise<T> {
     this.background.add(work);
     const done = () => this.background.delete(work);

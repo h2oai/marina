@@ -31,6 +31,7 @@
 
 import { Logger } from "../engine/logger";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { localHttpBase } from "../net/listen-ports";
 import { selfModelToken } from "../net/model/self-model-token";
 import type { ClassifierMethod } from "./classifier-methods";
 import { combineAnswers, unsureAnswers } from "./combine";
@@ -84,7 +85,7 @@ export function classifierEngineModels(
 }
 
 function selfBaseUrl(env: NodeJS.ProcessEnv): string {
-  return `http://localhost:${Number(env.WS_PORT) || 3300}/v1`;
+  return `${localHttpBase(env)}/v1`;
 }
 
 /**

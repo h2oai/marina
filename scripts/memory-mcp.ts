@@ -10,7 +10,7 @@ import { MarinaMemoryClient } from "../src/sdk/memory-client";
 
 try {
   const { values } = parseArgs({
-    args: Bun.argv.slice(2),
+    args: process.argv.slice(2),
     options: {
       url: { type: "string", default: process.env.MARINA_MEMORY_URL ?? "http://127.0.0.1:3301" },
       credentials: { type: "string" },

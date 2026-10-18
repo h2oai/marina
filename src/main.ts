@@ -36,6 +36,16 @@ import { AdapterManager } from "./net/adapters/adapter-manager";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
 import { FeedPublisher } from "./net/feed-publisher";
 import { formatPerception } from "./net/formatter";
+import {
+  endpointFilePath,
+  OpenTurns,
+  parseIdleShutdown,
+  parseParentPid,
+  removeEndpointFile,
+  startIdleShutdown,
+  watchParent,
+  writeEndpointFile,
+} from "./net/instance-lifecycle";
 import { recordListenPort } from "./net/listen-ports";
 import { loadOrCreateLocalApiKey, localApiKeyPath } from "./net/local-api-key";
 import { LogServer } from "./net/log-server";
@@ -55,6 +65,7 @@ import { LocalStorageProvider } from "./storage/local-provider";
 import { loadOtlpExporterConfig, MarinaOtlpExporter } from "./telemetry/otlp-exporter";
 import { loadOtlpLogExporterConfig, MarinaOtlpLogExporter } from "./telemetry/otlp-log-exporter";
 import type { RoomId } from "./types";
+import { MARINA_VERSION } from "./version";
 import { loadRooms } from "./world/room-loader";
 import { seedGuidePool } from "./world/seed-guide";
 import type { WorldDefinition } from "./world/world-definition";
@@ -63,6 +74,9 @@ import { loadWorld } from "./world/world-loader";
 // MARINA_DATA_DIR roots every unset path default (database, keys, assets,
 // scratch, model caches) before anything below reads them (src/config/data-dir.ts).
 const DATA_DIR = applyDataDir(process.env);
+// Embedding lifecycle (src/net/instance-lifecycle.ts), validated before anything starts.
+const IDLE_SHUTDOWN_MS = parseIdleShutdown(process.env.MARINA_IDLE_SHUTDOWN);
+const PARENT_PID = parseParentPid(process.env.MARINA_PARENT_PID);
 
 // Port semantics: unset/empty/non-numeric env keeps the default; an explicit 0
 // (or negative) DISABLES that listener so multiple instances can share a host.
@@ -859,6 +873,57 @@ if (
   );
 }
 
+// ─── Embedding: endpoint file, idle shutdown, parent watch ─────────────────────
+// endpoint.json tells a host where this instance listens and with which key, so
+// an on-demand caller adopts a running Marina instead of starting a second one.
+const ENDPOINT_FILE = endpointFilePath(DATA_DIR, DB_PATH);
+{
+  const urlHost =
+    LOOPBACK_ONLY_BIND || RESOLVED_WS_HOST === "0.0.0.0" || RESOLVED_WS_HOST === "::"
+      ? "127.0.0.1"
+      : RESOLVED_WS_HOST.includes(":")
+        ? `[${RESOLVED_WS_HOST}]`
+        : RESOLVED_WS_HOST;
+  const url = `http://${urlHost}:${boundWsPort}`;
+  try {
+    writeEndpointFile(ENDPOINT_FILE, {
+      url,
+      ...(mcpServer ? { mcpUrl: `http://${urlHost}:${mcpServer.getPort()}/mcp` } : {}),
+      pid: process.pid,
+      ...(LOCAL_API_KEY ? { apiKey: LOCAL_API_KEY } : {}),
+      version: MARINA_VERSION,
+      world: WORLD_NAME,
+      startedAt: new Date().toISOString(),
+      idleShutdownMs: IDLE_SHUTDOWN_MS,
+    });
+    logger.info("main", `Endpoint file ${ENDPOINT_FILE} (mode 600)`);
+  } catch (err) {
+    logger.error("main", `Endpoint file ${ENDPOINT_FILE} could not be written`, { err });
+  }
+}
+if (IDLE_SHUTDOWN_MS > 0) {
+  const openTurns = new OpenTurns();
+  engine.addEventListener((event) => openTurns.observe(event));
+  startIdleShutdown({
+    idleMs: IDLE_SHUTDOWN_MS,
+    isBusy: () => openTurns.count > 0 || engine.hasBackgroundWork(),
+    onIdle: () => {
+      logger.info(
+        "main",
+        `No external activity for ${IDLE_SHUTDOWN_MS / 1000}s — shutting down (MARINA_IDLE_SHUTDOWN)`,
+      );
+      void shutdown(0);
+    },
+  });
+  logger.info("main", `Idle shutdown after ${IDLE_SHUTDOWN_MS / 1000}s without external activity`);
+}
+if (PARENT_PID !== undefined) {
+  watchParent(PARENT_PID, () => {
+    logger.warn("main", `Parent process ${PARENT_PID} is gone — shutting down (MARINA_PARENT_PID)`);
+    void shutdown(0);
+  });
+}
+
 // ─── Graceful Shutdown ────────────────────────────────────────────────────────
 
 let shuttingDown = false;
@@ -901,6 +966,7 @@ async function shutdown(code = 0) {
   await otlpExporter?.stop();
   await otlpLogExporter?.stop();
   logServer?.stop();
+  removeEndpointFile(ENDPOINT_FILE);
   db.close();
   releaseDatabaseLease();
   process.exit(code);
