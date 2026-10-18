@@ -92,7 +92,7 @@ import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
-import { attachSpendLedger, dbSpendSink } from "./spend-ledger";
+import { attachWorldSpendLedger } from "./spend-ledger";
 import { registerTickJobs } from "./tick-jobs";
 import { type TickJobStatus, TickScheduler } from "./tick-scheduler";
 
@@ -314,15 +314,16 @@ export class Engine {
       // MARINA_DAILY_SPEND_CAP_USD survives a restart (src/engine/spend-ledger.ts).
       const spendDb = this.db;
       // Command-line processes on the same DB_PATH attach the same ledger, so
-      // the day's total is shared across processes (re-read on every check).
+      // the day's total is shared across processes (re-read on every check);
+      // with MARINA_SPEND_LEDGER every process naming that file shares one
+      // total and one cap (src/engine/shared-spend-ledger.ts).
       spendDb.onClose(
-        attachSpendLedger(
-          dbSpendSink(spendDb, (error) =>
+        attachWorldSpendLedger(spendDb, {
+          onError: (error) =>
             tryLog(this.logger, "spend", "Daily spend not recorded", () => {
               throw error;
             }),
-          ),
-        ),
+        }),
       );
 
       // Route health: a first-party key's usage limit survives a restart, so

@@ -29,7 +29,12 @@ import type { Engine } from "./engine";
 import { corpusEmbeddingStatus } from "./search-providers/corpus-vectors";
 import { searchBackendHealth } from "./search-providers/health";
 import { describeSearchReadiness } from "./search-readiness";
-import { dailySpend, formatSpendUsd, scopeSpendToday } from "./spend-ledger";
+import {
+  activeSharedSpendLedger,
+  dailySpend,
+  formatSpendUsd,
+  scopeSpendToday,
+} from "./spend-ledger";
 import {
   getTrustProfile,
   isLocalProfile,
@@ -441,6 +446,10 @@ export function computeReadiness(engine: Engine): ReadinessReport {
 
   // ── Daily spend — the world's upstream dollars today vs its cap ────────────
   const spend = dailySpend(env);
+  // With MARINA_SPEND_LEDGER the total is every process sharing that file.
+  const sharedNote = activeSharedSpendLedger()
+    ? " — shared ledger (MARINA_SPEND_LEDGER): every process on it counts"
+    : "";
   if (spend.capUsd !== undefined) {
     const share = spend.spentUsd / spend.capUsd;
     const source = env.MARINA_DAILY_SPEND_CAP_USD?.trim()
@@ -450,7 +459,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       id: "daily-spend",
       label: "Daily spend",
       status: spend.reached ? "off" : share >= 0.8 ? "degraded" : "ok",
-      detail: `${formatSpendUsd(spend.spentUsd)} of ${formatSpendUsd(spend.capUsd)} today (UTC, ${source})${spend.reached ? " — model calls, decisions, forecasts and media generation are refused; agents paused" : ""}`,
+      detail: `${formatSpendUsd(spend.spentUsd)} of ${formatSpendUsd(spend.capUsd)} today (UTC, ${source})${sharedNote}${spend.reached ? " — model calls, decisions, forecasts and media generation are refused; agents paused" : ""}`,
       ...(spend.reached || share >= 0.8
         ? {
             remediation:
@@ -463,7 +472,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       id: "daily-spend",
       label: "Daily spend",
       status: "ok",
-      detail: `${formatSpendUsd(spend.spentUsd)} today (UTC) — uncapped (MARINA_DAILY_SPEND_CAP_USD=${env.MARINA_DAILY_SPEND_CAP_USD?.trim() ?? "0"})`,
+      detail: `${formatSpendUsd(spend.spentUsd)} today (UTC) — uncapped (MARINA_DAILY_SPEND_CAP_USD=${env.MARINA_DAILY_SPEND_CAP_USD?.trim() ?? "0"})${sharedNote}`,
     });
   }
 
