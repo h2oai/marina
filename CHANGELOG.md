@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a restart and time out (`MARINA_VIDEO_JOB_TIMEOUT_MIN`) (#469).
 - The media library, viewer and uploads work in the desktop shell (#477).
 
+### Security
+
+- **A hostname is loopback only when it is one.** A browser origin, bind host or gateway target
+  counted as loopback when its hostname merely started with `127.`, so on a loopback bind a page
+  served from a name such as `127.attacker.example` was trusted as the local operator's own
+  browser on `/ws`, `/dashboard-ws`, `/canvas-ws` and `/api/command`. Loopback now means
+  `localhost`, `::1` or an IPv4 literal in 127.0.0.0/8, through one shared check
+  (`src/net/loopback.ts`) that replaces every local copy.
+
 ## [0.8.0] — 2026-10-14
 
 ### Upgrade notes

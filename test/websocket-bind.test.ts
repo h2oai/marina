@@ -5,11 +5,8 @@
 
 import { describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
-import {
-  isLoopbackHostname,
-  resolveWsBindHostname,
-  WebSocketServer,
-} from "../src/net/websocket-server";
+import { isLoopbackHostname } from "../src/net/loopback";
+import { resolveWsBindHostname, WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, makeTestRoom } from "./helpers";

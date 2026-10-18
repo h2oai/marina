@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { stripAnsi } from "../net/ansi";
-import { isLoopbackOriginHost } from "../net/cors";
+import { isLoopbackHostname } from "../net/loopback";
 import { validateFetchUrl, validateOperatorLanUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
 import { MarinaClient, type Perception } from "../sdk/client";
@@ -51,7 +51,7 @@ export async function validateGatewayUrl(url: string): Promise<string | null> {
   // is checked. Shared/public instances go through the SSRF guard so the server
   // can never be told to hand GATEWAY_SECRET to something on its own host or LAN.
   if (isLocalProfile()) return validateOperatorLanUrl(httpUrl);
-  if (isLoopbackOriginHost(parsed.hostname)) {
+  if (isLoopbackHostname(parsed.hostname)) {
     return `Blocked host ${parsed.hostname} — loopback gateway peers are only allowed under the local trust profile`;
   }
   return validateFetchUrl(httpUrl);

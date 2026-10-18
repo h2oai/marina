@@ -7,6 +7,8 @@
 // Access-Control-Allow-Origin header.  When unset, NO ACAO header is emitted —
 // same-origin requests work fine, cross-origin requests are blocked.
 
+import { isLoopbackHostname } from "./loopback";
+
 export function getAllowedOrigins(env: NodeJS.ProcessEnv = process.env): Set<string> | null {
   const raw = env.ALLOWED_ORIGINS;
   if (!raw) return null;
@@ -53,14 +55,6 @@ export function corsHeaders(
 // and `/canvas-ws` upgrade paths and by the pre-auth `/api/command` / `/api/ask`
 // ingress so a web page cannot drive a loopback (sovereign under the `local`
 // profile) principal from another site.
-
-const LOOPBACK_ORIGIN_HOSTS: ReadonlySet<string> = new Set(["localhost", "::1", "[::1]"]);
-
-/** True for a loopback HOSTNAME as `URL.hostname` reports it (`[::1]` keeps its brackets). */
-export function isLoopbackOriginHost(hostname: string): boolean {
-  const h = hostname.trim().toLowerCase();
-  return LOOPBACK_ORIGIN_HOSTS.has(h) || h.startsWith("127.");
-}
 
 export interface BrowserOriginOptions {
   /**
@@ -110,7 +104,7 @@ export function isTrustedBrowserOrigin(
   const allowed = opts.allowedOrigins === undefined ? getAllowedOrigins() : opts.allowedOrigins;
   if (allowed?.has(parsed.origin) || allowed?.has(trimmed)) return true;
 
-  if (opts.loopbackBind && isLoopbackOriginHost(parsed.hostname)) return true;
+  if (opts.loopbackBind && isLoopbackHostname(parsed.hostname)) return true;
 
   return false;
 }
