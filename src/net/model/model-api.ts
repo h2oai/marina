@@ -18,6 +18,7 @@ import { handleDecisionModels, handleDecisions } from "../api/decisions-api";
 import { handleForecast } from "../api/forecast-api";
 import { handleMediaApi } from "../api/media-api";
 import { handleOutcomeReport } from "../api/outcomes-api";
+import { handlePatternRun } from "../api/patterns-api";
 import {
   authFailuresExhausted,
   clientIp,
@@ -189,6 +190,11 @@ export async function handleModelApi(
   // Forecast any question (research → verified evidence → analysts → judge) — src/forecast.
   if (url.pathname === "/v1/forecast" && method === "POST") {
     return await handleForecast(req, engine.db, authResult);
+  }
+
+  // Run one free-text task under a named orchestration pattern — src/net/api/patterns-api.ts.
+  if (url.pathname === "/v1/patterns/run" && method === "POST") {
+    return await handlePatternRun(req, engine, authResult);
   }
 
   // Decisions API (noul / choice / score) for any harness — src/net/decisions-api.ts.
