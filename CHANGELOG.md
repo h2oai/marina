@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Embeddable Marina**: `MARINA_DATA_DIR` keeps every write in one directory; `MARINA_SINGLE_PORT`
+  serves `/mcp` on the HTTP port; `endpoint.json` lets a host find a running instance;
+  `MARINA_IDLE_SHUTDOWN` and `MARINA_PARENT_PID` end it when unused or orphaned;
+  `MARINA_SPEND_LEDGER` shares one daily cap across instances; `marina worlds`, `endpoint`,
+  `mcp-stdio`, `acp` and `memory-mcp` subcommands. See docs/guides/embedding.md.
+
 - **Private predictions and research**: `marina predict` / `marina research`, the `/predict` and
   `/research` dashboard pages and chat cards, the `inquiry` command, and an SDK client keep each
   question as a durable private case with its answer, sources and captured work, reopenable from
@@ -40,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- With `WS_PORT=0`, the decision backend, lessons judge and note ingest called port 3300
+  instead of the bound port.
 - **Code Mode clone sources** go through the shared SSRF guard: `code project clone` now also
   refuses `[::1]`, IPv4-mapped, link-local and cloud-metadata hosts, and names that resolve to a
   private address.
@@ -53,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The startup banner no longer prints the local model-API key; it reads the key from its
+  0600 file instead, so captured stdout never carries the credential.
 - **A hostname is loopback only when it is one.** A browser origin, bind host or gateway target
   counted as loopback when its hostname merely started with `127.`, so on a loopback bind a page
   served from a name such as `127.attacker.example` was trusted as the local operator's own
