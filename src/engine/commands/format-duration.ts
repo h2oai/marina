@@ -53,6 +53,13 @@ export interface ParseDurationOptions {
    * historical `market.parseDurationMs` behaviour.
    */
   minUnit?: "s" | "m" | "h" | "d";
+  /**
+   * Accept a decimal amount (`1.5h`, `0.25s`). Off by default: every other
+   * surface takes whole units. `project budget` envelopes opt in.
+   */
+  allowDecimal?: boolean;
+  /** Accept milliseconds (`250ms`). Off by default; `project budget` opts in. */
+  allowMs?: boolean;
 }
 
 /**
@@ -66,10 +73,11 @@ export function parseDuration(
   opts: ParseDurationOptions = {},
 ): number | undefined {
   if (!arg) return undefined;
-  const m = arg.match(/^(\d+)\s*([a-z]+)$/i);
+  const m = arg.match(opts.allowDecimal ? /^(\d+(?:\.\d+)?)\s*([a-z]+)$/i : /^(\d+)\s*([a-z]+)$/i);
   if (!m) return undefined;
-  const n = Number.parseInt(m[1]!, 10);
+  const n = Number(m[1]!);
   const spelled = m[2]!.toLowerCase();
+  if (spelled === "ms") return opts.allowMs && !opts.minUnit ? n : undefined;
   const unit = DURATION_UNITS[spelled] !== undefined ? spelled : DURATION_UNIT_ALIASES[spelled];
   if (!unit) return undefined;
   if (opts.minUnit && UNIT_RANK[unit]! < UNIT_RANK[opts.minUnit]!) return undefined;
