@@ -24,6 +24,7 @@
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
+import { parsePick } from "../../orchestration/pick";
 import type { RepairLabel } from "../../repair/output-repair";
 import { repairToolCallMessage } from "../../repair/tool-call-repair";
 import type { EntityId } from "../../types";
@@ -192,20 +193,7 @@ export function pickMessages(input: {
   ];
 }
 
-/** The checker's pick (0-based) when it names a draft in 1..n; undefined otherwise. */
-export function parsePick(text: string, n: number): { index: number; reason: string } | undefined {
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) return undefined;
-  try {
-    const j = JSON.parse(m[0]) as { pick?: unknown; reason?: unknown };
-    const pick = typeof j.pick === "string" ? Number(j.pick) : j.pick;
-    if (typeof pick !== "number" || !Number.isInteger(pick) || pick < 1 || pick > n)
-      return undefined;
-    return { index: pick - 1, reason: typeof j.reason === "string" ? j.reason.trim() : "" };
-  } catch {
-    return undefined;
-  }
-}
+export { parsePick };
 
 interface Draft {
   ok: boolean;
