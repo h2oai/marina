@@ -92,6 +92,7 @@ budget flag. Write their reports outside the public checkout.
 |---|---|
 | `bench` / `bench:ui` | Academic benchmark harness; web UI on port 3303. See [Benchmarks](../../benchmarks/README.md). |
 | `bench:compare <a> <b>` | Paired comparison of two harness result files or tier-0 directories: Wilson intervals, McNemar test, paired bootstrap, reported cost. |
+| `eval:transfer --spec <file>` | Transfer report: a candidate configuration counts only when it improves on at least two independent suites (paired bootstrap + exact sign test, held-out items) with no significant regression. Ingests existing result files; `--run` executes suite commands. Writes markdown and JSON. See [Benchmarks](../../benchmarks/README.md#transfer-report). |
 | `bench:tier0` | A small fixed hard slice (HLE verified gold, GPQA, FRAMES) for crew and formation sweeps against any endpoint. |
 | `bench:native` | Native world tasks: print a seeded task, or run and score it against a live server. |
 | `bench:participation-context` | Measure automatic-context retrieval latency on seeded records. See [Testing](testing.md#context-latency-regression-gate). |

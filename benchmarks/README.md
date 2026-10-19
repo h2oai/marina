@@ -133,6 +133,76 @@ its 95 % Wilson interval, dollars total and per item, and tokens. For the pair: 
 exact test on the discordant counts, and a paired bootstrap (10,000 resamples, `--seed`,
 `--resamples`) of accuracy(B) − accuracy(A) with a 95 % percentile interval.
 
+### Transfer report
+
+A capability counts only when it improves results on **at least two independent evaluations**,
+not just the one it was built for, and makes none significantly worse. `eval:transfer` checks
+that rule for a baseline and a candidate configuration (env-knob overlays) across a list of suites:
+
+```bash
+bun run eval:transfer --spec transfer.json                 # ingest existing result files (no spend)
+bun run eval:transfer --spec transfer.json --out reports/x # writes reports/x.md and reports/x.json
+bun run eval:transfer --spec transfer.json --split all     # every item, not just the held-out half
+bun run eval:transfer --spec transfer.json --run           # also run suites that have a `run` command
+bun run eval:transfer --adapters                           # list the suite adapters
+```
+
+```json
+{
+  "baseline":  { "label": "verify-off", "env": { "MARINA_FORECAST_VERIFY": "off" } },
+  "candidate": { "label": "verify-on",  "env": { "MARINA_FORECAST_VERIFY": "on" } },
+  "stats": { "alpha": 0.05, "resamples": 10000, "seed": 1, "minItems": 10 },
+  "suites": [
+    { "name": "futurex-past", "group": "futurex", "adapter": "futurex",
+      "baseline": ["runs/off/cheap-date-filtered-lessons-off-r1"],
+      "candidate": ["runs/on/cheap-date-filtered-lessons-off-r1", "runs/on/cheap-date-filtered-lessons-off-r2"] },
+    { "name": "arena-numeric", "group": "arena", "adapter": "arena-evaluate",
+      "arms": { "baseline": "baseline", "candidate": "nowcast" },
+      "baseline": ["arena-eval.json"], "candidate": ["arena-eval.json"] },
+    { "name": "hle", "group": "hle", "adapter": "harness",
+      "run": { "command": ["env", "MARINA_BENCH_RESULT_FILE={out}", "bun", "run", "bench", "-b", "hle-verified-gold"], "replicates": 2 } }
+  ]
+}
+```
+
+Per suite, items are paired by id (several files per arm are replicates, averaged per item; an id
+missing from any run is left out and counted), d = candidate − baseline, then a paired bootstrap of
+mean(d) (seeded, percentile interval) and an exact two-sided sign test on the non-zero d. A suite
+**improves** only when both agree (interval low > `margin`, sign-test p < `alpha` with more wins);
+it **regresses** when either says so. The verdict is `transfers` only with improvements in at least
+`minGroups` (2) distinct `group`s and no regression anywhere; otherwise `regresses`,
+`does-not-transfer` or `insufficient` (fewer than two groups with `minItems` paired items).
+Suites in the same `group` (two FutureX batches, two arena families scored by one method) count
+once. The scores are per-item means: a board's own weighting (FutureX levels) is not applied.
+
+**Held-out by default.** Each suite keeps only the `holdout` side of the stable hash split that
+benchmark promotion uses (`itemSplit`, slot `transfer:<group>`, 50 %); give the slot a capability
+was tuned on (`"split": {"kind": "hash", "slot": "…"}`) so its tuning items never count. A time
+split keeps items whose evidence cutoff is on or after a date (`{"kind": "time", "after": "2026-09-01"}`,
+`--split after:<date>`; adapters that know item times only). `"all"` / `--split all` opts out, and
+the report labels it. Adapters drop what their own suite marks unsafe: FutureX rows flagged by the
+leak audit; arena rounds whose outcome was public before the lock are already gone.
+
+**Ingest first.** Suites read files that already exist; a suite with a `run` command executes it
+only under `--run` (argv, never a shell; `{out}`, `{arm}`, `{replicate}` substituted; the arm's
+`env` overlaid on the environment; outputs under `--run-dir`, default `transfer-runs/` next to
+the spec). Exit status: 0 for `transfers`, 2 for any other verdict, 1 on error.
+
+| Adapter | Reads |
+|---|---|
+| `items` | generic `[{id, score, at?, exclude?}]` as JSON, `{items: […]}` or JSONL |
+| `harness` | harness result JSON (`BenchmarkResult`): `items[].score`, else `correct` as 1/0 |
+| `futurex` | FutureX clean-backtest run directory (or its `score.json`); `at` from `answers.json`, leak-audit-flagged rows excluded (`options.audit: "off"` keeps them) |
+| `arena-evaluate` | `bun run arena evaluate --out` reports: `rounds[]` and `shapes.rounds[]`, column `arm`, skill vs persistence; `options.tracker` keeps one family |
+| `arena-paired` | `bun run arena shadow paired-score --out`: eligible batches, column `arm` (`start`, `delphi`, `fred`, `calibrated`) |
+
+**Adding a suite.** Easiest: make the evaluation write the `items` format (one line per item:
+`{"id": "…", "score": 0.73}`, higher is better — negate a loss; add `at` for time splits and
+`exclude: "<reason>"` for items that must not count). Otherwise add an adapter to
+`benchmarks/transfer/adapters.ts` (`load(source) → ItemScore[]`, register it in `ADAPTERS`) with a
+fixture test in `test/eval-transfer.test.ts`. Keep benchmark knowledge in the adapter;
+`benchmarks/transfer/core.ts` (the statistics and the verdict) stays benchmark-free.
+
 ## Phase B — Memory Delta Experiments
 
 The core thesis test: does Marina's memory system measurably improve outcomes?

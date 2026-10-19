@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Transfer report** (`bun run eval:transfer --spec <file>`, `benchmarks/transfer/`): enforces
+  the rule that a capability counts only when it improves on at least two independent evaluations,
+  not just the one it was built for. Takes a baseline and a candidate env overlay and a list of
+  suites; ingests existing per-item results (generic `items` JSON/JSONL, harness results, FutureX
+  clean backtests, `arena evaluate` and `arena shadow paired-score` reports) or, only with `--run`,
+  runs each suite's command per arm and replicate. Per suite: a seeded paired bootstrap of the
+  mean delta and an exact sign test on held-out items (the promotion hash split by default, or a
+  time split); verdict `transfers` only with significant gains in ≥ 2 independent groups and no
+  significant regression. Writes a markdown and a JSON report; no benchmark logic in the core.
 - **Search engines for research retrieval**: `openrouter-web:<model>@<engine>[:<mode>]` accepts
   every OpenRouter web plugin engine — `native`, `exa` (instant … deep-reasoning), `parallel`
   (turbo … advanced), `perplexity`, `firecrawl` — validates engine and mode, and adds the engine's
