@@ -45,9 +45,11 @@ export interface ArenaConfig {
 
 const MODEL_ID = "[a-z0-9-]+\\/[\\w.:/-]+";
 /** A research retriever entry (`openrouter-web:<model>` / `sonar:<model>` / `tavily:<depth>`). */
-const SEARCH_BACKEND = "(tavily|exa|searxng|duckduckgo|openrouter)";
+// Kept in step with WEB_SEARCH_BACKEND_NAMES and OPENROUTER_WEB_ENGINES (test/arena-config-retrievers.test.ts).
+const SEARCH_BACKEND = "(tavily|exa|searxng|duckduckgo|deepseek|openrouter)";
+const WEB_ENGINE = "(native|exa|parallel|perplexity|firecrawl)(:[a-z-]+)?";
 const ARCHIVE_BACKEND = "(gdelt|wikipedia|hn|arxiv|wayback)";
-const RETRIEVER = `((openrouter-web|sonar):[A-Za-z0-9._/:-]+(@(exa|native))?|tavily:(basic|advanced)|exa:(auto|neural|keyword)|search(:${SEARCH_BACKEND}(\\+${SEARCH_BACKEND})*)?|asof(:${ARCHIVE_BACKEND}(\\+${ARCHIVE_BACKEND})*)?|closed-book)`;
+const RETRIEVER = `(openrouter-web:[A-Za-z0-9._/:-]+(@${WEB_ENGINE})?|sonar:[A-Za-z0-9._/:-]+|tavily:(basic|advanced)|exa:(auto|neural|keyword)|search(:${SEARCH_BACKEND}(\\+${SEARCH_BACKEND})*)?|asof(:${ARCHIVE_BACKEND}(\\+${ARCHIVE_BACKEND})*)?|closed-book)`;
 /** Orchestration patterns as forecasting protocols (src/arena/formations.ts). */
 const FORMATION =
   "(ensemble|deliberation|debate|chorus|pipeline|cascade|mapreduce|blackboard|symbiosis|research|delphi|tournament|verification)";
