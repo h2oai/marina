@@ -38,6 +38,7 @@ import {
   mayReadCanvas,
 } from "../canvas-access";
 import {
+  AssetBytesError,
   type AssetLibraryHost,
   checkAssetEdit,
   editAsset,
@@ -576,7 +577,13 @@ export async function runAssetCommand(
         return;
       }
       const derived = db.listDerivatives([asset.id]).length;
-      await removeAsset(library, asset, eid);
+      try {
+        await removeAsset(library, asset, eid);
+      } catch (err) {
+        if (!(err instanceof AssetBytesError)) throw err;
+        ctx.send(eid, `${err.message} Try again later; nothing was removed from the library.`);
+        return;
+      }
       ctx.send(
         eid,
         `Asset ${asset.id.slice(0, 8)}.. deleted${derived ? ` (with ${derived} derivative${derived === 1 ? "" : "s"})` : ""}.`,

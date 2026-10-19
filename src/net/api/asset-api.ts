@@ -5,6 +5,7 @@ import { isGatedAssetBytes, mayReadAsset } from "../../engine/canvas-access";
 import { isOperatorPrincipal as isOperatorPerson } from "../../engine/challenges";
 import type { Engine } from "../../engine/engine";
 import {
+  AssetBytesError,
   type AssetEdit,
   type AssetLibraryHost,
   checkAssetEdit,
@@ -156,7 +157,13 @@ export async function handleAssetApi(
       if (denied) return denied;
     }
     // Bytes of the asset and its derivatives, then the row (derivatives cascade).
-    await removeAsset(library, asset, writerId);
+    try {
+      await removeAsset(library, asset, writerId);
+    } catch (err) {
+      if (!(err instanceof AssetBytesError)) throw err;
+      // Storage refused; the asset is kept rather than orphaning its bytes.
+      return json({ error: "asset_storage_error", message: err.message, id }, 503);
+    }
     return json({ ok: true, id });
   }
 
