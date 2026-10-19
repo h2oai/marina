@@ -96,7 +96,15 @@ describe("manifold: live", () => {
       `- 2026-10-05 — Manifold (play money) "${fed.question}": Yes 81% (volume M15,235, closes 2026-10-28) [Manifold](${fed.url})`,
     ]);
     expect(r.prices).toEqual([
-      { venue: "manifold", market: fed.question, outcome: "Yes", p: 0.81, at: NOW.toISOString() },
+      {
+        venue: "manifold",
+        market: fed.question,
+        outcome: "Yes",
+        p: 0.81,
+        at: NOW.toISOString(),
+        volume: 15234.7,
+        volumeUnit: "mana",
+      },
     ]);
     expect(r.sources).toEqual([{ url: fed.url!, title: fed.question }]);
   });
@@ -218,6 +226,8 @@ describe("manifold: a past cutoff reads the bet history, never the current value
         outcome: "Yes",
         p: 0.62,
         at: "2026-09-01T12:00:00.000Z",
+        volume: 100,
+        volumeUnit: "mana",
       },
     ]);
   });

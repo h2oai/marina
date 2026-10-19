@@ -13,6 +13,7 @@ import {
   fallbackFor,
   formatDate,
   parseAnswerContract,
+  parseContractSpec,
   renderContract,
 } from "../src/forecast/answer-contract";
 import type { AnswerSpec } from "../src/forecast/answer-types";
@@ -133,6 +134,35 @@ describe("parsing the question's own instructions", () => {
     expect(text).toContain("one calendar date written YYYY-MM-DD");
     expect(text).toContain("bare value");
     expect(text).toContain('format line: "End with');
+  });
+});
+
+describe("an explicit contract from JSON", () => {
+  it("takes options from the spec and checks the form fits the type", () => {
+    expect(parseContractSpec({ form: "single-choice", wrapper: "boxed" }, abc)).toEqual({
+      contract: { form: "single-choice", options: abc.options, wrapper: "boxed" },
+    });
+    expect(parseContractSpec({ form: "date" }, { type: "text" })).toEqual({
+      contract: { form: "date", dateFormat: "YYYY-MM-DD" },
+    });
+    expect(
+      parseContractSpec(
+        { form: "number", decimals: 2, unit: "USD", integer: false },
+        {
+          type: "number",
+        },
+      ),
+    ).toEqual({ contract: { form: "number", decimals: 2, unit: "USD" } });
+    expect(parseContractSpec({ form: "date" }, abc)).toHaveProperty("error");
+    expect(
+      parseContractSpec(
+        { form: "multi-select", minPicks: 3, maxPicks: 2 },
+        { type: "multi", options: abc.options },
+      ),
+    ).toEqual({ error: "contract.minPicks exceeds contract.maxPicks" });
+    expect(parseContractSpec({ form: "ranked-list", size: 99 }, { type: "ranking" })).toEqual({
+      error: "contract.size must be an integer 1–50",
+    });
   });
 });
 

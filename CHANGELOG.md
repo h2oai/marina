@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when the history is missing. Yes/no prices feed the market prior like Polymarket's. Good
   Judgment Open is not added (no public API; its terms forbid automated collection); new crowd
   sources register in `OPT_IN_LOOKUPS`.
+- **Market prior across venues**: when several venues (for example Polymarket and Manifold) each
+  matched exactly one market on the same question, the yes/no market-lookup prior now pools them —
+  a log-odds mean, weighted by log(1 + volume) when every venue reports volume in the same unit,
+  with the venues' spread (and disagreement) in its `detail` — instead of rejecting itself. Several
+  markets on one venue stay ambiguous, and a single venue's prior is unchanged.
+- **`contract` on `POST /v1/forecast`**: an optional explicit answer contract beside `answer`,
+  validated against the typed spec (400 when invalid) and enforced unless
+  `MARINA_FORECAST_CONTRACT=observe`.
 - **Search engines for research retrieval**: `openrouter-web:<model>@<engine>[:<mode>]` accepts
   every OpenRouter web plugin engine — `native`, `exa` (instant … deep-reasoning), `parallel`
   (turbo … advanced), `perplexity`, `firecrawl` — validates engine and mode, and adds the engine's

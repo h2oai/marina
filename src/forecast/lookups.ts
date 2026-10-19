@@ -65,6 +65,7 @@ export type {
   ForecastLookup,
   LookupContext,
   LookupResult,
+  MarketPrice,
   PollHints,
   Reading,
 } from "./lookup-types";

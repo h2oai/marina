@@ -229,7 +229,13 @@ async function liveReading(
     if (!isProb(m.probability)) return undefined;
     return {
       text: `Yes ${pct(m.probability)}${tail}`,
-      price: { market: m.question, outcome: "Yes", p: m.probability, at: now.toISOString() },
+      price: {
+        market: m.question,
+        outcome: "Yes",
+        p: m.probability,
+        at: now.toISOString(),
+        ...(Number.isFinite(m.volume) ? { volume: m.volume!, volumeUnit: "mana" } : {}),
+      },
     };
   }
   if (m.outcomeType === "MULTIPLE_CHOICE") {
@@ -282,6 +288,8 @@ async function historicalReading(
       outcome: "Yes",
       p: at.p,
       at: new Date(at.at).toISOString(),
+      // A full page is a lower bound, not the volume: then none is claimed.
+      ...(r.value.length < BET_PAGE ? { volume: at.traded, volumeUnit: "mana" } : {}),
     },
   };
 }

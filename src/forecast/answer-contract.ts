@@ -268,6 +268,91 @@ function baseContract(spec: AnswerSpec | undefined, text: string): AnswerContrac
   return { form: "free-text" };
 }
 
+// ─── An explicit contract from untrusted JSON (POST /v1/forecast) ────────────
+
+/** Which contract forms each typed answer accepts. */
+const FORMS_FOR: Record<AnswerSpec["type"], readonly ContractForm[]> = {
+  choice: ["single-choice"],
+  multi: ["multi-select"],
+  number: ["number"],
+  ranking: ["ranked-list"],
+  text: ["free-text", "date"],
+};
+
+/**
+ * A caller's explicit contract (API body, CLI) checked against its typed
+ * spec — or the reason it is invalid. Options always come from the spec;
+ * the form must fit the spec's type (a date or free text for `text`).
+ */
+export function parseContractSpec(
+  raw: unknown,
+  spec: AnswerSpec,
+): { contract: AnswerContract } | { error: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { error: "contract must be an object" };
+  }
+  const r = raw as Record<string, unknown>;
+  const form = r.form;
+  if (typeof form !== "string" || !(CONTRACT_FORMS as readonly string[]).includes(form)) {
+    return { error: `contract.form must be one of ${CONTRACT_FORMS.join(", ")}` };
+  }
+  if (!FORMS_FOR[spec.type].includes(form as ContractForm)) {
+    return {
+      error: `contract.form ${form} does not fit answer.type ${spec.type} (use ${FORMS_FOR[spec.type].join(" or ")})`,
+    };
+  }
+  const int = (k: string, lo: number, hi: number): number | undefined | { error: string } => {
+    const v = r[k];
+    if (v === undefined) return undefined;
+    return Number.isInteger(v) && (v as number) >= lo && (v as number) <= hi
+      ? (v as number)
+      : { error: `contract.${k} must be an integer ${lo}–${hi}` };
+  };
+  const str = (k: string, max: number): string | undefined | { error: string } => {
+    const v = r[k];
+    if (v === undefined) return undefined;
+    return typeof v === "string" && v.trim() && v.length <= max
+      ? v.trim()
+      : { error: `contract.${k} must be a non-empty string of at most ${max} characters` };
+  };
+  const c: AnswerContract = { form: form as ContractForm };
+  if (spec.type === "choice" || spec.type === "multi") c.options = spec.options;
+  const fields: Array<[keyof AnswerContract, number | string | undefined | { error: string }]> = [
+    ["minPicks", int("minPicks", 0, 64)],
+    ["maxPicks", int("maxPicks", 1, 64)],
+    ["decimals", int("decimals", 0, 10)],
+    ["size", int("size", 1, 50)],
+    ["maxWords", int("maxWords", 1, 500)],
+    ["maxLength", int("maxLength", 1, 2_000)],
+    ["unit", str("unit", 40)],
+    ["formatLine", str("formatLine", MAX_FORMAT_LINE)],
+  ];
+  for (const [k, v] of fields) {
+    if (v === undefined) continue;
+    if (typeof v === "object") return v;
+    (c as unknown as Record<string, unknown>)[k] = v;
+  }
+  if (r.integer !== undefined) {
+    if (typeof r.integer !== "boolean") return { error: "contract.integer must be a boolean" };
+    if (r.integer) c.integer = true;
+  }
+  if (r.dateFormat !== undefined) {
+    if (!(DATE_FORMATS as readonly unknown[]).includes(r.dateFormat)) {
+      return { error: `contract.dateFormat must be one of ${DATE_FORMATS.join(", ")}` };
+    }
+    c.dateFormat = r.dateFormat as DateFormat;
+  }
+  if (r.wrapper !== undefined) {
+    if (r.wrapper !== "boxed") return { error: 'contract.wrapper must be "boxed"' };
+    c.wrapper = "boxed";
+  }
+  if (c.form === "date" && !c.dateFormat) c.dateFormat = "YYYY-MM-DD";
+  if (c.minPicks !== undefined && c.maxPicks !== undefined && c.minPicks > c.maxPicks) {
+    return { error: "contract.minPicks exceeds contract.maxPicks" };
+  }
+  return { contract: c };
+}
+
 // ─── Prompt text ─────────────────────────────────────────────────────────────
 
 /** The contract as one instruction for every model that writes or checks the answer. */

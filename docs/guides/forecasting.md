@@ -163,7 +163,8 @@ In the world: `forecast <question> type:choice options:A,B,C [ends:<ISO time>]` 
 `{"type":"choice","options":[{"id":"A","label":"…"}, …]}`, `{"type":"multi",…}`,
 `{"type":"number","unit"?:"…","integer"?:true}`, `{"type":"ranking","size"?:5,"candidates"?:[…]}`
 or `{"type":"text"}` — plus optional `endTime`, `asOf`, `context` (resolution rules or format
-notes), `runs` (1–9), `researchRounds` (1–4) and `critique` (boolean). Which models run stays an
+notes), `runs` (1–9), `researchRounds` (1–4), `critique` (boolean) and `contract` (an explicit
+[answer contract](#answer-contract)). Which models run stays an
 operator setting.
 
 What happens:
@@ -305,7 +306,14 @@ typed `answer` spec. A question that states no such instruction gets no contract
   changes only when the contract's value is a valid typed answer. A forecast with no answer is
   never filled in.
 
-A request that carries its own `contract` is enforced unless the mode is `observe`.
+A request that carries its own `contract` is enforced unless the mode is `observe`. Over HTTP,
+`POST /v1/forecast` accepts an optional `contract` beside `answer`: `{"form": …}` plus any of
+`minPicks`, `maxPicks`, `unit`, `integer`, `decimals`, `dateFormat` (`YYYY-MM-DD`, `YYYY-MM`,
+`YYYY`, `MM/DD/YYYY`, `DD/MM/YYYY`, `Month D, YYYY`, `D Month YYYY`), `size`, `maxWords`,
+`maxLength`, `wrapper` (`"boxed"`) and `formatLine`. The form must fit the answer type
+(`single-choice` for `choice`, `multi-select` for `multi`, `number`, `ranked-list` for
+`ranking`, `free-text` or `date` for `text`), options always come from `answer`, and an invalid
+contract is a 400.
 
 ## Priors, calibration, the skeptic crew and routing
 
@@ -343,7 +351,13 @@ stage. The priors, in order:
    observed — a prior observed after the cutoff is rejected and the rejection recorded). A
    `statistical` prior comes from data rather than people: a series' own history or a published
    reference class's base rate (see [Statistical priors](#statistical-priors));
-2. one priced market a lookup matched, for a yes/no question (two or more matches give no prior);
+2. one priced market a lookup matched, for a yes/no question. Two or more markets on one venue
+   are ambiguous and give no prior. When several venues each matched exactly one market and the
+   markets name the same question (every pair of titles shares at least two words), their prices
+   are pooled: a log-odds mean, weighted by log(1 + volume) when every venue reports volume in
+   the same unit (else equal weights, since USD and play money are not comparable). The prior's
+   `detail` lists each venue's price and weight and the spread, flagged when the venues are more
+   than 0.15 apart. A single venue's prior is unchanged;
 3. for a number, the freshest official reading (the lookups' anchor);
 4. the base rate of the question's class in resolved history (the caller's `category`, else the
    answer type) — per recurring option label for a choice, per class for a multi-select, smoothed

@@ -212,6 +212,29 @@ describe("POST /v1/forecast", () => {
     expect(res.status).toBe(503);
   });
 
+  it("validates an optional answer contract against the typed spec", async () => {
+    using _ = noModels();
+    const text = { type: "text" };
+    const bad = async (contract: unknown, answer: unknown = text) => {
+      const res = await post({ question: "q", answer, contract });
+      expect(res.status).toBe(400);
+      return ((await res.json()) as { error: { message: string } }).error.message;
+    };
+    expect(await bad("date")).toContain("contract must be an object");
+    expect(await bad({ form: "guess" })).toContain("contract.form must be one of");
+    expect(await bad({ form: "number" })).toContain("does not fit answer.type text");
+    expect(await bad({ form: "date", dateFormat: "YY" })).toContain("contract.dateFormat");
+    expect(await bad({ form: "free-text", maxWords: 0 })).toContain("contract.maxWords");
+    expect(await bad({ form: "free-text", wrapper: "brackets" })).toContain("contract.wrapper");
+    // A valid contract passes validation (then: no model here).
+    const ok = await post({
+      question: "When will it open?",
+      answer: text,
+      contract: { form: "date", dateFormat: "YYYY-MM-DD", wrapper: "boxed" },
+    });
+    expect(ok.status).toBe(503);
+  });
+
   it("saves only on request, under the key's bound entity; a measurement under its board", async () => {
     using _ = noModels();
     const req = (eval_?: string) =>
