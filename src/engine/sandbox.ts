@@ -5,6 +5,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandDef, RoomModule } from "../types";
+import { logRejection } from "./errors";
+import { Logger } from "./logger";
+
+const logger = new Logger();
 
 // ─── Forbidden Globals ──────────────────────────────────────────────────────
 
@@ -209,7 +213,9 @@ export async function compileRoomModule(source: string): Promise<RoomModule> {
 
     return room;
   } finally {
-    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    await rm(tempDir, { recursive: true, force: true }).catch(
+      logRejection(logger, "sandbox", "sandbox temp dir cleanup failed"),
+    );
   }
 }
 
@@ -282,7 +288,9 @@ export async function compileCommandModule(source: string): Promise<CommandDef> 
 
     return cmd as CommandDef;
   } finally {
-    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    await rm(tempDir, { recursive: true, force: true }).catch(
+      logRejection(logger, "sandbox", "sandbox temp dir cleanup failed"),
+    );
   }
 }
 

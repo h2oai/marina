@@ -456,6 +456,7 @@ export async function doctor(
   const workspace = session
     ? workspaceForSession(deps, session)
     : getSelectedWorkspace(entity, deps);
+  // allow-empty-catch: a missing package.json means no package scripts
   const packageJson = await workspace.read("package.json").catch(() => null);
   const scripts = packageJson ? detectPackageScripts(packageJson.content) : [];
   const packageManager = await detectPackageManager(workspace);

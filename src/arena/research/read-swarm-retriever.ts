@@ -17,11 +17,15 @@
  */
 
 import type { DecisionProvider } from "../../decisions/types";
+import { logRejection } from "../../engine/errors";
+import { Logger } from "../../engine/logger";
 import { getCorpusDocument, parseCorpusUrl } from "../../engine/search-providers/corpus";
 import { type Candidate, type FirstMoveModel, judgeRerank } from "../../retrieval/first-move";
 import { type DocReading, ReadSwarm } from "../../retrieval/read-swarm";
 import { isDateStrict, type ResearchReport, type Retriever, type Source } from "./retrieve";
 import { defaultPageText, fetchAllowed, MIN_QUOTE_CHARS, type PageText } from "./verify";
+
+const logger = new Logger();
 
 export interface ReadSwarmRetrieverOptions {
   reader: FirstMoveModel;
@@ -132,7 +136,12 @@ export function readSwarmRetriever(inner: Retriever, opts: ReadSwarmRetrieverOpt
       ...(opts.chunkChars ? { chunkChars: opts.chunkChars } : {}),
       ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
     });
-    if (opts.decompose || clues.length === 0) await swarm.open().catch(() => undefined);
+    if (opts.decompose || clues.length === 0)
+      await swarm.open().catch(
+        logRejection(logger, "arena", "read-swarm question decomposition failed", {
+          level: "debug",
+        }),
+      );
     const found = base.sources.filter((s) => /^(https?|corpus):\/\//.test(s.url));
     let pages: Candidate[] = found.map((s) => ({
       id: s.url,

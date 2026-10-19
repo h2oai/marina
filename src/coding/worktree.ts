@@ -5,7 +5,11 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
+import { logRejection } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import { LocalWorkspace, type WorkspaceRunResult } from "./local-workspace";
+
+const logger = new Logger();
 
 /**
  * Per-session git-worktree isolation (opt-in, default OFF).
@@ -186,7 +190,9 @@ export async function removeSessionWorktree(
 
   if (!existsSync(path)) {
     // Already gone on disk — prune the stale administrative record, report done.
-    await runGit(repoRoot, ["git", "worktree", "prune"], hostExecForbidden).catch(() => undefined);
+    await runGit(repoRoot, ["git", "worktree", "prune"], hostExecForbidden).catch(
+      logRejection(logger, "code", "git worktree prune failed", { level: "debug" }),
+    );
     return { removed: true };
   }
 
@@ -203,10 +209,14 @@ export async function removeSessionWorktree(
   const args = ["git", "worktree", "remove"];
   if (opts.force) args.push("--force");
   args.push(path);
-  const res = await runGit(repoRoot, args, hostExecForbidden).catch(() => null);
+  const res = await runGit(repoRoot, args, hostExecForbidden).catch(
+    logRejection(logger, "code", "git worktree remove failed", { fallback: null }),
+  );
   if (res?.exitCode !== 0) {
     return { removed: false, keptReason: `git worktree remove failed; keeping it at ${path}` };
   }
-  await runGit(repoRoot, ["git", "worktree", "prune"], hostExecForbidden).catch(() => undefined);
+  await runGit(repoRoot, ["git", "worktree", "prune"], hostExecForbidden).catch(
+    logRejection(logger, "code", "git worktree prune failed", { level: "debug" }),
+  );
   return { removed: true };
 }

@@ -79,6 +79,7 @@ async function readBody(req: Request): Promise<Record<string, unknown>> {
       bytes += value.byteLength;
       if (bytes > 2 * 1024 * 1024) {
         // A custom stream may never settle cancellation; rejection must stay bounded.
+        // allow-empty-catch: cancelling an over-cap body; a custom stream may reject or never settle
         void reader.cancel().catch(() => {});
         throw new MemoryError(413, "body_too_large", "JSON body exceeds 2 MiB");
       }
@@ -91,6 +92,7 @@ async function readBody(req: Request): Promise<Record<string, unknown>> {
     if (error instanceof MemoryError) throw error;
     throw new MemoryError(400, "invalid_json", "Invalid JSON body");
   } finally {
+    // allow-empty-catch: cancelling an aborted request body
     if (req.signal.aborted) void reader.cancel(req.signal.reason).catch(() => {});
     reader.releaseLock();
   }

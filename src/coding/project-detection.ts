@@ -370,6 +370,7 @@ async function readMarkers(
     // Lockfiles can be large; presence is all detection needs from them.
     const file = await workspace
       .read(marker, CONTENT_MARKERS.has(marker) ? 64 * 1024 : 1)
+      // allow-empty-catch: an absent marker file is the normal case
       .catch(() => null);
     if (!file) continue;
     markers.add(marker);
@@ -382,9 +383,11 @@ async function readMarkers(
 /** The workspace's changed paths: `changedPaths()` when available, else the unstaged diff. */
 export async function workspaceTouchedPaths(workspace: DetectableWorkspace): Promise<string[]> {
   if (workspace.changedPaths) {
+    // allow-empty-catch: changedPaths is optional; the diff below is the fallback
     const changed = await workspace.changedPaths().catch(() => null);
     if (changed) return changed;
   }
+  // allow-empty-catch: no readable diff means no known touched paths
   const diff = await workspace.diff(undefined, 256 * 1024).catch(() => null);
   return diff ? diffTouchedPaths(diff.content) : [];
 }

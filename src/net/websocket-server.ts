@@ -18,7 +18,7 @@ import {
   WS_MAX_TOTAL_CONNECTIONS,
 } from "../engine/constants";
 import type { Engine } from "../engine/engine";
-import { getErrorMessage } from "../engine/errors";
+import { getErrorMessage, logRejection } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { isOpenApiMode } from "../engine/trust-profile";
 import { extensionGatewayAdmission } from "../extensions/loader";
@@ -160,7 +160,11 @@ function inlineScriptHashesFor(path: string): Promise<readonly string[]> {
     pending = Bun.file(path)
       .text()
       .then((html) => inlineScriptHashes(html))
-      .catch(() => []);
+      .catch(
+        logRejection(logger, "ws", "could not read static page for CSP script hashes", {
+          fallback: [],
+        }),
+      );
     staticPageHashes.set(path, pending);
   }
   return pending;

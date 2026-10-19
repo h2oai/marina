@@ -122,6 +122,7 @@ export class FlywheelClient {
       // Aborting fetch after headers have arrived is not sufficient in every
       // runtime (notably Bun): explicitly cancel the response reader so the
       // HTTP/Connect stream closes and Flywheel can kill the exact process.
+      // allow-empty-catch: cancelling an aborted stream; an already-closed reader rejects
       void reader.cancel(options?.signal?.reason).catch(() => {});
     };
     options?.signal?.addEventListener("abort", abortStream, { once: true });

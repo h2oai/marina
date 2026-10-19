@@ -35,8 +35,12 @@ import { guardedFetch } from "../../net/url-guard";
 import type { EntityId } from "../../types";
 import { type CanvasReader, canvasReaderFor, mayReadAsset, readableNode } from "../canvas-access";
 import type { Engine } from "../engine";
+import { logRejection } from "../errors";
+import { Logger } from "../logger";
 import { recordAssetWrite } from "./asset-library";
 import { type ImageLimits, prepareImage } from "./image-ops";
+
+const logger = new Logger();
 
 /** The kinds of visual input a source can be prepared into. */
 export type VisualKind = "image" | "pdf" | "video" | "text";
@@ -247,6 +251,7 @@ async function readBodyCapped(resp: Response, cap: number): Promise<Uint8Array> 
     if (done) break;
     total += value.byteLength;
     if (total > cap) {
+      // allow-empty-catch: releasing an over-cap body read before throwing
       await reader.cancel().catch(() => undefined);
       throw new Error("Remote file is larger than the vision size cap.");
     }
@@ -314,6 +319,7 @@ async function readStreamCapped(
     });
     if (total >= cap) {
       onOverflow();
+      // allow-empty-catch: releasing a capped body read
       await reader.cancel().catch(() => undefined);
       break;
     }
@@ -512,7 +518,10 @@ export async function prepareVisual(
     };
   } finally {
     release();
-    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    if (dir)
+      await rm(dir, { recursive: true, force: true }).catch(
+        logRejection(logger, "media", "temp dir cleanup failed"),
+      );
   }
 }
 
@@ -635,6 +644,7 @@ async function describeWith(
       notes: input.notes,
     };
   }
+  // allow-empty-catch: a non-JSON body is reported below with the HTTP status
   const body = (await resp.json().catch(() => ({}))) as {
     choices?: { message?: { content?: unknown } }[];
     error?: { message?: string };

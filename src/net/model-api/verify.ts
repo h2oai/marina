@@ -23,7 +23,7 @@
 import { availableModels } from "../../agent/available-models";
 import { type DefaultSlotReader, resolveDefault } from "../../engine/default-resolution";
 import type { Engine } from "../../engine/engine";
-import { getErrorMessage } from "../../engine/errors";
+import { getErrorMessage, logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { evalOption } from "../../learning/eval-context";
 import { lessonsBlock, lessonsHeaderValue, recallForWork } from "../../learning/service";
@@ -1033,7 +1033,11 @@ export async function maybeVerifyChat(
       entityId,
       joinNotes(proposerNote, revisionNote(draft, verdict.issues, verdict.conflict)),
       noteScope,
-    ).catch(() => undefined);
+    ).catch(
+      logRejection(log, "model-api", "verify: revision failed; keeping the draft", {
+        level: "debug",
+      }),
+    );
     if (!revised?.ok || !revised.body || !firstMessage(revised.body)) {
       verdictLabel = "revision-failed";
       break;
@@ -1083,7 +1087,11 @@ export async function maybeVerifyChat(
         usage = addUsage(usage, r.body?.usage);
         return r.ok ? textOf(firstMessage(r.body)?.content) : "";
       },
-    }).catch(() => undefined);
+    }).catch(
+      logRejection(log, "model-api", "verify: repair failed; keeping the draft", {
+        level: "debug",
+      }),
+    );
     if (repaired) {
       repairLabel = repaired.label;
       final = withFirstMessage(final, repaired.message);

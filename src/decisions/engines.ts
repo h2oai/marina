@@ -324,6 +324,7 @@ async function askWithin(
   else signal?.addEventListener("abort", forward, { once: true });
   const pending = provider.ask(request, controller.signal);
   // Observed below or abandoned at the settle bound; never an unhandled rejection.
+  // allow-empty-catch: observed below or abandoned at the settle bound
   pending.catch(() => undefined);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const after = (wait: number) =>

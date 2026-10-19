@@ -153,6 +153,7 @@ export class WorldCollectiveManager {
       for await (const chunk of child.stderr as ReadableStream<Uint8Array>) {
         stderrTail = (stderrTail + decoder.decode(chunk, { stream: true })).slice(-2_000);
       }
+      // allow-empty-catch: the stderr tail is diagnostic only
     })().catch(() => undefined);
     const why = (base: string) => {
       const tail = stderrTail.trim().split("\n").slice(-3).join(" | ").slice(-400);

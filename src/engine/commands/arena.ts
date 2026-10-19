@@ -12,6 +12,8 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { ArenaStore } from "../../persistence/interfaces/arena-store";
 import type { NotesStore } from "../../persistence/interfaces/notes-store";
 import type { CommandDef, RoomContext } from "../../types";
+import { logRejection } from "../errors";
+import { Logger } from "../logger";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
 import {
   type ArenaLabDeps,
@@ -20,6 +22,8 @@ import {
   arenaShadow,
   arenaSignals,
 } from "./arena-lab";
+
+const logger = new Logger();
 
 const USAGE = [
   "Usage: arena [status] | arena health | arena rounds [n] | arena show <round_id> | arena submissions | arena backtest [n]",
@@ -218,7 +222,11 @@ export function arenaCommand(deps: {
             for (const round of rounds
               .filter((r) => r.target_type !== "ranking_list")
               .slice(0, n)) {
-              const lock = await data.lock(round.round_id).catch(() => undefined);
+              const lock = await data
+                .lock(round.round_id)
+                .catch(
+                  logRejection(logger, "arena", "arena round lock unavailable", { level: "debug" }),
+                );
               if (!lock) continue;
               const series =
                 round.target_type === "profile_energy"

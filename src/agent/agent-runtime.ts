@@ -23,7 +23,7 @@ import {
   positiveNumberFromEnv,
   reflectorIdleStopMs,
 } from "../engine/constants";
-import { getErrorMessage } from "../engine/errors";
+import { getErrorMessage, logRejection } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { classifyToolError, softFailureClass } from "../learning/tool-errors";
 import {
@@ -606,7 +606,9 @@ export class AgentRuntime {
             keepConfig: true,
             keepChildren: true,
             shutdown: true,
-          }).catch(() => undefined);
+          }).catch(
+            logRejection(logger, "agents", "stopping an agent after a cancelled respawn failed"),
+          );
           return false;
         }
         if (config.room) {
@@ -742,7 +744,12 @@ export class AgentRuntime {
         isLocalProvider(spawnProvider) &&
         !(ctxEnv && process.env[ctxEnv])
       ) {
-        const limits = await detectModelLimits(resolvedModel).catch(() => null);
+        const limits = await detectModelLimits(resolvedModel).catch(
+          logRejection(logger, "agents", "context-window detection failed; using the default", {
+            level: "debug",
+            fallback: null,
+          }),
+        );
         if (limits?.contextWindow) {
           detectedContextWindow = limits.contextWindow;
           logger.info(
@@ -957,7 +964,9 @@ export class AgentRuntime {
     logger.warn("agents", `"${name}": ${error}`);
     this.onEvent?.({ type: "agent_error", name, error, timestamp: Date.now() });
     if (refuse && this.agents.has(name)) {
-      await this.stop(name, { keepConfig: true }).catch(() => undefined);
+      await this.stop(name, { keepConfig: true }).catch(
+        logRejection(logger, "agents", "stopping an agent after a failed tool probe failed"),
+      );
     }
   }
 

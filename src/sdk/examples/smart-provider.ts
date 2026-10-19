@@ -257,6 +257,7 @@ async function callProvider(messages: Message[]): Promise<string> {
       }),
     });
     if (!resp.ok) {
+      // allow-empty-catch: the error body is optional detail; the status is reported regardless
       const body = await resp.text().catch(() => "");
       throw new Error(`Provider ${resp.status}: ${body.slice(0, 200)}`);
     }
@@ -277,6 +278,7 @@ async function callProvider(messages: Message[]): Promise<string> {
     body: JSON.stringify({ model: PROVIDER_MODEL, messages, temperature: 0 }),
   });
   if (!resp.ok) {
+    // allow-empty-catch: the error body is optional detail; the status is reported regardless
     const body = await resp.text().catch(() => "");
     throw new Error(`Provider ${resp.status}: ${body.slice(0, 200)}`);
   }

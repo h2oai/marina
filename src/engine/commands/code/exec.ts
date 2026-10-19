@@ -171,6 +171,7 @@ async function resolveTestShorthand(
 ): Promise<{ command: string[]; fallback?: PythonTestFallback }> {
   if (args.length === 1 && args[0]?.toLowerCase() === "test") {
     const workspace = workspaceForSession(deps, session);
+    // allow-empty-catch: undetectable runner falls back to the default test command
     const runner = await detectWorkspaceRunner(workspace).catch(() => null);
     // The detected test command (a bare `test` for Bun still means `bun run test`).
     const test = runner?.testCommand;
@@ -183,6 +184,7 @@ async function resolveTestShorthand(
       ) {
         const probe = await workspace
           .runPreparationStep([...PREPARATION_PROBES.pytest])
+          // allow-empty-catch: a failed probe means unknown; the test run reports for itself
           .catch(() => null);
         if (probe && pytestUnavailable(probe)) {
           const fallback = pythonTestFallback(workspace.displayRoot());
@@ -225,6 +227,7 @@ async function showRunAllowlist(
     return;
   }
   const policy = workspace.runPolicy();
+  // allow-empty-catch: a missing package.json means no package scripts
   const packageJson = await workspace.read("package.json").catch(() => null);
   const scripts = packageJson ? detectPackageScripts(packageJson.content) : [];
   const detected = new Set(scripts);
@@ -535,6 +538,7 @@ export async function planVerification(
   const touched = knownTouched
     ? [...knownTouched]
     : await workspaceTouchedPaths(workspace).catch(() => [] as string[]);
+  // allow-empty-catch: undetectable runner falls back to the stored or default recipe
   const detected = await detectWorkspaceRunner(workspace, touched).catch(() => null);
   // A stored recipe decides what runs, so preparation probes for what IT needs:
   // a Python recipe without pytest (unittest, a test script) needs Python only.

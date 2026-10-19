@@ -22,7 +22,9 @@
  * outcomes no one had seen.
  */
 
+import { logRejection } from "../../engine/errors";
 import { promotionMargin } from "../../engine/fishing-margin";
+import { Logger } from "../../engine/logger";
 import { vendorModelSpec } from "../../net/model/default-models";
 import type { NotesStore } from "../../persistence/interfaces/notes-store";
 import type { ArenaData } from "../data";
@@ -32,6 +34,8 @@ import { parseReply } from "../model-forecaster";
 import { crpsNormal, skill } from "../score";
 import type { ArenaRound } from "../types";
 import { applySignal, type SignalSpec, signalKey, validateSignal } from "./signals";
+
+const logger = new Logger();
 
 export const DISCOVERY_ENTITY = "arena-discovery";
 /** Families with enough weekly numeric history to split into discovery and holdout. */
@@ -116,7 +120,9 @@ export async function scoreSignal(
 ): Promise<Score> {
   const skills: number[] = [];
   for (const { round, outcome } of rounds) {
-    const lock = await data.lock(round.round_id).catch(() => undefined);
+    const lock = await data
+      .lock(round.round_id)
+      .catch(logRejection(logger, "arena", "arena round lock unavailable", { level: "debug" }));
     const history = lock?.answer_history ?? lock?.history ?? [];
     if (!lock || history.length === 0) continue;
     const pers = crpsNormal(history.at(-1)!.value, PERSISTENCE_SD, outcome);
@@ -227,7 +233,9 @@ export async function discover(opts: {
   };
   const past = pastAttempts(notes, tracker);
   const seen = new Set(past.map((p) => p.key));
-  const lock = await data.lock(discovery.at(-1)!.round.round_id).catch(() => undefined);
+  const lock = await data
+    .lock(discovery.at(-1)!.round.round_id)
+    .catch(logRejection(logger, "arena", "arena round lock unavailable", { level: "debug" }));
   const sample = (lock?.answer_history ?? lock?.history ?? []).slice(-20).map((p) => p.value);
   const prompt = buildProposal(
     tracker,

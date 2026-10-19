@@ -19,7 +19,9 @@ import {
   MARINA_LOGIN_ATTEMPTS_PER_MIN,
   MARINA_MAX_LOGINS,
 } from "./engine/constants";
+
 import { Engine } from "./engine/engine";
+import { logRejection } from "./engine/errors";
 import { Logger } from "./engine/logger";
 import { projectTraces } from "./engine/trace-projection";
 import {
@@ -954,11 +956,15 @@ async function shutdown(code = 0) {
   engine.stop();
 
   // Stop external adapters first
-  await adapterManager.stopAll().catch(() => {});
+  await adapterManager
+    .stopAll()
+    .catch(logRejection(logger, "main", "stopping adapters on shutdown failed"));
 
   // Stop spawned agents (graceful checkpoint + disconnect). stopAll preserves
   // each agent's saved config so they respawn on the next boot.
-  await engine.agentRuntime.stopAll().catch(() => {});
+  await engine.agentRuntime
+    .stopAll()
+    .catch(logRejection(logger, "main", "stopping agents on shutdown failed"));
 
   await Promise.all([wsServer.drainRequests(), mcpServer?.drainRequests()]);
   await engine.drainCommands();

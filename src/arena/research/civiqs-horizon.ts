@@ -23,9 +23,13 @@
  * rule as `civiqsNowcast`); nothing here reads a later file.
  */
 
+import { logRejection } from "../../engine/errors";
+import { Logger } from "../../engine/logger";
 import type { ArenaData } from "../data";
 import type { ArenaRound } from "../types";
 import { CIVIQS_SERIES, civiqsDailySeries, type LiveCiviqs } from "./civiqs-nowcast";
+
+const logger = new Logger();
 
 export type HorizonMode = "off" | "drift" | "sd" | "both";
 
@@ -169,7 +173,9 @@ export async function revisionSd(
       days: 1,
       asOf: `${day}T23:59:59Z`,
       maxLookbackDays: 0,
-    }).catch(() => undefined);
+    }).catch(
+      logRejection(logger, "arena", "earlier Civiqs series unavailable", { level: "debug" }),
+    );
     const p = earlier?.points.at(-1);
     if (!p || seen.has(p.date)) continue;
     seen.add(p.date);
@@ -270,7 +276,7 @@ export async function horizonNowcast(
   // The same snapshot the nowcast reads (archive fetched by the lock; an open
   // round may use the live dashboard when it is at least as fresh).
   const daily = await civiqsDailySeries(data, round, { days: 120, asOf, live }).catch(
-    () => undefined,
+    logRejection(logger, "arena", "Civiqs daily series unavailable", { level: "debug" }),
   );
   const pts = daily?.points ?? [];
   // Do not compress missing days into one trend step or train on the wrong

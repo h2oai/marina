@@ -354,6 +354,7 @@ export class MemoryService {
   private publication(input: Parameters<typeof runMemoryImport>[1], signal?: AbortSignal) {
     const promise = runMemoryImport(this.db, input, signal);
     this.publications.add(promise);
+    // allow-empty-catch: bookkeeping only; callers await `promise` and see its error
     void promise.finally(() => this.publications.delete(promise)).catch(() => {});
     return promise;
   }

@@ -154,6 +154,7 @@ export class MarinaOtlpLogExporter {
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`OTLP log collector returned HTTP ${response.status}`);
+      // allow-empty-catch: a non-JSON 2xx body has no partial-success report
       const result = (await response.json().catch(() => ({}))) as {
         partialSuccess?: { rejectedLogRecords?: number; errorMessage?: string };
       };

@@ -22,7 +22,7 @@
 // shares its state-changing calls (else the first valid draft), labelled.
 
 import type { Engine } from "../../engine/engine";
-import { getErrorMessage } from "../../engine/errors";
+import { getErrorMessage, logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { parsePick } from "../../orchestration/pick";
 import type { RepairLabel } from "../../repair/output-repair";
@@ -392,7 +392,11 @@ export async function ensembleTurn(engine: Engine, t: EnsembleTurn): Promise<Ens
         usage = addUsage(usage, r.body?.usage);
         return r.ok ? textOf(r.message?.content) : "";
       },
-    }).catch(() => undefined);
+    }).catch(
+      logRejection(log, "model-api", "ensemble: repair failed; keeping the draft", {
+        level: "debug",
+      }),
+    );
     if (repaired) {
       repairLabel = repaired.label;
       final = withFirstMessage(final, repaired.message);
