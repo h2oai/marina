@@ -38,6 +38,7 @@ async function main() {
         (connectArrival ? cleanText.match(/^([A-Za-z0-9_]+) connects\.$/)?.[1] : undefined);
       if (name && name !== session.name) {
         console.log(`Greeting ${name}`);
+        // allow-empty-catch: a greeting is best-effort in this example
         agent.say(`Welcome, ${name}! How can I help you today?`).catch(() => {});
       }
     }

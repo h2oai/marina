@@ -441,6 +441,7 @@ export function throttledTabPredict(
       const res = await call(req);
       return { res, ms: performance.now() - t0 };
     });
+    // allow-empty-catch: queue tail only; the caller awaits `next` and sees its error
     chain = next.catch(() => undefined);
     return next;
   };

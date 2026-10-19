@@ -13,11 +13,15 @@
  * the result, and trust only rounds after it.
  */
 
+import { logRejection } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import type { ArenaData } from "./data";
 import type { RoundForecast } from "./forecast";
 import { forecastRound, PERSISTENCE_SD } from "./forecast";
 import { crpsNormal, skill } from "./score";
 import type { ArenaLock, ArenaRound, Distribution } from "./types";
+
+const logger = new Logger();
 
 export type Forecaster = (round: ArenaRound, lock: ArenaLock) => Promise<RoundForecast>;
 
@@ -145,7 +149,9 @@ export async function evaluateResolved(
   const worker = async () => {
     for (let round = queue.shift(); round; round = queue.shift()) {
       if (learning) reveal(Date.parse(round.lock_at));
-      const lock = await data.lock(round.round_id).catch(() => undefined);
+      const lock = await data
+        .lock(round.round_id)
+        .catch(logRejection(logger, "arena", "arena round lock unavailable", { level: "debug" }));
       const history = lock?.answer_history ?? lock?.history ?? [];
       if (!lock || history.length === 0) continue;
       const outcome = resolved[round.round_id]!.value as number;
@@ -305,7 +311,12 @@ export async function scoreShadow(
       const round = await data.round(row.round_id);
       if (round?.target_type !== "profile_energy" && round?.target_type !== "ranking_list")
         continue;
-      site ??= await data.siteRounds().catch(() => []);
+      site ??= await data.siteRounds().catch(
+        logRejection(logger, "arena", "arena site rounds unavailable", {
+          level: "debug",
+          fallback: [],
+        }),
+      );
       const scored =
         round.target_type === "ranking_list"
           ? await scoreShadowRanking(data, round, row, site)
@@ -314,7 +325,11 @@ export async function scoreShadow(
       continue;
     }
     const round = await data.round(row.round_id);
-    const lock = round && (await data.lock(row.round_id).catch(() => undefined));
+    const lock =
+      round &&
+      (await data
+        .lock(row.round_id)
+        .catch(logRejection(logger, "arena", "arena round lock unavailable", { level: "debug" })));
     const history = lock?.answer_history ?? lock?.history ?? [];
     const topline = (JSON.parse(row.forecast) as { topline?: { mean: number; sd: number } })
       .topline;
@@ -409,10 +424,12 @@ async function scoreShadowProfile(
       import("./forecast"),
       import("./research/civiqs-nowcast"),
     ]);
-  let lock = await data.lock(round.round_id).catch(() => undefined);
+  let lock = await data
+    .lock(round.round_id)
+    .catch(logRejection(logger, "arena", "arena round lock unavailable", { level: "debug" }));
   if (lock && round.tracker === "google_trends" && !lock.answer_history_by_cell) {
     const byCell = await trendsBasketHistory(data, round, TRENDS_INCLUDE_PARTIAL).catch(
-      () => undefined,
+      logRejection(logger, "arena", "trends basket history unavailable", { level: "debug" }),
     );
     if (byCell) lock = { ...lock, answer_history_by_cell: byCell };
   }

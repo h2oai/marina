@@ -3,6 +3,7 @@
 
 import { Client, Events, GatewayIntentBits, type Message } from "discord.js";
 import { redeemLinkCode } from "../engine/commands/link";
+import { logRejection } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import type { Connection, Perception } from "../types";
 import type { Adapter, AdapterContext } from "./adapters/adapter";
@@ -95,7 +96,9 @@ export class DiscordAdapter implements Adapter {
         // A `link` code binds this Discord user to the code's account (see link.ts).
         const linked = redeemLinkCode(this.ctx.db, "discord", discordUserId, text);
         if (linked && existingConnId) {
-          await message.reply(`Linked this account to ${linked.entityName}.`).catch(() => {});
+          await message
+            .reply(`Linked this account to ${linked.entityName}.`)
+            .catch(logRejection(logger, "discord", "discord reply failed"));
           return;
         }
 
@@ -114,7 +117,7 @@ export class DiscordAdapter implements Adapter {
               if ("send" in message.channel) {
                 (message.channel as { send: (s: string) => Promise<unknown> })
                   .send(formatted)
-                  .catch(() => {});
+                  .catch(logRejection(logger, "discord", "discord send failed"));
               }
             },
             close() {
@@ -127,7 +130,9 @@ export class DiscordAdapter implements Adapter {
 
           const result = engine.login(connId, loginName);
           if ("error" in result) {
-            await message.reply(result.error).catch(() => {});
+            await message
+              .reply(result.error)
+              .catch(logRejection(logger, "discord", "discord reply failed"));
             engine.removeConnection(connId);
             userConns.delete(discordUserId);
             return;
@@ -138,7 +143,7 @@ export class DiscordAdapter implements Adapter {
             .reply(
               `${linked ? "Linked and logged in" : "Logged in"} as ${loginName}. Type commands to play!`,
             )
-            .catch(() => {});
+            .catch(logRejection(logger, "discord", "discord reply failed"));
           return;
         }
 
@@ -147,13 +152,17 @@ export class DiscordAdapter implements Adapter {
         if (!entityId) {
           userConns.delete(discordUserId);
           this.removeMapping(discordUserId);
-          await message.reply("Session expired. Send your name to log in again.").catch(() => {});
+          await message
+            .reply("Session expired. Send your name to log in again.")
+            .catch(logRejection(logger, "discord", "discord reply failed"));
           return;
         }
 
         // Rate limit
         if (rateLimiter && !rateLimiter.consume(entityId)) {
-          await message.reply("Rate limited. Please slow down.").catch(() => {});
+          await message
+            .reply("Rate limited. Please slow down.")
+            .catch(logRejection(logger, "discord", "discord reply failed"));
           return;
         }
 

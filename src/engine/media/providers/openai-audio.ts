@@ -156,6 +156,7 @@ export function parseTranscriptionReply(json: unknown): TranscribeResult {
 
 /** An upstream error body's message, else its text (bounded). */
 async function upstreamError(res: Response, label: string): Promise<string> {
+  // allow-empty-catch: the error body is optional detail; the status is reported regardless
   const text = (await res.text().catch(() => "")).slice(0, 2000);
   try {
     const parsed = JSON.parse(text) as { error?: { message?: string } };

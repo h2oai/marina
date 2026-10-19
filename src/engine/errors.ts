@@ -4,7 +4,7 @@
 // ─── Error Utilities ─────────────────────────────────────────────────────────
 
 import { getErrorMessage } from "../sdk/errors";
-import type { Logger } from "./logger";
+import type { Logger, LogLevel } from "./logger";
 
 export { getErrorMessage } from "../sdk/errors";
 
@@ -34,6 +34,25 @@ export async function tryLogAsync(
   } catch (err) {
     logger.warn(category, message, { error: getErrorMessage(err) });
   }
+}
+
+/**
+ * A promise `.catch` handler that logs the rejection and resolves to
+ * `fallback` (default `undefined`) — the logged replacement for a handler
+ * that silently returns a constant (see `test/lint-no-empty-catch.test.ts`).
+ * Default level `warn`; pass `debug` for failures that are expected noise but
+ * still worth seeing when diagnosing.
+ */
+export function logRejection<T = undefined>(
+  logger: Logger,
+  category: string,
+  message: string,
+  opts: { level?: LogLevel; fallback?: T } = {},
+): (err: unknown) => T {
+  return (err) => {
+    logger.log(opts.level ?? "warn", category, message, { error: getErrorMessage(err) });
+    return opts.fallback as T;
+  };
 }
 
 // ─── Result Type ─────────────────────────────────────────────────────────────

@@ -32,6 +32,8 @@
  * earned routing promotes it only on paired resolved rounds.
  */
 
+import { logRejection } from "../../engine/errors";
+import { Logger } from "../../engine/logger";
 import { isExcludedTitle, RANKING_HALF_LIFE_DAYS, rankingScores } from "../forecast";
 import { forecastCutoff } from "../freshness";
 import type { Complete } from "../model-forecaster";
@@ -39,6 +41,8 @@ import type { ArenaLock, ArenaRound } from "../types";
 import type { ResearchBrief } from "./briefs";
 import { WIKITOP_PUBLICATION_LAG_DAYS } from "./civiqs-nowcast";
 import type { ResearchReport, Retriever, Source } from "./retrieve";
+
+const logger = new Logger();
 
 const DAY_MS = 86_400_000;
 /** An event this many days before the target week still counts toward it. */
@@ -331,7 +335,11 @@ export async function wikiEventsRanking(
       audit.reason = `event date ${c.date} outside the window`;
       continue;
     }
-    const canonical = await deps.wiki.canonicalTitle(c.article).catch(() => undefined);
+    const canonical = await deps.wiki
+      .canonicalTitle(c.article)
+      .catch(
+        logRejection(logger, "arena", "wiki canonical-title lookup failed", { level: "debug" }),
+      );
     if (!canonical) {
       audit.reason = "no such English Wikipedia article";
       continue;
@@ -348,7 +356,7 @@ export async function wikiEventsRanking(
     seen.add(canonical);
     const views = await deps.wiki
       .dailyViews(canonical, iso(Date.parse(lastPublished) - 13 * DAY_MS), lastPublished)
-      .catch(() => undefined);
+      .catch(logRejection(logger, "arena", "wiki daily-views lookup failed", { level: "debug" }));
     if (!views) {
       audit.reason = "pageviews unavailable";
       continue;

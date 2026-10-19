@@ -3,6 +3,7 @@
 
 import { Bot } from "grammy";
 import { redeemLinkCode } from "../../engine/commands/link";
+import { logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import type { Connection, Perception } from "../../types";
 import { formatPerception } from "../formatter";
@@ -71,7 +72,7 @@ export class TelegramAdapter implements Adapter {
     this.bot.command("start", async (ctx) => {
       await ctx
         .reply("Welcome to Marina! Send your character name to log in, or /help for commands.")
-        .catch(() => {});
+        .catch(logRejection(logger, "telegram", "telegram reply failed"));
     });
 
     this.bot.on("message:text", async (ctx) => {
@@ -86,7 +87,9 @@ export class TelegramAdapter implements Adapter {
         // A `link` code binds this chat to the code's account (see link.ts).
         const linked = redeemLinkCode(this.ctx.db, "telegram", String(chatId), text);
         if (linked && existingConnId) {
-          await ctx.reply(`Linked this chat to ${linked.entityName}.`).catch(() => {});
+          await ctx
+            .reply(`Linked this chat to ${linked.entityName}.`)
+            .catch(logRejection(logger, "telegram", "telegram reply failed"));
           return;
         }
 
@@ -102,7 +105,7 @@ export class TelegramAdapter implements Adapter {
             connectedAt: Date.now(),
             send(perception: Perception) {
               const formatted = formatPerception(perception, "markdown");
-              ctx.reply(formatted).catch(() => {});
+              ctx.reply(formatted).catch(logRejection(logger, "telegram", "telegram reply failed"));
             },
             close() {
               chatConns.delete(chatId);
@@ -115,7 +118,9 @@ export class TelegramAdapter implements Adapter {
           // Try to login
           const result = engine.login(connId, loginName);
           if ("error" in result) {
-            await ctx.reply(result.error).catch(() => {});
+            await ctx
+              .reply(result.error)
+              .catch(logRejection(logger, "telegram", "telegram reply failed"));
             engine.removeConnection(connId);
             chatConns.delete(chatId);
             return;
@@ -126,7 +131,7 @@ export class TelegramAdapter implements Adapter {
             .reply(
               `${linked ? "Linked and logged in" : "Logged in"} as ${loginName}. Type commands to play!`,
             )
-            .catch(() => {});
+            .catch(logRejection(logger, "telegram", "telegram reply failed"));
           return;
         }
 
@@ -136,13 +141,17 @@ export class TelegramAdapter implements Adapter {
           // Connection exists but no entity (shouldn't happen, but handle gracefully)
           chatConns.delete(chatId);
           this.removeMapping(chatId);
-          await ctx.reply("Session expired. Send your name to log in again.").catch(() => {});
+          await ctx
+            .reply("Session expired. Send your name to log in again.")
+            .catch(logRejection(logger, "telegram", "telegram reply failed"));
           return;
         }
 
         // Rate limit
         if (rateLimiter && !rateLimiter.consume(entityId)) {
-          await ctx.reply("Rate limited. Please slow down.").catch(() => {});
+          await ctx
+            .reply("Rate limited. Please slow down.")
+            .catch(logRejection(logger, "telegram", "telegram reply failed"));
           return;
         }
 

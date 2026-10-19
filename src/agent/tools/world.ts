@@ -15,11 +15,15 @@ import {
   parseScore,
   type Score,
 } from "../../coordination/score";
+import { logRejection } from "../../engine/errors";
+import { Logger } from "../../engine/logger";
 import { runScore } from "../../sdk/conduct";
 import { stripPleasantry } from "../acknowledgement";
 import { channelAction, projectCommand } from "../tool-policy";
 import { createCodeTool, createTypedCodeTools } from "./code";
 import { execCommand, formatPerceptions, type ToolContext, wrap } from "./shared";
+
+const logger = new Logger();
 
 // ─── Typed Tool Wrappers ────────────────────────────────────────────────────
 
@@ -514,7 +518,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
           // Feed propagation — concise, one event per run (per-step is noise).
           await ctx.client
             .command(`conduct ran ${p.name ?? score.id} -- ${run.result.slice(0, 160)}`)
-            .catch(() => {});
+            .catch(logRejection(logger, "agents", "conduct feed note failed", { level: "debug" }));
           return {
             content: [
               {

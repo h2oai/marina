@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { harnessDecisionProvider } from "../../decisions/engines";
 import type { DecisionProvider } from "../../decisions/types";
 import type { Engine } from "../../engine/engine";
-import { getErrorMessage } from "../../engine/errors";
+import { getErrorMessage, logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { noteOutcome } from "../../learning/service";
 import {
@@ -546,7 +546,11 @@ export async function finishObligations(
       recentCalls: prep.calls,
     },
     { ...(prep.provider ? { provider: prep.provider } : {}), complete: prep.complete },
-  ).catch(() => undefined);
+  ).catch(
+    logRejection(log, "model-api", "obligations: judge failed; reply is unjudged", {
+      level: "debug",
+    }),
+  );
   if (!verdicts) return done(resp, text, "unjudged");
   for (const [id, v] of Object.entries(verdicts)) {
     if (v === "declined") settle(prep.ledger, id, "declined", "judge:declined");
@@ -630,7 +634,9 @@ async function reviewDraft(
     store.put(prep.ledger);
     if (!sel.engaged) return done(resp, text, "review-not-selected");
   }
-  const verdict = await reviewWrite(input, ask, judge).catch(() => undefined);
+  const verdict = await reviewWrite(input, ask, judge).catch(
+    logRejection(log, "model-api", "obligations: write review failed", { level: "debug" }),
+  );
   const named = recordReview(state, verdict);
   store.put(prep.ledger);
   const label = reviewLabel(verdict);

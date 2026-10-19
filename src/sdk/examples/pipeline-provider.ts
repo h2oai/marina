@@ -140,6 +140,7 @@ async function handleRequest(request: {
   const candidate = await stageReason(messages, structure);
   // Verify stage runs but we return the reasoned candidate — verifier is
   // advisory, not a retry gate (that's Gastown's job).
+  // allow-empty-catch: the verifier is advisory in this example
   const verdict = await stageVerify(request.content, structure, candidate).catch(() => "");
 
   const dt = Math.round(performance.now() - t0);

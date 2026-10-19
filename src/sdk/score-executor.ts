@@ -119,6 +119,7 @@ export async function executeScore(
     rejectAbort = reject;
   });
   // Attach a handler even for an empty graph or a pre-aborted request.
+  // allow-empty-catch: observes the abort promise; the awaited race rethrows it
   void aborted.catch(() => undefined);
   const onAbort = () => rejectAbort(controller.signal.reason);
   controller.signal.addEventListener("abort", onAbort, { once: true });
@@ -178,6 +179,7 @@ export async function executeScore(
           running.delete(step.id);
         });
         // Every launched step is observed even if a different sibling fails first.
+        // allow-empty-catch: observed here; the step's failure surfaces through the race below
         void promise.catch(() => undefined);
         running.set(step.id, promise);
         if (controller.signal.aborted) break;

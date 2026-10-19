@@ -449,6 +449,7 @@ export class LocalWorkspace implements WorkspaceRuntime {
     const visit = async (path: string) => {
       if (hits.length >= limit) return;
       const file = Bun.file(path);
+      // allow-empty-catch: an unreadable file is simply not searched
       const text = await file.text().catch(() => "");
       const lines = text.split("\n");
       for (let i = 0; i < lines.length && hits.length < limit; i++) {
@@ -1481,6 +1482,7 @@ export async function runWorkspaceCommand(
         stop("SIGKILL");
         // A host command can deliberately detach descendants. Bound our pipe
         // wait too; this is process lifecycle management, not a security sandbox.
+        // allow-empty-catch: cancelling the pipes of a killed process; an already-closed reader rejects
         await Promise.all(readers.map((reader) => reader.cancel().catch(() => {})));
         await proc.exited;
       }

@@ -20,6 +20,10 @@
  */
 
 import type { BenchmarkSubject } from "./benchmark-runner";
+import { logRejection } from "./errors";
+import { Logger } from "./logger";
+
+const logger = new Logger();
 
 export interface TrialArm {
   label: "candidate" | "incumbent";
@@ -175,7 +179,9 @@ export async function runTrial(
     }
   } finally {
     for (const s of started) {
-      await deps.stop(s.agent).catch(() => undefined);
+      await deps
+        .stop(s.agent)
+        .catch(logRejection(logger, "evolve", "stopping a trial agent failed"));
       if (s.channel) deps.deleteModelChannel(s.channel);
     }
   }

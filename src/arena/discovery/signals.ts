@@ -25,11 +25,15 @@
  *            | horizon
  */
 
+import { logRejection } from "../../engine/errors";
+import { Logger } from "../../engine/logger";
 import type { ArenaData } from "../data";
 import { forecastScalar, horizonSteps, PERSISTENCE_SD } from "../forecast";
 import { horizonNowcast } from "../research/civiqs-horizon";
 import { civiqsNowcast } from "../research/civiqs-nowcast";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "../types";
+
+const logger = new Logger();
 
 export interface SignalSpec {
   centre: string;
@@ -145,7 +149,7 @@ export async function applySignal(
           round,
           ck === "nowcast-drift" ? (sk === "horizon" ? "both" : "drift") : "sd",
           ck === "nowcast-drift" ? cp : undefined,
-        ).catch(() => undefined)
+        ).catch(logRejection(logger, "arena", "horizon nowcast failed", { level: "debug" }))
       : undefined;
   const hzFresh = !!hz && hz.lastDate > (history.at(-1)?.date ?? "");
   if (ck === "nowcast-drift") {
@@ -153,7 +157,9 @@ export async function applySignal(
   } else if (ck === "nowcast" || ck === "nowcast-shrink" || ck === "nowcast-mean") {
     const n =
       round.tracker === "civiqs"
-        ? await civiqsNowcast(data, round).catch(() => undefined)
+        ? await civiqsNowcast(data, round).catch(
+            logRejection(logger, "arena", "Civiqs nowcast failed", { level: "debug" }),
+          )
         : undefined;
     const isFresher = !!n && n.date > (history.at(-1)?.date ?? "");
     const fresher = isFresher ? n!.value : v.at(-1)!;

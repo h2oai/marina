@@ -22,10 +22,14 @@
  * resolution (when the truth became public), else now.
  */
 
+import { logRejection } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import type { ArenaConfig } from "./config";
 import type { ArenaData } from "./data";
 import type { ArenaRound, Distribution } from "./types";
+
+const logger = new Logger();
 
 type Settler = Pick<
   MarinaDB,
@@ -183,7 +187,12 @@ export async function settleArenaFilings(
       db.acceptedArenaSubmission(entrant, r.round_id),
   );
   if (shaped.length === 0) return report;
-  const site = (await deps.data.siteRounds().catch(() => [])) as SiteRound[];
+  const site = (await deps.data.siteRounds().catch(
+    logRejection(logger, "arena", "arena site rounds unavailable", {
+      level: "debug",
+      fallback: [],
+    }),
+  )) as SiteRound[];
   const siteById = new Map((Array.isArray(site) ? site : []).map((r) => [r.round_id, r]));
   const { recordResolved } = await import("../outcomes/record");
   for (const round of shaped) {
@@ -242,7 +251,9 @@ function refsFor(entrant: string, round: ArenaRound, method: ArenaMethod): strin
 
 /** The arena's persistence mean for a scalar round (its frozen history's last value). */
 async function persistenceOf(data: ArenaData, roundId: string): Promise<number | undefined> {
-  const lock = await data.lock(roundId).catch(() => undefined);
+  const lock = await data
+    .lock(roundId)
+    .catch(logRejection(logger, "arena", "arena round lock unavailable", { level: "debug" }));
   const last = (lock?.answer_history ?? lock?.history ?? []).at(-1)?.value;
   return typeof last === "number" && Number.isFinite(last) ? last : undefined;
 }

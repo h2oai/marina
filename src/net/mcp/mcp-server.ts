@@ -10,6 +10,7 @@ import { RateLimiter } from "../../auth/rate-limiter";
 import { secretsEqual } from "../../auth/secret-compare";
 import { WS_IDLE_TIMEOUT_SECONDS } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
+import { logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import type { FlywheelToolBackend } from "../../integrations/flywheel-manager";
 import { contextCacheStats } from "../../memory/context-cache";
@@ -443,7 +444,11 @@ export class McpServerAdapter {
       const connections = this.engine.getConnections();
       if (!connections.has(session.connId)) {
         this.sessions.delete(sessionId);
-        session.mcp.close().catch(() => {});
+        session.mcp
+          .close()
+          .catch(
+            logRejection(logger, "mcp", "closing a stale MCP session failed", { level: "debug" }),
+          );
       }
     }
   }

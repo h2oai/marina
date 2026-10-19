@@ -42,7 +42,7 @@ import {
 } from "../../persistence/db-assets";
 import type { StorageProvider } from "../../storage/provider";
 import type { EngineEvent, EntityId } from "../../types";
-import { getErrorMessage } from "../errors";
+import { getErrorMessage, logRejection } from "../errors";
 import { Logger } from "../logger";
 import { ASSET_TEXT_KINDS, type AssetTextKind, capAssetText } from "./asset-text";
 import { imageProcessingAvailable, probeImage, thumbnail, toDataUrl } from "./image-ops";
@@ -404,7 +404,9 @@ async function withTempFile<T>(
     await writeFile(file, data);
     return await fn(dir, file);
   } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    await rm(dir, { recursive: true, force: true }).catch(
+      logRejection(logger, "media", "temp dir cleanup failed"),
+    );
   }
 }
 
@@ -620,7 +622,12 @@ export async function backfillAssets(
   if (!db || !storage) return 0;
   const rows = db.listAssetsNeedingFacts(limit);
   for (const row of rows) {
-    const stored = await storage.get(row.storage_key).catch(() => null);
+    const stored = await storage.get(row.storage_key).catch(
+      logRejection(logger, "media", "stored asset bytes unreadable", {
+        level: "debug",
+        fallback: null,
+      }),
+    );
     if (!stored) {
       db.updateAssetFacts(row.id, {
         sha256: "",
@@ -749,8 +756,13 @@ export async function removeAsset(
   if (!db) return false;
   const derived = db.listDerivatives([row.id]);
   if (host.storage) {
-    for (const d of derived) await host.storage.delete(d.storage_key).catch(() => false);
-    await host.storage.delete(row.storage_key).catch(() => false);
+    for (const d of derived)
+      await host.storage
+        .delete(d.storage_key)
+        .catch(logRejection(logger, "media", "asset blob delete failed", { fallback: false }));
+    await host.storage
+      .delete(row.storage_key)
+      .catch(logRejection(logger, "media", "asset blob delete failed", { fallback: false }));
   }
   const removed = db.deleteAsset(row.id);
   if (removed) emit(host, "asset_deleted", row, actor);

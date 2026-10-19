@@ -208,12 +208,14 @@ async function post(
     if (res.ok || attempt > 1 || !RETRYABLE.has(res.status)) break;
     const delay = retryDelayMs(res);
     if (deadline - performance.now() - delay < RETRY_MIN_REMAINING_MS) break;
+    // allow-empty-catch: discarding a retryable response body before the retry
     await res.body?.cancel().catch(() => undefined);
     await waitFor(delay, combined);
     if (combined.aborted) {
       throw new DecisionError(`decision call timed out after ${opts.timeoutMs}ms`, "timeout", 504);
     }
   }
+  // allow-empty-catch: the error body is optional detail; the status is reported regardless
   if (!res.ok) throw statusError(res.status, await res.text().catch(() => ""));
   try {
     return await res.json();

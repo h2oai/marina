@@ -35,6 +35,7 @@ export const streamUsageSidecar = new WeakMap<Response, () => OpenAIUsage | unde
  * bare status text, so operators can see WHY passthru failed.
  */
 async function anthropicErrorMessage(resp: Response): Promise<string> {
+  // allow-empty-catch: the error body is optional detail; the status is reported regardless
   const detail = await resp.text().catch(() => "");
   let reason = "";
   try {

@@ -101,6 +101,7 @@ export async function readBytesCapped(res: Response, maxBytes: number): Promise<
       read += chunk.byteLength;
     }
   } finally {
+    // allow-empty-catch: releasing a body read that is already done or capped
     await reader.cancel().catch(() => undefined);
   }
   const out = new Uint8Array(read);
@@ -397,6 +398,7 @@ export async function readPage(url: string, opts: ReadPageOptions = {}): Promise
       url,
       opts.browser,
       barred ? (u: string) => barred(u) : undefined,
+      // allow-empty-catch: the rendered read is an optional upgrade; the static read stands
     ).catch(() => undefined);
     if (rendered && (!attempt.read.ok || rendered.read.text.length > attempt.read.text.length)) {
       attempt = rendered;

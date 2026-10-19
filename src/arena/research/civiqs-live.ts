@@ -156,6 +156,7 @@ function paced<T>(fn: () => Promise<T>): Promise<T> {
     lastCall = Date.now();
     return fn();
   });
+  // allow-empty-catch: queue tail only; the caller awaits `run` and sees its error
   queue = run.catch(() => undefined);
   return run;
 }
