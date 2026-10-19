@@ -79,9 +79,16 @@ export interface WikiApi {
 
 export interface WikiEventsDeps {
   retriever: Retriever;
-  complete: Complete;
+  /** One extraction model, or several (each reads the same sources; candidates are pooled). */
+  complete: Complete | Complete[];
   wiki: WikiApi;
   maxInsert?: number;
+  /**
+   * The statistical list to merge into, best first, instead of the recency
+   * scores (`wiki-specialist`: projected weekly sums), and how many of its
+   * units one day at an article's recent daily level is worth.
+   */
+  base?: { scored: Array<[string, number]>; perDay: number; label?: string };
 }
 
 export type EventKind =
@@ -283,23 +290,31 @@ export async function wikiEventsRanking(
   const lastPublished = iso(
     Date.parse(cutoff.slice(0, 10)) - WIKITOP_PUBLICATION_LAG_DAYS * DAY_MS,
   );
-  const scored = rankingScores(lock, spec?.items);
+  const scored = deps.base?.scored ?? rankingScores(lock, spec?.items);
   if (scored.length < length)
     throw new Error(`only ${scored.length} candidates for a top-${length}`);
   const base = scored.slice(0, length).map(([t]) => t);
-  // The list's units: recency-weighted views; Σ weights converts a daily level.
-  const obsDays = [...(lock.answer_obs ?? [])].map((o) => o.date).sort();
-  const newest = Date.parse(obsDays.at(-1)!);
-  const weightSum = obsDays.reduce(
-    (s, d) => s + 0.5 ** ((newest - Date.parse(d)) / DAY_MS / RANKING_HALF_LIFE_DAYS),
-    0,
-  );
+  // The list's units: recency-weighted views, where Σ weights converts a daily
+  // level; or the caller's own (`base.perDay`).
+  let weightSum = deps.base?.perDay ?? 0;
+  if (!deps.base) {
+    const obsDays = [...(lock.answer_obs ?? [])].map((o) => o.date).sort();
+    const newest = Date.parse(obsDays.at(-1)!);
+    weightSum = obsDays.reduce(
+      (s, d) => s + 0.5 ** ((newest - Date.parse(d)) / DAY_MS / RANKING_HALF_LIFE_DAYS),
+      0,
+    );
+  }
   const bar = scored[length - 1]![1];
   const barDaily = weightSum > 0 ? bar / weightSum : bar;
 
   const report = await deps.retriever(wikiEventsBrief(round, cutoff));
-  const reply = await deps.complete(SYSTEM, extractionPrompt(round, report, base));
-  const candidates = parseCandidates(reply);
+  const prompt = extractionPrompt(round, report, base);
+  const models = Array.isArray(deps.complete) ? deps.complete : [deps.complete];
+  const replies = await Promise.allSettled(models.map((complete) => complete(SYSTEM, prompt)));
+  const ok = replies.filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled");
+  if (ok.length === 0) throw (replies[0] as PromiseRejectedResult).reason;
+  const candidates = ok.flatMap((r) => parseCandidates(r.value));
 
   const scores = new Map(scored);
   const events: EventAudit[] = [];

@@ -679,7 +679,9 @@ against the arena's recorded persistence loss for each round.
   final once published, and the archive was partly backfilled); the half-life was chosen by
   backtest over the archived weeks. A per-article trajectory model (power-law decay from each
   article's own peak, shrunk toward a pooled exponent) was tested walk-forward on the archive
-  and did not win on the held-out weeks, so the recency list stays the default.
+  and did not win on the held-out weeks, so the recency list stays the default route; the
+  Wikipedia specialist below (exponential decay over a base level, backtested on 67 weeks of
+  Wikimedia lists rather than the archive's ten) did beat it.
 - **Wikipedia scheduled events** (`research:wiki-events:<model>[@<retrievers>]`): the recency
   list cannot see a release, premiere, execution, final or an event's end that has not happened
   yet. This card searches for events in the target week (results published before the cutoff),
@@ -698,6 +700,36 @@ against the arena's recorded persistence loss for each round.
   (`wikiEvents`). Web search cannot be replayed, so the card runs as a shadow challenger
   (`MARINA_ARENA_SHADOW_CHALLENGERS="wikipedia=research:wiki-events:<model>@<retrievers>"`,
   `bun run arena shadow challengers due`) and earned routing decides whether it files.
+- **Wikipedia specialist** (`wiki-specialist[:<model>[,<model>…][@<retrievers>]]`,
+  `src/arena/wiki-specialist.ts`): forecasts the target week's views instead of ranking last
+  week's. Timing: a `wiki-top10-<Sunday>` round locks the Friday 14:00 UTC before its Monday–Sunday
+  week, so the week has not begun at the lock (no partial-week hours to observe) and the newest
+  readable daily list is the lock day − 2 (a Wednesday) — the forecast reaches 5 to 11 days ahead;
+  persistence, the skill denominator, is the week ending the Sunday before the lock. Inputs are 28
+  daily top-1000 lists: the arena's `wikitop/` archive first, the Wikimedia REST top endpoint for
+  missing days (`src/arena/wikimedia.ts`: Marina's User-Agent with a contact URL, requests ≥ 100 ms
+  apart, in-process cache, SSRF guard; never a day after the lock day − 2). Each title in the top
+  100 of a list from the last 14 days is projected: a base level (the median of its own 28 days)
+  plus an excess that decays exponentially with a half-life measured from the page's own decline
+  since its 14-day peak, shrunk geometrically halfway toward an 8-day prior; the current level is
+  the newest day, corrected by global weekday factors. The list is ordered by the projected weekly
+  sum discounted by 15 % of its transient share (a fading spike yields a top slot to a steady page
+  of the same projected mass — RBO weighs the top slots most). With models, scheduled events
+  proposed from dated sources go through the same mechanical checks as `research:wiki-events`
+  (candidates from several models are pooled; one failing model leaves the others) and merge into
+  the projected list, at most `MARINA_ARENA_WIKI_EVENTS_MAX_INSERT` new articles; the forecast
+  detail keeps the projection (`wikiSpecialist`) and every candidate (`wikiEvents`). Defaults come
+  from `scripts/arena-wiki-backtest.ts --dir <daily lists> [--site data.json] [--grid]`, a
+  walk-forward over weeks reconstructed from the daily lists (each set up as the arena does: same
+  lock, cutoff and persistence week; the six resolved arena rounds reconstruct exactly). Over 67
+  weeks ending 2025-07-13 … 2026-10-18 the mean per-round skill was 0.041 for the recency nowcast
+  and 0.106 for the specialist (better in 47 of 67 weeks); with the settings re-chosen each week on
+  earlier weeks only, 0.081 against the nowcast's 0.031 on the same 55 weeks; on the six resolved
+  arena rounds 0.148 against 0.105. Events cannot be replayed (search results are not
+  reproducible as of a past date), so the event variant runs as a shadow challenger
+  (`MARINA_ARENA_SHADOW_CHALLENGERS="wikipedia=wiki-specialist:<model>"`); an oracle that inserts up
+  to three true entrants unseen in the projected top 30 bounds that channel at about +0.04.
+  Route the statistical specialist with `wikipedia=wiki-specialist` in `MARINA_ARENA_ROUTES`.
 - **Google Trends baskets**: Trends re-normalises its index in every snapshot. Forecasts use a
   newer complete basket from `trends/` when available; the original lock still defines the
   scoring baseline. Complete weeks only are used (`MARINA_ARENA_TRENDS_PARTIAL=on` adds the
