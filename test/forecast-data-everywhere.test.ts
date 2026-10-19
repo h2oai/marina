@@ -327,7 +327,7 @@ describe("arena research data evidence", () => {
       arenaResearchLookups({ MARINA_ARENA_RESEARCH_LOOKUPS: "all", ODDS_API_KEY: "k" }).map(
         (l) => l.name,
       ),
-    ).toEqual(["polymarket", "kalshi", "fred", "bls"]);
+    ).toEqual(["polymarket", "kalshi", "fred", "bls", "votehub"]);
   });
 
   it("appends markets for every round and a related series only where one is declared, as of the cutoff", async () => {

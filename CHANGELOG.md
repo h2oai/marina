@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Arena signals everywhere**: `MARINA_ARENA_RESEARCH_SIGNALS=all` gives every arena family its
+  mapped outside signals (`src/arena/research/signal-map.ts`): FRED economy, inflation and market
+  series (vintage as of the lock), a family market phrase for Polymarket/Kalshi, and other
+  pollsters' approval / generic-ballot polls from VoteHub's keyless API (new `votehub` lookup,
+  target's own pollster excluded, cut at the listing day). Unset `MARINA_ARENA_RESEARCH_LOOKUPS`
+  then means `polymarket,kalshi,fred,votehub`. FRED lists longer than three series run in chunks.
+  Market and poll lines are frozen under payload URLs so the citation check verifies what was read
+  at the lock. `off` and `consumer` are unchanged.
+
 - **Arena proposal judge**: delphi and symbiosis formations with a verified research dossier ask a
   decision model (Jev by default) whether each member's move from the start is supported by the
   verified lines; support weights the median move and can only lower the trust, any judge failure

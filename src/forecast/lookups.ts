@@ -14,6 +14,11 @@
  *   fred        FRED series — vintage-correct as of the cutoff with FRED_API_KEY, live-only without
  *   bls         BLS series — live-only (latest revision); BLS_API_KEY raises the quota
  *   markets     = polymarket,kalshi;  all = every lookup above
+ *
+ * `voteHubLookup` (lookup-polls.ts: other pollsters' approval / generic-ballot
+ * readings) is exported for callers that name a poll quantity (`DataHints.polls`,
+ * today the arena's `MARINA_ARENA_RESEARCH_LOOKUPS=votehub`); it is not in
+ * `LOOKUP_NAMES` because the general planner never names one.
  *   auto        (the default) every lookup that can run here: the keyless ones
  *               (polymarket, kalshi, fred, bls) plus odds when ODDS_API_KEY is set
  *   off / none  no lookups
@@ -35,6 +40,7 @@ import type { ForecastLookup, LookupContext, LookupResult } from "./lookup-types
 
 export { kalshiLookup, polymarketLookup } from "./lookup-markets";
 export { impliedProbabilities, oddsLookup } from "./lookup-odds";
+export { pollAvailable, pollNet, voteHubLookup } from "./lookup-polls";
 export {
   anchorLine,
   blsLookup,
@@ -47,6 +53,7 @@ export type {
   ForecastLookup,
   LookupContext,
   LookupResult,
+  PollHints,
   Reading,
 } from "./lookup-types";
 
