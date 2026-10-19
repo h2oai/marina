@@ -780,7 +780,8 @@ if (import.meta.main) {
     }
     case "mcp-stdio": {
       const { runMcpStdio } = await import("./mcp-stdio");
-      process.exitCode = await runMcpStdio(dispatch.rest);
+      // Exit as soon as the bridge ends (stdin EOF): nothing else should keep it alive.
+      process.exit(await runMcpStdio(dispatch.rest));
       break;
     }
     case "memory-mcp":
