@@ -209,10 +209,10 @@ Adding a delegate: put the query in the module, add the one-line delegate to `Ma
 
 ## Fresh schema and existing database upgrades
 
-Fresh databases install `schema-baseline.ts` (version 137) in one SQLite transaction,
-then apply any `FORWARD_MIGRATIONS` in `schema.ts`. This avoids replaying historical
-ALTER statements, index rebuilds, data conversions and per-version disk commits on
-an empty database. The baseline marker stays 137; forward migrations advance the database to the
+Fresh databases install `schema-baseline.ts` (version 167, the schema of v0.8.0) in one
+SQLite transaction, then apply any `FORWARD_MIGRATIONS` in `schema.ts`. This avoids replaying
+historical ALTER statements, index rebuilds, data conversions and per-version disk commits on
+an empty database. The baseline marker stays 167; forward migrations advance the database to the
 current version. Consolidation does not reset the schema counter.
 
 `schema-history.ts` retains the original SQL unchanged for populated databases. A
@@ -221,11 +221,22 @@ is never stamped over existing tables. Pending versions still commit individuall
 a failure stops at the previous version, and newer unsupported schemas fail closed.
 
 `bun run schema:check` regenerates the baseline in a disposable in-memory database
-and checks the committed artifact. FTS shadow tables are created by SQLite, not
-copied as independent tables. Indexes, triggers, foreign keys and seeded allowlist
-entries are included; seed timestamps remain installation timestamps. Regression
-tests compare the baseline's schema and seed data with historical replay and test
-populated older databases, FTS writes/deletion, and reopening.
+and checks the committed artifact. The generator replays an EMPTY database exactly as
+`MarinaDB` upgrades one — each migration's SQL and its data conversion (`apply`), one
+transaction per version, foreign keys on — so the baseline is "the schema an empty
+database has at version N". FTS shadow tables are created by SQLite, not copied as
+independent tables. Indexes, triggers, foreign keys and seeded allowlist entries are
+included; seed timestamps remain installation timestamps. A seeded row in any table the
+generator has not been told how to reproduce at installation fails generation, and two
+independent replays must produce the same artifact, so a per-database value (a
+`randomblob` id, a `unixepoch()` stamp) is never baked in. `test/schema-baseline.test.ts`
+compares the baseline with replay, and a fresh `MarinaDB` with an empty database migrated
+one version at a time from 0: every schema object's SQL verbatim, column, index and
+foreign-key pragmas, every table's rows (FTS shadow tables included, except the
+`_data` averages record, which `integrity-check` covers), and integrity checks.
+Other tests cover populated older databases, FTS writes/deletion, and reopening.
+`test/schema-replay.ts` (`migrateEmptyTo`) builds a database at any older version
+for upgrade tests, independent of where the baseline sits.
 
 New changes belong in `FORWARD_MIGRATIONS`, after its last version. Migration 138
 converts numeric memory inside the same transaction as its DDL and version marker. Migration 139
@@ -280,7 +291,7 @@ booted.
 
 ## Baseline refresh policy
 
-The schema-137 baseline is a cache of historical replay, never a second definition:
+The baseline is a cache of historical replay, never a second definition:
 `schema-history.ts` plus `FORWARD_MIGRATIONS` define the schema, and
 `bun run schema:check` proves the baseline equals replay.
 
@@ -296,19 +307,29 @@ The schema-137 baseline is a cache of historical replay, never a second definiti
 - **Refresh only when it pays**: fresh-install time or the size of the forward list is
   a measured problem. The baseline exists to spare empty databases the historical
   rebuilds and data conversions; it is not tidied for its own sake.
-- **Fold a contiguous prefix of pure-SQL migrations.** The generator runs only each
-  migration's `sql`; a migration with an `apply` hook (138 converts numeric memory, 143
-  hashes `mem_api_keys` secrets) cannot be folded until the generator also runs hooks
-  and the hook is shown to be a no-op on an empty database. Today migration 138 is the
-  first forward migration and has a hook, so the baseline stays at 137.
+- **Fold a contiguous prefix, hooks included.** The generator runs each migration's
+  `sql` AND its `apply` hook on the empty database, because a hook may change the schema
+  even with no rows (138's conversion drops `legacy_memory_outbox`). A folded hook stays
+  in `MIGRATION_HOOKS` in `schema.ts`, keyed by version, so an existing database that
+  upgrades through that version still converts its data; `schema-history.ts` stays pure
+  SQL. 138 and 143 are folded this way (2026-10, baseline 137 → 167, v0.8.0).
+- **Seeded rows need a decision.** A migration that inserts rows on an empty database
+  must reproduce them at installation, not copy the generation-time value: list the
+  table in the generator's `SEEDED_TABLES` with an install-time SQL expression for every
+  per-database column (`shell_allowlist.added_at` today). The next refresh past 170
+  meets `investigation_instance` (a `randomblob` uuid per database): generation fails
+  until it gets such an entry, and `test/schema-baseline.test.ts` asserts two fresh
+  installs get different ids.
 - **How**: move the folded entries verbatim (same versions, same SQL) from
-  `FORWARD_MIGRATIONS` to the end of `schema-history.ts`, raise
-  `SCHEMA_BASELINE_VERSION` in `schema-baseline.ts`, regenerate with
+  `FORWARD_MIGRATIONS` to the end of `schema-history.ts` (hooks to `MIGRATION_HOOKS`),
+  raise `SCHEMA_BASELINE_VERSION` in `schema-baseline.ts`, regenerate with
   `bun scripts/generate-schema-baseline.ts`, and run `bun run schema:check`,
-  `test/schema-baseline.test.ts` and `test/upgrade-from-releases.test.ts`. The schema
-  counter never resets: `SCHEMA_VERSION` and every database's `schema_version` are
-  unchanged by a refresh, and every release fixture must still upgrade to exactly the
-  fresh-install schema.
+  `test/schema-baseline.test.ts` and `test/upgrade-from-releases.test.ts`. Tests that
+  need an older database build it with `migrateEmptyTo`, never from `SCHEMA_BASELINE`.
+  Before folding, check each moved migration's SQL is byte-identical to the tagged
+  release's. The schema counter never resets: `SCHEMA_VERSION` and every database's
+  `schema_version` are unchanged by a refresh, and every release fixture must still
+  upgrade to exactly the fresh-install schema.
 
 The operator side — backup, first-boot migration, verification, rollback and the
 newer-schema refusal — is in [Upgrading a server](../guides/upgrading.md).

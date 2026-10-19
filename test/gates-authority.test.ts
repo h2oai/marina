@@ -32,7 +32,7 @@ import {
 } from "../src/engine/safety-gates";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
-import { FORWARD_MIGRATIONS } from "../src/persistence/schema";
+import { MIGRATIONS } from "../src/persistence/schema";
 import { type EntityId, roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, until } from "./helpers";
 
@@ -321,7 +321,7 @@ describe("migration 140 carries capability across", () => {
       "INSERT INTO entity_competence (entity_id, gate, demonstrations, supervised_only) VALUES (?, 'admin.destructive', 999, 0), (?, 'admin.destructive', 0, 1)",
       ["u_admin", "u_learner"],
     );
-    const sql = FORWARD_MIGRATIONS.find((m) => m.version === 140)?.sql ?? "";
+    const sql = MIGRATIONS.find((m) => m.version === 140)?.sql ?? "";
     raw.exec(sql);
     const rows = raw
       .query(
