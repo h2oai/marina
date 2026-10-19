@@ -23,8 +23,12 @@
  * analysis found 15 of 160 clean-backtest rows mistyped; 14 are fixed, the
  * 15th resolved to a void outcome, which no answer shape expresses).
  *
- * The full prompt rides along as `context` (it carries the settlement rules
- * and the requested format); the row's end time becomes the evidence cutoff.
+ * The full prompt rides along as `context` (it carries the settlement rules);
+ * the row's end time becomes the evidence cutoff. The prompt's own format line
+ * ("IMPORTANT: End with … \boxed{…}") is stripped by default; `formatLine:
+ * "keep"` keeps it, so the core answer contract (`MARINA_FORECAST_CONTRACT`,
+ * src/forecast/answer-contract.ts) can read and enforce it — the switch that
+ * lets the format line's effect be measured.
  */
 
 import type { AnswerOption, AnswerSpec } from "../../src/forecast/answer-types";
@@ -226,18 +230,25 @@ export function endTimeIso(raw: string): string | undefined {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
 
+/** Keep or strip the prompt's "IMPORTANT: End with …" format line (default `strip`). */
+export type FormatLineMode = "strip" | "keep";
+export const FORMAT_LINE_MODES: readonly FormatLineMode[] = ["strip", "keep"];
+
+const FORMAT_LINE = /IMPORTANT: End with[^\n]*/g;
+
 /** The general forecast request for one row. */
-export function requestFor(row: FuturexRow, opts: { asOf?: string } = {}): TypedForecastRequest {
+export function requestFor(
+  row: FuturexRow,
+  opts: { asOf?: string; formatLine?: FormatLineMode } = {},
+): TypedForecastRequest {
   const endTime = endTimeIso(row.end_time);
+  const prompt = opts.formatLine === "keep" ? row.prompt : row.prompt.replace(FORMAT_LINE, "");
   return {
     question: questionText(row).slice(0, 1_000),
     answer: specFor(row),
     ...(endTime ? { endTime } : {}),
     ...(opts.asOf ? { asOf: opts.asOf } : {}),
-    context: `${TIME_NOTE}\n\n${row.prompt.replace(/IMPORTANT: End with[^\n]*/g, "").trim()}`.slice(
-      0,
-      4_000,
-    ),
+    context: `${TIME_NOTE}\n\n${prompt.trim()}`.slice(0, 4_000),
   };
 }
 

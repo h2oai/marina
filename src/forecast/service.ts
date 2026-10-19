@@ -35,7 +35,11 @@
  *   MARINA_FORECAST_CRITIQUE   on | off (default on)
  *   MARINA_FORECAST_LOOKUPS    optional structured sources: polymarket, kalshi, odds, fred,
  *                              bls, markets, all, off (default auto: every available
- *                              lookup; keys ODDS_API_KEY, FRED_API_KEY, BLS_API_KEY)
+ *                              lookup; keys ODDS_API_KEY, FRED_API_KEY, BLS_API_KEY), plus
+ *                              opt-in `manifold` (only when named)
+ *   MARINA_FORECAST_CONTRACT   off | observe | on (default off): the answer contract —
+ *                              the question's own answer-form instructions parsed, carried
+ *                              through every stage and enforced (`./answer-contract.ts`)
  *   MARINA_FORECAST_VERIFY     on | off (default on): each run's draft is checked by
  *                              MARINA_FORECAST_VERIFIER (default: the critic) before it counts
  *   MARINA_FORECAST_RETRIEVAL_FILTER  strict | none (default none): keep only report lines
@@ -67,6 +71,7 @@ import { dailyCapRefusal } from "../engine/spend-ledger";
 import { vendorModelSpec } from "../net/model/default-models";
 import { researchRetriever } from "../research/retriever";
 import { type AdjustSettings, adjustSettingsFromEnv } from "./adjust";
+import { contractModeFromEnv } from "./answer-contract";
 import { SELECTION_MODES, type SelectionMode } from "./answer-types";
 import type { ForecastHistory } from "./history";
 import type { LessonStore } from "./lessons";
@@ -330,7 +335,9 @@ export function typedOptionsFromEnv(
   const minEvidence = intEnv(env.MARINA_FORECAST_MIN_EVIDENCE);
   const disagreement = env.MARINA_FORECAST_DISAGREEMENT?.trim().toLowerCase();
   const pool = env.MARINA_FORECAST_POOL?.trim().toLowerCase();
+  const contract = contractModeFromEnv(env);
   return {
+    ...(contract !== "off" ? { contract } : {}),
     ...(SELECTION_MODES.includes(selection as SelectionMode)
       ? { selection: selection as SelectionMode }
       : {}),

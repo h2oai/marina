@@ -57,6 +57,12 @@ import {
 } from "../repair/output-repair";
 import type { AdjustmentRecord, AdjustSettings } from "./adjust";
 import {
+  type AnswerContract,
+  type ContractMode,
+  type ContractRecord,
+  contractInstruction,
+} from "./answer-contract";
+import {
   type AnswerOption,
   type AnswerSpec,
   type AnswerValue,
@@ -116,6 +122,13 @@ export interface TypedForecastRequest {
    * with the time it was observed. One observed after the cutoff is rejected.
    */
   priors?: SuppliedPrior[];
+  /**
+   * The required FORM of the final answer (`answer-contract.ts`): carried to
+   * the planner, runs, verifier, critic, formations and judge, and enforced
+   * at the end of `forecastFormed`. Usually parsed from the question's own
+   * instructions under `MARINA_FORECAST_CONTRACT=on`; a caller may set it.
+   */
+  contract?: AnswerContract;
 }
 
 export interface TypedForecastOptions {
@@ -203,6 +216,14 @@ export interface TypedForecastOptions {
    * Skipped in the budget's final phase.
    */
   completion?: boolean;
+  /**
+   * The answer contract (`answer-contract.ts`, `MARINA_FORECAST_CONTRACT`):
+   * `off` (default) parses nothing; `observe` parses the question's format
+   * instructions and records whether the final answer meets them, changing
+   * nothing; `on` carries the contract through every stage and enforces it
+   * (normalise, re-ask once, deterministic fallback). Read by `forecastFormed`.
+   */
+  contract?: ContractMode;
 }
 
 export type GroundingFollowUpMode = "all" | "one" | "off";
@@ -394,6 +415,8 @@ export interface TypedForecastAnswer {
   budgetForced?: BudgetForced;
   /** Prior shrink and recalibration (`./adjust.ts`): the raw forecast, the prior, the learned settings. */
   adjustment?: AdjustmentRecord;
+  /** The answer contract's final check (`answer-contract.ts`): what it found and did. */
+  contract?: ContractRecord;
 }
 
 const MAX_DOSSIER_CHARS = 24_000;
@@ -401,8 +424,23 @@ const MAX_DOSSIER_CHARS = 24_000;
 const clampInt = (v: number | undefined, lo: number, hi: number, d: number) =>
   v === undefined || !Number.isFinite(v) ? d : Math.min(hi, Math.max(lo, Math.round(v)));
 
-/** How the answer must be given, per type — shared by runs and critic. */
-export function answerInstruction(spec: AnswerSpec): string {
+/**
+ * How the answer must be given, per type — shared by runs and critic; with a
+ * contract, its required form follows.
+ */
+export function answerInstruction(spec: AnswerSpec, contract?: AnswerContract): string {
+  const base = typeInstruction(spec);
+  return contract ? `${base}\n${contractInstruction(contract)}` : base;
+}
+
+/** The judge's view of the question: with a contract, the required answer form too. */
+export function judgeQuestion(req: TypedForecastRequest): string {
+  return req.contract
+    ? `${req.question}\n${contractInstruction(req.contract).split("\n")[0]}`
+    : req.question;
+}
+
+function typeInstruction(spec: AnswerSpec): string {
   switch (spec.type) {
     case "choice":
       return [
@@ -595,6 +633,7 @@ export async function forecastTyped(
     `Question: ${req.question}`,
     req.context ? `How it resolves / notes:\n${req.context.slice(0, 4_000)}` : "",
     req.endTime ? `The question closes: ${req.endTime}` : "",
+    req.contract ? contractInstruction(req.contract) : "",
     `Forecast made as of: ${cutoff.at} (the evidence cutoff — use nothing published after it; the event itself happens later)`,
     out.lessons?.length
       ? `Lessons from earlier resolved questions (apply where relevant):\n${out.lessons.map((l) => `- ${l.text}`).join("\n")}`
@@ -1197,7 +1236,7 @@ async function runIndependent(
         judgeRecord,
         `Answer: ${run.formatted}. ${run.reason ?? ""}`,
         evidence,
-        req.question,
+        judgeQuestion(req),
         (g, q) => Math.max(0.05, (g ?? 0) * ((q ?? 0) / 2)),
       );
       run.weight = judged.weight;

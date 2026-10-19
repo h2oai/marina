@@ -280,6 +280,33 @@ The typed answer object keeps every stage — plan, each research round (with it
 and warnings), lookups, every run with its reason and weight, the combination and its support, the
 critique, the cutoff, sources, verification, evidence budget, judge record, cost and time. In-world answers are saved like any other forecast.
 
+### Answer contract
+
+A question often says how its answer must be written: "End with the option letter in
+`\boxed{}`", "a date in YYYY-MM-DD", "rounded to one decimal place", "select up to two", "list
+the top 3", "in at most four words". `MARINA_FORECAST_CONTRACT` (default `off`) turns those
+instructions into an explicit **answer contract** (`src/forecast/answer-contract.ts`) — the form
+(single choice, multi-select with pick bounds, a number with unit / integer / decimals, a date
+in a format, a ranked list of a size, free text with a word limit), an optional `\boxed{…}`
+wrapper and the format line verbatim — read from the question and its `context` and refining the
+typed `answer` spec. A question that states no such instruction gets no contract.
+
+- `observe` parses the contract and records on the answer (`contract`) whether the final answer
+  meets it. No prompt and no answer changes.
+- `on` carries the contract to the planner, every run, the verifier, the critic, the Delphi and
+  tournament formations and the judge. Then a final validator checks the finished answer. A
+  lossless rewrite (letter case, an option's label to its id, a date in another notation, rounding
+  to the stated decimals, a list cut to its size) is applied directly. A real violation (not an
+  option, two dates, a short list, too many words) is re-asked once of the critic (else the
+  planner), and if that fails a deterministic fallback is used (the first option named, else the
+  most probable; the first number or date; a list or text cut to its limit). The answer keeps
+  `contract.status` (`ok`, `normalized`, `reasked`, `fallback` or `violation`), the pipeline's own
+  answer in `contract.before` and the required rendering in `contract.rendered`; the prediction
+  changes only when the contract's value is a valid typed answer. A forecast with no answer is
+  never filled in.
+
+A request that carries its own `contract` is enforced unless the mode is `observe`.
+
 ## Priors, calibration, the skeptic crew and routing
 
 Four mechanisms from Marina's [Social Simulation Arena](arena.md) forecaster, generalised to any
@@ -451,7 +478,8 @@ are saved with their answer as one string (`prediction`).
 | `MARINA_FORECAST_CRITIQUE` | `on` | `off` skips the critique |
 | `MARINA_FORECAST_SELECTION` | `agreement` | typed answers: `confidence` takes the most self-confident run instead of combining by agreement (see Combine) |
 | `MARINA_FORECAST_BUDGET_S` | unset (none) | typed answers: wall-clock budget per forecast. From about 75 % no further research round starts. At the cap, lookups, verification and the critique are skipped and the answer is combined from the runs that have finished (the first to finish, when none has). The answer then carries `budgetForced`, and a skipped check is `verified.verdict: "not_run"` |
-| `MARINA_FORECAST_LOOKUPS` | `auto` | structured sources: `auto` (every one that can run here), `off`, or a list of `polymarket`, `kalshi`, `odds`, `fred`, `bls`, `markets` / `all` (see [Lookups](#lookups)) |
+| `MARINA_FORECAST_LOOKUPS` | `auto` | structured sources: `auto` (every one that can run here), `off`, or a list of `polymarket`, `kalshi`, `odds`, `fred`, `bls`, `markets` / `all`, plus the opt-in `manifold` (see [Lookups](#lookups)) |
+| `MARINA_FORECAST_CONTRACT` | `off` | typed answers: the [answer contract](#answer-contract) — `observe` records whether the final answer meets the question's own format instructions; `on` carries them through every stage and enforces them |
 | `MARINA_FORECAST_MARINA_URL` / `_KEY` | `http://localhost:3300` | where `marina:<crew>` analysts are asked |
 
 An analyst may be a crew: `MARINA_FORECAST_ANALYSTS=marina:answerer` asks the `answerer` crew on a
@@ -491,6 +519,15 @@ read as FRED's current date).
 | `odds` | The Odds API head-to-head | current pre-game odds, margin removed, averaged across bookmakers | the snapshot at or before the cutoff (`/historical`, a paid-plan endpoint) | `ODDS_API_KEY` |
 | `fred` | FRED (St. Louis Fed) | latest observations | as published on the cutoff date (ALFRED vintages) | `FRED_API_KEY` for a past cutoff; keyless works live |
 | `bls` | BLS public API | latest monthly observations | skipped (BLS serves only the latest revision) | `BLS_API_KEY` optional (raises the quota) |
+| `manifold` (opt-in) | Manifold Markets (play money) | probability, volume and scheduled close of open markets; a multiple-choice market's leading answers | yes/no markets only: the probability after the last trade at or before the cutoff (bet history, within 30 days) and the mana traded up to it; never the current probability, volume, close date or resolution; nothing when the history is missing | none |
+
+Opt-in lookups run only when named (`MARINA_FORECAST_LOOKUPS=auto,manifold`, or
+`MARINA_ARENA_RESEARCH_LOOKUPS=fred,manifold`); `auto`, `all` and `markets` never include them, so
+adding one changes no default. A market created after the cutoff, or settled by then, contributes
+nothing. Good Judgment Open is not offered: it has no public API, its terms forbid automated
+collection, and its crowd forecasts are not published as of a past date, so no reading would be
+safe for a backtest. A further crowd source implements the same lookup interface in
+`src/forecast/lookup-crowd.ts` and adds one entry to `OPT_IN_LOOKUPS` in `src/forecast/lookups.ts`.
 
 Markets are matched to the question by their words (and by date when both sides know one) with a
 conservative threshold, so an unrelated market's price is never shown. Sports odds show only games
