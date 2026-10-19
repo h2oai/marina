@@ -65,6 +65,7 @@ export function researchRetriever(
     evidenceLoopRetriever(base, {
       pageText: defaultPageText(),
       maxRounds: settings.rounds,
+      ...(settings.authority ? { authority: true } : {}),
       targetEvidence: settings.targetEvidence,
       advice: settings.advice,
       advisory: {

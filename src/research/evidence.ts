@@ -105,7 +105,14 @@ export async function captureEvidence(
       return links.length > 0 && links.every((url) => pages.has(url));
     })
     .join("\n");
-  const checked = await verifyDossier(text, reader);
+  // Only the authority flags ride along (the reader already holds the same text).
+  const checked = await verifyDossier(
+    text,
+    reader,
+    sources
+      .filter((s) => s.authoritative && !s.error)
+      .map((s) => ({ url: s.url, authoritative: true })),
+  );
   const value = {
     version: 1 as const,
     brief: structuredClone(brief),

@@ -171,7 +171,11 @@ function wire(env: NodeJS.ProcessEnv): Wired | { error: string } {
         defaultAnalystSpecs(env)[0],
     );
     if (env.MARINA_READ_SWARM_READER?.trim()) retrieverLabel += "+read-swarm";
-    if (env.MARINA_RESEARCH_EVIDENCE === "on" || Number(env.MARINA_RESEARCH_LOOP_ROUNDS ?? 1) > 1)
+    if (
+      env.MARINA_RESEARCH_EVIDENCE === "on" ||
+      env.MARINA_RESEARCH_AUTHORITY?.trim().toLowerCase() === "on" ||
+      Number(env.MARINA_RESEARCH_LOOP_ROUNDS ?? 1) > 1
+    )
       retrieverLabel += "+evidence-loop";
   } catch (err) {
     return {

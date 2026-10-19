@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Research authority mode** (`MARINA_RESEARCH_AUTHORITY=on`, default off): research can find and
+  read the publisher a question resolves against. A brief's settlement pages are authority targets
+  from the first round, and the evidence loop's gap reviewer may name one (domain, page URL, field)
+  as a validated part of its reply. The `search` retriever adds one domain-restricted query per
+  target (Tavily `include_domains`, Exa `includeDomains`, `site:` elsewhere); a named page is read
+  first only for a live cutoff, never in a date-strict backtest; the read swarm asks for the
+  field's exact value with its as-of date and reads the publisher first; and `verifyDossier` tags
+  lines citing only the publisher's sources `[authoritative]`. Off leaves prompts, briefs, dossiers
+  and forecast-settings fingerprints unchanged. See docs/guides/search.md.
 - **Search engines for research retrieval**: `openrouter-web:<model>@<engine>[:<mode>]` accepts
   every OpenRouter web plugin engine — `native`, `exa` (instant … deep-reasoning), `parallel`
   (turbo … advanced), `perplexity`, `firecrawl` — validates engine and mode, and adds the engine's

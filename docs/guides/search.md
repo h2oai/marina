@@ -122,6 +122,40 @@ The loop uses the shared Score executor and WorkBudget. `MARINA_RESEARCH_LOOP_MO
 the reviewer; absent, it uses the caller's lead/first analyst. `MARINA_READ_SWARM_READER`
 adds full-page readers before verification on both general forecasts and arena research routes.
 
+### Research authority mode
+
+Many questions resolve against one publisher: an official statistic, a league table, an
+exchange or agency page. `MARINA_RESEARCH_AUTHORITY=on` (default off; implies evidence capture)
+lets research find and read that source (`src/research/authority.ts`):
+
+- **Targets.** A brief's settlement pages (`readFirst`) and any `authority` it carries are
+  authority targets from the first round. With `MARINA_RESEARCH_LOOP_ROUNDS` of 2 or more, the gap
+  reviewer may also name one, next to its queries:
+  `"authority": {"domain": "…", "url": "…", "field": "…"}` — the publisher's domain, the page if
+  it knows it, and the exact field to read. The reply is untrusted: a target must be a public DNS
+  host, its URL an http(s) page on that host, and at most two are kept. An invalid one is ignored
+  (`authorityRejected` in the round's audit), never fatal. A newly named publisher earns one more
+  round even when the reviewer asked no further query.
+- **Search.** The `search` retriever adds one domain-restricted query per target: a native domain
+  filter on backends that have one (Tavily `include_domains`, Exa `includeDomains`), a `site:`
+  operator for the rest (SearXNG, DuckDuckGo, DeepSeek). The funnel counts them as
+  `authorityQueries`. Other retrievers ignore targets.
+- **Direct read.** A named page joins `readFirst` only for a live cutoff. A date-strict retriever
+  (a backtest) never gets a direct authority fetch; its own date bound still decides what it reads.
+  The usual SSRF guard, `NO_FETCH_DOMAINS`, `brief.exclude` and after-cutoff filters apply to
+  every authority page.
+- **Read swarm.** With `MARINA_READ_SWARM_READER` set, each target's field becomes a reader clue
+  asking for the exact value with its as-of date, and the publisher's pages are read first.
+- **Tagging.** Sources on a target's domain are flagged `authoritative`. The citation check
+  (`verifyDossier`) prefixes a line that cites only such sources with `[authoritative]` (after the
+  status tag in the annotated dossier), so forecasters can weight it. The tag is recomputed from
+  the sources each time, so a model cannot create it by writing it.
+- **Audit.** The loop records the named target per round and the final targets in
+  `researchLoop.authority`.
+
+When the setting is off, prompts, briefs, dossiers and forecast-settings fingerprints are
+unchanged.
+
 These features are opt-in and metered through the usual spend ledger. Typed forecasts and
 research reports already have outer gap rounds: keep those at one round/disabled when measuring
 the inner loop in isolation. A capture's fetch time does not prove when the information first

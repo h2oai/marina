@@ -14,12 +14,18 @@
  * Off unless an operator names a reader model (`MARINA_READ_SWARM_READER`); a
  * reader outage leaves the inner report as it was. Date-strictness is
  * preserved: the readers only read pages the inner retriever returned.
+ *
+ * When the brief names authority publishers (`brief.authority`, research
+ * authority mode), each named field becomes a clue asking for its exact value
+ * with its as-of date, the publishers' pages are read first, and their quotes
+ * lead the dossier lines.
  */
 
 import type { DecisionProvider } from "../../decisions/types";
 import { logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { getCorpusDocument, parseCorpusUrl } from "../../engine/search-providers/corpus";
+import { authorityClue, matchesAuthority } from "../../research/authority";
 import { type Candidate, type FirstMoveModel, judgeRerank } from "../../retrieval/first-move";
 import { type DocReading, ReadSwarm } from "../../retrieval/read-swarm";
 import { isDateStrict, type ResearchReport, type Retriever, type Source } from "./retrieve";
@@ -62,6 +68,8 @@ export interface ReadSwarmBriefStats {
   quotesVerified: number;
   dossierLines: number;
   clues: number;
+  /** Clues asking for an authority publisher's field (absent when none). */
+  authorityClues?: number;
   /** How the reading order was decided. */
   order: "judged" | "retriever";
   judgeError?: string;
@@ -74,13 +82,19 @@ function linkTitle(title: string): string {
   return title.replace(/[[\]]/g, "").replace(/\s+/g, " ").trim().slice(0, 120) || "source";
 }
 
-/** One cited line per verified quote: `- "<quote>" [title](url)`, clue-bearing readings first. */
+/**
+ * One cited line per verified quote: `- "<quote>" [title](url)`, readings of an
+ * authority page (`first`) first, then clue-bearing readings.
+ */
 export function swarmDossierLines(
   readings: readonly DocReading[],
   titles: ReadonlyMap<string, string | undefined>,
+  first: (url: string) => boolean = () => false,
 ): string[] {
   const lines: string[] = [];
-  const ordered = [...readings].sort((a, b) => b.clues.length - a.clues.length);
+  const ordered = [...readings].sort(
+    (a, b) => Number(first(b.id)) - Number(first(a.id)) || b.clues.length - a.clues.length,
+  );
   for (const r of ordered) {
     for (const q of r.quotes) {
       if (!q.verified || q.text.replace(/\s+/g, " ").trim().length < MIN_QUOTE_CHARS) continue;
@@ -103,7 +117,21 @@ export function readSwarmRetriever(inner: Retriever, opts: ReadSwarmRetrieverOpt
       if (s.text) texts.set(s.url, s.text);
     }
     const question = brief.request.slice(0, 2000);
-    const clues = (brief.queries ?? []).map((q) => q.trim()).filter(Boolean);
+    const authority = brief.authority ?? [];
+    const isAuthority = (url: string) => authority.length > 0 && matchesAuthority(url, authority);
+    const authorityClues = authority.flatMap((t) => {
+      const clue = authorityClue(t);
+      return clue ? [clue] : [];
+    });
+    const briefClues = (brief.queries ?? []).map((q) => q.trim()).filter(Boolean);
+    // Authority clues join the brief's clues; with none, the question's first line leads.
+    const clues =
+      authorityClues.length && !opts.decompose
+        ? [
+            ...(briefClues.length ? briefClues : [question.split("\n")[0]!.trim()].filter(Boolean)),
+            ...authorityClues,
+          ]
+        : briefClues;
     const swarm = new ReadSwarm(question, {
       search: async () => [],
       read: async (url, offset, maxChars) => {
@@ -160,10 +188,16 @@ export function readSwarmRetriever(inner: Retriever, opts: ReadSwarmRetrieverOpt
         order = "judged";
       } else judgeError = judged.error;
     }
+    // The authority publishers' pages are read first (stable otherwise).
+    if (authority.length)
+      pages = [
+        ...pages.filter((p) => isAuthority(p.id)),
+        ...pages.filter((p) => !isAuthority(p.id)),
+      ];
     // Reads are reserved in list order, so the read budget keeps the first pages.
     await swarm.readMany(pages);
     const readings = swarm.readings();
-    const lines = swarmDossierLines(readings, titles);
+    const lines = swarmDossierLines(readings, titles, isAuthority);
     const cost = Math.max(0, (opts.spent?.() ?? before) - before);
     const st = swarm.stats();
     const stats: ReadSwarmBriefStats = {
@@ -175,6 +209,9 @@ export function readSwarmRetriever(inner: Retriever, opts: ReadSwarmRetrieverOpt
       quotesVerified: st.quotesVerified,
       dossierLines: lines.length,
       clues: st.clues,
+      ...(authorityClues.length && !opts.decompose
+        ? { authorityClues: authorityClues.length }
+        : {}),
       order,
       ...(judgeError ? { judgeError } : {}),
     };

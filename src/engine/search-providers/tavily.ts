@@ -35,6 +35,7 @@ export function tavilyProvider(apiKey: string): SearchProvider {
   return {
     name: "tavily",
     engines: ["web", "news"],
+    domainFilter: true,
 
     async search(
       query: string,
@@ -53,6 +54,7 @@ export function tavilyProvider(apiKey: string): SearchProvider {
         include_answer: false,
         topic: includeNews ? "news" : "general",
         include_usage: true,
+        ...(opts.domains?.length ? { include_domains: opts.domains } : {}),
       });
 
       const capped = dailyCapRefusal();
