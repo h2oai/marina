@@ -665,7 +665,16 @@ figure's population, response category and subgroup definition; its search budge
    Sonar through OpenRouter (native search; `sonar`, `sonar-pro`, `sonar-pro-search`,
    `sonar-reasoning-pro`, `sonar-deep-research`), and a comma-separated list runs several engines
    on the same brief and merges their reports (each under its own heading, sources de-duplicated),
-   e.g. `openrouter-web:openai/gpt-6-luna,sonar:sonar-pro`. `tavily:basic` / `tavily:advanced`
+   e.g. `openrouter-web:openai/gpt-6-luna,sonar:sonar-pro`. `openrouter-web:<model>@<engine>[:<mode>]`
+   picks the web plugin's engine: `native` (vendor search, passed-through price), `exa`
+   (`instant`/`fast`/`auto` $0.007, `deep-lite`/`deep` $0.012, `deep-reasoning` $0.015 per request),
+   `parallel` (`turbo`/`fast` $0.001, `basic`/`advanced` $0.005), `perplexity` ($0.005) or
+   `firecrawl` ($0.005 + $0.0125 per result); Exa and Parallel add $0.001 per result beyond 10.
+   The engine's list price is added to the model's cost for each call. `search:<backend>+…` runs the
+   page-reading engine over a backend chain, e.g. `search:duckduckgo+deepseek` (DeepSeek's Search
+   API with `DEEPSEEK_API_KEY`, $0.75 per 1,000 non-empty searches; the brief's window rides as
+   `after:`/`before:` operators) — prices and details in [search.md](search.md#engines-and-prices).
+   `tavily:basic` / `tavily:advanced`
    calls Tavily's search API directly (`TAVILY_API_KEY`): one news search per brief query, dated
    from the brief's window, up to 8 results each; no model writes the report — each result (best
    12 by score, anything published before the window dropped) becomes one line
@@ -1139,7 +1148,7 @@ not isolate evidence sharing as cleanly.
 | `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
 | `MARINA_ARENA_TRENDS_PARTIAL` | off | `on` counts a Trends basket's partial current week |
 | `MARINA_ARENA_CIVIQS_LIVE` | on | `off` stops the nowcast reading the live Civiqs dashboard for open rounds |
-| `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:google/gemini-3.1-pro-preview` | the research agent's search backend(s): `openrouter-web:<model>`, `sonar:<model>`, `tavily:basic` / `tavily:advanced` (needs `TAVILY_API_KEY`), comma-separated to merge |
+| `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:google/gemini-3.1-pro-preview` | the research agent's search backend(s): `openrouter-web:<model>[@<native\|exa\|parallel\|perplexity\|firecrawl>[:<mode>]]`, `sonar:<model>`, `tavily:basic` / `tavily:advanced` (needs `TAVILY_API_KEY`), `search:<backends>` (e.g. `duckduckgo+deepseek`), comma-separated to merge |
 | `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend; falls back to `jev`) or `none` |
 | `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |
 | `MARINA_ARENA_PROPOSAL_JUDGE` | `on` | delphi / symbiosis with verified research: judged support weights the move and lowers trust; `observe` records only, `off` skips |

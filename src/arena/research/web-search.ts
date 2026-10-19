@@ -9,7 +9,9 @@
  *   1. searches EVERY brief query (the planner's decomposition: entities,
  *      latest news, the resolution source, official data, base rates);
  *   2. through a backend chain — Tavily, Exa, SearXNG, DuckDuckGo, then
- *      OpenRouter's Exa plugin, whichever this installation has, in that order. A backend that fails (a key out
+ *      DeepSeek's Search API and OpenRouter's Exa plugin, whichever this
+ *      installation has, in that order (the brief's window rides along as
+ *      `before`/`after`, which date-aware backends such as DeepSeek apply). A backend that fails (a key out
  *      of credit answers HTTP 432, an outage, the daily spend cap) is recorded
  *      in the search-health ledger (shown by `readiness`), skipped for the
  *      rest of the brief, and the next backend answers the same query. Every
@@ -37,6 +39,7 @@
 import { extractPublishedDate, extractReadableText } from "../../engine/html-text";
 import { standaloneSearchHttp } from "../../engine/search-providers/asof-http";
 import { dateBoundProvider } from "../../engine/search-providers/asof-providers";
+import { deepSeekSearchProvider } from "../../engine/search-providers/deepseek";
 import { duckDuckGoProvider } from "../../engine/search-providers/duckduckgo";
 import { recordSearchOutcome, searchBackendDown } from "../../engine/search-providers/health";
 import type { SearchHttp, SearchProvider, SearchResult } from "../../engine/search-providers/index";
@@ -314,15 +317,17 @@ export const WEB_SEARCH_BACKEND_NAMES = [
   "exa",
   "searxng",
   "duckduckgo",
+  "deepseek",
   "openrouter",
 ] as const;
 
 /**
  * The backend chain: `MARINA_RESEARCH_SEARCH_BACKENDS` (comma-separated names,
  * in order) or, unset, every configured one — Tavily (TAVILY_API_KEY), Exa
- * (EXA_API_KEY), SearXNG (SEARXNG_URL) — then keyless DuckDuckGo, then
- * OpenRouter's Exa plugin (OPENROUTER_API_KEY) as the paid fallback when the
- * free engine is throttled. A named backend without its key is left out and
+ * (EXA_API_KEY), SearXNG (SEARXNG_URL) — then keyless DuckDuckGo, then the
+ * paid fallbacks when the free engine is throttled: DeepSeek's Search API
+ * (DEEPSEEK_API_KEY, $0.75 per 1,000 searches) and OpenRouter's Exa plugin
+ * (OPENROUTER_API_KEY). A named backend without its key is left out and
  * reported in `skipped`.
  */
 export function searchBackendsFromEnv(env: NodeJS.ProcessEnv = process.env): {
@@ -350,6 +355,10 @@ export function searchBackendsFromEnv(env: NodeJS.ProcessEnv = process.env): {
       else if (listed) skipped.push("searxng (no SEARXNG_URL)");
     } else if (name === "duckduckgo") {
       backends.push(duckDuckGoProvider());
+    } else if (name === "deepseek") {
+      const key = env.DEEPSEEK_API_KEY?.trim();
+      if (key) backends.push(deepSeekSearchProvider(key));
+      else if (listed) skipped.push("deepseek (no DEEPSEEK_API_KEY)");
     } else if (name === "openrouter") {
       const key = env.OPENROUTER_API_KEY?.trim();
       if (key) {
@@ -700,6 +709,10 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
     );
     const bound = Number.isFinite(boundMs) ? boundMs : now.getTime();
     const live = now.getTime() - bound < LIVE_SLACK_MS;
+    const sinceMs = brief.since
+      ? Date.parse(`${brief.since.slice(0, 10)}T00:00:00.000Z`)
+      : Number.NaN;
+    const sinceIso = Number.isFinite(sinceMs) ? new Date(sinceMs).toISOString() : undefined;
     const passageChars =
       opts.passageChars ??
       (brief.maxChars && brief.maxChars > 0
@@ -733,7 +746,14 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
           try {
             const results = await backend.search(
               q,
-              { maxResults: perQuery, engines: ["web", "news"], spend },
+              {
+                maxResults: perQuery,
+                engines: ["web", "news"],
+                spend,
+                // A past cutoff bounds the search; the brief's window start is a hint.
+                ...(live ? {} : { before: new Date(bound).toISOString() }),
+                ...(sinceIso ? { after: sinceIso } : {}),
+              },
               http,
             );
             recordSearchOutcome(backend.name);

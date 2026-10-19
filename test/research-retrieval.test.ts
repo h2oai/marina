@@ -398,7 +398,7 @@ describe("retriever specs", () => {
     );
     expect(() => retrieverFromSpec("openrouter-web:m@exa", { openrouter: "k" })).not.toThrow();
     expect(() => retrieverFromSpec("openrouter-web:m@bing", { openrouter: "k" })).toThrow(
-      "exa or native",
+      "unknown web plugin engine",
     );
     // A date-strict run can never mix in the open web.
     expect(() => retrieverFromSpec("search", {}, { requireDateStrict: true, env: {} })).toThrow(
