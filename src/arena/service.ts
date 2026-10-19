@@ -7,7 +7,7 @@
  * a key rotation or an autopilot switch takes effect without a restart.
  */
 
-import { getErrorMessage } from "../engine/errors";
+import { getErrorMessage, logRejection } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
@@ -894,7 +894,9 @@ export async function runArenaFilingWatch(
     const data = dataFor(config);
     const references = new Map<string, AnchorReference>();
     for (const round of rounds) {
-      const reference = await data.anchorReference(round).catch(() => undefined);
+      const reference = await data
+        .anchorReference(round)
+        .catch(logRejection(logger, "arena", "anchor reference lookup failed", { level: "debug" }));
       if (reference) references.set(round.round_id, reference);
     }
     result = {
