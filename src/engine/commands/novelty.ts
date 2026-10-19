@@ -44,10 +44,10 @@ export function noveltyCommand(deps: {
   return {
     category: "Cognition",
     usage: [
-      "novelty",
-      "novelty stats",
-      "novelty suggest [goal]",
-      "novelty experiments [benchmark]",
+      { syntax: "novelty", effect: "read" },
+      { syntax: "novelty stats", effect: "read" },
+      { syntax: "novelty suggest [goal]", effect: "read" },
+      { syntax: "novelty experiments [benchmark]", effect: "read" },
     ],
     name: "novelty",
     aliases: [],

@@ -162,7 +162,13 @@ export function syncOperationalAlerts(deps: OpsDependencies): void {
 export function opsCommand(deps: OpsDependencies): CommandDef {
   return {
     category: "System",
-    usage: ["ops ack <id>", "ops history", "ops inbox", "ops recover", "ops resolve <id>"],
+    usage: [
+      { syntax: "ops ack <id>", effect: "write" },
+      { syntax: "ops history", effect: "read" },
+      { syntax: "ops inbox", effect: "read" },
+      { syntax: "ops recover", effect: "write" },
+      { syntax: "ops resolve <id>", effect: "write" },
+    ],
     name: "ops",
     aliases: ["alerts"],
     minRank: 0,

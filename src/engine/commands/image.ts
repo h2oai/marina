@@ -22,10 +22,20 @@ export function imageCommand(engine: Engine): CommandDef {
   return {
     category: "Canvas & Media",
     usage: [
-      "image generate <prompt...>",
-      "image generate <prompt...> [model:<provider/model>] [style:<style>] [width:<px>] [height:<px>] [canvas:<name>]",
-      "image generate <prompt...> [style:synthwave] [width:1024] [canvas:name]",
-      "image describe <node|asset|url> [question...] [model:<provider/model>]",
+      { syntax: "image generate <prompt...>", effect: "execute" },
+      {
+        syntax:
+          "image generate <prompt...> [model:<provider/model>] [style:<style>] [width:<px>] [height:<px>] [canvas:<name>]",
+        effect: "execute",
+      },
+      {
+        syntax: "image generate <prompt...> [style:synthwave] [width:1024] [canvas:name]",
+        effect: "execute",
+      },
+      {
+        syntax: "image describe <node|asset|url> [question...] [model:<provider/model>]",
+        effect: "write",
+      },
     ],
     name: "image",
     help: "Generate or read images. Usage: image generate <prompt...> [model:<provider/model>] [style:<style>] [width:<px>] [height:<px>] [canvas:<name>] (also --width 1024) | image describe <node|asset|url> [question] [model:<provider/model>]",

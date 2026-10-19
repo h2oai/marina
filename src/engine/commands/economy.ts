@@ -23,11 +23,23 @@ export function economyCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "economy adapter <id> | <kind> | <network> | <reference|observe|submit> [| endpoint-ref] [| configuration-ref]",
-      "economy contract <goal-ref> | <terms JSON> | <verification method> | <dispute method> [| adapter] [| asset-ref]",
-      "economy event <contract> <kind> | <actor-ref> | <subject-ref> | <amount> | <asset-ref> | <external-tx-ref> | <causal refs csv> | <data JSON>",
-      "economy list",
-      "economy show <contract>",
+      {
+        syntax:
+          "economy adapter <id> | <kind> | <network> | <reference|observe|submit> [| endpoint-ref] [| configuration-ref]",
+        effect: "write",
+      },
+      {
+        syntax:
+          "economy contract <goal-ref> | <terms JSON> | <verification method> | <dispute method> [| adapter] [| asset-ref]",
+        effect: "write",
+      },
+      {
+        syntax:
+          "economy event <contract> <kind> | <actor-ref> | <subject-ref> | <amount> | <asset-ref> | <external-tx-ref> | <causal refs csv> | <data JSON>",
+        effect: "write",
+      },
+      { syntax: "economy list", effect: "read" },
+      { syntax: "economy show <contract>", effect: "read" },
     ],
     name: "economy",
     aliases: [],

@@ -20,11 +20,19 @@ export function mutationCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "mutation genome <parent-genome-hash> | <summary> | <patch JSON> [| evidence refs csv]",
-      "mutation lineage <domain> <target-ref>",
-      "mutation list [domain]",
-      "mutation record <domain> <target-ref> | <disposition> | <summary> | <patch JSON> [| parent mutation ids csv] [| evidence refs csv] [| descendant-ref]",
-      "mutation show <id>",
+      {
+        syntax:
+          "mutation genome <parent-genome-hash> | <summary> | <patch JSON> [| evidence refs csv]",
+        effect: "write",
+      },
+      { syntax: "mutation lineage <domain> <target-ref>", effect: "read" },
+      { syntax: "mutation list [domain]", effect: "read" },
+      {
+        syntax:
+          "mutation record <domain> <target-ref> | <disposition> | <summary> | <patch JSON> [| parent mutation ids csv] [| evidence refs csv] [| descendant-ref]",
+        effect: "write",
+      },
+      { syntax: "mutation show <id>", effect: "read" },
     ],
     name: "mutation",
     aliases: ["mutations"],

@@ -68,12 +68,12 @@ export function scenarioCommand(deps: {
   return {
     category: "Markets & Forecasting",
     usage: [
-      "scenario extract <url>",
-      "scenario extract board <name>",
-      "scenario inject <key>=<value>",
-      "scenario personas",
-      "scenario report",
-      "scenario status",
+      { syntax: "scenario extract <url>", effect: "write" },
+      { syntax: "scenario extract board <name>", effect: "write" },
+      { syntax: "scenario inject <key>=<value>", effect: "write" },
+      { syntax: "scenario personas", effect: "write" },
+      { syntax: "scenario report", effect: "write" },
+      { syntax: "scenario status", effect: "write" },
     ],
     name: "scenario",
     aliases: ["sc"],

@@ -37,7 +37,7 @@ export function orientCommand(deps: {
 }): CommandDef {
   return {
     category: "Memory",
-    usage: ["orient"],
+    usage: [{ syntax: "orient", effect: "read" }],
     name: "orient",
     aliases: ["status", "briefing"],
     help: "Memory health dashboard — core memory, notes, activity coverage, and knowledge gaps.\nUsage: orient",

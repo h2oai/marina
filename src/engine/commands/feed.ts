@@ -28,7 +28,11 @@ export function feedCommand(deps: {
 }): CommandDef {
   return {
     category: "Knowledge",
-    usage: ["feed", "feed kinds", "feed list [kind:X] [entity:Y] [since:30m|1h|2d] [limit:20]"],
+    usage: [
+      { syntax: "feed", effect: "read" },
+      { syntax: "feed kinds", effect: "read" },
+      { syntax: "feed list [kind:X] [entity:Y] [since:30m|1h|2d] [limit:20]", effect: "read" },
+    ],
     name: "feed",
     aliases: [],
     help: HELP,

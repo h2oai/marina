@@ -9,10 +9,10 @@ import type { CommandDef } from "../../types";
 export function provenanceCommand(db: MarinaDB): CommandDef {
   return {
     usage: [
-      "provenance",
-      "provenance list [journey-id]",
-      "provenance status",
-      "provenance verify [count]",
+      { syntax: "provenance", effect: "read" },
+      { syntax: "provenance list [journey-id]", effect: "read" },
+      { syntax: "provenance status", effect: "read" },
+      { syntax: "provenance verify [count]", effect: "read" },
     ],
     name: "provenance",
     aliases: [],

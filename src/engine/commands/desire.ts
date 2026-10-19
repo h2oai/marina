@@ -21,8 +21,11 @@ export function desireCommand(deps: {
   const lastModelPass = new Map<string, number>();
   return {
     usage: [
-      "desire <one sentence>",
-      "desire <what you want to explore, understand, decide, improve, or create>",
+      { syntax: "desire <one sentence>", effect: "write" },
+      {
+        syntax: "desire <what you want to explore, understand, decide, improve, or create>",
+        effect: "write",
+      },
     ],
     name: "desire",
     aliases: ["pursue"],

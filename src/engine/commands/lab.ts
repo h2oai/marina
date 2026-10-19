@@ -39,14 +39,31 @@ export function labCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "lab compare <run-ids csv> | <questions csv> | <measures JSON> | <interpretation>",
-      "lab event <run> <started|intervention|observation|measure|completed|failed|gap> | <source-ref> | <data JSON>",
-      "lab fork <parent-run> | <fork-point-ref> | <treatments JSON> [| seed]",
-      "lab list",
-      "lab manifest <scenario JSON>",
-      "lab replicate <manifest-hash> | <mode> | <reproducibility> | <count> | <seed-prefix> [| treatments JSON]",
-      "lab run <manifest-hash> | <mode> | <reproducibility> | <seed> [| treatments JSON]",
-      "lab show <run>",
+      {
+        syntax: "lab compare <run-ids csv> | <questions csv> | <measures JSON> | <interpretation>",
+        effect: "write",
+      },
+      {
+        syntax:
+          "lab event <run> <started|intervention|observation|measure|completed|failed|gap> | <source-ref> | <data JSON>",
+        effect: "write",
+      },
+      {
+        syntax: "lab fork <parent-run> | <fork-point-ref> | <treatments JSON> [| seed]",
+        effect: "write",
+      },
+      { syntax: "lab list", effect: "read" },
+      { syntax: "lab manifest <scenario JSON>", effect: "write" },
+      {
+        syntax:
+          "lab replicate <manifest-hash> | <mode> | <reproducibility> | <count> | <seed-prefix> [| treatments JSON]",
+        effect: "write",
+      },
+      {
+        syntax: "lab run <manifest-hash> | <mode> | <reproducibility> | <seed> [| treatments JSON]",
+        effect: "write",
+      },
+      { syntax: "lab show <run>", effect: "read" },
     ],
     name: "lab",
     aliases: [],

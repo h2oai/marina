@@ -26,10 +26,10 @@ export function inheritanceCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "inheritance [list]",
-      "inheritance export <guide|tradition-pool>",
-      "inheritance export <pool>",
-      "inheritance import <bundle-token>",
+      { syntax: "inheritance [list]", effect: "read" },
+      { syntax: "inheritance export <guide|tradition-pool>", effect: "read" },
+      { syntax: "inheritance export <pool>", effect: "read" },
+      { syntax: "inheritance import <bundle-token>", effect: "write" },
     ],
     name: "inheritance",
     aliases: ["inherit"],

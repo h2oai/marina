@@ -10,7 +10,7 @@ export function shoutCommand(deps: {
 }): CommandDef {
   return {
     category: "Communication",
-    usage: ["shout <message>"],
+    usage: [{ syntax: "shout <message>", effect: "write" }],
     name: "shout",
     aliases: ["yell"],
     help: "Shout a message to all entities on the server. Usage: shout <message>",

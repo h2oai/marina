@@ -24,7 +24,7 @@ export function shareCommand(deps: {
 }): CommandDef {
   return {
     category: "Coordination",
-    usage: ["share <pool> <content>"],
+    usage: [{ syntax: "share <pool> <content>", effect: "write" }],
     name: "share",
     aliases: [],
     help: "Drop a note into a shared pool. Usage: share <pool> <content>",

@@ -7,7 +7,7 @@ import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 export function sayCommand(getEntity: (id: EntityId) => Entity | undefined): CommandDef {
   return {
     category: "Communication",
-    usage: ["say <message>"],
+    usage: [{ syntax: "say <message>", effect: "write" }],
     name: "say",
     aliases: [],
     help: "Say something to everyone in the space. Usage: say <message>",

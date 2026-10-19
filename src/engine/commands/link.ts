@@ -135,7 +135,12 @@ export function linkCommand(deps: {
 }): CommandDef {
   return {
     category: "Identity & Access",
-    usage: ["link", "link status", "link unlink <adapter>", "link unlink <telegram|discord>"],
+    usage: [
+      { syntax: "link", effect: "write" },
+      { syntax: "link status", effect: "read" },
+      { syntax: "link unlink <adapter>", effect: "delete" },
+      { syntax: "link unlink <telegram|discord>", effect: "delete" },
+    ],
     name: "link",
     aliases: [],
     help: "Link an external account (Telegram/Discord). Usage: link | link status | link unlink <adapter>",

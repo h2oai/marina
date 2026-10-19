@@ -27,9 +27,9 @@ export function competenceCommand(deps: {
   return {
     category: "Information",
     usage: [
-      "competence [<family prefix>]",
-      "competence mine [<family prefix>]",
-      "competence judged [<family prefix>]",
+      { syntax: "competence [<family prefix>]", effect: "read" },
+      { syntax: "competence mine [<family prefix>]", effect: "read" },
+      { syntax: "competence judged [<family prefix>]", effect: "read" },
     ],
     name: "competence",
     aliases: [],

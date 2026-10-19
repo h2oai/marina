@@ -29,7 +29,7 @@ export function digCommand(deps: {
 }): CommandDef {
   return {
     category: "Cognition",
-    usage: ["dig <topic>"],
+    usage: [{ syntax: "dig <topic>", effect: "read" }],
     name: "dig",
     aliases: [],
     help: "Investigate a topic — internal notes + web evidence + synthesis. Usage: dig <topic>",

@@ -27,12 +27,16 @@ export function intellectCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "intellect create <name> | <purpose> [| contributor-ids]",
-      "intellect descend <parent> <name> | <purpose>",
-      "intellect event <intellect> <kind> | <detail>",
-      "intellect instance <intellect> | <principal-id> | <model-ref> | <harness-ref> | <environment-ref>",
-      "intellect list",
-      "intellect show <id>",
+      { syntax: "intellect create <name> | <purpose> [| contributor-ids]", effect: "write" },
+      { syntax: "intellect descend <parent> <name> | <purpose>", effect: "write" },
+      { syntax: "intellect event <intellect> <kind> | <detail>", effect: "write" },
+      {
+        syntax:
+          "intellect instance <intellect> | <principal-id> | <model-ref> | <harness-ref> | <environment-ref>",
+        effect: "write",
+      },
+      { syntax: "intellect list", effect: "read" },
+      { syntax: "intellect show <id>", effect: "read" },
     ],
     name: "intellect",
     aliases: ["intellects"],

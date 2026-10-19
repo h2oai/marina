@@ -15,7 +15,7 @@ export function moveCommand(deps: {
 }): CommandDef {
   return {
     category: "Navigation",
-    usage: ["move <direction>"],
+    usage: [{ syntax: "move <direction>", effect: "write" }],
     name: "move",
     aliases: [
       "go",

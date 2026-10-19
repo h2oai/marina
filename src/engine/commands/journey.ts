@@ -38,15 +38,18 @@ export function journeyCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "journey changes <id|latest>",
-      "journey create <desire>",
-      "journey link <id|latest> <kind> <ref> [relationship]",
-      "journey list [all]",
-      "journey progress <id|latest>",
-      "journey record <id|latest> <event> | <summary> [| <ref-kind>:<ref>]",
-      "journey result <id|latest>",
-      "journey show <id|latest>",
-      "journey steer <id|latest> <context or correction>",
+      { syntax: "journey changes <id|latest>", effect: "read" },
+      { syntax: "journey create <desire>", effect: "write" },
+      { syntax: "journey link <id|latest> <kind> <ref> [relationship]", effect: "write" },
+      { syntax: "journey list [all]", effect: "read" },
+      { syntax: "journey progress <id|latest>", effect: "read" },
+      {
+        syntax: "journey record <id|latest> <event> | <summary> [| <ref-kind>:<ref>]",
+        effect: "write",
+      },
+      { syntax: "journey result <id|latest>", effect: "read" },
+      { syntax: "journey show <id|latest>", effect: "read" },
+      { syntax: "journey steer <id|latest> <context or correction>", effect: "write" },
     ],
     name: "journey",
     aliases: ["journeys"],

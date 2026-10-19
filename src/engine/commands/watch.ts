@@ -54,11 +54,15 @@ export function watchCommand(deps: {
   return {
     category: "Markets & Forecasting",
     usage: [
-      "watch create <kind> <key>:<value> [<additional key:value pairs>] [cadence:<duration>] [retirement:<policy>] [notify:<entity-or-channel>]",
-      "watch due [limit:<N>]",
-      "watch list",
-      "watch retire <id> [reason:<text>]",
-      "watch show <id>",
+      {
+        syntax:
+          "watch create <kind> <key>:<value> [<additional key:value pairs>] [cadence:<duration>] [retirement:<policy>] [notify:<entity-or-channel>]",
+        effect: "write",
+      },
+      { syntax: "watch due [limit:<N>]", effect: "read" },
+      { syntax: "watch list", effect: "read" },
+      { syntax: "watch retire <id> [reason:<text>]", effect: "delete" },
+      { syntax: "watch show <id>", effect: "read" },
     ],
     name: "watch",
     aliases: [],

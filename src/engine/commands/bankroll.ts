@@ -113,12 +113,12 @@ export function bankrollCommand(deps: {
   return {
     category: "Markets & Forecasting",
     usage: [
-      "bankroll cap <usd>",
-      "bankroll floor <usd>",
-      "bankroll kelly <fraction>",
-      "bankroll reset",
-      "bankroll set <usd>",
-      "bankroll show",
+      { syntax: "bankroll cap <usd>", effect: "write" },
+      { syntax: "bankroll floor <usd>", effect: "write" },
+      { syntax: "bankroll kelly <fraction>", effect: "write" },
+      { syntax: "bankroll reset", effect: "delete" },
+      { syntax: "bankroll set <usd>", effect: "write" },
+      { syntax: "bankroll show", effect: "read" },
     ],
     name: "bankroll",
     aliases: [],

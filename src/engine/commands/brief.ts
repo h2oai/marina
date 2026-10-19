@@ -51,7 +51,13 @@ interface BriefDeps {
 export function briefCommand(deps: BriefDeps): CommandDef {
   return {
     category: "Information",
-    usage: ["brief", "brief full", "brief social", "brief unwatch", "brief watch [interval]"],
+    usage: [
+      { syntax: "brief", effect: "read" },
+      { syntax: "brief full", effect: "read" },
+      { syntax: "brief social", effect: "read" },
+      { syntax: "brief unwatch", effect: "write" },
+      { syntax: "brief watch [interval]", effect: "write" },
+    ],
     name: "brief",
     aliases: [],
     help: "Get oriented. Shows the current shape of the world — who is here, what exists, where to go next. 'brief full' shows the detailed briefing, 'brief social' the social view. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.",

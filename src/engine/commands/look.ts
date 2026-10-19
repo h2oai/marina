@@ -35,7 +35,7 @@ export function lookCommand(
 ): CommandDef {
   return {
     category: "Navigation",
-    usage: ["look [target]"],
+    usage: [{ syntax: "look [target]", effect: "read" }],
     name: "look",
     aliases: ["l", "examine", "ex", "x"],
     help: "Look at the space, or examine something closely. Usage: look [target]",

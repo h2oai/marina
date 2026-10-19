@@ -7,6 +7,7 @@ import { resolveInvestigation } from "../../investigations/resolve";
 import { investigationService } from "../../investigations/service";
 import { InvestigationError, parseInvestigationRequest } from "../../investigations/validation";
 import type { MarinaDB } from "../../persistence/database";
+import type { CommandUsage } from "../../sdk/command-forms";
 import { type InvestigationView, investigationAttemptText } from "../../sdk/investigation-text";
 import { INVESTIGATION_SCHEMA, type InvestigationAttempt } from "../../sdk/investigation-types";
 import type { CommandDef, Entity } from "../../types";
@@ -14,22 +15,30 @@ import { getErrorMessage } from "../errors";
 import { parseModifiers, splitOnTerminator } from "../parse-input";
 
 const usage = [
-  "inquiry predict [type:binary|number|choice] [unit:<unit>] [options:<a,b,c>] [runs:<n>] [case:<id>] [parent:<attempt>] [key:<key>] [horizon:<date>] [asof:<date>] -- <question>",
-  "inquiry research [case:<id>] [parent:<attempt>] [key:<key>] -- <question>",
-  "inquiry list",
-  "inquiry show <case-id> [attempt-id]",
-  "inquiry why <case-id> [attempt-id]",
-  "inquiry sources <case-id> [attempt-id]",
-  "inquiry report <case-id> [attempt-id]",
-  "inquiry events <attempt-id> [cursor]",
-  "inquiry cancel <attempt-id>",
-  "inquiry select <attempt-id>",
-  "inquiry grant <case-id> <account> <read|work>",
-  "inquiry revoke <case-id> <account>",
-  "inquiry delete <case-id>",
-  "inquiry review <attempt-id> -- <review>",
-  "inquiry resolve <attempt-id> -- <outcome-json>",
-];
+  {
+    syntax:
+      "inquiry predict [type:binary|number|choice] [unit:<unit>] [options:<a,b,c>] [runs:<n>] [case:<id>] [parent:<attempt>] [key:<key>] [horizon:<date>] [asof:<date>] -- <question>",
+    effect: "execute",
+  },
+  {
+    syntax: "inquiry research [case:<id>] [parent:<attempt>] [key:<key>] -- <question>",
+    effect: "execute",
+  },
+  { syntax: "inquiry list", effect: "read" },
+  { syntax: "inquiry show <case-id> [attempt-id]", effect: "read" },
+  { syntax: "inquiry why <case-id> [attempt-id]", effect: "read" },
+  { syntax: "inquiry sources <case-id> [attempt-id]", effect: "read" },
+  { syntax: "inquiry report <case-id> [attempt-id]", effect: "read" },
+  { syntax: "inquiry events <attempt-id> [cursor]", effect: "read" },
+  { syntax: "inquiry cancel <attempt-id>", effect: "write" },
+  { syntax: "inquiry select <attempt-id>", effect: "write" },
+  { syntax: "inquiry grant <case-id> <account> <read|work>", effect: "write" },
+  { syntax: "inquiry revoke <case-id> <account>", effect: "delete" },
+  { syntax: "inquiry delete <case-id>", effect: "delete" },
+  { syntax: "inquiry review <attempt-id> -- <review>", effect: "write" },
+  { syntax: "inquiry resolve <attempt-id> -- <outcome-json>", effect: "write" },
+] satisfies CommandUsage[];
+const usageText = usage.map((form) => form.syntax).join("\n");
 
 export function inquiryCommand(deps: {
   db: MarinaDB;
@@ -40,7 +49,7 @@ export function inquiryCommand(deps: {
     category: "Cognition",
     minRank: 0,
     usage,
-    help: `Private predictions and deep research, with durable evidence and agent delegation.\n${usage.join("\n")}\nWork runs in the background. Inspect it with show/events. A grant permits an account (human or agent) to read or initiate work; it never broadcasts private evidence to a room. New attempts use configured forecast/research providers and work limits; costs may be incomplete.`,
+    help: `Private predictions and deep research, with durable evidence and agent delegation.\n${usageText}\nWork runs in the background. Inspect it with show/events. A grant permits an account (human or agent) to read or initiate work; it never broadcasts private evidence to a room. New attempts use configured forecast/research providers and work limits; costs may be incomplete.`,
     handler: (ctx, input) => {
       const say = (text: string, attempt?: InvestigationAttempt) =>
         ctx.send(
@@ -121,8 +130,7 @@ export function inquiryCommand(deps: {
           );
           return;
         }
-        if (!id)
-          throw new InvestigationError("invalid_request", `Give an ID.\n${usage.join("\n")}`);
+        if (!id) throw new InvestigationError("invalid_request", `Give an ID.\n${usageText}`);
         if (sub === "review") {
           db.reviewInvestigation(actor, id, question ?? "");
           say("Review added to the private case journal.");
@@ -177,10 +185,7 @@ export function inquiryCommand(deps: {
           db.eraseInvestigation(actor.key, id);
           say("Investigation and owned evidence erased.");
         } else
-          throw new InvestigationError(
-            "invalid_request",
-            `Unknown inquiry action.\n${usage.join("\n")}`,
-          );
+          throw new InvestigationError("invalid_request", `Unknown inquiry action.\n${usageText}`);
       } catch (error) {
         say(`Inquiry: ${getErrorMessage(error)}`);
       }

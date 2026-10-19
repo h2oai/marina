@@ -606,7 +606,13 @@ reply enters the SDK's ordinary world-perception stream.
 For operator extensions, put `category` and `usage` beside the command's `help` and
 handler. A usage entry can be a syntax string or an object with `syntax`, `description`,
 `examples`, `effect`, and field overrides keyed by field label. Effects are `read`,
-`write`, `delete`, `execute`, or `unknown`; omitted effects remain unknown. Field
+`write`, `delete`, `execute`, or `unknown`; omitted effects remain unknown. `read` changes
+nothing (it may fetch or consult a model and return the answer); `write` creates or
+changes state; `delete` removes, retires or revokes it; `execute` starts work that runs
+on its own — processes, agents, jobs, external calls, or held and batched commands. An
+exposed MCP tool is marked `readOnlyHint` only for a `read` form, so when in doubt
+declare a stronger effect. Every builtin form declares one
+(`test/tool-policy-effects.test.ts`). Field
 overrides support numeric bounds, defaults, enum choices and text encoding constraints.
 These definitions supply help forms, dashboard builders, autocomplete and MCP
 `capabilities`/`invoke`. They describe inputs; the command router still enforces authority.

@@ -180,7 +180,10 @@ export function readinessCommand(deps: {
 }): CommandDef {
   return {
     category: "System",
-    usage: ["readiness", "readiness providers [name]"],
+    usage: [
+      { syntax: "readiness", effect: "read" },
+      { syntax: "readiness providers [name]", effect: "read" },
+    ],
     name: "readiness",
     aliases: ["doctor", "health"],
     help: "Show which Marina capabilities are active, degraded, or off — with fixes. `readiness providers [name]` sends one tiny request per configured LLM provider and checks the reply shape. `readiness autonomy` shows whether agents are acting on their own right now, requirement by requirement.",

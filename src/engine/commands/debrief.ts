@@ -24,7 +24,7 @@ export function debriefCommand(deps: {
 }): CommandDef {
   return {
     category: "Memory",
-    usage: ["debrief"],
+    usage: [{ syntax: "debrief", effect: "read" }],
     name: "debrief",
     aliases: [],
     help: "Close-out view: recent notes, claimed tasks, current standing. Usage: debrief",

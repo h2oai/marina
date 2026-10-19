@@ -10,7 +10,11 @@ export function ignoreCommand(deps: {
 }): CommandDef {
   return {
     category: "Identity & Access",
-    usage: ["ignore <name>", "ignore list", "ignore remove <name>"],
+    usage: [
+      { syntax: "ignore <name>", effect: "write" },
+      { syntax: "ignore list", effect: "read" },
+      { syntax: "ignore remove <name>", effect: "delete" },
+    ],
     name: "ignore",
     aliases: ["block"],
     help: "Ignore an entity. Usage: ignore <name> | ignore list | ignore remove <name>",

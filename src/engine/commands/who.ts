@@ -23,7 +23,7 @@ export function whoCommand(
     e.kind === "agent" && isRuntimeAgent && !isRuntimeAgent(e.name) ? "participant" : e.kind;
   return {
     category: "Information",
-    usage: ["who"],
+    usage: [{ syntax: "who", effect: "read" }],
     name: "who",
     aliases: [],
     help: "List all connected entities. Agents with no activity in 5m are tagged [silent].",

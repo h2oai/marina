@@ -17,7 +17,7 @@ export function askCommand(deps: {
 }): CommandDef {
   return {
     category: "Cognition",
-    usage: ["ask <question>"],
+    usage: [{ syntax: "ask <question>", effect: "read" }],
     name: "ask",
     aliases: [],
     help: "Ask Marina through the shared command substrate. Usage: ask <question>",

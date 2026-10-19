@@ -7,7 +7,7 @@ import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 export function emoteCommand(getEntity: (id: EntityId) => Entity | undefined): CommandDef {
   return {
     category: "Communication",
-    usage: ["emote <action>"],
+    usage: [{ syntax: "emote <action>", effect: "write" }],
     name: "emote",
     aliases: ["me"],
     help: "Broadcast an action in the third person. Usage: emote reviews the findings",

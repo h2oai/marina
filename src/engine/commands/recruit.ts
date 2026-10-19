@@ -112,10 +112,10 @@ export function recruitCommand(deps: RecruitCommandDeps): CommandDef {
   return {
     category: "Coordination",
     usage: [
-      "recruit <a,b,c> into <crew> [role=<r>]",
-      "recruit available [role=<r>]",
-      "recruit best into <crew> for <goal> [count=N]",
-      "recruit match <goal> [limit=N]",
+      { syntax: "recruit <a,b,c> into <crew> [role=<r>]", effect: "write" },
+      { syntax: "recruit available [role=<r>]", effect: "read" },
+      { syntax: "recruit best into <crew> for <goal> [count=N]", effect: "write" },
+      { syntax: "recruit match <goal> [limit=N]", effect: "read" },
     ],
     name: "recruit",
     aliases: [],

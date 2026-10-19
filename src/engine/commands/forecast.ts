@@ -55,11 +55,15 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
   return {
     category: "Markets & Forecasting",
     usage: [
-      "forecast <question> [resolves:<venue>/<ticker>]",
-      "forecast <question> type:<choice|multi|number|ranking|text> [options:<id,id,…>] [size:<n>] [ends:<iso>]",
-      "forecast list",
-      "forecast track <id> <venue>/<ticker>",
-      "forecast competence [<family prefix>]",
+      { syntax: "forecast <question> [resolves:<venue>/<ticker>]", effect: "execute" },
+      {
+        syntax:
+          "forecast <question> type:<choice|multi|number|ranking|text> [options:<id,id,…>] [size:<n>] [ends:<iso>]",
+        effect: "execute",
+      },
+      { syntax: "forecast list", effect: "read" },
+      { syntax: "forecast track <id> <venue>/<ticker>", effect: "write" },
+      { syntax: "forecast competence [<family prefix>]", effect: "read" },
     ],
     name: "forecast",
     aliases: ["predict"],

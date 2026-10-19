@@ -21,12 +21,12 @@ export function demoCommand(deps: {
   return {
     category: "System",
     usage: [
-      "demo preflight",
-      "demo qualify",
-      "demo recover",
-      "demo reset",
-      "demo status",
-      "demo warm",
+      { syntax: "demo preflight", effect: "read" },
+      { syntax: "demo qualify", effect: "read" },
+      { syntax: "demo recover", effect: "write" },
+      { syntax: "demo reset", effect: "write" },
+      { syntax: "demo status", effect: "read" },
+      { syntax: "demo warm", effect: "execute" },
     ],
     name: "demo",
     aliases: [],

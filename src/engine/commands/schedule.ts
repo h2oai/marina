@@ -67,17 +67,27 @@ export function scheduleCommand(deps: {
     aliases: ["schedules"],
     help: HELP,
     usage: [
-      "schedule add <name> every:<duration> [catch-up:once|none] [max-runs:N] -- <command>",
-      "schedule add <name> daily:<HH:MM> [catch-up:once|none] [max-runs:N] -- <command>",
-      "schedule add <name> at:<time> [catch-up:once|none] -- <command>",
-      "schedule add <name> before:<time> lead:<duration> -- <command>",
-      "schedule [list]",
-      "schedule show <name>",
-      "schedule history <name> [limit:N]",
-      "schedule pause <name>",
-      "schedule resume <name>",
-      "schedule run <name>",
-      "schedule delete <name>",
+      {
+        syntax:
+          "schedule add <name> every:<duration> [catch-up:once|none] [max-runs:N] -- <command>",
+        effect: "write",
+      },
+      {
+        syntax: "schedule add <name> daily:<HH:MM> [catch-up:once|none] [max-runs:N] -- <command>",
+        effect: "write",
+      },
+      {
+        syntax: "schedule add <name> at:<time> [catch-up:once|none] -- <command>",
+        effect: "write",
+      },
+      { syntax: "schedule add <name> before:<time> lead:<duration> -- <command>", effect: "write" },
+      { syntax: "schedule [list]", effect: "read" },
+      { syntax: "schedule show <name>", effect: "read" },
+      { syntax: "schedule history <name> [limit:N]", effect: "read" },
+      { syntax: "schedule pause <name>", effect: "write" },
+      { syntax: "schedule resume <name>", effect: "write" },
+      { syntax: "schedule run <name>", effect: "execute" },
+      { syntax: "schedule delete <name>", effect: "delete" },
     ],
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);

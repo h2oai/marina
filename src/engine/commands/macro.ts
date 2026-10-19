@@ -52,9 +52,9 @@ export function macroCommand(
   return {
     category: "Coordination",
     usage: [
-      "macro create <name> <command with $* / $1…> [room:<room>]",
-      "macro delete <name> [room:<room>]",
-      "macro list",
+      { syntax: "macro create <name> <command with $* / $1…> [room:<room>]", effect: "write" },
+      { syntax: "macro delete <name> [room:<room>]", effect: "delete" },
+      { syntax: "macro list", effect: "read" },
     ],
     name: "macro",
     aliases: [],

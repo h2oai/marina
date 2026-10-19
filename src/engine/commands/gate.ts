@@ -48,7 +48,11 @@ export function gateCommand(deps: {
   spawnedBy?: (name: string) => string | undefined;
 }): CommandDef {
   return {
-    usage: ["gate list [entity]", "gate grant <entity> <gate>", "gate revoke <entity> <gate>"],
+    usage: [
+      { syntax: "gate list [entity]", effect: "read" },
+      { syntax: "gate grant <entity> <gate>", effect: "write" },
+      { syntax: "gate revoke <entity> <gate>", effect: "delete" },
+    ],
     name: "gate",
     aliases: ["gates"],
     category: "Civic",

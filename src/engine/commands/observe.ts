@@ -17,7 +17,11 @@ export function observeCommand(deps: {
 }): CommandDef {
   return {
     category: "Experiments",
-    usage: ["observe <entity>", "observe log <entity>", "observe stats"],
+    usage: [
+      { syntax: "observe <entity>", effect: "read" },
+      { syntax: "observe log <entity>", effect: "read" },
+      { syntax: "observe stats", effect: "read" },
+    ],
     name: "observe",
     aliases: [],
     help: "Observe agents. Usage: observe <entity> (rank 3+) | observe stats (rank 2+) | observe log <entity> (rank 7+)",

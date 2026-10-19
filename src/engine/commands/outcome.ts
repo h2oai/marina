@@ -41,11 +41,11 @@ export function outcomeCommand(deps: {
     category: "Information",
     minRank: 0,
     usage: [
-      "outcome",
-      "outcome stats",
-      "outcome evidence [source:<s>] [since:<duration>] [judged]",
-      "outcome list [kind:<k>] [limit:<n>]",
-      "outcome agreement",
+      { syntax: "outcome", effect: "read" },
+      { syntax: "outcome stats", effect: "read" },
+      { syntax: "outcome evidence [source:<s>] [since:<duration>] [judged]", effect: "read" },
+      { syntax: "outcome list [kind:<k>] [limit:<n>]", effect: "read" },
+      { syntax: "outcome agreement", effect: "read" },
     ],
     help: `Every resolved result — forecasts, task verdicts, Code Mode checks — is recorded once and learned from.\n${USAGE}\n\nstats: whether lessons and history keep up (pending, done, skipped, failed). evidence: live success rates per kind of work, model and role, from real shared work — a person's (and their agents') work stays out of it (mechanical outcomes; \`judged\` shows judged ones instead). list: your own outcomes. agreement: how often each judge's opinions match the mechanical results for the same work (a judge settles results on its own only once earned). Read-only.`,
     handler: (ctx: RoomContext, input) => {

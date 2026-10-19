@@ -109,10 +109,10 @@ export function keyCommand(deps: {
   return {
     category: "Admin & Security",
     usage: [
-      "key add <name> <provider> <value>",
-      "key delete <name>",
-      "key list",
-      "key test <name>",
+      { syntax: "key add <name> <provider> <value>", effect: "write" },
+      { syntax: "key delete <name>", effect: "delete" },
+      { syntax: "key list", effect: "read" },
+      { syntax: "key test <name>", effect: "read" },
     ],
     name: "key",
     aliases: [],

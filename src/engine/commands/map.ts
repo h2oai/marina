@@ -16,7 +16,7 @@ export function mapCommand(deps: {
 }): CommandDef {
   return {
     category: "Navigation",
-    usage: ["map"],
+    usage: [{ syntax: "map", effect: "read" }],
     name: "map",
     aliases: [],
     help: "Show a map of nearby spaces.",
