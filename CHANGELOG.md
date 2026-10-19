@@ -66,6 +66,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`contract` on `POST /v1/forecast`**: an optional explicit answer contract beside `answer`,
   validated against the typed spec (400 when invalid) and enforced unless
   `MARINA_FORECAST_CONTRACT=observe`.
+- **Transfer report** (`bun run eval:transfer --spec <file>`, `benchmarks/transfer/`): enforces
+  the rule that a capability counts only when it improves on at least two independent evaluations,
+  not just the one it was built for. Takes a baseline and a candidate env overlay and a list of
+  suites; ingests existing per-item results (generic `items` JSON/JSONL, harness results, FutureX
+  clean backtests, `arena evaluate` and `arena shadow paired-score` reports) or, only with `--run`,
+  runs each suite's command per arm and replicate. Per suite: a seeded paired bootstrap of the
+  mean delta and an exact sign test on held-out items (the promotion hash split by default, or a
+  time split); verdict `transfers` only with significant gains in ≥ 2 independent groups and no
+  significant regression. Writes a markdown and a JSON report; no benchmark logic in the core.
+  A `ledger` adapter reads per-item rows from any benchmark ledger DB without writing to it
+  (in-world `benchmark run`/`compare-run`, imported runs, ForecastBench/Metaculus selection runs;
+  runs selected by label, id, replicate group or date range); the `items` reader splits one file
+  into arms by `variant` and runs by `replicate` and remaps other record formats (τ²,
+  BrowseComp-Plus, LongMemEval and paired-run presets); `--bootstrap two-stage` resamples
+  replicate runs then items as forecasting selection does; and `--inventory [root…]` finds every
+  per-item result and ledger on disk and lists the baseline/candidate pairs each suite offers.
 - **Search engines for research retrieval**: `openrouter-web:<model>@<engine>[:<mode>]` accepts
   every OpenRouter web plugin engine — `native`, `exa` (instant … deep-reasoning), `parallel`
   (turbo … advanced), `perplexity`, `firecrawl` — validates engine and mode, and adds the engine's
