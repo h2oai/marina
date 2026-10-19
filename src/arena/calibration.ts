@@ -33,13 +33,16 @@
  * how wide a filing should be, the resolved rounds are the measurement, and on
  * Civiqs the floor was what kept filings ~2.7× wider than their misses. The
  * mean is never moved. The decision and its evidence (n, ŝ, w per level) are
- * kept under `spreadCalibration` in the filing's detail.
+ * kept under `spreadCalibration` in the filing's detail. A scalar filing made
+ * from a stale anchor is no evidence about spread (its miss was the old reading,
+ * not the forecaster): see `staleLegacyFiling`.
  * `MARINA_ARENA_SPREAD_CALIBRATION=observe` records without applying; `off`
  * skips it (the retired `MARINA_ARENA_CALIBRATION` is read as a fallback).
  */
 
 import { getErrorMessage } from "../engine/errors";
 import type { ArenaSubmissionRow } from "../persistence/db-arena";
+import { sameReading } from "./anchor";
 import type { RoundForecast } from "./forecast";
 import { crpsNormal } from "./score";
 import { cellSamples } from "./score-shapes";
@@ -278,13 +281,49 @@ export interface SiteRoundLike {
     corrected?: unknown;
     voided?: unknown;
   };
+  baselines?: { persistence?: { mean?: unknown } } | null;
   scores?: Record<string, { crps?: number; energy?: number }>;
   forecasts?: Record<string, { mean?: number; sd?: number; cells?: Record<string, Distribution> }>;
 }
 
 interface FiledDetail {
   round?: { tracker?: string; target_type?: string; cells?: string[] };
-  forecast?: { note?: string; spreadCalibration?: { applied?: boolean; scale?: number } };
+  lock?: unknown;
+  forecast?: {
+    note?: string;
+    origins?: unknown;
+    pollLevel?: unknown;
+    spreadCalibration?: { applied?: boolean; scale?: number };
+  };
+}
+
+/** A filing this far ahead of the lock cannot have seen the last weekly release before it. */
+export const STALE_FILING_LEAD_MS = 7 * DAY_MS;
+
+/** Method suffix for filings whose start was the poll-level rule (`poll-level.ts`). */
+export const POLL_LEVEL_METHOD = "+poll-level";
+/** Resolved poll-level filings needed before their spread is calibrated. */
+export const MIN_POLL_LEVEL_RECORDS = 4;
+
+/**
+ * A scalar filing that recorded no anchor (filed before the anchor guard), was
+ * made at least `STALE_FILING_LEAD_MS` before the lock, and whose mean differs
+ * from the arena's persistence value at the lock: it was scored against a
+ * release it never saw (Economist/YouGov w42, filed 36/18 on 2026-09-30 while
+ * persistence at the 2026-10-11 lock was 38/21). Its miss measures the stale
+ * anchor, which the anchor guard now prevents, not the forecaster's spread.
+ */
+export function staleLegacyFiling(
+  row: Pick<ArenaSubmissionRow, "created_at">,
+  detail: FiledDetail,
+  filedMean: number,
+  site: Pick<SiteRoundLike, "lock_at" | "baselines"> | undefined,
+): boolean {
+  if (detail.lock || detail.forecast?.origins) return false;
+  const lock = time(site?.lock_at);
+  const persistence = site?.baselines?.persistence?.mean;
+  if (!Number.isFinite(lock) || !finite(persistence)) return false;
+  return lock - row.created_at >= STALE_FILING_LEAD_MS && !sameReading(filedMean, persistence);
 }
 
 const finite = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
@@ -369,12 +408,15 @@ function recordOf(
     (body.profile ? "profile_energy" : "continuous_normal");
   const applied = detail.forecast?.spreadCalibration;
   const undo = applied?.applied && finite(applied.scale) && applied.scale > 0 ? applied.scale : 1;
-  const method = methodOf(detail.forecast?.note ?? body.notes);
+  const method =
+    methodOf(detail.forecast?.note ?? body.notes) +
+    (detail.forecast?.pollLevel ? POLL_LEVEL_METHOD : "");
   const family = spreadFamily({ tracker, target_type: targetType as ArenaRound["target_type"] });
 
   if (targetType === "continuous_normal") {
     const t = body.topline;
     if (!t || !finite(t.mean) || !finite(t.sd) || !(t.sd > 0)) return undefined;
+    if (row && staleLegacyFiling(row, detail, t.mean, s)) return undefined;
     const res = s?.resolution ?? input.resolutions?.[id];
     if (!res || res.voided || !finite(res.value)) return undefined;
     const knownAt = knownAtOf(res);
@@ -444,7 +486,7 @@ export function applySpreadCalibration(
   const mode = opts.mode ?? "on";
   if (mode === "off" || (!f.topline && !f.profile)) return f;
   const family = spreadFamily(round);
-  const method = methodOf(f.note);
+  const method = methodOf(f.note) + (f.pollLevel ? POLL_LEVEL_METHOD : "");
   const key = calibrationKey(family, method);
   const lock = Date.parse(round.lock_at);
   const cutoff = Number.isFinite(lock) ? Math.min(opts.now, lock) : opts.now;
@@ -466,6 +508,18 @@ export function applySpreadCalibration(
         ? `sd ×${pool.scale} from ${visible.length} resolved round(s) (family n=${pool.family.n}, method n=${pool.method.n})`
         : "no resolved rounds yet: identity",
     };
+    // A poll-level start already sizes its sd from the rule's own backtested
+    // errors; a multiplier learned on filings made from the old start would be
+    // applied to a different basis. Wait for the poll-level filings' own record.
+    if (f.pollLevel && pool.method.n < MIN_POLL_LEVEL_RECORDS) {
+      return {
+        ...f,
+        spreadCalibration: {
+          ...record,
+          reason: `poll-level start: its own backtested sd stands until ${MIN_POLL_LEVEL_RECORDS} resolved poll-level filings (have ${pool.method.n})`,
+        },
+      };
+    }
     if (mode !== "on" || pool.scale === 1) return { ...f, spreadCalibration: record };
     const s = pool.scale;
     const profile = f.profile

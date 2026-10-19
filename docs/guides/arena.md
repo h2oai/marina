@@ -356,7 +356,11 @@ family cannot export its miscalibration — toward 1 by F / (F + 4). The result 
 Order: forecaster → move weight → error floor → spread calibration, so resolved rounds have the
 last word over the floor's estimate (on Civiqs the floor kept filings ~2.7× wider than their
 misses). The decision and its evidence (scale, n / ŝ / w per level, cutoff) are kept under
-`spreadCalibration` in the filing's detail. `MARINA_ARENA_SPREAD_CALIBRATION=observe` records
+`spreadCalibration` in the filing's detail. Two exclusions: a scalar filing made before the
+anchor guard from a release older than the one at its lock (filed ≥ 7 days early, mean ≠ the
+arena's persistence) is no evidence, since its miss measures the stale anchor; and a poll-level
+start keeps its own backtested sd until 4 poll-level filings have resolved (its records are keyed
+`…+poll-level`). `MARINA_ARENA_SPREAD_CALIBRATION=observe` records
 without applying; `off` skips it (the retired `MARINA_ARENA_CALIBRATION` is read when it is
 unset). Walk-forward over Season 0 to mid-October (31 resolved rounds we filed, each round
 calibrated only on outcomes published before its lock) it lifts mean per-round skill from 0.129

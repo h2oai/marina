@@ -13,10 +13,12 @@ import {
   type SiteRoundLike,
   SPREAD_POOL_K,
   type SpreadRecord,
+  STALE_FILING_LEAD_MS,
   scalarSpreadLoss,
   spreadCalibrationHistory,
   spreadCalibrationModeFromEnv,
   spreadFamily,
+  staleLegacyFiling,
   visibleSpreadRecords,
 } from "../src/arena/calibration";
 import { ArenaData } from "../src/arena/data";
@@ -444,5 +446,68 @@ describe("filing pipeline", () => {
     expect(on.topline!.mean).toBe(off.topline!.mean);
     expect(on.topline!.sd).toBeLessThan(off.topline!.sd);
     expect(on.notes).toContain("spread-calibrated on arena:civiqs|baseline");
+  });
+});
+
+describe("stale legacy filings are no spread evidence", () => {
+  const lock = "2026-10-11T14:00:00Z";
+  const site = { lock_at: lock, baselines: { persistence: { mean: 38 } } };
+  const filedAt = (msBeforeLock: number) => ({ created_at: Date.parse(lock) - msBeforeLock });
+
+  it("excludes the YouGov w42 shape: no anchor, filed 11 days early, mean ≠ persistence at lock", () => {
+    expect(staleLegacyFiling(filedAt(11 * 86_400_000), {}, 36, site)).toBe(true);
+  });
+
+  it("keeps a filing that matches persistence, was filed close to the lock, or recorded its anchor", () => {
+    expect(staleLegacyFiling(filedAt(11 * 86_400_000), {}, 38, site)).toBe(false);
+    expect(staleLegacyFiling(filedAt(STALE_FILING_LEAD_MS - 1), {}, 36, site)).toBe(false);
+    expect(staleLegacyFiling(filedAt(11 * 86_400_000), { lock: {} }, 36, site)).toBe(false);
+    expect(
+      staleLegacyFiling(filedAt(11 * 86_400_000), { forecast: { origins: {} } }, 36, site),
+    ).toBe(false);
+  });
+
+  it("keeps it when the site lacks the lock or persistence", () => {
+    expect(staleLegacyFiling(filedAt(11 * 86_400_000), {}, 36, undefined)).toBe(false);
+    expect(staleLegacyFiling(filedAt(11 * 86_400_000), {}, 36, { lock_at: lock })).toBe(false);
+  });
+});
+
+describe("poll-level starts keep their own backtested sd", () => {
+  const round = {
+    round_id: "yougov-2026-w44-rv-approval",
+    tracker: "economist_yougov",
+    target_type: "continuous_normal",
+    lock_at: "2026-10-25T14:00:00Z",
+  } as unknown as Parameters<typeof applySpreadCalibration>[0];
+  const note =
+    "route economist_yougov → formation:delphi:a,b,c+research@search:duckduckgo; marina delphi formation";
+  // Old-start filings that would all have scored best twice as wide.
+  const history: SpreadRecord[] = Array.from({ length: 6 }, (_, i) => ({
+    roundId: `old-${i}`,
+    family: "economist_yougov",
+    method: "formation:delphi+research",
+    knownAt: 0,
+    loss: (s: number) => (s - 2) ** 2 + 1,
+    norm: 2,
+  }));
+  const base = { topline: { mean: 37.8, sd: 1 }, note } as unknown as Parameters<
+    typeof applySpreadCalibration
+  >[1];
+
+  it("an ordinary start is scaled by the old evidence", () => {
+    const out = applySpreadCalibration(round, base, history, {
+      now: Date.parse(round.lock_at) - 1,
+    });
+    expect(out.spreadCalibration?.applied).toBe(true);
+    expect(out.topline!.sd).toBeGreaterThan(1);
+  });
+
+  it("a poll-level start is left alone until its own filings resolve", () => {
+    const f = { ...base, pollLevel: { rule: "blend" } } as typeof base;
+    const out = applySpreadCalibration(round, f, history, { now: Date.parse(round.lock_at) - 1 });
+    expect(out.spreadCalibration?.applied).toBe(false);
+    expect(out.spreadCalibration?.key).toContain("+poll-level");
+    expect(out.topline!.sd).toBe(1);
   });
 });
