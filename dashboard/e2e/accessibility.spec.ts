@@ -24,6 +24,29 @@ async function audit(page: Page, name: string) {
       ),
     )
     .toBe(0);
+  // JS-driven motion (layout animations) isn't in getAnimations(): wait until
+  // every interactive element holds still, so axe never measures mid-slide.
+  const geometry = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll("button, a[href], input, select, textarea, [role=option]")]
+        .map((element) => {
+          const r = element.getBoundingClientRect();
+          return `${r.x.toFixed(1)},${r.y.toFixed(1)},${r.width.toFixed(1)},${r.height.toFixed(1)}`;
+        })
+        .join("|"),
+    );
+  let previous = "";
+  await expect
+    .poll(
+      async () => {
+        const current = await geometry();
+        const settled = current === previous;
+        previous = current;
+        return settled;
+      },
+      { intervals: [100], timeout: 10_000 },
+    )
+    .toBe(true);
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
@@ -151,10 +174,13 @@ test("asset library, uploads and the media viewer are accessible", async ({ page
   await expect(page.locator("#marina-command-input")).toBeVisible();
   await page.getByRole("tab", { name: "Library", exact: true }).click();
   const library = page.getByRole("tabpanel", { name: "Library" });
-  const stamp = Date.now() % 200;
+  // A retry reuses the same server and library: give each attempt its own
+  // names and bytes so it never meets an earlier attempt's uploads.
+  const tag = `${test.info().retry}${Math.floor(Math.random() * 1e6)}`;
+  const stamp = Math.floor(Math.random() * 256);
   const files = [
-    { name: "harbour-red.png", mimeType: "image/png", buffer: png([200, stamp, 40]) },
-    { name: "harbour-blue.png", mimeType: "image/png", buffer: png([30, stamp, 210]) },
+    { name: `harbour-red-${tag}.png`, mimeType: "image/png", buffer: png([200, stamp, 40]) },
+    { name: `harbour-blue-${tag}.png`, mimeType: "image/png", buffer: png([30, stamp, 210]) },
   ];
   await library.getByTestId("upload-input").first().setInputFiles(files);
   const uploads = library.getByRole("region", { name: "Uploads" });
@@ -163,13 +189,13 @@ test("asset library, uploads and the media viewer are accessible", async ({ page
   await library.getByTestId("upload-input").first().setInputFiles([files[0]!]);
   await expect(uploads.getByText("Already in your library")).toBeVisible();
   const grid = library.getByRole("listbox", { name: /Assets/ });
-  await expect(grid.getByRole("option", { name: /harbour-blue\.png/ })).toBeVisible();
+  await expect(grid.getByRole("option", { name: new RegExp(`harbour-blue-${tag}\\.png`) })).toBeVisible();
   await audit(page, "asset-library");
 
   // Open from the keyboard; ←/→ move through the current results.
-  await grid.getByRole("option", { name: /harbour-red\.png/ }).click();
+  await grid.getByRole("option", { name: new RegExp(`harbour-red-${tag}\\.png`) }).click();
   await grid.press("Enter");
-  const viewer = page.getByRole("dialog", { name: /harbour-red\.png/ });
+  const viewer = page.getByRole("dialog", { name: new RegExp(`harbour-red-${tag}\\.png`) });
   await expect(viewer).toBeVisible();
   await expect(viewer.getByRole("button", { name: "Close viewer" })).toBeFocused();
   await viewer.getByRole("button", { name: "Details" }).click();
@@ -177,7 +203,7 @@ test("asset library, uploads and the media viewer are accessible", async ({ page
   await page.screenshot({ path: test.info().outputPath("media-viewer.png") });
   await audit(page, "media-viewer");
   await page.keyboard.press("ArrowLeft");
-  await expect(page.getByRole("dialog", { name: /harbour-blue\.png/ })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: new RegExp(`harbour-blue-${tag}\\.png`) })).toBeVisible();
   await page.emulateMedia({ colorScheme: "light" });
   await expect(page.locator("html")).toHaveAttribute("data-theme-scheme", "light");
   await audit(page, "media-viewer-light");
@@ -193,20 +219,20 @@ test("asset library, uploads and the media viewer are accessible", async ({ page
   await expect(page.locator("#marina-command-input")).toBeVisible();
   const card = page
     .getByTestId("chat-media-card")
-    .filter({ hasText: "harbour-red.png" })
+    .filter({ hasText: `harbour-red-${tag}.png` })
     .first();
   await expect(card).toBeVisible();
   await expect(
-    page.getByTestId("chat-media-card").filter({ hasText: "harbour-blue.png" }).first(),
+    page.getByTestId("chat-media-card").filter({ hasText: `harbour-blue-${tag}.png` }).first(),
   ).toBeVisible();
   await card.scrollIntoViewIfNeeded();
   await card.screenshot({ path: test.info().outputPath("chat-media-card.png") });
   await audit(page, "chat-media-cards");
-  await card.getByRole("button", { name: "Open harbour-red.png in the media viewer" }).focus();
+  await card.getByRole("button", { name: `Open harbour-red-${tag}.png in the media viewer` }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("dialog", { name: /harbour-red\.png/ })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: new RegExp(`harbour-red-${tag}\\.png`) })).toBeVisible();
   await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("dialog", { name: /harbour-blue\.png/ })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: new RegExp(`harbour-blue-${tag}\\.png`) })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toBeHidden();
 });
