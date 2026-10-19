@@ -118,6 +118,37 @@ describe("idle shutdown", () => {
     expect(activity.lastActivityAt).toBe(20);
     expect(turns.count).toBe(0);
   });
+
+  test("a stopped or crashed agent's open turn stops postponing shutdown", () => {
+    const turns = new OpenTurns(new ActivityTracker(() => 0), { now: () => 0 });
+    turns.observe({ type: "agent_turn_start", name: "a" });
+    turns.observe({ type: "agent_turn_start", name: "b" });
+    turns.observe({ type: "agent_turn_start", name: "c" });
+    turns.observe({ type: "agent_stop", name: "a" });
+    expect(turns.count).toBe(2);
+    turns.observe({ type: "agent_state_change", name: "b", state: "error" });
+    expect(turns.count).toBe(1);
+    turns.observe({ type: "agent_state_change", name: "c", state: "autonomous" });
+    expect(turns.count).toBe(1);
+    turns.observe({ type: "agent_state_change", name: "c", state: "stopped" });
+    expect(turns.count).toBe(0);
+  });
+
+  test("a turn whose end never arrives expires after maxTurnMs", () => {
+    let clock = 0;
+    const turns = new OpenTurns(new ActivityTracker(() => clock), {
+      now: () => clock,
+      maxTurnMs: 1_000,
+    });
+    turns.observe({ type: "agent_turn_start", name: "a" });
+    clock = 600;
+    turns.observe({ type: "agent_turn_start", name: "a" });
+    expect(turns.count).toBe(2);
+    clock = 1_001;
+    expect(turns.count).toBe(1);
+    clock = 1_601;
+    expect(turns.count).toBe(0);
+  });
 });
 
 describe("endpoint.json", () => {

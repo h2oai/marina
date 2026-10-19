@@ -100,29 +100,57 @@ export function startIdleShutdown(opts: IdleShutdownOptions): () => void {
   return () => clearInterval(timer);
 }
 
-/** Tracks open agent turns from `agent_turn_start` / `agent_turn_end` events. */
+/** An open turn older than this no longer postpones idle shutdown (a hung or lost turn). */
+export const MAX_OPEN_TURN_MS = 30 * 60_000;
+
+/**
+ * Tracks open agent turns from `agent_turn_start` / `agent_turn_end` events.
+ * A turn whose end never arrives cannot hold the instance up forever: an
+ * agent's turns are dropped when it stops (`agent_stop`, or an
+ * `agent_state_change` to `stopped`/`error`), and any turn older than
+ * `maxTurnMs` stops counting.
+ */
 export class OpenTurns {
-  private open = new Map<string, number>();
+  /** Start times of each agent's open turns, oldest first. */
+  private open = new Map<string, number[]>();
+  private readonly now: () => number;
+  private readonly maxTurnMs: number;
 
-  constructor(private readonly activity: ActivityTracker = instanceActivity) {}
+  constructor(
+    private readonly activity: ActivityTracker = instanceActivity,
+    opts: { now?: () => number; maxTurnMs?: number } = {},
+  ) {
+    this.now = opts.now ?? Date.now;
+    this.maxTurnMs = opts.maxTurnMs ?? MAX_OPEN_TURN_MS;
+  }
 
-  observe(event: { type: string; name?: string; origin?: string }): void {
+  observe(event: { type: string; name?: string; origin?: string; state?: string }): void {
     if (!event.name) return;
     if (event.type === "agent_turn_start") {
-      this.open.set(event.name, (this.open.get(event.name) ?? 0) + 1);
+      const starts = this.open.get(event.name) ?? [];
+      starts.push(this.now());
+      this.open.set(event.name, starts);
     } else if (event.type === "agent_turn_end") {
-      const n = (this.open.get(event.name) ?? 0) - 1;
-      if (n > 0) this.open.set(event.name, n);
-      else this.open.delete(event.name);
+      const starts = this.open.get(event.name);
+      starts?.shift();
+      if (!starts?.length) this.open.delete(event.name);
       // A turn that answered a caller is that caller's activity; an autonomous
       // turn is not (see the module comment).
       if (event.origin === "request") this.activity.touch();
+    } else if (
+      event.type === "agent_stop" ||
+      (event.type === "agent_state_change" &&
+        (event.state === "stopped" || event.state === "error"))
+    ) {
+      // A stopped or crashed agent ends no more turns.
+      this.open.delete(event.name);
     }
   }
 
   get count(): number {
+    const cutoff = this.now() - this.maxTurnMs;
     let n = 0;
-    for (const v of this.open.values()) n += v;
+    for (const starts of this.open.values()) for (const t of starts) if (t > cutoff) n++;
     return n;
   }
 }
