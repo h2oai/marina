@@ -30,8 +30,8 @@ export function forecastSettings(spec: string, env: NodeJS.ProcessEnv, weight?: 
           proposalJudgeModel: proposalJudgeModel(env),
         }
       : {}),
-    // Only for the wiki-events card, so every other spec keeps its fingerprint.
-    ...(spec.includes("research:wiki-events")
+    // Only for the Wikipedia event cards, so every other spec keeps its fingerprint.
+    ...(spec.includes("research:wiki-events") || spec.includes("wiki-specialist:")
       ? { wikiEventsMaxInsert: env.MARINA_ARENA_WIKI_EVENTS_MAX_INSERT ?? "3" }
       : {}),
   };

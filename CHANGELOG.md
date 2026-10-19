@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Arena Wikipedia specialist** (`wiki-specialist[:<model>[,…][@<retrievers>]]`): the
+  `wiki-top10` ranking forecast from each candidate's projected target-week pageviews (a base level
+  plus an exponentially decaying excess with a page-specific half-life, weekday-corrected, ordered
+  by projected weekly sum with a discount on the transient share), read from the arena's daily top
+  lists and, for missing days, the Wikimedia REST API (rate-limited, cached, guarded, never after
+  the lock day − 2). Optional event models pool mechanically verified scheduled events into it,
+  capped by `MARINA_ARENA_WIKI_EVENTS_MAX_INSERT`. Walk-forward over 67 reconstructed weeks: mean
+  skill 0.106 against the recency nowcast's 0.041 (`scripts/arena-wiki-backtest.ts`). Runs as a
+  route (`wikipedia=wiki-specialist`) or a shadow challenger.
+
 - **Arena proposal judge**: delphi and symbiosis formations with a verified research dossier ask a
   decision model (Jev by default) whether each member's move from the start is supported by the
   verified lines; support weights the median move and can only lower the trust, any judge failure

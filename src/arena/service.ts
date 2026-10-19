@@ -362,6 +362,9 @@ export async function forecasterFor(
   if (spec.startsWith(`${WIKI_EVENTS}:`)) {
     return wikiEventsForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness);
   }
+  if (spec === WIKI_SPECIALIST || spec.startsWith(`${WIKI_SPECIALIST}:`)) {
+    return wikiSpecialistForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness);
+  }
   if (spec.startsWith("research:")) {
     return researchForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness, opts.notes);
   }
@@ -1085,30 +1088,17 @@ export async function learnFromResolutions(
 /** The method key of the Wikipedia event-research card (src/arena/research/wiki-events.ts). */
 export const WIKI_EVENTS = "research:wiki-events";
 
-/**
- * `research:wiki-events:<model>[@<retriever>[,<retriever>…]]`: the recency
- * list plus mechanically verified scheduled events (one extraction call to
- * `<model>`; retrievers as in `research:`, else MARINA_ARENA_RESEARCH_RETRIEVER).
- * Any other round shape gets the nowcast, so the spec is safe on a route.
- */
-async function wikiEventsForecasterFor(
-  spec: string,
-  env: NodeJS.ProcessEnv,
-  strictFreshness = false,
-): Promise<{ forecaster: Forecaster; usage?: Usage }> {
-  const [{ modelComplete }, retrieve, events, nowcast, { guardedFetch }] = await Promise.all([
+/** Retriever, extraction model(s), Wikimedia client and insertion cap shared by the Wikipedia event cards. */
+async function wikiEventTooling(models: string[], retrieverArg: string, env: NodeJS.ProcessEnv) {
+  const [{ modelComplete }, retrieve, events, { wikimediaFetchJson }] = await Promise.all([
     import("./model-backend"),
     import("./research/retrieve"),
     import("./research/wiki-events"),
-    import("./research/civiqs-nowcast"),
-    import("../net/url-guard"),
+    import("./wikimedia"),
   ]);
-  const rest = spec.slice(`${WIKI_EVENTS}:`.length);
-  const at = rest.indexOf("@");
-  const model = at < 0 ? rest : rest.slice(0, at);
   const orKey = env.OPENROUTER_API_KEY;
   const retrieverSpec =
-    (at < 0 ? "" : rest.slice(at + 1)).trim() ||
+    retrieverArg.trim() ||
     env.MARINA_ARENA_RESEARCH_RETRIEVER?.trim() ||
     (env.TAVILY_API_KEY?.trim() ? "tavily:basic" : "search:duckduckgo");
   const retriever = retrieve.retrieverFromSpec(
@@ -1120,32 +1110,59 @@ async function wikiEventsForecasterFor(
     },
     { env },
   );
-  const made = modelComplete(model, env);
-  let retrievalUsd = 0;
+  const made = models.map((m) => modelComplete(m, env));
+  const spent = { retrievalUsd: 0 };
   const usage: Usage = {
     get calls() {
-      return made.usage.calls;
+      return made.reduce((s, m) => s + m.usage.calls, 0);
     },
     get inputTokens() {
-      return made.usage.inputTokens;
+      return made.reduce((s, m) => s + m.usage.inputTokens, 0);
     },
     get outputTokens() {
-      return made.usage.outputTokens;
+      return made.reduce((s, m) => s + m.usage.outputTokens, 0);
     },
     get costUsd() {
-      return made.usage.costUsd + retrievalUsd;
+      return made.reduce((s, m) => s + m.usage.costUsd, 0) + spent.retrievalUsd;
     },
   };
+  // Through the SSRF guard, rate-limited, with Wikimedia's User-Agent (wikimedia.ts).
   const wiki = events.wikimediaApi(async (url) => {
-    const res = await guardedFetch(url, {
-      headers: { "User-Agent": "Marina-arena/1.0 (https://github.com/h2oai/marina)" },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!res.ok) throw new Error(`Wikimedia ${res.status}`);
-    return res.json();
+    const body = await wikimediaFetchJson(url);
+    if (body === undefined) throw new Error("Wikimedia 404");
+    return body;
   });
   const raw = Number.parseInt(env.MARINA_ARENA_WIKI_EVENTS_MAX_INSERT ?? "", 10);
   const maxInsert = Number.isFinite(raw) && raw >= 0 ? raw : events.DEFAULT_MAX_INSERT;
+  return {
+    events,
+    retriever,
+    retrieverSpec,
+    completes: made.map((m) => m.complete),
+    usage,
+    spent,
+    wiki,
+    maxInsert,
+  };
+}
+
+/**
+ * `research:wiki-events:<model>[@<retriever>[,<retriever>…]]`: the recency
+ * list plus mechanically verified scheduled events (one extraction call to
+ * `<model>`; retrievers as in `research:`, else MARINA_ARENA_RESEARCH_RETRIEVER).
+ * Any other round shape gets the nowcast, so the spec is safe on a route.
+ */
+async function wikiEventsForecasterFor(
+  spec: string,
+  env: NodeJS.ProcessEnv,
+  strictFreshness = false,
+): Promise<{ forecaster: Forecaster; usage?: Usage }> {
+  const nowcast = await import("./research/civiqs-nowcast");
+  const rest = spec.slice(`${WIKI_EVENTS}:`.length);
+  const at = rest.indexOf("@");
+  const model = at < 0 ? rest : rest.slice(0, at);
+  const tools = await wikiEventTooling([model], at < 0 ? "" : rest.slice(at + 1), env);
+  const { events, retriever, retrieverSpec, completes, usage, spent, wiki, maxInsert } = tools;
   const data = arenaData(env);
   const fallback = nowcast.nowcastForecaster(data, forecastRound, {
     ...(await liveCiviqs(env, strictFreshness)),
@@ -1159,11 +1176,11 @@ async function wikiEventsForecasterFor(
       const inputs = obs.length ? { ...lock, answer_obs: obs } : lock;
       const result = await events.wikiEventsRanking(round, inputs, {
         retriever,
-        complete: made.complete,
+        complete: completes[0]!,
         wiki,
         maxInsert,
       });
-      retrievalUsd += result.costUsd;
+      spent.retrievalUsd += result.costUsd;
       const verified = result.events.filter((e) => e.verified);
       const moved = verified.filter((e) => e.action && e.action !== "none").length;
       const f = {
@@ -1178,6 +1195,127 @@ async function wikiEventsForecasterFor(
           retrievalUsd: result.costUsd,
         },
       };
+      return strictFreshness
+        ? requireFreshForecast(round, inputs, f, forecastCutoff(round.lock_at))
+        : f;
+    },
+  };
+}
+
+// ─── Wikipedia specialist ────────────────────────────────────────────────────
+
+/** The method key of the Wikipedia top-10 specialist (src/arena/wiki-specialist.ts). */
+export const WIKI_SPECIALIST = "wiki-specialist";
+/** Fewest daily lists (of 28) the specialist projects from; fewer and the nowcast answers. */
+const MIN_SPECIALIST_DAYS = 14;
+
+/**
+ * `wiki-specialist[:<model>[,<model>…][@<retriever>[,…]]]`: each candidate's
+ * target-week views projected from its own daily series (decaying spike over
+ * a base level), ranked by the projected weekly sum. With models, scheduled
+ * events they extract from dated sources are mechanically verified
+ * (`wiki-events.ts`) and merged into the projected list, at most
+ * MARINA_ARENA_WIKI_EVENTS_MAX_INSERT new articles. Without models it makes no
+ * paid call. Any other round shape gets the nowcast, so the spec is safe on a route.
+ */
+async function wikiSpecialistForecasterFor(
+  spec: string,
+  env: NodeJS.ProcessEnv,
+  strictFreshness = false,
+): Promise<{ forecaster: Forecaster; usage?: Usage }> {
+  const [nowcast, specialist, wikimedia] = await Promise.all([
+    import("./research/civiqs-nowcast"),
+    import("./wiki-specialist"),
+    import("./wikimedia"),
+  ]);
+  const rest = spec.startsWith(`${WIKI_SPECIALIST}:`)
+    ? spec.slice(`${WIKI_SPECIALIST}:`.length)
+    : "";
+  const at = rest.indexOf("@");
+  const models = (at < 0 ? rest : rest.slice(0, at))
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+  const tools = models.length
+    ? await wikiEventTooling(models, at < 0 ? "" : rest.slice(at + 1), env)
+    : undefined;
+  const data = arenaData(env);
+  const fallback = nowcast.nowcastForecaster(data, forecastRound, {
+    ...(await liveCiviqs(env, strictFreshness)),
+  });
+  const params = specialist.DEFAULT_SPECIALIST_PARAMS;
+  return {
+    ...(tools ? { usage: tools.usage } : {}),
+    forecaster: async (round, lock) => {
+      if (round.target_type !== "ranking_list" || round.tracker !== "wikipedia")
+        return fallback(round, lock);
+      const weekEnd = round.ranking?.week_end;
+      if (!weekEnd) throw new Error(`${round.round_id}: a Wikipedia ranking round names no week`);
+      const read = await wikimedia.dailyTopsForRound(data, round, params.historyDays);
+      if (read.sources.errors.length)
+        logger.warn("arena", "Wikimedia daily top lists unavailable for some days", {
+          round: round.round_id,
+          errors: read.sources.errors.slice(0, 5),
+        });
+      // Too few lists to measure a page's decay: the nowcast answers.
+      if (read.days.length < MIN_SPECIALIST_DAYS) {
+        const f = await fallback(round, lock);
+        return {
+          ...f,
+          note: `${f.note}; wiki-specialist fell back: ${read.days.length} of ${params.historyDays} daily lists to ${read.lastDay}`,
+        };
+      }
+      const projected = specialist.specialistRanking(read.days, {
+        weekEnd,
+        lastDay: read.lastDay,
+        length: round.ranking?.length ?? 10,
+        params,
+      });
+      const inputs = { ...lock, answer_obs: wikimedia.asAnswerObs(read.days) };
+      const sourceNote = `${read.sources.archive} archived + ${read.sources.wikimedia} Wikimedia daily lists to ${read.lastDay}${read.sources.missing.length ? `, ${read.sources.missing.length} missing` : ""}`;
+      const top = projected.scored.slice(0, 15).map((s) => ({
+        title: s.title,
+        weekly: Math.round(s.weekly),
+        base: Math.round(s.base),
+        level: Math.round(s.level),
+        halfLife: Number(s.halfLife.toFixed(2)),
+        transient: Number(s.transient.toFixed(3)),
+      }));
+      let f: import("./forecast").RoundForecast & Record<string, unknown> = {
+        ranking: projected.ranking,
+        rules: {},
+        note: `marina wiki-specialist: projected target-week pageviews (decaying excess over base, half-life prior ${params.halfLifeDays} d) from ${sourceNote}`,
+        wikiSpecialist: { params, read: projected.read, sources: read.sources, top },
+      };
+      if (tools) {
+        const result = await tools.events.wikiEventsRanking(round, inputs, {
+          retriever: tools.retriever,
+          complete: tools.completes,
+          wiki: tools.wiki,
+          maxInsert: tools.maxInsert,
+          base: {
+            scored: projected.scored.map((s) => [s.title, s.score] as [string, number]),
+            perDay: 7,
+            label: "projected weekly views",
+          },
+        });
+        tools.spent.retrievalUsd += result.costUsd;
+        const moved = result.events.filter(
+          (e) => e.verified && e.action && e.action !== "none",
+        ).length;
+        f = {
+          ...f,
+          ranking: result.ranking,
+          note: `${f.note} + ${moved} verified scheduled event(s) of ${result.events.length} proposed by ${models.map((m) => m.replace(/^openrouter\//, "")).join(", ")} from ${result.sources} source(s)`,
+          wikiEvents: {
+            base: result.base,
+            events: result.events,
+            read: result.read,
+            retriever: tools.retrieverSpec,
+            retrievalUsd: result.costUsd,
+          },
+        };
+      }
       return strictFreshness
         ? requireFreshForecast(round, inputs, f, forecastCutoff(round.lock_at))
         : f;
