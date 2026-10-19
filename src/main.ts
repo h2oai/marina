@@ -1,6 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+// First: MARINA_DATA_DIR and its .env must be applied before any module below
+// reads the environment at load time (src/config/load-data-dir.ts).
+import "./config/load-data-dir";
 import { resolve } from "node:path";
 import { BUILTIN_WORLD_SLUGS } from "../worlds";
 import { agentModelMapProblems } from "../worlds/seed";
@@ -8,7 +11,7 @@ import { getInternalModelToken } from "./agent/agent-runtime";
 import { RateLimiter } from "./auth/rate-limiter";
 import { parseExecUnrestricted } from "./coding/exec-approver";
 import { ensureConfiguredRoots } from "./coding/workspace-registry";
-import { applyDataDir } from "./config/data-dir";
+import { dataDir } from "./config/data-dir";
 import { applyStoredDecisionSettings } from "./decisions/settings";
 import { describeAutonomyPosture, getAutonomyPosture, ungatedPostureNote } from "./engine/autonomy";
 import {
@@ -71,9 +74,9 @@ import { seedGuidePool } from "./world/seed-guide";
 import type { WorldDefinition } from "./world/world-definition";
 import { loadWorld } from "./world/world-loader";
 
-// MARINA_DATA_DIR roots every unset path default (database, keys, assets,
-// scratch, model caches) before anything below reads them (src/config/data-dir.ts).
-const DATA_DIR = applyDataDir(process.env);
+// MARINA_DATA_DIR (applied by the first import above) roots every unset path
+// default: database, keys, assets, scratch, model caches (src/config/data-dir.ts).
+const DATA_DIR = dataDir(process.env);
 // Embedding lifecycle (src/net/instance-lifecycle.ts), validated before anything starts.
 const IDLE_SHUTDOWN_MS = parseIdleShutdown(process.env.MARINA_IDLE_SHUTDOWN);
 const PARENT_PID = parseParentPid(process.env.MARINA_PARENT_PID);
