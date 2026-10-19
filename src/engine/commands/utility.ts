@@ -7,7 +7,7 @@ import { formatDurationFull } from "./format-duration";
 export function timeCommand(): CommandDef {
   return {
     category: "System",
-    usage: ["time"],
+    usage: [{ syntax: "time", effect: "read" }],
     name: "time",
     aliases: ["date"],
     help: "Show the current server time.",
@@ -22,7 +22,7 @@ export function timeCommand(): CommandDef {
 export function uptimeCommand(getUptime: () => number): CommandDef {
   return {
     category: "System",
-    usage: ["uptime"],
+    usage: [{ syntax: "uptime", effect: "read" }],
     name: "uptime",
     aliases: [],
     help: "Show how long the server has been running.",

@@ -257,12 +257,12 @@ export function reflectCommand(deps: {
   return {
     category: "Memory",
     usage: [
-      "reflect --template [topic] [--share <pool>]",
-      "reflect [topic] [--share <pool>] [--no-spawn]",
-      "reflect adopt <job-id>",
-      "reflect failure <description> [--share <pool>]",
-      "reflect jobs",
-      "reflect via <helper> [topic] [--share <pool>]",
+      { syntax: "reflect --template [topic] [--share <pool>]", effect: "write" },
+      { syntax: "reflect [topic] [--share <pool>] [--no-spawn]", effect: "execute" },
+      { syntax: "reflect adopt <job-id>", effect: "write" },
+      { syntax: "reflect failure <description> [--share <pool>]", effect: "write" },
+      { syntax: "reflect jobs", effect: "read" },
+      { syntax: "reflect via <helper> [topic] [--share <pool>]", effect: "execute" },
     ],
     name: "reflect",
     aliases: [],

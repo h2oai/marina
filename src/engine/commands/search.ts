@@ -13,7 +13,7 @@ export function searchCommand(deps: {
 }): CommandDef {
   return {
     category: "Knowledge",
-    usage: ["search <query>"],
+    usage: [{ syntax: "search <query>", effect: "read" }],
     name: "search",
     aliases: [],
     help: "Global search across rooms, boards, channels, tasks, markets, open pools, and the chronicle. Usage: search <query>",

@@ -18,9 +18,13 @@ export function reproduceCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "reproduce intellect <parent-ids csv> | <name> | <purpose> | <components JSON> [| contributors csv] [| evidence refs csv]",
-      "reproduce list",
-      "reproduce show <reproduction-id>",
+      {
+        syntax:
+          "reproduce intellect <parent-ids csv> | <name> | <purpose> | <components JSON> [| contributors csv] [| evidence refs csv]",
+        effect: "write",
+      },
+      { syntax: "reproduce list", effect: "read" },
+      { syntax: "reproduce show <reproduction-id>", effect: "read" },
     ],
     name: "reproduce",
     aliases: [],

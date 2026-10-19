@@ -48,15 +48,21 @@ export function worldCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "world adopt <child> <role> [into:<existing>]",
-      "world adopt approve <id> [reason] · world adopt rollback <id> · world adopt list",
-      "world adopt reject <id> [reason] · world adopt rollback <id> · world adopt list",
-      "world create <name> [template] [| <hypothesis>]",
-      "world list",
-      "world run <name> <command …>",
-      "world seed-role <name> <role>",
-      "world start <name>",
-      "world stop <name>",
+      { syntax: "world adopt <child> <role> [into:<existing>]", effect: "write" },
+      {
+        syntax: "world adopt approve <id> [reason] · world adopt rollback <id> · world adopt list",
+        effect: "write",
+      },
+      {
+        syntax: "world adopt reject <id> [reason] · world adopt rollback <id> · world adopt list",
+        effect: "write",
+      },
+      { syntax: "world create <name> [template] [| <hypothesis>]", effect: "write" },
+      { syntax: "world list", effect: "read" },
+      { syntax: "world run <name> <command …>", effect: "execute" },
+      { syntax: "world seed-role <name> <role>", effect: "write" },
+      { syntax: "world start <name>", effect: "execute" },
+      { syntax: "world stop <name>", effect: "write" },
     ],
     name: "world",
     aliases: ["worlds"],

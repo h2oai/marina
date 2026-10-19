@@ -105,7 +105,13 @@ export function questCommand(deps: {
 
   return {
     category: "Identity & Access",
-    usage: ["quest abandon", "quest complete", "quest list", "quest start <name>", "quest status"],
+    usage: [
+      { syntax: "quest abandon", effect: "write" },
+      { syntax: "quest complete", effect: "write" },
+      { syntax: "quest list", effect: "read" },
+      { syntax: "quest start <name>", effect: "write" },
+      { syntax: "quest status", effect: "read" },
+    ],
     name: "quest",
     aliases: ["checklist", "onboarding"],
     help: "Guided objectives and onboarding checklists. Structured step-by-step workflows that track your progress. Usage: quest [start|status|list|complete|abandon]",

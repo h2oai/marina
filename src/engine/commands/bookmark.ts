@@ -15,7 +15,12 @@ export function bookmarkCommand(deps: {
 }): CommandDef {
   return {
     category: "Knowledge",
-    usage: ["bookmark", "bookmark delete <#>", "bookmark list", "bookmark note <#> <text>"],
+    usage: [
+      { syntax: "bookmark", effect: "write" },
+      { syntax: "bookmark delete <#>", effect: "delete" },
+      { syntax: "bookmark list", effect: "read" },
+      { syntax: "bookmark note <#> <text>", effect: "write" },
+    ],
     name: "bookmark",
     aliases: ["bm"],
     help: "Save space bookmarks. Usage: bookmark | bookmark list | bookmark note <#> <text> | bookmark delete <#>",

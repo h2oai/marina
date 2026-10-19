@@ -161,14 +161,22 @@ export function traitCommand(deps: {
   return {
     category: "Identity & Access",
     usage: [
-      "trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]",
-      "trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]",
-      "trait delete <name>",
-      "trait diff <a> <b>",
-      "trait history <name>",
-      "trait lint <name>",
-      "trait list",
-      "trait view <name>",
+      {
+        syntax:
+          "trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]",
+        effect: "write",
+      },
+      {
+        syntax:
+          "trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]",
+        effect: "write",
+      },
+      { syntax: "trait delete <name>", effect: "delete" },
+      { syntax: "trait diff <a> <b>", effect: "read" },
+      { syntax: "trait history <name>", effect: "read" },
+      { syntax: "trait lint <name>", effect: "read" },
+      { syntax: "trait list", effect: "read" },
+      { syntax: "trait view <name>", effect: "read" },
     ],
     name: "trait",
     aliases: [],

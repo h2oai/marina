@@ -15,7 +15,12 @@ export function lsCommand(deps: {
 }): CommandDef {
   return {
     category: "Navigation",
-    usage: ["ls", "ls <room-id>", "ls entities", "ls rooms"],
+    usage: [
+      { syntax: "ls", effect: "read" },
+      { syntax: "ls <room-id>", effect: "read" },
+      { syntax: "ls entities", effect: "read" },
+      { syntax: "ls rooms", effect: "read" },
+    ],
     name: "ls",
     aliases: ["list", "dir"],
     help: "Browse rooms, entities, and room contents. Usage: ls [rooms|entities|<room-id>]",

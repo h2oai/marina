@@ -27,19 +27,19 @@ Aliases: none.
 
 ### `adapter disable <platform>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`platform`): text, required.
 
 ### `adapter enable <platform>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`platform`): text, required.
 
 ### `adapter enable <platform> [config json]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`platform`): text, required.
 - `field-1` (`config`): json, optional group `option-0`.
@@ -47,7 +47,7 @@ Effect: unknown.
 
 ### `adapter enable <platform> [config]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`platform`): text, required.
 - `field-1` (`config`): text, optional group `option-0`.
@@ -55,12 +55,12 @@ Effect: unknown.
 
 ### `adapter list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `adapter status <platform>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`platform`): text, required.
 
@@ -84,7 +84,7 @@ Aliases: none.
 
 ### `admin <kick|ban|unban|stats|announce|reload|export> [args]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`kick|ban|unban|stats|announce|reload|export`): text, required, choices `kick`, `ban`, `unban`, `stats`, `announce`, `reload`, `export`.
 - `field-1` (`args`): text, optional group `option-0`.
@@ -92,36 +92,36 @@ Effect: unknown.
 
 ### `admin announce <message>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`message`): text, required.
 
 ### `admin decisions`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `admin decisions set <setting> <value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`setting`): text, required.
 - `field-1` (`value`): text, required.
 
 ### `admin decisions unset <setting>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`setting`): text, required.
 
 ### `admin decisions history`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `admin ban <entity> [reason]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`entity`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -129,29 +129,29 @@ Effect: unknown.
 
 ### `admin bans`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `admin export`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `admin kick <entity>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`entity`): text, required.
 
 ### `admin reload <room-id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`room-id`): text, required.
 
 ### `admin snapshot <name> [--force] [--compact]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - Group `option-0`: `--force`.
@@ -159,17 +159,17 @@ Effect: unknown.
 
 ### `admin snapshots`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `admin stats`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `admin unban <entity>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`entity`): text, required.
 
@@ -198,147 +198,147 @@ Aliases: none.
 
 ### `agent attention <name> <message>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`message`): text, required.
 
 ### `agent attention <name> <msg>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`msg`): text, required.
 
 ### `agent attention-feedback <name> noise`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `agent attention-feedback <name> useful`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `agent attention-mode <name> balanced`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `agent attention-mode <name> focused`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `agent attention-mode <name> open`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `agent config <name> ..`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `agent config <name> key <value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`value`): text, required.
 
 ### `agent config <name> model <value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`value`): text, required.
 
 ### `agent config <name> role <value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`value`): text, required.
 
 ### `agent config <name> thinking <value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`value`): text, required.
 
 ### `agent diagnose <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `agent disable <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `agent enable <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `agent failover <name> <provider/model>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`provider/model`): text, required.
 
 ### `agent focus <name> <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `agent focus <name> <description>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`description`): text, required.
 
 ### `agent list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `agent restart <name>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 
 ### `agent restart <name> ..`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 
 ### `agent spawn <name> ..`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 
 ### `agent spawn <name> [model <m>] [role <r>] [key <k>] [budget <n>] [thinking:<level>] [goal <g>]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`m`): text, optional group `option-0`.
@@ -356,7 +356,7 @@ Effect: unknown.
 
 ### `agent spawn <name> [model <model>] [role <role>] [key <key>] [budget <n-calls>] [thinking:off|low|medium|high] [goal <goal>]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`model`): text, optional group `option-0`.
@@ -374,19 +374,19 @@ Effect: unknown.
 
 ### `agent status <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `agent stop <name> ..`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `agent stop <name> [--keep-children]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - Group `option-0`: `--keep-children`.
@@ -404,26 +404,26 @@ Aliases: none.
 
 ### `arena [status]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`status`): text, optional group `option-0`.
 - Group `option-0`: `status`.
 
 ### `arena health`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `arena backtest [n]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`n`): number, optional group `option-0`.
 - Group `option-0`: `n`.
 
 ### `arena discover [tracker:T] [n:N]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`tracker`): text, optional group `option-0`.
 - `field-1` (`n`): number, optional group `option-1`.
@@ -432,7 +432,7 @@ Effect: unknown.
 
 ### `arena evaluate [baseline|nowcast|discovered] [tracker:T] [limit:N]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`baseline|nowcast|discovered`): choice, optional group `option-0`, choices `baseline`, `nowcast`, `discovered`.
 - `field-1` (`tracker`): text, optional group `option-1`.
@@ -443,21 +443,21 @@ Effect: unknown.
 
 ### `arena rounds [n]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`n`): number, optional group `option-0`.
 - Group `option-0`: `n`.
 
 ### `arena shadow [list]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`list`): text, optional group `option-0`.
 - Group `option-0`: `list`.
 
 ### `arena shadow run <round_id|due> [forecaster:F]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`round id|due`): text, required, choices `round_id`, `due`.
 - `field-1` (`forecaster`): text, optional group `option-0`.
@@ -465,25 +465,25 @@ Effect: unknown.
 
 ### `arena shadow score`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `arena show <round_id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`round id`): text, required.
 
 ### `arena signals [tracker:T]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`tracker`): text, optional group `option-0`.
 - Group `option-0`: `tracker:T`.
 
 ### `arena submissions`
 
-Effect: unknown.
+Effect: read.
 
 
 ## ask
@@ -495,7 +495,7 @@ Aliases: none.
 
 ### `ask <question>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`question`): text, required.
 
@@ -524,7 +524,7 @@ Aliases: `assets`.
 
 ### `asset list [type:image|video|audio|pdf|document|other] [owner:<owner>] [origin:upload|generated|request|derived|tool] [tag:<tag>] [canvas:<canvas>] [since:<window>] [limit:N] [sort:new|old|size|name]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`type`): text, optional group `option-0`, choices `image`, `video`, `audio`, `pdf`, `document`, `other`.
 - `field-1` (`owner`): text, optional group `option-1`.
@@ -545,13 +545,13 @@ Effect: unknown.
 
 ### `asset show <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
 ### `asset search <text> [limit:N]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`text`): text, required.
 - `field-1` (`limit`): number, optional group `option-0`.
@@ -559,34 +559,34 @@ Effect: unknown.
 
 ### `asset tag <id> <changes...>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`changes...`): text, required.
 
 ### `asset caption <id> -- <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`text`): text, required.
 
 ### `asset caption <id> accept`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
 ### `asset alt <id> -- <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`text`): text, required.
 
 ### `asset delete <id>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`id`): text, required.
 
@@ -613,14 +613,14 @@ Aliases: `associations`.
 
 ### `association create <name> | <purpose>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`purpose`): text, required.
 
 ### `association event <association> <kind> | <detail>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`association`): text, required.
 - `field-1` (`kind`): text, required.
@@ -628,7 +628,7 @@ Effect: unknown.
 
 ### `association join <association> | <kind>:<ref> | <role or interpretation>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`association`): text, required.
 - `field-1` (`kind`): text, required.
@@ -637,7 +637,7 @@ Effect: unknown.
 
 ### `association leave <association> | <kind>:<ref> | <reason>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`association`): text, required.
 - `field-1` (`kind`): text, required.
@@ -646,7 +646,7 @@ Effect: unknown.
 
 ### `association link <association> | <canonical-kind>:<ref> | <relationship>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`association`): text, required.
 - `field-1` (`canonical-kind`): text, required.
@@ -655,12 +655,12 @@ Effect: unknown.
 
 ### `association list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `association relate <association> | <kind>:<ref> | <directed|reciprocal> | <semantics> | <kind>:<ref> [| JSON terms or text]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`association`): text, required.
 - `field-1` (`kind`): text, required.
@@ -674,7 +674,7 @@ Effect: unknown.
 
 ### `association revise <association> | <relation-id> | <kind>:<ref> | <directed|reciprocal> | <semantics> | <kind>:<ref> [| JSON terms or text]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`association`): text, required.
 - `field-1` (`relation-id`): text, required.
@@ -689,7 +689,7 @@ Effect: unknown.
 
 ### `association show <association>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`association`): text, required.
 
@@ -702,7 +702,7 @@ Aliases: none.
 
 ### `audio transcribe <source> [model:<provider/model>] [language:<code>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`source`): text, required.
 - `field-1` (`model`): text, optional group `option-0`.
@@ -712,7 +712,7 @@ Effect: unknown.
 
 ### `audio transcribe <source> [model:<provider/model>] [language:<code>] -- <context>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`source`): text, required.
 - `field-1` (`model`): text, optional group `option-0`.
@@ -723,7 +723,7 @@ Effect: unknown.
 
 ### `audio transcript <asset> [segments]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`asset`): text, required.
 - `field-1` (`segments`): text, optional group `option-0`.
@@ -731,7 +731,7 @@ Effect: unknown.
 
 ### `audio speak [voice:<voice>] [model:<provider/model>] [format:mp3|wav|opus|aac|flac] [speed:<number>] [canvas:<name>] -- <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`voice`): text, optional group `option-0`.
 - `field-1` (`model`): text, optional group `option-1`.
@@ -770,36 +770,36 @@ Aliases: none.
 
 ### `bankroll cap <usd>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`usd`): number, required.
 
 ### `bankroll floor <usd>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`usd`): number, required.
 
 ### `bankroll kelly <fraction>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`fraction`): number, required.
 
 ### `bankroll reset`
 
-Effect: unknown.
+Effect: delete.
 
 
 ### `bankroll set <usd>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`usd`): number, required.
 
 ### `bankroll show`
 
-Effect: unknown.
+Effect: read.
 
 
 ## batch
@@ -814,7 +814,7 @@ Aliases: none.
 
 ### `batch <commands>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`commands`): text, required.
 
@@ -918,7 +918,7 @@ Aliases: `bench`.
 
 ### `benchmark challenge <slot> <run> [--max-cost-ratio R]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`slot`): text, required.
 - `field-1` (`run`): text, required.
@@ -927,14 +927,14 @@ Effect: unknown.
 
 ### `benchmark compare <runA> <runB>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`runA`): text, required.
 - `field-1` (`runB`): text, required.
 
 ### `benchmark compare-run <name> arms:<a>,<b> cap:<usd> [replicates:N] [limit:N] [seed:N] [model:M] [judge:M] [concurrency:N] [partition:holdout|tune]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`arms`): text, required.
@@ -957,19 +957,19 @@ Effect: unknown.
 
 ### `benchmark compare-run status [id]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, optional group `option-0`.
 - Group `option-0`: `id`.
 
 ### `benchmark defaults`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`slot`): text, required.
 - `field-1` (`run`): text, required.
@@ -980,27 +980,27 @@ Effect: unknown.
 
 ### `benchmark purge-content-notes [confirm:yes]`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`confirm`): text, optional group `option-0`.
 - Group `option-0`: `confirm:yes`.
 
 ### `benchmark frontier <benchmark>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`benchmark`): text, required.
 
 ### `benchmark invalidate <run> reason:<text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`run`): text, required.
 - `field-1` (`reason`): text, required.
 
 ### `benchmark leaderboard <benchmark> [--limit N]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`benchmark`): text, required.
 - `field-1` (`--limit`): number, optional group `option-0`.
@@ -1008,57 +1008,57 @@ Effect: unknown.
 
 ### `benchmark participants <benchmark>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`benchmark`): text, required.
 
 ### `benchmark replicates <run>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`run`): text, required.
 
 ### `benchmark list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `benchmark orchestrations`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `benchmark reference`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `benchmark reference benchmark`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `benchmark reference model`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `benchmark result <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
 ### `benchmark revalidate <run> reason:<text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`run`): text, required.
 - `field-1` (`reason`): text, required.
 
 ### `benchmark run <name> [--limit N] [--seed N] [--model M]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`--limit`): number, optional group `option-0`.
@@ -1070,7 +1070,7 @@ Effect: unknown.
 
 ### `benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live] [arm:bare|on|full|<members>] [cap:<usd>]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`--limit`): number, optional group `option-0`.
@@ -1097,7 +1097,7 @@ Effect: unknown.
 
 ### `benchmark runs [--benchmark X] [--limit N]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`--benchmark`): text, optional group `option-0`.
 - `field-1` (`--limit`): number, optional group `option-1`.
@@ -1106,28 +1106,28 @@ Effect: unknown.
 
 ### `benchmark kit [list]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`list`): text, optional group `option-0`.
 - Group `option-0`: `list`.
 
 ### `benchmark kit doctor [setup]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`setup`): text, optional group `option-0`.
 - Group `option-0`: `setup`.
 
 ### `benchmark kit status [id]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, optional group `option-0`.
 - Group `option-0`: `id`.
 
 ### `benchmark kit <setup> [arms:a,b] [replicates:N] [limit:N] [budget:<usd>] [model:M] [domain:D] [dry-run]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`setup`): text, required.
 - `field-1` (`arms`): text, optional group `option-0`.
@@ -1146,7 +1146,7 @@ Effect: unknown.
 
 ### `benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name|all`): text, required, choices `name`, `all`.
 - `field-1` (`--limit`): number, optional group `option-0`.
@@ -1172,37 +1172,37 @@ Aliases: none.
 
 ### `board archive <postId>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`postId`): text, required.
 
 ### `board create <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `board list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `board list [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `board pin <postId>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`postId`): text, required.
 
 ### `board post <board> <title> | <body>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`board`): text, required.
 - `field-1` (`title`): text, required.
@@ -1210,7 +1210,7 @@ Effect: unknown.
 
 ### `board read <board> [postId]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`board`): text, required.
 - `field-1` (`postId`): text, optional group `option-0`.
@@ -1218,27 +1218,27 @@ Effect: unknown.
 
 ### `board reply <postId> <body>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`postId`): text, required.
 - `field-1` (`body`): text, required.
 
 ### `board scores <postId>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`postId`): text, required.
 
 ### `board search <board> <query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`board`): text, required.
 - `field-1` (`query`): text, required.
 
 ### `board vote <postId> down [score 1-10]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`postId`): text, required.
 - `field-1` (`score`): text, optional group `option-0`.
@@ -1246,7 +1246,7 @@ Effect: unknown.
 
 ### `board vote <postId> up [score 1-10]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`postId`): text, required.
 - `field-1` (`score`): text, optional group `option-0`.
@@ -1261,23 +1261,23 @@ Aliases: `bm`.
 
 ### `bookmark`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `bookmark delete <#>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`#`): text, required.
 
 ### `bookmark list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `bookmark note <#> <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`#`): text, required.
 - `field-1` (`text`): text, required.
@@ -1291,27 +1291,27 @@ Aliases: none.
 
 ### `brief`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `brief full`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `brief social`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `brief unwatch`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `brief watch [interval]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`interval`): text, optional group `option-0`.
 - Group `option-0`: `interval`.
@@ -1335,50 +1335,50 @@ Aliases: none.
 
 ### `build audit`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `build audit [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `build code <room> <typescript source>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`room`): text, required.
 - `field-1` (`typescript source`): text, required.
 
 ### `build command`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `build command [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `build command audit <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `build command code <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `build command code <name> [source]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`source`): text, optional group `option-0`.
@@ -1386,55 +1386,55 @@ Effect: unknown.
 
 ### `build command create <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `build command destroy <name>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 
 ### `build command list <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `build command reload <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `build command validate <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `build destroy <room>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`room`): text, required.
 
 ### `build diff`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `build diff [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `build link [from] <exit> <to>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`from`): text, optional group `option-0`.
 - `field-1` (`exit`): text, required.
@@ -1443,7 +1443,7 @@ Effect: unknown.
 
 ### `build modify [room] <short|long|item> <value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`room`): text, optional group `option-0`.
 - `field-1` (`short|long|item`): text, required, choices `short`, `long`, `item`.
@@ -1452,26 +1452,26 @@ Effect: unknown.
 
 ### `build modify item <key> <description>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`key`): text, required.
 - `field-1` (`description`): text, required.
 
 ### `build reload`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `build reload [args]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `build revert <room> [version]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`room`): text, required.
 - `field-1` (`version`): number, optional group `option-0`.
@@ -1479,7 +1479,7 @@ Effect: unknown.
 
 ### `build room <id> [short description]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`short`): text, optional group `option-0`.
@@ -1487,33 +1487,33 @@ Effect: unknown.
 
 ### `build template`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `build template [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `build template apply <name> <newRoomId>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`newRoomId`): text, required.
 
 ### `build template list [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `build template save <room> <name> [description]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`room`): text, required.
 - `field-1` (`name`): text, required.
@@ -1522,7 +1522,7 @@ Effect: unknown.
 
 ### `build unlink [from] <exit>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`from`): text, optional group `option-0`.
 - `field-1` (`exit`): text, required.
@@ -1530,12 +1530,12 @@ Effect: unknown.
 
 ### `build validate`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `build validate [args]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
@@ -1563,13 +1563,13 @@ Aliases: none.
 
 ### `calc <expression-or-statements>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`expression-or-statements`): text, required.
 
 ### `calc <expression>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`expression`): text, required.
 
@@ -1585,36 +1585,36 @@ Aliases: `cv`.
 
 ### `canvas asset delete <id>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`id`): text, required.
 
 ### `canvas asset info <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
 ### `canvas asset list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `canvas asset upload <url or file:filename>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`url or file:filename`): text, required.
 
 ### `canvas asset upload <url>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`url`): text, required.
 
 ### `canvas connect <src_node_id> <tgt_node_id> <relationship>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`src node id`): text, required.
 - `field-1` (`tgt node id`): text, required.
@@ -1622,7 +1622,7 @@ Effect: unknown.
 
 ### `canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`src node id`): text, required.
 - `field-1` (`tgt node id`): text, required.
@@ -1632,7 +1632,7 @@ Effect: unknown.
 
 ### `canvas create <name> [desc]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, optional group `option-0`.
@@ -1640,7 +1640,7 @@ Effect: unknown.
 
 ### `canvas create <name> [description]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`description`): text, optional group `option-0`.
@@ -1648,43 +1648,43 @@ Effect: unknown.
 
 ### `canvas delete <name>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 
 ### `canvas disconnect <edge_id>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`edge id`): text, required.
 
 ### `canvas edges <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `canvas info <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `canvas intent claim <node_id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`node id`): text, required.
 
 ### `canvas intent claim <node_id> |`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`node id`): text, required.
 
 ### `canvas intent complete <node_id> [--type <type>] <result text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`node id`): text, required.
 - `field-1` (`type`): text, optional group `option-0`.
@@ -1693,7 +1693,7 @@ Effect: unknown.
 
 ### `canvas intent complete <node_id> [--type <type>] <result>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`node id`): text, required.
 - `field-1` (`type`): text, optional group `option-0`.
@@ -1702,28 +1702,28 @@ Effect: unknown.
 
 ### `canvas intent complete <node_id> <result>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`node id`): text, required.
 - `field-1` (`result`): text, required.
 
 ### `canvas intent complete-rich <node_id> <a2ui_json>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`node id`): text, required.
 - `field-1` (`a2ui json`): json, required.
 
 ### `canvas intent complete-rich <node_id> <json>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`node id`): text, required.
 - `field-1` (`json`): json, required.
 
 ### `canvas intent fail <node_id> [reason]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`node id`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -1731,33 +1731,33 @@ Effect: unknown.
 
 ### `canvas intent list [canvas]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`canvas`): text, optional group `option-0`.
 - Group `option-0`: `canvas`.
 
 ### `canvas layout <grid|timeline|feed> <canvas_name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`grid|timeline|feed`): choice, required, choices `grid`, `timeline`, `feed`.
 - `field-1` (`canvas name`): text, required.
 
 ### `canvas layout <grid|timeline|feed> <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`grid|timeline|feed`): choice, required, choices `grid`, `timeline`, `feed`.
 - `field-1` (`name`): text, required.
 
 ### `canvas list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `canvas look <node_id> [question...] [model:<provider/model>] [mode:native|describe]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`node id`): text, required.
 - `field-1` (`question`): text, optional group `option-0`.
@@ -1769,20 +1769,20 @@ Effect: unknown.
 
 ### `canvas resources [filter]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`filter`): text, optional group `option-0`.
 - Group `option-0`: `filter`.
 
 ### `canvas nodes <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `canvas post [on:<canvas>] [reply:<node_id>] <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`on`): text, optional group `option-0`.
 - `field-1` (`reply`): text, optional group `option-1`.
@@ -1792,7 +1792,7 @@ Effect: unknown.
 
 ### `canvas publish <type> <asset_id> [canvas_name] [reply:<node_id>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`type`): text, required.
 - `field-1` (`asset id`): text, required.
@@ -1803,7 +1803,7 @@ Effect: unknown.
 
 ### `canvas publish <type> <asset_id> [canvas] [reply:<node_id>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`type`): text, required.
 - `field-1` (`asset id`): text, required.
@@ -1814,7 +1814,7 @@ Effect: unknown.
 
 ### `canvas visit <self|entity|name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`self|entity|name`): text, required, choices `self`, `entity`, `name`.
 
@@ -1837,12 +1837,12 @@ Aliases: `challenges`.
 
 ### `challenge`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `challenge approve <token> [once|always] [note]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`token`): text, required.
 - `field-1` (`once|always`): choice, optional group `option-0`, choices `once`, `always`.
@@ -1852,7 +1852,7 @@ Effect: unknown.
 
 ### `challenge deny <token> [reason]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`token`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -1860,7 +1860,7 @@ Effect: unknown.
 
 ### `challenge stats`
 
-Effect: unknown.
+Effect: read.
 
 
 ## channel
@@ -1879,13 +1879,13 @@ Aliases: `ch`.
 
 ### `channel create <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `channel history <name> [count]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`count`): number, optional group `option-0`.
@@ -1893,24 +1893,24 @@ Effect: unknown.
 
 ### `channel join <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `channel leave <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `channel list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `channel list <name> [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`args`): text, optional group `option-0`.
@@ -1918,12 +1918,12 @@ Effect: unknown.
 
 ### `channel listall`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `channel listall <name> [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`args`): text, optional group `option-0`.
@@ -1931,7 +1931,7 @@ Effect: unknown.
 
 ### `channel send <name> <message>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`message`): text, required.
@@ -1960,18 +1960,18 @@ Aliases: none.
 
 ### `chronicle`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `chronicle about <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `chronicle correct <id> <title> | <body> [refs <ids>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`title`): text, required.
@@ -1981,7 +1981,7 @@ Effect: unknown.
 
 ### `chronicle correct <id> <title> | <body> [refs <ids>] [participants <names>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`title`): text, required.
@@ -1993,7 +1993,7 @@ Effect: unknown.
 
 ### `chronicle digest day <title> | <body> [refs <ids>] [period <token>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, required.
 - `field-1` (`body`): text, required.
@@ -2004,7 +2004,7 @@ Effect: unknown.
 
 ### `chronicle digest week <title> | <body> [refs <ids>] [period <token>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, required.
 - `field-1` (`body`): text, required.
@@ -2015,19 +2015,19 @@ Effect: unknown.
 
 ### `chronicle kinds`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `chronicle pending [since <dur>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`dur`): text, optional group `option-0`.
 - Group `option-0`: `since dur`.
 
 ### `chronicle record <title> | <body> [refs <ids>] [participants <names>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, required.
 - `field-1` (`body`): text, required.
@@ -2038,7 +2038,7 @@ Effect: unknown.
 
 ### `chronicle record <title> | <body> refs <feed:N,task:N,...> [participants <names>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, required.
 - `field-1` (`body`): text, required.
@@ -2048,13 +2048,13 @@ Effect: unknown.
 
 ### `chronicle show <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
 ### `chronicle since <duration>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`duration`): text, required.
 
@@ -2178,106 +2178,106 @@ Aliases: none.
 
 ### `code`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code apply <patch_id|last patch>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`patch id|last patch`): text, required, choices `patch_id`, `last patch`.
 
 ### `code approval`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code approval list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code approval request <k> <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`k`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `code approval request <shell|network|secret|commit|spawn|other> <description>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`shell|network|secret|commit|spawn|other`): choice, required, choices `shell`, `network`, `secret`, `commit`, `spawn`, `other`.
 - `field-1` (`description`): text, required.
 
 ### `code approvals`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code approve <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
 ### `code archive <artifact_id|last>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`artifact id|last`): text, required, choices `artifact_id`, `last`.
 
 ### `code artifacts`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code artifacts failed`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code artifacts kind <artifact_kind>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`artifact kind`): text, required.
 
 ### `code artifacts recent`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code artifacts status <status>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`status`): text, required.
 
 ### `code ask <request>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`request`): text, required.
 
 ### `code assign <agent> <req>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`agent`): text, required.
 - `field-1` (`req`): text, required.
 
 ### `code assign <agent> verification:candidate -- <req>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`agent`): text, required.
 - `field-1` (`req`): text, required.
 
 ### `code do [verification:candidate|checks|delivery] [owner:unattended] [budget:<duration>] -- <task>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`verification`): text, optional group `option-0`, choices `candidate`, `checks`, `delivery`.
 - `field-1` (`owner`): text, optional group `option-1`.
@@ -2289,13 +2289,13 @@ Effect: unknown.
 
 ### `code assume <interpretation>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`interpretation`): text, required.
 
 ### `code blocked [kind:decision|impossible] <reason>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`kind`): text, optional group `option-0`, choices `decision`, `impossible`.
 - `field-1` (`reason`): text, required.
@@ -2303,21 +2303,21 @@ Effect: unknown.
 
 ### `code branch [title]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, optional group `option-0`.
 - Group `option-0`: `title`.
 
 ### `code checkpoint [title]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, optional group `option-0`.
 - Group `option-0`: `title`.
 
 ### `code crew <goal> [with <a,b>]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`goal`): text, required.
 - `field-1` (`a,b`): text, optional group `option-0`.
@@ -2325,7 +2325,7 @@ Effect: unknown.
 
 ### `code crew <goal> [with <agentA,agentB,...>]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`goal`): text, required.
 - `field-1` (`agentA,agentB,...`): text, optional group `option-0`.
@@ -2333,44 +2333,44 @@ Effect: unknown.
 
 ### `code decision <choice>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`choice`): text, required.
 
 ### `code decision <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`text`): text, required.
 
 ### `code deny <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
 ### `code diff [path]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`path`): text, optional group `option-0`.
 - Group `option-0`: `path`.
 
 ### `code doctor`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code done [summary]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`summary`): text, optional group `option-0`.
 - Group `option-0`: `summary`.
 
 ### `code edit <path> [all] <old text> <new text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`path`): text, required.
 - `field-1` (`old text`): text, required.
@@ -2379,14 +2379,14 @@ Effect: unknown.
 
 ### `code exec-approve <token> [once]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`token`): text, required.
 - Group `option-0`: `once`.
 
 ### `code exec-deny <token> [reason]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`token`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -2394,54 +2394,54 @@ Effect: unknown.
 
 ### `code exec-mode <prompt|auto|off>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`prompt|auto|off`): choice, required, choices `prompt`, `auto`, `off`.
 
 ### `code exit`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code external`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code external link <acp|mcp|cursor|zed|vscode|other> <external_id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`acp|mcp|cursor|zed|vscode|other`): choice, required, choices `acp`, `mcp`, `cursor`, `zed`, `vscode`, `other`.
 - `field-1` (`external id`): text, required.
 
 ### `code external link <system> <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`system`): text, required.
 - `field-1` (`id`): text, required.
 
 ### `code external show`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code external unlink`
 
-Effect: unknown.
+Effect: delete.
 
 
 ### `code files [path]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`path`): text, optional group `option-0`.
 - Group `option-0`: `path`.
 
 ### `code handoff <notes> [to:<agent>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`notes`): text, required.
 - `field-1` (`to`): text, optional group `option-0`.
@@ -2449,64 +2449,64 @@ Effect: unknown.
 
 ### `code handoff <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`text`): text, required.
 
 ### `code history [session_id]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`session id`): text, optional group `option-0`.
 - Group `option-0`: `session_id`.
 
 ### `code lint`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code model`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code model set <provider/model|agent|crew|direct>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`provider/model|agent|crew|direct`): text, required, choices `provider/model`, `agent`, `crew`, `direct`.
 
 ### `code model set <target>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`target`): text, required.
 
 ### `code observe <note>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`note`): text, required.
 
 ### `code observe <what you observed>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`what you observed`): text, required.
 
 ### `code onboard`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code patch [title] <diff>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, optional group `option-0`.
 - `field-1` (`diff`): text, required.
@@ -2514,105 +2514,105 @@ Effect: unknown.
 
 ### `code patches [status]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`status`): text, optional group `option-0`.
 - Group `option-0`: `status`.
 
 ### `code patches applied`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code patches pending`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code patches rejected`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code pin <artifact_id|last>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`artifact id|last`): text, required, choices `artifact_id`, `last`.
 
 ### `code plan <direction>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`direction`): text, required.
 
 ### `code plan <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`text`): text, required.
 
 ### `code profile`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code profile alias <a> <b>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`a`): text, required.
 - `field-1` (`b`): text, required.
 
 ### `code profile alias <alias> <command>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`alias`): text, required.
 - `field-1` (`command`): text, required.
 
 ### `code profile alias clear <alias>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`alias`): text, required.
 
 ### `code profile aliases`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code profile compare`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code profile help [name]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, optional group `option-0`.
 - Group `option-0`: `name`.
 
 ### `code profile list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code profile show`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code profile use <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `code project clone <public-https-url> [name]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`public-https-url`): text, required.
 - `field-1` (`name`): text, optional group `option-0`.
@@ -2620,7 +2620,7 @@ Effect: unknown.
 
 ### `code project clone <url> [name]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`url`): text, required.
 - `field-1` (`name`): text, optional group `option-0`.
@@ -2628,84 +2628,84 @@ Effect: unknown.
 
 ### `code project delete <id|name> [discard] confirm`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`id|name`): text, required, choices `id`, `name`.
 - Group `option-0`: `discard`.
 
 ### `code project delete <id|name> confirm`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`id|name`): text, required, choices `id`, `name`.
 
 ### `code project diff`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code project export [archive]`
 
-Effect: unknown.
+Effect: write.
 
 - Group `option-0`: `archive`.
 
 ### `code project import <artifact> <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`artifact`): text, required.
 - `field-1` (`name`): text, required.
 
 ### `code project import <project_archive_artifact> <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`project archive artifact`): text, required.
 - `field-1` (`name`): text, required.
 
 ### `code project init <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `code project list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code project reconcile`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code project status`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code project switch <id|name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id|name`): text, required, choices `id`, `name`.
 
 ### `code run --argv <json-array>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`json-array`): json, required.
 
 ### `code read <path>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`path`): text, required.
 
 ### `code see <path> [question]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`path`): text, required.
 - `field-1` (`question`): text, optional group `option-0`.
@@ -2713,30 +2713,30 @@ Effect: unknown.
 
 ### `code recipe`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code recipe list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code recipe run <name>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 
 ### `code recipe save <n> <cmds>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`n`): number, required.
 - `field-1` (`cmds`): text, required.
 
 ### `code recipe save <name> <command> [then <command>...]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`command`): text, required.
@@ -2745,176 +2745,176 @@ Effect: unknown.
 
 ### `code recipe show <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `code reject <patch_id|last patch>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`patch id|last patch`): text, required, choices `patch_id`, `last patch`.
 
 ### `code resume <session_id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`session id`): text, required.
 
 ### `code revert <checkpoint>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`checkpoint`): text, required.
 
 ### `code review`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code review approve`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code review reject`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code review accept-unverified <attempt> <reason>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`attempt`): text, required.
 - `field-1` (`reason`): text, required.
 
 ### `code roles`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code run <check|cmd...>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`check|cmd...`): text, required, choices `check`, `cmd...`.
 
 ### `code run <typecheck|lint|test|build|dashboard:build|bun ...|git ...>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`typecheck|lint|test|build|dashboard:build|bun ...|git ...`): text, required, choices `typecheck`, `lint`, `test`, `build`, `dashboard:build`, `bun ...`, `git ...`.
 
 ### `code run allowlist`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code run app [script]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`script`): text, optional group `option-0`.
 - Group `option-0`: `script`.
 
 ### `code sandbox credentials`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code sandbox hibernate`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code sandbox local`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code sandbox network status`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code sandbox ops hibernate <entity-id> confirm`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`entity-id`): text, required.
 
 ### `code sandbox ops inventory`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code sandbox ops metrics`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code sandbox ops reclaim [confirm]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`confirm`): text, optional group `option-0`.
 - Group `option-0`: `confirm`.
 
 ### `code sandbox ops reconcile`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code sandbox ops revoke <entity-id> confirm`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`entity-id`): text, required.
 
 ### `code sandbox ops stop <entity-id> [discard] confirm`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`entity-id`): text, required.
 - Group `option-0`: `discard`.
 
 ### `code sandbox resume`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code sandbox start [image]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`image`): text, optional group `option-0`.
 - Group `option-0`: `image`.
 
 ### `code sandbox status`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code sandbox stop [discard] confirm`
 
-Effect: unknown.
+Effect: delete.
 
 - Group `option-0`: `discard`.
 
 ### `code sandbox stop confirm`
 
-Effect: unknown.
+Effect: delete.
 
 
 ### `code sandbox use`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code search <query> [path:<relative-path>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 - `field-1` (`path`): text, optional group `option-0`.
@@ -2922,22 +2922,22 @@ Effect: unknown.
 
 ### `code service list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code service logs`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code service probe`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code service probes <id|name> [limit]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id|name`): text, required, choices `id`, `name`.
 - `field-1` (`limit`): number, optional group `option-0`.
@@ -2945,29 +2945,29 @@ Effect: unknown.
 
 ### `code service publish <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `code service restart`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code service revoke <name>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 
 ### `code service screenshot`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code service start <name> [--port N] -- <command>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`--port`): number, optional group `option-0`.
@@ -2976,208 +2976,208 @@ Effect: unknown.
 
 ### `code service status`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code service stop`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code show <artifact_id|last|last patch|last failed>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`artifact id|last|last patch|last failed`): text, required, choices `artifact_id`, `last`, `last patch`, `last failed`.
 
 ### `code show <patch_id|last patch>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`patch id|last patch`): text, required, choices `patch_id`, `last patch`.
 
 ### `code skill`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code skill add <name> <instructions>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`instructions`): text, required.
 
 ### `code skill add <name> <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`text`): text, required.
 
 ### `code skill list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code skill use <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `code spawn <role> <goal>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`role`): text, required.
 - `field-1` (`goal`): text, required.
 
 ### `code spawn run <spawn_request>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`spawn request`): text, required.
 
 ### `code start [title]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, optional group `option-0`.
 - Group `option-0`: `title`.
 
 ### `code status [session_id]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`session id`): text, optional group `option-0`.
 - Group `option-0`: `session_id`.
 
 ### `code steer <direction>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`direction`): text, required.
 
 ### `code stop`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code summary <notes>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`notes`): text, required.
 
 ### `code summary <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`text`): text, required.
 
 ### `code supersede <artifact_id|last>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`artifact id|last`): text, required, choices `artifact_id`, `last`.
 
 ### `code task <title>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, required.
 
 ### `code test`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code thread`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code tree`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code typecheck`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code unpin <artifact_id|last>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`artifact id|last`): text, required, choices `artifact_id`, `last`.
 
 ### `code verify`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code verify start`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code verify candidate`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code verify delivery manifest:<path>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`manifest`): text, required.
 
 ### `code verify candidate dependencies:auto`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code verify scope:changed+full budget:10m`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `code workspace`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code workspace discover`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code workspace list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code workspace show`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code workspace runner`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code workspace runner local`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code workspace runner container image:<ref> [sync:mount|patch] [workdir:<path>] [network:on]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`image`): text, required.
 - `field-1` (`sync`): text, optional group `option-0`, choices `mount`, `patch`.
@@ -3189,45 +3189,45 @@ Effect: unknown.
 
 ### `code workspace use <path>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`path`): text, required.
 
 ### `code worktree`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code worktree merge`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code worktree off`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code worktree on`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `code worktree status`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `code write <path> <content>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`path`): text, required.
 - `field-1` (`content`): text, required.
 
 ### `code writer [<agent>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`agent`): text, optional group `option-0`.
 - Group `option-0`: `agent`.
@@ -3245,21 +3245,21 @@ Aliases: none.
 
 ### `competence [<family prefix>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`family prefix`): text, optional group `option-0`.
 - Group `option-0`: `family prefix`.
 
 ### `competence mine [<family prefix>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`family prefix`): text, optional group `option-0`.
 - Group `option-0`: `family prefix`.
 
 ### `competence judged [<family prefix>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`family prefix`): text, optional group `option-0`.
 - Group `option-0`: `family prefix`.
@@ -3287,39 +3287,39 @@ Aliases: none.
 
 ### `conduct create <name> -- <json>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`json`): json, required.
 
 ### `conduct fork <name> <newname>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`newname`): text, required.
 
 ### `conduct json <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `conduct learned [category]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`category`): text, optional group `option-0`.
 - Group `option-0`: `category`.
 
 ### `conduct list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `conduct outcome <name> <0..1> [category=<c>] [-- <label>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`0..1`): number, required.
@@ -3330,26 +3330,26 @@ Effect: unknown.
 
 ### `conduct ran <name> -- <summary>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`summary`): text, required.
 
 ### `conduct resolve <assignee>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`assignee`): text, required.
 
 ### `conduct show <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `conduct track <name> <sampleId> predict=<0..1> [category=<c>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`sampleId`): text, required.
@@ -3359,7 +3359,7 @@ Effect: unknown.
 
 ### `conduct validate -- <json>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`json`): json, required.
 
@@ -3372,21 +3372,21 @@ Aliases: `conn`.
 
 ### `connect add <name> <url>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`url`): text, required.
 
 ### `connect auth <name> bearer <token>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`token`): text, required.
 
 ### `connect auth <name> header <key> <value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`key`): text, required.
@@ -3394,7 +3394,7 @@ Effect: unknown.
 
 ### `connect call <name> <tool> [json]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`tool`): text, required.
@@ -3403,7 +3403,7 @@ Effect: unknown.
 
 ### `connect call <server> <tool> [json-args]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`server`): text, required.
 - `field-1` (`tool`): text, required.
@@ -3412,25 +3412,25 @@ Effect: unknown.
 
 ### `connect list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `connect list [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `connect remove <name>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 
 ### `connect tools <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
@@ -3481,7 +3481,7 @@ Aliases: none.
 
 ### `crew artifact <name> <kind> -- <ref>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`kind`): text, required.
@@ -3489,7 +3489,7 @@ Effect: unknown.
 
 ### `crew artifact <name> <map|reduce|synthesis|draft> -- <ref>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`map|reduce|synthesis|draft`): choice, required, choices `map`, `reduce`, `synthesis`, `draft`.
@@ -3497,20 +3497,20 @@ Effect: unknown.
 
 ### `crew complete <name> -- <summary>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`summary`): text, required.
 
 ### `crew create <name> ..`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 
 ### `crew create <name> <a,b,c> [formation:<f>] [persist] -- <goal>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`a,b,c`): text, required.
@@ -3521,20 +3521,20 @@ Effect: unknown.
 
 ### `crew decline <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `crew dispatch <name> <message>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`message`): text, required.
 
 ### `crew dissolve <name> [reason]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -3542,25 +3542,25 @@ Effect: unknown.
 
 ### `crew formation <name> <formation>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`formation`): text, required.
 
 ### `crew info <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `crew invitations`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `crew invite <name> <agent> [role:<r>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`agent`): text, required.
@@ -3569,32 +3569,32 @@ Effect: unknown.
 
 ### `crew join <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `crew leave <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `crew persist <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `crew stage <name> <stage>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`stage`): text, required.
 
 ### `crew stall <name> <agent> [reason]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`agent`): text, required.
@@ -3620,12 +3620,12 @@ Aliases: none.
 
 ### `data sources`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `data markets <query> [asof:<date>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 - `field-1` (`asof`): text, optional group `option-0`.
@@ -3633,7 +3633,7 @@ Effect: unknown.
 
 ### `data odds <sport_key> [team…] [asof:<date>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`sport key`): text, required.
 - `field-1` (`team…`): text, optional group `option-0`.
@@ -3643,13 +3643,13 @@ Effect: unknown.
 
 ### `data odds <team…>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`team…`): text, required.
 
 ### `data series <id|query> [asof:<date>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id|query`): text, required, choices `id`, `query`.
 - `field-1` (`asof`): text, optional group `option-0`.
@@ -3657,12 +3657,12 @@ Effect: unknown.
 
 ### `data series UNRATE`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `data series CPIAUCSL asof:2026-06-30`
 
-Effect: unknown.
+Effect: read.
 
 
 ## debate
@@ -3674,7 +3674,7 @@ Aliases: none.
 
 ### `debate <goal>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`goal`): text, required.
 
@@ -3687,7 +3687,7 @@ Aliases: none.
 
 ### `debrief`
 
-Effect: unknown.
+Effect: read.
 
 
 ## decision
@@ -3707,18 +3707,18 @@ Aliases: `decisions`.
 
 ### `decision agreement`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `decision approve <token>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`token`): text, required.
 
 ### `decision check [image:<ref>] [<request> |] <draft>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`image`): text, optional group `option-0`.
 - `field-1` (`request`): text, optional group `option-1`.
@@ -3728,7 +3728,7 @@ Effect: unknown.
 
 ### `decision choose [image:<ref>] <question> | <option> | <option> [| …]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`image`): text, optional group `option-0`.
 - `field-1` (`question`): text, required.
@@ -3740,7 +3740,7 @@ Effect: unknown.
 
 ### `decision deny <token> [reason]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`token`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -3748,22 +3748,22 @@ Effect: unknown.
 
 ### `decision list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `decision qualify`
 
-Effect: unknown.
+Effect: execute.
 
 
 ### `decision receipts`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `decision settings [set <setting> <value> | unset <setting> | history]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`setting`): text, optional group `option-0`.
 - `field-1` (`value`): text, optional group `option-0`.
@@ -3779,32 +3779,32 @@ Aliases: none.
 
 ### `demo preflight`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `demo qualify`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `demo recover`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `demo reset`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `demo status`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `demo warm`
 
-Effect: unknown.
+Effect: execute.
 
 
 ## desire
@@ -3816,13 +3816,13 @@ Aliases: `pursue`.
 
 ### `desire <one sentence>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`one sentence`): text, required.
 
 ### `desire <what you want to explore, understand, decide, improve, or create>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`what you want to explore, understand, decide, improve, or create`): text, required.
 
@@ -3835,7 +3835,7 @@ Aliases: none.
 
 ### `dig <topic>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`topic`): text, required.
 
@@ -3848,7 +3848,7 @@ Aliases: none.
 
 ### `drop <item>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`item`): text, required.
 
@@ -3868,7 +3868,7 @@ Aliases: none.
 
 ### `economy adapter <id> | <kind> | <network> | <reference|observe|submit> [| endpoint-ref] [| configuration-ref]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`kind`): text, required.
@@ -3881,7 +3881,7 @@ Effect: unknown.
 
 ### `economy contract <goal-ref> | <terms JSON> | <verification method> | <dispute method> [| adapter] [| asset-ref]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`goal-ref`): text, required.
 - `field-1` (`terms JSON`): json, required.
@@ -3894,7 +3894,7 @@ Effect: unknown.
 
 ### `economy event <contract> <kind> | <actor-ref> | <subject-ref> | <amount> | <asset-ref> | <external-tx-ref> | <causal refs csv> | <data JSON>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`contract`): text, required.
 - `field-1` (`kind`): text, required.
@@ -3908,12 +3908,12 @@ Effect: unknown.
 
 ### `economy list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `economy show <contract>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`contract`): text, required.
 
@@ -3926,7 +3926,7 @@ Aliases: `me`.
 
 ### `emote <action>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`action`): text, required.
 
@@ -4095,18 +4095,18 @@ Aliases: `exp`.
 
 ### `experiment`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `experiment complete <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `experiment create <name> [arms A,B,...] [metric <name>] [goal higher|lower]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`arms`): text, optional group `option-0`.
@@ -4118,7 +4118,7 @@ Effect: unknown.
 
 ### `experiment create <name> [arms A,B,...] [metric <name>] [goal higher|lower] [agents] [time]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`arms`): text, optional group `option-0`.
@@ -4132,18 +4132,18 @@ Effect: unknown.
 
 ### `experiment join <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `experiment list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `experiment record <name> <arm> <metric> <value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`arm`): text, required.
@@ -4152,7 +4152,7 @@ Effect: unknown.
 
 ### `experiment record <name> <metric> <value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`metric`): text, required.
@@ -4160,19 +4160,19 @@ Effect: unknown.
 
 ### `experiment results <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `experiment start <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `experiment status <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
@@ -4185,7 +4185,7 @@ Aliases: none.
 
 ### `explore <goal>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`goal`): text, required.
 
@@ -4198,7 +4198,7 @@ Aliases: none.
 
 ### `export <board> [json]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`board`): text, required.
 - `field-1` (`json`): json, optional group `option-0`.
@@ -4223,17 +4223,17 @@ Aliases: none.
 
 ### `feed`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `feed kinds`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `feed list [kind:X] [entity:Y] [since:30m|1h|2d] [limit:20]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`kind`): text, optional group `option-0`.
 - `field-1` (`entity`): text, optional group `option-1`.
@@ -4259,7 +4259,7 @@ Aliases: `predict`.
 
 ### `forecast <question> [resolves:<venue>/<ticker>]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`question`): text, required.
 - `field-1` (`resolves`): text, optional group `option-0`.
@@ -4268,7 +4268,7 @@ Effect: unknown.
 
 ### `forecast <question> type:<choice|multi|number|ranking|text> [options:<id,id,…>] [size:<n>] [ends:<iso>]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`question`): text, required.
 - `field-1` (`type`): text, required, choices `choice`, `multi`, `number`, `ranking`, `text`.
@@ -4281,12 +4281,12 @@ Effect: unknown.
 
 ### `forecast list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `forecast track <id> <venue>/<ticker>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`venue`): text, required.
@@ -4294,7 +4294,7 @@ Effect: unknown.
 
 ### `forecast competence [<family prefix>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`family prefix`): text, optional group `option-0`.
 - Group `option-0`: `family prefix`.
@@ -4315,21 +4315,21 @@ Aliases: `gates`.
 
 ### `gate list [entity]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`entity`): text, optional group `option-0`.
 - Group `option-0`: `entity`.
 
 ### `gate grant <entity> <gate>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`entity`): text, required.
 - `field-1` (`gate`): text, required.
 
 ### `gate revoke <entity> <gate>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`entity`): text, required.
 - `field-1` (`gate`): text, required.
@@ -4343,32 +4343,32 @@ Aliases: `gw`.
 
 ### `gateway add <name> <ws-url>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`ws-url`): text, required.
 
 ### `gateway bridge <name> <channel>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`channel`): text, required.
 
 ### `gateway list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `gateway remove <name>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 
 ### `gateway send <name> <entity> <message>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`entity`): text, required.
@@ -4376,13 +4376,13 @@ Effect: unknown.
 
 ### `gateway status <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `gateway unbridge <name> <channel>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`channel`): text, required.
@@ -4400,7 +4400,7 @@ Aliases: `genomes`.
 
 ### `genome create <world-template> | <components csv> | <compatibility csv> [| notes]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`world-template`): text, required.
 - `field-1` (`components csv`): text, required.
@@ -4410,12 +4410,12 @@ Effect: unknown.
 
 ### `genome list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `genome show <sha256:hash>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`sha256:hash`): text, required.
 
@@ -4428,7 +4428,7 @@ Aliases: `take`, `pick`.
 
 ### `get <item>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`item`): text, required.
 
@@ -4441,7 +4441,7 @@ Aliases: none.
 
 ### `give <item> to <entity>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`item`): text, required.
 - `field-1` (`entity`): text, required.
@@ -4455,7 +4455,7 @@ Aliases: `tp`, `teleport`.
 
 ### `goto <room-id|entity-name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`room-id|entity-name`): text, required, choices `room-id`, `entity-name`.
 
@@ -4475,71 +4475,71 @@ Aliases: `team`.
 
 ### `group create <id> <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`name`): text, required.
 
 ### `group demote <entity> <group>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`entity`): text, required.
 - `field-1` (`group`): text, required.
 
 ### `group disband <name>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 
 ### `group info <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `group invite <entity> <group>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`entity`): text, required.
 - `field-1` (`group`): text, required.
 
 ### `group join <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `group kick <entity> <group>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`entity`): text, required.
 - `field-1` (`group`): text, required.
 
 ### `group leave <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `group list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `group list [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `group promote <entity> <group>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`entity`): text, required.
 - `field-1` (`group`): text, required.
@@ -4556,28 +4556,28 @@ Aliases: none.
 
 ### `guide`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `guide <topic>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`topic`): text, required.
 
 ### `guide audit`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `guide list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `guide recall <topic>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`topic`): text, required.
 
@@ -4590,41 +4590,41 @@ Aliases: `?`, `commands`.
 
 ### `help`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `help <category>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`category`): text, required.
 
 ### `help <command> [full]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`command`): text, required.
 - Group `option-0`: `full`.
 
 ### `help all`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `help catalog`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `help catalog <command>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`command`): text, required.
 
 ### `help catalog json`
 
-Effect: unknown.
+Effect: read.
 
 
 ## ignore
@@ -4636,18 +4636,18 @@ Aliases: `block`.
 
 ### `ignore <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `ignore list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `ignore remove <name>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 
@@ -4660,13 +4660,13 @@ Aliases: none.
 
 ### `image generate <prompt...>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`prompt...`): text, required.
 
 ### `image generate <prompt...> [model:<provider/model>] [style:<style>] [width:<px>] [height:<px>] [canvas:<name>]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`prompt...`): text, required.
 - `field-1` (`model`): text, optional group `option-0`.
@@ -4682,7 +4682,7 @@ Effect: unknown.
 
 ### `image generate <prompt...> [style:synthwave] [width:1024] [canvas:name]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`prompt...`): text, required.
 - `field-1` (`style`): text, optional group `option-0`.
@@ -4694,7 +4694,7 @@ Effect: unknown.
 
 ### `image describe <node|asset|url> [question...] [model:<provider/model>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`node|asset|url`): text, required, choices `node`, `asset`, `url`.
 - `field-1` (`question`): text, optional group `option-0`.
@@ -4711,26 +4711,26 @@ Aliases: `inherit`.
 
 ### `inheritance [list]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`list`): text, optional group `option-0`.
 - Group `option-0`: `list`.
 
 ### `inheritance export <guide|tradition-pool>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`guide|tradition-pool`): text, required, choices `guide`, `tradition-pool`.
 
 ### `inheritance export <pool>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`pool`): text, required.
 
 ### `inheritance import <bundle-token>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`bundle-token`): text, required.
 
@@ -4759,7 +4759,7 @@ Aliases: none.
 
 ### `inquiry predict [type:binary|number|choice] [unit:<unit>] [options:<a,b,c>] [runs:<n>] [case:<id>] [parent:<attempt>] [key:<key>] [horizon:<date>] [asof:<date>] -- <question>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`type`): text, optional group `option-0`, choices `binary`, `number`, `choice`.
 - `field-1` (`unit`): text, optional group `option-1`.
@@ -4783,7 +4783,7 @@ Effect: unknown.
 
 ### `inquiry research [case:<id>] [parent:<attempt>] [key:<key>] -- <question>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`case`): text, optional group `option-0`.
 - `field-1` (`parent`): text, optional group `option-1`.
@@ -4795,12 +4795,12 @@ Effect: unknown.
 
 ### `inquiry list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `inquiry show <case-id> [attempt-id]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`case-id`): text, required.
 - `field-1` (`attempt-id`): text, optional group `option-0`.
@@ -4808,7 +4808,7 @@ Effect: unknown.
 
 ### `inquiry why <case-id> [attempt-id]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`case-id`): text, required.
 - `field-1` (`attempt-id`): text, optional group `option-0`.
@@ -4816,7 +4816,7 @@ Effect: unknown.
 
 ### `inquiry sources <case-id> [attempt-id]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`case-id`): text, required.
 - `field-1` (`attempt-id`): text, optional group `option-0`.
@@ -4824,7 +4824,7 @@ Effect: unknown.
 
 ### `inquiry report <case-id> [attempt-id]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`case-id`): text, required.
 - `field-1` (`attempt-id`): text, optional group `option-0`.
@@ -4832,7 +4832,7 @@ Effect: unknown.
 
 ### `inquiry events <attempt-id> [cursor]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`attempt-id`): text, required.
 - `field-1` (`cursor`): text, optional group `option-0`.
@@ -4840,19 +4840,19 @@ Effect: unknown.
 
 ### `inquiry cancel <attempt-id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`attempt-id`): text, required.
 
 ### `inquiry select <attempt-id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`attempt-id`): text, required.
 
 ### `inquiry grant <case-id> <account> <read|work>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`case-id`): text, required.
 - `field-1` (`account`): text, required.
@@ -4860,27 +4860,27 @@ Effect: unknown.
 
 ### `inquiry revoke <case-id> <account>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`case-id`): text, required.
 - `field-1` (`account`): text, required.
 
 ### `inquiry delete <case-id>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`case-id`): text, required.
 
 ### `inquiry review <attempt-id> -- <review>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`attempt-id`): text, required.
 - `field-1` (`review`): text, required.
 
 ### `inquiry resolve <attempt-id> -- <outcome-json>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`attempt-id`): text, required.
 - `field-1` (`outcome-json`): json, required.
@@ -4904,7 +4904,7 @@ Aliases: `intellects`.
 
 ### `intellect create <name> | <purpose> [| contributor-ids]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`purpose`): text, required.
@@ -4913,7 +4913,7 @@ Effect: unknown.
 
 ### `intellect descend <parent> <name> | <purpose>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`parent`): text, required.
 - `field-1` (`name`): text, required.
@@ -4921,7 +4921,7 @@ Effect: unknown.
 
 ### `intellect event <intellect> <kind> | <detail>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`intellect`): text, required.
 - `field-1` (`kind`): text, required.
@@ -4929,7 +4929,7 @@ Effect: unknown.
 
 ### `intellect instance <intellect> | <principal-id> | <model-ref> | <harness-ref> | <environment-ref>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`intellect`): text, required.
 - `field-1` (`principal-id`): text, required.
@@ -4939,12 +4939,12 @@ Effect: unknown.
 
 ### `intellect list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `intellect show <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
@@ -4957,7 +4957,7 @@ Aliases: `i`, `inv`.
 
 ### `inventory`
 
-Effect: unknown.
+Effect: read.
 
 
 ## journey
@@ -4985,19 +4985,19 @@ Aliases: `journeys`.
 
 ### `journey changes <id|latest>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id|latest`): text, required, choices `id`, `latest`.
 
 ### `journey create <desire>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`desire`): text, required.
 
 ### `journey link <id|latest> <kind> <ref> [relationship]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id|latest`): text, required, choices `id`, `latest`.
 - `field-1` (`kind`): text, required.
@@ -5007,19 +5007,19 @@ Effect: unknown.
 
 ### `journey list [all]`
 
-Effect: unknown.
+Effect: read.
 
 - Group `option-0`: `all`.
 
 ### `journey progress <id|latest>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id|latest`): text, required, choices `id`, `latest`.
 
 ### `journey record <id|latest> <event> | <summary> [| <ref-kind>:<ref>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id|latest`): text, required, choices `id`, `latest`.
 - `field-1` (`event`): text, required.
@@ -5030,19 +5030,19 @@ Effect: unknown.
 
 ### `journey result <id|latest>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id|latest`): text, required, choices `id`, `latest`.
 
 ### `journey show <id|latest>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id|latest`): text, required, choices `id`, `latest`.
 
 ### `journey steer <id|latest> <context or correction>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id|latest`): text, required, choices `id`, `latest`.
 - `field-1` (`context or correction`): text, required.
@@ -5065,7 +5065,7 @@ Aliases: none.
 
 ### `key add <name> <provider> <value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`provider`): text, required.
@@ -5073,18 +5073,18 @@ Effect: unknown.
 
 ### `key delete <name>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 
 ### `key list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `key test <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
@@ -5106,7 +5106,7 @@ Aliases: none.
 
 ### `lab compare <run-ids csv> | <questions csv> | <measures JSON> | <interpretation>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`run-ids csv`): text, required.
 - `field-1` (`questions csv`): text, required.
@@ -5115,7 +5115,7 @@ Effect: unknown.
 
 ### `lab event <run> <started|intervention|observation|measure|completed|failed|gap> | <source-ref> | <data JSON>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`run`): text, required.
 - `field-1` (`started|intervention|observation|measure|completed|failed|gap`): choice, required, choices `started`, `intervention`, `observation`, `measure`, `completed`, `failed`, `gap`.
@@ -5124,7 +5124,7 @@ Effect: unknown.
 
 ### `lab fork <parent-run> | <fork-point-ref> | <treatments JSON> [| seed]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`parent-run`): text, required.
 - `field-1` (`fork-point-ref`): text, required.
@@ -5134,18 +5134,18 @@ Effect: unknown.
 
 ### `lab list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `lab manifest <scenario JSON>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`scenario JSON`): json, required.
 
 ### `lab replicate <manifest-hash> | <mode> | <reproducibility> | <count> | <seed-prefix> [| treatments JSON]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`manifest-hash`): text, required.
 - `field-1` (`mode`): text, required.
@@ -5157,7 +5157,7 @@ Effect: unknown.
 
 ### `lab run <manifest-hash> | <mode> | <reproducibility> | <seed> [| treatments JSON]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`manifest-hash`): text, required.
 - `field-1` (`mode`): text, required.
@@ -5168,7 +5168,7 @@ Effect: unknown.
 
 ### `lab show <run>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`run`): text, required.
 
@@ -5184,17 +5184,17 @@ Aliases: none.
 
 ### `learned`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `learned artifacts`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `learned items [artifact:<id>] [status:<active|retired|revoked>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`artifact`): text, optional group `option-0`.
 - `field-1` (`status`): text, optional group `option-1`, choices `active`, `retired`, `revoked`.
@@ -5203,19 +5203,19 @@ Effect: unknown.
 
 ### `learned seeds`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `learned priors [family:<family>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`family`): text, optional group `option-0`.
 - Group `option-0`: `family:family`.
 
 ### `learned events [limit:<n>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`limit`): number, optional group `option-0`.
 - Group `option-0`: `limit:n`.
@@ -5234,27 +5234,27 @@ Aliases: none.
 
 ### `lessons <topic>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`topic`): text, required.
 
 ### `lessons <topic> domain:<forecast|code|tools|benchmark|arena|research|meta>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`topic`): text, required.
 - `field-1` (`domain`): text, required, choices `forecast`, `code`, `tools`, `benchmark`, `arena`, `research`, `meta`.
 
 ### `lessons retire <id> reason:<text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`reason`): text, required.
 
 ### `lessons retire source:<source> [domain:<d>] [confirm:yes] reason:<text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`source`): text, required.
 - `field-1` (`domain`): text, optional group `option-0`.
@@ -5265,7 +5265,7 @@ Effect: unknown.
 
 ### `lessons retire match:<text> [domain:<d>] [confirm:yes] reason:<text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`match`): text, required.
 - `field-1` (`domain`): text, optional group `option-0`.
@@ -5276,7 +5276,7 @@ Effect: unknown.
 
 ### `lessons supersede <id> reason:<text> -- <replacement lesson>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`reason`): text, required.
@@ -5291,23 +5291,23 @@ Aliases: none.
 
 ### `link`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `link status`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `link unlink <adapter>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`adapter`): text, required.
 
 ### `link unlink <telegram|discord>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`telegram|discord`): choice, required, choices `telegram`, `discord`.
 
@@ -5320,7 +5320,7 @@ Aliases: `l`, `examine`, `ex`, `x`.
 
 ### `look [target]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`target`): text, optional group `option-0`.
 - Group `option-0`: `target`.
@@ -5334,23 +5334,23 @@ Aliases: `list`, `dir`.
 
 ### `ls`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `ls <room-id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`room-id`): text, required.
 
 ### `ls entities`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `ls rooms`
 
-Effect: unknown.
+Effect: read.
 
 
 ## macro
@@ -5362,7 +5362,7 @@ Aliases: none.
 
 ### `macro create <name> <command with $* / $1…> [room:<room>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`command with $* / $1…`): text, required.
@@ -5371,7 +5371,7 @@ Effect: unknown.
 
 ### `macro delete <name> [room:<room>]`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`room`): text, optional group `option-0`.
@@ -5379,7 +5379,7 @@ Effect: unknown.
 
 ### `macro list`
 
-Effect: unknown.
+Effect: read.
 
 
 ## map
@@ -5391,7 +5391,7 @@ Aliases: none.
 
 ### `map`
 
-Effect: unknown.
+Effect: read.
 
 
 ## marina-descend
@@ -5409,7 +5409,7 @@ Aliases: none.
 
 ### `marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`genome-hash`): text, required.
 - `field-1` (`name`): text, required.
@@ -5421,18 +5421,18 @@ Effect: unknown.
 
 ### `marina-descend list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `marina-descend start <descendant-id>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`descendant-id`): text, required.
 
 ### `marina-descend stop <descendant-id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`descendant-id`): text, required.
 
@@ -5457,33 +5457,33 @@ Aliases: `mk`.
 
 ### `market forecast <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
 ### `market leaderboard`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `market list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `market list open`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `market list resolved`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `market live <kalshi|polymarket> [duration] [limit]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`kalshi|polymarket`): choice, required, choices `kalshi`, `polymarket`.
 - `field-1` (`duration`): text, optional group `option-0`.
@@ -5493,7 +5493,7 @@ Effect: unknown.
 
 ### `market live <venue> [duration] [limit]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`venue`): text, required.
 - `field-1` (`duration`): text, optional group `option-0`.
@@ -5503,20 +5503,20 @@ Effect: unknown.
 
 ### `market score [entity]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`entity`): text, optional group `option-0`.
 - Group `option-0`: `entity`.
 
 ### `market search <query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 
 ### `market show <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
@@ -5616,7 +5616,7 @@ Aliases: none.
 
 ### `memory ack <NAME> <VERSION> <CURSOR> [OBSERVED_AT]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`NAME`): text, required.
 - `field-1` (`VERSION`): number, required.
@@ -5626,13 +5626,13 @@ Effect: unknown.
 
 ### `memory across <JSON query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`JSON query`): json, required.
 
 ### `memory adopt <ID> [space <SPACE_ID>] [JSON]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`ID`): text, required.
 - `field-1` (`SPACE ID`): text, optional group `option-0`.
@@ -5642,19 +5642,19 @@ Effect: unknown.
 
 ### `memory adopt <ID> confirm-abstention`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`ID`): text, required.
 
 ### `memory api <JSON request>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`JSON request`): json, required.
 
 ### `memory assist <role> <helper> <task>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`role`): text, required.
 - `field-1` (`helper`): text, required.
@@ -5662,26 +5662,26 @@ Effect: unknown.
 
 ### `memory assist-cancel <ID>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`ID`): text, required.
 
 ### `memory assistance <ID>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`ID`): text, required.
 
 ### `memory changes [CURSOR]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`CURSOR`): text, optional group `option-0`.
 - Group `option-0`: `CURSOR`.
 
 ### `memory claim <subject> <predicate> <JSON scalar>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`subject`): text, required.
 - `field-1` (`predicate`): text, required.
@@ -5689,12 +5689,12 @@ Effect: unknown.
 
 ### `memory federation`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `memory feedback <TASK_ID> <helpful|unhelpful|pass|fail|unknown> <explanation>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`TASK ID`): text, required.
 - `field-1` (`helpful|unhelpful|pass|fail|unknown`): choice, required, choices `helpful`, `unhelpful`, `pass`, `fail`, `unknown`.
@@ -5702,7 +5702,7 @@ Effect: unknown.
 
 ### `memory finish <TASK_ID> <VERSION> <completed|interrupted|failed> <next action>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`TASK ID`): text, required.
 - `field-1` (`VERSION`): number, required.
@@ -5711,90 +5711,90 @@ Effect: unknown.
 
 ### `memory graph <subject>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`subject`): text, required.
 
 ### `memory guide`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `memory jobs [JSON filters]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`JSON filters`): json, optional group `option-0`.
 - Group `option-0`: `JSON filters`.
 
 ### `memory join <JSON patterns>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`JSON patterns`): json, required.
 
 ### `memory kv clear`
 
-Effect: unknown.
+Effect: delete.
 
 
 ### `memory kv delete <key>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`key`): text, required.
 
 ### `memory kv get <key>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`key`): text, required.
 
 ### `memory kv history <key>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`key`): text, required.
 
 ### `memory kv list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `memory kv set <key> <value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`key`): text, required.
 - `field-1` (`value`): text, required.
 
 ### `memory plan <task>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`task`): text, required.
 
 ### `memory poll <NAME>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`NAME`): text, required.
 
 ### `memory query <JSON filters>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`JSON filters`): json, required.
 
 ### `memory query <JSON>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`JSON`): json, required.
 
 ### `memory reaffirm <ID> <version> <JSON pins>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`ID`): text, required.
 - `field-1` (`version`): number, required.
@@ -5802,7 +5802,7 @@ Effect: unknown.
 
 ### `memory recipe <ID> <VERSION> <task>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`ID`): text, required.
 - `field-1` (`VERSION`): number, required.
@@ -5810,18 +5810,18 @@ Effect: unknown.
 
 ### `memory recipe-save <JSON recipe>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`JSON recipe`): json, required.
 
 ### `memory recipes`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `memory relate <subject> <predicate> <entity ID>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`subject`): text, required.
 - `field-1` (`predicate`): text, required.
@@ -5829,13 +5829,13 @@ Effect: unknown.
 
 ### `memory remember <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`text`): text, required.
 
 ### `memory resolve <ID> <policy> <JSON>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`ID`): text, required.
 - `field-1` (`policy`): text, required.
@@ -5843,62 +5843,62 @@ Effect: unknown.
 
 ### `memory resume <TASK_ID>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`TASK ID`): text, required.
 
 ### `memory retrieve <task>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`task`): text, required.
 
 ### `memory review [JSON filters]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`JSON filters`): json, optional group `option-0`.
 - Group `option-0`: `JSON filters`.
 
 ### `memory rule-materialize <JSON request> explicitly save dependency-pinned conclusions`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`JSON request`): json, required.
 
 ### `memory rule-run <JSON request>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`JSON request`): json, required.
 
 ### `memory rule-save <JSON request>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`JSON request`): json, required.
 
 ### `memory run <TASK_ID> <VERSION>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`TASK ID`): text, required.
 - `field-1` (`VERSION`): number, required.
 
 ### `memory service`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `memory show <record ID>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`record ID`): text, required.
 
 ### `memory source <source ID> [start end]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`source ID`): text, required.
 - `field-1` (`start`): number, optional group `option-0`.
@@ -5907,62 +5907,62 @@ Effect: unknown.
 
 ### `memory sources <query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 
 ### `memory start <goal>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`goal`): text, required.
 
 ### `memory tasks [CURSOR]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`CURSOR`): text, optional group `option-0`.
 - Group `option-0`: `CURSOR`.
 
 ### `memory transfer <ID>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`ID`): text, required.
 
 ### `memory transfer-abort <ID>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`ID`): text, required.
 
 ### `memory transfers [JSON filters]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`JSON filters`): json, optional group `option-0`.
 - Group `option-0`: `JSON filters`.
 
 ### `memory unwatch <NAME> <VERSION>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`NAME`): text, required.
 - `field-1` (`VERSION`): number, required.
 
 ### `memory usage`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `memory vocabulary`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `memory watch <NAME> [RECORD_ID ...]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`NAME`): text, required.
 - `field-1` (`RECORD_ID`): text, optional group `option-0`.
@@ -5988,7 +5988,7 @@ Aliases: `meshes`.
 
 ### `mesh create <stable-id> | <name> | <charter-ref> | <protocol>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`stable-id`): text, required.
 - `field-1` (`name`): text, required.
@@ -5997,14 +5997,14 @@ Effect: unknown.
 
 ### `mesh export <mesh> <event-id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`mesh`): text, required.
 - `field-1` (`event-id`): text, required.
 
 ### `mesh join <mesh> [| disclosure JSON]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`mesh`): text, required.
 - `field-1` (`|`): json, optional group `option-0`.
@@ -6012,19 +6012,19 @@ Effect: unknown.
 
 ### `mesh leave <mesh> | <reason>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`mesh`): text, required.
 - `field-1` (`reason`): text, required.
 
 ### `mesh list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `mesh publish <mesh> | <kind> | <payload JSON or text> [| parent event ids csv]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`mesh`): text, required.
 - `field-1` (`kind`): text, required.
@@ -6034,20 +6034,20 @@ Effect: unknown.
 
 ### `mesh replicate <mesh> <event-token>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`mesh`): text, required.
 - `field-1` (`event-token`): text, required.
 
 ### `mesh show <mesh>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`mesh`): text, required.
 
 ### `mesh translate <source> | <target> | <translator-ref> | <protocol-map JSON>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`source`): text, required.
 - `field-1` (`target`): text, required.
@@ -6056,7 +6056,7 @@ Effect: unknown.
 
 ### `mesh witness <mesh> <event-id> <witnessed|replicated|disputed|unavailable>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`mesh`): text, required.
 - `field-1` (`event-id`): text, required.
@@ -6071,7 +6071,7 @@ Aliases: none.
 
 ### `monitor <goal>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`goal`): text, required.
 
@@ -6084,7 +6084,7 @@ Aliases: `go`, `north`, `south`, `east`, `west`, `up`, `down`, `n`, `s`, `e`, `w
 
 ### `move <direction>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`direction`): text, required.
 
@@ -6104,7 +6104,7 @@ Aliases: `mutations`.
 
 ### `mutation genome <parent-genome-hash> | <summary> | <patch JSON> [| evidence refs csv]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`parent-genome-hash`): text, required.
 - `field-1` (`summary`): text, required.
@@ -6114,21 +6114,21 @@ Effect: unknown.
 
 ### `mutation lineage <domain> <target-ref>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`domain`): text, required.
 - `field-1` (`target-ref`): text, required.
 
 ### `mutation list [domain]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`domain`): text, optional group `option-0`.
 - Group `option-0`: `domain`.
 
 ### `mutation record <domain> <target-ref> | <disposition> | <summary> | <patch JSON> [| parent mutation ids csv] [| evidence refs csv] [| descendant-ref]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`domain`): text, required.
 - `field-1` (`target-ref`): text, required.
@@ -6144,7 +6144,7 @@ Effect: unknown.
 
 ### `mutation show <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
@@ -6157,7 +6157,7 @@ Aliases: none.
 
 ### `next`
 
-Effect: unknown.
+Effect: read.
 
 
 ## note
@@ -6169,13 +6169,13 @@ Aliases: none.
 
 ### `note <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`text`): text, required.
 
 ### `note <text> [importance N] [type T]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`text`): text, required.
 - `field-1` (`importance`): number, optional group `option-0`.
@@ -6185,7 +6185,7 @@ Effect: unknown.
 
 ### `note <text> importance <N> type <type>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`text`): text, required.
 - `field-1` (`N`): number, required.
@@ -6215,7 +6215,7 @@ Effect: write.
 
 ### `note consolidate <keeper-id> <duplicate-id> [duplicate-id ...]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`keeper-id`): text, required.
 - `field-1` (`duplicate-id`): text, required.
@@ -6224,56 +6224,56 @@ Effect: unknown.
 
 ### `note contradictions`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `note correct <id> <new text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`new text`): text, required.
 
 ### `note correct <id> <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`text`): text, required.
 
 ### `note delete <id>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`id`): text, required.
 
 ### `note derive <your-note-id> <source-note-id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`your-note-id`): text, required.
 - `field-1` (`source-note-id`): text, required.
 
 ### `note evolve <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
 ### `note explain <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
 ### `note graph`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `note link <id1> <id2> <rel>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id1`): text, required.
 - `field-1` (`id2`): text, required.
@@ -6281,7 +6281,7 @@ Effect: unknown.
 
 ### `note link <id1> <id2> <relationship>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id1`): text, required.
 - `field-1` (`id2`): text, required.
@@ -6289,51 +6289,51 @@ Effect: unknown.
 
 ### `note list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `note resolve <case-id> both <evidence-backed rationale>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`case-id`): text, required.
 - `field-1` (`evidence-backed rationale`): text, required.
 
 ### `note resolve <case-id> left <evidence-backed rationale>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`case-id`): text, required.
 - `field-1` (`evidence-backed rationale`): text, required.
 
 ### `note resolve <case-id> neither <evidence-backed rationale>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`case-id`): text, required.
 - `field-1` (`evidence-backed rationale`): text, required.
 
 ### `note resolve <case-id> right <evidence-backed rationale>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`case-id`): text, required.
 - `field-1` (`evidence-backed rationale`): text, required.
 
 ### `note room`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `note search <query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 
 ### `note source <your-note-id> <url|note:id|asset:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`your-note-id`): text, required.
 - `field-1` (`url|note:id|asset:id`): text, required, choices `url`, `note:id`, `asset:id`.
@@ -6346,18 +6346,18 @@ Effect: unknown.
 
 ### `note trace <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
 ### `note types`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `note unlink <id1> <id2> <rel>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`id1`): text, required.
 - `field-1` (`id2`): text, required.
@@ -6365,7 +6365,7 @@ Effect: unknown.
 
 ### `note unlink <id1> <id2> <relationship>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`id1`): text, required.
 - `field-1` (`id2`): text, required.
@@ -6400,24 +6400,24 @@ Aliases: none.
 
 ### `novelty`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `novelty stats`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `novelty suggest [goal]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`goal`): text, optional group `option-0`.
 - Group `option-0`: `goal`.
 
 ### `novelty experiments [benchmark]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`benchmark`): text, optional group `option-0`.
 - Group `option-0`: `benchmark`.
@@ -6431,19 +6431,19 @@ Aliases: none.
 
 ### `observe <entity>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`entity`): text, required.
 
 ### `observe log <entity>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`entity`): text, required.
 
 ### `observe stats`
 
-Effect: unknown.
+Effect: read.
 
 
 ## ops
@@ -6455,28 +6455,28 @@ Aliases: `alerts`.
 
 ### `ops ack <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
 ### `ops history`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `ops inbox`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `ops recover`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `ops resolve <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
@@ -6490,7 +6490,7 @@ Aliases: `status`, `briefing`.
 
 ### `orient`
 
-Effect: unknown.
+Effect: read.
 
 
 ## outcome
@@ -6505,17 +6505,17 @@ Aliases: `outcomes`.
 
 ### `outcome`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `outcome stats`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `outcome evidence [source:<s>] [since:<duration>] [judged]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`source`): text, optional group `option-0`.
 - `field-1` (`since`): text, optional group `option-1`.
@@ -6526,7 +6526,7 @@ Effect: unknown.
 
 ### `outcome list [kind:<k>] [limit:<n>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`kind`): text, optional group `option-0`.
 - `field-1` (`limit`): number, optional group `option-1`.
@@ -6535,7 +6535,7 @@ Effect: unknown.
 
 ### `outcome agreement`
 
-Effect: unknown.
+Effect: read.
 
 
 ## plan
@@ -6547,7 +6547,7 @@ Aliases: none.
 
 ### `plan <goal>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`goal`): text, required.
 
@@ -6574,13 +6574,13 @@ Aliases: none.
 
 ### `pool <name> add`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `pool <name> add <text> [importance:N]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`text`): text, required.
@@ -6589,37 +6589,37 @@ Effect: unknown.
 
 ### `pool <name> audit`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `pool <name> list`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `pool <name> ratify`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `pool <name> recall`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `pool <name> status`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `pool create <name> [group <groupName>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`groupName`): text, optional group `option-0`.
@@ -6627,7 +6627,7 @@ Effect: unknown.
 
 ### `pool list`
 
-Effect: unknown.
+Effect: read.
 
 
 ## position
@@ -6665,7 +6665,7 @@ Aliases: `pos`.
 
 ### `position close <order-id> [count]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`order-id`): text, required.
 - `field-1` (`count`): number, optional group `option-0`.
@@ -6673,26 +6673,26 @@ Effect: unknown.
 
 ### `position confirm <id>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`id`): text, required.
 
 ### `position confirm <proposal-id>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`proposal-id`): text, required.
 
 ### `position list [venue]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`venue`): text, optional group `option-0`.
 - Group `option-0`: `venue`.
 
 ### `position open <venue> <ticker> <yes|no> <count> [limit-price-cents]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`venue`): text, required.
 - `field-1` (`ticker`): text, required.
@@ -6703,7 +6703,7 @@ Effect: unknown.
 
 ### `position open <venue> <ticker> <yes|no> <count> [limit-price]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`venue`): text, required.
 - `field-1` (`ticker`): text, required.
@@ -6714,33 +6714,33 @@ Effect: unknown.
 
 ### `position pnl`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `position pnl all`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `position pnl today`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `position pnl week`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `position propose <json>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`json`): json, required.
 
 ### `position reject <id> [reason]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -6748,7 +6748,7 @@ Effect: unknown.
 
 ### `position reject <proposal-id> [reason]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`proposal-id`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -6756,7 +6756,7 @@ Effect: unknown.
 
 ### `position size <venue> <ticker> <yes|no> <our-prob 0-1> <market-price 1-99 cents>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`venue`): text, required.
 - `field-1` (`ticker`): text, required.
@@ -6766,7 +6766,7 @@ Effect: unknown.
 
 ### `position size <venue> <ticker> <yes|no> <our-prob> <market-price>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`venue`): text, required.
 - `field-1` (`ticker`): text, required.
@@ -6793,12 +6793,12 @@ Aliases: none.
 
 ### `probe`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `probe <kind> <key>:<value> [<additional key:value pairs>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`kind`): text, required.
 - `field-1` (`key`): text, required.
@@ -6815,35 +6815,35 @@ Aliases: `impact`.
 
 ### `productivity`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `productivity agent <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `productivity leaderboard`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `productivity primitives [name]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, optional group `option-0`.
 - Group `option-0`: `name`.
 
 ### `productivity prompts`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `productivity trend`
 
-Effect: unknown.
+Effect: read.
 
 
 ## project
@@ -6865,13 +6865,13 @@ Aliases: `proj`.
 
 ### `project <name> budget`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `project <name> budget [tokens <n>] [cost <usd>] [duration <n>ms|s|m|h]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`n`): number, optional group `option-0`.
@@ -6884,135 +6884,135 @@ Effect: unknown.
 
 ### `project <name> decompose`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `project <name> decompose custom <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project <name> decompose custom <description>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`description`): text, required.
 
 ### `project <name> decompose htdag <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project <name> decompose lazy-expansion <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project <name> decompose non-overlapping <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project <name> decompose plan-exec-verify <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project <name> decompose workload-tiers <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project <name> join`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `project <name> memory`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `project <name> memory custom <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project <name> memory custom <description>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`description`): text, required.
 
 ### `project <name> memory generative <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project <name> memory graph <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project <name> memory shared <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project <name> memory tiered <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project <name> orchestrate`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `project <name> orchestrate custom <description>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`description`): text, required.
 
 ### `project <name> outcome`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `project <name> outcome <0..1> | <evidence-backed result and lessons>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`0..1`): number, required.
@@ -7020,44 +7020,44 @@ Effect: unknown.
 
 ### `project <name> propose`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `project <name> propose <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`text`): text, required.
 
 ### `project <name> recommend`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `project <name> status`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `project <name> tasks`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `project <name> usage`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `project <name> usage <tokens> [cost-usd]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`tokens`): number, required.
@@ -7066,33 +7066,33 @@ Effect: unknown.
 
 ### `project <name> verify`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `project create <name> | <desc>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
 
 ### `project create <name> | <description>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`description`): text, required.
 
 ### `project info <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `project list`
 
-Effect: unknown.
+Effect: read.
 
 
 ## provenance
@@ -7104,24 +7104,24 @@ Aliases: none.
 
 ### `provenance`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `provenance list [journey-id]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`journey-id`): text, optional group `option-0`.
 - Group `option-0`: `journey-id`.
 
 ### `provenance status`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `provenance verify [count]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`count`): number, optional group `option-0`.
 - Group `option-0`: `count`.
@@ -7135,28 +7135,28 @@ Aliases: `checklist`, `onboarding`.
 
 ### `quest abandon`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `quest complete`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `quest list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `quest start <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `quest status`
 
-Effect: unknown.
+Effect: read.
 
 
 ## quit
@@ -7168,7 +7168,7 @@ Aliases: `exit`, `logout`, `disconnect`.
 
 ### `quit`
 
-Effect: unknown.
+Effect: write.
 
 
 ## rank
@@ -7180,18 +7180,18 @@ Aliases: none.
 
 ### `rank`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `rank <entity>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`entity`): text, required.
 
 ### `rank <entity> <level>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`entity`): text, required.
 - `field-1` (`level`): number, required.
@@ -7205,7 +7205,7 @@ Aliases: `reply`.
 
 ### `re <message>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`message`): text, required.
 
@@ -7218,12 +7218,12 @@ Aliases: `doctor`, `health`.
 
 ### `readiness`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `readiness providers [name]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, optional group `option-0`.
 - Group `option-0`: `name`.
@@ -7239,7 +7239,7 @@ Aliases: none.
 
 ### `recall <query> [recent | important] [type <type>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 - `field-1` (`recent`): text, optional group `option-0`.
@@ -7249,7 +7249,7 @@ Effect: unknown.
 
 ### `recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 - `field-1` (`recent|important|trusted|explain|evidence|all`): choice, optional group `option-0`, choices `recent`, `important`, `trusted`, `explain`, `evidence`, `all`.
@@ -7272,23 +7272,23 @@ Aliases: none.
 
 ### `recap <topic>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`topic`): text, required.
 
 ### `recap chronicle`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `recap chronicle day`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `recap chronicle week`
 
-Effect: unknown.
+Effect: read.
 
 
 ## recruit
@@ -7306,7 +7306,7 @@ Aliases: none.
 
 ### `recruit <a,b,c> into <crew> [role=<r>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`a,b,c`): text, required.
 - `field-1` (`crew`): text, required.
@@ -7315,14 +7315,14 @@ Effect: unknown.
 
 ### `recruit available [role=<r>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`role`): text, optional group `option-0`.
 - Group `option-0`: `role=r`.
 
 ### `recruit best into <crew> for <goal> [count=N]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`crew`): text, required.
 - `field-1` (`goal`): text, required.
@@ -7331,7 +7331,7 @@ Effect: unknown.
 
 ### `recruit match <goal> [limit=N]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`goal`): text, required.
 - `field-1` (`limit`): number, optional group `option-0`.
@@ -7346,7 +7346,7 @@ Aliases: none.
 
 ### `reflect --template [topic] [--share <pool>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`topic`): text, optional group `option-0`.
 - `field-1` (`pool`): text, optional group `option-1`.
@@ -7355,7 +7355,7 @@ Effect: unknown.
 
 ### `reflect [topic] [--share <pool>] [--no-spawn]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`topic`): text, optional group `option-0`.
 - `field-1` (`pool`): text, optional group `option-1`.
@@ -7365,13 +7365,13 @@ Effect: unknown.
 
 ### `reflect adopt <job-id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`job-id`): text, required.
 
 ### `reflect failure <description> [--share <pool>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`description`): text, required.
 - `field-1` (`pool`): text, optional group `option-0`.
@@ -7379,12 +7379,12 @@ Effect: unknown.
 
 ### `reflect jobs`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `reflect via <helper> [topic] [--share <pool>]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`helper`): text, required.
 - `field-1` (`topic`): text, optional group `option-0`.
@@ -7406,7 +7406,7 @@ Aliases: none.
 
 ### `reproduce intellect <parent-ids csv> | <name> | <purpose> | <components JSON> [| contributors csv] [| evidence refs csv]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`parent-ids csv`): text, required.
 - `field-1` (`name`): text, required.
@@ -7419,12 +7419,12 @@ Effect: unknown.
 
 ### `reproduce list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `reproduce show <reproduction-id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`reproduction-id`): text, required.
 
@@ -7437,7 +7437,7 @@ Aliases: none.
 
 ### `research <goal>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`goal`): text, required.
 
@@ -7454,13 +7454,13 @@ Aliases: none.
 
 ### `role create <name> ..`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `role create <name> [traits <t1,t2,...>] [guidelines <g1> | <g2> ...] [focus <f1,f2,...>] [tone <tone>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`t1,t2,...`): text, optional group `option-0`.
@@ -7475,7 +7475,7 @@ Effect: unknown.
 
 ### `role create <name> [traits <t1,t2,...>] [guidelines <g1|g2|...>] [focus <f1,f2,...>] [tone <tone>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`t1,t2,...`): text, optional group `option-0`.
@@ -7489,55 +7489,55 @@ Effect: unknown.
 
 ### `role delete <name>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 
 ### `role diff <a> <b>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`a`): text, required.
 - `field-1` (`b`): text, required.
 
 ### `role edit <name> ..`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `role history <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `role lint <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `role list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `role reload <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `role view <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `role view <name> [goal <text>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`text`): text, optional group `option-0`.
@@ -7545,7 +7545,7 @@ Effect: unknown.
 
 ### `role view <name> goal <text>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`text`): text, required.
@@ -7569,7 +7569,7 @@ Aliases: none.
 
 ### `run <binary> [args...]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`binary`): text, required.
 - `field-1` (`args`): text, optional group `option-0`.
@@ -7577,7 +7577,7 @@ Effect: unknown.
 
 ### `run quiet <binary> [args...]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`binary`): text, required.
 - `field-1` (`args`): text, optional group `option-0`.
@@ -7585,7 +7585,7 @@ Effect: unknown.
 
 ### `run raw <command string>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`command string`): text, required.
 
@@ -7598,7 +7598,7 @@ Aliases: none.
 
 ### `say <message>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`message`): text, required.
 
@@ -7631,36 +7631,36 @@ Aliases: `sc`.
 
 ### `scenario extract <url>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`url`): text, required.
 
 ### `scenario extract board <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `scenario inject <key>=<value>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`key`): text, required.
 - `field-1` (``): text, required.
 
 ### `scenario personas`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `scenario report`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `scenario status`
 
-Effect: unknown.
+Effect: write.
 
 
 ## schedule
@@ -7694,7 +7694,7 @@ Aliases: `schedules`.
 
 ### `schedule add <name> every:<duration> [catch-up:once|none] [max-runs:N] -- <command>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`every`): text, required.
@@ -7706,7 +7706,7 @@ Effect: unknown.
 
 ### `schedule add <name> daily:<HH:MM> [catch-up:once|none] [max-runs:N] -- <command>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`daily`): text, required.
@@ -7718,7 +7718,7 @@ Effect: unknown.
 
 ### `schedule add <name> at:<time> [catch-up:once|none] -- <command>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`at`): text, required.
@@ -7728,7 +7728,7 @@ Effect: unknown.
 
 ### `schedule add <name> before:<time> lead:<duration> -- <command>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`before`): text, required.
@@ -7737,20 +7737,20 @@ Effect: unknown.
 
 ### `schedule [list]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`list`): text, optional group `option-0`.
 - Group `option-0`: `list`.
 
 ### `schedule show <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `schedule history <name> [limit:N]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`limit`): number, optional group `option-0`.
@@ -7758,25 +7758,25 @@ Effect: unknown.
 
 ### `schedule pause <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `schedule resume <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 
 ### `schedule run <name>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 
 ### `schedule delete <name>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 
@@ -7789,7 +7789,7 @@ Aliases: `stats`.
 
 ### `score`
 
-Effect: unknown.
+Effect: read.
 
 
 ## search
@@ -7801,7 +7801,7 @@ Aliases: none.
 
 ### `search <query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 
@@ -7814,7 +7814,7 @@ Aliases: none.
 
 ### `share <pool> <content>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`pool`): text, required.
 - `field-1` (`content`): text, required.
@@ -7836,31 +7836,31 @@ Aliases: `sh`.
 
 ### `shell allow <binary>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`binary`): text, required.
 
 ### `shell deny <binary>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`binary`): text, required.
 
 ### `shell history [n]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`n`): number, optional group `option-0`.
 - Group `option-0`: `n`.
 
 ### `shell list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `shell log [entity] [n]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`entity`): text, optional group `option-0`.
 - `field-1` (`n`): number, optional group `option-1`.
@@ -7869,7 +7869,7 @@ Effect: unknown.
 
 ### `shell save board <board_name> [title]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`board name`): text, required.
 - `field-1` (`title`): text, optional group `option-0`.
@@ -7877,26 +7877,26 @@ Effect: unknown.
 
 ### `shell save board <board> <title>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`board`): text, required.
 - `field-1` (`title`): text, required.
 
 ### `shell save canvas <canvas>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`canvas`): text, required.
 
 ### `shell save memory <key>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`key`): text, required.
 
 ### `shell save note [importance] [type]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`importance`): number, optional group `option-0`.
 - `field-1` (`type`): text, optional group `option-1`.
@@ -7905,30 +7905,30 @@ Effect: unknown.
 
 ### `shell scratch cat <file>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`file`): text, required.
 
 ### `shell scratch cat <filename>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`filename`): text, required.
 
 ### `shell scratch ls`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `shell scratch rm <file>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`file`): text, required.
 
 ### `shell scratch rm <filename>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`filename`): text, required.
 
@@ -7941,7 +7941,7 @@ Aliases: `yell`.
 
 ### `shout <message>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`message`): text, required.
 
@@ -7954,19 +7954,19 @@ Aliases: none.
 
 ### `skill audit`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `skill compose <id1> <id2> ..`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id1`): text, required.
 - `field-1` (`id2`): text, required.
 
 ### `skill compose <id1> <id2> [id3] ..`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id1`): text, required.
 - `field-1` (`id2`): text, required.
@@ -7975,37 +7975,37 @@ Effect: unknown.
 
 ### `skill import <path-to-markdown-file>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`path-to-markdown-file`): text, required.
 
 ### `skill import <path>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`path`): text, required.
 
 ### `skill list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `skill search <query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 
 ### `skill share <id> <pool>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`pool`): text, required.
 
 ### `skill store <name> | <desc> | <actions>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`desc`): text, required.
@@ -8013,7 +8013,7 @@ Effect: unknown.
 
 ### `skill store <name> | <description> | <action_sequence>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`description`): text, required.
@@ -8021,7 +8021,7 @@ Effect: unknown.
 
 ### `skill verify <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
@@ -8034,7 +8034,7 @@ Aliases: none.
 
 ### `solve <goal>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`goal`): text, required.
 
@@ -8047,20 +8047,20 @@ Aliases: none.
 
 ### `source [here|room/id]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`here|room/id`): choice, optional group `option-0`, choices `here`, `room/id`.
 - Group `option-0`: `here|room/id`.
 
 ### `source command <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `source connector <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
@@ -8078,18 +8078,18 @@ Aliases: none.
 
 ### `standing`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `standing show <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `standing top [N]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`N`): number, optional group `option-0`.
 - Group `option-0`: `N`.
@@ -8106,7 +8106,7 @@ Aliases: `sysprompt`.
 
 ### `system-prompt [role <name>] [goal <text>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, optional group `option-0`.
 - `field-1` (`text`): text, optional group `option-1`.
@@ -8136,46 +8136,46 @@ Aliases: none.
 
 ### `task approve <id> <claimant>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`claimant`): text, required.
 
 ### `task assign <id> <bundle_id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`bundle id`): text, required.
 
 ### `task bundle <title> | <description>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, required.
 - `field-1` (`description`): text, required.
 
 ### `task cancel <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
 ### `task children <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
 ### `task claim <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
 ### `task create <title> | <description> [standing:N] [bounty]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, required.
 - `field-1` (`description`): text, required.
@@ -8185,7 +8185,7 @@ Effect: unknown.
 
 ### `task goal <title> | <description> [priority:N]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`title`): text, required.
 - `field-1` (`description`): text, required.
@@ -8194,31 +8194,31 @@ Effect: unknown.
 
 ### `task heartbeat <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
 ### `task info <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
 ### `task list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `task list [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `task progress <id> [+N | N]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`+N`): number, optional group `option-0`.
@@ -8226,38 +8226,38 @@ Effect: unknown.
 
 ### `task recover`
 
-Effect: unknown.
+Effect: write.
 
 
 ### `task recover [args]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `task reject <id> <claimant>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`claimant`): text, required.
 
 ### `task standing`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `task standing [args]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
 
 ### `task submit <id> <text>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`text`): text, required.
@@ -8272,7 +8272,7 @@ Aliases: `whisper`, `msg`.
 
 ### `tell <entity> [ttl:30s] <message>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`entity`): text, required.
 - `field-1` (`ttl`): text, optional group `option-0`.
@@ -8281,18 +8281,18 @@ Effect: unknown.
 
 ### `tell ack <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
 ### `tell inbox`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `tell status <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
@@ -8305,7 +8305,7 @@ Aliases: `date`.
 
 ### `time`
 
-Effect: unknown.
+Effect: read.
 
 
 ## trace
@@ -8334,7 +8334,7 @@ Aliases: `traces`.
 
 ### `trace [list] [limit]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`list`): text, optional group `option-0`.
 - `field-1` (`limit`): number, optional group `option-1`.
@@ -8343,7 +8343,7 @@ Effect: unknown.
 
 ### `trace advise <models|routes|autonomous|tools> [limit]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`models|routes|autonomous|tools`): choice, required, choices `models`, `routes`, `autonomous`, `tools`.
 - `field-1` (`limit`): number, optional group `option-0`.
@@ -8351,7 +8351,7 @@ Effect: unknown.
 
 ### `trace advise evidence <benchmark[,benchmark]> [min-n] [role:<role>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`benchmark[,benchmark]`): text, required.
 - `field-1` (`min-n`): text, optional group `option-0`.
@@ -8361,21 +8361,21 @@ Effect: unknown.
 
 ### `trace choose <models|routes|autonomous|tools> <eligible-candidate...>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`models|routes|autonomous|tools`): choice, required, choices `models`, `routes`, `autonomous`, `tools`.
 - `field-1` (`eligible-candidate...`): text, required.
 
 ### `trace choose <models|routes|autonomous|tools> <eligible...>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`models|routes|autonomous|tools`): choice, required, choices `models`, `routes`, `autonomous`, `tools`.
 - `field-1` (`eligible...`): text, required.
 
 ### `trace compare <models|routes> [limit]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`models|routes`): choice, required, choices `models`, `routes`.
 - `field-1` (`limit`): number, optional group `option-0`.
@@ -8383,27 +8383,27 @@ Effect: unknown.
 
 ### `trace dataset [limit]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`limit`): number, optional group `option-0`.
 - Group `option-0`: `limit`.
 
 ### `trace dataset verify [limit]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`limit`): number, optional group `option-0`.
 - Group `option-0`: `limit`.
 
 ### `trace eval <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
 ### `trace find [status=...] [model=...] [agent=...] [tool=...] [q=...] [since=...] [until=...] [limit=20] [cursor=...]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`status`): text, optional group `option-0`.
 - `field-1` (`model`): text, optional group `option-1`.
@@ -8426,7 +8426,7 @@ Effect: unknown.
 
 ### `trace judge <id> <passed|failed|inconclusive> <criterion> | <rationale>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`passed|failed|inconclusive`): choice, required, choices `passed`, `failed`, `inconclusive`.
@@ -8435,24 +8435,24 @@ Effect: unknown.
 
 ### `trace judgments <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
 ### `trace otel`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `trace show <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
 ### `trace stats [limit]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`limit`): number, optional group `option-0`.
 - Group `option-0`: `limit`.
@@ -8471,7 +8471,7 @@ Aliases: none.
 
 ### `trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`category`): text, required.
@@ -8501,7 +8501,7 @@ Effect: unknown.
 
 ### `trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`category`): text, required.
@@ -8531,37 +8531,37 @@ Effect: unknown.
 
 ### `trait delete <name>`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`name`): text, required.
 
 ### `trait diff <a> <b>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`a`): text, required.
 - `field-1` (`b`): text, required.
 
 ### `trait history <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `trait lint <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
 ### `trait list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `trait view <name>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`name`): text, required.
 
@@ -8574,7 +8574,7 @@ Aliases: none.
 
 ### `uptime`
 
-Effect: unknown.
+Effect: read.
 
 
 ## usecase
@@ -8597,26 +8597,26 @@ Aliases: `uc`.
 
 ### `usecase <natural language>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`natural language`): text, required.
 
 ### `usecase <recipe> <topic>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`recipe`): text, required.
 - `field-1` (`topic`): text, required.
 
 ### `usecase info <recipe>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`recipe`): text, required.
 
 ### `usecase list`
 
-Effect: unknown.
+Effect: read.
 
 
 ## video
@@ -8628,13 +8628,13 @@ Aliases: none.
 
 ### `video generate <prompt...>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`prompt...`): text, required.
 
 ### `video generate <prompt...> [--model provider/model] [--duration <s>] [--fps <frames>] [--reference <asset>] [--canvas <name>]`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`prompt...`): text, required.
 - `field-1` (`--model`): text, optional group `option-0`.
@@ -8650,7 +8650,7 @@ Effect: unknown.
 
 ### `video describe <node|asset|url> [question...] [model:<provider/model>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`node|asset|url`): text, required, choices `node`, `asset`, `url`.
 - `field-1` (`question`): text, optional group `option-0`.
@@ -8685,7 +8685,7 @@ Aliases: none.
 
 ### `watch create <kind> <key>:<value> [<additional key:value pairs>] [cadence:<duration>] [retirement:<policy>] [notify:<entity-or-channel>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`kind`): text, required.
 - `field-1` (`key`): text, required.
@@ -8701,19 +8701,19 @@ Effect: unknown.
 
 ### `watch due [limit:<N>]`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`limit`): number, optional group `option-0`.
 - Group `option-0`: `limit:N`.
 
 ### `watch list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `watch retire <id> [reason:<text>]`
 
-Effect: unknown.
+Effect: delete.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -8721,7 +8721,7 @@ Effect: unknown.
 
 ### `watch show <id>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
@@ -8750,20 +8750,20 @@ Aliases: none.
 
 ### `web fetch <url>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`url`): text, required.
 
 ### `web multisearch <q1> | <q2>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`q1`): text, required.
 - `field-1` (`q2`): text, required.
 
 ### `web multisearch <query1> | <query2> | <query3>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query1`): text, required.
 - `field-1` (`query2`): text, required.
@@ -8771,7 +8771,7 @@ Effect: unknown.
 
 ### `web search [engines:<a,b>] [limit:N] [before:<date>] <query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`engines`): text, optional group `option-0`.
 - `field-1` (`limit`): number, optional group `option-1`.
@@ -8783,39 +8783,39 @@ Effect: unknown.
 
 ### `web search before:<date> <query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`before`): text, required.
 - `field-1` (`query`): text, required.
 
 ### `web fetch <url> asof:<date>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`url`): text, required.
 - `field-1` (`asof`): text, required.
 
 ### `web search <query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 
 ### `web search engines:web,academic <query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 
 ### `web search limit:5 <query>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`query`): text, required.
 
 ### `web swarm [engines:<a,b>] [docs:N] <question>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`engines`): text, optional group `option-0`.
 - `field-1` (`docs`): number, optional group `option-1`.
@@ -8825,7 +8825,7 @@ Effect: unknown.
 
 ### `web swarm engines:corpus:<name> <question>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`engines:corpus`): text, required.
 - `field-1` (`question`): text, required.
@@ -8839,7 +8839,7 @@ Aliases: none.
 
 ### `who`
 
-Effect: unknown.
+Effect: read.
 
 
 ## witness
@@ -8860,30 +8860,30 @@ Aliases: none.
 
 ### `witness`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `witness attest <id>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 
 ### `witness grant <entity> <gate>`
 
-Effect: unknown.
+Effect: read.
 
 - `field-0` (`entity`): text, required.
 - `field-1` (`gate`): text, required.
 
 ### `witness queue`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `witness reject <id> [reason]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -8891,7 +8891,7 @@ Effect: unknown.
 
 ### `witness request <gate>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`gate`): text, required.
 
@@ -8904,7 +8904,7 @@ Aliases: none.
 
 ### `work`
 
-Effect: unknown.
+Effect: read.
 
 
 ## world
@@ -8923,7 +8923,7 @@ Aliases: `worlds`.
 
 ### `world adopt <child> <role> [into:<existing>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`child`): text, required.
 - `field-1` (`role`): text, required.
@@ -8932,7 +8932,7 @@ Effect: unknown.
 
 ### `world adopt approve <id> [reason] · world adopt rollback <id> · world adopt list`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -8941,7 +8941,7 @@ Effect: unknown.
 
 ### `world adopt reject <id> [reason] · world adopt rollback <id> · world adopt list`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`reason`): text, optional group `option-0`.
@@ -8950,7 +8950,7 @@ Effect: unknown.
 
 ### `world create <name> [template] [| <hypothesis>]`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`template`): text, optional group `option-0`.
@@ -8960,31 +8960,31 @@ Effect: unknown.
 
 ### `world list`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `world run <name> <command …>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`command …`): text, required.
 
 ### `world seed-role <name> <role>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`role`): text, required.
 
 ### `world start <name>`
 
-Effect: unknown.
+Effect: execute.
 
 - `field-0` (`name`): text, required.
 
 ### `world stop <name>`
 
-Effect: unknown.
+Effect: write.
 
 - `field-0` (`name`): text, required.

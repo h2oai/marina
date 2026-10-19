@@ -1251,10 +1251,10 @@ export function usecaseCommand(deps: UseCaseCommandDeps): CommandDef {
   return {
     category: "Coordination",
     usage: [
-      "usecase <natural language>",
-      "usecase <recipe> <topic>",
-      "usecase info <recipe>",
-      "usecase list",
+      { syntax: "usecase <natural language>", effect: "execute" },
+      { syntax: "usecase <recipe> <topic>", effect: "execute" },
+      { syntax: "usecase info <recipe>", effect: "read" },
+      { syntax: "usecase list", effect: "read" },
     ],
     name: "usecase",
     aliases: ["uc"],
@@ -1509,7 +1509,7 @@ export function universalIntentCommands(deps: UseCaseCommandDeps): CommandDef[] 
   const usecase = usecaseCommand(deps);
   return UNIVERSAL_INTENTS.map((intent) => ({
     name: intent,
-    usage: [`${intent} <goal>`],
+    usage: [{ syntax: `${intent} <goal>`, effect: "execute" }],
     aliases: [],
     category: "Coordination",
     help: `${intent} <goal> — launch an observable ${intent} project with tasks, shared memory, a fitting orchestration pattern, and an agent.`,

@@ -12,7 +12,7 @@ export function exportCommand(
 ): CommandDef {
   return {
     category: "Knowledge",
-    usage: ["export <board> [json]"],
+    usage: [{ syntax: "export <board> [json]", effect: "read" }],
     name: "export",
     aliases: [],
     help: "Export board posts. Usage: export <board> [json]",

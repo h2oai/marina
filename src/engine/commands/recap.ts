@@ -54,7 +54,12 @@ export function recapCommand(deps: {
 }): CommandDef {
   return {
     category: "Memory",
-    usage: ["recap <topic>", "recap chronicle", "recap chronicle day", "recap chronicle week"],
+    usage: [
+      { syntax: "recap <topic>", effect: "read" },
+      { syntax: "recap chronicle", effect: "read" },
+      { syntax: "recap chronicle day", effect: "read" },
+      { syntax: "recap chronicle week", effect: "read" },
+    ],
     name: "recap",
     aliases: [],
     help: HELP,

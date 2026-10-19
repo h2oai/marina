@@ -50,10 +50,10 @@ export function challengeCommand(deps: {
     minRank: 0,
     help: USAGE,
     usage: [
-      "challenge",
-      "challenge approve <token> [once|always] [note]",
-      "challenge deny <token> [reason]",
-      "challenge stats",
+      { syntax: "challenge", effect: "read" },
+      { syntax: "challenge approve <token> [once|always] [note]", effect: "execute" },
+      { syntax: "challenge deny <token> [reason]", effect: "write" },
+      { syntax: "challenge stats", effect: "read" },
     ],
     handler: (ctx, input) => {
       const me = deps.getEntity(input.entity);

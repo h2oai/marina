@@ -21,10 +21,14 @@ export function marinaDescendCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]",
-      "marina-descend list",
-      "marina-descend start <descendant-id>",
-      "marina-descend stop <descendant-id>",
+      {
+        syntax:
+          "marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]",
+        effect: "write",
+      },
+      { syntax: "marina-descend list", effect: "read" },
+      { syntax: "marina-descend start <descendant-id>", effect: "execute" },
+      { syntax: "marina-descend stop <descendant-id>", effect: "write" },
     ],
     name: "marina-descend",
     aliases: [],

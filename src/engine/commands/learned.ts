@@ -55,12 +55,12 @@ export function learnedCommand(deps: { db?: MarinaDB }): CommandDef {
   return {
     category: "Knowledge",
     usage: [
-      "learned",
-      "learned artifacts",
-      "learned items [artifact:<id>] [status:<active|retired|revoked>]",
-      "learned seeds",
-      "learned priors [family:<family>]",
-      "learned events [limit:<n>]",
+      { syntax: "learned", effect: "read" },
+      { syntax: "learned artifacts", effect: "read" },
+      { syntax: "learned items [artifact:<id>] [status:<active|retired|revoked>]", effect: "read" },
+      { syntax: "learned seeds", effect: "read" },
+      { syntax: "learned priors [family:<family>]", effect: "read" },
+      { syntax: "learned events [limit:<n>]", effect: "read" },
     ],
     name: "learned",
     aliases: [],

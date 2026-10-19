@@ -245,7 +245,10 @@ export async function evalExpressionBounded(
 export function calcCommand(deps: { getEntity: (id: string) => Entity | undefined }): CommandDef {
   return {
     category: "System",
-    usage: ["calc <expression-or-statements>", "calc <expression>"],
+    usage: [
+      { syntax: "calc <expression-or-statements>", effect: "read" },
+      { syntax: "calc <expression>", effect: "read" },
+    ],
     name: "calc",
     aliases: [],
     minRank: 0,

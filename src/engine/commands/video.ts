@@ -11,9 +11,16 @@ export function videoCommand(_engine: Engine): CommandDef {
   return {
     category: "Canvas & Media",
     usage: [
-      "video generate <prompt...>",
-      "video generate <prompt...> [--model provider/model] [--duration <s>] [--fps <frames>] [--reference <asset>] [--canvas <name>]",
-      "video describe <node|asset|url> [question...] [model:<provider/model>]",
+      { syntax: "video generate <prompt...>", effect: "execute" },
+      {
+        syntax:
+          "video generate <prompt...> [--model provider/model] [--duration <s>] [--fps <frames>] [--reference <asset>] [--canvas <name>]",
+        effect: "execute",
+      },
+      {
+        syntax: "video describe <node|asset|url> [question...] [model:<provider/model>]",
+        effect: "write",
+      },
     ],
     name: "video",
     help: "Generate or read videos. Usage: video generate <prompt...> [--model provider/model] [--duration <s>] [--fps <frames>] [--reference <asset>] [--canvas <name>] | video describe <node|asset|url> [question] (sampled keyframes)",

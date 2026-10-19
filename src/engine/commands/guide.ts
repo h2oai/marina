@@ -38,7 +38,13 @@ export function guideCommand(deps: {
 }): CommandDef {
   return {
     category: "Information",
-    usage: ["guide", "guide <topic>", "guide audit", "guide list", "guide recall <topic>"],
+    usage: [
+      { syntax: "guide", effect: "read" },
+      { syntax: "guide <topic>", effect: "read" },
+      { syntax: "guide audit", effect: "read" },
+      { syntax: "guide list", effect: "read" },
+      { syntax: "guide recall <topic>", effect: "read" },
+    ],
     name: "guide",
     aliases: [],
     minRank: 0,

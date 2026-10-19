@@ -20,7 +20,7 @@ export function scoreCommand(deps: {
 }): CommandDef {
   return {
     category: "Information",
-    usage: ["score"],
+    usage: [{ syntax: "score", effect: "read" }],
     name: "score",
     // `status` intentionally omitted: it collides with orient's alias, which
     // registers later and wins, so `status` here was dead. orient owns it.

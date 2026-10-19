@@ -18,7 +18,7 @@ export function batchCommand(deps: {
 }): CommandDef {
   return {
     category: "System",
-    usage: ["batch <commands>"],
+    usage: [{ syntax: "batch <commands>", effect: "execute" }],
     name: "batch",
     aliases: [],
     help: "Execute multiple commands in sequence, separated by semicolons.\nUsage: batch look ; north ; look ; note Found something\n\nA ';' inside a message (say, tell, channel send, note, …) stays text unless a command follows it; quote the text or write \\; to keep any ';' literal. Up to 20 commands per batch. Each subcommand consumes one rate-limit token.",

@@ -17,7 +17,7 @@ export function gotoCommand(deps: {
 }): CommandDef {
   return {
     category: "Navigation",
-    usage: ["goto <room-id|entity-name>"],
+    usage: [{ syntax: "goto <room-id|entity-name>", effect: "write" }],
     name: "goto",
     aliases: ["tp", "teleport"],
     help: "Teleport to a room or entity. Usage: goto <room-id|entity-name>",

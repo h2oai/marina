@@ -39,7 +39,10 @@ export function probeCommand(deps: {
 }): CommandDef {
   return {
     category: "Markets & Forecasting",
-    usage: ["probe", "probe <kind> <key>:<value> [<additional key:value pairs>]"],
+    usage: [
+      { syntax: "probe", effect: "read" },
+      { syntax: "probe <kind> <key>:<value> [<additional key:value pairs>]", effect: "write" },
+    ],
     name: "probe",
     aliases: [],
     minRank: 0,

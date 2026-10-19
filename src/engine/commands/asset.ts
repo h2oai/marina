@@ -595,14 +595,18 @@ export function assetCommand(deps: AssetCommandDeps): CommandDef {
     category: "Canvas & Media",
     help: HELP,
     usage: [
-      "asset list [type:image|video|audio|pdf|document|other] [owner:<owner>] [origin:upload|generated|request|derived|tool] [tag:<tag>] [canvas:<canvas>] [since:<window>] [limit:N] [sort:new|old|size|name]",
-      "asset show <id>",
-      "asset search <text> [limit:N]",
-      "asset tag <id> <changes...>",
-      "asset caption <id> -- <text>",
-      "asset caption <id> accept",
-      "asset alt <id> -- <text>",
-      "asset delete <id>",
+      {
+        syntax:
+          "asset list [type:image|video|audio|pdf|document|other] [owner:<owner>] [origin:upload|generated|request|derived|tool] [tag:<tag>] [canvas:<canvas>] [since:<window>] [limit:N] [sort:new|old|size|name]",
+        effect: "read",
+      },
+      { syntax: "asset show <id>", effect: "read" },
+      { syntax: "asset search <text> [limit:N]", effect: "read" },
+      { syntax: "asset tag <id> <changes...>", effect: "write" },
+      { syntax: "asset caption <id> -- <text>", effect: "write" },
+      { syntax: "asset caption <id> accept", effect: "write" },
+      { syntax: "asset alt <id> -- <text>", effect: "write" },
+      { syntax: "asset delete <id>", effect: "delete" },
     ],
     // Rank 0: reading the library is basic. Writes check ownership in the
     // handler (owner, an agent's creator, or an operator via a challenge).

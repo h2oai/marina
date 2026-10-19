@@ -267,10 +267,20 @@ export function audioCommand(engine: Engine): CommandDef {
     category: "Canvas & Media",
     help: `Speech to text and text to speech. ${USAGE}`,
     usage: [
-      "audio transcribe <source> [model:<provider/model>] [language:<code>]",
-      "audio transcribe <source> [model:<provider/model>] [language:<code>] -- <context>",
-      "audio transcript <asset> [segments]",
-      "audio speak [voice:<voice>] [model:<provider/model>] [format:mp3|wav|opus|aac|flac] [speed:<number>] [canvas:<name>] -- <text>",
+      {
+        syntax: "audio transcribe <source> [model:<provider/model>] [language:<code>]",
+        effect: "write",
+      },
+      {
+        syntax: "audio transcribe <source> [model:<provider/model>] [language:<code>] -- <context>",
+        effect: "write",
+      },
+      { syntax: "audio transcript <asset> [segments]", effect: "read" },
+      {
+        syntax:
+          "audio speak [voice:<voice>] [model:<provider/model>] [format:mp3|wav|opus|aac|flac] [speed:<number>] [canvas:<name>] -- <text>",
+        effect: "write",
+      },
     ],
     readOnlyForm: (input) => input.tokens[0]?.toLowerCase() === "transcript",
     handler: async (ctx, input) => {

@@ -23,10 +23,11 @@
  *
  * `marina_command` / `marina_batch` (and the typed wrappers that build one
  * command string) are classified by verb and subcommand from an explicit
- * allowlist. Commands declare `effect` on their usage forms only sparsely, and
- * the agent side has no router to ask; `test/tool-policy.test.ts` checks that
- * no form a command declares `write` / `delete` / `execute` is classified as a
- * read here, so the list can only err towards the gate.
+ * allowlist: the agent side has no router to ask which form a string matches.
+ * Every builtin usage form declares its `effect`, and
+ * `test/tool-policy-effects.test.ts` checks that no form declared `write` /
+ * `delete` / `execute` is classified as a read here, so the list can only err
+ * towards the gate.
  */
 export type ToolRisk = "read" | "self" | "communicate" | "egress" | "mutate" | "consequential";
 

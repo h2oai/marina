@@ -81,8 +81,12 @@ export function recallCommand(deps: {
   return {
     category: "Memory",
     usage: [
-      "recall <query> [recent | important] [type <type>]",
-      "recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]",
+      { syntax: "recall <query> [recent | important] [type <type>]", effect: "read" },
+      {
+        syntax:
+          "recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]",
+        effect: "read",
+      },
     ],
     name: "recall",
     aliases: [],

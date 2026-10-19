@@ -13,7 +13,7 @@ export function getCommand(deps: {
 }): CommandDef {
   return {
     category: "Objects",
-    usage: ["get <item>"],
+    usage: [{ syntax: "get <item>", effect: "write" }],
     name: "get",
     aliases: ["take", "pick"],
     help: "Pick up an item. Usage: get <item>",
@@ -62,7 +62,7 @@ export function dropCommand(deps: {
 }): CommandDef {
   return {
     category: "Objects",
-    usage: ["drop <item>"],
+    usage: [{ syntax: "drop <item>", effect: "write" }],
     name: "drop",
     aliases: [],
     help: "Drop an item from your inventory. Usage: drop <item>",
@@ -112,7 +112,7 @@ export function giveCommand(deps: {
 }): CommandDef {
   return {
     category: "Objects",
-    usage: ["give <item> to <entity>"],
+    usage: [{ syntax: "give <item> to <entity>", effect: "write" }],
     name: "give",
     aliases: [],
     help: "Give an item to someone. Usage: give <item> to <entity>",

@@ -128,12 +128,18 @@ export function lessonsCommand(deps: { db?: MarinaDB }): CommandDef {
   return {
     category: "Knowledge",
     usage: [
-      "lessons <topic>",
-      `lessons <topic> domain:<${DOMAIN_HINT}>`,
-      "lessons retire <id> reason:<text>",
-      "lessons retire source:<source> [domain:<d>] [confirm:yes] reason:<text>",
-      "lessons retire match:<text> [domain:<d>] [confirm:yes] reason:<text>",
-      SUPERSEDE_USAGE,
+      { syntax: "lessons <topic>", effect: "read" },
+      { syntax: `lessons <topic> domain:<${DOMAIN_HINT}>`, effect: "read" },
+      { syntax: "lessons retire <id> reason:<text>", effect: "write" },
+      {
+        syntax: "lessons retire source:<source> [domain:<d>] [confirm:yes] reason:<text>",
+        effect: "write",
+      },
+      {
+        syntax: "lessons retire match:<text> [domain:<d>] [confirm:yes] reason:<text>",
+        effect: "write",
+      },
+      { syntax: SUPERSEDE_USAGE, effect: "write" },
     ],
     name: "lessons",
     aliases: [],

@@ -56,7 +56,11 @@ export function shellExecRefusal(
 export function runCommand(deps: RunDeps): CommandDef {
   return {
     category: "Agents",
-    usage: ["run <binary> [args...]", "run quiet <binary> [args...]", "run raw <command string>"],
+    usage: [
+      { syntax: "run <binary> [args...]", effect: "execute" },
+      { syntax: "run quiet <binary> [args...]", effect: "execute" },
+      { syntax: "run raw <command string>", effect: "execute" },
+    ],
     name: "run",
     aliases: [],
     help: HELP,

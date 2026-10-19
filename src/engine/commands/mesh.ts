@@ -25,16 +25,25 @@ export function meshCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "mesh create <stable-id> | <name> | <charter-ref> | <protocol>",
-      "mesh export <mesh> <event-id>",
-      "mesh join <mesh> [| disclosure JSON]",
-      "mesh leave <mesh> | <reason>",
-      "mesh list",
-      "mesh publish <mesh> | <kind> | <payload JSON or text> [| parent event ids csv]",
-      "mesh replicate <mesh> <event-token>",
-      "mesh show <mesh>",
-      "mesh translate <source> | <target> | <translator-ref> | <protocol-map JSON>",
-      "mesh witness <mesh> <event-id> <witnessed|replicated|disputed|unavailable>",
+      { syntax: "mesh create <stable-id> | <name> | <charter-ref> | <protocol>", effect: "write" },
+      { syntax: "mesh export <mesh> <event-id>", effect: "read" },
+      { syntax: "mesh join <mesh> [| disclosure JSON]", effect: "write" },
+      { syntax: "mesh leave <mesh> | <reason>", effect: "write" },
+      { syntax: "mesh list", effect: "read" },
+      {
+        syntax: "mesh publish <mesh> | <kind> | <payload JSON or text> [| parent event ids csv]",
+        effect: "write",
+      },
+      { syntax: "mesh replicate <mesh> <event-token>", effect: "write" },
+      { syntax: "mesh show <mesh>", effect: "read" },
+      {
+        syntax: "mesh translate <source> | <target> | <translator-ref> | <protocol-map JSON>",
+        effect: "write",
+      },
+      {
+        syntax: "mesh witness <mesh> <event-id> <witnessed|replicated|disputed|unavailable>",
+        effect: "write",
+      },
     ],
     name: "mesh",
     aliases: ["meshes"],

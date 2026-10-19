@@ -61,12 +61,12 @@ export function witnessCommand(deps: {
 
   return {
     usage: [
-      "witness",
-      "witness attest <id>",
-      "witness grant <entity> <gate>",
-      "witness queue",
-      "witness reject <id> [reason]",
-      "witness request <gate>",
+      { syntax: "witness", effect: "read" },
+      { syntax: "witness attest <id>", effect: "write" },
+      { syntax: "witness grant <entity> <gate>", effect: "read" },
+      { syntax: "witness queue", effect: "read" },
+      { syntax: "witness reject <id> [reason]", effect: "write" },
+      { syntax: "witness request <gate>", effect: "write" },
     ],
     name: "witness",
     category: "Civic",

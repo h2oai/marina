@@ -15,7 +15,7 @@ export function quitCommand(deps: {
 }): CommandDef {
   return {
     category: "System",
-    usage: ["quit"],
+    usage: [{ syntax: "quit", effect: "write" }],
     name: "quit",
     aliases: ["exit", "logout", "disconnect"],
     help: "Disconnect from Marina and end your session.",

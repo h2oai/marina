@@ -14,12 +14,12 @@ export function adapterCommand(deps: {
   return {
     category: "Admin & Security",
     usage: [
-      "adapter disable <platform>",
-      "adapter enable <platform>",
-      "adapter enable <platform> [config json]",
-      "adapter enable <platform> [config]",
-      "adapter list",
-      "adapter status <platform>",
+      { syntax: "adapter disable <platform>", effect: "write" },
+      { syntax: "adapter enable <platform>", effect: "write" },
+      { syntax: "adapter enable <platform> [config json]", effect: "write" },
+      { syntax: "adapter enable <platform> [config]", effect: "write" },
+      { syntax: "adapter list", effect: "read" },
+      { syntax: "adapter status <platform>", effect: "read" },
     ],
     name: "adapter",
     aliases: [],

@@ -33,15 +33,29 @@ export function associationCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "association create <name> | <purpose>",
-      "association event <association> <kind> | <detail>",
-      "association join <association> | <kind>:<ref> | <role or interpretation>",
-      "association leave <association> | <kind>:<ref> | <reason>",
-      "association link <association> | <canonical-kind>:<ref> | <relationship>",
-      "association list",
-      "association relate <association> | <kind>:<ref> | <directed|reciprocal> | <semantics> | <kind>:<ref> [| JSON terms or text]",
-      "association revise <association> | <relation-id> | <kind>:<ref> | <directed|reciprocal> | <semantics> | <kind>:<ref> [| JSON terms or text]",
-      "association show <association>",
+      { syntax: "association create <name> | <purpose>", effect: "write" },
+      { syntax: "association event <association> <kind> | <detail>", effect: "write" },
+      {
+        syntax: "association join <association> | <kind>:<ref> | <role or interpretation>",
+        effect: "write",
+      },
+      { syntax: "association leave <association> | <kind>:<ref> | <reason>", effect: "write" },
+      {
+        syntax: "association link <association> | <canonical-kind>:<ref> | <relationship>",
+        effect: "write",
+      },
+      { syntax: "association list", effect: "read" },
+      {
+        syntax:
+          "association relate <association> | <kind>:<ref> | <directed|reciprocal> | <semantics> | <kind>:<ref> [| JSON terms or text]",
+        effect: "write",
+      },
+      {
+        syntax:
+          "association revise <association> | <relation-id> | <kind>:<ref> | <directed|reciprocal> | <semantics> | <kind>:<ref> [| JSON terms or text]",
+        effect: "write",
+      },
+      { syntax: "association show <association>", effect: "read" },
     ],
     name: "association",
     aliases: ["associations"],

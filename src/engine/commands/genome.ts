@@ -16,9 +16,12 @@ export function genomeCommand(deps: {
 }): CommandDef {
   return {
     usage: [
-      "genome create <world-template> | <components csv> | <compatibility csv> [| notes]",
-      "genome list",
-      "genome show <sha256:hash>",
+      {
+        syntax: "genome create <world-template> | <components csv> | <compatibility csv> [| notes]",
+        effect: "write",
+      },
+      { syntax: "genome list", effect: "read" },
+      { syntax: "genome show <sha256:hash>", effect: "read" },
     ],
     name: "genome",
     aliases: ["genomes"],
