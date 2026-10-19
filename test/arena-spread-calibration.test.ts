@@ -504,7 +504,7 @@ describe("poll-level starts keep their own backtested sd", () => {
   });
 
   it("a poll-level start is left alone until its own filings resolve", () => {
-    const f = { ...base, pollLevel: { rule: "blend" } } as typeof base;
+    const f = { ...base, pollLevel: { rule: "blend" } } as unknown as typeof base;
     const out = applySpreadCalibration(round, f, history, { now: Date.parse(round.lock_at) - 1 });
     expect(out.spreadCalibration?.applied).toBe(false);
     expect(out.spreadCalibration?.key).toContain("+poll-level");
