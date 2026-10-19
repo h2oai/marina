@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Search engines for research retrieval**: `openrouter-web:<model>@<engine>[:<mode>]` accepts
+  every OpenRouter web plugin engine — `native`, `exa` (instant … deep-reasoning), `parallel`
+  (turbo … advanced), `perplexity`, `firecrawl` — validates engine and mode, and adds the engine's
+  list price to each call's recorded cost (`@exa` / `@native` unchanged). A new `deepseek` search
+  backend (DeepSeek's Search API, `DEEPSEEK_API_KEY`, $0.75 per 1,000 non-empty searches) joins
+  the `search:` chain and `web search` as a paid fallback after DuckDuckGo, with the brief's window
+  as `after:`/`before:` operators and bounded HTTP 429 retries; `readiness` lists both.
+
 - **Arena proposal judge**: delphi and symbiosis formations with a verified research dossier ask a
   decision model (Jev by default) whether each member's move from the start is supported by the
   verified lines; support weights the median move and can only lower the trust, any judge failure

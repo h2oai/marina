@@ -8,6 +8,7 @@
  *   1. Tavily (if TAVILY_API_KEY set) — AI-native, highest quality
  *   2. SearXNG (if SEARXNG_URL set) — self-hosted meta-search, 150+ engines
  *   3. DuckDuckGo (always available) — free, no key needed
+ *   4. DeepSeek Search (if DEEPSEEK_API_KEY set) — paid fallback when DuckDuckGo fails
  * A provider that fails (a key out of credit, an outage) throws; its engines
  * fall through to the next provider in this order, and the failure lands in
  * the search-health ledger (`./health`, shown by `readiness`). A provider that
@@ -372,8 +373,15 @@ export function initProviders(): void {
     import("./searxng").then((m) => registerProvider(m.searxngProvider(process.env.SEARXNG_URL!)));
   }
 
-  // Tier 2: always-available free providers
-  import("./duckduckgo").then((m) => registerProvider(m.duckDuckGoProvider()));
+  // Tier 2: always-available free providers, then DeepSeek's paid search as
+  // their fallback (DEEPSEEK_API_KEY is often set for chat models alone, so it
+  // never outranks the free engine). Chained so the order holds.
+  import("./duckduckgo")
+    .then((m) => registerProvider(m.duckDuckGoProvider()))
+    .then(() => (process.env.DEEPSEEK_API_KEY?.trim() ? import("./deepseek") : undefined))
+    .then((m) => {
+      if (m) registerProvider(m.deepSeekSearchProvider(process.env.DEEPSEEK_API_KEY!.trim()));
+    });
 
   // Academic: always available, free, no keys
   import("./academic").then((m) => registerProvider(m.academicProvider()));
@@ -410,6 +418,10 @@ export function initProvidersSync(): void {
   }
 
   registerProvider(duckDuckGoProvider());
+  if (process.env.DEEPSEEK_API_KEY?.trim()) {
+    const { deepSeekSearchProvider } = require("./deepseek");
+    registerProvider(deepSeekSearchProvider(process.env.DEEPSEEK_API_KEY.trim()));
+  }
   registerProvider(academicProvider());
 
   const { dateBoundProviders } = require("./asof-providers");

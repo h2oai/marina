@@ -54,9 +54,41 @@ None of these lets post-bound text into a result.
 query the forecast planner decomposed — the named entities, recent news, the resolution source,
 official data, base rates, market or expert expectations — through the backend chain
 (`MARINA_RESEARCH_SEARCH_BACKENDS`, default: Tavily, Exa, SearXNG as configured, then DuckDuckGo,
-then OpenRouter's Exa web plugin with `OPENROUTER_API_KEY` — a paid fallback for when DuckDuckGo
-throttles bulk callers, which it does). A page the question names as its resolution source is read
-before any search.
+then the paid fallbacks for when DuckDuckGo throttles bulk callers, which it does: DeepSeek's
+Search API with `DEEPSEEK_API_KEY`, then OpenRouter's Exa web plugin with `OPENROUTER_API_KEY`). A
+page the question names as its resolution source is read before any search.
+
+### Engines and prices
+
+| Form | Engine | Price (list, estimated into the spend ledger) |
+| --- | --- | --- |
+| `search:duckduckgo` | DuckDuckGo HTML | free (throttles bulk callers) |
+| `search:deepseek` | DeepSeek Search API (`DEEPSEEK_API_KEY`) | $0.75 per 1,000 searches that return results; empty results are free; billed from 2026-10-31 16:00 UTC |
+| `search:tavily` / `tavily:basic\|advanced` | Tavily (`TAVILY_API_KEY`) | $0.008 per credit (basic 1, advanced 2) |
+| `search:exa` / `exa:auto\|neural\|keyword` | Exa (`EXA_API_KEY`) | ~$0.006 per search |
+| `search:openrouter` | OpenRouter web plugin on Exa | the carrier model's tokens + the plugin |
+| `openrouter-web:<model>@native` | the model vendor's own search | passed through by OpenRouter |
+| `openrouter-web:<model>@exa[:<mode>]` | Exa via OpenRouter | `instant`/`fast`/`auto` (default) $0.007, `deep-lite`/`deep` $0.012, `deep-reasoning` $0.015 per request; +$0.001 per result beyond 10 |
+| `openrouter-web:<model>@parallel[:<mode>]` | Parallel via OpenRouter | `turbo`/`fast` $0.001, `basic` (default)/`advanced` $0.005 per request; +$0.001 per result beyond 10 |
+| `openrouter-web:<model>@perplexity` | Perplexity via OpenRouter | $0.005 per request |
+| `openrouter-web:<model>@firecrawl` | Firecrawl via OpenRouter | $0.005 per search + $0.0125 per result (5 results asked: ~$0.07) |
+| `sonar:<model>` | Perplexity Sonar (native search) | the model's price |
+
+`openrouter-web` asks the plugin for 10 results (Firecrawl: 5) and records the model's
+`usage.cost` plus the engine's list price for the mode (`@native` also sends
+`web_search_options.search_context_size: medium`). OpenRouter does not document whether
+`usage.cost` already includes the plugin, so the spend ledger may err high, never low. `@exa` and
+`@native` without a mode behave as before. An unknown engine or mode is refused when the spec is
+read.
+
+The DeepSeek backend sends each query (cut to the API's 128 characters) with the brief's window as
+`after:<YYYY-MM-DD>` / `before:<YYYY-MM-DD>` operators (`before` only for a past cutoff), asks for
+the chain's results per query (the API allows 50) with page content, quotes each result's summary (else snippet) as its passage and
+carries the page content for the citation check; a result dated outside the window is dropped.
+HTTP 429 (over 100 searches per second) is retried twice with a short backoff, then the chain moves
+on. With `DEEPSEEK_API_KEY` set, the `web search` command also uses it as the fallback after
+DuckDuckGo. `readiness` (check `search`) lists the chain, the OpenRouter web engines, and each
+backend's recent failures.
 
 - **Breadth:** results are fused across queries, at most `MARINA_RESEARCH_DOMAIN_CAP` pages per site
   (default 3), up to `MARINA_RESEARCH_MAX_PAGES` (default 14) pages read in parallel through the
