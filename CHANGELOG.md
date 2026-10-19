@@ -18,6 +18,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field's exact value with its as-of date and reads the publisher first; and `verifyDossier` tags
   lines citing only the publisher's sources `[authoritative]`. Off leaves prompts, briefs, dossiers
   and forecast-settings fingerprints unchanged. See docs/guides/search.md.
+- **Quant stage for typed forecasts** (`MARINA_FORECAST_QUANT=off|observe|on`, default `off`).
+  When a lookup reads an official series with history, `fitSeries` projects it to the question's
+  end time. When every option of a choice is a numeric range ("Below 2.5%", "2.5% to 2.9%",
+  "3.0% or higher", counts), `bucketProbabilities` gives each option's probability from that
+  projection or from a supplied numeric prior. `observe` records all of this on the answer
+  (`quant`) and changes nothing a model sees. `on` shows it to the runs (as a reference class)
+  and to the judge, and blends the buckets into a choice's probabilities
+  (`MARINA_FORECAST_QUANT_WEIGHT`, default 0.25). `off` leaves answers and prompts byte-identical.
+- **Built-in skills**: `skill builtin [name]` shows skills shipped with the server, and
+  `skill search` finds them, with no import and no seeding. The first is `quantitative-estimates`.
+  A new `quantitative-estimates` trait on the `researcher` and `market-oracle` roles points to it.
+- **Quantitative helpers for every agent**: a new rank-0 `quant` command next to `calc`, with no
+  model call and no code sandbox. `quant fit <values> steps:N|to:<date>` fits a plain or dated
+  series and returns a mean, an sd and quantiles. The methods are persistence, EWMA, a
+  persistence/EWMA blend, a linear trend, a damped trend and a combination, and `auto` chooses
+  among them by their own rolling-origin errors. `quant buckets mean:<m> sd:<s> | q:<level>=<value>,… -- <ranges>`
+  gives each numeric range's probability and the most likely range, including open-ended ranges,
+  sd 0 and tied quantiles. The shared code lives in `src/quant/` (`fitSeries`,
+  `bucketProbabilities`, normal primitives). The arena's scalar baseline and poll-level rule now
+  call it, and a regression test checks bit-identical output against the earlier code. A new
+  `quantitative-estimates` skill (`seeds/skills/quantitative-estimates.md`) teaches `calc` for
+  units, percent change and growth, and `quant` for series and ranges.
 - **Search engines for research retrieval**: `openrouter-web:<model>@<engine>[:<mode>]` accepts
   every OpenRouter web plugin engine — `native`, `exa` (instant … deep-reasoning), `parallel`
   (turbo … advanced), `perplexity`, `firecrawl` — validates engine and mode, and adds the engine's

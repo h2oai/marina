@@ -44,6 +44,11 @@
  *   MARINA_FORECAST_PRIOR, _PRIOR_WEIGHT, _CALIBRATION, _CALIBRATION_MARGIN,
  *   _CALIBRATION_SCORE, _HISTORY, _HISTORY_MIN   prior shrink and recalibration from
  *                              resolved history (`./adjust.ts`; all off by default)
+ *   MARINA_FORECAST_QUANT      off | observe | on (default off): the deterministic quant stage
+ *                              (`./quant.ts`) — a series baseline and numeric-range bucket
+ *                              probabilities; observe records them only; on shows them to the
+ *                              runs and the judge and blends the buckets (MARINA_FORECAST_QUANT_WEIGHT,
+ *                              default 0.25) into a choice's probabilities
  *
  * No vendor key is required. Unset, every part resolves to what this
  * installation has (`src/agent/available-models.ts`): OpenRouter's three-vendor
@@ -71,6 +76,7 @@ import { SELECTION_MODES, type SelectionMode } from "./answer-types";
 import type { ForecastHistory } from "./history";
 import type { LessonStore } from "./lessons";
 import { lookupsFromSpec } from "./lookups";
+import { quantModeFromEnv, quantWeightFromEnv } from "./quant";
 import type { ForecastDeps } from "./question";
 import { DEFAULT_RETRIEVER, defaultRetrieverSpec } from "./retriever-default";
 import type { ModelPart, TypedForecastDeps, TypedForecastOptions } from "./typed";
@@ -334,7 +340,9 @@ export function typedOptionsFromEnv(
   const minEvidence = intEnv(env.MARINA_FORECAST_MIN_EVIDENCE);
   const disagreement = env.MARINA_FORECAST_DISAGREEMENT?.trim().toLowerCase();
   const pool = env.MARINA_FORECAST_POOL?.trim().toLowerCase();
+  const quant = quantModeFromEnv(env);
   return {
+    ...(quant !== "off" ? { quant, quantWeight: quantWeightFromEnv(env) } : {}),
     ...(SELECTION_MODES.includes(selection as SelectionMode)
       ? { selection: selection as SelectionMode }
       : {}),

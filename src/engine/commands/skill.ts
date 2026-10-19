@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { BUILTIN_SKILLS, builtinSkill, searchBuiltinSkills } from "../../agent/builtin-skills";
 import {
   formatSkillContent,
   loadSkillFile,
@@ -30,6 +31,7 @@ export function skillCommand(deps: {
     category: "Memory",
     usage: [
       { syntax: "skill audit", effect: "read" },
+      { syntax: "skill builtin [name]", effect: "read" },
       { syntax: "skill compose <id1> <id2> ..", effect: "write" },
       { syntax: "skill compose <id1> <id2> [id3] ..", effect: "write" },
       { syntax: "skill import <path-to-markdown-file>", effect: "write" },
@@ -43,7 +45,7 @@ export function skillCommand(deps: {
     ],
     name: "skill",
     aliases: [],
-    help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",
+    help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd) | skill builtin [name] (skills shipped with the server, e.g. quantitative-estimates). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -66,12 +68,13 @@ export function skillCommand(deps: {
               "Usage: skill store <name> | <description> | <action_sequence>\n" +
               "Example: skill store pool-recall-fanout | find a fact when one keyword misses | " +
               "recall <topic> ; pool bench-facts recall <synonym> ; note the hit\n\n" +
+              "Built-in skills (no import needed): skill builtin\n" +
               "Looking for help? Try: evolve, help, guide",
           );
         } else {
           ctx.send(
             input.entity,
-            "Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+)",
+            "Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+) | skill builtin [name]",
           );
         }
         return;
@@ -122,6 +125,20 @@ export function skillCommand(deps: {
             weightRecency: 0.2,
             weightRelevance: 0.4,
           });
+          const builtins = searchBuiltinSkills(query);
+          const builtinLines = builtins.map(
+            (b) =>
+              `  built-in "${b.name}": ${b.description.slice(0, 80)} — skill builtin ${b.name}`,
+          );
+          if (results.length === 0 && builtinLines.length > 0) {
+            ctx.send(
+              input.entity,
+              [header(`Skills: "${query}"`), separator(), ...builtinLines].join("\n"),
+              undefined,
+              memoryResult("skill-search", { success: true, notes: [] }),
+            );
+            return;
+          }
           if (results.length === 0) {
             ctx.send(
               input.entity,
@@ -141,6 +158,7 @@ export function skillCommand(deps: {
             ...results.map((n) => {
               return `  #${n.id} [imp=${n.importance} score=${n.score.toFixed(2)}]: ${n.content.slice(0, 80)}`;
             }),
+            ...builtinLines,
           ];
           ctx.send(
             input.entity,
@@ -148,6 +166,33 @@ export function skillCommand(deps: {
             undefined,
             memoryResult("skill-search", { success: true, notes: memoryNoteResults(results) }),
           );
+          return;
+        }
+
+        case "builtin": {
+          const name = input.tokens[1];
+          if (!name) {
+            ctx.send(
+              input.entity,
+              [
+                header("Built-in skills"),
+                separator(),
+                ...BUILTIN_SKILLS.map((b) => `  ${b.name}: ${b.description}`),
+                "",
+                "Read one with: skill builtin <name>",
+              ].join("\n"),
+            );
+            return;
+          }
+          const skill = builtinSkill(name);
+          if (!skill) {
+            ctx.send(
+              input.entity,
+              `No built-in skill "${name}". Built-in: ${BUILTIN_SKILLS.map((b) => b.name).join(", ")}`,
+            );
+            return;
+          }
+          ctx.send(input.entity, `[Skill: ${skill.name}] ${skill.description}\n\n${skill.body}`);
           return;
         }
 

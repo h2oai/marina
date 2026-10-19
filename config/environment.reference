@@ -910,6 +910,10 @@
 # MARINA_FORECAST_HISTORY=
 # MARINA_FORECAST_HISTORY_MIN=50
 
+# Quantitative stage for typed forecasts (src/forecast/quant.ts, over the shared helpers in src/quant/). It is deterministic and makes no model call. When a lookup read an official series with history (for example FRED), the series is fitted (persistence, EWMA, blend, trend, damped trend or a combination, chosen by its own past errors) and projected to the question's end time. When every option of a choice is a numeric range ("below 2.5%", "2.5% to 2.9%", "3.0% or higher"), each option's probability comes from that projection, else from a supplied numeric prior with a value and sd. `off` (the default) skips the stage and leaves every answer unchanged. `observe` records the baseline, the bucket probabilities and the blend they would give on the answer (`quant`) without changing anything a model sees or the answer. `on` also shows them to the runs (a dossier line, as a reference class) and to the judge (an evidence chunk), and blends the bucket probabilities into a choice asked with probabilities, with QUANT_WEIGHT (0–1, default 0.25).
+# MARINA_FORECAST_QUANT=off
+# MARINA_FORECAST_QUANT_WEIGHT=0.25
+
 # Automatic resolution (src/outcomes/autoresolve.ts): every hour, the markets that open saved answers are linked to (`resolves:<venue>/<ticker>`) are read, at most 20 per pass, and a resolved one settles every answer waiting on it. Public Kalshi/Polymarket reads only. `off` waits for a `probe`.
 # MARINA_OUTCOME_AUTORESOLVE=on
 

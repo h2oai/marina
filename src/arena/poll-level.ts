@@ -21,6 +21,7 @@
  * tracker is already smoothed. Pure: frozen values in, forecast out.
  */
 
+import { ewma, fitSeries, predictWith, rms, rollingOriginErrors } from "../quant/series-fit";
 import type { Distribution } from "./types";
 
 /** Tracker families whose scalar toplines use the poll-level start (walk-forward backtest). */
@@ -70,15 +71,12 @@ export interface PollLevelEvidence {
 
 /** The arena's EWMA (`ssa/baselines.py`): seeded at the first value, alpha `POLL_EWMA_ALPHA`. */
 export function arenaEwma(values: number[], alpha = POLL_EWMA_ALPHA): number {
-  if (values.length === 0) throw new Error("empty history");
-  let m = values[0]!;
-  for (let i = 1; i < values.length; i++) m = alpha * values[i]! + (1 - alpha) * m;
-  return m;
+  return ewma(values, alpha);
 }
 
 /** The rule's mean: the average of persistence and the arena's EWMA. */
 export function pollBlendMean(values: number[]): number {
-  return (values.at(-1)! + arenaEwma(values)) / 2;
+  return predictWith("blend", values, 1, { alpha: POLL_EWMA_ALPHA });
 }
 
 /**
@@ -91,47 +89,51 @@ export function ruleErrorRms(
   predict: (prefix: number[]) => number,
   steps: number,
 ): { rms: number; n: number } | undefined {
-  let sum = 0;
-  let n = 0;
-  for (
-    let t = Math.max(WARM_UP + steps - 1, values.length - ERROR_WINDOW);
-    t < values.length;
-    t++
-  ) {
-    const e = values[t]! - predict(values.slice(0, t - steps + 1));
-    sum += e * e;
-    n++;
-  }
-  return n < MIN_ERRORS ? undefined : { rms: Math.sqrt(sum / n), n };
+  const errors = rollingOriginErrors(values, (p) => predict(p as number[]), steps, {
+    window: ERROR_WINDOW,
+    warmUp: WARM_UP,
+  });
+  return errors.length < MIN_ERRORS ? undefined : { rms: rms(errors), n: errors.length };
 }
 
 /**
  * The poll-level start for one series, or undefined when its history is too
- * short to size the spread (the caller then files its baseline).
+ * short to size the spread (the caller then files its baseline). The shared
+ * series fit (`src/quant/series-fit.ts`, method `blend`) with the arena's
+ * constants.
  */
 export function pollLevelForecast(
   values: number[],
   steps: number,
 ): { forecast: Distribution; evidence: PollLevelEvidence } | undefined {
   const finite = values.filter((v) => Number.isFinite(v));
-  if (finite.length === 0) return undefined;
-  const err = ruleErrorRms(finite, pollBlendMean, steps);
-  if (!err) return undefined;
+  if (finite.length === 0 || !Number.isSafeInteger(steps) || steps < 1) return undefined;
+  const fit = fitSeries(finite, {
+    steps,
+    method: "blend",
+    alpha: POLL_EWMA_ALPHA,
+    window: ERROR_WINDOW,
+    warmUp: WARM_UP,
+    minErrors: MIN_ERRORS,
+    sdScale: POLL_LEVEL_SD_SCALE,
+    minSd: POLL_LEVEL_MIN_SD,
+    levels: [],
+  });
+  if (fit?.sdBasis !== "rolling-origin") return undefined;
   const persistence = finite.at(-1)!;
-  const ewma = arenaEwma(finite);
-  const sd = Math.max(POLL_LEVEL_SD_SCALE * err.rms, POLL_LEVEL_MIN_SD);
+  const ewmaLevel = arenaEwma(finite);
   return {
-    forecast: { mean: (persistence + ewma) / 2, sd },
+    forecast: { mean: fit.mean, sd: fit.sd },
     evidence: {
       rule: "persistence-ewma-blend",
       persistence,
-      ewma: round3(ewma),
+      ewma: round3(ewmaLevel),
       alpha: POLL_EWMA_ALPHA,
       steps,
       sd: {
         basis: "rule-rms",
-        rms: round3(err.rms),
-        errors: err.n,
+        rms: round3(fit.errorRms!),
+        errors: fit.errorCount,
         scale: POLL_LEVEL_SD_SCALE,
         floor: POLL_LEVEL_MIN_SD,
       },

@@ -38,6 +38,7 @@ import { moveCommand } from "../commands/move";
 import { mutationCommand } from "../commands/mutation";
 import { noteCommand } from "../commands/note";
 import { probeCommand } from "../commands/probe";
+import { quantCommand } from "../commands/quant";
 import { questCommand } from "../commands/quest";
 import { rankCommand } from "../commands/rank";
 import { reproduceCommand } from "../commands/reproduce";
@@ -195,6 +196,9 @@ export function registerGeneralCommands(engine: Engine): void {
   engine.commands.registerBuiltin(emoteCommand((id) => engine.entities.get(id)));
   engine.commands.registerBuiltin(
     calcCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
+  );
+  engine.commands.registerBuiltin(
+    quantCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
   engine.commands.registerBuiltin(timeCommand());
   engine.commands.registerBuiltin(uptimeCommand(() => engine.getUptime()));

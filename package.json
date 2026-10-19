@@ -42,6 +42,7 @@
     "LICENSE",
     "dist/memory.js",
     "skills/marina-memory",
+    "seeds/skills",
     "extensions/local-embeddings/index.ts",
     "extensions/local-embeddings/package.json",
     "extensions/local-embeddings/bun.lock",
