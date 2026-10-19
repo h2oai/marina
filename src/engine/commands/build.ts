@@ -346,9 +346,10 @@ function handleValidate(
     return;
   }
 
+  // A check only. Marking a version valid makes it load on restart, so that
+  // stays with the world.code-gated `build reload`.
   const validation = validateRoomSource(source.source);
   if (validation.valid) {
-    deps.db.markRoomSourceValid(roomIdStr, source.version);
     ctx.send(input.entity, success(`Source for "${roomIdStr}" v${source.version} is valid.`));
   } else {
     ctx.send(
