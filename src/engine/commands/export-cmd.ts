@@ -3,10 +3,12 @@
 
 import type { BoardManager } from "../../coordination/board-manager";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { boardRefusal } from "./board";
 
 export function exportCommand(
   boards: BoardManager,
   getEntity: (id: string) => Entity | undefined,
+  isGroupMember?: (groupId: string, entityId: string) => boolean,
 ): CommandDef {
   return {
     category: "Knowledge",
@@ -30,6 +32,13 @@ export function exportCommand(
       const board = boards.getBoardByName(boardName);
       if (!board) {
         ctx.send(input.entity, `Board "${boardName}" not found.`);
+        return;
+      }
+
+      // Exporting reads the board: the same access rule as `board read`.
+      const refusal = boardRefusal(entity, board, "read", isGroupMember);
+      if (refusal) {
+        ctx.send(input.entity, refusal.message);
         return;
       }
 

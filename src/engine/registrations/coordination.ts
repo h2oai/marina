@@ -50,7 +50,11 @@ export function registerCoordinationCommands(engine: Engine): void {
   // Export command (only if boards available)
   if (engine.boardManager) {
     engine.commands.registerBuiltin(
-      exportCommand(engine.boardManager, (id) => engine.entities.get(id as EntityId)),
+      exportCommand(
+        engine.boardManager,
+        (id) => engine.entities.get(id as EntityId),
+        (groupId, entityId) => engine.groupManager?.isMember(groupId, entityId) ?? false,
+      ),
     );
   }
 
@@ -188,6 +192,7 @@ export function registerCoordinationCommands(engine: Engine): void {
         engine.boardManager,
         (id) => engine.entities.get(id as EntityId),
         (event) => engine.logEvent(event),
+        (groupId, entityId) => engine.groupManager?.isMember(groupId, entityId) ?? false,
       ),
     );
   }

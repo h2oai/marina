@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { BoardManager } from "../../coordination/board-manager";
+import type { Board, BoardManager, BoardPost } from "../../coordination/board-manager";
 import {
   bold,
   dim,
@@ -14,11 +14,79 @@ import {
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { rankFloorRefusal } from "../rank-floor";
 
+export type BoardOp = "read" | "write" | "pin";
+
+const OP_REFUSAL: Record<BoardOp, string> = {
+  read: "You don't have permission to read this board.",
+  write: "You don't have permission to post on this board.",
+  pin: "You don't have permission to pin posts on this board.",
+};
+
+/**
+ * The one access rule for every board path. A group board is open to its
+ * group's members only, in every trust profile (like group memory pools), and
+ * fails closed when membership can't be checked. Rank floors go through
+ * `rankFloorRefusal` (lifted under local/`open`, otherwise a challenge).
+ * `hidden` marks a refusal that must read as "not found", so post ids can't
+ * be used to probe a group's board.
+ */
+export function boardRefusal(
+  entity: Entity,
+  board: Board,
+  op: BoardOp,
+  isGroupMember?: (groupId: string, entityId: string) => boolean,
+  refusal: string = OP_REFUSAL[op],
+): { message: string; hidden: boolean } | undefined {
+  if (
+    board.scopeType === "group" &&
+    !(board.scopeId && isGroupMember?.(board.scopeId, entity.id))
+  ) {
+    return { message: `Board "${board.name}" not found.`, hidden: true };
+  }
+  const floor = op === "read" ? board.readRank : op === "write" ? board.writeRank : board.pinRank;
+  const message = rankFloorRefusal(entity, floor, refusal);
+  return message ? { message, hidden: false } : undefined;
+}
+
+/** True when `entity` may see `board` at all (list and search filters; raises nothing). */
+export function boardVisible(
+  entity: Entity,
+  board: Board,
+  isGroupMember?: (groupId: string, entityId: string) => boolean,
+): boolean {
+  return (
+    board.scopeType !== "group" || !!(board.scopeId && isGroupMember?.(board.scopeId, entity.id))
+  );
+}
+
 export function boardCommand(
   boards: BoardManager,
   getEntity: (id: string) => Entity | undefined,
   logEvent?: (event: EngineEvent) => void,
+  isGroupMember?: (groupId: string, entityId: string) => boolean,
 ): CommandDef {
+  /** A post and its board, after the access check; sends the refusal and returns undefined. */
+  const postFor = (
+    ctx: RoomContext,
+    entity: Entity,
+    postIdStr: string,
+    op: BoardOp,
+  ): { post: BoardPost; board: Board } | undefined => {
+    const postId = Number.parseInt(postIdStr, 10);
+    const post = Number.isNaN(postId) ? undefined : boards.getPost(postId);
+    const board = post ? boards.getBoard(post.boardId) : undefined;
+    const refusal = post && board ? boardRefusal(entity, board, op, isGroupMember) : undefined;
+    if (!post || !board || refusal?.hidden) {
+      ctx.send(entity.id, `Post #${postIdStr} not found.`);
+      return undefined;
+    }
+    if (refusal) {
+      ctx.send(entity.id, refusal.message);
+      return undefined;
+    }
+    return { post, board };
+  };
+
   return {
     category: "Coordination",
     usage: [
@@ -47,7 +115,7 @@ export function boardCommand(
 
       switch (sub) {
         case "list": {
-          const all = boards.getAllBoards();
+          const all = boards.getAllBoards().filter((b) => boardVisible(entity, b, isGroupMember));
           if (all.length === 0) {
             ctx.send(input.entity, "No boards exist yet.");
             return;
@@ -70,10 +138,12 @@ export function boardCommand(
 
           const postId = Number.parseInt(tokens[2] ?? "", 10);
           if (!Number.isNaN(postId) && postId > 0) {
-            // Read specific post
-            const post = boards.getPost(postId);
-            if (!post) {
-              ctx.send(input.entity, `Post #${postId} not found.`);
+            // Read specific post: it must be on the named board, readable by the caller.
+            const found = postFor(ctx, entity, String(postId), "read");
+            if (!found) return;
+            const { post } = found;
+            if (boards.getBoardByName(boardName)?.id !== post.boardId) {
+              ctx.send(input.entity, `Post #${postId} not found on ${boardName}.`);
               return;
             }
             const votes = boards.getVoteCount(postId);
@@ -106,13 +176,9 @@ export function boardCommand(
             ctx.send(input.entity, `Board "${boardName}" not found.`);
             return;
           }
-          const readRefusal = rankFloorRefusal(
-            entity,
-            board.readRank,
-            "You don't have permission to read this board.",
-          );
+          const readRefusal = boardRefusal(entity, board, "read", isGroupMember);
           if (readRefusal) {
-            ctx.send(input.entity, readRefusal);
+            ctx.send(input.entity, readRefusal.message);
             return;
           }
           const posts = boards.listPosts(board.id);
@@ -144,13 +210,9 @@ export function boardCommand(
             ctx.send(input.entity, `Board "${boardName}" not found.`);
             return;
           }
-          const writeRefusal = rankFloorRefusal(
-            entity,
-            board.writeRank,
-            "You don't have permission to post on this board.",
-          );
+          const writeRefusal = boardRefusal(entity, board, "write", isGroupMember);
           if (writeRefusal) {
-            ctx.send(input.entity, writeRefusal);
+            ctx.send(input.entity, writeRefusal.message);
             return;
           }
           const rest = tokens.slice(2).join(" ");
@@ -193,13 +255,16 @@ export function boardCommand(
             return;
           }
           const parentId = Number.parseInt(postIdStr, 10);
-          const parent = boards.getPost(parentId);
-          if (!parent) {
-            ctx.send(input.entity, `Post #${postIdStr} not found.`);
+          // Replying reads the thread and writes to its board.
+          const found = postFor(ctx, entity, postIdStr, "read");
+          if (!found) return;
+          const { post: parent, board } = found;
+          const writeRefusal = boardRefusal(entity, board, "write", isGroupMember);
+          if (writeRefusal) {
+            ctx.send(input.entity, writeRefusal.message);
             return;
           }
           const replyBody = tokens.slice(2).join(" ");
-          const board = boards.getBoard(parent.boardId);
           const reply = boards.createPost({
             boardId: parent.boardId,
             authorId: input.entity,
@@ -212,7 +277,7 @@ export function boardCommand(
             entity: input.entity,
             postId: reply.id,
             boardId: parent.boardId,
-            boardName: board?.name ?? parent.boardId,
+            boardName: board.name,
             title: "",
             body: replyBody,
             parentId,
@@ -232,6 +297,11 @@ export function boardCommand(
           const board = boards.getBoardByName(boardName);
           if (!board) {
             ctx.send(input.entity, `Board "${boardName}" not found.`);
+            return;
+          }
+          const searchRefusal = boardRefusal(entity, board, "read", isGroupMember);
+          if (searchRefusal) {
+            ctx.send(input.entity, searchRefusal.message);
             return;
           }
           const results = boards.searchPosts(board.id, query);
@@ -258,11 +328,7 @@ export function boardCommand(
             return;
           }
           const postId = Number.parseInt(postIdStr, 10);
-          const post = boards.getPost(postId);
-          if (!post) {
-            ctx.send(input.entity, `Post #${postIdStr} not found.`);
-            return;
-          }
+          if (!postFor(ctx, entity, postIdStr, "read")) return;
           const value = direction === "up" ? 1 : -1;
           let score: number | undefined;
           if (tokens[3]) {
@@ -289,11 +355,9 @@ export function boardCommand(
             return;
           }
           const postId = Number.parseInt(postIdStr, 10);
-          const post = boards.getPost(postId);
-          if (!post) {
-            ctx.send(input.entity, `Post #${postIdStr} not found.`);
-            return;
-          }
+          const found = postFor(ctx, entity, postIdStr, "read");
+          if (!found) return;
+          const { post } = found;
           const scores = boards.getScores(postId);
           if (scores.length === 0) {
             ctx.send(input.entity, `No votes on post #${postId}.`);
@@ -319,21 +383,11 @@ export function boardCommand(
             return;
           }
           const postId = Number.parseInt(postIdStr, 10);
-          const post = boards.getPost(postId);
-          if (!post) {
-            ctx.send(input.entity, `Post #${postIdStr} not found.`);
-            return;
-          }
-          const board = boards.getBoard(post.boardId);
-          const pinRefusal =
-            board &&
-            rankFloorRefusal(
-              entity,
-              board.pinRank,
-              "You don't have permission to pin posts on this board.",
-            );
+          const found = postFor(ctx, entity, postIdStr, "read");
+          if (!found) return;
+          const pinRefusal = boardRefusal(entity, found.board, "pin", isGroupMember);
           if (pinRefusal) {
-            ctx.send(input.entity, pinRefusal);
+            ctx.send(input.entity, pinRefusal.message);
             return;
           }
           boards.pinPost(postId);
@@ -348,10 +402,21 @@ export function boardCommand(
             return;
           }
           const postId = Number.parseInt(postIdStr, 10);
-          const post = boards.getPost(postId);
-          if (!post) {
-            ctx.send(input.entity, `Post #${postIdStr} not found.`);
-            return;
+          const found = postFor(ctx, entity, postIdStr, "read");
+          if (!found) return;
+          // Archiving is the author's call, or a moderator's (the board's pin rights).
+          if (found.post.authorId !== entity.id) {
+            const moderate = boardRefusal(
+              entity,
+              found.board,
+              "pin",
+              isGroupMember,
+              "Only the author or a board moderator can archive this post.",
+            );
+            if (moderate) {
+              ctx.send(input.entity, moderate.message);
+              return;
+            }
           }
           boards.archivePost(postId);
           ctx.send(input.entity, `Archived post #${postId}.`);

@@ -152,8 +152,55 @@ describe("Boards", () => {
       expect(conn2.lastText()).toContain("You don't have permission to read this board.");
       engine.processCommand(conn2.entity!, "board post council Hi | there");
       expect(conn2.lastText()).toContain("You don't have permission to post on this board.");
+      // Pinning needs to read the board first; Bob can't.
+      engine.processCommand(conn2.entity!, "board pin 1");
+      expect(conn2.lastText()).toContain("You don't have permission to read this board.");
+    });
+
+    it("guards every post-id and search path, not just the board listing", () => {
+      using _state = scopeProcessState({
+        trustProfile: "shared",
+        env: { MARINA_AUTONOMY: undefined },
+      });
+      restrictedBoard();
+      for (const command of [
+        "board read council 1",
+        "board read general 1",
+        "board search council meeting",
+        "board scores 1",
+        "board vote 1 up",
+        "board reply 1 sneaking in",
+        "board archive 1",
+        "export council",
+      ]) {
+        conn2.clear();
+        engine.processCommand(conn2.entity!, command);
+        const text = stripAnsi(conn2.lastText());
+        expect(text, command).not.toContain("Agenda");
+        expect(text, command).toMatch(/permission|not found/);
+      }
+      expect(
+        engine.boardManager!.listPosts(engine.boardManager!.getBoardByName("council")!.id),
+      ).toHaveLength(1);
+    });
+
+    it("refuses pin, but not read, when only the pin floor is above the caller", () => {
+      using _state = scopeProcessState({
+        trustProfile: "shared",
+        env: { MARINA_AUTONOMY: undefined },
+      });
+      engine.boardManager!.createBoard({ name: "notices", readRank: 0, writeRank: 0, pinRank: 3 });
+      engine.processCommand(conn1.entity!, "board post notices Hello | world");
+      setRank(engine.entities.get(conn2.entity!)!, 0);
+      conn2.clear();
+      engine.processCommand(conn2.entity!, "board read notices 1");
+      expect(stripAnsi(conn2.lastText())).toContain("Hello");
       engine.processCommand(conn2.entity!, "board pin 1");
       expect(conn2.lastText()).toContain("You don't have permission to pin posts on this board.");
+      engine.processCommand(conn2.entity!, "board archive 1");
+      expect(conn2.lastText()).toContain(
+        "Only the author or a board moderator can archive this post.",
+      );
     });
 
     it("passes the same floors under the local ungated profile", () => {
@@ -169,6 +216,62 @@ describe("Boards", () => {
       engine.processCommand(conn2.entity!, "board pin 1");
       expect(conn2.lastText()).toContain("Pinned post #1");
     });
+  });
+
+  describe("group boards are members-only", () => {
+    function groupBoard(): string {
+      const group = engine.groupManager!.create({
+        id: "crew1",
+        name: "Crew One",
+        leaderId: conn1.entity!,
+      });
+      void group;
+      const board = engine.boardManager!.getBoardsForScope("group", "crew1")[0]!;
+      engine.boardManager!.createPost({
+        boardId: board.id,
+        authorId: conn1.entity!,
+        authorName: "Alice",
+        title: "Private plan",
+        body: "members only",
+      });
+      return board.name;
+    }
+
+    for (const profile of ["shared", "local"] as const) {
+      it(`hides a group's board from non-members (${profile} profile)`, () => {
+        using _state = scopeProcessState({
+          trustProfile: profile,
+          env: { MARINA_AUTONOMY: undefined },
+        });
+        const name = groupBoard();
+        const postId = engine.boardManager!.listPosts(
+          engine.boardManager!.getBoardByName(name)!.id,
+        )[0]!.id;
+        for (const command of [
+          "board list",
+          `board read ${name}`,
+          `board read ${name} ${postId}`,
+          `board search ${name} plan`,
+          `board post ${name} Hi | there`,
+          `board reply ${postId} hello`,
+          `board scores ${postId}`,
+          `board vote ${postId} up`,
+          `board archive ${postId}`,
+          `export ${name}`,
+        ]) {
+          conn2.clear();
+          engine.processCommand(conn2.entity!, command);
+          const text = stripAnsi(conn2.lastText());
+          expect(text, command).not.toContain("Private plan");
+          expect(text, command).not.toContain("members only");
+          if (command !== "board list") expect(text, command).toContain("not found");
+        }
+        // The group's leader (a member) still reads it.
+        conn1.clear();
+        engine.processCommand(conn1.entity!, `board read ${name} ${postId}`);
+        expect(stripAnsi(conn1.lastText())).toContain("Private plan");
+      });
+    }
   });
 
   it("should prevent duplicate board names", () => {

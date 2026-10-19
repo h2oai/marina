@@ -61,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Boards enforce their access rules on every path** (GHSA-rgp4-gg8w-xwxm). Reading a post by
+  number, reply, search, scores, vote, archive and `export` skipped a board's rank floors, and no
+  path kept a group's board members-only. One rule now covers them all: group boards are
+  members-only in every trust profile, rank floors apply to every path, and archiving is the
+  author's or a moderator's.
 - The startup banner no longer prints the local model-API key; it reads the key from its
   0600 file instead, so captured stdout never carries the credential.
 - **A hostname is loopback only when it is one.** A browser origin, bind host or gateway target
