@@ -200,7 +200,7 @@ describe("share baskets", () => {
     expect(shareBasketTotal(basketRound, off, startOf(basketRound, off))).toBeUndefined();
   });
 
-  it("rescales the means proportionally to the total and leaves the sds", () => {
+  it("rescales means and sds proportionally to the total", () => {
     const { profile, audit } = renormaliseShares(
       { a: { mean: 55, sd: 1 }, b: { mean: 30, sd: 2 }, c: { mean: 20, sd: 3 } },
       ["a", "b", "c"],
@@ -208,7 +208,10 @@ describe("share baskets", () => {
     expect(audit.sumBefore).toBe(105);
     expect(profile.a!.mean + profile.b!.mean + profile.c!.mean).toBeCloseTo(100, 2);
     expect(profile.a!.mean / profile.b!.mean).toBeCloseTo(55 / 30, 3);
-    expect(profile.c!.sd).toBe(3);
+    // A proportional rescale scales each cell's spread by the same factor.
+    expect(audit.factor).toBeCloseTo(100 / 105, 3);
+    expect(profile.c!.sd).toBeCloseTo(3 * (100 / 105), 3);
+    expect(profile.a!.sd / profile.a!.mean).toBeCloseTo(1 / 55, 4);
     const none = renormaliseShares({ a: { mean: 0, sd: 1 } }, ["a"]);
     expect(none.audit.factor).toBe(1);
   });

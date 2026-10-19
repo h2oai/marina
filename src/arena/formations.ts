@@ -76,6 +76,7 @@
 
 import type { Evidence } from "../decisions/evidence";
 import type { DecisionProvider } from "../decisions/types";
+import { getErrorMessage } from "../engine/errors";
 import { judgeAudit, judgeClaim, newJudgeRecord } from "../forecast/judge";
 import { requireResearchEvidence } from "../research/admission";
 import type { RoundForecast } from "./forecast";
@@ -110,6 +111,11 @@ import { buildResearchBrief } from "./research/briefs";
 import type { CiviqsDaily } from "./research/civiqs-nowcast";
 import type { Retriever } from "./research/retrieve";
 import { type PageText, verifyDossier } from "./research/verify";
+import {
+  markResearchFallback,
+  type ResearchFallbackMode,
+  type ResearchFallbackRecord,
+} from "./research-fallback";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "./types";
 
 export const FORMATION_PATTERNS = [
@@ -182,11 +188,13 @@ export interface FormationForecast extends RoundForecast {
   dailySource?: string;
   /** The start forecast the formation moved from (the move weight's origin). */
   formationStart?: Distribution;
+  /** Profile rounds: the per-cell start the formation moved from (the move weight's origin). */
+  formationStartProfile?: Record<string, Distribution>;
   /** Typed signals the members listed (unanchored variant). */
   signals?: ForecastSignal[];
   /** Filled by the service: what the round's calls cost. */
   costUsd?: number;
-  /** The proposal judge's record (delphi / symbiosis with verified lines; `proposal-judge.ts`). */
+  /** The proposal judge's record (delphi / symbiosis with verified lines, scalar or per cell; `proposal-judge.ts`). */
   judge?: ProposalJudgeRecord;
 }
 
@@ -1342,7 +1350,7 @@ export async function formationForecastRound(
   briefing?: string,
   /** A decision backend for model-judged aspects (verification); omitted ⇒ computed aspects only. */
   judge?: DecisionProvider,
-  /** The proposal judge (delphi / symbiosis scalar rounds) and the verified dossier lines it reads. */
+  /** The proposal judge (delphi / symbiosis, scalar or profile) and the verified dossier lines it reads. */
   proposalJudge?: ProposalJudgeConfig & { verified?: string },
 ): Promise<FormationForecast> {
   const given = start ?? forecastRound(round, lock);
@@ -1351,7 +1359,16 @@ export async function formationForecastRound(
   if (round.target_type === "profile_energy" && hasEveryCell(round, baseline) && members.length) {
     // Profile rounds: the same protocols over whole profiles, aggregated per cell.
     const { profileFormationForecastRound } = await import("./formation-profile");
-    return profileFormationForecastRound(pattern, round, lock, members, baseline, briefing, judge);
+    return profileFormationForecastRound(
+      pattern,
+      round,
+      lock,
+      members,
+      baseline,
+      briefing,
+      judge,
+      proposalJudge,
+    );
   }
   if (round.target_type !== "continuous_normal" || !baseline.topline || members.length === 0) {
     return {
@@ -1589,6 +1606,15 @@ export interface ComposedForecast extends FormationForecast {
  * dossier is built once per round and appended to every call of both
  * formations; the second formation also sees the first's handoff. Both shrink
  * toward the same start, so chaining cannot compound a move.
+ *
+ * `research.required`: research that fails (no verified evidence, a failed
+ * loop, closed-book retrieval, no successful reader, or a formation with no
+ * usable proposal over the dossier) is handled by `research.fallback`
+ * (`research-fallback.ts`): `skip` throws (the round is not filed — the
+ * default here; the arena reads `MARINA_ARENA_RESEARCH_FALLBACK`, default
+ * `closed-book`), `closed-book` runs the same stages without the dossier and
+ * files the start forecast if that errors or keeps its start, `start` files
+ * the start forecast. A fallback is recorded as `researchFallback`.
  */
 export async function composeForecastRound(
   round: ArenaRound,
@@ -1597,6 +1623,8 @@ export async function composeForecastRound(
   start: RoundForecast,
   research?: ({ retriever: Retriever; pageText: PageText } | { dossier: ResearchDossier }) & {
     required?: boolean;
+    /** What required research that fails files instead (default `skip`: throw). */
+    fallback?: ResearchFallbackMode;
     refresh?: { key: string; previous?: ComposedForecast; now?: () => Date };
   },
   /** A decision backend for model-judged aspects, handed to both formations. */
@@ -1614,13 +1642,45 @@ export async function composeForecastRound(
         ? structuredClone(research.dossier)
         : await buildDossier(round, lock, start, research.retriever, research.pageText)
       : undefined;
+  const fallbackMode = research?.fallback ?? "skip";
+  /** Required research failed: the closed-book stages, else the start forecast. */
+  const fallBack = async (reason: string): Promise<ComposedForecast> => {
+    const mode = fallbackMode as Exclude<ResearchFallbackMode, "skip">;
+    const record: ResearchFallbackRecord = { mode, reason, used: "start" };
+    const audit = dossier ? { dossier } : {};
+    if (mode === "closed-book") {
+      try {
+        const closed = await composeForecastRound(
+          round,
+          lock,
+          stages,
+          start,
+          undefined,
+          judge,
+          additionalBrief,
+          proposalJudge,
+        );
+        if (!closed.fallback)
+          return { ...markResearchFallback(closed, { ...record, used: "closed-book" }), ...audit };
+        record.closedBookError = closed.fallback;
+      } catch (err) {
+        record.closedBookError = getErrorMessage(err).slice(0, 300);
+      }
+    }
+    return { ...markResearchFallback(withoutDaily(start), record), ...audit };
+  };
   if (research?.required) {
     if (!dossier) throw new Error("Required research refused: unsupported forecast shape");
-    requireResearchEvidence(
-      { ...dossier, retriever: dossier.retriever ?? "" },
-      dossier.verified,
-      dossier.error,
-    );
+    try {
+      requireResearchEvidence(
+        { ...dossier, retriever: dossier.retriever ?? "" },
+        dossier.verified,
+        dossier.error,
+      );
+    } catch (err) {
+      if (fallbackMode === "skip") throw err;
+      return fallBack(getErrorMessage(err));
+    }
   }
   let evidenceRefresh: ComposedForecast["evidenceRefresh"];
   if (research?.refresh && dossier) {
@@ -1673,8 +1733,11 @@ export async function composeForecastRound(
     judge,
     weigh,
   );
-  if (research?.required && one.fallback)
-    throw new Error(`Required research forecast refused: ${one.fallback}`);
+  if (research?.required && one.fallback) {
+    if (fallbackMode === "skip")
+      throw new Error(`Required research forecast refused: ${one.fallback}`);
+    return fallBack(`research forecast refused: ${one.fallback}`);
+  }
   if (!second || !(numeric || profiled))
     return {
       ...one,
@@ -1699,8 +1762,11 @@ export async function composeForecastRound(
     judge,
     weigh,
   );
-  if (research?.required && two.fallback)
-    throw new Error(`Required research forecast refused: ${two.fallback}`);
+  if (research?.required && two.fallback) {
+    if (fallbackMode === "skip")
+      throw new Error(`Required research forecast refused: ${two.fallback}`);
+    return fallBack(`research forecast refused: ${two.fallback}`);
+  }
   return {
     ...two,
     ...(evidenceRefresh ? { evidenceRefresh } : {}),

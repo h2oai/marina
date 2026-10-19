@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Market and poll lines are frozen under payload URLs so the citation check verifies what was read
   at the lock. `off` and `consumer` are unchanged.
 
+- **Arena profile rounds at parity with scalar rounds**: on Google Trends baskets, YouGov
+  crosstabs and Civiqs profiles the proposal judge now runs per cell (one batched call per member,
+  support per cell, trust only drops, fails open); the learned move weight fits one weight on
+  every cell's move by energy-score skill (placebo and minimum history as for scalars, pooled
+  across profile families of a method when a key has few rounds); each cell's sd is floored at the
+  narrowest proposal and the members' linear pool; and a share basket's rescale to 100 now scales
+  the sds with the means. Formations record `formationStartProfile`.
+- **Arena research fallback**: with `MARINA_ARENA_RESEARCH_REQUIRED=on`, research that fails no
+  longer skips the round; `MARINA_ARENA_RESEARCH_FALLBACK=closed-book|start|skip` (default
+  `closed-book`) files the same formation closed-book, else the start forecast, recorded as
+  `forecast.researchFallback` and keyed as a closed-book filing by the calibrators.
 - **Arena proposal judge**: delphi and symbiosis formations with a verified research dossier ask a
   decision model (Jev by default) whether each member's move from the start is supported by the
   verified lines; support weights the median move and can only lower the trust, any judge failure

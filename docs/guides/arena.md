@@ -296,7 +296,13 @@ and cost (which also reach the round's `costUsd`). `MARINA_ARENA_PROPOSAL_JUDGE=
 (default `on`; `observe` records the judged forecast without filing it) and
 `MARINA_ARENA_PROPOSAL_JUDGE_MODEL` (default `typesafe/jev-1.13`; any Decisions-API model id on
 OpenRouter — switching to another decision model is one env change — or `decisions` for the
-world's `MARINA_DECISIONS` backend). Profile rounds are not judged yet. To measure it, run
+world's `MARINA_DECISIONS` backend). Profile rounds are judged **per cell**: each member is asked
+one call (up to 16 cells a call, the decision API's question limit — a 16-cell crosstab is one
+call per member) with one yes/no question per cell it moved, so support differs by cell. Per cell,
+the support-weighted median of the members' moves on that cell is filed at that cell's trust ×
+its mean support (never above the unjudged trust); `forecast.judge.cells` keeps each cell's
+support per member and both aggregations, `support` per member is its mean over its moved cells,
+and any failure on any call files the unjudged profile. To measure it, run
 `shadow compare` with `observe` and score `judge.judged` against `judge.unjudged`, or run the
 paired comparison under `on` and `off` (the config fingerprint differs) and use `paired-score`.
 
@@ -317,8 +323,14 @@ profiles) every pattern runs the same protocol over the whole profile
   its start;
 - **share baskets**: when the round's unit or question says its cells add to 100 (or the unit
   names a share) AND its last published values add to 100 within 2 points, the aggregated means are
-  rescaled proportionally to 100 (every mean × 100 / Σ means; sds unchanged). Independent cells
-  (subgroup profiles) are never rescaled.
+  rescaled proportionally to 100 (every mean and every sd × 100 / Σ means — a proportional rescale
+  scales a cell's spread too), after the judge and the sd floors. Independent cells (subgroup
+  profiles) are never rescaled;
+- **sd floors** as for a scalar: after aggregation (and the judge), each cell's sd is at least the
+  narrowest sd any final proposal gave that cell and at least the linear pool of every recorded
+  member reply on that cell (advocates and dropped replies excluded); `protocol.sdFloors` lists
+  the cells each floor raised. The spread calibration still runs last in `submit` and may narrow
+  the result when resolved rounds say so.
 
 Per pattern: debate's sealed sides become CHANGE (the profile moves from the start) and STAY, and
 the judge rules change or stay with one trust; pipeline takes the analyst's cell where it gave one,
@@ -331,7 +343,8 @@ of that proposal) and citations (`{cell, date, value}`) and the judged "follows"
 `+then:` hands the second formation the first's profile and proposals, and `+research@` builds the
 dossier from an item-by-item brief. The record keeps `profileProposals`, and under `protocol` the
 pattern's audit plus `cells` (per-cell proposals counted, trust, agreement) and `shares` (the
-rescale: sum before, factor). Ranking rounds keep their start.
+rescale: sum before, factor). The per-cell start the formation moved from is kept as
+`formationStartProfile` (the move weight's origin). Ranking rounds keep their start.
 
 Auction, ledger and sharding are orchestration patterns for allocating or partitioning work, not
 for combining views of one number, so they have no formation.
@@ -416,6 +429,23 @@ information in the moves). With fewer than 8 records it does nothing. Order: for
 weight → error floor → spread calibration; the decision (w, n, held-out gain, placebo) is kept
 under `moveWeight`. `MARINA_ARENA_MOVE_WEIGHT=observe` records without applying; `off` skips it.
 Formation filings now record their start (`formationStart`) so the move is exact.
+
+On **profile rounds** the same weight multiplies every cell's move (median member proposal for
+the cell − its start, each capped at 2 of the cell's start sds), keyed
+`arena:<tracker>:profile|<method>`. The loss is the arena's energy score as a share of
+persistence's on the round (1 − per-round skill, the leaderboard's metric), computed exactly
+from the arena's point set; outcomes and persistence's score come from the arena's site data,
+visible only once released. The placebo shuffles the standardized cell moves (Δ / start sd) across
+every cell of every round. A key with fewer than 8 visible rounds pools every profile family of the
+same method (`moveWeight.scope = profile-families`, `evidenceKey`); the minimum history, the 5 %
+held-out margin and the placebo still apply to the pool. A share basket is re-closed to 100 after
+the re-weighting (means and sds by one factor). Starts come from `formationStartProfile`, else
+the cell's dated origin, else (older filings) the per-cell median rule. Backtest on the four
+resolved profile rounds with recorded per-cell proposals (one Trends, one crosstab, two Civiqs;
+in-sample only, far too few to adopt anything — the gate needs 8): filed mean skill 0.022; a
+weight of 1 would have given 0.054 (crosstab 0.103 → 0.205, Trends 0.022 → 0.050, Civiqs
+unchanged — its members kept the nowcast); the per-cell sd floors alone 0.022 → 0.035 (crosstab
+0.103 → 0.142, Trends 0.022 → 0.037, Civiqs ±0.001).
 
 **Unanchored formations and typed signals.** `formation:<pattern>~unanchored:<models>` runs the
 same members, dossier and protocol without the instruction that the start forecast is the default,
@@ -1087,6 +1117,20 @@ research plan on outage. It cannot override dates, invent measurements, lift spe
 or turn incomplete required research into a successful filing. Its receipts travel with the
 dossier and can be attributed to the exact resolved submission through the outcome ledger.
 
+`MARINA_ARENA_RESEARCH_REQUIRED=on` makes research required **unless it fails**: closed-book
+retrieval, no verified evidence, a failed or unfinished research loop, a read swarm with no
+successful reader, a research judge that grounds no proposal, or a formation with no usable
+proposal over the dossier. What is filed then is `MARINA_ARENA_RESEARCH_FALLBACK`:
+`closed-book` (default) runs the same formation — or, on a `research:` route, the same analysts
+with no retrieval, judged on the series data alone — and files the start forecast if that errors
+or keeps its start; `start` files the start forecast at once; `skip` refuses the round as before
+(an accepted filing stays, the round can go unrefreshed). A fallback filing records
+`forecast.researchFallback` (`mode`, `reason`, `used`, `closedBookError`, what the failed research
+already spent) and its note says `research fallback (closed-book|start)`; the failed dossier is
+kept for audit and its cost is still counted. The anchor guard, error floor and spread
+calibration apply as to any filing, and the calibrators key it as a closed-book filing, never as
+researched. A no-history round still has no start and is refused.
+
 `MARINA_ARENA_EVIDENCE_REFRESH=on` rechecks sources before deciding whether an accepted
 formation needs another panel. Reuse requires the same round, strategy, inputs and evidence
 fingerprint, a complete prior run, and a forecast under 24 hours old. The final two hours
@@ -1189,5 +1233,6 @@ not isolate evidence sharing as cleanly.
 | `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:google/gemini-3.1-pro-preview` | the research agent's search backend(s): `openrouter-web:<model>[@<native\|exa\|parallel\|perplexity\|firecrawl>[:<mode>]]`, `sonar:<model>`, `tavily:basic` / `tavily:advanced` (needs `TAVILY_API_KEY`), `search:<backends>` (e.g. `duckduckgo+deepseek`), comma-separated to merge |
 | `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend; falls back to `jev`) or `none` |
 | `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |
-| `MARINA_ARENA_PROPOSAL_JUDGE` | `on` | delphi / symbiosis with verified research: judged support weights the move and lowers trust; `observe` records only, `off` skips |
+| `MARINA_ARENA_PROPOSAL_JUDGE` | `on` | delphi / symbiosis with verified research: judged support weights the move and lowers trust (per cell on profile rounds); `observe` records only, `off` skips |
+| `MARINA_ARENA_RESEARCH_FALLBACK` | `closed-book` | with `MARINA_ARENA_RESEARCH_REQUIRED=on`, what failed research files: `closed-book` (then the start), `start`, or `skip` (refuse the round) |
 | `MARINA_ARENA_PROPOSAL_JUDGE_MODEL` | `typesafe/jev-1.13` | the proposal judge: any Decisions-API model id on OpenRouter, or `decisions` (the `MARINA_DECISIONS` backend) |

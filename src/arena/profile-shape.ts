@@ -86,9 +86,11 @@ export interface ShareAudit {
 /**
  * The share basket's closure, applied AFTER aggregation: every cell's mean is
  * multiplied by the same factor, total / Σ means, so the filed means add to
- * the total and each cell keeps its share of the basket; sds are unchanged.
- * Proportional, one step, no iteration; a non-positive sum leaves the profile
- * as it is.
+ * the total and each cell keeps its share of the basket. The sds take the
+ * same factor — a proportional rescale of a cell scales its spread too — so a
+ * cell's sd stays the same fraction of its mean as aggregation (and the sd
+ * floors before it) made it. Proportional, one step, no iteration; a
+ * non-positive sum leaves the profile as it is.
  */
 export function renormaliseShares(
   profile: Record<string, Distribution>,
@@ -101,7 +103,7 @@ export function renormaliseShares(
   const out: Record<string, Distribution> = { ...profile };
   for (const c of cells) {
     const d = profile[c];
-    if (d) out[c] = { mean: round3(d.mean * factor), sd: d.sd };
+    if (d) out[c] = { mean: round3(d.mean * factor), sd: Math.max(0.001, round3(d.sd * factor)) };
   }
   return { profile: out, audit: { total, sumBefore: round3(sum), factor: round3(factor) } };
 }

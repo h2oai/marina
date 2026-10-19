@@ -17,9 +17,18 @@
  *     MAX_FINAL_SD_MOVE of the cell's start sd, the sd blended by the same
  *     trust with a floor of half the start sd; a cell nobody answered keeps
  *     its start;
+ *   - delphi / symbiosis with verified research lines: the proposal judge
+ *     (`proposal-judge.ts`, `weighProfileProposals`) weighs each cell by the
+ *     support judged for THAT cell — trust only drops, any judge failure files
+ *     the unjudged aggregation;
+ *   - every cell's sd is then at least the narrowest final proposal's for that
+ *     cell and at least the linear pool of every recorded reply's cell
+ *     (`profileSdFloors`, the scalar `atLeastNarrowestProposal` /
+ *     `atLeastLinearPool`); the spread calibration in submit.ts still runs
+ *     after and keeps the last word on width;
  *   - a share basket (the round says its cells add to 100, and its last
- *     published values do) is rescaled proportionally to 100 AFTER
- *     aggregation; independent cells never are.
+ *     published values do) is rescaled proportionally to 100 AFTER all of
+ *     that, means and sds by the same factor; independent cells never are.
  *
  * Per-pattern protocol on a profile:
  *   ensemble / deliberation / chorus / blackboard — as for a number, with whole
@@ -60,6 +69,7 @@ import {
   type FormationMember,
   type FormationPattern,
   type FormationStep,
+  linearPoolSd,
   MAX_FINAL_SD_MOVE,
   MAX_PROPOSAL_SD_MOVE,
   median,
@@ -84,6 +94,12 @@ import {
   shareBasketTotal,
 } from "./profile-shape";
 import { freshestReading } from "./prompt-context";
+import {
+  PROPOSAL_JUDGED_PATTERNS,
+  type ProposalJudgeConfig,
+  type ProposalJudgeRecord,
+  weighProfileProposals,
+} from "./proposal-judge";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "./types";
 
 /** Published values per cell a member reads as "the numbers". */
@@ -1039,6 +1055,110 @@ const verification: PProtocol = async (ctx, members) => {
   );
 };
 
+/**
+ * The usable cells of every member reply a protocol recorded (validated per
+ * cell as proposals are), by cell. Debate advocates argue an assigned side, so
+ * theirs are not opinions; a reply that did not count is not `ok`.
+ */
+export function recordedCellReplies(
+  steps: FormationStep[],
+  cells: string[],
+  base: Record<string, Distribution>,
+): Record<string, Distribution[]> {
+  const out: Record<string, Distribution[]> = Object.fromEntries(cells.map((c) => [c, []]));
+  for (const s of steps) {
+    if (!s.status.startsWith("ok") || !s.reply || /(^|\/)advocate/.test(s.stage)) continue;
+    const { profile } = parseProfile(s.reply.profile, cells, base, MAX_PROPOSAL_SD_MOVE);
+    for (const [c, d] of Object.entries(profile)) out[c]!.push(d);
+  }
+  return out;
+}
+
+/**
+ * The scalar sd floors, per cell: a cell's sd is at least the narrowest sd any
+ * final proposal gave that cell (no member asked for more confidence) and at
+ * least the linear pool of every recorded reply on that cell (the members'
+ * pooled uncertainty, disagreement included). Means are untouched; the cells
+ * each floor raised are returned for the audit.
+ */
+export function profileSdFloors(
+  cells: string[],
+  base: Record<string, Distribution>,
+  profile: Record<string, Distribution>,
+  proposals: ProfileProposal[],
+  steps: FormationStep[],
+): {
+  profile: Record<string, Distribution>;
+  raised: { narrowest: string[]; linearPool: string[] };
+} {
+  const out: Record<string, Distribution> = { ...profile };
+  const raised = { narrowest: [] as string[], linearPool: [] as string[] };
+  const replies = recordedCellReplies(steps, cells, base);
+  for (const c of cells) {
+    const d = out[c];
+    if (!d) continue;
+    const sds = proposals
+      .map((p) => p.profile[c]?.sd)
+      .filter((sd): sd is number => sd !== undefined && Number.isFinite(sd) && sd > 0);
+    let sd = d.sd;
+    if (sds.length && sd < Math.min(...sds)) {
+      sd = round3(Math.min(...sds));
+      raised.narrowest.push(c);
+    }
+    const pooled = linearPoolSd(replies[c] ?? []);
+    if (pooled !== undefined && sd < pooled) {
+      sd = round3(pooled);
+      raised.linearPool.push(c);
+    }
+    if (sd !== d.sd) out[c] = { ...d, sd };
+  }
+  return { profile: out, raised };
+}
+
+/**
+ * The proposal judge over a delphi / symbiosis profile outcome: the unjudged
+ * per-cell aggregation is recomputed exactly as `aggregateCells` made it, then
+ * weighed cell by cell. Anything but `applied` returns that aggregation.
+ */
+async function judgeProfileOutcome(
+  ctx: PCtx,
+  out: POutcome,
+  config: ProposalJudgeConfig & { verified?: string },
+): Promise<{ out: POutcome; record: ProposalJudgeRecord } | undefined> {
+  const list = Object.values(out.proposals);
+  if (list.length === 0) return undefined;
+  const trust: Record<string, number> = {};
+  for (const c of ctx.cells) {
+    const ps = list.map((p) => p.profile[c]).filter((d): d is Distribution => !!d);
+    if (ps.length) trust[c] = DEFAULT_TRUST * agreement(ctx.base[c]!, ps);
+  }
+  const weighed = await weighProfileProposals({
+    config,
+    round: ctx.round,
+    cells: ctx.cells,
+    base: ctx.base,
+    proposals: out.proposals,
+    verified: config.verified,
+    unjudged: { profile: out.profile, trust },
+    settle: (c, move, sd, t) => settle(ctx.base[c]!, move, sd, t),
+  });
+  if (weighed.record.status !== "applied") return { out, record: weighed.record };
+  const cells: Record<string, CellAudit> = { ...(out.cells ?? {}) };
+  for (const [c, t] of Object.entries(weighed.trust)) {
+    if (cells[c]) cells[c] = { ...cells[c]!, trust: round3(t) };
+  }
+  const answered = Object.values(cells).filter((a) => a.n > 0);
+  return {
+    out: {
+      ...out,
+      profile: weighed.profile,
+      cells,
+      trust: round3(mean(answered.map((a) => a.trust))),
+    },
+    record: weighed.record,
+  };
+}
+
 const PROTOCOLS: Record<FormationPattern, PProtocol> = {
   ensemble,
   deliberation,
@@ -1056,7 +1176,9 @@ const PROTOCOLS: Record<FormationPattern, PProtocol> = {
 
 /**
  * A formation on a profile round. `baseline` is the start forecast without its
- * daily series, and must carry a profile with every cell.
+ * daily series, and must carry a profile with every cell. `proposalJudge`
+ * (delphi / symbiosis only) weighs the final proposals per cell against the
+ * verified dossier lines.
  */
 export async function profileFormationForecastRound(
   pattern: FormationPattern,
@@ -1066,6 +1188,7 @@ export async function profileFormationForecastRound(
   baseline: RoundForecast,
   briefing?: string,
   judge?: DecisionProvider,
+  proposalJudge?: ProposalJudgeConfig & { verified?: string },
 ): Promise<FormationForecast> {
   const cells = round.cells ?? [];
   const base = baseline.profile!;
@@ -1091,22 +1214,40 @@ export async function profileFormationForecastRound(
     ...(briefing ? { briefing } : {}),
     ...(judge ? { judge } : {}),
   };
-  const out = await PROTOCOLS[pattern](ctx, members);
+  const raw = await PROTOCOLS[pattern](ctx, members);
   const common = { formation: pattern, rounds: ctx.steps };
-  if (!out) return { ...baseline, ...common, fallback: "no usable proposal" };
-  const closed = share !== undefined ? renormaliseShares(out.profile, cells, share) : undefined;
+  if (!raw) return { ...baseline, ...common, fallback: "no usable proposal" };
+  const judged =
+    proposalJudge && (PROPOSAL_JUDGED_PATTERNS as readonly string[]).includes(pattern)
+      ? await judgeProfileOutcome(ctx, raw, proposalJudge)
+      : undefined;
+  const out = judged?.out ?? raw;
+  const floored = profileSdFloors(
+    cells,
+    base,
+    out.profile,
+    Object.values(out.proposals),
+    ctx.steps,
+  );
+  const closed = share !== undefined ? renormaliseShares(floored.profile, cells, share) : undefined;
   const fresh = cells.some((c) => freshestReading(baseline, c));
+  const raised = floored.raised.narrowest.length + floored.raised.linearPool.length;
   return {
     ...baseline,
     ...common,
-    profile: closed?.profile ?? out.profile,
+    profile: closed?.profile ?? floored.profile,
     profileProposals: out.proposals,
+    formationStartProfile: Object.fromEntries(
+      cells.map((c) => [c, { mean: base[c]!.mean, sd: base[c]!.sd }]),
+    ),
     trust: out.trust,
+    ...(judged ? { judge: judged.record } : {}),
     ...(out.agreement !== undefined ? { agreement: out.agreement } : {}),
     ...(out.critique ? { critique: out.critique } : {}),
     protocol: {
       ...(out.protocol ?? {}),
       ...(out.cells ? { cells: out.cells } : {}),
+      ...(raised ? { sdFloors: floored.raised } : {}),
       ...(closed ? { shares: closed.audit } : {}),
     },
     note: `marina ${pattern} formation (${members.map((m) => m.name).join(", ")}) over ${fresh ? "the Civiqs nowcast profile" : "the calibrated baseline"}, per cell${closed ? `, shares rescaled to ${share}` : ""}`,

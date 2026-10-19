@@ -21,6 +21,14 @@
  * answer) ⇒ fail OPEN to today's aggregation, recorded as `unavailable`.
  * `observe` judges and records what the judged forecast would have been,
  * without changing the filing. The record lands on the forecast as `judge`.
+ *
+ * Profile rounds (`weighProfileProposals`): the same rule, cell by cell. Each
+ * member is asked ONE call (up to 16 cells a call — the decision API's
+ * question limit — so a 16-cell crosstab is one call per member) with one
+ * yes/no question per cell it moved; support therefore differs by cell. Per
+ * cell: weighted median of the members' moves on that cell, trust = that
+ * cell's unjudged trust × its mean support (never above it). Any failure on
+ * any call fails the WHOLE profile open to the unjudged aggregation.
  */
 
 import { DEFAULT_JUDGE_MODEL, researchJudge } from "../decisions/config";
@@ -58,6 +66,17 @@ export interface ProposalJudgeRecord {
   unjudged?: { mean: number; sd: number; trust: number; move: number };
   /** The judged aggregation (filed when `applied`, recorded when `observed`). */
   judged?: { mean: number; sd: number; trust: number; move: number };
+  /** Profile rounds: the judgement per cell (support per proposal key, both aggregations). */
+  cells?: Record<string, ProfileCellJudgement>;
+}
+
+/** One profile cell's judgement (`weighProfileProposals`). */
+export interface ProfileCellJudgement {
+  /** Yes-probability per proposal key that answered the cell (1 = did not move it). */
+  support: Record<string, number>;
+  meanSupport: number;
+  unjudged: { mean: number; sd: number; trust: number; move: number };
+  judged: { mean: number; sd: number; trust: number; move: number };
 }
 
 /** Patterns whose final aggregation the proposal judge weighs. */
@@ -137,6 +156,19 @@ const SUPPORTED = noul(
   },
 );
 
+/** The decision API's limit on questions per request (`questions.ts`). */
+export const MAX_CELLS_PER_CALL = 16;
+
+const cellQuestion = (cell: string) =>
+  noul(
+    `The forecaster's move of cell "${cell.slice(0, 120)}" away from its start forecast is supported by the verified evidence lines.`,
+    {
+      true: "A verified line reports a concrete, dated change or measurement for this cell (or the group or item it names) that points the same direction as the move and plausibly justifies its size.",
+      false:
+        "No verified line bears on this cell's move, a line points the other way, or the reason rests on extrapolation, mean reversion or facts not in the verified lines.",
+    },
+  );
+
 export interface ProposalForJudge {
   mean: number;
   sd: number;
@@ -201,6 +233,210 @@ export async function judgeSupport(
   return errors.length
     ? { error: errors.join("; ").slice(0, 400), calls, latencyMs, costUsd }
     : { support, calls, latencyMs, costUsd };
+}
+
+/** A whole-profile proposal as the judge reads it. */
+export interface ProfileProposalForJudge {
+  profile: Record<string, Distribution>;
+  reason?: string;
+}
+
+/**
+ * Ask the judge about every cell each proposal moved: one call per proposal
+ * (chunked at `MAX_CELLS_PER_CALL` cells), one yes/no question per moved cell.
+ * Returns the support per key per cell (1 for a cell the proposal answered
+ * but did not move), or the error — any failure ⇒ the whole judgement is
+ * unavailable.
+ */
+export async function judgeProfileSupport(
+  judge: DecisionProvider,
+  round: Pick<ArenaRound, "question" | "unit">,
+  cells: string[],
+  base: Record<string, Distribution>,
+  proposals: Record<string, ProfileProposalForJudge>,
+  verified: string,
+): Promise<
+  | {
+      support: Record<string, Record<string, number>>;
+      calls: number;
+      latencyMs: number;
+      costUsd: number;
+    }
+  | { error: string; calls: number; latencyMs: number; costUsd: number }
+> {
+  const evidence = verified.trim().slice(0, MAX_EVIDENCE_CHARS);
+  const support: Record<string, Record<string, number>> = {};
+  let calls = 0;
+  let latencyMs = 0;
+  let costUsd = 0;
+  const errors: string[] = [];
+  const asks: Array<Promise<void>> = [];
+  for (const [key, p] of Object.entries(proposals)) {
+    const mine: Record<string, number> = {};
+    support[key] = mine;
+    const moved: string[] = [];
+    for (const c of cells) {
+      const d = p.profile[c];
+      const b = base[c];
+      if (!d || !b) continue;
+      if (d.mean === b.mean) mine[c] = 1;
+      else moved.push(c);
+    }
+    for (let i = 0; i < moved.length; i += MAX_CELLS_PER_CALL) {
+      const chunk = moved.slice(i, i + MAX_CELLS_PER_CALL);
+      calls++;
+      asks.push(
+        (async () => {
+          try {
+            const result = await judge.ask({
+              state: {
+                question: round.question,
+                ...(round.unit ? { unit: round.unit } : {}),
+                member_reason: (p.reason ?? "").slice(0, 600) || "(none stated)",
+                cells: chunk.map((c, j) => {
+                  const b = base[c]!;
+                  const d = p.profile[c]!;
+                  const move = d.mean - b.mean;
+                  return {
+                    question_id: `cell_${j + 1}`,
+                    cell: c,
+                    start_forecast: { mean: b.mean, sd: b.sd },
+                    member_forecast: { mean: d.mean, sd: d.sd },
+                    move_from_start: `${move > 0 ? "up" : "down"} by ${round3(Math.abs(move))} (${round3(Math.abs(move) / b.sd)} start sds)`,
+                  };
+                }),
+                verified_evidence: evidence,
+              },
+              questions: Object.fromEntries(
+                chunk.map((c, j) => [`cell_${j + 1}`, cellQuestion(c)]),
+              ),
+            });
+            latencyMs = Math.max(latencyMs, result.latencyMs ?? 0);
+            costUsd += result.costUsd ?? 0;
+            chunk.forEach((c, j) => {
+              const a = result.answers[`cell_${j + 1}`];
+              if (a?.type !== "noul" || !Number.isFinite(a.noul)) {
+                errors.push(`${key}/${c}: no noul answer`.slice(0, 200));
+                return;
+              }
+              mine[c] = Math.min(1, Math.max(0, a.noul));
+            });
+          } catch (err) {
+            errors.push(`${key}: ${getErrorMessage(err)}`.slice(0, 200));
+          }
+        })(),
+      );
+    }
+  }
+  await Promise.all(asks);
+  return errors.length
+    ? { error: errors.join("; ").slice(0, 400), calls, latencyMs, costUsd }
+    : { support, calls, latencyMs, costUsd };
+}
+
+/**
+ * Weigh a profile formation's final proposals by judged support, cell by
+ * cell. `unjudged` is the formation's own per-cell aggregation (median move,
+ * median sd, its per-cell trust); `settle` is the shrink-and-cap step for one
+ * cell. Anything but `applied` files `unjudged` unchanged.
+ */
+export async function weighProfileProposals(opts: {
+  config: ProposalJudgeConfig;
+  round: Pick<ArenaRound, "question" | "unit">;
+  cells: string[];
+  base: Record<string, Distribution>;
+  proposals: Record<string, ProfileProposalForJudge>;
+  verified: string | undefined;
+  unjudged: { profile: Record<string, Distribution>; trust: Record<string, number> };
+  settle: (cell: string, move: number, sd: number, trust: number) => Distribution;
+}): Promise<{
+  profile: Record<string, Distribution>;
+  trust: Record<string, number>;
+  record: ProposalJudgeRecord;
+}> {
+  const { config, cells, base, proposals, unjudged } = opts;
+  const record: ProposalJudgeRecord = {
+    mode: config.mode,
+    status: "skipped",
+    provider: config.provider.kind,
+    model: config.provider.model,
+    ...(config.provider.calibrated === undefined ? {} : { calibrated: config.provider.calibrated }),
+    calls: 0,
+    latencyMs: 0,
+    costUsd: 0,
+  };
+  const today = { profile: unjudged.profile, trust: unjudged.trust, record };
+  const keys = Object.keys(proposals);
+  if (!opts.verified?.trim())
+    return { ...today, record: { ...record, reason: "no verified lines" } };
+  if (keys.length === 0) return { ...today, record: { ...record, reason: "no proposals" } };
+  const moved = keys.some((k) =>
+    cells.some((c) => {
+      const d = proposals[k]!.profile[c];
+      return d !== undefined && base[c] !== undefined && d.mean !== base[c]!.mean;
+    }),
+  );
+  if (!moved) return { ...today, record: { ...record, reason: "no proposal moved" } };
+  const judged = await judgeProfileSupport(
+    config.provider,
+    opts.round,
+    cells,
+    base,
+    proposals,
+    opts.verified,
+  );
+  record.calls = judged.calls;
+  record.latencyMs = judged.latencyMs;
+  record.costUsd = Math.round(judged.costUsd * 1e6) / 1e6;
+  if ("error" in judged) {
+    new Logger().warn("arena", "proposal judge unavailable; unjudged profile filed", {
+      model: config.provider.model,
+      error: judged.error,
+    });
+    return { ...today, record: { ...record, status: "unavailable", error: judged.error } };
+  }
+  const profile: Record<string, Distribution> = { ...unjudged.profile };
+  const trust: Record<string, number> = { ...unjudged.trust };
+  const perCell: Record<string, ProfileCellJudgement> = {};
+  const all: number[] = [];
+  for (const c of cells) {
+    const b = base[c];
+    const on = keys.filter((k) => proposals[k]!.profile[c] !== undefined);
+    if (!b || on.length === 0) continue;
+    const weights = on.map((k) => judged.support[k]?.[c] ?? 1);
+    all.push(...weights);
+    const ms = weights.reduce((s, w) => s + w, 0) / weights.length;
+    const moves = on.map((k) => proposals[k]!.profile[c]!.mean - b.mean);
+    const sds = on.map((k) => proposals[k]!.profile[c]!.sd);
+    const t0 = unjudged.trust[c] ?? 0;
+    const t = Math.min(t0, t0 * ms);
+    const move = weightedMedian(moves, weights);
+    const sd = weightedMedian(
+      sds,
+      sds.map(() => 1),
+    );
+    const d = opts.settle(c, move, sd, t);
+    const u = unjudged.profile[c] ?? b;
+    perCell[c] = {
+      support: Object.fromEntries(on.map((k, i) => [k, round3(weights[i]!)])),
+      meanSupport: round3(ms),
+      unjudged: { mean: u.mean, sd: u.sd, trust: round3(t0), move: round3(u.mean - b.mean) },
+      judged: { mean: d.mean, sd: d.sd, trust: round3(t), move: round3(move) },
+    };
+    profile[c] = d;
+    trust[c] = t;
+  }
+  const keySupport = Object.fromEntries(
+    keys.map((k) => {
+      const vs = Object.values(judged.support[k] ?? {});
+      return [k, round3(vs.length ? vs.reduce((s, v) => s + v, 0) / vs.length : 1)];
+    }),
+  );
+  record.support = keySupport;
+  record.meanSupport = round3(all.length ? all.reduce((s, w) => s + w, 0) / all.length : 1);
+  record.cells = perCell;
+  if (config.mode === "observe") return { ...today, record: { ...record, status: "observed" } };
+  return { profile, trust, record: { ...record, status: "applied" } };
 }
 
 /**
