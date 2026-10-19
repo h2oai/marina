@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Arena**: a first filing for a round outside the filing window is refused unless `--early` is
   passed; `arena-filing-watch` alerts on a filing that was never refreshed (#466).
+- **Arena spread calibration**: every filed sd — scalar toplines and each profile cell — is
+  multiplied by a scale learned from resolved rounds (best mean per-round skill; CRPS or the
+  arena's energy score), partially pooled method → family → cross-family (w = n/(n+4)), clamped
+  to [0.35, 3], cut at min(now, lock), and applied after the measured-error floor. It replaces
+  the per-key held-out calibrator, which needed 8 records per key and never fired.
+  `MARINA_ARENA_SPREAD_CALIBRATION=on|observe|off` (default on; `MARINA_ARENA_CALIBRATION` is
+  read as a fallback). Walk-forward on Season 0: mean per-round skill 0.129 → 0.180.
 
 ### Fixed
 
