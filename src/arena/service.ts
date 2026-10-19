@@ -647,6 +647,11 @@ async function formationForecasterFor(
         env.OPENROUTER_API_KEY,
       )
     : undefined;
+  // Delphi / symbiosis proposals weighed by judged support on the verified lines
+  // (MARINA_ARENA_PROPOSAL_JUDGE[_MODEL]); used only when a dossier exists.
+  const proposalJudge = stages.some((st) => st.pattern === "delphi" || st.pattern === "symbiosis")
+    ? (await import("./proposal-judge")).proposalJudgeFromEnv(env)
+    : undefined;
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   const data = arenaData(env);
   const start = nowcastForecaster(data, forecastRound, {
@@ -728,6 +733,7 @@ async function formationForecasterFor(
                 : undefined,
               judge,
               lessonBrief,
+              proposalJudge,
             );
       f.lessons = lessons;
       let cost = (f as { dossier?: { costUsd?: number } }).dossier?.costUsd ?? 0;
@@ -737,6 +743,13 @@ async function formationForecasterFor(
         ? []
         : [composed.protocol, composed.upstream?.protocol]) {
         const j = (p as { judge?: { calls?: number; costUsd?: number } } | undefined)?.judge;
+        usage.calls += j?.calls ?? 0;
+        cost += j?.costUsd ?? 0;
+      }
+      // The proposal judge's calls and dollars (both stages' records).
+      for (const j of composed.evidenceRefresh?.reused
+        ? []
+        : [composed.judge, composed.upstream?.judge]) {
         usage.calls += j?.calls ?? 0;
         cost += j?.costUsd ?? 0;
       }

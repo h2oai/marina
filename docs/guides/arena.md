@@ -205,6 +205,26 @@ dropped blowups are excluded). Each round's calls, statuses, trust and cost are 
 with the pattern's own audit under `protocol` (delphi's summary, the tournament bracket,
 verification's aspect verdicts and judge record).
 
+**Proposal judge (delphi, symbiosis).** When the formation carries a verified research dossier
+(`+research@…`, or a frozen dossier in `shadow compare`), a decision model weighs each member's
+final proposal: one yes/no question — is this member's move from the start supported by the
+*verified* dossier lines? — given the round question, the start forecast, the member's forecast
+and stated reason (symbiosis: its credit and contribution). The yes-probabilities, renormalised,
+weight the median move (equal support ⇒ the ordinary median), and the trust becomes
+`0.5 × agreement × mean support`, so it can only drop; the 4-sd drop rule and the 2-sd cap stay.
+A proposal that did not move counts as supported without a call; no verified lines or no moving
+proposal leaves the forecast unchanged. Any judge failure (outage, timeout, spend-cap refusal,
+malformed answer) files the unjudged aggregation. The record is `forecast.judge`: `status`
+(`applied`, `observed`, `skipped`, `unavailable`), the judge's provider and model, per-member
+`support`, `meanSupport`, and the `unjudged` and `judged` mean, sd, trust and move, plus calls
+and cost (which also reach the round's `costUsd`). `MARINA_ARENA_PROPOSAL_JUDGE=on|observe|off`
+(default `on`; `observe` records the judged forecast without filing it) and
+`MARINA_ARENA_PROPOSAL_JUDGE_MODEL` (default `typesafe/jev-1.13`; any Decisions-API model id on
+OpenRouter — switching to another decision model is one env change — or `decisions` for the
+world's `MARINA_DECISIONS` backend). Profile rounds are not judged yet. To measure it, run
+`shadow compare` with `observe` and score `judge.judged` against `judge.unjudged`, or run the
+paired comparison under `on` and `off` (the config fingerprint differs) and use `paired-score`.
+
 **Profile rounds.** On a `profile_energy` round (a Google Trends basket, Civiqs or YouGov subgroup
 profiles) every pattern runs the same protocol over the whole profile
 (`src/arena/formation-profile.ts`, shared shape helpers in `src/arena/profile-shape.ts`):
@@ -1060,3 +1080,5 @@ not isolate evidence sharing as cleanly.
 | `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:google/gemini-3.1-pro-preview` | the research agent's search backend(s): `openrouter-web:<model>`, `sonar:<model>`, `tavily:basic` / `tavily:advanced` (needs `TAVILY_API_KEY`), comma-separated to merge |
 | `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend; falls back to `jev`) or `none` |
 | `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |
+| `MARINA_ARENA_PROPOSAL_JUDGE` | `on` | delphi / symbiosis with verified research: judged support weights the move and lowers trust; `observe` records only, `off` skips |
+| `MARINA_ARENA_PROPOSAL_JUDGE_MODEL` | `typesafe/jev-1.13` | the proposal judge: any Decisions-API model id on OpenRouter, or `decisions` (the `MARINA_DECISIONS` backend) |

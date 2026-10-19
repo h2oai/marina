@@ -377,13 +377,16 @@ export const DEFAULT_JUDGE_MODEL = "typesafe/jev-1.13";
  *              back to `jev`.
  *   none       no judge (equal weights)
  * Judging a whole research brief takes longer than a gate call, so the
- * timeout is at least `minTimeoutMs`.
+ * timeout is at least `minTimeoutMs`. `model` is the Decisions-API model `jev`
+ * asks on OpenRouter (default jev-1.13; any model with the same wire format,
+ * e.g. H2O-Lightning, is one argument away).
  */
 export function researchJudge(
   spec: string,
   env: NodeJS.ProcessEnv,
   openRouterKey: string | undefined,
   minTimeoutMs = 10_000,
+  model = DEFAULT_JUDGE_MODEL,
 ): DecisionProvider | undefined {
   const name = spec.trim().toLowerCase();
   if (name === "decisions") {
@@ -407,7 +410,7 @@ export function researchJudge(
     kind: "decisions-api",
     baseUrl: "https://openrouter.ai/api/alpha",
     path: "/decisions",
-    model: DEFAULT_JUDGE_MODEL,
+    model,
     apiKey: openRouterKey,
     timeoutMs: minTimeoutMs,
   });
