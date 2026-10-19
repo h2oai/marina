@@ -317,7 +317,7 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
         if (!resolvedAt) return;
         const item = scoreItem(row, r.prediction);
         if (history && fresh) {
-          const req = requestFor(row);
+          const req = requestFor(row, variant.formatLine ? { formatLine: variant.formatLine } : {});
           const truth = truthOutcome(row, req.answer);
           const rec = truth
             ? recordFromAnswer({

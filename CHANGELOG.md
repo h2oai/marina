@@ -40,6 +40,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call it, and a regression test checks bit-identical output against the earlier code. A new
   `quantitative-estimates` skill (`seeds/skills/quantitative-estimates.md`) teaches `calc` for
   units, percent change and growth, and `quant` for series and ranges.
+- **Forecast answer contract** (`src/forecast/answer-contract.ts`, `MARINA_FORECAST_CONTRACT`,
+  default `off`): a question's own answer-form instructions — single choice, multi-select with
+  pick bounds, a number with unit / integer / decimals, a date in a stated format, a ranked list of
+  a size, free text with a word limit, an optional `\boxed{…}` wrapper and the format line
+  verbatim — become a structured contract over the typed spec. `observe` records whether the final
+  answer meets it and changes nothing; `on` carries it to the planner, runs, verifier, critic,
+  formations and judge, then a final validator normalises losslessly, re-asks once on a real
+  violation and falls back deterministically, keeping `contract` (status, the pipeline's answer,
+  the rendered form) on the answer. FutureX's adapter can now keep the row prompt's
+  `IMPORTANT: End with …` line (`--format-line keep`, variant `formatLine`); the default still
+  strips it, so its effect can be measured.
+- **Manifold lookup** (opt-in `manifold` in `MARINA_FORECAST_LOOKUPS` /
+  `MARINA_ARENA_RESEARCH_LOOKUPS`; never part of `auto`, `all` or `markets`): Manifold Markets'
+  keyless API — probability, volume and close date live; for a past cutoff, the probability after
+  the last trade at or before it from the bet history and the mana traded up to it, and nothing
+  when the history is missing. Yes/no prices feed the market prior like Polymarket's. Good
+  Judgment Open is not added (no public API; its terms forbid automated collection); new crowd
+  sources register in `OPT_IN_LOOKUPS`.
+- **Market prior across venues**: when several venues (for example Polymarket and Manifold) each
+  matched exactly one market on the same question, the yes/no market-lookup prior now pools them —
+  a log-odds mean, weighted by log(1 + volume) when every venue reports volume in the same unit,
+  with the venues' spread (and disagreement) in its `detail` — instead of rejecting itself. Several
+  markets on one venue stay ambiguous, and a single venue's prior is unchanged.
+- **`contract` on `POST /v1/forecast`**: an optional explicit answer contract beside `answer`,
+  validated against the typed spec (400 when invalid) and enforced unless
+  `MARINA_FORECAST_CONTRACT=observe`.
 - **Search engines for research retrieval**: `openrouter-web:<model>@<engine>[:<mode>]` accepts
   every OpenRouter web plugin engine — `native`, `exa` (instant … deep-reasoning), `parallel`
   (turbo … advanced), `perplexity`, `firecrawl` — validates engine and mode, and adds the engine's

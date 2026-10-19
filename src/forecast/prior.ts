@@ -14,7 +14,12 @@
  *   community      a community forecast the asker supplied
  *   statistical    a statistical prior the asker supplied (a series' own history,
  *                  `./series-prior.ts`, or a published reference class's base rate)
- *   market-lookup  one priced market a lookup matched, for a yes/no question
+ *   market-lookup  one priced market a lookup matched, for a yes/no question —
+ *                  or, when several venues each matched exactly one market on
+ *                  the same question, their pool (`poolVenuePrices`: a
+ *                  log-odds mean, weighted by volume when every venue reports
+ *                  it in the same unit, with the venues' spread noted); two
+ *                  markets on ONE venue stay ambiguous and are rejected
  *   anchor         the freshest official reading of the quantity (a number)
  *   base-rate      how the question's reference class resolved in history
  *                  (per recurring option label for a choice, per class for a
@@ -40,12 +45,14 @@ import {
   adoptOnHoldout,
   clampP,
   gridArgmin,
+  logit,
   meanLoss,
   type ProperScore,
   poolDistribution,
   poolMarginals,
   poolNumber,
   round,
+  sigmoid,
   uniform,
 } from "./fitting";
 import {
@@ -57,7 +64,8 @@ import {
   priorBucket,
   type ResolvedRecord,
 } from "./history";
-import type { LookupResult, NumericAnchor } from "./lookups";
+import { tokens } from "./lookup-match";
+import type { LookupResult, MarketPrice, NumericAnchor } from "./lookups";
 
 /** A prior the asker supplies (an adapter's market price, community forecast or statistical prior). */
 export interface SuppliedPrior {
@@ -163,7 +171,21 @@ export function choosePrior(input: {
       const at = Date.parse(p.at);
       return Number.isFinite(at) && at <= cutoff && p.p > 0 && p.p < 1 && YES.test(p.outcome);
     });
-    if (prices.length && usable.length !== 1) {
+    const venues = new Set(usable.map((p) => p.venue));
+    const pooled =
+      usable.length > 1 && venues.size === usable.length ? poolVenuePrices(usable) : undefined;
+    if (pooled && "pooled" in pooled) {
+      const pool = pooled.pooled;
+      return done({
+        source: "market-lookup",
+        distribution: { [yn.yes]: clampP(pool.p), [yn.no]: clampP(1 - pool.p) },
+        at: pool.at,
+        detail: pool.detail,
+      });
+    }
+    if (pooled && "reason" in pooled) {
+      rejected.push({ source: "market-lookup", reason: pooled.reason });
+    } else if (prices.length && usable.length !== 1) {
       rejected.push({
         source: "market-lookup",
         reason: `${usable.length} priced yes markets matched (a prior needs exactly one)`,
@@ -387,4 +409,51 @@ export function fitShrinkWeight(input: {
     minRecords: input.minRecords,
   });
   return { ...result, source: input.source, group, ...(useBucket ? { bucket } : {}) };
+}
+
+/** Venues further apart than this (in probability) are flagged as disagreeing. */
+export const VENUE_DISAGREEMENT = 0.15;
+/** Two venues' market titles must share at least this many words to be the same question. */
+const SAME_QUESTION_SHARED = 2;
+
+/**
+ * Several venues' yes prices for ONE question (each venue matched exactly one
+ * market): a log-odds mean, weighted by log(1 + volume) when every price
+ * reports its volume in the same unit (else equally — USD and play money are
+ * not comparable), noting the venues' spread. The markets must name the same
+ * question: every pair of titles shares at least two words; otherwise the
+ * prices are refused as ambiguous, like two markets on one venue.
+ */
+export function poolVenuePrices(
+  prices: MarketPrice[],
+): { pooled: { p: number; at: string; detail: string } } | { reason: string } {
+  const words = prices.map((p) => tokens(p.market));
+  for (let i = 0; i < words.length; i++) {
+    for (let j = i + 1; j < words.length; j++) {
+      let shared = 0;
+      for (const w of words[i]!) if (words[j]!.has(w)) shared++;
+      if (shared < SAME_QUESTION_SHARED) {
+        return {
+          reason: `${prices.length} venues priced markets that do not name the same question (${prices[i]!.venue}, ${prices[j]!.venue})`,
+        };
+      }
+    }
+  }
+  const units = new Set(prices.map((p) => p.volumeUnit));
+  const byVolume =
+    units.size === 1 &&
+    !units.has(undefined) &&
+    prices.every((p) => p.volume !== undefined && Number.isFinite(p.volume) && p.volume >= 0);
+  const weights = prices.map((p) => (byVolume ? Math.log1p(p.volume!) : 1));
+  const total = weights.reduce((s, w) => s + w, 0);
+  const w = total > 0 ? weights.map((x) => x / total) : prices.map(() => 1 / prices.length);
+  const p = sigmoid(prices.reduce((s, x, i) => s + w[i]! * logit(x.p), 0));
+  const ps = prices.map((x) => x.p);
+  const spread = Math.max(...ps) - Math.min(...ps);
+  const at = prices.map((x) => x.at).sort((a, b) => Date.parse(b) - Date.parse(a))[0]!;
+  const parts = prices
+    .map((x, i) => `${x.venue} ${round(x.p, 3)} (w ${round(w[i]!, 2)})`)
+    .join(", ");
+  const detail = `pooled ${prices.length} venues, ${byVolume ? `volume-weighted (${[...units][0]})` : "equal weights"}, log-odds mean ${round(p, 3)}: ${parts}; spread ${round(spread, 3)}${spread > VENUE_DISAGREEMENT ? " — venues disagree" : ""}`;
+  return { pooled: { p, at, detail } };
 }
