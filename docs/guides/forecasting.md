@@ -438,9 +438,34 @@ Every agent has two rank-0 commands for the arithmetic of forecasting. Neither c
   range's probability and the most likely range. Use it for multiple-choice questions with
   numeric ranges.
 
-The `quantitative-estimates` skill (`seeds/skills/quantitative-estimates.md`, imported with
-`skill import`) teaches when to use each command. The mechanics are in
+The `quantitative-estimates` skill teaches when to use each command. It ships with the server, so
+any agent can read it with `skill builtin quantitative-estimates` (and `skill search` finds it)
+without importing anything. The `researcher` and `market-oracle` roles carry a
+`quantitative-estimates` trait that points to it. The mechanics are in
 [architecture/forecasting.md](../architecture/forecasting.md#quantitative-helpers-srcquant).
+
+#### The quant stage in typed forecasts
+
+`MARINA_FORECAST_QUANT` (default `off`) adds a deterministic stage to every typed forecast. It
+makes no model call.
+
+- **Series baseline.** When a lookup read an official series with history (FRED, BLS), the
+  series is fitted with `fitSeries` and projected to the question's end time.
+- **Range buckets.** When every option of a choice is a numeric range ("Below 2.5%",
+  "2.5% to 2.9%", "3.0% or higher", "Between 100,000 and 200,000", or counts such as "0", "1",
+  "2 or more"), each option's probability comes from that projection. Without one, it comes from a
+  supplied numeric prior with a value and sd. Ranges displayed with rounding gaps are joined at
+  the midpoints.
+
+The modes:
+
+- `observe` records the baseline, the bucket probabilities and the blend they would give on the
+  answer (`quant`). Nothing a model sees changes, and the answer does not change, so the effect can
+  be measured from resolved questions at no extra cost.
+- `on` also shows both to the runs (a dossier line, used as a reference class) and to the judge
+  (an evidence chunk). For a choice asked with probabilities, it also blends the bucket
+  probabilities into the runs' distribution with weight `MARINA_FORECAST_QUANT_WEIGHT` (default
+  0.25). The prediction then becomes the most probable option.
 
 ## Keeping score
 

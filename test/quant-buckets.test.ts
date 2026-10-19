@@ -6,6 +6,7 @@ import {
   bucketProbabilities,
   formatBucket,
   type Predictive,
+  parseBucket,
   parseBuckets,
   predictiveCdf,
   thresholdBuckets,
@@ -221,5 +222,19 @@ describe("parseBuckets", () => {
     expect(() => parseBuckets("")).toThrow("no buckets");
     expect(() => parseBuckets("<10, lots")).toThrow('"lots"');
     expect(() => parseBuckets("10-")).toThrow(RangeError);
+  });
+});
+
+describe("parseBucket (one option's text)", () => {
+  it("reads the ways multiple-choice options write ranges", () => {
+    expect(parseBucket("3.0% or higher")).toMatchObject({ lo: 3, loClosed: true });
+    expect(parseBucket("2.4% or lower")).toMatchObject({ hi: 2.4, hiClosed: true });
+    expect(parseBucket("Between 2 and 3")).toMatchObject({ lo: 2, hi: 3 });
+    expect(parseBucket("Less than 1,500,000.")).toMatchObject({ hi: 1500000 });
+    expect(parseBucket("200,000 to 249,999")).toMatchObject({ lo: 200000, hi: 249999 });
+    expect(parseBucket("[1,200]")).toMatchObject({ lo: 1, hi: 200 });
+    expect(parseBucket("2.5% to 2.9%")?.label).toBe("2.5% to 2.9%");
+    expect(parseBucket("Yes")).toBeUndefined();
+    expect(parseBucket("Team A")).toBeUndefined();
   });
 });

@@ -293,6 +293,18 @@ const PATTERNS: Array<[RegExp, (m: RegExpMatchArray) => Bucket]> = [
   ],
   [new RegExp(String.raw`^(${NUM})\s*\+$`, "i"), (m) => ({ lo: num(m[1]!), loClosed: true })],
   [
+    new RegExp(String.raw`^(${NUM})\s+or\s+(more|higher|above|greater|over)$`, "i"),
+    (m) => ({ lo: num(m[1]!), loClosed: true }),
+  ],
+  [
+    new RegExp(String.raw`^(${NUM})\s+or\s+(less|lower|below|fewer|under)$`, "i"),
+    (m) => ({ hi: num(m[1]!), hiClosed: true }),
+  ],
+  [
+    new RegExp(String.raw`^between\s+(${NUM})\s+and\s+(${NUM})$`, "i"),
+    (m) => ({ lo: num(m[1]!), hi: num(m[2]!) }),
+  ],
+  [
     new RegExp(String.raw`^(${NUM})\s*(?:-|–|—|\.\.|to)\s*(${NUM})$`, "i"),
     (m) => ({ lo: num(m[1]!), hi: num(m[2]!) }),
   ],
@@ -333,16 +345,34 @@ export function parseBuckets(text: string): Bucket[] {
   if (items.length === 0) throw new RangeError("no buckets given");
   return items.map((item) => {
     const labelled = /^([A-Za-z0-9_]{1,16})\s*:\s*(.+)$/.exec(item);
-    const body = (labelled ? labelled[2]! : item).trim();
-    for (const [re, build] of PATTERNS) {
-      const m = body.match(re);
-      if (m) {
-        const b = build(m);
-        if (b.lo === Number.NEGATIVE_INFINITY) delete b.lo;
-        if (b.hi === Number.POSITIVE_INFINITY) delete b.hi;
-        return labelled ? { ...b, label: labelled[1]! } : { ...b, label: item };
-      }
-    }
-    throw new RangeError(`cannot read bucket "${item}"`);
+    const b = readBucket((labelled ? labelled[2]! : item).trim());
+    if (!b) throw new RangeError(`cannot read bucket "${item}"`);
+    return labelled ? { ...b, label: labelled[1]! } : { ...b, label: item };
   });
+}
+
+function readBucket(body: string): Bucket | undefined {
+  for (const [re, build] of PATTERNS) {
+    const m = body.match(re);
+    if (m) {
+      const b = build(m);
+      if (b.lo === Number.NEGATIVE_INFINITY) delete b.lo;
+      if (b.hi === Number.POSITIVE_INFINITY) delete b.hi;
+      return b;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * One range written as a multiple-choice option might be ("3.0% to 3.4%",
+ * "200,000 or more", "Between 2 and 3", "Less than 1.5%"), or undefined when
+ * the text is not a numeric range. Thousands separators are accepted (outside
+ * bracket notation) and trailing periods are ignored. The label is the text.
+ */
+export function parseBucket(text: string): Bucket | undefined {
+  let body = text.trim().replace(/\.$/, "");
+  if (!/^[[(]/.test(body)) body = body.replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
+  const b = readBucket(body);
+  return b ? { ...b, label: text.trim() } : undefined;
 }

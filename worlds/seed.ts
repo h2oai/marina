@@ -950,6 +950,30 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
+  // ── Quantitative estimates (tool-use trait over calc + quant) ────────
+  // Surfaces the built-in `quantitative-estimates` skill to the roles that
+  // state or forecast numbers, without seeding any skill note.
+
+  seedTrait(db, {
+    name: "quantitative-estimates",
+    category: "methodology",
+    prompt:
+      "Every number you state comes from a tool, not from your head: `calc` for arithmetic, " +
+      "units, percent change and growth; `quant fit <values> steps:N` to project a series " +
+      "with a spread; `quant buckets mean:<m> sd:<s> -- <ranges>` for the probability of " +
+      "each numeric range in a multiple-choice question. Report a spread with every " +
+      "forecast. The full procedure: `skill builtin quantitative-estimates`.",
+    capabilities: {
+      strengths: ["exact-arithmetic", "series-extrapolation", "calibrated-prediction"],
+      preferences: ["tool-verified-numbers", "quantify-uncertainty"],
+      avoids: ["mental-arithmetic", "point-estimates-without-spread"],
+      domains: ["forecasting", "research", "analysis"],
+      behaviors: ["quantify-uncertainty", "verify-computation"],
+      antiBehaviors: ["overclaim"],
+    },
+    createdBy: SYSTEM,
+  });
+
   // ── Researcher role (used by usecase recipes) ────────────────────────
 
   seedRole(db, {
@@ -963,6 +987,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       "thoroughness",
       "source-integrity",
       "intellectual-honesty",
+      "quantitative-estimates",
     ],
     guidelines: [
       "Check what you already know before searching (recall, pool recall)",
@@ -1002,7 +1027,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     name: "market-oracle",
     description:
       "Market analyst — synthesizes positions, evidence, and reasoning across prediction markets.",
-    traits: ["methodical-observation", "knowledge-cataloging"],
+    traits: ["methodical-observation", "knowledge-cataloging", "quantitative-estimates"],
     guidelines: [
       "Monitor all positions in your market room using recall and pool recall",
       "When asked, provide balanced synthesis of yes/no arguments with confidence levels",

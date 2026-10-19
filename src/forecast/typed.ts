@@ -94,6 +94,7 @@ import {
   runLookups,
 } from "./lookups";
 import type { SuppliedPrior } from "./prior";
+import { DEFAULT_QUANT_WEIGHT, type QuantMode, type QuantRecord, quantStage } from "./quant";
 
 export interface TypedForecastRequest {
   question: string;
@@ -203,6 +204,16 @@ export interface TypedForecastOptions {
    * Skipped in the budget's final phase.
    */
   completion?: boolean;
+  /**
+   * The deterministic quantitative stage (`./quant.ts`, `MARINA_FORECAST_QUANT`):
+   * `off` (default) skips it; `observe` records a series baseline and
+   * numeric-range bucket probabilities on the answer (`quant`) without
+   * changing anything a model sees; `on` also shows them to the runs and the
+   * judge and blends the buckets into a choice's probabilities.
+   */
+  quant?: QuantMode;
+  /** Weight of the bucket distribution in that blend, 0–1 (default 0.25). */
+  quantWeight?: number;
 }
 
 export type GroundingFollowUpMode = "all" | "one" | "off";
@@ -394,6 +405,8 @@ export interface TypedForecastAnswer {
   budgetForced?: BudgetForced;
   /** Prior shrink and recalibration (`./adjust.ts`): the raw forecast, the prior, the learned settings. */
   adjustment?: AdjustmentRecord;
+  /** The quantitative stage (`options.quant` observe/on): series baseline, range buckets, blend. */
+  quant?: QuantRecord;
 }
 
 const MAX_DOSSIER_CHARS = 24_000;
@@ -705,6 +718,23 @@ export async function forecastTyped(
       }
     }
   }
+  // ── Quant (opt-in): a series baseline and numeric-range bucket probabilities ─
+  const quantMode = opts.quant ?? "off";
+  let quantEvidence: string | undefined;
+  if (quantMode !== "off") {
+    const stage = quantStage({
+      mode: quantMode,
+      spec: req.answer,
+      readings: (out.lookups ?? []).flatMap((l) => l.readings ?? []),
+      ...(req.priors ? { priors: req.priors } : {}),
+      cutoff: cutoff.at,
+      ...(req.endTime ? { endTime: req.endTime } : {}),
+    });
+    out.quant = stage.record;
+    // `observe` returns no lines and no evidence: nothing a model sees changes.
+    lines.push(...stage.lines);
+    quantEvidence = stage.evidence;
+  }
   // A research outage is not a reason to give up: the runs still answer from
   // the question, its resolution notes and what the models know — with a caveat.
   const researchDown = lines.length === 0 && out.research.every((r) => r.error);
@@ -731,6 +761,7 @@ export async function forecastTyped(
         text: verifiedText.slice(i, i + EVIDENCE_CHUNK),
       });
     }
+    if (quantEvidence) evidence.push({ ref: "quant:1", text: quantEvidence });
     const user = `${header}\n\nRESEARCH DOSSIER${checked ? " (cited lines tagged by a mechanical check against the cited page)" : ""}:\n${dossier || (researchDown ? "(research unavailable — answer from the question, its notes and what you know as of the cutoff)" : "(nothing found)")}`;
     return { checked, dossier, evidence, verifiedChars: verifiedText.length, user };
   };
@@ -1014,6 +1045,15 @@ export async function forecastTyped(
       .map((r) => ({ distribution: r.distribution!, weight: r.weight }));
     const dist = logodds ? logOddsDistributions(items) : averageDistributions(items);
     if (dist) setDistribution(out, spec.options, dist);
+    const buckets = out.quant?.buckets;
+    if (buckets && out.distribution) {
+      const weight = Math.min(1, Math.max(0, opts.quantWeight ?? DEFAULT_QUANT_WEIGHT));
+      const before = out.distribution;
+      const after = blendDistributions(before, buckets.distribution, weight);
+      const applied = out.quant!.mode === "on";
+      out.quant!.blend = { weight, before, after, applied };
+      if (applied) setDistribution(out, spec.options, after);
+    }
   }
   if (spec.type === "multi" && spec.probabilities) {
     // Each option's own probability; the picked set stays the runs' combined answer.

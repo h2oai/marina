@@ -1557,7 +1557,7 @@ Examples:
 
 Statements run in order, sharing a scope. Separate with ; or newline.
 Each evaluation is bounded to 10 s; an expression that takes longer returns an error.
-Forecast a series or price numeric ranges with `quant fit` / `quant buckets` (see `help quant`).
+Forecast a series or price numeric ranges with `quant fit` / `quant buckets` (see `help quant`, `skill builtin quantitative-estimates`).
 
 Category: System. Minimum rank: 0.
 Aliases: none.
@@ -7148,6 +7148,7 @@ Examples:
 
 fit: methods persistence, ewma, blend (persistence+EWMA)/2, trend (least-squares line), damped (trend damped 0.9/step), combo (mean of persistence, EWMA, damped); auto (default) takes the lowest rolling-origin error that beats persistence by 5%. sd = RMS of the method's own past steps-ahead misses (fallback √steps × RMS of one-step changes). Steps count releases; to:<date> converts at the median spacing.
 buckets: P(outcome in each range) and the most likely range; open ends and sd 0 (a point mass) are handled. Use the most likely bucket for a multiple-choice numeric answer.
+When to use calc vs quant: skill builtin quantitative-estimates
 
 Category: System. Minimum rank: 0.
 Aliases: none.
@@ -8017,7 +8018,7 @@ Effect: write.
 
 ## skill
 
-Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.
+Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd) | skill builtin [name] (skills shipped with the server, e.g. quantitative-estimates). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.
 
 Category: Memory. Minimum rank: 0.
 Aliases: none.
@@ -8026,6 +8027,13 @@ Aliases: none.
 
 Effect: read.
 
+
+### `skill builtin [name]`
+
+Effect: read.
+
+- `field-0` (`name`): text, optional group `option-0`.
+- Group `option-0`: `name`.
 
 ### `skill compose <id1> <id2> ..`
 

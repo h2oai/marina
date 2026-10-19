@@ -49,7 +49,8 @@ Examples:
   quant fit 41 42 40 43 44 42 45 46 -- <42, 42-46, >=46
 
 fit: methods persistence, ewma, blend (persistence+EWMA)/2, trend (least-squares line), damped (trend damped 0.9/step), combo (mean of persistence, EWMA, damped); auto (default) takes the lowest rolling-origin error that beats persistence by 5%. sd = RMS of the method's own past steps-ahead misses (fallback √steps × RMS of one-step changes). Steps count releases; to:<date> converts at the median spacing.
-buckets: P(outcome in each range) and the most likely range; open ends and sd 0 (a point mass) are handled. Use the most likely bucket for a multiple-choice numeric answer.`;
+buckets: P(outcome in each range) and the most likely range; open ends and sd 0 (a point mass) are handled. Use the most likely bucket for a multiple-choice numeric answer.
+When to use calc vs quant: skill builtin quantitative-estimates`;
 
 /** Parse series tokens into plain or dated values. Throws on a bad token. */
 export function parseSeriesTokens(tokens: readonly string[]): {

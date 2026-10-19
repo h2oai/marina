@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Quant stage for typed forecasts** (`MARINA_FORECAST_QUANT=off|observe|on`, default `off`).
+  When a lookup reads an official series with history, `fitSeries` projects it to the question's
+  end time. When every option of a choice is a numeric range ("Below 2.5%", "2.5% to 2.9%",
+  "3.0% or higher", counts), `bucketProbabilities` gives each option's probability from that
+  projection or from a supplied numeric prior. `observe` records all of this on the answer
+  (`quant`) and changes nothing a model sees. `on` shows it to the runs (as a reference class)
+  and to the judge, and blends the buckets into a choice's probabilities
+  (`MARINA_FORECAST_QUANT_WEIGHT`, default 0.25). `off` leaves answers and prompts byte-identical.
+- **Built-in skills**: `skill builtin [name]` shows skills shipped with the server, and
+  `skill search` finds them, with no import and no seeding. The first is `quantitative-estimates`.
+  A new `quantitative-estimates` trait on the `researcher` and `market-oracle` roles points to it.
 - **Quantitative helpers for every agent**: a new rank-0 `quant` command next to `calc`, with no
   model call and no code sandbox. `quant fit <values> steps:N|to:<date>` fits a plain or dated
   series and returns a mean, an sd and quantiles. The methods are persistence, EWMA, a
