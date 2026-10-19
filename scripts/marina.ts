@@ -9,15 +9,15 @@
  *   marina connect <name> [...]  connect to a running Marina (REPL / -c one-shot / pipe)
  *   marina attach [url] [...]    code in an existing coding session on a running Marina
  *   marina start                 run the full server in the foreground
-  marina worlds [--json]       list the worlds built into this binary
-  marina endpoint [--data-dir <dir>] [--show-key]
-                               where the running instance for a data directory
-                               listens (its endpoint.json; the key stays masked)
-  marina acp <name>            Agent Client Protocol over stdio for editors
-                               (targets MARINA_URL, else the instance in MARINA_DATA_DIR)
-  marina mcp-stdio [--url <mcp-url>] [--token <t>] [--data-dir <dir>]
-                               stdio MCP bridge to a running Marina's /mcp
-  marina memory-mcp [...]      stdio MCP server for one Marina memory space
+ *   marina worlds [--json]       list the worlds built into this binary
+ *   marina endpoint [--data-dir <dir>] [--show-key]
+ *                                where the running instance for a data directory
+ *                                listens (its endpoint.json; the key stays masked)
+ *   marina acp <name>            Agent Client Protocol over stdio for editors
+ *                                (targets MARINA_URL, else the instance in MARINA_DATA_DIR)
+ *   marina mcp-stdio [--url <mcp-url>] [--token <t>] [--data-dir <dir>]
+ *                                stdio MCP bridge to a running Marina's /mcp
+ *   marina memory-mcp [...]      stdio MCP server for one Marina memory space
  *   marina status [--url|--port] is a Marina running? health + capability readiness
  *   marina init                  interactive .env setup
  *   marina supervise [...]       manage local coding agents from the dashboard
@@ -379,6 +379,15 @@ Usage:
   marina inquiry [...]        saved answers, collaboration and standalone TUI
   marina route [...]           join, publish, and exchange participant messages
   marina start                 run the full server in the foreground
+  marina worlds [--json]       list the worlds built into this binary
+  marina endpoint [--data-dir <dir>] [--show-key]
+                               where the running instance for a data directory
+                               listens (its endpoint.json; the key stays masked)
+  marina acp <name>            Agent Client Protocol over stdio for editors
+                               (targets MARINA_URL, else the instance in MARINA_DATA_DIR)
+  marina mcp-stdio [--url <mcp-url>] [--token <t>] [--data-dir <dir>]
+                               stdio MCP bridge to a running Marina's /mcp
+  marina memory-mcp [...]      stdio MCP server for one Marina memory space
   marina status [--url <ws-url> | --port <n>]
                                health + capability readiness of the running Marina
   marina init                  interactive setup (writes .env)
