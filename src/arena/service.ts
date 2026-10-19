@@ -27,6 +27,7 @@ import { forecastSettings } from "./forecast-config";
 import { forecastCutoff, requireFreshForecast } from "./freshness";
 import type { Usage } from "./model-backend";
 import { publicKeyBase64 } from "./protocol";
+import { researchFallbackModeFromEnv } from "./research-fallback";
 import {
   baselineForecaster,
   dueRounds,
@@ -714,6 +715,7 @@ async function formationForecasterFor(
                 ? {
                     ...evidence,
                     required: env.MARINA_ARENA_RESEARCH_REQUIRED === "on",
+                    fallback: researchFallbackModeFromEnv(env),
                     ...(env.MARINA_ARENA_EVIDENCE_REFRESH === "on" && previous
                       ? {
                           refresh: {
@@ -1330,6 +1332,7 @@ async function researchForecasterFor(
           ...(lessonBrief ? { lessonBrief } : {}),
           retriever,
           requireResearch: env.MARINA_ARENA_RESEARCH_REQUIRED === "on",
+          researchFallback: researchFallbackModeFromEnv(env),
           analysts: made.map((m) => ({ name: m.name, complete: m.complete })),
           ...(judge ? { judge } : {}),
           trustCap: Number.isFinite(trustCap) ? trustCap : 0.5,
@@ -1342,6 +1345,8 @@ async function researchForecasterFor(
         throw err;
       }
       spent(f);
+      // A research fallback: what the failed research spent before it was refused.
+      researchCost += f.researchFallback?.failedCostUsd ?? 0;
       f.lessons = lessons;
       return f;
     },

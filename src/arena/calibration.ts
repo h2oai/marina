@@ -44,6 +44,7 @@ import { getErrorMessage } from "../engine/errors";
 import type { ArenaSubmissionRow } from "../persistence/db-arena";
 import { sameReading } from "./anchor";
 import type { RoundForecast } from "./forecast";
+import { RESEARCH_FALLBACK_NOTE } from "./research-fallback";
 import { crpsNormal } from "./score";
 import { cellSamples } from "./score-shapes";
 import type { ArenaResolution, ArenaRound, Distribution } from "./types";
@@ -73,7 +74,7 @@ export function spreadCalibrationModeFromEnv(
  * The method that produced a forecast, from its note, at pattern level: model
  * lists change with every model generation, so they would fragment the record.
  * `route <family> → <spec>` names the routed spec; research is part of the
- * method unless it ran closed-book.
+ * method unless it ran closed-book (by spec, or as a research fallback).
  */
 export function methodOf(note: string | undefined): string {
   const text = note ?? "";
@@ -82,7 +83,10 @@ export function methodOf(note: string | undefined): string {
   const [head, rest] = [spec.split("+")[0]!, spec.slice(spec.split("+")[0]!.length)];
   const kind = head.split(":")[0]!;
   const base = kind === "formation" ? `formation:${head.split(":")[1] ?? "?"}` : kind;
-  const researched = /\+research@/.test(rest) && !/\+research@closed-book/.test(rest);
+  const researched =
+    /\+research@/.test(rest) &&
+    !/\+research@closed-book/.test(rest) &&
+    !RESEARCH_FALLBACK_NOTE.test(text);
   return researched ? `${base}+research` : base;
 }
 
@@ -334,7 +338,7 @@ const time = (x: unknown) => (typeof x === "string" ? Date.parse(x) : Number.NaN
  * time, if later); a profile carries only its release date, so the end of
  * that day — never earlier than the value could have been seen.
  */
-function knownAtOf(res: NonNullable<SiteRoundLike["resolution"]> | ArenaResolution): number {
+export function knownAtOf(res: NonNullable<SiteRoundLike["resolution"]> | ArenaResolution): number {
   const at = time(res.resolved_at);
   const corrected = res.corrected as { at?: unknown } | undefined;
   const fix = time(corrected?.at);

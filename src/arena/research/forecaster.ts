@@ -41,6 +41,8 @@
 
 import type { Evidence } from "../../decisions/evidence";
 import type { DecisionProvider } from "../../decisions/types";
+import { getErrorMessage } from "../../engine/errors";
+import { Logger } from "../../engine/logger";
 import {
   askAnalyst,
   type JudgeRecord,
@@ -71,9 +73,15 @@ import {
   startLine,
   withoutDaily,
 } from "../prompt-context";
+import {
+  markResearchFallback,
+  type ResearchFallbackMode,
+  type ResearchFallbackRecord,
+} from "../research-fallback";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "../types";
 import { buildResearchBrief } from "./briefs";
 import type { CiviqsDaily } from "./civiqs-nowcast";
+import { closedBookRetriever } from "./isolation";
 import type { ResearchReport, Retriever } from "./retrieve";
 import { type PageText, type VerifiedDossier, verifyDossier } from "./verify";
 
@@ -92,6 +100,13 @@ const SERIES_EVIDENCE_POINTS = 12;
 
 export interface ResearchDeps {
   requireResearch?: boolean;
+  /**
+   * What required research that fails files instead (`research-fallback.ts`):
+   * `closed-book` reruns the analysts with no retrieval (judged on the series
+   * data alone), then the start forecast; `start` files the start forecast;
+   * `skip` (default here) throws. Ignored unless `requireResearch`.
+   */
+  researchFallback?: ResearchFallbackMode;
   retriever: Retriever;
   analysts: Array<{ name: string; complete: Complete }>;
   /** The judge (Jev via the decisions API, or any decision backend); omitted ⇒ equal weights. */
@@ -183,6 +198,79 @@ export interface NoAnchorAudit {
   dispersion: number;
   floor: number;
   floorShare: number;
+}
+
+/** Required research produced nothing to file; `detail` keeps the audit trail (dossier, judge). */
+export class ResearchRefusal extends Error {
+  constructor(
+    message: string,
+    readonly detail: Partial<ResearchForecast>,
+  ) {
+    super(message);
+    this.name = "ResearchRefusal";
+  }
+}
+
+/** What the failed research had spent (retrieval + judge), from the refusal's detail. */
+function failedResearchCost(err: unknown): number {
+  const d = (err as { detail?: Record<string, unknown> } | null)?.detail;
+  if (!d) return 0;
+  const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : 0);
+  const dossier = d.dossier as { costUsd?: unknown } | undefined;
+  const judge = d.judge as { costUsd?: unknown } | undefined;
+  return n(dossier?.costUsd ?? d.costUsd) + n(judge?.costUsd);
+}
+
+/**
+ * The research forecaster with the required-research fallback
+ * (`MARINA_ARENA_RESEARCH_FALLBACK`): under `requireResearch`, a refusal is
+ * no longer the end of the round — `closed-book` reruns the same analysts with
+ * no retrieval (their proposals judged on the series data alone), and if that
+ * keeps its start or errors, the start forecast is filed; `start` files the
+ * start forecast. The filing carries `researchFallback`. A no-history round
+ * (`NoAnchorRefusal`) has no start to fall back to and is still refused.
+ */
+export async function researchForecastRound(
+  round: ArenaRound,
+  lock: ArenaLock,
+  deps: ResearchDeps,
+): Promise<ResearchForecast> {
+  const mode = deps.researchFallback ?? "skip";
+  if (!deps.requireResearch || mode === "skip") return researchAttempt(round, lock, deps);
+  try {
+    return await researchAttempt(round, lock, deps);
+  } catch (err) {
+    if (err instanceof NoAnchorRefusal) throw err;
+    const spent = failedResearchCost(err);
+    const record: ResearchFallbackRecord = {
+      mode,
+      reason: getErrorMessage(err).slice(0, 300),
+      used: "start",
+      ...(spent > 0 ? { failedCostUsd: Math.round(spent * 1e6) / 1e6 } : {}),
+    };
+    new Logger().warn("arena", "required research failed; filing the research fallback", {
+      round: round.round_id,
+      mode,
+      reason: record.reason,
+    });
+    if (mode === "closed-book") {
+      try {
+        const closed = await researchAttempt(round, lock, {
+          ...deps,
+          requireResearch: false,
+          retriever: closedBookRetriever(),
+        });
+        if (!closed.fallback)
+          return markResearchFallback(closed, { ...record, used: "closed-book" });
+        record.closedBookError = closed.fallback;
+      } catch (e) {
+        if (e instanceof NoAnchorRefusal) throw e;
+        record.closedBookError = getErrorMessage(e).slice(0, 300);
+      }
+    }
+    const given = deps.base ? await deps.base(round, lock) : forecastRound(round, lock);
+    return markResearchFallback(withoutDaily(given), record);
+  }
 }
 
 /**
@@ -300,7 +388,7 @@ async function judgeProposal(
   };
 }
 
-export async function researchForecastRound(
+async function researchAttempt(
   round: ArenaRound,
   lock: ArenaLock,
   deps: ResearchDeps,
@@ -312,7 +400,8 @@ export async function researchForecastRound(
   const daily = dailyOf(given);
   const baseline = withoutDaily(given);
   const keep = (why: string, extra: Partial<ResearchForecast> = {}): ResearchForecast => {
-    if (deps.requireResearch) throw new Error(`Required research forecast refused: ${why}`);
+    if (deps.requireResearch)
+      throw new ResearchRefusal(`Required research forecast refused: ${why}`, extra);
     return { ...baseline, ...extra, fallback: why };
   };
   const cells = round.cells ?? [];
@@ -688,7 +777,8 @@ async function researchProfileRound(
   const cells = round.cells ?? [];
   const base = baseline.profile!;
   const keep = (why: string, extra: Partial<ResearchForecast> = {}): ResearchForecast => {
-    if (deps.requireResearch) throw new Error(`Required research forecast refused: ${why}`);
+    if (deps.requireResearch)
+      throw new ResearchRefusal(`Required research forecast refused: ${why}`, extra);
     return { ...baseline, ...extra, fallback: why };
   };
   const nowcastUsed = (baseline as { nowcast?: Record<string, { date: string; value: number }> })
