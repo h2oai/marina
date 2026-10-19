@@ -151,6 +151,7 @@ Marina can be a signed participant in the MIT Social Simulation Arena (`src/aren
 - No outcome before its release: evaluation runs in lock order, and inputs are only data fetched or published before the lock. A forecaster change is judged on the leaderboard's metric (mean of per-round skill), never total CRPS.
 - `arena-filing-watch` (tick job, ~10 min, `src/arena/filing-watch.ts`) only READS `arena_submissions`/`arena_attempts` for rounds locking within 24 h and keeps one `arena-filing:<round>` alert per round in trouble (unfiled, failed or stuck refresh, no near-lock refresh; a stale anchor on ANY open round); readiness `arena-filing`. It never files.
 - Anchor guard (`src/arena/anchor.ts`, `MARINA_ARENA_ANCHOR_GUARD`): before signing, a forecast's anchor is compared with the arena's latest published value (site data persistence, rounding-tolerant, per cell); stale → re-read inputs once, then re-anchor and record attempt `stale_anchor`. `submit due --replace` refiles every open round whose accepted filing is stale, whatever its lock.
+- The proposal judge (`proposal-judge.ts`, delphi/symbiosis with verified lines) can only LOWER trust (× mean judged support) and re-weight the median; it fails OPEN to the unjudged aggregation on any judge error and records `forecast.judge`.
 - Web research and experiments are shadow-only (`arena_shadow`, migration 128), never backtested against revealed outcomes; plans and selector advice never promote themselves into live routes; budget exhaustion is never a successful fallback.
 → docs/architecture/forecasting.md
 

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Arena proposal judge**: delphi and symbiosis formations with a verified research dossier ask a
+  decision model (Jev by default) whether each member's move from the start is supported by the
+  verified lines; support weights the median move and can only lower the trust, any judge failure
+  files the unjudged forecast, and `forecast.judge` records per-member support and the effect.
+  `MARINA_ARENA_PROPOSAL_JUDGE=on|observe|off` (default `on`), `MARINA_ARENA_PROPOSAL_JUDGE_MODEL`
+  (default `typesafe/jev-1.13`; any Decisions-API model id, or `decisions`).
 - **Embeddable Marina**: `MARINA_DATA_DIR` keeps every write in one directory; `MARINA_SINGLE_PORT`
   serves `/mcp` on the HTTP port; `endpoint.json` lets a host find a running instance;
   `MARINA_IDLE_SHUTDOWN` and `MARINA_PARENT_PID` end it when unused or orphaned;
