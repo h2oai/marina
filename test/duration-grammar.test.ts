@@ -7,10 +7,13 @@
 // parse (the shared grammar is a superset: `mo`, long spellings, inner space).
 
 import { describe, expect, test } from "bun:test";
+import fc from "fast-check";
+import { parseDuration } from "../src/engine/commands/format-duration";
 import { parseRetentionValue } from "../src/engine/retention";
 import { parseSince } from "../src/net/api/asset-library-view";
 import { parseCadence } from "../src/resolvers/cadence";
 import { parseRetirement } from "../src/resolvers/watch-spec";
+import { propertyOptions } from "./property-options";
 
 const UNITS: Record<string, number> = {
   s: 1_000,
@@ -167,5 +170,146 @@ describe("duration parsers route through parseDuration without changing old resu
     expect(cadenceOf("2hours")).toEqual({ kind: "interval", ms: 2 * UNITS.h! });
     expect(retirementOf("1 week")).toEqual({ kind: "duration", ms: UNITS.w! });
     expect(parseSince("30s", NOW)).toBe(NOW - 30 * UNITS.s!);
+  });
+});
+
+// `project budget duration` had its own grammar: decimals and `ms`, units
+// ms|s|m|h only, case-insensitive. Frozen here as the reference oracle.
+function oldProjectDuration(raw: string): number | undefined {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(raw.toLowerCase());
+  if (!match) return undefined;
+  const scale = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[match[2]!]!;
+  return Number(match[1]) * scale;
+}
+
+// parseDuration before the allowDecimal/allowMs options, frozen: the defaults
+// every other caller relies on must not move.
+const OLD_UNITS: Record<string, number> = { ...UNITS, mo: 30 * 86_400_000 };
+const OLD_ALIASES: Record<string, string> = {
+  sec: "s",
+  secs: "s",
+  second: "s",
+  seconds: "s",
+  min: "m",
+  mins: "m",
+  minute: "m",
+  minutes: "m",
+  hr: "h",
+  hrs: "h",
+  hour: "h",
+  hours: "h",
+  day: "d",
+  days: "d",
+  wk: "w",
+  wks: "w",
+  week: "w",
+  weeks: "w",
+  month: "mo",
+  months: "mo",
+};
+const OLD_RANK: Record<string, number> = { s: 0, m: 1, h: 2, d: 3, w: 4, mo: 5 };
+function oldDefaultDuration(arg: string, opts: { minUnit?: string }): number | undefined {
+  if (!arg) return undefined;
+  const m = arg.match(/^(\d+)\s*([a-z]+)$/i);
+  if (!m) return undefined;
+  const n = Number.parseInt(m[1]!, 10);
+  const spelled = m[2]!.toLowerCase();
+  const unit = OLD_UNITS[spelled] !== undefined ? spelled : OLD_ALIASES[spelled];
+  if (!unit) return undefined;
+  if (opts.minUnit && OLD_RANK[unit]! < OLD_RANK[opts.minUnit]!) return undefined;
+  return n * OLD_UNITS[unit]!;
+}
+
+const PROJECT = { allowDecimal: true, allowMs: true } as const;
+
+const PROJECT_INPUTS = [
+  ...INPUTS,
+  "250ms",
+  "250MS",
+  "0.5ms",
+  "1.5h",
+  "1.5H",
+  "0.25s",
+  "2.75m",
+  "0.0001ms",
+  "007.50s",
+  "1.h",
+  ".5h",
+  "1..5h",
+  "1.5.5h",
+  "1e3ms",
+  "1,5h",
+  "0x10s",
+  "Infinityh",
+  "NaNs",
+  "1.5",
+  "ms",
+  "1msec",
+];
+
+describe("project budget durations go through parseDuration", () => {
+  test("every input the old project parser accepted gives the identical result", () => {
+    for (const raw of PROJECT_INPUTS) {
+      const old = oldProjectDuration(raw);
+      if (old !== undefined)
+        expect<unknown>([raw, parseDuration(raw, PROJECT)]).toEqual([raw, old]);
+    }
+  });
+
+  test("property: the old grammar's inputs agree", () => {
+    const unit = fc.constantFrom("ms", "s", "m", "h", "MS", "Ms", "mS", "S", "M", "H");
+    const decimal = fc.option(fc.stringMatching(/^[0-9]{1,6}$/), { nil: undefined });
+    fc.assert(
+      fc.property(fc.stringMatching(/^[0-9]{1,9}$/), decimal, unit, (whole, frac, u) => {
+        const raw = `${whole}${frac === undefined ? "" : `.${frac}`}${u}`;
+        const old = oldProjectDuration(raw);
+        expect(old).not.toBeUndefined();
+        expect(parseDuration(raw, PROJECT)).toBe(old!);
+      }),
+      propertyOptions(200),
+    );
+  });
+
+  test("property: on arbitrary tokens, old acceptance implies the same result", () => {
+    const token = fc.stringMatching(/^[0-9.msMShHdwo x-]{0,8}$/);
+    fc.assert(
+      fc.property(token, (raw) => {
+        const old = oldProjectDuration(raw);
+        if (old !== undefined) expect(parseDuration(raw, PROJECT)).toBe(old);
+      }),
+      propertyOptions(500),
+    );
+  });
+
+  test("project-only forms stay rejected by default (and under minUnit)", () => {
+    for (const raw of ["1.5h", "0.25s", "250ms", "0.5ms", "1ms", "1.0m"]) {
+      expect(parseDuration(raw)).toBeUndefined();
+      expect(parseDuration(raw, { minUnit: "s" })).toBeUndefined();
+    }
+    expect(parseDuration("250ms", { allowDecimal: true })).toBeUndefined();
+    expect(parseDuration("1.5h", { allowMs: true })).toBeUndefined();
+    expect(parseDuration("250ms", { allowMs: true, minUnit: "s" })).toBeUndefined();
+    expect(parseDuration("1.5h", { allowDecimal: true, minUnit: "h" })).toBe(5_400_000);
+  });
+
+  test("property: default parseDuration matches its pre-option behaviour", () => {
+    const token = fc.oneof(
+      fc.stringMatching(/^[0-9.msMShHdwoinrecu x-]{0,10}$/),
+      fc.constantFrom(...INPUTS, "5min", "2hours", "1month", "3 weeks", "1.5h", "250ms"),
+    );
+    const minUnit = fc.constantFrom(undefined, "s", "m", "h", "d" as const);
+    fc.assert(
+      fc.property(token, minUnit, (raw, min) => {
+        const opts = min === undefined ? {} : { minUnit: min };
+        expect(parseDuration(raw, opts)).toBe(oldDefaultDuration(raw, opts));
+      }),
+      propertyOptions(500),
+    );
+  });
+
+  test("newly accepted for project budgets: the shared grammar's units and spellings", () => {
+    expect(parseDuration("1d", PROJECT)).toBe(UNITS.d!);
+    expect(parseDuration("1.5days", PROJECT)).toBe(1.5 * UNITS.d!);
+    expect(parseDuration("2 hours", PROJECT)).toBe(2 * UNITS.h!);
   });
 });

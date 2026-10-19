@@ -15,6 +15,7 @@ import {
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { requiresPersistence } from "./command-messages";
+import { parseDuration } from "./format-duration";
 
 /** Emit a coordination_change so the dashboard's Projects list refreshes live. */
 function emitProjectChange(
@@ -745,11 +746,8 @@ export function projectCommand(deps: {
             if (key === "tokens") budget.tokens = Number(raw);
             if (key === "cost") budget.cost = Number(raw);
             if (key === "duration") {
-              const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(raw.toLowerCase());
-              if (match) {
-                const scale = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[match[2]!]!;
-                budget.durationMs = Number(match[1]) * scale;
-              }
+              const ms = parseDuration(raw, { allowDecimal: true, allowMs: true });
+              if (ms !== undefined) budget.durationMs = ms;
             }
           }
           if (
