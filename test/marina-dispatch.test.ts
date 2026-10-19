@@ -736,6 +736,11 @@ describe("embedding subcommands (SRV-8, SRV-11)", () => {
     expect(parseDispatch(["endpoint", "--bogus"]).kind).toBe("usage-error");
   });
 
+  it("--help lists every embedding subcommand", () => {
+    for (const sub of ["worlds", "endpoint", "acp", "mcp-stdio", "memory-mcp"])
+      expect(USAGE).toContain(`  marina ${sub} `);
+  });
+
   it("every builtin world has a one-line summary", () => {
     for (const slug of BUILTIN_WORLD_SLUGS)
       expect(BUILTIN_WORLD_SUMMARIES[slug]?.length).toBeGreaterThan(10);
