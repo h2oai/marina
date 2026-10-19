@@ -23,6 +23,7 @@ import {
   moveOf,
   moveWeightHistory,
   moveWeightModeFromEnv,
+  type ScalarMoveRecord,
 } from "../src/arena/move-weight";
 import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
 import type { ArenaShadowRow, ArenaSubmissionRow } from "../src/persistence/db-arena";
@@ -229,7 +230,7 @@ describe("moveWeightHistory", () => {
       "arena:yougov|formation:delphi",
       "arena:yougov|formation:delphi~unanchored",
     ]);
-    const s = out.find((r) => r.key.endsWith("~unanchored"))!;
+    const s = out.find((r) => r.key.endsWith("~unanchored"))! as ScalarMoveRecord;
     // The post-lock shadow (mean 99) is never used.
     expect(s.filed.mean).toBe(41.5);
     expect(s.delta).toBe(3);

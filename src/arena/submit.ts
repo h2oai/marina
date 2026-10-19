@@ -191,17 +191,21 @@ async function calibrationFor(
   try {
     const [resolutions, rounds] = await Promise.all([deps.data.resolutions(), deps.data.rounds()]);
     const rows = deps.store.listArenaSubmissions({ entrant: deps.config.entrant, limit: 500 });
+    // Site data: the spread calibration's outcomes, and profile outcomes for the move weight.
+    const site = await Promise.resolve()
+      .then(() => deps.data.siteRounds())
+      .catch((err) => {
+        new Logger().warn("arena", "arena site data unavailable for calibration", {
+          error: getErrorMessage(err),
+        });
+        return [];
+      });
     const spreads =
       mode === "off"
         ? []
         : spreadCalibrationHistory({
             rows,
-            site: await deps.data.siteRounds().catch((err) => {
-              new Logger().warn("arena", "arena site data unavailable for spread calibration", {
-                error: getErrorMessage(err),
-              });
-              return [];
-            }),
+            site,
             resolutions,
             entrant: deps.config.entrant,
             rounds: Object.fromEntries(rounds.map((r) => [r.round_id, r])),
@@ -223,6 +227,7 @@ async function calibrationFor(
               ]),
             ),
             deps.store.listArenaShadow({ limit: 2_000 }),
+            site,
           );
     const now = deps.now?.() ?? Date.now();
     return {

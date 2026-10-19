@@ -45,9 +45,11 @@ export interface ArenaConfig {
 
 const MODEL_ID = "[a-z0-9-]+\\/[\\w.:/-]+";
 /** A research retriever entry (`openrouter-web:<model>` / `sonar:<model>` / `tavily:<depth>`). */
-const SEARCH_BACKEND = "(tavily|exa|searxng|duckduckgo|openrouter)";
+// Kept in step with WEB_SEARCH_BACKEND_NAMES and OPENROUTER_WEB_ENGINES (test/arena-config-retrievers.test.ts).
+const SEARCH_BACKEND = "(tavily|exa|searxng|duckduckgo|deepseek|openrouter)";
+const WEB_ENGINE = "(native|exa|parallel|perplexity|firecrawl)(:[a-z-]+)?";
 const ARCHIVE_BACKEND = "(gdelt|wikipedia|hn|arxiv|wayback)";
-const RETRIEVER = `((openrouter-web|sonar):[A-Za-z0-9._/:-]+(@(exa|native))?|tavily:(basic|advanced)|exa:(auto|neural|keyword)|search(:${SEARCH_BACKEND}(\\+${SEARCH_BACKEND})*)?|asof(:${ARCHIVE_BACKEND}(\\+${ARCHIVE_BACKEND})*)?|closed-book)`;
+const RETRIEVER = `(openrouter-web:[A-Za-z0-9._/:-]+(@${WEB_ENGINE})?|sonar:[A-Za-z0-9._/:-]+|tavily:(basic|advanced)|exa:(auto|neural|keyword)|search(:${SEARCH_BACKEND}(\\+${SEARCH_BACKEND})*)?|asof(:${ARCHIVE_BACKEND}(\\+${ARCHIVE_BACKEND})*)?|closed-book)`;
 /** Orchestration patterns as forecasting protocols (src/arena/formations.ts). */
 const FORMATION =
   "(ensemble|deliberation|debate|chorus|pipeline|cascade|mapreduce|blackboard|symbiosis|research|delphi|tournament|verification)";
@@ -59,6 +61,8 @@ const FORECASTER_SPEC = new RegExp(
     `|formation:${FORMATION}(~unanchored)?:${MODELS}(\\+then:${FORMATION}(~unanchored)?:${MODELS})?(\\+research@${RETRIEVER}(,${RETRIEVER}){0,3})?` +
     // Wikipedia rankings with mechanically verified scheduled events (one extraction model).
     `|research:wiki-events:${MODEL_ID}(@${RETRIEVER}(,${RETRIEVER}){0,3})?` +
+    // Wikipedia top-10 specialist: projected weekly views; optional event models (up to four).
+    `|wiki-specialist(:${MODEL_ID}(,${MODEL_ID}){0,3}(@${RETRIEVER}(,${RETRIEVER}){0,3})?)?` +
     // Research takes up to eight analysts, and optionally its own retrievers
     // after `@` (else MARINA_ARENA_RESEARCH_RETRIEVER), so each mix is its own
     // shadow record.
@@ -92,7 +96,7 @@ export function parseForecasterSpec(raw: string | undefined): string {
     return spec;
   }
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, spike-decay, tabh2o[:forecast][@nowcast], model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>[~unanchored]:<model>[,…][+then:<pattern>[~unanchored]:<model>[,…]][+research@<retriever>[,…]] (up to twelve models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), research:wiki-events:<model>[@<retriever>[,…]], route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, spike-decay, tabh2o[:forecast][@nowcast], model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>[~unanchored]:<model>[,…][+then:<pattern>[~unanchored]:<model>[,…]][+research@<retriever>[,…]] (up to twelve models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), research:wiki-events:<model>[@<retriever>[,…]], wiki-specialist[:<model>[,…][@<retriever>[,…]]], route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
   );
 }
 

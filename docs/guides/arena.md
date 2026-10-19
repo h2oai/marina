@@ -10,7 +10,45 @@ See [captured evidence and follow-ups](search.md#captured-evidence-and-bounded-f
 
 `MARINA_ARENA_RESEARCH_SIGNALS=consumer` adds FRED gasoline prices (GASREGW) and initial
 claims (ICSA) to Civiqs economic/household/inflation research. `MARINA_ARENA_RESEARCH_LOOKUPS`
-must include `fred`. The target's own history still sets its level; these different quantities
+must include `fred`.
+
+`MARINA_ARENA_RESEARCH_SIGNALS=all` adds every mapped outside signal for the round's family
+(`ARENA_SIGNAL_MAP` in `src/arena/research/signal-map.ts`, which documents each choice):
+
+| Family (round ids) | FRED series (vintage as of the lock) | Markets phrase | Polls (VoteHub) |
+| --- | --- | --- | --- |
+| Civiqs econ-now / econ-direction | UMCSENT, GASREGW, ICSA, UNRATE, CPIAUCSL, NASDAQCOM, T5YIE | US recession 2026 | — |
+| Civiqs family-finances | UMCSENT, GASREGW, ICSA, UNRATE, CPIAUCSL, NASDAQCOM | — | — |
+| Civiqs inflation-concern | CPIAUCSL, GASREGW, MICH, T5YIE, EXPINF1YR | How high will inflation get in 2026 | — |
+| Civiqs angry-share | UMCSENT, GASREGW | Trump approval rating | approval, Civiqs excluded |
+| Civiqs approval, profile and demographic cells | — | Trump approval rating | approval, Civiqs excluded |
+| Economist/YouGov approval, RV, strong; YouGov crosstabs | — | Trump approval rating | approval, YouGov excluded |
+| Economist/YouGov generic ballot | — | House control 2026 | generic ballot, YouGov excluded |
+| Harvard-Harris | — | Trump approval rating | approval, Harris excluded |
+| Morning Consult | — | Trump approval rating | approval, Morning Consult excluded |
+| Midterm specials | — | House control 2026 | generic ballot |
+| UMich sentiment and party | MICH, GASREGW, NASDAQCOM, ICSA, UNRATE, CPIAUCSL, T5YIE (never UMCSENT: the target itself, a month late) | — | — |
+| NY Fed SCE 1-year / 3-year | MICH or EXPINF3YR first, then EXPINF1YR, T5YIE, CPIAUCSL, GASREGW | How high will inflation get in 2026 | — |
+| AAII | NASDAQCOM, NASDAQ100, VIXCLS | S&P 500 close end of 2026 | — |
+| Google Trends, Wikipedia | none: no keyless, dated event calendar | — | — |
+
+With `all` and `MARINA_ARENA_RESEARCH_LOOKUPS` unset, the lookups are
+`polymarket,kalshi,fred,votehub`; set the variable to choose differently. FRED needs
+`FRED_API_KEY` for any past lock (keyless FRED is live-only); Polymarket, Kalshi and VoteHub are
+keyless. BLS is left out: it duplicates the FRED series and serves only the latest revision. FRED's
+SP500 (like DJIA) has no vintages, so a past lock cannot read it; the Nasdaq series stand in.
+The market phrases name 2026 contracts and need revisiting when the season rolls over.
+Every signal is cut at the lock: FRED reads the vintage of the lock's prior UTC day, markets the
+last price at or before the lock, and a VoteHub poll counts only when its whole listing day
+(`created_at`, taken to end 08:00 UTC the next day) precedes the lock, with the target's own
+pollster excluded; recency and the 14-day-versus-prior-14-day change use the fieldwork end, so a
+poll VoteHub lists months late is not read as news. Market and poll lines are frozen under their own payload URL, so the citation
+check verifies the price or poll that was read rather than a live page that has moved. The
+fingerprint records the effective lookups, so `all` is a separate shadow variant.
+
+Signal discovery (`src/arena/discovery/`) is not wired into formation evidence: its promoted
+signals are centre/spread forecasts from the round's own history, not dated outside facts, and
+none is promoted live. Adding one would be a formation start option tried in shadow first. The target's own history still sets its level; these different quantities
 are evidence of possible changes only. The consumer playbook also asks for dated NY Fed SCE
 household-finance, employment, income and credit evidence. It does not treat a newly downloaded
 workbook as an old information vintage.
@@ -258,7 +296,13 @@ and cost (which also reach the round's `costUsd`). `MARINA_ARENA_PROPOSAL_JUDGE=
 (default `on`; `observe` records the judged forecast without filing it) and
 `MARINA_ARENA_PROPOSAL_JUDGE_MODEL` (default `typesafe/jev-1.13`; any Decisions-API model id on
 OpenRouter — switching to another decision model is one env change — or `decisions` for the
-world's `MARINA_DECISIONS` backend). Profile rounds are not judged yet. To measure it, run
+world's `MARINA_DECISIONS` backend). Profile rounds are judged **per cell**: each member is asked
+one call (up to 16 cells a call, the decision API's question limit — a 16-cell crosstab is one
+call per member) with one yes/no question per cell it moved, so support differs by cell. Per cell,
+the support-weighted median of the members' moves on that cell is filed at that cell's trust ×
+its mean support (never above the unjudged trust); `forecast.judge.cells` keeps each cell's
+support per member and both aggregations, `support` per member is its mean over its moved cells,
+and any failure on any call files the unjudged profile. To measure it, run
 `shadow compare` with `observe` and score `judge.judged` against `judge.unjudged`, or run the
 paired comparison under `on` and `off` (the config fingerprint differs) and use `paired-score`.
 
@@ -279,8 +323,14 @@ profiles) every pattern runs the same protocol over the whole profile
   its start;
 - **share baskets**: when the round's unit or question says its cells add to 100 (or the unit
   names a share) AND its last published values add to 100 within 2 points, the aggregated means are
-  rescaled proportionally to 100 (every mean × 100 / Σ means; sds unchanged). Independent cells
-  (subgroup profiles) are never rescaled.
+  rescaled proportionally to 100 (every mean and every sd × 100 / Σ means — a proportional rescale
+  scales a cell's spread too), after the judge and the sd floors. Independent cells (subgroup
+  profiles) are never rescaled;
+- **sd floors** as for a scalar: after aggregation (and the judge), each cell's sd is at least the
+  narrowest sd any final proposal gave that cell and at least the linear pool of every recorded
+  member reply on that cell (advocates and dropped replies excluded); `protocol.sdFloors` lists
+  the cells each floor raised. The spread calibration still runs last in `submit` and may narrow
+  the result when resolved rounds say so.
 
 Per pattern: debate's sealed sides become CHANGE (the profile moves from the start) and STAY, and
 the judge rules change or stay with one trust; pipeline takes the analyst's cell where it gave one,
@@ -293,7 +343,8 @@ of that proposal) and citations (`{cell, date, value}`) and the judged "follows"
 `+then:` hands the second formation the first's profile and proposals, and `+research@` builds the
 dossier from an item-by-item brief. The record keeps `profileProposals`, and under `protocol` the
 pattern's audit plus `cells` (per-cell proposals counted, trust, agreement) and `shares` (the
-rescale: sum before, factor). Ranking rounds keep their start.
+rescale: sum before, factor). The per-cell start the formation moved from is kept as
+`formationStartProfile` (the move weight's origin). Ranking rounds keep their start.
 
 Auction, ledger and sharding are orchestration patterns for allocating or partitioning work, not
 for combining views of one number, so they have no formation.
@@ -378,6 +429,23 @@ information in the moves). With fewer than 8 records it does nothing. Order: for
 weight → error floor → spread calibration; the decision (w, n, held-out gain, placebo) is kept
 under `moveWeight`. `MARINA_ARENA_MOVE_WEIGHT=observe` records without applying; `off` skips it.
 Formation filings now record their start (`formationStart`) so the move is exact.
+
+On **profile rounds** the same weight multiplies every cell's move (median member proposal for
+the cell − its start, each capped at 2 of the cell's start sds), keyed
+`arena:<tracker>:profile|<method>`. The loss is the arena's energy score as a share of
+persistence's on the round (1 − per-round skill, the leaderboard's metric), computed exactly
+from the arena's point set; outcomes and persistence's score come from the arena's site data,
+visible only once released. The placebo shuffles the standardized cell moves (Δ / start sd) across
+every cell of every round. A key with fewer than 8 visible rounds pools every profile family of the
+same method (`moveWeight.scope = profile-families`, `evidenceKey`); the minimum history, the 5 %
+held-out margin and the placebo still apply to the pool. A share basket is re-closed to 100 after
+the re-weighting (means and sds by one factor). Starts come from `formationStartProfile`, else
+the cell's dated origin, else (older filings) the per-cell median rule. Backtest on the four
+resolved profile rounds with recorded per-cell proposals (one Trends, one crosstab, two Civiqs;
+in-sample only, far too few to adopt anything — the gate needs 8): filed mean skill 0.022; a
+weight of 1 would have given 0.054 (crosstab 0.103 → 0.205, Trends 0.022 → 0.050, Civiqs
+unchanged — its members kept the nowcast); the per-cell sd floors alone 0.022 → 0.035 (crosstab
+0.103 → 0.142, Trends 0.022 → 0.037, Civiqs ±0.001).
 
 **Unanchored formations and typed signals.** `formation:<pattern>~unanchored:<models>` runs the
 same members, dossier and protocol without the instruction that the start forecast is the default,
@@ -611,7 +679,9 @@ against the arena's recorded persistence loss for each round.
   final once published, and the archive was partly backfilled); the half-life was chosen by
   backtest over the archived weeks. A per-article trajectory model (power-law decay from each
   article's own peak, shrunk toward a pooled exponent) was tested walk-forward on the archive
-  and did not win on the held-out weeks, so the recency list stays the default.
+  and did not win on the held-out weeks, so the recency list stays the default route; the
+  Wikipedia specialist below (exponential decay over a base level, backtested on 67 weeks of
+  Wikimedia lists rather than the archive's ten) did beat it.
 - **Wikipedia scheduled events** (`research:wiki-events:<model>[@<retrievers>]`): the recency
   list cannot see a release, premiere, execution, final or an event's end that has not happened
   yet. This card searches for events in the target week (results published before the cutoff),
@@ -630,6 +700,36 @@ against the arena's recorded persistence loss for each round.
   (`wikiEvents`). Web search cannot be replayed, so the card runs as a shadow challenger
   (`MARINA_ARENA_SHADOW_CHALLENGERS="wikipedia=research:wiki-events:<model>@<retrievers>"`,
   `bun run arena shadow challengers due`) and earned routing decides whether it files.
+- **Wikipedia specialist** (`wiki-specialist[:<model>[,<model>…][@<retrievers>]]`,
+  `src/arena/wiki-specialist.ts`): forecasts the target week's views instead of ranking last
+  week's. Timing: a `wiki-top10-<Sunday>` round locks the Friday 14:00 UTC before its Monday–Sunday
+  week, so the week has not begun at the lock (no partial-week hours to observe) and the newest
+  readable daily list is the lock day − 2 (a Wednesday) — the forecast reaches 5 to 11 days ahead;
+  persistence, the skill denominator, is the week ending the Sunday before the lock. Inputs are 28
+  daily top-1000 lists: the arena's `wikitop/` archive first, the Wikimedia REST top endpoint for
+  missing days (`src/arena/wikimedia.ts`: Marina's User-Agent with a contact URL, requests ≥ 100 ms
+  apart, in-process cache, SSRF guard; never a day after the lock day − 2). Each title in the top
+  100 of a list from the last 14 days is projected: a base level (the median of its own 28 days)
+  plus an excess that decays exponentially with a half-life measured from the page's own decline
+  since its 14-day peak, shrunk geometrically halfway toward an 8-day prior; the current level is
+  the newest day, corrected by global weekday factors. The list is ordered by the projected weekly
+  sum discounted by 15 % of its transient share (a fading spike yields a top slot to a steady page
+  of the same projected mass — RBO weighs the top slots most). With models, scheduled events
+  proposed from dated sources go through the same mechanical checks as `research:wiki-events`
+  (candidates from several models are pooled; one failing model leaves the others) and merge into
+  the projected list, at most `MARINA_ARENA_WIKI_EVENTS_MAX_INSERT` new articles; the forecast
+  detail keeps the projection (`wikiSpecialist`) and every candidate (`wikiEvents`). Defaults come
+  from `scripts/arena-wiki-backtest.ts --dir <daily lists> [--site data.json] [--grid]`, a
+  walk-forward over weeks reconstructed from the daily lists (each set up as the arena does: same
+  lock, cutoff and persistence week; the six resolved arena rounds reconstruct exactly). Over 67
+  weeks ending 2025-07-13 … 2026-10-18 the mean per-round skill was 0.041 for the recency nowcast
+  and 0.106 for the specialist (better in 47 of 67 weeks); with the settings re-chosen each week on
+  earlier weeks only, 0.081 against the nowcast's 0.031 on the same 55 weeks; on the six resolved
+  arena rounds 0.148 against 0.105. Events cannot be replayed (search results are not
+  reproducible as of a past date), so the event variant runs as a shadow challenger
+  (`MARINA_ARENA_SHADOW_CHALLENGERS="wikipedia=wiki-specialist:<model>"`); an oracle that inserts up
+  to three true entrants unseen in the projected top 30 bounds that channel at about +0.04.
+  Route the statistical specialist with `wikipedia=wiki-specialist` in `MARINA_ARENA_ROUTES`.
 - **Google Trends baskets**: Trends re-normalises its index in every snapshot. Forecasts use a
   newer complete basket from `trends/` when available; the original lock still defines the
   scoring baseline. Complete weeks only are used (`MARINA_ARENA_TRENDS_PARTIAL=on` adds the
@@ -665,7 +765,16 @@ figure's population, response category and subgroup definition; its search budge
    Sonar through OpenRouter (native search; `sonar`, `sonar-pro`, `sonar-pro-search`,
    `sonar-reasoning-pro`, `sonar-deep-research`), and a comma-separated list runs several engines
    on the same brief and merges their reports (each under its own heading, sources de-duplicated),
-   e.g. `openrouter-web:openai/gpt-6-luna,sonar:sonar-pro`. `tavily:basic` / `tavily:advanced`
+   e.g. `openrouter-web:openai/gpt-6-luna,sonar:sonar-pro`. `openrouter-web:<model>@<engine>[:<mode>]`
+   picks the web plugin's engine: `native` (vendor search, passed-through price), `exa`
+   (`instant`/`fast`/`auto` $0.007, `deep-lite`/`deep` $0.012, `deep-reasoning` $0.015 per request),
+   `parallel` (`turbo`/`fast` $0.001, `basic`/`advanced` $0.005), `perplexity` ($0.005) or
+   `firecrawl` ($0.005 + $0.0125 per result); Exa and Parallel add $0.001 per result beyond 10.
+   The engine's list price is added to the model's cost for each call. `search:<backend>+…` runs the
+   page-reading engine over a backend chain, e.g. `search:duckduckgo+deepseek` (DeepSeek's Search
+   API with `DEEPSEEK_API_KEY`, $0.75 per 1,000 non-empty searches; the brief's window rides as
+   `after:`/`before:` operators) — prices and details in [search.md](search.md#engines-and-prices).
+   `tavily:basic` / `tavily:advanced`
    calls Tavily's search API directly (`TAVILY_API_KEY`): one news search per brief query, dated
    from the brief's window, up to 8 results each; no model writes the report — each result (best
    12 by score, anything published before the window dropped) becomes one line
@@ -1040,6 +1149,20 @@ research plan on outage. It cannot override dates, invent measurements, lift spe
 or turn incomplete required research into a successful filing. Its receipts travel with the
 dossier and can be attributed to the exact resolved submission through the outcome ledger.
 
+`MARINA_ARENA_RESEARCH_REQUIRED=on` makes research required **unless it fails**: closed-book
+retrieval, no verified evidence, a failed or unfinished research loop, a read swarm with no
+successful reader, a research judge that grounds no proposal, or a formation with no usable
+proposal over the dossier. What is filed then is `MARINA_ARENA_RESEARCH_FALLBACK`:
+`closed-book` (default) runs the same formation — or, on a `research:` route, the same analysts
+with no retrieval, judged on the series data alone — and files the start forecast if that errors
+or keeps its start; `start` files the start forecast at once; `skip` refuses the round as before
+(an accepted filing stays, the round can go unrefreshed). A fallback filing records
+`forecast.researchFallback` (`mode`, `reason`, `used`, `closedBookError`, what the failed research
+already spent) and its note says `research fallback (closed-book|start)`; the failed dossier is
+kept for audit and its cost is still counted. The anchor guard, error floor and spread
+calibration apply as to any filing, and the calibrators key it as a closed-book filing, never as
+researched. A no-history round still has no start and is refused.
+
 `MARINA_ARENA_EVIDENCE_REFRESH=on` rechecks sources before deciding whether an accepted
 formation needs another panel. Reuse requires the same round, strategy, inputs and evidence
 fingerprint, a complete prior run, and a forecast under 24 hours old. The final two hours
@@ -1139,8 +1262,9 @@ not isolate evidence sharing as cleanly.
 | `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
 | `MARINA_ARENA_TRENDS_PARTIAL` | off | `on` counts a Trends basket's partial current week |
 | `MARINA_ARENA_CIVIQS_LIVE` | on | `off` stops the nowcast reading the live Civiqs dashboard for open rounds |
-| `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:google/gemini-3.1-pro-preview` | the research agent's search backend(s): `openrouter-web:<model>`, `sonar:<model>`, `tavily:basic` / `tavily:advanced` (needs `TAVILY_API_KEY`), comma-separated to merge |
+| `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:google/gemini-3.1-pro-preview` | the research agent's search backend(s): `openrouter-web:<model>[@<native\|exa\|parallel\|perplexity\|firecrawl>[:<mode>]]`, `sonar:<model>`, `tavily:basic` / `tavily:advanced` (needs `TAVILY_API_KEY`), `search:<backends>` (e.g. `duckduckgo+deepseek`), comma-separated to merge |
 | `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend; falls back to `jev`) or `none` |
 | `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |
-| `MARINA_ARENA_PROPOSAL_JUDGE` | `on` | delphi / symbiosis with verified research: judged support weights the move and lowers trust; `observe` records only, `off` skips |
+| `MARINA_ARENA_PROPOSAL_JUDGE` | `on` | delphi / symbiosis with verified research: judged support weights the move and lowers trust (per cell on profile rounds); `observe` records only, `off` skips |
+| `MARINA_ARENA_RESEARCH_FALLBACK` | `closed-book` | with `MARINA_ARENA_RESEARCH_REQUIRED=on`, what failed research files: `closed-book` (then the start), `start`, or `skip` (refuse the round) |
 | `MARINA_ARENA_PROPOSAL_JUDGE_MODEL` | `typesafe/jev-1.13` | the proposal judge: any Decisions-API model id on OpenRouter, or `decisions` (the `MARINA_DECISIONS` backend) |

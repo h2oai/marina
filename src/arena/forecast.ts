@@ -223,6 +223,8 @@ export interface RoundForecast {
   errorFloorApplied?: { fromSd?: number; notes: string[] };
   /** The earned-route decision for a routed round (`earned-routes.ts`). */
   routing?: import("./earned-routes").ArenaRouteDecision;
+  /** Required research failed and this is what was filed instead (`research-fallback.ts`). */
+  researchFallback?: import("./research-fallback").ResearchFallbackRecord;
 }
 
 export interface ForecastOrigin {

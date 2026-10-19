@@ -28,15 +28,33 @@
  * filing is unchanged. The sd is not touched here (`calibration.ts` and the
  * measured-error floor own it). `MARINA_ARENA_MOVE_WEIGHT=observe` records the
  * decision without applying it; `off` skips it.
+ *
+ * Profile rounds (key `arena:<tracker>:profile|<method>`): the same weight on
+ * every cell's Δ (median member proposal for that cell − its start), each cell
+ * capped at its own start sds; a share basket is rescaled to its total after,
+ * means and sds by one factor. The loss is the arena's energy score as a share
+ * of persistence's on the round (1 − per-round skill — the leaderboard's
+ * metric), exact and cheap: the sds never change, so the point set is computed
+ * once per round. The placebo shuffles the standardized cell moves (Δ / start
+ * sd) across every cell of every round. Profile families are few and resolve
+ * weekly, so a key with fewer than `MIN_MOVE_RECORDS` visible rounds pools
+ * every profile family of the same method (the decision says which).
  */
 
 import { mulberry32 } from "../../benchmarks/stats";
 import { getErrorMessage } from "../engine/errors";
 import { adoptOnHoldout, gridArgmin } from "../forecast/fitting";
 import type { ArenaShadowRow, ArenaSubmissionRow } from "../persistence/db-arena";
-import { calibrationKey, methodOf } from "./calibration";
+import {
+  calibrationKey,
+  knownAtOf,
+  methodOf,
+  type SiteRoundLike,
+  spreadFamily,
+} from "./calibration";
 import { CALIBRATION_MARGIN, type RoundForecast } from "./forecast";
 import { crpsNormal } from "./score";
+import { cellSamples } from "./score-shapes";
 import type { ArenaResolution, ArenaRound, Distribution } from "./types";
 
 export type MoveWeightMode = "off" | "observe" | "on";
@@ -58,22 +76,122 @@ export function moveWeightModeFromEnv(env: NodeJS.ProcessEnv = process.env): Mov
   return m === "off" || m === "observe" ? m : "on";
 }
 
-/** One resolved formation forecast: where it started, how far its members moved, what it filed. */
-export interface MoveRecord {
+interface MoveRecordBase {
   /** Round id (+ `#shadow:<forecaster>` for a shadow), unique per record. */
   id: string;
   roundId: string;
   key: string;
   resolvedAt: string;
+  /** The trust the formation applied (≈ 0.5 today); undefined when unknown. */
+  trust?: number;
+}
+
+/** One resolved scalar formation forecast: where it started, how far its members moved, what it filed. */
+export interface ScalarMoveRecord extends MoveRecordBase {
   start: number;
   startSd?: number;
   /** Median member proposal − start. */
   delta: number;
-  /** The trust the formation applied (≈ 0.5 today); undefined when unknown. */
-  trust?: number;
   /** What was filed (mean, sd) — the default the weight must beat. */
   filed: Distribution;
   outcome: number;
+  profile?: undefined;
+}
+
+/** One cell of a resolved profile formation forecast. */
+export interface ProfileMoveCell {
+  cell: string;
+  start: number;
+  startSd: number;
+  /** Median member proposal for this cell − its start (0 when no member answered it). */
+  delta: number;
+  filed: Distribution;
+  outcome: number;
+}
+
+/** A resolved profile formation forecast, scored by the arena's energy score. */
+export interface ProfileMove {
+  /** In the round's cell order (the point set depends on it). */
+  cells: ProfileMoveCell[];
+  /** A share basket's total: re-weighted means are rescaled to it. */
+  shareTotal?: number;
+  /** Persistence's energy score on the round (else the filing's): loss = ES / norm. */
+  norm: number;
+  /** The point set's deviations at the filed sds (rows = draws) and its pairwise term. */
+  dev: number[][];
+  t2: number;
+}
+
+export interface ProfileMoveRecord extends MoveRecordBase {
+  profile: ProfileMove;
+}
+
+export type MoveRecord = ScalarMoveRecord | ProfileMoveRecord;
+
+/** The point set and pairwise term of a profile at its filed sds (computed once per round). */
+export function profilePointSet(sds: number[]): { dev: number[][]; t2: number } {
+  const dev = cellSamples(sds.map((sd) => ({ mean: 0, sd })));
+  const n = dev.length;
+  const k = sds.length;
+  let acc = 0;
+  for (let i = 0; i < n; i++) {
+    const a = dev[i]!;
+    for (let j = i + 1; j < n; j++) {
+      const b = dev[j]!;
+      let d2 = 0;
+      for (let c = 0; c < k; c++) d2 += (a[c]! - b[c]!) ** 2;
+      acc += Math.sqrt(d2);
+    }
+  }
+  return { dev, t2: (2 * acc) / (n * n) };
+}
+
+/** Energy score of means + scale · dev against the outcome (the arena's V-statistic). */
+function energyAt(p: ProfileMove, means: number[], scale: number): number {
+  const k = p.cells.length;
+  let t1 = 0;
+  for (const row of p.dev) {
+    let d2 = 0;
+    for (let c = 0; c < k; c++) d2 += (means[c]! - p.cells[c]!.outcome + scale * row[c]!) ** 2;
+    t1 += Math.sqrt(d2);
+  }
+  return t1 / p.dev.length - 0.5 * scale * p.t2;
+}
+
+/**
+ * The means (and the sd factor) a weight files for a profile: every cell's
+ * start + w · Δ capped at its own start sds, then a share basket rescaled to
+ * its total (means and sds by the same factor).
+ */
+export function profileWeightedMeans(
+  p: {
+    cells: Array<Pick<ProfileMoveCell, "start" | "startSd" | "delta">>;
+    shareTotal?: number;
+  },
+  w: number,
+): { means: number[]; factor: number } {
+  const means = p.cells.map((c) => {
+    const cap = MAX_START_SD_MOVE * c.startSd;
+    return c.start + Math.min(Math.max(w * c.delta, -cap), cap);
+  });
+  const sum = means.reduce((a, b) => a + b, 0);
+  const factor = p.shareTotal !== undefined && sum > 0 ? p.shareTotal / sum : 1;
+  return { means: means.map((m) => m * factor), factor };
+}
+
+/** A profile's loss (ES / norm) as filed, or at weight `w`. */
+function profileLoss(p: ProfileMove, w?: number): number {
+  if (w === undefined) {
+    return (
+      energyAt(
+        p,
+        p.cells.map((c) => c.filed.mean),
+        1,
+      ) / p.norm
+    );
+  }
+  const { means, factor } = profileWeightedMeans(p, w);
+  return energyAt(p, means, factor) / p.norm;
 }
 
 interface ProposalLike {
@@ -89,7 +207,14 @@ interface FormationDetail {
     proposals?: Record<string, ProposalLike>;
     trust?: number;
     topline?: Distribution;
-    moveWeight?: { applied?: boolean; fromMean?: number };
+    moveWeight?: { applied?: boolean; fromMean?: number; fromProfile?: Record<string, number> };
+    profileProposals?: Record<string, { profile?: Record<string, ProposalLike> }>;
+    formationStartProfile?: Record<string, Distribution>;
+    protocol?: {
+      cells?: Record<string, { n?: number; trust?: number }>;
+      shares?: { total?: number; factor?: number };
+    };
+    judge?: { status?: string };
   };
 }
 
@@ -137,6 +262,59 @@ export function moveOf(
 }
 
 /**
+ * Each cell's start, Δ (median member proposal − start) and trust of one
+ * profile formation forecast. The start is the recorded
+ * `formationStartProfile` (else the cell's origin start), else recovered per
+ * cell from the median rule
+ * (filed / share factor = start + trust · (median − start)) — only where that
+ * rule made the filing (no applied judge or move weight).
+ */
+export function profileMoveOf(
+  f: NonNullable<FormationDetail["forecast"]>,
+  filed: Record<string, Distribution>,
+  cells: string[],
+):
+  | {
+      cells: Array<{ cell: string; start: number; startSd: number; delta: number }>;
+      trust?: number;
+    }
+  | undefined {
+  const proposals = Object.values(f.profileProposals ?? {});
+  if (!proposals.length) return undefined;
+  const recorded = f.formationStartProfile;
+  const factor =
+    finite(f.protocol?.shares?.factor) && f.protocol!.shares!.factor! > 0
+      ? f.protocol!.shares!.factor!
+      : 1;
+  const recoverable = !recorded && f.judge?.status !== "applied" && !f.moveWeight?.applied;
+  const out: Array<{ cell: string; start: number; startSd: number; delta: number }> = [];
+  for (const c of cells) {
+    const means = proposals.map((p) => p?.profile?.[c]?.mean).filter(finite);
+    const d = filed[c];
+    if (!d || !finite(d.mean) || !(d.sd > 0)) return undefined;
+    let start: number | undefined;
+    let startSd: number | undefined;
+    // The recorded start, else the cell's dated origin (a nowcast start records one).
+    const rec = recorded?.[c] ?? f.origins?.[c]?.start;
+    if (rec && finite(rec.mean) && rec.sd > 0) {
+      start = rec.mean;
+      startSd = rec.sd;
+    } else if (recoverable) {
+      const audit = f.protocol?.cells?.[c];
+      const t = finite(audit?.trust) ? audit!.trust! : undefined;
+      const pre = d.mean / factor;
+      if (!means.length || t === 0) start = pre;
+      else if (t !== undefined && t < 0.999) start = (pre - t * medianOf(means)) / (1 - t);
+      // The start sd is unknown on a legacy filing: the filed sd stands in for the cap.
+      startSd = d.sd;
+    }
+    if (start === undefined || !Number.isFinite(start) || startSd === undefined) return undefined;
+    out.push({ cell: c, start, startSd, delta: means.length ? medianOf(means) - start : 0 });
+  }
+  return { cells: out, ...(finite(f.trust) ? { trust: f.trust } : {}) };
+}
+
+/**
  * One record per resolved round per source: the newest accepted filing (the
  * one the board scored) and, optionally, each shadow forecaster's latest
  * pre-lock record — keyed by (family, method), formation forecasts only.
@@ -146,8 +324,68 @@ export function moveWeightHistory(
   resolutions: Record<string, ArenaResolution>,
   rounds: Record<string, { tracker: string; lock_at?: string; series?: string }> = {},
   shadows: ArenaShadowRow[] = [],
+  /** The arena's site data: profile outcomes, persistence's energy score, cell order. */
+  site: SiteRoundLike[] = [],
 ): MoveRecord[] {
   const out: MoveRecord[] = [];
+  const siteById = new Map(site.map((r) => [r.round_id, r]));
+  const pushProfile = (
+    roundId: string,
+    note: string | undefined,
+    detail: FormationDetail,
+    profile: Record<string, Distribution>,
+  ) => {
+    const s = siteById.get(roundId);
+    const res = s?.resolution;
+    if (s?.status !== "resolved" || s.scoreable === false || !res || res.voided) return;
+    const outcome = res.outcome as Record<string, unknown> | undefined;
+    const knownAt = knownAtOf(res);
+    if (!outcome || !Number.isFinite(knownAt) || !detail.forecast) return;
+    const method = methodOf(note);
+    if (!method.startsWith("formation:")) return;
+    const order = s.cells ?? Object.keys(profile);
+    if (order.length < 2 || !order.every((c) => finite(outcome[c]))) return;
+    const m = profileMoveOf(detail.forecast, profile, order);
+    if (!m) return;
+    const cells = m.cells.map((c) => ({
+      ...c,
+      filed: { mean: profile[c.cell]!.mean, sd: profile[c.cell]!.sd },
+      outcome: outcome[c.cell] as number,
+    }));
+    const { dev, t2 } = profilePointSet(cells.map((c) => c.filed.sd));
+    const total = detail.forecast.protocol?.shares?.total;
+    const move: ProfileMove = {
+      cells,
+      ...(finite(total) ? { shareTotal: total } : {}),
+      norm: 1,
+      dev,
+      t2,
+    };
+    const pers = s.scores?.persistence?.energy;
+    move.norm =
+      finite(pers) && pers > 0
+        ? pers
+        : energyAt(
+            move,
+            cells.map((c) => c.filed.mean),
+            1,
+          );
+    if (!(move.norm > 0)) return;
+    out.push({
+      id: roundId,
+      roundId,
+      key: calibrationKey(
+        spreadFamily({
+          tracker: s.tracker ?? detail.round?.tracker ?? roundId.split("-")[0]!,
+          target_type: "profile_energy",
+        }),
+        method,
+      ),
+      resolvedAt: new Date(knownAt).toISOString(),
+      ...(m.trust !== undefined ? { trust: m.trust } : {}),
+      profile: move,
+    });
+  };
   const resolvedOf = (roundId: string) => {
     const res = resolutions[roundId];
     if (!res || res.voided || !finite(res.value) || !res.resolved_at) return undefined;
@@ -193,9 +431,15 @@ export function moveWeightHistory(
   }
   for (const [roundId, row] of newest) {
     try {
-      const body = JSON.parse(row.body) as { topline?: Distribution; notes?: string };
+      const body = JSON.parse(row.body) as {
+        topline?: Distribution;
+        profile?: Record<string, Distribution>;
+        notes?: string;
+      };
       const detail = JSON.parse(row.detail || "{}") as FormationDetail;
-      push(roundId, roundId, detail.forecast?.note ?? body.notes, detail, body.topline);
+      if (body.profile)
+        pushProfile(roundId, detail.forecast?.note ?? body.notes, detail, body.profile);
+      else push(roundId, roundId, detail.forecast?.note ?? body.notes, detail, body.topline);
     } catch {
       // allow-empty-catch: a malformed ledger row is no evidence
     }
@@ -235,7 +479,7 @@ export function moveWeightHistory(
 }
 
 /** The mean a weight files for a record (capped like every formation). */
-function weightedMean(r: Pick<MoveRecord, "start" | "startSd" | "delta">, w: number): number {
+function weightedMean(r: Pick<ScalarMoveRecord, "start" | "startSd" | "delta">, w: number): number {
   const move = w * r.delta;
   const cap = r.startSd !== undefined ? MAX_START_SD_MOVE * r.startSd : Number.POSITIVE_INFINITY;
   return r.start + Math.min(Math.max(move, -cap), cap);
@@ -246,13 +490,20 @@ type WeightParams = { kind: "filed" } | { kind: "weight"; w: number };
 function lossOf(rs: MoveRecord[], p: WeightParams): { loss: number; n: number } {
   let sum = 0;
   for (const r of rs) {
+    if (r.profile) {
+      sum += profileLoss(r.profile, p.kind === "filed" ? undefined : p.w);
+      continue;
+    }
     const mean = p.kind === "filed" ? r.filed.mean : weightedMean(r, p.w);
     sum += crpsNormal(mean, r.filed.sd, r.outcome);
   }
   return { loss: rs.length ? sum / rs.length : Number.NaN, n: rs.length };
 }
 
-/** The minimum-CRPS weight on the grid, shrunk toward the records' own mean trust. */
+/**
+ * The minimum-loss weight on the grid (CRPS for scalars, ES / persistence ES
+ * for profiles), shrunk toward the records' own mean trust.
+ */
 export function fitMoveWeight(rs: MoveRecord[]): number | undefined {
   if (!rs.length) return undefined;
   const best = gridArgmin(MOVE_WEIGHT_GRID, (w) => lossOf(rs, { kind: "weight", w }).loss);
@@ -274,6 +525,45 @@ function heldOut(rs: MoveRecord[]) {
     margin: CALIBRATION_MARGIN,
     minRecords: MIN_MOVE_RECORDS,
   });
+}
+
+/** Fisher–Yates, in place. */
+function shuffle<T>(xs: T[], rand: () => number): T[] {
+  for (let j = xs.length - 1; j > 0; j--) {
+    const k = Math.floor(rand() * (j + 1));
+    [xs[j], xs[k]] = [xs[k]!, xs[j]!];
+  }
+  return xs;
+}
+
+/**
+ * The placebo's records: scalar Δs permuted across rounds; profile cells'
+ * standardized moves (Δ / start sd) permuted across every cell of every round.
+ */
+function shuffleMoves(rs: MoveRecord[], rand: () => number): MoveRecord[] {
+  if (!rs.some((r) => r.profile)) {
+    const deltas = shuffle(
+      rs.map((r) => (r as ScalarMoveRecord).delta),
+      rand,
+    );
+    return rs.map((r, j) => ({ ...(r as ScalarMoveRecord), delta: deltas[j]! }));
+  }
+  const z = shuffle(
+    rs.flatMap((r) => (r.profile ? r.profile.cells.map((c) => c.delta / c.startSd) : [])),
+    rand,
+  );
+  let at = 0;
+  return rs.map((r) =>
+    r.profile
+      ? {
+          ...r,
+          profile: {
+            ...r.profile,
+            cells: r.profile.cells.map((c) => ({ ...c, delta: z[at++]! * c.startSd })),
+          },
+        }
+      : r,
+  );
 }
 
 function quantile(xs: number[], q: number): number {
@@ -306,12 +596,7 @@ export function decideMoveWeight(rs: MoveRecord[], seed = 20261014): MoveWeightD
   const rand = mulberry32(seed);
   const gains: number[] = [];
   for (let i = 0; i < PLACEBO_SHUFFLES; i++) {
-    const deltas = rs.map((r) => r.delta);
-    for (let j = deltas.length - 1; j > 0; j--) {
-      const k = Math.floor(rand() * (j + 1));
-      [deltas[j], deltas[k]] = [deltas[k]!, deltas[j]!];
-    }
-    const shuffled = heldOut(rs.map((r, j) => ({ ...r, delta: deltas[j]! })));
+    const shuffled = heldOut(shuffleMoves(rs, rand));
     gains.push(shuffled.holdout?.improvement ?? 0);
   }
   const p80 = quantile(gains, PLACEBO_QUANTILE);
@@ -344,18 +629,123 @@ export interface MoveWeightRecord extends MoveWeightDecision {
   fromMean?: number;
   start?: number;
   delta?: number;
+  /** Profiles: the filed means before the weight, per cell. */
+  fromProfile?: Record<string, number>;
+  /** Profiles: Δ per cell. */
+  deltas?: Record<string, number>;
+  /** Profiles: the evidence the decision used — this key, or every profile family of the method. */
+  scope?: "key" | "profile-families";
+  /** The records' key (or pattern) the decision was made on. */
+  evidenceKey?: string;
 }
 
 interface WithFormation {
   proposals?: Record<string, ProposalLike>;
   formationStart?: Distribution;
   trust?: number;
+  profileProposals?: Record<string, { profile?: Record<string, ProposalLike> }>;
+  formationStartProfile?: Record<string, Distribution>;
+  protocol?: { shares?: { total?: number; factor?: number } };
 }
 
 /**
- * The forecast with its topline mean re-weighted along the formation's move
- * when (family, method) has earned it, plus a `moveWeight` record of the
- * decision. Non-formation forecasts and profiles pass through untouched.
+ * The visible profile records for a key: its own when there are at least
+ * `MIN_MOVE_RECORDS`, else every profile family's records of the same method
+ * (cross-family pooling, as the spread calibration pools).
+ */
+function profileEvidence(
+  history: MoveRecord[],
+  key: string,
+  method: string,
+  roundId: string,
+  now: number,
+): { records: MoveRecord[]; scope: "key" | "profile-families"; evidenceKey: string } {
+  const visible = history.filter(
+    (r) => r.profile && r.roundId !== roundId && Date.parse(r.resolvedAt) <= now,
+  );
+  const own = visible.filter((r) => r.key === key);
+  if (own.length >= MIN_MOVE_RECORDS) return { records: own, scope: "key", evidenceKey: key };
+  const suffix = `:profile|${method}`;
+  return {
+    records: visible.filter((r) => r.key.endsWith(suffix)),
+    scope: "profile-families",
+    evidenceKey: `arena:*${suffix}`,
+  };
+}
+
+/** `applyMoveWeight` on a profile formation forecast: one weight on every cell's Δ. */
+function applyProfileMoveWeight(
+  round: ArenaRound,
+  f: RoundForecast,
+  history: MoveRecord[],
+  opts: { now: number; mode: MoveWeightMode },
+): RoundForecast & { moveWeight?: MoveWeightRecord } {
+  const g = f as RoundForecast & WithFormation;
+  const method = methodOf(f.note);
+  const key = calibrationKey(spreadFamily(round), method);
+  try {
+    const cells = (round.cells ?? Object.keys(f.profile!)).filter((c) => f.profile![c]);
+    const m = profileMoveOf(g, f.profile!, cells);
+    if (!m) return f;
+    const ev = profileEvidence(history, key, method, round.round_id, opts.now);
+    const d = decideMoveWeight(ev.records);
+    const r3 = (x: number) => Math.round(x * 1000) / 1000;
+    const record: MoveWeightRecord = {
+      key,
+      mode: opts.mode,
+      applied: false,
+      ...d,
+      scope: ev.scope,
+      evidenceKey: ev.evidenceKey,
+      fromProfile: Object.fromEntries(cells.map((c) => [c, f.profile![c]!.mean])),
+      deltas: Object.fromEntries(m.cells.map((c) => [c.cell, r3(c.delta)])),
+    };
+    if (!d.adopted || d.w === undefined || opts.mode !== "on") return { ...f, moveWeight: record };
+    const total = g.protocol?.shares?.total;
+    const filedFactor =
+      finite(g.protocol?.shares?.factor) && g.protocol!.shares!.factor! > 0
+        ? g.protocol!.shares!.factor!
+        : 1;
+    const { means, factor } = profileWeightedMeans(
+      { cells: m.cells, ...(finite(total) ? { shareTotal: total } : {}) },
+      d.w,
+    );
+    const profile = { ...f.profile! };
+    m.cells.forEach((c, i) => {
+      const was = f.profile![c.cell]!;
+      // The sd before the filing's own share rescale, at the new factor.
+      profile[c.cell] = {
+        mean: r3(means[i]!),
+        sd: Math.max(0.001, r3((was.sd / filedFactor) * factor)),
+      };
+    });
+    return {
+      ...f,
+      profile,
+      moveWeight: { ...record, applied: true },
+      note: `${f.note}; move weight ${d.w} learned on ${ev.evidenceKey} (held out, placebo passed)`,
+    };
+  } catch (err) {
+    return {
+      ...f,
+      moveWeight: {
+        key,
+        mode: opts.mode,
+        applied: false,
+        adopted: false,
+        nFit: 0,
+        nHoldout: 0,
+        reason: `move weight failed: ${getErrorMessage(err)}`,
+      },
+    };
+  }
+}
+
+/**
+ * The forecast with its topline mean — or every profile cell's mean — re-
+ * weighted along the formation's move when (family, method) has earned it,
+ * plus a `moveWeight` record of the decision. Non-formation forecasts pass
+ * through untouched.
  */
 export function applyMoveWeight(
   round: ArenaRound,
@@ -365,13 +755,20 @@ export function applyMoveWeight(
 ): RoundForecast & { moveWeight?: MoveWeightRecord } {
   const mode = opts.mode ?? "on";
   const g = f as RoundForecast & WithFormation;
-  if (mode === "off" || !f.topline || !g.proposals || !g.formationStart) return f;
+  if (mode === "off") return f;
+  if (f.profile && g.profileProposals && g.formationStartProfile)
+    return applyProfileMoveWeight(round, f, history, { now: opts.now, mode });
+  if (!f.topline || !g.proposals || !g.formationStart) return f;
   const key = calibrationKey(round.tracker, methodOf(f.note));
   try {
     const m = moveOf({ ...g, topline: f.topline }, f.topline.mean, round.series);
     if (!m) return f;
     const visible = history.filter(
-      (r) => r.key === key && r.roundId !== round.round_id && Date.parse(r.resolvedAt) <= opts.now,
+      (r) =>
+        !r.profile &&
+        r.key === key &&
+        r.roundId !== round.round_id &&
+        Date.parse(r.resolvedAt) <= opts.now,
     );
     const d = decideMoveWeight(visible);
     const record: MoveWeightRecord = {

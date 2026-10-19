@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 import { researchFeatures } from "../research/settings";
 import { proposalJudgeMode, proposalJudgeModel } from "./proposal-judge";
 import { horizonOptionsFromEnv } from "./research/civiqs-horizon";
+import { arenaLookupSpec } from "./research/signal-map";
+import { researchFallbackModeFromEnv } from "./research-fallback";
 
 /** Explicit allowlist: never persist process.env or API keys in a forecast trace. */
 export function forecastSettings(spec: string, env: NodeJS.ProcessEnv, weight?: number) {
@@ -12,6 +14,10 @@ export function forecastSettings(spec: string, env: NodeJS.ProcessEnv, weight?: 
     version: 2,
     research: researchFeatures(env),
     researchRequired: env.MARINA_ARENA_RESEARCH_REQUIRED === "on",
+    // Only when research is required, so other configurations keep their fingerprint.
+    ...(env.MARINA_ARENA_RESEARCH_REQUIRED === "on"
+      ? { researchFallback: researchFallbackModeFromEnv(env) }
+      : {}),
     evidenceRefresh: env.MARINA_ARENA_EVIDENCE_REFRESH === "on",
     signals: env.MARINA_ARENA_RESEARCH_SIGNALS ?? "off",
     formationLessons: env.MARINA_ARENA_FORMATION_LESSONS ?? "observe",
@@ -19,7 +25,8 @@ export function forecastSettings(spec: string, env: NodeJS.ProcessEnv, weight?: 
     routes: spec === "routed" ? (env.MARINA_ARENA_ROUTES ?? "*=nowcast") : undefined,
     horizon: horizonOptionsFromEnv(env),
     live: env.MARINA_ARENA_CIVIQS_LIVE?.trim().toLowerCase() !== "off",
-    lookups: env.MARINA_ARENA_RESEARCH_LOOKUPS ?? "off",
+    // As set, else off — except the lookups `MARINA_ARENA_RESEARCH_SIGNALS=all` turns on.
+    lookups: arenaLookupSpec(env),
     judge: env.MARINA_ARENA_RESEARCH_JUDGE ?? "jev",
     researchTrust: env.MARINA_ARENA_RESEARCH_TRUST ?? "0.5",
     weight: weight ?? 0.5,
@@ -30,8 +37,8 @@ export function forecastSettings(spec: string, env: NodeJS.ProcessEnv, weight?: 
           proposalJudgeModel: proposalJudgeModel(env),
         }
       : {}),
-    // Only for the wiki-events card, so every other spec keeps its fingerprint.
-    ...(spec.includes("research:wiki-events")
+    // Only for the Wikipedia event cards, so every other spec keeps its fingerprint.
+    ...(spec.includes("research:wiki-events") || spec.includes("wiki-specialist:")
       ? { wikiEventsMaxInsert: env.MARINA_ARENA_WIKI_EVENTS_MAX_INSERT ?? "3" }
       : {}),
   };

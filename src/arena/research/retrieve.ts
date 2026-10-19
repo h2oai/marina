@@ -5,7 +5,9 @@
  * Retrieval for the research agent. A `Retriever` turns a brief into a dated,
  * cited research report — facts only, no forecast. Backends, all called over
  * the SSRF guard through OpenRouter:
- *   - `openrouter-web:<model>` — any model with OpenRouter's `web` plugin;
+ *   - `openrouter-web:<model>[@<engine>[:<mode>]]` — any model with OpenRouter's
+ *     `web` plugin, on the plugin's engine (native, exa, parallel, perplexity,
+ *     firecrawl) and mode; the engine's list price is added to the call's cost;
  *   - `sonar:<perplexity model>` — Perplexity Sonar, which searches natively
  *     (sonar, sonar-pro, sonar-pro-search, sonar-reasoning-pro,
  *     sonar-deep-research); citations arrive as the same `url_citation`
@@ -29,7 +31,7 @@
  * (every source kept, costs summed), so several engines can research one brief.
  */
 
-import { logRejection } from "../../engine/errors";
+import { getErrorMessage, logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { standaloneSearchHttp } from "../../engine/search-providers/asof-http";
 import {
@@ -48,6 +50,13 @@ import {
   type SearchResult,
   withinBound,
 } from "../../engine/search-providers/index";
+import {
+  OPENROUTER_WEB_ENGINES,
+  OPENROUTER_WEB_PRICES,
+  type OpenRouterWebEngine,
+  openRouterWebPluginUsd,
+  parseOpenRouterWebEngine,
+} from "../../engine/search-providers/openrouter-web-engines";
 import { TAVILY_USD_PER_CREDIT } from "../../engine/search-providers/tavily";
 import { waybackFetch } from "../../engine/search-providers/wayback";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
@@ -68,7 +77,15 @@ import {
 const logger = new Logger();
 
 export type { RetrievalFunnel };
-export { EXA_USD_PER_SEARCH, TAVILY_USD_PER_CREDIT };
+export {
+  EXA_USD_PER_SEARCH,
+  OPENROUTER_WEB_ENGINES,
+  OPENROUTER_WEB_PRICES,
+  type OpenRouterWebEngine,
+  openRouterWebPluginUsd,
+  parseOpenRouterWebEngine,
+  TAVILY_USD_PER_CREDIT,
+};
 
 export interface Source {
   url: string;
@@ -120,15 +137,31 @@ export interface OpenRouterWebOptions {
   /**
    * The web plugin's search engine: `native` (the model vendor's own search),
    * `exa` (Exa results with page excerpts — which then serve the citation
-   * check), or unset (OpenRouter picks: native where the vendor has one).
+   * check), `parallel`, `perplexity`, `firecrawl`, or unset (OpenRouter picks:
+   * native where the vendor has one, else Exa).
    */
-  engine?: "native" | "exa";
+  engine?: OpenRouterWebEngine;
+  /** The engine's mode (`exa`: instant … deep-reasoning; `parallel`: turbo … advanced). */
+  mode?: string;
+  /** `web_search_options.search_context_size` (native search); default `medium` for `native`. */
+  searchContextSize?: "low" | "medium" | "high";
   apiKey: string;
   maxResults?: number;
   maxTokens?: number;
   timeoutMs?: number;
   fetcher?: (url: string, init: RequestInit) => Promise<Response>;
 }
+
+// ─── OpenRouter web plugin engines ───────────────────────────────────────────
+
+/** Results asked of the plugin per engine when the caller sets none (Firecrawl bills each result). */
+const OPENROUTER_WEB_DEFAULT_RESULTS: Record<OpenRouterWebEngine, number> = {
+  native: 10,
+  exa: 10,
+  parallel: 10,
+  perplexity: 10,
+  firecrawl: 5,
+};
 
 /** Research through OpenRouter's `web` plugin with a search-grounded model. */
 export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
@@ -143,9 +176,10 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
   return async (brief) => {
     const capped = dailyCapRefusal();
     if (capped) throw new Error(capped);
-    const health = opts.nativeSearch
-      ? "sonar"
-      : `openrouter-web${opts.engine ? `@${opts.engine}` : ""}`;
+    const engineTag = opts.engine ? `@${opts.engine}${opts.mode ? `:${opts.mode}` : ""}` : "";
+    const health = opts.nativeSearch ? "sonar" : `openrouter-web${engineTag}`;
+    const maxResults =
+      opts.maxResults ?? (opts.engine ? OPENROUTER_WEB_DEFAULT_RESULTS[opts.engine] : 8);
     const res = await fetcher("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${opts.apiKey}`, "Content-Type": "application/json" },
@@ -161,10 +195,18 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
               plugins: [
                 {
                   id: "web",
-                  max_results: opts.maxResults ?? 8,
+                  max_results: maxResults,
                   ...(opts.engine ? { engine: opts.engine } : {}),
+                  ...(opts.mode ? { mode: opts.mode } : {}),
                 },
               ],
+              ...(opts.searchContextSize || opts.engine === "native"
+                ? {
+                    web_search_options: {
+                      search_context_size: opts.searchContextSize ?? "medium",
+                    },
+                  }
+                : {}),
               // Reasoning models otherwise spend the whole budget thinking and return nothing.
               reasoning: { effort: "low" },
             }),
@@ -213,13 +255,22 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
         ...(excerpt && excerpt.length >= 200 && fetchAllowed(url) ? { text: excerpt } : {}),
       });
     }
-    recordSpend("forecast", data.usage?.cost);
+    const searches = data.usage?.server_tool_use_details?.web_search_requests ?? 0;
+    // The model's tokens (`usage.cost`) plus the plugin's list price for the
+    // chosen engine. OpenRouter does not document whether `usage.cost` already
+    // carries the plugin's charge, so the estimate is added: the spend cap errs
+    // high, never low.
+    const pluginUsd = opts.nativeSearch
+      ? 0
+      : openRouterWebPluginUsd(opts.engine, opts.mode, maxResults, searches);
+    const costUsd = (data.usage?.cost ?? 0) + pluginUsd;
+    recordSpend("forecast", costUsd);
     return {
       report,
       sources,
-      costUsd: data.usage?.cost ?? 0,
-      searches: data.usage?.server_tool_use_details?.web_search_requests ?? 0,
-      retriever: `${opts.nativeSearch ? "sonar" : "openrouter-web"}:${opts.model}${opts.engine ? `@${opts.engine}` : ""}`,
+      costUsd,
+      searches,
+      retriever: `${opts.nativeSearch ? "sonar" : "openrouter-web"}:${opts.model}${engineTag}`,
     };
   };
 }
@@ -869,17 +920,17 @@ export function retrieverFromSpec(
       }
       const [kind, ...rest] = part.split(":");
       let model = rest.join(":");
-      // `openrouter-web:<model>@exa|native` picks the web plugin's search engine.
-      let engine: "exa" | "native" | undefined;
+      // `openrouter-web:<model>@<engine>[:<mode>]` picks the web plugin's search engine.
+      let engine: { engine: OpenRouterWebEngine; mode?: string } | undefined;
       const at = model.lastIndexOf("@");
       if (kind === "openrouter-web" && at > 0) {
-        const e = model.slice(at + 1).toLowerCase();
-        if (e !== "exa" && e !== "native") {
+        try {
+          engine = parseOpenRouterWebEngine(model.slice(at + 1));
+        } catch (err) {
           throw new Error(
-            `MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}": the engine after @ is exa or native`,
+            `MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}": ${getErrorMessage(err)} — use @<engine>[:<mode>]`,
           );
         }
-        engine = e;
         model = model.slice(0, at);
       }
       if (!model) throw new Error(`MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" names no model`);
@@ -908,11 +959,11 @@ export function retrieverFromSpec(
           : openRouterWebRetriever({
               model,
               apiKey: k.openrouter,
-              ...(engine ? { engine, maxResults: 10 } : {}),
+              ...(engine ?? {}),
             });
       }
       throw new Error(
-        `unknown MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" (openrouter-web:<model>[@exa|@native], sonar:<model>, tavily:<basic|advanced>, exa:<auto|neural|keyword>, search[:<backends>], asof[:<providers>], corpus:<name> or closed-book)`,
+        `unknown MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" (openrouter-web:<model>[@<native|exa|parallel|perplexity|firecrawl>[:<mode>]], sonar:<model>, tavily:<basic|advanced>, exa:<auto|neural|keyword>, search[:<backends>], asof[:<providers>], corpus:<name> or closed-book)`,
       );
     }),
   );

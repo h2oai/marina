@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Search engines for research retrieval**: `openrouter-web:<model>@<engine>[:<mode>]` accepts
+  every OpenRouter web plugin engine — `native`, `exa` (instant … deep-reasoning), `parallel`
+  (turbo … advanced), `perplexity`, `firecrawl` — validates engine and mode, and adds the engine's
+  list price to each call's recorded cost (`@exa` / `@native` unchanged). A new `deepseek` search
+  backend (DeepSeek's Search API, `DEEPSEEK_API_KEY`, $0.75 per 1,000 non-empty searches) joins
+  the `search:` chain and `web search` as a paid fallback after DuckDuckGo, with the brief's window
+  as `after:`/`before:` operators and bounded HTTP 429 retries; `readiness` lists both.
+- **Arena signals everywhere**: `MARINA_ARENA_RESEARCH_SIGNALS=all` gives every arena family its
+  mapped outside signals (`src/arena/research/signal-map.ts`): FRED economy, inflation and market
+  series (vintage as of the lock), a family market phrase for Polymarket/Kalshi, and other
+  pollsters' approval / generic-ballot polls from VoteHub's keyless API (new `votehub` lookup,
+  target's own pollster excluded, cut at the listing day). Unset `MARINA_ARENA_RESEARCH_LOOKUPS`
+  then means `polymarket,kalshi,fred,votehub`. FRED lists longer than three series run in chunks.
+  Market and poll lines are frozen under payload URLs so the citation check verifies what was read
+  at the lock. `off` and `consumer` are unchanged.
+
+- **Arena profile rounds at parity with scalar rounds**: on Google Trends baskets, YouGov
+  crosstabs and Civiqs profiles the proposal judge now runs per cell (one batched call per member,
+  support per cell, trust only drops, fails open); the learned move weight fits one weight on
+  every cell's move by energy-score skill (placebo and minimum history as for scalars, pooled
+  across profile families of a method when a key has few rounds); each cell's sd is floored at the
+  narrowest proposal and the members' linear pool; and a share basket's rescale to 100 now scales
+  the sds with the means. Formations record `formationStartProfile`.
+- **Arena research fallback**: with `MARINA_ARENA_RESEARCH_REQUIRED=on`, research that fails no
+  longer skips the round; `MARINA_ARENA_RESEARCH_FALLBACK=closed-book|start|skip` (default
+  `closed-book`) files the same formation closed-book, else the start forecast, recorded as
+  `forecast.researchFallback` and keyed as a closed-book filing by the calibrators.
+- **Arena Wikipedia specialist** (`wiki-specialist[:<model>[,…][@<retrievers>]]`): the
+  `wiki-top10` ranking forecast from each candidate's projected target-week pageviews (a base level
+  plus an exponentially decaying excess with a page-specific half-life, weekday-corrected, ordered
+  by projected weekly sum with a discount on the transient share), read from the arena's daily top
+  lists and, for missing days, the Wikimedia REST API (rate-limited, cached, guarded, never after
+  the lock day − 2). Optional event models pool mechanically verified scheduled events into it,
+  capped by `MARINA_ARENA_WIKI_EVENTS_MAX_INSERT`. Walk-forward over 67 reconstructed weeks: mean
+  skill 0.106 against the recency nowcast's 0.041 (`scripts/arena-wiki-backtest.ts`). Runs as a
+  route (`wikipedia=wiki-specialist`) or a shadow challenger.
+
 - **Installable SDK**: `bun run pack:sdk` builds `@marina/agent-sdk` as a tarball you install with
   `bun add`, `npm install` or `pnpm add`. The docs import it by package name (#498).
 - **Command effects**: every builtin command form declares `read`, `write`, `execute` or `delete`.
@@ -76,6 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A research brief with only one of `until` / `untilAt` was searched as live (no upper date bound);
+  either field now bounds the search.
 - **Asset bytes are never orphaned.** Local storage reports a failed delete instead of treating it
   as "already gone". Retention keeps and retries an asset whose bytes could not be removed, and
   `asset delete` / `DELETE /api/assets/:id` report the failure (503) and keep the asset. A failed

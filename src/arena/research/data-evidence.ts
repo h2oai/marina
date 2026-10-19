@@ -21,9 +21,73 @@
 import { createHash } from "node:crypto";
 import { getErrorMessage } from "../../engine/errors";
 import type { DataHints, ForecastLookup, LookupResult } from "../../forecast/lookup-types";
-import { type LookupName, lookupsFromSpec, runLookups } from "../../forecast/lookups";
+import {
+  type LookupName,
+  lookupsFromSpec,
+  runLookups,
+  voteHubLookup,
+} from "../../forecast/lookups";
 import type { ResearchBrief } from "./briefs";
 import { isDateStrict, type ResearchReport, type Retriever } from "./retrieve";
+import { arenaLookupSpec, arenaSignalEntry, arenaSignalSet } from "./signal-map";
+
+/** FRED series per lookup call (the lookup's own cap); more named series run in chunks. */
+const FRED_CHUNK = 3;
+
+/**
+ * Freeze one non-FRED lookup line (a market price, a poll) under a unique URL
+ * whose provided text is the line's own payload, so the citation check
+ * verifies it against what was read at the cutoff rather than a live page
+ * that has moved on. The original link stays as the source's `origin`.
+ */
+export function freezeLookupLine(
+  name: string,
+  line: string,
+  asOf: string | undefined,
+): { line: string; source?: ResearchReport["sources"][number] } {
+  const link = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/.exec(line);
+  if (!link) return { line };
+  const origin = link[2]!.split("#")[0]!;
+  const payload = JSON.stringify({ lookup: name, asOf, line });
+  const digest = createHash("sha256").update(payload).digest("hex").slice(0, 32);
+  const url = `${origin}#marina-snapshot-${digest}`;
+  const observed = /^- (\d{4}-\d{2}-\d{2})/.exec(line)?.[1];
+  return {
+    line: line.replace(link[0], `[${link[1]}](${url})`),
+    source: {
+      url,
+      title: `${name} ${link[1]}`.trim(),
+      text: payload,
+      origin,
+      ...(observed ? { observedAt: observed } : {}),
+      ...(asOf ? { availableAt: asOf } : {}),
+    },
+  };
+}
+
+/** Run a FRED lookup over every named series, three at a time, merged into one result. */
+function chunkedFred(l: ForecastLookup): ForecastLookup {
+  return {
+    name: l.name,
+    lookup: async (query, cutoff, now, ctx) => {
+      const ids = ctx?.hints?.fred ?? [];
+      if (ids.length <= FRED_CHUNK) return l.lookup(query, cutoff, now, ctx);
+      const parts: LookupResult[] = [];
+      for (let i = 0; i < ids.length; i += FRED_CHUNK) {
+        const hints = { ...ctx!.hints, fred: ids.slice(i, i + FRED_CHUNK) };
+        parts.push(await l.lookup(query, cutoff, now, { ...ctx, hints }));
+      }
+      const ok = parts.filter((p) => !p.skipped || p.readings?.length);
+      if (ok.length === 0) return parts[0]!;
+      return {
+        ...ok[0]!,
+        lines: ok.flatMap((p) => p.lines),
+        sources: ok.flatMap((p) => p.sources),
+        readings: ok.flatMap((p) => p.readings ?? []),
+      };
+    },
+  };
+}
 
 /**
  * Official series related to an arena round (by round id): evidence of the
@@ -57,13 +121,28 @@ export function arenaLookupHints(brief: ResearchBrief): {
   return hit ? { hints: { ...hit.hints }, related: hit.why } : { hints: {} };
 }
 
-/** Task-matched explanatory changes; opt-in so historical controls keep their inputs. */
+/**
+ * Task-matched explanatory changes; opt-in so historical controls keep their
+ * inputs. `consumer` adds GASREGW and ICSA to Civiqs economic rounds; `all`
+ * adds every mapped signal for the round's family (`ARENA_SIGNAL_MAP`:
+ * FRED series, a market phrase and other pollsters' polls), after the
+ * default related series.
+ */
 export function arenaSignalHints(env: NodeJS.ProcessEnv) {
-  const expanded = env.MARINA_ARENA_RESEARCH_SIGNALS?.trim() === "consumer";
+  const set = arenaSignalSet(env);
   return (brief: ResearchBrief): ReturnType<typeof arenaLookupHints> => {
     const base = arenaLookupHints(brief);
+    if (set === "all") {
+      const entry = arenaSignalEntry(brief.roundId);
+      if (!entry) return base;
+      const fred = [...new Set([...(base.hints.fred ?? []), ...(entry.hints.fred ?? [])])];
+      return {
+        hints: { ...base.hints, ...entry.hints, ...(fred.length ? { fred } : {}) },
+        related: entry.why,
+      };
+    }
     if (
-      !expanded ||
+      set !== "consumer" ||
       !/^civiqs-.*-(econ-(now|direction)|family-finances|inflation-concern)$/.test(brief.roundId)
     )
       return base;
@@ -115,9 +194,13 @@ export function withDataLookups(
     const report = await inner(brief);
     const now = (opts.now ?? (() => new Date()))();
     const { hints, related } = (opts.hints ?? arenaLookupHints)(brief);
+    // A family's market phrase (`all`) is the search; otherwise the brief's queries.
     const query =
-      opts.query?.(brief) ?? brief.queries?.slice(0, 2).join(" ") ?? brief.request.slice(0, 200);
-    let lines: string[] = [];
+      opts.query?.(brief) ??
+      hints.markets ??
+      brief.queries?.slice(0, 2).join(" ") ??
+      brief.request.slice(0, 200);
+    const lines: string[] = [];
     const staleSeries: string[] = [];
     let evidence: LookupResult[] = [];
     const sources: ResearchReport["sources"] = [];
@@ -126,6 +209,7 @@ export function withDataLookups(
       const seriesNamed = !!(hints.fred?.length || hints.bls?.length);
       const usable = lookups
         .filter((l) => seriesNamed || (l.name !== "fred" && l.name !== "bls"))
+        .filter((l) => l.name !== "votehub" || !!hints.polls)
         .map(
           (l): ForecastLookup =>
             l.name !== "fred"
@@ -139,7 +223,7 @@ export function withDataLookups(
                       cutoff.getTime() < now.getTime()
                         ? new Date(Date.parse(cutoff.toISOString().slice(0, 10)) - 1)
                         : cutoff;
-                    return l.lookup(query, at, now, ctx);
+                    return chunkedFred(l).lookup(query, at, now, ctx);
                   },
                 },
         );
@@ -211,9 +295,12 @@ export function withDataLookups(
           }
           continue;
         }
-        lines = lines.concat(r.lines);
-        for (const s of r.sources)
-          sources.push({ url: s.url, ...(s.title ? { title: s.title } : {}) });
+        // Market prices and polls: each line frozen under its own payload URL.
+        for (const raw of r.lines) {
+          const frozen = freezeLookupLine(r.name, raw, r.asOf);
+          lines.push(frozen.line);
+          if (frozen.source) sources.push(frozen.source);
+        }
       }
     } catch (error) {
       warnings.push(`Structured data failed: ${getErrorMessage(error).slice(0, 160)}`);
@@ -239,10 +326,22 @@ export function withDataLookups(
   return isDateStrict(inner) ? Object.assign(wrapped, { dateStrict: true as const }) : wrapped;
 }
 
-/** `MARINA_ARENA_RESEARCH_LOOKUPS` (default off): the lookups arena research may add. */
+/**
+ * `MARINA_ARENA_RESEARCH_LOOKUPS` (default off; `polymarket,kalshi,fred,votehub`
+ * when unset under `MARINA_ARENA_RESEARCH_SIGNALS=all`): the lookups arena
+ * research may add. The general spec, plus `votehub` (other pollsters' polls),
+ * which `auto` and `all` include; it runs only for a round that names a poll
+ * quantity.
+ */
 export function arenaResearchLookups(env: NodeJS.ProcessEnv = process.env): ForecastLookup[] {
-  const spec = env.MARINA_ARENA_RESEARCH_LOOKUPS?.trim();
+  const spec = arenaLookupSpec(env).trim();
   if (!spec || spec.toLowerCase() === "off" || spec.toLowerCase() === "none") return [];
+  const items = spec
+    .toLowerCase()
+    .split(",")
+    .map((s) => s.trim());
+  const polls = items.some((s) => s === "votehub" || s === "polls" || s === "auto" || s === "all");
   // Odds have no arena family; everything else follows the general spec.
-  return lookupsFromSpec(spec, env).filter((l) => (l.name as LookupName) !== "odds");
+  const general = lookupsFromSpec(spec, env).filter((l) => (l.name as LookupName) !== "odds");
+  return polls ? [...general, voteHubLookup()] : general;
 }

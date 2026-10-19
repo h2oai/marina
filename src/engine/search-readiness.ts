@@ -11,6 +11,7 @@
 import { forecastRetrieverSpec } from "../forecast/retriever-default";
 import type { SearchBackendHealth } from "./search-providers/health";
 import { isQuotaOrAuthError, SEARCH_BACKOFF_MS } from "./search-providers/health";
+import { OPENROUTER_WEB_ENGINES } from "./search-providers/openrouter-web-engines";
 
 export interface SearchReadiness {
   status: "ok" | "degraded";
@@ -27,10 +28,14 @@ export function describeSearchReadiness(
   if (env.TAVILY_API_KEY?.trim()) configured.push("tavily");
   if (env.EXA_API_KEY?.trim()) configured.push("exa");
   if (env.SEARXNG_URL?.trim()) configured.push("searxng");
+  const deepseek = Boolean(env.DEEPSEEK_API_KEY?.trim());
+  const openrouter = Boolean(env.OPENROUTER_API_KEY?.trim());
   const chain = [
     ...configured,
     "duckduckgo",
-    ...(env.OPENROUTER_API_KEY?.trim() ? ["openrouter (Exa plugin, research)"] : []),
+    // Paid fallbacks after the free engine (DeepSeek's key may be set for chat alone).
+    ...(deepseek ? ["deepseek (Search API)"] : []),
+    ...(openrouter ? ["openrouter (Exa plugin, research)"] : []),
   ];
   const failing = health.filter(
     (h) =>
@@ -46,6 +51,9 @@ export function describeSearchReadiness(
   const parts = [
     `web search chain: ${chain.join(" → ")}`,
     `forecast retrieval: ${forecastRetrieverSpec(env)}`,
+    ...(openrouter
+      ? [`openrouter-web engines: ${OPENROUTER_WEB_ENGINES.join(", ")} (@<engine>[:<mode>])`]
+      : []),
     ...(working.length ? [`answering: ${working.map((h) => h.name).join(", ")}`] : []),
     ...failingText,
   ];
@@ -56,15 +64,15 @@ export function describeSearchReadiness(
       detail: parts.join("; "),
       remediation: keyedFailing
         ? "A search backend is failing (often an exhausted plan: Tavily answers HTTP 432). Queries fall through to the next backend; top up or replace the key, or set MARINA_RESEARCH_SEARCH_BACKENDS to reorder the chain."
-        : "Keyless search is failing (rate limit or outage). Configure TAVILY_API_KEY, EXA_API_KEY or SEARXNG_URL for a keyed backend.",
+        : "Keyless search is failing (rate limit or outage). Configure TAVILY_API_KEY, EXA_API_KEY, SEARXNG_URL or DEEPSEEK_API_KEY for a keyed backend.",
     };
   }
-  if (configured.length === 0 && !env.OPENROUTER_API_KEY?.trim()) {
+  if (configured.length === 0 && !openrouter && !deepseek) {
     return {
       status: "degraded",
       detail: `${parts.join("; ")} (keyless only)`,
       remediation:
-        "Only keyless DuckDuckGo search is configured. Set TAVILY_API_KEY, EXA_API_KEY or SEARXNG_URL (or OPENROUTER_API_KEY for web-grounded research) for more reliable evidence.",
+        "Only keyless DuckDuckGo search is configured. Set TAVILY_API_KEY, EXA_API_KEY, SEARXNG_URL or DEEPSEEK_API_KEY (or OPENROUTER_API_KEY for web-grounded research) for more reliable evidence.",
     };
   }
   return { status: "ok", detail: parts.join("; ") };
