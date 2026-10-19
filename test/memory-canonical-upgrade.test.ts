@@ -11,8 +11,8 @@ import { closeWorldMemoryService } from "../src/memory/world-service";
 import { MarinaDB } from "../src/persistence/database";
 import { numericMemoryIntegrity } from "../src/persistence/db-memory-projections";
 import { exportState, importState } from "../src/persistence/export-import";
-import { SCHEMA_BASELINE } from "../src/persistence/schema-baseline";
 import type { MemoryRecord } from "../src/sdk/memory-types";
+import { migrateEmptyTo } from "./schema-replay";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -28,7 +28,7 @@ function fixture() {
     // Match production initialization: one durable commit, not one fsync per DDL
     // statement. Autocommit setup can exhaust the test timeout on CI storage.
     old.transaction(() => {
-      old.exec(SCHEMA_BASELINE);
+      migrateEmptyTo(old, 137);
       seedLegacyFixture(old);
     })();
   } catch (error) {

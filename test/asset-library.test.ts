@@ -38,11 +38,11 @@ import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { memoryObserver } from "../src/net/memory/memory-visibility";
 import { MarinaDB } from "../src/persistence/database";
 import { assetCursor } from "../src/persistence/db-assets";
-import { FORWARD_MIGRATIONS, SCHEMA_BASELINE } from "../src/persistence/schema";
 import { LocalStorageProvider } from "../src/storage/local-provider";
 import type { EngineEvent, EntityId } from "../src/types";
 import { createTestEngine } from "./engine-fixture";
 import { MockConnection, stripAnsi } from "./helpers";
+import { migrateEmptyTo } from "./schema-replay";
 
 const REMOTE = "203.0.113.9";
 
@@ -78,14 +78,7 @@ describe("migration 168", () => {
   it("upgrades a 167 database: origin and provenance from metadata, FTS seeded, facts left for the backfill", () => {
     const path = join(dir, "w.db");
     const raw = new Database(path);
-    raw.exec(SCHEMA_BASELINE);
-    for (const m of FORWARD_MIGRATIONS.filter((m) => m.version < 168)) {
-      raw.transaction(() => {
-        raw.exec(m.sql);
-        m.apply?.(raw);
-        raw.run("INSERT OR REPLACE INTO schema_version (version) VALUES (?)", [m.version]);
-      })();
-    }
+    migrateEmptyTo(raw, 167);
     const insert = raw.prepare(
       `INSERT INTO assets (id, entity_name, filename, mime_type, size, storage_key, metadata, created_at)
        VALUES (?, 'Ann', ?, 'image/png', 3, ?, ?, 1000)`,

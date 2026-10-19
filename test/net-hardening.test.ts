@@ -31,7 +31,7 @@ import { validateOllamaRequest } from "../src/net/model-api/ollama";
 import { hasInternalBearer, upstreamAbort } from "../src/net/model-api/shared";
 import { MarinaDB } from "../src/persistence/database";
 import { hashMemApiKeySecret } from "../src/persistence/db-notes";
-import { FORWARD_MIGRATIONS } from "../src/persistence/schema";
+import { MIGRATIONS } from "../src/persistence/schema";
 import { createTestEngine } from "./engine-fixture";
 import { cleanupDb, MockConnection, until } from "./helpers";
 import { scopeProcessState } from "./process-state";
@@ -348,7 +348,7 @@ describe("memory API keys", () => {
       "Cara",
       now,
     ]);
-    const migration = FORWARD_MIGRATIONS.find((m) => m.version === 143)!;
+    const migration = MIGRATIONS.find((m) => m.version === 143)!;
     raw.exec(migration.sql);
     migration.apply!(raw);
     const rows = raw.query("SELECT id, secret FROM mem_api_keys ORDER BY id").all() as {

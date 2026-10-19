@@ -11,9 +11,9 @@ import { deliverOutcomes } from "../src/outcomes/deliver";
 import { resolveForecast } from "../src/outcomes/forecast";
 import { MarinaDB } from "../src/persistence/database";
 import { exportState, importState } from "../src/persistence/export-import";
-import { FORWARD_MIGRATIONS, SCHEMA_BASELINE } from "../src/persistence/schema";
 import type { InvestigationRequest } from "../src/sdk/investigation-types";
 import { binaryInvestigation } from "./fixtures/investigations";
+import { migrateEmptyTo } from "./schema-replay";
 
 const owner = { key: "owner-id", name: "owner" };
 const agent = { key: "agent-id", name: "external-agent" };
@@ -26,14 +26,7 @@ it("upgrades an existing media schema without replacing its migration or losing 
     const previous = new Database(path);
     let mediaTrigger: unknown;
     try {
-      previous.exec(SCHEMA_BASELINE);
-      for (const migration of FORWARD_MIGRATIONS.filter((entry) => entry.version <= 169)) {
-        previous.transaction(() => {
-          previous.exec(migration.sql);
-          migration.apply?.(previous);
-          previous.run("INSERT INTO schema_version(version) VALUES (?)", [migration.version]);
-        })();
-      }
+      migrateEmptyTo(previous, 169);
       previous.run(
         "INSERT INTO core_memory(entity_name, key, value, version, created_at, updated_at) VALUES (?, ?, ?, 1, 1, 1)",
         ["media:memory", "upgrade-fixture", "preserved"],

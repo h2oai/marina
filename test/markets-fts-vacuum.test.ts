@@ -4,7 +4,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { MarinaDB } from "../src/persistence/database";
-import { FORWARD_MIGRATIONS } from "../src/persistence/schema";
+import { MIGRATIONS } from "../src/persistence/schema";
 import { cleanupDb } from "./helpers";
 
 // Migration 144: `markets_fts` is keyed by the INTEGER PRIMARY KEY `seq`, so
@@ -79,7 +79,7 @@ describe("markets_fts survives VACUUM", () => {
     `);
     // Apply migration 144's SQL as the upgrade runner does: one transaction,
     // foreign keys ON (so a careless parent DROP would cascade).
-    const migration = FORWARD_MIGRATIONS.find((m) => m.version === 144)!;
+    const migration = MIGRATIONS.find((m) => m.version === 144)!;
     raw.run("PRAGMA foreign_keys=ON");
     raw.transaction(() => raw.exec(migration.sql))();
     raw.close();
