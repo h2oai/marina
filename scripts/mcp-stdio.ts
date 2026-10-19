@@ -12,6 +12,7 @@
  * `--data-dir` / `MARINA_DATA_DIR` (its `mcpUrl` and local key).
  */
 
+import type { Readable, Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -56,7 +57,13 @@ export function resolveMcpTarget(
   return { url: endpoint.mcpUrl, ...(key ? { token: key } : {}) };
 }
 
-export async function runMcpStdio(argv: string[]): Promise<number> {
+/** Streams the bridge reads and writes; tests pass their own. */
+export interface McpStdioIO {
+  stdin?: Readable;
+  stdout?: Writable;
+}
+
+export async function runMcpStdio(argv: string[], io: McpStdioIO = {}): Promise<number> {
   try {
     const { values } = parseArgs({
       args: argv,
@@ -74,10 +81,16 @@ export async function runMcpStdio(argv: string[]): Promise<number> {
     const upstream = new StreamableHTTPClientTransport(new URL(target.url), {
       requestInit: target.token ? { headers: { Authorization: `Bearer ${target.token}` } } : {},
     });
-    const local = new StdioServerTransport();
+    const stdin = io.stdin ?? process.stdin;
+    const local = new StdioServerTransport(stdin, io.stdout ?? process.stdout);
+    // The stdio transport never ends on its own: it ignores stdin EOF. A client
+    // that goes away closes our stdin, so end there — or the bridge (and its
+    // upstream MCP session) would outlive the client indefinitely.
     const closed = new Promise<void>((resolve) => {
       local.onclose = () => resolve();
       upstream.onclose = () => resolve();
+      stdin.once("end", () => resolve());
+      stdin.once("close", () => resolve());
     });
     local.onmessage = (message) => {
       upstream.send(message).catch((err) => {
@@ -96,6 +109,9 @@ export async function runMcpStdio(argv: string[]): Promise<number> {
     await local.start();
     process.stderr.write(`[marina mcp-stdio] forwarding to ${target.url}\n`);
     await closed;
+    // End the upstream session explicitly (HTTP DELETE) so Marina releases its
+    // connection now rather than when its stale-session sweep finds it.
+    await upstream.terminateSession().catch(() => undefined);
     await Promise.allSettled([upstream.close(), local.close()]);
     return 0;
   } catch (err) {

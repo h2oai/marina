@@ -3,6 +3,7 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { DATA_DIR_PATHS, dataDir } from "../config/data-dir";
 import { childSpendEnv } from "../engine/spend-ledger";
 import type { MarinaDB } from "../persistence/database";
 import { keySecretIsAutomatic } from "../persistence/key-secret-file";
@@ -93,7 +94,12 @@ export class WorldCollectiveManager {
     let wsPort = 34_000;
     while (usedPorts.has(wsPort)) wsPort += 10;
     if (wsPort > 65_500) throw new Error("No collective port range remains available.");
-    const variantRoot = join(this.sourceRoot, "data", "collective", input.name);
+    // Under MARINA_DATA_DIR every variant lives inside it (nothing in the
+    // checkout); otherwise in the source tree, as before.
+    const parentDataDir = dataDir();
+    const variantRoot = parentDataDir
+      ? join(parentDataDir, "collective", input.name)
+      : join(this.sourceRoot, "data", "collective", input.name);
     mkdirSync(join(variantRoot, "assets"), { recursive: true });
     return this.db.createWorldVariant({
       ...input,
@@ -116,7 +122,7 @@ export class WorldCollectiveManager {
     const child = Bun.spawn([process.execPath, "run", "src/main.ts"], {
       cwd: variant.source_root,
       env: {
-        ...inheritedChildEnv(),
+        ...inheritedChildEnv(process.env, dirname(variant.db_path)),
         MARINA_NAME: variant.name,
         MARINA_WORLD: variant.world_template,
         MARINA_COLLECTIVE_CHILD: "1",
@@ -243,13 +249,44 @@ export class WorldCollectiveManager {
   }
 }
 
+/** Model caches: read-mostly downloads a child may share with its parent rather than fetch again. */
+const SHARED_DATA_DIR_PATHS = new Set([
+  "MARINA_MEMORY_EMBEDDING_CACHE",
+  "MARINA_CORPUS_EMBEDDING_CACHE",
+]);
+
 /**
- * The parent's environment for a child world, minus an automatic
- * key-encryption secret: that secret belongs to the file next to the
- * PARENT's database, so the child mints its own beside its database.
+ * The parent's environment for a child world, minus what belongs to the
+ * parent alone:
+ *
+ * - an automatic key-encryption secret: it belongs to the file next to the
+ *   PARENT's database, so the child mints its own beside its database;
+ * - the parent's `MARINA_DATA_DIR` and the paths derived from it (auth
+ *   database, scratch): the child gets its own data directory, `variantDir`,
+ *   so it never writes the parent's `endpoint.json` or opens its auth
+ *   database. Model caches stay shared. An explicitly set path still passes;
+ * - the embedding lifecycle: no inherited `MARINA_IDLE_SHUTDOWN` (the parent
+ *   decides when a child stops) or `MARINA_SINGLE_PORT` (a child keeps the
+ *   port layout the collective assigns), and `MARINA_PARENT_PID` names THIS
+ *   process, so a child never outlives the Marina that started it.
  */
-export function inheritedChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function inheritedChildEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  variantDir?: string,
+): NodeJS.ProcessEnv {
   const copy = { ...env };
   if (keySecretIsAutomatic()) delete copy.MARINA_KEY_SECRET;
+  delete copy.MARINA_IDLE_SHUTDOWN;
+  delete copy.MARINA_SINGLE_PORT;
+  copy.MARINA_PARENT_PID = String(process.pid);
+  const parentDir = dataDir(env);
+  if (parentDir) {
+    for (const [key, name] of Object.entries(DATA_DIR_PATHS)) {
+      if (SHARED_DATA_DIR_PATHS.has(key)) continue;
+      if (copy[key] === join(parentDir, name)) delete copy[key];
+    }
+    if (variantDir) copy.MARINA_DATA_DIR = resolve(variantDir);
+    else delete copy.MARINA_DATA_DIR;
+  }
   return copy;
 }

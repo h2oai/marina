@@ -2039,16 +2039,16 @@ export class Engine {
     parkWorkCarry(this.db);
   }
 
-  /**
-   * Register detached work that may still write the database (an `evolve`
-   * trial or replication). `shutdown()` drains it — with async tick jobs —
-   * before the host closes persistence.
-   */
   /** Tracked background work or an async tick job is still running (idle shutdown waits for it). */
   hasBackgroundWork(): boolean {
     return this.background.size > 0 || this.tickScheduler.pendingCount > 0;
   }
 
+  /**
+   * Register detached work that may still write the database (an `evolve`
+   * trial or replication). `shutdown()` drains it — with async tick jobs —
+   * before the host closes persistence.
+   */
   trackBackground<T>(work: Promise<T>): Promise<T> {
     this.background.add(work);
     const done = () => this.background.delete(work);

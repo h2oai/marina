@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyDataDir, instanceEnvPath, scratchRoot } from "../src/config/data-dir";
@@ -62,5 +62,47 @@ describe("MARINA_DATA_DIR", () => {
     applyDataDir(env);
     expect(env.ANTHROPIC_API_KEY).toBe("from-file");
     expect(env.MARINA_WORLD).toBe("default");
+  });
+
+  test("its .env reaches settings read at module load (main imports the bootstrap first)", async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, ".env"), "MARINA_MAX_LOGINS=7\n");
+    const repo = join(import.meta.dir, "..");
+    // The same order as src/main.ts: the bootstrap, then a module that reads
+    // the environment while it loads.
+    const entry = join(dir, "entry.ts");
+    writeFileSync(
+      entry,
+      `import ${JSON.stringify(join(repo, "src/config/load-data-dir"))};\n` +
+        `import { MARINA_MAX_LOGINS } from ${JSON.stringify(join(repo, "src/engine/constants"))};\n` +
+        "process.stdout.write(String(MARINA_MAX_LOGINS));\n",
+    );
+    const env: Record<string, string> = { PATH: process.env.PATH ?? "", MARINA_DATA_DIR: dir };
+    const proc = Bun.spawn([process.execPath, "--no-env-file", entry], {
+      cwd: dir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    expect(await proc.exited, err).toBe(0);
+    expect(out).toBe("7");
+    // An explicit environment value still wins over the file.
+    const explicit = Bun.spawn([process.execPath, "--no-env-file", entry], {
+      cwd: dir,
+      env: { ...env, MARINA_MAX_LOGINS: "3" },
+      stdout: "pipe",
+    });
+    expect(await new Response(explicit.stdout).text()).toBe("3");
+    await explicit.exited;
+  });
+
+  test("src/main.ts imports the bootstrap before anything else", () => {
+    const main = readFileSync(join(import.meta.dir, "..", "src", "main.ts"), "utf8");
+    const firstImport = main.match(/^import [^;]*;/m)?.[0];
+    expect(firstImport).toBe('import "./config/load-data-dir";');
   });
 });
