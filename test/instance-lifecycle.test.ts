@@ -193,3 +193,62 @@ test("watchParent fires once when the parent is gone", async () => {
     stop();
   }
 });
+
+describe("streamed responses stay in flight", () => {
+  function sse(): { res: Response; push(s: string): void; end(): void } {
+    let ctl!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({ start: (c) => (ctl = c) });
+    return {
+      res: new Response(body, { headers: { "content-type": "text/event-stream" } }),
+      push: (text) => ctl.enqueue(new TextEncoder().encode(text)),
+      end: () => ctl.close(),
+    };
+  }
+
+  test("until the body is fully read, and idle shutdown waits for it", async () => {
+    let clock = 0;
+    const activity = new ActivityTracker(() => clock);
+    let idle = false;
+    const stop = startIdleShutdown({
+      idleMs: 1_000,
+      activity,
+      isBusy: () => false,
+      onIdle: () => (idle = true),
+      now: () => clock,
+      checkEveryMs: 5,
+    });
+    try {
+      const stream = sse();
+      const res = activity.endWithResponse(stream.res, activity.begin());
+      expect(res.headers.get("content-type")).toBe("text/event-stream");
+      const reader = res.body!.getReader();
+      stream.push("data: 1\n\n");
+      await reader.read();
+      clock = 5_000; // far past the idle window, the stream still open
+      await Bun.sleep(30);
+      expect(activity.inFlight).toBe(1);
+      expect(idle).toBe(false);
+      stream.end();
+      expect((await reader.read()).done).toBe(true);
+      expect(activity.inFlight).toBe(0);
+      expect(activity.lastActivityAt).toBe(5_000);
+      clock = 6_001;
+      await until(() => idle);
+    } finally {
+      stop();
+    }
+  });
+
+  test("a cancelled stream ends; a plain or absent response ends at once", async () => {
+    const activity = new ActivityTracker();
+    const stream = sse();
+    const res = activity.endWithResponse(stream.res, activity.begin());
+    expect(activity.inFlight).toBe(1);
+    await res.body!.cancel();
+    expect(activity.inFlight).toBe(0);
+    activity.endWithResponse(Response.json({ ok: true }), activity.begin());
+    expect(activity.inFlight).toBe(0);
+    expect(activity.endWithResponse(undefined, activity.begin())).toBeUndefined();
+    expect(activity.inFlight).toBe(0);
+  });
+});

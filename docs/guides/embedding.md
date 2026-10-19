@@ -11,7 +11,7 @@ compiled `marina` binary and the source checkout behave the same way.
 | `MARINA_DATA_DIR=<dir>` | Everything the instance writes lives here: `marina.db`, keys, `assets/`, `scratch/`, model caches, and the settings editor's `.env`. Nothing is written to the working directory. Explicit path settings (`DB_PATH`, `ASSETS_DIR`, …) still win. |
 | `WS_PORT=0` | Any free port. Internal self-calls follow the port actually bound. |
 | `MARINA_SINGLE_PORT=true` | `/mcp` is served on the HTTP port and the log viewer stays off, so the instance uses one port. |
-| `MARINA_IDLE_SHUTDOWN=15m` | Exit cleanly after 15 minutes with no external HTTP, WebSocket or MCP request. Health probes and Marina's own agents do not count; an open agent turn or background job postpones the exit. |
+| `MARINA_IDLE_SHUTDOWN=15m` | Exit cleanly 15 minutes after the last external use ends. External use is an HTTP or MCP request (until a streamed response finishes, so a long SSE answer or an MCP client's open event stream counts throughout), an open WebSocket or telnet connection (a dashboard tab included), or a message on one. An MCP session with no request or stream open does not count. Health probes and Marina's own agents do not count; an open agent turn (until its agent stops, at most 30 minutes) or background job postpones the exit. |
 | `MARINA_PARENT_PID=<pid>` | Exit cleanly when that process is gone (an owner that died without stopping Marina). |
 | `MARINA_SPEND_LEDGER=<file>` | Several instances (one per world, say) share one daily spend total and one `MARINA_DAILY_SPEND_CAP_USD`. |
 
