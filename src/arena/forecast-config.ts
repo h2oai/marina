@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { researchFeatures } from "../research/settings";
 import { proposalJudgeMode, proposalJudgeModel } from "./proposal-judge";
 import { horizonOptionsFromEnv } from "./research/civiqs-horizon";
+import { arenaLookupSpec } from "./research/signal-map";
 
 /** Explicit allowlist: never persist process.env or API keys in a forecast trace. */
 export function forecastSettings(spec: string, env: NodeJS.ProcessEnv, weight?: number) {
@@ -19,7 +20,8 @@ export function forecastSettings(spec: string, env: NodeJS.ProcessEnv, weight?: 
     routes: spec === "routed" ? (env.MARINA_ARENA_ROUTES ?? "*=nowcast") : undefined,
     horizon: horizonOptionsFromEnv(env),
     live: env.MARINA_ARENA_CIVIQS_LIVE?.trim().toLowerCase() !== "off",
-    lookups: env.MARINA_ARENA_RESEARCH_LOOKUPS ?? "off",
+    // As set, else off — except the lookups `MARINA_ARENA_RESEARCH_SIGNALS=all` turns on.
+    lookups: arenaLookupSpec(env),
     judge: env.MARINA_ARENA_RESEARCH_JUDGE ?? "jev",
     researchTrust: env.MARINA_ARENA_RESEARCH_TRUST ?? "0.5",
     weight: weight ?? 0.5,

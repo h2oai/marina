@@ -10,7 +10,45 @@ See [captured evidence and follow-ups](search.md#captured-evidence-and-bounded-f
 
 `MARINA_ARENA_RESEARCH_SIGNALS=consumer` adds FRED gasoline prices (GASREGW) and initial
 claims (ICSA) to Civiqs economic/household/inflation research. `MARINA_ARENA_RESEARCH_LOOKUPS`
-must include `fred`. The target's own history still sets its level; these different quantities
+must include `fred`.
+
+`MARINA_ARENA_RESEARCH_SIGNALS=all` adds every mapped outside signal for the round's family
+(`ARENA_SIGNAL_MAP` in `src/arena/research/signal-map.ts`, which documents each choice):
+
+| Family (round ids) | FRED series (vintage as of the lock) | Markets phrase | Polls (VoteHub) |
+| --- | --- | --- | --- |
+| Civiqs econ-now / econ-direction | UMCSENT, GASREGW, ICSA, UNRATE, CPIAUCSL, NASDAQCOM, T5YIE | US recession 2026 | — |
+| Civiqs family-finances | UMCSENT, GASREGW, ICSA, UNRATE, CPIAUCSL, NASDAQCOM | — | — |
+| Civiqs inflation-concern | CPIAUCSL, GASREGW, MICH, T5YIE, EXPINF1YR | How high will inflation get in 2026 | — |
+| Civiqs angry-share | UMCSENT, GASREGW | Trump approval rating | approval, Civiqs excluded |
+| Civiqs approval, profile and demographic cells | — | Trump approval rating | approval, Civiqs excluded |
+| Economist/YouGov approval, RV, strong; YouGov crosstabs | — | Trump approval rating | approval, YouGov excluded |
+| Economist/YouGov generic ballot | — | House control 2026 | generic ballot, YouGov excluded |
+| Harvard-Harris | — | Trump approval rating | approval, Harris excluded |
+| Morning Consult | — | Trump approval rating | approval, Morning Consult excluded |
+| Midterm specials | — | House control 2026 | generic ballot |
+| UMich sentiment and party | MICH, GASREGW, NASDAQCOM, ICSA, UNRATE, CPIAUCSL, T5YIE (never UMCSENT: the target itself, a month late) | — | — |
+| NY Fed SCE 1-year / 3-year | MICH or EXPINF3YR first, then EXPINF1YR, T5YIE, CPIAUCSL, GASREGW | How high will inflation get in 2026 | — |
+| AAII | NASDAQCOM, NASDAQ100, VIXCLS | S&P 500 close end of 2026 | — |
+| Google Trends, Wikipedia | none: no keyless, dated event calendar | — | — |
+
+With `all` and `MARINA_ARENA_RESEARCH_LOOKUPS` unset, the lookups are
+`polymarket,kalshi,fred,votehub`; set the variable to choose differently. FRED needs
+`FRED_API_KEY` for any past lock (keyless FRED is live-only); Polymarket, Kalshi and VoteHub are
+keyless. BLS is left out: it duplicates the FRED series and serves only the latest revision. FRED's
+SP500 (like DJIA) has no vintages, so a past lock cannot read it; the Nasdaq series stand in.
+The market phrases name 2026 contracts and need revisiting when the season rolls over.
+Every signal is cut at the lock: FRED reads the vintage of the lock's prior UTC day, markets the
+last price at or before the lock, and a VoteHub poll counts only when its whole listing day
+(`created_at`, taken to end 08:00 UTC the next day) precedes the lock, with the target's own
+pollster excluded; recency and the 14-day-versus-prior-14-day change use the fieldwork end, so a
+poll VoteHub lists months late is not read as news. Market and poll lines are frozen under their own payload URL, so the citation
+check verifies the price or poll that was read rather than a live page that has moved. The
+fingerprint records the effective lookups, so `all` is a separate shadow variant.
+
+Signal discovery (`src/arena/discovery/`) is not wired into formation evidence: its promoted
+signals are centre/spread forecasts from the round's own history, not dated outside facts, and
+none is promoted live. Adding one would be a formation start option tried in shadow first. The target's own history still sets its level; these different quantities
 are evidence of possible changes only. The consumer playbook also asks for dated NY Fed SCE
 household-finance, employment, income and credit evidence. It does not treat a newly downloaded
 workbook as an old information vintage.

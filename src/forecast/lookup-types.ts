@@ -22,6 +22,20 @@ export interface DataHints {
   fred?: string[];
   /** BLS series ids (for example `CUUR0000SA0`). */
   bls?: string[];
+  /** Published opinion polls of one quantity, from the VoteHub poll API (`lookup-polls.ts`). */
+  polls?: PollHints;
+}
+
+/** Which polls to read: a VoteHub poll type and subject, minus pollsters to leave out. */
+export interface PollHints {
+  /** VoteHub `poll_type`: `approval` (Approve − Disapprove) or `generic-ballot` (Dem − Rep). */
+  type: "approval" | "generic-ballot";
+  /** VoteHub `subject`, for example `Donald Trump` or `2026`. */
+  subject: string;
+  /** Pollster names (case-insensitive substrings) to drop — the target's own pollster. */
+  exclude?: string[];
+  /** How the lines name the quantity, for example `Trump approval`. */
+  label?: string;
 }
 
 /** What every lookup is told about the question beside the search phrase. */
