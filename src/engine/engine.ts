@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { scratchRoot } from "../config/data-dir";
 import { localHttpBase } from "../net/listen-ports";
 import { MARINA_ROOT } from "../runtime-paths";
 import { AuthCoordinator, type LoginIdentity, type LoginResult } from "./auth-coordinator";
@@ -91,7 +92,7 @@ import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
-import { attachSpendLedger, dbSpendSink } from "./spend-ledger";
+import { attachWorldSpendLedger } from "./spend-ledger";
 import { registerTickJobs } from "./tick-jobs";
 import { type TickJobStatus, TickScheduler } from "./tick-scheduler";
 
@@ -276,7 +277,7 @@ export class Engine {
     }
 
     // Initialize shell runtime
-    this.shellRuntime = new ShellRuntime(this.db);
+    this.shellRuntime = new ShellRuntime(this.db, scratchRoot());
     this.shellRuntime.init();
 
     // Initialize coordination managers if db is available
@@ -313,15 +314,16 @@ export class Engine {
       // MARINA_DAILY_SPEND_CAP_USD survives a restart (src/engine/spend-ledger.ts).
       const spendDb = this.db;
       // Command-line processes on the same DB_PATH attach the same ledger, so
-      // the day's total is shared across processes (re-read on every check).
+      // the day's total is shared across processes (re-read on every check);
+      // with MARINA_SPEND_LEDGER every process naming that file shares one
+      // total and one cap (src/engine/shared-spend-ledger.ts).
       spendDb.onClose(
-        attachSpendLedger(
-          dbSpendSink(spendDb, (error) =>
+        attachWorldSpendLedger(spendDb, {
+          onError: (error) =>
             tryLog(this.logger, "spend", "Daily spend not recorded", () => {
               throw error;
             }),
-          ),
-        ),
+        }),
       );
 
       // Route health: a first-party key's usage limit survives a restart, so
@@ -2042,6 +2044,11 @@ export class Engine {
    * trial or replication). `shutdown()` drains it — with async tick jobs —
    * before the host closes persistence.
    */
+  /** Tracked background work or an async tick job is still running (idle shutdown waits for it). */
+  hasBackgroundWork(): boolean {
+    return this.background.size > 0 || this.tickScheduler.pendingCount > 0;
+  }
+
   trackBackground<T>(work: Promise<T>): Promise<T> {
     this.background.add(work);
     const done = () => this.background.delete(work);

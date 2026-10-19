@@ -33,7 +33,16 @@
  * scoped process is refused when EITHER its scope cap OR the world's global
  * cap is reached — a scope only ever narrows the budget. An invalid scope name
  * refuses all spend rather than silently dropping the scope cap.
+ *
+ * Shared ledger: `MARINA_SPEND_LEDGER=<path>` (src/engine/shared-spend-ledger.ts)
+ * points several processes — one per world when a host embeds Marina — at
+ * ONE ledger file. Spend is recorded there AND in the world database (which
+ * keeps the per-world history and per-session cost readers working), but every
+ * cap check and every readout reads the shared file, so the cap is enforced on
+ * the total of every process sharing it.
  */
+
+import { openSharedSpendLedger, sharedSpendLedgerPath } from "./shared-spend-ledger";
 
 /** Where a dollar left Marina. `search` is a paid search API call (Tavily, Exa) — migration 158. */
 export type SpendSource = "model_api" | "agent" | "decision" | "forecast" | "media" | "search";
@@ -45,6 +54,10 @@ export interface SpendSink {
   totalFor(day: string): number;
   /** The persisted total for one scope; absent = the sink keeps no scopes. */
   scopeTotalFor?(day: string, scope: string): number;
+  /** Every scope's rows for the day; present when the sink is the shared ledger. */
+  scopeRowsFor?(day: string): { scope: string; cost_usd: number }[];
+  /** The shared ledger file this sink records into (`MARINA_SPEND_LEDGER`). */
+  sharedPath?: string;
 }
 
 let sink: { target: SpendSink } | undefined;
@@ -142,8 +155,67 @@ export function dbSpendSink(db: SpendLedgerStore, onError?: (error: unknown) => 
  * timer starts a fresh process each run. Returns the detach function; call it
  * before closing the database.
  */
-export function attachDbSpendLedger(db: SpendLedgerStore): () => void {
-  return attachSpendLedger(dbSpendSink(db));
+export function attachDbSpendLedger(
+  db: SpendLedgerStore,
+  env: NodeJS.ProcessEnv = process.env,
+): () => void {
+  return attachWorldSpendLedger(db, { env });
+}
+
+export interface WorldSpendLedgerOptions {
+  env?: NodeJS.ProcessEnv;
+  /** Where a failed write is reported instead of thrown (as `dbSpendSink`). */
+  onError?: (error: unknown) => void;
+}
+
+/**
+ * Attach this process's spend ledger: the world database's (when given) and,
+ * with `MARINA_SPEND_LEDGER` set, the shared ledger file too. With the shared
+ * file, spend is written to both and totals are read from the shared file, so
+ * the cap holds across every process — every world — that names it. Opening
+ * the shared file is fail-closed: an unusable `MARINA_SPEND_LEDGER` throws
+ * rather than quietly falling back to a per-world cap. Returns the detach
+ * function, which also closes the shared file.
+ */
+export function attachWorldSpendLedger(
+  db: SpendLedgerStore | undefined,
+  opts: WorldSpendLedgerOptions = {},
+): () => void {
+  const path = sharedSpendLedgerPath(opts.env ?? process.env);
+  if (!path) return db ? attachSpendLedger(dbSpendSink(db, opts.onError)) : () => {};
+  const shared = openSharedSpendLedger(path);
+  const world = db ? dbSpendSink(db) : undefined;
+  const release = attachSpendLedger({
+    add: (day, source, usd, scope) => {
+      let failure: unknown;
+      try {
+        shared.add(day, source, usd, scope);
+      } catch (error) {
+        failure = error;
+      }
+      try {
+        world?.add(day, source, usd, scope);
+      } catch (error) {
+        failure ??= error;
+      }
+      if (failure === undefined) return;
+      if (!opts.onError) throw failure;
+      opts.onError(failure);
+    },
+    totalFor: (day) => shared.totalFor(day),
+    scopeTotalFor: (day, scope) => shared.scopeTotalFor?.(day, scope) ?? 0,
+    scopeRowsFor: (day) => shared.scopeRowsFor(day),
+    sharedPath: shared.path,
+  });
+  return () => {
+    release();
+    shared.close();
+  };
+}
+
+/** The shared ledger file the attached ledger records into, if any. */
+export function activeSharedSpendLedger(): string | undefined {
+  return sink?.target.sharedPath;
 }
 
 let warnedInMemory = false;
@@ -195,13 +267,19 @@ export function spentTodayInScopeUsd(scope: string, now = Date.now()): number {
   return readScopeTotal(scope);
 }
 
-/** Every scope's persisted spend today, largest first. */
+/**
+ * Every scope's persisted spend today, largest first. With the shared ledger
+ * attached (`MARINA_SPEND_LEDGER`) this is the shared file's scopes — the
+ * totals the caps are checked against — not just this world's.
+ */
 export function scopeSpendToday(
   db: Pick<SpendLedgerStore, "getScopeDailySpend">,
   now = Date.now(),
 ): { scope: string; spentUsd: number }[] {
   const by = new Map<string, number>();
-  for (const row of db.getScopeDailySpend(utcDay(now))) {
+  const day = utcDay(now);
+  const rows = sink?.target.scopeRowsFor?.(day) ?? db.getScopeDailySpend(day);
+  for (const row of rows) {
     by.set(row.scope, (by.get(row.scope) ?? 0) + row.cost_usd);
   }
   return [...by]
@@ -276,6 +354,61 @@ export function childDailySpendCapEnv(env: NodeJS.ProcessEnv = process.env): str
   const child = own === undefined ? DEFAULT_CHILD_DAILY_SPEND_CAP_USD : own;
   if (child === null) return parent === undefined ? "off" : String(parent);
   return String(parent === undefined ? child : Math.min(child, parent));
+}
+
+/**
+ * The spend settings a World Collective child world is started with.
+ *
+ * Per-world ledger (default): `MARINA_DAILY_SPEND_CAP_USD` =
+ * {@link childDailySpendCapEnv} — the child's own database, its own total,
+ * never above the parent's cap.
+ *
+ * Shared ledger (`MARINA_SPEND_LEDGER`, inherited by the child, made absolute
+ * because the child runs in another directory): the child records into the
+ * SAME file, so its global cap is the parent's (one total, one cap), and its
+ * own budget becomes a scope — `child:<name>` capped at
+ * {@link childDailySpendCapEnv} — so it still cannot spend more than
+ * min(child cap, parent cap) of its own, and the family together cannot pass
+ * the parent's cap. A parent running under a scope passes that scope down
+ * with its cap lowered to min(child cap, scope cap); a name that cannot be a
+ * scope falls back to applying the child cap to the shared total.
+ */
+export function childSpendEnv(
+  childName: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const childCap = childDailySpendCapEnv(env);
+  const path = sharedSpendLedgerPath(env);
+  if (!path) return { MARINA_DAILY_SPEND_CAP_USD: childCap };
+  const parentCap = dailySpendCapUsd(env);
+  const shared = {
+    MARINA_SPEND_LEDGER: path,
+    MARINA_DAILY_SPEND_CAP_USD: parentCap === undefined ? "off" : String(parentCap),
+  };
+  const own = parseCap(childCap) ?? undefined;
+  const parentScope = spendScope(env);
+  if (parentScope?.valid) {
+    const scopeCap = spendScopeCapUsd(env);
+    const capped = [own, scopeCap].filter((v): v is number => v !== undefined);
+    return {
+      ...shared,
+      MARINA_SPEND_SCOPE: parentScope.name,
+      MARINA_SPEND_SCOPE_CAP_USD: capped.length ? String(Math.min(...capped)) : "off",
+    };
+  }
+  if (parentScope) return { ...shared, MARINA_DAILY_SPEND_CAP_USD: childCap };
+  const slug = childName
+    .toLowerCase()
+    .replace(/[^a-z0-9._:-]+/g, "-")
+    .replace(/^[^a-z0-9]+/, "")
+    .slice(0, 58);
+  const scope = spendScope({ MARINA_SPEND_SCOPE: `child:${slug}` });
+  if (!slug || !scope?.valid) return { ...shared, MARINA_DAILY_SPEND_CAP_USD: childCap };
+  return {
+    ...shared,
+    MARINA_SPEND_SCOPE: scope.name,
+    MARINA_SPEND_SCOPE_CAP_USD: childCap,
+  };
 }
 
 export interface ScopeSpendState {

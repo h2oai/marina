@@ -35,18 +35,20 @@ import {
   requestTrace,
   SSE_HEADERS,
 } from "./shared";
-import { proxyToUpstream } from "./upstream";
+import { explicitUpstreamModel, proxyToUpstream } from "./upstream";
 import {
   addUsage,
   firstMessage,
   isReadOnlyToolCall,
   type Msg,
+  parseVerifyModel,
   renderAssistant,
   renderReviewHead,
   renderTurns,
   repairModelFor,
   textOf,
   type Usage,
+  VERIFY_MODEL_PREFIX,
   withFirstMessage,
 } from "./verify";
 
@@ -83,6 +85,24 @@ export function parseEnsembleModels(model: unknown): string[] | { error: string 
       error: `${ENSEMBLE_MODEL_PREFIX} takes ${MIN_SIZE}–${MAX_SIZE} comma-separated model ids (got ${ids.length}).`,
     };
   return ids;
+}
+
+/**
+ * The ensemble's checker: the passthru pin when one applies, else the verify
+ * checker resolution for the first proposer (`MARINA_VERIFY_CHECKER_MODEL`,
+ * the earned `verify:checker` slot, else the proposer itself).
+ */
+export function ensembleChecker(engine: Engine, first: string, pin: string): string {
+  if (pin) return pin;
+  return (
+    parseVerifyModel(
+      `${VERIFY_MODEL_PREFIX}${first}`,
+      process.env,
+      undefined,
+      engine.db,
+      (id) => !!explicitUpstreamModel(engine, id),
+    )?.checker ?? first
+  );
 }
 
 export const ENSEMBLE_PICK_SYSTEM = [

@@ -55,6 +55,7 @@
 import { availableModels } from "../agent/available-models";
 import { positiveNumberFromEnv } from "../engine/constants";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
+import { localHttpBase } from "../net/listen-ports";
 import { LOCAL_PROVIDERS, localProviderBaseUrl } from "../net/model/model-discovery";
 import { selfModelToken } from "../net/model/self-model-token";
 import { type ClassifierMethod, parseClassifierMethod } from "./classifier-methods";
@@ -182,9 +183,9 @@ function classifierHost(
     : undefined;
 }
 
-/** `http://localhost:$WS_PORT/v1` — this Marina's own `/v1`. */
+/** This Marina's own `/v1` on the port its listener actually bound (`WS_PORT=0` included). */
 export function selfDecisionBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
-  return `http://localhost:${Number(env.WS_PORT) || 3300}/v1`;
+  return `${localHttpBase(env)}/v1`;
 }
 
 /** A chat classifier on Marina's own `/v1`, when the world routes any model at all. */

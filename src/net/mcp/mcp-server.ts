@@ -4,6 +4,7 @@
 import { hostname } from "node:os";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import type { Server } from "bun";
 import { getInternalModelToken } from "../../agent/agent-runtime";
 import { RateLimiter } from "../../auth/rate-limiter";
 import { secretsEqual } from "../../auth/secret-compare";
@@ -16,6 +17,7 @@ import type { Connection, Perception } from "../../types";
 import { handleConnectRoutes, healthResponse, registerConnectEndpoint } from "../api/connect-api";
 import { isTrustedBrowserOrigin } from "../cors";
 import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "../http-utils";
+import { instanceActivity } from "../instance-lifecycle";
 import { recordListenPort } from "../listen-ports";
 import { isLoopbackHostname } from "../loopback";
 import { RequestDrain } from "../request-drain";
@@ -190,21 +192,19 @@ export class McpServerAdapter {
     _flywheel: FlywheelToolBackend | undefined = engine.flywheel,
   ) {}
 
+  private warnedNoAllowedHosts = false;
+  private readonly bindHostname = resolveWsBindHostname();
+  private readonly loopbackBind = isLoopbackHostname(this.bindHostname);
+
+  /** Serve `/mcp` on its own listener (MCP_PORT). */
   start(): void {
-    const engine = this.engine;
-    const sessions = this.sessions;
     const self = this;
-
-    const bindHostname = resolveWsBindHostname();
-    const loopbackBind = isLoopbackHostname(bindHostname);
-    let warnedNoAllowedHosts = false;
-
     const serverOptions = {
       port: this.port,
       // Secure-by-default: bind loopback-only unless WS_HOST/MARINA_HOST is set
       // or MARINA_PUBLIC=true. Mirrors the WebSocket server so the MCP surface is
       // never silently exposed on all interfaces on a fresh desktop node.
-      hostname: bindHostname,
+      hostname: this.bindHostname,
       idleTimeout: WS_IDLE_TIMEOUT_SECONDS,
       maxRequestBodySize: 8 * 1024 * 1024,
       error(error: unknown) {
@@ -226,130 +226,27 @@ export class McpServerAdapter {
           const url = new URL(req.url);
 
           if (url.pathname === "/health") {
-            return healthResponse(engine, {
+            return healthResponse(self.engine, {
               protocol: "mcp",
-              admission: mcpAdmission(engine).snapshot(),
-              commands: engine.commandAdmission,
-              contextCache: engine.db ? contextCacheStats(engine.db) : undefined,
-              sessions: sessions.size,
+              admission: mcpAdmission(self.engine).snapshot(),
+              commands: self.engine.commandAdmission,
+              contextCache: self.engine.db ? contextCacheStats(self.engine.db) : undefined,
+              sessions: self.sessions.size,
             });
           }
 
           // Connect manifest, capability negotiation, skill document — the
           // same handlers the WebSocket listener serves.
-          const connectResp = await handleConnectRoutes(req, url, engine);
+          const connectResp = await handleConnectRoutes(req, url, self.engine);
           if (connectResp) return connectResp;
 
           if (url.pathname === "/mcp") {
-            // Browser-origin gate: a page on another site must not drive a
-            // loopback MCP endpoint (non-browser clients send no Origin and pass).
-            const origin = req.headers.get("Origin");
-            if (!isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind })) {
-              return new Response("Forbidden origin", {
-                status: 403,
-                headers: securityHeaders("api"),
-              });
+            const endActivity = instanceActivity.begin();
+            try {
+              return await self.handleMcp(req, server);
+            } finally {
+              endActivity();
             }
-
-            // Transport-layer bearer (keys configured / sign-in on / public bind).
-            const unauthorized = authenticateMcpTransport(req, engine, loopbackBind);
-            if (unauthorized) return unauthorized;
-
-            const sessionId = req.headers.get("mcp-session-id");
-            const session = sessionId ? sessions.get(sessionId) : undefined;
-
-            if (session) {
-              return await session.transport.handleRequest(req);
-            }
-
-            // Real socket peer for this session's client — used to key the
-            // login-attempt throttle. Without it, every MCP session falls back to
-            // its unique connId and each new session gets a fresh throttle bucket,
-            // bypassing checkLoginRate entirely (a flood of new sessions is never
-            // limited). Sharing one bucket per peer IP closes that bypass.
-            const peerIp = server.requestIP(req)?.address ?? undefined;
-
-            // Session creation is itself throttled per peer (MCP_SESSION limit,
-            // `MARINA_MCP_SESSIONS_PER_MIN`): every new transport allocates an
-            // engine connection, so an unauthenticated flood must be bounded. The
-            // bucket is scoped to this listener's port so two adapters in one
-            // process (tests, multi-instance hosts) never share a budget.
-            const throttleKey = `${server.port ?? self.port}|${peerIp ?? "unknown"}`;
-            if (!consumeHttpRate("mcpSession", throttleKey)) {
-              return rateLimitedResponse(origin, 60);
-            }
-
-            // DNS-rebinding protection: validate the Host header against the
-            // bind + `MARINA_MCP_ALLOWED_HOSTS`.
-            const allowedHosts = mcpAllowedHosts(
-              bindHostname,
-              server.port ?? self.port,
-              loopbackBind,
-            );
-            if (
-              !loopbackBind &&
-              !process.env.MARINA_MCP_ALLOWED_HOSTS?.trim() &&
-              !warnedNoAllowedHosts
-            ) {
-              warnedNoAllowedHosts = true;
-              logger.warn(
-                "mcp",
-                `Non-loopback bind without MARINA_MCP_ALLOWED_HOSTS — MCP accepts only these Host names: ${allowedHosts.join(", ")}. ` +
-                  "Set MARINA_MCP_ALLOWED_HOSTS=mcp.example.com[:port] to add the names clients use.",
-              );
-            }
-
-            // New session
-            const transport = new WebStandardStreamableHTTPServerTransport({
-              sessionIdGenerator: () => crypto.randomUUID(),
-              enableDnsRebindingProtection: true,
-              allowedHosts,
-              onsessioninitialized(newSessionId: string) {
-                const connId = `mcp_${++mcpIdCounter}`;
-                const newSession: McpSession = {
-                  connId,
-                  entityId: null,
-                  peerIp,
-                  throttleKey,
-                  perceptionBuffer: [],
-                  commandTail: Promise.resolve(),
-                  transport,
-                  mcp,
-                };
-
-                const conn: Connection = {
-                  id: connId,
-                  protocol: "mcp",
-                  entity: null,
-                  connectedAt: Date.now(),
-                  // Header-derived rate-limit/throttle key ONLY — never a trust
-                  // anchor (peerIp/loopback trust is left unset for MCP).
-                  ip: peerIp,
-                  send(perception: Perception) {
-                    newSession.perceptionBuffer.push(perception);
-                  },
-                  close() {
-                    sessions.delete(newSessionId);
-                    engine.removeConnection(connId);
-                  },
-                };
-
-                engine.addConnection(conn);
-                sessions.set(newSessionId, newSession);
-              },
-              onsessionclosed(closedSessionId: string) {
-                const s = sessions.get(closedSessionId);
-                if (s) {
-                  engine.removeConnection(s.connId);
-                  sessions.delete(closedSessionId);
-                }
-              },
-            });
-
-            const mcp = self.createMcpServer();
-            await mcp.connect(transport);
-
-            return await transport.handleRequest(req);
           }
 
           return new Response("Marina MCP Server — connect via MCP protocol at /mcp", {
@@ -379,16 +276,155 @@ export class McpServerAdapter {
       }
       if (!this.server) throw lastError;
     }
+    this.port = this.server.port ?? this.port;
+    this.ready();
+  }
 
+  /**
+   * Serve `/mcp` through another listener (`MARINA_SINGLE_PORT`): the HTTP
+   * server on `port` routes `/mcp` to {@link handle}, so an instance needs one
+   * port instead of two.
+   */
+  mount(port: number): void {
+    this.port = port;
+    this.ready();
+  }
+
+  /** One `/mcp` request arriving on a listener this adapter is mounted on. */
+  async handle(req: Request, server: Server<unknown>): Promise<Response> {
+    if (this.draining)
+      return Response.json(
+        { error: "Instance is draining", code: "draining" },
+        { status: 503, headers: { "Retry-After": "5" } },
+      );
+    const leave = this.requestDrain.enter();
+    try {
+      return await this.handleMcp(req, server);
+    } finally {
+      leave();
+    }
+  }
+
+  private ready(): void {
     // Periodic cleanup of stale MCP sessions (every 5 minutes)
     this.cleanupTimer = setInterval(() => this.cleanupStaleSessions(), 300_000);
-
-    this.port = this.server.port ?? this.port;
     registerConnectEndpoint(this.engine, "mcp", this.port);
     recordListenPort("mcp", this.port);
     logger.info("mcp", `MCP server listening on http://localhost:${this.port}/mcp`, {
       port: this.port,
     });
+  }
+
+  private async handleMcp(req: Request, server: Server<unknown>): Promise<Response> {
+    const engine = this.engine;
+    const sessions = this.sessions;
+    const { bindHostname, loopbackBind } = this;
+
+    // Browser-origin gate: a page on another site must not drive a
+    // loopback MCP endpoint (non-browser clients send no Origin and pass).
+    const origin = req.headers.get("Origin");
+    if (!isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind })) {
+      return new Response("Forbidden origin", {
+        status: 403,
+        headers: securityHeaders("api"),
+      });
+    }
+
+    // Transport-layer bearer (keys configured / sign-in on / public bind).
+    const unauthorized = authenticateMcpTransport(req, engine, loopbackBind);
+    if (unauthorized) return unauthorized;
+
+    const sessionId = req.headers.get("mcp-session-id");
+    const session = sessionId ? sessions.get(sessionId) : undefined;
+
+    if (session) {
+      return await session.transport.handleRequest(req);
+    }
+
+    // Real socket peer for this session's client — used to key the
+    // login-attempt throttle. Without it, every MCP session falls back to
+    // its unique connId and each new session gets a fresh throttle bucket,
+    // bypassing checkLoginRate entirely (a flood of new sessions is never
+    // limited). Sharing one bucket per peer IP closes that bypass.
+    const peerIp = server.requestIP(req)?.address ?? undefined;
+
+    // Session creation is itself throttled per peer (MCP_SESSION limit,
+    // `MARINA_MCP_SESSIONS_PER_MIN`): every new transport allocates an
+    // engine connection, so an unauthenticated flood must be bounded. The
+    // bucket is scoped to this listener's port so two adapters in one
+    // process (tests, multi-instance hosts) never share a budget.
+    const throttleKey = `${server.port ?? this.port}|${peerIp ?? "unknown"}`;
+    if (!consumeHttpRate("mcpSession", throttleKey)) {
+      return rateLimitedResponse(origin, 60);
+    }
+
+    // DNS-rebinding protection: validate the Host header against the
+    // bind + `MARINA_MCP_ALLOWED_HOSTS`.
+    const allowedHosts = mcpAllowedHosts(bindHostname, server.port ?? this.port, loopbackBind);
+    if (
+      !loopbackBind &&
+      !process.env.MARINA_MCP_ALLOWED_HOSTS?.trim() &&
+      !this.warnedNoAllowedHosts
+    ) {
+      this.warnedNoAllowedHosts = true;
+      logger.warn(
+        "mcp",
+        `Non-loopback bind without MARINA_MCP_ALLOWED_HOSTS — MCP accepts only these Host names: ${allowedHosts.join(", ")}. ` +
+          "Set MARINA_MCP_ALLOWED_HOSTS=mcp.example.com[:port] to add the names clients use.",
+      );
+    }
+
+    // New session
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+      enableDnsRebindingProtection: true,
+      allowedHosts,
+      onsessioninitialized(newSessionId: string) {
+        const connId = `mcp_${++mcpIdCounter}`;
+        const newSession: McpSession = {
+          connId,
+          entityId: null,
+          peerIp,
+          throttleKey,
+          perceptionBuffer: [],
+          commandTail: Promise.resolve(),
+          transport,
+          mcp,
+        };
+
+        const conn: Connection = {
+          id: connId,
+          protocol: "mcp",
+          entity: null,
+          connectedAt: Date.now(),
+          // Header-derived rate-limit/throttle key ONLY — never a trust
+          // anchor (peerIp/loopback trust is left unset for MCP).
+          ip: peerIp,
+          send(perception: Perception) {
+            newSession.perceptionBuffer.push(perception);
+          },
+          close() {
+            sessions.delete(newSessionId);
+            engine.removeConnection(connId);
+          },
+        };
+
+        engine.addConnection(conn);
+        sessions.set(newSessionId, newSession);
+      },
+      onsessionclosed(closedSessionId: string) {
+        const s = sessions.get(closedSessionId);
+        if (s) {
+          engine.removeConnection(s.connId);
+          sessions.delete(closedSessionId);
+        }
+      },
+    });
+
+    const mcp = this.createMcpServer();
+    await mcp.connect(transport);
+
+    return await transport.handleRequest(req);
   }
 
   getPort(): number {

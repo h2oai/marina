@@ -30,6 +30,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Run an autonomous coding task | [Coding in Marina](coding.md#first-autonomous-fix-copy-and-paste) | [Troubleshooting](troubleshooting.md) |
 | Keep coding, messages and world activity together | [Coding terminal](coding.md#start-in-your-project-folder) | [Coding desks](published-panels.md#create-a-coding-desk) |
 | Deploy a shared instance | [Deployment](deployment.md) | [Authentication](../authentication.md) |
+| Run Marina inside another application (start on demand, one data directory, idle shutdown) | [Embedding Marina](embedding.md) | [Model API](model-api.md) |
 | Back up or recover a world | [Backup and recovery](recovery.md) | Snapshots, restore, and recovering a damaged database |
 | Trace an input through the code | [Contributor workflows](contributor-workflows.md) | Terminal/API input through admission, execution, memory and verification |
 | Check supported contracts before upgrading | [Compatibility and upgrades](compatibility.md) | Supported contract per surface, how each is qualified, and upgrades |

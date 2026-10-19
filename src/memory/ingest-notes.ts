@@ -49,6 +49,7 @@
 
 import { createHash } from "node:crypto";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { localHttpBase } from "../net/listen-ports";
 import { samplingFor } from "../net/model/sampling-params";
 import type { MemoryRepository } from "../persistence/db-memory-service";
 import type { MemoryActor } from "../persistence/db-principals";
@@ -197,7 +198,7 @@ export function ingestNoteWriter(
   const model = ingestNotesModel(env);
   if (!model) return null;
   return chatNoteWriter({
-    baseUrl: deps.selfBaseUrl ?? `http://localhost:${Number(env.WS_PORT) || 3300}/v1`,
+    baseUrl: deps.selfBaseUrl ?? `${localHttpBase(env)}/v1`,
     model,
     apiKey: deps.token ?? internalToken,
     ...(deps.fetch ? { fetch: deps.fetch } : {}),

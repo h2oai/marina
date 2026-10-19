@@ -143,6 +143,7 @@ export default defineConfig({
             { label: "Building Worlds", slug: "docs/guides/building-worlds" },
             { label: "Configuration", slug: "docs/guides/configuration" },
             { label: "Deployment", slug: "docs/guides/deployment" },
+            { label: "Embedding Marina", slug: "docs/guides/embedding" },
             { label: "Operator Runbook", slug: "docs/guides/operator-runbook" },
             { label: "Testing", slug: "docs/guides/testing" },
             { label: "Dashboard Accessibility", slug: "docs/guides/dashboard-accessibility" },

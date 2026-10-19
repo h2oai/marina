@@ -42,6 +42,7 @@ import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { rankedServing } from "../memory/admission";
 import { residentMemoryOperation } from "../memory/resident-service";
+import { localHttpBase } from "../net/listen-ports";
 import { selfModelToken } from "../net/model/self-model-token";
 import type { MarinaDB } from "../persistence/database";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
@@ -219,7 +220,7 @@ export function lessonRecallSinkFor(db: MarinaDB): LessonSink {
 
 /** This Marina's own `/v1` base and the internal model token (no vendor key). */
 function selfBaseUrl(env: NodeJS.ProcessEnv): string {
-  return `http://localhost:${Number(env.WS_PORT) || 3300}/v1`;
+  return `${localHttpBase(env)}/v1`;
 }
 
 export interface SelfModelDeps {

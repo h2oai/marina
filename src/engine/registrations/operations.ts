@@ -4,6 +4,7 @@
 import { parseExecUnrestricted } from "../../coding/exec-approver";
 import { recoverCodingRuns } from "../../coding/task-run";
 import { VerificationRunner } from "../../coding/verification-runner";
+import { scratchRoot } from "../../config/data-dir";
 import { probeConfiguredProviders } from "../../net/model/model-api";
 import { describeRouteHealth } from "../../net/model/route-health";
 import { hasProviderKey } from "../../net/model-api/upstream";
@@ -159,7 +160,7 @@ export function registerOperationCommands(engine: Engine): void {
       db: engine.db,
       storage: engine.storage,
       logEvent: (event) => engine.logEvent(event as import("../../types").EngineEvent),
-      scratchRoot: "data/scratch",
+      scratchRoot: scratchRoot(),
       canvasGrants: engine.canvasGrants,
       look: (who, tokens) => lookReply(engine, who, tokens),
     }),

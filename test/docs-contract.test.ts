@@ -221,6 +221,7 @@ const ENV_VARS_OUTSIDE_SERVER_CATALOG = new Map<string, string>([
   ["MARINA_SMOKE_TOKEN", "script: smoke-production (docs/operations.md)"],
   // Memory-service clients: examples/memory-service/.env.example.
   ["MARINA_MEMORY_URL", "client: scripts/memory-mcp.ts and memory-service examples"],
+  ["MARINA_MCP_URL", "client: scripts/mcp-stdio.ts (`marina mcp-stdio` target)"],
   ["MARINA_MEMORY_TOKEN", "client: scripts/memory-mcp.ts and memory-service examples"],
   ["MARINA_MEMORY_SPACE", "client: scripts/memory-mcp.ts and memory-service examples"],
   // Research harnesses under scripts/research/ document their knobs in the file header.

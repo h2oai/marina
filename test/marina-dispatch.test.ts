@@ -25,6 +25,7 @@ import {
   USAGE,
 } from "../scripts/marina";
 import type { Perception } from "../src/sdk/client";
+import { BUILTIN_WORLD_SLUGS, BUILTIN_WORLD_SUMMARIES } from "../worlds";
 
 describe("marina dispatcher routing", () => {
   it("routes bare invocation to the coding flow with no dir", () => {
@@ -709,5 +710,35 @@ describe("one-shot exits say whether the work was verified", () => {
       { path: "src/a.ts", added: 2, removed: 1 },
       { path: "b.md", added: 1, removed: 1 },
     ]);
+  });
+});
+
+describe("embedding subcommands (SRV-8, SRV-11)", () => {
+  it("routes acp, mcp-stdio, memory-mcp, worlds and endpoint", () => {
+    expect(parseDispatch(["acp", "Ada"])).toEqual({ kind: "acp", rest: ["Ada"] });
+    expect(parseDispatch(["mcp-stdio", "--data-dir", "/d"])).toEqual({
+      kind: "mcp-stdio",
+      rest: ["--data-dir", "/d"],
+    });
+    expect(parseDispatch(["memory-mcp", "--space", "s"])).toEqual({
+      kind: "memory-mcp",
+      rest: ["--space", "s"],
+    });
+    expect(parseDispatch(["worlds"])).toEqual({ kind: "worlds", json: false });
+    expect(parseDispatch(["worlds", "--json"])).toEqual({ kind: "worlds", json: true });
+    expect(parseDispatch(["endpoint"])).toEqual({ kind: "endpoint", showKey: false });
+    expect(parseDispatch(["endpoint", "--data-dir", "/d", "--show-key"])).toEqual({
+      kind: "endpoint",
+      dataDir: "/d",
+      showKey: true,
+    });
+    expect(parseDispatch(["endpoint", "--data-dir"]).kind).toBe("usage-error");
+    expect(parseDispatch(["endpoint", "--bogus"]).kind).toBe("usage-error");
+  });
+
+  it("every builtin world has a one-line summary", () => {
+    for (const slug of BUILTIN_WORLD_SLUGS)
+      expect(BUILTIN_WORLD_SUMMARIES[slug]?.length).toBeGreaterThan(10);
+    expect(Object.keys(BUILTIN_WORLD_SUMMARIES).sort()).toEqual([...BUILTIN_WORLD_SLUGS].sort());
   });
 });

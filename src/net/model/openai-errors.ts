@@ -28,6 +28,8 @@ export type OpenAIErrorCode =
   | "decisions_disabled"
   // POST /v1/forecast without the keys forecasting needs (src/net/forecast-api.ts).
   | "forecast_unavailable"
+  // POST /v1/patterns/run with no model to run the members (src/net/api/patterns-api.ts).
+  | "pattern_unavailable"
   | "outcome_unbound"
   | "outcome_unavailable"
   | "outcome_unknown_request"

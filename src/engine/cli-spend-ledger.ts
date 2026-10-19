@@ -12,11 +12,13 @@
  *
  * The connection is the ledger's own, independent of whatever databases the
  * command opens and closes along the way; it is released and closed on exit.
- * Without a database path the process counts in memory and warns once.
+ * Without a database path the process counts in memory and warns once —
+ * unless `MARINA_SPEND_LEDGER` names a shared ledger file, which is then the
+ * process's ledger on its own (src/engine/shared-spend-ledger.ts).
  */
 
 import { MarinaDB } from "../persistence/database";
-import { attachDbSpendLedger, warnInMemorySpend } from "./spend-ledger";
+import { attachWorldSpendLedger, warnInMemorySpend } from "./spend-ledger";
 
 export interface CliSpendLedgerOptions {
   /** The world database. Default: `DB_PATH`; none ⇒ in-memory with a warning. */
@@ -33,19 +35,26 @@ export interface CliSpendLedgerOptions {
 export function attachCliSpendLedger(label: string, opts: CliSpendLedgerOptions = {}): () => void {
   const env = opts.env ?? process.env;
   const path = (opts.dbPath ?? env.DB_PATH)?.trim();
-  if (!path || path === ":memory:") {
+  const noWorld = !path || path === ":memory:";
+  if (noWorld && !env.MARINA_SPEND_LEDGER?.trim()) {
     warnInMemorySpend(label, opts.warn);
     return () => {};
   }
-  const db = new MarinaDB(path);
-  const release = attachDbSpendLedger(db);
+  const db = noWorld ? undefined : new MarinaDB(path);
+  let release: () => void;
+  try {
+    release = attachWorldSpendLedger(db, { env });
+  } catch (error) {
+    db?.close();
+    throw error;
+  }
   let closed = false;
   const close = () => {
     if (closed) return;
     closed = true;
     process.off("exit", close);
     release();
-    db.close();
+    db?.close();
   };
   process.once("exit", close);
   return close;

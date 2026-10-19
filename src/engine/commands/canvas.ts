@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { join } from "node:path";
+import { scratchRoot as defaultScratchRoot } from "../../config/data-dir";
 import { header, separator } from "../../net/ansi";
 import { guardedFetch } from "../../net/url-guard";
 import type { MarinaDB } from "../../persistence/database";
@@ -1343,7 +1344,7 @@ async function handleAsset(
           ctx.send(eid, "Invalid filename. Use a simple filename from your scratch directory.");
           return;
         }
-        const root = scratchRoot ?? "data/scratch";
+        const root = scratchRoot ?? defaultScratchRoot();
         const filePath = join(root, eid, filename);
         try {
           const file = Bun.file(filePath);

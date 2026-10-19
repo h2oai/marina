@@ -28,6 +28,7 @@ import {
 import {
   completionAsSse,
   ENSEMBLE_MODEL_PREFIX,
+  ensembleChecker,
   ensembleSize,
   ensembleTurn,
   parseEnsembleModels,
@@ -94,7 +95,6 @@ import {
 import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
 import {
   maybeVerifyChat,
-  parseVerifyModel,
   VERIFY_MODEL_PREFIX,
   type VerifyDraftInput,
   verifyPin,
@@ -170,24 +170,6 @@ function learnFor(
     ...(owner ? { owner } : {}),
     ran: !!owner && stack.members.has("learn") && lessonsFromWorkMode() !== "off",
   };
-}
-
-/**
- * The ensemble's checker: the passthru pin when one applies, else the verify
- * checker resolution for the first proposer (`MARINA_VERIFY_CHECKER_MODEL`,
- * the earned `verify:checker` slot, else the proposer itself).
- */
-function ensembleChecker(engine: Engine, first: string, pin: string): string {
-  if (pin) return pin;
-  return (
-    parseVerifyModel(
-      `${VERIFY_MODEL_PREFIX}${first}`,
-      process.env,
-      undefined,
-      engine.db,
-      (id) => !!explicitUpstreamModel(engine, id),
-    )?.checker ?? first
-  );
 }
 
 /** The members that ran, in declaration order. */
