@@ -21,28 +21,28 @@ link for validation, HTTP statuses, streaming and deployment-specific availabili
 
 ### `url.pathname === "/api/assets/sign"`
 
-[Source](../../src/net/api/asset-api.ts#L114)
+[Source](../../src/net/api/asset-api.ts#L115)
 
 - Guard: `url.pathname === "/api/assets/sign" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/assets\/(.+)$/)`
 
-[Source](../../src/net/api/asset-api.ts#L148)
+[Source](../../src/net/api/asset-api.ts#L149)
 
 - Guard: `idMatch && method === "DELETE"`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L208)
+[Source](../../src/net/api/asset-api.ts#L215)
 
 - Guard: `url.pathname === "/api/assets" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L215)
+[Source](../../src/net/api/asset-api.ts#L222)
 
 - Guard: `url.pathname === "/api/assets" && method === "GET" && url.searchParams.get("view") === "library"`
 - Guard: `method === "GET"`
@@ -51,7 +51,7 @@ Fields read here: `["1", "true"].includes(url.searchParams.get("facets") ?? "")`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L237)
+[Source](../../src/net/api/asset-api.ts#L244)
 
 - Guard: `url.pathname === "/api/assets" && method === "GET"`
 - Guard: `method === "GET"`
@@ -2060,13 +2060,13 @@ Fields read here: `model`, `name`.
 
 ### `url.pathname === "/mcp"`
 
-[Source](../../src/net/websocket-server.ts#L413)
+[Source](../../src/net/websocket-server.ts#L420)
 
 - Guard: `url.pathname === "/mcp" && self.mcpHandler`
 
 ### `url.pathname === "/dashboard-ws"`
 
-[Source](../../src/net/websocket-server.ts#L417)
+[Source](../../src/net/websocket-server.ts#L424)
 
 - Guard: `isWsUpgrade`
 
@@ -2074,7 +2074,7 @@ Fields read here: `server.upgrade(req, { data: { connId, isCanvas: true, canvasI
 
 ### `url.pathname === "/ws"`
 
-[Source](../../src/net/websocket-server.ts#L418)
+[Source](../../src/net/websocket-server.ts#L425)
 
 - Guard: `isWsUpgrade`
 
@@ -2082,7 +2082,7 @@ Fields read here: `server.upgrade(req, { data: { connId, isCanvas: true, canvasI
 
 ### `url.pathname === "/canvas-ws"`
 
-[Source](../../src/net/websocket-server.ts#L419)
+[Source](../../src/net/websocket-server.ts#L426)
 
 - Guard: `isWsUpgrade`
 
@@ -2090,21 +2090,21 @@ Fields read here: `server.upgrade(req, { data: { connId, isCanvas: true, canvasI
 
 ### `url.pathname === "/dashboard-ws"`
 
-[Source](../../src/net/websocket-server.ts#L455)
+[Source](../../src/net/websocket-server.ts#L462)
 
 - Guard: `isWsUpgrade`
 - Guard: `url.pathname === "/dashboard-ws"`
 
 ### `url.pathname === "/ws"`
 
-[Source](../../src/net/websocket-server.ts#L471)
+[Source](../../src/net/websocket-server.ts#L478)
 
 - Guard: `isWsUpgrade`
 - Guard: `url.pathname === "/ws"`
 
 ### `url.pathname === "/canvas-ws"`
 
-[Source](../../src/net/websocket-server.ts#L481)
+[Source](../../src/net/websocket-server.ts#L488)
 
 - Guard: `isWsUpgrade`
 - Guard: `url.pathname === "/canvas-ws"`
@@ -2113,152 +2113,152 @@ Fields read here: `server.upgrade(req, { data: { connId, isCanvas: true, canvasI
 
 ### `url.pathname.startsWith("/assets/")`
 
-[Source](../../src/net/websocket-server.ts#L513)
+[Source](../../src/net/websocket-server.ts#L520)
 
 - Guard: `url.pathname.startsWith("/assets/") && self.storage`
 
 ### `url.pathname.startsWith("/api/assets")`
 
-[Source](../../src/net/websocket-server.ts#L525)
+[Source](../../src/net/websocket-server.ts#L532)
 
 - Guard: `url.pathname.startsWith("/api/assets") && self.db && self.storage`
 
 ### `url.pathname.startsWith("/api/canvases")`
 
-[Source](../../src/net/websocket-server.ts#L538)
+[Source](../../src/net/websocket-server.ts#L545)
 
 - Guard: `url.pathname.startsWith("/api/canvases") && self.db`
 
 ### `url.pathname === "/mem"`
 
-[Source](../../src/net/websocket-server.ts#L560)
+[Source](../../src/net/websocket-server.ts#L567)
 
 - Guard: `(url.pathname === "/mem" &#124;&#124; url.pathname.startsWith("/mem/")) && self.db`
 
 ### `url.pathname.startsWith("/mem/")`
 
-[Source](../../src/net/websocket-server.ts#L560)
+[Source](../../src/net/websocket-server.ts#L567)
 
 - Guard: `(url.pathname === "/mem" &#124;&#124; url.pathname.startsWith("/mem/")) && self.db`
 
 ### `url.pathname === "/api/probe"`
 
-[Source](../../src/net/websocket-server.ts#L571)
+[Source](../../src/net/websocket-server.ts#L578)
 
 - Guard: `url.pathname === "/api/probe" && self.db`
 
 ### `url.pathname.startsWith("/api/entity/")`
 
-[Source](../../src/net/websocket-server.ts#L585)
+[Source](../../src/net/websocket-server.ts#L592)
 
 - Guard: `url.pathname.startsWith("/api/entity/") && self.db`
 
 ### `url.pathname.startsWith("/v1/memory")`
 
-[Source](../../src/net/websocket-server.ts#L596)
+[Source](../../src/net/websocket-server.ts#L603)
 
 - Guard: `url.pathname.startsWith("/v1/memory") && self.memoryService`
 
 ### `url.pathname.startsWith("/v1/")`
 
-[Source](../../src/net/websocket-server.ts#L604)
+[Source](../../src/net/websocket-server.ts#L611)
 
 - Guard: `req.method === "POST" && (url.pathname.startsWith("/v1/") &#124;&#124; isModelApiPath(url.pathname))`
 - Guard: `req.method === "POST"`
 
 ### `url.pathname.startsWith("/v1/")`
 
-[Source](../../src/net/websocket-server.ts#L608)
+[Source](../../src/net/websocket-server.ts#L615)
 
 - Guard: `url.pathname.startsWith("/v1/")`
 
 ### `url.pathname.startsWith("/api/auth")`
 
-[Source](../../src/net/websocket-server.ts#L634)
+[Source](../../src/net/websocket-server.ts#L641)
 
 - Guard: `url.pathname.startsWith("/api/auth")`
 
 ### `url.pathname.startsWith("/api/orchestration/")`
 
-[Source](../../src/net/websocket-server.ts#L648)
+[Source](../../src/net/websocket-server.ts#L655)
 
 - Guard: `url.pathname.startsWith("/api/orchestration/")`
 - Guard: `req.method === "OPTIONS"`
 
 ### `url.pathname.startsWith("/api/")`
 
-[Source](../../src/net/websocket-server.ts#L668)
+[Source](../../src/net/websocket-server.ts#L675)
 
 - Guard: `url.pathname.startsWith("/api/")`
 
 ### `url.pathname === "/health"`
 
-[Source](../../src/net/websocket-server.ts#L679)
+[Source](../../src/net/websocket-server.ts#L686)
 
 - Guard: `url.pathname === "/health"`
 
 ### `url.pathname === "/dashboard"`
 
-[Source](../../src/net/websocket-server.ts#L688)
+[Source](../../src/net/websocket-server.ts#L695)
 
 - Guard: `url.pathname === "/dashboard" &#124;&#124; url.pathname.startsWith("/dashboard/")`
 
 ### `url.pathname.startsWith("/dashboard/")`
 
-[Source](../../src/net/websocket-server.ts#L688)
+[Source](../../src/net/websocket-server.ts#L695)
 
 - Guard: `url.pathname === "/dashboard" &#124;&#124; url.pathname.startsWith("/dashboard/")`
 
 ### `url.pathname === "/dashboard"`
 
-[Source](../../src/net/websocket-server.ts#L690)
+[Source](../../src/net/websocket-server.ts#L697)
 
 - Guard: `url.pathname === "/dashboard" &#124;&#124; url.pathname.startsWith("/dashboard/")`
 
 ### `url.pathname === "/canvas"`
 
-[Source](../../src/net/websocket-server.ts#L712)
+[Source](../../src/net/websocket-server.ts#L719)
 
 - Guard: `url.pathname === "/canvas" &#124;&#124; url.pathname.startsWith("/canvas/")`
 
 ### `url.pathname.startsWith("/canvas/")`
 
-[Source](../../src/net/websocket-server.ts#L712)
+[Source](../../src/net/websocket-server.ts#L719)
 
 - Guard: `url.pathname === "/canvas" &#124;&#124; url.pathname.startsWith("/canvas/")`
 
 ### `url.pathname === "/who"`
 
-[Source](../../src/net/websocket-server.ts#L719)
+[Source](../../src/net/websocket-server.ts#L726)
 
 - Guard: `url.pathname === "/who" &#124;&#124; url.pathname.startsWith("/who/")`
 
 ### `url.pathname.startsWith("/who/")`
 
-[Source](../../src/net/websocket-server.ts#L719)
+[Source](../../src/net/websocket-server.ts#L726)
 
 - Guard: `url.pathname === "/who" &#124;&#124; url.pathname.startsWith("/who/")`
 
 ### `url.pathname === "/terminal"`
 
-[Source](../../src/net/websocket-server.ts#L723)
+[Source](../../src/net/websocket-server.ts#L730)
 
 - Guard: `url.pathname === "/terminal"`
 
 ### `url.pathname === "/"`
 
-[Source](../../src/net/websocket-server.ts#L728)
+[Source](../../src/net/websocket-server.ts#L735)
 
 - Guard: `url.pathname === "/"`
 
 ### `url.pathname === "/chat"`
 
-[Source](../../src/net/websocket-server.ts#L732)
+[Source](../../src/net/websocket-server.ts#L739)
 
 - Guard: `url.pathname === "/chat"`
 
 ### `url.pathname === "/ask"`
 
-[Source](../../src/net/websocket-server.ts#L736)
+[Source](../../src/net/websocket-server.ts#L743)
 
 - Guard: `url.pathname === "/ask"`

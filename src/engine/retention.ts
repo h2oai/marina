@@ -26,7 +26,7 @@
 import type { MarinaDB } from "../persistence/database";
 import { parseDuration } from "./commands/format-duration";
 import { EVENT_LOG_DB_RETENTION } from "./constants";
-import { logRejection } from "./errors";
+import { getErrorMessage } from "./errors";
 import { Logger } from "./logger";
 
 const logger = new Logger();
@@ -720,21 +720,33 @@ export async function pruneRequestImageBlobs(
   if (!policy || policy.disabled || policy.effectiveKeepMs === undefined) return 0;
   const before = (opts.now ?? Date.now()) - policy.effectiveKeepMs;
   let removed = 0;
+  let kept = 0;
   for (const asset of db.listAssetsByOrigin("request", before, REQUEST_IMAGE_BLOB_BATCH)) {
     // Thumbnails show the same pixels: their bytes go first, their rows cascade.
-    for (const d of db.listDerivatives([asset.id])) {
-      await storage.delete(d.storage_key).catch(
-        logRejection(logger, "retention", "request-image blob delete failed", {
-          fallback: false,
-        }),
-      );
+    // A row is dropped only once every blob it points at is gone, so a failed
+    // delete is retried next pass instead of orphaning bytes.
+    let failed = false;
+    for (const key of [
+      ...db.listDerivatives([asset.id]).map((d) => d.storage_key),
+      asset.storage_key,
+    ]) {
+      try {
+        await storage.delete(key);
+      } catch (err) {
+        failed = true;
+        logger.warn("retention", "request-image blob delete failed; asset kept for the next pass", {
+          asset: asset.id,
+          error: getErrorMessage(err),
+        });
+      }
     }
-    await storage
-      .delete(asset.storage_key)
-      .catch(
-        logRejection(logger, "retention", "request-image blob delete failed", { fallback: false }),
-      );
+    if (failed) {
+      kept++;
+      continue;
+    }
     if (db.deleteAsset(asset.id)) removed++;
   }
+  if (kept > 0)
+    logger.warn("retention", "request-image assets kept after blob delete failures", { kept });
   return removed;
 }

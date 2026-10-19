@@ -12,7 +12,11 @@ export interface StorageProvider {
   /** Retrieve stored data by key. Returns null if not found. */
   get(key: string): Promise<{ data: Uint8Array; mime: string } | null>;
 
-  /** Delete stored data by key. Returns true if deleted. */
+  /**
+   * Delete stored data by key. Returns true if deleted, false if nothing was
+   * stored under the key; throws when stored bytes could not be removed, so a
+   * caller never drops a record that still points at them.
+   */
   delete(key: string): Promise<boolean>;
 
   /** Resolve a key to a URL path suitable for HTTP serving. */
