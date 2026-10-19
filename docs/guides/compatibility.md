@@ -50,8 +50,9 @@ actively probes configured upstreams; a configured key or local URL alone is not
 of connectivity or successful agent work.
 
 For an offline upgrade, stop the instance and run
-`bun run memory:compatibility upgrade DB_PATH`. `status DB_PATH` reports integrity
-counts without content. The old backfill/retry commands and queue are retired.
+`bun run memory:compatibility upgrade DB_PATH`. `status DB_PATH` only reads: it reports
+the schema version and pending migrations, and integrity counts without content once
+the database is current. The old backfill/retry commands and queue are retired.
 A conversion failure preserves the previous schema and data for recovery.
 
 For new features, replace numeric-note creation with `memory remember <text>`,

@@ -82,8 +82,14 @@ bun run memory:compatibility upgrade "$DB_PATH"
 
 It takes the database lease, applies pending migrations, prints memory-integrity counts
 as JSON and exits nonzero if a migration failed or the counts show unconverted or broken
-records. (`memory:compatibility status` opens the database the same way, so it also
-migrates; run it on a copy if you only want to look.)
+records.
+
+To look without changing anything, run `bun run memory:compatibility status "$DB_PATH"`.
+It opens the database read-only, applies no migrations and takes no lease, so it is
+safe while the server runs. It prints the schema version on disk, the binary's latest
+version and the number of pending migrations; once none are pending it also prints the
+memory-integrity counts. It exits nonzero while migrations are pending (naming the
+`upgrade` command to run) or when the counts show unconverted or broken records.
 
 ## 5. Verify
 

@@ -56,7 +56,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `memory <sub>` | Standalone memory service admin: `init`, `serve`, `revoke`, `backup`, `restore`, `rotate-backups`, `compact-receipts`, transfers. See [Memory Service](memory-service.md). |
 | `memory:mcp` | Memory as a stdio MCP server for coding clients. See [Memory extensions](memory-extensions.md). |
 | `build:memory` | Build the browser memory SDK (`dist/memory.js`). |
-| `memory:compatibility status\|upgrade <db>` | Report numeric-memory integrity for a database, or upgrade it. See [Compatibility](compatibility.md). |
+| `memory:compatibility status\|upgrade <db>` | Report schema version, pending migrations and numeric-memory integrity without changing the database (`status`), or apply pending migrations (`upgrade`). See [Compatibility](compatibility.md). |
 
 ## Develop and test
 
