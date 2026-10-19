@@ -123,7 +123,11 @@ export async function dailyTopsForRound(
   const sources = { archive: 0, wikimedia: 0, missing: [] as string[], errors: [] as string[] };
   const days = await Promise.all(
     wanted.map(async (day): Promise<DailyTop | undefined> => {
-      const archived = await data.wikitopDay(`${project}.${access}`, day).catch(() => undefined);
+      // A failed archive read falls through to Wikimedia; the reason is kept with the others.
+      const archived = await data.wikitopDay(`${project}.${access}`, day).catch((err: unknown) => {
+        sources.errors.push(`archive ${day}: ${getErrorMessage(err)}`);
+        return undefined;
+      });
       if (archived?.articles && Object.keys(archived.articles).length) {
         sources.archive++;
         return { date: day, articles: archived.articles };
