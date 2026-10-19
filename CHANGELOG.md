@@ -72,6 +72,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only those locking within 24 h). `submit due --replace` also refiles every open round whose
   accepted filing is stale, whatever its lock. `MARINA_ARENA_ANCHOR_GUARD=on|observe|off`. Two
   Season-0 Economist/YouGov rounds filed at 36 / 18 locked against 38 / 21.
+- **Embedded Marina follow-ups** (#493):
+  - Child worlds get their own data directory under the parent's, so they never overwrite the
+    parent's `endpoint.json` or open its auth database.
+  - `<MARINA_DATA_DIR>/.env` applies before any module reads the environment.
+  - Idle shutdown waits for streamed responses and open WebSocket and telnet sessions.
+  - A stopped agent's open turn no longer blocks idle shutdown.
+  - `marina mcp-stdio` exits when its client goes away.
+  - `marina --help` lists the embedding subcommands.
 - With `WS_PORT=0`, the decision backend, lessons judge and note ingest called port 3300
   instead of the bound port.
 - **Code Mode clone sources** go through the shared SSRF guard: `code project clone` now also

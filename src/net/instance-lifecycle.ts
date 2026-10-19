@@ -6,7 +6,9 @@
  * process: find it (`endpoint.json`), let it go away when nobody uses it
  * (`MARINA_IDLE_SHUTDOWN`), and tie its life to a parent (`MARINA_PARENT_PID`).
  *
- * Activity is EXTERNAL use: HTTP, WebSocket and MCP requests from callers.
+ * Activity is EXTERNAL use: an HTTP or MCP request from a caller (in flight
+ * until a streamed response body ends — an MCP client's open event stream
+ * included), an open WebSocket or telnet connection, or a frame on one.
  * Marina's own agents calling its `/v1` with the internal token are not
  * activity, and an autonomous agent's turns never reset the idle clock (an
  * open turn only postpones the shutdown until it ends) — otherwise one
@@ -17,7 +19,14 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { parseDuration } from "../engine/commands/format-duration";
 
-/** Counts in-flight external requests and remembers when the last one ended. */
+/** Response types whose body is a long-lived stream. */
+const STREAMING_TYPE = /text\/event-stream|ndjson/i;
+
+/**
+ * Counts in-flight external use — requests (until a streamed body ends) and
+ * open interactive sessions (a WebSocket or telnet connection) — and
+ * remembers when the last one ended.
+ */
 export class ActivityTracker {
   private active = 0;
   private last: number;
@@ -26,7 +35,7 @@ export class ActivityTracker {
     this.last = now();
   }
 
-  /** One external request begins; call the returned function when it ends. */
+  /** One external request or session begins; call the returned function when it ends. */
   begin(): () => void {
     this.active++;
     this.last = this.now();
@@ -37,6 +46,43 @@ export class ActivityTracker {
       this.active--;
       this.last = this.now();
     };
+  }
+
+  /**
+   * Hand a request's `end` to its response: a streamed body (server-sent
+   * events, NDJSON) stays in flight until the body is fully read, cancelled or
+   * fails, so a long stream is never cut off by idle shutdown; any other
+   * response (or none, after a WebSocket upgrade) ends the request now.
+   */
+  endWithResponse<R extends Response | undefined>(res: R, end: () => void): R {
+    if (!res?.body || !STREAMING_TYPE.test(res.headers.get("content-type") ?? "")) {
+      end();
+      return res;
+    }
+    const reader = res.body.getReader();
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            end();
+            controller.close();
+          } else controller.enqueue(value);
+        } catch (err) {
+          end();
+          controller.error(err);
+        }
+      },
+      cancel(reason) {
+        end();
+        return reader.cancel(reason);
+      },
+    });
+    return new Response(body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    }) as R;
   }
 
   /** A one-shot external event (a WebSocket frame). */
@@ -100,29 +146,57 @@ export function startIdleShutdown(opts: IdleShutdownOptions): () => void {
   return () => clearInterval(timer);
 }
 
-/** Tracks open agent turns from `agent_turn_start` / `agent_turn_end` events. */
+/** An open turn older than this no longer postpones idle shutdown (a hung or lost turn). */
+export const MAX_OPEN_TURN_MS = 30 * 60_000;
+
+/**
+ * Tracks open agent turns from `agent_turn_start` / `agent_turn_end` events.
+ * A turn whose end never arrives cannot hold the instance up forever: an
+ * agent's turns are dropped when it stops (`agent_stop`, or an
+ * `agent_state_change` to `stopped`/`error`), and any turn older than
+ * `maxTurnMs` stops counting.
+ */
 export class OpenTurns {
-  private open = new Map<string, number>();
+  /** Start times of each agent's open turns, oldest first. */
+  private open = new Map<string, number[]>();
+  private readonly now: () => number;
+  private readonly maxTurnMs: number;
 
-  constructor(private readonly activity: ActivityTracker = instanceActivity) {}
+  constructor(
+    private readonly activity: ActivityTracker = instanceActivity,
+    opts: { now?: () => number; maxTurnMs?: number } = {},
+  ) {
+    this.now = opts.now ?? Date.now;
+    this.maxTurnMs = opts.maxTurnMs ?? MAX_OPEN_TURN_MS;
+  }
 
-  observe(event: { type: string; name?: string; origin?: string }): void {
+  observe(event: { type: string; name?: string; origin?: string; state?: string }): void {
     if (!event.name) return;
     if (event.type === "agent_turn_start") {
-      this.open.set(event.name, (this.open.get(event.name) ?? 0) + 1);
+      const starts = this.open.get(event.name) ?? [];
+      starts.push(this.now());
+      this.open.set(event.name, starts);
     } else if (event.type === "agent_turn_end") {
-      const n = (this.open.get(event.name) ?? 0) - 1;
-      if (n > 0) this.open.set(event.name, n);
-      else this.open.delete(event.name);
+      const starts = this.open.get(event.name);
+      starts?.shift();
+      if (!starts?.length) this.open.delete(event.name);
       // A turn that answered a caller is that caller's activity; an autonomous
       // turn is not (see the module comment).
       if (event.origin === "request") this.activity.touch();
+    } else if (
+      event.type === "agent_stop" ||
+      (event.type === "agent_state_change" &&
+        (event.state === "stopped" || event.state === "error"))
+    ) {
+      // A stopped or crashed agent ends no more turns.
+      this.open.delete(event.name);
     }
   }
 
   get count(): number {
+    const cutoff = this.now() - this.maxTurnMs;
     let n = 0;
-    for (const v of this.open.values()) n += v;
+    for (const starts of this.open.values()) for (const t of starts) if (t > cutoff) n++;
     return n;
   }
 }

@@ -64,7 +64,7 @@
 # @restart
 # MARINA_SINGLE_PORT=false
 
-# Shut down gracefully after this long with no external HTTP, WebSocket or MCP request, no open agent turn and no pending background work (`15m`, `900s`, `1h`; 0 or unset = never). Health probes and Marina's own agents calling its /v1 are not activity, and autonomous agent turns never reset the clock. For on-demand instances that a host starts when needed (see endpoint.json under MARINA_DATA_DIR).
+# Shut down gracefully after this long with no external use, no open agent turn and no pending background work (`15m`, `900s`, `1h`; 0 or unset = never). External use is an HTTP or MCP request (in flight until a streamed response — SSE or NDJSON, an MCP client's event stream included — ends), an open WebSocket (dashboard, chat, SDK) or telnet connection, or a frame on one; the clock starts when the last of them ends. An idle MCP session with no open stream does not count. Health probes and Marina's own agents calling its /v1 are not activity, autonomous agent turns never reset the clock, and an open turn stops postponing the exit when its agent stops or after 30 minutes. For on-demand instances that a host starts when needed (see endpoint.json under MARINA_DATA_DIR).
 # @restart
 # MARINA_IDLE_SHUTDOWN=0
 

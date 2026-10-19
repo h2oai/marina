@@ -11,9 +11,14 @@ compiled `marina` binary and the source checkout behave the same way.
 | `MARINA_DATA_DIR=<dir>` | Everything the instance writes lives here: `marina.db`, keys, `assets/`, `scratch/`, model caches, and the settings editor's `.env`. Nothing is written to the working directory. Explicit path settings (`DB_PATH`, `ASSETS_DIR`, …) still win. |
 | `WS_PORT=0` | Any free port. Internal self-calls follow the port actually bound. |
 | `MARINA_SINGLE_PORT=true` | `/mcp` is served on the HTTP port and the log viewer stays off, so the instance uses one port. |
-| `MARINA_IDLE_SHUTDOWN=15m` | Exit cleanly after 15 minutes with no external HTTP, WebSocket or MCP request. Health probes and Marina's own agents do not count; an open agent turn or background job postpones the exit. |
+| `MARINA_IDLE_SHUTDOWN=15m` | Exit cleanly 15 minutes after the last external use ends. External use is an HTTP or MCP request (until a streamed response finishes, so a long SSE answer or an MCP client's open event stream counts throughout), an open WebSocket or telnet connection (a dashboard tab included), or a message on one. An MCP session with no request or stream open does not count. Health probes and Marina's own agents do not count; an open agent turn (until its agent stops, at most 30 minutes) or background job postpones the exit. |
 | `MARINA_PARENT_PID=<pid>` | Exit cleanly when that process is gone (an owner that died without stopping Marina). |
 | `MARINA_SPEND_LEDGER=<file>` | Several instances (one per world, say) share one daily spend total and one `MARINA_DAILY_SPEND_CAP_USD`. |
+
+Settings resolve in this order, highest first: the process environment (including a `.env` that
+Bun loads from the working directory), then `<MARINA_DATA_DIR>/.env` (where the dashboard settings
+editor saves), then the built-in default. The data directory's `.env` is applied before any server
+module loads, so every setting in it takes effect on the next start.
 
 ## Finding a running instance
 
@@ -48,6 +53,12 @@ their own `MODEL_API_KEYS`. `marina endpoint --data-dir <dir>` prints the file w
 One world per instance: give each world its own data directory (`MARINA_WORLD=<slug>`), and the
 same `MARINA_SPEND_LEDGER` so the cap covers them all. `marina worlds --json` lists the worlds
 built into the binary.
+
+Child worlds an instance starts (the World Collective) live under its data directory
+(`<MARINA_DATA_DIR>/collective/<name>`), each with its own data directory, so a child never
+replaces the parent's `endpoint.json` or opens its auth database. A child exits with the Marina that
+started it and inherits neither `MARINA_IDLE_SHUTDOWN` nor `MARINA_SINGLE_PORT`. In-world benchmark
+result files go to `<MARINA_DATA_DIR>/benchmark-results`.
 
 ## Protocols
 

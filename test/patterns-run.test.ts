@@ -9,7 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { modelSourceEnvKeys } from "../src/agent/available-models";
@@ -81,6 +81,21 @@ const run = (
     ...(signal ? { signal } : {}),
   });
 const stages = (r: PatternRunResult) => r.trace.steps.map((s) => s.stage);
+
+describe("the protocols stay pure", () => {
+  it("text-patterns imports no network or engine module at runtime", () => {
+    const source = readFileSync(
+      join(import.meta.dir, "../src/orchestration/text-patterns.ts"),
+      "utf8",
+    );
+    const runtimeImports = [...source.matchAll(/^import (?!type )[^;]*?from "([^"]+)";/gms)].map(
+      (m) => m[1],
+    );
+    expect(runtimeImports.filter((p) => p?.includes("/net/") || p?.endsWith("/engine"))).toEqual(
+      [],
+    );
+  });
+});
 
 describe("the pattern catalogue split", () => {
   it("every catalogue pattern is either runnable here or crew-only, never both", () => {

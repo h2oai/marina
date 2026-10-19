@@ -241,11 +241,16 @@ export class McpServerAdapter {
           if (connectResp) return connectResp;
 
           if (url.pathname === "/mcp") {
+            // In flight until the response ends — an open event stream included.
             const endActivity = instanceActivity.begin();
             try {
-              return await self.handleMcp(req, server);
-            } finally {
+              return instanceActivity.endWithResponse(
+                await self.handleMcp(req, server),
+                endActivity,
+              );
+            } catch (err) {
               endActivity();
+              throw err;
             }
           }
 

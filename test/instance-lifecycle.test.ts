@@ -118,6 +118,37 @@ describe("idle shutdown", () => {
     expect(activity.lastActivityAt).toBe(20);
     expect(turns.count).toBe(0);
   });
+
+  test("a stopped or crashed agent's open turn stops postponing shutdown", () => {
+    const turns = new OpenTurns(new ActivityTracker(() => 0), { now: () => 0 });
+    turns.observe({ type: "agent_turn_start", name: "a" });
+    turns.observe({ type: "agent_turn_start", name: "b" });
+    turns.observe({ type: "agent_turn_start", name: "c" });
+    turns.observe({ type: "agent_stop", name: "a" });
+    expect(turns.count).toBe(2);
+    turns.observe({ type: "agent_state_change", name: "b", state: "error" });
+    expect(turns.count).toBe(1);
+    turns.observe({ type: "agent_state_change", name: "c", state: "autonomous" });
+    expect(turns.count).toBe(1);
+    turns.observe({ type: "agent_state_change", name: "c", state: "stopped" });
+    expect(turns.count).toBe(0);
+  });
+
+  test("a turn whose end never arrives expires after maxTurnMs", () => {
+    let clock = 0;
+    const turns = new OpenTurns(new ActivityTracker(() => clock), {
+      now: () => clock,
+      maxTurnMs: 1_000,
+    });
+    turns.observe({ type: "agent_turn_start", name: "a" });
+    clock = 600;
+    turns.observe({ type: "agent_turn_start", name: "a" });
+    expect(turns.count).toBe(2);
+    clock = 1_001;
+    expect(turns.count).toBe(1);
+    clock = 1_601;
+    expect(turns.count).toBe(0);
+  });
 });
 
 describe("endpoint.json", () => {
@@ -161,4 +192,63 @@ test("watchParent fires once when the parent is gone", async () => {
   } finally {
     stop();
   }
+});
+
+describe("streamed responses stay in flight", () => {
+  function sse(): { res: Response; push(s: string): void; end(): void } {
+    let ctl!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({ start: (c) => (ctl = c) });
+    return {
+      res: new Response(body, { headers: { "content-type": "text/event-stream" } }),
+      push: (text) => ctl.enqueue(new TextEncoder().encode(text)),
+      end: () => ctl.close(),
+    };
+  }
+
+  test("until the body is fully read, and idle shutdown waits for it", async () => {
+    let clock = 0;
+    const activity = new ActivityTracker(() => clock);
+    let idle = false;
+    const stop = startIdleShutdown({
+      idleMs: 1_000,
+      activity,
+      isBusy: () => false,
+      onIdle: () => (idle = true),
+      now: () => clock,
+      checkEveryMs: 5,
+    });
+    try {
+      const stream = sse();
+      const res = activity.endWithResponse(stream.res, activity.begin());
+      expect(res.headers.get("content-type")).toBe("text/event-stream");
+      const reader = res.body!.getReader();
+      stream.push("data: 1\n\n");
+      await reader.read();
+      clock = 5_000; // far past the idle window, the stream still open
+      await Bun.sleep(30);
+      expect(activity.inFlight).toBe(1);
+      expect(idle).toBe(false);
+      stream.end();
+      expect((await reader.read()).done).toBe(true);
+      expect(activity.inFlight).toBe(0);
+      expect(activity.lastActivityAt).toBe(5_000);
+      clock = 6_001;
+      await until(() => idle);
+    } finally {
+      stop();
+    }
+  });
+
+  test("a cancelled stream ends; a plain or absent response ends at once", async () => {
+    const activity = new ActivityTracker();
+    const stream = sse();
+    const res = activity.endWithResponse(stream.res, activity.begin());
+    expect(activity.inFlight).toBe(1);
+    await res.body!.cancel();
+    expect(activity.inFlight).toBe(0);
+    activity.endWithResponse(Response.json({ ok: true }), activity.begin());
+    expect(activity.inFlight).toBe(0);
+    expect(activity.endWithResponse(undefined, activity.begin())).toBeUndefined();
+    expect(activity.inFlight).toBe(0);
+  });
 });

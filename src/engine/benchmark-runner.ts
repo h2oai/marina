@@ -23,6 +23,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { dataDir } from "../config/data-dir";
 import { noteBenchmarkRun } from "../learning/intake";
 import { caseGuardFromItems } from "../learning/leak-guard";
 import { localHttpBase } from "../net/listen-ports";
@@ -97,6 +98,16 @@ export function categoryAccuracy(
 
 const DATASETS_DIR = "benchmarks/datasets";
 const RESULTS_DIR = "benchmarks/results";
+
+/**
+ * Where an in-world run's harness writes its result file: under
+ * `MARINA_DATA_DIR` when set (`<dir>/benchmark-results`, nothing in the
+ * checkout), else `benchmarks/results` in the working directory.
+ */
+export function benchmarkResultsDir(env: NodeJS.ProcessEnv = process.env): string {
+  const dir = dataDir(env);
+  return dir ? join(dir, "benchmark-results") : join(process.cwd(), RESULTS_DIR);
+}
 
 // Subset known to exist in benchmarks/harness.ts registry. Kept in sync
 // manually — if the harness adds a benchmark, add it here to expose it to
@@ -629,7 +640,7 @@ export class BenchmarkRunner {
     },
     started: number,
   ): Promise<void> {
-    const resultFile = join(process.cwd(), RESULTS_DIR, `${id}.json`);
+    const resultFile = join(benchmarkResultsDir(), `${id}.json`);
     // An arm or a cap: the harness talks to /v1 with a run key carrying them.
     const target = this.target();
     const stack = opts.arm ? armStack(opts.arm) : undefined;

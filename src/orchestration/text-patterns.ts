@@ -12,7 +12,7 @@
  * pass text between models. Each protocol is a small, bounded sequence of
  * stages; a checker model picks ONE whole answer where a protocol needs a
  * choice (answers are never merged), with the ensemble's JSON pick contract
- * (`parsePick`).
+ * (`parsePick`, `src/orchestration/pick.ts`).
  *
  * Patterns that need a persistent crew (roles, memory pools, tasks spread
  * over time) are refused here — they run as `marina:<crew>`.
@@ -24,7 +24,7 @@
 
 import { getErrorMessage } from "../engine/errors";
 import type { SpendGuard } from "../engine/spend-guard";
-import { parsePick } from "../net/model-api/ensemble";
+import { parsePick } from "./pick";
 
 /** One model call: a system prompt and a user message in, text and its cost out. Throws on failure. */
 export type TextComplete = (
