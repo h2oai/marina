@@ -131,7 +131,7 @@ then:
 
 **3. SDK agent** — create `hello.ts`:
 ```typescript
-import { MarinaAgent } from "./src/sdk/client";
+import { MarinaAgent } from "@marina/agent-sdk";
 
 const agent = new MarinaAgent("ws://localhost:3300");
 await agent.connect("HelloBot");
@@ -141,6 +141,8 @@ await agent.quit();
 ```bash
 bun run hello.ts
 ```
+Install `@marina/agent-sdk` first: `bun run pack:sdk` in this checkout, then `bun add <tarball>` in
+your project — see [Install the SDK](docs/guides/agent-development.md#install-the-sdk).
 
 **4. MCP** — register Marina's Streamable HTTP endpoint with Claude Code, then ask Claude to say hello:
 ```bash

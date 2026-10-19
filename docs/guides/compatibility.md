@@ -88,7 +88,8 @@ removal. During 0.x, removal requires a new minor version; after 1.0, removal re
 a major version and at least two minor releases and 90 days of notice. Security fixes
 may shorten the window, with an explicit upgrade advisory. Consumers should tolerate
 unknown additive response fields and must not derive authority from display text.
-Internal modules under `src/` are not SDK import paths.
+Internal modules under `src/` are not SDK import paths: install the package
+([Install the SDK](agent-development.md#install-the-sdk)) and import only its three entry points.
 
 A stability declaration does not enable experimental mechanisms. Promote defaults
 only with paired held-out evidence, including missing-provider/JEV behavior, false
