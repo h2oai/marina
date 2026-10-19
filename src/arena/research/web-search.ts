@@ -703,11 +703,13 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
 
   return async (brief: ResearchBrief): Promise<ResearchReport> => {
     const now = opts.now?.() ?? new Date();
-    const boundMs = Math.min(
+    // The earliest cutoff the brief states. Either field alone bounds it: a
+    // Math.min over a missing (NaN) one used to read as "no cutoff" — live.
+    const cutoffs = [
       brief.untilAt ? Date.parse(brief.untilAt) : Number.NaN,
       brief.until ? Date.parse(`${brief.until.slice(0, 10)}T23:59:59.999Z`) : Number.NaN,
-    );
-    const bound = Number.isFinite(boundMs) ? boundMs : now.getTime();
+    ].filter(Number.isFinite);
+    const bound = cutoffs.length ? Math.min(...cutoffs) : now.getTime();
     const live = now.getTime() - bound < LIVE_SLACK_MS;
     const sinceMs = brief.since
       ? Date.parse(`${brief.since.slice(0, 10)}T00:00:00.000Z`)

@@ -102,6 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A research brief with only one of `until` / `untilAt` was searched as live (no upper date bound);
+  either field now bounds the search.
 - **Arena anchor guard**: before signing, a filing's anchor (the latest reading its inputs saw) is
   compared with the arena's latest published value, per series or profile cell and tolerant of
   rounding. A stale anchor re-reads the inputs once, then re-anchors on the arena's value; the

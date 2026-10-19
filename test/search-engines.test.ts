@@ -416,6 +416,30 @@ describe("deepseek in the search chain", () => {
     await r(brief());
     expect(seen[0]).toEqual({ after: "2026-09-01T00:00:00.000Z" });
   });
+
+  it("either cutoff field alone bounds the search (a missing one is not 'live')", async () => {
+    const seen: Array<{ before?: string }> = [];
+    const backend: SearchProvider = {
+      name: "deepseek",
+      engines: ["web"],
+      async search(_q, opts) {
+        seen.push(opts.before ? { before: opts.before } : {});
+        return [];
+      },
+    };
+    const r = webSearchRetriever({
+      backends: [backend],
+      background: null,
+      http: noHttp,
+      fetchPage: async () => undefined,
+      now: () => new Date("2026-10-19T12:00:00.000Z"),
+    });
+    await r(brief({ untilAt: "2026-10-04T12:00:00.000Z" }));
+    expect(seen[0]).toEqual({ before: "2026-10-04T12:00:00.000Z" });
+    seen.length = 0;
+    await r(brief({ until: "2026-10-04" }));
+    expect(seen[0]).toEqual({ before: "2026-10-04T23:59:59.999Z" });
+  });
 });
 
 describe("search readiness", () => {
