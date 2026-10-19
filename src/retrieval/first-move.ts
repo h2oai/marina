@@ -237,6 +237,7 @@ export async function firstMove(question: string, opts: FirstMoveOptions): Promi
   const clues = opts.decomposer ? await decomposeQuestion(question, opts.decomposer) : [];
   // The question itself always searches too: a clue list never loses its baseline.
   const queries = [question, ...clues];
+  // allow-empty-catch: one failed query must not sink the fused ranking of the others
   const rankings = await Promise.all(queries.map((q) => opts.search(q, depth).catch(() => [])));
   const fused = fuseRankings(rankings);
   if (!opts.reranker && !opts.judge)

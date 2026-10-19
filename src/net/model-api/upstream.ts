@@ -715,6 +715,7 @@ async function dispatchOpenAICompatible(
           status: resp.status,
         },
       );
+      // allow-empty-catch: the error body is optional detail; the status is reported regardless
       const text = await resp.text().catch(() => "");
       return {
         response: null,
@@ -880,6 +881,7 @@ export function normalizeToolCallSSE(
           for (const part of parts) processLine(part, controller);
           if (finishEmitted) {
             controller.close();
+            // allow-empty-catch: the stream is finished; cancelling the upstream reader is cleanup
             reader.cancel().catch(() => {});
             return;
           }
@@ -890,6 +892,7 @@ export function normalizeToolCallSSE(
     },
     cancel(reason) {
       cancelled = true;
+      // allow-empty-catch: downstream cancelled; cancelling the upstream reader is cleanup
       reader.cancel(reason).catch(() => {});
     },
   });
@@ -1303,6 +1306,7 @@ export async function proxyToUpstream(
     const text = await response
       .clone()
       .text()
+      // allow-empty-catch: the error body is optional detail; the status is reported regardless
       .catch(() => "");
     let message = text;
     try {

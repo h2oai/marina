@@ -86,6 +86,7 @@ export class DurableResidentMemory {
       return run();
     };
     const next = this.pending.then(guarded, guarded);
+    // allow-empty-catch: serialization tail only; the caller awaits `next` and sees its error
     this.pending = next.catch(() => {});
     return withMemoryAbort(() => next, signal);
   }

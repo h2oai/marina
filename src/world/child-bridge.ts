@@ -28,6 +28,7 @@ export async function runInChild(
       body: JSON.stringify({ name: as, command }),
       signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
     });
+    // allow-empty-catch: a non-JSON body falls back to the HTTP status
     const body = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
     if (!res.ok) return { ok: false, error: body.error ?? `child replied HTTP ${res.status}` };
     return { ok: true, text: body.text ?? "" };

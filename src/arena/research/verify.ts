@@ -210,6 +210,7 @@ export async function readCapped(res: Response, maxBytes = MAX_PAGE_BYTES): Prom
     }
     out += decoder.decode();
   } finally {
+    // allow-empty-catch: releasing a body read that is already done or capped
     await reader.cancel().catch(() => undefined);
   }
   return out;
@@ -227,6 +228,7 @@ export function defaultPageText(timeoutMs = PAGE_TIMEOUT_MS, maxBytes = MAX_PAGE
         { maxHops: 3 },
       );
       if (!res.ok) {
+        // allow-empty-catch: discarding the body of a failed response
         await res.body?.cancel().catch(() => undefined);
         return undefined;
       }

@@ -8,7 +8,7 @@
  * a producer never waits on a judge and nothing is lost to a restart.
  */
 
-import { tryLog } from "../engine/errors";
+import { logRejection, tryLog } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import type { OutcomeInput, OutcomeKind } from "../persistence/db-outcomes";
@@ -50,7 +50,9 @@ export function deliverSoon(db: MarinaDB): void {
     const { deliverOutcomes } = await import("./deliver");
     do {
       state.again = false;
-      await deliverOutcomes(db).catch(() => undefined);
+      await deliverOutcomes(db).catch(
+        logRejection(logger, "outcomes", "outcome delivery pass failed"),
+      );
     } while (state.again);
   })().finally(() => scheduled.delete(db));
   scheduled.set(db, state);

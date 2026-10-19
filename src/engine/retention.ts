@@ -26,6 +26,10 @@
 import type { MarinaDB } from "../persistence/database";
 import { parseDuration } from "./commands/format-duration";
 import { EVENT_LOG_DB_RETENTION } from "./constants";
+import { logRejection } from "./errors";
+import { Logger } from "./logger";
+
+const logger = new Logger();
 
 export type RetentionKind = "telemetry" | "ledger" | "audit" | "append-only";
 
@@ -719,9 +723,17 @@ export async function pruneRequestImageBlobs(
   for (const asset of db.listAssetsByOrigin("request", before, REQUEST_IMAGE_BLOB_BATCH)) {
     // Thumbnails show the same pixels: their bytes go first, their rows cascade.
     for (const d of db.listDerivatives([asset.id])) {
-      await storage.delete(d.storage_key).catch(() => false);
+      await storage.delete(d.storage_key).catch(
+        logRejection(logger, "retention", "request-image blob delete failed", {
+          fallback: false,
+        }),
+      );
     }
-    await storage.delete(asset.storage_key).catch(() => false);
+    await storage
+      .delete(asset.storage_key)
+      .catch(
+        logRejection(logger, "retention", "request-image blob delete failed", { fallback: false }),
+      );
     if (db.deleteAsset(asset.id)) removed++;
   }
   return removed;

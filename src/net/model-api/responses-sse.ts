@@ -440,6 +440,7 @@ async function forEachSseData(
 ): Promise<void> {
   const reader = body.getReader();
   const cancel = () => {
+    // allow-empty-catch: cancelling an aborted stream; an already-closed reader rejects
     void reader.cancel(signal?.reason).catch(() => {});
   };
   signal?.addEventListener("abort", cancel, { once: true });
@@ -475,6 +476,7 @@ async function forEachSseData(
     if (buf.trim()) handle(buf);
   } catch (error) {
     // Stop paid upstream work when decoding or downstream processing fails.
+    // allow-empty-catch: stopping the upstream before rethrowing the real error
     await reader.cancel(error).catch(() => {});
     throw error;
   } finally {

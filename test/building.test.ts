@@ -177,6 +177,23 @@ describe("Building System", () => {
     expect(conn1.lastText()).toContain("valid");
   });
 
+  it("validate checks a staged draft without making it load on restart", () => {
+    // Staged by an authorized author; a rank-4 builder without world.code validates it.
+    db.saveRoomSource({
+      roomId: "test/start",
+      source: 'export default { short: "Staged", long: "Not applied yet" };',
+      authorId: conn1.entity!,
+      authorName: "Builder",
+      valid: false,
+    });
+    const builder = engine.entities.get(conn1.entity!)!;
+    setRank(builder, 4); // no world.code grant
+    engine.processCommand(conn1.entity!, "build validate test/start");
+    expect(conn1.lastText()).toContain("is valid");
+    // Only the world.code-gated `build reload` marks a version valid (loaded on restart).
+    expect(db.getRoomSource("test/start")!.valid).toBe(0);
+  });
+
   it("requires architect rank for destroy", () => {
     engine.processCommand(conn1.entity!, "build destroy test/north");
     expect(conn1.lastText()).toContain("Cannot destroy rooms");

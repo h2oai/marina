@@ -65,7 +65,7 @@ import { MemoryClientError } from "../../sdk/memory-client";
 import type { MemoryOperationRequest } from "../../sdk/memory-operations";
 import type { StorageProvider } from "../../storage/provider";
 import type { EngineEvent } from "../../types";
-import { getErrorMessage } from "../errors";
+import { getErrorMessage, logRejection } from "../errors";
 import { Logger } from "../logger";
 import { dailyCapRefusal } from "../spend-ledger";
 import { derivativeMode, MAX_DERIVE_BYTES, setAssetText, sha256Hex } from "./asset-library";
@@ -427,7 +427,12 @@ export async function extractPdfText(
     return { note: "external tools off (MARINA_ASSET_DERIVATIVES=off)" };
   if (!hasTool("pdftotext")) return { note: "pdftotext not installed" };
   if (row.size > MAX_DERIVE_BYTES) return { note: `larger than ${MAX_DERIVE_BYTES} bytes` };
-  const stored = await storage?.get(row.storage_key).catch(() => null);
+  const stored = await storage?.get(row.storage_key).catch(
+    logRejection(logger, "media", "stored asset bytes unreadable", {
+      level: "debug",
+      fallback: null,
+    }),
+  );
   if (!stored) return { note: "stored bytes missing" };
   const dir = await mkdtemp(join(tmpdir(), "marina-asset-text-"));
   try {
@@ -442,7 +447,9 @@ export async function extractPdfText(
     if (!capped.text) return { note: "no text in the PDF (scanned pages are not OCR'd)" };
     return { text: capped.text, ...(capped.truncated ? { truncated: true } : {}) };
   } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    await rm(dir, { recursive: true, force: true }).catch(
+      logRejection(logger, "media", "temp dir cleanup failed"),
+    );
   }
 }
 
@@ -499,7 +506,12 @@ async function visionStep(
   if (capped) return { vision: "pending", retry_at: now + SPEND_RETRY_MS, note: "spend_cap" };
   if (row.size > visionMaxBytes(opts.env))
     return { vision: "unavailable", note: "image larger than MARINA_VISION_MAX_BYTES" };
-  const stored = await host.storage?.get(row.storage_key).catch(() => null);
+  const stored = await host.storage?.get(row.storage_key).catch(
+    logRejection(logger, "media", "stored asset bytes unreadable", {
+      level: "debug",
+      fallback: null,
+    }),
+  );
   if (!stored) return { vision: "unavailable", note: "stored bytes missing" };
   const describe = opts.describe;
   if (!describe) return { vision: "unavailable", note: "no vision model route" };

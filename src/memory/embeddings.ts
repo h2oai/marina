@@ -171,7 +171,8 @@ export function openAIEmbeddings(opts: OpenAIEmbeddingOptions): EmbeddingProvide
     if (!response.ok) {
       const detail =
         response.status === 400 || response.status === 413
-          ? await response.text().catch(() => "")
+          ? // allow-empty-catch: the error body is optional detail; the status is reported regardless
+            await response.text().catch(() => "")
           : "";
       if (TOO_LONG.test(detail)) throw new TooLong(response.status);
       throw new MemoryError(

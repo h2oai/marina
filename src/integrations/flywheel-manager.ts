@@ -1,9 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { logRejection } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import type { FlywheelBindingRow, FlywheelBindingState, MarinaDB } from "../persistence/database";
 import type { EntityId } from "../types";
 import { FlywheelClient, type FlywheelEvent, type FlywheelFetch } from "./flywheel";
+
+const logger = new Logger();
 
 const AGENT_SCOPES = [
   "sandbox:create",
@@ -425,7 +429,9 @@ export class FlywheelManager implements FlywheelToolBackend {
     } catch (error) {
       await this.execDetailed(entityId, "rm", ["-f", "--", temporaryPath], "/", {
         timeoutMs,
-      }).catch(() => undefined);
+      }).catch(
+        logRejection(logger, "flywheel", "sandbox temp file cleanup failed", { level: "debug" }),
+      );
       this.recordOperation(
         entityId,
         "write",

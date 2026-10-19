@@ -7,6 +7,7 @@ import {
   type TaskClaim,
   type TaskManager,
 } from "../../coordination/task-manager";
+
 import { parseTaskNodeType, TASK_NODE_TYPE_MEANING } from "../../coordination/task-node-type";
 import { harnessDecisionProvider } from "../../decisions/engines";
 import type { Evidence } from "../../decisions/evidence";
@@ -31,8 +32,12 @@ import {
 import type { JudgeObservationInput } from "../../persistence/db-decisions";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { isOperatorPrincipal } from "../challenges";
+import { logRejection } from "../errors";
+import { Logger } from "../logger";
 import { mayActOn, ownershipRefusal } from "../ownership";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
+
+const logger = new Logger();
 
 const TASK_SUBS = [
   "list",
@@ -571,7 +576,7 @@ export function taskCommand(
                 logVerify(verdict, "observed");
                 observe(verdict);
               })
-              .catch(() => undefined);
+              .catch(logRejection(logger, "decisions", "observed submission verification failed"));
             trackBackground?.(observation);
             return;
           }

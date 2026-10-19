@@ -97,6 +97,7 @@ async function callMarina(messages: Array<{ role: string; content: string }>): P
     body: JSON.stringify({ model: MARINA_MODEL, messages, temperature: 0 }),
   });
   if (!resp.ok) {
+    // allow-empty-catch: the error body is optional detail; the status is reported regardless
     const body = await resp.text().catch(() => "");
     throw new Error(`Marina ${resp.status}: ${body.slice(0, 200)}`);
   }

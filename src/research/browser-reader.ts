@@ -134,19 +134,24 @@ export async function openBrowser(opts: BrowserOptions = {}): Promise<BrowserRea
           const response = await route.fetch({ maxRedirects: 0, timeout });
           await route.fulfill({ response });
         } catch {
+          // allow-empty-catch: the route may already be handled or its page closed
           await route.abort("failed").catch(() => undefined);
         }
       });
       await context.routeWebSocket(/.*/, (ws) => ws.close());
       const page = await context.newPage();
       const res = await page.goto(url, { waitUntil: "domcontentloaded", timeout });
+      // allow-empty-catch: networkidle is a best-effort wait; a busy page is still read
       await page.waitForLoadState("networkidle", { timeout: 6_000 }).catch(() => undefined);
       const status = res?.status() ?? 0;
       const html = await page.content();
+      // allow-empty-catch: innerText is optional; the HTML is the read
       const text = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+      // allow-empty-catch: the title is optional
       const title = await page.title().catch(() => undefined);
       const screenshot = await page
         .screenshot({ type: "jpeg", quality: 60, fullPage: false, timeout: 10_000 })
+        // allow-empty-catch: the screenshot is optional
         .catch(() => undefined);
       return {
         ok: status >= 200 && status < 300,
@@ -168,6 +173,7 @@ export async function openBrowser(opts: BrowserOptions = {}): Promise<BrowserRea
         error: getErrorMessage(e).slice(0, 200),
       };
     } finally {
+      // allow-empty-catch: closing a context whose page may already be gone
       await context.close().catch(() => undefined);
       release();
     }
@@ -175,6 +181,7 @@ export async function openBrowser(opts: BrowserOptions = {}): Promise<BrowserRea
 
   return {
     render,
+    // allow-empty-catch: closing a browser whose process may already be gone
     close: () => browser.close().catch(() => undefined),
   };
 }

@@ -211,6 +211,7 @@ export async function cmdTool(
     return result;
   });
   const completion = pending.finally(admission.release);
+  // allow-empty-catch: queue tail only; the caller awaits `completion` and sees its error
   session.commandTail = completion.catch(() => undefined);
   return completion;
 }

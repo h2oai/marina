@@ -34,6 +34,7 @@ async function request(
         : {}),
     });
     if (!res.ok) {
+      // allow-empty-catch: draining an error body; the status is reported regardless
       await res.text().catch(() => "");
       return { ok: false, error: `${label} HTTP ${res.status}` };
     }

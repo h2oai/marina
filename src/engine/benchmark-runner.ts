@@ -867,6 +867,7 @@ export class BenchmarkRunner {
 
   /** Resolves when run `id` has finished and been recorded (at once if it is not running). */
   async done(id: string): Promise<void> {
+    // allow-empty-catch: the run records its own failure; done() only waits for it to settle
     await this.active.get(id)?.catch(() => undefined);
   }
 

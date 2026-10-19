@@ -14,7 +14,8 @@
  * leakage, and needs no model.
  */
 
-import { getErrorMessage } from "../../engine/errors";
+import { getErrorMessage, logRejection } from "../../engine/errors";
+import { Logger } from "../../engine/logger";
 import type { ArenaData } from "../data";
 import type { ForecastOrigin, RoundForecast } from "../forecast";
 import { auditForecastFreshness, forecastCutoff, requireFreshForecast } from "../freshness";
@@ -27,6 +28,8 @@ import {
   horizonOptionsFromEnv,
   weeklyAnchorNowcast,
 } from "./civiqs-horizon";
+
+const logger = new Logger();
 
 type Net = true | { minuend: string[]; subtrahend: string[] };
 
@@ -182,7 +185,9 @@ export async function civiqsNowcast(
   // a live reading of the same or a later day is the fresher evidence. A
   // round whose lock has passed never does — a backtest sees the archive only.
   if (!live || Date.parse(round.lock_at) <= Date.now()) return archived;
-  const snap = await live(series.name, series.filters).catch(() => undefined);
+  const snap = await live(series.name, series.filters).catch(
+    logRejection(logger, "arena", "live Civiqs read failed", { level: "debug" }),
+  );
   const point = snap?.points.at(-1);
   if (!snap || !point) return archived;
   if (!eligibleObservationDay(point[0], asOf)) return archived;
@@ -238,7 +243,11 @@ async function latestArchivedSnapshot(
   const start = Date.parse(asOf.slice(0, 10));
   for (let back = 0; back <= maxLookbackDays; back++) {
     const day = new Date(start - back * 86_400_000).toISOString().slice(0, 10);
-    const snap = await data.civiqsSnapshot(dir, day).catch(() => undefined);
+    const snap = await data
+      .civiqsSnapshot(dir, day)
+      .catch(
+        logRejection(logger, "arena", "archived Civiqs snapshot unavailable", { level: "debug" }),
+      );
     if (!snap?.points.at(-1)) continue;
     if (!eligibleObservationDay(snap.points.at(-1)![0], asOf)) continue;
     const fetchedAt = (snap as { fetched_at?: string }).fetched_at;
@@ -297,7 +306,9 @@ export async function nowcastErrorFloor(
   const errors: NowcastErrorFloor["errors"] = [];
   for (const f of fridays) {
     const lockAt = new Date(Date.parse(f.date) - 2 * 86_400_000 + 14 * 3_600_000).toISOString();
-    const found = await latestArchivedSnapshot(data, series, lockAt, 6).catch(() => undefined);
+    const found = await latestArchivedSnapshot(data, series, lockAt, 6).catch(
+      logRejection(logger, "arena", "archived Civiqs snapshot unavailable", { level: "debug" }),
+    );
     const point = found?.snap.points.at(-1);
     if (!found || !point || point[0] >= f.date) continue;
     const reading = seriesValue(found.snap, point, series);
@@ -364,7 +375,9 @@ export async function civiqsDailySeries(
   const archived = found ? pick(found.snap, found.path) : undefined;
   // As for the nowcast: only an open round may read the dashboard itself.
   if (!opts.live || Date.parse(round.lock_at) <= Date.now()) return archived;
-  const snap = await opts.live(series.name, series.filters).catch(() => undefined);
+  const snap = await opts
+    .live(series.name, series.filters)
+    .catch(logRejection(logger, "arena", "live Civiqs read failed", { level: "debug" }));
   const last = snap?.points.at(-1);
   if (!snap || !last) return archived;
   if (!eligibleObservationDay(last[0], asOf)) return archived;
@@ -464,7 +477,7 @@ export function nowcastForecaster(
         horizon.phi,
         round.lock_at,
         cachedLive,
-      ).catch(() => undefined);
+      ).catch(logRejection(logger, "arena", "Civiqs horizon nowcast failed", { level: "debug" }));
       // Only when it read the same day the nowcast did (one snapshot, one answer).
       if (!hz || hz.lastDate !== n.date) return { mean: n.value, sd };
       return { mean: hz.mean, sd: hz.sd ?? sd, detail: hz.detail };
@@ -495,7 +508,9 @@ export function nowcastForecaster(
           weekly,
           horizon.phi,
           cachedLive,
-        ).catch(() => undefined);
+        ).catch(
+          logRejection(logger, "arena", "Civiqs horizon projection failed", { level: "debug" }),
+        );
         if (projected) c = { mean: projected.mean, sd: start.sd, detail: projected.detail };
       }
       const origin = selected ?? weekly;
@@ -620,7 +635,13 @@ export async function wikitopObservations(
   const days = Array.from({ length: daysBack }, (_, k) =>
     new Date(lockDay - (k + WIKITOP_PUBLICATION_LAG_DAYS) * 86_400_000).toISOString().slice(0, 10),
   );
-  const got = await Promise.all(days.map((d) => data.wikitopDay(dir, d).catch(() => undefined)));
+  const got = await Promise.all(
+    days.map((d) =>
+      data
+        .wikitopDay(dir, d)
+        .catch(logRejection(logger, "arena", "wikitop day unavailable", { level: "debug" })),
+    ),
+  );
   return got
     .filter((d): d is NonNullable<typeof d> => !!d)
     .map((d) => {
@@ -652,7 +673,9 @@ export async function trendsBasketHistory(
   for (let back = 0; back <= maxLookbackDays; back++) {
     const day = new Date(lock - back * 86_400_000).toISOString().slice(0, 10);
     for (const dir of await data.trendsBasketDirs()) {
-      const snap = await data.trendsSnapshot(dir, day).catch(() => undefined);
+      const snap = await data
+        .trendsSnapshot(dir, day)
+        .catch(logRejection(logger, "arena", "trends snapshot unavailable", { level: "debug" }));
       if (!snap) continue;
       const out = auditedTrendsHistory({ ...round, lock_at: cutoff }, snap, includePartial);
       if (out) return out;

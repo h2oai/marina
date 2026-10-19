@@ -313,6 +313,7 @@ async function jsonRequest<T>(
     clearTimeout(timer);
 
     if (!res.ok) {
+      // allow-empty-catch: the error body is optional detail; the status is reported regardless
       const text = await res.text().catch(() => "");
       return {
         ok: false,

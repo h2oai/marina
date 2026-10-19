@@ -31,7 +31,8 @@ import type { MarinaDB } from "../../persistence/database";
 import type { AssetRow } from "../../persistence/db-assets";
 import type { EngineEvent, EntityId } from "../../types";
 import type { Engine } from "../engine";
-import { getErrorMessage } from "../errors";
+import { getErrorMessage, logRejection } from "../errors";
+import { Logger } from "../logger";
 import { dailyCapRefusal, recordSpend } from "../spend-ledger";
 import { setAssetText } from "./asset-library";
 import { enforceMediaJobQuota } from "./manager";
@@ -54,6 +55,8 @@ import {
 } from "./providers/audio-util";
 import { publishGeneratedAsset, storeGeneratedAsset } from "./publish";
 import { hasTool, runTool } from "./vision";
+
+const logger = new Logger();
 
 type Env = Record<string, string | undefined>;
 
@@ -144,7 +147,9 @@ async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   try {
     return await fn(dir);
   } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    await rm(dir, { recursive: true, force: true }).catch(
+      logRejection(logger, "media", "temp dir cleanup failed"),
+    );
   }
 }
 

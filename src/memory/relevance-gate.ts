@@ -369,6 +369,7 @@ export async function gateRelevance(
       if (signal.aborted) onAbort();
       else signal.addEventListener("abort", onAbort, { once: true });
     });
+    // allow-empty-catch: observes the abort promise; the awaited race rethrows it
     expired.catch(() => undefined);
     try {
       const replies = await Promise.race([

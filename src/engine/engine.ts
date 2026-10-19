@@ -79,7 +79,7 @@ import { ConnectorRuntime } from "./connector-runtime";
 import { positiveNumberFromEnv, ROOM_FETCH_RATE_MS, ROOM_FETCH_TIMEOUT_MS } from "./constants";
 import { onDefaultResolved, summarizeDefaultValue } from "./default-resolution";
 import { sanitizeEntityName } from "./entity-name";
-import { getErrorMessage, tryLog, tryLogAsync } from "./errors";
+import { getErrorMessage, logRejection, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
 import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
@@ -2030,7 +2030,9 @@ export class Engine {
     if (!this.db) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
-      flushWorkLessons(this.db).catch(() => undefined),
+      flushWorkLessons(this.db).catch(
+        logRejection(this.logger, "engine", "work-lesson flush on shutdown failed"),
+      ),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, WORK_FLUSH_SHUTDOWN_TIMEOUT_MS);
       }),

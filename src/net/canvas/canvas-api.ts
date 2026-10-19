@@ -217,6 +217,7 @@ export async function handleCanvasApi(
     if (!canvas) return json({ error: "Canvas not found" }, 404);
 
     if (method === "POST" && !edgeId) {
+      // allow-empty-catch: a missing or malformed body is validated below as empty
       const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";
       const targetId = typeof body.targetId === "string" ? body.targetId : "";
@@ -304,6 +305,7 @@ export async function handleCanvasApi(
     const node = db.getNode(nodeId);
     if (!node || node.canvas_id !== canvasId) return json({ error: "Node not found" }, 404);
 
+    // allow-empty-catch: a missing or malformed body is validated below as empty
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const actorName = actorNameForRequest(body, engine, authenticatedEntityId);
 

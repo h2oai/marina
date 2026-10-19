@@ -173,6 +173,7 @@ export async function readBodyTextCapped(
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
+        // allow-empty-catch: releasing an over-cap body read
         await reader.cancel().catch(() => undefined);
         return tooLarge();
       }

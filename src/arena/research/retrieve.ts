@@ -31,7 +31,8 @@
  * (every source kept, costs summed), so several engines can research one brief.
  */
 
-import { getErrorMessage } from "../../engine/errors";
+import { getErrorMessage, logRejection } from "../../engine/errors";
+import { Logger } from "../../engine/logger";
 import { standaloneSearchHttp } from "../../engine/search-providers/asof-http";
 import {
   DATE_BOUND_PROVIDER_NAMES,
@@ -72,6 +73,8 @@ import {
   WEB_SEARCH_DEFAULTS,
   webSearchRetriever,
 } from "./web-search";
+
+const logger = new Logger();
 
 export type { RetrievalFunnel };
 export {
@@ -615,7 +618,9 @@ export function asOfRetriever(opts: AsOfRetrieverOptions = {}): DateStrictRetrie
       kept = await Promise.all(
         kept.map(async (r) => {
           if (!toRead.has(r.url)) return r;
-          const page = await waybackFetch(http, r.url, bound).catch(() => undefined);
+          const page = await waybackFetch(http, r.url, bound).catch(
+            logRejection(logger, "arena", "wayback fetch failed", { level: "debug" }),
+          );
           if (!page?.text || !withinBound(page.at, bound)) return r;
           return {
             ...r,

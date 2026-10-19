@@ -8,9 +8,13 @@
  * refreshes every six hours.
  */
 
+import { logRejection } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import { guardedFetch } from "../net/url-guard";
 import { type AnchorReference, type ArenaSiteData, anchorReferenceFromSite } from "./anchor";
 import type { ArenaLock, ArenaResolution, ArenaRound } from "./types";
+
+const logger = new Logger();
 
 export const DEFAULT_ARENA_DATA_URL =
   "https://raw.githubusercontent.com/Social-Atoms/social-sim-arena/main";
@@ -98,7 +102,9 @@ export class ArenaData {
     | undefined
   > {
     if (!/^[a-z0-9][a-z0-9_.-]{1,47}$/.test(id)) return undefined;
-    return this.json<{ entrant_id: string }>(`entrants/${id}.json`).catch(() => undefined) as never;
+    return this.json<{ entrant_id: string }>(`entrants/${id}.json`).catch(
+      logRejection(logger, "arena", "arena entrant lookup failed", { level: "debug" }),
+    ) as never;
   }
 
   async rounds(): Promise<ArenaRound[]> {

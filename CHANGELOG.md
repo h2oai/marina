@@ -46,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skill 0.106 against the recency nowcast's 0.041 (`scripts/arena-wiki-backtest.ts`). Runs as a
   route (`wikipedia=wiki-specialist`) or a shadow challenger.
 
+- **Installable SDK**: `bun run pack:sdk` builds `@marina/agent-sdk` as a tarball you install with
+  `bun add`, `npm install` or `pnpm add`. The docs import it by package name (#498).
+- **Command effects**: every builtin command form declares `read`, `write`, `execute` or `delete`.
+  The command reference shows it, MCP tools for read forms carry `readOnlyHint`, and new commands
+  must declare one (#502).
 - **Arena proposal judge**: delphi and symbiosis formations with a verified research dossier ask a
   decision model (Jev by default) whether each member's move from the start is supported by the
   verified lines; support weights the median move and can only lower the trust, any judge failure
@@ -84,6 +89,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Faster fresh installs**: new databases start from the schema-167 baseline (v0.8.0) instead of
+  137, about 2.5× faster to create. Existing databases upgrade exactly as before (#500).
+- **Silent promise failures are logged or justified**: the empty-catch check covers
+  `.catch(() => {})`. Best-effort failures now log through module loggers; the rest carry a reason (#501).
+- **`project budget` durations** go through the shared duration parser, which now accepts the
+  same decimals and `ms` (#499).
 - **Arena poll-level start**: scalar rounds of Economist/YouGov, Morning Consult and AAII start
   from the average of persistence and the arena's EWMA with sd half its own recent RMS error
   (walk-forward mean per-round skill 0.11 / 0.15 over pre-lock history, 0.15 / 0.30 / 0.43 on
@@ -104,6 +115,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A research brief with only one of `until` / `untilAt` was searched as live (no upper date bound);
   either field now bounds the search.
+- **`memory:compatibility status` only reads.** It no longer upgrades the database it inspects; it
+  reports pending migrations and points to `upgrade` (#497).
+- **`build validate` no longer makes staged room code loadable.** Only the `world.code`-gated
+  `build reload` marks a version valid for loading on restart (#503).
 - **Arena anchor guard**: before signing, a filing's anchor (the latest reading its inputs saw) is
   compared with the arena's latest published value, per series or profile cell and tolerant of
   rounding. A stale anchor re-reads the inputs once, then re-anchors on the arena's value; the

@@ -652,6 +652,7 @@ async function guardedPage(
     );
     const contentType = res.headers.get("content-type") ?? "";
     if (!res.ok || (contentType && !/html|text\/plain|xml/i.test(contentType))) {
+      // allow-empty-catch: discarding the body of a response we refuse
       await res.body?.cancel().catch(() => undefined);
       return undefined;
     }

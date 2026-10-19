@@ -67,7 +67,7 @@ import {
   UPSTREAM_ERROR_PAUSE_MS,
   upstreamErrorBackoffMs,
 } from "../engine/constants";
-import { getErrorMessage } from "../engine/errors";
+import { getErrorMessage, logRejection } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { takeSettledProxyCall } from "../engine/proxy-settlement";
 import {
@@ -1958,7 +1958,13 @@ export class LeanAgentAdapter implements AgentHandle {
             "archive-fallback",
             `n:${messages.length}`,
           ])
-          .catch(() => {});
+          .catch(
+            logRejection(
+              this.log,
+              LEAN_AGENT_LOG_CATEGORY,
+              "compaction archive-fallback note failed",
+            ),
+          );
       }
     };
 
@@ -2951,7 +2957,9 @@ export class LeanAgentAdapter implements AgentHandle {
       this.focusSource = persistedFocus.description === this.config.goal ? "config" : "agent";
     } else if (this.focus) {
       // First run with a config goal — record it so a later restart resumes it.
-      this.platformMemory.saveFocus(this.focus).catch(() => {});
+      this.platformMemory
+        .saveFocus(this.focus)
+        .catch(logRejection(this.log, LEAN_AGENT_LOG_CATEGORY, "could not persist focus"));
     }
     // The agent's own loop instruments (rest, channel budget, persistent
     // focus, autonomy) survive restarts like its focus does.
@@ -3053,6 +3061,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // Without this, stop() blocks for up to one full cycle while the
     // current prompt() runs to completion.
     this.agent.abort();
+    // allow-empty-catch: abort() rejects the in-flight prompt; stop only needs it settled
     await this.agent.waitForIdle().catch(() => {});
 
     // Unwind a still-running discovery turn (its catch is a no-op now that
@@ -3083,7 +3092,7 @@ export class LeanAgentAdapter implements AgentHandle {
           `Session ended: ${this.metrics.toolCalls} tool calls, ${this.metrics.errors} errors, uptime ${uptime}m`,
           { helper: opts?.shutdown ? "never" : "existing" },
         )
-        .catch(() => {});
+        .catch(logRejection(this.log, LEAN_AGENT_LOG_CATEGORY, "session-end reflection failed"));
     }
 
     this.client.disconnect();
@@ -3641,7 +3650,14 @@ export class LeanAgentAdapter implements AgentHandle {
         .map((b) => b.text)
         .join("\n");
     };
-    const repaired = await repairFinalAnswer(prose, { mode, shot }).catch(() => undefined);
+    const repaired = await repairFinalAnswer(prose, { mode, shot }).catch(
+      logRejection(
+        this.log,
+        LEAN_AGENT_LOG_CATEGORY,
+        "final-answer repair failed; keeping the unrepaired answer",
+        { level: "debug" },
+      ),
+    );
     if (!repaired) return false;
     const label = repaired.label ?? "repaired:parse";
     const envelope = JSON.stringify({
@@ -5463,7 +5479,11 @@ The goal is a smaller, sharper memory — not more notes.`;
         this.recentCommands = [];
         this.sendAttention(
           "LOOP DETECTED: Same command repeated 4 times. Try something different.",
-        ).catch(() => {});
+        ).catch(
+          logRejection(this.log, LEAN_AGENT_LOG_CATEGORY, "loop-detection notice failed", {
+            level: "debug",
+          }),
+        );
       }
     }
   }
@@ -6026,7 +6046,9 @@ The goal is a smaller, sharper memory — not more notes.`;
    */
   private updateFocus(focus: Focus | null): void {
     this.focus = focus;
-    this.platformMemory.saveFocus(focus).catch(() => {});
+    this.platformMemory
+      .saveFocus(focus)
+      .catch(logRejection(this.log, LEAN_AGENT_LOG_CATEGORY, "could not persist focus"));
   }
 
   setSystemPrompt(prompt: string | undefined): void {
@@ -6080,6 +6102,7 @@ The goal is a smaller, sharper memory — not more notes.`;
     this.autonomousLoopRunning = false;
     this.cycleWaiter.wake();
     this.agent.abort();
+    // allow-empty-catch: abort() rejects the in-flight prompt; the restart only needs it settled
     await this.agent.waitForIdle().catch(() => {});
     if (this.autonomousLoopPromise) await this.autonomousLoopPromise;
     this.stopCheckpointTimer();
@@ -6166,7 +6189,11 @@ The goal is a smaller, sharper memory — not more notes.`;
     if (!spawner || spawner === "system") return;
     // `[notice]` prefix: the spawner's tellAndAwait filters these so a budget /
     // spend / upstream-error notice is never mistaken for a reply.
-    this.client.command(`tell ${spawner} ${TELL_NOTICE_PREFIX} ${message}`).catch(() => {});
+    this.client.command(`tell ${spawner} ${TELL_NOTICE_PREFIX} ${message}`).catch(
+      logRejection(this.log, LEAN_AGENT_LOG_CATEGORY, "spawner notice failed", {
+        level: "debug",
+      }),
+    );
   }
 
   private enterPause(kind: AgentPauseState["kind"], reason: string, until?: number): void {
