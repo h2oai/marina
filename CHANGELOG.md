@@ -76,6 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Asset bytes are never orphaned.** Local storage reports a failed delete instead of treating it
+  as "already gone". Retention keeps and retries an asset whose bytes could not be removed, and
+  `asset delete` / `DELETE /api/assets/:id` report the failure (503) and keep the asset. A failed
+  read of `/chat` or `/ask` no longer strips their CSP script grants until restart (#506).
 - **`memory:compatibility status` only reads.** It no longer upgrades the database it inspects; it
   reports pending migrations and points to `upgrade` (#497).
 - **`build validate` no longer makes staged room code loadable.** Only the `world.code`-gated
