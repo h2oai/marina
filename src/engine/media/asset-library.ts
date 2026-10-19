@@ -742,10 +742,22 @@ export function setAssetText(
   return updated;
 }
 
+/** Stored bytes could not be removed; the asset row was kept so nothing is orphaned. */
+export class AssetBytesError extends Error {
+  constructor(
+    readonly assetId: string,
+    readonly failedKeys: string[],
+  ) {
+    super(`Could not delete the stored bytes of asset ${assetId}; the asset was kept.`);
+    this.name = "AssetBytesError";
+  }
+}
+
 /**
  * Delete an asset's bytes and its derivatives' bytes, then the row (derivative
  * rows, tags and links cascade; canvas nodes keep their SET NULL). Emits
- * `asset_deleted`. Returns whether the row existed.
+ * `asset_deleted`. Returns whether the row existed. Throws `AssetBytesError`,
+ * keeping the row, when any stored bytes could not be removed.
  */
 export async function removeAsset(
   host: AssetLibraryHost,
@@ -756,13 +768,19 @@ export async function removeAsset(
   if (!db) return false;
   const derived = db.listDerivatives([row.id]);
   if (host.storage) {
-    for (const d of derived)
-      await host.storage
-        .delete(d.storage_key)
-        .catch(logRejection(logger, "media", "asset blob delete failed", { fallback: false }));
-    await host.storage
-      .delete(row.storage_key)
-      .catch(logRejection(logger, "media", "asset blob delete failed", { fallback: false }));
+    const failedKeys: string[] = [];
+    for (const key of [...derived.map((d) => d.storage_key), row.storage_key]) {
+      try {
+        await host.storage.delete(key);
+      } catch (err) {
+        failedKeys.push(key);
+        logger.warn("media", "asset blob delete failed", {
+          asset: row.id,
+          error: getErrorMessage(err),
+        });
+      }
+    }
+    if (failedKeys.length > 0) throw new AssetBytesError(row.id, failedKeys);
   }
   const removed = db.deleteAsset(row.id);
   if (removed) emit(host, "asset_deleted", row, actor);

@@ -43,8 +43,11 @@ export class LocalStorageProvider implements StorageProvider {
     try {
       unlinkSync(path);
       return true;
-    } catch {
-      return false;
+    } catch (err) {
+      // Already gone is not a failure; anything else (permissions, a busy or
+      // read-only volume) leaves the bytes behind and must reach the caller.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw err;
     }
   }
 

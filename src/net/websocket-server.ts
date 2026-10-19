@@ -18,7 +18,7 @@ import {
   WS_MAX_TOTAL_CONNECTIONS,
 } from "../engine/constants";
 import type { Engine } from "../engine/engine";
-import { getErrorMessage, logRejection } from "../engine/errors";
+import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { isOpenApiMode } from "../engine/trust-profile";
 import { extensionGatewayAdmission } from "../extensions/loader";
@@ -152,19 +152,26 @@ async function serveDashboardIndex(): Promise<Response> {
  * granting `'unsafe-inline'` to every HTML route, their script bodies are
  * hashed once (the files don't change while the process runs) and allowed by
  * digest — the page is still served if the read fails, just without the grants.
+ * Only a successful read is cached: a failed one is retried on the next request,
+ * so one transient error doesn't strip the grants until restart.
  */
 const staticPageHashes = new Map<string, Promise<readonly string[]>>();
-function inlineScriptHashesFor(path: string): Promise<readonly string[]> {
+export function inlineScriptHashesFor(
+  path: string,
+  read: (path: string) => Promise<string> = (p) => Bun.file(p).text(),
+): Promise<readonly string[]> {
   let pending = staticPageHashes.get(path);
   if (!pending) {
-    pending = Bun.file(path)
-      .text()
+    pending = read(path)
       .then((html) => inlineScriptHashes(html))
-      .catch(
-        logRejection(logger, "ws", "could not read static page for CSP script hashes", {
-          fallback: [],
-        }),
-      );
+      .catch((err: unknown) => {
+        staticPageHashes.delete(path);
+        logger.warn("ws", "could not read static page for CSP script hashes", {
+          path,
+          error: getErrorMessage(err),
+        });
+        return [] as readonly string[];
+      });
     staticPageHashes.set(path, pending);
   }
   return pending;
