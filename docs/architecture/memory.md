@@ -72,8 +72,9 @@ Institutional publications remain independently authorized records.
 Shutdown drains admitted command/HTTP work and existing embedding workers before
 closing persistence. There is no memory compatibility worker to drain. Offline
 `bun run memory:compatibility upgrade DB_PATH` opens the database under an exclusive
-lease and performs pending migrations; `status` reports unconverted notes, broken
-references and duplicate bodies without printing content. Old snapshot imports
+lease and performs pending migrations; `status` opens the database read-only and never migrates: it reports the schema
+version and pending migrations, and — once none are pending — unconverted notes,
+broken references and duplicate bodies without printing content. Old snapshot imports
 convert their memory before committing as well.
 
 ## New feature write path and deprecations
