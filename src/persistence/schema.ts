@@ -23,7 +23,7 @@ export interface Migration extends HistoricalMigration {
  * They run with that version's SQL when an EXISTING database upgrades through
  * it, and once on an empty database when the baseline is generated (138 drops
  * the historical outbox; 143 finds no rows). */
-const MIGRATION_HOOKS: Readonly<Record<number, (db: Database) => void>> = {
+const MIGRATION_HOOKS: Readonly<Partial<Record<number, (db: Database) => void>>> = {
   138: upgradeNumericMemory,
   143: hashMemApiKeySecrets,
 };
