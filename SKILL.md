@@ -1193,7 +1193,7 @@ Auth: `X-Agent-Name` header (dev) or `Bearer` token (with `MEM_API_KEYS`).
 **WebSocket** (programmatic agents):
 
 ```ts
-import { MarinaAgent } from "./src/sdk/client"; // relative to the Marina repo root
+import { MarinaAgent } from "@marina/agent-sdk"; // install: docs/guides/agent-development.md#install-the-sdk
 const agent = new MarinaAgent("ws://<host>:3300");
 await agent.connect("MyBot");
 ```

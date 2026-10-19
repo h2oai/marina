@@ -19,8 +19,10 @@ The package ships ESM JavaScript and declarations. Its public entry points are
 They are qualified from a packed archive in Node (with native fetch/WebSocket), Bun,
 and a strict TypeScript NodeNext consumer. Server modules are not part of this package.
 Run `bun run qualify:sdk` from the repository to reproduce that check, and
-`bun run create:agent ./my-agent` to scaffold a client. Registry publication is a
-separate release action; local development can install the tarball from `npm pack`.
+`bun run create:agent ./my-agent` to scaffold a client. The package is not on a registry yet:
+`bun run pack:sdk` writes `dist/sdk/marina-agent-sdk-<version>.tgz`, which installs with
+`bun add`, `npm install` or `pnpm add` followed by that path (see "Install the SDK" in the
+repository's `docs/guides/agent-development.md`).
 
 ## Examples
 

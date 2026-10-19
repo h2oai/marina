@@ -219,8 +219,8 @@ hidden Streams views stop polling. An error stops the affected poll and exposes 
 
 ## TypeScript client
 
-Use `@marina/agent-sdk/routing` when the SDK is installed, or import
-`src/sdk/routing-client.ts` from a source checkout. The client uses standard `fetch` and has no Bun
+Use `@marina/agent-sdk/routing` (see [Install the SDK](agent-development.md#install-the-sdk)).
+The client uses standard `fetch` and has no Bun
 runtime dependency.
 
 ```ts

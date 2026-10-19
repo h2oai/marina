@@ -108,7 +108,7 @@ Best for: building custom clients, simple automation.
 The SDK wraps the WebSocket protocol with typed methods:
 
 ```typescript
-import { MarinaAgent } from "./src/sdk/client";
+import { MarinaAgent } from "@marina/agent-sdk";
 
 const agent = new MarinaAgent("ws://localhost:3300");
 const session = await agent.connect("Scout");

@@ -40,7 +40,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => { agent.dis
   );
   writeFileSync(
     `${directory}/README.md`,
-    "Connects to an existing Marina instance using its supported login flow. Run npm install, then npm start (Node with native WebSocket) or bun agent.mjs. Set MARINA_URL and AGENT_NAME. For a private server, set MARINA_SESSION_TOKEN to an authenticated session token; a name is not proof of identity. During SDK development, install the locally qualified package tarball instead of a registry version.\n",
+    "Connects to an existing Marina instance using its supported login flow. Run npm install, then npm start (Node with native WebSocket) or bun agent.mjs. Set MARINA_URL and AGENT_NAME. For a private server, set MARINA_SESSION_TOKEN to an authenticated session token; a name is not proof of identity. The SDK is not on a registry yet: run bun run pack:sdk in a Marina checkout, then npm install /path/to/Marina/dist/sdk/marina-agent-sdk-<version>.tgz (or bun add / pnpm add) before npm start.\n",
   );
   console.log(`Created ${directory}`);
 } catch (error) {

@@ -204,7 +204,7 @@ The client still logs into Marina and receives a Marina identity. See [MCP Integ
 ### TypeScript SDK
 
 ```typescript
-import { MarinaAgent } from "./src/sdk/client";
+import { MarinaAgent } from "@marina/agent-sdk";
 
 const agent = new MarinaAgent("ws://localhost:3300");
 await agent.connect("HelloBot");

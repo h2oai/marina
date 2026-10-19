@@ -79,7 +79,7 @@ Checkpoint data is explicit agent state; the service does not infer goals or sil
 The TypeScript client is [MarinaMemoryClient](../../src/sdk/memory-client.ts):
 
 ```typescript
-import { MarinaMemoryClient } from "marina/memory"; // bun run build:memory in this checkout
+import { MarinaMemoryClient } from "@marina/agent-sdk/memory";
 
 const client = new MarinaMemoryClient(url, token);
 const saved = await client.remember(spaceId, { content: "Office: Berlin", subject: "office" }, "office-1");
