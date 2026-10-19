@@ -9,6 +9,7 @@
  */
 
 import { guardedFetch } from "../net/url-guard";
+import { type AnchorReference, type ArenaSiteData, anchorReferenceFromSite } from "./anchor";
 import type { ArenaLock, ArenaResolution, ArenaRound } from "./types";
 
 export const DEFAULT_ARENA_DATA_URL =
@@ -55,6 +56,15 @@ export class ArenaData {
     const value = JSON.parse(text) as T;
     this.cache.set(path, { at: this.now(), value });
     return value;
+  }
+
+  /**
+   * Forget every cached read, so the next read fetches again. The anchor guard
+   * (`anchor.ts`) re-reads a round's inputs once when they look older than
+   * what the arena has published.
+   */
+  refresh(): void {
+    this.cache.clear();
   }
 
   /** Per-experiment view: each requested path is read once, without TTL expiry. */
@@ -155,6 +165,15 @@ export class ArenaData {
       "site/data.json",
     );
     return site.rounds;
+  }
+
+  /**
+   * The arena's latest published value for an open round's series (or each
+   * profile cell), from the same `site/data.json`: undefined when the round is
+   * not there or has no comparable value (ranking rounds).
+   */
+  async anchorReference(round: ArenaRound): Promise<AnchorReference | undefined> {
+    return anchorReferenceFromSite(await this.json<ArenaSiteData>("site/data.json"), round);
   }
 
   /** One archived Wikipedia daily top list (`wikitop/<project>.<access>/<day>.json`), or undefined. */

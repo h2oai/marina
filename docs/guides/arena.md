@@ -101,9 +101,20 @@ Filing stays the operator's act outside the world, but the server watches it. Wh
 - the standing filing **predates the round's 24-hour refresh window and nothing has tried since** (critical within 6 h of its lock), the trace a runner leaves when it crashes before recording an attempt;
 - a refresh **failed** (error, rejected or skipped) after the standing filing;
 - a refresh **started and never finished** (over 30 minutes);
-- within 45 minutes of the lock, **nothing ran in the last 90 minutes**, meaning the near-lock pass did not run.
+- within 45 minutes of the lock, **nothing ran in the last 90 minutes**, meaning the near-lock pass did not run;
+- **stale anchor**: for EVERY open round, whatever its lock, the accepted filing is anchored on an older release than the arena's latest published value (critical within 6 h of its lock), or — within 24 hours — the last refresh recorded `stale_anchor` (see below).
 
 Readiness shows the last pass as `arena-filing`. The watch only reads: it never files, so a broken runner (a stale build, a failing timer) shows up within one pass instead of after the lock. An alert resolves itself once its round is fine again.
+
+### Anchor guard
+
+A forecast starts from the latest reading its inputs saw (its anchor). The arena scores every round against persistence, the last value IT treats as published at the lock, so a filing anchored on an older release loses skill by construction. In Season 0, `yougov-2026-w42-rv-approval` and `-strong-approval` were filed 11 days early at 36 and 18, never refreshed, and locked against 38 and 21.
+
+Before signing, every filing (autopilot, `submit`, `--replace`, dry runs) compares its anchor with the arena's latest value for the round: the round's persistence baseline in the arena's site data (`site/data.json`, per cell for profile rounds), dated by the series tail when that tail ends on the same value. Ranking rounds are not checked. The comparison tolerates the arena's rounding (a poll published as 38 matches 37.6; a one-decimal value matches within 0.05). A value that matches is fresh whatever the dates; a different value is stale unless Marina's reading is dated the same day or later (a daily source ahead of the arena's refresh).
+
+When the anchor is stale, Marina drops its cached arena data and runs the forecaster again once. If the inputs are still stale, it shifts each stale mean by (arena value − anchor), keeping the spread, and files that; the attempt is recorded as `stale_anchor` with the reason, and the filing watch alerts. The trace is kept in the filing's `detail.anchorGuard`. An unreadable site file never blocks a filing (`unchecked`). `MARINA_ARENA_ANCHOR_GUARD=observe` records the verdict and files the forecast unchanged; `off` skips the check.
+
+`bun run arena submit due --replace` also refiles every open round whose accepted filing is anchored on an older release than the arena's, whatever its lock and whatever `MARINA_ARENA_WINDOW_HOURS` is, so a daily refresh catches a new release days before the lock instead of relying on one near-lock pass.
 
 ### Input freshness before filing
 
@@ -419,7 +430,8 @@ unanswered round costs nothing. A filing that misses its refresh is scored again
 baseline frozen on fresher data, and it can only lose. Replacing an accepted filing is always
 allowed.
 
-File inside the window, then schedule an operator refresh closer to the lock. For
+With `--replace`, `due` also selects every open round whose accepted filing has a stale anchor
+(see [Anchor guard](#anchor-guard)), whatever its lock. File inside the window, then schedule an operator refresh closer to the lock. For
 example, an hourly `MARINA_ARENA_WINDOW_HOURS=1.1 bun run arena submit due --replace` selects
 rounds locking within 66 minutes, while preserving the five-minute safety margin. Allow enough
 time for the selected formation and any simultaneous deadlines. Runners sharing a checkout or

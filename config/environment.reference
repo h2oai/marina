@@ -962,6 +962,9 @@
 # MARINA_ARENA_AUTOPILOT=off
 # MARINA_ARENA_WINDOW_HOURS=24
 
+# Anchor guard, before signing any arena filing: compare the forecast's anchor (the latest reading its inputs saw, per series or profile cell) with the arena's own latest published value (persistence baseline in the arena's site data, dated by its series tail), tolerant of the arena's rounding. An older release with a different value is stale: the inputs are re-read once, and if still stale the stale means are shifted onto the arena's value; the attempt is recorded as `stale_anchor` and the filing watch alerts. `submit due --replace` also refiles every open round whose accepted filing is stale, whatever its lock. `on` (default) re-reads and re-anchors, `observe` records the verdict and files what was forecast, `off` skips the check. Ranking rounds are never checked.
+# MARINA_ARENA_ANCHOR_GUARD=on
+
 # What answers (default nowcast — no model calls; the baseline for non-Civiqs rounds): nowcast (freshest Civiqs reading), baseline, spike-decay (nowcast with Trends basket event-week cells decayed toward their recent level; a shadow challenger), discovered (best promoted signal, else nowcast), tabh2o[:forecast][@nowcast] (experimental; TabH2O on the lock's own history, needs TABH2O_API_KEY), model:<provider/model>, crew:<m>[,<m>,<m>] (statistician, analyst, skeptic) or research:<m>[,<m>,<m>]. A model's answer is shrunk toward the baseline by MARINA_ARENA_MODEL_WEIGHT. Measure with `bun run arena evaluate` before switching.
 # MARINA_ARENA_FORECASTER=nowcast
 

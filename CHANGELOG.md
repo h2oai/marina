@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Arena anchor guard**: before signing, a filing's anchor (the latest reading its inputs saw) is
+  compared with the arena's latest published value, per series or profile cell and tolerant of
+  rounding. A stale anchor re-reads the inputs once, then re-anchors on the arena's value; the
+  attempt is recorded as `stale_anchor` and `arena-filing-watch` alerts (for every open round, not
+  only those locking within 24 h). `submit due --replace` also refiles every open round whose
+  accepted filing is stale, whatever its lock. `MARINA_ARENA_ANCHOR_GUARD=on|observe|off`. Two
+  Season-0 Economist/YouGov rounds filed at 36 / 18 locked against 38 / 21.
 - With `WS_PORT=0`, the decision backend, lessons judge and note ingest called port 3300
   instead of the bound port.
 - **Code Mode clone sources** go through the shared SSRF guard: `code project clone` now also
