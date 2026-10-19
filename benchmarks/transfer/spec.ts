@@ -19,7 +19,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { itemSplit } from "../../src/engine/benchmark-promotion";
-import { adapterFor, type Source } from "./adapters";
+import { adapterFor, loadRuns, type Source } from "./adapters";
 import type { ItemScore, SuiteData, TransferOptions } from "./core";
 
 export interface ArmConfig {
@@ -243,20 +243,21 @@ function runSources(
 /** Load (or, if allowed, run then load) every suite of a spec. */
 export function loadSuites(spec: TransferSpec, opts: LoadOptions): SuiteData[] {
   return spec.suites.map((suite) => {
-    const adapter = adapterFor(suite.adapter);
     const group = suite.group ?? suite.name;
     const split = opts.split ?? suite.split ?? spec.split ?? { kind: "hash" };
-    if (split !== "all" && split.kind === "time" && !adapter.timed)
-      throw new Error(
-        `suite ${suite.name}: adapter ${adapter.name} has no item times for a time split`,
-      );
     const removed = new Map<string, Set<string>>();
     const arm = (name: ArmName) => {
       const listed = suite[name];
       const sources = listed?.length ? listed : runSources(spec, suite, name, opts);
-      return sources.map((s) =>
-        applySplit(adapter.load(toSource(s, opts.baseDir, suite, name)), split, group, removed),
-      );
+      return sources.flatMap((s) => {
+        const source = toSource(s, opts.baseDir, suite, name);
+        const adapter = adapterFor(source.adapter ?? suite.adapter);
+        if (split !== "all" && split.kind === "time" && !adapter.timed)
+          throw new Error(
+            `suite ${suite.name}: adapter ${adapter.name} has no item times for a time split`,
+          );
+        return loadRuns(adapter, source).map((run) => applySplit(run, split, group, removed));
+      });
     };
     const baseline = arm("baseline");
     const candidate = arm("candidate");

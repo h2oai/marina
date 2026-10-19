@@ -8,8 +8,9 @@
  *
  *   bun run eval:transfer --spec <spec.json> [--out <prefix>] [--split all|holdout|selection|after:<date>]
  *                         [--seed N] [--resamples N] [--alpha A] [--margin M] [--min-items N]
- *                         [--run [--run-dir <dir>]] [--json]
+ *                         [--bootstrap items|two-stage] [--run [--run-dir <dir>]] [--json]
  *   bun run eval:transfer --adapters
+ *   bun run eval:transfer --inventory [root…] [--out <prefix>] [--min-items N] [--max-copy-mb N]
  *
  * Ingest-only by default: every suite reads result files that already exist.
  * `--run` lets a suite with a `run` command execute it (once per arm and
@@ -18,21 +19,31 @@
  * `<prefix>.json` (default `transfer-report`). Exit 0 when the verdict is
  * `transfers`, 2 for any other verdict, 1 on error.
  *
+ * `--inventory` walks the roots (default: ~/.cache/marina-*, ~/.local/share/marina-*,
+ * ~/Projects/GitHub/marina-internal) read-only and writes `<prefix>.md` / `<prefix>.json`
+ * (default `transfer-inventory`): every per-item result source an adapter can read, per
+ * suite its variants, items and dates, and the baseline/candidate pairs with ready suite
+ * entries.
+ *
  * Spec format, adapters and how to add a suite: benchmarks/README.md →
  * "Transfer report". Library: benchmarks/transfer/.
  */
 
-import { writeFileSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { ADAPTERS } from "../benchmarks/transfer/adapters";
 import { renderMarkdown, type TransferOptions, transferVerdict } from "../benchmarks/transfer/core";
+import { buildInventory, renderInventory } from "../benchmarks/transfer/inventory";
 import { loadSuites, readSpec, type SplitSpec, specDir } from "../benchmarks/transfer/spec";
 
-const { values } = parseArgs({
+const { values, positionals } = parseArgs({
   args: process.argv.slice(2),
+  allowPositionals: true,
   options: {
     spec: { type: "string" },
-    out: { type: "string", default: "transfer-report" },
+    out: { type: "string" },
     split: { type: "string" },
     seed: { type: "string" },
     resamples: { type: "string" },
@@ -43,6 +54,9 @@ const { values } = parseArgs({
     "run-dir": { type: "string" },
     json: { type: "boolean", default: false },
     adapters: { type: "boolean", default: false },
+    bootstrap: { type: "string" },
+    inventory: { type: "boolean", default: false },
+    "max-copy-mb": { type: "string" },
   },
 });
 
@@ -66,10 +80,12 @@ function main(): number {
     for (const a of Object.values(ADAPTERS)) console.log(`${a.name.padEnd(16)} ${a.description}`);
     return 0;
   }
+  if (values.inventory) return inventory();
   if (!values.spec) {
     console.error("usage: bun run eval:transfer --spec <spec.json> [--out <prefix>] [--run]");
     return 1;
   }
+  const out = values.out ?? "transfer-report";
   const spec = readSpec(values.spec);
   const split = splitFlag(values.split);
   const suites = loadSuites(spec, {
@@ -87,16 +103,55 @@ function main(): number {
   set("alpha", num("alpha", values.alpha));
   set("margin", num("margin", values.margin));
   set("minItems", num("min-items", values["min-items"]));
+  if (values.bootstrap !== undefined) {
+    if (values.bootstrap !== "items" && values.bootstrap !== "two-stage")
+      throw new Error("--bootstrap must be items or two-stage");
+    flags.bootstrap = values.bootstrap;
+  }
   const result = transferVerdict(suites, { ...(spec.stats ?? {}), ...flags });
   const generatedAt = new Date().toISOString();
   const header = { baseline: spec.baseline, candidate: spec.candidate, generatedAt };
   const markdown = renderMarkdown(result, header);
   const json = JSON.stringify({ generatedAt, ...header, ...result }, null, 2);
-  writeFileSync(`${values.out}.md`, markdown);
-  writeFileSync(`${values.out}.json`, `${json}\n`);
+  writeFileSync(`${out}.md`, markdown);
+  writeFileSync(`${out}.json`, `${json}\n`);
   console.log(values.json ? json : markdown);
-  console.error(`report → ${values.out}.md, ${values.out}.json`);
+  console.error(`report → ${out}.md, ${out}.json`);
   return result.verdict === "transfers" ? 0 : 2;
+}
+
+/** The default inventory roots: local Marina caches, data and the internal design notes. */
+function defaultRoots(): string[] {
+  const home = homedir();
+  const under = (dir: string) =>
+    existsSync(dir)
+      ? readdirSync(dir)
+          .filter((n) => n.startsWith("marina-"))
+          .map((n) => join(dir, n))
+      : [];
+  return [
+    ...under(join(home, ".cache")),
+    ...under(join(home, ".local", "share")),
+    join(home, "Projects", "GitHub", "marina-internal"),
+  ].filter((p) => existsSync(p));
+}
+
+function inventory(): number {
+  const out = values.out ?? "transfer-inventory";
+  const roots = positionals.length ? positionals : defaultRoots();
+  const maxCopy = num("max-copy-mb", values["max-copy-mb"]);
+  const inv = buildInventory({
+    roots,
+    ...(values["min-items"] ? { minItems: num("min-items", values["min-items"])! } : {}),
+    ...(maxCopy !== undefined ? { maxCopyBytes: maxCopy * 1024 * 1024 } : {}),
+    log: (line) => console.error(line),
+  });
+  const json = JSON.stringify(inv, null, 2);
+  writeFileSync(`${out}.md`, renderInventory(inv));
+  writeFileSync(`${out}.json`, `${json}\n`);
+  console.log(values.json ? json : renderInventory(inv));
+  console.error(`inventory → ${out}.md, ${out}.json`);
+  return 0;
 }
 
 try {

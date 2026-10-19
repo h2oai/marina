@@ -64,9 +64,16 @@ groups and regresses significantly on none.
   items pair by id (replicates averaged), a seeded paired bootstrap gives the interval of the mean
   delta and an exact sign test gives p. An improvement needs both (interval low > margin, p < α);
   a regression needs either. Suites sharing a `group` count once.
-- **Adapters own the formats** (`adapters.ts`): generic `items`, harness results, FutureX clean
-  backtests (leak-audit-flagged rows excluded), `arena evaluate --out` and `arena shadow
-  paired-score --out` reports.
+- **Adapters own the formats** (`adapters.ts`): generic `items` records (one file may hold every
+  arm by `variant` and replicate runs by `replicate`; field options map other record formats),
+  harness results, the benchmark ledger (`ledger.ts`: runs by label, id, group or date, read
+  without writing — immutable open, or a temporary copy when a `-wal` holds rows), FutureX clean
+  backtests (leak-audit-flagged rows excluded), `arena evaluate` / `shadow paired-score` reports,
+  and τ², BrowseComp-Plus, LongMemEval and paired-run presets.
+- **Replicates**: averaged per item; `bootstrap: two-stage` resamples runs then items, the same
+  cluster bootstrap as forecasting selection.
+- **Inventory** (`inventory.ts`, `--inventory`): finds every per-item result and ledger on disk,
+  lists per suite the variants and the pairs that share items, with ready suite entries.
 - **Held out by default**: only the `holdout` side of the promotion split (`itemSplit`, slot
   `transfer:<group>`) counts, or a time split on each item's evidence cutoff; `all` is labelled.
 - **No spend by default**: it ingests existing files; a suite's `run` command executes only under

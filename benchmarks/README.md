@@ -144,7 +144,9 @@ bun run eval:transfer --spec transfer.json                 # ingest existing res
 bun run eval:transfer --spec transfer.json --out reports/x # writes reports/x.md and reports/x.json
 bun run eval:transfer --spec transfer.json --split all     # every item, not just the held-out half
 bun run eval:transfer --spec transfer.json --run           # also run suites that have a `run` command
+bun run eval:transfer --spec transfer.json --bootstrap two-stage # resample replicate runs, then items
 bun run eval:transfer --adapters                           # list the suite adapters
+bun run eval:transfer --inventory [root…] --out inv        # find every per-item result on disk
 ```
 
 ```json
@@ -156,6 +158,10 @@ bun run eval:transfer --adapters                           # list the suite adap
     { "name": "futurex-past", "group": "futurex", "adapter": "futurex",
       "baseline": ["runs/off/cheap-date-filtered-lessons-off-r1"],
       "candidate": ["runs/on/cheap-date-filtered-lessons-off-r1", "runs/on/cheap-date-filtered-lessons-off-r2"] },
+    { "name": "forecastbench", "group": "forecastbench", "adapter": "ledger",
+      "arms": { "baseline": "mech-verify", "candidate": "mech-verify+PC" },
+      "options": { "benchmark": "forecastbench-backtest" },
+      "baseline": ["data/ledger.db"], "candidate": ["data/ledger.db"] },
     { "name": "arena-numeric", "group": "arena", "adapter": "arena-evaluate",
       "arms": { "baseline": "baseline", "candidate": "nowcast" },
       "baseline": ["arena-eval.json"], "candidate": ["arena-eval.json"] },
@@ -174,6 +180,10 @@ it **regresses** when either says so. The verdict is `transfers` only with impro
 `does-not-transfer` or `insufficient` (fewer than two groups with `minItems` paired items).
 Suites in the same `group` (two FutureX batches, two arena families scored by one method) count
 once. The scores are per-item means: a board's own weighting (FutureX levels) is not applied.
+`"bootstrap": "two-stage"` (in `stats`, or `--bootstrap two-stage`) resamples each arm's replicate
+runs before the items, the cluster bootstrap of `benchmarks/forecasting/select.ts` (same draws for
+a seed), so run-to-run variance widens the interval; the default resamples items of the
+replicate-averaged deltas.
 
 **Held-out by default.** Each suite keeps only the `holdout` side of the stable hash split that
 benchmark promotion uses (`itemSplit`, slot `transfer:<group>`, 50 %); give the slot a capability
@@ -190,17 +200,46 @@ the spec). Exit status: 0 for `transfers`, 2 for any other verdict, 1 on error.
 
 | Adapter | Reads |
 |---|---|
-| `items` | generic `[{id, score, at?, exclude?}]` as JSON, `{items: […]}` or JSONL |
-| `harness` | harness result JSON (`BenchmarkResult`): `items[].score`, else `correct` as 1/0 |
+| `items` | generic records `{id, score, at?, exclude?, variant?, replicate?}`: JSON array, `{items: […]}`, JSONL, or a directory of such files. `arm` keeps one `variant` (one file can hold every arm), distinct `replicate` values become replicate runs, a boolean score counts 1/0, duplicate ids in a run are averaged. Options remap fields for any other record format: `records` (path to a nested array), `id`, `score`, `variant` (comma list, joined with `/`), `replicate`, `at`, `exclude` — dotted paths, `a\|b` alternatives, `""` to drop |
+| `harness` | harness result JSON (`BenchmarkResult`, and the `*-ledger.json` filing bodies): `items[].score`, else `correct` as 1/0 |
+| `ledger` | a benchmark ledger DB (any world DB, `ledger.db`) — in-world `benchmark run` / `compare-run`, imported harness runs, ForecastBench/Metaculus selection runs. Each selected run is one replicate; select by `arm` (the run label without its ` rN` suffix, else the model) or options `label`, `group` (globs), `run` (ids), `benchmark`, `since`/`until` (start time), `status` (default `completed`), `includeInvalid` (default off: invalidated runs are skipped, as every ranking reader does) |
 | `futurex` | FutureX clean-backtest run directory (or its `score.json`); `at` from `answers.json`, leak-audit-flagged rows excluded (`options.audit: "off"` keeps them) |
 | `arena-evaluate` | `bun run arena evaluate --out` reports: `rounds[]` and `shapes.rounds[]`, column `arm`, skill vs persistence; `options.tracker` keeps one family |
 | `arena-paired` | `bun run arena shadow paired-score --out`: eligible batches, column `arm` (`start`, `delphi`, `fred`, `calibrated`) |
+| `tau2` | τ²-bench results JSON: `simulations[]` by `task_id`, `reward_info.reward`, each `trial` a replicate |
+| `browsecomp` | BrowseComp-Plus `evals/` directory (`run_N_eval.json` per query), `judge_result.correct` |
+| `longmemeval` | LongMemEval `per_question.jsonl`, `score` by `question_id` |
+| `paired-run` | a paired-run campaign `analysis.json`: `<options.suite>.attempts[]` by `task`, arm `arm/model`, `reward` or `passed` |
+
+The last four are field presets over the `items` reader. A source may name its own `adapter`, so
+one suite can pair, say, a harness file against ledger runs of the same benchmark.
+
+**Ledgers are read without writing.** A DB with no write-ahead log is opened through SQLite's
+`immutable=1` URI (no locks, no `-shm`/`-wal` created); a DB whose `-wal` holds rows is copied
+with its log to a temporary directory and the copy is read (`maxCopyMb` option, default 1 GB;
+above it the log is not read and the inventory says so).
+
+**Inventory.** `--inventory [root…]` (default roots: `~/.cache/marina-*`, `~/.local/share/marina-*`,
+`~/Projects/GitHub/marina-internal`; a root may be one DB file) walks the roots read-only,
+skipping source trees (`src/`, `node_modules/`, `checkout/`, … — a checkout's `benchmarks/` only
+for its `results/`), recognises every file and ledger an adapter reads, and writes
+`<out>.md` / `<out>.json` (default `transfer-inventory`): per suite its variants (adapter,
+replicates, items scored in every replicate, item dates, recording dates, sources) and every
+pair of variants sharing ≥ `--min-items` items, each with a ready suite entry for a spec.
+Byte-identical files count once; a ledger run present in several DB copies counts once; a pair
+whose scores agree on every shared item (one run recorded twice, e.g. a result file and its
+ledger filing) is left out. Groups are conservative: domains and subsets of one benchmark
+(τ² domains, HLE text and multimodal, the LongMemEval sets) are one group. Pairs are per suite —
+choosing which pair in each group is the same baseline/candidate change is the reader's call.
 
 **Adding a suite.** Easiest: make the evaluation write the `items` format (one line per item:
-`{"id": "…", "score": 0.73}`, higher is better — negate a loss; add `at` for time splits and
-`exclude: "<reason>"` for items that must not count). Otherwise add an adapter to
-`benchmarks/transfer/adapters.ts` (`load(source) → ItemScore[]`, register it in `ADAPTERS`) with a
-fixture test in `test/eval-transfer.test.ts`. Keep benchmark knowledge in the adapter;
+`{"id": "…", "score": 0.73}`, higher is better — negate a loss; add `at` for time splits,
+`exclude: "<reason>"` for items that must not count, `variant` to keep several arms in one file
+and `replicate` for repeated runs). An existing record format usually needs only field options
+on `items` (or a preset like `tau2`). Otherwise add an adapter to `benchmarks/transfer/adapters.ts`
+(`load(source) → ItemScore[]`, or `loadRuns` for several replicates; register it in `ADAPTERS`),
+teach `benchmarks/transfer/inventory.ts` to recognise its files, and add a fixture test in
+`test/eval-transfer.test.ts`. Keep benchmark knowledge in the adapter;
 `benchmarks/transfer/core.ts` (the statistics and the verdict) stays benchmark-free.
 
 ## Phase B — Memory Delta Experiments

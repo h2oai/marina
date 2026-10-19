@@ -62,6 +62,13 @@ export interface TransferOptions {
   minItems?: number;
   /** Independent groups that must improve (default 2). */
   minGroups?: number;
+  /**
+   * `items` (default): resample items of the replicate-averaged deltas.
+   * `two-stage`: resample each arm's replicate runs, then the items — the
+   * cluster bootstrap of `benchmarks/forecasting/select.ts`, so run-to-run
+   * variance widens the interval.
+   */
+  bootstrap?: "items" | "two-stage";
 }
 
 export interface SignTest {
@@ -117,6 +124,7 @@ export const DEFAULTS: Required<TransferOptions> = {
   margin: 0,
   minItems: 10,
   minGroups: 2,
+  bootstrap: "items",
 };
 
 /** Exact two-sided sign test on paired deltas; zero deltas are ties and dropped. */
@@ -149,6 +157,47 @@ export function bootstrapMean(
     let s = 0;
     for (let i = 0; i < n; i++) s += deltas[Math.floor(rand() * n)] ?? 0;
     stats[r] = s / n;
+  }
+  stats.sort();
+  const alpha = (1 - level) / 2;
+  const at = (q: number) =>
+    stats[Math.min(resamples - 1, Math.max(0, Math.floor(q * resamples)))] ?? 0;
+  return { mean, low: at(alpha), high: at(1 - alpha), resamples };
+}
+
+/**
+ * Two-stage (cluster) paired bootstrap of mean(candidate − baseline): each
+ * iteration resamples each arm's replicate runs with replacement, then the
+ * items, and averages per item over the drawn runs. Same draw order and
+ * quantiles as `pairedBootstrap` in `benchmarks/forecasting/select.ts`
+ * (there leader − other), so a seed gives the same interval.
+ */
+export function twoStageBootstrap(
+  candidate: ReadonlyArray<ReadonlyMap<string, number>>,
+  baseline: ReadonlyArray<ReadonlyMap<string, number>>,
+  ids: readonly string[],
+  opts: { resamples?: number; seed?: number; level?: number } = {},
+): Bootstrap {
+  const resamples = opts.resamples ?? DEFAULTS.resamples;
+  const level = opts.level ?? DEFAULTS.level;
+  if (ids.length === 0 || candidate.length === 0 || baseline.length === 0)
+    return { mean: 0, low: 0, high: 0, resamples: 0 };
+  const rand = mulberry32(opts.seed ?? DEFAULTS.seed);
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
+  const itemMean = (runs: ReadonlyArray<ReadonlyMap<string, number>>, id: string) =>
+    runs.reduce((s, r) => s + (r.get(id) ?? 0), 0) / runs.length;
+  const mean =
+    ids.reduce((s, id) => s + itemMean(candidate, id) - itemMean(baseline, id), 0) / ids.length;
+  const stats = new Float64Array(resamples);
+  for (let k = 0; k < resamples; k++) {
+    const c = candidate.map(() => pick(candidate));
+    const b = baseline.map(() => pick(baseline));
+    let s = 0;
+    for (let j = 0; j < ids.length; j++) {
+      const id = pick(ids);
+      s += itemMean(c, id) - itemMean(b, id);
+    }
+    stats[k] = s / ids.length;
   }
   stats.sort();
   const alpha = (1 - level) / 2;
@@ -207,7 +256,11 @@ export function analyzeSuite(suite: SuiteData, options: TransferOptions = {}): S
   const cand = armMeans(suite.candidate, ids);
   const deltas = ids.map((_, i) => (cand[i] ?? 0) - (base[i] ?? 0));
   const mean = (xs: number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : 0);
-  const delta = bootstrapMean(deltas, o);
+  const asMaps = (runs: ItemScore[][]) => runs.map((r) => new Map(r.map((x) => [x.id, x.score])));
+  const delta =
+    o.bootstrap === "two-stage"
+      ? twoStageBootstrap(asMaps(suite.candidate), asMaps(suite.baseline), ids, o)
+      : bootstrapMean(deltas, o);
   const sign = signTest(deltas);
   const removed = { ...(suite.removed ?? {}) };
   for (const [k, v] of Object.entries(excluded)) removed[k] = (removed[k] ?? 0) + v;
@@ -314,7 +367,7 @@ export function renderMarkdown(result: TransferResult, header: ReportHeader): st
     `- Baseline \`${header.baseline.label}\`: ${env(header.baseline.env)}`,
     `- Candidate \`${header.candidate.label}\`: ${env(header.candidate.env)}`,
     `- Rule: improves on ≥ ${o.minGroups} independent groups (bootstrap ${Math.round(o.level * 100)} % interval low > ${o.margin} AND sign test p < ${o.alpha}), no suite regressing (interval high < 0 OR sign test p < ${o.alpha} against).`,
-    `- Bootstrap: ${o.resamples} resamples, seed ${o.seed}; suites need ≥ ${o.minItems} paired items.`,
+    `- Bootstrap: ${o.bootstrap === "two-stage" ? "two-stage (replicate runs, then items)" : "items"}, ${o.resamples} resamples, seed ${o.seed}; suites need ≥ ${o.minItems} paired items.`,
     ...(header.generatedAt ? [`- Generated ${header.generatedAt}`] : []),
     "",
     "| Suite | Group | Split | n | Baseline | Candidate | Δ mean [interval] | Sign W/L/T, p | Outcome |",
