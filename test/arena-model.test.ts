@@ -68,7 +68,8 @@ describe("model forecaster", () => {
     expect(prompt).toContain("Approve?");
     expect(prompt).toContain(`${history.at(-1)!.date} ${history.at(-1)!.value}`);
     expect(prompt).toContain("Start forecast");
-    expect(prompt).toContain("the persistence baseline");
+    // A weekly poll topline starts from the poll level (arena-poll-level.test.ts).
+    expect(prompt).toContain("the poll level");
     expect(prompt).toContain("Resolution: the next value this source publishes");
     expect(prompt).toContain("CRPS");
     expect(prompt).not.toContain("nowcast");

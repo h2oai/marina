@@ -13,6 +13,13 @@
  */
 
 import {
+  POLL_LEVEL_TRACKERS,
+  type PollLevelEvidence,
+  type PollLevelMode,
+  pollLevelForecast,
+  pollLevelModeFromEnv,
+} from "./poll-level";
+import {
   chooseLevelWindow,
   type LevelEvidence,
   levelForecast,
@@ -35,8 +42,10 @@ const DAY_MS = 86_400_000;
 /**
  * `level` (sampling-noise profiles only, `sampling-noise.ts`) also moves the
  * mean: the mean of the last k releases, with the spread of its own misses.
+ * `poll-level` (noisy scalar poll toplines, `poll-level.ts`) files the average
+ * of persistence and the arena's EWMA with half its own recent RMS error.
  */
-export type SpreadRule = "persistence" | "calibrated" | "robust" | "level";
+export type SpreadRule = "persistence" | "calibrated" | "robust" | "level" | "poll-level";
 
 export interface ScalarForecast extends Distribution {
   rule: SpreadRule;
@@ -203,6 +212,8 @@ export interface RoundForecast {
   rules: Record<string, SpreadRule>;
   /** The level window chosen for a sampling-noise profile, and the evidence behind it. */
   level?: LevelEvidence;
+  /** The poll-level start for a noisy scalar poll topline (`poll-level.ts`). */
+  pollLevel?: PollLevelEvidence;
   note: string;
   /** Dated inputs and the actual start distribution, retained through model stages. */
   origins?: Record<string, ForecastOrigin>;
@@ -241,9 +252,33 @@ export interface ForecastOrigin {
   };
 }
 
-export function forecastRound(round: ArenaRound, lock: ArenaLock): RoundForecast {
+export function forecastRound(
+  round: ArenaRound,
+  lock: ArenaLock,
+  /** Defaults to `MARINA_ARENA_POLL_LEVEL` (on). */
+  opts: { pollLevel?: PollLevelMode } = {},
+): RoundForecast {
   if (round.target_type === "continuous_normal") {
-    const f = forecastScalar(lock.answer_history ?? lock.history ?? [], round.release_at);
+    const history = lock.answer_history ?? lock.history ?? [];
+    const pollLevel =
+      POLL_LEVEL_TRACKERS.has(round.tracker) &&
+      (opts.pollLevel ?? pollLevelModeFromEnv()) === "on" &&
+      history.length > 0
+        ? pollLevelForecast(
+            history.map((p) => p.value),
+            horizonSteps(history, round.release_at),
+          )
+        : undefined;
+    if (pollLevel) {
+      const { forecast, evidence } = pollLevel;
+      return {
+        topline: { mean: round3(forecast.mean), sd: round3(forecast.sd) },
+        rules: { [round.series ?? round.round_id]: "poll-level" },
+        pollLevel: evidence,
+        note: `marina-baseline v1 (poll level): mean of persistence ${evidence.persistence} and the arena EWMA ${evidence.ewma} (alpha ${evidence.alpha}); sd ${evidence.sd.scale} x its own ${evidence.steps}-step RMS error ${evidence.sd.rms} over ${evidence.sd.errors} releases, floor ${evidence.sd.floor}`,
+      };
+    }
+    const f = forecastScalar(history, round.release_at);
     return {
       topline: { mean: f.mean, sd: f.sd },
       rules: { [round.series ?? round.round_id]: f.rule },
