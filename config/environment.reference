@@ -980,6 +980,9 @@
 # `research:wiki-events:<model>[@<retrievers>]` (Wikipedia top-N with scheduled events): the most articles a run may add to the recency list from mechanically verified events (0 = none, the statistical list only).
 # MARINA_ARENA_WIKI_EVENTS_MAX_INSERT=3
 
+# Start forecast for noisy weekly poll toplines (scalar rounds of economist_yougov, morning_consult and aaii): the average of persistence and the arena's EWMA null (alpha 0.4), sd half the rule's own recent one-step RMS error (floor 0.5), chosen by walk-forward backtest on mean per-round skill. `off` files the persistence-based baseline instead. Formations and research start from whichever is filed.
+# MARINA_ARENA_POLL_LEVEL=on
+
 # `off` stops the nowcast reading the live Civiqs dashboard for open rounds (rounds past their lock never do).
 # MARINA_ARENA_CIVIQS_LIVE=on
 

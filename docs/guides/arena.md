@@ -79,7 +79,7 @@ the mean of per-round skill. Everywhere else it files exact persistence.
 
 | Round shape | Marina's answer |
 |---|---|
-| Number (`continuous_normal`) | persistence mean ± calibrated or 1.5 spread |
+| Number (`continuous_normal`) | persistence mean ± calibrated or 1.5 spread; a weekly poll topline (Economist/YouGov, Morning Consult, AAII) takes the poll level instead (below) |
 | Profile (`profile_energy`) | the same, per cell; a subgroup crosstab (`yougov_xtab`) may instead take the mean of the last k releases (below) |
 | Ranking (`ranking_list`) | last-7-day Wikipedia pageview totals, Main_Page and non-articles excluded |
 
@@ -90,6 +90,32 @@ recent misses at the round's horizon. It picks one k for the whole profile from 
 record, scored per target date over all cells, and uses it (rule `level`) only when it beats the
 per-cell baseline by the calibration margin. The choice and its evidence are kept in the forecast
 detail (`level`).
+
+A weekly poll topline is the same kind of noisy sample: Economist/YouGov RV approval went 38, 37,
+40, 35, 36, 38. For the scalar rounds of `economist_yougov`, `morning_consult` and `aaii`
+(`src/arena/poll-level.ts`, rule `poll-level`) the start forecast is the average of persistence and
+the arena's own EWMA null (α 0.4), with an sd of half that rule's own recent one-step RMS error
+(last 26 releases, at least 6; floor 0.5). Half, not the full RMS, because the leaderboard averages
+per-round skill against persistence at sd 1.5 and quiet weeks dominate that average. A series with
+too little history keeps the baseline. The rule, both means, the RMS and the number of errors
+behind it are kept in the forecast detail (`pollLevel`) and the filing note; formations and
+research start from it. `MARINA_ARENA_POLL_LEVEL=off` restores the persistence start.
+
+Walk-forward backtest (mean per-round skill vs persistence; resolved rounds from their lock
+snapshots, and every origin from release 16 of each series' latest pre-lock history):
+
+| Family | Resolved n | Baseline | Poll level | History n | Baseline | Poll level |
+|---|---|---|---|---|---|---|
+| economist_yougov | 10 | 0.00 | 0.15 | 132 | 0.00 | 0.11 |
+| morning_consult | 6 | −0.01 | 0.30 | 44 | 0.00 | 0.15 |
+| aaii | 4 | 0.00 | 0.43 | 6 | 0.00 | 0.04 |
+| umich_sentiment | 4 | 0.00 | −0.05 | 44 | −0.03 | −0.22 |
+| umich_party | 3 | 0.00 | −0.23 | 132 | 0.00 | −0.41 |
+
+The UMich series trend month to month, so any shrink toward a recent level loses and they keep the
+baseline; the mean of the last k releases lost on every scalar family. Civiqs's daily tracker is
+already smoothed, NY Fed SCE gained too little to switch, and Harvard-Harris has too short a
+history to test.
 
 `arena show <round_id>` prints exactly what would be filed and which spread rule each series used.
 

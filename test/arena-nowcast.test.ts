@@ -126,11 +126,13 @@ describe("Civiqs nowcast", () => {
       answer_history: [...history, { date: "2026-09-29", value: -26 }],
     });
     expect(stale.topline!.mean).toBe(-26);
-    const other = await forecast(
-      { ...round, tracker: "economist_yougov", series: "yougov_rv_approval" },
-      lock,
-    );
-    expect(other.topline).toEqual(forecastRound(round, lock).topline);
+    const yougov: ArenaRound = {
+      ...round,
+      tracker: "economist_yougov",
+      series: "yougov_rv_approval",
+    };
+    const other = await forecast(yougov, lock);
+    expect(other.topline).toEqual(forecastRound(yougov, lock).topline);
   });
 
   it("returns the recent daily series from the archive only, for a lock that has passed", async () => {

@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Arena poll-level start**: scalar rounds of Economist/YouGov, Morning Consult and AAII start
+  from the average of persistence and the arena's EWMA with sd half its own recent RMS error
+  (walk-forward mean per-round skill 0.11 / 0.15 over pre-lock history, 0.15 / 0.30 / 0.43 on
+  resolved rounds, vs 0.00 for the persistence start); the rule and its evidence are recorded in
+  the filing detail. `MARINA_ARENA_POLL_LEVEL=off` restores the old start.
+
 - **Arena**: a first filing for a round outside the filing window is refused unless `--early` is
   passed; `arena-filing-watch` alerts on a filing that was never refreshed (#466).
 
