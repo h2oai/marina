@@ -425,6 +425,23 @@ A **prior-only** forecast (`src/forecast/prior-answer.ts`) is the answer the bes
 its own, at no cost. Benchmark adapters include it as a candidate configuration: a model
 configuration that cannot beat its own prior on held-out questions is adding noise.
 
+### Numeric helpers for agents
+
+Every agent has two rank-0 commands for the arithmetic of forecasting. Neither calls a model.
+
+- `calc` does exact arithmetic, unit conversion, percent change and compound growth, for example
+  `calc (380 / 250)^(1/7) - 1`.
+- `quant fit <values> steps:N` (or `to:<date>`) fits a series and returns a mean, an sd and
+  quantiles. It chooses among persistence, EWMA, a persistence/EWMA blend, a linear trend, a
+  damped trend and a combination by their own past errors.
+- `quant buckets mean:<m> sd:<s> -- <ranges>` (or `q:<level>=<value>,…`) gives each numeric
+  range's probability and the most likely range. Use it for multiple-choice questions with
+  numeric ranges.
+
+The `quantitative-estimates` skill (`seeds/skills/quantitative-estimates.md`, imported with
+`skill import`) teaches when to use each command. The mechanics are in
+[architecture/forecasting.md](../architecture/forecasting.md#quantitative-helpers-srcquant).
+
 ## Keeping score
 
 Every in-world answer is saved with its full audit trail (`forecast list` shows yours). To have

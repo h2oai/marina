@@ -185,6 +185,7 @@ const READ_VERBS: ReadonlySet<string> = new Set([
   "?",
   "commands",
   "calc",
+  "quant",
   "time",
   "date",
   "uptime",

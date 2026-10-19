@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Quantitative helpers for every agent**: a new rank-0 `quant` command next to `calc`, with no
+  model call and no code sandbox. `quant fit <values> steps:N|to:<date>` fits a plain or dated
+  series and returns a mean, an sd and quantiles. The methods are persistence, EWMA, a
+  persistence/EWMA blend, a linear trend, a damped trend and a combination, and `auto` chooses
+  among them by their own rolling-origin errors. `quant buckets mean:<m> sd:<s> | q:<level>=<value>,… -- <ranges>`
+  gives each numeric range's probability and the most likely range, including open-ended ranges,
+  sd 0 and tied quantiles. The shared code lives in `src/quant/` (`fitSeries`,
+  `bucketProbabilities`, normal primitives). The arena's scalar baseline and poll-level rule now
+  call it, and a regression test checks bit-identical output against the earlier code. A new
+  `quantitative-estimates` skill (`seeds/skills/quantitative-estimates.md`) teaches `calc` for
+  units, percent change and growth, and `quant` for series and ranges.
 - **Search engines for research retrieval**: `openrouter-web:<model>@<engine>[:<mode>]` accepts
   every OpenRouter web plugin engine — `native`, `exa` (instant … deep-reasoning), `parallel`
   (turbo … advanced), `perplexity`, `firecrawl` — validates engine and mode, and adds the engine's

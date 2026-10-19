@@ -266,7 +266,8 @@ Examples:
   calc derivative('sin(x)', 'x')
 
 Statements run in order, sharing a scope. Separate with ; or newline.
-Each evaluation is bounded to ${CALC_TIMEOUT_MS / 1000} s; an expression that takes longer returns an error.`,
+Each evaluation is bounded to ${CALC_TIMEOUT_MS / 1000} s; an expression that takes longer returns an error.
+Forecast a series or price numeric ranges with \`quant fit\` / \`quant buckets\` (see \`help quant\`).`,
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

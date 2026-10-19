@@ -1557,6 +1557,7 @@ Examples:
 
 Statements run in order, sharing a scope. Separate with ; or newline.
 Each evaluation is bounded to 10 s; an expression that takes longer returns an error.
+Forecast a series or price numeric ranges with `quant fit` / `quant buckets` (see `help quant`).
 
 Category: System. Minimum rank: 0.
 Aliases: none.
@@ -7125,6 +7126,75 @@ Effect: read.
 
 - `field-0` (`count`): number, optional group `option-0`.
 - Group `option-0`: `count`.
+
+## quant
+
+Numeric forecasting helpers — no model call, milliseconds.
+Usage:
+  quant fit <values> [steps:N | to:<date>] [method:auto|persistence|ewma|blend|trend|damped|combo] [alpha:0.4] [damping:0.9] [trend:12] [-- <buckets>]
+  quant buckets mean:<m> sd:<s> -- <buckets>
+  quant buckets q:<level>=<value>,<level>=<value>,... -- <buckets>
+  quant buckets mean:<m> sd:<s> cuts:<t1>,<t2>,... [closed:lower|upper]
+
+Values: plain numbers (oldest first) or date=value pairs, separated by spaces or commas; NaN/na/null are skipped.
+Buckets: comma-separated ranges — <10, 10-20, 20..30, >=30, [a, b], (a, b], 5+, or a bare number; optional label "A: <10".
+
+Examples:
+  quant fit 3.1 3.3 3.6 3.4 3.9 4.0 4.2 4.1 steps:2
+  quant fit 2026-01-31=3.1, 2026-02-28=3.3, 2026-03-31=3.6 to:2026-06-30 method:damped
+  quant buckets mean:3.4 sd:0.3 -- <3, 3-3.5, 3.5-4, >=4
+  quant buckets q:0.1=38,0.5=42,0.9=47 -- A: <40; B: 40-45; C: >=45
+  quant fit 41 42 40 43 44 42 45 46 -- <42, 42-46, >=46
+
+fit: methods persistence, ewma, blend (persistence+EWMA)/2, trend (least-squares line), damped (trend damped 0.9/step), combo (mean of persistence, EWMA, damped); auto (default) takes the lowest rolling-origin error that beats persistence by 5%. sd = RMS of the method's own past steps-ahead misses (fallback √steps × RMS of one-step changes). Steps count releases; to:<date> converts at the median spacing.
+buckets: P(outcome in each range) and the most likely range; open ends and sd 0 (a point mass) are handled. Use the most likely bucket for a multiple-choice numeric answer.
+
+Category: System. Minimum rank: 0.
+Aliases: none.
+
+### `quant fit <values> [steps:N | to:<date>] [method:<method>] [alpha:<a>] [damping:<phi>] [trend:<n>] [-- <buckets>]`
+
+Effect: read.
+
+- `field-0` (`values`): text, required.
+- `field-1` (`steps`): number, optional group `option-0`.
+- `field-2` (`to`): text, optional group `option-0`.
+- `field-3` (`method`): text, optional group `option-1`.
+- `field-4` (`alpha`): text, optional group `option-2`.
+- `field-5` (`damping`): text, optional group `option-3`.
+- `field-6` (`trend`): number, optional group `option-4`.
+- `field-7` (`buckets`): text, optional group `option-5`.
+- Group `option-0`: `steps:N | to:date`.
+- Group `option-1`: `method:method`.
+- Group `option-2`: `alpha:a`.
+- Group `option-3`: `damping:phi`.
+- Group `option-4`: `trend:n`.
+- Group `option-5`: `-- buckets`.
+
+### `quant buckets mean:<m> sd:<s> -- <buckets>`
+
+Effect: read.
+
+- `field-0` (`mean`): text, required.
+- `field-1` (`sd`): text, required.
+- `field-2` (`buckets`): text, required.
+
+### `quant buckets q:<level>=<value>,... -- <buckets>`
+
+Effect: read.
+
+- `field-0` (`q`): number, required.
+- `field-1` (``): text, required.
+- `field-2` (`buckets`): text, required.
+
+### `quant buckets mean:<m> sd:<s> cuts:<t1>,<t2>,...`
+
+Effect: read.
+
+- `field-0` (`mean`): text, required.
+- `field-1` (`sd`): text, required.
+- `field-2` (`cuts`): text, required.
+- `field-3` (`t2`): text, required.
 
 ## quest
 
