@@ -15,6 +15,11 @@ compiled `marina` binary and the source checkout behave the same way.
 | `MARINA_PARENT_PID=<pid>` | Exit cleanly when that process is gone (an owner that died without stopping Marina). |
 | `MARINA_SPEND_LEDGER=<file>` | Several instances (one per world, say) share one daily spend total and one `MARINA_DAILY_SPEND_CAP_USD`. |
 
+Settings resolve in this order, highest first: the process environment (including a `.env` that
+Bun loads from the working directory), then `<MARINA_DATA_DIR>/.env` (where the dashboard settings
+editor saves), then the built-in default. The data directory's `.env` is applied before any server
+module loads, so every setting in it takes effect on the next start.
+
 ## Finding a running instance
 
 With `MARINA_DATA_DIR` set, once it is listening Marina writes `<MARINA_DATA_DIR>/endpoint.json` (mode 600, replaced
