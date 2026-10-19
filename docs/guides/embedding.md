@@ -54,6 +54,12 @@ One world per instance: give each world its own data directory (`MARINA_WORLD=<s
 same `MARINA_SPEND_LEDGER` so the cap covers them all. `marina worlds --json` lists the worlds
 built into the binary.
 
+Child worlds an instance starts (the World Collective) live under its data directory
+(`<MARINA_DATA_DIR>/collective/<name>`), each with its own data directory, so a child never
+replaces the parent's `endpoint.json` or opens its auth database. A child exits with the Marina that
+started it and inherits neither `MARINA_IDLE_SHUTDOWN` nor `MARINA_SINGLE_PORT`. In-world benchmark
+result files go to `<MARINA_DATA_DIR>/benchmark-results`.
+
 ## Protocols
 
 - OpenAI-compatible `/v1` (chat, responses, forecast, memory) — see [Model API](model-api.md).
