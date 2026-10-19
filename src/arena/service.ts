@@ -12,6 +12,7 @@ import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
 import type { NotesStore } from "../persistence/interfaces/notes-store";
+import type { AnchorReference } from "./anchor";
 import { type ArenaConfig, arenaConfigFromEnv, loadArenaKey } from "./config";
 import { ArenaData, DEFAULT_ARENA_DATA_URL } from "./data";
 import type { Forecaster, Learner } from "./evaluate";
@@ -647,6 +648,11 @@ async function formationForecasterFor(
         env.OPENROUTER_API_KEY,
       )
     : undefined;
+  // Delphi / symbiosis proposals weighed by judged support on the verified lines
+  // (MARINA_ARENA_PROPOSAL_JUDGE[_MODEL]); used only when a dossier exists.
+  const proposalJudge = stages.some((st) => st.pattern === "delphi" || st.pattern === "symbiosis")
+    ? (await import("./proposal-judge")).proposalJudgeFromEnv(env)
+    : undefined;
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   const data = arenaData(env);
   const start = nowcastForecaster(data, forecastRound, {
@@ -728,6 +734,7 @@ async function formationForecasterFor(
                 : undefined,
               judge,
               lessonBrief,
+              proposalJudge,
             );
       f.lessons = lessons;
       let cost = (f as { dossier?: { costUsd?: number } }).dossier?.costUsd ?? 0;
@@ -737,6 +744,13 @@ async function formationForecasterFor(
         ? []
         : [composed.protocol, composed.upstream?.protocol]) {
         const j = (p as { judge?: { calls?: number; costUsd?: number } } | undefined)?.judge;
+        usage.calls += j?.calls ?? 0;
+        cost += j?.costUsd ?? 0;
+      }
+      // The proposal judge's calls and dollars (both stages' records).
+      for (const j of composed.evidenceRefresh?.reused
+        ? []
+        : [composed.judge, composed.upstream?.judge]) {
         usage.calls += j?.calls ?? 0;
         cost += j?.costUsd ?? 0;
       }
@@ -876,7 +890,18 @@ export async function runArenaFilingWatch(
       const h = (Date.parse(r.lock_at) - now) / 3_600_000;
       return h > 0 && h <= WATCH_WINDOW_HOURS;
     }).length;
-    result = { checkedAt: now, watched, findings: filingFindings(rounds, store, entrant, now) };
+    // The arena's latest values, for the stale-anchor check; best effort per round.
+    const data = dataFor(config);
+    const references = new Map<string, AnchorReference>();
+    for (const round of rounds) {
+      const reference = await data.anchorReference(round).catch(() => undefined);
+      if (reference) references.set(round.round_id, reference);
+    }
+    result = {
+      checkedAt: now,
+      watched,
+      findings: filingFindings(rounds, store, entrant, now, references),
+    };
   } catch (err) {
     result = { checkedAt: now, watched: 0, findings: [], error: getErrorMessage(err) };
   }

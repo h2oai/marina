@@ -84,6 +84,10 @@ export function startLine(round: ArenaRound, start: RoundForecast, history: Aren
     return `Start forecast ${dist}: the NOWCAST — the freshest daily Civiqs reading (${fresh.value}, dated ${fresh.date}), with the baseline's spread; ${lead} day(s) from that reading to the resolution date.`;
   }
   const last = history.at(-1);
+  const poll = start.pollLevel;
+  if (poll) {
+    return `Start forecast ${dist}: the poll level — the average of the last published value${last ? ` (${last.value} on ${last.date})` : ""} and the series' EWMA (${poll.ewma}, alpha ${poll.alpha}), because a poll topline is a noisy sample around a slowly moving level; sd is ${poll.sd.scale} x this rule's own recent RMS error (${poll.sd.rms}).`;
+  }
   return `Start forecast ${dist}: the persistence baseline — the last published value${last ? ` (${last.value} on ${last.date})` : ""} with a spread sized to how this series moves.`;
 }
 

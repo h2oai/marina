@@ -12,6 +12,7 @@
  */
 
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
+import { type AnchorReference, describeStale, filedAnchorCheck } from "./anchor";
 import { roundHealth } from "./health";
 import type { ArenaRound } from "./types";
 
@@ -31,7 +32,8 @@ export type FilingProblem =
   | "not-refreshed"
   | "failed-refresh"
   | "stuck-refresh"
-  | "no-near-lock-refresh";
+  | "no-near-lock-refresh"
+  | "stale-anchor";
 
 export interface FilingFinding {
   roundId: string;
@@ -41,17 +43,37 @@ export interface FilingFinding {
   detail: string;
 }
 
-/** Problems with the filings of rounds locking within {@link WATCH_WINDOW_HOURS}. */
+/**
+ * Problems with the filings of rounds locking within {@link WATCH_WINDOW_HOURS},
+ * plus — for EVERY open round, given the arena's latest values (`references`,
+ * `ArenaData.anchorReference`) — an accepted filing anchored on an older
+ * release than the arena's (`stale-anchor`; critical within 6 h of the lock).
+ */
 export function filingFindings(
   rounds: readonly ArenaRound[],
   store: ArenaStore,
   entrant: string,
   now = Date.now(),
+  references?: ReadonlyMap<string, AnchorReference>,
 ): FilingFinding[] {
   const out: FilingFinding[] = [];
   for (const round of rounds) {
     const lockIn = (Date.parse(round.lock_at) - now) / 3_600_000;
-    if (!(lockIn > 0 && lockIn <= WATCH_WINDOW_HOURS)) continue;
+    if (!(lockIn > 0)) continue;
+    const accepted = store.acceptedArenaSubmission(entrant, round.round_id);
+    const filed = accepted
+      ? filedAnchorCheck(round, accepted, references?.get(round.round_id))
+      : undefined;
+    if (filed?.stale) {
+      out.push({
+        roundId: round.round_id,
+        lockAt: round.lock_at,
+        severity: lockIn <= CRITICAL_UNFILED_HOURS ? "critical" : "warning",
+        problem: "stale-anchor",
+        detail: `the accepted filing is anchored on an older release than the arena's — ${describeStale(filed)}; locks in ${lockIn.toFixed(1)} h`,
+      });
+    }
+    if (!(lockIn <= WATCH_WINDOW_HOURS)) continue;
     const h = roundHealth(round, store, entrant, now);
     const base = { roundId: round.round_id, lockAt: round.lock_at };
     const hours = lockIn.toFixed(1);
@@ -97,6 +119,19 @@ export function filingFindings(
         severity: "warning",
         problem: "failed-refresh",
         detail: `last refresh ${h.lastAttempt.status}${h.lastAttempt.reason ? `: ${h.lastAttempt.reason}` : ""}; the filing from ${h.accepted?.at} stands; locks in ${hours} h`,
+      });
+    }
+    if (
+      !filed?.stale &&
+      h.lastAttempt &&
+      !h.lastAttempt.unfinished &&
+      h.lastAttempt.status === "stale_anchor"
+    ) {
+      out.push({
+        ...base,
+        severity: "warning",
+        problem: "stale-anchor",
+        detail: `the last refresh found Marina's inputs older than the arena's latest release${h.lastAttempt.reason ? `: ${h.lastAttempt.reason}` : ""}; locks in ${hours} h`,
       });
     }
     if (

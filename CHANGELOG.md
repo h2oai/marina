@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Arena proposal judge**: delphi and symbiosis formations with a verified research dossier ask a
+  decision model (Jev by default) whether each member's move from the start is supported by the
+  verified lines; support weights the median move and can only lower the trust, any judge failure
+  files the unjudged forecast, and `forecast.judge` records per-member support and the effect.
+  `MARINA_ARENA_PROPOSAL_JUDGE=on|observe|off` (default `on`), `MARINA_ARENA_PROPOSAL_JUDGE_MODEL`
+  (default `typesafe/jev-1.13`; any Decisions-API model id, or `decisions`).
 - **Embeddable Marina**: `MARINA_DATA_DIR` keeps every write in one directory; `MARINA_SINGLE_PORT`
   serves `/mcp` on the HTTP port; `endpoint.json` lets a host find a running instance;
   `MARINA_IDLE_SHUTDOWN` and `MARINA_PARENT_PID` end it when unused or orphaned;
@@ -41,11 +47,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Arena poll-level start**: scalar rounds of Economist/YouGov, Morning Consult and AAII start
+  from the average of persistence and the arena's EWMA with sd half its own recent RMS error
+  (walk-forward mean per-round skill 0.11 / 0.15 over pre-lock history, 0.15 / 0.30 / 0.43 on
+  resolved rounds, vs 0.00 for the persistence start); the rule and its evidence are recorded in
+  the filing detail. `MARINA_ARENA_POLL_LEVEL=off` restores the old start.
+
 - **Arena**: a first filing for a round outside the filing window is refused unless `--early` is
   passed; `arena-filing-watch` alerts on a filing that was never refreshed (#466).
+- **Arena spread calibration**: every filed sd — scalar toplines and each profile cell — is
+  multiplied by a scale learned from resolved rounds (best mean per-round skill; CRPS or the
+  arena's energy score), partially pooled method → family → cross-family (w = n/(n+4)), clamped
+  to [0.35, 3], cut at min(now, lock), and applied after the measured-error floor. It replaces
+  the per-key held-out calibrator, which needed 8 records per key and never fired.
+  `MARINA_ARENA_SPREAD_CALIBRATION=on|observe|off` (default on; `MARINA_ARENA_CALIBRATION` is
+  read as a fallback). Walk-forward on Season 0: mean per-round skill 0.129 → 0.180.
 
 ### Fixed
 
+- **Arena anchor guard**: before signing, a filing's anchor (the latest reading its inputs saw) is
+  compared with the arena's latest published value, per series or profile cell and tolerant of
+  rounding. A stale anchor re-reads the inputs once, then re-anchors on the arena's value; the
+  attempt is recorded as `stale_anchor` and `arena-filing-watch` alerts (for every open round, not
+  only those locking within 24 h). `submit due --replace` also refiles every open round whose
+  accepted filing is stale, whatever its lock. `MARINA_ARENA_ANCHOR_GUARD=on|observe|off`. Two
+  Season-0 Economist/YouGov rounds filed at 36 / 18 locked against 38 / 21.
 - **Embedded Marina follow-ups** (#493):
   - Child worlds get their own data directory under the parent's, so they never overwrite the
     parent's `endpoint.json` or open its auth database.

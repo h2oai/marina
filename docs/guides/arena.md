@@ -79,7 +79,7 @@ the mean of per-round skill. Everywhere else it files exact persistence.
 
 | Round shape | Marina's answer |
 |---|---|
-| Number (`continuous_normal`) | persistence mean ± calibrated or 1.5 spread |
+| Number (`continuous_normal`) | persistence mean ± calibrated or 1.5 spread; a weekly poll topline (Economist/YouGov, Morning Consult, AAII) takes the poll level instead (below) |
 | Profile (`profile_energy`) | the same, per cell; a subgroup crosstab (`yougov_xtab`) may instead take the mean of the last k releases (below) |
 | Ranking (`ranking_list`) | last-7-day Wikipedia pageview totals, Main_Page and non-articles excluded |
 
@@ -91,6 +91,32 @@ record, scored per target date over all cells, and uses it (rule `level`) only w
 per-cell baseline by the calibration margin. The choice and its evidence are kept in the forecast
 detail (`level`).
 
+A weekly poll topline is the same kind of noisy sample: Economist/YouGov RV approval went 38, 37,
+40, 35, 36, 38. For the scalar rounds of `economist_yougov`, `morning_consult` and `aaii`
+(`src/arena/poll-level.ts`, rule `poll-level`) the start forecast is the average of persistence and
+the arena's own EWMA null (α 0.4), with an sd of half that rule's own recent one-step RMS error
+(last 26 releases, at least 6; floor 0.5). Half, not the full RMS, because the leaderboard averages
+per-round skill against persistence at sd 1.5 and quiet weeks dominate that average. A series with
+too little history keeps the baseline. The rule, both means, the RMS and the number of errors
+behind it are kept in the forecast detail (`pollLevel`) and the filing note; formations and
+research start from it. `MARINA_ARENA_POLL_LEVEL=off` restores the persistence start.
+
+Walk-forward backtest (mean per-round skill vs persistence; resolved rounds from their lock
+snapshots, and every origin from release 16 of each series' latest pre-lock history):
+
+| Family | Resolved n | Baseline | Poll level | History n | Baseline | Poll level |
+|---|---|---|---|---|---|---|
+| economist_yougov | 10 | 0.00 | 0.15 | 132 | 0.00 | 0.11 |
+| morning_consult | 6 | −0.01 | 0.30 | 44 | 0.00 | 0.15 |
+| aaii | 4 | 0.00 | 0.43 | 6 | 0.00 | 0.04 |
+| umich_sentiment | 4 | 0.00 | −0.05 | 44 | −0.03 | −0.22 |
+| umich_party | 3 | 0.00 | −0.23 | 132 | 0.00 | −0.41 |
+
+The UMich series trend month to month, so any shrink toward a recent level loses and they keep the
+baseline; the mean of the last k releases lost on every scalar family. Civiqs's daily tracker is
+already smoothed, NY Fed SCE gained too little to switch, and Harvard-Harris has too short a
+history to test.
+
 `arena show <round_id>` prints exactly what would be filed and which spread rule each series used.
 
 ### Filing watch
@@ -101,9 +127,20 @@ Filing stays the operator's act outside the world, but the server watches it. Wh
 - the standing filing **predates the round's 24-hour refresh window and nothing has tried since** (critical within 6 h of its lock), the trace a runner leaves when it crashes before recording an attempt;
 - a refresh **failed** (error, rejected or skipped) after the standing filing;
 - a refresh **started and never finished** (over 30 minutes);
-- within 45 minutes of the lock, **nothing ran in the last 90 minutes**, meaning the near-lock pass did not run.
+- within 45 minutes of the lock, **nothing ran in the last 90 minutes**, meaning the near-lock pass did not run;
+- **stale anchor**: for EVERY open round, whatever its lock, the accepted filing is anchored on an older release than the arena's latest published value (critical within 6 h of its lock), or — within 24 hours — the last refresh recorded `stale_anchor` (see below).
 
 Readiness shows the last pass as `arena-filing`. The watch only reads: it never files, so a broken runner (a stale build, a failing timer) shows up within one pass instead of after the lock. An alert resolves itself once its round is fine again.
+
+### Anchor guard
+
+A forecast starts from the latest reading its inputs saw (its anchor). The arena scores every round against persistence, the last value IT treats as published at the lock, so a filing anchored on an older release loses skill by construction. In Season 0, `yougov-2026-w42-rv-approval` and `-strong-approval` were filed 11 days early at 36 and 18, never refreshed, and locked against 38 and 21.
+
+Before signing, every filing (autopilot, `submit`, `--replace`, dry runs) compares its anchor with the arena's latest value for the round: the round's persistence baseline in the arena's site data (`site/data.json`, per cell for profile rounds), dated by the series tail when that tail ends on the same value. Ranking rounds are not checked. The comparison tolerates the arena's rounding (a poll published as 38 matches 37.6; a one-decimal value matches within 0.05). A value that matches is fresh whatever the dates; a different value is stale unless Marina's reading is dated the same day or later (a daily source ahead of the arena's refresh).
+
+When the anchor is stale, Marina drops its cached arena data and runs the forecaster again once. If the inputs are still stale, it shifts each stale mean by (arena value − anchor), keeping the spread, and files that; the attempt is recorded as `stale_anchor` with the reason, and the filing watch alerts. The trace is kept in the filing's `detail.anchorGuard`. An unreadable site file never blocks a filing (`unchecked`). `MARINA_ARENA_ANCHOR_GUARD=observe` records the verdict and files the forecast unchanged; `off` skips the check.
+
+`bun run arena submit due --replace` also refiles every open round whose accepted filing is anchored on an older release than the arena's, whatever its lock and whatever `MARINA_ARENA_WINDOW_HOURS` is, so a daily refresh catches a new release days before the lock instead of relying on one near-lock pass.
 
 ### Input freshness before filing
 
@@ -205,6 +242,26 @@ dropped blowups are excluded). Each round's calls, statuses, trust and cost are 
 with the pattern's own audit under `protocol` (delphi's summary, the tournament bracket,
 verification's aspect verdicts and judge record).
 
+**Proposal judge (delphi, symbiosis).** When the formation carries a verified research dossier
+(`+research@…`, or a frozen dossier in `shadow compare`), a decision model weighs each member's
+final proposal: one yes/no question — is this member's move from the start supported by the
+*verified* dossier lines? — given the round question, the start forecast, the member's forecast
+and stated reason (symbiosis: its credit and contribution). The yes-probabilities, renormalised,
+weight the median move (equal support ⇒ the ordinary median), and the trust becomes
+`0.5 × agreement × mean support`, so it can only drop; the 4-sd drop rule and the 2-sd cap stay.
+A proposal that did not move counts as supported without a call; no verified lines or no moving
+proposal leaves the forecast unchanged. Any judge failure (outage, timeout, spend-cap refusal,
+malformed answer) files the unjudged aggregation. The record is `forecast.judge`: `status`
+(`applied`, `observed`, `skipped`, `unavailable`), the judge's provider and model, per-member
+`support`, `meanSupport`, and the `unjudged` and `judged` mean, sd, trust and move, plus calls
+and cost (which also reach the round's `costUsd`). `MARINA_ARENA_PROPOSAL_JUDGE=on|observe|off`
+(default `on`; `observe` records the judged forecast without filing it) and
+`MARINA_ARENA_PROPOSAL_JUDGE_MODEL` (default `typesafe/jev-1.13`; any Decisions-API model id on
+OpenRouter — switching to another decision model is one env change — or `decisions` for the
+world's `MARINA_DECISIONS` backend). Profile rounds are not judged yet. To measure it, run
+`shadow compare` with `observe` and score `judge.judged` against `judge.unjudged`, or run the
+paired comparison under `on` and `off` (the config fingerprint differs) and use `paired-score`.
+
 **Profile rounds.** On a `profile_energy` round (a Google Trends basket, Civiqs or YouGov subgroup
 profiles) every pattern runs the same protocol over the whole profile
 (`src/arena/formation-profile.ts`, shared shape helpers in `src/arena/profile-shape.ts`):
@@ -273,18 +330,42 @@ reading that week's Wednesday-lock nowcast would have used (the newest snapshot 
 lock) is compared with the Friday value; the RMS, shrunk toward the start sd with 2 pseudo-weeks,
 is recorded as `origins.<series>.errorFloor` (at least 3 measured weeks, else none). Whatever
 forecaster produced the answer (nowcast, formation, crew, research, routed), the filed sd is
-raised to that floor when it is narrower, and the note says so; it only ever widens.
+raised to that floor when it is narrower, and the note says so; it only ever widens. The spread
+calibration below runs after it and may narrow the result when resolved rounds say so.
 
-**Spread calibration per (family, method).** Before the floor, a filed topline's sd passes
-through the general forecaster's sd-scale calibrator (`src/forecast/recalibration.ts`), keyed
-`arena:<tracker>|<method>` (`src/arena/calibration.ts`; the method at pattern level, e.g.
-`formation:delphi+research` or `nowcast`). Its evidence is our own resolved filings — the newest
-accepted version of each round, the sd its forecaster produced, the published value — visible
-only once resolved, never the round being filed. The minimum-CRPS scale is fitted on the older
-60 %, shrunk toward 1, and adopted only when it beats identity on the newer 40 % by 5 %; with
-fewer than 8 records of the key it is identity. Order: forecaster → calibration → error floor.
-The decision is kept under `calibration` in the filing's detail. `MARINA_ARENA_CALIBRATION=observe`
-records without applying; `off` skips it.
+**Spread calibration per (family, method).** Last, after the floor, every filed sd — a scalar
+topline and each profile cell — is multiplied by a scale learned from resolved rounds
+(`src/arena/calibration.ts`). The family is the tracker, with `:profile` for profile rounds
+(`civiqs` and `civiqs:profile` get their sds from different paths); the key is
+`arena:<family>|<method>`, the method at pattern level (e.g. `formation:delphi+research`,
+`nowcast`). Evidence is one record per resolved round we filed: the sd as it stood before this
+step (our ledger's newest accepted filing, divided back by any multiplier applied then; the
+arena's site data for a round the ledger lacks), the published outcome, and persistence's loss
+on the round, from the arena's public `site/data.json` (scalars fall back to
+`resolutions/resolved.json`). A record is visible only when its outcome was published at or
+before min(now, the round's lock) — `resolved_at` (or its correction) for a scalar, the end of
+the release day for a profile — and never for the round itself.
+
+Each level's ŝ is the multiplier on a 0.30–3.00 grid with the best **mean per-round skill**
+(1 − loss/persistence loss; CRPS for a scalar, the arena's energy score for a profile — exact,
+since the point set is linear in the multiplier). Levels pool in log space with
+w = n / (n + 4): the (family, method) toward its family, the family toward the cross-family
+scale, and that — the geometric mean of the families' ŝ, each family counted once so one busy
+family cannot export its miscalibration — toward 1 by F / (F + 4). The result is clamped to
+[0.35, 3]. With no resolved rounds it is identity; one resolved round already moves it a little.
+Order: forecaster → move weight → error floor → spread calibration, so resolved rounds have the
+last word over the floor's estimate (on Civiqs the floor kept filings ~2.7× wider than their
+misses). The decision and its evidence (scale, n / ŝ / w per level, cutoff) are kept under
+`spreadCalibration` in the filing's detail. Two exclusions: a scalar filing made before the
+anchor guard from a release older than the one at its lock (filed ≥ 7 days early, mean ≠ the
+arena's persistence) is no evidence, since its miss measures the stale anchor; and a poll-level
+start keeps its own backtested sd until 4 poll-level filings have resolved (its records are keyed
+`…+poll-level`). `MARINA_ARENA_SPREAD_CALIBRATION=observe` records
+without applying; `off` skips it (the retired `MARINA_ARENA_CALIBRATION` is read when it is
+unset). Walk-forward over Season 0 to mid-October (31 resolved rounds we filed, each round
+calibrated only on outcomes published before its lock) it lifts mean per-round skill from 0.129
+to 0.180, nearly all of it on Civiqs toplines (0.289 → 0.359) and Economist/YouGov (−0.902 →
+−0.827); the profile families move by under 0.01 on two or three rounds each.
 
 **Learned move weight per (family, method).** A formation files its start plus a constant share
 (about one half) of its members' median move. `src/arena/move-weight.ts` learns that share from
@@ -294,7 +375,7 @@ outcomes instead: the filed mean becomes `start + w × (median proposal − star
 beats what was filed on the newer 40 % by 5 % AND a placebo fails: the same fit with the members'
 moves shuffled across rounds must not reach the same gain (else the gain is shrinkage, not
 information in the moves). With fewer than 8 records it does nothing. Order: forecaster → move
-weight → spread calibration → error floor; the decision (w, n, held-out gain, placebo) is kept
+weight → error floor → spread calibration; the decision (w, n, held-out gain, placebo) is kept
 under `moveWeight`. `MARINA_ARENA_MOVE_WEIGHT=observe` records without applying; `off` skips it.
 Formation filings now record their start (`formationStart`) so the move is exact.
 
@@ -419,7 +500,8 @@ unanswered round costs nothing. A filing that misses its refresh is scored again
 baseline frozen on fresher data, and it can only lose. Replacing an accepted filing is always
 allowed.
 
-File inside the window, then schedule an operator refresh closer to the lock. For
+With `--replace`, `due` also selects every open round whose accepted filing has a stale anchor
+(see [Anchor guard](#anchor-guard)), whatever its lock. File inside the window, then schedule an operator refresh closer to the lock. For
 example, an hourly `MARINA_ARENA_WINDOW_HOURS=1.1 bun run arena submit due --replace` selects
 rounds locking within 66 minutes, while preserving the five-minute safety margin. Allow enough
 time for the selected formation and any simultaneous deadlines. Runners sharing a checkout or
@@ -1060,3 +1142,5 @@ not isolate evidence sharing as cleanly.
 | `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:google/gemini-3.1-pro-preview` | the research agent's search backend(s): `openrouter-web:<model>`, `sonar:<model>`, `tavily:basic` / `tavily:advanced` (needs `TAVILY_API_KEY`), comma-separated to merge |
 | `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend; falls back to `jev`) or `none` |
 | `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |
+| `MARINA_ARENA_PROPOSAL_JUDGE` | `on` | delphi / symbiosis with verified research: judged support weights the move and lowers trust; `observe` records only, `off` skips |
+| `MARINA_ARENA_PROPOSAL_JUDGE_MODEL` | `typesafe/jev-1.13` | the proposal judge: any Decisions-API model id on OpenRouter, or `decisions` (the `MARINA_DECISIONS` backend) |

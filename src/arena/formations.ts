@@ -64,6 +64,11 @@
  * floor of half the start sd. A failed or malformed call drops out; with no
  * usable proposal the formation files the start forecast.
  *
+ * With a verified dossier, delphi and symbiosis also pass their final
+ * proposals through the proposal judge (`proposal-judge.ts`,
+ * `MARINA_ARENA_PROPOSAL_JUDGE`): judged support weights the median move and
+ * can only lower the trust; any judge failure files the unjudged aggregation.
+ *
  * Profile rounds run the same patterns over whole profiles, one call per
  * member per step, aggregated cell by cell with these clamps
  * (`formation-profile.ts`); ranking rounds keep their start.
@@ -95,6 +100,12 @@ import {
   startLine,
   withoutDaily,
 } from "./prompt-context";
+import {
+  PROPOSAL_JUDGED_PATTERNS,
+  type ProposalJudgeConfig,
+  type ProposalJudgeRecord,
+  weighProposals,
+} from "./proposal-judge";
 import { buildResearchBrief } from "./research/briefs";
 import type { CiviqsDaily } from "./research/civiqs-nowcast";
 import type { Retriever } from "./research/retrieve";
@@ -175,6 +186,8 @@ export interface FormationForecast extends RoundForecast {
   signals?: ForecastSignal[];
   /** Filled by the service: what the round's calls cost. */
   costUsd?: number;
+  /** The proposal judge's record (delphi / symbiosis with verified lines; `proposal-judge.ts`). */
+  judge?: ProposalJudgeRecord;
 }
 
 interface Ctx {
@@ -406,6 +419,8 @@ interface Outcome {
   agreement?: number;
   critique?: string;
   protocol?: Record<string, unknown>;
+  /** A member's stated reason by proposal key, when the proposal itself carries none (symbiosis). */
+  reasons?: Record<string, string>;
 }
 
 type Protocol = (ctx: Ctx, members: FormationMember[]) => Promise<Outcome | undefined>;
@@ -723,7 +738,11 @@ async function symbioticPair(
   quant: FormationMember,
   analyst: FormationMember,
   tag: string,
-): Promise<{ proposals: Record<string, Proposal>; modes: string[] }> {
+): Promise<{
+  proposals: Record<string, Proposal>;
+  modes: string[];
+  reasons: Record<string, string>;
+}> {
   const pair = [
     { role: "quant" as const, m: quant, input: ctx.numbers },
     { role: "analyst" as const, m: analyst, input: ctx.recent },
@@ -737,7 +756,8 @@ async function symbioticPair(
         `${SYMBIOSIS_SYSTEM[p.role]} ${FIRST_REPLY}`,
         `${ctx.head}\n\n${p.input}`,
       );
-      return { p: proposalOf(ctx, r), contribution: String(r?.contribution ?? "").slice(0, 400) };
+      const contribution = String(r?.contribution ?? "").slice(0, 400);
+      return { p: proposalOf(ctx, r), contribution, note: contribution };
     }),
   );
   const modes: string[] = [];
@@ -769,9 +789,11 @@ async function symbioticPair(
           if (step) step.status = "not taken: no credit to the partner";
           return own;
         }
+        const contribution = String(r?.contribution ?? own.contribution).slice(0, 400);
         return {
           p: revised ?? own.p,
-          contribution: String(r?.contribution ?? own.contribution).slice(0, 400),
+          contribution,
+          note: revised ? [credit, contribution].filter(Boolean).join("; ") : own.note,
         };
       }),
     );
@@ -781,11 +803,15 @@ async function symbioticPair(
     modes.push(`gap ${round3(gap())} → finalize (exchange cap)`);
   }
   const proposals: Record<string, Proposal> = {};
+  const reasons: Record<string, string> = {};
   pair.forEach((p, i) => {
     const got = state[i]!.p;
-    if (got) proposals[`${tag}${p.role}:${p.m.name}`] = got;
+    if (!got) return;
+    const key = `${tag}${p.role}:${p.m.name}`;
+    proposals[key] = got;
+    if (state[i]!.note) reasons[key] = `${p.role}: ${state[i]!.note}`;
   });
-  return { proposals, modes };
+  return { proposals, modes, reasons };
 }
 
 /**
@@ -799,7 +825,7 @@ const symbiosis: Protocol = async (ctx, members) => {
   if (members.length <= 2) {
     const one = await symbioticPair(ctx, members[0]!, members[1 % members.length]!, "");
     const out = byMedian(ctx, one.proposals);
-    return out && { ...out, critique: one.modes.join("; ") };
+    return out && { ...out, critique: one.modes.join("; "), reasons: one.reasons };
   }
   const pairs: Array<[FormationMember, FormationMember]> = [];
   for (let i = 0; i < members.length; i += 2) {
@@ -810,10 +836,13 @@ const symbiosis: Protocol = async (ctx, members) => {
   );
   const perPair: Record<string, Proposal> = {};
   const notes: string[] = [];
+  const reasons: Record<string, string> = {};
   results.forEach((r, i) => {
     const halves = Object.values(r.proposals);
     notes.push(`pair${i + 1}: ${r.modes.join(", ")}`);
     if (halves.length === 0) return;
+    const said = Object.values(r.reasons).join(" | ");
+    if (said) reasons[`pair${i + 1}`] = said;
     perPair[`pair${i + 1}`] = {
       ...halves[0]!,
       mean: halves.reduce((s, h) => s + h.mean, 0) / halves.length,
@@ -821,7 +850,7 @@ const symbiosis: Protocol = async (ctx, members) => {
     };
   });
   const out = byMedian(ctx, perPair);
-  return out && { ...out, critique: notes.join(" | ").slice(0, 1_500) };
+  return out && { ...out, critique: notes.join(" | ").slice(0, 1_500), reasons };
 };
 
 /** The checks the research pattern can run; each is computed here, never by a model. */
@@ -1313,6 +1342,8 @@ export async function formationForecastRound(
   briefing?: string,
   /** A decision backend for model-judged aspects (verification); omitted ⇒ computed aspects only. */
   judge?: DecisionProvider,
+  /** The proposal judge (delphi / symbiosis scalar rounds) and the verified dossier lines it reads. */
+  proposalJudge?: ProposalJudgeConfig & { verified?: string },
 ): Promise<FormationForecast> {
   const given = start ?? forecastRound(round, lock);
   const daily = dailyOf(given);
@@ -1351,6 +1382,10 @@ export async function formationForecastRound(
     ...(judge ? { judge } : {}),
   };
   const out = await PROTOCOLS[pattern](ctx, members);
+  const judged =
+    out && proposalJudge && (PROPOSAL_JUDGED_PATTERNS as readonly string[]).includes(pattern)
+      ? await judgeOutcome(ctx, out, proposalJudge)
+      : undefined;
   const fresh = freshestReading(baseline, round.series);
   const common = {
     formation: pattern,
@@ -1364,14 +1399,44 @@ export async function formationForecastRound(
     ...common,
     formationStart: { mean: ctx.base.mean, sd: ctx.base.sd },
     ...(signals.length ? { signals } : {}),
-    topline: atLeastLinearPool(atLeastNarrowestProposal(out.topline, out.proposals), ctx.steps),
+    topline: atLeastLinearPool(
+      atLeastNarrowestProposal(judged?.topline ?? out.topline, out.proposals),
+      ctx.steps,
+    ),
     proposals: out.proposals,
-    trust: out.trust,
+    trust: judged ? round3(judged.trust) : out.trust,
+    ...(judged ? { judge: judged.record } : {}),
     ...(out.agreement !== undefined ? { agreement: out.agreement } : {}),
     ...(out.critique ? { critique: out.critique } : {}),
     ...(out.protocol ? { protocol: out.protocol } : {}),
     note: `marina ${pattern} formation (${members.map((m) => m.name).join(", ")}) over ${fresh ? `the nowcast (${fresh.date})` : "the calibrated baseline"}`,
   };
+}
+
+/**
+ * The proposal judge over a delphi / symbiosis outcome (`proposal-judge.ts`):
+ * the unjudged aggregation is recomputed exactly as `byMedian` made it, then
+ * weighed. Anything but `applied` returns that aggregation unchanged.
+ */
+async function judgeOutcome(
+  ctx: Ctx,
+  out: Outcome,
+  config: ProposalJudgeConfig & { verified?: string },
+) {
+  const list = Object.values(out.proposals);
+  if (list.length === 0) return undefined;
+  const trust = DEFAULT_TRUST * agreement(ctx.base, list);
+  const c = centre(ctx.base, list);
+  return weighProposals({
+    config,
+    round: ctx.round,
+    base: ctx.base,
+    proposals: out.proposals,
+    ...(out.reasons ? { reasons: out.reasons } : {}),
+    verified: config.verified,
+    unjudged: { topline: out.topline, trust, move: c.move, sd: c.sd },
+    settle: (move, sd, t) => settle(ctx.base, move, sd, t),
+  });
 }
 
 // ─── Composition: research crew → formation → optional judging formation ─────
@@ -1515,6 +1580,7 @@ export interface ComposedForecast extends FormationForecast {
     | "trust"
     | "rounds"
     | "protocol"
+    | "judge"
   >;
 }
 
@@ -1536,6 +1602,8 @@ export async function composeForecastRound(
   /** A decision backend for model-judged aspects, handed to both formations. */
   judge?: DecisionProvider,
   additionalBrief?: string,
+  /** The proposal judge: weighs delphi / symbiosis proposals against the dossier's verified lines. */
+  proposalJudge?: ProposalJudgeConfig,
 ): Promise<ComposedForecast> {
   const [first, second] = stages;
   const numeric = round.target_type === "continuous_normal" && Boolean(start.topline);
@@ -1594,6 +1662,7 @@ export async function composeForecastRound(
   const brief =
     [dossier ? dossierBlock(dossier) : undefined, additionalBrief].filter(Boolean).join("\n\n") ||
     undefined;
+  const weigh = proposalJudge && { ...proposalJudge, verified: dossier?.verified };
   const one = await formationForecastRound(
     first.pattern,
     round,
@@ -1602,6 +1671,7 @@ export async function composeForecastRound(
     start,
     brief,
     judge,
+    weigh,
   );
   if (research?.required && one.fallback)
     throw new Error(`Required research forecast refused: ${one.fallback}`);
@@ -1627,6 +1697,7 @@ export async function composeForecastRound(
     start,
     [brief, handoff].filter(Boolean).join("\n\n"),
     judge,
+    weigh,
   );
   if (research?.required && two.fallback)
     throw new Error(`Required research forecast refused: ${two.fallback}`);
@@ -1646,6 +1717,7 @@ export async function composeForecastRound(
       ...(one.profileProposals ? { profileProposals: one.profileProposals } : {}),
       ...(one.trust !== undefined ? { trust: one.trust } : {}),
       ...(one.protocol ? { protocol: one.protocol } : {}),
+      ...(one.judge ? { judge: one.judge } : {}),
     },
     note: `${two.note ?? `marina ${second.pattern}`} judging ${first.pattern}${dossier?.verified.trim() ? " with a verified research dossier" : dossier ? " without verified research evidence" : ""}`,
   };

@@ -26,6 +26,7 @@ import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
 import type { DecisionProvider } from "../src/decisions/types";
 import { MarinaDB } from "../src/persistence/database";
 import { cleanupDb } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const weekly = (values: number[], start = "2026-01-02"): ArenaPoint[] =>
   values.map((value, i) => ({
@@ -302,6 +303,13 @@ describe("source terms", () => {
 });
 
 describe("research agent pipeline", () => {
+  // These fixtures exercise research over the persistence-based start; the
+  // poll-level start (arena-poll-level.test.ts) is pinned off here.
+  let pollLevel: DisposableStack | undefined;
+  beforeEach(() => {
+    pollLevel = scopeProcessState({ env: { MARINA_ARENA_POLL_LEVEL: "off" } });
+  });
+  afterEach(() => pollLevel?.dispose());
   it("required research rejects an outage or unverifiable dossier before analysts run", async () => {
     let calls = 0;
     for (const retriever of [

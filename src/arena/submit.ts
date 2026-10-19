@@ -17,10 +17,23 @@ import { guardedFetch } from "../net/url-guard";
 import type { ArenaSubmissionRow } from "../persistence/db-arena";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
 import {
-  arenaCalibrationHistory,
+  type AnchorCheck,
+  type AnchorGuardMode,
+  type AnchorGuardTrace,
+  type AnchorReference,
+  anchorGuardModeFromEnv,
+  anchorIds,
+  checkAnchor,
+  describeStale,
+  filedAnchorCheck,
+  forecastAnchors,
+  reanchorForecast,
+} from "./anchor";
+import {
+  applySpreadCalibration,
   type CalibrationMode,
-  calibrateFiledForecast,
-  calibrationModeFromEnv,
+  spreadCalibrationHistory,
+  spreadCalibrationModeFromEnv,
 } from "./calibration";
 import type { ArenaConfig } from "./config";
 import type { ArenaData } from "./data";
@@ -96,15 +109,22 @@ export interface SubmitDeps {
   forecasterConfig?: Record<string, unknown>;
   /** Required by official operator routes, including the final signing check. */
   strictFreshness?: boolean;
+  /** The anchor guard (`anchor.ts`); `MARINA_ARENA_ANCHOR_GUARD` when omitted. */
+  anchorGuard?: AnchorGuardMode;
 }
 
 export const baselineForecaster: Forecaster = async (round, lock) => forecastRound(round, lock);
 
-export type SubmitOutcome =
+/** Set when the forecast's anchor was older than the arena's latest value (`anchor.ts`). */
+type AnchorFlag = { anchor?: AnchorGuardTrace };
+
+export type SubmitOutcome = (
   | { kind: "accepted"; roundId: string; row: ArenaSubmissionRow; already?: boolean }
   | { kind: "rejected" | "error"; roundId: string; reason: string; row?: ArenaSubmissionRow }
   | { kind: "skipped"; roundId: string; reason: string }
-  | { kind: "dry-run"; roundId: string; body: ArenaForecastBody };
+  | { kind: "dry-run"; roundId: string; body: ArenaForecastBody }
+) &
+  AnchorFlag;
 
 /** Build the body Marina would file for a round right now (no signing, no I/O beyond reads). */
 export async function buildForecastBody(
@@ -118,8 +138,9 @@ export async function buildForecastBody(
 
 /**
  * Whatever produced the forecast (nowcast, formation, crew, research, routed),
- * no filed sd is narrower than the series' measured nowcast error
- * (`ForecastOrigin.errorFloor`). Only ever widens; the mean is untouched.
+ * no sd leaves this step narrower than the series' measured nowcast error
+ * (`ForecastOrigin.errorFloor`). Only ever widens; the mean is untouched. The
+ * spread calibration runs after it and may narrow it on resolved evidence.
  */
 export function applyErrorFloor(round: ArenaRound, f: RoundForecast): RoundForecast {
   const floorOf = (id: string | undefined) => (id ? f.origins?.[id]?.errorFloor : undefined);
@@ -156,24 +177,35 @@ type Calibrate = (round: ArenaRound, f: RoundForecast) => RoundForecast;
 /**
  * The (family, method) post-processing of a filing, from our own resolved
  * filings (and, for the move weight, arena shadows) and the arena's published
- * values: the learned move weight (`move-weight.ts`) on the mean, then the
- * spread calibration (`calibration.ts`). A read failure leaves the forecast
- * as its forecaster made it, never unfiled.
+ * values: the learned move weight (`move-weight.ts`) on the mean before the
+ * error floor, and the spread calibration (`calibration.ts`) on every sd after
+ * it. A read failure leaves the forecast as its forecaster made it, never
+ * unfiled.
  */
 async function calibrationFor(
   deps: Pick<SubmitDeps, "config" | "data" | "store" | "now">,
-  mode: CalibrationMode = calibrationModeFromEnv(),
+  mode: CalibrationMode = spreadCalibrationModeFromEnv(),
   moveMode: MoveWeightMode = moveWeightModeFromEnv(),
-): Promise<Calibrate | undefined> {
+): Promise<{ move?: Calibrate; spread?: Calibrate } | undefined> {
   if (mode === "off" && moveMode === "off") return undefined;
   try {
     const [resolutions, rounds] = await Promise.all([deps.data.resolutions(), deps.data.rounds()]);
     const rows = deps.store.listArenaSubmissions({ entrant: deps.config.entrant, limit: 500 });
-    const history = arenaCalibrationHistory(
-      rows,
-      resolutions,
-      Object.fromEntries(rounds.map((r) => [r.round_id, r.tracker])),
-    );
+    const spreads =
+      mode === "off"
+        ? []
+        : spreadCalibrationHistory({
+            rows,
+            site: await deps.data.siteRounds().catch((err) => {
+              new Logger().warn("arena", "arena site data unavailable for spread calibration", {
+                error: getErrorMessage(err),
+              });
+              return [];
+            }),
+            resolutions,
+            entrant: deps.config.entrant,
+            rounds: Object.fromEntries(rounds.map((r) => [r.round_id, r])),
+          });
     const moves =
       moveMode === "off"
         ? []
@@ -193,10 +225,19 @@ async function calibrationFor(
             deps.store.listArenaShadow({ limit: 2_000 }),
           );
     const now = deps.now?.() ?? Date.now();
-    return (round, f) => {
-      const moved =
-        moveMode === "off" ? f : applyMoveWeight(round, f, moves, { now, mode: moveMode });
-      return mode === "off" ? moved : calibrateFiledForecast(round, moved, history, { now, mode });
+    return {
+      ...(moveMode === "off"
+        ? {}
+        : {
+            move: (round: ArenaRound, f: RoundForecast) =>
+              applyMoveWeight(round, f, moves, { now, mode: moveMode }),
+          }),
+      ...(mode === "off"
+        ? {}
+        : {
+            spread: (round: ArenaRound, f: RoundForecast) =>
+              applySpreadCalibration(round, f, spreads, { now, mode }),
+          }),
     };
   } catch (err) {
     new Logger().warn("arena", "calibration history unavailable", {
@@ -211,14 +252,37 @@ async function prepareForecast(
   entrant: string,
   round: ArenaRound,
   forecaster: Forecaster,
-  calibrate?: Calibrate,
+  calibrate?: { move?: Calibrate; spread?: Calibrate },
 ) {
   const lock = await data.lock(round.round_id);
   const raw = await forecaster(round, lock);
-  // The forecaster, then the (family, method) move weight and spread
-  // calibration, then the measured-error floor: the floor has the last word on
-  // how narrow it may be.
-  const f = applyErrorFloor(round, calibrate ? calibrate(round, raw) : raw);
+  // The forecaster, then the (family, method) move weight, then the
+  // measured-error floor, then the spread calibration: resolved rounds have
+  // the last word on how wide a filing is.
+  const floored = applyErrorFloor(round, calibrate?.move ? calibrate.move(round, raw) : raw);
+  const f = calibrate?.spread ? calibrate.spread(round, floored) : floored;
+  return {
+    body: bodyFor(round, entrant, f),
+    detail: {
+      schema: "marina.arena.forecast.v1",
+      round,
+      lock,
+      lockHash: createHash("sha256").update(JSON.stringify(lock)).digest("hex"),
+      forecast: f,
+    } as {
+      schema: string;
+      round: ArenaRound;
+      lock: typeof lock;
+      lockHash: string;
+      forecast: RoundForecast;
+      anchorGuard?: AnchorGuardTrace;
+    },
+  };
+}
+
+type Prepared = Awaited<ReturnType<typeof prepareForecast>>;
+
+function bodyFor(round: ArenaRound, entrant: string, f: RoundForecast): ArenaForecastBody {
   const body: ArenaForecastBody = {
     round_id: round.round_id,
     entrant,
@@ -229,16 +293,86 @@ async function prepareForecast(
   };
   const invalid = validateForecastBody(round, body);
   if (invalid) throw new Error(`${round.round_id}: ${invalid}`);
-  return {
-    body,
-    detail: {
-      schema: "marina.arena.forecast.v1",
-      round,
-      lock,
-      lockHash: createHash("sha256").update(JSON.stringify(lock)).digest("hex"),
-      forecast: f,
-    },
+  return body;
+}
+
+/** The arena's latest values for a round, or why they could not be read. */
+async function referenceFor(
+  data: ArenaData,
+  round: ArenaRound,
+): Promise<{ reference?: AnchorReference; error?: string }> {
+  try {
+    return { reference: await data.anchorReference(round) };
+  } catch (err) {
+    return { error: getErrorMessage(err) };
+  }
+}
+
+/**
+ * The anchor guard, before signing: compare the forecast's anchor with the
+ * newest value the arena treats as published for the round. Stale → re-read
+ * the inputs once (arena data cache dropped, forecaster run again); still
+ * stale → shift the stale means onto the arena's value (`reanchorForecast`).
+ * `observe` records the verdict and files what was forecast. An unreadable
+ * reference never blocks a filing; it is recorded as `unchecked`.
+ */
+async function guardAnchor(
+  deps: SubmitDeps,
+  round: ArenaRound,
+  prepared: Prepared,
+  again: () => Promise<Prepared>,
+): Promise<Prepared> {
+  const mode = deps.anchorGuard ?? anchorGuardModeFromEnv();
+  if (mode === "off" || !anchorIds(round).length) return prepared;
+  const trace = (p: Prepared, t: Omit<AnchorGuardTrace, "mode">): Prepared => {
+    p.detail.anchorGuard = { mode, ...t };
+    return p;
   };
+  const checkOf = (p: Prepared, reference: AnchorReference) =>
+    checkAnchor(round, forecastAnchors(round, p.detail.lock, p.detail.forecast), reference);
+  const first = await referenceFor(deps.data, round);
+  if (!first.reference) {
+    return trace(prepared, {
+      status: "unchecked",
+      reason: first.error ?? "the arena publishes no comparable value for this round",
+    });
+  }
+  const check = checkOf(prepared, first.reference);
+  if (!check.stale) return trace(prepared, { status: "fresh", check });
+  if (mode === "observe")
+    return trace(prepared, { status: "stale", check, reason: describeStale(check) });
+
+  deps.data.refresh();
+  let fresh: Prepared;
+  try {
+    fresh = await again();
+  } catch (err) {
+    return trace(prepared, {
+      status: "stale",
+      check,
+      reason: `${describeStale(check)}; re-reading the inputs failed: ${getErrorMessage(err)}`,
+    });
+  }
+  const second = await referenceFor(deps.data, round);
+  const recheck: AnchorCheck = second.reference ? checkOf(fresh, second.reference) : check;
+  if (!recheck.stale) return trace(fresh, { status: "refetched", check: recheck });
+  const shifted = reanchorForecast(fresh.detail.forecast, round, recheck);
+  if (!Object.keys(shifted.reanchored).length) {
+    return trace(fresh, { status: "stale", check: recheck, reason: describeStale(recheck) });
+  }
+  fresh.detail.forecast = shifted.forecast;
+  fresh.body = bodyFor(round, deps.config.entrant, shifted.forecast);
+  return trace(fresh, {
+    status: "reanchored",
+    check: recheck,
+    reason: `inputs still stale after a re-read; re-anchored on the arena's latest value — ${describeStale(recheck)}`,
+    reanchored: shifted.reanchored,
+  });
+}
+
+/** True when the guard found a stale anchor (whatever it then did about it). */
+function staleAnchor(trace: AnchorGuardTrace | undefined): boolean {
+  return trace?.status === "stale" || trace?.status === "reanchored";
 }
 
 export async function submitRound(
@@ -284,11 +418,27 @@ export async function submitRound(
   });
   try {
     const result = await submitRoundInner(deps, roundId, opts);
-    record("finished", result.kind === "accepted" && result.already ? "unchanged" : result.kind, {
-      ...("reason" in result ? { reason: maskSensitiveText(result.reason, 1000) } : {}),
-      ...("row" in result && result.row ? { submissionId: result.row.id } : {}),
-      budget: dailySpend(),
-    });
+    // A stale anchor is its own status (the filing watch alerts on it), unless the send failed.
+    const stale =
+      staleAnchor(result.anchor) && result.kind !== "error" && result.kind !== "rejected";
+    record(
+      "finished",
+      stale
+        ? "stale_anchor"
+        : result.kind === "accepted" && result.already
+          ? "unchanged"
+          : result.kind,
+      {
+        ...(stale
+          ? { reason: maskSensitiveText(result.anchor?.reason ?? "stale anchor", 1000) }
+          : "reason" in result
+            ? { reason: maskSensitiveText(result.reason, 1000) }
+            : {}),
+        ...(result.anchor ? { anchor: result.anchor.status } : {}),
+        ...("row" in result && result.row ? { submissionId: result.row.id } : {}),
+        budget: dailySpend(),
+      },
+    );
     return result;
   } catch (error) {
     record("finished", "error", {
@@ -336,40 +486,41 @@ async function submitRoundInner(
     row = latest; // an unconfirmed send: re-send the SAME signed request
   } else {
     let body: ArenaForecastBody;
-    let detail: Awaited<ReturnType<typeof prepareForecast>>["detail"];
-    try {
-      ({ body, detail } = await prepareForecast(
+    let detail: Prepared["detail"];
+    const calibrate = await calibrationFor(deps);
+    const prepare = () =>
+      prepareForecast(
         deps.data,
         config.entrant,
         round,
         deps.forecaster ?? baselineForecaster,
-        await calibrationFor(deps),
-      ));
+        calibrate,
+      );
+    try {
+      ({ body, detail } = await guardAnchor(deps, round, await prepare(), prepare));
     } catch (err) {
       return { kind: "skipped", roundId, reason: err instanceof Error ? err.message : String(err) };
     }
+    const flagged = <T extends SubmitOutcome>(out: T): T =>
+      detail.anchorGuard ? { ...out, anchor: detail.anchorGuard } : out;
     if (opts.dryRun) {
       if (deps.strictFreshness) {
         try {
           requireFreshForecast(round, detail.lock, detail.forecast, new Date(now).toISOString());
         } catch (err) {
-          return {
-            kind: "skipped",
-            roundId,
-            reason: getErrorMessage(err),
-          };
+          return flagged({ kind: "skipped", roundId, reason: getErrorMessage(err) });
         }
       }
-      return { kind: "dry-run", roundId, body };
+      return flagged({ kind: "dry-run", roundId, body });
     }
     // Model/retrieval work may take minutes. Admission time is not signing time.
     const signingTime = deps.now?.() ?? Date.now();
     if (Date.parse(round.lock_at) - signingTime < LOCK_MARGIN_MS) {
-      return {
+      return flagged({
         kind: "skipped",
         roundId,
         reason: `forecast finished too close to lock at ${round.lock_at}`,
-      };
+      });
     }
     if (deps.strictFreshness) {
       try {
@@ -380,18 +531,15 @@ async function submitRoundInner(
           new Date(signingTime).toISOString(),
         );
       } catch (err) {
-        return {
-          kind: "skipped",
-          roundId,
-          reason: getErrorMessage(err),
-        };
+        return flagged({ kind: "skipped", roundId, reason: getErrorMessage(err) });
       }
     }
     const raw = Buffer.from(JSON.stringify(body));
     if (opts.replace && accepted && accepted.body === raw.toString("utf8")) {
-      return { kind: "accepted", roundId, row: accepted, already: true };
+      return flagged({ kind: "accepted", roundId, row: accepted, already: true });
     }
-    if (raw.length > MAX_BODY_BYTES) return { kind: "skipped", roundId, reason: "body too large" };
+    if (raw.length > MAX_BODY_BYTES)
+      return flagged({ kind: "skipped", roundId, reason: "body too large" });
     const meta: SignedMeta = {
       entrant: config.entrant,
       "key-id": config.keyId,
@@ -415,6 +563,7 @@ async function submitRoundInner(
     });
     row = store.latestArenaSubmission(config.entrant, roundId)!;
     if (row.id !== id) throw new Error("arena ledger write was not read back");
+    return flagged(await send(deps, row));
   }
   return send(deps, row);
 }
@@ -459,19 +608,59 @@ async function send(deps: SubmitDeps, row: ArenaSubmissionRow): Promise<SubmitOu
   }
 }
 
-/** Rounds whose lock falls inside the filing window and (unless `includeAccepted`) have no accepted submission. */
+/**
+ * Rounds whose lock falls inside the filing window and (unless `includeAccepted`)
+ * have no accepted submission. With `includeAccepted` (`submit due --replace`)
+ * it also returns every OTHER open round whose accepted filing is anchored on
+ * an older release than the arena's latest (`staleFilings`), whatever its lock:
+ * a refresh only near the lock is one missed run away from a stale anchor.
+ */
 export async function dueRounds(
-  deps: Pick<SubmitDeps, "config" | "data" | "store" | "now">,
+  deps: Pick<SubmitDeps, "config" | "data" | "store" | "now" | "anchorGuard">,
   opts: { includeAccepted?: boolean } = {},
 ): Promise<ArenaRound[]> {
   const now = deps.now?.() ?? Date.now();
   const horizon = now + deps.config.windowHours * 3_600_000;
-  return (await deps.data.openRounds(now)).filter((r) => {
-    const lock = Date.parse(r.lock_at);
-    return (
-      lock <= horizon &&
-      lock - now >= LOCK_MARGIN_MS &&
-      (opts.includeAccepted || !deps.store.acceptedArenaSubmission(deps.config.entrant, r.round_id))
-    );
-  });
+  const open = (await deps.data.openRounds(now)).filter(
+    (r) => Date.parse(r.lock_at) - now >= LOCK_MARGIN_MS,
+  );
+  const inWindow = open.filter(
+    (r) =>
+      Date.parse(r.lock_at) <= horizon &&
+      (opts.includeAccepted ||
+        !deps.store.acceptedArenaSubmission(deps.config.entrant, r.round_id)),
+  );
+  if (!opts.includeAccepted) return inWindow;
+  const due = new Set(inWindow.map((r) => r.round_id));
+  const stale = new Set(
+    (
+      await staleFilings(
+        deps,
+        open.filter((r) => !due.has(r.round_id)),
+      )
+    ).map((s) => s.round.round_id),
+  );
+  return open.filter((r) => due.has(r.round_id) || stale.has(r.round_id));
+}
+
+/**
+ * Open rounds whose ACCEPTED filing is anchored on an older release than the
+ * arena's latest value (`filedAnchorCheck`). Reads only; an unreadable
+ * reference leaves the round out (the near-lock refresh still covers it).
+ */
+export async function staleFilings(
+  deps: Pick<SubmitDeps, "config" | "data" | "store" | "anchorGuard">,
+  rounds: readonly ArenaRound[],
+): Promise<Array<{ round: ArenaRound; check: AnchorCheck }>> {
+  if ((deps.anchorGuard ?? anchorGuardModeFromEnv()) === "off") return [];
+  const out: Array<{ round: ArenaRound; check: AnchorCheck }> = [];
+  for (const round of rounds) {
+    if (!anchorIds(round).length) continue;
+    const accepted = deps.store.acceptedArenaSubmission(deps.config.entrant, round.round_id);
+    if (!accepted) continue;
+    const { reference } = await referenceFor(deps.data, round);
+    const check = filedAnchorCheck(round, accepted, reference);
+    if (check?.stale) out.push({ round, check });
+  }
+  return out;
 }

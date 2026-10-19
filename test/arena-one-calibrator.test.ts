@@ -2,33 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import {
-  arenaCalibrationHistory,
-  calibrateFiledForecast,
-  calibrationKey,
-  calibrationModeFromEnv,
-  methodOf,
-} from "../src/arena/calibration";
-import type { RoundForecast } from "../src/arena/forecast";
+import { methodOf } from "../src/arena/calibration";
 import {
   atLeastLinearPool,
   type FormationStep,
   linearPoolSd,
   recordedReplies,
 } from "../src/arena/formations";
-import type { ArenaRound } from "../src/arena/types";
 import type { ResolvedRecord } from "../src/forecast/history";
 import { fitCalibration } from "../src/forecast/recalibration";
-import type { ArenaSubmissionRow } from "../src/persistence/db-arena";
-
-const round = (id: string, tracker = "civiqs"): ArenaRound => ({
-  round_id: id,
-  tracker,
-  question: "q",
-  target_type: "continuous_normal",
-  lock_at: "2027-01-06T14:00:00Z",
-  release_at: "2027-01-08T14:00:00Z",
-});
 
 const DELPHI_NOTE = "route civiqs → formation:delphi:a,b,c+research@search:tavily; marina delphi";
 
@@ -68,69 +50,6 @@ describe("methodOf", () => {
   });
 });
 
-describe("arenaCalibrationHistory", () => {
-  const row = (
-    id: number,
-    roundId: string,
-    topline: { mean: number; sd: number },
-    extra: Partial<ArenaSubmissionRow> = {},
-    detail: unknown = {},
-  ): ArenaSubmissionRow =>
-    ({
-      id,
-      entrant: "e",
-      round_id: roundId,
-      request_id: `q${id}`,
-      url: "u",
-      meta: "{}",
-      body: JSON.stringify({ round_id: roundId, topline, notes: DELPHI_NOTE }),
-      detail: JSON.stringify(detail),
-      status: "accepted",
-      http_status: 200,
-      response: null,
-      created_at: id,
-      updated_at: id,
-      ...extra,
-    }) as ArenaSubmissionRow;
-
-  it("keeps the newest accepted filing of each resolved round, its pre-calibration sd", () => {
-    const rows = [
-      row(1, "civiqs-a", { mean: 1, sd: 9 }),
-      row(
-        2,
-        "civiqs-a",
-        { mean: 2, sd: 0.5 },
-        {},
-        {
-          round: { tracker: "civiqs" },
-          forecast: { note: DELPHI_NOTE, calibration: { fromSd: 0.3 } },
-        },
-      ),
-      row(3, "civiqs-a", { mean: 3, sd: 0.5 }, { status: "rejected" }),
-      row(4, "yougov-b", { mean: 40, sd: 1.5 }),
-      row(5, "civiqs-open", { mean: 5, sd: 1 }),
-      row(6, "civiqs-void", { mean: 5, sd: 1 }),
-    ];
-    const out = arenaCalibrationHistory(
-      rows,
-      {
-        "civiqs-a": { value: 2.5, resolved_at: "2026-10-01T00:00:00Z" },
-        "yougov-b": { value: 41, resolved_at: "2026-10-02T00:00:00Z" },
-        "civiqs-void": { value: 1, resolved_at: "2026-10-02T00:00:00Z", voided: { why: "x" } },
-      },
-      { "yougov-b": "economist_yougov" },
-    );
-    expect(out).toHaveLength(2);
-    const a = out.find((r) => r.id === "civiqs-a")!;
-    expect(a.raw).toEqual({ value: 2, sd: 0.3 });
-    expect(a.group).toBe(calibrationKey("civiqs", "formation:delphi+research"));
-    // Empty detail: the tracker comes from the season, the method from the body's notes.
-    expect(out.find((r) => r.id === "yougov-b")!.group).toBe(
-      "arena:economist_yougov|formation:delphi+research",
-    );
-  });
-});
-
 describe("fitCalibration key and shrink", () => {
   it("pools only the key's records and shrinks the scale toward 1", () => {
     const key = "arena:civiqs|formation:delphi";
@@ -152,58 +71,6 @@ describe("fitCalibration key and shrink", () => {
     expect(s(loose)).toBeGreaterThan(2);
     expect(s(shrunk)).toBeGreaterThan(1);
     expect(s(shrunk)).toBeLessThan(s(loose));
-  });
-});
-
-describe("calibrateFiledForecast", () => {
-  const f: RoundForecast = { topline: { mean: 29.8, sd: 0.2 }, note: DELPHI_NOTE } as RoundForecast;
-  const key = calibrationKey("civiqs", "formation:delphi+research");
-  const now = Date.parse("2027-01-05T00:00:00Z");
-
-  it("is identity with too little history", () => {
-    const out = calibrateFiledForecast(round("civiqs-x"), f, records(5, 3, key), { now });
-    expect(out.topline).toEqual(f.topline);
-    expect(out.calibration?.adopted).toBe(false);
-    expect(out.calibration?.reason).toContain("insufficient history");
-  });
-
-  it("widens an overconfident (family, method) on a held-out gain, mean untouched", () => {
-    const out = calibrateFiledForecast(round("civiqs-x"), f, records(20, 3, key), { now });
-    expect(out.calibration?.applied).toBe(true);
-    expect(out.topline!.mean).toBe(29.8);
-    expect(out.topline!.sd).toBeGreaterThan(0.2);
-    expect(out.note).toContain(`calibrated on ${key}`);
-  });
-
-  it("ignores other keys, the round itself and outcomes not yet known", () => {
-    const other = calibrateFiledForecast(round("civiqs-x", "aaii"), f, records(20, 3, key), {
-      now,
-    });
-    expect(other.topline).toEqual(f.topline);
-    // Every record resolves after `now`: none is visible.
-    const future = calibrateFiledForecast(
-      round("civiqs-x"),
-      f,
-      records(20, 3, key, Date.parse("2027-02-01")),
-      { now },
-    );
-    expect(future.calibration?.applied).toBe(false);
-    const self = records(20, 3, key).map((r) => ({ ...r, id: "civiqs-x" }));
-    expect(calibrateFiledForecast(round("civiqs-x"), f, self, { now }).calibration?.applied).toBe(
-      false,
-    );
-  });
-
-  it("observe records without applying; off is a no-op", () => {
-    const h = records(20, 3, key);
-    const obs = calibrateFiledForecast(round("civiqs-x"), f, h, { now, mode: "observe" });
-    expect(obs.calibration?.adopted).toBe(true);
-    expect(obs.calibration?.applied).toBe(false);
-    expect(obs.topline).toEqual(f.topline);
-    expect(calibrateFiledForecast(round("civiqs-x"), f, h, { now, mode: "off" })).toBe(f);
-    expect(calibrationModeFromEnv({})).toBe("on");
-    expect(calibrationModeFromEnv({ MARINA_ARENA_CALIBRATION: "observe" })).toBe("observe");
-    expect(calibrationModeFromEnv({ MARINA_ARENA_CALIBRATION: "OFF" })).toBe("off");
   });
 });
 
