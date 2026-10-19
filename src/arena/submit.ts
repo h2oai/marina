@@ -30,10 +30,10 @@ import {
   reanchorForecast,
 } from "./anchor";
 import {
-  arenaCalibrationHistory,
+  applySpreadCalibration,
   type CalibrationMode,
-  calibrateFiledForecast,
-  calibrationModeFromEnv,
+  spreadCalibrationHistory,
+  spreadCalibrationModeFromEnv,
 } from "./calibration";
 import type { ArenaConfig } from "./config";
 import type { ArenaData } from "./data";
@@ -138,8 +138,9 @@ export async function buildForecastBody(
 
 /**
  * Whatever produced the forecast (nowcast, formation, crew, research, routed),
- * no filed sd is narrower than the series' measured nowcast error
- * (`ForecastOrigin.errorFloor`). Only ever widens; the mean is untouched.
+ * no sd leaves this step narrower than the series' measured nowcast error
+ * (`ForecastOrigin.errorFloor`). Only ever widens; the mean is untouched. The
+ * spread calibration runs after it and may narrow it on resolved evidence.
  */
 export function applyErrorFloor(round: ArenaRound, f: RoundForecast): RoundForecast {
   const floorOf = (id: string | undefined) => (id ? f.origins?.[id]?.errorFloor : undefined);
@@ -176,24 +177,35 @@ type Calibrate = (round: ArenaRound, f: RoundForecast) => RoundForecast;
 /**
  * The (family, method) post-processing of a filing, from our own resolved
  * filings (and, for the move weight, arena shadows) and the arena's published
- * values: the learned move weight (`move-weight.ts`) on the mean, then the
- * spread calibration (`calibration.ts`). A read failure leaves the forecast
- * as its forecaster made it, never unfiled.
+ * values: the learned move weight (`move-weight.ts`) on the mean before the
+ * error floor, and the spread calibration (`calibration.ts`) on every sd after
+ * it. A read failure leaves the forecast as its forecaster made it, never
+ * unfiled.
  */
 async function calibrationFor(
   deps: Pick<SubmitDeps, "config" | "data" | "store" | "now">,
-  mode: CalibrationMode = calibrationModeFromEnv(),
+  mode: CalibrationMode = spreadCalibrationModeFromEnv(),
   moveMode: MoveWeightMode = moveWeightModeFromEnv(),
-): Promise<Calibrate | undefined> {
+): Promise<{ move?: Calibrate; spread?: Calibrate } | undefined> {
   if (mode === "off" && moveMode === "off") return undefined;
   try {
     const [resolutions, rounds] = await Promise.all([deps.data.resolutions(), deps.data.rounds()]);
     const rows = deps.store.listArenaSubmissions({ entrant: deps.config.entrant, limit: 500 });
-    const history = arenaCalibrationHistory(
-      rows,
-      resolutions,
-      Object.fromEntries(rounds.map((r) => [r.round_id, r.tracker])),
-    );
+    const spreads =
+      mode === "off"
+        ? []
+        : spreadCalibrationHistory({
+            rows,
+            site: await deps.data.siteRounds().catch((err) => {
+              new Logger().warn("arena", "arena site data unavailable for spread calibration", {
+                error: getErrorMessage(err),
+              });
+              return [];
+            }),
+            resolutions,
+            entrant: deps.config.entrant,
+            rounds: Object.fromEntries(rounds.map((r) => [r.round_id, r])),
+          });
     const moves =
       moveMode === "off"
         ? []
@@ -213,10 +225,19 @@ async function calibrationFor(
             deps.store.listArenaShadow({ limit: 2_000 }),
           );
     const now = deps.now?.() ?? Date.now();
-    return (round, f) => {
-      const moved =
-        moveMode === "off" ? f : applyMoveWeight(round, f, moves, { now, mode: moveMode });
-      return mode === "off" ? moved : calibrateFiledForecast(round, moved, history, { now, mode });
+    return {
+      ...(moveMode === "off"
+        ? {}
+        : {
+            move: (round: ArenaRound, f: RoundForecast) =>
+              applyMoveWeight(round, f, moves, { now, mode: moveMode }),
+          }),
+      ...(mode === "off"
+        ? {}
+        : {
+            spread: (round: ArenaRound, f: RoundForecast) =>
+              applySpreadCalibration(round, f, spreads, { now, mode }),
+          }),
     };
   } catch (err) {
     new Logger().warn("arena", "calibration history unavailable", {
@@ -231,14 +252,15 @@ async function prepareForecast(
   entrant: string,
   round: ArenaRound,
   forecaster: Forecaster,
-  calibrate?: Calibrate,
+  calibrate?: { move?: Calibrate; spread?: Calibrate },
 ) {
   const lock = await data.lock(round.round_id);
   const raw = await forecaster(round, lock);
-  // The forecaster, then the (family, method) move weight and spread
-  // calibration, then the measured-error floor: the floor has the last word on
-  // how narrow it may be.
-  const f = applyErrorFloor(round, calibrate ? calibrate(round, raw) : raw);
+  // The forecaster, then the (family, method) move weight, then the
+  // measured-error floor, then the spread calibration: resolved rounds have
+  // the last word on how wide a filing is.
+  const floored = applyErrorFloor(round, calibrate?.move ? calibrate.move(round, raw) : raw);
+  const f = calibrate?.spread ? calibrate.spread(round, floored) : floored;
   return {
     body: bodyFor(round, entrant, f),
     detail: {

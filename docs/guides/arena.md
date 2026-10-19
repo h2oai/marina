@@ -310,18 +310,38 @@ reading that week's Wednesday-lock nowcast would have used (the newest snapshot 
 lock) is compared with the Friday value; the RMS, shrunk toward the start sd with 2 pseudo-weeks,
 is recorded as `origins.<series>.errorFloor` (at least 3 measured weeks, else none). Whatever
 forecaster produced the answer (nowcast, formation, crew, research, routed), the filed sd is
-raised to that floor when it is narrower, and the note says so; it only ever widens.
+raised to that floor when it is narrower, and the note says so; it only ever widens. The spread
+calibration below runs after it and may narrow the result when resolved rounds say so.
 
-**Spread calibration per (family, method).** Before the floor, a filed topline's sd passes
-through the general forecaster's sd-scale calibrator (`src/forecast/recalibration.ts`), keyed
-`arena:<tracker>|<method>` (`src/arena/calibration.ts`; the method at pattern level, e.g.
-`formation:delphi+research` or `nowcast`). Its evidence is our own resolved filings — the newest
-accepted version of each round, the sd its forecaster produced, the published value — visible
-only once resolved, never the round being filed. The minimum-CRPS scale is fitted on the older
-60 %, shrunk toward 1, and adopted only when it beats identity on the newer 40 % by 5 %; with
-fewer than 8 records of the key it is identity. Order: forecaster → calibration → error floor.
-The decision is kept under `calibration` in the filing's detail. `MARINA_ARENA_CALIBRATION=observe`
-records without applying; `off` skips it.
+**Spread calibration per (family, method).** Last, after the floor, every filed sd — a scalar
+topline and each profile cell — is multiplied by a scale learned from resolved rounds
+(`src/arena/calibration.ts`). The family is the tracker, with `:profile` for profile rounds
+(`civiqs` and `civiqs:profile` get their sds from different paths); the key is
+`arena:<family>|<method>`, the method at pattern level (e.g. `formation:delphi+research`,
+`nowcast`). Evidence is one record per resolved round we filed: the sd as it stood before this
+step (our ledger's newest accepted filing, divided back by any multiplier applied then; the
+arena's site data for a round the ledger lacks), the published outcome, and persistence's loss
+on the round, from the arena's public `site/data.json` (scalars fall back to
+`resolutions/resolved.json`). A record is visible only when its outcome was published at or
+before min(now, the round's lock) — `resolved_at` (or its correction) for a scalar, the end of
+the release day for a profile — and never for the round itself.
+
+Each level's ŝ is the multiplier on a 0.30–3.00 grid with the best **mean per-round skill**
+(1 − loss/persistence loss; CRPS for a scalar, the arena's energy score for a profile — exact,
+since the point set is linear in the multiplier). Levels pool in log space with
+w = n / (n + 4): the (family, method) toward its family, the family toward the cross-family
+scale, and that — the geometric mean of the families' ŝ, each family counted once so one busy
+family cannot export its miscalibration — toward 1 by F / (F + 4). The result is clamped to
+[0.35, 3]. With no resolved rounds it is identity; one resolved round already moves it a little.
+Order: forecaster → move weight → error floor → spread calibration, so resolved rounds have the
+last word over the floor's estimate (on Civiqs the floor kept filings ~2.7× wider than their
+misses). The decision and its evidence (scale, n / ŝ / w per level, cutoff) are kept under
+`spreadCalibration` in the filing's detail. `MARINA_ARENA_SPREAD_CALIBRATION=observe` records
+without applying; `off` skips it (the retired `MARINA_ARENA_CALIBRATION` is read when it is
+unset). Walk-forward over Season 0 to mid-October (31 resolved rounds we filed, each round
+calibrated only on outcomes published before its lock) it lifts mean per-round skill from 0.129
+to 0.180, nearly all of it on Civiqs toplines (0.289 → 0.359) and Economist/YouGov (−0.902 →
+−0.827); the profile families move by under 0.01 on two or three rounds each.
 
 **Learned move weight per (family, method).** A formation files its start plus a constant share
 (about one half) of its members' median move. `src/arena/move-weight.ts` learns that share from
@@ -331,7 +351,7 @@ outcomes instead: the filed mean becomes `start + w × (median proposal − star
 beats what was filed on the newer 40 % by 5 % AND a placebo fails: the same fit with the members'
 moves shuffled across rounds must not reach the same gain (else the gain is shrinkage, not
 information in the moves). With fewer than 8 records it does nothing. Order: forecaster → move
-weight → spread calibration → error floor; the decision (w, n, held-out gain, placebo) is kept
+weight → error floor → spread calibration; the decision (w, n, held-out gain, placebo) is kept
 under `moveWeight`. `MARINA_ARENA_MOVE_WEIGHT=observe` records without applying; `off` skips it.
 Formation filings now record their start (`formationStart`) so the move is exact.
 

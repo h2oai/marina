@@ -157,8 +157,25 @@ export class ArenaData {
       round_id: string;
       status: string;
       target_type: string;
-      resolution?: { outcome?: unknown };
-      scores?: Record<string, { energy?: number; loss?: number; skill?: number }>;
+      tracker?: string;
+      lock_at?: string;
+      cells?: string[];
+      scoreable?: boolean;
+      persistence_crps?: number | null;
+      resolution?: {
+        outcome?: unknown;
+        value?: unknown;
+        resolved_at?: unknown;
+        release_date?: unknown;
+        corrected?: unknown;
+        voided?: unknown;
+      };
+      scores?: Record<string, { crps?: number; energy?: number; loss?: number; skill?: number }>;
+      /** Every entrant's filed forecast (scalar mean/sd, or profile cells). */
+      forecasts?: Record<
+        string,
+        { mean?: number; sd?: number; cells?: Record<string, { mean: number; sd: number }> }
+      >;
     }>
   > {
     const site = await this.json<{ rounds: Awaited<ReturnType<ArenaData["siteRounds"]>> }>(
