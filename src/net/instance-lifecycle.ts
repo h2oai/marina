@@ -6,7 +6,9 @@
  * process: find it (`endpoint.json`), let it go away when nobody uses it
  * (`MARINA_IDLE_SHUTDOWN`), and tie its life to a parent (`MARINA_PARENT_PID`).
  *
- * Activity is EXTERNAL use: HTTP, WebSocket and MCP requests from callers.
+ * Activity is EXTERNAL use: an HTTP or MCP request from a caller (in flight
+ * until a streamed response body ends — an MCP client's open event stream
+ * included), an open WebSocket or telnet connection, or a frame on one.
  * Marina's own agents calling its `/v1` with the internal token are not
  * activity, and an autonomous agent's turns never reset the idle clock (an
  * open turn only postpones the shutdown until it ends) — otherwise one
@@ -17,7 +19,14 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { parseDuration } from "../engine/commands/format-duration";
 
-/** Counts in-flight external requests and remembers when the last one ended. */
+/** Response types whose body is a long-lived stream. */
+const STREAMING_TYPE = /text\/event-stream|ndjson/i;
+
+/**
+ * Counts in-flight external use — requests (until a streamed body ends) and
+ * open interactive sessions (a WebSocket or telnet connection) — and
+ * remembers when the last one ended.
+ */
 export class ActivityTracker {
   private active = 0;
   private last: number;
@@ -26,7 +35,7 @@ export class ActivityTracker {
     this.last = now();
   }
 
-  /** One external request begins; call the returned function when it ends. */
+  /** One external request or session begins; call the returned function when it ends. */
   begin(): () => void {
     this.active++;
     this.last = this.now();
@@ -37,6 +46,43 @@ export class ActivityTracker {
       this.active--;
       this.last = this.now();
     };
+  }
+
+  /**
+   * Hand a request's `end` to its response: a streamed body (server-sent
+   * events, NDJSON) stays in flight until the body is fully read, cancelled or
+   * fails, so a long stream is never cut off by idle shutdown; any other
+   * response (or none, after a WebSocket upgrade) ends the request now.
+   */
+  endWithResponse<R extends Response | undefined>(res: R, end: () => void): R {
+    if (!res?.body || !STREAMING_TYPE.test(res.headers.get("content-type") ?? "")) {
+      end();
+      return res;
+    }
+    const reader = res.body.getReader();
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            end();
+            controller.close();
+          } else controller.enqueue(value);
+        } catch (err) {
+          end();
+          controller.error(err);
+        }
+      },
+      cancel(reason) {
+        end();
+        return reader.cancel(reason);
+      },
+    });
+    return new Response(body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    }) as R;
   }
 
   /** A one-shot external event (a WebSocket frame). */

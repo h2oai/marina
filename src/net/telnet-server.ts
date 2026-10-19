@@ -11,6 +11,7 @@ import type { Connection, EntityId, Perception } from "../types";
 import { A } from "./ansi";
 import { formatPerception } from "./formatter";
 import { clientIp } from "./http-utils";
+import { instanceActivity } from "./instance-lifecycle";
 import { resolveWsBindHostname } from "./websocket-server";
 
 /** Module logger: telnet surface lifecycle and socket-level failures. */
@@ -103,6 +104,8 @@ export class TelnetServer {
             return;
           }
           sockets.set(connId, socket);
+          // An open session is someone using this instance: idle shutdown waits for it.
+          socket.data.endActivity = instanceActivity.begin();
 
           const conn: Connection = {
             id: connId,
@@ -133,6 +136,7 @@ export class TelnetServer {
         },
 
         data(socket, data) {
+          instanceActivity.touch();
           if (self.draining) {
             socket.write("Instance is draining.\r\n");
             return;
@@ -216,6 +220,7 @@ export class TelnetServer {
 
         close(socket) {
           const connId = socket.data.connId;
+          socket.data.endActivity?.();
           self.release(socket.data.ip);
           socket.data.ip = undefined;
           if (!sockets.delete(connId)) return;
@@ -263,6 +268,8 @@ interface TelnetData {
   name: string | null;
   /** Counted client address; cleared once released so a close never double-counts. */
   ip?: string;
+  /** Ends this connection's hold on idle shutdown (`MARINA_IDLE_SHUTDOWN`). */
+  endActivity?: () => void;
 }
 
 /**
