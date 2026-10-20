@@ -65,7 +65,7 @@ export interface TelemetryStore {
   getPrimitiveUsageLeaderboard(limit?: number): PrimitiveUsageSummary[];
   recordAutonomyPulse(pulse: AutonomyPulseInput): void;
   listAutonomyPulse(sinceMs: number): AutonomyPulseRow[];
-  addDailySpend(day: string, source: string, usd: number, scope?: string): void;
+  addDailySpend(day: string, source: string, usd: number, scope?: string, purpose?: string): void;
   getDailySpend(day: string): DailySpendRow[];
   getScopeDailySpend(day: string, scope?: string): ScopeDailySpendRow[];
 }

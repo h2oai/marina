@@ -785,7 +785,7 @@ async function main(): Promise<number> {
       try {
         const [loop, { modelComplete }] = await Promise.all([
           import("../src/arena/discovery/loop"),
-          import("../src/arena/model-backend"),
+          import("../src/model/complete"),
         ]);
         // Operator-proposed signals take the proposer's place: the same split,
         // margin and record, with no model call.
@@ -797,7 +797,10 @@ async function main(): Promise<number> {
         const proposer = operator ? "operator" : (values.proposer ?? loop.proposerModel());
         const { complete, usage } = operator
           ? { complete: undefined, usage: { calls: 0, costUsd: 0 } }
-          : modelComplete(proposer);
+          : modelComplete(proposer, process.env, {
+              purpose: "arena",
+              trace: { caller: "arena.discovery" },
+            });
         const trackers = values.tracker ? [values.tracker] : loop.DISCOVERY_TRACKERS;
         for (const tracker of trackers) {
           const out = await loop.discover({

@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** Shared research features for arena, general forecasts and research reports. */
-import { modelComplete } from "../arena/model-backend";
-import { readSwarmRetriever } from "../arena/research/read-swarm-retriever";
-import type { Retriever } from "../arena/research/retrieve";
-import { defaultPageText } from "../arena/research/verify";
+import { modelComplete } from "../model/complete";
+import { modelTurns } from "../model/turns";
 import { researchDecisionProvider } from "./decision-advice";
 import { evidenceLoopRetriever } from "./evidence-loop";
-import { modelTurns } from "./model-turn";
+import { readSwarmRetriever } from "./read-swarm-retriever";
+import type { Retriever } from "./retrieve";
 import { withReleaseCalendar, withSurveyEvidence } from "./survey";
+import { defaultPageText } from "./verify";
 
 export { researchFeatures } from "./settings";
 
@@ -29,7 +29,11 @@ export function researchRetriever(
   const surveyFile = env.MARINA_RESEARCH_SURVEY_FILE?.trim();
   if (surveyFile) base = withSurveyEvidence(base, () => Bun.file(surveyFile).json());
   if (settings.reader) {
-    const reader = modelComplete(settings.reader, env, opts);
+    const reader = modelComplete(settings.reader, env, {
+      ...opts,
+      purpose: "research",
+      trace: { caller: "research.reader" },
+    });
     base = readSwarmRetriever(base, {
       reader: { name: settings.reader, complete: reader.complete },
       spent: () => reader.usage.costUsd,
@@ -40,7 +44,11 @@ export function researchRetriever(
   if (settings.rounds > 1 && !model) throw new Error("iterative research needs a reviewer model");
   const reviewer =
     settings.rounds > 1
-      ? modelComplete(model!, env, { maxTokens: Math.min(opts.maxTokens ?? 4000, 4000) })
+      ? modelComplete(model!, env, {
+          maxTokens: Math.min(opts.maxTokens ?? 4000, 4000),
+          purpose: "research",
+          trace: { caller: "research.reviewer" },
+        })
       : undefined;
   let adviceCost = 0;
   // Lazy: missing credentials leave the deterministic plan available.
@@ -52,7 +60,8 @@ export function researchRetriever(
           const turns = modelTurns(model, env, {
             maxTokens: 512,
             signal,
-            spendSource: "forecast",
+            purpose: "research",
+            trace: { caller: "research.advice" },
             onCost: (cost) => {
               adviceCost += cost;
             },

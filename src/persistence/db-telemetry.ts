@@ -663,6 +663,8 @@ export interface ScopeDailySpendRow extends DailySpendRow {
  * scope's total (migration 156) — both upserts in ONE immediate transaction,
  * so every process sharing the database (WAL, busy timeout) sees both or
  * neither, and concurrent writers serialize instead of losing an increment.
+ * A `purpose` (already `purpose:<name>`, `src/engine/spend-ledger.ts`) adds a
+ * breakdown row in `spend_scope_daily` in the same transaction.
  */
 export function addDailySpend(
   db: Database,
@@ -670,6 +672,7 @@ export function addDailySpend(
   source: string,
   usd: number,
   scope?: string,
+  purpose?: string,
 ): void {
   const now = Date.now();
   db.transaction(() => {
@@ -678,14 +681,15 @@ export function addDailySpend(
        ON CONFLICT(day, source) DO UPDATE SET
          cost_usd = cost_usd + excluded.cost_usd, calls = calls + 1, updated_at = excluded.updated_at`,
     ).run(day, source, usd, now);
-    if (scope) {
+    for (const row of [scope, purpose]) {
+      if (!row) continue;
       db.query(
         `INSERT INTO spend_scope_daily (day, scope, source, cost_usd, calls, updated_at)
          VALUES (?, ?, ?, ?, 1, ?)
          ON CONFLICT(day, scope, source) DO UPDATE SET
            cost_usd = cost_usd + excluded.cost_usd, calls = calls + 1,
            updated_at = excluded.updated_at`,
-      ).run(day, scope, source, usd, now);
+      ).run(day, row, source, usd, now);
     }
   }).immediate();
 }

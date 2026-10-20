@@ -2088,8 +2088,8 @@ export class MarinaDB implements MarinaStores {
     return telemetryDb.listAutonomyPulse(this.reader, sinceMs);
   }
 
-  addDailySpend(day: string, source: string, usd: number, scope?: string): void {
-    telemetryDb.addDailySpend(this.db, day, source, usd, scope);
+  addDailySpend(day: string, source: string, usd: number, scope?: string, purpose?: string): void {
+    telemetryDb.addDailySpend(this.db, day, source, usd, scope, purpose);
   }
 
   getDailySpend(day: string): telemetryDb.DailySpendRow[] {

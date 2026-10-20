@@ -225,6 +225,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One shared model backend for library pipelines** (`src/model/`). Forecast, arena, research,
+  lessons, outcome extraction, the web swarm and benchmark checkers call models through one core
+  (`modelCall`) instead of `src/arena/model-backend.ts` and a second `modelTurns` copy.
+  `src/arena/model-backend.ts` and `src/research/model-turn.ts` are re-exports, and so are the
+  retriever and verifier modules that moved from `src/arena/research/` to `src/research/`
+  (`retrieve`, `verify`, `web-search`, `isolation`, `barred`, `read-swarm-retriever`).
+  - **Spend labels.** Every call names its purpose. The ledger records it under the purpose's
+    source plus a `purpose:<name>` breakdown row in `spend_scope_daily` (no migration; read with
+    `purposeSpendToday`, left out of the budget-scope readouts). Lesson writing, outcome
+    extraction, the web swarm and benchmark checkers move from `forecast` to `model_api`; a judge
+    is `decision`; forecast, arena and research stay `forecast`. `MARINA_SPEND_SCOPE` may not use
+    the reserved `purpose:` prefix.
+  - **No double count.** A loopback `marina/*` call is no longer also priced and recorded by the
+    caller; the `/v1` passthru that serves it records it once as `model_api`.
+  - **Retry.** A transient failure (429, 5xx, network) is retried once by default with backoff
+    (`MARINA_MODEL_RETRIES`, `MARINA_MODEL_RETRY_BASE_MS`). Usage limits, auth, other 4xx, the
+    spend cap, timeouts and aborts are never retried.
+  - **Traces.** Each call mints a `req-…` id and emits `model_request_lifecycle` events
+    (`routeKind: "direct"`, `purpose`, the caller's `traceContext`), so `trace show` covers
+    library calls.
+  - **Route fallback (opt-in).** `MARINA_MODEL_ROUTE_FALLBACK=on` reuses route health: a usage-
+    limited first-party route is served by the same model via OpenRouter. Default off.
 - **Faster fresh installs**: new databases start from the schema-167 baseline (v0.8.0) instead of
   137, about 2.5× faster to create. Existing databases upgrade exactly as before (#500).
 - **Silent promise failures are logged or justified**: the empty-catch check covers

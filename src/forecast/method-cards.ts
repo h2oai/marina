@@ -23,7 +23,7 @@
  * derives the deps a card runs with.
  */
 
-import type { ResearchReport } from "../arena/research/retrieve";
+import type { ResearchReport } from "../research/retrieve";
 import type { AnswerType } from "./answer-types";
 import { ANSWER_TYPES } from "./answer-types";
 import { TYPED_FORMATIONS, type TypedFormation, typedFormation } from "./formations";

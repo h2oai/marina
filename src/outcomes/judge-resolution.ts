@@ -25,8 +25,6 @@
  * confirms it. Ranking and text answers are not judged.
  */
 
-import { modelComplete } from "../arena/model-backend";
-import { type RetrieverKeys, retrieverFromSpec } from "../arena/research/retrieve";
 import { harnessDecisionProvider } from "../decisions/engines";
 import { choice, noul } from "../decisions/questions";
 import type { ChoiceAnswer, DecisionProvider, NoulAnswer } from "../decisions/types";
@@ -34,8 +32,10 @@ import { Logger } from "../engine/logger";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { forecastRetrieverSpec } from "../forecast/retriever-default";
 import type { TypedForecastAnswer } from "../forecast/typed";
+import { modelComplete } from "../model/complete";
 import type { MarinaDB } from "../persistence/database";
 import type { ForecastAnswerRow } from "../persistence/db-markets";
+import { type RetrieverKeys, retrieverFromSpec } from "../research/retrieve";
 import { judgeEarned } from "./agreement";
 import { proposeForecastResolution, resolveForecast } from "./forecast";
 
@@ -85,7 +85,7 @@ export interface JudgeResolutionDeps {
   /** The decision backend (default: the harness's configured one). */
   judge?: DecisionProvider;
   /** Research after the fact (default: the forecast retriever). */
-  retriever?: import("../arena/research/retrieve").Retriever;
+  retriever?: import("../research/retrieve").Retriever;
   /**
    * Proposes a number's resolved value with a verbatim quote (numbers only;
    * default: `MARINA_OUTCOME_JUDGE_MODEL`, else the first forecast analyst,
@@ -228,7 +228,11 @@ function extractorFrom(env: NodeJS.ProcessEnv): (system: string, user: string) =
     env.MARINA_OUTCOME_JUDGE_MODEL?.trim() ||
     env.MARINA_FORECAST_ANALYSTS?.split(",")[0]?.trim() ||
     "marina/default";
-  return modelComplete(spec, env, { maxTokens: 400 }).complete;
+  return modelComplete(spec, env, {
+    maxTokens: 400,
+    purpose: "outcomes",
+    trace: { caller: "outcomes.extractor" },
+  }).complete;
 }
 
 export async function judgeOpenResolutions(

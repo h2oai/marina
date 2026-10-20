@@ -38,6 +38,7 @@ import {
 } from "../learning/work";
 import { memoryAccess } from "../memory/access";
 import { residentMemoryAPI } from "../memory/resident-service";
+import { attachModelTraceSink } from "../model/trace";
 import type { AdapterManager } from "../net/adapters/adapter-manager";
 import { connects } from "../net/ansi";
 import { attachRouteHealthStore, coreMemoryRouteStore } from "../net/model/route-health";
@@ -329,6 +330,10 @@ export class Engine {
       // Route health: a first-party key's usage limit survives a restart, so
       // a reboot does not hammer the limited route (src/net/model/route-health.ts).
       spendDb.onClose(attachRouteHealthStore(coreMemoryRouteStore(spendDb)));
+
+      // In-process model calls (src/model: forecast, lessons, outcomes, the
+      // web swarm, …) trace into the same event log as /v1 requests.
+      spendDb.onClose(attachModelTraceSink((event) => this.logEvent(event)));
 
       // Benchmark runner — spawns the harness subprocess + persists runs
       this.benchmarkRunner = new BenchmarkRunner(

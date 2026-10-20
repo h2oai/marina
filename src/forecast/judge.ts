@@ -16,10 +16,10 @@
  * that each caller returns in its answer object — the audit trail.
  */
 
-import { parseReply } from "../arena/model-forecaster";
 import type { Evidence } from "../decisions/evidence";
 import type { DecisionProvider } from "../decisions/types";
 import { checkDraft } from "../decisions/verify";
+import { parseReply } from "../model/reply";
 
 /** What the judge was and what it cost, summed over the claims it judged. */
 export interface JudgeRecord {

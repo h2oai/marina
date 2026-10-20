@@ -31,6 +31,7 @@
 
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { type CovariateVintage, covariatesAt } from "../forecast/numeric";
+import type { Usage } from "../model/access";
 import {
   type TabH2OPredictRequest,
   type TabH2OResult,
@@ -40,7 +41,6 @@ import {
 import { availableInstant } from "../research/measurement";
 import type { RoundForecast } from "./forecast";
 import { horizonSteps } from "./forecast";
-import type { Usage } from "./model-backend";
 import { blend, type ModelRoundForecast } from "./model-forecaster";
 import { withoutDaily } from "./prompt-context";
 import { normalQuantile } from "./score-shapes";

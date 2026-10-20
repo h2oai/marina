@@ -79,6 +79,8 @@ import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import { judgeAudit, judgeClaim, newJudgeRecord } from "../forecast/judge";
 import { requireResearchEvidence } from "../research/admission";
+import type { Retriever } from "../research/retrieve";
+import { type PageText, verifyDossier } from "../research/verify";
 import type { RoundForecast } from "./forecast";
 import { forecastRound } from "./forecast";
 import {
@@ -109,8 +111,6 @@ import {
 } from "./proposal-judge";
 import { buildResearchBrief } from "./research/briefs";
 import type { CiviqsDaily } from "./research/civiqs-nowcast";
-import type { Retriever } from "./research/retrieve";
-import { type PageText, verifyDossier } from "./research/verify";
 import {
   markResearchFallback,
   type ResearchFallbackMode,
@@ -1465,7 +1465,7 @@ export interface FormationStage {
 
 /** What the research crew handed over: the verified lines, and its audit record. */
 export interface ResearchDossier {
-  readSwarm?: import("./research/retrieve").ResearchReport["readSwarm"];
+  readSwarm?: import("../research/retrieve").ResearchReport["readSwarm"];
   evidence?: import("../research/evidence").EvidenceSnapshot;
   researchLoop?: import("../research/evidence-loop").ResearchLoopAudit;
   since: string;
@@ -1477,8 +1477,8 @@ export interface ResearchDossier {
   error?: string;
   status?: "verified" | "empty" | "failed";
   warnings?: string[];
-  funnels?: import("./research/retrieve").ResearchReport["funnels"];
-  data?: import("./research/retrieve").ResearchReport["data"];
+  funnels?: import("../research/retrieve").ResearchReport["funnels"];
+  data?: import("../research/retrieve").ResearchReport["data"];
   /** The dossier's typed measurements (target / change claims) as signals. */
   signals?: ForecastSignal[];
 }

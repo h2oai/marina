@@ -34,13 +34,13 @@
 
 import { logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
+import type { ResearchReport, Retriever, Source } from "../../research/retrieve";
 import { isExcludedTitle, RANKING_HALF_LIFE_DAYS, rankingScores } from "../forecast";
 import { forecastCutoff } from "../freshness";
 import type { Complete } from "../model-forecaster";
 import type { ArenaLock, ArenaRound } from "../types";
 import type { ResearchBrief } from "./briefs";
 import { WIKITOP_PUBLICATION_LAG_DAYS } from "./civiqs-nowcast";
-import type { ResearchReport, Retriever, Source } from "./retrieve";
 
 const logger = new Logger();
 

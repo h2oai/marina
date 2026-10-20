@@ -72,16 +72,16 @@
  */
 
 import { availableModels } from "../agent/available-models";
-import { modelComplete } from "../arena/model-backend";
-import { barredRetriever } from "../arena/research/barred";
 import type { SourceExclusion } from "../arena/research/briefs";
-import { strictDateFilter } from "../arena/research/isolation";
-import { type Retriever, retrieverFromSpec } from "../arena/research/retrieve";
-import { defaultPageText } from "../arena/research/verify";
 import { researchJudge } from "../decisions/config";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { modelComplete } from "../model/complete";
 import { vendorModelSpec } from "../net/model/default-models";
+import { barredRetriever } from "../research/barred";
+import { strictDateFilter } from "../research/isolation";
+import { type Retriever, retrieverFromSpec } from "../research/retrieve";
 import { researchRetriever } from "../research/retriever";
+import { defaultPageText } from "../research/verify";
 import { type AdjustSettings, adjustSettingsFromEnv } from "./adjust";
 import { contractModeFromEnv } from "./answer-contract";
 import { SELECTION_MODES, type SelectionMode } from "./answer-types";
@@ -268,7 +268,10 @@ export function modelPart(
   env: NodeJS.ProcessEnv = process.env,
 ): ModelPart & { usage?: { costUsd: number } } {
   if (spec.startsWith("marina:")) return crewPart(spec, env);
-  const made = modelComplete(spec, env);
+  const made = modelComplete(spec, env, {
+    purpose: "forecast",
+    trace: { caller: "forecast.part" },
+  });
   return {
     name: spec.replace(/^openrouter\//, ""),
     complete: made.complete,

@@ -28,11 +28,11 @@
  */
 
 import type { ResearchBrief } from "../arena/research/briefs";
-import type { ResearchReport } from "../arena/research/retrieve";
-import { verifyDossier } from "../arena/research/verify";
 import { getErrorMessage } from "../engine/errors";
 import { groundedIn } from "../repair/output-repair";
 import { markAuthoritative, parseAuthority } from "../research/authority";
+import type { ResearchReport } from "../research/retrieve";
+import { verifyDossier } from "../research/verify";
 import { type AnswerSpec, type AnswerValue, formatAnswer, validateAnswer } from "./answer-types";
 import type { Distribution } from "./distribution";
 import type { FormedAnswer, TypedFormation } from "./formations";

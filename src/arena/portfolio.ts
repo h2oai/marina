@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import type { WorkBudget } from "../coordination/work-budget";
 import { getErrorMessage } from "../engine/errors";
+import type { Usage } from "../model/access";
 import { validateEvidence } from "../research/evidence";
 import { type Score, validateScore } from "../sdk/score";
 import { type DispatchContext, executeScore } from "../sdk/score-executor";
@@ -16,7 +17,6 @@ import {
   type ResearchDossier,
 } from "./formations";
 import { auditForecastInputs } from "./input-audit";
-import type { Usage } from "./model-backend";
 import { validateForecastBody } from "./submit";
 import type { ArenaLock, ArenaRound, Distribution } from "./types";
 
@@ -179,10 +179,15 @@ export interface PortfolioNode {
 export async function portfolioModels(env: NodeJS.ProcessEnv, maxTokens = 2000) {
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 8000)
     throw new Error("maxTokens must be 1–8000");
-  const { modelComplete } = await import("./model-backend");
+  const { modelComplete } = await import("../model/complete");
   const usage: Usage = { calls: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 };
   const complete: PortfolioComplete = async (spec, system, user, signal) => {
-    const model = modelComplete(spec, env, { signal, maxTokens });
+    const model = modelComplete(spec, env, {
+      signal,
+      maxTokens,
+      purpose: "arena",
+      trace: { caller: "arena.portfolio" },
+    });
     try {
       return await model.complete(system, user);
     } finally {

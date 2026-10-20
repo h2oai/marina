@@ -1,10 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isDateStrict, type Retriever, type Source } from "../arena/research/retrieve";
 import { getErrorMessage } from "../engine/errors";
 import { evidenceHash } from "./evidence";
 import { availableInstant, type Measurement } from "./measurement";
+import { isDateStrict, type Retriever, type Source } from "./retrieve";
 
 export interface SurveyCell {
   subgroup: string;

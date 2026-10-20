@@ -2,19 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type BudgetForced, budgetPhase } from "../agent/budget-terminal";
-import type { Complete } from "../arena/model-forecaster";
-import { parseReply } from "../arena/model-forecaster";
-import {
-  isDateStrict,
-  type ResearchReport,
-  type Retriever,
-  type Source,
-} from "../arena/research/retrieve";
-import { type PageText, stripAuthorityTag } from "../arena/research/verify";
 import { WorkBudget } from "../coordination/work-budget";
 import type { AdvisoryOptions } from "../decisions/advisory";
 import { getErrorMessage } from "../engine/errors";
 import { isLiveCutoff } from "../forecast/lookup-types";
+import { type Complete, parseReply } from "../model/reply";
 import type { AdvisoryMode, DecisionReceipt } from "../sdk/decision-receipt";
 import { executeScore } from "../sdk/score-executor";
 import {
@@ -28,6 +20,8 @@ import {
 import { researchAdvice } from "./decision-advice";
 import { captureEvidence, type EvidenceSnapshot } from "./evidence";
 import { indexEvidence, selectEvidence } from "./evidence-index";
+import { isDateStrict, type ResearchReport, type Retriever, type Source } from "./retrieve";
+import { type PageText, stripAuthorityTag } from "./verify";
 
 export interface ResearchLoopAudit {
   rounds: Array<{

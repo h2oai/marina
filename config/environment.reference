@@ -1299,6 +1299,15 @@
 # While a first-party key (Anthropic, OpenAI, Google, xAI, Mistral, DeepSeek) reports a usage/quota limit, serve the SAME model via OpenRouter when OPENROUTER_API_KEY is set and OpenRouter's catalog lists it (labelled openrouter-served; back to the direct key when the limit lifts). Never a different model. `off` keeps the caller paused/refused until the reset instead. Default on.
 # MARINA_PROVIDER_FALLBACK=on
 
+# In-process library model calls (src/model: forecast, arena, research, lessons, outcome extraction, the web swarm, benchmark checkers) also use the same-model OpenRouter route while a first-party key is usage-limited, and a usage limit they hit marks the route for every caller. Needs OPENROUTER_API_KEY; MARINA_PROVIDER_FALLBACK=off still wins. Never a different model. Default off (the call fails as before).
+# MARINA_MODEL_ROUTE_FALLBACK=off
+
+# Extra attempts for an in-process library model call (src/model) after a transient failure: HTTP 429 throttling, a 5xx or a network error. Never a usage/quota limit, an auth refusal, another 4xx, the daily spend cap, a timeout or an abort. Each attempt is priced and checked against the daily cap. Default 1; 0 or off = no retry; at most 5.
+# MARINA_MODEL_RETRIES=1
+
+# First backoff (ms) before a MARINA_MODEL_RETRIES retry, doubled per attempt with up to 25 % jitter, capped at 30 s. Default 1000.
+# MARINA_MODEL_RETRY_BASE_MS=1000
+
 # MCP session creations and login/auth tool calls per client IP per minute. 0 disables.
 # MARINA_MCP_SESSIONS_PER_MIN=10
 

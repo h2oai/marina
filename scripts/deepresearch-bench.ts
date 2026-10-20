@@ -50,7 +50,6 @@ import {
   loadRecords,
   type TaskRetriever,
 } from "../benchmarks/deepresearch/run";
-import { modelComplete } from "../src/arena/model-backend";
 import {
   type ReadSwarmBriefStats,
   readSwarmRetriever,
@@ -68,6 +67,7 @@ import {
   recallForWork,
   settleOutcomes,
 } from "../src/learning/service";
+import { modelComplete } from "../src/model/complete";
 import { MarinaDB } from "../src/persistence/database";
 import { researchFingerprint } from "../src/research/checkpoint";
 import { researchRetriever } from "../src/research/retriever";
@@ -212,7 +212,7 @@ function retrieverFactory(): () => TaskRetriever {
   );
   // One reader per task, so each task's reader spend is its own.
   return () => {
-    const reader = modelComplete(readerSpec, process.env);
+    const reader = modelComplete(readerSpec, process.env, { purpose: "benchmark" });
     const briefs: ReadSwarmBriefStats[] = [];
     const sum = (k: keyof ReadSwarmBriefStats) =>
       briefs.reduce((n, b) => n + (typeof b[k] === "number" ? (b[k] as number) : 0), 0);

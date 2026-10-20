@@ -12,7 +12,7 @@
  * spend cap. One swarm per entity at a time.
  */
 
-import { modelComplete } from "../../arena/model-backend";
+import { modelComplete } from "../../model/complete";
 import { dim, header, separator } from "../../net/ansi";
 import { ReadSwarm, renderCandidateTable } from "../../retrieval/read-swarm";
 import type { EntityId, RoomContext } from "../../types";
@@ -73,7 +73,10 @@ export async function handleSwarm(
     typeof mods.values.docs === "number" ? Math.min(Math.max(mods.values.docs, 1), 60) : 16;
   let reader: ReturnType<typeof modelComplete>;
   try {
-    reader = modelComplete(readerSpec, env);
+    reader = modelComplete(readerSpec, env, {
+      purpose: "swarm",
+      trace: { caller: "web.swarm" },
+    });
   } catch (e) {
     ctx.send(eid, `Read swarm unavailable: ${getErrorMessage(e)}`);
     return;

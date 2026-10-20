@@ -90,6 +90,7 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
         : {};
       upsertSpan(trace, {
         spanId: event.spanId,
+        ...(event.parentSpanId ? { parentSpanId: event.parentSpanId } : {}),
         kind: "model_request",
         name: event.model,
         timestamp: event.timestamp,
@@ -106,6 +107,10 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
           ...(event.routeAdviceMode ? { routeAdviceMode: event.routeAdviceMode } : {}),
           ...(event.routeReason ? { routeReason: event.routeReason } : {}),
           ...(event.routeKind ? { routeKind: event.routeKind } : {}),
+          ...(event.purpose ? { purpose: event.purpose } : {}),
+          ...Object.fromEntries(
+            Object.entries(event.traceContext ?? {}).map(([k, v]) => [`context.${k}`, v]),
+          ),
           ...(event.ttftMs === undefined ? {} : { ttftMs: event.ttftMs }),
           ...(event.inputTokens === undefined ? {} : { inputTokens: event.inputTokens }),
           ...(event.outputTokens === undefined ? {} : { outputTokens: event.outputTokens }),

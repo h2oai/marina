@@ -751,8 +751,15 @@ export type EngineEvent =
       candidateCount?: number;
       routeAdviceMode?: "pareto" | "explore" | "insufficient";
       routeReason?: string;
-      /** Execution path selected at the model endpoint boundary. */
-      routeKind?: "agent" | "passthru" | "fallback" | "synthesis";
+      /** Execution path selected at the model endpoint boundary. `direct`: an
+       * in-process library call through `src/model` (forecast, lessons, …). */
+      routeKind?: "agent" | "passthru" | "fallback" | "synthesis" | "direct";
+      /** Parent span when the call belongs to a larger traced unit of work. */
+      parentSpanId?: string;
+      /** What a `direct` call was for (`src/model/purpose.ts`): forecast, lessons, … */
+      purpose?: string;
+      /** Caller-supplied trace context of a `direct` call: caller, task, round, question. */
+      traceContext?: Record<string, string>;
       /** Resolved passthru identity for per-caller attribution (light
        * governance). Absent on anonymous/internal-routed requests. */
       entityId?: string;
