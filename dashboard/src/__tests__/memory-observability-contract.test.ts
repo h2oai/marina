@@ -48,7 +48,7 @@ describe("memory-observability-types (dashboard lib) matches the backend contrac
     expectTypeOf<Lib.MemoryReceiptSurface>().toEqualTypeOf<Backend.MemoryReceiptView["surface"]>();
     // The literal members the components switch on must still be present.
     expectTypeOf<
-      "pending" | "running" | "answered" | "abstained" | "cancelled"
+      "pending" | "running" | "answered" | "abstained" | "cancelled" | "expired"
     >().toEqualTypeOf<Lib.MemoryJobState>();
     expectTypeOf<
       "hygiene" | "accumulation" | "shared-write-review"
@@ -128,6 +128,7 @@ describe("memory-map-types (unified) matches the backend graph contract", () => 
     answered: true,
     abstained: true,
     cancelled: true,
+    expired: true,
   };
   const JOB_MARKERS: Record<Unified.MemoryJobMarker, true> = {
     hygiene: true,

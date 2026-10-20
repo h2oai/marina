@@ -81,6 +81,19 @@ export function recordDemonstration(
   );
 }
 
+/**
+ * Every row at the operator-grant sentinel (`isGrantedCompetence`), keyed by
+ * the durable account id — the input of `gate audit` / `gate reset`.
+ */
+export function listGrantedCompetence(db: Database): CompetenceRow[] {
+  return db
+    .query(
+      `SELECT entity_id, gate, demonstrations, last_demo_at, supervised_only FROM entity_competence
+       WHERE supervised_only = 0 AND demonstrations >= ? ORDER BY entity_id, gate`,
+    )
+    .all(GRANTED_DEMONSTRATIONS) as CompetenceRow[];
+}
+
 /** Force-grant a gate (for admin overrides, world seeds). */
 export function grantCompetence(db: Database, entityId: string, gate: string): void {
   db.run(

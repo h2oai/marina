@@ -25,7 +25,13 @@ import {
   runBatch,
   type Variant,
 } from "../benchmarks/futurex/run";
-import { batchDeadline, dailyRows, scheduleState } from "../benchmarks/futurex/schedule";
+import {
+  batchDeadline,
+  dailyRows,
+  futurexSystemdUnits,
+  lateRows,
+  scheduleState,
+} from "../benchmarks/futurex/schedule";
 import { parseTruth, scoreBatch, scoreItem } from "../benchmarks/futurex/score";
 import {
   DEFAULT_IDENTITY,
@@ -369,6 +375,61 @@ describe("watch schedule", () => {
       dailyRows(rows, standing, now, { mode, nearEndMs: 48 * 3_600_000 }).map((r) => r.id);
     expect(ids("all")).toEqual(["kept", "fallback", "missing", "soon"]);
     expect(ids("stale")).toEqual(["fallback", "missing", "soon"]);
+  });
+
+  it("answers late: each unanswered open row once, inside the lead before its own cutoff", () => {
+    const deadline = new Date("2026-10-07T16:00:00Z");
+    const lead = 6 * 3_600_000;
+    const rows = [
+      endsAt("early-close", "2026-10-06T12:00:00Z"), // cutoff = its end, before the deadline
+      endsAt("after-deadline", "2026-10-12T12:00:00Z"), // cutoff = the deadline
+      endsAt("answered", "2026-10-06T13:00:00Z"),
+      endsAt("fallback", "2026-10-06T13:00:00Z"),
+      endsAt("closed", "2026-10-05T12:00:00Z"),
+    ];
+    const at = "2026-10-06T07:00:00Z";
+    const standing = {
+      answered: { prediction: "A", at },
+      fallback: { prediction: "A", fallback: true, at },
+    };
+    const ids = (now: string) =>
+      lateRows(rows, standing, new Date(now), { deadline, leadMs: lead }).map((r) => r.id);
+    // Two days out: nothing is due yet — the batch arriving runs nothing.
+    expect(ids("2026-10-05T16:00:00Z")).toEqual([]);
+    // Inside the early-closing rows' window (not the deadline's).
+    expect(ids("2026-10-06T08:00:00Z")).toEqual(["early-close", "fallback"]);
+    // Inside the deadline window; the early rows have closed.
+    expect(ids("2026-10-07T11:00:00Z")).toEqual(["after-deadline"]);
+    // At or past the deadline: nothing.
+    expect(ids("2026-10-07T16:00:00Z")).toEqual([]);
+  });
+
+  it("emits a capped, persistent systemd unit pair that answers late — text only", () => {
+    const base = {
+      repo: "/srv/marina",
+      bun: "/usr/local/bin/bun",
+      envFile: "/srv/marina/.env",
+      dir: "/srv/marina data/futurex",
+      run: "cheap",
+      answer: "late" as const,
+      finalLeadHours: 6,
+      scopeCapUsd: 25,
+      learn: true,
+      name: "marina-futurex-late",
+    };
+    const { service, timer } = futurexSystemdUnits(base);
+    expect(service).toContain(
+      'ExecStart=/usr/local/bin/bun --env-file=/srv/marina/.env scripts/futurex.ts watch --once --answer late --final-lead-hours 6 --run cheap --dir "/srv/marina data/futurex" --learn',
+    );
+    expect(service).not.toContain("--daily");
+    expect(service).toContain("Environment=MARINA_SPEND_SCOPE_CAP_USD=25");
+    expect(service).toContain("WorkingDirectory=/srv/marina");
+    expect(timer).toContain("OnCalendar=hourly");
+    expect(timer).toContain("Persistent=true");
+    expect(() => futurexSystemdUnits({ ...base, scopeCapUsd: 0 })).toThrow(/uncapped/);
+    expect(futurexSystemdUnits({ ...base, answer: "early" }).service).toContain(
+      "--answer early --daily",
+    );
   });
 });
 

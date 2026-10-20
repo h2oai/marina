@@ -141,6 +141,7 @@ const overview: MemoryOverview = {
     answered24h: 4,
     abstained24h: 1,
     cancelled24h: 0,
+    expired24h: 0,
     byMarker: { hygiene: 1 },
   },
   resolutions: [
@@ -297,7 +298,7 @@ const emptyHistory: MemoryHygieneHistory = { scope: "all", hours: 168, samples: 
 const emptyOverview: MemoryOverview = {
   ...overview,
   hygiene: [],
-  jobs: { open: 0, answered24h: 0, abstained24h: 0, cancelled24h: 0, byMarker: {} },
+  jobs: { open: 0, answered24h: 0, abstained24h: 0, cancelled24h: 0, expired24h: 0, byMarker: {} },
   resolutions: [],
   ratifications: [],
   credits: [],

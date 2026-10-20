@@ -1306,6 +1306,9 @@ export class MarinaDB implements MarinaStores {
   grantCompetence(entityId: string, gate: string): void {
     competenceDb.grantCompetence(this.db, this.durableEntityKey(entityId), gate);
   }
+  listGrantedCompetence() {
+    return competenceDb.listGrantedCompetence(this.db);
+  }
   // ─── Witness ledger (delegated to db-witness.ts) ─────────────────────
 
   createWitnessRow(input: Parameters<typeof witnessDb.createWitnessRow>[1]) {
@@ -1348,13 +1351,20 @@ export class MarinaDB implements MarinaStores {
       entityId: this.durableEntityKey(row.entityId),
     });
   }
-  computeStanding(entityId: string, halfLifeMs: number, horizonMs: number, now: number): number {
+  computeStanding(
+    entityId: string,
+    halfLifeMs: number,
+    horizonMs: number,
+    now: number,
+    kinds?: standingDb.StandingKindFilter,
+  ): number {
     return standingDb.computeStanding(
       this.db,
       this.durableEntityKey(entityId),
       halfLifeMs,
       horizonMs,
       now,
+      kinds,
     );
   }
   countStandingEvents(entityId: string, kind: string, since: number): number {

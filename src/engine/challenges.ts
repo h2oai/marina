@@ -102,6 +102,7 @@ import {
   setGateRefusalHook,
 } from "./gate-context";
 import { Logger } from "./logger";
+import { notifyOperator } from "./ops-notify";
 import { getRank, rankName } from "./permissions";
 import { checkUnattendedGate, grant, isOperatorGrantGate, SAFETY_GATES } from "./safety-gates";
 
@@ -331,6 +332,15 @@ function persistHold(challenge: Challenge): void {
     }),
   );
   openInboxItem(challenge);
+  void notifyOperator({
+    event: "challenge.opened",
+    title: `Marina: ${challenge.requesterName} is waiting on a person (${challengeClass(challenge)})`,
+    detail: `${challenge.reason} · answer within ${minutesLeft(challenge)} min`,
+    action: `challenge approve ${challenge.token}`,
+    token: challenge.token,
+    class: challengeClass(challenge),
+    deadlineAt: challenge.expiresAt,
+  });
 }
 
 /** The live entity id of the requester (ids are transient; names are not). */
@@ -497,6 +507,7 @@ function ensureRestored(): void {
 function expireDue(now = Date.now()): void {
   if (!host) return;
   ensureRestored();
+  let expired = 0;
   for (const [token, entry] of pending) {
     if (entry.challenge.expiresAt > now) continue;
     pending.delete(token);
@@ -506,7 +517,125 @@ function expireDue(now = Date.now()): void {
       "expired",
       `Challenge ${token} expired unanswered — ${entry.challenge.summary} did not run.`,
     );
+    expired++;
   }
+  if (expired > 0) noteUnanswered(now);
+}
+
+// ─── Unanswered-hold summary (2026-10-20) ────────────────────────────────────
+
+/** The window `challenge summary` and the unanswered digest look back over. */
+export const CHALLENGE_SUMMARY_WINDOW_MS = 7 * 24 * 60 * 60_000;
+/** The one rolling ops-inbox item for holds that expired with nobody answering. */
+export const UNANSWERED_DIGEST_KEY = "challenge:unanswered";
+
+export interface ChallengeSummary {
+  windowMs: number;
+  total: number;
+  open: number;
+  approved: number;
+  denied: number;
+  /** Expired with nobody answering (includes holds superseded at the class cap). */
+  unanswered: number;
+  /** Per class (gate id, `rank:<n>`, `tool:<name>`), most unanswered first. */
+  byClass: { class: string; total: number; unanswered: number }[];
+  /** Per requester, most unanswered first. */
+  byRequester: { name: string; total: number; unanswered: number }[];
+  /** Holds with no owner: only an operator can ever answer them. */
+  operatorOnly: number;
+}
+
+function rowClass(row: ChallengeHoldRow): string {
+  return challengeClass({
+    kind: row.kind,
+    ...(row.gate_id ? { gateId: row.gate_id } : {}),
+    ...(row.min_rank !== null ? { minRank: row.min_rank } : {}),
+    ...(row.tool_name ? { toolName: row.tool_name } : {}),
+  });
+}
+
+/** Pure: what happened to the holds opened inside the window. Content-free. */
+export function summarizeChallengeHolds(
+  rows: readonly ChallengeHoldRow[],
+  now = Date.now(),
+  windowMs = CHALLENGE_SUMMARY_WINDOW_MS,
+): ChallengeSummary {
+  const recent = rows.filter((r) => r.created_at >= now - windowMs);
+  const tally = (key: (r: ChallengeHoldRow) => string) => {
+    const map = new Map<string, { total: number; unanswered: number }>();
+    for (const r of recent) {
+      const k = key(r);
+      const cur = map.get(k) ?? { total: 0, unanswered: 0 };
+      cur.total++;
+      if (r.status === "expired") cur.unanswered++;
+      map.set(k, cur);
+    }
+    return [...map.entries()].sort(
+      (a, b) => b[1].unanswered - a[1].unanswered || b[1].total - a[1].total,
+    );
+  };
+  return {
+    windowMs,
+    total: recent.length,
+    open: recent.filter((r) => r.status === "pending").length,
+    approved: recent.filter((r) => r.status === "once" || r.status === "always").length,
+    denied: recent.filter((r) => r.status === "deny").length,
+    unanswered: recent.filter((r) => r.status === "expired").length,
+    byClass: tally(rowClass).map(([k, v]) => ({ class: k, ...v })),
+    byRequester: tally((r) => r.requester_name).map(([k, v]) => ({ name: k, ...v })),
+    operatorOnly: recent.filter((r) => !r.creator_name).length,
+  };
+}
+
+/** The live world's summary, or undefined without a database. */
+export function challengeSummary(
+  now = Date.now(),
+  windowMs = CHALLENGE_SUMMARY_WINDOW_MS,
+): ChallengeSummary | undefined {
+  const db = host?.db;
+  if (!db) return undefined;
+  try {
+    return summarizeChallengeHolds(db.listChallengeHolds({ limit: 10_000 }), now, windowMs);
+  } catch {
+    return undefined; // allow-empty-catch: a closed or unmigrated database has no summary
+  }
+}
+
+/**
+ * Holds just expired with nobody answering: keep ONE rolling ops-inbox item
+ * (`challenge:unanswered`, warning) that stays open until an operator
+ * resolves it — the per-hold items close on expiry, so without it nothing
+ * visible remained — and push a notice through MARINA_OPS_NOTIFY.
+ */
+function noteUnanswered(now: number): void {
+  const db = host?.db;
+  const summary = challengeSummary(now);
+  if (!db || !summary || summary.unanswered === 0) return;
+  const days = Math.round(summary.windowMs / 86_400_000);
+  const classes = summary.byClass
+    .filter((c) => c.unanswered > 0)
+    .slice(0, 5)
+    .map((c) => `${c.class} ${c.unanswered}`)
+    .join(", ");
+  const title = `${summary.unanswered} of ${summary.total} held action(s) expired unanswered (${days} d)`;
+  const detail =
+    `${classes}${summary.operatorOnly ? ` · ${summary.operatorOnly} had no owner (operator-only)` : ""}` +
+    ` · approved ${summary.approved}, denied ${summary.denied}, open ${summary.open}`;
+  tryLog(logger, "challenges", "unanswered-hold digest not updated", () =>
+    db.upsertOperationalAlert({
+      key: UNANSWERED_DIGEST_KEY,
+      severity: "warning",
+      category: "challenge-digest",
+      kind: "approval",
+      title,
+      detail,
+      remedy:
+        "challenge summary · answer new holds with challenge approve|deny <token> · " +
+        "set MARINA_OPS_NOTIFY to be told the moment one opens · ops resolve <id> clears this",
+      metadata: { unanswered: summary.unanswered, total: summary.total },
+    }),
+  );
+  void notifyOperator({ event: "challenge.unanswered", title: `Marina: ${title}`, detail });
 }
 
 /** Deliver notices owed to requesters who are connected now. */

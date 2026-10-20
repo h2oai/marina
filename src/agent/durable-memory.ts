@@ -51,10 +51,49 @@ const references = (data: Record<string, unknown> | undefined) => {
   return [...new Set(ids)];
 };
 
+/** Stable JSON (sorted keys) for comparing checkpoint data. */
+function stable(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0,
+          ),
+        )
+      : v,
+  );
+}
+
+/**
+ * True when two checkpoint payloads differ only in their `timestamp` — a
+ * save that would change nothing else is skipped (an idle resident's
+ * 5-minute checkpoint used to write a new version and receipt every time).
+ */
+export function sameCheckpointData(
+  a: Record<string, unknown> | undefined,
+  b: Record<string, unknown>,
+): boolean {
+  if (!a) return false;
+  const { timestamp: _a, ...left } = a;
+  const { timestamp: _b, ...right } = b;
+  return stable(left) === stable(right);
+}
+
 /** Private resident evidence; serialized writes, stable retry keys and remote CAS.
- * No inference, goal selection or implicit sharing is performed here. */
+ * No inference, goal selection or implicit sharing is performed here.
+ *
+ * Call economy (2026-10-20): a checkpoint-only save (`save`, the request
+ * ledger) uses the last checkpoint this instance read or wrote instead of
+ * re-reading it (the server's `expected_version` CAS still guards it; a
+ * `version_conflict` drops the copy and retries once from a fresh read), and
+ * a save whose data is unchanged apart from `timestamp` is skipped — an idle
+ * resident used to write an identical checkpoint every five minutes. Archive
+ * and journal writes always read fresh: nothing may be captured after a
+ * forget invalidated the checkpoint. */
 export class DurableResidentMemory {
   private pending: Promise<unknown> = Promise.resolve();
+  /** Last checkpoint seen: `undefined` = unknown (read it), `null` = none. */
+  private known: MemoryCheckpoint | null | undefined;
   /** Idempotency-key component (unchanged length budget for receipt keys). */
   private sessionKey = crypto.randomUUID();
   /** Capture session of every journal/archive source: tagged so retrieval never
@@ -97,19 +136,30 @@ export class DurableResidentMemory {
         signal,
       );
       this.hadCheckpoint = true;
+      this.known = structuredClone(result);
       return result;
     } catch (error) {
+      this.known = undefined;
       if (
         error instanceof MemoryClientError &&
         error.status === 404 &&
         error.code === "checkpoint_not_found"
-      )
+      ) {
+        this.known = null;
         return null;
+      }
       throw error;
     }
   }
-  private async writableCheckpoint(signal?: AbortSignal): Promise<MemoryCheckpoint | null> {
-    const previous = await this.checkpoint(signal);
+  private async writableCheckpoint(
+    signal?: AbortSignal,
+    opts: { fresh?: boolean } = {},
+  ): Promise<MemoryCheckpoint | null> {
+    if (opts.fresh) this.known = undefined;
+    // A copy: callers merge into `previous.data`, and an in-place change to
+    // the remembered value would make the unchanged-save check lie.
+    const previous =
+      this.known !== undefined ? structuredClone(this.known) : await this.checkpoint(signal);
     if (!previous && this.hadCheckpoint)
       throw new MemoryClientError(
         409,
@@ -117,6 +167,60 @@ export class DurableResidentMemory {
         "Resident checkpoint was invalidated; restart before archiving local context",
       );
     return previous;
+  }
+  /** Save the resident checkpoint and remember what was written. */
+  private async writeCheckpoint(
+    key: string,
+    previous: MemoryCheckpoint | null,
+    input: { source_cursor: number; data: Record<string, unknown> },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const saved = await this.call<{ version: number }>(
+      {
+        operation: "save_checkpoint",
+        id: "resident",
+        key,
+        input: {
+          expected_version: previous?.version ?? 0,
+          source_cursor: input.source_cursor,
+          source_ids: references(input.data),
+          data: input.data,
+        },
+      },
+      signal,
+    );
+    this.hadCheckpoint = true;
+    this.known =
+      typeof saved?.version === "number"
+        ? {
+            name: "resident",
+            version: saved.version,
+            source_cursor: input.source_cursor,
+            data: structuredClone(input.data),
+            updated_at: Date.now(),
+          }
+        : undefined;
+  }
+  /**
+   * Run a read-modify-write. Any failure drops the remembered checkpoint; a
+   * `version_conflict` against a REMEMBERED (not freshly read) checkpoint is
+   * retried once from a fresh read — someone else wrote in between.
+   */
+  private async freshOnConflict(run: () => Promise<void>): Promise<void> {
+    const remembered = this.known !== undefined;
+    try {
+      await run();
+    } catch (error) {
+      this.known = undefined;
+      if (
+        remembered &&
+        error instanceof MemoryClientError &&
+        error.status === 409 &&
+        error.code === "version_conflict"
+      )
+        return run();
+      throw error;
+    }
   }
   save(data: Record<string, unknown>, signal?: AbortSignal): Promise<void> {
     const snapshot = JSON.parse(JSON.stringify(data));
@@ -147,31 +251,30 @@ export class DurableResidentMemory {
     update: (previous: Record<string, unknown> | undefined) => Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<void> {
-    return this.serialize(async () => {
-      const previous = await this.writableCheckpoint(signal);
-      const merged = update(previous?.data);
-      await this.call(
-        {
-          operation: "save_checkpoint",
-          id: "resident",
-          key: crypto.randomUUID(),
-          input: {
-            expected_version: previous?.version ?? 0,
-            source_cursor: previous?.source_cursor ?? 0,
-            source_ids: references(merged),
-            data: merged,
-          },
-        },
-        signal,
-      );
-      this.hadCheckpoint = true;
-    }, signal);
+    return this.serialize(
+      () =>
+        this.freshOnConflict(async () => {
+          const previous = await this.writableCheckpoint(signal);
+          const merged = update(previous?.data);
+          if (previous && sameCheckpointData(previous.data, merged)) return;
+          await this.writeCheckpoint(
+            crypto.randomUUID(),
+            previous,
+            { source_cursor: previous?.source_cursor ?? 0, data: merged },
+            signal,
+          );
+        }),
+      signal,
+    );
   }
   archive(messages: unknown[], summary: string, signal?: AbortSignal): Promise<void> {
     // Snapshot before entering the asynchronous queue: callers may keep appending.
     const originals = JSON.stringify(messages, withoutImageBytes),
       count = messages.length;
-    return this.serialize(() => this.persist(originals, count, summary, "archive", signal), signal);
+    return this.serialize(
+      () => this.freshOnConflict(() => this.persist(originals, count, summary, "archive", signal)),
+      signal,
+    );
   }
   journal(
     message: unknown,
@@ -181,7 +284,7 @@ export class DurableResidentMemory {
     const original = JSON.stringify([message], withoutImageBytes);
     const completed = [...completedRequests];
     return this.serialize(
-      () => this.persist(original, 1, "", "journal", signal, completed),
+      () => this.freshOnConflict(() => this.persist(original, 1, "", "journal", signal, completed)),
       signal,
     );
   }
@@ -194,7 +297,9 @@ export class DurableResidentMemory {
     completedRequests: readonly string[] = [],
   ): Promise<void> {
     const hash = digest(original);
-    const previous = await this.writableCheckpoint(signal);
+    // Always a fresh read before archiving: nothing may be captured once a
+    // forget has invalidated the checkpoint (the remembered copy cannot know).
+    const previous = await this.writableCheckpoint(signal, { fresh: true });
     const prior = previous?.data[kind] as Archive | undefined;
     if (kind === "archive" && prior?.sha256 === hash) return;
     const operation = kind === "journal" ? crypto.randomUUID() : hash;
@@ -293,21 +398,15 @@ export class DurableResidentMemory {
       },
       timestamp: Date.now(),
     };
-    await this.call(
+    await this.writeCheckpoint(
+      `checkpoint:${this.sessionKey}:${operation}:${previous?.version ?? 0}`,
+      previous,
       {
-        operation: "save_checkpoint",
-        id: "resident",
-        key: `checkpoint:${this.sessionKey}:${operation}:${previous?.version ?? 0}`,
-        input: {
-          expected_version: previous?.version ?? 0,
-          source_cursor: kind === "archive" ? manifest.seq! : (previous?.source_cursor ?? 0),
-          source_ids: references(data),
-          data,
-        },
+        source_cursor: kind === "archive" ? manifest.seq! : (previous?.source_cursor ?? 0),
+        data,
       },
       signal,
     );
-    this.hadCheckpoint = true;
     // A bounded local optimization only; evicted entries still deduplicate remotely.
     while (this.parts.size > 4096) this.parts.delete(this.parts.keys().next().value!);
   }

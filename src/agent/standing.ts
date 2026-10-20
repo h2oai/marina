@@ -11,8 +11,9 @@
  * of an experiment, the engine checking a quest. Recognition (being
  * chronicled) and volume (pool notes, recalls, self-declared crew stages,
  * self-reported helping acts) earn nothing: those kinds are RETIRED — their
- * historical rows stay in the append-only ledger and fade by the normal
- * decay, but no new row is written (`record` refuses them).
+ * historical rows stay in the append-only ledger as history, no new row is
+ * written (`record` refuses them), and by default they count toward no
+ * standing (`MARINA_STANDING_RETIRED=decay` lets them fade out instead).
  *
  * Independence (`independentParties`): a person and every agent in its spawn
  * lineage are ONE party — the worker's and the verifier's lineages must not
@@ -91,7 +92,8 @@ export type StandingKind =
  *   crew work earns through tasks an independent creator approves;
  * - `helping_act`: completing a canvas intent is self-reported — the intent's
  *   owner never accepts it.
- * Historical rows stay in the append-only ledger and decay out normally.
+ * Historical rows stay in the append-only ledger; by default they no longer
+ * count (`retiredStandingMode`).
  */
 export const RETIRED_STANDING_KINDS: ReadonlySet<StandingKind> = new Set<StandingKind>([
   "pool_note",
@@ -268,11 +270,52 @@ export function taskStandingValue(standing: number | null | undefined): number {
 }
 
 /**
+ * How retired-kind rows count (`MARINA_STANDING_RETIRED`, 2026-10-20):
+ * - `exclude` (default): they are history only. The rows stay in the
+ *   append-only ledger and every readout can show them, but they count
+ *   toward no standing, so no decision (rank derivation, gate standing
+ *   floors, low-standing review, shared-retrieval weighting, recruiting,
+ *   leaderboards) is made on credit that can no longer be earned.
+ * - `decay`: the pre-2026-10-20 behaviour — they count and fade by the
+ *   normal half-life.
+ * On the live world 97 of 106 ledger rows were `chronicled` / `pool_note`,
+ * so under `decay` the "verified work" number was mostly recognition.
+ */
+export type RetiredStandingMode = "exclude" | "decay";
+
+export function retiredStandingMode(env: NodeJS.ProcessEnv = process.env): RetiredStandingMode {
+  return env.MARINA_STANDING_RETIRED?.trim().toLowerCase() === "decay" ? "decay" : "exclude";
+}
+
+const RETIRED_KIND_LIST: readonly string[] = [...RETIRED_STANDING_KINDS];
+
+/**
  * Compute the decayed standing for an entity from the ledger. Floors at 0.
+ * Retired kinds are left out unless `MARINA_STANDING_RETIRED=decay`.
  */
 export function computeFromLedger(db: MarinaDB, entityId: string, now = Date.now()): number {
-  const raw = db.computeStanding(entityId, HALF_LIFE_MS, ROLLUP_HORIZON_MS, now);
+  const raw = db.computeStanding(
+    entityId,
+    HALF_LIFE_MS,
+    ROLLUP_HORIZON_MS,
+    now,
+    retiredStandingMode() === "exclude" ? { exclude: RETIRED_KIND_LIST } : {},
+  );
   return Math.max(0, raw);
+}
+
+/**
+ * The decayed value of an entity's retired-kind rows (`chronicled`,
+ * `pool_note`, …) — history for readouts, whatever the mode. Under the
+ * default `exclude` it is NOT part of `getStanding`.
+ */
+export function retiredStandingOf(db: MarinaDB, entityId: string, now = Date.now()): number {
+  return Math.max(
+    0,
+    db.computeStanding(entityId, HALF_LIFE_MS, ROLLUP_HORIZON_MS, now, {
+      only: RETIRED_KIND_LIST,
+    }),
+  );
 }
 
 /**

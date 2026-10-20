@@ -38,6 +38,26 @@ function fail(code: string, message: string, status = 409): never {
   throw new MemoryError(status, code, message);
 }
 
+/** Why a job was expired: its deadline passed, or its worker was gone. */
+export type AssistanceExpiryReason = "deadline" | "worker_absent";
+
+/** The memory event (operation) an expiry writes; the reason is its suffix. */
+export const ASSISTANCE_EXPIRED_EVENT = "assistance.expired";
+
+/** Actor id recorded on expiry events: the engine, not a principal. */
+export const ASSISTANCE_EXPIRY_ACTOR = "system:assistance-expiry";
+
+/** A job is gone this long before a missing worker counts against it. */
+export const ASSISTANCE_ABSENT_GRACE_MS = 15 * 60_000;
+
+export interface AssistanceExpiry {
+  id: string;
+  role: string;
+  worker_id: string;
+  prior: "pending" | "running";
+  reason: AssistanceExpiryReason;
+}
+
 /** Durable coordination metadata only. Requests are canonical sources and
  * proposals are dependency-pinned records in the existing memory service. */
 export function memoryAssistanceRepository(db: Database) {
@@ -416,6 +436,108 @@ export function memoryAssistanceRepository(db: Database) {
           id,
         ]);
         enforceMemoryStorage(db, job.requester_id, before);
+      })();
+    },
+    /**
+     * Close open jobs nobody can work any more, with a clear status: state
+     * `expired`, the lease dropped, and one `assistance.expired.<reason>`
+     * memory event per job (actor `system:assistance-expiry`). A job is dead
+     * when its deadline (or its root's cancellation) has passed — `active()`
+     * already refuses every action on it — or when its worker is in
+     * `absentWorkers` (no running agent / live connection for that account),
+     * it was filed more than `graceMs` ago, and it holds no live lease.
+     * Nothing is deleted: the request source, evidence and history stay, and
+     * `restoreExpired` reopens a job whose deadline is still ahead. With
+     * `apply: false` it only reports what it would expire.
+     */
+    expireStale(
+      options: {
+        now?: number;
+        absentWorkers?: ReadonlySet<string>;
+        graceMs?: number;
+        apply?: boolean;
+        limit?: number;
+      } = {},
+    ): AssistanceExpiry[] {
+      const now = options.now ?? Date.now();
+      const grace = options.graceMs ?? ASSISTANCE_ABSENT_GRACE_MS;
+      const limit = Math.max(1, Math.min(options.limit ?? 5000, 50_000));
+      return db.transaction(() => {
+        const rows = db
+          .query(
+            `SELECT j.id,j.role,j.worker_id,j.state,j.space_id,j.deadline,j.lease_until,j.created_at,
+                    r.state AS root_state
+             FROM memory_assistance_jobs j JOIN memory_assistance_jobs r ON r.id=j.root_id
+             WHERE j.state IN ('pending','running') ORDER BY j.created_at LIMIT ?`,
+          )
+          .all(limit) as {
+          id: string;
+          role: string;
+          worker_id: string;
+          state: "pending" | "running";
+          space_id: string;
+          deadline: number;
+          lease_until: number | null;
+          created_at: number;
+          root_state: string;
+        }[];
+        const expired: AssistanceExpiry[] = [];
+        for (const job of rows) {
+          let reason: AssistanceExpiryReason | undefined;
+          if (job.deadline <= now || job.root_state === "cancelled") reason = "deadline";
+          else if (
+            options.absentWorkers?.has(job.worker_id) &&
+            now - job.created_at >= grace &&
+            !(job.state === "running" && (job.lease_until ?? 0) > now)
+          )
+            reason = "worker_absent";
+          if (!reason) continue;
+          expired.push({
+            id: job.id,
+            role: job.role,
+            worker_id: job.worker_id,
+            prior: job.state,
+            reason,
+          });
+          if (!options.apply) continue;
+          db.run(
+            "UPDATE memory_assistance_jobs SET state='expired',lease_token=NULL,lease_until=NULL,version=version+1 WHERE id=? AND state IN ('pending','running')",
+            [job.id],
+          );
+          event(
+            db,
+            { principalId: ASSISTANCE_EXPIRY_ACTOR, credentialId: "", scopes: [] },
+            job.space_id,
+            `${ASSISTANCE_EXPIRED_EVENT}.${reason}`,
+            job.id,
+          );
+        }
+        return expired;
+      })();
+    },
+    /**
+     * Undo an expiry: reopen an `expired` job as `pending` (the worker claims
+     * it afresh). Refused when its deadline has passed — that job is dead
+     * whatever its state says — or its root was cancelled.
+     */
+    restoreExpired(id: string, now = Date.now()): { id: string; state: string } {
+      return db.transaction(() => {
+        const job = row(id);
+        if (job.state !== "expired") fail("assistance_not_expired", "Only an expired job reopens");
+        if (job.deadline <= now || row(job.root_id).state === "cancelled")
+          fail("assistance_expired", "Its deadline has passed; file a new request instead");
+        db.run(
+          "UPDATE memory_assistance_jobs SET state='pending',version=version+1 WHERE id=? AND state='expired'",
+          [id],
+        );
+        event(
+          db,
+          { principalId: ASSISTANCE_EXPIRY_ACTOR, credentialId: "", scopes: [] },
+          job.space_id,
+          "assistance.restored",
+          id,
+        );
+        return { id, state: "pending" };
       })();
     },
     isInputSource(space: string, id: string): boolean {

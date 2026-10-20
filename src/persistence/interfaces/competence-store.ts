@@ -12,6 +12,7 @@ export interface CompetenceStore {
   ): ReturnType<typeof competenceDb.listCompetenceForEntity>;
   recordDemonstration(entityId: string, gate: string, unlockAt: number, now: number): void;
   grantCompetence(entityId: string, gate: string): void;
+  listGrantedCompetence(): ReturnType<typeof competenceDb.listGrantedCompetence>;
 }
 
 /** Runtime mirror of `CompetenceStore`'s method names — the drift test compares it to the facade. */
@@ -20,6 +21,7 @@ export const COMPETENCE_STORE_METHODS = [
   "listCompetenceForEntity",
   "recordDemonstration",
   "grantCompetence",
+  "listGrantedCompetence",
 ] as const satisfies readonly (keyof CompetenceStore)[];
 
 export const COMPETENCE_STORE_COMPLETE: ExactKeys<

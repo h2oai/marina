@@ -171,6 +171,8 @@ import {
   defaultLoopPreferences,
   LOOP_PREFERENCE_KEYS,
   type LoopPreferences,
+  nextPreferenceRefreshCycles,
+  PREFERENCE_REFRESH_MIN_CYCLES,
   parseFocusWrite,
   parseLoopPreferenceCommand,
   selfWriteCommand,
@@ -1629,6 +1631,8 @@ export class LeanAgentAdapter implements AgentHandle {
   private notesSinceReflection = 0;
   private cachedTickRate: { min: number; normal: number; idle: number } | null = null;
   private lastTickRateCheck = 0;
+  /** Cycles between core-memory preference reads; backs off while nothing changes. */
+  private preferenceRefreshEvery = PREFERENCE_REFRESH_MIN_CYCLES;
 
   // ─── Autonomous Loop Wakeup ────────────────────────────────────────
   /**
@@ -3879,11 +3883,21 @@ export class LeanAgentAdapter implements AgentHandle {
     // own clock with at most one cycle of lag. (This used to be a complete
     // no-op: the cache was invalidated and then recomputed from env defaults
     // without ever reading the memory key the docs promised.)
-    if (this.loopIterationCount - this.lastTickRateCheck >= 50) {
+    // The interval backs off (50 → 400 cycles) while the reads find nothing
+    // new: an idle resident used to re-read seven core-memory keys every 50
+    // cycles for ever. The agent's own `memory set|delete <key>` is applied
+    // at once (`applyLoopPreferenceCommand`), so only an outside change waits.
+    if (this.loopIterationCount - this.lastTickRateCheck >= this.preferenceRefreshEvery) {
       this.lastTickRateCheck = this.loopIterationCount;
       this.cachedTickRate = null; // force recompute on next access
-      void this.refreshAgentPace();
-      void this.refreshLoopPreferences();
+      void Promise.all([this.refreshAgentPace(), this.refreshLoopPreferences()]).then(
+        ([pace, prefs]) => {
+          this.preferenceRefreshEvery = nextPreferenceRefreshCycles(
+            this.preferenceRefreshEvery,
+            pace || prefs,
+          );
+        },
+      );
     }
     if (this.cachedTickRate) return this.cachedTickRate;
 
@@ -3911,17 +3925,21 @@ export class LeanAgentAdapter implements AgentHandle {
   private agentPace: "fast" | "normal" | "slow" | null = null;
   private paceRefreshInFlight = false;
 
-  private async refreshAgentPace(): Promise<void> {
-    if (this.paceRefreshInFlight) return;
+  /** Re-read pace; true when it changed. */
+  private async refreshAgentPace(): Promise<boolean> {
+    if (this.paceRefreshInFlight) return false;
     this.paceRefreshInFlight = true;
     try {
       const pace = await this.platformMemory.getPace();
       if (pace !== this.agentPace) {
         this.agentPace = pace;
         this.cachedTickRate = null; // apply on next access
+        return true;
       }
+      return false;
     } catch {
       // Pace is a preference, never worth failing a cycle over.
+      return false;
     } finally {
       this.paceRefreshInFlight = false;
     }
@@ -3933,17 +3951,20 @@ export class LeanAgentAdapter implements AgentHandle {
    * `memory set|delete <key>` the agent issues is applied at once
    * (`applyLoopPreferenceCommand`) so the choice never waits for this read.
    */
-  private async refreshLoopPreferences(): Promise<void> {
-    if (this.loopPrefsRefreshInFlight) return;
+  private async refreshLoopPreferences(): Promise<boolean> {
+    if (this.loopPrefsRefreshInFlight) return false;
     this.loopPrefsRefreshInFlight = true;
     try {
       const next = defaultLoopPreferences();
       for (const key of LOOP_PREFERENCE_KEYS) {
         applyLoopPreference(next, key, await this.platformMemory.getCoreValue(key));
       }
+      const changed = JSON.stringify(next) !== JSON.stringify(this.loopPrefs);
       this.setLoopPreferences(next);
+      return changed;
     } catch {
       // Preferences are instruments, never worth failing a cycle over.
+      return false;
     } finally {
       this.loopPrefsRefreshInFlight = false;
     }

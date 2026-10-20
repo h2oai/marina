@@ -22,6 +22,9 @@ bun run futurex watch --once --run cheap --daily --learn
                                       # …and re-forecast open rows daily (see Standing answers)
 bun run futurex watch --once --run cheap --daily --daily-rows stale --near-end-hours 48
                                       # …daily runs touch only stale rows (see Standing answers)
+bun run futurex watch --once --run cheap --answer late --final-lead-hours 6
+                                      # …answer each row once, close to its cutoff (see Answering late)
+bun run futurex schedule --run cheap  # PRINT a systemd service + hourly timer for the late watcher
 bun run futurex learn                 # resolved rows of filed batches → outcome lessons
 bun run futurex status                # every submission recorded so far
 ```
@@ -103,6 +106,35 @@ FutureX questions stay open for days, so a filed answer is a *standing* answer p
   A run that revises something writes a new file, which is a new `external_submissions` row, and
   prints the email fields again. A run that revises nothing reproduces the same file, which is
   already recorded, and prints nothing to send.
+
+## Answering late and scheduling
+
+`watch --answer late` does not forecast a batch when it arrives. Each open row is answered
+**once**, inside `--final-lead-hours` of its own cutoff. The cutoff is the batch deadline, or the
+row's end time when that comes first. So the answer sees as much news as possible and costs one
+forecast per row (`lateRows` in `benchmarks/futurex/schedule.ts`). A row whose answer is missing or a
+fallback is retried on the next check inside its window. Nothing runs at or after the deadline,
+`--daily` is ignored, and the in-progress rule and `schedule.json` work as above. `watch` itself
+still defaults to `--answer early`.
+
+Nothing schedules the watcher for you. `bun run futurex schedule` prints a systemd user service and
+an hourly timer that run `watch --once`, answering late by default, with a 6 h lead. Add `--out
+<dir>` to write the two files instead of printing them. It installs nothing, enables nothing and
+never calls `systemctl`. The operator decides whether to activate it:
+
+```bash
+bun run futurex schedule --run cheap --dir ~/futurex-data --env-file .env --scope-cap 25 --out /tmp/units
+cp /tmp/units/marina-futurex-late.* ~/.config/systemd/user/ && systemctl --user daemon-reload
+systemctl --user enable --now marina-futurex-late.timer     # only when you mean it
+```
+
+Options: `--answer early|late`, `--final-lead-hours N` (default 6 here), `--run <variants>`,
+`--variants <file.json>`, `--dir`, `--learn`, `--repo` (working directory, default the current one),
+`--bun` (default the running Bun), `--env-file`, `--db-path` (sets `DB_PATH`) and `--name` (unit
+name, default `marina-futurex-late`). Every model call is charged to the unit's own spend scope
+(`MARINA_SPEND_SCOPE=<name>`), and `--scope-cap` (USD, default 25) must be above 0, because an
+uncapped timer is refused. The timer is `Persistent=true`, so a check missed while the machine
+slept runs on wake.
 
 `--learn` (or `bun run futurex learn`) hands resolved weeks to the
 [outcome-lesson loop](../architecture/memory.md#outcome-lessons-srclearning) on every watch tick,

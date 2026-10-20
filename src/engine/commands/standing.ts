@@ -5,6 +5,9 @@ import { deriveRankFromStanding, RANK_THRESHOLDS } from "../../agent/rank-progre
 import {
   ledgerFor,
   namedLeaderboard,
+  RETIRED_STANDING_KINDS,
+  retiredStandingMode,
+  retiredStandingOf,
   STANDING_AMOUNTS,
   STANDING_HALF_LIFE_DAYS,
   standingOf,
@@ -55,7 +58,8 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       `a proposal its requester adopts (${STANDING_AMOUNTS.assistance_adopted}), ` +
       `and an onboarding quest (${STANDING_AMOUNTS.quest_complete}). ` +
       "Being chronicled, pool notes, recalls, crew completions and helping acts no longer earn; " +
-      "past rows decay out. " +
+      "their past rows stay as history but count toward no standing " +
+      "(MARINA_STANDING_RETIRED=decay lets them fade out instead). " +
       "Decay floors at 0; rank 0–4 is derived from thresholds (5/15/40/100). " +
       "Above rank 4, capability is earned per-operation via the Capability gates shown in " +
       "your standing view — keep building standing, then perform each gated action under " +
@@ -119,6 +123,13 @@ export function standingCommand(deps: StandingDeps): CommandDef {
         `  ${bold(standing.toFixed(1))} ${dim(`(half-life ${STANDING_HALF_LIFE_DAYS}d)`)}`,
         `  ${dim("derived rank:")} ${derived}  ${dim("stored:")} ${currentRank}`,
       ];
+      const retired = retiredStandingOf(db, target.id);
+      if (retired >= 0.05)
+        lines.push(
+          retiredStandingMode() === "exclude"
+            ? `  ${dim(`retired credit ${retired.toFixed(1)} (history only — no longer earned, not counted)`)}`
+            : `  ${dim(`includes retired credit ${retired.toFixed(1)} (MARINA_STANDING_RETIRED=decay; it fades out)`)}`,
+        );
       // ── Path forward ──────────────────────────────────────────────
       // The rank ladder tops out at 4 (Builder). Below that, show the gap to
       // the next tier; at/above it, explain that further capability is earned
@@ -155,8 +166,9 @@ export function standingCommand(deps: StandingDeps): CommandDef {
         const now = Date.now();
         for (const entry of ledger) {
           const sign = entry.amount >= 0 ? "+" : "";
+          const retiredKind = RETIRED_STANDING_KINDS.has(entry.kind);
           lines.push(
-            `  ${sign}${entry.amount.toFixed(1).padStart(6)}  ${entry.kind.padEnd(28)}  ${dim(fmtAge(now - entry.earnedAt))}`,
+            `  ${sign}${entry.amount.toFixed(1).padStart(6)}  ${entry.kind.padEnd(28)}  ${dim(fmtAge(now - entry.earnedAt))}${retiredKind ? dim(" · retired") : ""}`,
           );
         }
       } else {

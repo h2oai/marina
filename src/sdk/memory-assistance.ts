@@ -33,7 +33,7 @@ export interface MemoryAssistanceJob {
   parent_id: string | null;
   root_id: string;
   depth: number;
-  state: "pending" | "running" | "answered" | "abstained" | "cancelled";
+  state: "pending" | "running" | "answered" | "abstained" | "cancelled" | "expired";
   /** Live deadline/ancestor projection; state retains the last recorded transition. */
   work_open: boolean;
   version: number;

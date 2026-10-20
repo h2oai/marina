@@ -376,6 +376,7 @@ describe("authorization matrix", () => {
       answered24h: 1,
       abstained24h: 0,
       cancelled24h: 0,
+      expired24h: 0,
     });
     expect(operator.dispatch).toMatchObject({
       accumulationJobs24h: 1,

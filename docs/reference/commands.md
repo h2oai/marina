@@ -1885,10 +1885,13 @@ Usage:
                                           — run it now; always also grants its gate
   challenge deny <token> [reason]         — decline; the requester is told why
   challenge stats                         — the judge's record per gate vs people's answers
+  challenge summary [days]                — what happened to recent holds (default 7 d):
+                                            answered, denied, expired unanswered, by class
 People answer: the owner of the agent that asked (the person who started its
 spawn chain) or an operator — only for what they could do themselves. Agents
 never answer another's hold, and nobody answers their own ask. Offline
-approvers find holds here and in `ops inbox`; holds survive a restart.
+approvers find holds here and in `ops inbox`; holds survive a restart. Set
+MARINA_OPS_NOTIFY (a webhook URL or cmd:<program>) to be told the moment one opens.
 
 Category: Civic. Minimum rank: 0.
 Aliases: `challenges`.
@@ -1920,6 +1923,13 @@ Effect: write.
 
 Effect: read.
 
+
+### `challenge summary [days]`
+
+Effect: read.
+
+- `field-0` (`days`): text, optional group `option-0`.
+- Group `option-0`: `days`.
 
 ## channel
 
@@ -4364,6 +4374,11 @@ Usage:
   gate list [entity]            — every gate and its status for you (or <entity>)
   gate grant <entity> <gate>    — grant a gate you hold solo (sovereigns: any gate)
   gate revoke <entity> <gate>   — (sovereign) take a gate back
+  gate audit                    — every operator-grant (999) row by holder; agents flagged
+  gate reset <entity|agents> [gate|all] [apply]
+                                — dry run by default: what would be revoked. `apply`
+                                  (operator) revokes operator-grant rows only, chronicled;
+                                  demonstrated competence stays; `gate grant` restores
 Operator-grant gates (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code) are granted by sovereigns only; nobody grants themselves.
 Earning a gate instead: run the gated action — the held run executes once a person approves it, and
 approvals from outside your own lineage build the gate (`challenge`).
@@ -4391,6 +4406,21 @@ Effect: delete.
 
 - `field-0` (`entity`): text, required.
 - `field-1` (`gate`): text, required.
+
+### `gate audit`
+
+Effect: read.
+
+
+### `gate reset <entity|agents> [gate|all] [apply]`
+
+Effect: delete.
+
+- `field-0` (`entity|agents`): text, required, choices `entity`, `agents`.
+- `field-1` (`gate|all`): choice, optional group `option-0`, choices `gate`, `all`.
+- `field-2` (`apply`): text, optional group `option-1`.
+- Group `option-0`: `gate|all`.
+- Group `option-1`: `apply`.
 
 ## gateway
 
@@ -6506,7 +6536,7 @@ Effect: read.
 
 ## ops
 
-Durable operations inbox. Usage: ops inbox|ack <id>|resolve <id>|history|recover
+Durable operations inbox. Usage: ops inbox|ack <id>|resolve <id>|history|recover|assistance [expire|restore <job>]
 
 Category: System. Minimum rank: 0.
 Aliases: `alerts`.
@@ -6516,6 +6546,22 @@ Aliases: `alerts`.
 Effect: write.
 
 - `field-0` (`id`): text, required.
+
+### `ops assistance`
+
+Effect: read.
+
+
+### `ops assistance expire`
+
+Effect: write.
+
+
+### `ops assistance restore <job>`
+
+Effect: write.
+
+- `field-0` (`job`): text, required.
 
 ### `ops history`
 
@@ -8206,7 +8252,7 @@ Usage:
   standing                — your current standing + ledger
   standing show <name>    — another entity's standing (online or not)
   standing top [N]        — leaderboard
-Standing is earned only when someone independent of you (not your account, not your spawn lineage) verifies the work: a task they approve (up to 10), an approved Code Mode attempt whose checks passed (1), a forecast resolved by an independent source (up to 0.5 by skill, once a day), an experiment an independent party replicated (3), a proposal its requester adopts (1), and an onboarding quest (3). Being chronicled, pool notes, recalls, crew completions and helping acts no longer earn; past rows decay out. Decay floors at 0; rank 0–4 is derived from thresholds (5/15/40/100). Above rank 4, capability is earned per-operation via the Capability gates shown in your standing view — keep building standing, then perform each gated action under supervision until it unlocks.
+Standing is earned only when someone independent of you (not your account, not your spawn lineage) verifies the work: a task they approve (up to 10), an approved Code Mode attempt whose checks passed (1), a forecast resolved by an independent source (up to 0.5 by skill, once a day), an experiment an independent party replicated (3), a proposal its requester adopts (1), and an onboarding quest (3). Being chronicled, pool notes, recalls, crew completions and helping acts no longer earn; their past rows stay as history but count toward no standing (MARINA_STANDING_RETIRED=decay lets them fade out instead). Decay floors at 0; rank 0–4 is derived from thresholds (5/15/40/100). Above rank 4, capability is earned per-operation via the Capability gates shown in your standing view — keep building standing, then perform each gated action under supervision until it unlocks.
 
 Category: Civic. Minimum rank: 0.
 Aliases: none.
