@@ -69,6 +69,13 @@ import type { AdvisoryMode, DecisionReceipt } from "../sdk/decision-receipt";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../sdk/memory-assistance";
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemorySearchResult, MemorySourceSearchResult } from "../sdk/memory-types";
+import {
+  type AsOfServed,
+  noteAsOf,
+  proposalsKnownAt,
+  recordVersionAsOf,
+  sourcesKnownAt,
+} from "./as-of";
 import { cachedContext } from "./context-cache";
 import { judgeContextValue, orderContextValue } from "./context-value";
 import { INGEST_NOTE_KIND } from "./ingest-notes";
@@ -258,8 +265,12 @@ function ageDays(createdAt: number): string {
   return `${Math.max(0, Math.floor((Date.now() - createdAt) / 86_400_000))}d`;
 }
 
-function noteItem(tier: UnifiedTier, note: ScoredNoteRow): UnifiedContextItem {
+function noteItem(
+  tier: UnifiedTier,
+  note: ScoredNoteRow & { asOf?: AsOfServed },
+): UnifiedContextItem {
   const bits = [`#${note.id}`, `imp=${note.importance}`];
+  if (note.asOf) bits.push(`as-of v${note.asOf.version}/${note.asOf.current}`);
   if (tier === "trusted") {
     bits.push(
       note.verification_status === "verified"
@@ -282,6 +293,7 @@ function noteItem(tier: UnifiedTier, note: ScoredNoteRow): UnifiedContextItem {
       verification: note.verification_status ?? "unverified",
       confidence: note.confidence ?? 0.5,
       age: ageDays(note.created_at),
+      ...(note.asOf ? { as_of_version: note.asOf.version } : {}),
     },
   };
 }
@@ -431,9 +443,33 @@ function assetRecordReadable(
   return !!asset && assetReadableBy(db, { name: entityName }, asset);
 }
 
-function recordItem(record: MemorySearchResult["results"][number]): UnifiedContextItem {
-  const freshness =
-    record.freshness && record.freshness !== "current" ? ` ${record.freshness}` : "";
+type SearchedRecord = MemorySearchResult["results"][number] & { asOf?: AsOfServed };
+
+/** A searched record as it stood at `asOf`: its own text at that version, or nothing. */
+function recordAsOf(
+  db: MarinaDB,
+  record: MemorySearchResult["results"][number],
+  asOf: number,
+): SearchedRecord[] {
+  const row = recordVersionAsOf(db, record.id, record.version, asOf);
+  if (!row) return [];
+  if (row.version === record.version) return [record];
+  return [
+    {
+      ...record,
+      content: row.content,
+      version: row.version,
+      asOf: { version: row.version, current: record.version },
+    },
+  ];
+}
+
+function recordItem(record: SearchedRecord): UnifiedContextItem {
+  const freshness = record.asOf
+    ? ` as-of (current v${record.asOf.current})`
+    : record.freshness && record.freshness !== "current"
+      ? ` ${record.freshness}`
+      : "";
   const asset = assetOf(record);
   if (asset) {
     const part = typeof record.metadata.part === "string" ? record.metadata.part : "text";
@@ -597,38 +633,43 @@ function fetchLegacy(
   const out: Fetched = { items: {}, degraded: [] };
   const terms = queryTerms(query);
   const distinctive = distinctiveTerms(db, entityName, terms);
-  // The as-of fence: a note written after the cutoff, or revised since it was
-  // written (its current text may be later than the cutoff), is not served.
-  const known = (n: { id: number; created_at: number }) =>
-    opts.asOf === undefined ||
-    (n.created_at <= opts.asOf && (findDurableTwin(db, n.id)?.version ?? 1) <= 1);
-  const relevant = (n: { id: number; content: string; created_at: number }) =>
-    known(n) && relevantToQuery(n.content, terms, distinctive);
+  // The as-of fence: a note written after the cutoff is not served; a note
+  // revised since is served as it stood at the cutoff (`noteAsOf`: the newest
+  // version with a reliable known-at time by then, else nothing). Relevance is
+  // judged on the text actually served.
+  const asOf = opts.asOf;
+  const fence = <T extends ScoredNoteRow>(rows: T[]): (T & { asOf?: AsOfServed })[] =>
+    asOf === undefined
+      ? rows
+      : rows.flatMap((n) => {
+          const known = noteAsOf(db, n, asOf);
+          return known ? [known] : [];
+        });
+  const relevant = (n: { content: string }) => relevantToQuery(n.content, terms, distinctive);
   try {
-    const skills = db
-      .recallNotesWithType(entityName, query, "skill", {
+    const skills = fence(
+      db.recallNotesWithType(entityName, query, "skill", {
         weightImportance: 0.4,
         weightRecency: 0.2,
         weightRelevance: 0.4,
-      })
-      .filter(relevant);
+      }),
+    ).filter(relevant);
     out.items.skill = skills.map((n) => noteItem("skill", n));
   } catch (error) {
     out.degraded.push({ tier: "skill", ...errorCode(error) });
   }
   try {
-    const seeds = (
+    const seeds = fence(
       opts.noteType
         ? db.recallNotesWithType(entityName, query, opts.noteType, opts.weights)
-        : db.recallNotes(entityName, query, opts.weights)
+        : db.recallNotes(entityName, query, opts.weights),
     ).filter(relevant);
-    const trusted = expandMemoryRecall(db, seeds, entityName, {
-      noteType: opts.noteType,
-      trusted: true,
-    }).filter(known);
-    const ordinary = expandMemoryRecall(db, seeds, entityName, { noteType: opts.noteType }).filter(
-      known,
-    );
+    // A historical version is never `trusted`: verification belongs to the
+    // current text ("new text clears prior verification").
+    const trusted = fence(
+      expandMemoryRecall(db, seeds, entityName, { noteType: opts.noteType, trusted: true }),
+    ).filter((n) => !n.asOf);
+    const ordinary = fence(expandMemoryRecall(db, seeds, entityName, { noteType: opts.noteType }));
     out.items.trusted = trusted.map((n) => noteItem("trusted", n));
     out.items.unverified = ordinary.map((n) => noteItem("unverified", n));
   } catch (error) {
@@ -657,6 +698,7 @@ async function fetchDurable(
   limits: { records: number; sources: number; proposals: number },
   representedRecords: ReadonlySet<string>,
   search: "lexical" | "hybrid" = "lexical",
+  asOf?: number,
 ): Promise<Fetched> {
   const out: Fetched = { items: { evidence: [], proposal: [] }, degraded: [] };
   let spaceId: string | undefined;
@@ -721,6 +763,8 @@ async function fetchDurable(
         // `servableRecord` stays as the evidence guard: it also drops a
         // historical version and holds over any other search backend.
         .filter((record) => servableRecord(record, now))
+        // Under the as-of fence: the version known by the cutoff, else nothing.
+        .flatMap((record) => (asOf === undefined ? [record] : recordAsOf(db, record, asOf)))
         .filter((record) => relevantToQuery(record.content, terms, distinctive))
         .filter((record) => assetRecordReadable(db, entityName, record))
         .slice(0, limits.records)
@@ -756,7 +800,19 @@ async function fetchDurable(
       db,
       candidates.map((hit) => hit.id),
     );
-    const hits = candidates.filter((hit) => !journal.has(hit.id));
+    // Under the as-of fence a source is served only when its capture is dated by the cutoff.
+    const captured =
+      asOf === undefined
+        ? undefined
+        : sourcesKnownAt(
+            db,
+            candidates.map((h) => h.id),
+          );
+    const hits = candidates.filter(
+      (hit) =>
+        !journal.has(hit.id) &&
+        (captured === undefined || (captured.get(hit.id) ?? Number.POSITIVE_INFINITY) <= asOf!),
+    );
     // `source_search` is not validity-filtered either: a retired twin's
     // captured excerpt is still a lexical hit after its record was dropped
     // above. Serve a source only while some deriving record is servable.
@@ -781,8 +837,20 @@ async function fetchDurable(
     return out;
   }
   {
+    // Under the as-of fence a proposal is served only when its answer is dated by the cutoff.
+    const completed =
+      asOf === undefined
+        ? undefined
+        : proposalsKnownAt(
+            db,
+            jobs.map((job) => job.id),
+          );
     const answered = jobs
       .filter((job) => job.state === "answered" && (!spaceId || job.space_id === spaceId))
+      .filter(
+        (job) =>
+          completed === undefined || (completed.get(job.id) ?? Number.POSITIVE_INFINITY) <= asOf!,
+      )
       .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1));
     for (const job of answered) {
       if (out.items.proposal!.length >= limits.proposals) break;
@@ -794,9 +862,11 @@ async function fetchDurable(
           id: job.id,
         });
         const fullJob = full.result as MemoryAssistanceJob;
+        const inherited = inheritedAuthority(citedLegacyInputs(db, entityName, fullJob));
         const item = proposalItem(
           fullJob,
-          inheritedAuthority(citedLegacyInputs(db, entityName, fullJob)),
+          // Inputs' CURRENT verification may postdate the cutoff: never raise it under the fence.
+          asOf === undefined ? inherited : { ...inherited, verification: "unverified" },
         );
         if (item) out.items.proposal!.push(item);
       } catch (error) {
@@ -1147,15 +1217,16 @@ async function retrieveUnifiedContext(
       Object.assign(fetched, legacy.items);
       degraded.push(...legacy.degraded);
     }
-    if (scope !== "legacy" && opts.asOf !== undefined) {
-      // Durable records and assistance answers carry no per-item as-of: under
-      // the fence they are withheld, and said to be (fail closed).
-      const message = `withheld under the evidence cutoff ${new Date(opts.asOf).toISOString()}`;
-      degraded.push(
-        { tier: "evidence", code: "fenced", message },
-        { tier: "proposal", code: "fenced", message },
-      );
-    } else if (scope !== "legacy") {
+    if (scope !== "legacy") {
+      if (opts.asOf !== undefined) {
+        // Durable records, sources and proposals are filtered by their own
+        // known-at time (`./as-of`); one without a reliable time is withheld.
+        const message = `filtered to what was known by the evidence cutoff ${new Date(opts.asOf).toISOString()}; undated items withheld`;
+        degraded.push(
+          { tier: "evidence", code: "fenced", message },
+          { tier: "proposal", code: "fenced", message },
+        );
+      }
       const represented = new Set<string>();
       for (const tier of LEGACY_TIERS)
         for (const item of fetched[tier] ?? []) {
@@ -1166,7 +1237,7 @@ async function retrieveUnifiedContext(
               ...item.meta,
               record_id: record.recordId,
               space_id: record.spaceId,
-              version: record.version,
+              version: (item.meta?.as_of_version as number | undefined) ?? record.version,
             };
           }
         }
@@ -1181,6 +1252,7 @@ async function retrieveUnifiedContext(
         },
         represented,
         search,
+        opts.asOf,
       );
       Object.assign(fetched, durable.items);
       degraded.push(...durable.degraded);

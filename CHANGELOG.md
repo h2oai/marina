@@ -399,6 +399,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Resident tool schemas: `full` 13,983 → 8,763 B, `crew` 11,216 → 6,512 B, `minimal`
     5,174 → 4,373 B. A crew-profile Opus resident sends about 5.8 KB (~1.5k tokens) less per
     turn. A 16k local model's prefix falls from about 17.5 KB to 9.6 KB.
+- **Cache-aware idle handling for residents** (`src/agent/prompt-cache.ts`). A prompt sent more
+  than the provider's cache lifetime (5 min) after the agent's last request is cold: the whole
+  request is written to the cache again. In a week of five Opus residents, 89 % of turns 5–60 min
+  after the previous one were cold, and those rewrites were 31 % of agent spend ($60 of $195).
+  - **Default change: compaction before a cold turn.** When the cache has expired and the history
+    holds at least the cap's target + 8000 estimated tokens (24 000 by default), it is compacted to
+    the target before the prompt, through the same archived compaction as the 48k cap. Estimated
+    saving on the measured week: about $29/week, summarizer cost included.
+    `MARINA_AGENT_COLD_COMPACT=off` restores the old behaviour; `…_MIN_TOKENS` tunes the threshold.
+  - **Default change: one-hour cache lifetime for the static prefix** (tool schemas and system
+    prompt) on direct Anthropic requests; the conversation keeps 5 minutes. Estimated saving about
+    $10/week. `MARINA_PROMPT_CACHE_STATIC_TTL=off` restores it.
+  - **Keep-alive pings, off by default** (`MARINA_AGENT_CACHE_KEEPALIVE=on`): a `max_tokens: 1`
+    replay of the last request shortly before the cache expires, bounded per idle gap, per window
+    and per agent per day, and turned off for an agent at the first reply that did not read the
+    cache. Estimated about −$24/week alone, about −$16/week on top of cold-turn compaction, at the
+    cost of extra calls.
+  - Cache lifetimes are configurable per provider family (`MARINA_PROMPT_CACHE_TTL`); local servers
+    and providers with no known cache never count as cold.
+  - `agent status` shows cold turns, compactions before them, the cache writes they avoided, and
+    keep-alives.
+  - **Compaction is incremental.** Earlier summaries are kept verbatim instead of being
+    re-summarized, and every summary carries a `Pointers:` line (URLs, typed ids, `#` handles, file
+    paths) that is handed on when an old summary is dropped.
+- **Default change: `[Focus Review Due]` counts prompts, not minutes.** The 5-minute wall-clock
+  horizon fired on 45 % of prompts, because idle gaps are longer than that. A focus is now reviewed
+  after 10 prompts under it (`MARINA_FOCUS_REVIEW_CYCLES`, or the agent config's
+  `focusReviewCycles`, which replaces `focusTimeout`); idle time never counts.
+- **Default change: fenced memory is reconstructed as of the cutoff** (`src/memory/as-of.ts`).
+  Under an evidence cutoff, a note edited after creation was dropped, and the durable evidence and
+  proposal tiers were withheld entirely. Now a revised note is served at the newest canonical
+  version known by the cutoff, with that version's own text (labelled `as-of vK/N`, never trusted).
+  Durable records, captured sources and assistance proposals are served by their own known-at
+  time, taken from the service events the write path records. An item with no such event (bundle
+  imports, events past their 30-day retention) is still withheld. Tests prove no post-cutoff text
+  reaches any fenced surface.
 
 - **One formation catalogue** (`src/orchestration/formations/`). Formations were implemented once
   per surface: crew briefs, project templates, arena protocols, typed forecast formations and text
