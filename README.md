@@ -116,20 +116,14 @@ explicit local-development bypass, not a production default. Prefer containers? 
 
 ### Use `marina` like Claude Code or Codex
 
-Link the CLI once from the checkout, then run it in any project folder:
-
 ```bash
-bun run setup:cli          # links marina into ~/.bun/bin and prints the PATH line for your shell
+bun run setup:cli    # once, from the checkout: puts `marina` on your PATH
 cd ~/your-project
-marina                     # coding session on this folder (same as `marina .`)
-marina --tui               # fullscreen workspace
-marina -p "fix the failing test"   # one-shot: run a task, print the diff + summary, exit
-marina --agent claude      # or codex / pi: run that coder inside Marina
+marina               # code in this folder (--tui fullscreen, -p "<task>" one-shot)
 ```
 
-No server needs to be running first; `marina attach` joins one that is. Configure a provider with
-`marina init` (or `.env`). See the [coding guide](docs/guides/coding.md#start-in-your-project-folder)
-and `marina --help`.
+`marina --agent claude|codex|pi` runs that coder instead; `marina --help` lists the rest. See the
+[coding guide](docs/guides/coding.md#start-in-your-project-folder).
 
 Using a packaged desktop build instead? Open Marina and follow **Start Here**; provider setup and
 agent controls are clickable and no config file is required. See [Desktop App](#desktop-app).

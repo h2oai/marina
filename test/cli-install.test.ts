@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { runningFolderServer, serverInfoPath } from "../scripts/code";
-import { pathHint, setupCli } from "../scripts/setup-cli";
+import { linkDir, pathHint, setupCli } from "../scripts/setup-cli";
 
 const pkg = (await Bun.file(join(import.meta.dir, "..", "package.json")).json()) as {
   version: string;
@@ -24,11 +24,24 @@ describe("marina from any folder", () => {
     const first = setupCli({ env });
     expect(first).toMatchObject({ status: "linked", onPath: true });
     expect(setupCli({ env }).status).toBe("already-linked");
-    expect(setupCli({ env: { BUN_INSTALL: scratch, PATH: "/usr/bin" } }).onPath).toBe(false);
+    expect(
+      setupCli({ env: { BUN_INSTALL: scratch, HOME: scratch, PATH: "/usr/bin" } }).onPath,
+    ).toBe(false);
     rmSync(first.link);
     writeFileSync(first.link, "#!/bin/sh\necho other\n");
     expect(setupCli({ env }).status).toBe("occupied");
     expect(setupCli({ env, force: true }).status).toBe("linked");
+  });
+
+  it("links into a folder already on PATH, preferring Bun's, so no PATH edit is needed", () => {
+    const bun = join(scratch, "bin");
+    const local = join(scratch, ".local", "bin");
+    const env = { BUN_INSTALL: scratch, HOME: scratch };
+    expect(linkDir({ ...env, PATH: `${local}${delimiter}${bun}` })).toBe(bun);
+    expect(linkDir({ ...env, PATH: `/usr/bin${delimiter}${local}` })).toBe(local);
+    expect(linkDir({ ...env, PATH: "/usr/bin" })).toBe(bun);
+    const r = setupCli({ env: { ...env, PATH: local } });
+    expect(r).toMatchObject({ link: join(local, "marina"), status: "linked", onPath: true });
   });
 
   it("tells each shell how to add the bin folder to PATH in its own syntax", () => {

@@ -23,12 +23,12 @@ Open **http://localhost:3300**. The root redirects to the dashboard.
 #### Use `marina` from any folder
 
 ```bash
-bun run setup:cli     # links marina into Bun's bin folder (~/.bun/bin)
+bun run setup:cli     # links marina into ~/.bun/bin or ~/.local/bin, whichever is on PATH
 marina version        # then, in any project: marina .
 ```
 
-If the folder is not on your PATH, the command prints the exact line for your shell
-(`export PATH=…` for bash/zsh, `fish_add_path ~/.bun/bin` for fish).
+If neither folder is on your PATH, it links into `~/.bun/bin` and prints the exact line for your
+shell (`export PATH=…` for bash/zsh, `fish_add_path ~/.bun/bin` for fish).
 The terminal works without building the dashboard; only `/dashboard` needs
 `bun run dashboard:build`.
 
