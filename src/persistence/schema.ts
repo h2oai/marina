@@ -221,6 +221,18 @@ CREATE TABLE investigation_events (
 );
 `,
   },
+  // Migration 171 — the causal message envelope (`src/engine/message-envelope.ts`):
+  // `cause` is the ref of the message a direct or channel message answers,
+  // `depth` its causal depth (cause depth + 1, else 0). Refs and numbers only.
+  {
+    version: 171,
+    sql: `
+ALTER TABLE direct_messages ADD COLUMN cause TEXT;
+ALTER TABLE direct_messages ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE channel_messages ADD COLUMN cause TEXT;
+ALTER TABLE channel_messages ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

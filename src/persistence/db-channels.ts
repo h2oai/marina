@@ -114,11 +114,20 @@ export function addChannelMessage(
   senderId: string,
   senderName: string,
   content: string,
+  envelope?: { cause?: string; depth: number },
 ): number {
   const result = db.run(
-    `INSERT INTO channel_messages (channel_id, sender_id, sender_name, content, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
-    [channelId, senderId, senderName, content, Date.now()],
+    `INSERT INTO channel_messages (channel_id, sender_id, sender_name, content, created_at, cause, depth)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      channelId,
+      senderId,
+      senderName,
+      content,
+      Date.now(),
+      envelope?.cause ?? null,
+      envelope?.depth ?? 0,
+    ],
   );
   return Number(result.lastInsertRowid);
 }
@@ -706,6 +715,10 @@ export interface ChannelMessageRow {
   sender_name: string;
   content: string;
   created_at: number;
+  /** Ref of the message this one answers (migration 171), or null. */
+  cause: string | null;
+  /** Causal depth: the cause's depth + 1, else 0. */
+  depth: number;
 }
 
 export interface ChannelMemberRow {

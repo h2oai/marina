@@ -166,10 +166,17 @@ export class DashboardBroadcaster {
         // Drop entirely. Raw input is stripped (it may carry tokens/keys/
         // passwords), which left a content-free row that rendered as a bare
         // "> " — and the meaningful commands already surface as their own
-        // richer typed events (say, tell, note_created, recall_trace, task_*).
-        // So the bare command event is either empty noise or a duplicate of a
-        // better row beside it. Same rationale as connect/disconnect above.
+        // typed events (say_sent, tell_sent, note_created, recall_trace,
+        // task_*). So the bare command event is either empty noise or a
+        // duplicate of a better row beside it. Same rationale as
+        // connect/disconnect above.
         return null;
+      case "say_sent":
+      case "tell_sent":
+        // Content-free by construction (names, a message ref and the causal
+        // envelope — src/engine/message-envelope.ts); who may see each one is
+        // decided per viewer in memoryObserver().event.
+        return event as Record<string, unknown>;
       case "memory_job":
       case "memory_service_event":
         // Emitted by src/net/memory-observability.ts with ids/names/states
