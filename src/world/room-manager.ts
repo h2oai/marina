@@ -52,6 +52,7 @@ export type BroadcastExceptFn = (
   exclude: EntityId,
   message: string,
   tag?: string,
+  metadata?: Record<string, unknown>,
 ) => void;
 export type EntitiesInRoomFn = (room: RoomId) => Entity[];
 export type FindEntityFn = (name: string, room: RoomId) => Entity | undefined;
@@ -138,8 +139,12 @@ export class RoomManager {
       entities: deps.entitiesInRoom(roomId),
       send: deps.send,
       broadcast: (msg: string, tag?: string) => deps.broadcast(roomId, msg, tag),
-      broadcastExcept: (exclude: EntityId, msg: string, tag?: string) =>
-        deps.broadcastExcept(roomId, exclude, msg, tag),
+      broadcastExcept: (
+        exclude: EntityId,
+        msg: string,
+        tag?: string,
+        metadata?: Record<string, unknown>,
+      ) => deps.broadcastExcept(roomId, exclude, msg, tag, metadata),
       getEntity: (id: EntityId) => deps.entitiesInRoom(roomId).find((e) => e.id === id),
       findEntity: (name: string) => deps.findEntity(name, roomId),
       store: room.store,

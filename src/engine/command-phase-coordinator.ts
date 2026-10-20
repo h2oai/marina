@@ -19,13 +19,16 @@ import { commandFenceFor, fenceDecision, fenceRefusal } from "./evidence-fence";
 import {
   armGatePass,
   claimCommandPass,
+  type MessageCause,
   runCommandScope,
   scopeEvidenceFence,
   setCurrentCodingTarget,
   setCurrentCommand,
+  setCurrentMessageCause,
 } from "./gate-context";
 import type { Logger } from "./logger";
 import { expandMacroBody, macroLimits, roomMacroOwner } from "./macro-expansion";
+import { normalizeCause } from "./message-envelope";
 import { rankName } from "./permissions";
 import { rankFloorRefusal } from "./rank-floor";
 import { checkGateForExecution, recordGateExecution } from "./safety-gates";
@@ -34,6 +37,12 @@ import { checkGateForExecution, recordGateExecution } from "./safety-gates";
 export interface CommandExecutionOptions {
   bypassModal?: boolean;
   codingTarget?: CodingCommandTarget;
+  /**
+   * The delivered message this input answers, when the ingress knows it
+   * (`src/engine/message-envelope.ts`). Messages the command sends record it
+   * as their `cause` at `depth + 1`.
+   */
+  cause?: MessageCause;
 }
 
 export interface CommandPhaseHost {
@@ -97,6 +106,7 @@ export class CommandPhaseCoordinator {
             ? { ...opts, codingTarget: parseCodingCommandTarget(opts.codingTarget) }
             : opts;
         setCurrentCodingTarget(entityId, own?.codingTarget);
+        if (own?.cause) setCurrentMessageCause(entityId, normalizeCause(own.cause));
         await this.executeInner(entityId, raw, own);
       },
       commandFenceFor(entityId),

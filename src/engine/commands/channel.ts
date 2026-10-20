@@ -4,6 +4,7 @@
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { channelSelf, header, separator } from "../../net/ansi";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { envelopeFields, messageEnvelope } from "../message-envelope";
 
 export function channelCommand(
   channels: ChannelManager,
@@ -147,17 +148,24 @@ export function channelCommand(
             return;
           }
           const message = tokens.slice(2).join(" ");
-          channels.send(ch.id, input.entity, entity.name, message);
+          const envelope = messageEnvelope(input.entity);
+          const { message: stored } = channels.post(ch.id, input.entity, entity.name, message, {
+            envelope,
+          });
           logEvent?.({
             type: "channel_message",
             entity: input.entity,
-            messageId: 0,
+            messageId: stored.id,
             channelName: name,
             content: message,
+            ...envelopeFields(envelope),
             timestamp: Date.now(),
           });
           ctx.send(input.entity, channelSelf(name, message), name, {
             delivery: { kind: "channel", target: name, message },
+            messageId: stored.id,
+            messageRef: `channel_msg:${stored.id}`,
+            ...envelopeFields(envelope),
           });
           return;
         }
