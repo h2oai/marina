@@ -81,6 +81,22 @@ const REQUEST_IMAGE_ASSET_WHERE =
 const ASSISTANCE_ACTION_TIME =
   "(SELECT j.created_at FROM memory_assistance_jobs j WHERE j.id = memory_assistance_actions.job_id)";
 
+/**
+ * The resident continuity journal's idempotency receipts
+ * (`src/agent/durable-memory.ts`): `archive:`, `archive-batch:`, `manifest:`
+ * and `checkpoint:` keys carry a per-process session uuid, and the plain
+ * checkpoint saves use a fresh uuid key whose response is the `resident`
+ * checkpoint. None of those keys is ever sent again once its process ends
+ * (agents restart within MAX_AGENT_UPTIME_MS, 24 h), so the receipt guards
+ * nothing after a few minutes. They were 94 % of the live world's 629k
+ * `memory_requests` rows, none acknowledged. Every other receipt is kept.
+ */
+export const CONTINUITY_RECEIPT_WHERE =
+  "(request_key GLOB 'archive:*' OR request_key GLOB 'archive-batch:*' OR " +
+  "request_key GLOB 'manifest:*' OR request_key GLOB 'checkpoint:*' OR " +
+  "(length(request_key) = 36 AND request_key GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*' " +
+  "AND json_valid(response) AND json_extract(response, '$.id') = 'resident'))";
+
 export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
   // ── telemetry: high-volume, derivable, nobody reads it after two weeks ──
   {
@@ -206,6 +222,14 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     keepMs: 30 * DAY_MS,
     where: "state IN ('ready', 'failed', 'cancelled')",
     note: "settled embedding jobs; pending/running jobs never age out, a reindex re-queues",
+  },
+  {
+    table: "memory_requests",
+    timeColumn: "created_at",
+    kind: "telemetry",
+    keepMs: 7 * DAY_MS,
+    where: CONTINUITY_RECEIPT_WHERE,
+    note: "ONLY the resident continuity journal's receipts (per-process session keys, never resent); every other idempotency receipt is kept, and acknowledged ones compact through memory receipt retention",
   },
   {
     table: "memory_assistance_actions",

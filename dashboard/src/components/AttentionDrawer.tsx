@@ -16,6 +16,17 @@ function desktopAttentionEnabled(): boolean {
   }
 }
 
+/**
+ * The item a desktop notification is raised for: a critical alert, or a held
+ * action waiting on a person's answer (`attention_kind` `approval` — challenge
+ * holds expire unanswered when nobody sees them in time).
+ */
+export function notifiableAttention<T extends { severity: string; attention_kind?: string }>(
+  items: readonly T[],
+): T | undefined {
+  return items.find((item) => item.severity === "critical" || item.attention_kind === "approval");
+}
+
 export function AttentionDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const query = useOperationalAlerts();
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +38,7 @@ export function AttentionDrawer({ open, onClose }: { open: boolean; onClose: () 
   );
 
   useEffect(() => {
-    const critical = items.find((item) => item.severity === "critical");
+    const critical = notifiableAttention(items);
     if (!critical) return;
     if (lastCriticalRef.current === null) {
       lastCriticalRef.current = critical.id;

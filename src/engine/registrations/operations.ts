@@ -9,6 +9,8 @@ import { probeConfiguredProviders } from "../../net/model/model-api";
 import { describeRouteHealth } from "../../net/model/route-health";
 import { hasProviderKey } from "../../net/model-api/upstream";
 import type { EntityId } from "../../types";
+import { engineAssistanceExpiryDeps } from "../assistance-expiry";
+import { isOperatorPrincipal } from "../challenges";
 import { adapterCommand } from "../commands/adapter";
 import { adminCommand } from "../commands/admin";
 import { agentCommand } from "../commands/agent";
@@ -295,6 +297,8 @@ export function registerOperationCommands(engine: Engine): void {
         tasks: engine.taskManager,
         runtime: engine.agentRuntime,
         readiness: () => computeReadiness(engine),
+        assistance: () => engineAssistanceExpiryDeps(engine, engine.db!),
+        isOperator: (id) => isOperatorPrincipal(engine.entities.get(id as EntityId)),
       }),
     );
     engine.commands.registerBuiltin(

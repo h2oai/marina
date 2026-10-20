@@ -12,6 +12,8 @@ import {
   recomputeAll,
   record,
   recordFromEvent,
+  retiredStandingMode,
+  retiredStandingOf,
   STANDING_AMOUNTS,
   STANDING_HALF_LIFE_DAYS,
 } from "../src/agent/standing";
@@ -53,7 +55,7 @@ describe("Standing — civic-contribution ledger", () => {
     expect(liveStandingKinds()).toContain("code_verified");
   });
 
-  it("historical rows of a retired kind stay readable and decay like any other", () => {
+  it("historical rows of a retired kind stay readable but count toward no standing by default", () => {
     const now = Date.now();
     const halfLifeMs = STANDING_HALF_LIFE_DAYS * 24 * 60 * 60 * 1000;
     db.appendStandingEvent({
@@ -64,8 +66,46 @@ describe("Standing — civic-contribution ledger", () => {
       amount: 2,
       earnedAt: now - halfLifeMs,
     });
-    expect(ledgerFor(db, "e_alice")[0]!.kind).toBe("chronicled");
-    expect(computeFromLedger(db, "e_alice", now)).toBeCloseTo(1, 2);
+    record(db, "e_alice", "Alice", KIND, "quest:1");
+    expect(ledgerFor(db, "e_alice").map((r) => r.kind)).toContain("chronicled");
+    expect(retiredStandingMode({})).toBe("exclude");
+    // History only: the live kind counts, the retired row does not.
+    expect(computeFromLedger(db, "e_alice", now)).toBeCloseTo(AMOUNT, 2);
+    expect(retiredStandingOf(db, "e_alice", now)).toBeCloseTo(1, 2);
+
+    // MARINA_STANDING_RETIRED=decay restores the old fade-out.
+    const previous = process.env.MARINA_STANDING_RETIRED;
+    process.env.MARINA_STANDING_RETIRED = "decay";
+    try {
+      expect(computeFromLedger(db, "e_alice", now)).toBeCloseTo(AMOUNT + 1, 2);
+    } finally {
+      if (previous === undefined) delete process.env.MARINA_STANDING_RETIRED;
+      else process.env.MARINA_STANDING_RETIRED = previous;
+    }
+  });
+
+  it("every live kind still earns (or debits) and counts", () => {
+    const liveKinds = liveStandingKinds();
+    let expected = 0;
+    for (const kind of liveKinds) {
+      // task_complete pays the task's own value; the rest their table amount.
+      const amount = kind === "task_complete" ? 2 : STANDING_AMOUNTS[kind];
+      record(db, "e_bob", "Bob", kind, `${kind}:1`, amount);
+      expected += amount;
+    }
+    expect(ledgerFor(db, "e_bob", 50)).toHaveLength(liveKinds.length);
+    expect(liveKinds).toEqual(
+      expect.arrayContaining([
+        "task_complete",
+        "code_verified",
+        "forecast_resolved",
+        "experiment_complete",
+        "assistance_adopted",
+        "quest_complete",
+      ]),
+    );
+    expect(computeFromLedger(db, "e_bob")).toBeCloseTo(Math.max(0, expected), 2);
+    expect(retiredStandingOf(db, "e_bob")).toBe(0);
   });
 
   it("record() appends a ledger row and standing reads back the amount", () => {

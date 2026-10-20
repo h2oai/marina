@@ -72,12 +72,14 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 |---|---|---|
 | `MARINA_CHALLENGES=on` | When a caller is refused by a rank floor or safety gate, Marina asks its creator and the admins with a token instead of only refusing; `challenge approve <token> [once\|always]` re-runs the held command. `off` restores plain refusals. |  |
 | `MARINA_CHALLENGE_TTL_MS=3600000` | How long an unanswered challenge stays open, in milliseconds. |  |
+| `MARINA_OPS_NOTIFY=off` | Push operator notices out of the world: when a held action (challenge) opens, and when holds expire with nobody answering. An http(s) URL receives a JSON POST; `cmd:<program> [args]` runs a program without a shell, with the title and detail appended as its last two arguments (for example `cmd:notify-send -a Marina`). Notices carry the class, requester, reason, token and deadline, never the held input. Unset or `off` sends nothing; `challenge summary` and the `ops inbox` item `challenge:unanswered` work either way. | protected |
 | `MARINA_CHALLENGE_JUDGE=observe` | Challenge judge (needs a decision backend; nothing is scored without one). `observe` (default) scores held commands in shadow so its agreement with people is measured. `on` also auto-approves `once` for a gate only after it earned that gate (25+ approved calls at 85% or better, 95% lower bound), never for the core gates, never `always`, never a deny. `off` never scores. `challenge stats` shows the record. | protected |
 | `MARINA_MAX_SPAWN_DEPTH=3` | Deepest spawn lineage an agent may extend (lead → sub-lead → specialist). |  |
 | `MARINA_STANDING_PER_SPAWNED_CHILD=25` | Standing per concurrent child an earned spawner may keep alive (budget = floor(standing / this), capped by MAX_AGENTS). |  |
 | `MARINA_MAX_REPLICAS_PER_RUN=5` | Total copies `evolve replicate` may seed from one accepted run. |  |
 | `MARINA_EVOLVE_TRIALS=` | `here` lets a dedicated parallel world run `evolve trial` itself. Trials otherwise run only in a World Collective child. Never set it on a world you care about. | protected |
 | `STANDING_HALF_LIFE_DAYS=60` | Standing decay half-life in days (minimum 1; a non-numeric value falls back to 60). Shorter means rank derived from standing demotes faster. | restart |
+| `MARINA_STANDING_RETIRED=exclude` | How ledger rows of retired standing kinds (`chronicled`, `pool_note`, `reflection_recalled`, crew credits, `helping_act`) count. `exclude` (default) keeps them as history (`standing` shows them) but counts them toward no standing, rank or decision. `decay` restores the earlier behaviour: they count and fade by the half-life. No row is ever deleted either way. |  |
 
 ## World
 

@@ -150,7 +150,11 @@ function JobGlyph({ data, size }: { data: MemoryMapNodeData; size: number }) {
         stroke={color}
         strokeWidth={2}
         strokeDasharray={running ? "4 3" : undefined}
-        opacity={node.state === "cancelled" || node.state === "abstained" ? 0.55 : 0.95}
+        opacity={
+          node.state === "cancelled" || node.state === "abstained" || node.state === "expired"
+            ? 0.55
+            : 0.95
+        }
       >
         {running && (
           <animate

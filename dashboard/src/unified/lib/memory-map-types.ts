@@ -149,6 +149,7 @@ export const JOB_STATE_COLORS: Record<MemoryJobState, string> = {
   answered: "#10b981",
   abstained: "#64748b",
   cancelled: "#f43f5e",
+  expired: "#94a3b8",
 };
 
 export function jobStateColor(state: string | undefined): string {

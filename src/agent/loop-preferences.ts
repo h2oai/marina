@@ -204,3 +204,21 @@ export function selfWriteCommand(
       return undefined;
   }
 }
+
+/** Cycles between the adapter's core-memory preference reads, right after a change. */
+export const PREFERENCE_REFRESH_MIN_CYCLES = 50;
+/** The ceiling the interval backs off to while nothing changes. */
+export const PREFERENCE_REFRESH_MAX_CYCLES = 400;
+
+/**
+ * Next refresh interval: back to the minimum after a change, else double
+ * (capped). An idle resident used to re-read pace and the five loop keys
+ * every 50 cycles for ever — seven `memory get` round trips each time.
+ */
+export function nextPreferenceRefreshCycles(current: number, changed: boolean): number {
+  if (changed) return PREFERENCE_REFRESH_MIN_CYCLES;
+  return Math.min(
+    PREFERENCE_REFRESH_MAX_CYCLES,
+    Math.max(PREFERENCE_REFRESH_MIN_CYCLES, current * 2),
+  );
+}

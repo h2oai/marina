@@ -7,7 +7,13 @@ import type { ExactKeys } from "./exact-keys";
 /** Standing ledger and cache (`db-standing.ts`); entity ids resolve to durable keys at the facade. */
 export interface StandingStore {
   appendStandingEvent(row: Parameters<typeof standingDb.appendStandingEvent>[1]): void;
-  computeStanding(entityId: string, halfLifeMs: number, horizonMs: number, now: number): number;
+  computeStanding(
+    entityId: string,
+    halfLifeMs: number,
+    horizonMs: number,
+    now: number,
+    kinds?: standingDb.StandingKindFilter,
+  ): number;
   countStandingEvents(entityId: string, kind: string, since: number): number;
   getStandingCache(entityId: string): ReturnType<typeof standingDb.getStandingCache>;
   setStandingCache(entityId: string, standing: number, now: number): void;

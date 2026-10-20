@@ -18,6 +18,12 @@ import { judgeWaitingWork } from "../outcomes/judge-quality";
 import { judgeOpenResolutions } from "../outcomes/judge-resolution";
 import type { MarinaDB } from "../persistence/database";
 import { refreshDeadlines, runDueSchedules } from "../schedules/runner";
+import {
+  ASSISTANCE_EXPIRY_PHASE,
+  engineAssistanceExpiryDeps,
+  formatAssistanceExpiry,
+  runAssistanceExpiry,
+} from "./assistance-expiry";
 import { syncOperationalAlerts } from "./commands/ops";
 import {
   AGENT_CLEANUP_INTERVAL,
@@ -215,6 +221,24 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
         runtime: host.agentRuntime,
         readiness: host.readiness,
       });
+    },
+  });
+
+  // Hourly (own phase): close memory-assistance jobs nobody can work any more
+  // — deadline passed, or the worker's account has no running agent or live
+  // connection (src/engine/assistance-expiry.ts). State `expired` + one memory
+  // event per job; nothing is deleted, `ops assistance restore <id>` reopens.
+  s.register({
+    name: "assistance-expiry",
+    every: NOTE_IMPORTANCE_INTERVAL,
+    phase: ASSISTANCE_EXPIRY_PHASE,
+    failureMessage: "Assistance-job expiry failed",
+    run: () => {
+      const db = host.db;
+      if (!db) return;
+      const report = runAssistanceExpiry(engineAssistanceExpiryDeps(host.engine, db));
+      if (report.expired.length > 0)
+        host.logger.info("memory", `Assistance jobs ${formatAssistanceExpiry(report)}`);
     },
   });
 

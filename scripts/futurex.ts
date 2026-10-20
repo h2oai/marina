@@ -16,6 +16,13 @@
  *         [--daily-rows all|stale]               which open rows a daily run re-forecasts (default all;
  *         [--near-end-hours 48]                  stale = missing/fallback answers + rows ending soon)
  *         [--in-progress-hours 6]                a started, unfinished run blocks new ones this long
+ *         [--answer early|late]                  early (default): a new batch is forecast at once;
+ *                                                late: each open row is answered ONCE, within
+ *                                                --final-lead-hours of its own cutoff (no dailies)
+ *   bun run futurex schedule [--answer late] …     PRINT a systemd user service + hourly timer for
+ *         [--run cheap] [--out <dir>]            `watch --once` (default answers late); nothing is
+ *         [--scope-cap 25] [--repo] [--bun]      installed or enabled — the operator copies it to
+ *         [--env-file] [--db-path] [--name]      ~/.config/systemd/user and runs systemctl
  *   bun run futurex learn                          resolved rows of filed batches → outcome lessons
  *   bun run futurex migrate-lessons                copy the retired forecast-lesson store into the pool
  *   bun run futurex status                         what has been filed (external_submissions)
@@ -48,7 +55,7 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { BOARD_EXCLUSIONS } from "../benchmarks/forecasting/barred";
 import type { ReferenceScores } from "../benchmarks/futurex/clean";
@@ -77,10 +84,14 @@ import {
   type Variant,
 } from "../benchmarks/futurex/run";
 import {
+  ANSWER_TIMINGS,
+  type AnswerTiming,
   batchDeadline,
   DAILY_ROWS_MODES,
   type DailyRowsMode,
   dailyRows,
+  futurexSystemdUnits,
+  lateRows,
   type Schedule,
   type ScheduleEntry,
   scheduleState,
@@ -127,6 +138,16 @@ const { positionals, values } = parseArgs({
     daily: { type: "boolean" },
     learn: { type: "boolean" },
     "final-lead-hours": { type: "string", default: "4" },
+    // early: forecast a new batch at once (+ --daily); late: answer each row once near its cutoff.
+    answer: { type: "string", default: "early" },
+    // `schedule`: where to write the units (default: print), and what they run.
+    out: { type: "string" },
+    repo: { type: "string" },
+    bun: { type: "string" },
+    "env-file": { type: "string" },
+    "scope-cap": { type: "string", default: "25" },
+    "db-path": { type: "string" },
+    name: { type: "string", default: "marina-futurex-late" },
     "daily-hour": { type: "string", default: "6" },
     // Which open rows a daily re-forecast touches: every one, or only stale ones.
     "daily-rows": { type: "string", default: "all" },
@@ -325,13 +346,17 @@ async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise
   const variants = variantsFromFlags();
   const mode: DailyRowsMode = opts.openOnly && kind === "daily" ? dailyRowsMode() : "all";
   const nearEndMs = Number(values["near-end-hours"]) * 3_600_000;
-  const rowsFor = (v: Variant): FuturexRow[] =>
-    opts.openOnly
-      ? dailyRows(limited, loadStanding(join(dir, "out", batch.sha, v.label)).answers, startedAt, {
-          mode,
-          nearEndMs,
+  const lateLeadMs = Number(values["final-lead-hours"]) * 3_600_000;
+  const rowsFor = (v: Variant): FuturexRow[] => {
+    if (!opts.openOnly) return limited;
+    const standing = loadStanding(join(dir, "out", batch.sha, v.label)).answers;
+    return kind === "late"
+      ? lateRows(limited, standing, startedAt, {
+          deadline: batchDeadline(batch).deadline,
+          leadMs: lateLeadMs,
         })
-      : limited;
+      : dailyRows(limited, standing, startedAt, { mode, nearEndMs });
+  };
   const planned = Object.fromEntries(variants.map((v) => [v.label, rowsFor(v).length]));
   console.log(
     `${describe(batch)}\n${kind}: ${Object.entries(planned)
@@ -722,8 +747,44 @@ async function backtestCmd(): Promise<number> {
   return 0;
 }
 
+function answerTiming(): AnswerTiming {
+  const a = values.answer as AnswerTiming;
+  if (!ANSWER_TIMINGS.includes(a)) {
+    throw new Error(`--answer ${values.answer}: expected ${ANSWER_TIMINGS.join("|")}`);
+  }
+  return a;
+}
+
+/**
+ * `--answer late`: answer each open row once, inside the lead window before
+ * its own cutoff (benchmarks/futurex/schedule.ts `lateRows`). Runs against
+ * the batch that is `latest` — fetched this tick or earlier.
+ */
+async function lateTick(sha: string): Promise<void> {
+  const batch = loadBatch(ONLINE_REPO, sha);
+  if (!batch || !values.run) return;
+  const now = new Date();
+  const { deadline } = batchDeadline(batch);
+  const state = scheduleState(loadSchedule(sha));
+  const inProgressMs = Number(values["in-progress-hours"]) * 3_600_000;
+  if (state.inProgressSince && now.getTime() - Date.parse(state.inProgressSince) < inProgressMs) {
+    console.log(`${now.toISOString()} a run started ${state.inProgressSince} is in progress`);
+    return;
+  }
+  if (now >= deadline) {
+    console.log(`${now.toISOString()} past the batch deadline (${deadline.toISOString()})`);
+    return;
+  }
+  values.variant = values.run.split(",").map((s) => s.trim());
+  values.batch = sha;
+  await runCmd({ kind: "late", openOnly: true });
+}
+
 async function watchCmd(): Promise<number> {
   const interval = Math.max(60, Number(values.interval)) * 1000;
+  const timing = answerTiming();
+  if (timing === "late" && values.daily)
+    console.log("--answer late answers each row once near its cutoff; --daily is ignored");
   for (;;) {
     const sha = await datasetSha(ONLINE_REPO);
     const have = loadBatch(ONLINE_REPO, "latest");
@@ -733,7 +794,11 @@ async function watchCmd(): Promise<number> {
       const b = await fetchBatch(ONLINE_REPO);
       saveBatch(b);
       console.log(`${new Date().toISOString()} NEW batch ${describe(b)}`);
-      if (values.run) {
+      if (timing === "late") {
+        console.log(
+          `  answering late: each row within ${values["final-lead-hours"]} h of its cutoff (deadline ${batchDeadline(b).deadline.toISOString()})`,
+        );
+      } else if (values.run) {
         values.variant = values.run.split(",").map((s) => s.trim());
         values.batch = b.sha;
         await runCmd({ kind: "new" });
@@ -741,8 +806,9 @@ async function watchCmd(): Promise<number> {
     }
     // Dailies only ever run for the batch that is still `latest` (a newer batch
     // ends the older one's re-forecasts), against the batch's own deadline.
+    if (timing === "late") await lateTick(sha);
     const current = have?.sha === sha ? have : undefined;
-    if (values.daily && values.run && current) {
+    if (timing === "early" && values.daily && values.run && current) {
       // Re-forecast open rows daily, plus one final run before the batch's deadline.
       const now = new Date();
       const { deadline, basis, boundedByEnd } = batchDeadline(current);
@@ -778,6 +844,49 @@ async function watchCmd(): Promise<number> {
   }
 }
 
+/**
+ * Print (or write to `--out`) a systemd user service + hourly timer that runs
+ * `watch --once`. Default `--answer late`. Nothing is installed, enabled or
+ * started: activating it is the operator's decision.
+ */
+function scheduleCmd(): number {
+  const given = (flag: string) =>
+    process.argv.some((a) => a === `--${flag}` || a.startsWith(`--${flag}=`));
+  // `watch` defaults to early; a scheduled watcher defaults to answering late.
+  const timing: AnswerTiming = given("answer") ? answerTiming() : "late";
+  const repo = resolve(values.repo ?? process.cwd());
+  const name = values.name ?? "marina-futurex-late";
+  const units = futurexSystemdUnits({
+    repo,
+    bun: values.bun ?? process.execPath,
+    ...(values["env-file"] ? { envFile: resolve(values["env-file"]) } : {}),
+    dir: resolve(repo, dir),
+    run: values.run ?? "cheap",
+    ...(values.variants ? { variantsFile: resolve(values.variants) } : {}),
+    answer: timing,
+    // A scheduled late answer leaves a few hourly checks of slack before each cutoff.
+    finalLeadHours: given("final-lead-hours") ? Number(values["final-lead-hours"]) : 6,
+    scopeCapUsd: Number(values["scope-cap"]),
+    ...(values["db-path"] ? { dbPath: resolve(values["db-path"]) } : {}),
+    learn: values.learn === true,
+    name,
+  });
+  if (values.out) {
+    mkdirSync(values.out, { recursive: true });
+    writeFileSync(join(values.out, `${name}.service`), units.service);
+    writeFileSync(join(values.out, `${name}.timer`), units.timer);
+    console.log(`wrote ${join(values.out, `${name}.service`)} and ${name}.timer (not enabled)`);
+  } else {
+    console.log(`# ${name}.service\n${units.service}\n# ${name}.timer\n${units.timer}`);
+  }
+  console.log(
+    `# Nothing was installed or started. To activate (operator only):\n` +
+      `#   cp ${name}.service ${name}.timer ~/.config/systemd/user/ && systemctl --user daemon-reload\n` +
+      `#   systemctl --user enable --now ${name}.timer`,
+  );
+  return 0;
+}
+
 function statusCmd(): number {
   const db = openDb();
   try {
@@ -798,7 +907,7 @@ async function main(): Promise<number> {
   // Every model call counts in the world database's daily spend ledger (and
   // MARINA_SPEND_SCOPE's), shared with the server and every other run on it,
   // so an hourly timer cannot spend a fresh cap each invocation.
-  if (cmd !== "fetch" && cmd !== "status" && cmd !== "migrate-lessons") {
+  if (cmd !== "fetch" && cmd !== "status" && cmd !== "migrate-lessons" && cmd !== "schedule") {
     attachCliSpendLedger(`bun run futurex ${cmd}`, {
       dbPath: process.env.DB_PATH || (values["no-ledger"] ? undefined : "marina.db"),
     });
@@ -814,13 +923,15 @@ async function main(): Promise<number> {
       return watchCmd();
     case "status":
       return statusCmd();
+    case "schedule":
+      return scheduleCmd();
     case "learn":
       return learnCmd();
     case "migrate-lessons":
       return migrateLessonsCmd();
     default:
       console.error(
-        "usage: bun run futurex fetch|run|backtest|watch|learn|migrate-lessons|status [flags] (see scripts/futurex.ts)",
+        "usage: bun run futurex fetch|run|backtest|watch|schedule|learn|migrate-lessons|status [flags] (see scripts/futurex.ts)",
       );
       return 2;
   }

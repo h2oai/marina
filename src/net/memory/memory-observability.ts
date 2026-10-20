@@ -653,7 +653,14 @@ export function buildMemoryOverview(
     ratios: memoryHygieneRatios(engine, scope, now),
     trust: { profile: trust.profile, ungated: trust.ungated, autonomy: trust.autonomy },
     hygiene: [],
-    jobs: { open: 0, answered24h: 0, abstained24h: 0, cancelled24h: 0, byMarker: {} },
+    jobs: {
+      open: 0,
+      answered24h: 0,
+      abstained24h: 0,
+      cancelled24h: 0,
+      expired24h: 0,
+      byMarker: {},
+    },
     resolutions: [],
     ratifications: [],
     credits: [],
@@ -713,6 +720,7 @@ export function buildMemoryOverview(
     if (row.state === "answered") overview.jobs.answered24h++;
     else if (row.state === "abstained") overview.jobs.abstained24h++;
     else if (row.state === "cancelled") overview.jobs.cancelled24h++;
+    else if (row.state === "expired") overview.jobs.expired24h++;
     const marker = markerOf(row.task);
     if (marker === "accumulation") overview.dispatch.accumulationJobs24h++;
     else if (marker === "shared-write-review") overview.dispatch.sharedWriteJobs24h++;

@@ -19,7 +19,7 @@
 
 export type MemoryJobView = {
   id: string;
-  state: "pending" | "running" | "answered" | "abstained" | "cancelled";
+  state: "pending" | "running" | "answered" | "abstained" | "cancelled" | "expired";
   workOpen: boolean;
   role: "librarian" | "reflector" | "evaluator";
   workerName: string;
@@ -194,6 +194,8 @@ export type MemoryOverview = {
     answered24h: number;
     abstained24h: number;
     cancelled24h: number;
+    /** Jobs closed by the expiry pass (deadline passed or worker gone), created in 24 h. */
+    expired24h: number;
     byMarker: Record<string, number>;
   };
   resolutions: MemoryResolutionView[];

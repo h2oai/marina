@@ -219,6 +219,7 @@ describe("Engine tick schedule", () => {
       { name: "conversation-cleanup", every: 3600, phase: 600 },
       { name: "note-importance", every: 3600, phase: 1200 },
       { name: "operational-alerts", every: 3600, phase: 1800 },
+      { name: "assistance-expiry", every: 3600, phase: 1950 },
       { name: "standing-recompute", every: 3600, phase: 2400 },
       { name: "memory-hygiene", every: 3600, phase: 2700 },
       { name: "memory-accumulation", every: 3600, phase: 900 },

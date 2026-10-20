@@ -11,8 +11,10 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, Entity } from "../../types";
 import {
+  CHALLENGE_SUMMARY_WINDOW_MS,
   type Challenge,
   type ChallengeAnswer,
+  challengeSummary,
   EARNED_MIN_N,
   EARNED_MIN_PRECISION,
   judgeMode,
@@ -30,10 +32,13 @@ Usage:
                                           — run it now; always also grants its gate
   challenge deny <token> [reason]         — decline; the requester is told why
   challenge stats                         — the judge's record per gate vs people's answers
+  challenge summary [days]                — what happened to recent holds (default 7 d):
+                                            answered, denied, expired unanswered, by class
 People answer: the owner of the agent that asked (the person who started its
 spawn chain) or an operator — only for what they could do themselves. Agents
 never answer another's hold, and nobody answers their own ask. Offline
-approvers find holds here and in \`ops inbox\`; holds survive a restart.`;
+approvers find holds here and in \`ops inbox\`; holds survive a restart. Set
+MARINA_OPS_NOTIFY (a webhook URL or cmd:<program>) to be told the moment one opens.`;
 
 function line(c: Challenge, now: number): string {
   const left = Math.max(0, Math.round((c.expiresAt - now) / 60_000));
@@ -54,6 +59,7 @@ export function challengeCommand(deps: {
       { syntax: "challenge approve <token> [once|always] [note]", effect: "execute" },
       { syntax: "challenge deny <token> [reason]", effect: "write" },
       { syntax: "challenge stats", effect: "read" },
+      { syntax: "challenge summary [days]", effect: "read" },
     ],
     handler: (ctx, input) => {
       const me = deps.getEntity(input.entity);
@@ -63,7 +69,52 @@ export function challengeCommand(deps: {
         "approve",
         "deny",
         "stats",
+        "summary",
       ]);
+
+      if (sub === "summary") {
+        const days = Number(input.tokens[1]);
+        const windowMs =
+          Number.isFinite(days) && days > 0
+            ? Math.min(days, 90) * 86_400_000
+            : CHALLENGE_SUMMARY_WINDOW_MS;
+        const s = challengeSummary(Date.now(), windowMs);
+        if (!s) {
+          ctx.send(input.entity, "No challenge history (this world keeps no database).");
+          return;
+        }
+        const window = `${Math.round(windowMs / 86_400_000)} d`;
+        const lines = [
+          header(`Challenges — last ${window}`),
+          separator(),
+          `  ${s.total} held · ${s.approved} approved · ${s.denied} denied · ${bold(String(s.unanswered))} expired unanswered · ${s.open} open`,
+        ];
+        if (s.operatorOnly)
+          lines.push(
+            dim(
+              `  ${s.operatorOnly} had no owner — only an operator (a person at rank 9) could answer.`,
+            ),
+          );
+        if (s.byClass.length) {
+          lines.push("", dim("By class (unanswered / held):"));
+          for (const c of s.byClass.slice(0, 10))
+            lines.push(`  ${c.class.padEnd(28)} ${c.unanswered}/${c.total}`);
+        }
+        if (s.byRequester.length) {
+          lines.push("", dim("By requester (unanswered / held):"));
+          for (const r of s.byRequester.slice(0, 10))
+            lines.push(`  ${r.name.padEnd(28)} ${r.unanswered}/${r.total}`);
+        }
+        if (s.unanswered > 0)
+          lines.push(
+            "",
+            dim(
+              "Nobody saw these in time. Set MARINA_OPS_NOTIFY to push new holds to a webhook or a desktop notifier.",
+            ),
+          );
+        ctx.send(input.entity, lines.join("\n"));
+        return;
+      }
 
       if (sub === "stats") {
         const records = listJudgeRecords();
