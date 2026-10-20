@@ -27,7 +27,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { homedir, hostname, tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { diffStat } from "../src/coding/unified-diff";
 import { formatAge } from "../src/engine/commands/format-duration";
@@ -35,6 +35,7 @@ import { waitForDatabaseLease } from "../src/persistence/database-lease";
 import { IS_COMPILED } from "../src/runtime-paths";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
 import { MARINA_VERSION } from "../src/version";
+import { applyCliEnvironment, userMarinaDir } from "./cli-env";
 import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
 import { inferCodeDefaultModel } from "./code-model";
@@ -596,12 +597,16 @@ export async function runCodeSession(
 ): Promise<void> {
   const dir = resolve(targetDir);
   if (!statSync(dir).isDirectory()) throw new Error(`Not a project directory: ${dir}`);
+  // This folder's Marina home: its database, harnesses and optional `.env`
+  // (settings for this folder only, above ~/.marina/.env; scripts/cli-env.ts).
+  const projectDirectory = join(userMarinaDir(), "projects", projectSlug(dir));
+  mkdirSync(projectDirectory, { recursive: true });
+  applyCliEnvironment({ instanceDir: projectDirectory });
   const fresh = opts.fresh ?? /^(1|true|on)$/i.test(process.env.MARINA_CODE_FRESH ?? "");
   // Host-exec approval posture. Neither flag → "off" (allowlist-only, no
   // exec-mode sent). Either flag demands an owned TTY; a pipe is never consent.
   const execResolution = resolveExecMode(opts, process.stdin.isTTY === true);
   const execMode = execResolution.mode;
-  const projectDirectory = join(homedir(), ".marina", "projects", projectSlug(dir));
   const harnessStore = new HarnessStore(projectDirectory);
   const savedHarness = opts.harness
     ? harnessStore.load(opts.harness)
@@ -625,9 +630,7 @@ export async function runCodeSession(
   } else {
     // Persistent per-folder home: sessions, artifacts, and memory survive
     // restarts, so re-entering `code` resumes where the last launch left off.
-    const dbDir = join(homedir(), ".marina", "projects", projectSlug(dir));
-    mkdirSync(dbDir, { recursive: true });
-    dbPath = join(dbDir, "marina.db");
+    dbPath = join(projectDirectory, "marina.db");
   }
   const defaultModel =
     harness.agent === "marina" && harness.model
@@ -640,7 +643,7 @@ export async function runCodeSession(
   const noProviderKey = harness.agent === "marina" && defaultModel === undefined;
   if (noProviderKey) {
     console.error(
-      "No LLM provider key — set one (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, …) or run `marina init`.",
+      `No LLM provider key — set one (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, …) in ${join(userMarinaDir(), ".env")} or run \`marina init\`.`,
     );
   }
 
@@ -708,7 +711,9 @@ export async function runCodeSession(
   const server = Bun.spawn(
     IS_COMPILED ? [process.execPath, "start"] : [process.execPath, "run", "src/main.ts"],
     {
-      cwd: IS_COMPILED ? dir : REPO_ROOT,
+      // Never the project folder: Bun would load its `.env`, and relative data
+      // paths would land in it. The launcher already passes every setting.
+      cwd: IS_COMPILED ? projectDirectory : REPO_ROOT,
       env: {
         ...process.env,
         WS_PORT: String(port),
@@ -861,12 +866,12 @@ export async function runCodeSession(
   }
 
   say(`Marina ${MARINA_VERSION} · ${folderName} · ${agentLabel}`);
-  // The provider check asks the SERVER, which loads its own environment (the
-  // repo .env): the launcher's environment says nothing about what it can use.
-  // The zero-config line above already named the missing key: say it once.
+  // The provider check asks the SERVER: a key can be valid in the environment
+  // and still unusable. The zero-config line above already named a missing key:
+  // say it once.
   if (harness.agent === "marina" && !noProviderKey && !(await serverHasModel(port))) {
     console.error(
-      `No model provider is configured for the agent. Set a key in ${join(IS_COMPILED ? dir : REPO_ROOT, ".env")} or run marina init; or use /use claude, /use codex or /use pi.`,
+      `No model provider is configured for the agent. Set a key in ${join(userMarinaDir(), ".env")} or run marina init; or use /use claude, /use codex or /use pi.`,
     );
   }
   if (verbose) {

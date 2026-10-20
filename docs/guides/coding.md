@@ -555,8 +555,10 @@ rm -rf /tmp/marina-coding-agent-demo
 
 ### If it does not start
 
-- **“No model provider is configured”:** the server found no provider key. Put one in the Marina
-  repository's `.env` (or run `marina init`), or export it in the same shell, then relaunch. A
+- **“No model provider is configured”:** the server found no provider key. Put one in
+  `~/.marina/.env` (or run `marina init`), or export it in the same shell, then relaunch. Your
+  project's own `.env` is never read; see
+  [where the CLI reads settings](configuration.md#where-the-marina-cli-reads-settings). A
   native agent (`/use claude`, `/use codex`, `/use pi`) needs no Marina key.
 - **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.2, and
   retry.

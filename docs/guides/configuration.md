@@ -6,6 +6,22 @@ starter to copy; [`config/environment.reference`](../../config/environment.refer
 complete annotated catalog that the dashboard settings editor (Admin → Settings) and the
 generated [environment reference](../reference/environment.md) are built from.
 
+### Where the `marina` CLI reads settings
+
+The `marina` command works the same in every folder and never reads your project's own `.env`
+(that belongs to your app). Highest first:
+
+| Layer | File | Use it for |
+|-------|------|------------|
+| Shell | `export KEY=…` | one-off overrides |
+| This folder's Marina | `~/.marina/projects/<folder>/.env` | settings for one project's sessions (next to its database) |
+| You | `~/.marina/.env` | provider keys and defaults for every folder; `marina init` writes here |
+| Source checkout | `<marina checkout>/.env` | a checkout's existing settings, when running from one |
+
+Each layer fills only what a higher one leaves unset. `marina start` treats its working directory
+as the instance, so a server folder's `.env` sits in the second row. `marina init` writes
+`~/.marina/.env` unless run inside the checkout or given `--directory`.
+
 ```bash
 bun run init --yes --preset minimal --directory /path/to/instance
 bun run init --check --directory /path/to/instance
