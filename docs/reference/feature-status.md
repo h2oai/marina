@@ -41,6 +41,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Benchmarks | siloed | `benchmark` (rank 4), `bun run benchmark` | benchmarks |
 | TabH2O | siloed | `TABH2O_API_KEY`; arena challenger, `market forecast` | src/arena, src/net/clients |
 | Quant helpers, data lookups, read swarm | siloed | `quant`, `data`, `web swarm` | src/quant, src/forecast, src/research |
+| Formation catalogue (Score templates, pure combiners) | siloed | Always on: typed forecast formations (`MARINA_FORECAST_FORMATION`), resident forecasts, `pattern run`, arena `formation:ensemble` and `formation:delphi` | src/orchestration/formations |
 | Research evidence loop and survey | siloed | `MARINA_RESEARCH_*` | src/research |
 | Research web agent, cited answers, fact pass | siloed | In world: `research ask` (rank 0, spend-guarded) and the typed `marina_research` tool; benchmark scripts (`scripts/mind2web2.ts`, deepresearch) | src/research |
 | Skills | core | `skill`; 5 built-ins (`skill builtin`); residents get the best-fitting skill in their prompt (`MARINA_SKILLS_RESIDENT`, default on); note seeds with `MARINA_SEED_SKILLS=true` (showcase) | src/agent |
@@ -51,10 +52,10 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Earned forecast routing | experimental | `MARINA_FORECAST_HISTORY` with enough resolved outcomes | src/forecast |
 | Research authority mode | experimental | `MARINA_RESEARCH_AUTHORITY=on` | src/research |
 | The Arbiter | experimental | `MARINA_FORECAST_ARBITER`, `MARINA_VERIFY_ARBITER`; `arbiter` | src/orchestration/arbiter.ts |
-| Forecasts by residents (as-of fence) | experimental | `MARINA_FORECAST_RESIDENTS=on`; `forecast <q> crew:<c> pattern:<p>` | src/forecast/resident-part.ts, src/engine/evidence-fence.ts |
+| Forecasts by residents (as-of fence) | experimental | `MARINA_FORECAST_RESIDENTS=on`; `forecast <q> crew:<c> pattern:<p>` (ensemble, delphi, tournament, skeptic) | src/forecast/resident-part.ts, src/forecast/resident-forecast.ts, src/engine/evidence-fence.ts |
 | Hybrid and vector retrieval | experimental | `MARINA_MEMORY_EMBEDDINGS`, `MARINA_CORPUS_EMBEDDINGS` | src/memory, src/research |
 | H2O-Lightning decision preset | experimental | `MARINA_LIGHTNING_MODEL=<OpenRouter id>` then `MARINA_DECISIONS=lightning` (no default id; off) | src/decisions/config.ts |
-| Text patterns (`pattern run`, `POST /v1/patterns/run`) | experimental | `pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run` | src/orchestration/text-patterns.ts, src/engine/commands/pattern.ts |
+| Text patterns (`pattern run`, `POST /v1/patterns/run`) | experimental | `pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run` | src/orchestration/text-patterns.ts, src/orchestration/formations, src/engine/commands/pattern.ts |
 | Typed resident analysis tools (`marina_forecast`, `marina_research`, `marina_swarm`, `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`, `marina_arbiter`, `marina_pattern`) | experimental | Deferred in the `full` tool profile: loaded by name through `marina_tool_search` (`MARINA_DEFERRED_TOOLS=off` keeps them resident); each runs its world command | src/agent/tools/analysis.ts, src/agent/analysis-commands.ts |
 | Investigations | experimental | `inquiry`, `marina inquiry`, `/api/investigations` | src/investigations |
 | Schedules | experimental | `schedule add …` | src/schedules |
@@ -87,6 +88,12 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
   `POST /v1/patterns/run` in world (rank 0; per-run budget, default $0.50, at most $2; the daily cap;
   one run per entity), over the operator's models only. Residents reach it as the typed
   `marina_pattern` tool. Experimental until a world uses it.
+- **Formation catalogue.** One entry per formation (`src/orchestration/formations/catalogue.ts`):
+  its one-line description, the Score templates it runs as (typed forecasts with model or resident
+  members, free-text `pattern run`, the arena's ensemble and delphi) and pure combiners per answer
+  type. The other ten arena formations still run their own code (byte-identical, held by
+  `test/formation-equivalence-arena.test.ts`); crew-only formations stay crew briefs that name their
+  entry.
 - **Typed analysis tools.** Residents load `marina_forecast`, `marina_research`, `marina_swarm`,
   `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`,
   `marina_arbiter` and `marina_pattern` through `marina_tool_search`. Each builds one world command,

@@ -374,6 +374,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One formation catalogue** (`src/orchestration/formations/`). Formations were implemented once
+  per surface: crew briefs, project templates, arena protocols, typed forecast formations and text
+  patterns shared names but not code. Each formation is now one catalogue entry: a one-line
+  description, a declarative Score template, and pure combiners per answer type. Assignees are
+  abstract slots resolved at run time to `model:`, `role:`, `marina:` or the in-process pipeline,
+  and the Score executor is the one runtime. Default behaviour is unchanged everywhere: forecasts,
+  `pattern run`, the arena and crews.
+  - **Typed forecasts.** `delphi`, `tournament` and `skeptic` run their formation stages as the
+    template's Score: Delphi revisions in parallel, tournament matches one at a time in bracket
+    order, and the skeptic's trust call. The combiners `combineDelphi`, `championAnswer` and
+    `combineSkeptic` are pure. `ensemble` is the pipeline's own round one and combine.
+  - **Resident forecasts.** These run every typed formation: `forecast <q> crew:|role:
+    pattern:tournament|skeptic` now works alongside `ensemble` and `delphi`. A slot's assignee may
+    be `model:<id>` (a bare model through `src/model`) in place of a resident, with the same
+    template and the same combiner. The ensemble and delphi Scores are byte-identical to before.
+  - **Free-text patterns.** All eight run from the catalogue's text templates. `CREW_ONLY_PATTERNS`
+    is derived from the catalogue.
+  - **Arena.** `ensemble` and `delphi` run from the catalogue's numeric templates. The shared clamps
+    (`median`, `agreement`, `settle`, `delphiSummary`) moved to `combine-numeric.ts` and are
+    re-exported. The other ten arena formations keep their own code as a documented follow-up.
+  - **One description.** `PATTERN_FIT` reads each formation's summary from the catalogue. Crew
+    briefs and project templates name their entry (`crewFormationEntry`, `ORCHESTRATION_TEMPLATES`).
+    `test/formation-catalogue.test.ts` fails when a brief or template loses its entry's protocol
+    phrases.
+  - **Equivalence evidence.** The pre-catalogue implementations are frozen in
+    `test/fixtures/formations-legacy/`. Given the same model replies, the catalogue reproduces them
+    exactly, answers and every prompt in order:
+    - `formation-equivalence-typed`: 4 formations × 7 answer types × 36 reply mixes;
+    - `formation-equivalence-text`: 8 patterns × 480 scenarios with budgets, aborts and outages;
+    - `formation-equivalence-arena`: all 12 arena formations × 160 runs on stored rounds.
+
 - **Live FutureX uses the earned default.** `bun run futurex run`, `watch --run earned` and
   `schedule` default to the `earned` variant: each row goes through `typedForecastFor` on board
   `futurex` (env, then `forecast-config:futurex`, then the family slot, then the built-in; card

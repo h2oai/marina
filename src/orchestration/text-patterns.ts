@@ -3,27 +3,42 @@
 
 /**
  * Free-text protocols for ONE task under a named orchestration pattern
- * (`POST /v1/patterns/run`, `src/net/api/patterns-api.ts`).
+ * (`POST /v1/patterns/run`, `src/net/api/patterns-api.ts`, and `pattern run`).
  *
- * These protocols share their NAMES with the orchestration catalogue
- * (`src/world/templates/orchestration.ts`) and with the numeric arena and
- * forecast formations (`src/arena/formations.ts`, `src/forecast/formations.ts`),
- * but they are NOT those formations: the formations combine numbers, these
- * pass text between models. Each protocol is a small, bounded sequence of
- * stages; a checker model picks ONE whole answer where a protocol needs a
- * choice (answers are never merged), with the ensemble's JSON pick contract
- * (`parsePick`, `src/orchestration/pick.ts`).
+ * Each protocol is its formation's catalogue entry (`./formations/catalogue.ts`,
+ * `TEXT_TEMPLATES`): a Score template run on the Score executor, its member
+ * steps asked of the members' models and its checker steps of the checker.
+ * The members that answer the entrant step are the formation's entrants; the
+ * rest of the template runs over them (`afterEntrants`). Between stages the
+ * run's budget is checked once (`StageGates`); a checker model picks ONE whole
+ * answer where a protocol needs a choice (answers are never merged), with the
+ * ensemble's JSON pick contract (`parsePick`, `src/orchestration/pick.ts`).
  *
- * Patterns that need a persistent crew (roles, memory pools, tasks spread
- * over time) are refused here — they run as `marina:<crew>`.
+ * The forecasting surfaces run the same catalogue entries with numeric
+ * (`src/arena/formations.ts`) and typed (`src/forecast/formations.ts`)
+ * combiners. Patterns that need a persistent crew (roles, memory pools, tasks
+ * spread over time) are refused here — they run as `marina:<crew>`; the
+ * catalogue says why (`crewOnly`).
  *
  * Pure: every model call goes through the injected `complete`, every dollar
  * is counted on the injected `SpendGuard`, so the protocols are testable
- * without an engine.
+ * without an engine. The catalogue implementation reproduces the
+ * pre-catalogue one exactly (`test/formation-equivalence-text.test.ts`).
  */
 
 import { getErrorMessage } from "../engine/errors";
 import type { SpendGuard } from "../engine/spend-guard";
+import type { Score } from "../sdk/score";
+import type { DispatchContext } from "../sdk/score-executor";
+import {
+  FORMATION_NAMES,
+  FORMATIONS,
+  partAssignee,
+  TEXT_TEMPLATES,
+  type TextFormationName,
+} from "./formations/catalogue";
+import { runFormationScore, StageGates } from "./formations/run";
+import { afterEntrants, formationScore, knockout } from "./formations/template";
 import { parsePick } from "./pick";
 
 /** One model call: a system prompt and a user message in, text and its cost out. Throws on failure. */
@@ -33,7 +48,7 @@ export type TextComplete = (
   user: string,
 ) => Promise<{ text: string; costUsd: number }>;
 
-/** The patterns this endpoint runs as one free-text task. */
+/** The patterns this endpoint runs as one free-text task: the catalogue's text templates. */
 export const TEXT_PATTERNS = [
   "ensemble",
   "debate",
@@ -43,23 +58,23 @@ export const TEXT_PATTERNS = [
   "deliberation",
   "chorus",
   "pipeline",
-] as const;
+] as const satisfies readonly TextFormationName[];
 
 export type TextPattern = (typeof TEXT_PATTERNS)[number];
 
-/** Catalogue patterns that need a persistent crew, each with why. */
+/** Catalogue patterns that need a persistent crew, each with why (the catalogue's `crewOnly`). */
 export const CREW_ONLY_PATTERNS: Readonly<Record<string, string>> = {
-  foundry: "an overseer assigns work to a crew and merges it through a gate over time",
-  swarm: "crew members self-select subtasks by expertise across many turns",
-  mapreduce: "fans a decomposed goal out to crew members as separate tasks",
-  blackboard: "crew members refine one shared workspace incrementally",
-  symbiosis: "an ongoing exchange between crews scanning a frontier",
-  research: "a hypothesis → act → measure → record loop that runs over days",
-  auction: "tasks are awarded to crew members by bid",
-  ledger: "a running account of commitments kept by a crew",
-  sharding: "work is partitioned across crew members holding their own state",
+  ...Object.fromEntries(
+    FORMATION_NAMES.flatMap((name) => {
+      const why = FORMATIONS[name].crewOnly;
+      return why ? [[name, why]] : [];
+    }),
+  ),
   custom: "a crew-defined protocol with no fixed shape",
 };
+
+/** The assignee of a text template's pure-code steps. */
+const PATTERN_PIPELINE = "model:marina-pattern";
 
 export function isTextPattern(name: string): name is TextPattern {
   return (TEXT_PATTERNS as readonly string[]).includes(name);
@@ -232,33 +247,6 @@ class Run {
     }
   }
 
-  /** The same stage for several members at once; the answers that came back, in member order. */
-  async all(
-    stage: string,
-    jobs: Array<{ label: string; member: string; system: string; user: string }>,
-  ): Promise<Answer[]> {
-    const texts = await Promise.all(
-      jobs.map((j) => this.call(`${stage}:${j.label}`, j.member, j.system, j.user)),
-    );
-    return jobs.flatMap((j, i) => {
-      const text = texts[i];
-      return text === undefined ? [] : [{ label: j.label, member: j.member, text }];
-    });
-  }
-
-  /** Every member answers the task independently. */
-  drafts(members: string[], stage = "draft"): Promise<Answer[]> {
-    return this.all(
-      stage,
-      members.map((member, i) => ({
-        label: `${stage}-${i + 1}`,
-        member,
-        system: ANSWER_SYSTEM,
-        user: taskBlock(this.task),
-      })),
-    );
-  }
-
   /**
    * The checker picks ONE answer (0-based). No call for a single candidate or
    * identical ones; an unreadable or failed pick fails open to the first.
@@ -304,17 +292,121 @@ class Run {
   }
 }
 
-// ─── Protocols ──────────────────────────────────────────────────────────────
+// ─── Protocols: the catalogue's text templates on the Score executor ─────────
 
 type Protocol = (r: Run, members: string[]) => Promise<void>;
+
+/** A step that did not run (its stage halted, or its input failed). */
+const SKIPPED = "";
+
+/** Step `<prefix><n>` → its 0-based instance. */
+const instance = (id: string, prefix: string) => Number(id.slice(prefix.length)) - 1;
+
+/** The template's Score over `n` members (only `steps`, when given). */
+function textScore(
+  r: Run,
+  name: TextPattern,
+  members: readonly string[],
+  steps?: readonly string[],
+): Score {
+  return formationScore(TEXT_TEMPLATES[name], {
+    k: members.length,
+    id: `pattern-${name}`,
+    assign: (slot, i) =>
+      slot === "checker"
+        ? partAssignee(r.checkerModel)
+        : slot === "peer"
+          ? partAssignee(members[(i + 1) % members.length]!)
+          : slot === "member"
+            ? partAssignee(members[i % members.length]!)
+            : PATTERN_PIPELINE,
+    ...(steps ? { only: steps } : {}),
+  });
+}
+
+/**
+ * The template's entrant step: one Score step per member, all at once; the
+ * answers that came back, in member order (failed members drop out).
+ */
+async function entrants(
+  r: Run,
+  name: TextPattern,
+  jobs: Array<{ label: string; member: string; system: string; user: string }>,
+  stage: string,
+): Promise<Answer[]> {
+  const step = TEXT_TEMPLATES[name].entrants!;
+  const texts: Array<string | undefined> = [];
+  await runFormationScore(
+    textScore(
+      r,
+      name,
+      jobs.map((j) => j.member),
+      [step],
+    ),
+    async (ctx) => {
+      const i = instance(ctx.step.id, step);
+      const j = jobs[i]!;
+      texts[i] = await r.call(`${stage}:${j.label}`, j.member, j.system, j.user);
+      return texts[i] ?? SKIPPED;
+    },
+  );
+  return jobs.flatMap((j, i) => {
+    const text = texts[i];
+    return text === undefined ? [] : [{ label: j.label, member: j.member, text }];
+  });
+}
+
+/** Every member answers the task independently (the entrant step). */
+function drafts(r: Run, name: TextPattern, members: string[], stage = "draft"): Promise<Answer[]> {
+  return entrants(
+    r,
+    name,
+    members.map((member, i) => ({
+      label: `${stage}-${i + 1}`,
+      member,
+      system: ANSWER_SYSTEM,
+      user: taskBlock(r.task),
+    })),
+    stage,
+  );
+}
+
+/** The rest of the template, over the entrants that answered. */
+function afterThe(
+  r: Run,
+  name: TextPattern,
+  answered: readonly Answer[],
+  dispatch: (ctx: DispatchContext) => Promise<string>,
+) {
+  return runFormationScore(
+    textScore(
+      r,
+      name,
+      answered.map((a) => a.member),
+      afterEntrants(TEXT_TEMPLATES[name]),
+    ),
+    dispatch,
+  );
+}
+
+/** Pick ONE of `finals` as the best answer (a no-op once the run has stopped). */
+async function pickBest(r: Run, stage: string, finals: Answer[]): Promise<string> {
+  r.best = finals[0]!.text;
+  if (r.halt()) return SKIPPED;
+  r.best = finals[await r.pick(stage, finals)]!.text;
+  return r.best;
+}
 
 /** Parallel independent drafts → the checker picks one. */
 const ensemble: Protocol = async (r, members) => {
   if (r.halt()) return;
-  const drafts = await r.drafts(members);
-  r.best = drafts[0]?.text;
-  if (drafts.length < 2 || r.halt()) return;
-  r.best = drafts[await r.pick("pick", drafts)]!.text;
+  const answered = await drafts(r, "ensemble", members);
+  r.best = answered[0]?.text;
+  if (answered.length < 2 || r.halt()) return;
+  await afterThe(r, "ensemble", answered, async () => {
+    r.best = answered[await r.pick("pick", answered)]!.text;
+    return r.best;
+  });
 };
 
 /**
@@ -324,35 +416,44 @@ const ensemble: Protocol = async (r, members) => {
 const debate: Protocol = async (r, members) => {
   const sides = [members[0]!, members[1] ?? members[0]!];
   if (r.halt()) return;
-  const openings = await r.all(
-    "opening",
+  const openings = await entrants(
+    r,
+    "debate",
     sides.map((member, i) => ({
       label: `advocate-${i + 1}`,
       member,
       system: ADVOCATE_SYSTEM,
       user: taskBlock(r.task),
     })),
+    "opening",
   );
   r.best = openings[0]?.text;
   if (openings.length < 2 || r.halt()) return;
-  const rebuttals = await r.all(
-    "rebuttal",
-    openings.map((own, i) => ({
-      label: own.label,
-      member: own.member,
-      system: REBUTTAL_SYSTEM,
-      user: [
+  const rebuttals: Array<Answer | undefined> = [];
+  await afterThe(r, "debate", openings, async ({ step }) => {
+    if (step.id === "judge") {
+      // An advocate whose rebuttal failed stands on its opening.
+      return pickBest(
+        r,
+        "judge",
+        openings.map((o, i) => rebuttals[i] ?? o),
+      );
+    }
+    const i = instance(step.id, "rebuttal");
+    const own = openings[i]!;
+    const text = await r.call(
+      `rebuttal:${own.label}`,
+      own.member,
+      REBUTTAL_SYSTEM,
+      [
         taskBlock(r.task),
         `YOUR OPENING:\n${own.text}`,
         `YOUR OPPONENT'S OPENING:\n${openings[1 - i]!.text}`,
       ].join("\n\n"),
-    })),
-  );
-  // An advocate whose rebuttal failed stands on its opening.
-  const finals = openings.map((o) => rebuttals.find((b) => b.label === o.label) ?? o);
-  r.best = finals[0]!.text;
-  if (r.halt()) return;
-  r.best = finals[await r.pick("judge", finals)]!.text;
+    );
+    if (text !== undefined) rebuttals[i] = { ...own, text };
+    return text ?? SKIPPED;
+  });
 };
 
 /**
@@ -361,94 +462,134 @@ const debate: Protocol = async (r, members) => {
  */
 const delphi: Protocol = async (r, members) => {
   if (r.halt()) return;
-  const round1 = await r.drafts(members, "round-1");
+  const round1 = await drafts(r, "delphi", members, "round-1");
   r.best = round1[0]?.text;
   if (round1.length < 2 || r.halt()) return;
-  const anonymous = round1.map((a) => `ANSWER:\n${a.text}`).join("\n\n---\n\n");
-  // Facilitator outage: the panel sees the anonymous answers themselves.
-  const summary =
-    (await r.call(
-      "summary",
-      r.checkerModel,
-      FACILITATOR_SYSTEM,
-      `${taskBlock(r.task)}\n\n${anonymous}`,
-    )) ?? anonymous;
-  if (r.halt()) return;
-  const round2 = await r.all(
-    "round-2",
-    round1.map((a) => ({
-      label: a.label,
-      member: a.member,
-      system: DELPHI_REVISE_SYSTEM,
-      user: [
-        taskBlock(r.task),
-        `YOUR EARLIER ANSWER:\n${a.text}`,
-        `PANEL SUMMARY:\n${summary}`,
-      ].join("\n\n"),
-    })),
-  );
-  const finals = round1.map((a) => round2.find((b) => b.label === a.label) ?? a);
-  r.best = finals[0]!.text;
-  if (r.halt()) return;
-  r.best = finals[await r.pick("pick", finals)]!.text;
+  const gates = new StageGates<boolean>();
+  const round2: Array<Answer | undefined> = [];
+  let summary = "";
+  await afterThe(r, "delphi", round1, async ({ step }) => {
+    if (step.id === "summary") {
+      const anonymous = round1.map((a) => `ANSWER:\n${a.text}`).join("\n\n---\n\n");
+      // Facilitator outage: the panel sees the anonymous answers themselves.
+      summary =
+        (await r.call(
+          "summary",
+          r.checkerModel,
+          FACILITATOR_SYSTEM,
+          `${taskBlock(r.task)}\n\n${anonymous}`,
+        )) ?? anonymous;
+      return summary;
+    }
+    if (step.id === "pick") {
+      if (r.stopped) return SKIPPED;
+      return pickBest(
+        r,
+        "pick",
+        round1.map((a, i) => round2[i] ?? a),
+      );
+    }
+    if (gates.once("round-2", () => r.halt())) return SKIPPED;
+    const i = instance(step.id, "round2");
+    const a = round1[i]!;
+    const text = await r.call(
+      `round-2:${a.label}`,
+      a.member,
+      DELPHI_REVISE_SYSTEM,
+      [taskBlock(r.task), `YOUR EARLIER ANSWER:\n${a.text}`, `PANEL SUMMARY:\n${summary}`].join(
+        "\n\n",
+      ),
+    );
+    if (text !== undefined) round2[i] = { ...a, text };
+    return text ?? SKIPPED;
+  });
 };
 
 /**
  * Independent drafts → single-elimination bracket of pairwise picks (an odd
- * entrant gets a bye); each match is a trace step `round-N:<a>-vs-<b>`.
+ * entrant gets a bye); each match is a trace step `round-N:<a>-vs-<b>`. The
+ * bracket is the template's, round by round over the drafts that answered.
  */
 const tournament: Protocol = async (r, members) => {
   if (r.halt()) return;
-  let entrants = await r.drafts(members);
-  r.best = entrants[0]?.text;
-  for (let round = 1; entrants.length > 1; round++) {
-    if (r.halt()) return;
-    const matches: Array<Promise<Answer>> = [];
-    for (let i = 0; i < entrants.length; i += 2) {
-      const a = entrants[i]!;
-      const b = entrants[i + 1];
-      if (!b) {
-        r.steps.push({
-          stage: `round-${round}:${a.label}`,
-          member: a.member,
-          status: "skipped",
-          text: "bye",
-        });
-        matches.push(Promise.resolve(a));
-        continue;
-      }
-      matches.push(
-        r.pick(`round-${round}:${a.label}-vs-${b.label}`, [a, b]).then((k) => (k ? b : a)),
-      );
+  const answered = await drafts(r, "tournament", members);
+  r.best = answered[0]?.text;
+  if (answered.length < 2) return;
+  const rounds = knockout(
+    answered.map((_, i) => `draft${i + 1}`),
+    "match",
+  );
+  const slots = new Map(rounds.flat().map((s) => [s.id, s]));
+  const holder = new Map<string, Answer>(answered.map((a, i) => [`draft${i + 1}`, a]));
+  const gates = new StageGates<boolean>();
+  await afterThe(r, "tournament", answered, async ({ step }) => {
+    const slot = slots.get(step.id)!;
+    const halted = gates.once(`round-${slot.round}`, () => {
+      // An earlier round stopped the run: its best answer stands.
+      if (r.stopped) return true;
+      // The field so far: the first entrant of this round's field is the best answer.
+      if (slot.round > 1) r.best = holder.get(rounds[slot.round - 2]![0]!.id)!.text;
+      return r.halt();
+    });
+    if (halted) return SKIPPED;
+    const a = holder.get(slot.a)!;
+    const b = slot.b === undefined ? undefined : holder.get(slot.b)!;
+    if (!b) {
+      r.steps.push({
+        stage: `round-${slot.round}:${a.label}`,
+        member: a.member,
+        status: "skipped",
+        text: "bye",
+      });
+      holder.set(slot.id, a);
+      return a.text;
     }
-    entrants = await Promise.all(matches);
-    r.best = entrants[0]!.text;
-  }
+    const k = await r.pick(`round-${slot.round}:${a.label}-vs-${b.label}`, [a, b]);
+    const winner = k ? b : a;
+    holder.set(slot.id, winner);
+    if (slot.id === rounds.at(-1)![0]!.id) r.best = winner.text;
+    return winner.text;
+  });
 };
 
 /** The first member drafts → the checker reviews → one revision when the review asks for it. */
 const verification: Protocol = async (r, members) => {
   const author = members[0]!;
   if (r.halt()) return;
-  const draft = await r.call("draft", author, ANSWER_SYSTEM, taskBlock(r.task));
-  r.best = draft;
-  if (draft === undefined || r.halt()) return;
-  const raw = await r.call(
-    "review",
-    r.checkerModel,
-    REVIEW_SYSTEM,
-    `${taskBlock(r.task)}\n\nDRAFT:\n${draft}`,
-  );
-  const review = raw === undefined ? undefined : parseReview(raw);
-  // A failed or unreadable review keeps the draft (fail open, as the ensemble's pick does).
-  if (!review || review.verdict === "approve" || r.halt()) return;
-  const revised = await r.call(
-    "revise",
-    author,
-    REVISE_SYSTEM,
-    [taskBlock(r.task), `DRAFT:\n${draft}`, `REVIEWER'S ISSUES:\n${review.issues}`].join("\n\n"),
-  );
-  if (revised !== undefined) r.best = revised;
+  let draft: string | undefined;
+  let review: ReturnType<typeof parseReview>;
+  let ended = false;
+  await runFormationScore(textScore(r, "verification", [author]), async ({ step }) => {
+    if (step.id === "draft") {
+      draft = await r.call("draft", author, ANSWER_SYSTEM, taskBlock(r.task));
+      r.best = draft;
+      return draft ?? SKIPPED;
+    }
+    if (step.id === "review") {
+      if (draft === undefined || r.halt()) {
+        ended = true;
+        return SKIPPED;
+      }
+      const raw = await r.call(
+        "review",
+        r.checkerModel,
+        REVIEW_SYSTEM,
+        `${taskBlock(r.task)}\n\nDRAFT:\n${draft}`,
+      );
+      review = raw === undefined ? undefined : parseReview(raw);
+      return raw ?? SKIPPED;
+    }
+    // A failed or unreadable review keeps the draft (fail open, as the ensemble's pick does).
+    if (ended || !review || review.verdict === "approve" || r.halt()) return SKIPPED;
+    const revised = await r.call(
+      "revise",
+      author,
+      REVISE_SYSTEM,
+      [taskBlock(r.task), `DRAFT:\n${draft}`, `REVIEWER'S ISSUES:\n${review.issues}`].join("\n\n"),
+    );
+    if (revised !== undefined) r.best = revised;
+    return revised ?? SKIPPED;
+  });
 };
 
 /**
@@ -457,27 +598,33 @@ const verification: Protocol = async (r, members) => {
  */
 const deliberation: Protocol = async (r, members) => {
   if (r.halt()) return;
-  const proposals = await r.drafts(members, "propose");
+  const proposals = await drafts(r, "deliberation", members, "propose");
   r.best = proposals[0]?.text;
   if (proposals.length < 2 || r.halt()) return;
-  const revised = await r.all(
-    "revise",
-    proposals.map((own) => ({
-      label: own.label,
-      member: own.member,
-      system: PEER_REVISE_SYSTEM,
-      user: [
+  const revised: Array<Answer | undefined> = [];
+  await afterThe(r, "deliberation", proposals, async ({ step }) => {
+    if (step.id === "pick")
+      return pickBest(
+        r,
+        "pick",
+        proposals.map((p, i) => revised[i] ?? p),
+      );
+    const i = instance(step.id, "revise");
+    const own = proposals[i]!;
+    const text = await r.call(
+      `revise:${own.label}`,
+      own.member,
+      PEER_REVISE_SYSTEM,
+      [
         taskBlock(r.task),
         `YOUR PROPOSAL:\n${own.text}`,
         "PEER PROPOSALS:",
         ...proposals.filter((p) => p !== own).map((p) => `PROPOSAL:\n${p.text}`),
       ].join("\n\n"),
-    })),
-  );
-  const finals = proposals.map((p) => revised.find((v) => v.label === p.label) ?? p);
-  r.best = finals[0]!.text;
-  if (r.halt()) return;
-  r.best = finals[await r.pick("pick", finals)]!.text;
+    );
+    if (text !== undefined) revised[i] = { ...own, text };
+    return text ?? SKIPPED;
+  });
 };
 
 /**
@@ -486,45 +633,55 @@ const deliberation: Protocol = async (r, members) => {
  */
 const chorus: Protocol = async (r, members) => {
   if (r.halt()) return;
-  const proposals = await r.drafts(members, "propose");
+  const proposals = await drafts(r, "chorus", members, "propose");
   r.best = proposals[0]?.text;
   if (proposals.length < 2 || r.halt()) return;
   const n = proposals.length;
-  const critiques = await r.all(
-    "critique",
-    proposals.map((target, i) => ({
-      label: target.label,
-      member: proposals[(i + 1) % n]!.member,
-      system: CRITIC_SYSTEM,
-      user: `${taskBlock(r.task)}\n\nPEER PROPOSAL:\n${target.text}`,
-    })),
-  );
-  if (r.halt()) return;
-  const criticised = proposals.flatMap((p) => {
-    const c = critiques.find((x) => x.label === p.label);
-    return c ? [{ p, critique: c.text }] : [];
+  const critiques: Array<string | undefined> = [];
+  const revised: Array<Answer | undefined> = [];
+  const gates = new StageGates<boolean>();
+  await afterThe(r, "chorus", proposals, async ({ step }) => {
+    if (step.id === "pick") {
+      if (r.stopped) return SKIPPED;
+      return pickBest(
+        r,
+        "pick",
+        proposals.map((p, i) => revised[i] ?? p),
+      );
+    }
+    if (step.id.startsWith("critique")) {
+      const i = instance(step.id, "critique");
+      const target = proposals[i]!;
+      critiques[i] = await r.call(
+        `critique:${target.label}`,
+        proposals[(i + 1) % n]!.member,
+        CRITIC_SYSTEM,
+        `${taskBlock(r.task)}\n\nPEER PROPOSAL:\n${target.text}`,
+      );
+      return critiques[i] ?? SKIPPED;
+    }
+    if (gates.once("revise", () => r.halt())) return SKIPPED;
+    const i = instance(step.id, "revise");
+    const p = proposals[i]!;
+    const critique = critiques[i];
+    if (critique === undefined) return SKIPPED;
+    const text = await r.call(
+      `revise:${p.label}`,
+      p.member,
+      CRITIQUE_REVISE_SYSTEM,
+      [taskBlock(r.task), `YOUR PROPOSAL:\n${p.text}`, `PEER CRITIQUE:\n${critique}`].join("\n\n"),
+    );
+    if (text !== undefined) revised[i] = { ...p, text };
+    return text ?? SKIPPED;
   });
-  const revised = await r.all(
-    "revise",
-    criticised.map(({ p, critique }) => ({
-      label: p.label,
-      member: p.member,
-      system: CRITIQUE_REVISE_SYSTEM,
-      user: [taskBlock(r.task), `YOUR PROPOSAL:\n${p.text}`, `PEER CRITIQUE:\n${critique}`].join(
-        "\n\n",
-      ),
-    })),
-  );
-  const finals = proposals.map((p) => revised.find((v) => v.label === p.label) ?? p);
-  r.best = finals[0]!.text;
-  if (r.halt()) return;
-  r.best = finals[await r.pick("pick", finals)]!.text;
 };
 
 /** Each member in order refines the previous handoff; the last output wins. */
 const pipeline: Protocol = async (r, members) => {
-  for (const [i, member] of members.entries()) {
-    if (r.halt()) return;
+  await runFormationScore(textScore(r, "pipeline", members), async ({ step }) => {
+    if (r.halt()) return SKIPPED;
+    const i = instance(step.id, "stage");
+    const member = members[i]!;
     const user =
       r.best === undefined
         ? taskBlock(r.task)
@@ -537,7 +694,8 @@ const pipeline: Protocol = async (r, members) => {
     );
     // A failed stage passes the previous handoff on unchanged.
     if (out !== undefined) r.best = out;
-  }
+    return r.best ?? SKIPPED;
+  });
 };
 
 const PROTOCOLS: Record<TextPattern, Protocol> = {

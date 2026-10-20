@@ -37,8 +37,17 @@
  * serving crew's formation reaches each request through its `protocol` line
  * instead (`requestProtocolLine`): verification, deliberation, tournament and
  * delphi consult named specialists by bounded awaited tells.
+ *
+ * Every formation but `freeform` is an entry in the formation catalogue
+ * (`src/orchestration/formations/catalogue.ts`, `crewFormationEntry`): the
+ * catalogue holds its one-line description, its Score templates (where it
+ * also runs as one task — typed forecasts, free-text patterns, arena rounds)
+ * and the protocol phrases its brief must keep; `test/formation-catalogue.test.ts`
+ * fails when a brief drifts from its entry. Crew-only formations stay crew
+ * protocols here.
  */
 
+import { type FormationEntry, formationEntry } from "../orchestration/formations/catalogue";
 import type { CrewFormation } from "../types";
 import { normalizePatternName } from "../world/templates/orchestration";
 
@@ -127,6 +136,15 @@ export const CREW_BRIEFS: Record<CrewFormation, string> = {
     "re-run, post the result. Done = full check passes; lead delivers. Checker can't run: " +
     "verify by hand, deliver with the limitation stated.",
 };
+
+/**
+ * The catalogue entry a crew formation runs (undefined for `freeform`, which
+ * has no fixed shape): its brief above is the crew-runtime form of that entry.
+ */
+export function crewFormationEntry(formation: CrewFormation): FormationEntry | undefined {
+  const entry = formationEntry(normalizePatternName(formation));
+  return entry?.crew ? entry : undefined;
+}
 
 /**
  * Formations whose protocol routes contributions somewhere other than the crew

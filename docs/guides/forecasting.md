@@ -557,8 +557,14 @@ forecast Was CPI above 3% in May 2026? asof:2026-06-01 measure:yes
 - `role:<role>` asks the live resident with that role and the highest standing; `crew:<crew>` asks
   the crew serving `marina:<crew>`. With neither, `role:forecaster`.
 - `pattern:ensemble` (the default) asks `residents:` (default 3) residents independently and
-  combines their answers by type; `pattern:delphi` then shows each an anonymous panel summary and
-  asks it to revise once.
+  combines their answers by type. The other patterns build on those answers:
+  - `pattern:delphi` shows each resident an anonymous panel summary and asks it to revise once.
+  - `pattern:tournament` puts the answers through a knockout bracket judged by the pipeline's
+    critic.
+  - `pattern:skeptic` asks two residents (a statistician and an analyst) and lets the critic set how
+    far to trust their move from the prior.
+
+  These are the same formations a plain typed forecast runs, from the one formation catalogue.
 - The forecast is a world task: Marina researches first, gives every resident the same dossier,
   and combines with the same pure code as any typed forecast (critique, answer contract, triage,
   the Arbiter). The reply names the task, the residents that answered and the calls spent.

@@ -48,27 +48,12 @@ import {
   TIERED_TEMPLATE,
 } from "../../world/templates/memory";
 import {
-  AUCTION_TEMPLATE,
-  BLACKBOARD_TEMPLATE,
-  CHORUS_TEMPLATE,
-  DEBATE_TEMPLATE,
-  DELIBERATION_TEMPLATE,
-  DELPHI_TEMPLATE,
-  FOUNDRY_TEMPLATE,
-  LEDGER_TEMPLATE,
-  MAPREDUCE_TEMPLATE,
   normalizePatternName,
   ORCHESTRATION_HELP,
   ORCHESTRATION_PATTERNS,
-  PIPELINE_TEMPLATE,
-  RESEARCH_TEMPLATE,
-  SHARDING_TEMPLATE,
-  SWARM_TEMPLATE,
-  SYMBIOSIS_TEMPLATE,
+  ORCHESTRATION_TEMPLATES,
   suggestPatterns,
   type TemplateNote,
-  TOURNAMENT_TEMPLATE,
-  VERIFICATION_TEMPLATE,
 } from "../../world/templates/orchestration";
 
 const VALID_ORCHESTRATIONS = new Set<string>(ORCHESTRATION_PATTERNS);
@@ -113,42 +98,9 @@ function learnedPatternScore(db: MarinaDB, pattern: string): { average?: number;
 }
 
 function getOrchestrationTemplate(name: string): TemplateNote[] | undefined {
-  switch (name) {
-    case "deliberation":
-      return DELIBERATION_TEMPLATE;
-    case "chorus":
-      return CHORUS_TEMPLATE;
-    case "foundry":
-      return FOUNDRY_TEMPLATE;
-    case "swarm":
-      return SWARM_TEMPLATE;
-    case "pipeline":
-      return PIPELINE_TEMPLATE;
-    case "debate":
-      return DEBATE_TEMPLATE;
-    case "mapreduce":
-      return MAPREDUCE_TEMPLATE;
-    case "blackboard":
-      return BLACKBOARD_TEMPLATE;
-    case "symbiosis":
-      return SYMBIOSIS_TEMPLATE;
-    case "research":
-      return RESEARCH_TEMPLATE;
-    case "delphi":
-      return DELPHI_TEMPLATE;
-    case "tournament":
-      return TOURNAMENT_TEMPLATE;
-    case "verification":
-      return VERIFICATION_TEMPLATE;
-    case "auction":
-      return AUCTION_TEMPLATE;
-    case "ledger":
-      return LEDGER_TEMPLATE;
-    case "sharding":
-      return SHARDING_TEMPLATE;
-    default:
-      return undefined;
-  }
+  return Object.hasOwn(ORCHESTRATION_TEMPLATES, name)
+    ? ORCHESTRATION_TEMPLATES[name as keyof typeof ORCHESTRATION_TEMPLATES]
+    : undefined;
 }
 
 function getDecompositionTemplate(name: string): TemplateNote[] | undefined {

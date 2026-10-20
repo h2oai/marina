@@ -686,8 +686,11 @@ describe("off: byte-identical", () => {
       assignee: "marina:crewx",
       pattern: "delphi",
     });
-    expect(residentRequest({ pattern: "tournament" })).toEqual({
-      error: expect.stringContaining("ensemble or delphi"),
+    // Every typed formation in the catalogue runs with residents.
+    expect(residentRequest({ pattern: "tournament" })).toMatchObject({ pattern: "tournament" });
+    expect(residentRequest({ pattern: "skeptic" })).toMatchObject({ pattern: "skeptic" });
+    expect(residentRequest({ pattern: "bogus" })).toEqual({
+      error: expect.stringContaining("ensemble, delphi, tournament, skeptic"),
     });
   });
 });
