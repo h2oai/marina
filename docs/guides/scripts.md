@@ -15,7 +15,7 @@ scripts print their own `--help`; the linked guide is the long form.
 | `build` | Bundle the server, the memory importer and the browser memory SDK into `dist/`. |
 | `dashboard:dev` / `dashboard:build` | Vite dev server / production build for the dashboard. |
 | `usecase-ui:dev` / `usecase-ui:build` | The example use-case UI (`examples/usecase-ui`). |
-| `setup:cli` | Put `marina` on your `PATH` by linking it into Bun's global bin folder; prints the line to add when that folder is not on `PATH` (`--force` replaces another link). |
+| `setup:cli` | Put `marina` on your `PATH`: links it into `~/.bun/bin` or `~/.local/bin`, whichever is already on `PATH`; with neither, links into `~/.bun/bin` and prints the line for your shell (`--force` replaces another link). |
 | `build:native` | Compile the `marina` dispatcher into a standalone `dist/marina` executable. See [Compatibility](compatibility.md). |
 | `build:sdk` | Build the `@marina/agent-sdk` package into `src/sdk/dist`. |
 | `create:agent <new-dir>` | Scaffold a minimal SDK agent project in a new directory (never overwrites files). |

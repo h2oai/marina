@@ -56,5 +56,8 @@ bun run start
 # open http://localhost:3300
 ```
 
+To code in your own projects the way you would with Claude Code or Codex, run
+`bun run setup:cli` once, then `marina` in any project folder (see [Coding](../guides/coding/)).
+
 The world and dashboard work without an LLM. Autonomous agents require a configured provider or a
 reachable local model; `readiness` reports what is available and how to enable missing capabilities.
