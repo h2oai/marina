@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import { mulberry32 } from "../benchmarks/stats";
 import { calibrationKey, methodOf } from "../src/arena/calibration";
 import { parseForecasterSpec } from "../src/arena/config";
 import { forecastRound, type RoundForecast } from "../src/arena/forecast";
@@ -28,6 +27,7 @@ import {
 import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
 import type { ArenaShadowRow, ArenaSubmissionRow } from "../src/persistence/db-arena";
 import type { EvidenceIndex } from "../src/research/evidence-index";
+import { mulberry32 } from "../src/stats";
 
 const weekly = (values: number[], start = "2026-01-02"): ArenaPoint[] =>
   values.map((value, i) => ({

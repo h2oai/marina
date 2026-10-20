@@ -8,7 +8,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mulberry32 } from "../benchmarks/stats";
 import { calibrationKey, methodOf } from "../src/arena/calibration";
 import { forecastRound, type RoundForecast } from "../src/arena/forecast";
 import { forecastSettings } from "../src/arena/forecast-config";
@@ -37,6 +36,7 @@ import { profileEnergy } from "../src/arena/score-shapes";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "../src/arena/types";
 import type { DecisionProvider } from "../src/decisions/types";
 import type { ArenaSubmissionRow } from "../src/persistence/db-arena";
+import { mulberry32 } from "../src/stats";
 import { scopeProcessState } from "./process-state";
 
 const weekly = (values: number[], start = "2026-01-02"): ArenaPoint[] =>

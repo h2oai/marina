@@ -434,13 +434,15 @@ export async function forecasterFor(
     return {
       usage,
       forecaster: async (round, lock) =>
-        crew.crewForecastRound(round, lock, members, notes, await start(round, lock), lessonStore),
+        crew.crewForecastRound(round, lock, members, await start(round, lock), lessonStore),
       ...(notes
         ? {
+            // A backtest's revealed round teaches through the judged loop only
+            // (a no-op unless learning is armed for this store). The number was
+            // public from the round's release. Live rounds settle on the
+            // outcome path instead (`resolveArenaFilings`).
             learner: (round, lock, filed, outcome) => {
-              const summary = crew.learn(notes, round, lock, filed, outcome);
-              // The judged loop too (a no-op unless learning is armed for this
-              // store). The number was public from the round's release.
+              const summary = crew.roundSummary(lock, filed, outcome);
               if (summary)
                 void import("../learning/service").then(({ noteOutcome }) =>
                   noteOutcome(
@@ -994,9 +996,6 @@ export async function runArenaAutopilot(
         logger.warn("arena", "resolving filings failed", { error: getErrorMessage(err) }),
       );
     }
-    if (deps.config.forecaster.startsWith("crew:") && "getNotesByType" in store) {
-      await learnFromResolutions(store as unknown as ArenaStore & NotesStore, deps);
-    }
     for (const round of await dueRounds(deps)) {
       const outcome = await submitRound(deps, round.round_id);
       outcomes.push(outcome);
@@ -1060,41 +1059,6 @@ function linkArenaAdvice(
       error: getErrorMessage(error),
     });
   }
-}
-
-/**
- * Close the crew's loop live: for every round Marina filed that the arena has
- * since resolved, write the lesson once (a lesson names its round, so a second
- * pass finds it and skips).
- */
-export async function learnFromResolutions(
-  store: ArenaStore & NotesStore,
-  deps: Pick<SubmitDeps, "config" | "data">,
-): Promise<number> {
-  const { learn, crewLessonOutcome, CREW_ENTITY } = await import("./crew");
-  const resolved = await deps.data.resolutions();
-  const known = new Set(
-    store
-      .getNotesByType(CREW_ENTITY, "lesson", 1000)
-      .map((n) => n.content.split(" ")[1]?.replace(/:$/, "")),
-  );
-  let written = 0;
-  for (const row of store.listArenaSubmissions({ entrant: deps.config.entrant, limit: 500 })) {
-    const value = resolved[row.round_id]?.value;
-    if (row.status !== "accepted" || typeof value !== "number" || known.has(row.round_id)) continue;
-    const body = JSON.parse(row.body) as { topline?: { mean: number; sd: number } };
-    const round = await deps.data.round(row.round_id);
-    if (!body.topline || !round) continue;
-    const summary = learn(store, round, await deps.data.lock(row.round_id), body.topline, value);
-    if (summary) {
-      const { noteOutcome } = await import("../learning/service");
-      // resolvedAt = now: conservative, the resolution is seen live.
-      noteOutcome(store, crewLessonOutcome(round, row.round_id, summary, new Date().toISOString()));
-    }
-    known.add(row.round_id);
-    written++;
-  }
-  return written;
 }
 
 // ─── Wikipedia scheduled events ──────────────────────────────────────────────

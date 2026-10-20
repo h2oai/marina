@@ -15,6 +15,7 @@ import { loadScoreOutcomes, recordScoreOutcome } from "../../coordination/score-
 import { characterizeScore } from "../../coordination/score-shape";
 import { listScoreNames, loadScore, storeScore } from "../../coordination/score-store";
 import { bold, dim, header, separator } from "../../net/ansi";
+import { fileResidentForecast } from "../../outcomes/filing";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 
@@ -298,6 +299,18 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
           undefined,
           { importance: 6, noteType: "process" },
         );
+        // The same call on the one outcome path: when the Sample resolves it is
+        // scored once (Brier), earns the tracker standing and teaches lessons.
+        // The conductor note above keeps feeding the Score's shape priors.
+        fileResidentForecast(deps.db, {
+          owner: caller.name,
+          source: "conduct",
+          key: `conduct:${name}:${sampleId}`,
+          sampleId,
+          question: `Score ${name} (${category}, ${topology}) on ${sampleId}`,
+          probability: clamped,
+          answer: { score: name, category, topology, sampleId, predict: clamped },
+        });
         ctx.send(
           input.entity,
           `Tracking "${name}" against ${sampleId} (predict ${clamped.toFixed(2)}). When it resolves, the outcome is recorded automatically.`,

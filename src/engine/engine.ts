@@ -44,6 +44,7 @@ import { connects } from "../net/ansi";
 import { attachRouteHealthStore, coreMemoryRouteStore } from "../net/model/route-health";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
+import { fileResidentForecast } from "../outcomes/filing";
 import { observeOutcomeEvent } from "../outcomes/live";
 import type { MarinaDB } from "../persistence/database";
 import { writeSample } from "../resolvers/sample-writer";
@@ -1043,6 +1044,7 @@ export class Engine {
               emitEvent,
             })
         : undefined,
+      fileForecast: this.db ? (params) => fileResidentForecast(this.db!, params) : undefined,
       spawnAgent: this.agentRuntime.isAvailable()
         ? async (config) => {
             try {

@@ -15,7 +15,6 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pairedBootstrap as selectPairedBootstrap } from "../benchmarks/forecasting/select";
-import { mulberry32 } from "../benchmarks/stats";
 import {
   adapterFor,
   arenaEvaluateAdapter,
@@ -51,6 +50,7 @@ import {
 } from "../benchmarks/transfer/ledger";
 import { applySplit, loadSuites, parseSpec, type TransferSpec } from "../benchmarks/transfer/spec";
 import { itemSplit } from "../src/engine/benchmark-promotion";
+import { mulberry32 } from "../src/stats";
 
 const dir = mkdtempSync(join(tmpdir(), "eval-transfer-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

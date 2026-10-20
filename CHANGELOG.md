@@ -247,6 +247,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     library calls.
   - **Route fallback (opt-in).** `MARINA_MODEL_ROUTE_FALLBACK=on` reuses route health: a usage-
     limited first-party route is served by the same model via OpenRouter. Default off.
+- **One path each for lessons, outcomes, standing, the earned judge and statistics.**
+  - **Lessons.** The arena crew no longer writes or reads its own `arena-crew` `lesson` notes,
+    which were unjudged and went straight into prompts, and a live round no longer teaches twice
+    (`learnFromResolutions` is gone: every accepted filing already settles on the outcome path).
+    The crew reads only the judged pool (`forecastLessonsFor`). A round revealed in
+    `bun run arena evaluate` teaches through the judged loop only, with the round as private
+    context for the leak check; that loop is not armed in an evaluation, so a crew backtest now
+    runs without lessons. Existing note rows stay, unused.
+  - **Outcomes.** A market room's `predict` and `conduct track` also file the resident's call on
+    the outcome path (`fileResidentForecast`), so it resolves with its Sample, teaches lessons
+    (never the forecast pipeline's history) and earns standing. A newer call settles the open one
+    as `superseded` (no score, no outcome). Position boards, `market_scores` and the conductor's
+    shape-prior notes are unchanged.
+  - **Standing.** `forecast_resolved` is paid to the filer and to every resident or agent its
+    filing names as a producer (`BoardFiling.producers`), who are also recorded as the outcome's
+    participants. The existing caps and independence rule apply, and one party is considered once
+    per answer. No new standing kind.
+  - **Earned judge.** `earnedJudge` and one agreement tally (`src/decisions/earned-judge.ts`)
+    replace the two copies of the gate (outcome judges, challenge judge) and the third agreement
+    count in `decision agreement`, which now also shows the lower bound and whether it is earned.
+    The challenge judge's lower bound uses z = 1.959964 instead of 1.96. Verdicts are identical
+    for every case up to 2,000 allow calls.
+  - **Statistics.** `benchmarks/stats.ts` and `benchmarks/replicate-stats.ts` moved to
+    `src/stats/` (shims stay at the old paths), so core no longer imports from the harness tree.
+    The bootstrap, Wilson and PRNG copies in the harnesses, `src/learned` and scripts now call
+    it. `test/stats-equivalence.test.ts` checks each against a frozen copy of its original with
+    exact equality.
 - **Faster fresh installs**: new databases start from the schema-167 baseline (v0.8.0) instead of
   137, about 2.5× faster to create. Existing databases upgrade exactly as before (#500).
 - **Silent promise failures are logged or justified**: the empty-catch check covers

@@ -18,7 +18,6 @@ import { hleGoldImageItems, hleGoldTextItems } from "../benchmarks/download";
 import { defaultTimeoutMs, usageFromResponse } from "../benchmarks/modes/passthrough";
 import { resultForDisk } from "../benchmarks/result-file";
 import { parseEquivalenceVerdict } from "../benchmarks/scoring/judge";
-import { mcnemarExact, pairedBootstrap, wilsonInterval } from "../benchmarks/stats";
 import {
   failureReason,
   formatTier0Summary,
@@ -35,6 +34,7 @@ import type {
   ResultItem,
 } from "../benchmarks/types";
 import { formatUsd, summarizeUsage } from "../benchmarks/usage";
+import { mcnemarExact, pairedBootstrap, wilsonInterval } from "../src/stats";
 
 describe("Wilson interval", () => {
   it("matches known 95% values", () => {

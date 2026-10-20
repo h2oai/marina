@@ -3,7 +3,7 @@
 
 /** Graded-score statistics for small paired pilots: mean with a bootstrap interval, paired differences. */
 
-import { mulberry32 } from "../stats";
+import { bootstrapMean as sharedBootstrapMean } from "../../src/stats";
 
 export interface MeanInterval {
   n: number;
@@ -12,24 +12,12 @@ export interface MeanInterval {
   high: number;
 }
 
-function percentile(sorted: Float64Array, q: number): number {
-  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(q * sorted.length)))] ?? 0;
-}
-
-/** Mean of `xs` with a 95 % percentile bootstrap interval (resampling items). */
+/** Mean of `xs` with a 95 % percentile bootstrap interval (resampling items; `src/stats`). */
 export function bootstrapMean(xs: readonly number[], resamples = 10_000, seed = 1): MeanInterval {
   const n = xs.length;
   if (n === 0) return { n: 0, mean: Number.NaN, low: Number.NaN, high: Number.NaN };
-  const mean = xs.reduce((s, x) => s + x, 0) / n;
-  const rand = mulberry32(seed);
-  const stats = new Float64Array(resamples);
-  for (let r = 0; r < resamples; r++) {
-    let s = 0;
-    for (let i = 0; i < n; i++) s += xs[Math.floor(rand() * n)] ?? 0;
-    stats[r] = s / n;
-  }
-  stats.sort();
-  return { n, mean, low: percentile(stats, 0.025), high: percentile(stats, 0.975) };
+  const b = sharedBootstrapMean(xs, { resamples, seed, quantiles: [0.025, 0.975] });
+  return { n, mean: b.mean, low: b.low, high: b.high };
 }
 
 export interface PairedDiff extends MeanInterval {

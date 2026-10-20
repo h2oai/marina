@@ -16,8 +16,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { draftAnswerKey } from "../../src/agent/budget-terminal";
 import { answerDigest } from "../../src/engine/benchmark-ledger";
+import { mulberry32 } from "../../src/stats";
 import { BudgetExhausted, isSpendCapRefusal } from "../call-spend-guard";
-import { mulberry32 } from "../stats";
 import type { BenchmarkResult, ResultItem } from "../types";
 import {
   type AgentOptions,

@@ -24,8 +24,8 @@
  * `forecastRouted`, which runs the chosen formation.
  */
 
-import { mulberry32 } from "../../benchmarks/stats";
 import { promotionMargin } from "../engine/fishing-margin";
+import { mulberry32 } from "../stats";
 import {
   type FormedAnswer,
   forecastFormed,

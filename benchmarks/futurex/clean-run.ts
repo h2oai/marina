@@ -30,6 +30,7 @@ import {
   type Outcome,
   recordOutcome,
 } from "../../src/learning/outcomes";
+import { lcg32, percentileFloor } from "../../src/stats";
 import { BOARD_EXCLUSIONS } from "../forecasting/barred";
 import {
   auditRow,
@@ -163,11 +164,7 @@ export function bootstrapOverall(
   iterations = 2_000,
   seed = 7,
 ): [number, number] {
-  let s = seed >>> 0;
-  const rand = () => {
-    s = (s * 1_664_525 + 1_013_904_223) >>> 0;
-    return s / 2 ** 32;
-  };
+  const rand = lcg32(seed);
   const byLevel = [1, 2, 3, 4].map((l) => items.filter((i) => i.level === l));
   const stats: number[] = [];
   for (let k = 0; k < iterations; k++) {
@@ -175,8 +172,7 @@ export function bootstrapOverall(
     stats.push(weightedOverall(sample));
   }
   stats.sort((a, b) => a - b);
-  const q = (p: number) => stats[Math.min(stats.length - 1, Math.floor(p * stats.length))]!;
-  return [round(q(0.025)), round(q(0.975))];
+  return [round(percentileFloor(stats, 0.025)), round(percentileFloor(stats, 0.975))];
 }
 
 const round = (x: number) => Math.round(x * 10_000) / 10_000;

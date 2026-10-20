@@ -41,6 +41,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { wilsonInterval } from "../src/stats";
 import {
   defaultReplicateGroup,
   formatPooled,
@@ -48,7 +49,6 @@ import {
   poolResults,
   validGroupKey,
 } from "./replicates";
-import { wilsonInterval } from "./stats";
 import type { BenchmarkResult } from "./types";
 import { formatUsd, totalCostUsd } from "./usage";
 

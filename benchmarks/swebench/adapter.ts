@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { verificationCounts } from "../../src/engine/benchmark-ledger";
 import { capEnvValue } from "../../src/engine/spend-guard";
-import { mulberry32 } from "../stats";
+import { mulberry32 } from "../../src/stats";
 
 /** The solver-visible fields `export.py` writes — no hints, gold or test patches. */
 export interface SweInstance {

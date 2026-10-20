@@ -442,8 +442,10 @@ async function main(): Promise<number> {
       let scratch: MarinaDB | undefined;
       const specArg = values.forecaster ? parseForecasterSpec(values.forecaster) : "baseline";
       if (specArg.startsWith("crew:")) {
-        // The crew's lesson memory lives in a throwaway Marina DB: evaluation
-        // never writes the world's notes.
+        // The crew reads judged lessons from a throwaway Marina DB, so an
+        // evaluation never writes the world's lessons. Revealed rounds teach
+        // only through the judged loop (`noteOutcome`), which is not armed
+        // here: an evaluation spends nothing on lessons.
         const dir = mkdtempSync(join(tmpdir(), "arena-eval-"));
         scratch = new MarinaDB(join(dir, "eval.db"));
         const crew = await forecasterFor(specArg, { notes: scratch });
@@ -508,7 +510,6 @@ async function main(): Promise<number> {
             concurrency: 4,
             learners,
           });
-      const lessons = scratch?.getNotesByType("arena-crew", "lesson", 1000).length;
       scratch?.close();
       const names = Object.keys(forecasters);
       const fmt = (x: number) => (Number.isNaN(x) ? "n/a" : `${x >= 0 ? "+" : ""}${x.toFixed(3)}`);
@@ -534,7 +535,7 @@ async function main(): Promise<number> {
           const cost = usage.reduce((s, u) => s + u.costUsd, 0);
           const calls = usage.reduce((s, u) => s + u.calls, 0);
           console.log(
-            `model calls ${calls} · cost $${cost.toFixed(4)} · kept the baseline on ${kept} round(s)${lessons === undefined ? "" : ` · lessons written ${lessons}${values["no-learn"] ? " (learning off)" : ""}`}`,
+            `model calls ${calls} · cost $${cost.toFixed(4)} · kept the baseline on ${kept} round(s)`,
           );
         }
         console.log("skill: 0 = the arena's persistence (last value, sd 1.5); above 0 beats it.");

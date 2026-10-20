@@ -13,11 +13,14 @@
  * identity. Pre-ledger runs with no target or slice have no automatic group:
  * each is its own one-replicate group.
  *
- * The statistics live in `benchmarks/replicate-stats.ts` (pure); this module
+ * The statistics live in `src/stats/replicates.ts` (pure); this module
  * only resolves groups from ledger rows and adapts them.
  */
 
 import { createHash } from "node:crypto";
+import { validGroupKey } from "../../benchmarks/replicates";
+import type { BenchmarkItemRow, BenchmarkRunRow } from "../persistence/db-benchmarks";
+import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
 import {
   comparePooled,
   type PooledComparison,
@@ -25,10 +28,7 @@ import {
   poolGroup,
   type Replicate,
   seedFromIds,
-} from "../../benchmarks/replicate-stats";
-import { validGroupKey } from "../../benchmarks/replicates";
-import type { BenchmarkItemRow, BenchmarkRunRow } from "../persistence/db-benchmarks";
-import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
+} from "../stats";
 import { canonicalJson } from "./benchmark-ledger";
 
 /** Fewest replicates of a challenger a promotion accepts (`MARINA_PROMOTION_MIN_REPLICATES`). */

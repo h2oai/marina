@@ -16,6 +16,18 @@ import type { OutcomeInput, OutcomeKind } from "../persistence/db-outcomes";
 const logger = new Logger();
 
 /**
+ * Sources of forecasts residents file in-world (`predict` in a market room,
+ * `conduct track`). They resolve, earn standing and teach lessons like any
+ * forecast, but never feed the forecast history: that history tunes the
+ * forecast PIPELINE's own outputs (recalibration, prior shrink, routing), and a
+ * resident's call is not one of them.
+ */
+export const RESIDENT_FORECAST_SOURCES: readonly string[] = ["market", "conduct"];
+
+const residentForecast = (source: string | undefined) =>
+  !!source && RESIDENT_FORECAST_SOURCES.some((s) => source === s || source.startsWith(`${s}:`));
+
+/**
  * The consumers that learn from an outcome. A judged outcome has none: it is
  * an opinion, recorded for agreement and evidence, until its judge has
  * earned the right to settle results (see `src/outcomes/agreement.ts`).
@@ -23,13 +35,14 @@ const logger = new Logger();
 export function consumersFor(
   kind: OutcomeKind,
   basis: OutcomeInput["basis"] = "mechanical",
-  opts: { deliverJudged?: boolean } = {},
+  opts: { deliverJudged?: boolean; source?: string } = {},
 ): string[] {
   if (basis === "judged" && !opts.deliverJudged) return [];
   // A reported request carries no text to judge a lesson from: evidence only.
   // A benchmark run's lesson goes through the benchmark learner
   // (`noteBenchmarkRun`), which owns its leak guard: its row is evidence only.
   if (kind === "request" || kind === "benchmark") return [];
+  if (kind === "forecast" && residentForecast(opts.source)) return ["lessons"];
   return kind === "forecast" ? ["lessons", "history"] : ["lessons"];
 }
 
@@ -73,7 +86,10 @@ export function recordResolved(
   /** Deliver a judged outcome (its judge has earned agreement; see agreement.ts). */
   opts: { deliverJudged?: boolean } = {},
 ): { id: number; created: boolean } {
-  const recorded = db.recordOutcomeRow(input, consumersFor(input.kind, input.basis, opts));
+  const recorded = db.recordOutcomeRow(
+    input,
+    consumersFor(input.kind, input.basis, { ...opts, source: input.source }),
+  );
   if (input.owner && input.decisionIds?.length) {
     tryLog(logger, "decisions", "Could not attribute outcome to decisions", () => {
       for (const id of new Set(input.decisionIds!.slice(0, 100)))

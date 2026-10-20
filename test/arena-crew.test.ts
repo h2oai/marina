@@ -3,12 +3,12 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { arenaConfigFromEnv, parseForecasterSpec } from "../src/arena/config";
-import { CREW_ENTITY, crewForecastRound, learn, recallLessons } from "../src/arena/crew";
+import { crewForecastRound, crewLessonOutcome, roundSummary } from "../src/arena/crew";
 import { ArenaData } from "../src/arena/data";
 import { evaluateResolved } from "../src/arena/evaluate";
 import { forecastRound } from "../src/arena/forecast";
 import type { Complete } from "../src/arena/model-forecaster";
-import { learnFromResolutions, resolveArenaFilings } from "../src/arena/service";
+import { resolveArenaFilings } from "../src/arena/service";
 import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
 import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
@@ -72,7 +72,6 @@ describe("forecasting crew", () => {
         analyst: seeing(`{"mean": ${fresh}, "sd": 1}`),
         skeptic: seeing('{"trust": 0, "sd_scale": 1}'),
       },
-      undefined,
       start,
     );
     // Trust 0 files the START (the nowcast), not last Friday's value.
@@ -112,7 +111,6 @@ describe("forecasting crew", () => {
         analyst: role("analyst", '{"mean": 41, "sd": 1}'),
         skeptic: role("skeptic", '{"trust": 0.2}'),
       },
-      undefined,
       start,
     );
     const last = history.at(-1)!;
@@ -165,7 +163,7 @@ describe("forecasting crew", () => {
     expect(f.fallback).toContain("numeric");
   });
 
-  it("reads the judged lesson pool at the round's lock beside its own series notes", async () => {
+  it("reads only the judged lesson pool, at the round's lock", async () => {
     const asked: Array<{ query: string; asOf: string }> = [];
     const store = {
       async recall(query: string, asOf: string) {
@@ -197,7 +195,6 @@ describe("forecasting crew", () => {
         skeptic: seeing('{"trust": 0, "sd_scale": 1}'),
       },
       undefined,
-      undefined,
       store,
     );
     expect(asked).toEqual([{ query: "civiqs Net approval?", asOf: round.lock_at }]);
@@ -218,31 +215,39 @@ describe("crew memory", () => {
     cleanupDb(DB);
   });
 
-  it("writes a lesson per resolved round and the analyst recalls the series' newest", async () => {
+  it("writes no unjudged crew notes: a resolved round is one judged-loop outcome", async () => {
     const last = history.at(-1)!.value;
-    learn(db, round, lock, { mean: last + 2, sd: 1.5 }, last - 1);
-    const lessons = recallLessons(db, "civiqs_net_approval");
-    expect(lessons).toHaveLength(1);
-    expect(lessons[0]).toContain("WRONG way");
-    expect(lessons[0]).toContain("lost to persistence");
-    expect(recallLessons(db, "other_series")).toHaveLength(0);
-    expect(db.getNotesByType(CREW_ENTITY, "lesson", 10)).toHaveLength(1);
+    const summary = roundSummary(lock, { mean: last + 2, sd: 1.5 }, last - 1)!;
+    expect(summary.lean).toContain("WRONG way");
+    expect(summary.beat).toBe(false);
+    const o = crewLessonOutcome(round, round.round_id, summary, round.release_at);
+    expect(o).toMatchObject({
+      domain: "arena",
+      succeeded: false,
+      refs: [`arena:${round.round_id}`],
+    });
+    // The leak check sees the case; the outcome's general fields never carry it.
+    expect(o.privateContext).toContain(round.question);
+    expect(o.attempted).not.toContain(round.question);
+    expect(db.getNotesByType("arena-crew", "lesson", 10)).toHaveLength(0);
 
+    // A legacy note left in the store is never injected into a prompt.
+    db.createNote("arena-crew", `[series:${round.series}] old: leaned the WRONG way`, undefined, {
+      noteType: "lesson",
+      skipDedup: true,
+    });
     let seen = "";
-    await crewForecastRound(
-      round,
-      lock,
-      {
-        statistician: reply("{}"),
-        analyst: async (_s, user) => {
-          seen = user;
-          return "{}";
-        },
-        skeptic: reply("{}"),
+    const f = await crewForecastRound(round, lock, {
+      statistician: reply("{}"),
+      analyst: async (_s, user) => {
+        seen = user;
+        return "{}";
       },
-      db,
-    );
-    expect(seen).toContain("WRONG way");
+      skeptic: reply("{}"),
+    });
+    expect(seen).not.toContain("WRONG way");
+    expect(seen).toContain("- none yet");
+    expect(f.lessonsUsed ?? 0).toBe(0);
   });
 
   it("evaluation reveals an outcome to learners only after it was published", async () => {
@@ -292,32 +297,6 @@ describe("crew memory", () => {
     expect(knownAt[r1.round_id]).toBe(0);
     expect(knownAt[r2.round_id]).toBe(0); // r1 not yet published when r2 locked
     expect(knownAt[r3.round_id]).toBe(2); // r1 and r2 both published before r3's lock
-  });
-
-  it("learns live from accepted filings once the arena resolves them, exactly once", async () => {
-    const files: Record<string, unknown> = {
-      "questions/season0.json": { rounds: [round] },
-      [`locks/${round.round_id}.json`]: lock,
-      "resolutions/resolved.json": { [round.round_id]: { value: 45 } },
-    };
-    const data = new ArenaData("https://example.test", async (url) => {
-      const path = url.replace("https://example.test/", "");
-      return path in files ? Response.json(files[path]) : new Response("", { status: 404 });
-    });
-    const config = arenaConfigFromEnv({ MARINA_ARENA_ENTRANT: "marina-test" })!;
-    const id = db.insertArenaSubmission({
-      entrant: "marina-test",
-      roundId: round.round_id,
-      requestId: "r-1",
-      url: "https://x",
-      meta: "{}",
-      body: JSON.stringify({ round_id: round.round_id, topline: { mean: 41, sd: 1.5 } }),
-    });
-    expect(await learnFromResolutions(db, { config, data })).toBe(0); // not accepted yet
-    db.updateArenaSubmission(id, { status: "accepted", httpStatus: 201 });
-    expect(await learnFromResolutions(db, { config, data })).toBe(1);
-    expect(await learnFromResolutions(db, { config, data })).toBe(0);
-    expect(recallLessons(db, "civiqs_net_approval")[0]).toContain("published 45");
   });
 
   it("every accepted filing is filed and resolved once on the outcome path", async () => {

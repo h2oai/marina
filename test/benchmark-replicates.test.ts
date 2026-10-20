@@ -3,13 +3,6 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
-  commonItems,
-  comparePooled,
-  poolGroup,
-  type Replicate,
-  seedFromIds,
-} from "../benchmarks/replicate-stats";
-import {
   defaultReplicateGroup,
   formatPooled,
   parseReplicates,
@@ -33,6 +26,7 @@ import { handleBenchmarkFile } from "../src/net/api/benchmarks-api";
 import type { PassthruAuthResult } from "../src/net/model-api/shared";
 import type { BenchmarkRunRow } from "../src/persistence/database";
 import { MarinaDB } from "../src/persistence/database";
+import { commonItems, comparePooled, poolGroup, type Replicate, seedFromIds } from "../src/stats";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 

@@ -14,6 +14,7 @@
  */
 
 import type { JudgeObservationRow } from "../persistence/db-decisions";
+import { type AgreementTally, earnedJudge, tallyComparison } from "./earned-judge";
 
 export interface JudgeAgreement {
   evaluator: string;
@@ -29,6 +30,9 @@ export interface JudgeAgreement {
   noOpinion: number;
   /** Opinion recorded; the creator has not decided yet. */
   awaitingVerdict: number;
+  /** Wilson 95 % lower bound on agreement, and whether it is earned (`earnedJudge`). */
+  lower: number;
+  earned: boolean;
 }
 
 export function judgeAgreement(rows: readonly JudgeObservationRow[]): JudgeAgreement[] {
@@ -49,6 +53,8 @@ export function judgeAgreement(rows: readonly JudgeObservationRow[]): JudgeAgree
       falseFail: 0,
       noOpinion: 0,
       awaitingVerdict: 0,
+      lower: 0,
+      earned: false,
     };
     by.set(r.evaluator, a);
     if (r.opinion === "none") {
@@ -59,11 +65,9 @@ export function judgeAgreement(rows: readonly JudgeObservationRow[]): JudgeAgree
       a.awaitingVerdict++;
       continue;
     }
-    a.compared++;
-    const approved = r.outcome === "approved";
-    if ((r.opinion === "pass") === approved) a.agreed++;
-    else if (r.opinion === "pass") a.falsePass++;
-    else a.falseFail++;
+    tallyComparison(a as AgreementTally, r.opinion === "pass", r.outcome === "approved");
   }
-  return [...by.values()].sort((x, y) => y.compared - x.compared);
+  return [...by.values()]
+    .map((a) => ({ ...a, ...earnedJudge(a.agreed, a.compared) }))
+    .sort((x, y) => y.compared - x.compared);
 }

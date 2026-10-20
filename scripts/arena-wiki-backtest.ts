@@ -49,6 +49,7 @@ import {
   specialistRanking,
   weeklyTop,
 } from "../src/arena/wiki-specialist";
+import { lcg32, percentileFloor, resampleMeans } from "../src/stats";
 
 const DAY_MS = 86_400_000;
 const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
@@ -225,19 +226,8 @@ if (wf.length) {
 /** Seeded paired bootstrap 95 % interval of the mean of `d`. */
 function bootstrapCi(d: number[], reps = 4000): [number, number] {
   if (d.length < 2) return [Number.NaN, Number.NaN];
-  let seed = 20261019;
-  const rand = () => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 2 ** 32;
-  };
-  const means: number[] = [];
-  for (let r = 0; r < reps; r++) {
-    let s = 0;
-    for (let i = 0; i < d.length; i++) s += d[Math.floor(rand() * d.length)]!;
-    means.push(s / d.length);
-  }
-  means.sort((a, b) => a - b);
-  return [means[Math.floor(0.025 * reps)]!, means[Math.floor(0.975 * reps)]!];
+  const means = resampleMeans(d, reps, lcg32(20261019));
+  return [percentileFloor(means, 0.025), percentileFloor(means, 0.975)];
 }
 
 interface ArmRow {
