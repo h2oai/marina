@@ -224,6 +224,38 @@ export function mapRecords(source: Source, map: FieldMap): ItemScore[][] {
   );
 }
 
+const TRIAL_ID = /^(.+)#(\d+)$/;
+
+/**
+ * Repeated-trial filings key each item `<task>#<trial>` (τ²-bench through
+ * `benchmarks/tau2/convert.ts`, Mind2Web 2 through `benchmarks/mind2web2/ledger.ts`).
+ * The trials of one task are not independent items: counted apart they
+ * inflate n, and the hash split would put trials of one task on both sides of
+ * the held-out line. When EVERY id of a run has that shape, collapse it to the
+ * task (score = mean over its trials in the run), as the `tau2` adapter does;
+ * `options.trials: "keep"` opts out.
+ */
+export function collapseTrials(items: ItemScore[], options?: Record<string, string>): ItemScore[] {
+  if (options?.trials === "keep" || items.length === 0) return items;
+  if (!items.every((x) => TRIAL_ID.test(x.id))) return items;
+  const byTask = new Map<string, { sum: number; n: number; at?: string; exclude?: string }>();
+  for (const x of items) {
+    const task = TRIAL_ID.exec(x.id)![1]!;
+    const cur = byTask.get(task) ?? { sum: 0, n: 0 };
+    cur.sum += x.score;
+    cur.n++;
+    if (x.at && !cur.at) cur.at = x.at;
+    if (x.exclude && !cur.exclude) cur.exclude = x.exclude;
+    byTask.set(task, cur);
+  }
+  return [...byTask].map(([id, x]) => ({
+    id,
+    score: x.sum / x.n,
+    ...(x.at ? { at: x.at } : {}),
+    ...(x.exclude ? { exclude: x.exclude } : {}),
+  }));
+}
+
 function requireArm(source: Source, adapter: string): string {
   if (!source.arm) throw new Error(`${adapter} source ${source.path} needs "arm" (which column)`);
   return source.arm;
@@ -257,10 +289,13 @@ export const harnessAdapter: SuiteAdapter = {
     const j = readJson(source.path);
     const items = isRecord(j) ? j.items : undefined;
     if (!Array.isArray(items)) throw new Error(`${source.path}: not a harness result (no items)`);
-    return items.filter(isRecord).map((x) => ({
-      id: String(x.id),
-      score: typeof x.score === "number" ? x.score : x.correct === true ? 1 : 0,
-    }));
+    return collapseTrials(
+      items.filter(isRecord).map((x) => ({
+        id: String(x.id),
+        score: typeof x.score === "number" ? x.score : x.correct === true ? 1 : 0,
+      })),
+      source.options,
+    );
   },
 };
 
@@ -470,7 +505,7 @@ export const ledgerAdapter: SuiteAdapter = {
         throw new Error(
           `${source.path}: runs from several benchmarks (${[...benchmarks].join(", ")}): add options.benchmark`,
         );
-      return runs.map((r) => ledgerItems(h.db, r.id));
+      return runs.map((r) => collapseTrials(ledgerItems(h.db, r.id), o));
     } finally {
       h.close();
     }
