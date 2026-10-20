@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
+ * Status: experimental — no in-world caller yet (a `pattern run` command is
+ * planned); the route stays. See docs/reference/feature-status.md.
+ *
  * `POST /v1/patterns/run` — `{pattern, task, members?, budgetUsd?}` runs ONE
  * free-text task under a named orchestration pattern and returns
  * `{message, success, pattern, trace: {steps, costUsd, fallback?}}`.

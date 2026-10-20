@@ -1,0 +1,93 @@
+# Feature status
+
+What Marina ships, and what actually runs. Every major feature has one status:
+
+| Status | Meaning |
+|---|---|
+| core | Used broadly; on by default or in every world. |
+| siloed | General, but only one subsystem uses it (arena, forecasting, benchmarks). |
+| experimental | Built and tested, but no production deployment uses it yet, or it is off / observe-only by default. Interfaces may change. |
+| demo | Used only by demos, showcase worlds and tests. |
+| deprecated | Kept for compatibility; do not build on it. |
+
+The table mirrors `FEATURE_STATUS` in [`src/config/feature-status.ts`](../../src/config/feature-status.ts);
+`test/feature-status.test.ts` fails when the two disagree. A world command that exists only for an
+experimental feature starts its help text with `[experimental]`, and `marina worlds` marks demo worlds
+`[demo]` (`"status"` in `--json`).
+
+| Feature | Status | How to enable | Owner area |
+|---|---|---|---|
+| Engine, tick loop, command registry | core | Always on | src/engine |
+| Default world (Workbench) | core | `MARINA_WORLD` unset or `default` | worlds/default |
+| Empty world | core | `MARINA_WORLD=empty` (minimal base for tests and hosts) | worlds |
+| Resident agents, roles, traits | core | Seeded by the world; `agent spawn` | src/agent |
+| Channels and DMs | core | `channel`, `tell` | src/engine |
+| Tasks | core | `task` | src/engine |
+| Memory (canonical records, unified context) | core | Always on | src/memory |
+| MCP exposure (world tools, capabilities) | core | `MCP_PORT` | src/net/mcp |
+| Model API (`/v1`, passthru) | core | `MODEL_API_KEYS` or `MARINA_OPEN_API=true` | src/net/model-api |
+| Dashboard | core | `WS_PORT` | dashboard |
+| Chronicle | core | `chronicle` | src/engine |
+| Spend ledger (per world) and daily cap | core | Always on; cap with `MARINA_DAILY_SPEND_CAP_USD` | src/engine |
+| Harness decisions (gate, classifier, verify) | core | `MARINA_DECISIONS` (default `auto`), `MARINA_DECISION_GATE=on` | src/decisions |
+| Standing, rank and safety gates | core | Always on; `standing`, `gate` | src/agent, src/engine |
+| Challenges (approval holds) | core | Always on; `challenge` | src/engine |
+| Outcomes and lessons | core | `MARINA_LESSONS` | src/outcomes, src/learning |
+| Memory assistance (evaluator/reflector jobs) | core | Workers with the evaluator/reflector roles | src/persistence |
+| Code Mode | core | `code` | src/engine/commands/code |
+| Canvas | siloed | `canvas`; the feed publisher writes the `feed` canvas | src/engine/commands/canvas.ts, src/net/feed-publisher.ts |
+| Forecast pipeline | siloed | `forecast`, `POST /v1/forecast`, forecasting scripts | src/forecast |
+| Social Simulation Arena (routed forecaster, shadow challengers) | siloed | `arena`, `scripts/arena.ts`, `MARINA_ARENA_*` | src/arena |
+| Benchmarks | siloed | `benchmark` (rank 4), `bun run benchmark` | benchmarks |
+| TabH2O | siloed | `TABH2O_API_KEY`; arena challenger, `market forecast` | src/arena, src/net/clients |
+| Quant helpers, data lookups, read swarm | siloed | `quant`, `data`, `web swarm` | src/quant, src/forecast, src/research |
+| Research evidence loop and survey | siloed | `MARINA_RESEARCH_*` | src/research |
+| Research web agent, cited answers, fact pass | siloed | Benchmark scripts only (`scripts/mind2web2.ts`, deepresearch) | src/research |
+| Skills | siloed | `skill`; seeds with `MARINA_SEED_SKILLS=true` (showcase) | src/agent |
+| Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch) | experimental | Experimental: for embedders (Flow, Nov 2026). `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint` | src/net/instance-lifecycle.ts |
+| Shared spend ledger | experimental | `MARINA_SPEND_LEDGER=<path>` | src/engine/shared-spend-ledger.ts |
+| Adaptive load-balance routing | experimental | Request header `X-Load-Balance: adaptive` | src/net/model-api |
+| Benchmark route evidence for `model:route` | experimental | `MARINA_ROUTE_EVIDENCE=on` (default `observe` records only) | src/engine/benchmark-evidence.ts |
+| Earned forecast routing | experimental | `MARINA_FORECAST_HISTORY` with enough resolved outcomes | src/forecast |
+| Research authority mode | experimental | `MARINA_RESEARCH_AUTHORITY=on` | src/research |
+| The Arbiter | experimental | `MARINA_FORECAST_ARBITER`, `MARINA_VERIFY_ARBITER`; `arbiter` | src/orchestration/arbiter.ts |
+| Hybrid and vector retrieval | experimental | `MARINA_MEMORY_EMBEDDINGS`, `MARINA_CORPUS_EMBEDDINGS` | src/memory, src/research |
+| H2O-Lightning decision preset | experimental | `MARINA_LIGHTNING_MODEL=<OpenRouter id>` then `MARINA_DECISIONS=lightning` (no default id; off) | src/decisions/config.ts |
+| Text patterns (`POST /v1/patterns/run`) | experimental | HTTP only; a `pattern run` command is planned | src/orchestration/text-patterns.ts |
+| Investigations | experimental | `inquiry`, `marina inquiry`, `/api/investigations` | src/investigations |
+| Schedules | experimental | `schedule add …` | src/schedules |
+| Evolution (coach, native protocols, `marina_evolve`, child worlds) | experimental | `evolve`; protocols and the `marina_evolve` tool need `MARINA_EVOLUTION_PROTOCOLS=true` | src/engine/commands/evolve.ts, src/agent/tools/evolution.ts |
+| Experiments | experimental | `experiment` | src/engine/commands/experiment.ts |
+| Markets and positions | experimental | `market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true` | src/resolvers, src/net/clients |
+| Federation (gateways, meshes) | experimental | `gateway`, `mesh`; `GATEWAY_SECRET` | src/engine/gateway-runtime.ts |
+| Learned bundles | experimental | `learned`, `bun run learned` | src/learned |
+| Media generation jobs | experimental | `image generate`, `video generate`, `audio` (needs a media-capable provider) | src/engine/commands/image.ts, src/persistence/db-media.ts |
+| Built-in worlds other than `default` and `empty` (13) | demo | `MARINA_WORLD=<slug>`; `marina worlds` shows each status | worlds |
+| Orchestration templates (16 pool-note patterns) | demo | `project <name> orchestrate <pattern>` | src/world/templates/orchestration.ts |
+| `MARINA_HOST` | deprecated | Alias of `WS_HOST` (`WS_HOST` wins) | src/net |
+| `NSED` pattern name | deprecated | Accepted as Deliberation, never advertised | src/world/templates/orchestration.ts |
+
+## Notes
+
+- **Embedding lifecycle.** Experimental: for embedders (Flow, Nov 2026). `MARINA_DATA_DIR`, the
+  `endpoint.json` file, `MARINA_IDLE_SHUTDOWN` and `MARINA_PARENT_PID` let a host find, adopt and stop
+  a Marina it did not start. No host uses them yet (the desktop app embeds Marina in-process); they are
+  kept for the Flow integration. The shared spend ledger (`MARINA_SPEND_LEDGER`) is the matching
+  per-host cap for one process per world.
+- **`marina_evolve`.** The typed evolution tool is deliberately not in `createAllTools`: the agent
+  adapter attaches it only while a native evolution protocol is active
+  (`MARINA_EVOLUTION_PROTOCOLS=true`).
+- **H2O-Lightning.** `MARINA_DECISIONS=lightning` asks H2O-Lightning over OpenRouter's Decisions API.
+  Marina ships no model id, so the preset stays off until `MARINA_LIGHTNING_MODEL` names one.
+  `decision settings` (and `admin decisions`) print one line: not configured, configured without an
+  OpenRouter key, available, or active. Nothing is probed, so the line never costs a call.
+- **Text patterns.** `POST /v1/patterns/run` is reachable over HTTP only; a `pattern run` world
+  command is planned.
+- **Adaptive load balancing** runs only when a request sends `X-Load-Balance: adaptive`; otherwise
+  routing is round-robin (or `least-busy` on request).
+- **Experimental is not unsafe.** Experimental commands go through the same rank, gates, challenges
+  and spend caps as every other command. The label says that nothing in production depends on them
+  yet.
+
+See also: [environment reference](environment.md) for every knob, and the
+[generated command API](commands.md) for exact syntax.

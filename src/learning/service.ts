@@ -34,7 +34,6 @@
  * Lessons live in one shared space per domain (`lessons:<domain>`).
  */
 
-import { modelComplete } from "../arena/model-backend";
 import { harnessDecisionProvider } from "../decisions/engines";
 import { chatClassifierProvider } from "../decisions/providers";
 import type { DecisionProvider } from "../decisions/types";
@@ -42,6 +41,7 @@ import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { rankedServing } from "../memory/admission";
 import { residentMemoryOperation } from "../memory/resident-service";
+import { modelComplete } from "../model/complete";
 import { localHttpBase } from "../net/listen-ports";
 import { selfModelToken } from "../net/model/self-model-token";
 import type { MarinaDB } from "../persistence/database";
@@ -276,7 +276,12 @@ export function lessonWriterFromEnv(
   if (spec === "none" || spec === "off") return undefined;
   if (spec.startsWith("marina/")) return selfModelWriter(spec, env, deps);
   try {
-    const { complete } = modelComplete(spec, env, { maxTokens: 600, timeoutMs: SELF_TIMEOUT_MS });
+    const { complete } = modelComplete(spec, env, {
+      maxTokens: 600,
+      timeoutMs: SELF_TIMEOUT_MS,
+      purpose: "lessons",
+      trace: { caller: "learning.writer" },
+    });
     return { name: spec, complete };
   } catch (err) {
     // A missing vendor key never blocks learning: fall back to this Marina's own model.

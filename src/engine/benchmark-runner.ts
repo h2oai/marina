@@ -30,13 +30,22 @@ import { localHttpBase } from "../net/listen-ports";
 import { DEFAULT_STACK, parseStackHeader } from "../net/model-api/stack";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";
+import { resolveBenchmarkJudge } from "./benchmark-judge";
 import {
   fallbackInvalidReason,
   type HarnessResultFile,
   isFallbackItem,
   ledgerFromHarnessResult,
 } from "./benchmark-ledger";
-import { mintRunKey, revokeRunKey } from "./benchmark-run-keys";
+import { resolveParticipants } from "./benchmark-participants";
+import {
+  BENCHMARK_KEYS,
+  BENCHMARK_REGISTRY,
+  type BenchmarkEntry,
+  benchmarkEntry,
+  benchmarkUsesJudge,
+} from "./benchmark-registry";
+import { mintRunKey, type RunKeyGrant, revokeRunKey } from "./benchmark-run-keys";
 import { getErrorMessage } from "./errors";
 import { featureEnvSnapshot } from "./feature-env";
 import { Logger } from "./logger";
@@ -49,6 +58,8 @@ interface BenchmarkSpec {
   datasetFile: string;
   /** Repo-relative path when the dataset is tracked rather than downloaded. */
   datasetPath?: string;
+  /** Items are generated in code: always ready, nothing to download. */
+  generated?: boolean;
 }
 
 /** Shape of a per-item entry in the harness result JSON. Kept intentionally
@@ -109,105 +120,52 @@ export function benchmarkResultsDir(env: NodeJS.ProcessEnv = process.env): strin
   return dir ? join(dir, "benchmark-results") : join(process.cwd(), RESULTS_DIR);
 }
 
-// Subset known to exist in benchmarks/harness.ts registry. Kept in sync
-// manually — if the harness adds a benchmark, add it here to expose it to
-// in-world agents. (Reading the harness at runtime would couple the engine
-// to harness module-load behavior; we prefer the static list.)
-export const BENCHMARKS: Record<string, BenchmarkSpec> = {
-  smoke: {
-    name: "smoke",
-    description: "Frozen 15-item prompt A/B set — measure a prompt or crew change in seconds",
-    datasetFile: "smoke-eval.json",
-    datasetPath: "benchmarks/smoke-eval.json",
-  },
-  "mmlu-pro": {
-    name: "mmlu-pro",
-    description: "12K 10-choice MC questions across 57 subjects",
-    datasetFile: "mmlu-pro.json",
-  },
-  truthfulqa: {
-    name: "truthfulqa",
-    description: "817 MC questions testing truthfulness",
-    datasetFile: "truthfulqa.json",
-  },
-  "arc-challenge": {
-    name: "arc-challenge",
-    description: "Grade-school science reasoning MC",
-    datasetFile: "arc-challenge.json",
-  },
-  hellaswag: {
-    name: "hellaswag",
-    description: "Commonsense sentence-completion MC",
-    datasetFile: "hellaswag.json",
-  },
-  musr: {
-    name: "musr",
-    description: "Multi-step soft reasoning (murder mysteries)",
-    datasetFile: "musr.json",
-  },
-  bbh: {
-    name: "bbh",
-    description: "BIG-Bench Hard logical deduction (5 objects)",
-    datasetFile: "bbh.json",
-  },
-  gsm8k: {
-    name: "gsm8k",
-    description: "Grade-school math word problems (numeric answer)",
-    datasetFile: "gsm8k.json",
-  },
-  math: {
-    name: "math",
-    description: "Competition math (MATH-500 subset)",
-    datasetFile: "math.json",
-  },
-  "simple-qa": {
-    name: "simple-qa",
-    description: "Short-answer factual (OpenAI SimpleQA)",
-    datasetFile: "simpleqa.json",
-  },
-  humaneval: {
-    name: "humaneval",
-    description: "164 Python function completion tasks",
-    datasetFile: "humaneval.json",
-  },
-  ifeval: {
-    name: "ifeval",
-    description: "Instruction-following verifier prompts",
-    datasetFile: "ifeval.json",
-  },
-  frames: {
-    name: "frames",
-    description: "Multi-hop factual retrieval (Google FRAMES)",
-    datasetFile: "frames.json",
-  },
-  aime: {
-    name: "aime",
-    description: "AIME 2024 olympiad math (30 problems)",
-    datasetFile: "aime-2024.json",
-  },
-  gpqa: {
-    name: "gpqa",
-    description: "GPQA-Diamond graduate-level science MC, options shuffled per seed (gated)",
-    datasetFile: "gpqa-diamond.json",
-  },
-  "hle-verified-gold": {
-    name: "hle-verified-gold",
-    description: "HLE-Verified Gold subset, text-only (exact match, else equivalence judge)",
-    datasetFile: "hle-verified-gold.json",
-  },
-  "hle-verified-gold-mm": {
-    name: "hle-verified-gold-mm",
-    description: "HLE-Verified Gold image items (image_url parts; exact match, else judge)",
-    datasetFile: "hle-verified-gold-mm.json",
-  },
-};
+/**
+ * Every benchmark the world can run, derived from the ONE registry
+ * (`src/engine/benchmark-registry.ts`) that the harness and the web UI read
+ * too — never a hand-synced copy (`test/benchmark-registry.test.ts`).
+ */
+export const BENCHMARKS: Record<string, BenchmarkSpec> = Object.fromEntries(
+  BENCHMARK_KEYS.map((key) => {
+    const e: BenchmarkEntry = BENCHMARK_REGISTRY[key];
+    const spec: BenchmarkSpec = {
+      name: key,
+      description: e.description,
+      datasetFile: `${e.dataset}.json`,
+      ...(e.source.kind === "tracked" ? { datasetPath: e.source.path } : {}),
+      ...(e.source.kind === "generated" ? { generated: true } : {}),
+    };
+    return [key, spec];
+  }),
+);
+
+/**
+ * The crew a `marina:<name>` target names, or undefined for any other id
+ * (`marina`, `marina/default`, `marina/verify:…`, a provider model). A crew
+ * target measures the residents serving `model-<name>`; anything else is a
+ * bare-model control.
+ */
+export function crewOfTarget(model: string): string | undefined {
+  return /^marina:([A-Za-z0-9][\w.-]*)$/.exec(model.trim())?.[1];
+}
 
 export interface BenchmarkRunOptions {
   benchmark: string;
   limit?: number;
   seed?: number;
-  model?: string; // default "marina"
+  /**
+   * What is measured: `marina:<crew>` — the residents serving that crew's
+   * endpoint (a `crew` target); any other id — the bare model, recorded as a
+   * control. Default `marina` (a control); the in-world `benchmark run`
+   * command always resolves a target before it gets here.
+   */
+  model?: string;
+  /** Judge model; default `MARINA_BENCHMARK_JUDGE_MODEL`, else `marina/default`. */
   judgeModel?: string;
+  /** Allow the judge to be the target model (recorded with the run). */
+  selfJudge?: boolean;
+  /** The crew's formation when the target is a crew (recorded in its target). */
+  formation?: string;
   concurrency?: number;
   agentId?: string;
   /**
@@ -284,10 +242,14 @@ export function inWorldTarget(config: {
   lessonsMode?: string;
   partition?: string;
   source?: string;
+  formation?: string;
 }): Record<string, unknown> {
   const stack = config.arm ? armStack(config.arm) : undefined;
   const s = stack && "stack" in stack && stack.stack !== "none" ? stack.stack : undefined;
+  const crew = crewOfTarget(config.model);
   return {
+    // A crew target names the crew (as tier0 and the kit file it) and its formation.
+    ...(crew ? { crew, ...(config.formation ? { formation: config.formation } : {}) } : {}),
     model: config.model,
     ...(s ? { stack: s } : {}),
     ...(config.lessons ? { lessons: config.lessonsMode ?? "measure" } : {}),
@@ -308,6 +270,28 @@ export function armStack(arm: string): { stack: string } | { error: string } {
   if (!parsed || parsed.kind === "error")
     return { error: parsed?.kind === "error" ? parsed.message : `unknown arm "${arm}"` };
   return { stack: a };
+}
+
+/**
+ * The run key a run gets, or undefined for the internal token. An arm, a cap
+ * or a crew target gets one (the run's eval context, arm and cap): a crew
+ * run's requests are always the run's own, never the internal token's, so
+ * they are attributed to the run and stop with it. A bare-model control
+ * without arm or cap keeps the internal token (passthru, no residents).
+ */
+export function runKeyGrant(
+  id: string,
+  opts: Pick<BenchmarkRunOptions, "benchmark" | "arm" | "capUsd">,
+  config: { targetKind: "crew" | "model"; lessonsMode?: string },
+): RunKeyGrant | undefined {
+  if (config.targetKind !== "crew" && !opts.arm && opts.capUsd === undefined) return undefined;
+  const stack = opts.arm ? armStack(opts.arm) : undefined;
+  return {
+    runId: id,
+    ...(stack && "stack" in stack ? { stack: stack.stack } : {}),
+    evalTag: `benchmark=${opts.benchmark}; mode=${config.lessonsMode ?? "measure"}`,
+    ...(opts.capUsd !== undefined ? { capUsd: opts.capUsd } : {}),
+  };
 }
 
 export interface BenchmarkSubject {
@@ -470,12 +454,19 @@ export function benchmarkRunConfig(
   env: Record<string, string | undefined> = process.env,
 ) {
   const serverFeatures = featureEnvSnapshot(env);
+  const model = opts.model ?? "marina";
+  const crew = crewOfTarget(model);
   return {
     benchmark: opts.benchmark,
     limit: opts.limit ?? 100,
     seed: opts.seed ?? 42,
-    model: opts.model ?? "marina",
+    model,
+    // A crew target measures residents; anything else is a bare-model control.
+    targetKind: crew ? ("crew" as const) : ("model" as const),
+    ...(crew ? {} : { control: true }),
+    ...(crew && opts.formation ? { formation: opts.formation } : {}),
     judgeModel: opts.judgeModel,
+    ...(opts.selfJudge ? { selfJudge: true } : {}),
     concurrency: opts.concurrency ?? 5,
     ...(opts.subjects?.length ? { subjects: opts.subjects } : {}),
     ...(opts.partition ? { partition: opts.partition } : {}),
@@ -498,6 +489,7 @@ export function harnessInvocation(
     seed: number;
     model: string;
     judgeModel?: string;
+    selfJudge?: boolean;
     concurrency: number;
     partition?: string;
     lessons?: boolean;
@@ -525,6 +517,7 @@ export function harnessInvocation(
     target.endpoint,
   ];
   if (config.judgeModel) args.push("--judge-model", config.judgeModel);
+  if (config.selfJudge) args.push("--self-judge");
   if (config.partition) args.push("--partition", config.partition);
   if (config.lessons) args.push("--lessons");
   if (config.lessonsMode) args.push("--lessons-mode", config.lessonsMode);
@@ -558,6 +551,8 @@ export class BenchmarkRunner {
     private target: () => HarnessTarget = () => ({
       endpoint: localHttpBase(),
     }),
+    /** The concrete model `marina/default` routes to, so a judge naming it is recognised. */
+    private defaultModel: () => string | undefined = () => undefined,
   ) {}
 
   list(): BenchmarkSpec[] {
@@ -567,6 +562,7 @@ export class BenchmarkRunner {
   datasetReady(name: string): boolean {
     const spec = BENCHMARKS[name];
     if (!spec) return false;
+    if (spec.generated) return true;
     const path = join(process.cwd(), spec.datasetPath ?? join(DATASETS_DIR, spec.datasetFile));
     return existsSync(path);
   }
@@ -594,6 +590,26 @@ export class BenchmarkRunner {
       if ("error" in stack) throw new Error(stack.error);
     }
     if (opts.capUsd !== undefined && !(opts.capUsd > 0)) throw new Error("cap must be above $0");
+    // A run never grades itself unless it opts in (src/engine/benchmark-judge.ts).
+    // Benchmarks no judge grades get none.
+    const entry = benchmarkEntry(opts.benchmark);
+    if (entry && benchmarkUsesJudge(entry)) {
+      const defaultModel = this.defaultModel();
+      const choice = resolveBenchmarkJudge({
+        target: opts.model ?? "marina",
+        ...(opts.judgeModel ? { judge: opts.judgeModel } : {}),
+        ...(opts.selfJudge ? { selfJudge: true } : {}),
+        ...(defaultModel ? { defaultModel } : {}),
+      });
+      if ("error" in choice) throw new Error(choice.error);
+      opts = {
+        ...opts,
+        judgeModel: choice.model,
+        selfJudge: choice.selfJudge === true ? true : undefined,
+      };
+    } else {
+      opts = { ...opts, judgeModel: undefined, selfJudge: undefined };
+    }
     const config = benchmarkRunConfig(opts);
     const configHash = hashConfig(config);
     const id = `br_${configHash}_${Date.now().toString(36)}`;
@@ -614,7 +630,7 @@ export class BenchmarkRunner {
       kind: "benchmark_started",
       entity: opts.agentId as EntityId | undefined,
       ref: id,
-      summary: `benchmark ${opts.benchmark} started — limit=${config.limit} seed=${config.seed} model=${config.model}`,
+      summary: `benchmark ${opts.benchmark} started — limit=${config.limit} seed=${config.seed} ${config.targetKind === "crew" ? `crew=${crewOfTarget(config.model)}` : `model=${config.model} (control: bare model, no residents)`}`,
       payload: { id, configHash, ...config },
       timestamp: started,
     });
@@ -633,7 +649,9 @@ export class BenchmarkRunner {
       limit: number;
       seed: number;
       model: string;
+      targetKind: "crew" | "model";
       judgeModel?: string;
+      selfJudge?: boolean;
       concurrency: number;
       lessons?: boolean;
       lessonsMode?: "measure" | "live";
@@ -641,18 +659,10 @@ export class BenchmarkRunner {
     started: number,
   ): Promise<void> {
     const resultFile = join(benchmarkResultsDir(), `${id}.json`);
-    // An arm or a cap: the harness talks to /v1 with a run key carrying them.
     const target = this.target();
-    const stack = opts.arm ? armStack(opts.arm) : undefined;
-    const runKey =
-      opts.arm || opts.capUsd !== undefined
-        ? mintRunKey({
-            runId: id,
-            ...(stack && "stack" in stack ? { stack: stack.stack } : {}),
-            evalTag: `benchmark=${opts.benchmark}; mode=${config.lessonsMode ?? "measure"}`,
-            ...(opts.capUsd !== undefined ? { capUsd: opts.capUsd } : {}),
-          })
-        : undefined;
+    const crewRun = config.targetKind === "crew";
+    const grant = runKeyGrant(id, opts, config);
+    const runKey = grant ? mintRunKey(grant) : undefined;
     const { args, env } = harnessInvocation(
       opts.benchmark,
       config,
@@ -680,10 +690,12 @@ export class BenchmarkRunner {
       harness = { error: getErrorMessage(err) };
     }
     const keyState = runKey ? revokeRunKey(runKey) : undefined;
-    // A run key measured the run's upstream spend exactly; without one the
-    // harness's own usage report is the cost.
+    // A run key measured a bare-model run's upstream spend exactly; without
+    // one the harness's own usage report is the cost. A crew run's residents
+    // spend on their own turns, outside the key: its cost comes from the
+    // harness and the participants' reported costs instead.
     this.recordHarnessResult(id, opts, started, harness, {
-      ...(keyState ? { costUsd: keyState.spentUsd } : {}),
+      ...(keyState && !crewRun ? { costUsd: keyState.spentUsd } : {}),
     });
     // A run stopped by its key is not a clean measurement: record why.
     if (keyState?.tripped) {
@@ -831,10 +843,19 @@ export class BenchmarkRunner {
     if (!run) return;
     try {
       const config = JSON.parse(run.config_json) as Parameters<typeof inWorldTarget>[0];
+      const crew = crewOfTarget(config.model);
+      // A crew run: resolve who worked each item from its trace, exactly as a
+      // filed run is (POST /v1/benchmarks/runs), so the residents' work reaches
+      // route evidence per participant and role. A control has no residents.
+      const resultItems = crew ? withParticipants(this.db, result.items ?? []) : result.items;
       const { run: ledger, items } = ledgerFromHarnessResult(
-        { ...result, config: { ...(result.config ?? {}), dataset: opts.benchmark } },
         {
-          targetKind: "model",
+          ...result,
+          ...(resultItems ? { items: resultItems } : {}),
+          config: { ...(result.config ?? {}), dataset: opts.benchmark },
+        },
+        {
+          targetKind: crew ? "crew" : "model",
           target: inWorldTarget(config),
           ...(costUsd !== undefined ? { costUsd } : {}),
           ...(opts.replicateGroup ? { replicateGroup: opts.replicateGroup } : {}),
@@ -885,4 +906,29 @@ export class BenchmarkRunner {
       return null;
     }
   }
+}
+
+/**
+ * The items with the participants their trace resolves to (and, for an
+ * unpriced item, the cost those participants reported) — the same
+ * resolution `POST /v1/benchmarks/runs` applies to a filed crew run.
+ */
+function withParticipants(
+  db: MarinaDB,
+  items: NonNullable<HarnessResultFile["items"]>,
+): NonNullable<HarnessResultFile["items"]> {
+  const traceIds = items.flatMap((it) => (typeof it.traceId === "string" ? [it.traceId] : []));
+  if (traceIds.length === 0) return items;
+  const resolved = resolveParticipants(db, traceIds);
+  return items.map((it) => {
+    const a = typeof it.traceId === "string" ? resolved.get(it.traceId) : undefined;
+    if (!a) return it;
+    return {
+      ...it,
+      ...(a.participants.length > 0 ? { participants: a.participants } : {}),
+      ...(typeof it.usage?.costUsd !== "number" && a.costUsd !== null
+        ? { usage: { costUsd: a.costUsd } }
+        : {}),
+    };
+  });
 }

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ResearchBrief } from "../arena/research/briefs";
-import type { ResearchReport, Retriever } from "../arena/research/retrieve";
 import type { WorkBudget } from "../coordination/work-budget";
 import { getErrorMessage } from "../engine/errors";
+import type { ResearchReport, Retriever } from "./retrieve";
 
 export const RESEARCH_HYPOTHESES = {
   measurement:

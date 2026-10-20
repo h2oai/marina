@@ -43,8 +43,6 @@
  */
 
 import { type BudgetForced, budgetPhase } from "../agent/budget-terminal";
-import type { ResearchReport, RetrievalFunnel, Retriever } from "../arena/research/retrieve";
-import { type PageText, verifyDossier } from "../arena/research/verify";
 import type { Evidence } from "../decisions/evidence";
 import type { DecisionProvider } from "../decisions/types";
 import { maxToolResultTokensForWindow } from "../engine/constants";
@@ -55,6 +53,8 @@ import {
   type RepairLabel,
   repairOutput,
 } from "../repair/output-repair";
+import type { ResearchReport, RetrievalFunnel, Retriever } from "../research/retrieve";
+import { type PageText, verifyDossier } from "../research/verify";
 import type { AdjustmentRecord, AdjustSettings } from "./adjust";
 import {
   type AnswerContract,

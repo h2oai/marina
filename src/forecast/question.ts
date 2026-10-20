@@ -18,10 +18,10 @@
  * wires the real retriever, models and judge.
  */
 
-import type { ResearchReport, Retriever } from "../arena/research/retrieve";
-import { type PageText, verifyDossier } from "../arena/research/verify";
 import type { Evidence } from "../decisions/evidence";
 import type { DecisionProvider } from "../decisions/types";
+import type { ResearchReport, Retriever } from "../research/retrieve";
+import { type PageText, verifyDossier } from "../research/verify";
 import { askAnalyst, type JudgeRecord, judgeAudit, judgeClaim, newJudgeRecord } from "./judge";
 
 export type ForecastKind = "probability" | "number";

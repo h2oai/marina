@@ -12,6 +12,13 @@
  * pool in the DB exactly like lane.sh's `count_notes`, waits SETTLE seconds
  * for the protocol tail, and (6) scores the FIRST matching note with the
  * generator's oracle. Optional fault: `agent stop <member>` mid-task.
+ *
+ * Every live run then (7) scores the crew's formation adherence over the run
+ * window from the live brief (`CREW_BRIEFS`, `formation-adherence.ts`) and
+ * (8) files the run into the server's benchmark ledger as a `crew` run
+ * (`POST /v1/benchmarks/runs`, key `MARINA_LEDGER_API_KEY`), so resident work
+ * reaches route evidence, promotion and formation lessons like every harness
+ * run. `--no-file` turns filing off; `--file-to <url>` files elsewhere.
  */
 
 import { Database } from "bun:sqlite";
@@ -20,6 +27,8 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { cachedParticipantToken, saveParticipantToken } from "../../scripts/session-cache";
 import { formatPerception } from "../../src/net/formatter";
 import { MarinaAgent } from "../../src/sdk/client";
+import { loadTranscript, scoreWindow, summarizeAdherence } from "../formation-adherence";
+import { type LedgerFileOutcome, postLedgerBody } from "../ledger-file";
 import { GENERATORS } from "./index";
 import type { GenerateOptions, NativeInstance, NativeScore, NativeTaskId } from "./shared";
 
@@ -43,6 +52,22 @@ export function loadCrewMembers(dbPath: string, crew: string): string[] {
         a.role === "lead" ? -1 : b.role === "lead" ? 1 : a.name.localeCompare(b.name),
       )
       .map((r) => r.name);
+  } finally {
+    db.close();
+  }
+}
+
+/** The crew's current formation in the world DB, or undefined (no such crew). */
+export function loadCrewFormation(dbPath: string, crew: string): string | undefined {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const row = db.query("SELECT formation FROM crews WHERE name = ?").get(crew) as {
+      formation?: string | null;
+    } | null;
+    return row?.formation ?? undefined;
+  } catch {
+    // An older DB without the column (or the table): the formation is unknown.
+    return undefined;
   } finally {
     db.close();
   }
@@ -183,6 +208,23 @@ export interface RunOptions {
   hab?: string;
   win?: string;
   log?: (s: string) => void;
+  /** Ledger to file into (default: the server the run used, `http://localhost:<port>`). */
+  fileTo?: string;
+  /** Never file the run. */
+  noFile?: boolean;
+  /** Ledger credential (default `MARINA_LEDGER_API_KEY`). */
+  ledgerKey?: string;
+  /** Ledger replicate group for the run. */
+  group?: string;
+}
+
+/** Formation adherence of the run window (brief steps headline; conventions diagnostic). */
+export interface NativeAdherence {
+  formation: string;
+  brief: number | null;
+  convention: number | null;
+  /** Brief steps left to a judge (scored null here). */
+  judgeSteps: number;
 }
 
 export interface RunResult {
@@ -199,6 +241,82 @@ export interface RunResult {
   deliverable?: string;
   fault?: { member: string; afterSeconds: number; reply?: string };
   result: NativeScore;
+  adherence?: NativeAdherence;
+  ledger?: LedgerFileOutcome;
+}
+
+/** The crew's adherence to its formation's live brief over `[start, end]` (epoch s). */
+export function nativeAdherence(o: {
+  db: string;
+  crew: string;
+  formation: string;
+  pool: string;
+  start: number;
+  end: number;
+}): NativeAdherence | undefined {
+  try {
+    const tr = loadTranscript(o.db, {
+      crew: o.crew,
+      since: o.start * 1000,
+      until: o.end * 1000,
+      pool: o.pool,
+    });
+    const results = scoreWindow(tr, o.formation);
+    return {
+      formation: o.formation,
+      ...summarizeAdherence(results),
+      judgeSteps: results.filter((r) => r.method === "judge").length,
+    };
+  } catch {
+    // Unknown formation or an unreadable window: the run is still scored and filed.
+    return undefined;
+  }
+}
+
+/**
+ * The ledger body for one native run: a `crew` target (crew, formation,
+ * members), one item (the instance tag, the oracle's verdict and score), the
+ * oracle as judge, the adherence summary in the config. Ids and numbers only —
+ * never the deliverable text.
+ */
+export function nativeLedgerBody(
+  res: RunResult,
+  o: { crew: string; label?: string; group?: string },
+) {
+  const benchmark = `native-${res.task}`;
+  const itemId = `${res.tag}${res.fault ? "-fault" : ""}`;
+  return {
+    targetKind: "crew" as const,
+    target: { crew: o.crew, formation: res.formation, members: res.members },
+    label: o.label ?? `native ${res.task} ${o.crew}/${res.formation}`,
+    judge: `oracle:${benchmark}`,
+    ...(o.group ? { replicateGroup: o.group } : {}),
+    result: {
+      config: {
+        name: benchmark,
+        dataset: benchmark,
+        mode: "native",
+        model: `marina:${o.crew}`,
+        seed: res.seed,
+        formation: res.formation,
+        ...(res.fault
+          ? { fault: { member: res.fault.member, afterSeconds: res.fault.afterSeconds } }
+          : {}),
+        ...(res.adherence ? { adherence: res.adherence } : {}),
+      },
+      timestamp: res.end * 1000,
+      duration_ms: Math.max(0, res.end - res.start) * 1000,
+      metadata: { total: 1, answered: res.found ? 1 : 0 },
+      items: [
+        {
+          id: itemId,
+          correct: res.result.correct,
+          score: res.result.score,
+          latencyMs: res.elapsedSec * 1000,
+        },
+      ],
+    },
+  };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -240,7 +358,7 @@ export async function scoreFromDb(
 export async function runNative(o: RunOptions): Promise<RunResult> {
   const log = o.log ?? ((s: string) => process.stderr.write(`${s}\n`));
   const crew = o.crew ?? "answerer";
-  const formation = o.formation ?? "freeform";
+  const formation = o.formation ?? loadCrewFormation(o.db, crew) ?? "freeform";
   const members = resolveRoster(o.db, crew, o.members);
   const inst = generateFor({ task: o.task, seed: o.seed, members, crash: o.crash });
   const url = `ws://localhost:${o.port}`;
@@ -297,6 +415,27 @@ export async function runNative(o: RunOptions): Promise<RunResult> {
       ...(inst.fault && o.crash ? { fault: { ...inst.fault, reply: faultReply } } : {}),
       result,
     };
+    const adherence = nativeAdherence({ db: o.db, crew, formation, pool: inst.pool, start, end });
+    if (adherence) {
+      res.adherence = adherence;
+      const fmt = (n: number | null) => (n === null ? "n/a" : n.toFixed(2));
+      log(
+        `    adherence ${formation}: brief ${fmt(adherence.brief)} (${adherence.judgeSteps} judge step(s) pending), conventions ${fmt(adherence.convention)}`,
+      );
+    }
+    if (!o.noFile) {
+      const fileTo = o.fileTo ?? `http://localhost:${o.port}`;
+      res.ledger = await postLedgerBody(
+        fileTo,
+        o.ledgerKey ?? process.env.MARINA_LEDGER_API_KEY,
+        nativeLedgerBody(res, { crew, ...(o.group ? { group: o.group } : {}) }),
+      );
+      log(
+        res.ledger.ok
+          ? `    ledger: ${res.ledger.created === false ? "already filed as" : "filed"} ${res.ledger.runId} @ ${fileTo}`
+          : `    ledger: filing failed (${res.ledger.status}): ${res.ledger.error}`,
+      );
+    }
     if (o.hab)
       appendFileSync(
         o.hab,

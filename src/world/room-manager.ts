@@ -125,6 +125,7 @@ export class RoomManager {
       brief?: (entityId: EntityId) => void;
       logEvent?: (event: EngineEvent) => void;
       writeSample?: RoomContext["writeSample"];
+      fileForecast?: RoomContext["fileForecast"];
       spawnAgent?: RoomContext["spawnAgent"];
       spawnRoomAgent?: RoomContext["spawnRoomAgent"];
     },
@@ -150,6 +151,7 @@ export class RoomManager {
       brief: deps.brief,
       logEvent: deps.logEvent,
       writeSample: deps.writeSample,
+      fileForecast: deps.fileForecast,
       spawnAgent: deps.spawnAgent,
       spawnRoomAgent: deps.spawnRoomAgent,
     };

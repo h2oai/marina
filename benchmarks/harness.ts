@@ -5,41 +5,22 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { judgeLabel, resolveBenchmarkJudge } from "../src/engine/benchmark-judge";
 import { fallbackInvalidReason } from "../src/engine/benchmark-ledger";
-import { loadSmoke, runChecks } from "./adapters/checks";
+import { benchmarkUsesJudge } from "../src/engine/benchmark-registry";
+import { runChecks } from "./adapters/checks";
 import { runCodeGen } from "./adapters/code-gen";
 import { runFreeForm } from "./adapters/free-form";
 import { runHLE } from "./adapters/hle";
 import { runIFEval } from "./adapters/ifeval";
-import { runMultipleChoice, shuffleChoices } from "./adapters/multiple-choice";
+import { runMultipleChoice } from "./adapters/multiple-choice";
 import { runNumeric } from "./adapters/numeric";
 import { runShortAnswer } from "./adapters/short-answer";
-import {
-  downloadAIME,
-  downloadAIME2025,
-  downloadARC,
-  downloadBBH,
-  downloadFRAMES,
-  downloadGPQA,
-  downloadGSM8K,
-  downloadHellaSwag,
-  downloadHLEVerifiedGold,
-  downloadHLEVerifiedGoldImages,
-  downloadHumanEval,
-  downloadIFEval,
-  downloadMATH,
-  downloadMMLUPro,
-  downloadMTBench,
-  downloadMuSR,
-  downloadNarrativeQA,
-  downloadSimpleQA,
-  downloadTruthfulQA,
-  loadRetentionBenchmark,
-} from "./download";
 import { fileToLedger, type LedgerTargetKind, parseTarget } from "./ledger-file";
 import { runRetentionTask, runRetentionTaskPassthrough } from "./modes/memory";
 import { setTargetLessonContext } from "./modes/passthrough";
 import { inPartition, parsePartition } from "./partition";
+import { BENCHMARKS } from "./registry";
 import {
   defaultReplicateGroup,
   formatPooled,
@@ -51,214 +32,11 @@ import {
 import { resultForDisk } from "./result-file";
 import { computeAccuracy, computeJudgeScore } from "./scoring/accuracy";
 import { computePassAtK } from "./scoring/pass-at-k";
-import type {
-  BenchmarkConfig,
-  BenchmarkDefinition,
-  BenchmarkResult,
-  DatasetItem,
-  ResultItem,
-} from "./types";
+import type { BenchmarkConfig, BenchmarkResult, DatasetItem, ResultItem } from "./types";
 import { formatUsd, summarizeUsage, totalCostUsd } from "./usage";
 
 // --- Benchmark Registry ---
-
-const BENCHMARKS: Record<string, BenchmarkDefinition> = {
-  smoke: {
-    name: "Smoke (prompt A/B)",
-    dataset: "smoke-eval",
-    adapter: "checks",
-    scoring: "accuracy",
-    description:
-      "Frozen 15-item prompt A/B set (benchmarks/smoke-eval.json) — same set as eval-prompt",
-    phase: "A",
-    download: loadSmoke,
-  },
-  "mmlu-pro": {
-    name: "MMLU-Pro",
-    dataset: "mmlu-pro",
-    adapter: "multiple-choice",
-    scoring: "accuracy",
-    description: "12K 10-choice MC questions across 57 subjects",
-    phase: "A",
-    download: downloadMMLUPro,
-  },
-  ifeval: {
-    name: "IFEval",
-    dataset: "ifeval",
-    adapter: "ifeval",
-    scoring: "ifeval",
-    description: "541 prompts with verifiable instruction constraints",
-    phase: "A",
-    download: downloadIFEval,
-  },
-  truthfulqa: {
-    name: "TruthfulQA MC2",
-    dataset: "truthfulqa",
-    adapter: "multiple-choice",
-    scoring: "accuracy",
-    description: "817 MC questions testing truthfulness",
-    phase: "A",
-    download: downloadTruthfulQA,
-  },
-  humaneval: {
-    name: "HumanEval",
-    dataset: "humaneval",
-    adapter: "code-gen",
-    scoring: "pass-at-k",
-    description: "164 Python function completion tasks",
-    phase: "A",
-    download: downloadHumanEval,
-  },
-  narrativeqa: {
-    name: "NarrativeQA",
-    dataset: "narrativeqa",
-    adapter: "free-form",
-    scoring: "judge",
-    description: "Story comprehension — memory vs no-memory",
-    phase: "B",
-    download: downloadNarrativeQA,
-  },
-  "mt-bench": {
-    name: "MT-Bench",
-    dataset: "mt-bench",
-    adapter: "free-form",
-    scoring: "judge",
-    description: "80 multi-turn conversation quality questions",
-    phase: "B",
-    download: downloadMTBench,
-  },
-  retention: {
-    name: "Memory Retention",
-    dataset: "retention",
-    adapter: "free-form",
-    scoring: "accuracy",
-    description: "100 cross-session knowledge retention tasks",
-    phase: "B",
-    download: async (_dir, limit) => loadRetentionBenchmark(_dir, limit),
-  },
-  // --- New benchmarks (Tier 1: MC reasoning) ---
-  "arc-challenge": {
-    name: "ARC-Challenge",
-    dataset: "arc-challenge",
-    adapter: "multiple-choice",
-    scoring: "accuracy",
-    description: "1172 grade-school science reasoning MC",
-    phase: "A",
-    download: downloadARC,
-  },
-  hellaswag: {
-    name: "HellaSwag",
-    dataset: "hellaswag",
-    adapter: "multiple-choice",
-    scoring: "accuracy",
-    description: "Commonsense sentence-completion MC",
-    phase: "A",
-    download: downloadHellaSwag,
-  },
-  musr: {
-    name: "MuSR",
-    dataset: "musr",
-    adapter: "multiple-choice",
-    scoring: "accuracy",
-    description: "Multi-step soft reasoning (murder mysteries)",
-    phase: "A",
-    download: downloadMuSR,
-  },
-  bbh: {
-    name: "BBH Logical Deduction",
-    dataset: "bbh",
-    adapter: "multiple-choice",
-    scoring: "accuracy",
-    description: "BIG-Bench Hard logical deduction (5 objects)",
-    phase: "A",
-    download: downloadBBH,
-  },
-  // --- Tier 2: numeric / short-answer ---
-  gsm8k: {
-    name: "GSM8K",
-    dataset: "gsm8k",
-    adapter: "numeric",
-    scoring: "numeric-match",
-    description: "1319 grade-school math word problems",
-    phase: "A",
-    download: downloadGSM8K,
-  },
-  math: {
-    name: "MATH-500",
-    dataset: "math",
-    adapter: "numeric",
-    scoring: "numeric-match",
-    description: "500 competition math problems (MATH benchmark subset)",
-    phase: "A",
-    download: downloadMATH,
-  },
-  "simple-qa": {
-    name: "SimpleQA",
-    dataset: "simpleqa",
-    adapter: "short-answer",
-    scoring: "normalized-match",
-    description: "Short-answer factual questions (OpenAI)",
-    phase: "A",
-    download: downloadSimpleQA,
-  },
-  frames: {
-    name: "FRAMES",
-    dataset: "frames",
-    adapter: "short-answer",
-    scoring: "judge",
-    description: "Multi-hop factual retrieval (Google)",
-    phase: "A",
-    download: downloadFRAMES,
-  },
-  aime: {
-    name: "AIME-2024",
-    dataset: "aime-2024",
-    adapter: "numeric",
-    scoring: "numeric-match",
-    description: "AIME 2024 olympiad math (30 problems, integer 0-999)",
-    phase: "A",
-    download: downloadAIME,
-  },
-  "aime-2025": {
-    name: "AIME-2025",
-    dataset: "aime-2025",
-    adapter: "numeric",
-    scoring: "numeric-match",
-    description: "AIME 2025 olympiad math (30 problems, integer 0-999)",
-    phase: "A",
-    download: downloadAIME2025,
-  },
-  gpqa: {
-    name: "GPQA-Diamond",
-    dataset: "gpqa-diamond",
-    adapter: "multiple-choice",
-    scoring: "accuracy",
-    description:
-      "198 graduate-level physics/bio/chem MC, options shuffled per seed (gated; HF_TOKEN)",
-    phase: "A",
-    download: downloadGPQA,
-    prepare: (items, seed) => items.map((item) => shuffleChoices(item, seed)),
-  },
-  "hle-verified-gold": {
-    name: "HLE-Verified Gold",
-    dataset: "hle-verified-gold",
-    adapter: "hle",
-    scoring: "accuracy",
-    description: "HLE-Verified Gold subset, text-only; exact match, else equivalence judge",
-    phase: "A",
-    download: downloadHLEVerifiedGold,
-  },
-  "hle-verified-gold-mm": {
-    name: "HLE-Verified Gold (multimodal)",
-    dataset: "hle-verified-gold-mm",
-    adapter: "hle",
-    scoring: "accuracy",
-    description:
-      "HLE-Verified Gold image items, image sent as an image_url part; exact match, else equivalence judge",
-    phase: "A",
-    download: downloadHLEVerifiedGoldImages,
-  },
-};
+// One registry (src/engine/benchmark-registry.ts); loaders in ./registry.ts.
 
 // --- CLI Parsing ---
 
@@ -289,6 +67,7 @@ function parseCliArgs() {
       replicates: { type: "string" },
       "lessons-mode": { type: "string" },
       lessons: { type: "boolean" },
+      "self-judge": { type: "boolean" },
       list: { type: "boolean" },
       results: { type: "boolean" },
       help: { type: "boolean", short: "h" },
@@ -325,6 +104,7 @@ function parseCliArgs() {
     replicates: str("replicates"),
     "lessons-mode": str("lessons-mode"),
     lessons: values.lessons === true,
+    "self-judge": values["self-judge"] === true,
     list: values.list === true,
     results: values.results === true,
     help: values.help === true,
@@ -654,8 +434,12 @@ Options:
   -e, --endpoint <url>      API endpoint (default: http://localhost:3300)
   -k, --api-key <key>       API key for authentication
       --model <name>        Model name (default: marina)
-      --judge-model <name>  Judge model for judge-scored items (default: --model)
+      --judge-model <name>  Judge model for judge-scored items (default:
+                            MARINA_BENCHMARK_JUDGE_MODEL, else marina/default). A judge
+                            that names the target model is refused: a run never grades itself
       --judge-endpoint <url> Judge endpoint (default: --endpoint)
+      --self-judge          Allow the judge to be the target model (recorded in the result
+                            as config.judge.self_judge; use only for a deliberate control)
   -c, --concurrency <n>     Parallel requests (default: 5)
   -s, --seed <n>            Random seed for subset selection
       --timeout <ms>        Per-request timeout (default: HARNESS_TIMEOUT_MS, else 600000)
@@ -751,6 +535,26 @@ Options:
     }
   }
 
+  // The judge never defaults to the target (src/engine/benchmark-judge.ts):
+  // only benchmarks graded by a judge get one; self-judging is an explicit opt-in.
+  let judge: BenchmarkConfig["judge"];
+  if (benchmarkUsesJudge(benchDef)) {
+    const choice = resolveBenchmarkJudge({
+      target: args.model ?? "marina",
+      ...(args["judge-model"] ? { judge: args["judge-model"] } : {}),
+      selfJudge: args["self-judge"],
+    });
+    if ("error" in choice) {
+      console.error(`Error: ${choice.error}`);
+      process.exit(2);
+    }
+    judge = {
+      model: choice.model,
+      endpoint: args["judge-endpoint"] ?? args.endpoint ?? "http://localhost:3300",
+      ...(choice.selfJudge ? { self_judge: true } : {}),
+    };
+  }
+
   const mode = (args.mode ?? "passthrough") as "passthrough" | "memory";
   const config: BenchmarkConfig = {
     name: benchDef.name,
@@ -768,10 +572,7 @@ Options:
     seed: args.seed ? Number.parseInt(args.seed, 10) : undefined,
     partition: parsePartition(args.partition),
     ...(args.ground === "search" ? { ground: "search" as const } : {}),
-    judge: {
-      model: args["judge-model"] ?? args.model ?? "marina",
-      endpoint: args["judge-endpoint"] ?? args.endpoint ?? "http://localhost:3300",
-    },
+    ...(judge ? { judge } : {}),
     lessons_mode: lessonsMode,
     ...(args.lessons ? { lessons: true } : {}),
   };
@@ -893,7 +694,7 @@ Options:
         targetKind: kind,
         target: args.target !== undefined ? parseTarget(args.target) : config.model,
         ...(args.label ? { label: args.label } : {}),
-        ...(config.judge ? { judge: `${config.judge.model} @ ${config.judge.endpoint}` } : {}),
+        ...(config.judge ? { judge: judgeLabel(config.judge) ?? undefined } : {}),
         ...(replicateGroup ? { replicateGroup } : {}),
       });
       if (filed.ok) {

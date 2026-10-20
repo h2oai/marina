@@ -25,6 +25,33 @@ export interface BoardFiling {
   /** The board's own id for the question, namespaced (`metaculus:q123`). */
   externalId: string;
   evalMode?: "live" | "measure";
+  /**
+   * Residents or agents (account names) that produced the answer besides the
+   * owner. Kept on the stored answer (`producers`); when it resolves each is
+   * credited `forecast_resolved` under the same caps and independence rule
+   * as the owner (`src/outcomes/forecast.ts`).
+   */
+  producers?: readonly string[];
+}
+
+/** The stored answer JSON with its producers attached (none: unchanged). */
+function withProducers(answer: unknown, producers: readonly string[] | undefined): string {
+  const names = cleanProducers(producers);
+  if (!names.length || typeof answer !== "object" || answer === null || Array.isArray(answer))
+    return JSON.stringify(answer);
+  return JSON.stringify({ ...(answer as Record<string, unknown>), producers: names });
+}
+
+/** At most 8 distinct, non-empty account names. */
+export function cleanProducers(producers: readonly unknown[] | undefined): string[] {
+  const out: string[] = [];
+  for (const p of producers ?? []) {
+    if (typeof p !== "string") continue;
+    const name = p.trim();
+    if (name && !out.some((o) => o.toLowerCase() === name.toLowerCase())) out.push(name);
+    if (out.length >= 8) break;
+  }
+  return out;
 }
 
 /**
@@ -50,7 +77,7 @@ export function fileTypedAnswer(
       ...(typeof answer.prediction === "number" ? { mean: answer.prediction } : {}),
       ...(typeof answer.prediction === "number" && sd ? { sd } : {}),
       ...(answer.formatted !== undefined ? { prediction: answer.formatted } : {}),
-      answerJson: JSON.stringify(answer),
+      answerJson: withProducers(answer, filing.producers),
       source: filing.source,
       externalId: filing.externalId,
       ...(filing.evalMode ? { evalMode: filing.evalMode } : {}),
@@ -91,7 +118,7 @@ export function fileAnswer(
       ...(input.probability !== undefined ? { probability: input.probability } : {}),
       ...(input.mean !== undefined ? { mean: input.mean } : {}),
       ...(input.sd !== undefined ? { sd: input.sd } : {}),
-      answerJson: JSON.stringify(input.answer),
+      answerJson: withProducers(input.answer, filing.producers),
       source: filing.source,
       externalId: filing.externalId,
       ...(filing.evalMode ? { evalMode: filing.evalMode } : {}),
@@ -123,4 +150,71 @@ export function resolveFiled(
   if (!row) return "unfiled";
   if (row.resolved_at !== null) return "settled";
   return resolveForecast(db, row.id, value, resolvedAt, { refs: [externalId, ...refs] });
+}
+
+/** A resident's own probability, filed in-world (a market room's `predict`, `conduct track`). */
+export interface ResidentForecast {
+  /** The resident (or person) whose call it is: the answer's owner and producer. */
+  owner: string;
+  /** `market` (a market room's `predict`) or `conduct` (`conduct track`). */
+  source: "market" | "conduct";
+  /**
+   * What makes a later call replace this one: the same owner, source and key
+   * (`inworld:<marketId>`, `conduct:<score>:<sampleId>`).
+   */
+  key: string;
+  /** The resolver Sample id it resolves on (`inworld/<marketId>`, `<venue>/<ticker>`). */
+  sampleId: string;
+  question: string;
+  /** P(yes), 0–1. */
+  probability: number;
+  /** The surface's own record of the call (kept as the audit trail; never on the outcome). */
+  answer: Record<string, unknown>;
+}
+
+/**
+ * File a resident's in-world forecast on the one outcome path, so it resolves
+ * through `resolveForecast` when its Sample resolves (Brier, one outcome,
+ * lessons, `forecast_resolved` standing under the usual caps and independence
+ * rule). A newer call with the same key replaces the open one: the earlier
+ * row is settled `superseded`, unscored, and records no outcome — only the
+ * latest call counts, as on the market's own board. Best-effort: undefined
+ * when the write failed (the surface's own record never depends on it).
+ */
+export function fileResidentForecast(
+  db: MarinaDB,
+  input: ResidentForecast,
+  now = Date.now(),
+): number | undefined {
+  const p = Math.max(0, Math.min(1, input.probability));
+  if (!input.owner || !input.sampleId || !Number.isFinite(p)) return undefined;
+  try {
+    for (const open of db.openForecastsForSample(input.sampleId)) {
+      if (open.entity_name !== input.owner || open.source !== input.source) continue;
+      if (!open.external_id?.startsWith(`${input.key}#`)) continue;
+      db.resolveForecastAnswer(open.id, JSON.stringify({ superseded: true }), null, now);
+    }
+    let externalId = `${input.key}#${now}`;
+    for (let n = 1; db.getForecastAnswerByExternalId(input.owner, externalId); n++)
+      externalId = `${input.key}#${now}.${n}`;
+    return db.saveForecastAnswer({
+      entityName: input.owner,
+      question: input.question,
+      kind: "probability",
+      probability: p,
+      answerJson: JSON.stringify({ ...input.answer, producers: [input.owner] }),
+      sampleId: input.sampleId,
+      source: input.source,
+      externalId,
+      // No eval mode: a resident's live call (any eval mode, `live` included,
+      // never earns standing in `resolveForecast`).
+      now,
+    });
+  } catch (err) {
+    logger.warn("main", "resident forecast not filed", {
+      key: input.key,
+      error: getErrorMessage(err),
+    });
+    return undefined;
+  }
 }

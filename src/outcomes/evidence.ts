@@ -14,10 +14,10 @@
  * or their agents') or `scope:unscoped` stays out (`./work-refs.ts`).
  */
 
-import { wilsonInterval } from "../../benchmarks/stats";
 import { outcomeRefs } from "../forecast/routing-refs";
 import type { MarinaDB } from "../persistence/database";
 import type { OutcomeBasis, OutcomeKind } from "../persistence/db-outcomes";
+import { wilsonInterval } from "../stats";
 import { sharedEvidence } from "./work-refs";
 
 export interface EvidenceCell {

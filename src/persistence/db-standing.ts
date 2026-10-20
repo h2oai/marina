@@ -92,8 +92,16 @@ export function computeStanding(
   halfLifeMs: number,
   horizonMs: number,
   now: number,
+  kinds: StandingKindFilter = {},
 ): number {
   const cutoff = now - horizonMs;
+  const exclude = kinds.exclude ?? [];
+  const only = kinds.only;
+  // An empty `only` selects nothing (not everything).
+  if (only && only.length === 0) return 0;
+  const filter =
+    (exclude.length ? ` AND kind NOT IN (${exclude.map(() => "?").join(",")})` : "") +
+    (only ? ` AND kind IN (${only.map(() => "?").join(",")})` : "");
   // SQLite EXP() gives natural exponentiation; 0.5 ** x = exp(x * ln 0.5).
   const row = db
     .query(
@@ -102,10 +110,16 @@ export function computeStanding(
          0
        ) AS total
        FROM entity_standing
-       WHERE entity_id = ? AND earned_at >= ?`,
+       WHERE entity_id = ? AND earned_at >= ?${filter}`,
     )
-    .get(now, halfLifeMs, entityId, cutoff) as { total: number };
+    .get(now, halfLifeMs, entityId, cutoff, ...exclude, ...(only ?? [])) as { total: number };
   return row.total;
+}
+
+/** Which ledger kinds a standing sum reads: none excluded and all included by default. */
+export interface StandingKindFilter {
+  exclude?: readonly string[];
+  only?: readonly string[];
 }
 
 /** Number of ledger rows of one kind earned by an entity since `since` (ms). */

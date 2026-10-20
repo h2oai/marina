@@ -868,8 +868,12 @@ Run, track, and rank benchmark evaluations from inside the world.
 Usage:
   benchmark list                                   — show available benchmarks + cache status
   benchmark orchestrations                         — show live marina:<name> endpoints
-  benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
-                                                   — kick off one run
+  benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [self-judge:on]
+                   [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
+                                                   — kick off one run. It measures RESIDENTS: crew:<name>,
+                                                     or with no target the world's serving crew (refused
+                                                     when there is none, or several). model:<id> is a
+                                                     bare-model CONTROL (no residents), labelled as one.
   benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]
                                                    — fan out across every live orchestration
   benchmark result <id>                            — show a single run's score + breakdown
@@ -929,12 +933,16 @@ Usage:
                                                      audited path (needs role.edit). Runs now teach
                                                      only through judged lessons (`lessons`).
 
-Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
-  hellaswag, musr, bbh, gsm8k, math, simple-qa, humaneval, ifeval, frames, aime
-  (run "benchmark list" for status)
+Benchmarks: smoke, mmlu-pro, ifeval, truthfulqa, humaneval, narrativeqa, mt-bench, retention, arc-challenge, hellaswag, musr, bbh, gsm8k, math, simple-qa, frames, aime, aime-2025, gpqa, hle-verified-gold, hle-verified-gold-mm
+  (smoke is the 15-item prompt A/B set, always ready; run "benchmark list" for status)
 
---model M format: "marina" = the default local endpoint; "marina:<name>" = a named
-  orchestration (a model-* channel with a live agent). See "benchmark orchestrations".
+Targets: crew:<name> = the residents serving marina:<name> (a model-<name> channel with a live
+  agent; see "benchmark orchestrations"); model:<id> = the bare model as a control ("marina" =
+  the default upstream model; model:marina:<name> is the crew <name>).
+Judge: judge-scored benchmarks (frames, simple-qa, hle-verified-gold*, narrativeqa, mt-bench)
+  are graded by judge:<model>, else MARINA_BENCHMARK_JUDGE_MODEL, else marina/default — never
+  by the target itself: a judge that names the target is refused unless self-judge:on, which
+  the run records (its ledger judge is marked [self-judge]).
 
 Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
@@ -949,7 +957,9 @@ Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Di
 
 Examples:
   benchmark list
-  benchmark run aime --limit 10 --model marina:answerer
+  benchmark run aime --limit 10                    # the world's serving crew
+  benchmark run aime --limit 10 crew:answerer
+  benchmark run aime --limit 10 model:marina      # control: the bare default model
   benchmark sweep aime --limit 10 --seed 42        # aime × every live marina:<name>
   benchmark sweep all --limit 5 --seed 42          # every bench × every orchestration
   benchmark leaderboard aime
@@ -1100,44 +1110,47 @@ Effect: write.
 - `field-0` (`run`): text, required.
 - `field-1` (`reason`): text, required.
 
-### `benchmark run <name> [--limit N] [--seed N] [--model M]`
+### `benchmark run <name> [crew:<name>] [--limit N] [--seed N]`
 
 Effect: execute.
 
 - `field-0` (`name`): text, required.
-- `field-1` (`--limit`): number, optional group `option-0`.
-- `field-2` (`--seed`): number, optional group `option-1`.
-- `field-3` (`--model`): text, optional group `option-2`.
-- Group `option-0`: `--limit N`.
-- Group `option-1`: `--seed N`.
-- Group `option-2`: `--model M`.
+- `field-1` (`crew`): text, optional group `option-0`.
+- `field-2` (`--limit`): number, optional group `option-1`.
+- `field-3` (`--seed`): number, optional group `option-2`.
+- Group `option-0`: `crew:name`.
+- Group `option-1`: `--limit N`.
+- Group `option-2`: `--seed N`.
 
-### `benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live] [arm:bare|on|full|<members>] [cap:<usd>]`
+### `benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [self-judge:on] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live] [arm:bare|on|full|<members>] [cap:<usd>]`
 
 Effect: execute.
 
 - `field-0` (`name`): text, required.
-- `field-1` (`--limit`): number, optional group `option-0`.
-- `field-2` (`--seed`): number, optional group `option-1`.
-- `field-3` (`--model`): text, optional group `option-2`.
-- `field-4` (`--judge`): text, optional group `option-3`.
-- `field-5` (`--concurrency`): number, optional group `option-4`.
-- `field-6` (`holdout|tune`): choice, optional group `option-5`, choices `holdout`, `tune`.
-- `field-7` (`lessons`): text, optional group `option-6`.
-- `field-8` (`lessons-mode`): text, optional group `option-7`, choices `measure`, `live`.
-- `field-9` (`arm`): text, optional group `option-8`, choices `bare`, `on`, `full`.
-- `field-10` (`members`): text, optional group `option-8`.
-- `field-11` (`cap`): number, optional group `option-9`.
-- Group `option-0`: `--limit N`.
-- Group `option-1`: `--seed N`.
-- Group `option-2`: `--model M`.
+- `field-1` (`crew`): text, optional group `option-0`.
+- `field-2` (`model`): text, optional group `option-0`.
+- `field-3` (`--limit`): number, optional group `option-1`.
+- `field-4` (`--seed`): number, optional group `option-2`.
+- `field-5` (`--judge`): text, optional group `option-3`.
+- `field-6` (`self-judge`): text, optional group `option-4`.
+- `field-7` (`--concurrency`): number, optional group `option-5`.
+- `field-8` (`holdout|tune`): choice, optional group `option-6`, choices `holdout`, `tune`.
+- `field-9` (`lessons`): text, optional group `option-7`.
+- `field-10` (`lessons-mode`): text, optional group `option-8`, choices `measure`, `live`.
+- `field-11` (`arm`): text, optional group `option-9`, choices `bare`, `on`, `full`.
+- `field-12` (`members`): text, optional group `option-9`.
+- `field-13` (`cap`): number, optional group `option-10`.
+- Group `option-0`: `crew:name | model:id`.
+- Group `option-1`: `--limit N`.
+- Group `option-2`: `--seed N`.
 - Group `option-3`: `--judge M`.
-- Group `option-4`: `--concurrency N`.
-- Group `option-5`: `--partition holdout|tune`.
-- Group `option-6`: `lessons:on`.
-- Group `option-7`: `lessons-mode:measure|live`.
-- Group `option-8`: `arm:bare|on|full|members`.
-- Group `option-9`: `cap:usd`.
+- Group `option-4`: `self-judge:on`.
+- Group `option-5`: `--concurrency N`.
+- Group `option-6`: `--partition holdout|tune`.
+- Group `option-7`: `lessons:on`.
+- Group `option-8`: `lessons-mode:measure|live`.
+- Group `option-9`: `arm:bare|on|full|members`.
+- Group `option-10`: `cap:usd`.
 
 ### `benchmark runs [--benchmark X] [--limit N]`
 
@@ -1872,10 +1885,13 @@ Usage:
                                           — run it now; always also grants its gate
   challenge deny <token> [reason]         — decline; the requester is told why
   challenge stats                         — the judge's record per gate vs people's answers
+  challenge summary [days]                — what happened to recent holds (default 7 d):
+                                            answered, denied, expired unanswered, by class
 People answer: the owner of the agent that asked (the person who started its
 spawn chain) or an operator — only for what they could do themselves. Agents
 never answer another's hold, and nobody answers their own ask. Offline
-approvers find holds here and in `ops inbox`; holds survive a restart.
+approvers find holds here and in `ops inbox`; holds survive a restart. Set
+MARINA_OPS_NOTIFY (a webhook URL or cmd:<program>) to be told the moment one opens.
 
 Category: Civic. Minimum rank: 0.
 Aliases: `challenges`.
@@ -1907,6 +1923,13 @@ Effect: write.
 
 Effect: read.
 
+
+### `challenge summary [days]`
+
+Effect: read.
+
+- `field-0` (`days`): text, optional group `option-0`.
+- Group `option-0`: `days`.
 
 ## channel
 
@@ -3977,7 +4000,7 @@ Effect: write.
 
 ## evolve
 
-Your self-improvement loop: where you stand + the next step. `evolve` for status, `evolve loop` for the how-to.
+[experimental] Your self-improvement loop: where you stand + the next step. `evolve` for status, `evolve loop` for the how-to.
 
 Category: Growth. Minimum rank: 0.
 Aliases: `coach`.
@@ -4116,7 +4139,7 @@ Effect: execute.
 
 ## experiment
 
-Run a controlled A/B comparison — define arms, record metrics per arm, get a ranked winner.
+[experimental] Run a controlled A/B comparison — define arms, record metrics per arm, get a ranked winner.
 Use this when you're MEASURING which of several conditions wins on a metric — not for getting work done.
   • plain work for one person → task        • a team coordinating a bundle of work → project
   • scored capability runs (MMLU, etc.)  → benchmark   • forecasting an outcome → market / scenario
@@ -4351,6 +4374,11 @@ Usage:
   gate list [entity]            — every gate and its status for you (or <entity>)
   gate grant <entity> <gate>    — grant a gate you hold solo (sovereigns: any gate)
   gate revoke <entity> <gate>   — (sovereign) take a gate back
+  gate audit                    — every operator-grant (999) row by holder; agents flagged
+  gate reset <entity|agents> [gate|all] [apply]
+                                — dry run by default: what would be revoked. `apply`
+                                  (operator) revokes operator-grant rows only, chronicled;
+                                  demonstrated competence stays; `gate grant` restores
 Operator-grant gates (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code) are granted by sovereigns only; nobody grants themselves.
 Earning a gate instead: run the gated action — the held run executes once a person approves it, and
 approvals from outside your own lineage build the gate (`challenge`).
@@ -4379,9 +4407,24 @@ Effect: delete.
 - `field-0` (`entity`): text, required.
 - `field-1` (`gate`): text, required.
 
+### `gate audit`
+
+Effect: read.
+
+
+### `gate reset <entity|agents> [gate|all] [apply]`
+
+Effect: delete.
+
+- `field-0` (`entity|agents`): text, required, choices `entity`, `agents`.
+- `field-1` (`gate|all`): choice, optional group `option-0`, choices `gate`, `all`.
+- `field-2` (`apply`): text, optional group `option-1`.
+- Group `option-0`: `gate|all`.
+- Group `option-1`: `apply`.
+
 ## gateway
 
-Bridge to peer Marina instances. Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it. Usage: gateway add <name> <ws-url> | gateway remove <name> | gateway list | gateway status <name> | gateway bridge <name> <channel> | gateway unbridge <name> <channel> | gateway send <name> <entity> <message>
+[experimental] Bridge to peer Marina instances. Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it. Usage: gateway add <name> <ws-url> | gateway remove <name> | gateway list | gateway status <name> | gateway bridge <name> <channel> | gateway unbridge <name> <channel> | gateway send <name> <entity> <message>
 
 Category: Federation. Minimum rank: 5. Gate: `gateway.connect`.
 Aliases: `gw`.
@@ -4781,7 +4824,7 @@ Effect: write.
 
 ## inquiry
 
-Private predictions and deep research, with durable evidence and agent delegation.
+[experimental] Private predictions and deep research, with durable evidence and agent delegation.
 inquiry predict [type:binary|number|choice] [unit:<unit>] [options:<a,b,c>] [runs:<n>] [case:<id>] [parent:<attempt>] [key:<key>] [horizon:<date>] [asof:<date>] -- <question>
 inquiry research [case:<id>] [parent:<attempt>] [key:<key>] -- <question>
 inquiry list
@@ -5219,7 +5262,7 @@ Effect: read.
 
 ## learned
 
-Inspect imported learned bundles (marina.learned.v1): artifacts, items and their trust, seeded default slots, evidence priors and the import audit. Read-only.
+[experimental] Inspect imported learned bundles (marina.learned.v1): artifacts, items and their trust, seeded default slots, evidence priors and the import audit. Read-only.
 Usage: learned | learned artifacts | learned items [artifact:<id>] [status:active|retired|revoked] | learned seeds | learned priors [family:<f>] | learned events [limit:<n>]
 
 Export and import are operator acts (`bun run learned export|import|verify|diff`). Imported lessons carry trust `imported` and are never trusted until local outcomes confirm them; seeds fill only empty default slots; priors are down-weighted and never ledger rows.
@@ -5483,7 +5526,7 @@ Effect: write.
 
 ## market
 
-Prediction market discovery and leaderboards.
+[experimental] Prediction market discovery and leaderboards.
 Usage: market list [open|resolved] | market search <query> | market show <id> (also view/info) | market live <venue> [duration] [limit] | market leaderboard | market score [entity] | market forecast <id>
 
 Examples:
@@ -6015,7 +6058,7 @@ Effect: write.
 
 ## mesh
 
-Transparent, voluntary, overlapping Marina meshes.
+[experimental] Transparent, voluntary, overlapping Marina meshes.
 Usage:
   mesh create <stable-id> | <name> | <charter-ref> | <protocol>
   mesh join <mesh> [| disclosure JSON]
@@ -6493,7 +6536,7 @@ Effect: read.
 
 ## ops
 
-Durable operations inbox. Usage: ops inbox|ack <id>|resolve <id>|history|recover
+Durable operations inbox. Usage: ops inbox|ack <id>|resolve <id>|history|recover|assistance [expire|restore <job>]
 
 Category: System. Minimum rank: 0.
 Aliases: `alerts`.
@@ -6503,6 +6546,22 @@ Aliases: `alerts`.
 Effect: write.
 
 - `field-0` (`id`): text, required.
+
+### `ops assistance`
+
+Effect: read.
+
+
+### `ops assistance expire`
+
+Effect: write.
+
+
+### `ops assistance restore <job>`
+
+Effect: write.
+
+- `field-0` (`job`): text, required.
 
 ### `ops history`
 
@@ -6677,7 +6736,7 @@ Effect: read.
 
 ## position
 
-Place, list, close, and track P&L on real prediction-market positions.
+[experimental] Place, list, close, and track P&L on real prediction-market positions.
 
 Usage:
   position size <venue> <ticker> <yes|no> <our-prob> <market-price>  — Kelly-size a candidate position
@@ -7780,7 +7839,7 @@ Effect: write.
 
 ## schedule
 
-Schedules — run one of your own commands later or on a repeat.
+[experimental] Schedules — run one of your own commands later or on a repeat.
 A scheduled run is your command exactly as if you typed it: your rank, gates,
 challenges and spend caps apply. It keeps running while you are offline (a
 stopped agent's schedules wait), and repeated failures raise an alert.
@@ -8193,7 +8252,7 @@ Usage:
   standing                — your current standing + ledger
   standing show <name>    — another entity's standing (online or not)
   standing top [N]        — leaderboard
-Standing is earned only when someone independent of you (not your account, not your spawn lineage) verifies the work: a task they approve (up to 10), an approved Code Mode attempt whose checks passed (1), a forecast resolved by an independent source (up to 0.5 by skill, once a day), an experiment an independent party replicated (3), a proposal its requester adopts (1), and an onboarding quest (3). Being chronicled, pool notes, recalls, crew completions and helping acts no longer earn; past rows decay out. Decay floors at 0; rank 0–4 is derived from thresholds (5/15/40/100). Above rank 4, capability is earned per-operation via the Capability gates shown in your standing view — keep building standing, then perform each gated action under supervision until it unlocks.
+Standing is earned only when someone independent of you (not your account, not your spawn lineage) verifies the work: a task they approve (up to 10), an approved Code Mode attempt whose checks passed (1), a forecast resolved by an independent source (up to 0.5 by skill, once a day), an experiment an independent party replicated (3), a proposal its requester adopts (1), and an onboarding quest (3). Being chronicled, pool notes, recalls, crew completions and helping acts no longer earn; their past rows stay as history but count toward no standing (MARINA_STANDING_RETIRED=decay lets them fade out instead). Decay floors at 0; rank 0–4 is derived from thresholds (5/15/40/100). Above rank 4, capability is earned per-operation via the Capability gates shown in your standing view — keep building standing, then perform each gated action under supervision until it unlocks.
 
 Category: Civic. Minimum rank: 0.
 Aliases: none.

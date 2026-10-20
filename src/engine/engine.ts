@@ -38,11 +38,13 @@ import {
 } from "../learning/work";
 import { memoryAccess } from "../memory/access";
 import { residentMemoryAPI } from "../memory/resident-service";
+import { attachModelTraceSink } from "../model/trace";
 import type { AdapterManager } from "../net/adapters/adapter-manager";
 import { connects } from "../net/ansi";
 import { attachRouteHealthStore, coreMemoryRouteStore } from "../net/model/route-health";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
+import { fileResidentForecast } from "../outcomes/filing";
 import { observeOutcomeEvent } from "../outcomes/live";
 import type { MarinaDB } from "../persistence/database";
 import { writeSample } from "../resolvers/sample-writer";
@@ -330,6 +332,10 @@ export class Engine {
       // a reboot does not hammer the limited route (src/net/model/route-health.ts).
       spendDb.onClose(attachRouteHealthStore(coreMemoryRouteStore(spendDb)));
 
+      // In-process model calls (src/model: forecast, lessons, outcomes, the
+      // web swarm, …) trace into the same event log as /v1 requests.
+      spendDb.onClose(attachModelTraceSink((event) => this.logEvent(event)));
+
       // Benchmark runner — spawns the harness subprocess + persists runs
       this.benchmarkRunner = new BenchmarkRunner(
         this.db,
@@ -338,6 +344,8 @@ export class Engine {
           endpoint: localHttpBase(),
           apiKey: getInternalModelToken(),
         }),
+        // The model marina/default routes to: a judge naming it is the target too.
+        () => this.db?.getDefaultModel(),
       );
 
       // Initialize gateway runtime (must be after channelManager)
@@ -1038,6 +1046,7 @@ export class Engine {
               emitEvent,
             })
         : undefined,
+      fileForecast: this.db ? (params) => fileResidentForecast(this.db!, params) : undefined,
       spawnAgent: this.agentRuntime.isAvailable()
         ? async (config) => {
             try {

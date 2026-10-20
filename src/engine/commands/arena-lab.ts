@@ -228,8 +228,11 @@ export async function arenaDiscover(
   }
   let propose = deps.propose;
   if (!propose) {
-    const { modelComplete } = await import("../../arena/model-backend");
-    const { complete, usage } = modelComplete(proposerModel());
+    const { modelComplete } = await import("../../model/complete");
+    const { complete, usage } = modelComplete(proposerModel(), process.env, {
+      purpose: "arena",
+      trace: { caller: "arena.discovery" },
+    });
     propose = async (prompt) => {
       const before = usage.costUsd;
       const reply = await complete(PROPOSER_SYSTEM, prompt);

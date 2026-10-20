@@ -145,6 +145,14 @@ export interface RoomContext {
     previousSampleNoteId?: number;
   }): { noteId: number; emittedFeedEvent: boolean };
 
+  /**
+   * File a resident's in-world forecast on the one outcome path
+   * (`fileResidentForecast` in src/outcomes/filing.ts): it resolves with its
+   * Sample, earns standing and teaches lessons. Returns the answer id, or
+   * undefined when nothing was filed (no database, or the write failed).
+   */
+  fileForecast?(params: import("./outcomes/filing").ResidentForecast): number | undefined;
+
   /** Spawn an AI agent (available when agent runtime is active) */
   spawnAgent?(config: {
     name: string;
@@ -751,8 +759,15 @@ export type EngineEvent =
       candidateCount?: number;
       routeAdviceMode?: "pareto" | "explore" | "insufficient";
       routeReason?: string;
-      /** Execution path selected at the model endpoint boundary. */
-      routeKind?: "agent" | "passthru" | "fallback" | "synthesis";
+      /** Execution path selected at the model endpoint boundary. `direct`: an
+       * in-process library call through `src/model` (forecast, lessons, …). */
+      routeKind?: "agent" | "passthru" | "fallback" | "synthesis" | "direct";
+      /** Parent span when the call belongs to a larger traced unit of work. */
+      parentSpanId?: string;
+      /** What a `direct` call was for (`src/model/purpose.ts`): forecast, lessons, … */
+      purpose?: string;
+      /** Caller-supplied trace context of a `direct` call: caller, task, round, question. */
+      traceContext?: Record<string, string>;
       /** Resolved passthru identity for per-caller attribution (light
        * governance). Absent on anonymous/internal-routed requests. */
       entityId?: string;

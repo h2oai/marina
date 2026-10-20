@@ -45,6 +45,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { buildUnifiedContext, renderUnifiedContext } from "../../src/memory/unified-context";
 import { MarinaDB } from "../../src/persistence/database";
+import { wilsonBounds } from "../../src/stats";
 import * as downloads from "../download";
 import type { DatasetItem, Message } from "../types";
 
@@ -521,16 +522,10 @@ export function splitItems<T extends { id: string }>(
   };
 }
 
-/** Wilson score interval, 95%. */
+/** Wilson score interval, 95% (`wilsonBounds` in `src/stats`; empty → [0, 0]). */
 export function wilson95(correct: number, n: number): Interval {
   if (n <= 0) return { low: 0, high: 0 };
-  const z = 1.959963984540054;
-  const p = correct / n;
-  const z2 = z * z;
-  const denom = 1 + z2 / n;
-  const center = (p + z2 / (2 * n)) / denom;
-  const half = (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / denom;
-  return { low: Math.max(0, center - half), high: Math.min(1, center + half) };
+  return wilsonBounds(correct, n);
 }
 
 /** SQuAD-style answer normalization: lowercase, strip punctuation + articles, collapse spaces. */

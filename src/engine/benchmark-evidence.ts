@@ -41,9 +41,9 @@
  * mid-history).
  */
 
-import { mcnemarExact, wilsonInterval } from "../../benchmarks/stats";
 import { liveEvidence } from "../outcomes/evidence";
 import type { BenchmarkItemRow, BenchmarkRunRow } from "../persistence/db-benchmarks";
+import { mcnemarExact, wilsonInterval } from "../stats";
 import { benchmarksInFamilies } from "./benchmark-families";
 
 export type RouteEvidenceMode = "off" | "observe" | "on";

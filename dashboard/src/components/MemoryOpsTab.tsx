@@ -280,9 +280,9 @@ function PostureSection({ data }: { data: MemoryOverview }) {
         <Metric label="Answered / 24h" value={data.jobs.answered24h} tone="success" />
         <Metric label="Abstained / 24h" value={data.jobs.abstained24h} />
         <Metric
-          label="Cancelled / 24h"
-          value={data.jobs.cancelled24h}
-          tone={data.jobs.cancelled24h > 0 ? "warning" : "default"}
+          label="Cancelled / expired 24h"
+          value={`${data.jobs.cancelled24h} / ${data.jobs.expired24h}`}
+          tone={data.jobs.cancelled24h + data.jobs.expired24h > 0 ? "warning" : "default"}
         />
         <Metric
           label="By marker"

@@ -18,7 +18,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { mulberry32 } from "../stats";
+import { mulberry32 } from "../../src/stats";
 import type { RunRecord } from "./run";
 
 export interface AnswerScore {

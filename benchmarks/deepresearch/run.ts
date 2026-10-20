@@ -22,10 +22,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { modelComplete } from "../../src/arena/model-backend";
 import type { Retriever } from "../../src/arena/research/retrieve";
 import { getErrorMessage } from "../../src/engine/errors";
 import type { SpendGuard } from "../../src/engine/spend-guard";
+import { modelComplete } from "../../src/model/complete";
 import {
   FileResearchCheckpoint,
   ResearchInterrupted,
@@ -337,7 +337,11 @@ export async function factCheckRun(input: {
       return;
     }
     const started = Date.now();
-    const checker = modelComplete(input.checker, env, { maxTokens: 8_000, timeoutMs: 600_000 });
+    const checker = modelComplete(input.checker, env, {
+      maxTokens: 8_000,
+      timeoutMs: 600_000,
+      purpose: "benchmark",
+    });
     const rec: TaskRecord = {
       ...src,
       label: input.label,

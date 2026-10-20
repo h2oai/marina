@@ -15,6 +15,7 @@
  * carries only what the round froze; no web.
  */
 
+import { type Complete, parseReply } from "../model/reply";
 import type { RoundForecast } from "./forecast";
 import {
   dailyBlock,
@@ -27,7 +28,8 @@ import {
 } from "./prompt-context";
 import type { ArenaLock, ArenaRound, Distribution } from "./types";
 
-export type Complete = (system: string, user: string) => Promise<string>;
+export type { Complete };
+export { parseReply };
 
 export interface ModelForecasterOptions {
   /** Share of the model's move from the baseline that is kept (0 = baseline, 1 = raw model). */
@@ -103,19 +105,6 @@ export function buildPrompt(round: ArenaRound, lock: ArenaLock, baseline: RoundF
     `Baseline ranking: ${JSON.stringify(baseline.ranking)}`,
     `Reply: {"ranking": [exactly ${length} distinct article titles in canonical underscore form, rank 1 first], "reason": "<one sentence>"}`,
   ].join("\n");
-}
-
-/** The first JSON object in a reply (tolerates code fences and prose around it). */
-export function parseReply(text: string): Record<string, unknown> | undefined {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) return undefined;
-  try {
-    const value = JSON.parse(text.slice(start, end + 1));
-    return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function asDist(v: unknown): Distribution | undefined {

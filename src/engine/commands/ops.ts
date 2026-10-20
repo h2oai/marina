@@ -7,6 +7,12 @@ import type { TaskManager } from "../../coordination/task-manager";
 import { bold, dim, header, separator, status } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef } from "../../types";
+import {
+  type AssistanceExpiryDeps,
+  formatAssistanceExpiry,
+  runAssistanceExpiry,
+} from "../assistance-expiry";
+import { getErrorMessage } from "../errors";
 import type { ReadinessReport } from "../readiness";
 import { notFound } from "./command-messages";
 
@@ -15,6 +21,56 @@ export interface OpsDependencies {
   tasks: TaskManager;
   runtime: AgentRuntime;
   readiness: () => ReadinessReport;
+  /** Presence for the assistance-job expiry (`ops assistance`, `ops recover`). */
+  assistance?: () => AssistanceExpiryDeps;
+  /** An operator: a person at rank 9 (`ops assistance expire|restore`). */
+  isOperator?: (entityId: string) => boolean;
+}
+
+const OPS_USAGE =
+  "Usage: ops inbox|ack <id>|resolve <id>|history|recover|assistance [expire|restore <job>]";
+
+/** `ops assistance …`: dead memory-assistance jobs — report, expire now, or reopen one. */
+function assistanceOps(deps: OpsDependencies, entityId: string, tokens: string[]): string {
+  const presence = deps.assistance?.();
+  if (!presence) return "Assistance-job expiry is not available in this world.";
+  const sub = tokens[0]?.toLowerCase();
+  if ((sub === "expire" || sub === "restore") && !deps.isOperator?.(entityId))
+    return `ops assistance ${sub} takes an operator (a person at rank 9). \`ops assistance\` shows the report.`;
+  if (sub === "restore") {
+    const id = tokens[1];
+    if (!id) return "Usage: ops assistance restore <job id>";
+    try {
+      deps.db.memoryRepository().assistance.restoreExpired(id);
+      return `Assistance job ${id} reopened as pending.`;
+    } catch (error) {
+      return `Not reopened: ${getErrorMessage(error)}`;
+    }
+  }
+  if (sub && sub !== "expire") return OPS_USAGE;
+  const report = runAssistanceExpiry(presence, { apply: sub === "expire" });
+  const counts = deps.db
+    .memoryRepository()
+    .raw.query(
+      "SELECT state,count(*) AS n FROM memory_assistance_jobs GROUP BY state ORDER BY state",
+    )
+    .all() as { state: string; n: number }[];
+  const lines = [
+    header("Memory assistance jobs"),
+    separator(),
+    `  ${counts.length ? counts.map((c) => `${c.state} ${c.n}`).join(" · ") : "no jobs"}`,
+    `  ${formatAssistanceExpiry(report)}`,
+  ];
+  if (sub !== "expire" && report.expired.length > 0)
+    lines.push(
+      dim("  The hourly pass expires these; `ops assistance expire` (operator) does it now."),
+    );
+  lines.push(
+    dim(
+      "  Expired jobs keep their request and history; `ops assistance restore <job>` reopens one whose deadline is still ahead.",
+    ),
+  );
+  return lines.join("\n");
 }
 
 export function syncOperationalAlerts(deps: OpsDependencies): void {
@@ -164,6 +220,9 @@ export function opsCommand(deps: OpsDependencies): CommandDef {
     category: "System",
     usage: [
       { syntax: "ops ack <id>", effect: "write" },
+      { syntax: "ops assistance", effect: "read" },
+      { syntax: "ops assistance expire", effect: "write" },
+      { syntax: "ops assistance restore <job>", effect: "write" },
       { syntax: "ops history", effect: "read" },
       { syntax: "ops inbox", effect: "read" },
       { syntax: "ops recover", effect: "write" },
@@ -172,17 +231,23 @@ export function opsCommand(deps: OpsDependencies): CommandDef {
     name: "ops",
     aliases: ["alerts"],
     minRank: 0,
-    help: "Durable operations inbox. Usage: ops inbox|ack <id>|resolve <id>|history|recover",
+    help: `Durable operations inbox. ${OPS_USAGE}`,
     handler: (ctx, input) => {
       const action = input.tokens[0]?.toLowerCase() ?? "inbox";
       if (action === "recover") {
         const recovered = deps.tasks.recoverExpired();
         const expired = deps.db.expireDirectMessages();
+        const presence = deps.assistance?.();
+        const jobs = presence ? runAssistanceExpiry(presence).expired.length : 0;
         syncOperationalAlerts(deps);
         ctx.send(
           input.entity,
-          `Recovery complete: ${recovered.length} work lease(s), ${expired} message deadline(s).`,
+          `Recovery complete: ${recovered.length} work lease(s), ${expired} message deadline(s), ${jobs} dead assistance job(s).`,
         );
+        return;
+      }
+      if (action === "assistance") {
+        ctx.send(input.entity, assistanceOps(deps, input.entity, input.tokens.slice(1)));
         return;
       }
       if (action === "ack" || action === "resolve") {
@@ -199,7 +264,7 @@ export function opsCommand(deps: OpsDependencies): CommandDef {
         return;
       }
       if (!["inbox", "status", "history"].includes(action)) {
-        ctx.send(input.entity, "Usage: ops inbox|ack <id>|resolve <id>|history|recover");
+        ctx.send(input.entity, OPS_USAGE);
         return;
       }
       syncOperationalAlerts(deps);

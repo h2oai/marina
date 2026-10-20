@@ -31,6 +31,8 @@
  */
 
 import { Database } from "bun:sqlite";
+import { CREW_BRIEFS } from "../src/coordination/crew-formations";
+import type { CrewFormation } from "../src/types";
 
 // ─── Transcript ──────────────────────────────────────────────────────────────
 
@@ -234,7 +236,7 @@ export interface StepResult {
   question?: string;
 }
 
-interface Step {
+export interface Step {
   id: string;
   layer: "brief" | "convention";
   /** Deterministic check; omitted for judged steps. */
@@ -409,6 +411,14 @@ const aspectOf = (text: string): string | undefined => {
   return a?.toLowerCase().replace(/s$/, "");
 };
 
+/**
+ * Hand-written checks for brief steps that can be scored deterministically,
+ * keyed by formation. They are not the protocol: the protocol is
+ * `CREW_BRIEFS`, and `adherenceSteps` keeps only the checks whose
+ * {@link BRIEF_ANCHORS anchor} is still in the live brief, then turns every
+ * brief clause no check covers into a judge question. Editing a brief can
+ * therefore never leave a stale copy scoring the old protocol.
+ */
 export const FORMATION_STEPS: Record<string, Step[]> = {
   freeform: [
     {
@@ -863,11 +873,154 @@ export const FORMATION_STEPS: Record<string, Step[]> = {
   ],
 };
 
+/**
+ * Where in `CREW_BRIEFS[formation]` each hand-written brief step's rule is
+ * stated: a phrase that must appear in the brief (case-insensitive). A step
+ * whose phrase is gone from the brief is dropped; `test/formation-adherence.test.ts`
+ * fails on such drift so a brief edit is a deliberate review of its checks.
+ */
+export const BRIEF_ANCHORS: Record<string, Record<string, string | string[]>> = {
+  freeform: {
+    "talk-on-channel": "on this channel",
+    "divide-by-strength": "Divide work by strength",
+    "single-deliverable": "merge results",
+  },
+  deliberation: {
+    "one-proposal-each": "each member posts one proposal",
+    "lead-picks": "lead picks or merges",
+    "one-round": ["ONE round", "Another round only if execution fails"],
+    "picked-owner-executes": "picked owner executes",
+    debrief: "debrief message after delivery",
+  },
+  chorus: {
+    "partials-on-wall": "Post partial results here",
+    "crossfire-review": "reviews one other member's partial",
+    "lead-delivers": "Lead merges and delivers",
+  },
+  delphi: {
+    "private-estimate-first": "before reading others'",
+    "anonymized-summary": "post one anonymized summary",
+    "summary-before-delivery": "post one anonymized summary",
+    "members-revise": "Members revise once",
+    "dissent-kept": "surviving dissent",
+  },
+  tournament: {
+    "solo-candidates": "deposit one candidate alone",
+    "distinct-candidates": "deposit one candidate alone",
+    "pairwise-rulings": ["Lead pairs candidates", "picks each pair's winner"],
+    "single-deliverable": "until one remains",
+    "graft-losers": "Graft losers' best ideas in",
+  },
+  verification: {
+    "single-drafter": "one drafter",
+    "aspects-separate": "checks ONE aspect",
+    "ran-checks": "Run checks",
+    "fail-returns-to-author": "A fail returns to the drafter once",
+    "deliver-after-all-pass": "lead delivers when every aspect passes",
+  },
+  auction: {
+    "lots-posted": "then wait for bids",
+    bids: "Members bid per lot",
+    "award-by-tell": "Lead awards each lot",
+    "winners-work": "Winners do their lot",
+    "lead-delivers": "lead merges and delivers",
+  },
+  ledger: {
+    "plan-ledger": "[plan] facts",
+    "progress-ledger": "a progress ledger (done, in flight, stuck)",
+    "progress-updated": "after each step",
+    "stall-replan": "lead replans, not retries",
+    "lead-delivers": "Lead delivers",
+  },
+  sharding: {
+    "lead-runs-checker": "run the checker once",
+    "shards-posted": "ONE message with every shard",
+    "members-claim": "reply 'claiming: <shard>'",
+    "oracle-unedited": "WITHOUT editing the checker or tests",
+    "full-rerun": "Done = full check passes",
+    "lead-delivers": "lead delivers",
+  },
+};
+
+const anchorsOf = (formation: string, step: string): string[] => {
+  const a = BRIEF_ANCHORS[formation]?.[step];
+  return a === undefined ? [] : Array.isArray(a) ? a : [a];
+};
+const has = (text: string, phrase: string) => text.toLowerCase().includes(phrase.toLowerCase());
+
+/** The live runtime brief for a formation, or undefined when it has none. */
+export function briefFor(formation: string): string | undefined {
+  return Object.hasOwn(CREW_BRIEFS, formation)
+    ? CREW_BRIEFS[formation as CrewFormation]
+    : undefined;
+}
+
+/** Clauses shorter than this many words ("Deliver.", "Parallel phases now.") are not steps. */
+const MIN_CLAUSE_WORDS = 4;
+
+/**
+ * The brief's protocol clauses: its sentences, split again at `;` and `→`
+ * (outside backtick code), short clauses dropped.
+ */
+export function briefClauses(brief: string): string[] {
+  const parts: string[] = [];
+  let cur = "";
+  let code = false;
+  for (let i = 0; i < brief.length; i++) {
+    const ch = brief[i] as string;
+    if (ch === "`") code = !code;
+    const sentenceEnd = !code && /[.!?]/.test(ch) && /\s/.test(brief[i + 1] ?? " ");
+    if (!code && (ch === ";" || ch === "→")) {
+      parts.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+    if (sentenceEnd) {
+      parts.push(cur);
+      cur = "";
+    }
+  }
+  parts.push(cur);
+  return parts
+    .map((p) => p.trim())
+    .filter((p) => p.split(/\s+/).filter((w) => /\w/.test(w)).length >= MIN_CLAUSE_WORDS);
+}
+
+/**
+ * The adherence steps for a formation, from its live brief (`CREW_BRIEFS`):
+ * every hand-written check whose anchor is still in the brief, then one judge
+ * step per brief clause no check covers (id `brief-<n>`, the clause's
+ * position), then the pool-template convention markers. Every formation with
+ * a brief has steps; an unknown formation throws.
+ */
+export function adherenceSteps(formation: string): Step[] {
+  const brief = briefFor(formation);
+  if (brief === undefined) throw new Error(`no runtime brief for formation "${formation}"`);
+  const hand = FORMATION_STEPS[formation] ?? [];
+  const checks = hand.filter(
+    (s) => s.layer === "brief" && anchorsOf(formation, s.id).some((a) => has(brief, a)),
+  );
+  const covered = (clause: string) =>
+    checks.some((s) => anchorsOf(formation, s.id).some((a) => has(clause, a) || has(a, clause)));
+  const judged: Step[] = briefClauses(brief).flatMap((clause, i) =>
+    covered(clause)
+      ? []
+      : [
+          {
+            id: `brief-${i + 1}`,
+            layer: "brief" as const,
+            question: `Did the crew follow this step of its ${formation} brief: "${clause}"? Score 1 if it did, 0.5 if partly, 0 if not; null if the step did not apply.`,
+          },
+        ],
+  );
+  return [...checks, ...judged, ...hand.filter((s) => s.layer === "convention")];
+}
+
 // ─── Scoring ─────────────────────────────────────────────────────────────────
 
 export function scoreWindow(tr: Transcript, formation: string): StepResult[] {
-  const steps = FORMATION_STEPS[formation];
-  if (!steps) throw new Error(`no adherence steps for formation "${formation}"`);
+  const steps = adherenceSteps(formation);
   const v = buildView(tr);
   return steps.map((s) => {
     if (s.check) {
@@ -980,8 +1133,7 @@ if (import.meta.main) {
   const results = scoreWindow(tr, formation);
   const packetPath = flag("packet");
   if (packetPath) {
-    const { CREW_BRIEFS } = await import("../src/coordination/crew-formations");
-    const brief = (CREW_BRIEFS as Record<string, string>)[formation] ?? "";
+    const brief = briefFor(formation) ?? "";
     await Bun.write(
       packetPath,
       JSON.stringify(buildJudgePacket(tr, formation, brief, results), null, 2),

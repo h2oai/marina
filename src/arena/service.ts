@@ -9,6 +9,8 @@
 
 import { getErrorMessage, logRejection } from "../engine/errors";
 import { Logger } from "../engine/logger";
+import type { Usage } from "../model/access";
+import type { ModelCompleteOptions } from "../model/complete";
 import type { MarinaDB } from "../persistence/database";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
 import type { NotesStore } from "../persistence/interfaces/notes-store";
@@ -25,7 +27,6 @@ import {
 import { forecastRound } from "./forecast";
 import { forecastSettings } from "./forecast-config";
 import { forecastCutoff, requireFreshForecast } from "./freshness";
-import type { Usage } from "./model-backend";
 import { publicKeyBase64 } from "./protocol";
 import { researchFallbackModeFromEnv } from "./research-fallback";
 import {
@@ -36,6 +37,8 @@ import {
   submitRound,
 } from "./submit";
 
+/** Every arena model call: spend purpose `arena` (ledger source `forecast`), traced. */
+const ARENA_CALL: ModelCompleteOptions = { purpose: "arena", trace: { caller: "arena" } };
 const logger = new Logger();
 /** Days of the Civiqs daily tracker the model roles read (the quant input). */
 const DAILY_POINTS = 21;
@@ -387,11 +390,11 @@ export async function forecasterFor(
     const specs = spec.slice("crew:".length).split(",");
     const [stat, analyst = stat, skeptic = analyst] = specs as [string, string?, string?];
     const [{ modelComplete }, crew] = await Promise.all([
-      import("./model-backend"),
+      import("../model/complete"),
       import("./crew"),
     ]);
     const env = opts.env ?? process.env;
-    const made = [stat, analyst!, skeptic!].map((m) => modelComplete(m, env));
+    const made = [stat, analyst!, skeptic!].map((m) => modelComplete(m, env, ARENA_CALL));
     const usage: Usage = {
       get calls() {
         return made.reduce((s, m) => s + m.usage.calls, 0);
@@ -431,13 +434,15 @@ export async function forecasterFor(
     return {
       usage,
       forecaster: async (round, lock) =>
-        crew.crewForecastRound(round, lock, members, notes, await start(round, lock), lessonStore),
+        crew.crewForecastRound(round, lock, members, await start(round, lock), lessonStore),
       ...(notes
         ? {
+            // A backtest's revealed round teaches through the judged loop only
+            // (a no-op unless learning is armed for this store). The number was
+            // public from the round's release. Live rounds settle on the
+            // outcome path instead (`resolveArenaFilings`).
             learner: (round, lock, filed, outcome) => {
-              const summary = crew.learn(notes, round, lock, filed, outcome);
-              // The judged loop too (a no-op unless learning is armed for this
-              // store). The number was public from the round's release.
+              const summary = crew.roundSummary(lock, filed, outcome);
               if (summary)
                 void import("../learning/service").then(({ noteOutcome }) =>
                   noteOutcome(
@@ -452,11 +457,11 @@ export async function forecasterFor(
   }
   const modelSpec = spec.replace(/^model:/, "");
   const [{ modelComplete }, { DEFAULT_MODEL_OPTIONS, modelForecastRound }] = await Promise.all([
-    import("./model-backend"),
+    import("../model/complete"),
     import("./model-forecaster"),
   ]);
   const env = opts.env ?? process.env;
-  const { complete, usage } = modelComplete(modelSpec, env);
+  const { complete, usage } = modelComplete(modelSpec, env, ARENA_CALL);
   const options = { ...DEFAULT_MODEL_OPTIONS, weight: opts.raw ? 1 : (opts.weight ?? 0.5) };
   if (opts.raw) options.maxSdMove = Number.POSITIVE_INFINITY;
   const { nowcastForecaster } = await import("./research/civiqs-nowcast");
@@ -578,7 +583,7 @@ async function formationForecasterFor(
 ): Promise<{ forecaster: Forecaster; usage: Usage }> {
   const [head = "", ...parts] = spec.split(/\+(?=then:|research@)/);
   const [{ modelComplete }, formations, { nowcastForecaster }] = await Promise.all([
-    import("./model-backend"),
+    import("../model/complete"),
     import("./formations"),
     import("./research/civiqs-nowcast"),
   ]);
@@ -589,7 +594,7 @@ async function formationForecasterFor(
     if (!pattern) throw new Error(`unknown formation ${name}`);
     const models = list.split(",");
     // Fail fast on a missing provider key, before any round runs.
-    for (const m of models) modelComplete(m, env);
+    for (const m of models) modelComplete(m, env, ARENA_CALL);
     return { pattern, models, unanchored: Boolean(variant) };
   };
   const stages = [stageOf(head)];
@@ -598,14 +603,14 @@ async function formationForecasterFor(
   const researchPart = parts.find((p) => p.startsWith("research@"));
   let research:
     | {
-        retriever: import("./research/retrieve").Retriever;
-        pageText: import("./research/verify").PageText;
+        retriever: import("../research/retrieve").Retriever;
+        pageText: import("../research/verify").PageText;
       }
     | undefined;
   if (researchPart && !inputs) {
     const [retrieve, { defaultPageText }] = await Promise.all([
-      import("./research/retrieve"),
-      import("./research/verify"),
+      import("../research/retrieve"),
+      import("../research/verify"),
     ]);
     const orKey = env.OPENROUTER_API_KEY;
     const { arenaResearchLookups, arenaSignalHints, withDataLookups } = await import(
@@ -671,7 +676,10 @@ async function formationForecasterFor(
     usage,
     forecaster: async (round, lock) => {
       const made = stages.map((st) =>
-        st.models.map((m) => ({ name: m.replace(/^openrouter\//, ""), ...modelComplete(m, env) })),
+        st.models.map((m) => ({
+          name: m.replace(/^openrouter\//, ""),
+          ...modelComplete(m, env, ARENA_CALL),
+        })),
       );
       const members = made.map((ms, i) =>
         ms.map(({ name, complete }) =>
@@ -988,9 +996,6 @@ export async function runArenaAutopilot(
         logger.warn("arena", "resolving filings failed", { error: getErrorMessage(err) }),
       );
     }
-    if (deps.config.forecaster.startsWith("crew:") && "getNotesByType" in store) {
-      await learnFromResolutions(store as unknown as ArenaStore & NotesStore, deps);
-    }
     for (const round of await dueRounds(deps)) {
       const outcome = await submitRound(deps, round.round_id);
       outcomes.push(outcome);
@@ -1056,41 +1061,6 @@ function linkArenaAdvice(
   }
 }
 
-/**
- * Close the crew's loop live: for every round Marina filed that the arena has
- * since resolved, write the lesson once (a lesson names its round, so a second
- * pass finds it and skips).
- */
-export async function learnFromResolutions(
-  store: ArenaStore & NotesStore,
-  deps: Pick<SubmitDeps, "config" | "data">,
-): Promise<number> {
-  const { learn, crewLessonOutcome, CREW_ENTITY } = await import("./crew");
-  const resolved = await deps.data.resolutions();
-  const known = new Set(
-    store
-      .getNotesByType(CREW_ENTITY, "lesson", 1000)
-      .map((n) => n.content.split(" ")[1]?.replace(/:$/, "")),
-  );
-  let written = 0;
-  for (const row of store.listArenaSubmissions({ entrant: deps.config.entrant, limit: 500 })) {
-    const value = resolved[row.round_id]?.value;
-    if (row.status !== "accepted" || typeof value !== "number" || known.has(row.round_id)) continue;
-    const body = JSON.parse(row.body) as { topline?: { mean: number; sd: number } };
-    const round = await deps.data.round(row.round_id);
-    if (!body.topline || !round) continue;
-    const summary = learn(store, round, await deps.data.lock(row.round_id), body.topline, value);
-    if (summary) {
-      const { noteOutcome } = await import("../learning/service");
-      // resolvedAt = now: conservative, the resolution is seen live.
-      noteOutcome(store, crewLessonOutcome(round, row.round_id, summary, new Date().toISOString()));
-    }
-    known.add(row.round_id);
-    written++;
-  }
-  return written;
-}
-
 // ─── Wikipedia scheduled events ──────────────────────────────────────────────
 
 /** The method key of the Wikipedia event-research card (src/arena/research/wiki-events.ts). */
@@ -1099,8 +1069,8 @@ export const WIKI_EVENTS = "research:wiki-events";
 /** Retriever, extraction model(s), Wikimedia client and insertion cap shared by the Wikipedia event cards. */
 async function wikiEventTooling(models: string[], retrieverArg: string, env: NodeJS.ProcessEnv) {
   const [{ modelComplete }, retrieve, events, { wikimediaFetchJson }] = await Promise.all([
-    import("./model-backend"),
-    import("./research/retrieve"),
+    import("../model/complete"),
+    import("../research/retrieve"),
     import("./research/wiki-events"),
     import("./wikimedia"),
   ]);
@@ -1118,7 +1088,7 @@ async function wikiEventTooling(models: string[], retrieverArg: string, env: Nod
     },
     { env },
   );
-  const made = models.map((m) => modelComplete(m, env));
+  const made = models.map((m) => modelComplete(m, env, ARENA_CALL));
   const spent = { retrievalUsd: 0 };
   const usage: Usage = {
     get calls() {
@@ -1410,11 +1380,14 @@ export async function wikiExtractionTooling(env: NodeJS.ProcessEnv) {
   ]);
   const needsModel = settings.extractors.some((n) => n === "events" || n === "news");
   const made = needsModel
-    ? (await import("./model-backend")).modelComplete(settings.model, env, { maxTokens: 2_000 })
+    ? (await import("../model/complete")).modelComplete(settings.model, env, {
+        ...ARENA_CALL,
+        maxTokens: 2_000,
+      })
     : undefined;
-  let retriever: import("./research/retrieve").Retriever | undefined;
+  let retriever: import("../research/retrieve").Retriever | undefined;
   if (settings.retriever) {
-    const retrieve = await import("./research/retrieve");
+    const retrieve = await import("../research/retrieve");
     retriever = retrieve.retrieverFromSpec(
       settings.retriever,
       {
@@ -1476,9 +1449,9 @@ async function researchForecasterFor(
   notes?: NotesStore,
 ): Promise<{ forecaster: Forecaster; usage?: Usage }> {
   const [{ modelComplete }, research, retrieve, decisions] = await Promise.all([
-    import("./model-backend"),
+    import("../model/complete"),
     import("./research/forecaster"),
-    import("./research/retrieve"),
+    import("../research/retrieve"),
     import("../decisions/config"),
   ]);
   const orKey = env.OPENROUTER_API_KEY;
@@ -1497,7 +1470,7 @@ async function researchForecasterFor(
       : env.TAVILY_API_KEY?.trim()
         ? "tavily:basic"
         : "asof");
-  const { defaultPageText } = await import("./research/verify");
+  const { defaultPageText } = await import("../research/verify");
   // Page text a retriever already fetched (Tavily) is checked in place of a fetch.
   const { arenaResearchLookups, arenaSignalHints, withDataLookups } = await import(
     "./research/data-evidence"
@@ -1526,7 +1499,7 @@ async function researchForecasterFor(
   const models = analystsPart.split(",");
   const made = models.map((m) => ({
     name: m.replace(/^openrouter\//, ""),
-    ...modelComplete(m, env),
+    ...modelComplete(m, env, ARENA_CALL),
   }));
   const judge = decisions.researchJudge(
     // `jev` falls back to the world's decision backend without OpenRouter.

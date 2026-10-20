@@ -58,7 +58,6 @@ import {
   tasksFromCsv,
   tasksFromScripts,
 } from "../benchmarks/mind2web2/tasks";
-import { modelComplete } from "../src/arena/model-backend";
 import { harnessDecisionProvider } from "../src/decisions/engines";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { formatLesson } from "../src/learning/outcomes";
@@ -68,6 +67,7 @@ import {
   recallForWork,
   settleOutcomes,
 } from "../src/learning/service";
+import { modelComplete } from "../src/model/complete";
 import { MarinaDB } from "../src/persistence/database";
 import { openBrowser } from "../src/research/browser-reader";
 import { citedUrls } from "../src/research/cited-answer";
@@ -170,7 +170,7 @@ async function run(): Promise<void> {
   if (values.swarm) {
     const spec = arm.swarmReader ?? process.env.MARINA_READ_SWARM_READER?.trim();
     if (!spec) fail("--swarm needs a reader model (the arm's, or MARINA_READ_SWARM_READER)");
-    const reader = modelComplete(spec, process.env, { maxTokens: 4_000 });
+    const reader = modelComplete(spec, process.env, { maxTokens: 4_000, purpose: "benchmark" });
     const judge = arm.swarmJudge ? harnessDecisionProvider(process.env) : undefined;
     swarm = {
       reader: {

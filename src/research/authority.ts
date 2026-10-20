@@ -24,7 +24,7 @@
  * `NO_FETCH_DOMAINS`, the brief's exclusions and every cutoff filter.
  */
 
-import type { Source } from "../arena/research/retrieve";
+import type { Source } from "./retrieve";
 
 export interface AuthorityTarget {
   /** The publisher's host, lower case, without `www.` or port: `bls.gov`. */

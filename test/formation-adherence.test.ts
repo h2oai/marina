@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, test } from "bun:test";
 import {
+  adherenceSteps,
+  BRIEF_ANCHORS,
+  briefClauses,
   buildJudgePacket,
   FORMATION_STEPS,
   type StepResult,
@@ -160,5 +163,68 @@ describe("summarizeAdherence", () => {
   test("the sharding brief says when to shard", () => {
     expect(CREW_BRIEFS.sharding).toContain("several independent failing cases");
     expect(CREW_BRIEFS.sharding).toContain("for one or two, just fix them");
+  });
+});
+
+describe("adherence is scored from the live brief (CREW_BRIEFS)", () => {
+  test("every hand-written brief step is anchored in its formation's live brief", () => {
+    for (const [f, steps] of Object.entries(FORMATION_STEPS)) {
+      const brief = CREW_BRIEFS[f as keyof typeof CREW_BRIEFS].toLowerCase();
+      for (const step of steps.filter((s) => s.layer === "brief")) {
+        const anchors = [BRIEF_ANCHORS[f]?.[step.id] ?? []].flat();
+        expect(anchors.length, `${f}/${step.id} has no anchor`).toBeGreaterThan(0);
+        for (const a of anchors)
+          expect(brief.includes(a.toLowerCase()), `${f}/${step.id}: "${a}" not in brief`).toBe(
+            true,
+          );
+      }
+    }
+  });
+
+  test("every formation with a brief is scored, uncovered clauses go to the judge", () => {
+    for (const f of Object.keys(CREW_BRIEFS)) {
+      const steps = adherenceSteps(f);
+      expect(
+        steps.some((s) => s.layer === "brief"),
+        f,
+      ).toBe(true);
+    }
+    // A formation with no hand checks is scored entirely from its brief's clauses.
+    const pipeline = adherenceSteps("pipeline");
+    expect(pipeline.length).toBe(briefClauses(CREW_BRIEFS.pipeline).length);
+    expect(pipeline.every((s) => s.question?.includes("pipeline brief"))).toBe(true);
+    // Sharding's "for one or two, just fix them" has no deterministic check: judged.
+    const sharding = adherenceSteps("sharding");
+    expect(sharding.some((s) => s.question?.includes("for one or two, just fix them"))).toBe(true);
+    expect(() => adherenceSteps("no-such-formation")).toThrow(/no runtime brief/);
+  });
+
+  test("clauses split at sentences, `;` and → outside code", () => {
+    expect(briefClauses(CREW_BRIEFS.deliberation)).toEqual([
+      "ONE round: each member posts one proposal here",
+      "lead picks or merges",
+      "picked owner executes now.",
+      "Another round only if execution fails.",
+      "One debrief message after delivery.",
+    ]);
+    expect(briefClauses("Run `a; b` now please. Ok.")).toEqual(["Run `a; b` now please."]);
+  });
+
+  test("a brief edit re-derives the steps: no stale copy scores the old protocol", () => {
+    const briefs = CREW_BRIEFS as Record<string, string>;
+    const original = briefs.freeform as string;
+    try {
+      briefs.freeform =
+        "Divide work by strength on this channel. Every member writes one test before coding.";
+      const ids = adherenceSteps("freeform").map((s) => s.id);
+      // "merge results" left the brief: its check is gone.
+      expect(ids).not.toContain("single-deliverable");
+      expect(ids).toContain("divide-by-strength");
+      // The new rule is scored (by the judge) without touching the scorer.
+      const judged = adherenceSteps("freeform").filter((s) => s.question);
+      expect(judged.some((s) => s.question?.includes("writes one test before coding"))).toBe(true);
+    } finally {
+      briefs.freeform = original;
+    }
   });
 });

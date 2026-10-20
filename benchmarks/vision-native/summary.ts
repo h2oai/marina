@@ -7,7 +7,7 @@
  * over the tasks both modes answered. Pure; reuses `benchmarks/stats.ts`.
  */
 
-import { type Interval, mcnemarExact, pairedBootstrap, wilsonInterval } from "../stats";
+import { type Interval, mcnemarExact, pairedBootstrap, wilsonInterval } from "../../src/stats";
 
 export interface ResultRow {
   task: string;

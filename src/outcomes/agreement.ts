@@ -10,14 +10,20 @@
  * confidence; until then its outcomes are opinions that teach nothing.
  */
 
-import { wilsonInterval } from "../../benchmarks/stats";
+import {
+  EARNED_JUDGE_MIN_LOWER,
+  EARNED_JUDGE_MIN_N,
+  earnedJudge,
+  emptyTally,
+  tallyComparison,
+} from "../decisions/earned-judge";
 import type { MarinaDB } from "../persistence/database";
 import type { OutcomeRow } from "../persistence/db-outcomes";
 
-/** Comparisons a judge needs before it can be trusted on its own. */
-export const EARNED_MIN_COMPARED = 25;
-/** Wilson 95 % lower bound on agreement a judge needs. */
-export const EARNED_MIN_LOWER = 0.85;
+/** Comparisons a judge needs before it can be trusted on its own (`earnedJudge`). */
+export const EARNED_MIN_COMPARED = EARNED_JUDGE_MIN_N;
+/** Wilson 95 % lower bound on agreement a judge needs (`earnedJudge`). */
+export const EARNED_MIN_LOWER = EARNED_JUDGE_MIN_LOWER;
 
 export interface JudgeAgreement {
   judge: string;
@@ -60,37 +66,25 @@ export function judgeAgreement(
   db: Pick<MarinaDB, "getOutcomeBySubject" | "listOutcomes">,
   opts: { judge?: string; limit?: number } = {},
 ): JudgeAgreement[] {
-  const by = new Map<string, JudgeAgreement>();
+  const by = new Map<string, { judged: number; tally: ReturnType<typeof emptyTally> }>();
   for (const j of db.listOutcomes({ basis: "judged", limit: opts.limit ?? 10_000 })) {
     if (!j.subject.startsWith("judged:")) continue;
     const judge = j.judge ?? "unknown";
     if (opts.judge && judge !== opts.judge) continue;
-    const a = by.get(judge) ?? {
-      judge,
-      judged: 0,
-      compared: 0,
-      agreed: 0,
-      falsePass: 0,
-      lower: 0,
-      earned: false,
-    };
+    const a = by.get(judge) ?? { judged: 0, tally: emptyTally() };
     a.judged++;
     const m = counterpart(db, j);
-    if (m) {
-      a.compared++;
-      if (agrees(j, m)) a.agreed++;
-      else if (j.succeeded === 1 && m.succeeded === 0) a.falsePass++;
-    }
+    if (m) tallyComparison(a.tally, j.succeeded === 1, m.succeeded === 1, agrees(j, m));
     by.set(judge, a);
   }
-  return [...by.values()].map((a) => {
-    const lower = a.compared ? wilsonInterval(a.agreed, a.compared).low : 0;
-    return {
-      ...a,
-      lower,
-      earned: a.compared >= EARNED_MIN_COMPARED && lower >= EARNED_MIN_LOWER,
-    };
-  });
+  return [...by.entries()].map(([judge, { judged, tally }]) => ({
+    judge,
+    judged,
+    compared: tally.compared,
+    agreed: tally.agreed,
+    falsePass: tally.falsePass,
+    ...earnedJudge(tally.agreed, tally.compared),
+  }));
 }
 
 /** True when `judge` has earned agreement on the outcome path. */

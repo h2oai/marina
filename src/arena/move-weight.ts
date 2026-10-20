@@ -41,10 +41,10 @@
  * every profile family of the same method (the decision says which).
  */
 
-import { mulberry32 } from "../../benchmarks/stats";
 import { getErrorMessage } from "../engine/errors";
 import { adoptOnHoldout, gridArgmin } from "../forecast/fitting";
 import type { ArenaShadowRow, ArenaSubmissionRow } from "../persistence/db-arena";
+import { mulberry32 } from "../stats";
 import {
   calibrationKey,
   knownAtOf,

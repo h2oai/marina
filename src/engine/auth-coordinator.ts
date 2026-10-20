@@ -546,15 +546,21 @@ export class AuthCoordinator {
     // LOCAL trust profile: this instance is one operator's own machine and
     // binds loopback only (main.ts refuses `local` on ANY non-loopback bind —
     // sign-in does not lift that — unless MARINA_ALLOW_INSECURE_PUBLIC=true).
-    // A loopback login by a person is the operator, so it is sovereign
-    // without MARINA_ADMINS. The agents they run (internal connections) are
-    // residents, not the operator: local-ungated already lifts rank floors
-    // and gates for them, and a stored sovereign rank would outlive the
-    // profile and let residents approve each other's held actions. A remote
-    // connection (only possible under that explicit insecure ack) gets nothing.
+    // A loopback login by a PERSON is the operator, so it is sovereign
+    // without MARINA_ADMINS. Agents are residents, not the operator:
+    // local-ungated already lifts rank floors and gates for them, and a
+    // stored sovereign rank — with every safety gate written at the
+    // GRANTED_DEMONSTRATIONS sentinel — outlives the profile, so gates never
+    // bite again (2026-10-20 audit: all 13 gates × 10 accounts at 999, every
+    // resident and MCP helper among them). An agent is any of the signals
+    // the challenge layer uses: an internal or MCP connection, a client that
+    // declared `principal: "agent"`, or an account with an agent config or
+    // agent principal. A remote connection (only possible under that
+    // explicit insecure ack) gets nothing.
     if (isLocalUngated()) {
       const conn = this.host.connections.get(connId);
-      if (isLoopbackConnection(conn) && !conn?.internal) this.grantSovereign(entity);
+      if (isLoopbackConnection(conn) && !this.isAgentLogin(entity, conn))
+        this.grantSovereign(entity);
       return;
     }
 
@@ -584,6 +590,16 @@ export class AuthCoordinator {
           `MARINA_AUTH=better-auth and use MARINA_AUTH_ADMIN_EMAILS for network admin access.`,
       );
     }
+  }
+
+  /** Agent signals for a login (see `principalKind` in challenges.ts). */
+  private isAgentLogin(
+    entity: Entity,
+    conn: { internal?: boolean; protocol?: string; agent?: boolean } | undefined,
+  ): boolean {
+    if (conn?.internal || conn?.protocol === "mcp" || conn?.agent) return true;
+    const db = this.host.db;
+    return !!db && (!!db.getAgentConfig(entity.name) || !!db.getPrincipal("agent", entity.name));
   }
 
   /** Promote an entity to sovereign (rank 9) + all safety gates (operator bootstrap). */

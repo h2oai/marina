@@ -1,8 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { mulberry32 } from "../../src/stats";
 import { queryWithUsage, replyLabels } from "../modes/passthrough";
-import { mulberry32 } from "../stats";
 import type { BenchmarkConfig, DatasetItem, ItemUsage, Message, ResultItem } from "../types";
 import { addCallUsage } from "../usage";
 

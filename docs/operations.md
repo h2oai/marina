@@ -251,6 +251,37 @@ bun run monitor --every 1m --desktop
 
 Or run one check (no `--every`) from a scheduler you already use, or from another machine with `--url`. `--desktop` uses `notify-send` on Linux and `osascript` on macOS; where neither exists it says so and skips.
 
+## Operational hygiene: dead jobs, unanswered holds, gate grants
+
+Built features stay inert when nobody sees what they produce. These commands show the state and
+fix it. Every change is either a safe expiry of work that can no longer run, or an explicit
+operator command with a dry run.
+
+| Command | Who | What it does |
+|---|---|---|
+| `ops assistance` | anyone | Counts memory-assistance jobs by state and shows what the hourly pass would expire (dead: deadline passed, or the worker's account has no running agent or live connection) |
+| `ops assistance expire` | operator | Runs that pass now: state `expired`, one memory event per job, nothing deleted (also part of `ops recover`) |
+| `ops assistance restore <job>` | operator | Reopens an expired job as `pending` while its deadline is still ahead |
+| `challenge summary [days]` | anyone | Recent held actions: approved, denied, expired unanswered and open, by class and requester |
+| `ops inbox` | anyone | Includes `challenge:unanswered`, which stays open while holds expire with nobody answering; resolve it with `ops resolve <id>` once you've seen it |
+| `gate audit` | anyone | Every operator-grant (999) gate row by holder, with agent accounts flagged |
+| `gate reset <entity\|agents> [gate\|all]` | anyone (dry run) | Lists the operator-grant rows a reset would revoke. Nothing changes |
+| `gate reset … apply` | operator | Revokes those rows (demonstrated competence stays), with one chronicle event per holder. Undo with `gate grant <entity> <gate>` |
+
+Set `MARINA_OPS_NOTIFY` so a held action reaches you the moment it opens, not after it expires: an
+http(s) URL gets a JSON POST, or `cmd:<program>` runs a local notifier, for example
+`MARINA_OPS_NOTIFY=cmd:notify-send -a Marina`. Notices never include the held input. The dashboard's
+attention drawer also raises a desktop notification for held actions once desktop alerts are enabled.
+
+Gate grants are never reset on boot. Before 2026-10-13 a `local` profile made every loopback login
+sovereign, agents included, so an older database may show every resident holding every gate. Run
+`gate audit`, then `gate reset agents` to see the plan, and add `apply` when you want gates to
+bite again. Under the `local` profile gates are lifted anyway; the rows matter once the profile or
+`MARINA_AUTONOMY` changes.
+
+Standing from retired kinds (`chronicled`, `pool_note`, …) is history only by default
+(`MARINA_STANDING_RETIRED=exclude`). `standing` shows it separately, and no row is deleted.
+
 ## Row retention
 
 Marina writes a row per command, per agent tool call, per memory operation and per
@@ -269,6 +300,7 @@ pass — a backlog drains over a few hours rather than stalling one tick), and o
 | `event_log` | telemetry | newest `MARINA_EVENT_RETENTION` rows (default 100k) |
 | `direct_messages` (acknowledged / expired / deadline-less) | ledger | 90 d |
 | `cognitive_events`, `productivity_sessions`, `core_memory_history`, `media_jobs`, `memory_assistance_actions` | ledger | 90 d |
+| `memory_requests` (continuity-journal receipts only) | telemetry | 7 d |
 | `witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events`, `benchmark_runs` | audit | 365 d |
 | `shell_log` | audit | 90 d |
 | `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events` | append-only | never |

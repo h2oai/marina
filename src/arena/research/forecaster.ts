@@ -51,6 +51,9 @@ import {
   newJudgeRecord,
 } from "../../forecast/judge";
 import { requireResearchEvidence } from "../../research/admission";
+import { closedBookRetriever } from "../../research/isolation";
+import type { ResearchReport, Retriever } from "../../research/retrieve";
+import { type PageText, type VerifiedDossier, verifyDossier } from "../../research/verify";
 import { forecastRound, type RoundForecast } from "../forecast";
 import { median } from "../formations";
 import type { Complete } from "../model-forecaster";
@@ -81,9 +84,6 @@ import {
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "../types";
 import { buildResearchBrief } from "./briefs";
 import type { CiviqsDaily } from "./civiqs-nowcast";
-import { closedBookRetriever } from "./isolation";
-import type { ResearchReport, Retriever } from "./retrieve";
-import { type PageText, type VerifiedDossier, verifyDossier } from "./verify";
 
 const MAX_SD_MOVE = 4;
 /**

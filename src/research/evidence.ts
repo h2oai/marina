@@ -4,10 +4,10 @@
 /** Portable evidence captured once, verified against those bytes, and replayed without I/O. */
 import { createHash } from "node:crypto";
 import type { ResearchBrief } from "../arena/research/briefs";
-import type { ResearchReport, Retriever, Source } from "../arena/research/retrieve";
-import { fetchAllowed, type PageText, verifyDossier } from "../arena/research/verify";
 import { getErrorMessage } from "../engine/errors";
 import { type EvidenceIndex, indexEvidence } from "./evidence-index";
+import type { ResearchReport, Retriever, Source } from "./retrieve";
+import { fetchAllowed, type PageText, verifyDossier } from "./verify";
 
 export const evidenceHash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");

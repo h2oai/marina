@@ -108,3 +108,132 @@ export function dailyRows(
   if (opts.mode === "all") return open;
   return open.filter((r) => noAnswer(standing[r.id]) || endMs(r) - t <= opts.nearEndMs);
 }
+
+/**
+ * When the watcher answers (`--answer`, 2026-10-20):
+ *   - `early` (the `watch` default): a new batch is forecast at once, then
+ *     re-forecast daily (`--daily`) and once before the deadline;
+ *   - `late`: nothing runs when the batch arrives. Each open row is answered
+ *     ONCE, inside `--final-lead-hours` of its own cutoff — the batch deadline,
+ *     or the row's end time when that comes first — so the answer sees as much
+ *     news as possible and costs one forecast per row. A row whose answer is
+ *     missing or a fallback is retried on the next check inside its window.
+ */
+export type AnswerTiming = "early" | "late";
+export const ANSWER_TIMINGS: readonly AnswerTiming[] = ["early", "late"];
+
+/** The rows a `late` pass answers at `now` (open, unanswered, inside their lead window). */
+export function lateRows(
+  rows: readonly FuturexRow[],
+  standing: Readonly<Record<string, StandingAnswer>>,
+  now: Date,
+  opts: { deadline: Date; leadMs: number },
+): FuturexRow[] {
+  const t = now.getTime();
+  const deadline = opts.deadline.getTime();
+  if (t >= deadline) return [];
+  return rows.filter((r) => {
+    const end = endMs(r);
+    if (end <= t || !noAnswer(standing[r.id])) return false;
+    const cutoff = end > 0 ? Math.min(end, deadline) : deadline;
+    return cutoff - t <= opts.leadMs;
+  });
+}
+
+export interface FuturexUnitOptions {
+  /** Repository checkout the unit runs from (absolute). */
+  repo: string;
+  /** Bun binary (absolute). */
+  bun: string;
+  /** `.env` passed to bun (absolute), or undefined for none. */
+  envFile?: string;
+  /** Data directory for batches and outputs (absolute). */
+  dir: string;
+  /** Comma-separated variant labels (`--run`). */
+  run: string;
+  /** `--variants <file.json>` (absolute), when the labels are not built-ins. */
+  variantsFile?: string;
+  answer: AnswerTiming;
+  finalLeadHours: number;
+  /** MARINA_SPEND_SCOPE_CAP_USD for the unit's own spend scope (must be > 0). */
+  scopeCapUsd: number;
+  /** World database for the spend ledger and submissions (DB_PATH), absolute. */
+  dbPath?: string;
+  learn: boolean;
+  /** Unit base name (`<name>.service` / `<name>.timer`). */
+  name: string;
+}
+
+/** systemd escaping for one ExecStart argument (spaces, quotes, `%`). */
+function systemdArg(arg: string): string {
+  const escaped = arg.replaceAll("%", "%%");
+  return /[\s"'\\]/.test(escaped)
+    ? `"${escaped.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+    : escaped;
+}
+
+/**
+ * A systemd user service + hourly timer for the watcher. Text only: nothing
+ * is installed or enabled here (`bun run futurex schedule` prints it, or
+ * writes it to `--out`); the operator decides whether to activate it. The
+ * timer is `Persistent=` so a check missed while the machine slept runs on
+ * wake, and the service carries its own capped spend scope.
+ */
+export function futurexSystemdUnits(o: FuturexUnitOptions): { service: string; timer: string } {
+  if (!(o.scopeCapUsd > 0))
+    throw new Error("scopeCapUsd must be > 0 (an uncapped timer is refused)");
+  const args = [
+    o.bun,
+    ...(o.envFile ? [`--env-file=${o.envFile}`] : []),
+    "scripts/futurex.ts",
+    "watch",
+    "--once",
+    "--answer",
+    o.answer,
+    ...(o.answer === "early" ? ["--daily"] : []),
+    "--final-lead-hours",
+    String(o.finalLeadHours),
+    "--run",
+    o.run,
+    "--dir",
+    o.dir,
+    ...(o.variantsFile ? ["--variants", o.variantsFile] : []),
+    ...(o.learn ? ["--learn"] : []),
+  ];
+  const when =
+    o.answer === "late"
+      ? `answers each row once, within ${o.finalLeadHours} h of its cutoff`
+      : `answers new batches at once, re-forecasts daily and ${o.finalLeadHours} h before the deadline`;
+  const service = [
+    "[Unit]",
+    `Description=Marina FutureX watcher (${when})`,
+    `Documentation=file://${o.repo}/docs/guides/futurex.md`,
+    "Wants=network-online.target",
+    "After=network-online.target",
+    "",
+    "[Service]",
+    "Type=oneshot",
+    `WorkingDirectory=${o.repo}`,
+    `Environment=MARINA_SPEND_SCOPE=${o.name}`,
+    `Environment=MARINA_SPEND_SCOPE_CAP_USD=${o.scopeCapUsd}`,
+    ...(o.dbPath ? [`Environment=DB_PATH=${o.dbPath}`] : []),
+    `ExecStart=${args.map(systemdArg).join(" ")}`,
+    "TimeoutStartSec=6h",
+    "Nice=10",
+    "",
+  ].join("\n");
+  const timer = [
+    "[Unit]",
+    `Description=Hourly check for ${o.name}.service`,
+    "",
+    "[Timer]",
+    "OnCalendar=hourly",
+    "RandomizedDelaySec=5m",
+    "Persistent=true",
+    "",
+    "[Install]",
+    "WantedBy=timers.target",
+    "",
+  ].join("\n");
+  return { service, timer };
+}

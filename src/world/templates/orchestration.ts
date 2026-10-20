@@ -1,6 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/**
+ * Status: demo. The 16 patterns are pool-note templates written by
+ * `project <name> orchestrate <pattern>`; the live world has used them only in
+ * demos (no persisted crews). See docs/reference/feature-status.md.
+ */
 export interface TemplateNote {
   content: string;
   importance: number;

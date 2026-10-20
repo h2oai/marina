@@ -14,12 +14,12 @@
  */
 
 import { spawn } from "node:child_process";
-import { fetchAllowed, VERIFY_USER_AGENT } from "../arena/research/verify";
 import { getErrorMessage } from "../engine/errors";
 import { decodeEntities, extractReadableText } from "../engine/html-text";
 import { guardedFetch } from "../net/url-guard";
 import { type BrowserReader, needsRender } from "./browser-reader";
 import { isPdf, type PageCapture, type ProvenanceCache } from "./provenance-cache";
+import { fetchAllowed, VERIFY_USER_AGENT } from "./verify";
 
 export interface PageLink {
   text: string;

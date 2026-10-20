@@ -27,8 +27,8 @@ import {
   runLookups,
   voteHubLookup,
 } from "../../forecast/lookups";
+import { isDateStrict, type ResearchReport, type Retriever } from "../../research/retrieve";
 import type { ResearchBrief } from "./briefs";
-import { isDateStrict, type ResearchReport, type Retriever } from "./retrieve";
 import { arenaLookupSpec, arenaSignalEntry, arenaSignalSet } from "./signal-map";
 
 /** FRED series per lookup call (the lookup's own cap); more named series run in chunks. */

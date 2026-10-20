@@ -45,8 +45,8 @@
  * `src/arena/research/read-swarm-retriever.ts`).
  */
 
-import { foldForQuote } from "../arena/research/verify";
 import type { DecisionProvider } from "../decisions/types";
+import { foldForQuote } from "../research/verify";
 import {
   type Candidate,
   decomposeQuestion,

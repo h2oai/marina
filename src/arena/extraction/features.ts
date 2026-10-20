@@ -17,8 +17,8 @@
 
 import { getErrorMessage, logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
+import type { Retriever } from "../../research/retrieve";
 import type { Complete } from "../model-forecaster";
-import type { Retriever } from "../research/retrieve";
 
 /** One extracted fact about one subject. */
 export interface AttentionFeature {

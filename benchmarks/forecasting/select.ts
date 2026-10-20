@@ -42,9 +42,9 @@ import { SpendGuard } from "../../src/engine/spend-guard";
 import { dailyCapRefusal } from "../../src/engine/spend-ledger";
 import type { TypedForecastAnswer, TypedForecastRequest } from "../../src/forecast/typed";
 import type { MarinaStores } from "../../src/persistence/interfaces";
+import { twoStageBootstrap } from "../../src/stats";
 import { idsDigest, openJournal } from "../journal";
 import { defaultReplicateGroup } from "../replicates";
-import { mulberry32 } from "../stats";
 import {
   configModels,
   describeConfig,
@@ -409,7 +409,7 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
 /**
  * Leader minus candidate, two-stage bootstrap: resample each side's replicate
  * runs, then the items (paired), 2 000 times; the observed difference and its
- * 95 % percentile interval.
+ * 95 % percentile interval (`twoStageBootstrap` in `src/stats`).
  */
 export function pairedBootstrap(
   leader: Array<Map<string, number>>,
@@ -418,26 +418,14 @@ export function pairedBootstrap(
   iterations = 2_000,
   seed = 11,
 ): { diff: number; ci: [number, number] } {
-  const rand = mulberry32(seed);
-  const pick = <T>(xs: T[]) => xs[Math.floor(rand() * xs.length)]!;
-  const itemMean = (runs: Array<Map<string, number>>, id: string) =>
-    runs.reduce((s, r) => s + (r.get(id) ?? 0), 0) / runs.length;
-  const observed =
-    ids.reduce((s, id) => s + itemMean(leader, id) - itemMean(other, id), 0) / ids.length;
-  const stats: number[] = [];
-  for (let k = 0; k < iterations; k++) {
-    const l = leader.map(() => pick(leader));
-    const o = other.map(() => pick(other));
-    let s = 0;
-    for (let j = 0; j < ids.length; j++) {
-      const id = pick(ids);
-      s += itemMean(l, id) - itemMean(o, id);
-    }
-    stats.push(s / ids.length);
-  }
-  stats.sort((a, b) => a - b);
-  const q = (p: number) => stats[Math.min(stats.length - 1, Math.floor(p * stats.length))]!;
-  return { diff: round(observed), ci: [round(q(0.025)), round(q(0.975))] };
+  if (ids.length === 0 || leader.length === 0 || other.length === 0)
+    return { diff: Number.NaN, ci: [Number.NaN, Number.NaN] };
+  const b = twoStageBootstrap(leader, other, ids, {
+    resamples: iterations,
+    seed,
+    quantiles: [0.025, 0.975],
+  });
+  return { diff: round(b.mean), ci: [round(b.low), round(b.high)] };
 }
 
 function fileRun(

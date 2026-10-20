@@ -34,8 +34,6 @@
  */
 
 import type { ResearchBrief, SourceExclusion } from "../arena/research/briefs";
-import type { ResearchReport, Retriever } from "../arena/research/retrieve";
-import { defaultPageText, type PageText, quoteBody, verifyDossier } from "../arena/research/verify";
 import { getErrorMessage } from "../engine/errors";
 import { extractJsonValue } from "../repair/output-repair";
 import { type ResearchCheckpoint, ResearchInterrupted } from "./checkpoint";
@@ -56,6 +54,8 @@ import {
   SECTION_SYSTEM,
   sectionLength,
 } from "./prompts";
+import type { ResearchReport, Retriever } from "./retrieve";
+import { defaultPageText, type PageText, quoteBody, verifyDossier } from "./verify";
 
 export type Complete = (system: string, user: string) => Promise<string>;
 

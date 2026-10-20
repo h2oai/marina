@@ -9,12 +9,24 @@
  * never more than the parent's own cap.
  *
  *   model_api  — `/v1` passthru, when an upstream call completes (benchmark
- *                runs, agents on `marina/*`, any OpenAI client)
+ *                runs, agents on `marina/*`, any OpenAI client), and an
+ *                in-process library call outside forecasting (`src/model`:
+ *                lessons, outcome extraction, the web swarm, benchmarks)
  *   agent      — an agent turn priced by its OWN provider; a turn priced from
  *                the proxy's `x-marina-cost-usd` header is already model_api
- *   decision   — a decision backend call that reported a cost
+ *   decision   — a decision backend call that reported a cost, and a
+ *                `src/model` call made as a judge
  *   forecast   — forecast / arena analyst and retrieval calls
  *   media      — image / video generation, at the provider's estimated price
+ *   search     — a paid search API call
+ *
+ * Purposes: a `src/model` call also records WHAT it was for (forecast,
+ * arena, research, lessons, outcomes, swarm, judge, benchmark, …) as a
+ * reserved scope row `purpose:<name>` in `spend_scope_daily`, written in the
+ * same transaction as the global row (no schema change: the source CHECK
+ * keeps its six values). Purpose rows are a breakdown, never a cap: they are
+ * left out of the budget-scope readouts (`scopeSpendToday`) and read with
+ * `purposeSpendToday`; `MARINA_SPEND_SCOPE` may not use the `purpose:` prefix.
  *
  * One ledger per world database. The engine attaches a sink that persists the
  * day's totals (`spend_daily`), and every command-line process that opens the
@@ -48,8 +60,8 @@ import { openSharedSpendLedger, sharedSpendLedgerPath } from "./shared-spend-led
 export type SpendSource = "model_api" | "agent" | "decision" | "forecast" | "media" | "search";
 
 export interface SpendSink {
-  /** Record `usd` for the day (and, when given, the scope) atomically. */
-  add(day: string, source: SpendSource, usd: number, scope?: string): void;
+  /** Record `usd` for the day (and, when given, the scope and purpose rows) atomically. */
+  add(day: string, source: SpendSource, usd: number, scope?: string, purpose?: string): void;
   /** The world's persisted total for the day, across every process. */
   totalFor(day: string): number;
   /** The persisted total for one scope; absent = the sink keeps no scopes. */
@@ -123,7 +135,7 @@ export function attachSpendLedger(next: SpendSink): () => void {
 
 /** The persistence a database-backed sink needs (`MarinaDB` fits). */
 export interface SpendLedgerStore {
-  addDailySpend(day: string, source: string, usd: number, scope?: string): void;
+  addDailySpend(day: string, source: string, usd: number, scope?: string, purpose?: string): void;
   getDailySpend(day: string): { cost_usd: number }[];
   getScopeDailySpend(day: string, scope?: string): { scope: string; cost_usd: number }[];
 }
@@ -135,9 +147,9 @@ export interface SpendLedgerStore {
  */
 export function dbSpendSink(db: SpendLedgerStore, onError?: (error: unknown) => void): SpendSink {
   return {
-    add: (day, source, usd, scope) => {
+    add: (day, source, usd, scope, purpose) => {
       try {
-        db.addDailySpend(day, source, usd, scope);
+        db.addDailySpend(day, source, usd, scope, purpose);
       } catch (error) {
         if (!onError) throw error;
         onError(error);
@@ -186,7 +198,7 @@ export function attachWorldSpendLedger(
   const shared = openSharedSpendLedger(path);
   const world = db ? dbSpendSink(db) : undefined;
   const release = attachSpendLedger({
-    add: (day, source, usd, scope) => {
+    add: (day, source, usd, scope, purpose) => {
       let failure: unknown;
       try {
         shared.add(day, source, usd, scope);
@@ -194,7 +206,8 @@ export function attachWorldSpendLedger(
         failure = error;
       }
       try {
-        world?.add(day, source, usd, scope);
+        // Purpose rows are a per-world breakdown; the shared file keeps totals and caps.
+        world?.add(day, source, usd, scope, purpose);
       } catch (error) {
         failure ??= error;
       }
@@ -241,6 +254,7 @@ export function recordSpend(
   usd: number | undefined,
   now = Date.now(),
   env: NodeJS.ProcessEnv = process.env,
+  purpose?: string,
 ): void {
   if (!usd || !Number.isFinite(usd) || usd <= 0) return;
   roll(now);
@@ -248,12 +262,49 @@ export function recordSpend(
   const name = scope?.valid ? scope.name : undefined;
   today += usd;
   if (name) scopeToday.set(name, (scopeToday.get(name) ?? 0) + usd);
+  const label = purpose && PURPOSE_NAME.test(purpose) ? `${PURPOSE_PREFIX}${purpose}` : undefined;
   try {
-    sink?.target.add(currentDay, source, usd, name);
+    sink?.target.add(currentDay, source, usd, name, label);
   } catch {
     // Persisting is best effort (the engine's sink already logs failures);
     // the best known total still enforces the cap.
   }
+}
+
+/** The reserved scope prefix of a purpose row (`purpose:lessons`). */
+export const PURPOSE_PREFIX = "purpose:";
+/** Purpose names: lower-case letters, digits, `.`, `_`, `-` (≤ 32). */
+const PURPOSE_NAME = /^[a-z0-9][a-z0-9._-]{0,31}$/;
+
+/**
+ * Record `usd` under `source` AND the purpose it was spent for: the global
+ * row once, plus a `purpose:<name>` breakdown row. An invalid purpose name
+ * still records the dollar (never drops spend), just without the breakdown.
+ */
+export function recordPurposeSpend(
+  purpose: string,
+  source: SpendSource,
+  usd: number | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+  now = Date.now(),
+): void {
+  recordSpend(source, usd, now, env, purpose);
+}
+
+/** Today's spend per purpose in this world's database, largest first. */
+export function purposeSpendToday(
+  db: Pick<SpendLedgerStore, "getScopeDailySpend">,
+  now = Date.now(),
+): { purpose: string; spentUsd: number }[] {
+  const by = new Map<string, number>();
+  for (const row of db.getScopeDailySpend(utcDay(now))) {
+    if (!row.scope.startsWith(PURPOSE_PREFIX)) continue;
+    const purpose = row.scope.slice(PURPOSE_PREFIX.length);
+    by.set(purpose, (by.get(purpose) ?? 0) + row.cost_usd);
+  }
+  return [...by]
+    .map(([purpose, spentUsd]) => ({ purpose, spentUsd }))
+    .sort((a, b) => b.spentUsd - a.spentUsd || a.purpose.localeCompare(b.purpose));
 }
 
 export function spentTodayUsd(now = Date.now()): number {
@@ -280,6 +331,8 @@ export function scopeSpendToday(
   const day = utcDay(now);
   const rows = sink?.target.scopeRowsFor?.(day) ?? db.getScopeDailySpend(day);
   for (const row of rows) {
+    // Purpose rows are a breakdown of the world total, not a budget scope.
+    if (row.scope.startsWith(PURPOSE_PREFIX)) continue;
     by.set(row.scope, (by.get(row.scope) ?? 0) + row.cost_usd);
   }
   return [...by]
@@ -329,7 +382,10 @@ export function spendScope(env: NodeJS.ProcessEnv = process.env): SpendScope | u
   const raw = env.MARINA_SPEND_SCOPE?.trim();
   if (!raw) return undefined;
   const name = raw.toLowerCase();
-  return SCOPE_NAME.test(name) ? { valid: true, name } : { valid: false, raw };
+  // `purpose:` rows are the per-purpose breakdown; a scope may not alias them.
+  return SCOPE_NAME.test(name) && !name.startsWith(PURPOSE_PREFIX)
+    ? { valid: true, name }
+    : { valid: false, raw };
 }
 
 /**

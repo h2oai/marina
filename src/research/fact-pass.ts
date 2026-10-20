@@ -16,11 +16,11 @@
  * a run with and without the pass share the same research and draft.
  */
 
-import { figuresMissing } from "../arena/research/verify";
 import { extractJsonValue } from "../repair/output-repair";
 import { citedNumbers, type Evidence, normalizeCitationMarkers } from "./citations";
 import { FACT_PASS_SYSTEM, languageName } from "./prompts";
 import { evidenceBlock, finishReport, type ReportModel, type ResearchReportResult } from "./report";
+import { figuresMissing } from "./verify";
 
 export interface FactEdit {
   section: number;

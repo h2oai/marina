@@ -55,6 +55,7 @@ export const JOB_STATE_CLASS: Record<MemoryJobState, string> = {
   answered: "border-emerald-400/60 bg-emerald-400/10 text-emerald-400",
   abstained: "border-violet-400/60 bg-violet-400/10 text-violet-300",
   cancelled: "border-border text-text-dim",
+  expired: "border-border text-text-dim",
 };
 
 export const JOB_MARKER_LABEL: Record<MemoryJobMarker, string> = {

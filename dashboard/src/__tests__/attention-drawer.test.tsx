@@ -3,7 +3,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AttentionDrawer } from "../components/AttentionDrawer";
+import { AttentionDrawer, notifiableAttention } from "../components/AttentionDrawer";
 
 const refetch = vi.fn(async () => undefined);
 const postApi = vi.fn(async (..._args: unknown[]) => ({ ok: true }));
@@ -69,6 +69,16 @@ describe("AttentionDrawer", () => {
       expect(postApi).toHaveBeenCalledWith("/api/operations/alerts/1/ack", undefined),
     );
     expect(refetch).toHaveBeenCalled();
+  });
+});
+describe("notifiableAttention", () => {
+  it("raises a desktop notice for a held action waiting on a person, not only for critical alerts", () => {
+    const info = { severity: "info", attention_kind: "operational" };
+    const hold = { severity: "info", attention_kind: "approval" };
+    const critical = { severity: "critical", attention_kind: "operational" };
+    expect(notifiableAttention([info])).toBeUndefined();
+    expect(notifiableAttention([info, hold])).toBe(hold);
+    expect(notifiableAttention([critical, hold])).toBe(critical);
   });
 });
 vi.mock("../hooks/use-routing-overview", () => ({

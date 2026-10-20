@@ -2,9 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
 import { renderEnvironmentReference } from "../scripts/generate-environment-reference";
 import { rewriteGuideLinks } from "../site/scripts/guide-links";
 import { ENVIRONMENT_REFERENCE_PATH, environmentCatalog } from "../src/config/environment";
+import {
+  EXPERIMENTAL_HELP_PREFIX,
+  experimentalHelp,
+  FEATURE_STATUS,
+} from "../src/config/feature-status";
 import { Engine } from "../src/engine/engine";
 import { SAFETY_GATES } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
@@ -286,6 +292,49 @@ describe("documentation contract — structure", () => {
 
     expect(ids.length).toBeGreaterThan(0);
     expect(ids.filter((id) => !mentions(doc, id))).toEqual([]);
+  });
+
+  it("keeps docs/reference/feature-status.md in step with FEATURE_STATUS", async () => {
+    const page = await readDoc("docs/reference/feature-status.md");
+    const rows = FEATURE_STATUS.map(
+      (f) => `| ${f.name} | ${f.status} | ${f.enable} | ${f.owner} |`,
+    );
+    expect(rows.filter((row) => !page.includes(`${row}\n`))).toEqual([]);
+    // No row in the page's feature table that the registry lacks.
+    const table = page.split("| Feature | Status | How to enable | Owner area |")[1] ?? "";
+    const pageRows =
+      table
+        .split("\n\n")[0]
+        ?.split("\n")
+        .filter((l) => l.startsWith("| ")) ?? [];
+    expect(pageRows.filter((row) => !rows.includes(row))).toEqual([]);
+    // Linked from the docs index and the README.
+    expect(await readDoc("docs/guides/README.md")).toContain("(../reference/feature-status.md)");
+    expect(await readDoc("README.md")).toContain("(docs/reference/feature-status.md)");
+    // Every owner path exists, every MARINA_* knob is in the environment reference.
+    const missing = FEATURE_STATUS.flatMap((f) => f.owner.split(", ")).filter(
+      (path) => !existsSync(path),
+    );
+    expect(missing).toEqual([]);
+    const reference = await readDoc(ENVIRONMENT_REFERENCE_PATH);
+    // Exact knobs only; a family wildcard such as `MARINA_ARENA_*` is skipped.
+    const knobs = FEATURE_STATUS.flatMap((f) => f.enable.match(/MARINA_[A-Z0-9_]+\*?/g) ?? []);
+    expect(knobs.filter((k) => !k.endsWith("*") && !reference.includes(`# ${k}=`))).toEqual([]);
+  });
+
+  it("labels the help of exactly the commands FEATURE_STATUS marks experimental", () => {
+    expect(experimentalHelp(experimentalHelp("x"))).toBe(`${EXPERIMENTAL_HELP_PREFIX} x`);
+    const builtins = new Map(engine.commands.allBuiltins().map((cmd) => [cmd.name, cmd]));
+    const listed = FEATURE_STATUS.flatMap((f) => f.commands ?? []);
+    for (const f of FEATURE_STATUS) if (f.commands) expect(f.status).toBe("experimental");
+    expect(listed.filter((name) => !builtins.has(name))).toEqual([]);
+    expect(
+      listed.filter((name) => !builtins.get(name)?.help.startsWith(EXPERIMENTAL_HELP_PREFIX)),
+    ).toEqual([]);
+    const labelled = [...builtins.values()]
+      .filter((cmd) => cmd.help.startsWith(EXPERIMENTAL_HELP_PREFIX))
+      .map((cmd) => cmd.name);
+    expect(labelled.filter((name) => !listed.includes(name))).toEqual([]);
   });
 
   it("resolves every registered builtin to a source file under src/engine/commands/", async () => {

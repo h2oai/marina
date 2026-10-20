@@ -68,3 +68,16 @@ export const BUILTIN_WORLD_SUMMARIES: Record<string, string> = {
   research: "Research lab: evidence-first investigation, experiments and synthesis",
   showcase: "Full capability showcase: every room template, seeded projects, crews and benchmarks",
 };
+
+/**
+ * What each builtin world is for, honestly: `core` worlds back real use
+ * (`default` is the live Workbench, `empty` the minimal base for tests and
+ * hosts); every other builtin is a `demo` — showcase material that no
+ * production deployment selects. See docs/reference/feature-status.md.
+ */
+export const BUILTIN_WORLD_STATUS: Record<string, "core" | "demo"> = Object.fromEntries(
+  Object.keys(BUILTIN_WORLDS).map((slug) => [
+    slug,
+    slug === "default" || slug === "empty" ? "core" : "demo",
+  ]),
+);

@@ -7,7 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Operational rot that kept built features inert** (2026-10-20 usage audit of the live world).
+  - **Dead memory-assistance jobs expire.** The live world held 334 pending and 15 running
+    evaluator jobs, all past their deadline, after the Evaluator agent left; the state column never
+    moved. An hourly pass (`src/engine/assistance-expiry.ts`) sets a new terminal state `expired`
+    when the deadline passed, or when the worker's world account has no running agent or live
+    connection (15 min grace, never during a live lease). It writes one
+    `assistance.expired.<reason>` memory event per job and deletes nothing.
+    `ops assistance [expire|restore <job>]` reports, runs the pass or reopens a job, and
+    `ops recover` includes the pass. The memory overview counts `expired24h`.
+  - **Unanswered challenges reach the operator.** All 21 live holds expired unanswered. Expiries
+    now keep one rolling `challenge:unanswered` ops-inbox item open until an operator resolves it.
+    `challenge summary [days]` reports outcomes by class and requester.
+    `MARINA_OPS_NOTIFY` (default off; webhook URL or `cmd:<program>`) pushes content-free notices
+    when a hold opens and when holds go unanswered. The dashboard attention drawer's desktop
+    notification also fires for held actions.
+  - **Retired standing kinds no longer count.** 97 of 106 live ledger rows were `chronicled` or
+    `pool_note`, which can no longer be earned. They stay as history (shown separately by
+    `standing`) but count toward no standing, rank or decision by default
+    (`MARINA_STANDING_RETIRED=exclude`; `decay` restores the old fade-out). Every live kind is
+    covered by a test.
+  - **Agents are no longer made sovereign at login.** Under the `local` profile a loopback MCP,
+    declared-agent or agent-account login was still promoted to rank 9 with every safety gate at the
+    999 grant sentinel. That is how all 13 gates × 10 live accounts were pre-seeded, so gates never
+    bit. Only a loopback person is now. Existing databases are not reset on boot: `gate audit` lists
+    grant rows by holder, and `gate reset <entity|agents> [gate|all]` is a dry run until `apply`
+    (operator only). It revokes sentinel rows only and chronicles each holder.
+  - **Fewer `memory` round trips and receipts.** `DurableResidentMemory` checkpoint-only saves
+    reuse the remembered checkpoint instead of re-reading it (the CAS still guards it; archive and
+    journal writes still read fresh). Saves that only change `timestamp` are skipped. Preference reads back off from every 50 to every 400 cycles while
+    unchanged. The retention pass prunes continuity-journal receipts in `memory_requests` after
+    7 days (94 % of the live world's 629k rows); every other receipt is kept.
+  - **FutureX can answer late on an opt-in schedule.** `watch --answer late` answers each open row
+    once, within `--final-lead-hours` of its own cutoff. `bun run futurex schedule` prints (or
+    writes with `--out`) a systemd user service and hourly timer that answer late by default, with
+    their own capped spend scope. It installs, enables and starts nothing.
+
 ### Added
+
+- **An honest feature surface** ([docs/reference/feature-status.md](docs/reference/feature-status.md)).
+  Every major feature now has one status: core, siloed, experimental, demo or deprecated. The page
+  also says how to enable each feature and which area owns it. The table mirrors `FEATURE_STATUS`
+  (`src/config/feature-status.ts`), and the documentation contract test keeps the two in step. It
+  is linked from the guides index and the README.
+  - World commands that only serve an experimental feature now start their help with
+    `[experimental]`: `inquiry`, `schedule`, `evolve`, `experiment`, `market`, `position`,
+    `gateway`, `mesh` and `learned`. Behaviour is unchanged, and they keep the same rank, gates and
+    spend caps.
+  - `marina worlds` marks the 13 demo worlds `[demo]` and adds `"status"` to `--json`.
+    `BUILTIN_WORLD_STATUS` lists `default` and `empty` as core.
+  - The following are now labelled experimental in code and in the environment reference:
+    - the embedding lifecycle (`MARINA_DATA_DIR` endpoint file, `MARINA_IDLE_SHUTDOWN`,
+      `MARINA_PARENT_PID`, `marina endpoint`), labelled "for embedders (Flow, Nov 2026)" and kept;
+    - the shared spend ledger (`MARINA_SPEND_LEDGER`);
+    - adaptive load balancing (`X-Load-Balance: adaptive`);
+    - `POST /v1/patterns/run`, kept for a planned `pattern run` command;
+    - native evolution protocols.
+  - The 16 orchestration templates are labelled demo.
+- **H2O-Lightning decision preset (experimental, off by default).**
+  - `MARINA_DECISIONS=lightning` (alias `h2o-lightning`, also settable at runtime with
+    `admin decisions set backend lightning`) asks H2O-Lightning through OpenRouter's Decisions API.
+  - No model id ships, so the preset stays off until `MARINA_LIGHTNING_MODEL` names its OpenRouter
+    id. A leftover `MARINA_DECISION_MODEL` is never used for it.
+  - `decision settings` / `admin decisions` print an `H2O-Lightning:` line: not configured,
+    configured without a key, available, or active. The line is read from configuration only and
+    never makes a billed call.
+  - This replaces a comment-only mention in `src/decisions/config.ts`.
 
 - **The Arbiter: adjudication only where answers disagree** (`src/orchestration/arbiter.ts`, all
   surfaces default `off`). The trigger was always-on same-model verification: it overruled correct
@@ -225,6 +292,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One shared model backend for library pipelines** (`src/model/`). Forecast, arena, research,
+  lessons, outcome extraction, the web swarm and benchmark checkers call models through one core
+  (`modelCall`) instead of `src/arena/model-backend.ts` and a second `modelTurns` copy.
+  `src/arena/model-backend.ts` and `src/research/model-turn.ts` are re-exports, and so are the
+  retriever and verifier modules that moved from `src/arena/research/` to `src/research/`
+  (`retrieve`, `verify`, `web-search`, `isolation`, `barred`, `read-swarm-retriever`).
+  - **Spend labels.** Every call names its purpose. The ledger records it under the purpose's
+    source plus a `purpose:<name>` breakdown row in `spend_scope_daily` (no migration; read with
+    `purposeSpendToday`, left out of the budget-scope readouts). Lesson writing, outcome
+    extraction, the web swarm and benchmark checkers move from `forecast` to `model_api`; a judge
+    is `decision`; forecast, arena and research stay `forecast`. `MARINA_SPEND_SCOPE` may not use
+    the reserved `purpose:` prefix.
+  - **No double count.** A loopback `marina/*` call is no longer also priced and recorded by the
+    caller; the `/v1` passthru that serves it records it once as `model_api`.
+  - **Retry.** A transient failure (429, 5xx, network) is retried once by default with backoff
+    (`MARINA_MODEL_RETRIES`, `MARINA_MODEL_RETRY_BASE_MS`). Usage limits, auth, other 4xx, the
+    spend cap, timeouts and aborts are never retried.
+  - **Traces.** Each call mints a `req-…` id and emits `model_request_lifecycle` events
+    (`routeKind: "direct"`, `purpose`, the caller's `traceContext`), so `trace show` covers
+    library calls.
+  - **Route fallback (opt-in).** `MARINA_MODEL_ROUTE_FALLBACK=on` reuses route health: a usage-
+    limited first-party route is served by the same model via OpenRouter. Default off.
+- **One path each for lessons, outcomes, standing, the earned judge and statistics.**
+  - **Lessons.** The arena crew no longer writes or reads its own `arena-crew` `lesson` notes,
+    which were unjudged and went straight into prompts, and a live round no longer teaches twice
+    (`learnFromResolutions` is gone: every accepted filing already settles on the outcome path).
+    The crew reads only the judged pool (`forecastLessonsFor`). A round revealed in
+    `bun run arena evaluate` teaches through the judged loop only, with the round as private
+    context for the leak check; that loop is not armed in an evaluation, so a crew backtest now
+    runs without lessons. Existing note rows stay, unused.
+  - **Outcomes.** A market room's `predict` and `conduct track` also file the resident's call on
+    the outcome path (`fileResidentForecast`), so it resolves with its Sample, teaches lessons
+    (never the forecast pipeline's history) and earns standing. A newer call settles the open one
+    as `superseded` (no score, no outcome). Position boards, `market_scores` and the conductor's
+    shape-prior notes are unchanged.
+  - **Standing.** `forecast_resolved` is paid to the filer and to every resident or agent its
+    filing names as a producer (`BoardFiling.producers`), who are also recorded as the outcome's
+    participants. The existing caps and independence rule apply, and one party is considered once
+    per answer. No new standing kind.
+  - **Earned judge.** `earnedJudge` and one agreement tally (`src/decisions/earned-judge.ts`)
+    replace the two copies of the gate (outcome judges, challenge judge) and the third agreement
+    count in `decision agreement`, which now also shows the lower bound and whether it is earned.
+    The challenge judge's lower bound uses z = 1.959964 instead of 1.96. Verdicts are identical
+    for every case up to 2,000 allow calls.
+  - **Statistics.** `benchmarks/stats.ts` and `benchmarks/replicate-stats.ts` moved to
+    `src/stats/` (shims stay at the old paths), so core no longer imports from the harness tree.
+    The bootstrap, Wilson and PRNG copies in the harnesses, `src/learned` and scripts now call
+    it. `test/stats-equivalence.test.ts` checks each against a frozen copy of its original with
+    exact equality.
+- **In-world `benchmark run` measures residents** (`src/engine/benchmark-target.ts`). Before,
+  a bare `benchmark run` sent every item to the upstream model with no resident involved.
+  - `crew:<name>` measures that crew. With no target, the run measures the world's one serving
+    crew; it is refused when there is none or several, and never falls back to the bare model.
+  - `model:<id>` is a bare-model control, recorded `targetKind: "model"`, `control: true`, and
+    labelled as one. `model:marina:<name>` still means the crew `<name>`.
+  - Crew runs always get a run key, and file as `crew` targets with trace-resolved participants,
+    so resident work reaches route evidence.
+- **No self-grading by default** (`src/engine/benchmark-judge.ts`, harness and in-world).
+  - Judge-scored benchmarks use `judge:` / `--judge-model`, else the new
+    `MARINA_BENCHMARK_JUDGE_MODEL`, else `marina/default`.
+  - A judge that names the target is refused unless `self-judge:on` / `--self-judge` opts in. The
+    opt-in is recorded, and the ledger judge reads `[self-judge]`.
+  - The harness default used to be the target itself. The tier0 direct-provider control keeps
+    target grading, now through an explicit `--self-judge`.
+  - Benchmarks that no judge grades record no judge.
+- **One benchmark registry** (`src/engine/benchmark-registry.ts`). The harness, the in-world
+  list and the web UI derive from it, and `test/benchmark-registry.test.ts` fails on drift. The
+  world can now run narrativeqa, mt-bench, retention and aime-2025.
+- **Native crew runs file to the ledger and score formation adherence.** A live
+  `bun run bench:native` run files a `crew` run (`native-<task>`, oracle judge) into its server's
+  ledger, with `--file-to`, `--group` and `--no-file` options. Its config carries formation
+  adherence over the run window.
+- **Formation adherence is scored from `CREW_BRIEFS`.** Hand-written checks count only while
+  their anchor phrase is still in the live brief, and every uncovered brief clause becomes a
+  judge question. Every formation is scorable, and an edited brief can no longer leave a stale
+  copy scoring the old protocol.
+
 - **Faster fresh installs**: new databases start from the schema-167 baseline (v0.8.0) instead of
   137, about 2.5× faster to create. Existing databases upgrade exactly as before (#500).
 - **Silent promise failures are logged or justified**: the empty-catch check covers
@@ -248,6 +392,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read as a fallback). Walk-forward on Season 0: mean per-round skill 0.129 → 0.180.
 
 ### Fixed
+
+- **`benchmark run` / `sweep` accept the documented `key:value` modifiers.** `arm:bare`,
+  `cap:5`, `lessons:on` and `model:…` were silently ignored before: only `--key value` parsed.
 
 - **Wikimedia client politeness**: MediaWiki action-API requests are spaced 500 ms apart
   (REST stays at 100 ms) and one HTTP 429 is retried after its `Retry-After` (up to 30 s).

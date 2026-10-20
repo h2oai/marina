@@ -18,7 +18,6 @@ import { hleGoldImageItems, hleGoldTextItems } from "../benchmarks/download";
 import { defaultTimeoutMs, usageFromResponse } from "../benchmarks/modes/passthrough";
 import { resultForDisk } from "../benchmarks/result-file";
 import { parseEquivalenceVerdict } from "../benchmarks/scoring/judge";
-import { mcnemarExact, pairedBootstrap, wilsonInterval } from "../benchmarks/stats";
 import {
   failureReason,
   formatTier0Summary,
@@ -35,6 +34,7 @@ import type {
   ResultItem,
 } from "../benchmarks/types";
 import { formatUsd, summarizeUsage } from "../benchmarks/usage";
+import { mcnemarExact, pairedBootstrap, wilsonInterval } from "../src/stats";
 
 describe("Wilson interval", () => {
   it("matches known 95% values", () => {
@@ -403,7 +403,9 @@ describe("tier0 preset", () => {
       model: "vendor/model-x",
       apiKey: "k2",
     });
-    expect(or.defaultJudgeModel).toBeUndefined();
+    // The direct-provider control keeps grading with the target, now explicitly.
+    expect(or.defaultJudgeModel).toBe("vendor/model-x");
+    expect(or.defaultSelfJudge).toBe(true);
     const url = resolveTier0Target("http://127.0.0.1:4555/", { model: "m" }, {});
     expect(url).toMatchObject({ endpoint: "http://127.0.0.1:4555", model: "m" });
     expect(() => resolveTier0Target("bogus", {}, {})).toThrow(/unrecognized/);

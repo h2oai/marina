@@ -39,7 +39,6 @@ import type {
 } from "@earendil-works/pi-ai";
 import { budgetFinalRequest, budgetSteerAt, budgetSteerNote } from "../agent/budget-terminal";
 import type { SourceExclusion } from "../arena/research/briefs";
-import { excludedSource, searchBackendsFromEnv } from "../arena/research/web-search";
 import { type AdvisoryOptions, advisoryMode } from "../decisions/advisory";
 import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
@@ -63,6 +62,7 @@ import { researchAdvice, researchDecisionProvider } from "./decision-advice";
 import { type ModelTurns, messageText } from "./model-turn";
 import { BARRED_REASON, type PageRead, readPage } from "./page-reader";
 import type { ProvenanceCache } from "./provenance-cache";
+import { excludedSource, searchBackendsFromEnv } from "./web-search";
 
 // ─── Tools ───────────────────────────────────────────────────────────────────
 

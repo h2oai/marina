@@ -28,23 +28,13 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { mulberry32 } from "../../../src/stats";
 
 export const SKILLS_DATASET_VERSION = "synthetic-skills-v1";
 const PROBLEMS_PER_FAMILY = 10;
 const PRNG_SEED = 0x5c111;
 
-// ─── Deterministic PRNG (mulberry32) ────────────────────────────────────────
-
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// ─── Deterministic PRNG (mulberry32, src/stats) ─────────────────────────────
 
 const rand = mulberry32(PRNG_SEED);
 const randInt = (lo: number, hi: number) => lo + Math.floor(rand() * (hi - lo + 1));

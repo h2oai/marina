@@ -15,7 +15,7 @@
  * benchmark's own FACT pipeline — is needed for those).
  */
 
-import { figuresIn, figuresMissing } from "../arena/research/verify";
+import { figuresIn, figuresMissing } from "./verify";
 
 /** One quoted passage from a source page, as the retriever read it. */
 export interface Evidence {

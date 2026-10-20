@@ -64,11 +64,11 @@
 # @restart
 # MARINA_SINGLE_PORT=false
 
-# Shut down gracefully after this long with no external use, no open agent turn and no pending background work (`15m`, `900s`, `1h`; 0 or unset = never). External use is an HTTP or MCP request (in flight until a streamed response — SSE or NDJSON, an MCP client's event stream included — ends), an open WebSocket (dashboard, chat, SDK) or telnet connection, or a frame on one; the clock starts when the last of them ends. An idle MCP session with no open stream does not count. Health probes and Marina's own agents calling its /v1 are not activity, autonomous agent turns never reset the clock, and an open turn stops postponing the exit when its agent stops or after 30 minutes. For on-demand instances that a host starts when needed (see endpoint.json under MARINA_DATA_DIR).
+# Experimental: for embedders (Flow, Nov 2026). Shut down gracefully after this long with no external use, no open agent turn and no pending background work (`15m`, `900s`, `1h`; 0 or unset = never). External use is an HTTP or MCP request (in flight until a streamed response — SSE or NDJSON, an MCP client's event stream included — ends), an open WebSocket (dashboard, chat, SDK) or telnet connection, or a frame on one; the clock starts when the last of them ends. An idle MCP session with no open stream does not count. Health probes and Marina's own agents calling its /v1 are not activity, autonomous agent turns never reset the clock, and an open turn stops postponing the exit when its agent stops or after 30 minutes. For on-demand instances that a host starts when needed (see endpoint.json under MARINA_DATA_DIR).
 # @restart
 # MARINA_IDLE_SHUTDOWN=0
 
-# Exit gracefully when this process id no longer exists — for a Marina owned by a host process that may die without stopping it.
+# Experimental: for embedders (Flow, Nov 2026). Exit gracefully when this process id no longer exists — for a Marina owned by a host process that may die without stopping it.
 # @restart
 # MARINA_PARENT_PID=
 
@@ -181,6 +181,10 @@
 # How long an unanswered challenge stays open, in milliseconds.
 # MARINA_CHALLENGE_TTL_MS=3600000
 
+# Push operator notices out of the world: when a held action (challenge) opens, and when holds expire with nobody answering. An http(s) URL receives a JSON POST; `cmd:<program> [args]` runs a program without a shell, with the title and detail appended as its last two arguments (for example `cmd:notify-send -a Marina`). Notices carry the class, requester, reason, token and deadline, never the held input. Unset or `off` sends nothing; `challenge summary` and the `ops inbox` item `challenge:unanswered` work either way.
+# @protected
+# MARINA_OPS_NOTIFY=off
+
 # Challenge judge (needs a decision backend; nothing is scored without one). `observe` (default) scores held commands in shadow so its agreement with people is measured. `on` also auto-approves `once` for a gate only after it earned that gate (25+ approved calls at 85% or better, 95% lower bound), never for the core gates, never `always`, never a deny. `off` never scores. `challenge stats` shows the record.
 # @protected
 # MARINA_CHALLENGE_JUDGE=observe
@@ -201,6 +205,9 @@
 # Standing decay half-life in days (minimum 1; a non-numeric value falls back to 60). Shorter means rank derived from standing demotes faster.
 # @restart
 # STANDING_HALF_LIFE_DAYS=60
+
+# How ledger rows of retired standing kinds (`chronicled`, `pool_note`, `reflection_recalled`, crew credits, `helping_act`) count. `exclude` (default) keeps them as history (`standing` shows them) but counts them toward no standing, rank or decision. `decay` restores the earlier behaviour: they count and fade by the half-life. No row is ever deleted either way.
+# MARINA_STANDING_RETIRED=exclude
 
 # ── World ────────────────────────────────────────────────────────────────────
 
@@ -260,7 +267,7 @@
 # `false` turns off model synthesis in `ask` and `dig` (retrieval only) and the model interpretation pass in `desire`. Any other value keeps them on.
 # MARINA_ASK_MODEL=true
 
-# `true` enables native evolution protocols: passive experiment lineage and evidence analysis over the experiment command. Nothing is auto-run or auto-promoted.
+# Experimental. `true` enables native evolution protocols (and attaches the `marina_evolve` agent tool while a protocol is active): passive experiment lineage and evidence analysis over the experiment command. Nothing is auto-run or auto-promoted.
 # MARINA_EVOLUTION_PROTOCOLS=false
 
 # `true` makes the retired Unified Canvas (ReactFlow world graph) reachable at /?unified.
@@ -268,7 +275,7 @@
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 
-# One directory for everything this instance writes. When set, every path setting below that is unset moves under it (DB_PATH → <dir>/marina.db, ASSETS_DIR → <dir>/assets, MARINA_SCRATCH_DIR → <dir>/scratch, BETTER_AUTH_DB_PATH, the embedding model caches), the dashboard settings editor reads and writes <dir>/.env, a running instance publishes <dir>/endpoint.json (url, MCP url, pid, local key; mode 600; removed on clean exit — written only with this setting), and keys from that file fill only variables the process environment leaves unset. Nothing is written to the working directory. An explicit path setting still wins. Created (mode 700) when missing.
+# One directory for everything this instance writes. When set, every path setting below that is unset moves under it (DB_PATH → <dir>/marina.db, ASSETS_DIR → <dir>/assets, MARINA_SCRATCH_DIR → <dir>/scratch, BETTER_AUTH_DB_PATH, the embedding model caches), the dashboard settings editor reads and writes <dir>/.env, a running instance publishes <dir>/endpoint.json (url, MCP url, pid, local key; mode 600; removed on clean exit — written only with this setting; the endpoint file is experimental: for embedders (Flow, Nov 2026)), and keys from that file fill only variables the process environment leaves unset. Nothing is written to the working directory. An explicit path setting still wins. Created (mode 700) when missing.
 # @restart
 # MARINA_DATA_DIR=
 
@@ -519,7 +526,7 @@
 # @protected
 # MARINA_CHILD_DAILY_SPEND_CAP_USD=50
 
-# Shared daily spend ledger: a SQLite file (created with mode 0600, its directory if missing) that several Marina processes record into and check MARINA_DAILY_SPEND_CAP_USD and MARINA_SPEND_SCOPE caps against, so a host running one process per world gets ONE daily total and ONE cap instead of one per world database. Spend is still written to each world database too (per-world history); every cap check and the readiness/Ops readouts use the shared total. Command-line runs that attach a ledger use it as well, even without DB_PATH. An unusable path refuses to start rather than falling back to a per-world cap. With it set, a World Collective child world shares the parent's cap and gets its own budget as scope `child:<name>` capped at MARINA_CHILD_DAILY_SPEND_CAP_USD. Unset = one ledger per world database.
+# Experimental: no production host sets it yet (for embedders running one process per world). Shared daily spend ledger: a SQLite file (created with mode 0600, its directory if missing) that several Marina processes record into and check MARINA_DAILY_SPEND_CAP_USD and MARINA_SPEND_SCOPE caps against, so a host running one process per world gets ONE daily total and ONE cap instead of one per world database. Spend is still written to each world database too (per-world history); every cap check and the readiness/Ops readouts use the shared total. Command-line runs that attach a ledger use it as well, even without DB_PATH. An unusable path refuses to start rather than falling back to a per-world cap. With it set, a World Collective child world shares the parent's cap and gets its own budget as scope `child:<name>` capped at MARINA_CHILD_DAILY_SPEND_CAP_USD. Unset = one ledger per world database.
 # @protected
 # MARINA_SPEND_LEDGER=/var/lib/marina/spend-ledger.db
 
@@ -730,11 +737,14 @@
 # Total deadline per advisory judgment, including fallback (1-60000 ms, default 4000). With two backends, half is reserved for fallback. Caller cancellation and the daily spend cap stop the chain. The normal safety gate retains its own failure policy.
 # MARINA_ADVISORY_TIMEOUT_MS=4000
 
-# Decision backend for cheap per-step judgements (it receives tool names and redacted arguments). `auto` (default; alias `on`): a chat classifier answering through this Marina's own /v1 with the world's default model (`marina-self`; MARINA_DECISION_MODEL overrides) — the strongest model the operator configured, on providers the world already uses, never a cheaper stand-in; with no provider at all decisions are off. `off` turns them off. `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `chat-classifier` (aliases `classifier`, `llm`): any chat model (see MARINA_DECISION_MODEL). Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it.
+# Decision backend for cheap per-step judgements (it receives tool names and redacted arguments). `auto` (default; alias `on`): a chat classifier answering through this Marina's own /v1 with the world's default model (`marina-self`; MARINA_DECISION_MODEL overrides) — the strongest model the operator configured, on providers the world already uses, never a cheaper stand-in; with no provider at all decisions are off. `off` turns them off. `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `lightning` (alias `h2o-lightning`, experimental): H2O-Lightning over the Decisions API on OpenRouter — off until MARINA_LIGHTNING_MODEL names its model id. `chat-classifier` (aliases `classifier`, `llm`): any chat model (see MARINA_DECISION_MODEL). Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it.
 # MARINA_DECISIONS=auto
 
 # Backend model. Defaults: typesafe/jev-1.13 for decisions-api, jev-latest for typesafe; chat-classifier uses google/gemini-3.1-pro-preview on OpenRouter, zai-org/GLM-5.3-Flash on the Hugging Face router, or the local runtime's default model on a configured llama.cpp / Ollama / vLLM server, and any other base URL must name a model.
 # MARINA_DECISION_MODEL=typesafe/jev-1.13
+
+# Experimental. The OpenRouter model id for H2O-Lightning. No default ships (its public id is not known): unset, the `lightning` backend stays off and `decision settings` reports it not configured. Set, `MARINA_DECISIONS=lightning` answers decisions with it (MARINA_DECISION_MODEL is ignored for that backend).
+# MARINA_LIGHTNING_MODEL=
 
 # Backend endpoint. Defaults: https://openrouter.ai/api/alpha (decisions-api), https://api.typesafe.ai (typesafe); chat-classifier: OpenRouter with OPENROUTER_API_KEY, else the Hugging Face router with its key, else a configured local runtime (LLAMA_BASE_URL / OLLAMA_BASE_URL / VIBETHINKER_BASE_URL or its key), else https://openrouter.ai/api/v1.
 # @protected
@@ -833,6 +843,9 @@
 
 # Where in-world `benchmark kit` runs keep their run directories (servers, scratch, logs). Default: `kit-runs/` beside the world DB (`DB_PATH`). The kit's runs file into the world DB either way.
 # MARINA_BENCHMARK_KIT_DIR=
+
+# The judge for judge-scored benchmark items (frames, simple-qa, hle-verified-gold*, narrativeqa, mt-bench) when a run names none: the in-world `benchmark run`/`sweep`/`compare-run` and `benchmarks/harness.ts` (src/engine/benchmark-judge.ts). Unset: `marina/default`. A run never grades itself: a judge that names the target model (aliases of the default model included) is refused unless the run opts in with `self-judge:on` / `--self-judge`, which the run records and the ledger marks `[self-judge]`.
+# MARINA_BENCHMARK_JUDGE_MODEL=
 
 # ── Forecasting ──────────────────────────────────────────────────────────────
 
@@ -1298,6 +1311,15 @@
 
 # While a first-party key (Anthropic, OpenAI, Google, xAI, Mistral, DeepSeek) reports a usage/quota limit, serve the SAME model via OpenRouter when OPENROUTER_API_KEY is set and OpenRouter's catalog lists it (labelled openrouter-served; back to the direct key when the limit lifts). Never a different model. `off` keeps the caller paused/refused until the reset instead. Default on.
 # MARINA_PROVIDER_FALLBACK=on
+
+# In-process library model calls (src/model: forecast, arena, research, lessons, outcome extraction, the web swarm, benchmark checkers) also use the same-model OpenRouter route while a first-party key is usage-limited, and a usage limit they hit marks the route for every caller. Needs OPENROUTER_API_KEY; MARINA_PROVIDER_FALLBACK=off still wins. Never a different model. Default off (the call fails as before).
+# MARINA_MODEL_ROUTE_FALLBACK=off
+
+# Extra attempts for an in-process library model call (src/model) after a transient failure: HTTP 429 throttling, a 5xx or a network error. Never a usage/quota limit, an auth refusal, another 4xx, the daily spend cap, a timeout or an abort. Each attempt is priced and checked against the daily cap. Default 1; 0 or off = no retry; at most 5.
+# MARINA_MODEL_RETRIES=1
+
+# First backoff (ms) before a MARINA_MODEL_RETRIES retry, doubled per attempt with up to 25 % jitter, capped at 30 s. Default 1000.
+# MARINA_MODEL_RETRY_BASE_MS=1000
 
 # MCP session creations and login/auth tool calls per client IP per minute. 0 disables.
 # MARINA_MCP_SESSIONS_PER_MIN=10

@@ -81,7 +81,6 @@ import {
 } from "../benchmarks/browsecomp-plus/run";
 import { CallSpendGuard, parseMaxUsd } from "../benchmarks/call-spend-guard";
 import { fileToLedger } from "../benchmarks/ledger-file";
-import { comparePooled, seedFromIds } from "../benchmarks/replicate-stats";
 import {
   defaultReplicateGroup,
   formatPooled,
@@ -90,9 +89,9 @@ import {
   replicateFromResult,
   validGroupKey,
 } from "../benchmarks/replicates";
-import { wilsonInterval } from "../benchmarks/stats";
 import type { BenchmarkResult } from "../benchmarks/types";
 import { CORPUS_LEAD_CHARS, corpusDir } from "../src/engine/search-providers/corpus";
+import { comparePooled, seedFromIds, wilsonInterval } from "../src/stats";
 
 const { positionals, values } = parseArgs({
   args: process.argv.slice(2),
