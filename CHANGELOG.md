@@ -411,6 +411,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Default change: one-hour cache lifetime for the static prefix** (tool schemas and system
     prompt) on direct Anthropic requests; the conversation keeps 5 minutes. Estimated saving about
     $10/week. `MARINA_PROMPT_CACHE_STATIC_TTL=off` restores it.
+  - **The system prompt no longer changes when an agent moves.** The roster's `This room:` line
+    put room-specific command names in the system prompt, so every room change rewrote the cached
+    static prefix. The line now rides in the per-turn context, shown when the room's commands
+    change (`getRoomCommandsLine`). The system prompt is byte-identical across rooms, and both tier
+    caps still hold (`test/prompt-budget.test.ts`).
   - **Keep-alive pings, off by default** (`MARINA_AGENT_CACHE_KEEPALIVE=on`): a `max_tokens: 1`
     replay of the last request shortly before the cache expires, bounded per idle gap, per window
     and per agent per day, and turned off for an agent at the first reply that did not read the
@@ -433,8 +438,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version known by the cutoff, with that version's own text (labelled `as-of vK/N`, never trusted).
   Durable records, captured sources and assistance proposals are served by their own known-at
   time, taken from the service events the write path records. An item with no such event (bundle
-  imports, events past their 30-day retention) is still withheld. Tests prove no post-cutoff text
+  imports, events dropped before migration 171) is still withheld. Tests prove no post-cutoff text
   reaches any fenced surface.
+  - **Fenced search is ranked on the as-of text.** `recall`, `recall … all|evidence`, the
+    continuation context and `context` used to select and order notes and records by their
+    CURRENT text and scores, then serve the as-of text. Which notes appeared, and their order,
+    could reveal a post-cutoff edit. Under a cutoff, notes are now picked from every handle
+    known by the cutoff whose any version matches, reduced to the as-of version, dropped unless
+    that text matches, and ordered by its term coverage, then by creation time (`fencedNoteRecall`,
+    `rankAsOf`). Durable records and sources are re-scored the same way. Query vocabulary, term
+    distinctiveness and link expansion, all current state, are skipped under a cutoff.
+  - **Known-at times survive event retention (migration 171).** The dating events were pruned
+    after 30 days, so older revisions could no longer be dated. The time is now stored on the row:
+    `memory_record_versions.known_at`, `memory_sources.known_at` and
+    `memory_assistance_jobs.completed_known_at`. Each is set by a trigger on the event, in the same
+    transaction. The migration is additive and idempotent: three nullable columns, three triggers,
+    and a one-row cursor. Existing rows are filled from the surviving events by the
+    `memory-known-at-backfill` tick job, in seq-range batches of short transactions (5,000 event
+    seqs each, 8 per pass every 10 ticks). Boot never waits. Until the backfill passes a dating
+    event, retention keeps it. Fenced reads use the stored time and fall back to the event log
+    only while the backfill is still running. This was chosen over exempting the events from
+    retention: on a large database, the as-of lookup becomes a primary-key read instead of a scan
+    of the unindexed event log, and the log stays bounded.
 
 - **One formation catalogue** (`src/orchestration/formations/`). Formations were implemented once
   per surface: crew briefs, project templates, arena protocols, typed forecast formations and text

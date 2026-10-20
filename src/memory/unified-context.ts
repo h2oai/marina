@@ -71,8 +71,9 @@ import { MemoryClientError } from "../sdk/memory-client";
 import type { MemorySearchResult, MemorySourceSearchResult } from "../sdk/memory-types";
 import {
   type AsOfServed,
-  noteAsOf,
+  fencedNoteRecall,
   proposalsKnownAt,
+  rankAsOf,
   recordVersionAsOf,
   sourcesKnownAt,
 } from "./as-of";
@@ -459,6 +460,7 @@ function recordAsOf(
       ...record,
       content: row.content,
       version: row.version,
+      created_at: row.created_at,
       asOf: { version: row.version, current: record.version },
     },
   ];
@@ -632,46 +634,78 @@ function fetchLegacy(
 ): Fetched {
   const out: Fetched = { items: {}, degraded: [] };
   const terms = queryTerms(query);
-  const distinctive = distinctiveTerms(db, entityName, terms);
-  // The as-of fence: a note written after the cutoff is not served; a note
-  // revised since is served as it stood at the cutoff (`noteAsOf`: the newest
-  // version with a reliable known-at time by then, else nothing). Relevance is
-  // judged on the text actually served.
   const asOf = opts.asOf;
-  const fence = <T extends ScoredNoteRow>(rows: T[]): (T & { asOf?: AsOfServed })[] =>
-    asOf === undefined
-      ? rows
-      : rows.flatMap((n) => {
-          const known = noteAsOf(db, n, asOf);
-          return known ? [known] : [];
-        });
+  if (asOf !== undefined) return fetchLegacyAsOf(db, entityName, query, terms, asOf, opts.noteType);
+  const distinctive = distinctiveTerms(db, entityName, terms);
   const relevant = (n: { content: string }) => relevantToQuery(n.content, terms, distinctive);
   try {
-    const skills = fence(
-      db.recallNotesWithType(entityName, query, "skill", {
+    const skills = db
+      .recallNotesWithType(entityName, query, "skill", {
         weightImportance: 0.4,
         weightRecency: 0.2,
         weightRelevance: 0.4,
-      }),
-    ).filter(relevant);
+      })
+      .filter(relevant);
     out.items.skill = skills.map((n) => noteItem("skill", n));
   } catch (error) {
     out.degraded.push({ tier: "skill", ...errorCode(error) });
   }
   try {
-    const seeds = fence(
+    const seeds = (
       opts.noteType
         ? db.recallNotesWithType(entityName, query, opts.noteType, opts.weights)
-        : db.recallNotes(entityName, query, opts.weights),
+        : db.recallNotes(entityName, query, opts.weights)
     ).filter(relevant);
-    // A historical version is never `trusted`: verification belongs to the
-    // current text ("new text clears prior verification").
-    const trusted = fence(
-      expandMemoryRecall(db, seeds, entityName, { noteType: opts.noteType, trusted: true }),
-    ).filter((n) => !n.asOf);
-    const ordinary = fence(expandMemoryRecall(db, seeds, entityName, { noteType: opts.noteType }));
+    const trusted = expandMemoryRecall(db, seeds, entityName, {
+      noteType: opts.noteType,
+      trusted: true,
+    });
+    const ordinary = expandMemoryRecall(db, seeds, entityName, { noteType: opts.noteType });
     out.items.trusted = trusted.map((n) => noteItem("trusted", n));
     out.items.unverified = ordinary.map((n) => noteItem("unverified", n));
+  } catch (error) {
+    out.degraded.push({ tier: "trusted", ...errorCode(error) });
+    out.degraded.push({ tier: "unverified", ...errorCode(error) });
+  }
+  return out;
+}
+
+/**
+ * The legacy tiers as of `asOf`: notes selected and ranked on the text known
+ * by the cutoff (`fencedNoteRecall`: a note whose only match is a later
+ * revision never appears and never moves another), each served at that
+ * version. Relevance is judged on the served text with every query term
+ * counted (term distinctiveness is measured over CURRENT notes, so it is not
+ * consulted), and link expansion is skipped (links carry no as-of date). A
+ * historical version is never `trusted`: verification belongs to the current
+ * text ("new text clears prior verification").
+ */
+function fetchLegacyAsOf(
+  db: MarinaDB,
+  entityName: string,
+  query: string,
+  terms: readonly string[],
+  asOf: number,
+  noteType: string | undefined,
+): Fetched {
+  const out: Fetched = { items: {}, degraded: [] };
+  const relevant = (n: { content: string }) => relevantToQuery(n.content, terms);
+  try {
+    const skills = fencedNoteRecall(db, entityName, query, asOf, { noteType: "skill" });
+    out.items.skill = skills.filter(relevant).map((n) => noteItem("skill", n));
+  } catch (error) {
+    out.degraded.push({ tier: "skill", ...errorCode(error) });
+  }
+  try {
+    const seeds = fencedNoteRecall(db, entityName, query, asOf, {
+      ...(noteType ? { noteType } : {}),
+    }).filter(relevant);
+    const trusted = fencedNoteRecall(db, entityName, query, asOf, {
+      ...(noteType ? { noteType } : {}),
+      trusted: true,
+    }).filter(relevant);
+    out.items.trusted = trusted.map((n) => noteItem("trusted", n));
+    out.items.unverified = seeds.map((n) => noteItem("unverified", n));
   } catch (error) {
     out.degraded.push({ tier: "trusted", ...errorCode(error) });
     out.degraded.push({ tier: "unverified", ...errorCode(error) });
@@ -735,10 +769,15 @@ async function fetchDurable(
       operation: "search",
       input: {
         query,
-        limit: Math.min(
-          100,
-          limits.records * EVIDENCE_OVERFETCH + jobArtifacts.size + representedRecords.size,
-        ),
+        // Under the fence every candidate the search allows: membership and
+        // order are decided afterwards on the as-of text.
+        limit:
+          asOf === undefined
+            ? Math.min(
+                100,
+                limits.records * EVIDENCE_OVERFETCH + jobArtifacts.size + representedRecords.size,
+              )
+            : 100,
         // Hybrid is the operator's explicit choice; a missing provider or an
         // incomplete index answers lexically and is labelled, never an error.
         ...(search === "hybrid" ? { mode: "hybrid" as const, allow_degraded: true } : {}),
@@ -754,22 +793,32 @@ async function fetchDurable(
       });
     const now = Date.now();
     const terms = queryTerms(query);
-    const distinctive = distinctiveTerms(db, entityName, terms);
-    out.items.evidence!.push(
-      ...result.results
-        .filter((record) => !jobArtifacts.has(record.id) && !representedRecords.has(record.id))
-        // `search` already excludes records whose validity ended (a `resolve`
-        // loser, a tombstone `revise`) before ranking, so they take no slot.
-        // `servableRecord` stays as the evidence guard: it also drops a
-        // historical version and holds over any other search backend.
-        .filter((record) => servableRecord(record, now))
-        // Under the as-of fence: the version known by the cutoff, else nothing.
-        .flatMap((record) => (asOf === undefined ? [record] : recordAsOf(db, record, asOf)))
-        .filter((record) => relevantToQuery(record.content, terms, distinctive))
-        .filter((record) => assetRecordReadable(db, entityName, record))
-        .slice(0, limits.records)
-        .map(recordItem),
-    );
+    // Distinctiveness is measured over CURRENT notes: not consulted under a cutoff.
+    const distinctive =
+      asOf === undefined ? distinctiveTerms(db, entityName, terms) : new Set<string>();
+    const candidates = result.results
+      .filter((record) => !jobArtifacts.has(record.id) && !representedRecords.has(record.id))
+      // `search` already excludes records whose validity ended (a `resolve`
+      // loser, a tombstone `revise`) before ranking, so they take no slot.
+      // `servableRecord` stays as the evidence guard: it also drops a
+      // historical version and holds over any other search backend.
+      .filter((record) => servableRecord(record, now))
+      // Under the as-of fence: the version known by the cutoff, else nothing.
+      .flatMap((record) => (asOf === undefined ? [record] : recordAsOf(db, record, asOf)))
+      .filter((record) => relevantToQuery(record.content, terms, distinctive))
+      .filter((record) => assetRecordReadable(db, entityName, record));
+    // Under the fence the search's order (scored on CURRENT text) is discarded:
+    // records are re-ranked on the as-of text they are served with.
+    // The item score is the as-of term coverage too: the tier is re-sorted by
+    // score, and a search score carries corpus statistics from after the cutoff.
+    const ranked =
+      asOf === undefined
+        ? candidates
+        : rankAsOf(candidates, query, {
+            text: (r) => r.content,
+            tiebreak: (a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1),
+          }).map(({ item, share }) => ({ ...item, score: share }));
+    out.items.evidence!.push(...ranked.slice(0, limits.records).map(recordItem));
   } catch (error) {
     const { code, message } = errorCode(error);
     out.degraded.push({ tier: "evidence", code, message });
@@ -822,11 +871,19 @@ async function fetchDurable(
       hits.map((hit) => hit.id),
       Date.now(),
     );
+    const kept = hits.filter((hit) => servable.has(hit.id));
+    // A source's text never changes, but its search score carries corpus
+    // statistics from after the cutoff: under the fence it is ranked and
+    // scored on its own text's term coverage, like the records above.
+    const rankedSources =
+      asOf === undefined
+        ? kept
+        : rankAsOf(kept, query, {
+            text: (h) => h.excerpt,
+            tiebreak: (a, b) => b.seq - a.seq,
+          }).map(({ item, share }) => ({ ...item, score: share }));
     out.items.evidence!.push(
-      ...hits
-        .filter((hit) => servable.has(hit.id))
-        .slice(0, limits.sources)
-        .map((hit) => sourceItem(spaceId, hit)),
+      ...rankedSources.slice(0, limits.sources).map((hit) => sourceItem(spaceId, hit)),
     );
   } catch (error) {
     out.degraded.push({ tier: "evidence", ...errorCode(error) });

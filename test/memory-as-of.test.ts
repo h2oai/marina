@@ -47,6 +47,21 @@ describe("memory as of the evidence cutoff", () => {
     if (at === null) raw().run(`DELETE FROM memory_service_events WHERE ${where}`, params);
     else
       raw().run(`UPDATE memory_service_events SET created_at = ? WHERE ${where}`, [at, ...params]);
+    // The date the event's trigger persisted on the row (migration 171) moves with it.
+    dateKnownAt(ref, operation, at, version);
+  };
+  /** Set (or clear) the persisted known-at an event of `operation` dates. */
+  const dateKnownAt = (ref: string, operation: string, at: number | null, version?: number) => {
+    if (operation === "memory.created" || operation === "memory.revised") {
+      const v = version ?? (operation === "memory.created" ? 1 : undefined);
+      raw().run(
+        `UPDATE memory_record_versions SET known_at = ? WHERE record_id = ?${v === undefined ? "" : " AND version = ?"}`,
+        v === undefined ? [at, ref] : [at, ref, v],
+      );
+    } else if (operation === "source.captured")
+      raw().run("UPDATE memory_sources SET known_at = ? WHERE id = ?", [at, ref]);
+    else if (operation === "assistance.completed")
+      raw().run("UPDATE memory_assistance_jobs SET completed_known_at = ? WHERE id = ?", [at, ref]);
   };
   const dateVersionRow = (recordId: string, version: number, at: number) =>
     raw().run(
@@ -97,7 +112,13 @@ describe("memory as of the evidence cutoff", () => {
   it("serves every tier known by the cutoff, the durable ones included", async () => {
     const result = await buildUnifiedContext(db, fx.owner, FIXTURE_QUERY, { asOf: CUTOFF_MS });
     // Before: the evidence and proposal tiers were withheld outright under a fence.
-    expect(tierIds(result)).toEqual(expectedTierIds(fx));
+    // Under the fence evidence is ordered by as-of term coverage: the record and
+    // the source tie here, so only membership is compared.
+    const sortedEvidence = (ids: Record<string, string[]>) => ({
+      ...ids,
+      evidence: [...(ids.evidence ?? [])].sort(),
+    });
+    expect(sortedEvidence(tierIds(result))).toEqual(sortedEvidence(expectedTierIds(fx)));
     expect(result.degraded.map((d) => `${d.tier}:${d.code}`).sort()).toEqual([
       "evidence:fenced",
       "proposal:fenced",
@@ -217,6 +238,112 @@ describe("memory as of the evidence cutoff", () => {
     // A durable record with no dated version: nothing.
     dateEvent(fx.recordId, "memory.created", null);
     expect(recordVersionAsOf(db, fx.recordId, 1, CUTOFF_MS)).toBeUndefined();
+  });
+
+  describe("ranking side channel", () => {
+    const QUERY = "Zephyr relay";
+    /** Dated numeric note (handle and its durable twin's v1) before the cutoff. */
+    const datedNote = (content: string, at: number) => {
+      const id = db.createNote(fx.owner, content, undefined, {
+        importance: 5,
+        noteType: "observation",
+      });
+      dateHandle(id, at);
+      const twin = findDurableTwin(db, id)!;
+      dateEvent(twin.recordId, "memory.created", at, 1);
+      dateVersionRow(twin.recordId, 1, at);
+      return { id, recordId: twin.recordId };
+    };
+    const datedRecord = async (content: string, at: number) => {
+      const reply = await residentMemoryOperation(db, fx.owner, {
+        operation: "remember",
+        input: { content, subject: "zephyr" },
+      });
+      const id = (reply.result as { id: string }).id;
+      dateEvent(id, "memory.created", at, 1);
+      dateVersionRow(id, 1, at);
+      return id;
+    };
+    const reviseAfter = async (recordId: string, content: string) => {
+      await revise(recordId, 1, content);
+      dateEvent(recordId, "memory.revised", AFTER, 2);
+      dateVersionRow(recordId, 2, AFTER);
+    };
+    const fencedRecall = async () => {
+      fenceEntity(fx.ownerEntityId, "t", CUTOFF_MS, Date.now() + 60_000);
+      fx.ownerConn.clear();
+      await engine.processCommand(fx.ownerEntityId, `recall ${QUERY}`);
+      return stripAnsi(fx.ownerConn.allTextJoined());
+    };
+    /** Snippets in the order they appear in `text` (absent ones dropped). */
+    const orderIn = (text: string, snippets: string[]) =>
+      snippets.filter((s) => text.includes(s)).sort((a, b) => text.indexOf(a) - text.indexOf(b));
+
+    it("a note whose post-cutoff revision alone matches never appears or moves another", async () => {
+      const older = datedNote("Zephyr log: backup antenna checked", EARLIER);
+      const newer = datedNote("Zephyr relay note: the uplink is calibrated weekly", BEFORE);
+      const garden = datedNote("Garden memo: tomatoes need staking", BEFORE);
+      const snippets = ["backup antenna", "uplink is calibrated", "tomatoes", "MIRAGE"];
+
+      const before = await buildUnifiedContext(db, fx.owner, QUERY, { asOf: CUTOFF_MS });
+      const recallBefore = await fencedRecall();
+      expect(tierIds(before).unverified).toEqual([String(newer.id), String(older.id)]);
+
+      // As of the cutoff the older note matches one term of two: it ranks second.
+      // After the cutoff the garden memo is rewritten to match the query hard,
+      // and the older note's revision would now outrank the newer one on its
+      // current text. Neither may be visible through selection or order.
+      await reviseAfter(garden.recordId, "Zephyr relay Zephyr relay MIRAGE zephyr relay");
+      await reviseAfter(older.recordId, "Zephyr relay Zephyr relay MIRAGE log zephyr relay");
+
+      const after = await buildUnifiedContext(db, fx.owner, QUERY, { asOf: CUTOFF_MS });
+      expect(tierIds(after)).toEqual(tierIds(before));
+      const contents = (r: UnifiedContextResult) =>
+        r.tiers.flatMap((t) => t.items.map((i) => `${t.tier}:${i.id}:${i.content}`));
+      expect(contents(after)).toEqual(contents(before));
+      expect(served(after)).not.toContain("MIRAGE");
+      expect(served(after)).not.toContain("tomatoes");
+
+      const recallAfter = await fencedRecall();
+      expect(recallAfter).not.toContain("MIRAGE");
+      expect(recallAfter).not.toContain("tomatoes");
+      expect(orderIn(recallAfter, snippets)).toEqual(orderIn(recallBefore, snippets));
+      expect(orderIn(recallAfter, snippets)).toEqual(["uplink is calibrated", "backup antenna"]);
+
+      // Unfenced reads see the current text (the fence changes nothing else).
+      const open = await buildUnifiedContext(db, fx.owner, QUERY);
+      expect(served(open)).toContain("MIRAGE");
+    });
+
+    it("a note whose AS-OF text matches is found even when its current text no longer does", async () => {
+      const kept = datedNote("Zephyr relay drift: phase offset noted", BEFORE);
+      await reviseAfter(kept.recordId, "Completely rewritten: nothing about masts here");
+      const fenced = await buildUnifiedContext(db, fx.owner, QUERY, { asOf: CUTOFF_MS });
+      expect(tierIds(fenced).unverified).toEqual([String(kept.id)]);
+      expect(served(fenced)).toContain("phase offset");
+      expect(served(fenced)).not.toContain("rewritten");
+      expect(await fencedRecall()).toContain("phase offset");
+    });
+
+    it("durable evidence is selected and ordered on its as-of text", async () => {
+      const north = await datedRecord("Zephyr record: north mast", EARLIER);
+      const south = await datedRecord("Zephyr relay record: south mast", BEFORE);
+      const garden = await datedRecord("Garden record: tomatoes ripen in August", BEFORE);
+      const evidence = (r: UnifiedContextResult) =>
+        (tierIds(r).evidence ?? []).filter((id) => [north, south, garden].includes(id));
+
+      // As of the cutoff the north record matches one term of two: second.
+      const before = await buildUnifiedContext(db, fx.owner, QUERY, { asOf: CUTOFF_MS });
+      expect(evidence(before)).toEqual([south, north]);
+
+      await reviseAfter(garden, "Zephyr relay Zephyr relay MIRAGE record zephyr");
+      await reviseAfter(north, "Zephyr relay Zephyr relay MIRAGE north zephyr relay");
+
+      const after = await buildUnifiedContext(db, fx.owner, QUERY, { asOf: CUTOFF_MS });
+      expect(evidence(after)).toEqual(evidence(before));
+      expect(served(after)).not.toContain("MIRAGE");
+      expect(served(after)).not.toContain("tomatoes");
+    });
   });
 
   it("an unrevised note keeps the old rule (its own time decides)", () => {

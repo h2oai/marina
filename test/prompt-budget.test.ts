@@ -41,6 +41,7 @@ import {
   COMMAND_ROSTER,
   FULL_SYSTEM_PROMPT_BYTE_CAP,
   getLeanSystemPrompt,
+  getRoomCommandsLine,
   LEAN_SYSTEM_PROMPT_BYTE_CAP,
   LEAN_TIER_MAX_CONTEXT_TOKENS,
   type PromptTier,
@@ -191,8 +192,11 @@ describe("system prompt byte budget", () => {
               // Large models are not worse off: both tiers render the same text.
               expect(byTier.get("full")).toBe(byTier.get("lean")!);
               const p = byTier.get("full")!;
-              // Room commands and the core work commands are listed; operator surfaces are not.
-              expect(p).toContain("This room: roomverb0");
+              // Room commands ride in the per-turn context, never the static prefix.
+              expect(p).not.toContain("This room:");
+              expect(p).not.toContain("roomverb");
+              expect(getRoomCommandsLine(entries)).toStartWith("This room: roomverb0");
+              // The core work commands are listed; operator surfaces are not.
               for (const core of ["work:", "web:", "challenge:"]) expect(p).toContain(`\n${core}`);
               // Commands TOOL ROUTING or MEMORY already teach are named there, not re-listed.
               for (const taught of [
@@ -213,6 +217,74 @@ describe("system prompt byte budget", () => {
           }
         }
       }
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it("renders a byte-identical system prompt across room changes", async () => {
+    // The `This room:` line used to sit in the roster, so a move rewrote the
+    // system prompt and invalidated the cached static prefix.
+    const roomA = Object.fromEntries(
+      Array.from({ length: 4 }, (_, i) => [`alphaverb${i}`, () => undefined]),
+    );
+    const roomB = { betaverb: () => undefined };
+    const fixture = createTestEngine();
+    try {
+      const tools = ["marina_command", "memory", "marina_memory_service", "marina_tool_search"];
+      for (const tier of ["lean", "full"] as const) {
+        const prompts = [roomA, roomB, undefined].map((roomCommands) =>
+          getLeanSystemPrompt(
+            null,
+            commandManifest(fixture.engine.commands, {
+              rank: 0,
+              ...(roomCommands ? { roomCommands: roomCommands as never } : {}),
+            }),
+            tools,
+            tier,
+          ),
+        );
+        expect(prompts[1]).toBe(prompts[0]!);
+        expect(prompts[2]).toBe(prompts[0]!);
+        expect(bytes(prompts[0]!)).toBeLessThanOrEqual(systemPromptByteCap(tier));
+      }
+      // The room-specific part moved to the per-turn context instead.
+      const lineA = getRoomCommandsLine(
+        commandManifest(fixture.engine.commands, { rank: 0, roomCommands: roomA as never }),
+      );
+      const lineB = getRoomCommandsLine(
+        commandManifest(fixture.engine.commands, { rank: 0, roomCommands: roomB as never }),
+      );
+      expect(lineA).toBe("This room: alphaverb0, alphaverb1, alphaverb2, alphaverb3");
+      expect(lineB).toBe("This room: betaverb");
+      expect(getRoomCommandsLine(commandManifest(fixture.engine.commands, { rank: 0 }))).toBe("");
+
+      // The adapter carries it per turn: shown when the room changes, and the
+      // system prompt it swaps in after a catalog refresh is the same bytes.
+      const adapter = new LeanAgentAdapter(
+        { name: "room-mover" } as never,
+        "ws://127.0.0.1:3300",
+        null,
+      );
+      const internals = adapter as unknown as {
+        capabilityEntries?: unknown;
+        buildContinuationPrompt(): Promise<string>;
+        currentSystemPrompt(): string;
+      };
+      internals.capabilityEntries = commandManifest(fixture.engine.commands, {
+        rank: 0,
+        roomCommands: roomA as never,
+      });
+      const systemA = internals.currentSystemPrompt();
+      expect(await internals.buildContinuationPrompt()).toContain(lineA);
+      internals.capabilityEntries = commandManifest(fixture.engine.commands, {
+        rank: 0,
+        roomCommands: roomB as never,
+      });
+      expect(internals.currentSystemPrompt()).toBe(systemA);
+      const next = await internals.buildContinuationPrompt();
+      expect(next).toContain(lineB);
+      expect(next).not.toContain("alphaverb");
     } finally {
       await fixture.dispose();
     }

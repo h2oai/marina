@@ -42,7 +42,7 @@ it("upgrades an existing media schema without replacing its migration or losing 
     try {
       const raw = upgraded.memoryRepository().raw;
       expect(raw.query("SELECT MAX(version) AS version FROM schema_version").get()).toEqual({
-        version: 170,
+        version: 171,
       });
       expect(
         raw.query("SELECT sql FROM sqlite_schema WHERE name='assets_memory_deleted'").get(),

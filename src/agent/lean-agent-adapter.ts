@@ -207,6 +207,7 @@ import {
   getLeanDiscoveryPrompt,
   getLeanSystemPrompt,
   getPromptVersion,
+  getRoomCommandsLine,
   type PromptTier,
   promptTierForContextWindow,
 } from "./prompts/lean-system";
@@ -4456,6 +4457,14 @@ export class LeanAgentAdapter implements AgentHandle {
         // best-effort; the agent works without the ledger
       }
     }
+
+    // ── 1c. This room's commands (on change, deduped on content) ──
+    // Room-specific, so never in the system prompt: a move would invalidate
+    // the cached static prefix. Shown when the room (or its commands) changes
+    // and re-shown after the section TTL.
+    const roomLine = getRoomCommandsLine(this.capabilityEntries);
+    if (roomLine && this.shouldIncludeSection("room_commands", roomLine))
+      parts.push(roomLine, 55, "room_commands");
 
     // ── 2. Social context (every 5th cycle, deduped on content) ──
     // The agent perceives room occupants from its own `marina_look` and

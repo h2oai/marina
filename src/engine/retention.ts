@@ -24,6 +24,7 @@
  */
 
 import type { MarinaDB } from "../persistence/database";
+import { KNOWN_AT_RETENTION_WHERE } from "../persistence/db-memory-known-at";
 import { parseDuration } from "./commands/format-duration";
 import { EVENT_LOG_DB_RETENTION } from "./constants";
 import { getErrorMessage } from "./errors";
@@ -124,7 +125,8 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     timeColumn: "created_at",
     kind: "telemetry",
     keepMs: 30 * DAY_MS,
-    note: "observability + watch cursors; a watch idle > 30 d re-primes from the live seq",
+    where: KNOWN_AT_RETENTION_WHERE,
+    note: "observability + watch cursors; a watch idle > 30 d re-primes from the live seq. The as-of fence dates rows by their own known_at (migration 171); a dating event the known-at backfill has not copied yet is kept",
   },
   {
     table: "routing_events",

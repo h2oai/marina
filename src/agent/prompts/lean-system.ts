@@ -4,7 +4,11 @@
 import { getAutonomyPosture } from "../../engine/autonomy";
 import { Logger } from "../../engine/logger";
 import { isLocalUngated } from "../../engine/trust-profile";
-import { type CommandCatalogEntry, renderCapabilityRoster } from "../../sdk/capabilities";
+import {
+  type CommandCatalogEntry,
+  renderCapabilityRoster,
+  renderRoomCommands,
+} from "../../sdk/capabilities";
 import { splitRoleLoopBlocks } from "../roles";
 
 /** Stable identity and operating contract for Marina's autonomous agents. */
@@ -105,10 +109,19 @@ export function getCommandRoster(
         includeRankLimited: isLocalUngated(),
         maxLineChars: 60,
         coreOnly: true,
+        // Room commands change with the room: they ride in the per-turn
+        // context (`getRoomCommandsLine`), so this prompt stays byte-stable
+        // per agent and its cached prefix survives a move.
+        includeRoom: false,
         ...(omit ? { omit } : {}),
       })
     : COMMAND_ROSTER;
   return getAutonomyPosture() === "guarded" ? roster : `${roster}\n${ECOLOGY_ROSTER}`;
+}
+
+/** The current room's commands for the per-turn context ("" when none). */
+export function getRoomCommandsLine(entries?: readonly CommandCatalogEntry[]): string {
+  return entries ? renderRoomCommands(entries, { includeRankLimited: isLocalUngated() }) : "";
 }
 
 /**
