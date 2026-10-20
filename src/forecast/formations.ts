@@ -60,6 +60,7 @@ import {
 } from "./distribution";
 import { askAnalyst } from "./judge";
 import { type SkepticRecord, skepticCrew } from "./skeptic";
+import { forecastTriaged } from "./triage-route";
 import {
   answerInstruction,
   forecastTyped,
@@ -136,8 +137,15 @@ export async function forecastFormed(
   const enforce = !contract ? undefined : mode === "observe" ? "observe" : "on";
   const { contract: _own, ...plain } = req;
   const carried: TypedForecastRequest = enforce === "on" ? { ...plain, contract } : plain;
-  const out = await formed(carried, deps, pattern);
-  if (adjustActive(deps.adjust)) await adjustForecast(out, carried, deps.adjust);
+  // Intake triage (`./triage-route.ts`): only when the deps carry it (`off` never does).
+  const out = deps.triage
+    ? await forecastTriaged(carried, { ...deps, triage: deps.triage }, pattern, (r, d) =>
+        formed(r, d, pattern),
+      )
+    : await formed(carried, deps, pattern);
+  // A triage read-off is a published figure: no prior shrink or recalibration moves it.
+  if (adjustActive(deps.adjust) && !out.triage?.readoff?.answered)
+    await adjustForecast(out, carried, deps.adjust);
   if (contract && enforce) await applyContract(out, carried, deps, contract, enforce);
   return out;
 }

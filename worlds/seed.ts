@@ -974,6 +974,30 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
+  // ── Intake triage (tool-use trait over `triage`) ─────────────────────
+  // Surfaces the built-in `intake-triage` skill: classify a question or task
+  // before spending on it, so a published figure is read, not forecast.
+
+  seedTrait(db, {
+    name: "intake-triage",
+    category: "methodology",
+    prompt:
+      "Before you research or forecast, run `triage <question>` (add `asof:<cutoff>` in a " +
+      "backtest). A `lookup` is already published: read the field on the publisher's page " +
+      "and stop. An `anchor` is the next print of a series: start from the latest reading " +
+      "with `quant fit`. A `list` needs the whole board rebuilt and sorted. Only a " +
+      "`forecast` needs the full method. The procedure: `skill builtin intake-triage`.",
+    capabilities: {
+      strengths: ["method-selection", "cost-control"],
+      preferences: ["read-before-forecast", "dates-over-opinion"],
+      avoids: ["forecasting-published-facts"],
+      domains: ["forecasting", "research", "analysis"],
+      behaviors: ["verify-computation"],
+      antiBehaviors: ["overclaim"],
+    },
+    createdBy: SYSTEM,
+  });
+
   // ── Researcher role (used by usecase recipes) ────────────────────────
 
   seedRole(db, {
@@ -988,6 +1012,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       "source-integrity",
       "intellectual-honesty",
       "quantitative-estimates",
+      "intake-triage",
     ],
     guidelines: [
       "Check what you already know before searching (recall, pool recall)",
@@ -1027,7 +1052,12 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     name: "market-oracle",
     description:
       "Market analyst — synthesizes positions, evidence, and reasoning across prediction markets.",
-    traits: ["methodical-observation", "knowledge-cataloging", "quantitative-estimates"],
+    traits: [
+      "methodical-observation",
+      "knowledge-cataloging",
+      "quantitative-estimates",
+      "intake-triage",
+    ],
     guidelines: [
       "Monitor all positions in your market room using recall and pool recall",
       "When asked, provide balanced synthesis of yes/no arguments with confidence levels",

@@ -53,6 +53,10 @@
  *                              probabilities; observe records them only; on shows them to the
  *                              runs and the judge and blends the buckets (MARINA_FORECAST_QUANT_WEIGHT,
  *                              default 0.25) into a choice's probabilities
+ *   MARINA_FORECAST_TRIAGE     off | observe | on (default off): intake triage (`./triage.ts`,
+ *                              `./triage-route.ts`) — lookup / anchor / list / forecast;
+ *                              _TRIAGE_MODEL (fact model, `none` = deterministic),
+ *                              _TRIAGE_CALENDAR (FRED probe and release calendar)
  *
  * No vendor key is required. Unset, every part resolves to what this
  * installation has (`src/agent/available-models.ts`): OpenRouter's three-vendor
@@ -84,6 +88,9 @@ import { lookupsFromSpec } from "./lookups";
 import { quantModeFromEnv, quantWeightFromEnv } from "./quant";
 import type { ForecastDeps } from "./question";
 import { DEFAULT_RETRIEVER, defaultRetrieverSpec } from "./retriever-default";
+import { triageModeFromEnv, triageModelFromEnv } from "./triage";
+import { triageCalendar, triageCalendarEnabled } from "./triage-calendar";
+import type { TriageSettings } from "./triage-route";
 import type { ModelPart, TypedForecastDeps, TypedForecastOptions } from "./typed";
 
 export { DEFAULT_RETRIEVER, defaultRetrieverSpec };
@@ -453,6 +460,7 @@ export function typedForecastDeps(
           ...(adjustOverride ?? {}),
           ...(history ? { history } : {}),
         };
+  const triage = triageSettingsFromEnv(env, extra);
   return {
     scale: w.scale,
     deps: {
@@ -473,10 +481,47 @@ export function typedForecastDeps(
       lookups: lookupsFromSpec(env.MARINA_FORECAST_LOOKUPS, env),
       options: typedOptionsFromEnv(env, options),
       ...(adjust ? { adjust } : {}),
+      ...(triage ? { triage } : {}),
     },
     costUsd: () =>
       w.researchCost() +
       w.analysts.reduce((s, m) => s + (m.usage?.costUsd ?? 0), 0) +
       extra.reduce((s, u) => s + u.costUsd, 0),
+  };
+}
+
+/**
+ * Intake triage settings (`MARINA_FORECAST_TRIAGE`, `./triage-route.ts`), or
+ * undefined when it is `off` (the default) — then the deps carry nothing and
+ * every forecast runs exactly as before. The fact model's spend joins `spend`.
+ */
+export function triageSettingsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  spend: Array<{ costUsd: number }> = [],
+): TriageSettings | undefined {
+  const mode = triageModeFromEnv(env);
+  if (mode === "off") return undefined;
+  const spec = triageModelFromEnv(env);
+  let model: ModelPart | undefined;
+  let modelError: string | undefined;
+  if (spec) {
+    try {
+      const m = modelPart(spec, env);
+      model = m;
+      if (m.usage) spend.push(m.usage);
+    } catch (err) {
+      modelError = `${spec}: ${(err as Error).message}`.slice(0, 200);
+    }
+  }
+  const fredApiKey = env.FRED_API_KEY?.trim() || undefined;
+  return {
+    mode,
+    ...(model ? { model } : {}),
+    ...(modelError ? { modelError } : {}),
+    ...(triageCalendarEnabled(env)
+      ? {
+          calendar: (facts, now) => triageCalendar(facts, now, fredApiKey ? { fredApiKey } : {}),
+        }
+      : {}),
   };
 }
