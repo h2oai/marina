@@ -18,7 +18,7 @@
  *   transaction (`db-memory-service.ts`), combined with the version row's time;
  * - a captured source: its `source.captured` event;
  * - an assistance proposal: its `assistance.completed` event.
- * Since migration 171 that event time is persisted on the row itself
+ * Since migration 172 that event time is persisted on the row itself
  * (`memory_record_versions.known_at`, `memory_sources.known_at`,
  * `memory_assistance_jobs.completed_known_at`) by a trigger on the event, and
  * older rows are filled by a bounded backfill (`db-memory-known-at.ts`), so
@@ -26,7 +26,7 @@
  * backfill is still running, an undated row falls back to the event lookup.
  * A version, source or proposal with neither — imported from a bundle (its
  * row times are the exporter's), converted before the event existed, or
- * pruned before migration 171 — has no reliable known-at and is NOT served
+ * pruned before migration 172 — has no reliable known-at and is NOT served
  * (fail closed). Content served is always the chosen version's own text,
  * never the current one.
  *
@@ -162,7 +162,7 @@ export function noteAsOf<T extends { id: number; content: string; created_at: nu
   return { ...note, content: row.content, asOf: { version: row.version, current } };
 }
 
-/** Persisted known-at per id (`table.column`, migration 171); NULLs omitted. */
+/** Persisted known-at per id (`table.column`, migration 172); NULLs omitted. */
 function persistedKnownAt(
   raw: Raw,
   table: "memory_sources" | "memory_assistance_jobs",

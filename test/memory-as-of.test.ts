@@ -47,7 +47,7 @@ describe("memory as of the evidence cutoff", () => {
     if (at === null) raw().run(`DELETE FROM memory_service_events WHERE ${where}`, params);
     else
       raw().run(`UPDATE memory_service_events SET created_at = ? WHERE ${where}`, [at, ...params]);
-    // The date the event's trigger persisted on the row (migration 171) moves with it.
+    // The date the event's trigger persisted on the row (migration 172) moves with it.
     dateKnownAt(ref, operation, at, version);
   };
   /** Set (or clear) the persisted known-at an event of `operation` dates. */

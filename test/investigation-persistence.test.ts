@@ -11,6 +11,7 @@ import { deliverOutcomes } from "../src/outcomes/deliver";
 import { resolveForecast } from "../src/outcomes/forecast";
 import { MarinaDB } from "../src/persistence/database";
 import { exportState, importState } from "../src/persistence/export-import";
+import { SCHEMA_VERSION } from "../src/persistence/schema";
 import type { InvestigationRequest } from "../src/sdk/investigation-types";
 import { binaryInvestigation } from "./fixtures/investigations";
 import { migrateEmptyTo } from "./schema-replay";
@@ -41,8 +42,9 @@ it("upgrades an existing media schema without replacing its migration or losing 
     const upgraded = new MarinaDB(path);
     try {
       const raw = upgraded.memoryRepository().raw;
+      // Upgrades run through every later migration, to the current version.
       expect(raw.query("SELECT MAX(version) AS version FROM schema_version").get()).toEqual({
-        version: 171,
+        version: SCHEMA_VERSION,
       });
       expect(
         raw.query("SELECT sql FROM sqlite_schema WHERE name='assets_memory_deleted'").get(),

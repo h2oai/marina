@@ -292,6 +292,12 @@ export interface DashboardEvent {
     | "connector"
     | "command";
   action?: "create" | "update" | "delete";
+  // Message envelope (say_sent / tell_sent, content-free; `from` / `to` above
+  // carry the sender and recipient names): the message ref and its causal
+  // thread — the ref it answers and its depth (0 = starts a thread).
+  messageRef?: string;
+  cause?: string;
+  depth?: number;
   timestamp: number;
 }
 

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Messages carry a causal envelope, and the canvas sees speech.** `say`, `tell` and `re` emit
+  content-free `say_sent` / `tell_sent` events (names, a message ref, `cause`, `depth`; never the
+  words), so the canvas draws say and tell arcs again. Every say, tell, re, shout and channel post
+  records `cause` (the message it answers: `re` names the tell it replies to) and `depth`, stored on
+  direct and channel messages (migration 171) and carried on their perceptions. `channel_message`
+  events carry the stored message id instead of `0`, so each post has its own feed ref.
+
 - **Yes/no forecasts lost their group class tag.** `group:binary:no|yes` failed the routing-ref
   character check (`|`), so every yes/no outcome reached card routing and the competence map
   without its coarsest class. Card evidence also no longer counts an answer twice when both its
@@ -438,7 +445,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version known by the cutoff, with that version's own text (labelled `as-of vK` — the version served, never the count past the cutoff, never trusted).
   Durable records, captured sources and assistance proposals are served by their own known-at
   time, taken from the service events the write path records. An item with no such event (bundle
-  imports, events dropped before migration 171) is still withheld. Tests prove no post-cutoff text
+  imports, events dropped before migration 172) is still withheld. Tests prove no post-cutoff text
   reaches any fenced surface.
   - **Fenced search is ranked on the as-of text.** `recall`, `recall … all|evidence`, the
     continuation context and `context` used to select and order notes and records by their
@@ -448,7 +455,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     that text matches, and ordered by its term coverage, then by creation time (`fencedNoteRecall`,
     `rankAsOf`). Durable records and sources are re-scored the same way. Query vocabulary, term
     distinctiveness and link expansion, all current state, are skipped under a cutoff.
-  - **Known-at times survive event retention (migration 171).** The dating events were pruned
+  - **Known-at times survive event retention (migration 172).** The dating events were pruned
     after 30 days, so older revisions could no longer be dated. The time is now stored on the row:
     `memory_record_versions.known_at`, `memory_sources.known_at` and
     `memory_assistance_jobs.completed_known_at`. Each is set by a trigger on the event, in the same

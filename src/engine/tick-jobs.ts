@@ -479,7 +479,7 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
   });
 
   // Every 10 ticks (phase 5, clear of schedules' 3): copy the dates of the
-  // memory events that predate migration 171 onto their version, source and
+  // memory events that predate migration 172 onto their version, source and
   // proposal rows (src/persistence/db-memory-known-at.ts) — a few short
   // seq-range batches per pass; boot never waits, and a finished backfill
   // costs one row read.

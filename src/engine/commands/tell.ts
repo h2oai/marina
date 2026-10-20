@@ -4,6 +4,7 @@
 import { tell } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { envelopeFields, type MessageCause, messageEnvelope } from "../message-envelope";
 import { parseModifiers } from "../parse-input";
 
 export interface TellDeps {
@@ -25,6 +26,11 @@ const TELL_USAGE = "Usage: tell <entity> [ttl:30s] <message>   (also --ttl=30s)"
  * Deliver a private message from `sender` to the named target. Shared by `tell`
  * and `re`. On success it records the sender's name on the recipient as
  * `last_tell_from`, so the recipient can reply with `re <message>`.
+ *
+ * The message records its causal envelope (`src/engine/message-envelope.ts`):
+ * `cause` names the message it answers — `re` passes the tell it replies to,
+ * otherwise the current command execution's cause applies — and emits one
+ * content-free `tell_sent` event.
  */
 export function deliverTell(
   deps: TellDeps,
@@ -34,6 +40,7 @@ export function deliverTell(
   targetName: string,
   message: string,
   deadlineMs?: number,
+  cause?: MessageCause,
 ): number | undefined {
   const target = deps.findEntityGlobal(targetName);
   if (!target) {
@@ -45,6 +52,7 @@ export function deliverTell(
     return undefined;
   }
 
+  const envelope = messageEnvelope(senderId, cause);
   const correlationId = crypto.randomUUID();
   const receipt = deps.db?.createDirectMessage({
     correlationId,
@@ -55,6 +63,7 @@ export function deliverTell(
     targetName: target.name,
     content: message,
     ...(deadlineMs ? { deadlineAt: Date.now() + deadlineMs } : {}),
+    ...envelopeFields(envelope),
   });
   if (receipt && receipt.correlation_id !== correlationId) {
     ctx.send(
@@ -64,6 +73,8 @@ export function deliverTell(
     return receipt.id;
   }
 
+  // A world without a database has no stored id; the ref is still unique.
+  const messageRef = receipt ? `tell:${receipt.id}` : `tell:${correlationId}`;
   deps.sendGlobal(target.id, tell(sender.name, message, "from"), senderId, "tell", {
     senderName: sender.name,
     to: target.name,
@@ -71,6 +82,8 @@ export function deliverTell(
     messageId: receipt?.id,
     correlationId: receipt?.correlation_id,
     deadlineAt: receipt?.deadline_at,
+    messageRef,
+    ...envelopeFields(envelope),
   });
   // Record who just messaged the recipient so they can `re`ply without retyping
   // the name. Reply chains naturally: replying makes you their last sender too.
@@ -84,8 +97,21 @@ export function deliverTell(
     senderId,
     `${tell(target.name, message, "to")}${receipt ? ` [delivered #${receipt.id}]` : ""}`,
     "tell",
-    { delivery: { kind: "tell", target: target.name, message } },
+    {
+      delivery: { kind: "tell", target: target.name, message },
+      messageRef,
+      ...envelopeFields(envelope),
+    },
   );
+  ctx.logEvent?.({
+    type: "tell_sent",
+    entity: senderId,
+    from: sender.name,
+    to: target.name,
+    messageRef,
+    ...envelopeFields(envelope),
+    timestamp: Date.now(),
+  });
   return receipt?.id;
 }
 
@@ -213,7 +239,26 @@ export function replyCommand(deps: TellDeps): CommandDef {
 
       const message = input.tokens.join(" ");
       const priorId = Number(sender.properties.last_tell_id);
-      const replyId = deliverTell(deps, ctx, input.entity, sender, lastFrom, message);
+      // The reply's cause is the tell it answers (the explicit reply path of
+      // src/engine/message-envelope.ts) — only a stored tell addressed to us.
+      const prior =
+        Number.isInteger(priorId) && deps.db ? deps.db.getDirectMessage(priorId) : undefined;
+      const cause =
+        prior &&
+        (prior.target_id === input.entity ||
+          prior.target_name.toLowerCase() === sender.name.toLowerCase())
+          ? { ref: `tell:${prior.id}`, depth: prior.depth ?? 0 }
+          : undefined;
+      const replyId = deliverTell(
+        deps,
+        ctx,
+        input.entity,
+        sender,
+        lastFrom,
+        message,
+        undefined,
+        cause,
+      );
       if (deps.db && Number.isInteger(priorId)) {
         deps.db.acknowledgeDirectMessage(priorId, input.entity, replyId);
       }

@@ -256,7 +256,7 @@ export function isExcludedFromExport(table: string): boolean {
   if (table === "memory_assistance_jobs" || table === "memory_assistance_actions") return true;
   if (table === "memory_storage_items" || table === "memory_storage_usage") return true;
   if (table === "memory_source_text") return true; // Rebuilt from canonical sources on import.
-  // Deployment-local backfill cursor (migration 171): the importing database has its own, and the
+  // Deployment-local backfill cursor (migration 172): the importing database has its own, and the
   // imported events date their rows through the known-at triggers.
   if (table === "memory_known_at_backfill") return true;
   return (

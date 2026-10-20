@@ -126,7 +126,7 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     kind: "telemetry",
     keepMs: 30 * DAY_MS,
     where: KNOWN_AT_RETENTION_WHERE,
-    note: "observability + watch cursors; a watch idle > 30 d re-primes from the live seq. The as-of fence dates rows by their own known_at (migration 171); a dating event the known-at backfill has not copied yet is kept",
+    note: "observability + watch cursors; a watch idle > 30 d re-primes from the live seq. The as-of fence dates rows by their own known_at (migration 172); a dating event the known-at backfill has not copied yet is kept",
   },
   {
     table: "routing_events",

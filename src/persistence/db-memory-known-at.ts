@@ -3,7 +3,7 @@
 
 /**
  * Known-at times for the as-of fence (`src/memory/as-of.ts`), persisted on the
- * rows themselves (migration 171): `memory_record_versions.known_at`,
+ * rows themselves (migration 172): `memory_record_versions.known_at`,
  * `memory_sources.known_at`, `memory_assistance_jobs.completed_known_at`.
  *
  * New events date their row through AFTER INSERT triggers on
@@ -56,7 +56,7 @@ export function knownAtBackfillState(db: Database): KnownAtBackfillState | undef
       .get() as { cursor: number; upto: number } | null;
     return row ? { ...row, done: row.cursor >= row.upto } : undefined;
   } catch {
-    // A schema without migration 171 has no backfill state.
+    // A schema without migration 172 has no backfill state.
     return undefined;
   }
 }

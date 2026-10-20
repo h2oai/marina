@@ -5,11 +5,11 @@
 ## Migrations
 - Migrations: append to `FORWARD_MIGRATIONS` in `src/persistence/schema.ts` (re-exported as `MIGRATIONS` by `database.ts`), never modify existing migrations. `MARINA_DB_DURABILITY=full` (fsync per commit) is the world default; migrations 96–109 are append-only like all others.
 
-## Known-at times for the as-of fence (migration 171)
+## Known-at times for the as-of fence (migration 172)
 
 The as-of fence (`src/memory/as-of.ts`) dates a canonical version, a captured source and an
 assistance proposal by the service event that recorded it (`memory.created` / `memory.revised`,
-`source.captured`, `assistance.completed`). Migration 171 persists that time on the row —
+`source.captured`, `assistance.completed`). Migration 172 persists that time on the row —
 `memory_record_versions.known_at`, `memory_sources.known_at`,
 `memory_assistance_jobs.completed_known_at` — through AFTER INSERT triggers on
 `memory_service_events` (same transaction, every write path). It is additive and idempotent:
@@ -23,6 +23,17 @@ never a whole-log scan. Retention keeps a dating event while it is inside the pe
 (`KNOWN_AT_RETENTION_WHERE`), so nothing the backfill still needs is pruned; fenced reads fall
 back to the event log only until the backfill is done. Bundle-imported rows carry no event and
 stay undated (fail closed).
+## Message envelope
+
+Migration 171 adds `cause TEXT` and `depth INTEGER NOT NULL DEFAULT 0` to `direct_messages`
+and `channel_messages`. `cause` is the ref of the message a post answers (`tell:<id>`,
+`channel_msg:<id>`, `say:<uuid>`, `shout:<uuid>`) and `depth` is the cause's depth + 1, or 0
+when the cause is unknown. `src/engine/message-envelope.ts` holds the rule: an explicit reply
+(`re`) names the tell it answers; otherwise the command execution's cause applies
+(`CommandExecutionOptions.cause`, kept on the `runCommandScope` frame in `gate-context.ts` and
+inherited by macro and `batch` expansions); otherwise the message starts a thread at depth 0.
+Delivered perceptions carry `messageRef`, `cause` and `depth`; the `say_sent` / `tell_sent`
+events carry names, the ref and the envelope, never the words.
 
 ## Private investigations
 

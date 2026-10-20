@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Migration 171: the as-of fence's known-at times live on the rows themselves
+ * Migration 172: the as-of fence's known-at times live on the rows themselves
  * (version, source, proposal), so the event log's 30-day retention can no
  * longer erase the date of an older revision. New events date their row by
  * trigger; older rows are filled by a bounded seq-range backfill, and until
@@ -28,7 +28,7 @@ import { cleanupDb, makeTestRoom } from "./helpers";
 const TEST_DB = "test_memory_known_at.db";
 const DAY = 86_400_000;
 
-describe("memory known-at persistence (migration 171)", () => {
+describe("memory known-at persistence (migration 172)", () => {
   let db: MarinaDB;
   let engine: Engine;
   let fx: UnifiedFixture;
@@ -93,7 +93,7 @@ describe("memory known-at persistence (migration 171)", () => {
   });
 
   it("the migration is additive and idempotent", () => {
-    const migration = MIGRATIONS.find((m) => m.version === 171)!;
+    const migration = MIGRATIONS.find((m) => m.version === 172)!;
     expect(migration.sql).not.toMatch(/\b(DROP|DELETE)\b/i);
     const before = raw().query("SELECT * FROM memory_known_at_backfill").all();
     // Re-running it over a migrated database changes nothing.

@@ -221,7 +221,19 @@ CREATE TABLE investigation_events (
 );
 `,
   },
-  // Migration 171 — known-at times on the rows the as-of fence dates
+  // Migration 171 — the causal message envelope (`src/engine/message-envelope.ts`):
+  // `cause` is the ref of the message a direct or channel message answers,
+  // `depth` its causal depth (cause depth + 1, else 0). Refs and numbers only.
+  {
+    version: 171,
+    sql: `
+ALTER TABLE direct_messages ADD COLUMN cause TEXT;
+ALTER TABLE direct_messages ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE channel_messages ADD COLUMN cause TEXT;
+ALTER TABLE channel_messages ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+`,
+  },
+  // Migration 172 — known-at times on the rows the as-of fence dates
   // (src/memory/as-of.ts). The `memory.created` / `memory.revised`,
   // `source.captured` and `assistance.completed` service events were the ONLY
   // record of when a version, source or proposal became known, and the event
@@ -234,7 +246,7 @@ CREATE TABLE investigation_events (
   // seq-range batches — never at boot, never one long transaction. Until the
   // cursor passes an event, retention keeps it (`KNOWN_AT_RETENTION_WHERE`).
   {
-    version: 171,
+    version: 172,
     sql: `
 CREATE TABLE IF NOT EXISTS memory_known_at_backfill (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -246,7 +258,7 @@ CREATE TABLE IF NOT EXISTS memory_known_at_backfill (
   },
 ];
 
-/** Migration 171 body — self-contained so later edits elsewhere never change it. */
+/** Migration 172 body — self-contained so later edits elsewhere never change it. */
 function installMemoryKnownAt(db: Database): void {
   const addColumn = (table: string, column: string) => {
     const columns = db.query(`PRAGMA table_info("${table}")`).all() as { name: string }[];
