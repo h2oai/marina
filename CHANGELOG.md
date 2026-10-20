@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Arbiter: adjudication only where answers disagree** (`src/orchestration/arbiter.ts`, all
+  surfaces default `off`). The trigger was always-on same-model verification: it overruled correct
+  answers too easily. On BrowseComp-Plus the `marina/verify:` arm lost accuracy and its gold recall
+  fell from 85 % to 66 %. An offline replay of stored runs found that, on the 82 items where four
+  unverified runs had a majority, the verify arm overruled a correct majority 15 times and fixed a
+  wrong one 0 times.
+  - Contested items are found from free signals: run agreement by answer type, verifier or critic
+    dissent, and judge spread. Only contested items reach the Arbiter, under a cap
+    (`MARINA_ARBITER_CAP`).
+  - The Arbiter keeps, overrules or abstains, with citations for every answer item and separate
+    source-quality and reasoning-quality scores. Overruling a majority needs grounded citations from
+    two independent registrable domains and confidence of at least 0.7 (`MARINA_ARBITER_*`);
+    anything less keeps the majority.
+  - Each overrule is scored when its question resolves (`ResolvedRecord.arbiter` in the forecast
+    history). The right to act can be gated on that earned record (`MARINA_ARBITER_UNEARNED=observe`).
+  - Wired into typed forecasts (`MARINA_FORECAST_ARBITER=off|observe|on|replace`, formation
+    `arbiter`). Under `on`, verifier corrections and critic revisions only advise; `replace` drops
+    the per-run verifier.
+  - Wired into `marina/verify:` (`MARINA_VERIFY_ARBITER`, `x-marina-arbiter` header,
+    `browsecomp-plus run --arbiter`). A checker's flag on a final answer is adjudicated instead of
+    freely revised; tool-call drafts are unchanged.
+  - In the world: the seeded `arbiter` role and `adjudication` trait, and a read-only
+    `arbiter contested|check|policy` command.
+  - The replay: `benchmarks/transfer/arbiter-replay.ts`, with no model calls.
+  - `off` is byte-identical, prompts included. See docs/architecture/orchestration.md.
+- **Intake triage** (`MARINA_FORECAST_TRIAGE=off|observe|on`, default `off`): before any method
+  runs, a question or task is classified as `lookup` (already published at the cutoff — read it),
+  `anchor` (a numeric official series not yet out — project the latest reading), `list` (a ranking
+  or board — rebuild, project, sort) or `forecast` (open — the full panel). Code derives the class
+  from facts and the clock, never a model: the stated resolution time, an official series that
+  already holds the period (FRED as published the day before the cutoff), a stated release date,
+  a dated event, the fact model's expected publication date, or a known statistic's usual lag. A
+  figure published after the cutoff is never a lookup. An optional cheap fact model
+  (`MARINA_FORECAST_TRIAGE_MODEL`, default `openrouter/deepseek/deepseek-v4.1-flash`, `none` for
+  fully deterministic) adds publisher, metric, period and expected publication date, and
+  `MARINA_FORECAST_TRIAGE_CALENDAR` reads the FRED release calendar. `observe` records the class,
+  facts and chosen method on the answer (`triage`) and changes nothing; `on` sends a lookup to an
+  authority read-off (one research round restricted to the publisher, the field read from
+  verified evidence and checked mechanically) and falls back to the full panel when the field is
+  not found, turns the quant stage on for an anchor, and gives a list the ranking method. `off`
+  leaves prompts, briefs and answers byte-identical. In-world agents get a rank-0 `triage
+  <question>` command (deterministic, no model call), a built-in `intake-triage` skill, and an
+  `intake-triage` trait on the `researcher` and `market-oracle` roles. `bun run eval:triage`
+  reports the class mix and per-class scores over stored results offline, at no cost.
 - **Research authority mode** (`MARINA_RESEARCH_AUTHORITY=on`, default off): research can find and
   read the publisher a question resolves against. A brief's settlement pages are authority targets
   from the first round, and the evidence loop's gap reviewer may name one (domain, page URL, field)

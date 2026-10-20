@@ -10,6 +10,7 @@ import { registerDeadlineSource } from "../../schedules/deadlines";
 import type { EntityId, RoomId } from "../../types";
 import { collectiveManager } from "../../world/world-collective-manager";
 import { commandManifest } from "../command-manifest";
+import { arbiterCommand } from "../commands/arbiter";
 import { associationCommand } from "../commands/association";
 import { audioCommand } from "../commands/audio";
 import { bookmarkCommand } from "../commands/bookmark";
@@ -48,6 +49,7 @@ import { scoreCommand } from "../commands/score";
 import { searchCommand } from "../commands/search";
 import { shoutCommand } from "../commands/shout";
 import { replyCommand, tellCommand } from "../commands/tell";
+import { triageCommand } from "../commands/triage";
 import { timeCommand, uptimeCommand } from "../commands/utility";
 import { videoCommand } from "../commands/video";
 import { watchCommand } from "../commands/watch";
@@ -199,6 +201,12 @@ export function registerGeneralCommands(engine: Engine): void {
   );
   engine.commands.registerBuiltin(
     quantCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
+  );
+  engine.commands.registerBuiltin(
+    arbiterCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
+  );
+  engine.commands.registerBuiltin(
+    triageCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
   engine.commands.registerBuiltin(timeCommand());
   engine.commands.registerBuiltin(uptimeCommand(() => engine.getUptime()));

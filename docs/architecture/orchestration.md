@@ -64,3 +64,58 @@ are distinct. See [the coding guide](../guides/coding.md) for the complete opera
   - If the attempt changed the workspace, the observer submits it. A change means writes, edits or applied patches recorded for this attempt, or a command followed by workspace paths that differ from HEAD, untracked files included (`changedPaths`, `.gitignore` respected). The summary is assembled from the attempt's record. The submission carries the label `budgetForced` `{reason:"spend"}` and whatever verification is recorded. It is never reported as verified unless its checks passed.
   - The submission verifier is not asked. Its opinion is `none`, like an outage, never a pass.
   - If nothing changed, the attempt ends `Blocked: BudgetForced: …` (`kind:impossible`) with the same label.
+
+## The Arbiter: adjudication only where answers disagree (2026-10-20)
+
+Always-on verification asks a reviewer, often the same model, to check every answer. That reviewer
+overrules correct answers too easily. On BrowseComp-Plus the `marina/verify:` arm (October 2026,
+when its checker still reviewed every turn) revised 976 of 1,093 reviewed turns, made about a third
+fewer searches, and gold recall fell from 85 % to 66 %. The Arbiter (`src/orchestration/arbiter.ts`)
+is one general replacement for that pattern, shared by every surface:
+
+- **Disagreement detection is free.** `detectDisagreement` reads signals the pipeline already has:
+  - agreement among independent runs, by answer type: choice and text by folded text, numbers
+    within a relative tolerance, multi-select as a set, rankings in order;
+  - a reviewer's dissent: a verifier's correction, a critic's revision, a checker's flag;
+  - the spread of judge scores.
+
+  Only contested items reach the Arbiter, and at most `MARINA_ARBITER_CAP` of them, most contested
+  first (`selectForArbiter` for a batch, `ArbiterQuota` per UTC day for a server).
+- **The contract.** The Arbiter writes ONE JSON verdict: `keep`, `overrule` (with the answer it
+  overrules to) or `abstain`. It must cite every answer item (each element of a list answer) with a
+  source and a verbatim quote, score `source_quality` and `reasoning_quality` separately, and give
+  a `confidence`. Abstaining is encouraged, and keeps the majority answer.
+- **The overrule bar** (`applyOverruleBar`). To overrule a majority of agreeing runs, the Arbiter
+  needs all three of:
+  - grounded citations: the quote is found in the evidence, and the source is a known source or
+    appears in it;
+  - at least `MARINA_ARBITER_MIN_DOMAINS` (2) independent registrable domains (`sourceKey`:
+    `en.` and `de.wikipedia.org` are one domain, a corpus document id is its own key);
+  - confidence of at least `MARINA_ARBITER_MIN_CONFIDENCE` (0.7).
+
+  With no majority, the domain floor is 1. A verdict that falls short is downgraded: to `abstain`
+  when confidence is short, otherwise to `keep`. The record says why. Residents can check the bar
+  for free with `arbiter check`.
+- **Earned trust.** Each overrule that clears the bar is scored when its question resolves. Observed
+  overrules count too, so `observe` builds the record before the Arbiter is allowed to act. In
+  forecasts the record lives in the forecast history (`ResolvedRecord.arbiter`), as booleans and the
+  Arbiter's model name. `arbiterTrackRecord` measures precision per evaluator. Under
+  `MARINA_ARBITER_UNEARNED=observe`, an Arbiter acts only after `MARINA_ARBITER_EARN_MIN_RESOLVED`
+  resolved overrules at precision of at least `MARINA_ARBITER_EARN_MIN_PRECISION`. Under `strict`
+  (the default), the bar alone decides.
+- **Surfaces.**
+  - Typed forecasts: `MARINA_FORECAST_ARBITER=off|observe|on|replace`, or formation `arbiter`
+    (`src/forecast/arbiter.ts`). Contested is judged on the runs' drafts. `on` makes the verifier
+    and critic advisory; `replace` also drops the per-run verifier.
+  - `marina/verify:`: `MARINA_VERIFY_ARBITER`, or the `x-marina-arbiter` header. A checker's flag
+    on a final answer becomes a dissent, adjudicated from the tool results. Tool-call drafts, which
+    are where verification helps τ² airline, are unchanged.
+  - The world: the `arbiter` role and `adjudication` trait (seeded with the other roles), invited
+    like any specialist, plus the read-only `arbiter contested|check|policy` command.
+- **Replay.** `bun benchmarks/transfer/arbiter-replay.ts` reads stored per-item results with no model
+  calls: BrowseComp-Plus replicate dirs, ledger runs (`answer_hash`, `correct`) and typed-forecast
+  answers. It counts how many items would reach the Arbiter, and how often the always-on verifier
+  overruled a correct majority or fixed a wrong one.
+
+`off` everywhere is byte-identical: no call, no field, the same prompts (`test/forecast-arbiter.test.ts`,
+`test/arbiter-verify.test.ts`). The core is pure and tested in `test/arbiter.test.ts`.

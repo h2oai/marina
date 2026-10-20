@@ -391,6 +391,50 @@ Effect: write.
 - `field-0` (`name`): text, required.
 - Group `option-0`: `--keep-children`.
 
+## arbiter
+
+The Arbiter's rules, free and mechanical — no model call.
+Usage:
+  arbiter contested [type:choice|multi|number|ranking|text] -- <answer> | <answer> | …
+  arbiter check [type:<t>] [majority:<answer>] [agreement:<0-1>] -- <verdict JSON>
+  arbiter policy
+
+contested: the answers independent attempts gave (multi/ranking items comma-separated). Contested = they disagree.
+check: apply the overrule bar to an Arbiter verdict:
+  {"verdict":"keep"|"overrule"|"abstain","answer":…,"items":[{"item":…,"citations":[{"source":<url>,"quote":…}]}],
+   "source_quality":0-1,"reasoning_quality":0-1,"confidence":0-1,"reason":…}
+  Overruling a majority needs citations for every answer item from independent domains and enough confidence; short of that it is kept or abstained.
+Invite an Arbiter: a resident with role `arbiter` (`agent spawn <name> role:arbiter`), then `tell <name> arbitrate: <question> | answers: … | evidence: …`.
+
+Category: System. Minimum rank: 0.
+Aliases: none.
+
+### `arbiter contested [type:choice|multi|number|ranking|text] -- <a> | <b> | …`
+
+Effect: read.
+
+- `field-0` (`type`): text, optional group `option-0`, choices `choice`, `multi`, `number`, `ranking`, `text`.
+- `field-1` (`a`): text, required.
+- `field-2` (`b`): text, required.
+- Group `option-0`: `type:choice|multi|number|ranking|text`.
+
+### `arbiter check [type:<t>] [majority:<answer>] [agreement:<0-1>] -- <verdict JSON>`
+
+Effect: read.
+
+- `field-0` (`type`): text, optional group `option-0`.
+- `field-1` (`majority`): text, optional group `option-1`.
+- `field-2` (`agreement`): text, optional group `option-2`.
+- `field-3` (`verdict JSON`): json, required.
+- Group `option-0`: `type:t`.
+- Group `option-1`: `majority:answer`.
+- Group `option-2`: `agreement:0-1`.
+
+### `arbiter policy`
+
+Effect: read.
+
+
 ## arena
 
 Marina in the Social Simulation Arena: open questions, Marina's forecasts, its filed record.
@@ -8642,6 +8686,43 @@ Effect: read.
 Effect: read.
 
 - `field-0` (`name`): text, required.
+
+## triage
+
+Intake triage — which method a question or task needs. No model call, milliseconds.
+Usage:
+  triage <question or task> [type:choice|multi|number|ranking|text] [options:A,B,…] [size:N] [ends:<ISO>] [resolves:<ISO>] [asof:<ISO>]
+
+The class is decided by dates, never guessed: a figure whose release (or event) is before NOW is a lookup.
+asof: sets NOW (default: the world clock); resolves: is when the answer becomes known.
+When to triage, and what each class does next: skill builtin intake-triage
+
+Examples:
+  triage What was the US CPI-U inflation rate for August 2026? type:number
+  triage Will Arsenal beat Aston Villa on 31 August 2026? type:choice options:Yes,No
+  triage Which five films will top the domestic box office for 18-20 September 2026? type:ranking size:5
+  triage What will EIA report for crude stocks for the week ending 28 August 2026? asof:2026-08-25
+
+Category: Markets & Forecasting. Minimum rank: 0.
+Aliases: none.
+
+### `triage <question or task> [type:<choice|multi|number|ranking|text>] [options:<id,id,…>] [size:<n>] [ends:<iso>] [resolves:<iso>] [asof:<iso>]`
+
+Effect: read.
+
+- `field-0` (`question or task`): text, required.
+- `field-1` (`type`): text, optional group `option-0`, choices `choice`, `multi`, `number`, `ranking`, `text`.
+- `field-2` (`options`): text, optional group `option-1`.
+- `field-3` (`size`): number, optional group `option-2`.
+- `field-4` (`ends`): text, optional group `option-3`.
+- `field-5` (`resolves`): text, optional group `option-4`.
+- `field-6` (`asof`): text, optional group `option-5`.
+- Group `option-0`: `type:choice|multi|number|ranking|text`.
+- Group `option-1`: `options:id,id,…`.
+- Group `option-2`: `size:n`.
+- Group `option-3`: `ends:iso`.
+- Group `option-4`: `resolves:iso`.
+- Group `option-5`: `asof:iso`.
 
 ## uptime
 

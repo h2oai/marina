@@ -212,6 +212,16 @@ critic) checks its draft against the dossier and the resolution rules — option
 scale, the latest reading, arithmetic — and a concrete correction replaces the draft. Each run
 records the verdict and, on a correction, the draft it replaced.
 
+**The Arbiter** (`MARINA_FORECAST_ARBITER`, default `off`; `--formation arbiter`): adjudication only
+where answers disagree, in place of always-on verification. A forecast is contested when its runs'
+drafts disagree, the verifier or the critic dissents, or the judge's scores spread; only then is the
+Arbiter (`MARINA_FORECAST_ARBITER_MODEL`, default the critic) asked. It keeps the majority, overrules
+it with cited evidence, or abstains. An overrule of a majority needs citations from two independent
+domains and confidence of at least 0.7 (`MARINA_ARBITER_*`). `observe` records the verdict on the
+answer (`arbiter`) and changes nothing. `on` makes verifier corrections and critic revisions advisory,
+so only a bar-clearing overrule changes the answer. `replace` also skips the per-run verifier. See
+[the Arbiter](../architecture/orchestration.md#the-arbiter-adjudication-only-where-answers-disagree-2026-10-20).
+
 **Lessons.** A forecast can recall lessons from questions that have already resolved. There is
 one lesson system: the judged, audited outcome loop
 ([outcome lessons](../architecture/memory.md#outcome-lessons-srclearning)). A resolved forecast,
@@ -508,6 +518,31 @@ The modes:
   probabilities into the runs' distribution with weight `MARINA_FORECAST_QUANT_WEIGHT` (default
   0.25). The prediction then becomes the most probable option.
 
+#### Intake triage
+
+`MARINA_FORECAST_TRIAGE` (default `off`) classifies every typed forecast before any method runs,
+so a figure that is already published gets read rather than forecast:
+
+| Class | When | Method under `on` |
+|---|---|---|
+| `lookup` | the answer is already published at the cutoff | an authority read-off: one research round restricted to the publisher, the field read from verified evidence and checked; the full panel if it is not found |
+| `anchor` | a numeric official series, not yet published | the panel with the quant stage on and the anchor method in its notes |
+| `list` | a ranking, top-N or board | the panel with the ranking method (rebuild the board, project, sort) |
+| `forecast` | anything else | the full panel, unchanged |
+
+Dates decide "already published?", never a model: the question's stated resolution time, an
+official FRED series that already holds the period, a release date the question names, a dated
+event that is over, the fact model's expected publication date, or a known statistic's usual
+release lag. NOW is the evidence cutoff, so in a backtest a figure published after the cutoff is
+never a lookup. `MARINA_FORECAST_TRIAGE_MODEL` (default `openrouter/deepseek/deepseek-v4.1-flash`;
+`none` = deterministic) adds facts — publisher, metric, period, expected publication date — and
+`MARINA_FORECAST_TRIAGE_CALENDAR` reads FRED's series and release calendar. `observe` records the
+class, its reason, the facts and the method on the answer (`triage`) without changing anything.
+
+Agents use the same classifier with `triage <question> [type:…] [asof:<cutoff>]` (rank 0, no
+model call) and the built-in `intake-triage` skill. `bun run eval:triage` measures it offline on
+stored results: the class mix and each class's mean score and share of the loss.
+
 ## Keeping score
 
 Every in-world answer is saved with its full audit trail (`forecast list` shows yours). To have
@@ -525,6 +560,7 @@ are saved with their answer as one string (`prediction`).
 | `MARINA_FORECAST_RETRIEVER` | `openrouter-web:google/gemini-3.1-pro-preview@exa,search` with an OpenRouter key; else `search` (the search backend chain, keyless DuckDuckGo at the end) | the research engine(s) |
 | `MARINA_FORECAST_DOSSIER_CHARS` | sized to the analysts' context window (12 000–60 000) | typed answers: research characters each run reads; verified lines are kept first |
 | `MARINA_FORECAST_FOLLOWUP` | `on` | typed answers: one extra research round — before the runs when fewer than `MARINA_FORECAST_MIN_EVIDENCE` (5) lines verify, else after them when no run is grounded |
+| `MARINA_FORECAST_ARBITER` | `off` | typed answers: `observe` records an Arbiter verdict on contested forecasts; `on` lets only a bar-clearing overrule change the answer (verifier and critic advise); `replace` also drops the per-run verifier |
 | `MARINA_FORECAST_DISAGREEMENT` | `on` | typed answers: when the runs disagree, search the crux and pool one more run |
 | `MARINA_FORECAST_JUDGE` | `jev` | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend — OpenJev, TypeSafe, a chat classifier; falls back to `jev` when none is set) or `none` (equal weights) |
 | `MARINA_FORECAST_PLANNER` | the first analyst | typed answers: plans and names research gaps |

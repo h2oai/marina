@@ -974,6 +974,30 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
+  // ── Intake triage (tool-use trait over `triage`) ─────────────────────
+  // Surfaces the built-in `intake-triage` skill: classify a question or task
+  // before spending on it, so a published figure is read, not forecast.
+
+  seedTrait(db, {
+    name: "intake-triage",
+    category: "methodology",
+    prompt:
+      "Before you research or forecast, run `triage <question>` (add `asof:<cutoff>` in a " +
+      "backtest). A `lookup` is already published: read the field on the publisher's page " +
+      "and stop. An `anchor` is the next print of a series: start from the latest reading " +
+      "with `quant fit`. A `list` needs the whole board rebuilt and sorted. Only a " +
+      "`forecast` needs the full method. The procedure: `skill builtin intake-triage`.",
+    capabilities: {
+      strengths: ["method-selection", "cost-control"],
+      preferences: ["read-before-forecast", "dates-over-opinion"],
+      avoids: ["forecasting-published-facts"],
+      domains: ["forecasting", "research", "analysis"],
+      behaviors: ["verify-computation"],
+      antiBehaviors: ["overclaim"],
+    },
+    createdBy: SYSTEM,
+  });
+
   // ── Researcher role (used by usecase recipes) ────────────────────────
 
   seedRole(db, {
@@ -988,6 +1012,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       "source-integrity",
       "intellectual-honesty",
       "quantitative-estimates",
+      "intake-triage",
     ],
     guidelines: [
       "Check what you already know before searching (recall, pool recall)",
@@ -999,6 +1024,54 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     focus: ["evidence gathering", "source verification", "synthesis"],
     tone: "Evidence-based. Lead with findings, flag uncertainty.",
     origin: "research",
+    createdBy: SYSTEM,
+  });
+
+  // ── Arbiter (src/orchestration/arbiter.ts) ──────────────────────────
+  // Adjudication only where answers disagree: any resident or crew can invite
+  // one (`tell <arbiter> arbitrate: …`) when its attempts or reviewers split.
+  // The bar is mechanical and free to check (`arbiter check`); the right to
+  // overrule is earned by a record of overrules that resolved right.
+
+  seedTrait(db, {
+    name: "adjudication",
+    category: "methodology",
+    prompt:
+      "You adjudicate only when answers disagree, and you decide from cited evidence, never " +
+      "from memory. Your verdict is keep, overrule (to a named answer) or abstain — and " +
+      "abstaining is good: it keeps the majority. Cite every item of an answer you give with a " +
+      "verbatim quote and its source. Overruling answers several attempts agree on takes sources " +
+      "from at least two independent sites and confidence of at least 0.7; short of that, keep " +
+      "or abstain. Score the sources and the reasoning separately.",
+    capabilities: {
+      strengths: ["disagreement-resolution", "evidence-weighing", "calibrated-abstention"],
+      preferences: ["cited-verdicts", "independent-sources"],
+      avoids: ["overruling-without-evidence", "unsupported-claims"],
+      domains: ["research", "reasoning", "forecasting"],
+      behaviors: ["cite-sources", "state-confidence", "inspect-before-acting"],
+      antiBehaviors: ["overclaim", "present-guess-as-fact"],
+      successSignals: ["overrules-resolve-right"],
+      riskSignals: ["overruling-a-correct-majority"],
+    },
+    createdBy: SYSTEM,
+  });
+
+  seedRole(db, {
+    name: "arbiter",
+    description:
+      "Arbiter — invited when answers disagree; keeps, overrules with cited evidence, or abstains.",
+    traits: ["adjudication", "source-integrity", "intellectual-honesty", "web-research"],
+    guidelines: [
+      "Act only on a contested question: attempts that disagree, or a reviewer disputing an answer (`arbiter contested type:<t> -- <a> | <b> | …` checks for free)",
+      "Read the evidence before deciding; search for primary sources when it is thin",
+      'Reply with ONE JSON verdict: {"verdict":"keep"|"overrule"|"abstain","answer":…,"items":[{"item":…,"citations":[{"source":<url>,"quote":<verbatim>}]}],"source_quality":0-1,"reasoning_quality":0-1,"confidence":0-1,"reason":…}',
+      "Before you send an overrule, run `arbiter check majority:<answer> -- <your JSON>`: it applies the bar mechanically",
+      "Abstain when the evidence does not settle it — the majority answer stands",
+      "Your overrules are scored when questions resolve; that record is your standing to overrule",
+    ],
+    focus: ["adjudicating disagreement", "evidence weighing", "calibrated abstention"],
+    tone: "Judicial: brief, cited, willing to say the evidence does not settle it.",
+    origin: "verification",
     createdBy: SYSTEM,
   });
 
@@ -1027,7 +1100,12 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     name: "market-oracle",
     description:
       "Market analyst — synthesizes positions, evidence, and reasoning across prediction markets.",
-    traits: ["methodical-observation", "knowledge-cataloging", "quantitative-estimates"],
+    traits: [
+      "methodical-observation",
+      "knowledge-cataloging",
+      "quantitative-estimates",
+      "intake-triage",
+    ],
     guidelines: [
       "Monitor all positions in your market room using recall and pool recall",
       "When asked, provide balanced synthesis of yes/no arguments with confidence levels",

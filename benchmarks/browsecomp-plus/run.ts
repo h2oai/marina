@@ -475,6 +475,8 @@ export interface ArmConfig {
   limit: number | null;
   /** `read-swarm` settings (absent for every other formation). */
   swarm?: Record<string, unknown>;
+  /** `--arbiter`: the `x-marina-arbiter` mode a `marina/verify:` model runs under (absent = server default). */
+  arbiter?: string;
   /** The sampled query ids, hashed: the slice itself, whatever produced it. */
   queriesHash: string;
 }

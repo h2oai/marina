@@ -14,7 +14,7 @@ const TEST_DB = "test_builtin_skills_cmd.db";
 
 describe("built-in skill library", () => {
   it("ships the quantitative-estimates skill exactly as its seed file", () => {
-    expect(BUILTIN_SKILLS.map((s) => s.name)).toEqual(["quantitative-estimates"]);
+    expect(BUILTIN_SKILLS.map((s) => s.name)).toEqual(["quantitative-estimates", "intake-triage"]);
     expect(builtinSkill(" Quantitative-Estimates ")).toEqual(
       loadSkillFile("seeds/skills/quantitative-estimates.md"),
     );
@@ -81,8 +81,10 @@ describe("skill builtin / skill search reach it with no import", () => {
     seedTraitsAndRoles(db);
     const trait = db.getTrait("quantitative-estimates");
     expect(trait?.prompt).toContain("skill builtin quantitative-estimates");
+    expect(db.getTrait("intake-triage")?.prompt).toContain("skill builtin intake-triage");
     for (const role of ["researcher", "market-oracle"]) {
       expect(JSON.parse(db.getRole(role)!.traits)).toContain("quantitative-estimates");
+      expect(JSON.parse(db.getRole(role)!.traits)).toContain("intake-triage");
     }
     // Seeding stays idempotent.
     seedTraitsAndRoles(db);

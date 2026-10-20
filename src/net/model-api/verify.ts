@@ -16,6 +16,14 @@
 // returns the proposer's draft unchanged (the verifier accepts on outage, as
 // in `src/decisions/policy.ts`).
 //
+// With `MARINA_VERIFY_ARBITER` (default off) a checker's flag on a FINAL text
+// answer (no tool calls) is a dissent, not a verdict: the Arbiter
+// (`src/orchestration/arbiter.ts`) adjudicates it from the conversation's tool
+// results. `observe` records its verdict (`x-marina-arbiter`) and changes
+// nothing; `on` keeps the draft unless the Arbiter overrules it past the bar
+// (grounded citations from two independent domains, confidence ≥ 0.7), and then
+// the revision is told the Arbiter's answer. Tool-call drafts are unchanged.
+//
 // With the `ensemble` stack member (or a `marina/ensemble:` panel) the first
 // draft is the ensemble's pick (`VerifyExtras.draft`): ensemble first, then
 // this review; a revision is one call by the picked draft's proposer.
@@ -29,6 +37,15 @@ import { evalOption } from "../../learning/eval-context";
 import { lessonsBlock, lessonsHeaderValue, recallForWork } from "../../learning/service";
 import { readOnlyCall } from "../../obligations/tool-call";
 import { isReadOnlyTool } from "../../obligations/tool-effect";
+import {
+  type ArbiterMode,
+  ArbiterQuota,
+  type ArbiterResult,
+  arbiterPolicyFromEnv,
+  arbitrate,
+  formatArbiterValue,
+  parseArbiterMode,
+} from "../../orchestration/arbiter";
 import type { RepairLabel } from "../../repair/output-repair";
 import { repairToolCallMessage } from "../../repair/tool-call-repair";
 import type { EntityId } from "../../types";
@@ -156,6 +173,97 @@ export function verifyReviewMode(
   env: Record<string, string | undefined> = process.env,
 ): VerifyReviewMode {
   return env.MARINA_VERIFY_REVIEW?.trim().toLowerCase() === "all" ? "all" : "consequential";
+}
+
+/**
+ * The Arbiter mode for one request: its `x-marina-arbiter` header (off |
+ * observe | on) when present, else `MARINA_VERIFY_ARBITER` (default off).
+ */
+export function verifyArbiterMode(
+  env: Record<string, string | undefined> = process.env,
+  header?: string | null,
+): ArbiterMode {
+  return parseArbiterMode(header ?? env.MARINA_VERIFY_ARBITER);
+}
+
+/** A final answer: text and no tool calls (the only draft the Arbiter adjudicates). */
+export function finalAnswerDraft(draft: Msg): boolean {
+  return (draft.tool_calls?.length ?? 0) === 0 && textOf(draft.content).trim().length > 0;
+}
+
+/** URLs and document ids in the conversation's tool results (the Arbiter's citable sources). */
+export function toolResultSources(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(/https?:\/\/[^\s"'<>)\]]+/g)) out.add(m[0]);
+  for (const m of text.matchAll(/"doc_?id"\s*:\s*"([^"]+)"/gi)) out.add(m[1]!);
+  return [...out].slice(0, 200);
+}
+
+/** The Arbiter's view of a flagged final draft: the request, the draft, the checker's dissent. */
+export function arbiterItemFor(messages: Msg[], draft: Msg, issues: string) {
+  const tools = messages.filter((m) => m.role === "tool");
+  const evidence = (tools.length ? tools : messages).map((m) => textOf(m.content)).join("\n");
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+  return {
+    id: "verify",
+    question: clamp(textOf(lastUser?.content), 4_000),
+    type: "text" as const,
+    runs: [{ answer: textOf(draft.content).trim(), label: "proposer" }],
+    dissent: [{ by: "checker", reason: issues }],
+    evidence,
+    sources: toolResultSources(evidence),
+  };
+}
+
+let arbiterQuota: ArbiterQuota | undefined;
+
+/** Ask the Arbiter (on the checker model) about a flagged final draft; never throws. */
+async function adjudicateDraft(
+  engine: Engine,
+  mode: Exclude<ArbiterMode, "off">,
+  checker: string,
+  messages: Msg[],
+  draft: Msg,
+  issues: string,
+  signal: AbortSignal | undefined,
+  entityId: EntityId | undefined,
+): Promise<{ result: ArbiterResult; costUsd: number; usage?: unknown }> {
+  const policy = arbiterPolicyFromEnv();
+  arbiterQuota ??= new ArbiterQuota(policy.cap);
+  let costUsd = 0;
+  let usage: unknown;
+  const result = await arbitrate(arbiterItemFor(messages, draft, issues), {
+    mode,
+    evaluator: checker,
+    policy,
+    quota: arbiterQuota,
+    complete: async (system, user) => {
+      const r = await callUpstream(
+        engine,
+        {
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+        },
+        checker,
+        signal,
+        "verify:arbiter",
+        entityId,
+      );
+      costUsd += r.costUsd ?? 0;
+      usage = r.body?.usage;
+      if (!r.ok) throw new Error(`arbiter HTTP ${r.status}`);
+      return textOf(firstMessage(r.body)?.content);
+    },
+  });
+  return { result, costUsd, ...(usage ? { usage } : {}) };
+}
+
+/** `x-marina-arbiter`: what the Arbiter did (`adjudicated:keep`, `capped`, …). */
+export function arbiterLabel(r: ArbiterResult): string {
+  const v = r.bar?.verdict;
+  return `${r.status}${v ? `:${v}` : ""}${r.applied ? ":applied" : ""}`;
 }
 
 /** A draft the checker can pass unreviewed under `consequential`: only read-only calls. */
@@ -977,6 +1085,9 @@ export async function maybeVerifyChat(
   let usage = addUsage(undefined, first.body.usage);
   let cost = first.costUsd ?? 0;
   let verdictLabel = "approved";
+  let arbiterHeader: string | undefined;
+  let overruled = false;
+  const arbiterMode = verifyArbiterMode(process.env, req.headers.get("x-marina-arbiter"));
   const rounds = verifyRounds();
   const effort = checkerEffort(body);
   const checkerCache = checkerCaches(spec.checker);
@@ -1018,6 +1129,40 @@ export async function maybeVerifyChat(
       break;
     }
     if (verdict.verdict === "approve") break;
+    // A flagged FINAL answer goes to the Arbiter (once per request) instead of
+    // a free revision: the checker's flag is a dissent, not a verdict.
+    if (arbiterMode !== "off" && finalAnswerDraft(draft)) {
+      if (arbiterHeader !== undefined) {
+        // Already adjudicated: under `on` no further free revision.
+        if (arbiterMode === "on") break;
+      } else {
+        const judged = await adjudicateDraft(
+          engine,
+          arbiterMode,
+          spec.checker,
+          callerMessages,
+          draft,
+          verdict.issues,
+          signal,
+          entityId,
+        );
+        cost += judged.costUsd;
+        usage = addUsage(usage, judged.usage);
+        arbiterHeader = arbiterLabel(judged.result);
+        if (arbiterMode === "on") {
+          if (!judged.result.applied || judged.result.final === undefined) {
+            verdictLabel = "arbiter-kept";
+            break;
+          }
+          overruled = true;
+          verdict = {
+            verdict: "revise",
+            issues:
+              `An arbiter weighed the evidence and found the answer should be: ${formatArbiterValue(judged.result.final)}. ${judged.result.verdict?.reason ?? ""}`.trim(),
+          };
+        }
+      }
+    }
     if (rounds === 0) {
       verdictLabel = "flagged";
       break;
@@ -1055,7 +1200,7 @@ export async function maybeVerifyChat(
     }
     final = revised.body;
     draft = candidate;
-    verdictLabel = "revised";
+    verdictLabel = overruled ? "arbiter-overruled" : "revised";
   }
 
   // 4. Output repair: the final message owed a tool call but carries it as
@@ -1117,6 +1262,7 @@ export async function maybeVerifyChat(
     "x-marina-verify": verdictLabel,
     "x-marina-lessons": lessonsHeader,
     ...(repairLabel ? { "x-marina-repair": repairLabel } : {}),
+    ...(arbiterHeader ? { "x-marina-arbiter": arbiterHeader } : {}),
     [COST_USD_HEADER]: cost.toFixed(8),
   });
 }

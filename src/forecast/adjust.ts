@@ -27,6 +27,7 @@
  */
 
 import { type AnswerSpec, formatAnswer } from "./answer-types";
+import { arbiterHistory } from "./arbiter";
 import {
   argmax,
   averageDistributions,
@@ -471,7 +472,7 @@ export function recordFromAnswer(input: {
     const h = horizonDays(answer.cutoff.at, req.endTime);
     if (h !== undefined) prior.horizonDays = h;
   }
-  return resolvedRecord({
+  const record = resolvedRecord({
     id: input.id,
     spec: req.answer,
     resolvedAt: input.resolvedAt,
@@ -483,6 +484,9 @@ export function recordFromAnswer(input: {
     ...(input.formation ? { formation: input.formation } : {}),
     ...(input.score !== undefined ? { score: input.score } : {}),
   });
+  // The Arbiter's earned-trust record (only when it adjudicated this answer).
+  const arbiter = arbiterHistory(answer, input.truth);
+  return arbiter ? { ...record, arbiter } : record;
 }
 
 function priorNumbers(p: ChosenPrior): ForecastNumbers & { source: PriorSource } & PriorContext {

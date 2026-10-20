@@ -42,6 +42,9 @@
  *                              through every stage and enforced (`./answer-contract.ts`)
  *   MARINA_FORECAST_VERIFY     on | off (default on): each run's draft is checked by
  *                              MARINA_FORECAST_VERIFIER (default: the critic) before it counts
+ *   MARINA_FORECAST_ARBITER    off | observe | on | replace (default off): adjudication of
+ *                              contested forecasts only (`./arbiter.ts`); the model is
+ *                              MARINA_FORECAST_ARBITER_MODEL (default: the critic)
  *   MARINA_FORECAST_RETRIEVAL_FILTER  strict | none (default none): keep only report lines
  *                              whose cited pages are provably published by the cutoff
  *                              (src/arena/research/isolation.ts)
@@ -53,6 +56,10 @@
  *                              probabilities; observe records them only; on shows them to the
  *                              runs and the judge and blends the buckets (MARINA_FORECAST_QUANT_WEIGHT,
  *                              default 0.25) into a choice's probabilities
+ *   MARINA_FORECAST_TRIAGE     off | observe | on (default off): intake triage (`./triage.ts`,
+ *                              `./triage-route.ts`) — lookup / anchor / list / forecast;
+ *                              _TRIAGE_MODEL (fact model, `none` = deterministic),
+ *                              _TRIAGE_CALENDAR (FRED probe and release calendar)
  *
  * No vendor key is required. Unset, every part resolves to what this
  * installation has (`src/agent/available-models.ts`): OpenRouter's three-vendor
@@ -78,12 +85,16 @@ import { researchRetriever } from "../research/retriever";
 import { type AdjustSettings, adjustSettingsFromEnv } from "./adjust";
 import { contractModeFromEnv } from "./answer-contract";
 import { SELECTION_MODES, type SelectionMode } from "./answer-types";
+import { forecastArbiterModeFromEnv } from "./arbiter";
 import type { ForecastHistory } from "./history";
 import type { LessonStore } from "./lessons";
 import { lookupsFromSpec } from "./lookups";
 import { quantModeFromEnv, quantWeightFromEnv } from "./quant";
 import type { ForecastDeps } from "./question";
 import { DEFAULT_RETRIEVER, defaultRetrieverSpec } from "./retriever-default";
+import { triageModeFromEnv, triageModelFromEnv } from "./triage";
+import { triageCalendar, triageCalendarEnabled } from "./triage-calendar";
+import type { TriageSettings } from "./triage-route";
 import type { ModelPart, TypedForecastDeps, TypedForecastOptions } from "./typed";
 
 export { DEFAULT_RETRIEVER, defaultRetrieverSpec };
@@ -347,8 +358,10 @@ export function typedOptionsFromEnv(
   const pool = env.MARINA_FORECAST_POOL?.trim().toLowerCase();
   const quant = quantModeFromEnv(env);
   const contract = contractModeFromEnv(env);
+  const arbiter = forecastArbiterModeFromEnv(env);
   return {
     ...(quant !== "off" ? { quant, quantWeight: quantWeightFromEnv(env) } : {}),
+    ...(arbiter !== "off" ? { arbiter } : {}),
     ...(contract !== "off" ? { contract } : {}),
     ...(SELECTION_MODES.includes(selection as SelectionMode)
       ? { selection: selection as SelectionMode }
@@ -377,6 +390,8 @@ export function typedForecastDeps(
     planner?: string;
     critic?: string;
     verifier?: string;
+    /** The Arbiter's model instead of MARINA_FORECAST_ARBITER_MODEL. */
+    arbiterModel?: string;
     /** A retriever spec instead of MARINA_FORECAST_RETRIEVER. */
     retriever?: string;
     /** Wrap retrieval in the strict pre-cutoff filter (MARINA_FORECAST_RETRIEVAL_FILTER=strict). */
@@ -409,7 +424,14 @@ export function typedForecastDeps(
   let planner: ModelPart | undefined;
   let critic: ModelPart | undefined;
   let verifier: ModelPart | undefined;
+  let arbiter: ModelPart | undefined;
   try {
+    const aSpec = overrides.arbiterModel ?? env.MARINA_FORECAST_ARBITER_MODEL?.trim();
+    if (aSpec) {
+      const a = modelPart(aSpec, env);
+      arbiter = a;
+      if (a.usage) extra.push(a.usage);
+    }
     const vSpec = overrides.verifier ?? env.MARINA_FORECAST_VERIFIER?.trim();
     if (vSpec) {
       const v = modelPart(vSpec, env);
@@ -436,6 +458,7 @@ export function typedForecastDeps(
     planner: _p,
     critic: _c,
     verifier: _v,
+    arbiterModel: _am,
     retriever: _r,
     strictRetrieval: _s,
     wrapRetriever,
@@ -453,6 +476,7 @@ export function typedForecastDeps(
           ...(adjustOverride ?? {}),
           ...(history ? { history } : {}),
         };
+  const triage = triageSettingsFromEnv(env, extra);
   return {
     scale: w.scale,
     deps: {
@@ -467,16 +491,54 @@ export function typedForecastDeps(
       ...(planner ? { planner } : {}),
       ...(critic ? { critic } : {}),
       ...(verifier ? { verifier } : {}),
+      ...(arbiter ? { arbiter } : {}),
       ...(lessons ? { lessons } : {}),
       ...(w.judge ? { judge: w.judge } : {}),
       pageText: defaultPageText(),
       lookups: lookupsFromSpec(env.MARINA_FORECAST_LOOKUPS, env),
       options: typedOptionsFromEnv(env, options),
       ...(adjust ? { adjust } : {}),
+      ...(triage ? { triage } : {}),
     },
     costUsd: () =>
       w.researchCost() +
       w.analysts.reduce((s, m) => s + (m.usage?.costUsd ?? 0), 0) +
       extra.reduce((s, u) => s + u.costUsd, 0),
+  };
+}
+
+/**
+ * Intake triage settings (`MARINA_FORECAST_TRIAGE`, `./triage-route.ts`), or
+ * undefined when it is `off` (the default) — then the deps carry nothing and
+ * every forecast runs exactly as before. The fact model's spend joins `spend`.
+ */
+export function triageSettingsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  spend: Array<{ costUsd: number }> = [],
+): TriageSettings | undefined {
+  const mode = triageModeFromEnv(env);
+  if (mode === "off") return undefined;
+  const spec = triageModelFromEnv(env);
+  let model: ModelPart | undefined;
+  let modelError: string | undefined;
+  if (spec) {
+    try {
+      const m = modelPart(spec, env);
+      model = m;
+      if (m.usage) spend.push(m.usage);
+    } catch (err) {
+      modelError = `${spec}: ${(err as Error).message}`.slice(0, 200);
+    }
+  }
+  const fredApiKey = env.FRED_API_KEY?.trim() || undefined;
+  return {
+    mode,
+    ...(model ? { model } : {}),
+    ...(modelError ? { modelError } : {}),
+    ...(triageCalendarEnabled(env)
+      ? {
+          calendar: (facts, now) => triageCalendar(facts, now, fredApiKey ? { fredApiKey } : {}),
+        }
+      : {}),
   };
 }

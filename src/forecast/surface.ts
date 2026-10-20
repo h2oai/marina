@@ -62,13 +62,18 @@ export interface TypedSurfaceOptions {
 
 const logger = new Logger();
 
-/** Formation names a surface accepts: the typed formations plus `verify` (a checked ensemble). */
-export const SURFACE_FORMATIONS = [...TYPED_FORMATIONS, "verify"] as const;
+/**
+ * Formation names a surface accepts: the typed formations plus `verify` (a
+ * checked ensemble) and `arbiter` (an ensemble adjudicated only when contested).
+ */
+export const SURFACE_FORMATIONS = [...TYPED_FORMATIONS, "verify", "arbiter"] as const;
 
 /**
  * The env a caller-chosen formation runs under. `verify` keeps the resolved
- * formation and checks each run's draft (`MARINA_FORECAST_VERIFY=on`); an
- * unknown name is an error, never a silent fallback to the default.
+ * formation and checks each run's draft (`MARINA_FORECAST_VERIFY=on`);
+ * `arbiter` keeps it and replaces that check with the Arbiter
+ * (`MARINA_FORECAST_ARBITER=replace`); an unknown name is an error, never a
+ * silent fallback to the default.
  */
 export function formationEnv(
   name: string | undefined,
@@ -77,6 +82,7 @@ export function formationEnv(
   const n = name?.trim().toLowerCase();
   if (!n) return { env };
   if (n === "verify") return { env: { ...env, MARINA_FORECAST_VERIFY: "on" } };
+  if (n === "arbiter") return { env: { ...env, MARINA_FORECAST_ARBITER: "replace" } };
   if (typedFormation(n)) return { env: { ...env, MARINA_FORECAST_FORMATION: n } };
   return { error: `unknown formation "${name}": use one of ${SURFACE_FORMATIONS.join(", ")}` };
 }
