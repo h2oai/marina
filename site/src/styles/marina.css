@@ -1,166 +1,110 @@
-/* ── Marina brand theme for Starlight ───────────────────────────────────
- * Matches the live dashboard identity: near-black + H2O yellow/amber/orange,
- * Orbitron (display) + Share Tech Mono (terminal). Docs body uses a readable
- * sans; headings and code lean into the terminal-civilization aesthetic.
+/* ── Marina brand theme ──────────────────────────────────────────────────
+ * The H2O.ai black & gold palette (the dashboard's default `h2o` theme in
+ * dashboard/src/lib/themes.ts), shared by the landing page and the Starlight
+ * docs; light mode reuses the dashboard's AA-checked `light` theme.
+ * Orbitron for headings (as on the dashboard), Geist for reading,
+ * Geist Mono for anything you type.
  */
-@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Geist:wght@400..700&family=Geist+Mono:wght@400..600&display=swap");
 
 :root {
-  --marina-bg: #0a0a0a;
-  --marina-bg-card: #111111;
-  --marina-bg-hover: #1a1a1a;
-  --marina-border: #262626;
-  --marina-primary: #ffdd00;
-  --marina-secondary: #ffb800;
-  --marina-accent: #ff9500;
-  --marina-text: #d4d4d4;
-  --marina-text-dim: #777777;
-  --marina-text-bright: #f0f0f0;
+  --mp-ink: #0a0a0a; /* H2O black: page background */
+  --mp-deep: #111111; /* raised surfaces: code, panels */
+  --mp-line: #262626;
+  --mp-line-strong: #3a3a3a;
+  --mp-foam: #f0f0f0; /* primary text */
+  --mp-mist: #a3a3a3; /* secondary text */
+  --mp-sea: #ffb800; /* H2O amber: speakers, quiet highlights */
+  --mp-sun: #ffdd00; /* H2O gold: actions and the one thing to look at */
 
-  --sl-font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --sl-font-mono: "Share Tech Mono", ui-monospace, "Cascadia Code", monospace;
+  --mp-font-display: "Orbitron", ui-sans-serif, system-ui, sans-serif;
+  --mp-font-body: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mp-font-mono: "Geist Mono", ui-monospace, "Cascadia Code", Menlo, monospace;
+
+  --sl-font: var(--mp-font-body);
+  --sl-font-mono: var(--mp-font-mono);
 }
 
-/* Dark theme (default + forced) */
+/* Docs: dark (default) */
 :root,
 :root[data-theme="dark"] {
   --sl-color-accent-low: #3a3000;
-  --sl-color-accent: #ffb800;
+  --sl-color-accent: #ffdd00;
   --sl-color-accent-high: #ffdd00;
   --sl-color-white: #f0f0f0;
   --sl-color-gray-1: #e6e6e6;
-  --sl-color-gray-2: #c2c2c2;
-  --sl-color-gray-3: #999999;
-  --sl-color-gray-4: #666666;
+  --sl-color-gray-2: #d4d4d4;
+  --sl-color-gray-3: #a3a3a3;
+  --sl-color-gray-4: #6b6b6b;
   --sl-color-gray-5: #3a3a3a;
   --sl-color-gray-6: #1a1a1a;
   --sl-color-black: #0a0a0a;
   --sl-color-bg: #0a0a0a;
-  --sl-color-bg-nav: rgba(10, 10, 10, 0.85);
-  --sl-color-bg-sidebar: #0c0c0c;
-  --sl-color-hairline-light: #262626;
-  --sl-color-hairline: #1c1c1c;
+  --sl-color-bg-nav: rgba(10, 10, 10, 0.88);
+  --sl-color-bg-sidebar: #0d0d0d;
+  --sl-color-hairline-light: #3a3a3a;
+  --sl-color-hairline: #262626;
   --sl-color-text-accent: #ffdd00;
 }
 
-/* Display headings in Orbitron */
+/* Docs: light, for people who read in daylight */
+:root[data-theme="light"] {
+  --sl-color-accent-low: #fff3b0;
+  --sl-color-accent: #755900;
+  --sl-color-accent-high: #4a3800;
+  --sl-color-white: #0b0f19;
+  --sl-color-gray-1: #1f2430;
+  --sl-color-gray-2: #3a4252;
+  --sl-color-gray-3: #5a6376;
+  --sl-color-gray-4: #8a93a5;
+  --sl-color-gray-5: #d2d8e3;
+  --sl-color-gray-6: #e6eaf2;
+  --sl-color-gray-7: #f4f6fa;
+  --sl-color-black: #ffffff;
+  --sl-color-bg: #ffffff;
+  --sl-color-bg-nav: rgba(255, 255, 255, 0.92);
+  --sl-color-bg-sidebar: #f4f6fa;
+  --sl-color-hairline-light: #d2d8e3;
+  --sl-color-hairline: #e6eaf2;
+  --sl-color-text-accent: #755900;
+}
+
 .sl-markdown-content h1,
 .sl-markdown-content h2,
 .sl-markdown-content h3,
 h1#_top,
-.hero h1,
-site-title,
 .site-title {
-  font-family: "Orbitron", var(--sl-font);
-  letter-spacing: -0.01em;
+  font-family: var(--mp-font-display);
+  letter-spacing: 0.01em;
 }
-
-/* Site title (top-left) in Orbitron + glow */
-.site-title,
-a.site-title span {
-  font-family: "Orbitron", sans-serif;
+h1#_top {
+  font-weight: 900;
+}
+.site-title {
   font-weight: 900;
   text-transform: lowercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
 }
 
-/* Ambient page background — faint grid + corner glows, like the dashboard */
-body {
-  background-color: var(--marina-bg);
-  background-image:
-    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(255, 221, 0, 0.06), transparent 60%),
-    radial-gradient(ellipse 50% 40% at 100% 100%, rgba(255, 149, 0, 0.05), transparent 55%),
-    radial-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-  background-size: auto, auto, 34px 34px;
-  background-attachment: fixed;
-}
-
-/* Inline code + code blocks — terminal yellow on black */
 .sl-markdown-content code:not(:where(.expressive-code *)) {
-  color: var(--marina-primary);
-  background: #161616;
-  border: 1px solid var(--marina-border);
-  border-radius: 4px;
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 5px;
   padding: 0.1em 0.35em;
 }
 
-/* Links + accents */
 .sl-markdown-content a {
-  color: var(--marina-primary);
+  color: var(--sl-color-text-accent);
   text-underline-offset: 3px;
 }
 
-/* Sidebar current item glows */
-:root[data-theme="dark"] .sidebar a[aria-current="page"] {
-  background: linear-gradient(90deg, rgba(255, 221, 0, 0.12), transparent);
-  color: var(--marina-primary);
-  border-left: 2px solid var(--marina-primary);
+.sidebar a[aria-current="page"] {
+  border-inline-start: 2px solid var(--sl-color-accent);
 }
 
-/* ── Landing-page utilities (used by src/pages/index.astro) ─────────────── */
-.al-page {
-  color: var(--marina-text);
-  font-family: var(--sl-font);
-  line-height: 1.6;
-}
-.al-mono {
-  font-family: "Share Tech Mono", monospace;
-}
-.al-display {
-  font-family: "Orbitron", sans-serif;
-}
-.al-glow {
-  text-shadow: 0 0 24px rgba(255, 221, 0, 0.35);
-}
-.al-wrap {
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: 0 1.5rem;
-}
-.al-grad {
-  background: linear-gradient(120deg, #ffdd00 0%, #ffb800 45%, #ff9500 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-.al-card {
-  background: var(--marina-bg-card);
-  border: 1px solid var(--marina-border);
-  border-radius: 12px;
-  padding: 1.25rem 1.4rem;
-  transition: border-color 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
-}
-.al-card:hover {
-  border-color: rgba(255, 221, 0, 0.4);
-  transform: translateY(-3px);
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-}
-.al-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-family: "Share Tech Mono", monospace;
-  font-size: 0.95rem;
-  padding: 0.7rem 1.3rem;
+/* The mermaid is drawn on black; keep her there in light mode. */
+:root[data-theme="light"] .site-title img {
+  background: var(--mp-ink);
   border-radius: 8px;
-  text-decoration: none;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-}
-.al-btn-primary {
-  background: linear-gradient(120deg, #ffdd00, #ff9500);
-  color: #0a0a0a;
-  font-weight: 700;
-  box-shadow: 0 6px 24px rgba(255, 180, 0, 0.25);
-}
-.al-btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 32px rgba(255, 180, 0, 0.4);
-}
-.al-btn-ghost {
-  border: 1px solid var(--marina-border);
-  color: var(--marina-text-bright);
-}
-.al-btn-ghost:hover {
-  border-color: var(--marina-primary);
-  color: var(--marina-primary);
+  padding: 3px;
 }

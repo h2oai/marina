@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A new front door.** The README, landing page and docs overview are rewritten to be shorter
+  and plainer, with the forecasting, research, orchestration and coding commands every participant
+  gets up front. The docs sidebar and guides index are regrouped by what a reader wants to do, and
+  the site uses the H2O black-and-gold theme with the Marina mermaid.
+
 - **Cheap by default, strong where it grades: model tiers.** Work that names no model now runs on
   one of two tiers (`src/config/model-tiers.ts`). The cheap tier (`MARINA_MODEL_TIER_CHEAP`) runs
   agents spawned without a model, room agents, boot-seeded crews (the Workbench, answerer and
