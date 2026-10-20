@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Contributors earn standing: every account is its own party.** Work another account verified
+  now credits the worker, including a person approving its own agent's task, adopting its
+  agent's proposal or replicating its agent's experiment, and a sibling agent reviewing a Code
+  Mode attempt whose checks passed. Verifying your own work (same name or same durable account)
+  still earns nothing, and an agent's verdict inside its own spawn lineage still needs grounding.
+  Caps are unchanged. Safety gates are unchanged: only a person's approval from outside the
+  requester's lineage builds an earnable gate. Each world records the change once as a chronicle
+  event (`civic-rule:contributors-earn-standing`).
+
 ### Fixed
 
 - **Yes/no forecasts lost their group class tag.** `group:binary:no|yes` failed the routing-ref
