@@ -58,8 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     forecasts, one challenger card from the answer's routing `explore` order runs in the background
     on the same request, deps and cutoff. It is filed `eval_mode = live` under `marina:shadow`,
     tagged `shadow`, `method:`, `card:`, `model:`, `family:` and `q:`/`pair:`, and settles with the
-    live answer through `resolveForecast`, so it teaches lessons and writes history. These are the
-    paired questions card routing (min 30) and recalibration were missing. The live answer never
+    live answer through `resolveForecast`, so it teaches lessons; it never writes history, so prior
+    shrink and recalibration get no correlated second record per question. These are the paired
+    questions card routing (min 30) was missing. Live FutureX `earned` runs get shadows too: started
+    when a row's standing answer is adopted, superseded on revision, settled by `futurex learn`. The live answer never
     changes; a past cutoff gets backtest isolation; no standing is earned.
   - **Arena routing reads the shared outcome rows** (`src/arena/earned-routes.ts`,
     `MARINA_ARENA_ROUTE_OUTCOMES`, default on). Outcomes tagged `family:`, `method:` and `arena:<round>`

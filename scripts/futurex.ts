@@ -103,6 +103,7 @@ import {
   scheduleState,
 } from "../benchmarks/futurex/schedule";
 import { parseTruth, scoreBatch, scoreItem } from "../benchmarks/futurex/score";
+import { settleRowShadow, startAdoptedShadows } from "../benchmarks/futurex/shadow";
 import {
   DEFAULT_IDENTITY,
   emailFields,
@@ -480,7 +481,13 @@ async function runVariants(
       })),
     );
     const results = { ...prior.results };
-    for (const r of run.results) if (standing[r.id] !== prior.answers[r.id]) results[r.id] = r;
+    const adopted = run.results.filter((r) => standing[r.id] !== prior.answers[r.id]);
+    for (const r of adopted) results[r.id] = r;
+    // Shadow challengers for the adopted answers (MARINA_FORECAST_SHADOW; earned only).
+    if (v.earned && earnedDb && process.env.MARINA_FORECAST_SHADOW?.trim()) {
+      const sh = await startAdoptedShadows(earnedDb, out, v.label, adopted);
+      if (sh.started) console.log(`  shadows: ${sh.filed}/${sh.started} filed`);
+    }
     writeFileSync(
       join(out, "standing.json"),
       JSON.stringify({ answers: standing, results } satisfies Standing),
@@ -589,7 +596,10 @@ async function learnCmd(): Promise<number> {
             resolveFiled(db, filing.owner, filing.externalId, value, Date.parse(resolvedAt), [
               `batch:${sha.slice(0, 10)}`,
             ]);
+            // Its shadow challenger, if one ran, settles on the same resolution.
+            settleRowShadow(db, out, r.id, { value, resolvedAt: Date.parse(resolvedAt) });
           } else if (!r.fallback) {
+            settleRowShadow(db, out, r.id, "unfiled");
             noteOutcome(
               db,
               futurexOutcome({
@@ -602,6 +612,7 @@ async function learnCmd(): Promise<number> {
               }),
             );
           }
+          if (r.fallback) settleRowShadow(db, out, r.id, "unfiled");
           learned.add(r.id);
           queued++;
         }

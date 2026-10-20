@@ -571,3 +571,140 @@ describe("FutureX live: the earned default, with fixed variants as the override"
     expect(describeEarned({ env: {} })).toContain("builtin");
   });
 });
+
+describe("shadows never add a correlated history record", () => {
+  it("the shadow's outcome skips history (its live answer records the question) but still teaches", async () => {
+    const { deliverOutcomes } = await import("../src/outcomes/deliver");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const db = new MarinaDB(":memory:");
+    try {
+      const req = { question: "Will it?", answer: yesNo };
+      const live = await liveAnswer(req);
+      planForecastShadow(live, {
+        req,
+        deps: deps(),
+        routing: live.routing,
+        costUsd: () => 0,
+        env: ON,
+        minN: 30,
+      });
+      const liveId = saveTypedAnswer(db, "Ada", live)!;
+      const start = startForecastShadow(db, liveId, live, { draw: 0 });
+      if (!start.started) throw new Error(start.reason);
+      const filed = await start.done;
+      if (filed.status !== "filed") throw new Error(filed.reason);
+      resolveForecast(db, liveId, { option: "Yes" }, Date.parse("2026-10-20T00:00:00Z"));
+      const history = join(mkdtempSync(join(tmpdir(), "shadow-hist-")), "history.jsonl");
+      await deliverOutcomes(db, {
+        env: { MARINA_FORECAST_HISTORY: history, MARINA_LESSONS: "on" },
+      });
+      const outcomes = db.listOutcomes({ kind: "forecast" });
+      const of = (subject: string) =>
+        db.outcomeDeliveries(outcomes.find((o) => o.subject === subject)!.id);
+      const shadowHistory = of(`forecast:${filed.answerId}`).find((d) => d.consumer === "history");
+      expect(shadowHistory).toMatchObject({ state: "skipped", reason: "shadow challenger" });
+      expect(of(`forecast:${liveId}`).find((d) => d.consumer === "history")?.state).toBe("done");
+      // Lessons are not skipped for it: they wait for (or reach) the learner like the live one.
+      expect(
+        of(`forecast:${filed.answerId}`).find((d) => d.consumer === "lessons")?.state,
+      ).not.toBe("skipped");
+    } finally {
+      await drainForecastShadows();
+      db.close();
+    }
+  });
+});
+
+describe("FutureX shadows: filed on adoption, settled at learn time", () => {
+  const prompt =
+    'The event to be predicted: "Will it? (resolved around 2026-10-03T08:00:00+08:00 (GMT+8))."\nA. Yes\nB. No\nIMPORTANT: End with \\boxed{YOUR_PREDICTION}.';
+  const row = { id: "r1", prompt, end_time: "2026-10-30T20:00:00+08:00", level: 1 };
+  const earned: Variant = { label: "earned", model: "marina", analysts: [], earned: true };
+  /** The surface forecaster, as `earnedForecaster` would be with shadows on: routed, planned. */
+  const forecastRow = async (req: TypedForecastRequest) => {
+    const answer = await forecastCarded(req, deps(), "ensemble", routeSettingsFromEnv({}), {
+      env: {},
+      featureProviders: [],
+    });
+    answer.costUsd = 0.02;
+    planForecastShadow(answer, {
+      req,
+      deps: deps(),
+      routing: answer.routing,
+      costUsd: () => 0,
+      env: { MARINA_FORECAST_SHADOW: "0.5" },
+      minN: 30,
+    });
+    return { answer, costUsd: 0.02 };
+  };
+
+  it("runs under the same gate, never touches the submitted answer, pairs on the row id, supersedes on revision", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { fileTypedAnswer, resolveFiled } = await import("../src/outcomes/filing");
+    const { loadShadowMap, settleRowShadow, startAdoptedShadows } = await import(
+      "../benchmarks/futurex/shadow"
+    );
+    const db = new MarinaDB(":memory:");
+    const out = mkdtempSync(join(tmpdir(), "futurex-shadow-"));
+    try {
+      const fixed = () => {
+        throw new Error("fixed deps used");
+      };
+      const run = await runBatch([row], earned, fixed, { now: () => NOW, forecastRow });
+      const submitted = JSON.stringify(run.results[0]);
+      // Not sampled: nothing filed, nothing recorded.
+      expect(
+        await startAdoptedShadows(db, out, "earned", run.results, { draw: () => 0.99 }),
+      ).toEqual({ started: 0, filed: 0 });
+      expect(loadShadowMap(out)).toEqual({});
+
+      const first = await runBatch([row], earned, fixed, { now: () => NOW, forecastRow });
+      expect(
+        await startAdoptedShadows(db, out, "earned", first.results, { draw: () => 0 }),
+      ).toEqual({ started: 1, filed: 1 });
+      const firstShadow = loadShadowMap(out).r1!;
+      expect(db.getForecastAnswer(firstShadow)).toMatchObject({
+        entity_name: SHADOW_OWNER,
+        source: "shadow",
+        eval_mode: "live",
+      });
+      // A revised standing answer supersedes the old shadow (it no longer pairs).
+      const revised = await runBatch([row], earned, fixed, { now: () => NOW, forecastRow });
+      await startAdoptedShadows(db, out, "earned", revised.results, { draw: () => 0 });
+      const current = loadShadowMap(out).r1!;
+      expect(current).not.toBe(firstShadow);
+      expect(db.getForecastAnswer(firstShadow)!.outcome_json).toContain("superseded");
+      // The submitted answer was never touched.
+      expect(JSON.stringify(run.results[0])).toBe(submitted);
+
+      // Learn time: the live answer is filed and resolved; its shadow settles on the same value.
+      const r = revised.results[0]!;
+      const filing = {
+        owner: "marina:futurex/earned",
+        source: "futurex",
+        externalId: "futurex:r1",
+        evalMode: "live" as const,
+      };
+      const before = JSON.stringify(r.answer);
+      fileTypedAnswer(db, r.answer, filing);
+      const at = Date.parse("2026-10-31T00:00:00Z");
+      resolveFiled(db, filing.owner, filing.externalId, { option: "A" }, at);
+      expect(settleRowShadow(db, out, "r1", { value: { option: "A" }, resolvedAt: at })).toBe(true);
+      expect(JSON.stringify(r.answer)).toBe(before);
+      const rows = db.listOutcomes({ kind: "forecast" });
+      expect(rows).toHaveLength(2);
+      const ev = evidenceFromOutcomes(rows);
+      expect(new Set(ev.map((e) => e.question))).toEqual(new Set(["q:r1"]));
+      expect(new Set(ev.map((e) => e.method)).size).toBe(2);
+      // Superseded shadows never record an outcome.
+      expect(rows.some((o) => o.subject === `forecast:${firstShadow}`)).toBe(false);
+    } finally {
+      await drainForecastShadows();
+      db.close();
+    }
+  });
+});

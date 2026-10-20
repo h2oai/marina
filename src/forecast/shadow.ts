@@ -25,7 +25,11 @@
  *               (`./routing-refs.ts`)
  *   settling    with the live answer: `resolveForecast` resolves the shadow on
  *               the same value when the live answer resolves, so its outcome
- *               teaches lessons and writes history like any other
+ *               teaches lessons like any other; it never writes history (the
+ *               live answer already records the question: no correlated extra
+ *               record for prior shrink or recalibration). A board that files
+ *               only at resolution (FutureX) uses `startBoardShadow` /
+ *               `settleBoardShadow` instead
  *   bounds      `MARINA_FORECAST_SHADOW_MAX_PER_DAY` runs a UTC day (default 10)
  *               and `MARINA_FORECAST_SHADOW_CAP_USD` a UTC day (default 2), both
  *               counted from the filed shadows plus those in flight, and the
@@ -45,8 +49,8 @@
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { resolveForecast } from "../outcomes/forecast";
 import type { MarinaDB } from "../persistence/database";
-import type { ForecastAnswerRow } from "../persistence/db-markets";
 import type { CardRouting } from "./card-routing";
 import { forecastFormed } from "./formations";
 import { applyCard, type MethodCard, recipeCard } from "./method-cards";
@@ -208,6 +212,19 @@ export type ShadowStart =
   | { started: false; reason: string }
   | { started: true; card: string; done: Promise<ShadowResult> };
 
+/** What a shadow is filed against: a filed live answer, or a board answer filed later. */
+interface ShadowTarget {
+  kind: string;
+  question: string;
+  /** The live answer's subject when it pairs without a question id (`forecast:<id>`). */
+  pair?: string;
+  /** The live answer's id when it is already filed. */
+  of?: number;
+  externalId: string;
+  /** False once there is nothing left to pair with (the live answer settled). */
+  open: () => boolean;
+}
+
 /**
  * Start the shadow for a live answer just filed as `liveId`, when one was
  * planned and the gate lets it run. Returns at once; the run continues in the
@@ -219,8 +236,81 @@ export function startForecastShadow(
   answer: unknown,
   opts: { draw?: number; now?: number } = {},
 ): ShadowStart {
-  if (liveId === undefined || !answer || typeof answer !== "object")
-    return { started: false, reason: "not filed" };
+  if (liveId === undefined) return { started: false, reason: "not filed" };
+  const live = db.getForecastAnswer(liveId);
+  return startShadow(db, answer, opts, () => {
+    if (!live || live.resolved_at !== null) return "live answer settled";
+    if (live.eval_mode === "measure") return "measurement run";
+    if (live.entity_name === SHADOW_OWNER) return "a shadow";
+    return {
+      kind: live.kind,
+      question: live.question,
+      of: live.id,
+      pair: `forecast:${live.id}`,
+      externalId: shadowExternalId(live.id),
+      open: () => db.getForecastAnswer(live.id)?.resolved_at === null,
+    };
+  });
+}
+
+/**
+ * Start the shadow for a board answer that is filed only when it resolves
+ * (FutureX files at learn time): the shadow is filed now, keyed by the board's
+ * own id (`shadow:<key>#<filed at>`), and the adapter settles it with its live
+ * answer (`settleBoardShadow`). The live answer must carry a question id, so
+ * the two pair on `q:`. Same plan, sampling, caps and isolation as any shadow.
+ */
+export function startBoardShadow(
+  db: MarinaDB,
+  answer: unknown,
+  key: string,
+  opts: { draw?: number; now?: number } = {},
+): ShadowStart {
+  return startShadow(db, answer, opts, (plan, typed) => {
+    if (!plan.routing.question) return "no question id to pair on";
+    const at = opts.now ?? Date.now();
+    let externalId = `shadow:${key}#${at}`;
+    for (let n = 1; db.getForecastAnswerByExternalId(SHADOW_OWNER, externalId); n++)
+      externalId = `shadow:${key}#${at}.${n}`;
+    return {
+      kind: typed.answer.type,
+      question: typed.question,
+      externalId,
+      open: () => true,
+    };
+  });
+}
+
+/** Settle a board shadow on its live answer's resolution (once; superseded ones are skipped). */
+export function settleBoardShadow(
+  db: MarinaDB,
+  shadowId: number,
+  value: unknown,
+  resolvedAt: number,
+): boolean {
+  const row = db.getForecastAnswer(shadowId);
+  if (!row || row.entity_name !== SHADOW_OWNER || row.resolved_at !== null) return false;
+  return !!resolveForecast(db, shadowId, value, resolvedAt);
+}
+
+/**
+ * Close an open board shadow whose live answer was replaced before it was
+ * submitted (a revised standing answer): settled `superseded`, unscored, no
+ * outcome — it no longer pairs with what was filed.
+ */
+export function supersedeShadow(db: MarinaDB, shadowId: number, now = Date.now()): void {
+  const row = db.getForecastAnswer(shadowId);
+  if (!row || row.entity_name !== SHADOW_OWNER || row.resolved_at !== null) return;
+  db.resolveForecastAnswer(shadowId, JSON.stringify({ superseded: true }), null, now);
+}
+
+function startShadow(
+  db: MarinaDB,
+  answer: unknown,
+  opts: { draw?: number; now?: number },
+  target: (plan: ShadowPlan, typed: TypedForecastAnswer) => ShadowTarget | string,
+): ShadowStart {
+  if (!answer || typeof answer !== "object") return { started: false, reason: "no answer" };
   const key = (answer as { typed?: object }).typed ?? answer;
   const plan = plans.get(answer as object) ?? plans.get(key);
   if (!plan) return { started: false, reason: "no plan" };
@@ -229,15 +319,13 @@ export function startForecastShadow(
   try {
     const settings = shadowSettingsFromEnv(plan.env);
     if (!settings) return { started: false, reason: "off" };
-    const live = db.getForecastAnswer(liveId);
-    if (!live || live.resolved_at !== null)
-      return { started: false, reason: "live answer settled" };
-    if (live.eval_mode === "measure") return { started: false, reason: "measurement run" };
-    if (live.entity_name === SHADOW_OWNER) return { started: false, reason: "a shadow" };
+    const typed = key as TypedForecastAnswer;
+    const t = target(plan, typed);
+    if (typeof t === "string") return { started: false, reason: t };
     const card = pickShadowCard(plan.routing, plan.minN);
     if (!card?.formation) return { started: false, reason: "no challenger to explore" };
     const now = opts.now ?? Date.now();
-    const estimateUsd = Number((key as { costUsd?: unknown }).costUsd) || 0;
+    const estimateUsd = Number(typed.costUsd) || 0;
     const gate = shadowGate({
       settings,
       used: shadowUsage(db, now),
@@ -249,10 +337,10 @@ export function startForecastShadow(
     if (!gate.run) return { started: false, reason: gate.reason };
     inflight.count++;
     inflight.reserveUsd += estimateUsd;
-    const done = runShadow(db, live, plan, card, key as TypedForecastAnswer)
+    const done = runShadow(db, t, plan, card, typed)
       .catch((err): ShadowResult => {
         logger.warn("forecast", "shadow challenger failed", {
-          live: liveId,
+          target: t.externalId,
           card: card.id,
           error: getErrorMessage(err),
         });
@@ -277,7 +365,7 @@ export async function drainForecastShadows(): Promise<ShadowResult[]> {
 
 async function runShadow(
   db: MarinaDB,
-  live: ForecastAnswerRow,
+  target: ShadowTarget,
   plan: ShadowPlan,
   card: MethodCard,
   liveTyped: TypedForecastAnswer,
@@ -296,12 +384,12 @@ async function runShadow(
   const routing = plan.routing;
   const models = [...new Set(formed.runs.map((r) => r.model).filter(Boolean))].slice(0, 4);
   const shadow = {
-    of: live.id,
+    ...(target.of !== undefined ? { of: target.of } : {}),
     card: card.id,
     live: routing.method,
     isolation,
     models,
-    ...(routing.question ? {} : { pair: `forecast:${live.id}` }),
+    ...(routing.question || !target.pair ? {} : { pair: target.pair }),
   };
   const typed = {
     ...formed,
@@ -314,27 +402,26 @@ async function runShadow(
     },
   } as TypedForecastAnswer & { routing: CardRouting };
   // Settled while the shadow ran: there is nothing left to pair it with.
-  const now = db.getForecastAnswer(live.id);
-  if (!now || now.resolved_at !== null)
+  if (!target.open())
     return { status: "dropped", card: card.id, reason: "live answer settled first" };
   const { fileAnswer, fileTypedAnswer } = await import("../outcomes/filing");
   const filing = {
     owner: SHADOW_OWNER,
     source: SHADOW_SOURCE,
-    externalId: shadowExternalId(live.id),
+    externalId: target.externalId,
     evalMode: "live" as const,
   };
   let answerId: number | undefined;
-  if (live.kind === "probability" || live.kind === "number") {
+  if (target.kind === "probability" || target.kind === "number") {
     // A plain live answer: the shadow is filed plain too, so both score on one metric.
-    const plain = { ...plainFromTyped(live.kind as ForecastKind, typed), shadow };
-    if (live.kind === "probability" && plain.probability === undefined)
+    const plain = { ...plainFromTyped(target.kind as ForecastKind, typed), shadow };
+    if (target.kind === "probability" && plain.probability === undefined)
       return { status: "dropped", card: card.id, reason: "no probability" };
     answerId = fileAnswer(
       db,
       {
-        question: live.question,
-        kind: live.kind,
+        question: target.question,
+        kind: target.kind,
         ...(plain.probability !== undefined ? { probability: plain.probability } : {}),
         ...(plain.mean !== undefined ? { mean: plain.mean } : {}),
         ...(plain.sd !== undefined ? { sd: plain.sd } : {}),
