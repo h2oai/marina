@@ -236,10 +236,39 @@ export function verifyMemoryCredential(db: Database, token: string): MemoryActor
 }
 
 /**
+ * Whether `principalId` is a person for standing purposes (2026-10-20): a
+ * `human` principal, or a world account with no principal row whose name is
+ * not an agent account (no agent config, no agent principal). A person's
+ * verdict credits any OTHER account, its own agents included; an agent's
+ * verdict inside its own party does not (`principalParty`).
+ */
+export function isPersonPrincipal(db: Database, principalId: string): boolean {
+  const row = db
+    .query("SELECT principal_type FROM principals WHERE principal_id = ?")
+    .get(principalId) as { principal_type: PrincipalType } | null;
+  if (row) return row.principal_type === "human";
+  const user = db.query("SELECT name FROM users WHERE id = ?").get(principalId) as {
+    name: string;
+  } | null;
+  if (!user) return false;
+  const agentConfig = db
+    .query("SELECT 1 FROM agent_configs WHERE name = ? COLLATE NOCASE LIMIT 1")
+    .get(user.name);
+  const agentPrincipal = db
+    .query(
+      "SELECT 1 FROM principals WHERE principal_type = 'agent' AND display_name = ? COLLATE NOCASE LIMIT 1",
+    )
+    .get(user.name);
+  return !agentConfig && !agentPrincipal;
+}
+
+/**
  * The party a principal belongs to for standing purposes: its own id and
  * name, its owner / lineage-parent chain, and the spawn lineage of each name
- * (`spawnLineage`). Two principals whose parties intersect are one party — a
- * person and the agents it spawned never credit each other.
+ * (`spawnLineage`). Two principals whose parties intersect are one party.
+ * Memory assistance uses it for an AGENT requester: an agent adopting a
+ * proposal from inside its own party credits no one (no grounding signal); a
+ * person requester credits any other account (`isPersonPrincipal`).
  */
 export function principalParty(
   db: Database,

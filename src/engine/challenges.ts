@@ -823,8 +823,8 @@ function inLineage(requester: { name: string }, name: string): boolean {
  * the gate is earnable (operator-grant gates are never built by approvals) and
  * the approver is a person outside the requester's own lineage. The owner of
  * an agent — whoever is up its spawn chain — may approve the run (it runs),
- * but that approval never builds the agent's gate: a person and the agents it
- * spawned are one party, the same rule `gate grant` applies.
+ * but that approval never builds the agent's gate: for gates a person and the
+ * agents it spawned are one party, the same rule `gate grant` applies.
  */
 export function approvalDemonstrates(
   approver: Entity,
@@ -834,8 +834,12 @@ export function approvalDemonstrates(
   if (!gateId || !SAFETY_GATES[gateId] || isOperatorGrantGate(gateId)) return false;
   if (principalKind(approver) !== "person") return false;
   if (norm(approver.name) === norm(requester.name)) return false;
-  // The same one-party rule verified-work standing uses (agent configs, then
-  // agent principals' owners); the live spawn chain when no store is wired.
+  // The gate's one-party rule (agent configs, then agent principals' owners);
+  // the live spawn chain when no store is wired. Standing is looser since
+  // 2026-10-20 (each account its own party, `standingVerifierRefusal`); gates
+  // deliberately are not: a person's own agents may raise each other's
+  // standing to a gate's floor, but only an approval from outside the lineage
+  // makes the gate solo.
   const db = host?.db;
   if (db && typeof db.spawnLineage === "function") {
     return independentParties(db, approver.name, requester.name);

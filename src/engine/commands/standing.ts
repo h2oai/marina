@@ -49,12 +49,14 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       "  standing                — your current standing + ledger\n" +
       "  standing show <name>    — another entity's standing (online or not)\n" +
       "  standing top [N]        — leaderboard\n" +
-      "Standing is earned only when someone independent of you (not your account, not your spawn " +
-      "lineage) verifies the work: " +
+      "Standing is earned when someone other than you verifies the work — every account is its " +
+      "own party, so a person approving its own agent's work, or a sibling agent reviewing " +
+      "checks that passed, credits the worker; verifying your own work never does, and an " +
+      "agent's verdict inside its own spawn lineage needs passing checks: " +
       `a task they approve (up to ${TASK_STANDING_MAX}), ` +
       `an approved Code Mode attempt whose checks passed (${STANDING_AMOUNTS.code_verified}), ` +
-      `a forecast resolved by an independent source (up to ${STANDING_AMOUNTS.forecast_resolved} by skill, once a day), ` +
-      `an experiment an independent party replicated (${STANDING_AMOUNTS.experiment_complete}), ` +
+      `a forecast resolved by an external or other source (up to ${STANDING_AMOUNTS.forecast_resolved} by skill, once a day), ` +
+      `an experiment another party replicated (${STANDING_AMOUNTS.experiment_complete}), ` +
       `a proposal its requester adopts (${STANDING_AMOUNTS.assistance_adopted}), ` +
       `and an onboarding quest (${STANDING_AMOUNTS.quest_complete}). ` +
       "Being chronicled, pool notes, recalls, crew completions and helping acts no longer earn; " +
@@ -63,7 +65,8 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       "Decay floors at 0; rank 0–4 is derived from thresholds (5/15/40/100). " +
       "Above rank 4, capability is earned per-operation via the Capability gates shown in " +
       "your standing view — keep building standing, then perform each gated action under " +
-      "supervision until it unlocks.",
+      "supervision until it unlocks (only approvals from an independent person, outside " +
+      "your own lineage, count toward that).",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("standing"));

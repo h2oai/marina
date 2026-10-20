@@ -123,11 +123,13 @@ export function recordTaskOpinion(
 
 /**
  * Standing for verified code: a Code Mode task attempt whose recorded
- * verification PASSED and whose submission a reviewer independent of the
- * worker approved (`code review approve`). Once per attempt (`code:<runId>`);
- * a reviewer in the worker's party (same account or spawn lineage) pays
- * nothing. A verification run alone earns nothing — the worker chooses its
- * checks — and neither does any measurement run (those never reach review).
+ * verification PASSED and whose submission another account approved (`code
+ * review approve`; the only caller passes passed attempts). Once per attempt
+ * (`code:<runId>`). The passing checks GROUND the verdict, so an agent
+ * reviewer inside the worker's spawn lineage (a sibling) credits it too
+ * (`standingVerifierRefusal`); the worker's own account never does. A
+ * verification run alone earns nothing — the worker chooses its checks — and
+ * neither does any measurement run (those never reach review).
  */
 export function creditVerifiedCode(
   db: MarinaDB,
@@ -138,6 +140,7 @@ export function creditVerifiedCode(
     ref: `code:${input.runId}`,
     worker: input.worker,
     verifier: input.reviewer,
+    grounded: true,
   });
 }
 

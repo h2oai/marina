@@ -766,7 +766,7 @@ export async function reviewCodingRun(
         reviewerKey: deps.db.durableEntityKey(eid),
       },
     });
-    // Checks that passed, approved by an independent reviewer: verified code.
+    // Checks that passed, approved by another account: verified (grounded) code.
     if (action === "approve" && meta.verification === "passed" && claim.entity_name)
       creditVerifiedCode(deps.db, {
         runId: run.id,

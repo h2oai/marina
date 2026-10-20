@@ -123,7 +123,7 @@ describe("experiment arms (A/B comparison)", () => {
     expect(done).toContain("completed");
     expect(done).toContain("winner");
     expect(done).toContain("No standing credited");
-    expect(done).toContain("independent recorder: none");
+    expect(done).toContain("replicator: none");
     // Outcome note is still written — completion itself is not blocked.
     const outcome = db
       .getNotesByEntity("Alice")
