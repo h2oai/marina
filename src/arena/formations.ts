@@ -78,6 +78,22 @@ import type { Evidence } from "../decisions/evidence";
 import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import { judgeAudit, judgeClaim, newJudgeRecord } from "../forecast/judge";
+import { NUMERIC_TEMPLATES, partAssignee } from "../orchestration/formations/catalogue";
+import {
+  agreement,
+  centre,
+  DEFAULT_TRUST,
+  delphiSummary,
+  MAX_FINAL_SD_MOVE,
+  MAX_PROPOSAL_SD_MOVE,
+  median,
+  medianOutcome,
+  movedCount,
+  round3,
+  settle,
+} from "../orchestration/formations/combine-numeric";
+import { runFormationScore } from "../orchestration/formations/run";
+import { formationScore } from "../orchestration/formations/template";
 import { requireResearchEvidence } from "../research/admission";
 import type { Retriever } from "../research/retrieve";
 import { type PageText, verifyDossier } from "../research/verify";
@@ -118,6 +134,20 @@ import {
 } from "./research-fallback";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "./types";
 
+// The shared clamps and the ensemble/delphi combiners live in the formation
+// catalogue (`src/orchestration/formations/combine-numeric.ts`).
+export {
+  agreement,
+  anonymize,
+  DEFAULT_TRUST,
+  DELPHI_SNIPPET_CHARS,
+  delphiSummary,
+  MAX_FINAL_SD_MOVE,
+  MAX_PROPOSAL_SD_MOVE,
+  median,
+  settle,
+} from "../orchestration/formations/combine-numeric";
+
 export const FORMATION_PATTERNS = [
   "ensemble",
   "deliberation",
@@ -144,13 +174,6 @@ export function formationPattern(name: string): FormationPattern | undefined {
     ? (n as FormationPattern)
     : undefined;
 }
-
-/** A proposal further than this many start-sds from the start is a blowup and dropped. */
-export const MAX_PROPOSAL_SD_MOVE = 4;
-/** No formation moves the mean further than this many start-sds. */
-export const MAX_FINAL_SD_MOVE = 2;
-/** Share of the aggregated move taken when no judge or skeptic sets the trust. */
-export const DEFAULT_TRUST = 0.5;
 
 export interface FormationMember {
   name: string;
@@ -198,6 +221,8 @@ export interface FormationForecast extends RoundForecast {
   judge?: ProposalJudgeRecord;
 }
 
+const clamp = (x: number, lo: number, hi: number) => Math.min(Math.max(x, lo), hi);
+
 interface Ctx {
   round: ArenaRound;
   base: Distribution;
@@ -218,45 +243,6 @@ interface Ctx {
   shown: ArenaPoint[];
   /** A decision backend for model-judged aspects (verification); optional. */
   judge?: DecisionProvider;
-}
-
-const round3 = (x: number) => Math.round(x * 1000) / 1000;
-const clamp = (x: number, lo: number, hi: number) => Math.min(Math.max(x, lo), hi);
-
-export function median(xs: number[]): number {
-  const s = [...xs].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
-}
-
-/** 1 when proposals agree; → 0 as their moves spread wider than the start sd. */
-export function agreement(base: Distribution, proposals: Proposal[]): number {
-  if (proposals.length < 2) return 1;
-  const moves = proposals.map((p) => p.mean - base.mean);
-  const mu = moves.reduce((a, b) => a + b, 0) / moves.length;
-  const sd = Math.sqrt(moves.reduce((a, b) => a + (b - mu) ** 2, 0) / moves.length);
-  return 1 / (1 + (sd / base.sd) ** 2);
-}
-
-/**
- * The shared shrink-toward-start step: take `trust` of `move`, cap it at
- * MAX_FINAL_SD_MOVE start-sds, and blend the sd the same way (floored at half
- * the start sd, then scaled by `sdScale` ∈ [0.5, 2]).
- */
-export function settle(
-  base: Distribution,
-  move: number,
-  proposedSd: number,
-  trust: number,
-  sdScale = 1,
-): Distribution {
-  const t = clamp(trust, 0, 1);
-  const cap = MAX_FINAL_SD_MOVE * base.sd;
-  const scale = clamp(sdScale, 0.5, 2);
-  return {
-    mean: round3(base.mean + clamp(t * move, -cap, cap)),
-    sd: round3(Math.max(base.sd * 0.5, ((1 - t) * base.sd + t * proposedSd) * scale)),
-  };
 }
 
 /**
@@ -316,14 +302,6 @@ export function recordedReplies(steps: FormationStep[]): Array<{ mean: number; s
 export function atLeastLinearPool(topline: Distribution, steps: FormationStep[]): Distribution {
   const pooled = linearPoolSd(recordedReplies(steps));
   return pooled !== undefined && topline.sd < pooled ? { ...topline, sd: round3(pooled) } : topline;
-}
-
-/** Median move and median sd of a set of proposals. */
-function centre(base: Distribution, proposals: Proposal[]) {
-  return {
-    move: median(proposals.map((p) => p.mean - base.mean)),
-    sd: median(proposals.map((p) => p.sd)),
-  };
 }
 
 /** The sentence that anchors every member to the start forecast (removed by `unanchored`). */
@@ -433,19 +411,9 @@ interface Outcome {
 
 type Protocol = (ctx: Ctx, members: FormationMember[]) => Promise<Outcome | undefined>;
 
-/** Median of the proposals, trust = DEFAULT_TRUST × their agreement. */
+/** Median of the proposals, trust = DEFAULT_TRUST × their agreement (the catalogue's ensemble combine). */
 function byMedian(ctx: Ctx, proposals: Record<string, Proposal>): Outcome | undefined {
-  const list = Object.values(proposals);
-  if (list.length === 0) return undefined;
-  const agree = agreement(ctx.base, list);
-  const trust = DEFAULT_TRUST * agree;
-  const c = centre(ctx.base, list);
-  return {
-    proposals,
-    topline: settle(ctx.base, c.move, c.sd, trust),
-    trust: round3(trust),
-    agreement: round3(agree),
-  };
+  return medianOutcome(ctx.base, proposals);
 }
 
 const FORECASTER_SYSTEM = `You are one of several independent forecasters. ${SCORING} ${PROPOSAL_REPLY}`;
@@ -466,8 +434,35 @@ function keyed(members: FormationMember[], ps: Array<Proposal | undefined>, pref
   return rec;
 }
 
-const ensemble: Protocol = async (ctx, members) =>
-  byMedian(ctx, keyed(members, await independent(ctx, members)));
+/** The catalogue's numeric template for these members (`NUMERIC_TEMPLATES`). */
+function numericScore(name: keyof typeof NUMERIC_TEMPLATES, members: FormationMember[]) {
+  return formationScore(NUMERIC_TEMPLATES[name], {
+    k: members.length,
+    id: `arena-${name}`,
+    assign: (slot, i) =>
+      slot === "member" ? partAssignee(members[i]!.name) : "model:marina-arena",
+  });
+}
+
+/** Step `<prefix><n>` → its 0-based instance. */
+const instance = (id: string, prefix: string) => Number(id.slice(prefix.length)) - 1;
+
+/** The catalogue's ensemble: N independent proposals → the median combine. */
+const ensemble: Protocol = async (ctx, members) => {
+  const user = `${ctx.head}\n\n${ctx.numbers}`;
+  const proposals: Array<Proposal | undefined> = [];
+  let out: Outcome | undefined;
+  await runFormationScore(numericScore("ensemble", members), async ({ step }) => {
+    if (step.id === "combine") {
+      out = byMedian(ctx, keyed(members, proposals));
+      return out ? JSON.stringify(out.topline) : "";
+    }
+    const i = instance(step.id, "propose");
+    proposals[i] = await propose(ctx, "propose", members[i]!, FORECASTER_SYSTEM, user);
+    return proposals[i] ? show(proposals[i]!) : "";
+  });
+  return out;
+};
 
 const deliberation: Protocol = async (ctx, members) => {
   const first = await independent(ctx, members);
@@ -947,84 +942,76 @@ const research: Protocol = async (ctx, members) => {
 // ─── Delphi: independence before influence ───────────────────────────────────
 
 /** Longest reason snippet a Delphi summary quotes. */
-export const DELPHI_SNIPPET_CHARS = 160;
-
-/** Replace any member's name (full id or short name) in a snippet with "a panelist". */
-export function anonymize(text: string, members: FormationMember[]): string {
-  let out = text;
-  for (const m of members) {
-    for (const name of new Set([m.name, m.name.split("/").at(-1) ?? m.name])) {
-      if (name.length >= 3) out = out.split(name).join("a panelist");
-    }
-  }
-  return out;
-}
-
-/**
- * The anonymized panel summary Delphi's second round sees: count, median and
- * range of the means and sds, and short reason snippets — sorted, so their
- * order says nothing about who wrote them, and scrubbed of member names.
- */
-export function delphiSummary(
-  base: Distribution,
-  proposals: Proposal[],
-  members: FormationMember[],
-): { text: string; record: Record<string, unknown> } {
-  const means = proposals.map((p) => p.mean);
-  const sds = proposals.map((p) => p.sd);
-  const snippets = proposals
-    .map((p) => anonymize((p.reason ?? "").trim(), members).slice(0, DELPHI_SNIPPET_CHARS))
-    .filter(Boolean)
-    .sort();
-  const medianMean = round3(median(means));
-  const meanRange = [round3(Math.min(...means)), round3(Math.max(...means))];
-  const medianSd = round3(median(sds));
-  const sdRange = [round3(Math.min(...sds)), round3(Math.max(...sds))];
-  const medianMove = round3(median(means) - base.mean);
-  const text = [
-    `PANEL SUMMARY (round 1, ${proposals.length} independent forecasts, anonymized):`,
-    `- mean: median ${medianMean} (a move of ${medianMove} from the start), range ${meanRange[0]} to ${meanRange[1]}`,
-    `- sd: median ${medianSd}, range ${sdRange[0]} to ${sdRange[1]}`,
-    ...(snippets.length
-      ? ["- reasons given (unordered):", ...snippets.map((s) => `  • ${s}`)]
-      : []),
-  ].join("\n");
-  return {
-    text,
-    record: { n: proposals.length, medianMean, meanRange, medianSd, sdRange, medianMove, snippets },
-  };
-}
-
 const DELPHI_SYSTEM = `You are a panelist in a Delphi forecast. In round 1 every panelist forecast independently. You now see only an anonymized statistical summary of the panel's round-1 forecasts — no individual forecasts, no names. Revise ONCE: keep your forecast unless the summary points you to something concrete in the data you had missed; a panel median is not evidence by itself. ${SCORING} ${PROPOSAL_REPLY}`;
 
+/**
+ * The catalogue's delphi: round 1 independent → the anonymous summary (pure)
+ * → each member whose round-1 forecast counted revises once (a failed
+ * revision keeps it) → the median combine over the revisions.
+ */
 const delphi: Protocol = async (ctx, members) => {
-  const first = await independent(ctx, members, "round1");
-  const valid = first.filter((p): p is Proposal => p !== undefined);
-  if (valid.length < 2) {
-    // A summary of one forecast is that forecast: nothing to revise against.
+  const user = `${ctx.head}\n\n${ctx.numbers}`;
+  const first: Array<Proposal | undefined> = [];
+  const revised: Array<Proposal | undefined> = [];
+  let summary: ReturnType<typeof delphiSummary> | undefined;
+  let out: Outcome | undefined;
+  await runFormationScore(numericScore("delphi", members), async ({ step }) => {
+    if (step.id === "summary") {
+      const valid = first.filter((p): p is Proposal => p !== undefined);
+      // A summary of one forecast is that forecast: nothing to revise against.
+      if (valid.length >= 2) summary = delphiSummary(ctx.base, valid, members);
+      return summary?.text ?? "";
+    }
+    if (step.id === "combine") {
+      out = summaryOutcome(ctx, members, first, revised, summary);
+      return out ? JSON.stringify(out.topline) : "";
+    }
+    if (step.id.startsWith("round1")) {
+      const i = instance(step.id, "round1");
+      first[i] = await propose(ctx, "round1", members[i]!, FORECASTER_SYSTEM, user);
+      return first[i] ? show(first[i]!) : "";
+    }
+    const i = instance(step.id, "round2");
+    const own = first[i];
+    if (!summary || !own) return "";
+    revised[i] =
+      (await propose(
+        ctx,
+        "round2",
+        members[i]!,
+        DELPHI_SYSTEM,
+        `${user}\n\nYour round-1 forecast: ${show(own)}\n\n${summary.text}`,
+      )) ?? own;
+    return show(revised[i]!);
+  });
+  return out;
+};
+
+/** Delphi's combine: the median over the revisions, with the protocol's audit record. */
+function summaryOutcome(
+  ctx: Ctx,
+  members: FormationMember[],
+  first: Array<Proposal | undefined>,
+  revised: Array<Proposal | undefined>,
+  summary: ReturnType<typeof delphiSummary> | undefined,
+): Outcome | undefined {
+  if (!summary) {
     const out = byMedian(ctx, keyed(members, first));
     return out && { ...out, protocol: { summary: null, revised: 0 } };
   }
-  const summary = delphiSummary(ctx.base, valid, members);
-  const revised = await Promise.all(
-    members.map(async (m, i) => {
-      const own = first[i];
-      if (!own) return undefined;
-      const user = `${ctx.head}\n\n${ctx.numbers}\n\nYour round-1 forecast: ${show(own)}\n\n${summary.text}`;
-      return (await propose(ctx, "round2", m, DELPHI_SYSTEM, user)) ?? own;
-    }),
-  );
-  const out = byMedian(ctx, keyed(members, revised));
-  const moved = revised.filter(
-    (p, i) => p && first[i] && (p.mean !== first[i]!.mean || p.sd !== first[i]!.sd),
-  ).length;
+  const all = members.map((_, i) => revised[i]);
+  const out = byMedian(ctx, keyed(members, all));
   return (
     out && {
       ...out,
-      protocol: { summary: summary.record, round1: keyed(members, first), moved },
+      protocol: {
+        summary: summary.record,
+        round1: keyed(members, first),
+        moved: movedCount(all, first),
+      },
     }
   );
-};
+}
 
 // ─── Tournament: pairwise knockout judged by the last model ──────────────────
 

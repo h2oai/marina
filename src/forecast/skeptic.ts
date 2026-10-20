@@ -33,23 +33,32 @@
  * With one configured model every role runs on it (the formation still works,
  * it is just less diverse). The research, lookups and cutoff are the ordinary
  * typed forecast's; the critique is replaced by the skeptic.
+ *
+ * The formation is the catalogue's `skeptic` entry (`src/orchestration/formations/`):
+ * round one (research, the two proposals) is the typed pipeline; the skeptic
+ * and the combine run as the template's Score, and the aggregation is the
+ * catalogue's pure `combineSkeptic`.
  */
 
-import { picksFrom } from "./adjust";
-import { type AnswerSpec, formatAnswer } from "./answer-types";
-import { argmax, combinedSd, type Distribution, normalise } from "./distribution";
 import {
-  clampP,
-  logit,
-  meanLoss,
-  poolDistribution,
-  poolMarginals,
-  round,
-  sigmoid,
-} from "./fitting";
-import { answerGroup, informative, type ResolvedRecord, visibleRecords } from "./history";
+  partAssignee,
+  TYPED_PIPELINE_ASSIGNEE,
+  TYPED_TEMPLATES,
+} from "../orchestration/formations/catalogue";
+import {
+  combineSkeptic,
+  numberFields,
+  SKEPTIC_MAX_SD_MOVE,
+  skepticProposals,
+  skepticTrust,
+} from "../orchestration/formations/combine-typed";
+import { runFormationScore, seeded } from "../orchestration/formations/run";
+import { formationScore } from "../orchestration/formations/template";
+import { type AnswerSpec, formatAnswer } from "./answer-types";
+import { meanLoss, round } from "./fitting";
+import { answerGroup, type ResolvedRecord, visibleRecords } from "./history";
 import { askAnalyst } from "./judge";
-import { type ChosenPrior, choosePrior, shrink } from "./prior";
+import { type ChosenPrior, choosePrior } from "./prior";
 import {
   answerInstruction,
   chooseCutoff,
@@ -65,7 +74,6 @@ export const STATISTICIAN_ROLE =
 export const ANALYST_ROLE =
   "ROLE: you are the analyst on a forecasting crew. Reason from the specifics: who and what decide the outcome, scheduled events before it resolves, what the sources say, and the lessons given. The start forecast (when the notes give one) is the default; move from it for specific, dated evidence.";
 
-const MAX_SD_MOVE = 4;
 const MAX_EVIDENCE = 10_000;
 
 export interface SkepticRecord {
@@ -221,122 +229,110 @@ export async function skepticCrew(
     return out;
   }
   // Numbers: a proposal implausibly far from the start forecast is a blowup, as in the arena.
-  let proposals = usable;
-  if (
-    spec.type === "number" &&
-    start?.value !== undefined &&
-    start.sd !== undefined &&
-    start.sd > 0
-  ) {
-    proposals = usable.filter(
-      (r) => Math.abs((r.value as number) - start.value!) <= MAX_SD_MOVE * start.sd!,
-    );
-    if (proposals.length === 0) {
-      crew.note = `every proposal moved more than ${MAX_SD_MOVE} sd from the start forecast; the start forecast stands`;
-      setNumber(out, spec, start.value, start.sd);
-      return out;
-    }
+  const proposals = skepticProposals(spec, usable, start);
+  if (proposals.length === 0) {
+    crew.note = `every proposal moved more than ${SKEPTIC_MAX_SD_MOVE} sd from the start forecast; the start forecast stands`;
+    setNumber(out, spec as Extract<AnswerSpec, { type: "number" }>, start!.value!, start!.sd);
+    return out;
   }
 
-  // ── The skeptic ─────────────────────────────────────────────────────────
+  // ── The catalogue's skeptic template: the skeptic step, then the pure combine ──
   let trust = 0.5;
   let sdScale = 1;
-  if (skeptic) {
-    const user = [
-      `Question: ${req.question}`,
-      req.context ? `Notes: ${clip(req.context, 3_000)}` : "",
-      `Evidence cutoff: ${first.cutoff.at}`,
-      `Answer format: ${answerInstruction(spec).split("\n")[0]}`,
-      `START FORECAST: ${describe(start)}`,
-      ...proposals.map(
-        (r, i) =>
-          `PROPOSAL ${i + 1} (${crew.proposals.find((p) => p.model === r.model)?.role ?? "member"}): ${r.formatted}${
-            r.distribution
-              ? ` — probabilities ${Object.entries(r.distribution)
-                  .map(([k, v]) => `${k}=${round(v, 3)}`)
-                  .join(" ")}`
-              : ""
-          }${r.sd !== undefined ? ` ± ${r.sd}` : ""}\n  reason: ${clip(r.reason ?? "", 400)}`,
-      ),
-      trackRecord(spec, history),
-      `RESEARCH:\n${clip(research.join("\n\n"), MAX_EVIDENCE) || "(none)"}`,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-    const { reply, error } = await askAnalyst(skeptic, skepticSystem(spec), user);
-    if (error !== undefined) crew.skepticError = error.slice(0, 160);
-    const t = Number(reply?.trust);
-    if (Number.isFinite(t)) trust = Math.min(1, Math.max(0, t));
-    const s = Number(reply?.sd_scale);
-    if (spec.type === "number" && Number.isFinite(s)) sdScale = Math.min(2, Math.max(1, s));
-    if (typeof reply?.critique === "string") crew.critique = reply.critique.slice(0, 300);
-  }
-  crew.trust = round(trust, 3);
-  if (spec.type === "number") crew.sdScale = round(sdScale, 3);
-
-  // ── Deterministic aggregation ───────────────────────────────────────────
-  if (spec.type === "number") {
-    const values = proposals.map((r) => r.value as number);
-    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-    const sds = proposals.filter((r) => r.sd !== undefined).map((r) => r.sd!);
-    const meanSd = sds.length ? sds.reduce((a, b) => a + b, 0) / sds.length : undefined;
-    if (start?.value !== undefined) {
-      const moved = shrink(
-        "number",
-        { value: mean, ...(meanSd !== undefined ? { sd: meanSd } : {}) },
-        start,
-        1 - trust,
-      );
-      const floor = start.sd !== undefined ? 0.5 * start.sd : 0;
-      const sd = moved.sd !== undefined ? Math.max(floor, moved.sd) * sdScale : undefined;
-      setNumber(out, spec, moved.value!, sd);
-    } else {
-      const spread = Math.sqrt(values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length);
-      const sd = combinedSd(
-        proposals.map((r) => ({ ...(r.sd !== undefined ? { sd: r.sd } : {}), weight: 1 })),
-        spread,
-      );
-      setNumber(out, spec, mean, sd !== undefined ? sd * sdScale : undefined);
-    }
-    return out;
-  }
-  const dists = proposals.map((r) => r.distribution).filter((d): d is Distribution => !!d);
-  if (dists.length === 0) {
-    crew.note = "no proposal stated probabilities";
-    return out;
-  }
-  const ids = spec.options.map((o) => o.id);
-  // The skeptic shrinks only toward an informative prior. Toward the uniform
-  // default it would add to the hedging LLM forecasters already show; without
-  // one the proposals' log-odds mean stands and extremity is calibration's job.
-  const shrinkable = informative(start?.source) && !!start?.distribution;
-  if (!shrinkable) crew.note = "no informative prior: the proposals' log-odds mean, unshrunk";
-  if (spec.type === "choice") {
-    const mean: Distribution = {};
-    for (const k of ids) {
-      mean[k] = Math.exp(dists.reduce((s, d) => s + Math.log(clampP(d[k] ?? 0)), 0) / dists.length);
-    }
-    const m = normalise(mean) ?? dists[0]!;
-    const final = shrinkable ? poolDistribution(m, start!.distribution!, 1 - trust) : m;
-    const top = argmax(spec.options, final);
-    out.distribution = final;
-    out.prediction = top;
-    out.formatted = top;
-    out.confidence = final[top];
-    return out;
-  }
-  const mean: Distribution = {};
-  for (const k of ids) {
-    mean[k] = round(
-      clampP(sigmoid(dists.reduce((s, d) => s + logit(d[k] ?? 0.5), 0) / dists.length)),
-    );
-  }
-  const final = shrinkable ? poolMarginals(mean, start!.distribution!, 1 - trust) : mean;
-  const picks = picksFrom(spec, final);
-  out.distribution = final;
-  out.prediction = picks;
-  out.formatted = formatAnswer(picks);
+  const roles = [statistician, analyst].filter((p): p is ModelPart => !!p);
+  const assignee = (p: ModelPart | undefined) =>
+    p ? partAssignee(p.name) : TYPED_PIPELINE_ASSIGNEE;
+  const score = formationScore(TYPED_TEMPLATES.skeptic, {
+    k: 2,
+    id: "forecast-skeptic",
+    assign: (slot, i) =>
+      slot === "forecaster"
+        ? assignee(roles[i] ?? roles[0])
+        : slot === "skeptic"
+          ? assignee(skeptic)
+          : assignee(undefined),
+  });
+  await runFormationScore(
+    score,
+    seeded(
+      {
+        research: "the typed pipeline's research round",
+        f1: first.runs[0]?.formatted ?? "",
+        f2: first.runs[1]?.formatted ?? "",
+      },
+      async ({ step }) => {
+        if (step.id === "skeptic") return askSkeptic();
+        combine();
+        return out.formatted ?? "(no answer)";
+      },
+    ),
+  );
   return out;
+
+  async function askSkeptic(): Promise<string> {
+    let reply: Record<string, unknown> | undefined;
+    if (skeptic) {
+      const user = [
+        `Question: ${req.question}`,
+        req.context ? `Notes: ${clip(req.context, 3_000)}` : "",
+        `Evidence cutoff: ${first.cutoff.at}`,
+        `Answer format: ${answerInstruction(spec).split("\n")[0]}`,
+        `START FORECAST: ${describe(start)}`,
+        ...proposals.map(
+          (r, i) =>
+            `PROPOSAL ${i + 1} (${crew.proposals.find((p) => p.model === r.model)?.role ?? "member"}): ${r.formatted}${
+              r.distribution
+                ? ` — probabilities ${Object.entries(r.distribution)
+                    .map(([k, v]) => `${k}=${round(v, 3)}`)
+                    .join(" ")}`
+                : ""
+            }${r.sd !== undefined ? ` ± ${r.sd}` : ""}\n  reason: ${clip(r.reason ?? "", 400)}`,
+        ),
+        trackRecord(spec, history),
+        `RESEARCH:\n${clip(research.join("\n\n"), MAX_EVIDENCE) || "(none)"}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      const asked = await askAnalyst(skeptic, skepticSystem(spec), user);
+      reply = asked.reply;
+      if (asked.error !== undefined) crew.skepticError = asked.error.slice(0, 160);
+      if (typeof reply?.critique === "string") crew.critique = reply.critique.slice(0, 300);
+    }
+    ({ trust, sdScale } = skepticTrust(spec, reply));
+    crew.trust = round(trust, 3);
+    if (spec.type === "number") crew.sdScale = round(sdScale, 3);
+    return crew.critique ?? `trust ${crew.trust}`;
+  }
+
+  // ── Deterministic aggregation (the catalogue's pure combiner) ─────────────
+  function combine(): void {
+    const narrowed = spec as Exclude<AnswerSpec, { type: "ranking" | "text" }>;
+    const combined = combineSkeptic(narrowed, proposals, start, trust, sdScale);
+    if (combined.kind === "none") {
+      crew.note = combined.note;
+      return;
+    }
+    if (combined.unshrunk)
+      crew.note = "no informative prior: the proposals' log-odds mean, unshrunk";
+    if (combined.kind === "number") {
+      setNumber(
+        out,
+        narrowed as Extract<AnswerSpec, { type: "number" }>,
+        combined.value,
+        combined.sd,
+      );
+      return;
+    }
+    out.distribution = combined.distribution;
+    if (combined.kind === "choice") {
+      out.prediction = combined.top;
+      out.formatted = combined.top;
+      out.confidence = combined.distribution[combined.top];
+      return;
+    }
+    out.prediction = combined.picks;
+    out.formatted = formatAnswer(combined.picks);
+  }
 }
 
 function setNumber(
@@ -345,8 +341,5 @@ function setNumber(
   value: number,
   sd: number | undefined,
 ): void {
-  const v = spec.integer ? Math.round(value) : round(value, 6);
-  out.prediction = v;
-  out.formatted = formatAnswer(v);
-  if (sd !== undefined && sd > 0) out.uncertainty = { sd: round(sd, 6) };
+  Object.assign(out, numberFields(spec, value, sd));
 }

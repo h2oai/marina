@@ -7,25 +7,35 @@
  * `forecast <q> crew:<c> pattern:<p>` (and `POST /v1/forecast` with
  * `pattern`/`crew`/`role`) creates a world task and runs the typed formation
  * through the Score executor (`src/sdk/score-executor.ts`) with resident
- * dispatch (`./resident-part.ts`):
+ * dispatch (`./resident-part.ts`). The Score is the formation's catalogue
+ * template (`src/orchestration/formations/catalogue.ts`, `TYPED_TEMPLATES`)
+ * with its `forecaster` slot resolved to the assignee:
  *
  *   ensemble   research → f1 … fK (one resident each, in parallel) → combine
  *   delphi     research → f1 … fK → summary → v1 … vK (each revises once) → combine
+ *   tournament research → f1 … fK → m1 … m(K-1) (knockout, refereed by the
+ *              pipeline's critic) → combine
+ *   skeptic    research → f1 (statistician), f2 (analyst) → skeptic (the
+ *              pipeline's critic) → combine
  *
  * Step 0 is the typed pipeline's own research round (plan, retrieval, the
  * mechanical citation check, lookups); its dossier is what every resident
  * step reads, and residents may extend it with their own tools — within the
  * as-of fence when the cutoff is past or the forecast is measured. Combining
- * stays pure code (`forecastFormed`: the runs' combination, the critique rule,
- * the answer contract, triage and the Arbiter are unchanged).
+ * stays pure code (`forecastFormed`: the catalogue's combiners, the critique
+ * rule, the answer contract, triage and the Arbiter are unchanged).
  *
  * How the pipeline and the Score meet: the formation runs as usual over K
  * slot parts; each slot's run (and, for delphi, its revision) is handed to
  * the Score step that owns it, which asks the resident and hands the answer
  * back. Anything else the pipeline asks a slot (a format repair, a crux run,
  * a follow-up re-run) is asked of the resident directly, under the same
- * budget. Wave C converts formations to Score templates generally; this is
- * the seam (`residentForecastScore`), for ensemble and delphi only.
+ * budget. Steps the pipeline's own parts work (research, the referee's
+ * matches, the skeptic, the combine) finish with the pipeline.
+ *
+ * Assignees are interchangeable: `role:<r>` and `marina:<crew>` are residents
+ * (`residentPart`); `model:<id>` is a bare model through `src/model`
+ * (`modelSlotPart`) in the same slot — same template, same combiner.
  *
  * Bounds: one `WorkBudget` (resident calls, concurrency, wall clock) and one
  * `SpendGuard` per forecast (`MARINA_FORECAST_RESIDENT_BUDGET_USD`); each
@@ -39,10 +49,19 @@ import { WorkBudget } from "../coordination/work-budget";
 import { getErrorMessage } from "../engine/errors";
 import { parseEvidenceCutoff, withEvidenceCutoff } from "../engine/evidence-fence";
 import { SpendGuard } from "../engine/spend-guard";
+import { dailyCapRefusal } from "../engine/spend-ledger";
+import { modelComplete } from "../model/complete";
+import { TYPED_PIPELINE_ASSIGNEE, TYPED_TEMPLATES } from "../orchestration/formations/catalogue";
+import { formationScore, membersFor } from "../orchestration/formations/template";
 import type { MarinaDB } from "../persistence/database";
 import type { Score } from "../sdk/score";
 import { type DispatchContext, executeScore, type ScoreStepEvent } from "../sdk/score-executor";
-import { type FormedAnswer, forecastFormed } from "./formations";
+import {
+  type FormedAnswer,
+  forecastFormed,
+  TYPED_FORMATIONS,
+  type TypedFormation,
+} from "./formations";
 import {
   type ResidentCall,
   type ResidentPart,
@@ -60,8 +79,9 @@ import {
   type TypedRun,
 } from "./typed";
 
-export const RESIDENT_PATTERNS = ["ensemble", "delphi"] as const;
-export type ResidentPattern = (typeof RESIDENT_PATTERNS)[number];
+/** Every typed formation runs with resident (or model) slots: the catalogue's typed templates. */
+export const RESIDENT_PATTERNS = TYPED_FORMATIONS;
+export type ResidentPattern = TypedFormation;
 
 export function residentPattern(name: string | undefined): ResidentPattern | undefined {
   const n = name?.trim().toLowerCase();
@@ -79,11 +99,18 @@ export const RESIDENT_CALLS_DEFAULT = 24;
 export const RESIDENT_TIMEOUT_MS_DEFAULT = 15 * 60_000;
 
 /** The pure-code steps of a template (no resident). */
-const PIPELINE = "model:marina-forecast";
+const PIPELINE = TYPED_PIPELINE_ASSIGNEE;
+
+/** The residents a formation asks when K are wanted (the skeptic crew is always two). */
+export function residentCount(pattern: ResidentPattern, k: number): number {
+  return membersFor(TYPED_TEMPLATES[pattern], Math.max(1, Math.min(K_MAX, Math.round(k))));
+}
 
 /**
- * The Score a resident formation runs as: step 0 research, K resident steps
- * (`assignee`, default `role:forecaster`), and the pure-code steps.
+ * The Score a resident formation runs as: the catalogue's typed template with
+ * its `forecaster` slot resolved to `assignee` (default `role:forecaster`);
+ * every other slot is the pipeline (research, summaries, the critic's
+ * referee and skeptic calls, the pure-code combine).
  */
 export function residentForecastScore(
   pattern: ResidentPattern,
@@ -91,47 +118,13 @@ export function residentForecastScore(
   assignee = "role:forecaster",
   id = `forecast-${pattern}`,
 ): Score {
-  const n = Math.max(1, Math.min(K_MAX, Math.round(k)));
-  const runs = Array.from({ length: n }, (_, i) => ({
-    id: `f${i + 1}`,
-    instruction: `Forecast independently from the research dossier (run ${i + 1} of ${n}); use your own tools within the evidence cutoff.`,
-    assignee,
-    access: ["research"],
-  }));
-  const steps: Score["steps"] = [
-    {
-      id: "research",
-      instruction:
-        "Plan the question, research it up to the evidence cutoff, check citations mechanically and run the structured lookups (the typed pipeline's research round).",
-      assignee: PIPELINE,
-      access: [],
-    },
-    ...runs,
-  ];
-  if (pattern === "delphi") {
-    steps.push({
-      id: "summary",
-      instruction:
-        "Summarise the panel anonymously: per-option medians and ranges, reason snippets.",
-      assignee: PIPELINE,
-      access: runs.map((r) => r.id),
-    });
-    for (let i = 0; i < n; i++)
-      steps.push({
-        id: `v${i + 1}`,
-        instruction: `Revise run ${i + 1} once after reading the anonymous panel summary.`,
-        assignee,
-        access: ["summary", `f${i + 1}`],
-      });
-  }
-  steps.push({
-    id: "combine",
-    instruction:
-      "Combine by type (pure code): the formation's combination, the critique rule, the answer contract, triage and the Arbiter.",
-    assignee: PIPELINE,
-    access: steps.filter((s) => s.id !== "research").map((s) => s.id),
+  const n = residentCount(pattern, k);
+  return formationScore(TYPED_TEMPLATES[pattern], {
+    k: n,
+    id,
+    goal: `Resident forecast (${pattern}, ${n} residents)`,
+    assign: (slot) => (slot === "forecaster" ? assignee : PIPELINE),
   });
-  return { id, goal: `Resident forecast (${pattern}, ${n} residents)`, author: "marina", steps };
 }
 
 // ─── Slots: where the pipeline's calls meet the Score's steps ────────────────
@@ -167,7 +160,7 @@ class Slot {
   constructor(
     readonly name: string,
     private readonly expected: Record<CallKind, number>,
-    readonly resident: ResidentPart,
+    readonly resident: SlotPart,
     private readonly onCall: (kind: CallKind, user: string) => void,
   ) {
     this.part = {
@@ -227,9 +220,12 @@ function latch<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
 export interface ResidentForecastRequest {
   forecast: TypedForecastRequest;
   pattern: ResidentPattern;
-  /** `role:<r>` (resolved by standing) or `marina:<crew>`; default `role:forecaster`. */
+  /**
+   * `role:<r>` (resolved by standing), `marina:<crew>`, or `model:<id>` (a
+   * bare model in the same slots); default `role:forecaster`.
+   */
   assignee?: string;
-  /** Residents asked (K), 1–7 (default 3). */
+  /** Residents asked (K), 1–7 (default 3; the skeptic crew always asks two). */
   k?: number;
   /** A measurement against a known outcome: the as-of fence is required and the filing is `measure`. */
   measure?: boolean;
@@ -273,8 +269,51 @@ export interface ResidentForecastRecord {
 
 export type ResidentFormedAnswer = FormedAnswer & { residents: ResidentForecastRecord };
 
-/** Makes the resident part behind one Score slot. */
-export type PartFactory = (spec: string, opts: ResidentPartOptions) => ResidentPart;
+/**
+ * What works one Score slot: a resident part, or a model part in the same
+ * place (`calls` stays empty: a model is never a producer).
+ */
+export type SlotPart = ModelPart & { spec: string; calls: ResidentCall[] };
+
+/** Makes the part behind one Score slot. */
+export type PartFactory = (spec: string, opts: ResidentPartOptions) => SlotPart | ResidentPart;
+
+/**
+ * A bare model in a resident slot (`model:<id>`): the shared model backend
+ * (`src/model`), under the forecast's `WorkBudget` and `SpendGuard`. The
+ * model is resolved at the first call, so an unusable id drops out of the
+ * runs like any failed analyst.
+ */
+export function modelSlotPart(spec: string, opts: ResidentPartOptions = {}): SlotPart {
+  const env = opts.env ?? process.env;
+  let made: ReturnType<typeof modelComplete> | undefined;
+  return {
+    name: opts.name ?? spec,
+    spec,
+    calls: opts.calls ?? [],
+    complete: async (system, user) => {
+      const stop = opts.spend?.stopReason() ?? dailyCapRefusal(env);
+      if (stop) throw new Error(`${spec}: ${stop}`);
+      made ??= modelComplete(spec.slice("model:".length), env, {
+        purpose: "forecast",
+        trace: { caller: "forecast.resident", ...opts.trace },
+      });
+      const model = made;
+      const before = model.usage.costUsd;
+      const run = () => model.complete(system, user);
+      try {
+        return opts.budget ? await opts.budget.run(run) : await run();
+      } finally {
+        opts.spend?.record(model.usage.costUsd - before);
+      }
+    },
+  };
+}
+
+/** The part for an assignee: `model:<id>` a model, anything else a resident. */
+export function assigneePart(spec: string, opts: ResidentPartOptions): SlotPart | ResidentPart {
+  return spec.startsWith("model:") ? modelSlotPart(spec, opts) : residentPart(spec, opts);
+}
 
 /**
  * Run a resident formation. `deps` is the ordinary typed wiring (retriever,
@@ -298,7 +337,7 @@ export async function runResidentForecast(
 ): Promise<ResidentFormedAnswer> {
   const env = opts.env ?? process.env;
   const assignee = req.assignee?.trim() || "role:forecaster";
-  const k = Math.max(1, Math.min(K_MAX, Math.round(req.k ?? RESIDENT_K_DEFAULT)));
+  const k = residentCount(req.pattern, req.k ?? RESIDENT_K_DEFAULT);
   const measure = req.measure === true;
   const cutoff = chooseCutoff(req.forecast, deps.now?.() ?? new Date());
   // A measured forecast is always fenced at its cutoff; a live one only when the cutoff is past.
@@ -317,7 +356,7 @@ export async function runResidentForecast(
   });
   const started = Date.now();
   const endsAt = started + timeoutMs;
-  const make = opts.part ?? residentPart;
+  const make = opts.part ?? assigneePart;
   const partOpts = {
     budget: work,
     spend,
@@ -397,6 +436,13 @@ export async function runResidentForecast(
         const answer = await pipeline;
         record.status = "done";
         return answer.formatted ?? "(no answer)";
+      }
+      if (ctx.step.assignee === PIPELINE) {
+        // The pipeline's own parts work it (the referee's matches, the skeptic).
+        // allow-empty-catch: the combine step surfaces a failed pipeline
+        await pipeline.catch(() => undefined);
+        record.status = "done";
+        return "(worked by the pipeline's critic; see the answer's formation record)";
       }
       const kind: CallKind = id.startsWith("v") ? "revise" : "run";
       const slot = slots[Number(id.slice(1)) - 1]!;

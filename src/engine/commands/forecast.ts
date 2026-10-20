@@ -8,6 +8,10 @@ import { residentsMode } from "../../forecast/resident-mode";
 import type { ForecastScale } from "../../forecast/service";
 import type { TypedForecastAnswer } from "../../forecast/typed";
 import { bold, dim, header, separator } from "../../net/ansi";
+import {
+  TYPED_FORMATION_NAMES,
+  type TypedFormationName,
+} from "../../orchestration/formations/catalogue";
 import type { MarinaDB } from "../../persistence/database";
 import type { ForecastAnswerRow } from "../../persistence/db-markets";
 import type { MarinaStores } from "../../persistence/interfaces";
@@ -30,7 +34,7 @@ const USAGE = [
   "       forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves",
   "       forecast competence [family]      what Marina's resolved record says each method is good at",
   "       forecast routes [family]          paired evidence per family and method, and which routes are earned",
-  "       forecast <question> crew:<crew>|role:<role> [pattern:ensemble|delphi] [residents:N] [asof:<date>] [measure:yes]",
+  "       forecast <question> crew:<crew>|role:<role> [pattern:ensemble|delphi|tournament|skeptic] [residents:N] [asof:<date>] [measure:yes]",
   "                                         residents answer with their own tools, as a task run as a Score",
   "                                         (MARINA_FORECAST_RESIDENTS=on; a past asof: or measure:yes fences their tools)",
 ].join("\n");
@@ -78,12 +82,12 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       { syntax: "forecast routes [<family prefix>]", effect: "read" },
       {
         syntax:
-          "forecast <question> crew:<crew> [pattern:<ensemble|delphi>] [residents:<n>] [asof:<iso>] [measure:yes]",
+          "forecast <question> crew:<crew> [pattern:<ensemble|delphi|tournament|skeptic>] [residents:<n>] [asof:<iso>] [measure:yes]",
         effect: "execute",
       },
       {
         syntax:
-          "forecast <question> role:<role> [pattern:<ensemble|delphi>] [residents:<n>] [asof:<iso>] [measure:yes]",
+          "forecast <question> role:<role> [pattern:<ensemble|delphi|tournament|skeptic>] [residents:<n>] [asof:<iso>] [measure:yes]",
         effect: "execute",
       },
     ],
@@ -370,7 +374,7 @@ export function forecastModifierSpec(env: NodeJS.ProcessEnv = process.env) {
 export function residentRequest(values: Record<string, unknown>):
   | {
       assignee: string;
-      pattern: "ensemble" | "delphi";
+      pattern: TypedFormationName;
       k?: number;
       asOf?: string;
       measure: boolean;
@@ -382,9 +386,11 @@ export function residentRequest(values: Record<string, unknown>):
   for (const k of ["crew", "role"])
     if (str(k) && !slug.test(str(k)))
       return { error: `${k}: takes a name (letters, digits, - _ .).` };
-  const pattern = (str("pattern") || "ensemble").toLowerCase();
-  if (pattern !== "ensemble" && pattern !== "delphi")
-    return { error: "pattern: takes ensemble or delphi for a resident forecast." };
+  const pattern = (str("pattern") || "ensemble").toLowerCase() as TypedFormationName;
+  if (!TYPED_FORMATION_NAMES.includes(pattern))
+    return {
+      error: `pattern: takes ${TYPED_FORMATION_NAMES.join(", ")} for a resident forecast.`,
+    };
   const k = str("residents") ? Number(str("residents")) : undefined;
   if (k !== undefined && !(Number.isInteger(k) && k >= 1 && k <= 7))
     return { error: "residents: takes a whole number 1–7." };

@@ -7,16 +7,26 @@
  * typed forecast (plan → research → lookups → K independent runs), so the
  * evidence and its cutoff are identical; only the combination differs.
  *
+ * Each formation is a catalogue entry (`src/orchestration/formations/`): a
+ * Score template plus a pure combiner per answer type. Round one (the
+ * template's `research` and `f1 … fK`) is the typed pipeline; what follows
+ * runs as the template's Score through the Score executor, its member steps
+ * dispatched to the run's own part — a model, a `marina:<crew>`, or a
+ * resident (`./resident-forecast.ts` runs the same templates with resident
+ * slots) — and its combine step is the pure combiner:
+ *
  *   ensemble   — the typed forecaster as is: the runs combined by type, then
- *                the critique (the control for the others)
+ *                the critique (the control for the others); the whole
+ *                template is the pipeline's own round one and combine
  *   delphi     — independence before influence: the runs are round one; each
  *                member then sees an ANONYMOUS panel summary (per-option
  *                medians and ranges, short reason snippets, no names) and the
  *                same research, and revises once; the answer is the median of
  *                the revisions (per option for probabilities)
  *   tournament — the runs' proposals meet in pairwise knockout matches judged
- *                by the critic (an odd field gives a bye); the champion's
- *                answer and uncertainty are the forecast; the bracket is kept
+ *                by the critic (an odd field gives a bye), match by match; the
+ *                champion's answer and uncertainty are the forecast; the
+ *                bracket is kept
  *   skeptic    — the arena's crew: a statistician and an analyst propose, a
  *                skeptic sets how much of their move away from the prior to
  *                trust; deterministic aggregation that can only shrink toward
@@ -30,8 +40,25 @@
  * and a crew formation is a `marina:<crew>` analyst — both compose with these.
  * A failed member or match drops out (a match falls to the first proposal);
  * with fewer than two usable runs every formation returns the runs' answer.
+ * The catalogue implementation reproduces the pre-catalogue one exactly
+ * (`test/formation-equivalence-typed.test.ts`).
  */
 
+import {
+  partAssignee,
+  TYPED_PIPELINE_ASSIGNEE,
+  TYPED_TEMPLATES,
+  type TypedFormationName,
+} from "../orchestration/formations/catalogue";
+import {
+  championAnswer,
+  combineDelphi,
+  matchWinner,
+  panelSummary,
+} from "../orchestration/formations/combine-typed";
+import { runFormationScore, seeded } from "../orchestration/formations/run";
+import { formationScore, knockout } from "../orchestration/formations/template";
+import type { Score } from "../sdk/score";
 import { adjustActive, adjustForecast } from "./adjust";
 import {
   type AnswerContract,
@@ -40,20 +67,10 @@ import {
   parseAnswerContract,
   reaskPrompt,
 } from "./answer-contract";
+import { type AnswerSpec, type AnswerValue, formatAnswer, validateAnswer } from "./answer-types";
 import {
-  type AnswerOption,
-  type AnswerSpec,
-  type AnswerValue,
-  combineAnswers,
-  formatAnswer,
-  validateAnswer,
-} from "./answer-types";
-import {
-  argmax,
-  combinedSd,
   completeMarginals,
   type Distribution,
-  normalise,
   parseDistribution,
   parseMarginals,
   pickDistribution,
@@ -72,7 +89,16 @@ import {
   type TypedRun,
 } from "./typed";
 
-export const TYPED_FORMATIONS = ["ensemble", "delphi", "tournament", "skeptic"] as const;
+// The pure Delphi helpers live with the catalogue's combiners.
+export { median, panelSummary } from "../orchestration/formations/combine-typed";
+
+/** The typed formations: the catalogue's typed templates, in routing order. */
+export const TYPED_FORMATIONS = [
+  "ensemble",
+  "delphi",
+  "tournament",
+  "skeptic",
+] as const satisfies readonly TypedFormationName[];
 export type TypedFormation = (typeof TYPED_FORMATIONS)[number];
 
 export function typedFormation(name: string | undefined): TypedFormation | undefined {
@@ -119,7 +145,6 @@ export interface FormationRecord {
 
 export type FormedAnswer = TypedForecastAnswer & { formation: FormationRecord };
 
-const SNIPPET = 160;
 const MAX_RESEARCH = 12_000;
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -206,6 +231,7 @@ async function formed(
   pattern: TypedFormation,
 ): Promise<FormedAnswer> {
   if (pattern === "ensemble") {
+    // The catalogue's ensemble template is the pipeline itself: research, K runs, combine.
     return { ...(await forecastTyped(req, deps)), formation: { pattern } };
   }
   if (pattern === "skeptic") {
@@ -247,33 +273,6 @@ function describeRun(spec: AnswerSpec, r: Pick<TypedRun, "formatted" | "distribu
   }
   if (spec.type === "number" && r.sd !== undefined) parts.push(`sd ${r.sd}`);
   return parts.join("; ");
-}
-
-/** The anonymous panel summary: medians, ranges and reason snippets, never who said what. */
-export function panelSummary(spec: AnswerSpec, runs: TypedRun[]): string {
-  const lines: string[] = [`${runs.length} forecasters answered independently.`];
-  const withDist = runs.filter((r) => r.distribution);
-  if (withDist.length && "options" in spec) {
-    for (const o of spec.options) {
-      const ps = withDist.map((r) => r.distribution![o.id] ?? 0);
-      lines.push(
-        `  ${o.id}${o.label ? ` (${clip(o.label, 60)})` : ""}: median ${median(ps).toFixed(2)}, range ${Math.min(...ps).toFixed(2)}–${Math.max(...ps).toFixed(2)}`,
-      );
-    }
-  } else if (spec.type === "number") {
-    const xs = runs.map((r) => r.value as number);
-    lines.push(`  median ${median(xs)}, range ${Math.min(...xs)}–${Math.max(...xs)}`);
-  } else {
-    const counts = new Map<string, number>();
-    for (const r of runs) counts.set(r.formatted!, (counts.get(r.formatted!) ?? 0) + 1);
-    for (const [a, n] of counts) lines.push(`  ${n}× ${clip(a, 80)}`);
-  }
-  const reasons = runs.map((r) => r.reason).filter((x): x is string => !!x);
-  if (reasons.length) {
-    lines.push("Reasons given (anonymous):");
-    for (const r of reasons) lines.push(`  - ${clip(r, SNIPPET)}`);
-  }
-  return lines.join("\n");
 }
 
 function reviseSystem(spec: AnswerSpec, contract?: TypedForecastRequest["contract"]): string {
@@ -337,6 +336,11 @@ function readReply(
   return out;
 }
 
+/**
+ * The catalogue's delphi template over the usable runs: `f1 … fn` are round
+ * one (seeded), `summary` the anonymous panel, `v1 … vn` one revision each
+ * (asked of the run's own part, in parallel), `combine` the pure combiner.
+ */
 async function delphi(
   req: TypedForecastRequest,
   deps: TypedForecastDeps,
@@ -345,67 +349,47 @@ async function delphi(
   evidence: string,
 ): Promise<FormedAnswer> {
   const spec = req.answer;
+  const members = usable.map((run, i) => memberFor(deps.analysts, run, i));
   const summary = panelSummary(spec, usable);
   const system = reviseSystem(spec, req.contract);
-  const revisions = await Promise.all(
-    usable.map(async (run, i) => {
-      const member = memberFor(deps.analysts, run, i);
+  const revisions: Array<FormationStep & { value?: AnswerValue }> = [];
+  let formed: FormedAnswer | undefined;
+  const score = typedScore("delphi", members);
+  await runFormationScore(
+    score,
+    seeded(roundOneSeeds(usable), async ({ step }) => {
+      if (step.id === "summary") return summary;
+      if (step.id === "combine") {
+        formed = combineRevisions(spec, first, revisions);
+        return formed.formatted ?? "(no answer)";
+      }
+      const i = instance(step.id, "v");
+      const run = usable[i]!;
+      const member = members[i]!;
       const user = `${baseUser(req, first.cutoff.at, evidence)}\n\nYOUR EARLIER ANSWER: ${describeRun(spec, run)}${run.reason ? `\nYour reason: ${clip(run.reason, 300)}` : ""}\n\nTHE PANEL (anonymous):\n${summary}`;
       const { reply, error } = await askAnalyst(member, system, user);
-      if (error !== undefined) return { member: member.name, error: error.slice(0, 160) };
-      return { ...readReply(spec, reply), member: member.name };
+      revisions[i] =
+        error !== undefined
+          ? { member: member.name, error: error.slice(0, 160) }
+          : { ...readReply(spec, reply), member: member.name };
+      return revisions[i]!.formatted ?? revisions[i]!.error ?? "";
     }),
   );
+  return formed!;
+}
+
+/** Delphi's combine step: the revisions through the catalogue's pure combiner. */
+function combineRevisions(
+  spec: AnswerSpec,
+  first: TypedForecastAnswer,
+  revisions: Array<FormationStep & { value?: AnswerValue }>,
+): FormedAnswer {
   const ok = revisions.filter((r) => r.formatted !== undefined) as Array<
     FormationStep & { value: AnswerValue }
   >;
   const record: FormationRecord = { pattern: "delphi", revisions: revisions.map(stripValue) };
   if (ok.length === 0) return { ...first, formation: { ...record, fallback: "no revision" } };
-  const out: FormedAnswer = { ...first, formation: record };
-  const combined = combineAnswers(
-    spec,
-    ok.map((r) => ({ value: r.value, weight: 1 })),
-  );
-  if (combined) {
-    out.combined = combined;
-    out.prediction = combined.value;
-    out.formatted = formatAnswer(combined.value);
-    out.confidence = combined.agreement;
-  }
-  if ("options" in spec && ok.every((r) => r.distribution)) {
-    const dist = medianDistribution(
-      spec.options,
-      ok.map((r) => r.distribution!),
-      spec.type === "choice",
-    );
-    out.distribution = dist;
-    if (spec.type === "choice") {
-      const top = argmax(spec.options, dist);
-      out.prediction = top;
-      out.formatted = top;
-      out.confidence = dist[top];
-    }
-  }
-  if (spec.type === "number") {
-    const sd = combinedSd(
-      ok.map((r) => ({ ...(r.sd !== undefined ? { sd: r.sd } : {}), weight: 1 })),
-      combined?.spread ?? 0,
-    );
-    if (sd !== undefined) out.uncertainty = { sd };
-  }
-  return out;
-}
-
-/** Per-option median; a choice's renormalised to sum 1. */
-function medianDistribution(
-  options: AnswerOption[],
-  ds: Distribution[],
-  sumToOne: boolean,
-): Distribution {
-  const out: Distribution = {};
-  for (const o of options) out[o.id] = median(ds.map((d) => d[o.id] ?? 0));
-  if (sumToOne) return normalise(out) ?? out;
-  return out;
+  return Object.assign({ ...first, formation: record }, combineDelphi(spec, ok));
 }
 
 // ─── Tournament ──────────────────────────────────────────────────────────────
@@ -417,6 +401,12 @@ const MATCH_SYSTEM = [
   'Reply with ONE JSON object: {"winner": "A" | "B", "reason": "<one sentence>"}.',
 ].join(" ");
 
+/**
+ * The catalogue's tournament template over the usable runs: a knockout
+ * bracket (`knockout`), one referee step per match in play order (each match
+ * waits for the one before: one referee, one match at a time), then the
+ * champion through the pure combiner.
+ */
 async function tournament(
   req: TypedForecastRequest,
   deps: TypedForecastDeps,
@@ -427,22 +417,47 @@ async function tournament(
   const spec = req.answer;
   const referee = deps.critic ?? deps.planner ?? deps.analysts[0]!;
   const matches: FormationMatch[] = [];
-  let field = [...usable];
-  while (field.length > 1) {
-    const next: TypedRun[] = [];
-    for (let i = 0; i < field.length; i += 2) {
-      const a = field[i]!;
-      const b = field[i + 1];
-      if (!b) {
-        next.push(a); // a bye
-        continue;
+  const entrants = usable.map((_, i) => `f${i + 1}`);
+  const bracket = new Map(
+    knockout(entrants, "m")
+      .flat()
+      .map((s) => [s.id, s]),
+  );
+  // Who holds each step: an entrant's run, a match's winner, a bye's runner.
+  const holder = new Map<string, TypedRun>(entrants.map((id, i) => [id, usable[i]!]));
+  let formed: FormedAnswer | undefined;
+  const score = typedScore(
+    "tournament",
+    usable.map((run, i) => memberFor(deps.analysts, run, i)),
+    referee,
+  );
+  await runFormationScore(
+    score,
+    seeded(roundOneSeeds(usable), async ({ step }) => {
+      if (step.id === "combine") {
+        const champ = holder.get(score.steps.at(-2)!.id)!;
+        const { head, tail } = championAnswer(spec, champ, first.uncertainty?.sd);
+        formed = Object.assign(
+          {
+            ...first,
+            ...head,
+            formation: { pattern: "tournament" as const, matches, champion: champ.run },
+          },
+          tail,
+        );
+        return formed.formatted ?? "(no answer)";
       }
+      const slot = bracket.get(step.id)!;
+      const a = holder.get(slot.a)!;
+      if (!slot.b) {
+        holder.set(slot.id, a); // a bye
+        return a.formatted ?? "";
+      }
+      const b = holder.get(slot.b)!;
       const user = `${baseUser(req, first.cutoff.at, evidence)}\n\nFORECAST A: ${describeRun(spec, a)}\nReason A: ${clip(a.reason ?? "", 400)}\n\nFORECAST B: ${describeRun(spec, b)}\nReason B: ${clip(b.reason ?? "", 400)}`;
       const { reply, error } = await askAnalyst(referee, MATCH_SYSTEM, user);
-      const pick = String(reply?.winner ?? "")
-        .trim()
-        .toUpperCase();
-      const winner = pick === "B" ? b : a;
+      const { pick, winner: side } = matchWinner(reply);
+      const winner = side === "b" ? b : a;
       matches.push({
         a: a.run,
         b: b.run,
@@ -454,30 +469,45 @@ async function tournament(
             ? { error: "no winner named; A advances" }
             : {}),
       });
-      next.push(winner);
-    }
-    field = next;
-  }
-  const champ = field[0]!;
-  const out: FormedAnswer = {
-    ...first,
-    prediction: champ.value,
-    formatted: champ.formatted,
-    ...(champ.confidence !== undefined ? { confidence: champ.confidence } : {}),
-    formation: { pattern: "tournament", matches, champion: champ.run },
-  };
-  if (champ.distribution) {
-    out.distribution = champ.distribution;
-    if (spec.type === "choice") out.confidence = champ.distribution[champ.formatted!];
-  }
-  if (spec.type === "number") {
-    const sd = champ.sd ?? first.uncertainty?.sd;
-    if (sd !== undefined) out.uncertainty = { sd };
-  }
-  return out;
+      holder.set(slot.id, winner);
+      return winner.formatted ?? "";
+    }),
+  );
+  return formed!;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** The catalogue's typed template for these members (forecasters; referee/skeptic: the critic). */
+export function typedScore(
+  pattern: TypedFormation,
+  members: ReadonlyArray<Pick<ModelPart, "name">>,
+  judge?: Pick<ModelPart, "name">,
+): Score {
+  return formationScore(TYPED_TEMPLATES[pattern], {
+    k: members.length,
+    id: `forecast-${pattern}`,
+    assign: (slot, i) =>
+      slot === "forecaster"
+        ? partAssignee(members[i]!.name)
+        : slot !== "pipeline" && judge
+          ? partAssignee(judge.name)
+          : TYPED_PIPELINE_ASSIGNEE,
+  });
+}
+
+/** Round one is done by the pipeline: its research and its runs seed the Score. */
+function roundOneSeeds(runs: readonly TypedRun[]): Record<string, string> {
+  return Object.fromEntries([
+    ["research", "the typed pipeline's research round"],
+    ...runs.map((r, i) => [`f${i + 1}`, r.formatted ?? ""]),
+  ]);
+}
+
+/** The 0-based instance of a fanned step id (`v3` → 2). */
+function instance(id: string, prefix: string): number {
+  return Number(id.slice(prefix.length)) - 1;
+}
 
 function memberFor(analysts: ModelPart[], run: TypedRun, i: number): ModelPart {
   return analysts.find((a) => a.name === run.model) ?? analysts[i % analysts.length]!;
@@ -486,11 +516,4 @@ function memberFor(analysts: ModelPart[], run: TypedRun, i: number): ModelPart {
 function stripValue(s: FormationStep & { value?: AnswerValue }): FormationStep {
   const { value: _v, ...rest } = s;
   return rest;
-}
-
-export function median(xs: number[]): number {
-  if (xs.length === 0) return Number.NaN;
-  const s = [...xs].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 }

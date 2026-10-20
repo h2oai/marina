@@ -1,0 +1,477 @@
+{
+  "note": "Stored arena rounds for the formation equivalence test (test/formation-equivalence-arena.test.ts). Synthetic series in the arena's shapes; never edit to make a test pass.",
+  "rounds": [
+    {
+      "round": {
+        "round_id": "yougov-2026-w31-approval",
+        "tracker": "yougov",
+        "series": "yougov_net_approval",
+        "question": "Net approval in the week ending 2026-08-01?",
+        "unit": "points",
+        "target_type": "continuous_normal",
+        "lock_at": "2026-08-01T14:00:00Z",
+        "release_at": "2026-08-03T14:00:00Z"
+      },
+      "lock": {
+        "round_id": "yougov-2026-w31-approval",
+        "answer_history": [
+          {
+            "date": "2026-01-02",
+            "value": 40
+          },
+          {
+            "date": "2026-01-09",
+            "value": 41
+          },
+          {
+            "date": "2026-01-16",
+            "value": 42
+          },
+          {
+            "date": "2026-01-23",
+            "value": 40
+          },
+          {
+            "date": "2026-01-30",
+            "value": 41
+          },
+          {
+            "date": "2026-02-06",
+            "value": 42
+          },
+          {
+            "date": "2026-02-13",
+            "value": 40
+          },
+          {
+            "date": "2026-02-20",
+            "value": 41
+          },
+          {
+            "date": "2026-02-27",
+            "value": 42
+          },
+          {
+            "date": "2026-03-06",
+            "value": 40
+          },
+          {
+            "date": "2026-03-13",
+            "value": 41
+          },
+          {
+            "date": "2026-03-20",
+            "value": 42
+          },
+          {
+            "date": "2026-03-27",
+            "value": 40
+          },
+          {
+            "date": "2026-04-03",
+            "value": 41
+          },
+          {
+            "date": "2026-04-10",
+            "value": 42
+          },
+          {
+            "date": "2026-04-17",
+            "value": 40
+          },
+          {
+            "date": "2026-04-24",
+            "value": 41
+          },
+          {
+            "date": "2026-05-01",
+            "value": 42
+          },
+          {
+            "date": "2026-05-08",
+            "value": 40
+          },
+          {
+            "date": "2026-05-15",
+            "value": 41
+          },
+          {
+            "date": "2026-05-22",
+            "value": 42
+          },
+          {
+            "date": "2026-05-29",
+            "value": 40
+          },
+          {
+            "date": "2026-06-05",
+            "value": 41
+          },
+          {
+            "date": "2026-06-12",
+            "value": 42
+          },
+          {
+            "date": "2026-06-19",
+            "value": 40
+          },
+          {
+            "date": "2026-06-26",
+            "value": 41
+          },
+          {
+            "date": "2026-07-03",
+            "value": 42
+          },
+          {
+            "date": "2026-07-10",
+            "value": 40
+          },
+          {
+            "date": "2026-07-17",
+            "value": 41
+          },
+          {
+            "date": "2026-07-24",
+            "value": 42
+          }
+        ]
+      }
+    },
+    {
+      "round": {
+        "round_id": "gallup-2026-w31-trend",
+        "tracker": "gallup",
+        "series": "gallup_economy",
+        "question": "Economic confidence index next release?",
+        "unit": "index",
+        "target_type": "continuous_normal",
+        "lock_at": "2026-08-01T14:00:00Z",
+        "release_at": "2026-08-04T14:00:00Z"
+      },
+      "lock": {
+        "round_id": "gallup-2026-w31-trend",
+        "answer_history": [
+          {
+            "date": "2026-01-02",
+            "value": -28.5
+          },
+          {
+            "date": "2026-01-09",
+            "value": -29.9
+          },
+          {
+            "date": "2026-01-16",
+            "value": -29.3
+          },
+          {
+            "date": "2026-01-23",
+            "value": -28.7
+          },
+          {
+            "date": "2026-01-30",
+            "value": -26.1
+          },
+          {
+            "date": "2026-02-06",
+            "value": -27.5
+          },
+          {
+            "date": "2026-02-13",
+            "value": -26.9
+          },
+          {
+            "date": "2026-02-20",
+            "value": -26.3
+          },
+          {
+            "date": "2026-02-27",
+            "value": -23.7
+          },
+          {
+            "date": "2026-03-06",
+            "value": -25.1
+          },
+          {
+            "date": "2026-03-13",
+            "value": -24.5
+          },
+          {
+            "date": "2026-03-20",
+            "value": -23.9
+          },
+          {
+            "date": "2026-03-27",
+            "value": -21.3
+          },
+          {
+            "date": "2026-04-03",
+            "value": -22.7
+          },
+          {
+            "date": "2026-04-10",
+            "value": -22.1
+          },
+          {
+            "date": "2026-04-17",
+            "value": -21.5
+          },
+          {
+            "date": "2026-04-24",
+            "value": -18.9
+          },
+          {
+            "date": "2026-05-01",
+            "value": -20.3
+          },
+          {
+            "date": "2026-05-08",
+            "value": -19.7
+          },
+          {
+            "date": "2026-05-15",
+            "value": -19.1
+          },
+          {
+            "date": "2026-05-22",
+            "value": -16.5
+          },
+          {
+            "date": "2026-05-29",
+            "value": -17.9
+          },
+          {
+            "date": "2026-06-05",
+            "value": -17.3
+          },
+          {
+            "date": "2026-06-12",
+            "value": -16.7
+          },
+          {
+            "date": "2026-06-19",
+            "value": -14.1
+          },
+          {
+            "date": "2026-06-26",
+            "value": -15.5
+          },
+          {
+            "date": "2026-07-03",
+            "value": -14.9
+          },
+          {
+            "date": "2026-07-10",
+            "value": -14.3
+          },
+          {
+            "date": "2026-07-17",
+            "value": -11.7
+          },
+          {
+            "date": "2026-07-24",
+            "value": -13.1
+          },
+          {
+            "date": "2026-07-31",
+            "value": -12.5
+          },
+          {
+            "date": "2026-08-07",
+            "value": -11.9
+          },
+          {
+            "date": "2026-08-14",
+            "value": -9.3
+          },
+          {
+            "date": "2026-08-21",
+            "value": -10.7
+          }
+        ]
+      }
+    },
+    {
+      "round": {
+        "round_id": "civiqs-2026-08-02-approval",
+        "tracker": "civiqs",
+        "series": "civiqs_approval",
+        "question": "Civiqs approval published on 2026-08-02?",
+        "unit": "percent",
+        "target_type": "continuous_normal",
+        "lock_at": "2026-08-01T14:00:00Z",
+        "release_at": "2026-08-02T14:00:00Z",
+        "release_estimated": true
+      },
+      "lock": {
+        "round_id": "civiqs-2026-08-02-approval",
+        "answer_history": [
+          {
+            "date": "2026-07-01",
+            "value": 44.0
+          },
+          {
+            "date": "2026-07-02",
+            "value": 45.38
+          },
+          {
+            "date": "2026-07-03",
+            "value": 46.66
+          },
+          {
+            "date": "2026-07-04",
+            "value": 47.72
+          },
+          {
+            "date": "2026-07-05",
+            "value": 48.52
+          },
+          {
+            "date": "2026-07-06",
+            "value": 46.99
+          },
+          {
+            "date": "2026-07-07",
+            "value": 47.13
+          },
+          {
+            "date": "2026-07-08",
+            "value": 46.97
+          },
+          {
+            "date": "2026-07-09",
+            "value": 46.57
+          },
+          {
+            "date": "2026-07-10",
+            "value": 46.02
+          },
+          {
+            "date": "2026-07-11",
+            "value": 43.43
+          },
+          {
+            "date": "2026-07-12",
+            "value": 42.9
+          },
+          {
+            "date": "2026-07-13",
+            "value": 42.53
+          },
+          {
+            "date": "2026-07-14",
+            "value": 42.41
+          },
+          {
+            "date": "2026-07-15",
+            "value": 42.6
+          },
+          {
+            "date": "2026-07-16",
+            "value": 41.12
+          },
+          {
+            "date": "2026-07-17",
+            "value": 41.96
+          },
+          {
+            "date": "2026-07-18",
+            "value": 43.07
+          },
+          {
+            "date": "2026-07-19",
+            "value": 44.36
+          },
+          {
+            "date": "2026-07-20",
+            "value": 45.75
+          },
+          {
+            "date": "2026-07-21",
+            "value": 45.12
+          },
+          {
+            "date": "2026-07-22",
+            "value": 46.37
+          },
+          {
+            "date": "2026-07-23",
+            "value": 47.4
+          },
+          {
+            "date": "2026-07-24",
+            "value": 48.15
+          },
+          {
+            "date": "2026-07-25",
+            "value": 48.57
+          },
+          {
+            "date": "2026-07-26",
+            "value": 46.66
+          },
+          {
+            "date": "2026-07-27",
+            "value": 46.46
+          },
+          {
+            "date": "2026-07-28",
+            "value": 46.04
+          },
+          {
+            "date": "2026-07-29",
+            "value": 45.47
+          },
+          {
+            "date": "2026-07-30",
+            "value": 44.88
+          },
+          {
+            "date": "2026-07-31",
+            "value": 42.37
+          }
+        ]
+      }
+    },
+    {
+      "round": {
+        "round_id": "rcp-2026-w31-short",
+        "tracker": "rcp",
+        "series": "rcp_generic_ballot",
+        "question": "Generic ballot margin?",
+        "target_type": "continuous_normal",
+        "lock_at": "2026-08-01T14:00:00Z",
+        "release_at": "2026-08-05T14:00:00Z"
+      },
+      "lock": {
+        "round_id": "rcp-2026-w31-short",
+        "answer_history": [
+          {
+            "date": "2026-06-19",
+            "value": 2.1
+          },
+          {
+            "date": "2026-06-26",
+            "value": 2.4
+          },
+          {
+            "date": "2026-07-03",
+            "value": 1.9
+          },
+          {
+            "date": "2026-07-10",
+            "value": 2.6
+          },
+          {
+            "date": "2026-07-17",
+            "value": 3.0
+          },
+          {
+            "date": "2026-07-24",
+            "value": 2.2
+          }
+        ]
+      }
+    }
+  ]
+}

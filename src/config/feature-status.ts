@@ -163,6 +163,13 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/quant, src/forecast, src/research",
   },
   {
+    name: "Formation catalogue (Score templates, pure combiners)",
+    status: "siloed",
+    enable:
+      "Always on: typed forecast formations (`MARINA_FORECAST_FORMATION`), resident forecasts, `pattern run`, arena `formation:ensemble` and `formation:delphi`",
+    owner: "src/orchestration/formations",
+  },
+  {
     name: "Research evidence loop and survey",
     status: "siloed",
     enable: "`MARINA_RESEARCH_*`",
@@ -229,8 +236,10 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   {
     name: "Forecasts by residents (as-of fence)",
     status: "experimental",
-    enable: "`MARINA_FORECAST_RESIDENTS=on`; `forecast <q> crew:<c> pattern:<p>`",
-    owner: "src/forecast/resident-part.ts, src/engine/evidence-fence.ts",
+    enable:
+      "`MARINA_FORECAST_RESIDENTS=on`; `forecast <q> crew:<c> pattern:<p>` (ensemble, delphi, tournament, skeptic)",
+    owner:
+      "src/forecast/resident-part.ts, src/forecast/resident-forecast.ts, src/engine/evidence-fence.ts",
   },
   {
     name: "Hybrid and vector retrieval",
@@ -250,7 +259,8 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     status: "experimental",
     enable:
       "`pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run`",
-    owner: "src/orchestration/text-patterns.ts, src/engine/commands/pattern.ts",
+    owner:
+      "src/orchestration/text-patterns.ts, src/orchestration/formations, src/engine/commands/pattern.ts",
     commands: ["pattern"],
   },
   {

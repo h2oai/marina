@@ -1,6 +1,6 @@
 # Orchestration Patterns, Crew Pools, and the Crew Runtime Layer
 
-**When to read this:** you are adding or changing an orchestration pattern template, crew pool access, crew formation briefs, or the formation mediators. `CLAUDE.md` → "Orchestration Patterns" states the invariants (convention-based, members-only crew pools, one mediator line per event); this page has the full pattern list and mechanics.
+**When to read this:** you are adding or changing an orchestration pattern template, a formation in the catalogue (`src/orchestration/formations/`), crew pool access, crew formation briefs, or the formation mediators. `CLAUDE.md` → "Orchestration Patterns" states the invariants (convention-based, members-only crew pools, one mediator line per event); this page has the full pattern list and mechanics.
 
 ## Patterns
 - All patterns are convention-based pool notes discovered via `recall`, not engine constraints
@@ -52,6 +52,66 @@ The command-ingress async context retains the attempt ID across long-running che
 late results from being attached to a newer attempt. Migration 126 adds lookup indexes and
 unique active-attempt constraints per session and durable worker. Submission and task approval
 are distinct. See [the coding guide](../guides/coding.md) for the complete operator flow.
+
+## The formation catalogue: one formation, one template (2026-10-20)
+
+A formation used to be implemented once per surface: pool-note templates, crew briefs, the arena's
+numeric protocols, the typed forecast formations and the free-text patterns. They shared names,
+not code. `src/orchestration/formations/` is now the one catalogue, with the Score executor as the
+one runtime.
+
+- **Entries** (`catalogue.ts`, `FORMATIONS`). There is one entry per formation: the 16 orchestration
+  patterns plus `ensemble` and `skeptic`. Each entry has:
+  - `summary`: the one-line description (`PATTERN_FIT.why` reads it);
+  - `crew`: whether the crew brief and the project template of that name exist;
+  - `markers`: protocol phrases that brief and template must both keep;
+  - `crewOnly`: why the formation needs a crew over time (`CREW_ONLY_PATTERNS` is derived from it);
+  - its Score templates: `typed`, `text` and `numeric`.
+- **Templates** (`template.ts`). A template declares its steps, which step fans out K times
+  (`k`, `chain`, or a knockout `bracket` scheduled match-by-match or round-by-round), which step reads
+  which, and an abstract slot per step: `forecaster`, `referee`, `skeptic`, `member`, `peer`,
+  `checker` or `pipeline`. `formationScore` resolves the slots to assignees (`model:<id>`, `role:<r>`,
+  `marina:<crew>`, or the in-process pipeline) and returns an ordinary Score. A surface whose members
+  can drop out runs the template's `entrants` step first, then the rest over the entrants that
+  answered (`afterEntrants`).
+- **Combiners** (`combine-typed.ts`, `combine-numeric.ts`). Combiners are pure code for each answer
+  type: Delphi medians, the tournament champion and the skeptic's shrink toward the prior (typed);
+  the median move, settle clamps and anonymous Delphi summary (numeric); the checker's pick for free
+  text.
+- **Running** (`run.ts`). `runFormationScore` admits every ready step at once, so the access graph is
+  the schedule. `seeded` supplies steps that are already done. `StageGates` checks a surface's budget
+  once per stage.
+
+Where each surface stands:
+
+| Surface | Runs from the catalogue | Notes |
+|---|---|---|
+| Typed forecasts (`src/forecast/formations.ts`, `skeptic.ts`) | ensemble, delphi, tournament, skeptic | Round one is the typed pipeline (the template's `research` + `f1…fK`). The rest runs as the template's Score, each member step going to that run's own part. |
+| Resident forecasts (`src/forecast/resident-forecast.ts`) | all four | Each forecaster slot is `role:`, `marina:` or `model:` (`assigneePart`). The referee and the skeptic are the pipeline's critic. The ensemble and delphi Scores are byte-identical to the pre-catalogue ones. |
+| Free-text patterns (`text-patterns.ts`: `pattern run`, `/v1/patterns/run`) | all eight | Members are the operator's models. Crew-only patterns are refused, and the catalogue gives the reason. |
+| Arena (`src/arena/formations.ts`) | ensemble, delphi | The other ten arena formations run their own protocols on the shared clamps. Moving them is a follow-up, held byte-identical meanwhile. |
+| Crews (`crew-formations.ts`, project templates) | none (crew protocols) | `crewFormationEntry` names each brief's entry, and `ORCHESTRATION_TEMPLATES` maps every template by name. |
+
+Equivalence is enforced, not assumed. The pre-catalogue implementations are frozen in
+`test/fixtures/formations-legacy/`. Given the same model replies, the catalogue reproduces them
+exactly, compared as JSON with key order and as the ordered list of every prompt:
+
+- `test/formation-equivalence-typed.test.ts`: 4 formations × 7 answer types, with failures and junk
+  replies.
+- `test/formation-equivalence-text.test.ts`: 8 patterns × member counts × budgets × aborts.
+- `test/formation-equivalence-arena.test.ts`: all 12 arena formations on the stored rounds
+  (`test/fixtures/formations/arena-rounds.json`), with out-of-order replies.
+
+`test/formation-catalogue.test.ts` fails when a brief, a template, `PATTERN_FIT`, `TEXT_PATTERNS`,
+`CREW_ONLY_PATTERNS`, the typed list or the arena list drifts from the catalogue. Never edit a frozen
+fixture to make a test pass.
+
+Follow-ups:
+
+- Move the remaining arena formations (deliberation, debate, chorus, pipeline, mapreduce, blackboard,
+  symbiosis, research, tournament, verification) and the profile rounds (`formation-profile.ts`).
+- Let the arena crew forecaster (`src/arena/crew.ts`) reuse the skeptic entry.
+- Allow a resident referee or skeptic slot.
 
 ## Budget terminal: every budget ends in an answer (2026-10-04)
 

@@ -553,9 +553,10 @@ picks one), `debate` (the first two members argue and rebut, the checker judges)
 picks in a bracket), `verification` (the first member drafts, the checker reviews, one revision),
 `deliberation` (proposals, revision after seeing anonymous peers, a pick), `chorus` (proposals,
 each critiques one peer, revision, a pick) and `pipeline` (each member refines the previous
-handoff; the last output wins). The legacy name `nsed` runs `deliberation`. These are text
-protocols that share names with the numeric arena and forecast formations; they are not those
-formations. A checker always picks ONE whole answer; answers are never merged.
+handoff; the last output wins). The legacy name `nsed` runs `deliberation`. Each is its
+formation's entry in the formation catalogue (`src/orchestration/formations/`). The arena and
+forecast formations of the same name use the same entry with numeric and typed combiners. A checker
+always picks ONE whole answer; answers are never merged.
 
 Crew-only patterns (`foundry`, `swarm`, `mapreduce`, `blackboard`, `symbiosis`, `research`,
 `auction`, `ledger`, `sharding`, `custom`) need a persistent crew and are refused with `400

@@ -5,7 +5,14 @@
  * Status: demo. The 16 patterns are pool-note templates written by
  * `project <name> orchestrate <pattern>`; the live world has used them only in
  * demos (no persisted crews). See docs/reference/feature-status.md.
+ *
+ * Every pattern here is an entry in the formation catalogue
+ * (`src/orchestration/formations/catalogue.ts`): its one-line description is
+ * the catalogue's `summary`, and `test/formation-catalogue.test.ts` holds
+ * these templates, the crew briefs and the catalogue together.
  */
+
+import { FORMATIONS } from "../../orchestration/formations/catalogue";
 export interface TemplateNote {
   content: string;
   importance: number;
@@ -81,41 +88,45 @@ export type TaskShape =
   | "open-ended"
   | "verifiable";
 
-/** Which shapes each built-in pattern fits, with a one-line "why". */
+/**
+ * Which shapes each built-in pattern fits, with a one-line "why": the
+ * formation catalogue's summary (`src/orchestration/formations/catalogue.ts`),
+ * so each formation is described once.
+ */
 export const PATTERN_FIT: Record<
   Exclude<OrchestrationPattern, "custom">,
   { shapes: TaskShape[]; why: string }
 > = {
   deliberation: {
     shapes: ["contested", "open-ended"],
-    why: "propose → cross-evaluate → converge",
+    why: FORMATIONS.deliberation.summary,
   },
-  chorus: { shapes: ["parallel", "shared-artifact"], why: "parallel phases + crossfire review" },
-  foundry: { shapes: ["hierarchical", "decomposable"], why: "overseer → workers → merge gate" },
-  swarm: { shapes: ["parallel", "open-ended"], why: "self-organizing expertise matching" },
-  pipeline: { shapes: ["sequential"], why: "stage-by-stage with handoff gates" },
-  debate: { shapes: ["contested"], why: "adversarial positions, judged" },
-  mapreduce: { shapes: ["decomposable", "parallel"], why: "fan out independent chunks, merge" },
-  blackboard: { shapes: ["shared-artifact"], why: "incremental refinement on one workspace" },
-  symbiosis: { shapes: ["open-ended"], why: "mutual benefit, frontier scanning" },
-  research: { shapes: ["open-ended"], why: "hypothesis → act → measure → record loop" },
+  chorus: { shapes: ["parallel", "shared-artifact"], why: FORMATIONS.chorus.summary },
+  foundry: { shapes: ["hierarchical", "decomposable"], why: FORMATIONS.foundry.summary },
+  swarm: { shapes: ["parallel", "open-ended"], why: FORMATIONS.swarm.summary },
+  pipeline: { shapes: ["sequential"], why: FORMATIONS.pipeline.summary },
+  debate: { shapes: ["contested"], why: FORMATIONS.debate.summary },
+  mapreduce: { shapes: ["decomposable", "parallel"], why: FORMATIONS.mapreduce.summary },
+  blackboard: { shapes: ["shared-artifact"], why: FORMATIONS.blackboard.summary },
+  symbiosis: { shapes: ["open-ended"], why: FORMATIONS.symbiosis.summary },
+  research: { shapes: ["open-ended"], why: FORMATIONS.research.summary },
   delphi: {
     shapes: ["contested", "open-ended"],
-    why: "independent estimates → anonymized summary → revision",
+    why: FORMATIONS.delphi.summary,
   },
-  tournament: { shapes: ["contested", "parallel"], why: "pairwise elimination among candidates" },
+  tournament: { shapes: ["contested", "parallel"], why: FORMATIONS.tournament.summary },
   verification: {
     shapes: ["decomposable", "shared-artifact", "verifiable"],
-    why: "generate, then one verifier per aspect",
+    why: FORMATIONS.verification.summary,
   },
-  auction: { shapes: ["decomposable", "parallel"], why: "tasks awarded to the best-fit bid" },
+  auction: { shapes: ["decomposable", "parallel"], why: FORMATIONS.auction.summary },
   ledger: {
     shapes: ["hierarchical", "sequential"],
-    why: "task + progress ledgers, replan on repeated stalls",
+    why: FORMATIONS.ledger.summary,
   },
   sharding: {
     shapes: ["decomposable", "parallel", "verifiable"],
-    why: "an oracle splits a failing target into claimable shards",
+    why: FORMATIONS.sharding.summary,
   },
 };
 
@@ -1039,3 +1050,28 @@ export const SHARDING_TEMPLATE: TemplateNote[] = [
     type: "skill",
   },
 ];
+
+/**
+ * The project pool-note template per pattern (`project <name> orchestrate
+ * <pattern>`), by catalogue name (`custom` has none).
+ */
+export const ORCHESTRATION_TEMPLATES: Readonly<
+  Record<Exclude<OrchestrationPattern, "custom">, TemplateNote[]>
+> = {
+  deliberation: DELIBERATION_TEMPLATE,
+  chorus: CHORUS_TEMPLATE,
+  foundry: FOUNDRY_TEMPLATE,
+  swarm: SWARM_TEMPLATE,
+  pipeline: PIPELINE_TEMPLATE,
+  debate: DEBATE_TEMPLATE,
+  mapreduce: MAPREDUCE_TEMPLATE,
+  blackboard: BLACKBOARD_TEMPLATE,
+  symbiosis: SYMBIOSIS_TEMPLATE,
+  research: RESEARCH_TEMPLATE,
+  delphi: DELPHI_TEMPLATE,
+  tournament: TOURNAMENT_TEMPLATE,
+  verification: VERIFICATION_TEMPLATE,
+  auction: AUCTION_TEMPLATE,
+  ledger: LEDGER_TEMPLATE,
+  sharding: SHARDING_TEMPLATE,
+};
