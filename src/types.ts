@@ -145,6 +145,14 @@ export interface RoomContext {
     previousSampleNoteId?: number;
   }): { noteId: number; emittedFeedEvent: boolean };
 
+  /**
+   * File a resident's in-world forecast on the one outcome path
+   * (`fileResidentForecast` in src/outcomes/filing.ts): it resolves with its
+   * Sample, earns standing and teaches lessons. Returns the answer id, or
+   * undefined when nothing was filed (no database, or the write failed).
+   */
+  fileForecast?(params: import("./outcomes/filing").ResidentForecast): number | undefined;
+
   /** Spawn an AI agent (available when agent runtime is active) */
   spawnAgent?(config: {
     name: string;

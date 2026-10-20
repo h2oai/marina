@@ -15,7 +15,12 @@
  * learn from).
  */
 
-import { FORECAST_DAILY_CAP, recordVerified, STANDING_AMOUNTS } from "../agent/standing";
+import {
+  FORECAST_DAILY_CAP,
+  independentParties,
+  recordVerified,
+  STANDING_AMOUNTS,
+} from "../agent/standing";
 import { crpsNormal } from "../arena/score";
 import { routingRefs } from "../forecast/routing-refs";
 import type { TypedForecastAnswer } from "../forecast/typed";
@@ -23,6 +28,7 @@ import { scoreTypedAnswer } from "../forecast/typed-score";
 import type { MarinaDB } from "../persistence/database";
 import type { ForecastAnswerRow } from "../persistence/db-markets";
 import type { OutcomeBasis, OutcomeInput } from "../persistence/db-outcomes";
+import { participantOf } from "./live";
 import { recordResolved } from "./record";
 
 /** A resolution's yes/no (`{ outcome: "yes" | "no" }`), tolerantly. */
@@ -161,14 +167,49 @@ function outcomeInput(
 }
 
 /**
- * Standing for a resolved forecast: the filer is paid by skill — a
+ * The residents or agents that produced an answer, as its filing recorded them
+ * (`producers` on the stored answer; see `src/outcomes/filing.ts`). At most 8
+ * names; the owner is not repeated.
+ */
+export function producersOf(f: Pick<ForecastAnswerRow, "answer_json" | "entity_name">): string[] {
+  let raw: unknown;
+  try {
+    raw = (JSON.parse(f.answer_json) as { producers?: unknown } | null)?.producers;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const p of raw) {
+    if (typeof p !== "string" || !p.trim()) continue;
+    const name = p.trim();
+    if (name.toLowerCase() === f.entity_name.toLowerCase()) continue;
+    if (out.some((o) => o.toLowerCase() === name.toLowerCase())) continue;
+    out.push(name);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+/** Who did the forecasting: the owner, then its recorded producers (agent, model, role). */
+function forecastParticipants(db: MarinaDB, f: ForecastAnswerRow) {
+  const producers = producersOf(f);
+  if (!producers.length && !/"producers"\s*:/.test(f.answer_json)) return undefined;
+  return [f.entity_name, ...producers].map((name) => participantOf(db, name));
+}
+
+/**
+ * Standing for a resolved forecast: everyone who produced it — the filer and
+ * the residents or agents its filing names as producers — is paid by skill: a
  * probability by its Brier skill over a coin flip, a number when it fell in
  * its 80% band, a typed answer by its quality when correct — up to
- * `forecast_resolved` (0.5), at most FORECAST_DAILY_CAP credits a UTC day,
- * once per answer. The resolution must be independent of the filer: an
- * external resolver or judge (`resolvedBy` absent), or a resolver outside the
- * filer's party. An evaluation filing (`eval_mode`) never earns, and nothing
- * here reads or stores the question.
+ * `forecast_resolved` (0.5) each, at most FORECAST_DAILY_CAP credits per
+ * account a UTC day, once per answer. One PARTY is considered once: a
+ * producer in the lineage of a worker already considered for this answer (a
+ * person and the agents it spawned) earns nothing, paid or refused. The resolution must be independent
+ * of each worker: an external resolver or judge (`resolvedBy` absent), or a
+ * resolver outside that worker's party. An evaluation filing (`eval_mode`)
+ * never earns, and nothing here reads or stores the question.
  */
 function creditResolvedForecast(
   db: MarinaDB,
@@ -185,17 +226,24 @@ function creditResolvedForecast(
         : 0;
   const amount = Number((STANDING_AMOUNTS.forecast_resolved * skill).toFixed(3));
   if (amount <= 0) return;
-  const key = db.durableKeyForName(f.entity_name);
-  if (!key) return;
-  const dayStart = new Date().setUTCHours(0, 0, 0, 0);
-  if (db.countStandingEvents(key, "forecast_resolved", dayStart) >= FORECAST_DAILY_CAP) return;
-  recordVerified(db, {
-    kind: "forecast_resolved",
-    ref: `forecast:${f.id}`,
-    worker: { name: f.entity_name },
-    verifier: resolvedBy && resolvedBy !== "system" ? resolvedBy : null,
-    amount,
-  });
+  // Parties already considered for this answer, paid or not: a worker's
+  // lineage never collects what the worker itself was refused (cap, resolver).
+  const seen: string[] = [];
+  for (const worker of [f.entity_name, ...producersOf(f)]) {
+    if (seen.some((c) => !independentParties(db, c, worker))) continue;
+    seen.push(worker);
+    const key = db.durableKeyForName(worker);
+    if (!key) continue;
+    const dayStart = new Date().setUTCHours(0, 0, 0, 0);
+    if (db.countStandingEvents(key, "forecast_resolved", dayStart) >= FORECAST_DAILY_CAP) continue;
+    recordVerified(db, {
+      kind: "forecast_resolved",
+      ref: `forecast:${f.id}`,
+      worker: { name: worker },
+      verifier: resolvedBy && resolvedBy !== "system" ? resolvedBy : null,
+      amount,
+    });
+  }
 }
 
 /**
@@ -235,6 +283,7 @@ export function resolveForecast(
   )
     return undefined;
   if (!s.learn) return { answerId: f.id, loss: s.loss };
+  const participants = opts.participants ?? forecastParticipants(db, f);
   const recorded = recordResolved(
     db,
     outcomeInput(
@@ -243,7 +292,7 @@ export function resolveForecast(
       `forecast:${f.id}`,
       resolvedAt,
       refs,
-      opts,
+      { ...opts, ...(participants !== undefined ? { participants } : {}) },
     ),
     { deliverJudged: opts.deliverJudged === true },
   );

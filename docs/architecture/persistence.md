@@ -89,7 +89,7 @@ A default configuration — a crew formation, a per-agent model map, a world's c
 - **Consumers:** `getPromotedDefault(db, slot)`. The showcase world reads slot `showcase:crew`'s `model` for its crew when `MARINA_CREW_MODEL` is unset; environment variables always win.
 
 ## Replicate groups (migration 148)
-Identical runs differ: two runs of one crew on the same 200 items can disagree on a dozen. So one run — and one McNemar p-value — is a single draw. `benchmark_runs.replicate_group` lets repeated runs of ONE configuration pool (`src/engine/benchmark-replicates.ts`; statistics in `benchmarks/replicate-stats.ts`).
+Identical runs differ: two runs of one crew on the same 200 items can disagree on a dozen. So one run — and one McNemar p-value — is a single draw. `benchmark_runs.replicate_group` lets repeated runs of ONE configuration pool (`src/engine/benchmark-replicates.ts`; statistics in `src/stats/replicates.ts`).
 - **Membership:**
   - A run belongs to the group it names. It gets one from `--group` on the harness and import, `replicateGroup` on `POST /v1/benchmarks/runs`, or `--replicate-of <run>`; `bun run benchmark:import --regroup <ids> --group <key> --reason "<why>"` moves recorded runs.
   - **Regroups are audited (migration 155):** every run a regroup actually moves (also `--replicate-of` naming a group for a run that had none) gets an append-only `benchmark_run_regroups` row — `run_id`, `from_group`, `to_group`, `reason`, `actor`, `source`, `created_at` — in the same transaction as the move. A trigger refuses `UPDATE`; retention never prunes it; it is part of export and restore. Item outcomes are never touched.

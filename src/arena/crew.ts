@@ -3,8 +3,8 @@
 
 /**
  * The forecasting crew: several roles, each its own model call (and, in a
- * multi-vendor run, its own vendor), over the calibrated baseline — plus a
- * memory of its own misses that it recalls per series.
+ * multi-vendor run, its own vendor), over the calibrated baseline — plus the
+ * judged lessons from resolved rounds (`src/learning`).
  *
  *   statistician — the quant: reads only numbers — the weekly history and, for
  *                  Civiqs, the DAILY tracker the round resolves on (as the
@@ -25,20 +25,19 @@
  * with no usable proposal the crew files the baseline. The skeptic can only
  * shrink a move, never enlarge it — the arena's losers lose by overreaching.
  *
- * Learning: `learn()` turns a resolved round into a lesson note (the outcome,
- * the crew's error vs persistence's, which way it leaned) in Marina's notes
- * store; the analyst recalls the most recent lessons for the series. Lessons
- * enter memory only once a round's number is public, so a forecast never sees
- * its own answer. The same round also feeds the judged outcome loop
- * (`crewLessonOutcome` → `noteOutcome`, domain `arena`; a no-op unless learning
- * is armed), and the crew reads the judged pool too — `forecast`, `arena` and
- * the cross-board `meta` lessons visible at the round's lock — beside its own
- * series notes.
+ * Learning goes through ONE system, `src/learning` (judged, leak-checked,
+ * retire/supersede): a resolved round becomes one judged outcome
+ * (`crewLessonOutcome`, domain `arena`; live rounds already settle on the
+ * outcome path in `settle.ts`), and the crew reads only the judged pool —
+ * `forecast`, `arena` and the cross-board `meta` lessons visible at the
+ * round's lock (`forecastLessonsFor`). Observe-mode lessons are never shown.
+ * The crew's old per-series `lesson` notes (entity `arena-crew`) were
+ * unjudged and injected straight into prompts; they are no longer written or
+ * read (existing rows stay in the notes store, unused).
  */
 
 import type { ForecastLesson, LessonStore } from "../forecast/lessons";
 import type { Outcome } from "../learning/outcomes";
-import type { NotesStore } from "../persistence/interfaces/notes-store";
 import type { RoundForecast } from "./forecast";
 import { forecastRound } from "./forecast";
 import type { Complete } from "./model-forecaster";
@@ -55,9 +54,6 @@ import {
 import { crpsNormal } from "./score";
 import type { ArenaLock, ArenaRound, Distribution } from "./types";
 
-export const CREW_ENTITY = "arena-crew";
-const LESSON_TYPE = "lesson";
-const MAX_LESSONS = 6;
 const MAX_SD_MOVE = 4;
 
 export interface CrewMembers {
@@ -108,21 +104,12 @@ function asProposal(v: Record<string, unknown> | undefined) {
   return { mean, sd, ...(typeof v?.reason === "string" ? { reason: v.reason.slice(0, 300) } : {}) };
 }
 
-/** The crew's recent lessons for a series, newest first. */
-export function recallLessons(notes: NotesStore, series: string): string[] {
-  const tag = `[series:${series}]`;
-  return notes
-    .getNotesByType(CREW_ENTITY, LESSON_TYPE, 200)
-    .filter((n) => n.content.startsWith(tag))
-    .sort((a, b) => b.id - a.id)
-    .slice(0, MAX_LESSONS)
-    .map((n) => n.content.slice(tag.length).trim());
-}
-
-/** Record what a resolved round taught: the crew's error next to persistence's. */
-export function learn(
-  notes: NotesStore,
-  round: ArenaRound,
+/**
+ * What a resolved round says about the crew's filing: its CRPS skill against
+ * persistence and which way it leaned. Pure: nothing is written — the lesson
+ * goes through the judged loop (`crewLessonOutcome`).
+ */
+export function roundSummary(
   lock: ArenaLock,
   filed: Distribution,
   outcome: number,
@@ -133,20 +120,12 @@ export function learn(
   const pers = crpsNormal(last, 1.5, outcome);
   const moved = filed.mean - last;
   const actual = outcome - last;
-  const verdict =
-    ours < pers ? "beat persistence" : ours > pers ? "lost to persistence" : "tied persistence";
   const lean =
     Math.abs(moved) < 1e-9
       ? "stayed on the last value"
       : Math.sign(moved) === Math.sign(actual)
         ? `leaned the right way (${moved > 0 ? "up" : "down"})`
         : `leaned the WRONG way (${moved > 0 ? "up" : "down"})`;
-  const content = `[series:${round.series ?? round.round_id}] ${round.round_id}: last ${last}, filed ${filed.mean}±${filed.sd}, published ${outcome} (move ${actual >= 0 ? "+" : ""}${Math.round(actual * 100) / 100}); ${verdict}, ${lean}.`;
-  notes.createNote(CREW_ENTITY, content, undefined, {
-    noteType: LESSON_TYPE,
-    importance: ours > pers ? 7 : 5,
-    skipDedup: true,
-  });
   return { beat: ours < pers, skill: pers > 0 ? 1 - ours / pers : 0, lean };
 }
 
@@ -161,6 +140,8 @@ export function crewLessonOutcome(
   roundId: string,
   summary: { beat: boolean; skill: number; lean: string },
   resolvedAt: string,
+  /** The round's case (question and numbers): seen by the leak check, never stored. */
+  privateContext?: string,
 ): Outcome {
   return {
     domain: "arena",
@@ -171,6 +152,7 @@ export function crewLessonOutcome(
     attempted: `${round.tracker ?? "tracker"} topline forecast against persistence`,
     detail: `skill ${summary.skill.toFixed(2)} vs persistence; ${summary.lean}`,
     refs: [`arena:${roundId}`],
+    privateContext: privateContext ?? `${round.question}\n${round.round_id}`,
   };
 }
 
@@ -194,7 +176,6 @@ export async function crewForecastRound(
   round: ArenaRound,
   lock: ArenaLock,
   members: CrewMembers,
-  notes?: NotesStore,
   /**
    * The forecast the crew starts from and shrinks toward — the nowcast when
    * the caller has one (a fresher daily reading than the weekly history), else
@@ -212,11 +193,8 @@ export async function crewForecastRound(
   }
   const base = baseline.topline;
   const history = historyOf(lock);
-  const series = round.series ?? round.round_id;
-  const lessons = [
-    ...(notes ? recallLessons(notes, series) : []),
-    ...(await judgedLessons(lessonStore, round)).map((l) => l.text),
-  ];
+  // Only judged lessons, through learning's gates (trust, visibility at the lock).
+  const lessons = (await judgedLessons(lessonStore, round)).map((l) => l.text);
   const fresh = freshestReading(baseline, round.series);
   const head = [
     `Question: ${round.question}`,

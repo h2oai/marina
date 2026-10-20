@@ -62,6 +62,19 @@ describe("conduct command (integration)", () => {
     expect(out()).toContain("cycle");
   });
 
+  it("`conduct track` also files the call on the outcome path, superseding an earlier one", async () => {
+    await engine.processCommand(alice.entity!, `conduct create ship -- ${CHAIN}`);
+    alice.clear();
+    await engine.processCommand(alice.entity!, "conduct track ship kalshi/SHIP predict=0.7");
+    expect(out()).toContain("Tracking");
+    await engine.processCommand(alice.entity!, "conduct track ship kalshi/SHIP predict=0.4");
+    const open = db.openForecastsForSample("kalshi/SHIP");
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ entity_name: "alice", source: "conduct", probability: 0.4 });
+    // The conductor note that feeds the Score's shape priors is still written.
+    expect(db.searchAllNotes("score-run kalshi/SHIP", 10).length).toBeGreaterThan(0);
+  });
+
   it("creates, lists, and shows a stored Score", async () => {
     await engine.processCommand(alice.entity!, `conduct create ship -- ${CHAIN}`);
     expect(out()).toContain('Score "ship" created');

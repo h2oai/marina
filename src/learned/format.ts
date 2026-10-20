@@ -31,6 +31,7 @@
 import { createHash } from "node:crypto";
 import type { RoleBundle } from "../agent/role-bundle";
 import { canonicalFederationJson } from "../net/federation-crypto";
+import { wilsonBounds, Z95 } from "../stats";
 
 export const LEARNED_SCHEMA = "marina.learned.v1";
 /** Content profile of a bundle that carries a whole world (`world` + `room_source` items). */
@@ -470,15 +471,10 @@ export function renderDiff(entries: readonly DiffEntry[], from?: string, to?: st
   return [head, ...lines].join("\n");
 }
 
-/** Wilson lower bound (95%) of a success rate. */
-export function wilsonLow(successes: number, n: number, z = 1.959963984540054): number {
+/** Wilson lower bound (95%) of a success rate (`wilsonBounds` in `src/stats`). */
+export function wilsonLow(successes: number, n: number, z = Z95): number {
   if (n <= 0 || successes <= 0) return 0;
-  const p = successes / n;
-  const z2 = z * z;
-  const denom = 1 + z2 / n;
-  const centre = (p + z2 / (2 * n)) / denom;
-  const half = (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / denom;
-  return Math.max(0, centre - half);
+  return wilsonBounds(successes, n, z).low;
 }
 
 export function proprietaryLicense(publisherName: string): string {

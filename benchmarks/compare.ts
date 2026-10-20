@@ -25,7 +25,7 @@ import {
   mcnemarExact,
   pairedBootstrap,
   wilsonInterval,
-} from "./stats";
+} from "../src/stats";
 import type { BenchmarkResult, ResultItem, UsageSummary } from "./types";
 import { formatUsd, summarizeUsage, totalCostUsd } from "./usage";
 

@@ -265,6 +265,20 @@ function marketRoom(opts: {
           updated: isUpdate,
           timestamp: Date.now(),
         });
+        // The same call on the one outcome path: it resolves with this market's
+        // Sample (`inworld/<marketId>`), so a resident's forecast earns standing
+        // and teaches lessons. The room board above stays as it was.
+        if (opts.marketId) {
+          ctx.fileForecast?.({
+            owner: entity.name,
+            source: "market",
+            key: `inworld:${opts.marketId}`,
+            sampleId: `inworld/${opts.marketId}`,
+            question: opts.question,
+            probability: direction === "yes" ? confidence / 100 : 1 - confidence / 100,
+            answer: { marketId: opts.marketId, roomId: ctx.roomId, direction, confidence },
+          });
+        }
         entity.properties.quest_predict = true;
         const marketsTraded = (entity.properties.markets_traded as number) ?? 0;
         entity.properties.markets_traded = marketsTraded + 1;

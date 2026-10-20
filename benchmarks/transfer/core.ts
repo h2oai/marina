@@ -25,7 +25,11 @@
  * claim a gain is deliberately higher than the bar to flag a loss.
  */
 
-import { mcnemarExact, mulberry32 } from "../stats";
+import {
+  mcnemarExact,
+  bootstrapMean as sharedBootstrapMean,
+  twoStageBootstrap as sharedTwoStageBootstrap,
+} from "../../src/stats";
 
 /** One item's score in one run. Higher is better (adapters negate a loss). */
 export interface ItemScore {
@@ -141,36 +145,24 @@ export function signTest(deltas: readonly number[], eps = 1e-12): SignTest {
   return { wins, losses, ties, p: mcnemarExact(wins, losses).p };
 }
 
-/** Paired bootstrap of the mean delta: resample items with replacement. */
+/** Paired bootstrap of the mean delta: resample items with replacement (`src/stats`). */
 export function bootstrapMean(
   deltas: readonly number[],
   opts: { resamples?: number; seed?: number; level?: number } = {},
 ): Bootstrap {
-  const n = deltas.length;
-  const resamples = opts.resamples ?? DEFAULTS.resamples;
-  const level = opts.level ?? DEFAULTS.level;
-  if (n === 0) return { mean: 0, low: 0, high: 0, resamples: 0 };
-  const mean = deltas.reduce((s, v) => s + v, 0) / n;
-  const rand = mulberry32(opts.seed ?? DEFAULTS.seed);
-  const stats = new Float64Array(resamples);
-  for (let r = 0; r < resamples; r++) {
-    let s = 0;
-    for (let i = 0; i < n; i++) s += deltas[Math.floor(rand() * n)] ?? 0;
-    stats[r] = s / n;
-  }
-  stats.sort();
-  const alpha = (1 - level) / 2;
-  const at = (q: number) =>
-    stats[Math.min(resamples - 1, Math.max(0, Math.floor(q * resamples)))] ?? 0;
-  return { mean, low: at(alpha), high: at(1 - alpha), resamples };
+  return sharedBootstrapMean(deltas, {
+    resamples: opts.resamples ?? DEFAULTS.resamples,
+    seed: opts.seed ?? DEFAULTS.seed,
+    level: opts.level ?? DEFAULTS.level,
+  });
 }
 
 /**
  * Two-stage (cluster) paired bootstrap of mean(candidate − baseline): each
  * iteration resamples each arm's replicate runs with replacement, then the
- * items, and averages per item over the drawn runs. Same draw order and
- * quantiles as `pairedBootstrap` in `benchmarks/forecasting/select.ts`
- * (there leader − other), so a seed gives the same interval.
+ * items, and averages per item over the drawn runs (`src/stats`
+ * `twoStageBootstrap`; `pairedBootstrap` in `benchmarks/forecasting/select.ts`
+ * is the same draw, leader − other, so a seed gives the same interval).
  */
 export function twoStageBootstrap(
   candidate: ReadonlyArray<ReadonlyMap<string, number>>,
@@ -178,32 +170,11 @@ export function twoStageBootstrap(
   ids: readonly string[],
   opts: { resamples?: number; seed?: number; level?: number } = {},
 ): Bootstrap {
-  const resamples = opts.resamples ?? DEFAULTS.resamples;
-  const level = opts.level ?? DEFAULTS.level;
-  if (ids.length === 0 || candidate.length === 0 || baseline.length === 0)
-    return { mean: 0, low: 0, high: 0, resamples: 0 };
-  const rand = mulberry32(opts.seed ?? DEFAULTS.seed);
-  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
-  const itemMean = (runs: ReadonlyArray<ReadonlyMap<string, number>>, id: string) =>
-    runs.reduce((s, r) => s + (r.get(id) ?? 0), 0) / runs.length;
-  const mean =
-    ids.reduce((s, id) => s + itemMean(candidate, id) - itemMean(baseline, id), 0) / ids.length;
-  const stats = new Float64Array(resamples);
-  for (let k = 0; k < resamples; k++) {
-    const c = candidate.map(() => pick(candidate));
-    const b = baseline.map(() => pick(baseline));
-    let s = 0;
-    for (let j = 0; j < ids.length; j++) {
-      const id = pick(ids);
-      s += itemMean(c, id) - itemMean(b, id);
-    }
-    stats[k] = s / ids.length;
-  }
-  stats.sort();
-  const alpha = (1 - level) / 2;
-  const at = (q: number) =>
-    stats[Math.min(resamples - 1, Math.max(0, Math.floor(q * resamples)))] ?? 0;
-  return { mean, low: at(alpha), high: at(1 - alpha), resamples };
+  return sharedTwoStageBootstrap(candidate, baseline, ids, {
+    resamples: opts.resamples ?? DEFAULTS.resamples,
+    seed: opts.seed ?? DEFAULTS.seed,
+    level: opts.level ?? DEFAULTS.level,
+  });
 }
 
 /** Per-item mean over one arm's replicate runs, restricted to `ids`. */

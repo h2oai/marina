@@ -105,7 +105,8 @@ Every verdict on something Marina did becomes a candidate lesson:
   - every valid ledger run filed before imports learned, once, through `bun run lessons backfill` (below);
   - a forecast settled by the `forecast-question` finder;
   - a Code Mode verification;
-  - an arena round resolved (`learnFromResolutions`), and a crew round scored in an arena evaluation (`crewLessonOutcome`; a no-op unless learning is armed for that store);
+  - an arena round resolved: every accepted filing settles on the outcome path (`src/arena/settle.ts`), and a crew round revealed in an arena evaluation becomes one judged outcome (`crewLessonOutcome`; a no-op unless learning is armed for that store). The arena crew keeps no lesson notes of its own: it reads only the judged pool (2026-10-20; the old unjudged `arena-crew` `lesson` notes are neither written nor injected);
+  - a resident's own in-world forecast (a market room's `predict`, `conduct track`) once its Sample resolves (`fileResidentForecast`, below);
   - Marina's own tool work, aggregated into patterns (`MARINA_LESSONS_FROM_WORK`, [below](#lessons-from-work-srclearningworkts)).
 - **Hand-off:** each producer calls `noteOutcome(db, outcome)`. That never blocks or throws, it queues, and it's a no-op unless `enableOutcomeLearning(db)` armed the database (`main.ts` does; tests and library code don't).
 
@@ -197,6 +198,24 @@ learning instead of losing it.
     resolved by `learn`.
   - **Arena** (`marina:arena/<entrant>`, `arena:<round>`): every accepted submission, from any
     forecaster, filed and resolved by the hourly autopilot.
+- **Residents (2026-10-20).** A resident's own call files through `fileResidentForecast`
+  (`src/outcomes/filing.ts`) on the Sample it resolves on, so it settles through the same
+  `resolveForecast` when that Sample resolves:
+  - a market room's `predict` (`worlds/markets.ts`, via `RoomContext.fileForecast`): source
+    `market`, Sample `inworld/<marketId>`; the room's own position board and `market_scores` are
+    unchanged;
+  - `conduct track <score> <sampleId> predict=<p>`: source `conduct`; the conductor note that feeds
+    the Score's shape priors is still written.
+  - A newer call with the same key (`inworld:<marketId>`, `conduct:<score>:<sampleId>`) settles the
+    open one `superseded`: unscored, no outcome, no standing. Only the latest call counts.
+  - Their outcomes carry the resident as a participant and teach `lessons` only: a resident's call
+    never enters `MARINA_FORECAST_HISTORY`, which tunes the forecast pipeline's own outputs
+    (`RESIDENT_FORECAST_SOURCES` in `record.ts`).
+- **Producers and standing.** A filing may name the residents or agents that produced it
+  (`BoardFiling.producers`, stored as `producers` on the answer). On resolution each producer is a
+  participant of the outcome and is credited `forecast_resolved` like the filer: same skill-scaled
+  amount, the per-account daily cap, the independence rule against the resolver, one party once
+  per answer. No new standing kind.
   - `unfiled` (an answer from before this path, or a backtest) keeps the adapter's old lesson hook.
   - A fallback is never learned.
 - **Live work** (`src/outcomes/live.ts`). What agents actually get done is a resolved result too.

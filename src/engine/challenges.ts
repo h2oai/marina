@@ -82,6 +82,7 @@
  */
 
 import { independentParties } from "../agent/standing";
+import { EARNED_JUDGE_MIN_LOWER, EARNED_JUDGE_MIN_N, earnedJudge } from "../decisions/earned-judge";
 import { harnessDecisionProvider } from "../decisions/engines";
 import { gateToolCall, maskSensitiveText } from "../decisions/gate";
 import { noteWorkFor } from "../learning/work";
@@ -211,10 +212,10 @@ export function judgeMode(env: NodeJS.ProcessEnv = process.env): JudgeMode {
   return v === "on" || v === "off" ? v : "observe";
 }
 
-/** The judge earns a class after this many people-answered cases it called allow… */
-export const EARNED_MIN_N = 25;
-/** …with people approving at least this often (Wilson 95 % lower bound). */
-export const EARNED_MIN_PRECISION = 0.85;
+/** The judge earns a class after this many people-answered cases it called allow… (`earnedJudge`) */
+export const EARNED_MIN_N = EARNED_JUDGE_MIN_N;
+/** …with people approving at least this often (Wilson 95 % lower bound; `earnedJudge`). */
+export const EARNED_MIN_PRECISION = EARNED_JUDGE_MIN_LOWER;
 /** Every n-th earned case still goes to people, so agreement keeps being measured. */
 export const AUDIT_EVERY = 10;
 
@@ -616,15 +617,6 @@ export interface JudgeRecord {
   earned: boolean;
 }
 
-function wilsonLower(k: number, n: number, z = 1.96): number {
-  if (n === 0) return 0;
-  const p = k / n;
-  const denom = 1 + (z * z) / n;
-  const centre = p + (z * z) / (2 * n);
-  const margin = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
-  return Math.max(0, (centre - margin) / denom);
-}
-
 /** The judge's record per class, from answered outcomes (pure). */
 export function judgeRecords(
   rows: {
@@ -660,11 +652,10 @@ export function judgeRecords(
     by.set(r.class, rec);
   }
   for (const rec of by.values()) {
-    rec.precisionLower = wilsonLower(rec.allowApproved, rec.allowSaid);
-    rec.earned =
-      !OPEN_POSTURE_CORE.has(rec.class) &&
-      rec.allowSaid >= EARNED_MIN_N &&
-      rec.precisionLower >= EARNED_MIN_PRECISION;
+    // Precision of allow: people approved what the judge said to allow.
+    const { lower, earned } = earnedJudge(rec.allowApproved, rec.allowSaid);
+    rec.precisionLower = lower;
+    rec.earned = !OPEN_POSTURE_CORE.has(rec.class) && earned;
   }
   return [...by.values()].sort((a, b) => a.class.localeCompare(b.class));
 }

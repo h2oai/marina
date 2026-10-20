@@ -8,7 +8,7 @@
  * harness prints the pooled summary (`replicate-stats.ts`).
  */
 
-import { type PooledGroup, poolGroup, type Replicate } from "./replicate-stats";
+import { type PooledGroup, poolGroup, type Replicate } from "../src/stats";
 import type { BenchmarkResult } from "./types";
 
 /** Most replicates one invocation may run. */

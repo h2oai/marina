@@ -208,7 +208,7 @@ export function decisionCommand(deps: {
               (a) =>
                 `  ${bold(a.evaluator)}${a.calibrated ? "" : dim(" (uncalibrated)")}  agreed ${pct(a.agreed, a.compared)} of ${a.compared}` +
                 dim(
-                  ` · passed-but-rejected ${a.falsePass} · failed-but-approved ${a.falseFail} · no opinion ${a.noOpinion} · awaiting verdict ${a.awaitingVerdict}`,
+                  ` · passed-but-rejected ${a.falsePass} · failed-but-approved ${a.falseFail} · no opinion ${a.noOpinion} · awaiting verdict ${a.awaitingVerdict} · lower ${Math.round(a.lower * 100)}% ${a.earned ? "earned" : "not earned"}`,
                 ),
             ),
             dim(

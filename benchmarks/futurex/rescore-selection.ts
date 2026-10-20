@@ -29,7 +29,7 @@ import { itemSplit } from "../../src/engine/benchmark-promotion";
 import { promotionMargin } from "../../src/engine/fishing-margin";
 import { SELECTION_MODES, type SelectionMode } from "../../src/forecast/answer-types";
 import { reselect, type TypedForecastAnswer } from "../../src/forecast/typed";
-import { mulberry32 } from "../stats";
+import { mulberry32, percentileCeil, percentileFloor } from "../../src/stats";
 import type { FuturexRow } from "./dataset";
 import { LEVEL_WEIGHTS, scoreItem } from "./score";
 
@@ -164,8 +164,8 @@ export function promotionCheck(
     stats.push(diff(sample));
   }
   stats.sort((x, y) => x - y);
-  const low = stats[Math.floor(0.025 * draws)] ?? 0;
-  const high = stats[Math.ceil(0.975 * draws) - 1] ?? 0;
+  const low = percentileFloor(stats, 0.025);
+  const high = percentileCeil(stats, 0.975);
   const margin = promotionMargin(tried);
   const reasons: string[] = [];
   if (!(low > 0)) reasons.push(`the paired interval [${pts(low)}, ${pts(high)}] is not above 0`);

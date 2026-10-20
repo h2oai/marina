@@ -15,6 +15,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HarnessResultFile } from "../../src/engine/benchmark-ledger";
+import { mulberry32, percentileCeil, percentileFloor, resampleMeans } from "../../src/stats";
 
 export interface LmeRow {
   question_id: string;
@@ -96,34 +97,19 @@ export interface LmeSummary {
   meanContextTokens: number;
 }
 
-/** Deterministic PRNG so the interval is reproducible. */
-function mulberry32(seed: number) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
+/** 95 % bootstrap interval of the accuracy (percent), seeded mulberry32 (`src/stats`). */
 export function bootstrapInterval(
   outcomes: boolean[],
   resamples = 10_000,
   seed = 1,
 ): [number, number] {
   if (outcomes.length === 0) return [NaN, NaN];
-  const rand = mulberry32(seed);
-  const stats: number[] = [];
-  for (let r = 0; r < resamples; r++) {
-    let c = 0;
-    for (let i = 0; i < outcomes.length; i++)
-      if (outcomes[Math.floor(rand() * outcomes.length)]) c++;
-    stats.push((100 * c) / outcomes.length);
-  }
-  stats.sort((a, b) => a - b);
-  return [stats[Math.floor(0.025 * resamples)]!, stats[Math.ceil(0.975 * resamples) - 1]!];
+  const stats = resampleMeans(
+    outcomes.map((o) => (o ? 100 : 0)),
+    resamples,
+    mulberry32(seed),
+  );
+  return [percentileFloor(stats, 0.025), percentileCeil(stats, 0.975)];
 }
 
 export function summarize(runs: readonly LmeRun[]): LmeSummary {

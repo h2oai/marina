@@ -15,7 +15,6 @@
  */
 
 import { createHash } from "node:crypto";
-import { mcnemarExact, wilsonInterval } from "../../benchmarks/stats";
 import {
   BENCHMARK_VERIFICATION_STATES,
   type BenchmarkItemInput,
@@ -26,6 +25,7 @@ import {
   type BenchmarkVerification,
 } from "../persistence/db-benchmarks";
 import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
+import { mcnemarExact, wilsonInterval } from "../stats";
 
 export const TARGET_KINDS: readonly BenchmarkTargetKind[] = ["model", "crew", "population"];
 

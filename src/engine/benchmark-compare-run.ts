@@ -16,8 +16,8 @@
  * comparison whose arms ran different models or code is flagged as unpaired.
  */
 
-import { wilsonInterval } from "../../benchmarks/stats";
 import type { BenchmarkRunRow, MarinaDB } from "../persistence/database";
+import { wilsonInterval } from "../stats";
 import { comparePooledGroups, type LoadedGroup, loadReplicateGroup } from "./benchmark-replicates";
 import { armStack, type BenchmarkRunner } from "./benchmark-runner";
 import { getErrorMessage } from "./errors";
