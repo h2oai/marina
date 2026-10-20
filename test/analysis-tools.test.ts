@@ -295,13 +295,16 @@ describe("analysis tools in the profiles", () => {
     }
   });
 
-  it("are named in TOOL ROUTING when the agent holds marina_tool_search", () => {
+  it("are listed once, by the loader's own description, not again in TOOL ROUTING", () => {
+    // 2026-10-20 dedupe: TOOL ROUTING points at the loader; its catalog is the one list.
     const routing = getToolRouting(["marina_command", TOOL_SEARCH_NAME]);
-    for (const name of EXPECTED_NAMES) {
-      expect(routing).toContain(name.slice("marina_".length));
-    }
-    expect(routing).toContain("analysis tools are marina_ +");
-    expect(getToolRouting(["marina_command"])).not.toContain("analysis tools");
+    expect(routing).toContain("`marina_tool_search` loads the typed tools its description lists");
+    expect(routing).not.toContain("analysis tools");
+    for (const name of EXPECTED_NAMES) expect(routing).not.toContain(name);
+    const { resident } = createProfileToolset(stubCtx([]), memory, "full");
+    const loader = resident.find((t) => t.name === TOOL_SEARCH_NAME)!;
+    for (const name of EXPECTED_NAMES) expect(loader.description).toContain(`${name} — `);
+    expect(getToolRouting(["marina_command"])).not.toContain("marina_tool_search");
   });
 });
 

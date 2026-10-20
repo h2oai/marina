@@ -429,7 +429,8 @@ Select any of them for details in the inspector; its action link opens Admin →
   tables skipped (missing in this database); the full policy table (table, kind — telemetry / ledger /
   audit / append-only — keep window, whether `MARINA_RETENTION_OVERRIDES` changed it, note); and the
   "never pruned" list (append-only tables plus anything the last pass left untouched).
-- **Prompt budget** — system prompt bytes against `LEAN_SYSTEM_PROMPT_BYTE_CAP` (bar turns amber past
+- **Prompt budget** — system prompt bytes against `LEAN_SYSTEM_PROMPT_BYTE_CAP`, the tighter of the
+  two prompt tiers (large-window models allow `FULL_SYSTEM_PROMPT_BYTE_CAP`; bar turns amber past
   90 %, red past 100 %), the continuation-prompt budget, whether deferred tools are on
   (`MARINA_DEFERRED_TOOLS`), how many tools are loadable on demand and their bytes, and resident
   tool-schema bytes per profile. Sizes are measured server-side once a minute. Below them,

@@ -1443,18 +1443,28 @@ describe("tool profiles", () => {
     }
   });
 
-  it("code tool is available to full and crew agents", () => {
+  it("code tool is available to full and crew agents: resident when wanted, else on demand", () => {
     const ctx = {} as never;
     const memory = {} as never;
-    expect(createScopedTools(ctx, memory, "full").some((tool) => tool.name === "marina_code")).toBe(
-      true,
-    );
-    expect(createScopedTools(ctx, memory, "crew").some((tool) => tool.name === "marina_code")).toBe(
-      true,
-    );
-    expect(
-      createScopedTools(ctx, memory, "minimal").some((tool) => tool.name === "marina_code"),
-    ).toBe(false);
+    const has = (tools: { name: string }[]) => tools.some((tool) => tool.name === "marina_code");
+    for (const profile of ["full", "crew"] as const) {
+      // On demand by default (2026-10-20): listed in marina_tool_search, ~4 KB off every request.
+      const lazy = createProfileToolset(ctx, memory, profile);
+      expect(has(lazy.resident)).toBe(false);
+      expect(has(lazy.deferred)).toBe(true);
+      // A bound coding task, a coding role or an explicit profile keeps it resident.
+      const wanted = createProfileToolset(
+        ctx,
+        memory,
+        profile,
+        { text: true },
+        { codeResident: true },
+      );
+      expect(has(wanted.resident)).toBe(true);
+      expect(has(wanted.deferred)).toBe(false);
+    }
+    expect(has(createScopedTools(ctx, memory, "minimal"))).toBe(false);
+    expect(has(createProfileToolset(ctx, memory, "minimal").deferred)).toBe(false);
   });
 
   it("code tool maps typed coding actions to Marina code commands", async () => {
@@ -1472,9 +1482,13 @@ describe("tool profiles", () => {
       },
     } as never;
     const memory = {} as never;
-    const tool = createScopedTools(ctx, memory, "full").find(
-      (candidate) => candidate.name === "marina_code",
-    );
+    const tool = createScopedTools(
+      ctx,
+      memory,
+      "full",
+      { text: true },
+      { codeResident: true },
+    ).find((candidate) => candidate.name === "marina_code");
     expect(tool).toBeTruthy();
 
     await tool!.execute("call-1", { action: "verify" });
@@ -1570,7 +1584,13 @@ describe("tool profiles", () => {
       gameState: { handlePerception: () => {} },
     } as never;
     for (const profile of ["full", "crew"] as const) {
-      const toolset = createProfileToolset(ctx, {} as never, profile);
+      const toolset = createProfileToolset(
+        ctx,
+        {} as never,
+        profile,
+        { text: true },
+        { codeResident: true },
+      );
       const generic = toolset.resident.find((tool) => tool.name === "marina_code")!;
       if (profile === "full")
         expect(toolset.deferred.some((tool) => tool.name === "marina_code_edit")).toBe(true);

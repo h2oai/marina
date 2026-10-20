@@ -374,6 +374,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Resident context budget: two prompt tiers, a deduplicated prompt and on-demand tools.**
+  The fixed prefix every resident sends on every turn is smaller, and small-window models get a
+  budget of their own.
+  - **Two tiers**, picked from the agent model's context window. `lean` (≤ 32k tokens) caps the
+    system prompt frame at 5,800 B (was 6,300 B for everyone) and gives the agent the `minimal`
+    tool profile unless its profile was set explicitly. `full` (larger, cached models) caps it at
+    9,000 B. Both render the same text, and the tests check both caps in every trust profile ×
+    autonomy posture.
+  - **Each command is introduced once.** The `# COMMANDS` roster skips commands that TOOL ROUTING
+    or MEMORY already name, TOOL ROUTING no longer repeats the analysis-tool list that
+    `marina_tool_search` carries, and the memory tools' descriptions defer to MEMORY. AUTHORITY
+    AND TRUST and HOW TO BE are unchanged. The worst-case frame fell from 6,279 B to 5,213 B.
+  - **`marina_code` and `think` load on demand.** `marina_code` (~4 KB) is resident while a coding
+    task is bound, for the `coding-agent` role and for an explicitly chosen profile; otherwise
+    each profile's `marina_tool_search` lists it. `think` (no calls among 3,368 recorded resident
+    tool calls) is listed the same way. `memory` and `marina_memory_service` were not merged — they
+    have different backends and callers — but `memory` now sends its enums as one `enum` keyword
+    (1,860 → 1,415 B). `MARINA_DEFERRED_TOOLS=off` keeps everything resident as before.
+  - **Long procedures moved to built-in skills.** The chronicling trait (1,879 → 727 B), the
+    `canvas-watcher` trait that every `general` agent carries (832 → 464 B) and the
+    `[Reflection Due]` procedure keep one line per rule and point at `skill builtin chronicling`,
+    `canvas-intents` and `consolidate-memory`.
+  - Resident tool schemas: `full` 13,983 → 8,763 B, `crew` 11,216 → 6,512 B, `minimal`
+    5,174 → 4,373 B. A crew-profile Opus resident sends about 5.8 KB (~1.5k tokens) less per
+    turn. A 16k local model's prefix falls from about 17.5 KB to 9.6 KB.
+
 - **One formation catalogue** (`src/orchestration/formations/`). Formations were implemented once
   per surface: crew briefs, project templates, arena protocols, typed forecast formations and text
   patterns shared names but not code. Each formation is now one catalogue entry: a one-line

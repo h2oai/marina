@@ -53,6 +53,8 @@ export interface RosterOptions {
     maxLineChars?: number;
     /** List only the core work commands (and this room's) — nothing past them. */
     coreOnly?: boolean;
+    /** Command names to leave out because the surrounding prompt already teaches them. */
+    omit?: ReadonlySet<string>;
 }
 /** First line of a summary, clamped at a word boundary. */
 export declare function clampSummary(text: string, max: number): string;

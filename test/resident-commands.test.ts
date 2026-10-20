@@ -343,8 +343,8 @@ describe("data polls and data crowd", () => {
 });
 
 describe("skills: built-ins and `skill top`", () => {
-  it("ships all five seed skills and ranks them by fit, not by any shared word", () => {
-    expect(BUILTIN_SKILLS).toHaveLength(5);
+  it("ships all eight seed skills and ranks them by fit, not by any shared word", () => {
+    expect(BUILTIN_SKILLS).toHaveLength(8);
     expect(rankBuiltinSkills("solve this math problem")[0]?.skill.name).toBe("solve-math");
     expect(rankBuiltinSkills("decompose a multi-hop question")[0]?.skill.name).toBe(
       "decompose-multihop",

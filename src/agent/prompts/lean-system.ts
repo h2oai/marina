@@ -16,11 +16,48 @@ export function getPromptVersion(prompt: string): string {
  *  a bloat tripwire, enforced by test/memory-contract.test.ts. */
 export const MEMORY_CONTRACT_TOKEN_CAP = 220;
 
-/** Byte ceiling for `getLeanSystemPrompt(null)` INCLUDING the command roster —
- *  a bloat tripwire enforced by test/prompt-budget.test.ts. Raise deliberately.
- *  6500 → 6300 (2026-09-22): AUTHORITY AND TRUST + OPERATING LOOP trimmed to
- *  ≤ 1.2 KB combined; the base prompt measures ~6.19 KB under `guarded`. */
-export const LEAN_SYSTEM_PROMPT_BYTE_CAP = 6300;
+/**
+ * Prompt budget tiers (2026-10-20). The cap bounds the fixed frame (everything
+ * but the role prose, roster included) and is a bloat tripwire enforced by
+ * test/prompt-budget.test.ts in every trust profile × autonomy posture.
+ *
+ * - `lean`: models whose context window is ≤ `LEAN_TIER_MAX_CONTEXT_TOKENS`
+ *   (small local models — the reason the cap exists: a 16k window could not
+ *   fit the prefix). The adapter also gives these agents the `minimal` tool
+ *   profile unless their profile was chosen explicitly.
+ * - `full`: large-window, cache-served models, where the frame is ~5 % of a
+ *   turn and history ~80 %. The roomier cap is headroom for deliberate
+ *   additions, not a target: today both tiers render the same text.
+ */
+export type PromptTier = "lean" | "full";
+
+/** Context windows up to this many tokens (32k) get the `lean` tier. */
+export const LEAN_TIER_MAX_CONTEXT_TOKENS = 32_768;
+
+/** Byte ceiling of the `lean` tier frame. History: 6500 → 6300 (2026-09-22,
+ *  AUTHORITY + LOOP trimmed); 6300 → 5800 (2026-10-20, roster lines that
+ *  repeat TOOL ROUTING / MEMORY names dropped, ~5.5 KB worst case). */
+export const LEAN_SYSTEM_PROMPT_BYTE_CAP = 5800;
+
+/** Byte ceiling of the `full` tier frame: ~3.5 KB of headroom over today's
+ *  worst case. At cached Opus prices one extra static KB costs ≈ 0.7 % of
+ *  resident spend, so the cap guards attention and drift, not money. */
+export const FULL_SYSTEM_PROMPT_BYTE_CAP = 9000;
+
+/** The tier for a model's context window (tokens); unknown ⇒ `full`. */
+export function promptTierForContextWindow(contextWindow: number | undefined): PromptTier {
+  return contextWindow !== undefined &&
+    Number.isFinite(contextWindow) &&
+    contextWindow > 0 &&
+    contextWindow <= LEAN_TIER_MAX_CONTEXT_TOKENS
+    ? "lean"
+    : "full";
+}
+
+/** The frame byte cap of a tier. */
+export function systemPromptByteCap(tier: PromptTier): number {
+  return tier === "lean" ? LEAN_SYSTEM_PROMPT_BYTE_CAP : FULL_SYSTEM_PROMPT_BYTE_CAP;
+}
 
 /**
  * Compact natural-language roster of world commands. ONE copy lives here, in
@@ -44,13 +81,31 @@ export const LIVE_ROSTER_BYTES = 1500;
 /** How work, cost, held actions and escalation work here — never replaceable by a role. */
 export const WORKING_HERE = `Find work: \`work\`, \`next\`, \`task list\`. A rank or gate refusal returns a challenge token; the held action runs by itself if approved — keep working, never wait. \`forecast\`, web research and \`reflect\` (starts a model helper) cost money: prefer cheap reads first. Blocked or unsure: \`tell\` your creator; \`challenge\` lists held actions.`;
 
-/** The roster as the system prompt renders it: posture-aware, one copy. */
-export function getCommandRoster(entries?: CommandCatalogEntry[]): string {
+/**
+ * Command names a prompt section already teaches: the first word of every
+ * backticked span (`` `memory set focus <text>` `` ⇒ `memory`). The roster
+ * skips these, so a command is introduced once — in TOOL ROUTING or MEMORY,
+ * where its usage is — and the roster lists only what nothing else names.
+ */
+export function taughtCommandNames(...sections: string[]): Set<string> {
+  const names = new Set<string>();
+  for (const section of sections)
+    for (const match of section.matchAll(/`([a-z][a-z0-9-]*)/g)) names.add(match[1] as string);
+  return names;
+}
+
+/** The roster as the system prompt renders it: posture-aware, one copy.
+ *  `omit` names commands another section already teaches (`taughtCommandNames`). */
+export function getCommandRoster(
+  entries?: CommandCatalogEntry[],
+  omit?: ReadonlySet<string>,
+): string {
   const roster = entries
     ? renderCapabilityRoster(entries, LIVE_ROSTER_BYTES, {
         includeRankLimited: isLocalUngated(),
         maxLineChars: 60,
         coreOnly: true,
+        ...(omit ? { omit } : {}),
       })
     : COMMAND_ROSTER;
   return getAutonomyPosture() === "guarded" ? roster : `${roster}\n${ECOLOGY_ROSTER}`;
@@ -124,9 +179,10 @@ function renderLeanSystemPrompt(
   entries?: CommandCatalogEntry[],
   tools?: readonly string[],
 ): string {
-  const toolsSection =
-    process.env.MARINA_SYSTEM_TOOLS_PROSE === "off" ? "" : `\n${getToolRouting(tools)}\n`;
+  const routing = process.env.MARINA_SYSTEM_TOOLS_PROSE === "off" ? "" : getToolRouting(tools);
+  const toolsSection = routing ? `\n${routing}\n` : "";
   const memorySection = getMemoryContract();
+  const taught = taughtCommandNames(routing, memorySection);
 
   return `You are an autonomous participant in Marina. You think, therefore you are here.
 
@@ -151,7 +207,7 @@ ${memorySection}
 # COMMANDS
 
 ${WORKING_HERE}
-${getCommandRoster(entries)}
+${getCommandRoster(entries, taught)}
 
 # OPERATING LOOP
 
@@ -169,12 +225,15 @@ ${loop.everyTurn}`;
 /**
  * The agent's system prompt. `entries` is the live capability manifest (the
  * roster); `tools` names the tools the agent holds, so TOOL ROUTING never
- * names a tool the agent lacks (omitted ⇒ the minimal profile's set).
+ * names a tool the agent lacks (omitted ⇒ the minimal profile's set). `tier`
+ * picks the frame cap a role's loop override is measured against
+ * (`promptTierForContextWindow`); both tiers render the same text.
  */
 export function getLeanSystemPrompt(
   rolePrompt: string | null,
   entries?: CommandCatalogEntry[],
   tools?: readonly string[],
+  tier: PromptTier = "full",
 ): string {
   const split = rolePrompt ? splitRoleLoopBlocks(rolePrompt) : { prose: "", loop: {} };
   const roleSection = split.prose || "You are a versatile, general-purpose agent.";
@@ -205,10 +264,11 @@ export function getLeanSystemPrompt(
     renderLeanSystemPrompt("", overridden, entries, tools),
     "utf8",
   );
-  if (frameBytes > LEAN_SYSTEM_PROMPT_BYTE_CAP) {
+  const cap = systemPromptByteCap(tier);
+  if (frameBytes > cap) {
     logLoopRefusalOnce(
-      `cap:${JSON.stringify(requested)}`,
-      `role loop sections refused: the prompt frame would be ${frameBytes} B, over LEAN_SYSTEM_PROMPT_BYTE_CAP (${LEAN_SYSTEM_PROMPT_BYTE_CAP} B); defaults kept`,
+      `cap:${tier}:${JSON.stringify(requested)}`,
+      `role loop sections refused: the prompt frame would be ${frameBytes} B, over the ${tier} tier cap (${cap} B); defaults kept`,
     );
     return renderLeanSystemPrompt(roleSection, defaults, entries, tools);
   }
@@ -236,12 +296,11 @@ export function getToolRouting(tools: readonly string[] = BASELINE_TOOLS): strin
     via.push(
       "`marina_command` runs any command; a typed tool in your list is a shortcut for the same command.",
     );
+  // The loader's own description catalogs every deferred tool (analysis tools,
+  // marina_code, think …), and the memory tools' descriptions explain them:
+  // routing names neither list again.
   if (has("marina_tool_search"))
-    via.push(
-      "`marina_tool_search` loads typed tools by name; analysis tools are marina_ + forecast, research, swarm, data, quant, calc, decision_check, triage, arbiter, pattern.",
-    );
-  if (has("memory")) via.push("The `memory` tool writes and searches your private notes.");
-  if (has("marina_memory_service")) via.push("`marina_memory_service`: durable evidence records.");
+    via.push("`marina_tool_search` loads the typed tools its description lists.");
   const think = has("think") ? " `think` is not progress." : "";
   return `# TOOL ROUTING
 

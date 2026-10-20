@@ -89,6 +89,8 @@ export interface RosterOptions {
   maxLineChars?: number;
   /** List only the core work commands (and this room's) — nothing past them. */
   coreOnly?: boolean;
+  /** Command names to leave out because the surrounding prompt already teaches them. */
+  omit?: ReadonlySet<string>;
 }
 
 /** First line of a summary, clamped at a word boundary. */
@@ -136,7 +138,9 @@ export function renderCapabilityRoster(
   const sorted = eligible
     .filter(
       (entry) =>
-        entry.scope !== "room" && (!options.coreOnly || ROSTER_PRIORITY.includes(entry.name)),
+        entry.scope !== "room" &&
+        !options.omit?.has(entry.name) &&
+        (!options.coreOnly || ROSTER_PRIORITY.includes(entry.name)),
     )
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   let result = "Commands (`help <name>` for syntax; `help catalog [name]` lists forms):";

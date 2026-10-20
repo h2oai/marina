@@ -13,6 +13,9 @@
  */
 
 import answerRequest from "../../seeds/skills/answer-request.md" with { type: "text" };
+import canvasIntents from "../../seeds/skills/canvas-intents.md" with { type: "text" };
+import chronicling from "../../seeds/skills/chronicling.md" with { type: "text" };
+import consolidateMemory from "../../seeds/skills/consolidate-memory.md" with { type: "text" };
 import decomposeMultihop from "../../seeds/skills/decompose-multihop.md" with { type: "text" };
 import intakeTriage from "../../seeds/skills/intake-triage.md" with { type: "text" };
 import quantitativeEstimates from "../../seeds/skills/quantitative-estimates.md" with {
@@ -27,6 +30,11 @@ export const BUILTIN_SKILLS: readonly SkillImport[] = [
   parseSkillMarkdown(decomposeMultihop),
   parseSkillMarkdown(solveMath),
   parseSkillMarkdown(answerRequest),
+  // Progressive disclosure (2026-10-20): the long procedures of seeded traits.
+  // The trait keeps one line per rule and points here.
+  parseSkillMarkdown(chronicling),
+  parseSkillMarkdown(canvasIntents),
+  parseSkillMarkdown(consolidateMemory),
 ];
 
 export function builtinSkill(name: string): SkillImport | undefined {

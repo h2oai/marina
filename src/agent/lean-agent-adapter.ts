@@ -193,6 +193,8 @@ import {
   getLeanDiscoveryPrompt,
   getLeanSystemPrompt,
   getPromptVersion,
+  type PromptTier,
+  promptTierForContextWindow,
 } from "./prompts/lean-system";
 import { COMPACTION_SYSTEM_PROMPT, formatUntrustedContext } from "./prompts/support-prompts";
 import {
@@ -235,8 +237,10 @@ import {
 import {
   agentToolExecutionMode,
   applyToolExecutionModes,
+  CODE_TOOL_ROLES,
   createEvolutionTool,
   createProfileToolset,
+  resolveToolProfile,
   TOOL_SEARCH_NAME,
   type ToolContext,
 } from "./tools";
@@ -1321,6 +1325,8 @@ export class LeanAgentAdapter implements AgentHandle {
   private baseToolProfile: "full" | "crew" | "minimal" | "plan" = "full";
   private activeToolProfile: "full" | "crew" | "minimal" | "plan" = "full";
   private evolutionTool: AgentTool | null = null;
+  /** Tools `marina_tool_search` can load for this agent (on-demand `marina_code` among them). */
+  private deferredTools: AgentTool[] = [];
   private loadedToolNames: string[] = [];
   /** Turns (model calls) taken by the current prompt(); see MAX_TURNS_PER_PROMPT. */
   private currentPromptTurns = 0;
@@ -1804,7 +1810,12 @@ export class LeanAgentAdapter implements AgentHandle {
     // one line each inside `marina_tool_search` and loaded by name for the
     // session (`loadDeferredTools`). MARINA_DEFERRED_TOOLS=off = all resident.
     const toolContext = this.toolContext();
-    const toolProfile = config.toolProfile ?? "full";
+    // Prompt tier: a ≤ 32k-token model gets `minimal` unless its profile was
+    // chosen explicitly; `marina_code` is resident only on demand.
+    const toolProfile = resolveToolProfile(
+      config,
+      promptTierForContextWindow(this.model.contextWindow),
+    );
     this.baseToolProfile = toolProfile;
     this.activeToolProfile = toolProfile;
     const toolset = createProfileToolset(
@@ -1815,8 +1826,10 @@ export class LeanAgentAdapter implements AgentHandle {
       {
         onLoadTools: (loaded) => this.loadDeferredTools(loaded),
         ...(config.mediaGeneration ? { mediaGeneration: config.mediaGeneration } : {}),
+        codeResident: this.wantsCodeTool(),
       },
     );
+    this.deferredTools = toolset.deferred;
     const tools = toolset.resident;
     this.baseTools = tools;
     this.evolutionTool = applyToolExecutionModes([
@@ -2010,6 +2023,7 @@ export class LeanAgentAdapter implements AgentHandle {
           rolePrompt,
           undefined,
           tools.map((t) => t.name),
+          promptTierForContextWindow(this.model.contextWindow),
         ),
         model: this.model,
         tools,
@@ -2792,6 +2806,40 @@ export class LeanAgentAdapter implements AgentHandle {
     return (this.agent?.state.tools ?? this.baseTools).map((t) => t.name);
   }
 
+  // ─── Prompt budget tier (context engineering, 2026-10-20) ─────────────
+  /** `lean` for a model window ≤ 32k tokens, else `full` (the configured
+   *  window, not the adaptive effective one, so the tier never flaps). */
+  get promptTier(): PromptTier {
+    return promptTierForContextWindow(this.model.contextWindow);
+  }
+
+  /** `marina_code` resident: a bound coding task, a coding role, or an explicit profile. */
+  private wantsCodeTool(): boolean {
+    const role = this.config.role?.trim().toLowerCase();
+    const explicitProfile =
+      this.config.toolProfile !== undefined && !this.config.toolProfileInferred;
+    return (
+      this.activeCodingTask !== null || explicitProfile || (!!role && CODE_TOOL_ROLES.has(role))
+    );
+  }
+
+  /** A bound coding task needs `marina_code`: load it (once) if it is on demand. */
+  private ensureCodeTool(): void {
+    const code = this.deferredTools.find((t) => t.name === "marina_code");
+    if (code && this.agent) this.loadDeferredTools([code]);
+  }
+
+  /** The system prompt for the current role, roster, tools and tier. */
+  private currentSystemPrompt(): string {
+    return getLeanSystemPrompt(
+      this.rolePrompt,
+      this.capabilityEntries,
+      this.promptToolNames(),
+      this.promptTier,
+    );
+  }
+  // ─── end prompt budget tier ───────────────────────────────────────────
+
   /** Mirror `state.tools` into the loop's live snapshot array (same run). */
   private syncLiveRunTools(live: AgentTool[] | undefined): void {
     if (!live) return;
@@ -2886,9 +2934,7 @@ export class LeanAgentAdapter implements AgentHandle {
     this.gameState.setSession(session.entityId, session.name, session.token);
     try {
       this.capabilityEntries = (await this.client.capabilities()).commands;
-      this.replaceSystemPrompt(
-        getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries, this.promptToolNames()),
-      );
+      this.replaceSystemPrompt(this.currentSystemPrompt());
     } catch (error) {
       this.log.warn("agent", `Live capability discovery unavailable: ${getErrorMessage(error)}`);
     }
@@ -3249,9 +3295,7 @@ export class LeanAgentAdapter implements AgentHandle {
           const catalog = await this.client.capabilities();
           if (catalog.commands !== this.capabilityEntries) {
             this.capabilityEntries = catalog.commands;
-            this.replaceSystemPrompt(
-              getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries, this.promptToolNames()),
-            );
+            this.replaceSystemPrompt(this.currentSystemPrompt());
           }
         } catch (error) {
           this.log.warn("agent", `Capability refresh unavailable: ${getErrorMessage(error)}`);
@@ -4723,12 +4767,8 @@ export class LeanAgentAdapter implements AgentHandle {
       this.notesSinceReflection >= 3 &&
       !this.activeCodingTask
     ) {
-      const reflectionContent = `${this.notesSinceReflection} new notes since your last reflection. Run the three-phase consolidation:
-1. **Generate.** What's your working hypothesis for the current focus? State it in one sentence — what do you expect to happen / be true / work?
-2. **Reflect.** \`recall <focus>\` and \`reflect <focus>\` to surface what actually happened. Where did the hypothesis hold? Where did it break? Cite specific note ids.
-3. **Curate.** Keep what's load-bearing, prune what's wrong. \`note link <a> <b> <relation>\` for confirmed structure, \`note evolve <id>\` for superseded observations, \`note delete <id>\` for outright errors. If a generalisable procedure surfaced, \`skill store <name> | <desc> | <actions>\` so future agents inherit it.
-
-The goal is a smaller, sharper memory — not more notes.`;
+      // The procedure itself is the built-in `consolidate-memory` skill.
+      const reflectionContent = `${this.notesSinceReflection} new notes since your last reflection. Consolidate: state your working hypothesis, \`recall\`/\`reflect\` your focus to test it against cited notes, then curate (link, supersede, store a skill) — \`skill builtin consolidate-memory\` has the steps. The goal is a smaller, sharper memory, not more notes.`;
       if (this.shouldIncludeSection("reflection_due", reflectionContent)) {
         parts.push(`[Reflection Due]\n${reflectionContent}`);
       }
@@ -6009,6 +6049,7 @@ The goal is a smaller, sharper memory — not more notes.`;
     const next = task?.trim() ? task.trim() : null;
     if (next && next !== this.activeCodingTask) this.obligations.noteRequest(next);
     this.activeCodingTask = next;
+    if (next) this.ensureCodeTool();
     // A steer of the same attempt keeps its budget; clearing the task clears it.
     if (!next) this.codingTaskBudget = null;
     else if (budget) this.codingTaskBudget = budget;
@@ -6033,8 +6074,13 @@ The goal is a smaller, sharper memory — not more notes.`;
       {
         onLoadTools: (loaded) => this.loadDeferredTools(loaded),
         ...(this.config.mediaGeneration ? { mediaGeneration: this.config.mediaGeneration } : {}),
+        codeResident: this.wantsCodeTool(),
       },
     );
+    this.deferredTools = toolset.deferred;
+    // Outside plan mode the rebuilt set is the new base, so a later deferred
+    // load extends it instead of restoring the pre-switch tools.
+    if (target !== "plan") this.baseTools = toolset.resident;
     this.agent.state.tools = toolset.resident;
   }
 
@@ -6136,10 +6182,7 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   setSystemPrompt(prompt: string | undefined): void {
-    this.replaceSystemPrompt(
-      prompt ||
-        getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries, this.promptToolNames()),
-    );
+    this.replaceSystemPrompt(prompt || this.currentSystemPrompt());
   }
 
   /**
@@ -6221,9 +6264,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       this.config.role = opts.role;
       // Update rolePrompt and regenerate system prompt
       this.rolePrompt = opts.rolePrompt ?? null;
-      this.replaceSystemPrompt(
-        getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries, this.promptToolNames()),
-      );
+      this.replaceSystemPrompt(this.currentSystemPrompt());
       this.log.info(
         LEAN_AGENT_LOG_CATEGORY,
         `role reconfigured to "${opts.role}", system prompt regenerated`,
