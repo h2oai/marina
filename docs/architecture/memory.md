@@ -220,8 +220,9 @@ learning instead of losing it.
 - **Producers and standing.** A filing may name the residents or agents that produced it
   (`BoardFiling.producers`, stored as `producers` on the answer). On resolution each producer is a
   participant of the outcome and is credited `forecast_resolved` like the filer: same skill-scaled
-  amount, the per-account daily cap, the independence rule against the resolver, one party once
-  per answer. No new standing kind.
+  amount, the per-account daily cap, the standing party rule against the resolver (another
+  account; an agent resolver inside the worker's lineage pays nothing), and — because the producer
+  list is the filer's own claim — one lineage once per answer. No new standing kind.
   - `unfiled` (an answer from before this path, or a backtest) keeps the adapter's old lesson hook.
   - A fallback is never learned.
 - **Live work** (`src/outcomes/live.ts`). What agents actually get done is a resolved result too.

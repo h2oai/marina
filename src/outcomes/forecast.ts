@@ -206,10 +206,15 @@ function forecastParticipants(db: MarinaDB, f: ForecastAnswerRow) {
  * `forecast_resolved` (0.5) each, at most FORECAST_DAILY_CAP credits per
  * account a UTC day, once per answer. One PARTY is considered once: a
  * producer in the lineage of a worker already considered for this answer (a
- * person and the agents it spawned) earns nothing, paid or refused. The resolution must be independent
- * of each worker: an external resolver or judge (`resolvedBy` absent), or a
- * resolver outside that worker's party. An evaluation filing (`eval_mode`)
- * never earns, and nothing here reads or stores the question.
+ * person and the agents it spawned) earns nothing, paid or refused — the
+ * producer list is the filer's own claim, so this keeps `independentParties`
+ * (one person cannot multiply one answer across its own agents). The
+ * resolution must come from someone who may credit each worker: an external
+ * resolver or judge (`resolvedBy` absent), or a resolver passing
+ * `standingVerifierRefusal` (another account; an agent resolver inside the
+ * worker's lineage has no grounding signal and pays nothing). An evaluation
+ * filing (`eval_mode`) never earns, and nothing here reads or stores the
+ * question.
  */
 function creditResolvedForecast(
   db: MarinaDB,

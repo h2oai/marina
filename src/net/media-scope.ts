@@ -8,7 +8,7 @@
  * - `self`: the caller's own entity name.
  * - `owned`: the caller plus every agent it owns down its spawn lineage
  *   (`spawnDescendants`: agent configs' `spawned_by`, then agent principals'
- *   owners — a person and its agents are one party, as in standing).
+ *   owners — a person and its agents are one party, as for gate demonstrations).
  * - `chat`: `owned` plus the agents taking part in the caller's current
  *   conversation (the agents in its room). Media of those participants is
  *   still read-checked per viewer: library rows by `mayReadAsset`, jobs by

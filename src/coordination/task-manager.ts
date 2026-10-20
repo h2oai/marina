@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  independentParties,
   namedLeaderboard,
   recordVerified,
   standingOf,
+  standingVerifierRefusal,
   TASK_STANDING_DEFAULT,
   taskStandingValue,
   type VerifiedCredit,
@@ -226,26 +226,30 @@ export class TaskManager {
 
   /**
    * What approving `claimantName`'s submission would pay: the task's value
-   * (capped at TASK_STANDING_MAX) when the creator — the approver — is
-   * independent of the claimant, 0 otherwise. `task info` shows this.
+   * (capped at TASK_STANDING_MAX) when the creator — the approver — may
+   * credit the claimant (`standingVerifierRefusal`: another account, and not
+   * an agent inside the claimant's lineage), 0 otherwise. `task info` shows this.
    */
-  standingFor(task: Task, claimantName?: string): VerifiedCredit {
+  standingFor(task: Task, claimantName?: string, claimantId?: string): VerifiedCredit {
     const amount = taskStandingValue(task.standing);
     if (amount <= 0) return { credited: false, amount: 0, reason: "the task carries no standing" };
-    if (claimantName && !independentParties(this.db, claimantName, task.creatorName))
-      return {
-        credited: false,
-        amount: 0,
-        reason: `${task.creatorName} and ${claimantName} are one party (same account or spawn lineage)`,
-      };
+    const refusal = claimantName
+      ? standingVerifierRefusal(
+          this.db,
+          { name: claimantName, ...(claimantId ? { entityId: claimantId } : {}) },
+          task.creatorName,
+        )
+      : undefined;
+    if (refusal) return { credited: false, amount: 0, reason: refusal };
     return { credited: true, amount };
   }
 
   /**
    * Approve a submission (creator only) in any validation mode. Standing is
-   * paid only for independently verified work: the task's capped value when
-   * the approver is not the claimant's party (same account or spawn lineage),
-   * nothing otherwise — the task still completes.
+   * paid for work another party verified: the task's capped value unless the
+   * approver is the claimant's own account, or an agent inside the claimant's
+   * spawn lineage (no grounding signal for a task verdict) — the task still
+   * completes either way.
    */
   approve(
     taskId: number,

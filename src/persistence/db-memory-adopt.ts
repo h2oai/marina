@@ -55,7 +55,7 @@ import {
   rememberRecord,
   requireActor,
 } from "./db-memory-service";
-import { type MemoryActor, principalParty } from "./db-principals";
+import { isPersonPrincipal, type MemoryActor, principalParty } from "./db-principals";
 import { appendStandingEvent, hasStandingEvent } from "./db-standing";
 
 interface JobRow {
@@ -135,6 +135,15 @@ export function memoryAdoptRepository(db: Database) {
         display_name: string;
       } | null
     )?.display_name ?? id;
+  /** A principal's account name: its display name, else the world account's name, else the id. */
+  const accountName = (id: string): string =>
+    (
+      db.query("SELECT display_name FROM principals WHERE principal_id=?").get(id) as {
+        display_name: string;
+      } | null
+    )?.display_name ??
+    (db.query("SELECT name FROM users WHERE id=?").get(id) as { name: string } | null)?.name ??
+    id;
   /** Owner-authority reader for the job's space (the requester's credential
    * that filed the job) — how a delegated worker sees the proposal. */
   const delegator = (job: JobRow): MemoryActor => ({
@@ -149,10 +158,12 @@ export function memoryAdoptRepository(db: Database) {
       fail(404, "assistance_not_found", "Assistance request not found");
   }
   /**
-   * Standing for a requester's verdict on helpers' work. Only helpers
-   * INDEPENDENT of the requester are credited (or debited): a person and the
-   * agents in its spawn lineage are one party, so adopting your own agent's
-   * proposal earns nothing (src/agent/standing.ts).
+   * Standing for a requester's verdict on helpers' work (2026-10-20: each
+   * account is its own party). The requester itself is never credited. A
+   * PERSON requester credits (or debits) every other account, its own agents
+   * included — adopting your agent's proposal is a person's decision. An
+   * AGENT requester credits only helpers outside its party (`principalParty`):
+   * an adoption carries no grounding signal (src/agent/standing.ts).
    */
   function credit(
     kind: StandingKind,
@@ -163,10 +174,16 @@ export function memoryAdoptRepository(db: Database) {
     const credited: MemoryStandingCredit[] = [];
     const base = STANDING_AMOUNTS[kind];
     const lineage = (name: string) => spawnLineage(db, name);
-    const requesterParty = principalParty(db, requesterId, lineage);
+    const requesterIsPerson = isPersonPrincipal(db, requesterId);
+    const requesterName = accountName(requesterId).toLowerCase();
+    const requesterParty = requesterIsPerson ? undefined : principalParty(db, requesterId, lineage);
     for (const [principal, share] of shares) {
-      const party = principalParty(db, principal, lineage);
-      if ([...party].some((member) => requesterParty.has(member))) continue;
+      if (principal === requesterId || accountName(principal).toLowerCase() === requesterName)
+        continue;
+      if (requesterParty) {
+        const party = principalParty(db, principal, lineage);
+        if ([...party].some((member) => requesterParty.has(member))) continue;
+      }
       if (hasStandingEvent(db, principal, kind, ref)) continue;
       const amount = Number((base * share).toFixed(4));
       if (amount === 0) continue;
