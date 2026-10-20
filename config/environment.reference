@@ -493,6 +493,25 @@
 # MARINA_AGENT_CONTEXT_CAP_TOKENS=48000
 # MARINA_AGENT_CONTEXT_TARGET_TOKENS=16000
 
+# How long a provider's prompt cache lives after a request. A prompt sent after a longer gap is a cold turn: the whole request is written to the cache again. A default (`5m`), per-family values (`anthropic=5m,openai=10m`) or both; `off` for a family means it keeps no cache, so its turns are never cold. Built in: 5 minutes for anthropic, bedrock, marina (the agents' proxy), openrouter and openai; any other provider and local servers keep none unless named here.
+# MARINA_PROMPT_CACHE_TTL=5m
+
+# Compaction before a cold turn. When the cache has expired and the conversation holds at least MARINA_AGENT_COLD_COMPACT_MIN_TOKENS estimated tokens (default the cap's target + 8000, i.e. 24000 with the built-in cap; never below that, never at or above the cap), the history is compacted to MARINA_AGENT_CONTEXT_TARGET_TOKENS before the prompt, through the same archived, incremental compaction as the cap, so the rewrite the cold turn pays anyway is smaller. On by default; `off` disables it. Needs the conversation cap.
+# MARINA_AGENT_COLD_COMPACT=on
+# MARINA_AGENT_COLD_COMPACT_MIN_TOKENS=24000
+
+# One-hour cache lifetime for the static prefix (tool schemas and system prompt) of direct Anthropic requests; the conversation keeps the 5-minute lifetime. A cold turn then rewrites only the conversation. `1h` (default) or `off`.
+# MARINA_PROMPT_CACHE_STATIC_TTL=1h
+
+# Cache keep-alive for idle residents, off by default. `on`: shortly before the cache expires, an agent re-sends its last request with max_tokens 1 (a cache read), while its last prompt is at most MARINA_AGENT_CACHE_KEEPALIVE_WINDOW old (default 30m), at most MARINA_AGENT_CACHE_KEEPALIVE_MAX times per idle gap (default 6) and MARINA_AGENT_CACHE_KEEPALIVE_DAILY_USD per agent per UTC day (default 0.5); spend caps apply. Direct priced providers only (not the marina/* proxy), thinking off; a reply that did not read the cache turns it off for that agent.
+# MARINA_AGENT_CACHE_KEEPALIVE=off
+# MARINA_AGENT_CACHE_KEEPALIVE_WINDOW=30m
+# MARINA_AGENT_CACHE_KEEPALIVE_MAX=6
+# MARINA_AGENT_CACHE_KEEPALIVE_DAILY_USD=0.5
+
+# Prompts (cycles that call the model) an agent works under one focus before `[Focus Review Due]` asks it to review that focus. Idle time does not count. Default 10.
+# MARINA_FOCUS_REVIEW_CYCLES=10
+
 # Removes reasoning blocks (text and provider signature) from assistant messages of earlier runs between prompts; the latest run is untouched, OpenAI Responses-API messages are skipped, and the originals stay in the continuity journal. On by default; `off` keeps every reasoning block.
 # MARINA_DROP_OLD_THINKING_SIGNATURES=on
 

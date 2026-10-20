@@ -105,7 +105,12 @@ export interface AgentConfig {
    */
   budgetCalls?: number;
   loopCycleDelay?: number;
-  focusTimeout?: number;
+  /**
+   * Prompts (cycles that called the model) a focus runs before `[Focus Review
+   * Due]` asks for a review. Default `MARINA_FOCUS_REVIEW_CYCLES`, else 10.
+   * Idle time never counts — a long gap between prompts is not progress.
+   */
+  focusReviewCycles?: number;
   perceptionBufferCap?: number;
   attentionMode?: "focused" | "balanced" | "open";
   attentionThreshold?: number;

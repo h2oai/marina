@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { TaskManager } from "../../coordination/task-manager";
+import { noteAsOf } from "../../memory/as-of";
 import { memoryNoteResults, memoryResult } from "../../memory/command-result";
-import { findDurableTwin } from "../../memory/legacy-projection";
 import {
   expandedFtsQueries,
   expansionForEntityCached,
@@ -269,10 +269,13 @@ export function recallCommand(deps: {
         noteType,
         trusted: flags.has("trusted"),
       });
+      // Under the fence a revised note is served as it stood at the cutoff
+      // (`noteAsOf`); a historical version is never listed as trusted.
       if (asOf !== undefined)
-        results = results.filter(
-          (n) => n.created_at <= asOf && (findDurableTwin(db, n.id)?.version ?? 1) <= 1,
-        );
+        results = results.flatMap((n) => {
+          const known = noteAsOf(db, n, asOf);
+          return known && !(known.asOf && flags.has("trusted")) ? [known] : [];
+        });
 
       // Touch each returned note to update last_accessed and recall_count.
       for (const note of results) {

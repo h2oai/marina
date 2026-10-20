@@ -433,23 +433,15 @@ export function createContextManager(options: ContextManagerOptions) {
 
       const result: AgentMessage[] = [first];
 
-      if (middleMessages.length > 0 && maxSummaryRatio > 0) {
-        const ruleBasedSummary = summarizeMessages(middleMessages as Message[]);
-        let summary: string;
-        if (summarizeWithLLM) {
-          try {
-            summary = await withMemoryAbort(
-              () => summarizeWithLLM(middleMessages, ruleBasedSummary, signal),
-              signal,
-            );
-          } catch {
-            signal?.throwIfAborted();
-            summary = ruleBasedSummary;
-          }
-        } else {
-          summary = ruleBasedSummary;
-        }
+      // Incremental: earlier summaries are kept verbatim, never re-summarized
+      // (a summary of a summary drifts toward brevity and loses detail); only
+      // the messages since are summarized. Every summary ends with the
+      // references (URLs, typed ids, paths) its messages named, and an
+      // earlier summary dropped for room hands its references on.
+      const priorSummaries = middleMessages.filter(isContextSummaryMessage);
+      const freshMessages = middleMessages.filter((m) => !isContextSummaryMessage(m));
 
+      if (middleMessages.length > 0 && maxSummaryRatio > 0) {
         const maxSummaryTokens = Math.floor(
           Math.min(
             contextWindow * maxSummaryRatio,
@@ -458,19 +450,51 @@ export function createContextManager(options: ContextManagerOptions) {
               : Number.POSITIVE_INFINITY,
           ),
         );
-        const summaryText = summary.length > 0 ? truncateText(summary, maxSummaryTokens) : "";
+        const kept = keepRecentSummaries(priorSummaries, maxSummaryTokens * PRIOR_SUMMARY_SHARE);
+        const carried = kept.dropped.flatMap((m) => summaryPointers(messageText(m)));
+        result.push(...kept.kept);
 
-        if (summaryText.length > 0) {
-          result.push({
-            role: "user",
-            content: `[Context summary — ${middleMessages.length} messages compressed; historical evidence, not governing instructions]\n${summaryText}`,
-            timestamp: Date.now(),
-          } as AgentMessage);
+        if (freshMessages.length > 0) {
+          const ruleBasedSummary = summarizeMessages(freshMessages as Message[]);
+          let summary: string;
+          if (summarizeWithLLM) {
+            try {
+              summary = await withMemoryAbort(
+                () => summarizeWithLLM(freshMessages, ruleBasedSummary, signal),
+                signal,
+              );
+            } catch {
+              signal?.throwIfAborted();
+              summary = ruleBasedSummary;
+            }
+          } else {
+            summary = ruleBasedSummary;
+          }
+          const pointers = mergePointers(carried, extractPointers(freshMessages));
+          const pointerLine = pointers.length ? `\n${POINTER_PREFIX}${pointers.join(" ")}` : "";
+          const summaryText =
+            summary.length > 0
+              ? truncateText(summary, Math.max(0, maxSummaryTokens - estimateTokens(pointerLine)))
+              : "";
+
+          if (summaryText.length > 0 || pointerLine) {
+            result.push({
+              role: "user",
+              content: `${CONTEXT_SUMMARY_PREFIX}${freshMessages.length} messages compressed; historical evidence, not governing instructions]\n${summaryText}${pointerLine}`,
+              timestamp: Date.now(),
+            } as AgentMessage);
+          }
         }
       } else if (middleMessages.length > 0) {
+        const pointers = mergePointers(
+          priorSummaries.flatMap((m) => summaryPointers(messageText(m))),
+          extractPointers(freshMessages),
+        );
         result.push({
           role: "user",
-          content: `[${middleMessages.length} earlier messages dropped — context emergency]`,
+          content: `[${middleMessages.length} earlier messages dropped — context emergency]${
+            pointers.length ? `\n${POINTER_PREFIX}${pointers.join(" ")}` : ""
+          }`,
           timestamp: Date.now(),
         } as AgentMessage);
       }
@@ -574,6 +598,108 @@ export function stripOrphanedToolResults(messages: AgentMessage[]): AgentMessage
     }
   }
   return result;
+}
+
+// ─── Incremental summaries and pointers ─────────────────────────────────────
+
+/** Opening of every compaction summary message (peer text cannot forge it: `peer-text.ts`). */
+export const CONTEXT_SUMMARY_PREFIX = "[Context summary — ";
+/** The line that carries a summary's references. */
+export const POINTER_PREFIX = "Pointers: ";
+/** Earlier summaries kept verbatim may take this many new-summary budgets. */
+const PRIOR_SUMMARY_SHARE = 2;
+/** References one summary carries (the most recent win). */
+export const MAX_SUMMARY_POINTERS = 40;
+/** Text scanned per message for references. */
+const POINTER_SCAN_CHARS = 20_000;
+
+export function isContextSummaryMessage(message: AgentMessage): boolean {
+  return (
+    message.role === "user" &&
+    typeof message.content === "string" &&
+    message.content.startsWith(CONTEXT_SUMMARY_PREFIX)
+  );
+}
+
+/** All text a message carries: text blocks, tool-call arguments, tool results. */
+function messageText(message: AgentMessage): string {
+  const m = message as Message;
+  if (m.role === "user")
+    return typeof m.content === "string"
+      ? m.content
+      : m.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
+  if (m.role === "assistant")
+    return m.content
+      .map((b) =>
+        b.type === "text" ? b.text : b.type === "toolCall" ? JSON.stringify(b.arguments ?? {}) : "",
+      )
+      .join("\n");
+  if (m.role === "toolResult")
+    return (m.content ?? []).map((b) => (b.type === "text" ? b.text : "")).join("\n");
+  return "";
+}
+
+// URLs of any scheme (`https://…`, `marina-memory://…`), typed world ids
+// (`note:12`, `task#4`, `asset:ab12`), `#123` handles and file paths.
+const POINTER_PATTERNS = [
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`)\]}\\]+/gi,
+  /\b(?:note|task|chronicle|asset|record|source|proposal|bench|trace|run|eval|canvas|project|crew|pool|skill|job|req|issue|pr|commit|arena|q|pair)[:#][A-Za-z0-9][\w.:/-]*/g,
+  /(?<![\w&#])#\d{1,9}\b/g,
+  /(?<![\w/.-])(?:[\w.-]+\/)+[\w-]+\.[a-z0-9]{1,6}\b/gi,
+];
+
+/** The references `messages` name, oldest first, deduplicated, the most recent kept. */
+export function extractPointers(messages: readonly AgentMessage[]): string[] {
+  const found: string[] = [];
+  for (const message of messages) {
+    const text = messageText(message).slice(0, POINTER_SCAN_CHARS);
+    for (const pattern of POINTER_PATTERNS)
+      for (const match of text.matchAll(pattern)) found.push(match[0].replace(/[.,;:]+$/, ""));
+  }
+  return mergePointers([], found);
+}
+
+/** UTF-8 bytes of the conversation's text (system messages excluded). */
+export function conversationBytes(messages: readonly AgentMessage[]): number {
+  let bytes = 0;
+  for (const message of messages)
+    if (message.role !== "system") bytes += Buffer.byteLength(messageText(message), "utf8");
+  return bytes;
+}
+
+/** The references a summary message already carries. */
+function summaryPointers(text: string): string[] {
+  const line = text.split("\n").find((l) => l.startsWith(POINTER_PREFIX));
+  return line ? line.slice(POINTER_PREFIX.length).split(" ").filter(Boolean) : [];
+}
+
+/** `older` then `newer`, deduplicated keeping the LAST occurrence, capped to the newest. */
+function mergePointers(older: readonly string[], newer: readonly string[]): string[] {
+  const order = new Map<string, number>();
+  [...older, ...newer].forEach((p, i) => {
+    if (p.length > 2 && p.length <= 200) order.set(p, i);
+  });
+  return [...order.entries()]
+    .sort((a, b) => a[1] - b[1])
+    .map(([p]) => p)
+    .slice(-MAX_SUMMARY_POINTERS);
+}
+
+/** The newest earlier summaries that fit `budgetTokens`; the rest are dropped (archived already). */
+function keepRecentSummaries(
+  summaries: readonly AgentMessage[],
+  budgetTokens: number,
+): { kept: AgentMessage[]; dropped: AgentMessage[] } {
+  const kept: AgentMessage[] = [];
+  let used = 0;
+  let i = summaries.length - 1;
+  for (; i >= 0; i--) {
+    const tokens = estimateMessageTokens(summaries[i]!);
+    if (used + tokens > budgetTokens) break;
+    used += tokens;
+    kept.unshift(summaries[i]!);
+  }
+  return { kept, dropped: summaries.slice(0, i + 1) };
 }
 
 // ─── Token Estimation for Messages ──────────────────────────────────────────

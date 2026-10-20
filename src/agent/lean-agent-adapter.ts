@@ -31,6 +31,7 @@ import {
 import {
   type Api,
   type AssistantMessage,
+  type Context,
   isContextOverflow,
   type Message,
   type Model,
@@ -144,6 +145,7 @@ import {
 import {
   type ConversationTokenCap,
   computeContextBudget,
+  conversationBytes,
   conversationTokenCap,
   conversationTokens,
   createContextManager,
@@ -189,6 +191,18 @@ import {
 } from "./outstanding-requests";
 import { flattenPeerText, neutralizeAuthoredBlock, neutralizeAuthoredLine } from "./peer-text";
 import { piModels } from "./pi-models";
+import {
+  coldCompactionThreshold,
+  isColdTurn,
+  keepAliveHit,
+  keepAlivePolicy,
+  type PromptCacheMetrics,
+  PromptCacheTracker,
+  promptCacheFamily,
+  promptCacheTtlMs,
+  staticPrefixTtl,
+  withStaticPrefixTtl,
+} from "./prompt-cache";
 import {
   getLeanDiscoveryPrompt,
   getLeanSystemPrompt,
@@ -588,6 +602,8 @@ export interface AgentOperatorStatus {
   totalCacheWriteTokens?: number;
   /** Own command echoes kept out of the perception buffer (see `isSelfEchoPerception`). */
   selfEchoesDropped?: number;
+  /** Cold turns, compactions before them, keep-alives (`src/agent/prompt-cache.ts`). */
+  promptCache?: PromptCacheMetrics;
 }
 
 /** Duck-typed accessor so command surfaces need not import the adapter class. */
@@ -1307,6 +1323,22 @@ export function neutralizeUnusedReasoning(
 interface Focus {
   description: string;
   startedAt: number;
+  /** Prompts built under this focus since it was set or last reviewed. */
+  cycles?: number;
+}
+
+/** Built-in focus review horizon, in prompts (`MARINA_FOCUS_REVIEW_CYCLES`). */
+export const DEFAULT_FOCUS_REVIEW_CYCLES = 10;
+
+/** Prompts before `[Focus Review Due]`: config, then `MARINA_FOCUS_REVIEW_CYCLES`, then 10. */
+export function focusReviewCycles(
+  configured: number | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  if (configured !== undefined && Number.isFinite(configured) && configured >= 1)
+    return Math.floor(configured);
+  const raw = Number(env.MARINA_FOCUS_REVIEW_CYCLES);
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_FOCUS_REVIEW_CYCLES;
 }
 
 // ─── Lean Agent Adapter ─────────────────────────────────────────────────────
@@ -1572,6 +1604,16 @@ export class LeanAgentAdapter implements AgentHandle {
     /** Between-prompt compactions under `MARINA_AGENT_CONTEXT_CAP_TOKENS`. */
     capCompactions: 0,
   };
+  // ── Cache-aware idle handling (src/agent/prompt-cache.ts) ──
+  /** Cold turns, compactions before them, keep-alives — see `PromptCacheTracker`. */
+  private readonly promptCache = new PromptCacheTracker();
+  /** While set, the between-prompt cap uses this lower trigger (a cold-turn compaction). */
+  private coldTurnCap: ConversationTokenCap | undefined;
+  /** The last model request as sent, replayed by a keep-alive (direct providers only). */
+  private lastModelRequest:
+    | { model: Model<Api>; context: Context; options: SimpleStreamOptions }
+    | undefined;
+  private keepAliveTimer: ReturnType<typeof setTimeout> | undefined;
   /** Accounting headers of the most recent provider response, consumed by the next turn_end. */
   private pendingProxyMeta: ProxyResponseMeta | null = null;
   /** `usage.cost` the provider billed for the last reply of an unpriced model. */
@@ -1625,7 +1667,8 @@ export class LeanAgentAdapter implements AgentHandle {
   private readonly checkpointSaveInterval = 5 * 60 * 1000;
 
   private readonly loopCycleDelay: number;
-  private readonly focusTimeoutMs: number;
+  /** Prompts a focus runs before a review is due (`focusReviewCycles`). */
+  private readonly focusReviewCycles: number;
   private readonly perceptionBufferCap: number;
   private attentionMode: "focused" | "balanced" | "open";
   private attentionThreshold: number;
@@ -1745,7 +1788,7 @@ export class LeanAgentAdapter implements AgentHandle {
     this.spendGuard = spendGuard ?? {};
     this.rolePrompt = rolePrompt;
     this.loopCycleDelay = config.loopCycleDelay ?? 2000;
-    this.focusTimeoutMs = config.focusTimeout ?? 5 * 60 * 1000;
+    this.focusReviewCycles = focusReviewCycles(config.focusReviewCycles);
     this.perceptionBufferCap = config.perceptionBufferCap ?? 20;
     this.attentionMode = config.attentionMode ?? "balanced";
     this.attentionThreshold = Math.max(10, Math.min(90, config.attentionThreshold ?? 50));
@@ -2052,10 +2095,14 @@ export class LeanAgentAdapter implements AgentHandle {
       // OpenRouter routes also get `reasoning-control` shaping: only providers
       // that honour every parameter (tools included), and the reasoning disable
       // for a model a probe verified still calls tools without reasoning.
+      // A direct Anthropic request marks its static prefix (tools + system)
+      // with a one-hour cache lifetime (`MARINA_PROMPT_CACHE_STATIC_TTL`).
       onPayload: (payload, model) => {
         const keyed =
           withPromptCacheKey(payload, model as Model<Api>, `marina-agent:${this.name}`) ?? payload;
-        return shapeOpenRouterPayload(keyed, model as Model<Api>, this.thinkingLevel) ?? keyed;
+        const shaped =
+          shapeOpenRouterPayload(keyed, model as Model<Api>, this.thinkingLevel) ?? keyed;
+        return withStaticPrefixTtl(shaped, staticPrefixTtl(model as Model<Api>)) ?? shaped;
       },
       // Inject the output cap into every request. pi-agent-core never sets
       // `maxTokens`, and the openai-completions path only sends `max_tokens`
@@ -2078,13 +2125,15 @@ export class LeanAgentAdapter implements AgentHandle {
         await prepareHostedModel(routed.model, routed.apiKey, this.providerFetch, options?.signal, {
           updateContext: false,
         });
+        const sent: SimpleStreamOptions = {
+          ...options,
+          ...(routed.apiKey === undefined ? {} : { apiKey: routed.apiKey }),
+        };
+        this.rememberModelRequest(routed.model, context, sent);
         return piModels.streamSimple(
           routed.model,
           context,
-          this.providerStreamOptions(routed.model, {
-            ...options,
-            ...(routed.apiKey === undefined ? {} : { apiKey: routed.apiKey }),
-          }),
+          this.providerStreamOptions(routed.model, sent),
         );
       },
       // Dynamic resolver if a function was passed in; pi-agent-core will
@@ -2753,6 +2802,7 @@ export class LeanAgentAdapter implements AgentHandle {
     this.autonomousLoopRunning = false;
     this.autonomousMode = false;
     this.stopCheckpointTimer();
+    this.cancelKeepAlive();
     this.cycleWaiter.wake();
     // Cancel an in-flight prompt: its tool calls cannot reach the world.
     this.agent.abort();
@@ -2912,7 +2962,7 @@ export class LeanAgentAdapter implements AgentHandle {
       // default initial focus so the agent has direction from cycle 1 instead of
       // churning on the repeated "[No Focus] what interests you?" prompt with no
       // recall context (recall is gated on focus). This focus expires after
-      // focusTimeoutMs and hands off to memory-driven goal formation, and the
+      // focusReviewCycles prompts and hands off to memory-driven goal formation, and the
       // agent can replace it any time via `task goal` / `memory set goal`. A
       // persisted focus from a prior session still overrides it below.
       const roleHint = this.config.role
@@ -3063,6 +3113,7 @@ export class LeanAgentAdapter implements AgentHandle {
     this.autonomousLoopRunning = false;
     this.autonomousMode = false;
     this.stopCheckpointTimer();
+    this.cancelKeepAlive();
     this.pendingPerceptions = [];
     // Wake a parked cycle-delay sleep so the loop re-checks the cleared run
     // flags immediately, instead of blocking shutdown for up to the idle delay
@@ -3278,6 +3329,7 @@ export class LeanAgentAdapter implements AgentHandle {
           await this.agent.prompt(continuationPrompt);
         } finally {
           clearTimeout(timeoutHandle);
+          this.scheduleKeepAlive();
         }
         if (timedOut) {
           this.log.warn(
@@ -4738,6 +4790,11 @@ The goal is a smaller, sharper memory — not more notes.`;
     if (this.focus) {
       const elapsed = Date.now() - this.focus.startedAt;
       const elapsedMin = Math.round(elapsed / 60000);
+      // The horizon counts prompts (cycles that call the model), not wall
+      // clock: an idle gap is not work, and a minutes horizon fired on almost
+      // every prompt after one.
+      const cycles = (this.focus.cycles ?? 0) + 1;
+      this.focus.cycles = cycles;
 
       // The horizon asks for a review; it never deletes the agent's own focus.
       // An operator/config goal and a `focus_persistent` focus never expire;
@@ -4745,10 +4802,10 @@ The goal is a smaller, sharper memory — not more notes.`;
       const operatorFocus =
         this.focusSource === "config" ||
         (this.config.goal !== undefined && this.focus.description === this.config.goal);
-      if (elapsed > this.focusTimeoutMs && !operatorFocus && !this.loopPrefs.focusPersistent) {
+      if (cycles > this.focusReviewCycles && !operatorFocus && !this.loopPrefs.focusPersistent) {
         const expiredFocus = this.focus.description;
         if (this.focusSource === "seed") this.updateFocus(null);
-        else this.focus = { ...this.focus, startedAt: Date.now() };
+        else this.focus = { ...this.focus, startedAt: Date.now(), cycles: 0 };
         parts.push(
           `[Focus Review Due] "${expiredFocus}" reached its time horizon; this does not imply completion. Check its success evidence. If complete, preserve the result and choose a new objective. If still valuable, restate a narrower next milestone. If blocked, record the blocker and hand off or deliberately stop.`,
           80,
@@ -4990,6 +5047,8 @@ The goal is a smaller, sharper memory — not more notes.`;
     messages: readonly AgentMessage[],
     opts: { betweenPrompts?: boolean } = {},
   ): ConversationTokenCap | undefined {
+    // A cold-turn compaction in progress lowers the trigger (`compactBeforeColdTurn`).
+    if (this.coldTurnCap) return this.coldTurnCap;
     const cap = conversationTokenCap();
     if (!cap) return undefined;
     if (
@@ -5088,6 +5147,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       ? this.tokenCapFor(messages, { betweenPrompts: true })
       : undefined;
     const transform = this.contextTransform;
+    const cold = this.noteColdTurn();
     if (cap && transform && conversationTokens(messages) >= cap.capTokens) {
       try {
         const compacted = await transform(messages);
@@ -5105,8 +5165,157 @@ The goal is a smaller, sharper memory — not more notes.`;
           agent: this.name,
         });
       }
+    } else if (cold && cap && transform) {
+      messages = await this.compactBeforeColdTurn(messages, cap, transform);
     }
     if (messages !== original) this.agent.state.messages = messages;
+  }
+
+  // ─── Cache-aware idle handling (src/agent/prompt-cache.ts) ────────────
+
+  /** This agent's prompt-cache lifetime (ms); undefined when its provider keeps none. */
+  private promptCacheTtl(): number | undefined {
+    const provider = (this.model.provider ?? "").toLowerCase();
+    return promptCacheTtlMs(
+      promptCacheFamily({
+        provider,
+        api: this.model.api,
+        id: this.model.id,
+        proxied: isMarinaProxyModel(this.model),
+        local: isLocalProvider(provider),
+      }),
+    );
+  }
+
+  /** Before a prompt: is its first request cold? Counts it, and starts a new idle gap. */
+  private noteColdTurn(): boolean {
+    const now = Date.now();
+    const cold = isColdTurn(this.promptCache.lastRequestAt, now, this.promptCacheTtl());
+    if (cold) this.promptCache.metrics.coldTurns += 1;
+    this.promptCache.notePrompt(now);
+    this.cancelKeepAlive();
+    return cold;
+  }
+
+  /**
+   * The next request rewrites the whole history into the cache anyway: when
+   * the history is past `coldCompactionThreshold`, compact it to the cap's
+   * target first, through the same transform as the cap (archived first,
+   * incremental summary with pointers). A failure keeps the history.
+   */
+  private async compactBeforeColdTurn(
+    messages: AgentMessage[],
+    cap: ConversationTokenCap,
+    transform: NonNullable<typeof this.contextTransform>,
+  ): Promise<AgentMessage[]> {
+    const threshold = coldCompactionThreshold(cap);
+    if (threshold === undefined) return messages;
+    const before = conversationTokens(messages);
+    if (before < threshold) return messages;
+    this.coldTurnCap = { ...cap, capTokens: threshold };
+    try {
+      const compacted = await transform(messages);
+      if (compacted.length === messages.length && compacted.every((m, i) => m === messages[i]))
+        return messages;
+      const after = conversationTokens(compacted);
+      const m = this.promptCache.metrics;
+      m.coldCompactions += 1;
+      m.coldWriteTokensAvoided += Math.max(0, before - after);
+      m.coldWriteBytesAvoided += Math.max(
+        0,
+        conversationBytes(messages) - conversationBytes(compacted),
+      );
+      this.log.info(
+        LEAN_AGENT_LOG_CATEGORY,
+        `cold-turn compaction: ${messages.length} → ${compacted.length} messages (~${before} → ~${after} tokens; cache expired)`,
+        { agent: this.name },
+      );
+      return compacted;
+    } catch (error) {
+      this.log.warn(
+        LEAN_AGENT_LOG_CATEGORY,
+        `cold-turn compaction skipped: ${getErrorMessage(error)}`,
+        { agent: this.name },
+      );
+      return messages;
+    } finally {
+      this.coldTurnCap = undefined;
+    }
+  }
+
+  /** Keep what the last model request sent, for a keep-alive replay (direct providers only). */
+  private rememberModelRequest(model: Model<Api>, context: Context, options: SimpleStreamOptions) {
+    if (isMarinaProxyModel(model) || isUnpricedModel(model)) {
+      this.lastModelRequest = undefined;
+      return;
+    }
+    const { signal: _signal, ...rest } = options;
+    this.lastModelRequest = {
+      model,
+      context: { ...context, messages: [...context.messages] },
+      options: rest,
+    };
+  }
+
+  private cancelKeepAlive(): void {
+    if (this.keepAliveTimer) clearTimeout(this.keepAliveTimer);
+    this.keepAliveTimer = undefined;
+  }
+
+  /**
+   * `MARINA_AGENT_CACHE_KEEPALIVE=on` (default off): while the agent idles
+   * after a prompt, re-send its last request with `max_tokens: 1` just before
+   * the cache expires, so the next turn reads the cache instead of rewriting
+   * it. Bounded per gap, per day and by the spend caps; never with thinking
+   * on (the budget needs more output), never through the proxy; one miss
+   * (the replay wrote instead of reading) disables it for this agent.
+   */
+  private scheduleKeepAlive(): void {
+    this.cancelKeepAlive();
+    const policy = keepAlivePolicy(this.promptCacheTtl());
+    if (!policy || !this.autonomousLoopRunning || this.thinkingLevel !== "off") return;
+    const wait = Math.max(1_000, this.promptCache.lastRequestAt + policy.intervalMs - Date.now());
+    this.keepAliveTimer = setTimeout(() => {
+      this.keepAliveTimer = undefined;
+      void this.sendKeepAlive().catch(
+        logRejection(this.log, LEAN_AGENT_LOG_CATEGORY, "cache keep-alive failed"),
+      );
+    }, wait);
+    (this.keepAliveTimer as { unref?: () => void }).unref?.();
+  }
+
+  private async sendKeepAlive(): Promise<void> {
+    const request = this.lastModelRequest;
+    const policy = keepAlivePolicy(this.promptCacheTtl());
+    if (!request || !policy || !this.autonomousLoopRunning || this.agent.state.isStreaming) return;
+    if (this.promptCache.keepAliveRefusal(policy, Date.now()) !== null) return;
+    if (this.checkSpendCaps() || this.budgetExhausted) return;
+    const result = await piModels.completeSimple(request.model, request.context, {
+      ...request.options,
+      ...(this.providerFetch ? { fetch: this.providerFetch } : {}),
+      maxTokens: 1,
+      maxRetries: 0,
+    });
+    const usage = extractTurnUsage(result);
+    const cost = usage.costUsd ?? 0;
+    const now = Date.now();
+    recordSpend("agent", cost || undefined, now);
+    this.metrics.totalCostUsd += cost;
+    this.metrics.totalInputTokens += (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
+    this.metrics.totalCacheReadTokens += usage.cacheReadTokens ?? 0;
+    this.metrics.totalCacheWriteTokens += usage.cacheWriteTokens ?? 0;
+    if (cost) this.spend.record(cost, now);
+    this.promptCache.noteKeepAlive(now, cost);
+    if (result.stopReason === "error" || !keepAliveHit(usage)) {
+      this.promptCache.disabled = true;
+      this.log.warn(
+        LEAN_AGENT_LOG_CATEGORY,
+        `cache keep-alive disabled: ${result.stopReason === "error" ? String(result.errorMessage ?? "error") : "the replay did not read the cache"}`,
+        { agent: this.name },
+      );
+      return;
+    }
+    this.scheduleKeepAlive();
   }
 
   // ─── Stuck Detection ──────────────────────────────────────────────────
@@ -5265,6 +5474,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       // subscribers can show "agent is mid-thought" vs idle state.
       if (event.type === "turn_start") {
         this.turnStartedAt = Date.now();
+        this.promptCache.noteRequest(this.turnStartedAt);
         this.firstTurnOutputAt = 0;
         this.currentPromptTurns += 1;
         if (
@@ -5919,6 +6129,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       totalCacheWriteTokens: this.metrics.totalCacheWriteTokens,
       upstreamModel: this.lastUpstreamModel,
       selfEchoesDropped: this.selfEchoesDropped,
+      promptCache: { ...this.promptCache.metrics },
       costLastHourUsd: this.spend.total(now),
       spendCaps: {
         perAgentUsdPerHour: this.spendGuard.perAgentUsdPerHour,
@@ -6190,6 +6401,7 @@ The goal is a smaller, sharper memory — not more notes.`;
     await this.agent.waitForIdle().catch(() => {});
     if (this.autonomousLoopPromise) await this.autonomousLoopPromise;
     this.stopCheckpointTimer();
+    this.cancelKeepAlive();
 
     // Apply new config
     if (opts.thinkingLevel !== undefined) {
