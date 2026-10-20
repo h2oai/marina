@@ -114,6 +114,23 @@ starter) to `.env` for source-based configuration, or use the dashboard for supp
 settings; every setting is in [`config/environment.reference`](config/environment.reference). `MARINA_OPEN_API=true` is an
 explicit local-development bypass, not a production default. Prefer containers? See [Docker](#docker).
 
+### Use `marina` like Claude Code or Codex
+
+Link the CLI once from the checkout, then run it in any project folder:
+
+```bash
+bun run setup:cli          # links marina into ~/.bun/bin and prints the PATH line for your shell
+cd ~/your-project
+marina                     # coding session on this folder (same as `marina .`)
+marina --tui               # fullscreen workspace
+marina -p "fix the failing test"   # one-shot: run a task, print the diff + summary, exit
+marina --agent claude      # or codex / pi: run that coder inside Marina
+```
+
+No server needs to be running first; `marina attach` joins one that is. Configure a provider with
+`marina init` (or `.env`). See the [coding guide](docs/guides/coding.md#start-in-your-project-folder)
+and `marina --help`.
+
 Using a packaged desktop build instead? Open Marina and follow **Start Here**; provider setup and
 agent controls are clickable and no config file is required. See [Desktop App](#desktop-app).
 

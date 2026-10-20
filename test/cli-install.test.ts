@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { runningFolderServer, serverInfoPath } from "../scripts/code";
-import { setupCli } from "../scripts/setup-cli";
+import { pathHint, setupCli } from "../scripts/setup-cli";
 
 const pkg = (await Bun.file(join(import.meta.dir, "..", "package.json")).json()) as {
   version: string;
@@ -29,6 +29,13 @@ describe("marina from any folder", () => {
     writeFileSync(first.link, "#!/bin/sh\necho other\n");
     expect(setupCli({ env }).status).toBe("occupied");
     expect(setupCli({ env, force: true }).status).toBe("linked");
+  });
+
+  it("tells each shell how to add the bin folder to PATH in its own syntax", () => {
+    expect(pathHint("/b", { SHELL: "/usr/bin/fish" })).toContain("fish_add_path /b");
+    expect(pathHint("/b", { SHELL: "/bin/zsh" })).toContain('~/.zshrc:\n  export PATH="/b:$PATH"');
+    expect(pathHint("/b", { SHELL: "/bin/bash" })).toContain("~/.bashrc");
+    expect(pathHint("/b", {})).toContain('your shell profile:\n  export PATH="/b:$PATH"');
   });
 
   it("runs through a link from any working directory", () => {

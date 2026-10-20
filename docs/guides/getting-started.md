@@ -27,7 +27,8 @@ bun run setup:cli     # links marina into Bun's bin folder (~/.bun/bin)
 marina version        # then, in any project: marina .
 ```
 
-If the folder is not on your PATH, the command prints the exact `export PATH=…` line to add.
+If the folder is not on your PATH, the command prints the exact line for your shell
+(`export PATH=…` for bash/zsh, `fish_add_path ~/.bun/bin` for fish).
 The terminal works without building the dashboard; only `/dashboard` needs
 `bun run dashboard:build`.
 

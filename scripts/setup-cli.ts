@@ -9,7 +9,8 @@
  * own repository through the link). `<bin>` is Bun's global bin folder
  * (`$BUN_INSTALL/bin`, default `~/.bun/bin`). An existing
  * `marina` that points elsewhere is left alone unless `--force`. Prints
- * whether the folder is on PATH, and the exact line to add when it is not.
+ * whether the folder is on PATH, and the exact line to add when it is not —
+ * in the syntax of the user's shell (`$SHELL`: fish gets `fish_add_path`).
  */
 
 import {
@@ -22,7 +23,7 @@ import {
   symlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { basename, delimiter, join, resolve } from "node:path";
 
 export function cliBinDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(env.BUN_INSTALL?.trim() || join(homedir(), ".bun"), "bin");
@@ -55,6 +56,15 @@ export function setupCli(opts: { env?: NodeJS.ProcessEnv; force?: boolean } = {}
   return { link, target, status, onPath };
 }
 
+/** The instruction that puts `bin` on PATH, in the syntax of the user's shell. */
+export function pathHint(bin: string, env: NodeJS.ProcessEnv = process.env): string {
+  const shell = basename(env.SHELL?.trim() ?? "");
+  if (shell === "fish") return `run this once (it persists):\n  fish_add_path ${bin}\n`;
+  const profile =
+    shell === "zsh" ? "~/.zshrc" : shell === "bash" ? "~/.bashrc" : "your shell profile";
+  return `add this to ${profile}:\n  export PATH="${bin}:$PATH"\n`;
+}
+
 function isLink(path: string): boolean {
   try {
     return lstatSync(path).isSymbolicLink();
@@ -75,6 +85,6 @@ if (import.meta.main) {
   process.stdout.write(
     r.onPath
       ? `marina is on your PATH (${r.link} → ${r.target}). Try: marina version\n`
-      : `Linked ${r.link} → ${r.target}.\n${bin} is not on your PATH; add this to your shell profile:\n  export PATH="${bin}:$PATH"\n`,
+      : `Linked ${r.link} → ${r.target}.\n${bin} is not on your PATH; ${pathHint(bin)}`,
   );
 }
