@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { type BatchRun, describeEarned, runBatch, type Variant } from "../benchmarks/futurex/run";
 import { saveAnswer, saveTypedAnswer } from "../src/engine/commands/forecast";
+import { currentEvidenceCutoff, withEvidenceCutoff } from "../src/engine/evidence-fence";
 import type { AnswerSpec } from "../src/forecast/answer-types";
 import {
   type CardEvidence,
@@ -706,5 +707,75 @@ describe("FutureX shadows: filed on adoption, settled at learn time", () => {
       await drainForecastShadows();
       db.close();
     }
+  });
+});
+
+describe("a shadow under the as-of fence", () => {
+  let db: MarinaDB;
+  beforeEach(() => {
+    db = new MarinaDB(":memory:");
+  });
+  afterEach(async () => {
+    await drainForecastShadows();
+    db.close();
+  });
+
+  const CUT = "2026-06-01T00:00:00.000Z";
+  /** Analysts that record the fence each call ran under. */
+  const spying = (seen: Array<string | undefined>) => ({
+    ...deps(),
+    analysts: [
+      part("s1", () => {
+        seen.push(currentEvidenceCutoff());
+        return JSON.stringify({ answer: "Yes", probabilities: { Yes: 0.7, No: 0.3 } });
+      }),
+      part("s2", () => {
+        seen.push(currentEvidenceCutoff());
+        return JSON.stringify({ answer: "No", probabilities: { Yes: 0.4, No: 0.6 } });
+      }),
+    ],
+  });
+
+  it("a shadow planned inside a fenced context stays fenced, even when started outside it", async () => {
+    const req = { question: "Will it?", answer: yesNo };
+    const live = await liveAnswer(req);
+    const seen: Array<string | undefined> = [];
+    withEvidenceCutoff(CUT, () =>
+      planForecastShadow(live, {
+        req,
+        deps: spying(seen),
+        routing: live.routing,
+        costUsd: () => 0,
+        env: ON,
+        minN: 30,
+      }),
+    );
+    const liveId = saveTypedAnswer(db, "Ada", live)!;
+    const start = startForecastShadow(db, liveId, live, { draw: 0 });
+    if (!start.started) throw new Error(`not started: ${start.reason}`);
+    await start.done;
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((c) => c === CUT)).toBe(true);
+  });
+
+  it("a shadow started inside a fenced context stays fenced in the background", async () => {
+    const req = { question: "Will it?", answer: yesNo };
+    const live = await liveAnswer(req);
+    const seen: Array<string | undefined> = [];
+    planForecastShadow(live, {
+      req,
+      deps: spying(seen),
+      routing: live.routing,
+      costUsd: () => 0,
+      env: ON,
+      minN: 30,
+    });
+    const liveId = saveTypedAnswer(db, "Ada", live)!;
+    const start = withEvidenceCutoff(CUT, () => startForecastShadow(db, liveId, live, { draw: 0 }));
+    if (!start.started) throw new Error(`not started: ${start.reason}`);
+    expect(currentEvidenceCutoff()).toBeUndefined();
+    await start.done;
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((c) => c === CUT)).toBe(true);
   });
 });

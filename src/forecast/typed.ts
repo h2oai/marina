@@ -108,6 +108,7 @@ import {
 } from "./lookups";
 import type { SuppliedPrior } from "./prior";
 import { DEFAULT_QUANT_WEIGHT, type QuantMode, type QuantRecord, quantStage } from "./quant";
+import { fencedForResidents } from "./resident-part";
 
 export interface TypedForecastRequest {
   question: string;
@@ -590,6 +591,10 @@ export async function forecastTyped(
   req: TypedForecastRequest,
   deps: TypedForecastDeps,
 ): Promise<TypedForecastAnswer> {
+  // ── As-of fence hook (`./resident-part.ts`): resident parts + a past cutoff ──
+  const fenced = fencedForResidents(req, deps, () => forecastTyped(req, deps));
+  if (fenced) return fenced;
+  // ── end as-of fence hook ──
   const started = Date.now();
   const now = deps.now?.() ?? new Date();
   const opts = deps.options ?? {};

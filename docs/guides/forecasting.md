@@ -543,6 +543,38 @@ Agents use the same classifier with `triage <question> [type:…] [asof:<cutoff>
 model call) and the built-in `intake-triage` skill. `bun run eval:triage` measures it offline on
 stored results: the class mix and each class's mean score and share of the loss.
 
+## Residents as forecasters
+
+With `MARINA_FORECAST_RESIDENTS=on`, the world's residents can answer a forecast themselves, with
+their own tools, memory and lessons:
+
+```
+forecast Will the Fed cut rates in December 2026? role:forecaster pattern:delphi residents:3
+forecast Will turnout exceed 60%? crew:pollsters pattern:ensemble
+forecast Was CPI above 3% in May 2026? asof:2026-06-01 measure:yes
+```
+
+- `role:<role>` asks the live resident with that role and the highest standing; `crew:<crew>` asks
+  the crew serving `marina:<crew>`. With neither, `role:forecaster`.
+- `pattern:ensemble` (the default) asks `residents:` (default 3) residents independently and
+  combines their answers by type; `pattern:delphi` then shows each an anonymous panel summary and
+  asks it to revise once.
+- The forecast is a world task: Marina researches first, gives every resident the same dossier,
+  and combines with the same pure code as any typed forecast (critique, answer contract, triage,
+  the Arbiter). The reply names the task, the residents that answered and the calls spent.
+- **The as-of fence.** With a past `asof:` (or `measure:yes`, which always fences), every resident's
+  tools are bound to that date while it works: web search answers only from date-strict sources
+  published by then, a fetched page is the archived copy from then, `data` reads as of then,
+  `recall` and `lessons` serve only what was known by then, and anything that could reach later
+  evidence (other outbound tools, a nested `forecast`) is refused with a message naming the cutoff.
+  A live question about the future runs without it.
+- Each resident's own run is filed as its own answer, so when the question resolves the residents
+  whose runs scored earn `forecast_resolved` standing (an `eval_mode` measurement never does).
+- `POST /v1/forecast` takes the same as `pattern`, `crew`, `role` and `residents` with a typed
+  `answer`; it needs an API key bound to an entity.
+- Outside a server (`bun run forecast`), `marina:<crew>` analysts are asked over HTTP with the
+  fence and deadline as headers; `role:` analysts need the server.
+
 ## Keeping score
 
 Every in-world answer is saved with its full audit trail (`forecast list` shows yours). To have
@@ -573,6 +605,8 @@ are saved with their answer as one string (`prediction`).
 | `MARINA_FORECAST_LOOKUPS` | `auto` | structured sources: `auto` (every one that can run here), `off`, or a list of `polymarket`, `kalshi`, `odds`, `fred`, `bls`, `markets` / `all`, plus the opt-in `manifold` (see [Lookups](#lookups)) |
 | `MARINA_FORECAST_CONTRACT` | `off` | typed answers: the [answer contract](#answer-contract) — `observe` records whether the final answer meets the question's own format instructions; `on` carries them through every stage and enforces them |
 | `MARINA_FORECAST_MARINA_URL` / `_KEY` | `http://localhost:3300` | where `marina:<crew>` analysts are asked |
+| `MARINA_FORECAST_RESIDENTS` | `off` | `on`: `marina:<crew>` and `role:<r>` analysts are residents asked in-process, and `forecast <q> crew:<c> pattern:<p>` (or `role:<r>`) runs a [resident forecast](#residents-as-forecasters) |
+| `MARINA_FORECAST_RESIDENT_CALLS` / `_TIMEOUT_S` / `_BUDGET_USD` | `24` / `900` / none | per resident forecast: resident calls, wall clock (each call's deadline is what is left), and its own spend cap |
 
 An analyst may be a crew: `MARINA_FORECAST_ANALYSTS=marina:answerer` asks the `answerer` crew on a
 Marina server, so a crew in, say, the verification formation answers every run. The retriever

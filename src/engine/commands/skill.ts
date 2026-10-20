@@ -17,6 +17,7 @@ import { memoryNoteResults, memoryResult } from "../../memory/command-result";
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { currentEvidenceCutoffMs } from "../evidence-fence";
 import { parseModifiers } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
 import { isLocalUngated } from "../trust-profile";
@@ -204,11 +205,15 @@ export function skillCommand(deps: {
             Math.max(Number(parsed.values.bytes ?? SKILL_TOP_DEFAULT_BYTES), 200),
             SKILL_TOP_MAX_BYTES,
           );
-          const own = db.recallNotesWithType(entity.name, query, "skill", {
-            weightImportance: 0.4,
-            weightRecency: 0.2,
-            weightRelevance: 0.4,
-          })[0];
+          // The as-of fence (src/engine/evidence-fence.ts): only a skill written by the cutoff.
+          const fence = currentEvidenceCutoffMs();
+          const own = db
+            .recallNotesWithType(entity.name, query, "skill", {
+              weightImportance: 0.4,
+              weightRecency: 0.2,
+              weightRelevance: 0.4,
+            })
+            .find((n) => fence === undefined || n.created_at <= fence);
           if (own) {
             ctx.send(input.entity, clipBytes(`${own.content} (own skill #${own.id})`, budget));
             return;

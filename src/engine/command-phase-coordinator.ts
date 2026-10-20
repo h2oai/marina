@@ -15,10 +15,12 @@ import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
 import { closestName } from "./did-you-mean";
 import { getErrorMessage, tryLog } from "./errors";
+import { commandFenceFor, fenceDecision, fenceRefusal } from "./evidence-fence";
 import {
   armGatePass,
   claimCommandPass,
   runCommandScope,
+  scopeEvidenceFence,
   setCurrentCodingTarget,
   setCurrentCommand,
 } from "./gate-context";
@@ -84,15 +86,21 @@ export class CommandPhaseCoordinator {
    * nor clear them.
    */
   execute(entityId: EntityId, raw: string, opts?: CommandExecutionOptions): Promise<void> {
-    return runCommandScope(entityId, async () => {
-      // Copy at entry so a caller cannot retarget an invocation across an await.
-      const own =
-        opts?.codingTarget !== undefined
-          ? { ...opts, codingTarget: parseCodingCommandTarget(opts.codingTarget) }
-          : opts;
-      setCurrentCodingTarget(entityId, own?.codingTarget);
-      await this.executeInner(entityId, raw, own);
-    });
+    // The as-of fence (src/engine/evidence-fence.ts) is read once, at entry:
+    // the entity's own fences, the enclosing execution's and in-process frames.
+    return runCommandScope(
+      entityId,
+      async () => {
+        // Copy at entry so a caller cannot retarget an invocation across an await.
+        const own =
+          opts?.codingTarget !== undefined
+            ? { ...opts, codingTarget: parseCodingCommandTarget(opts.codingTarget) }
+            : opts;
+        setCurrentCodingTarget(entityId, own?.codingTarget);
+        await this.executeInner(entityId, raw, own);
+      },
+      commandFenceFor(entityId),
+    );
   }
 
   private async executeInner(
@@ -170,6 +178,21 @@ export class CommandPhaseCoordinator {
         `Unknown command: ${input.verb}.${near ? ` Did you mean "${near}"?` : ""} Type "help" for commands.`,
       );
       failCommandResponse(`Unknown command: ${input.verb}`);
+      recordUsage(false);
+      return;
+    }
+
+    // Under an evidence cutoff only the commands the fence policy names run
+    // (src/engine/evidence-fence.ts): room commands and unknown builtins are
+    // refused — fail closed.
+    const fence = scopeEvidenceFence();
+    if (
+      fence &&
+      fenceDecision(def?.name, input.tokens, resolved?.owner === "builtin") === "refuse"
+    ) {
+      const message = fenceRefusal(def?.name ?? input.verb, fence.cutoff);
+      failCommandResponse(message);
+      this.host.sendToEntity(entityId, message);
       recordUsage(false);
       return;
     }

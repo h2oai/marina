@@ -47,6 +47,7 @@
  */
 
 import { getErrorMessage } from "../engine/errors";
+import { currentEvidenceCutoff, withEvidenceCutoff } from "../engine/evidence-fence";
 import { Logger } from "../engine/logger";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { resolveForecast } from "../outcomes/forecast";
@@ -103,6 +104,8 @@ export interface ShadowPlan {
   env: NodeJS.ProcessEnv;
   /** Routing's paired minimum (a challenger past it has enough pairs). */
   minN: number;
+  /** The as-of fence the live answer ran under (ISO); its shadow runs under it too. */
+  fence?: string;
 }
 
 /** Plans waiting for their live answer to be filed (a plain answer is found by its `typed`). */
@@ -114,7 +117,10 @@ const plans = new WeakMap<object, ShadowPlan>();
  */
 export function planForecastShadow(answer: object, plan: ShadowPlan): void {
   if (!shadowSettingsFromEnv(plan.env) || !plan.routing) return;
-  plans.set(answer, plan);
+  // A live answer made under the as-of fence leaves a fenced plan
+  // (src/engine/evidence-fence.ts): its shadow can never see more than it did.
+  const fence = currentEvidenceCutoff();
+  plans.set(answer, fence ? { ...plan, fence } : plan);
 }
 
 /**
@@ -337,7 +343,11 @@ function startShadow(
     if (!gate.run) return { started: false, reason: gate.reason };
     inflight.count++;
     inflight.reserveUsd += estimateUsd;
-    const done = runShadow(db, t, plan, card, typed)
+    // Fenced where it was planned or started: the tighter cutoff binds the shadow's
+    // whole run, background included (`withEvidenceCutoff` nests and only tightens).
+    const done = withEvidenceCutoff(plan.fence, () =>
+      withEvidenceCutoff(currentEvidenceCutoff(), () => runShadow(db, t, plan, card, typed)),
+    )
       .catch((err): ShadowResult => {
         logger.warn("forecast", "shadow challenger failed", {
           target: t.externalId,

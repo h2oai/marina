@@ -51,6 +51,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Earned forecast routing | experimental | `MARINA_FORECAST_HISTORY` with enough resolved outcomes | src/forecast |
 | Research authority mode | experimental | `MARINA_RESEARCH_AUTHORITY=on` | src/research |
 | The Arbiter | experimental | `MARINA_FORECAST_ARBITER`, `MARINA_VERIFY_ARBITER`; `arbiter` | src/orchestration/arbiter.ts |
+| Forecasts by residents (as-of fence) | experimental | `MARINA_FORECAST_RESIDENTS=on`; `forecast <q> crew:<c> pattern:<p>` | src/forecast/resident-part.ts, src/engine/evidence-fence.ts |
 | Hybrid and vector retrieval | experimental | `MARINA_MEMORY_EMBEDDINGS`, `MARINA_CORPUS_EMBEDDINGS` | src/memory, src/research |
 | H2O-Lightning decision preset | experimental | `MARINA_LIGHTNING_MODEL=<OpenRouter id>` then `MARINA_DECISIONS=lightning` (no default id; off) | src/decisions/config.ts |
 | Text patterns (`pattern run`, `POST /v1/patterns/run`) | experimental | `pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run` | src/orchestration/text-patterns.ts, src/engine/commands/pattern.ts |

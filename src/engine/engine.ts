@@ -236,7 +236,21 @@ export class Engine {
     this.entities = new EntityManager();
     this.rooms = new RoomManager();
     this.commands = new CommandRouter();
-    this._connections = new ConnectionManager();
+    // The as-of fence is relayed to agents only (src/engine/evidence-fence.ts):
+    // the same agent signals as a login (internal/MCP/agent connection, or an
+    // account with an agent config or agent principal); a person keeps their tools.
+    this._connections = new ConnectionManager((id) => {
+      const entity = this.entities.get(id as EntityId);
+      if (!entity) return false;
+      const conn = this._connections.getConnectionForEntity(id as EntityId) as
+        | { internal?: boolean; protocol?: string; agent?: boolean }
+        | undefined;
+      if (conn?.internal || conn?.protocol === "mcp" || conn?.agent) return true;
+      return (
+        !!this.db &&
+        (!!this.db.getAgentConfig(entity.name) || !!this.db.getPrincipal("agent", entity.name))
+      );
+    });
     this.sandbox = new RoomSandbox();
     this.db = this.config.db;
     this._eventLog = new EventLog(this.logger, this.db);

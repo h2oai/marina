@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Connection, EntityId, Perception } from "../types";
+import { relayEvidenceFence } from "./evidence-fence";
 import { stampTraceLinks } from "./trace-context";
 
 /**
@@ -14,6 +15,12 @@ import { stampTraceLinks } from "./trace-context";
 export class ConnectionManager {
   private connections = new Map<string, Connection>();
   private entityToConnection = new Map<EntityId, string>();
+
+  /**
+   * @param fenceRelayTo which recipients a fenced execution's evidence cutoff
+   *   is relayed to (`src/engine/evidence-fence.ts`); undefined = every one.
+   */
+  constructor(private readonly fenceRelayTo?: (entityId: string) => boolean) {}
 
   /** Store a new connection. */
   add(conn: Connection): void {
@@ -97,6 +104,8 @@ export class ConnectionManager {
     if (!conn) return false;
     // Request traces ride along: a perception a traced command delivers to
     // another entity carries the command's span links (src/engine/trace-context.ts).
+    // A fenced execution fences whoever it reaches (src/engine/evidence-fence.ts).
+    relayEvidenceFence(entityId, this.fenceRelayTo);
     conn.send(stampTraceLinks(entityId, perception));
     return true;
   }

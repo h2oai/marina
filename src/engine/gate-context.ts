@@ -66,6 +66,14 @@ interface CommandScope {
   codingTarget?: CodingCommandTarget;
   /** False once the execution returned: detached work it spawned sees nothing. */
   open: boolean;
+  /**
+   * The as-of fence of this execution (epoch ms; `src/engine/evidence-fence.ts`):
+   * the tightest of the caller's and its enclosing frames'. Unlike the pass it
+   * outlives the execution, so detached work it spawned stays fenced.
+   */
+  evidenceCutoff?: number;
+  /** When the fence that set `evidenceCutoff` lapses (epoch ms), for relays. */
+  evidenceFenceUntil?: number;
   parent?: CommandScope;
 }
 
@@ -83,8 +91,24 @@ function scopeFor(entityId: string): CommandScope | undefined {
  * Run one command execution in its own frame. The frame starts with no
  * current command and no armed pass, and closes when `fn` settles.
  */
-export function runCommandScope<T>(entityId: string, fn: () => Promise<T>): Promise<T> {
-  const scope: CommandScope = { entityId, open: true, parent: scopes.getStore() };
+export function runCommandScope<T>(
+  entityId: string,
+  fn: () => Promise<T>,
+  fence?: { cutoff: number; until?: number },
+): Promise<T> {
+  const parent = scopes.getStore();
+  const scope: CommandScope = { entityId, open: true, parent };
+  // A nested execution never loosens the fence of the one that started it.
+  const cutoffs = [fence?.cutoff, parent?.evidenceCutoff].filter(
+    (c): c is number => c !== undefined && Number.isFinite(c),
+  );
+  if (cutoffs.length) {
+    scope.evidenceCutoff = Math.min(...cutoffs);
+    const untils = [fence?.until, parent?.evidenceFenceUntil].filter(
+      (u): u is number => u !== undefined && Number.isFinite(u),
+    );
+    if (untils.length) scope.evidenceFenceUntil = Math.max(...untils);
+  }
   return scopes.run(scope, async () => {
     try {
       return await fn();
@@ -95,6 +119,25 @@ export function runCommandScope<T>(entityId: string, fn: () => Promise<T>): Prom
       scope.codingTarget = undefined;
     }
   });
+}
+
+/**
+ * The as-of fence of the innermost execution frame (epoch ms), if any, and
+ * when it lapses. Read by `currentEvidenceCutoff()` in
+ * `src/engine/evidence-fence.ts`; a closed frame still answers.
+ */
+export function scopeEvidenceFence(): { cutoff: number; until?: number } | undefined {
+  const scope = scopes.getStore();
+  if (scope?.evidenceCutoff === undefined) return undefined;
+  return {
+    cutoff: scope.evidenceCutoff,
+    ...(scope.evidenceFenceUntil !== undefined ? { until: scope.evidenceFenceUntil } : {}),
+  };
+}
+
+/** The entity whose execution frame is innermost, if any. */
+export function scopeEntity(): string | undefined {
+  return scopes.getStore()?.entityId;
 }
 
 /**

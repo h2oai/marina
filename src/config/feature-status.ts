@@ -227,6 +227,12 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/orchestration/arbiter.ts",
   },
   {
+    name: "Forecasts by residents (as-of fence)",
+    status: "experimental",
+    enable: "`MARINA_FORECAST_RESIDENTS=on`; `forecast <q> crew:<c> pattern:<p>`",
+    owner: "src/forecast/resident-part.ts, src/engine/evidence-fence.ts",
+  },
+  {
     name: "Hybrid and vector retrieval",
     status: "experimental",
     enable: "`MARINA_MEMORY_EMBEDDINGS`, `MARINA_CORPUS_EMBEDDINGS`",

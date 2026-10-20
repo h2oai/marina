@@ -4352,6 +4352,9 @@ Usage: forecast <question> [resolves:<venue>/<ticker>]   e.g. forecast Will the 
        forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves
        forecast competence [family]      what Marina's resolved record says each method is good at
        forecast routes [family]          paired evidence per family and method, and which routes are earned
+       forecast <question> crew:<crew>|role:<role> [pattern:ensemble|delphi] [residents:N] [asof:<date>] [measure:yes]
+                                         residents answer with their own tools, as a task run as a Score
+                                         (MARINA_FORECAST_RESIDENTS=on; a past asof: or measure:yes fences their tools)
 
 Category: Markets & Forecasting. Minimum rank: 0.
 Aliases: `predict`.
@@ -4416,6 +4419,36 @@ Effect: read.
 
 - `field-0` (`family prefix`): text, optional group `option-0`.
 - Group `option-0`: `family prefix`.
+
+### `forecast <question> crew:<crew> [pattern:<ensemble|delphi>] [residents:<n>] [asof:<iso>] [measure:yes]`
+
+Effect: execute.
+
+- `field-0` (`question`): text, required.
+- `field-1` (`crew`): text, required.
+- `field-2` (`pattern`): text, optional group `option-0`, choices `ensemble`, `delphi`.
+- `field-3` (`residents`): number, optional group `option-1`.
+- `field-4` (`asof`): text, optional group `option-2`.
+- `field-5` (`measure`): text, optional group `option-3`.
+- Group `option-0`: `pattern:ensemble|delphi`.
+- Group `option-1`: `residents:n`.
+- Group `option-2`: `asof:iso`.
+- Group `option-3`: `measure:yes`.
+
+### `forecast <question> role:<role> [pattern:<ensemble|delphi>] [residents:<n>] [asof:<iso>] [measure:yes]`
+
+Effect: execute.
+
+- `field-0` (`question`): text, required.
+- `field-1` (`role`): text, required.
+- `field-2` (`pattern`): text, optional group `option-0`, choices `ensemble`, `delphi`.
+- `field-3` (`residents`): number, optional group `option-1`.
+- `field-4` (`asof`): text, optional group `option-2`.
+- `field-5` (`measure`): text, optional group `option-3`.
+- Group `option-0`: `pattern:ensemble|delphi`.
+- Group `option-1`: `residents:n`.
+- Group `option-2`: `asof:iso`.
+- Group `option-3`: `measure:yes`.
 
 ## gate
 

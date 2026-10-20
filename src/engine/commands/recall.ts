@@ -3,6 +3,7 @@
 
 import type { TaskManager } from "../../coordination/task-manager";
 import { memoryNoteResults, memoryResult } from "../../memory/command-result";
+import { findDurableTwin } from "../../memory/legacy-projection";
 import {
   expandedFtsQueries,
   expansionForEntityCached,
@@ -28,6 +29,7 @@ import {
 import type { MarinaDB, ScoredNoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { DAY_MS } from "../constants";
+import { currentEvidenceCutoffMs } from "../evidence-fence";
 import { extractFlags, extractModifiers } from "../parse-input";
 
 /** Default content budget for `recall <q> all|evidence` — roomier than the
@@ -173,6 +175,8 @@ export function recallCommand(deps: {
       }
 
       const weights = { weightImportance, weightRecency, weightRelevance };
+      // The as-of fence (src/engine/evidence-fence.ts): only memory known by the cutoff.
+      const asOf = currentEvidenceCutoffMs();
 
       // ── Unified surface: `recall <q> all` (every tier) / `recall <q> evidence`
       // (durable tiers only). Same builder the continuation prompt, /mem/context,
@@ -192,6 +196,7 @@ export function recallCommand(deps: {
             weights,
             noteType,
             budgetBytes,
+            ...(asOf !== undefined ? { asOf } : {}),
           });
 
           // Legacy hits surfaced through the unified view get the same
@@ -264,6 +269,10 @@ export function recallCommand(deps: {
         noteType,
         trusted: flags.has("trusted"),
       });
+      if (asOf !== undefined)
+        results = results.filter(
+          (n) => n.created_at <= asOf && (findDurableTwin(db, n.id)?.version ?? 1) <= 1,
+        );
 
       // Touch each returned note to update last_accessed and recall_count.
       for (const note of results) {
@@ -284,7 +293,8 @@ export function recallCommand(deps: {
 
       // Collect task FTS results
       const taskLines: string[] = [];
-      if (deps.taskManager) {
+      // Open tasks are live world state with no as-of: not shown under a fence.
+      if (deps.taskManager && asOf === undefined) {
         try {
           const taskResults = deps.taskManager.searchTasks(query, { limit: 5 });
           const openTasks = taskResults.filter(

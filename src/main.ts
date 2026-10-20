@@ -34,6 +34,7 @@ import {
   setTrustProfile,
 } from "./engine/trust-profile";
 import { loadExtensions } from "./extensions/loader";
+import { attachResidentDispatcher } from "./forecast/resident-part";
 import { enableOutcomeLearning } from "./learning/service";
 import { parseEmbeddingEnv } from "./memory/embedding-config";
 import { closeWorldMemoryService, worldMemoryService } from "./memory/world-service";
@@ -60,6 +61,7 @@ import { describeDefaultUpstream } from "./net/model/model-api";
 import { detectLocalContextWindow, detectOllamaDefaultModel } from "./net/model/model-discovery";
 import { providerSetupHint } from "./net/model/provider-setup";
 import { markServingProcess } from "./net/model/self-model-token";
+import { inProcessResidentDispatcher } from "./net/model-api/resident-dispatch";
 import { TelnetServer } from "./net/telnet-server";
 import { resolveWsBindHostname, WebSocketServer } from "./net/websocket-server";
 import { MarinaDB } from "./persistence/database";
@@ -706,6 +708,9 @@ await Promise.all(
 await engine.initAgents(boundWsPort);
 
 engine.start();
+// Forecast parts may be residents (MARINA_FORECAST_RESIDENTS=on): in this
+// process they are asked in-process, not over HTTP (src/forecast/resident-part.ts).
+attachResidentDispatcher(inProcessResidentDispatcher(engine));
 
 // Security warnings
 if (!LOOPBACK_ONLY_BIND) {

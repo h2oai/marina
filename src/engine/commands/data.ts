@@ -11,6 +11,7 @@ import {
   dataSources,
 } from "../../forecast/data-query";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
+import { currentEvidenceCutoffMs } from "../evidence-fence";
 import { type ModifierSpec, parseModifiers, unknownSubcommand } from "../parse-input";
 import { parseBound } from "../search-providers/index";
 
@@ -118,6 +119,9 @@ Read-only. Nothing returned is dated after now or after asof:.`,
         }
         asOf = new Date(b);
       }
+      // The as-of fence (src/engine/evidence-fence.ts): never later than the cutoff.
+      const fence = currentEvidenceCutoffMs();
+      if (fence !== undefined && (!asOf || asOf.getTime() > fence)) asOf = new Date(fence);
       const rest = mods.rest.join(" ").trim();
       if (!rest) {
         ctx.send(input.entity, `Usage: ${USAGE}`);

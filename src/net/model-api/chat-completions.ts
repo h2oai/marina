@@ -9,6 +9,7 @@
 import { BUDGET_FORCED_HEADER, DEADLINE_HEADER } from "../../agent/budget-terminal";
 import { parseDeadlineHeader } from "../../coordination/request-deadline";
 import type { Engine } from "../../engine/engine";
+import { ASOF_HEADER, parseEvidenceCutoff, RESPONDENT_HEADER } from "../../engine/evidence-fence";
 import { stageRequestImages } from "../../engine/media/vision";
 import { evalOption, LESSONS_HEADER } from "../../learning/eval-context";
 import type { OutcomeDomain } from "../../learning/outcomes";
@@ -828,6 +829,10 @@ export async function runOpenaiChat(
     if (clientDeadline) opts.deadlineMs = clientDeadline;
     const evalCtx = evalOption(req).eval;
     if (evalCtx) opts.eval = evalCtx;
+    // The as-of fence (src/engine/evidence-fence.ts): it can only restrict the
+    // responder's tools, so any authenticated caller may set it.
+    const asof = parseEvidenceCutoff(req.headers.get(ASOF_HEADER) ?? undefined);
+    if (asof !== undefined) opts.evidenceCutoff = new Date(asof).toISOString();
     const wantStream = body.stream === true;
 
     // A deliberately tiny verified fast path keeps the demo reactive without
@@ -914,6 +919,7 @@ export async function runOpenaiChat(
       if (result.repaired) extra["x-marina-repair"] = result.repaired;
       if (result.budgetForced) extra[BUDGET_FORCED_HEADER] = result.budgetForced.reason;
       if (result.lessons) extra[LESSONS_HEADER] = result.lessons;
+      if (result.respondent) extra[RESPONDENT_HEADER] = result.respondent.name;
       return json(
         openaiCompletion(model, result.content, usageFromTrace(engine, result.requestId)),
         200,

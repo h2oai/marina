@@ -32,8 +32,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ResearchBrief } from "../arena/research/briefs";
 import { getErrorMessage } from "../engine/errors";
+import { currentEvidenceCutoff, fenceRefusal } from "../engine/evidence-fence";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { forecastRetrieverSpec } from "../forecast/retriever-default";
+import { strictDateFilter } from "./isolation";
 import type { ModelTurns } from "./model-turn";
 
 export const RESEARCH_ASK_MODES = [
@@ -287,11 +289,22 @@ export async function researchAsk(
     req.budgetUsd ?? RESEARCH_ASK_DEFAULT_BUDGET_USD,
     RESEARCH_ASK_MAX_BUDGET_USD,
   );
+  // The as-of fence (src/engine/evidence-fence.ts): under a cutoff the web
+  // agent (it reads the live web) is refused, and the retriever modes run on
+  // the keyless date-strict `asof` retriever, bounded at the cutoff, behind the
+  // strict pre-cutoff report filter.
+  const fence = currentEvidenceCutoff();
+  if (fence && req.mode === "agent") {
+    return {
+      error: `${fenceRefusal("research ask mode:agent", Date.parse(fence))} Use mode:retrieve (date-strict at the cutoff).`,
+    };
+  }
+  if (fence && req.retriever && !/^asof(:|$)/.test(req.retriever.trim())) {
+    return {
+      error: `${fenceRefusal(`research ask retriever:${req.retriever.trim()}`, Date.parse(fence))} Only retriever:asof[:<providers>] is date-strict.`,
+    };
+  }
   const lead = deps.lead ? deps.lead() : await defaultLead(base);
-  // TODO(as-of fence): when the command scope carries an evidence cutoff
-  // (`currentEvidenceCutoff()` in src/engine/gate-context.ts), bound the brief
-  // with `untilAt` and require a date-strict retriever for the retriever
-  // modes; the web agent reads the live web and must then be refused.
   try {
     if (req.mode === "agent") {
       if (req.retriever) {
@@ -306,7 +319,9 @@ export async function researchAsk(
         budgetUsd,
       });
     }
-    const picked = residentRetrieverSpec(req.retriever, base);
+    const picked = fence
+      ? { spec: req.retriever?.trim() || "asof" }
+      : residentRetrieverSpec(req.retriever, base);
     if ("error" in picked) return picked;
     const today = (deps.now?.() ?? new Date()).toISOString().slice(0, 10);
     const brief: ResearchBrief = {
@@ -314,12 +329,18 @@ export async function researchAsk(
       since: "1900-01-01",
       request: question,
       ...(req.measure ? { target: { measure: req.measure } } : {}),
-      untilAt: `${today}T23:59:59Z`,
+      ...(fence
+        ? { untilAt: fence, until: fence.slice(0, 10) }
+        : { untilAt: `${today}T23:59:59Z` }),
     };
-    const got = await (deps.retrieve ?? retrieveDefault)(brief, picked.spec, {
-      env: moded.env,
-      ...(lead ? { reviewer: lead } : {}),
-    });
+    const retrieve = (b: ResearchBrief) =>
+      (deps.retrieve ?? retrieveDefault)(b, picked.spec, {
+        env: moded.env,
+        ...(lead ? { reviewer: lead } : {}),
+      });
+    const got = fence
+      ? await strictDateFilter(retrieve as Parameters<typeof strictDateFilter>[0])(brief)
+      : await retrieve(brief);
     return {
       mode: req.mode,
       text: got.report,
