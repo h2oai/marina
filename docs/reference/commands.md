@@ -3681,6 +3681,10 @@ Usage:
   data odds <team…>                         — every upcoming game naming those teams
   data series <id|query> [asof:<date>]      — official series (FRED, BLS): latest reading and recent
                                               history; a past asof: reads FRED as published then
+  data polls <approval|generic-ballot> <subject> [asof:<date>] [exclude:<pollster,…>]
+                                            — published polls (VoteHub): fieldwork in the four weeks
+                                              before asof:, newest first, with rolling means
+  data crowd <query> [asof:<date>]          — crowd probabilities (Manifold, play money; alias manifold)
 Read-only. Nothing returned is dated after now or after asof:.
 
 Category: Information. Minimum rank: 0.
@@ -3732,6 +3736,30 @@ Effect: read.
 
 Effect: read.
 
+
+### `data polls <approval|generic-ballot> <subject> [asof:<date>] [exclude:<pollster,…>]`
+
+Effect: read.
+
+- `field-0` (`approval|generic-ballot`): text, required, choices `approval`, `generic-ballot`.
+- `field-1` (`subject`): text, required.
+- `field-2` (`asof`): text, optional group `option-0`.
+- `field-3` (`exclude`): text, optional group `option-1`.
+- Group `option-0`: `asof:date`.
+- Group `option-1`: `exclude:pollster,…`.
+
+### `data polls approval Donald Trump`
+
+Effect: read.
+
+
+### `data crowd <query> [asof:<date>]`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
+- `field-1` (`asof`): text, optional group `option-0`.
+- Group `option-0`: `asof:date`.
 
 ## debate
 
@@ -4318,6 +4346,8 @@ Forecast any question with cited, verified evidence and several models.
 Usage: forecast <question> [resolves:<venue>/<ticker>]   e.g. forecast Will the Fed cut rates in October 2026?
        forecast <question> type:choice|multi|number|ranking|text [options:A,B,C] [size:N] [ends:<ISO time>]
                                          a typed answer: plan → research rounds → several runs → critique
+       forecast [formation:<name>] [retriever:<spec>] … -- <question>
+                                         choose the formation (or verify / arbiter) and a retriever the operator allows
        forecast list                     your saved forecasts and, once resolved, their scores
        forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves
        forecast competence [family]      what Marina's resolved record says each method is good at
@@ -4346,6 +4376,18 @@ Effect: execute.
 - Group `option-0`: `options:id,id,…`.
 - Group `option-1`: `size:n`.
 - Group `option-2`: `ends:iso`.
+
+### `forecast [formation:<name>] [retriever:<spec>] [type:<t>] … -- <question>`
+
+Effect: execute.
+
+- `field-0` (`formation`): text, optional group `option-0`.
+- `field-1` (`retriever`): text, optional group `option-1`.
+- `field-2` (`type`): text, optional group `option-2`.
+- `field-3` (`question`): text, required.
+- Group `option-0`: `formation:name`.
+- Group `option-1`: `retriever:spec`.
+- Group `option-2`: `type:t`.
 
 ### `forecast list`
 
@@ -5332,6 +5374,13 @@ Effect: read.
 
 - `field-0` (`topic`): text, required.
 - `field-1` (`domain`): text, required, choices `forecast`, `code`, `tools`, `benchmark`, `arena`, `research`, `meta`.
+
+### `lessons <topic> for:<forecast|code|research|tools|benchmark>`
+
+Effect: read.
+
+- `field-0` (`topic`): text, required.
+- `field-1` (`for`): text, required, choices `forecast`, `code`, `research`, `tools`, `benchmark`.
 
 ### `lessons retire <id> reason:<text>`
 
@@ -6642,6 +6691,30 @@ Effect: read.
 Effect: read.
 
 
+## pattern
+
+[experimental] Run one free-text task under an orchestration pattern: several of the operator's models draft, argue, review or vote, and a checker picks ONE whole answer (never merged). Costs money: per-run budget (default $0.5, at most $2) and the daily spend cap apply.
+Usage: pattern run <pattern> [budget:<usd>] -- <task>
+       pattern list
+patterns: ensemble, debate, delphi, tournament, verification, deliberation, chorus, pipeline
+
+Category: Coordination. Minimum rank: 0.
+Aliases: `patterns`.
+
+### `pattern list`
+
+Effect: read.
+
+
+### `pattern run <pattern> [budget:<usd>] -- <task>`
+
+Effect: execute.
+
+- `field-0` (`pattern`): text, required.
+- `field-1` (`budget`): number, optional group `option-0`.
+- `field-2` (`task`): text, required.
+- Group `option-0`: `budget:usd`.
+
 ## plan
 
 plan <goal> — launch an observable plan project with tasks, shared memory, a fitting orchestration pattern, and an agent.
@@ -7605,6 +7678,9 @@ Effect: read.
 ## research
 
 research <goal> — launch an observable research project with tasks, shared memory, a fitting orchestration pattern, and an agent.
+research ask <question> — a cited answer now (web-research agent, or one retriever pass in a research mode); costs money.
+Usage: research ask [mode:agent|retrieve|evidence-loop|survey|authority] [retriever:<spec>] [measure:<m>] [budget:<usd>] -- <question>
+       modes: agent, retrieve, evidence-loop, survey, authority (default agent: the web-research agent with a citation audit)
 
 Category: Coordination. Minimum rank: 0.
 Aliases: none.
@@ -7614,6 +7690,20 @@ Aliases: none.
 Effect: execute.
 
 - `field-0` (`goal`): text, required.
+
+### `research ask [mode:agent|retrieve|evidence-loop|survey|authority] [retriever:<spec>] [measure:<m>] [budget:<usd>] -- <question>`
+
+Effect: execute.
+
+- `field-0` (`mode`): text, optional group `option-0`, choices `agent`, `retrieve`, `evidence-loop`, `survey`, `authority`.
+- `field-1` (`retriever`): text, optional group `option-1`.
+- `field-2` (`measure`): text, optional group `option-2`.
+- `field-3` (`budget`): number, optional group `option-3`.
+- `field-4` (`question`): text, required.
+- Group `option-0`: `mode:agent|retrieve|evidence-loop|survey|authority`.
+- Group `option-1`: `retriever:spec`.
+- Group `option-2`: `measure:m`.
+- Group `option-3`: `budget:usd`.
 
 ## role
 
@@ -8121,7 +8211,7 @@ Effect: write.
 
 ## skill
 
-Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd) | skill builtin [name] (skills shipped with the server, e.g. quantitative-estimates). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.
+Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd) | skill builtin [name] (skills shipped with the server, e.g. quantitative-estimates) | skill top <query> [bytes:<n>] (the one best skill — your own first, else a built-in — clipped to a budget). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.
 
 Category: Memory. Minimum rank: 0.
 Aliases: none.
@@ -8176,6 +8266,14 @@ Effect: read.
 Effect: read.
 
 - `field-0` (`query`): text, required.
+
+### `skill top <query> [bytes:<n>]`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
+- `field-1` (`bytes`): number, optional group `option-0`.
+- Group `option-0`: `bytes:n`.
 
 ### `skill share <id> <pool>`
 

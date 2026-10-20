@@ -465,7 +465,7 @@ await agent.think("note", "Sparse attention reduces compute by 60% — confirmed
 await agent.quit();
 ```
 
-In-world spawned agents (via `agent spawn`) get web access automatically through the `marina_web` tool — they search and fetch during their autonomous reasoning loop without any extra code.
+In-world spawned agents (via `agent spawn`) get web access automatically through the `marina_web` tool — they search and fetch during their autonomous reasoning loop without any extra code. They also load typed analysis tools on demand through `marina_tool_search` — `marina_forecast`, `marina_research`, `marina_swarm`, `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`, `marina_arbiter` and `marina_pattern` — each a typed front for one world command, under the same rank, gates and spend caps (see [Agent prompt architecture](agent-prompt-architecture.md#prompt-budget)).
 
 ---
 

@@ -442,7 +442,10 @@ export class PlatformMemoryBackend {
    * cross-board `meta` pool included; trusted first, labels kept). Each line
    * is one lesson; `ids` are the short ids the command shows.
    */
-  async lessonsFor(topic: string): Promise<{ lines: string[]; ids: string[] }> {
+  async lessonsFor(
+    topic: string,
+    work?: "forecast" | "research" | "code",
+  ): Promise<{ lines: string[]; ids: string[] }> {
     // Free text only: no modifier tokens, never a curation subcommand.
     const words = topic
       .replace(/\s+/g, " ")
@@ -451,7 +454,9 @@ export class PlatformMemoryBackend {
       .slice(0, 24);
     if (/^(retire|supersede)$/i.test(words[0] ?? "")) words.unshift("about");
     if (words.length === 0) return { lines: [], ids: [] };
-    const text = extractText(await this.client.command(`lessons ${words.join(" ")}`));
+    // `for:<work>` narrows the recall to that kind of work, budgeted (`lessons … for:`).
+    const scope = work ? ` for:${work}` : "";
+    const text = extractText(await this.client.command(`lessons ${words.join(" ")}${scope}`));
     const lines: string[] = [];
     const ids: string[] = [];
     for (const line of text.split("\n")) {
@@ -461,6 +466,23 @@ export class PlatformMemoryBackend {
       if (m[2]) ids.push(m[2]);
     }
     return { lines, ids };
+  }
+
+  /**
+   * The ONE best skill for a topic via `skill top` (the agent's own first,
+   * else a relevant built-in), clipped to `bytes`; undefined when none fits.
+   */
+  async topSkill(topic: string, bytes: number): Promise<string | undefined> {
+    const words = topic
+      .replace(/\s+/g, " ")
+      .split(" ")
+      .filter((w) => w && !/[:=]/.test(w))
+      .slice(0, 24);
+    if (words.length === 0) return undefined;
+    const text = extractText(
+      await this.client.command(`skill top ${words.join(" ")} bytes:${Math.floor(bytes)}`),
+    ).trim();
+    return text.startsWith("[Skill:") ? text : undefined;
   }
 
   async workInbox(): Promise<PlatformMemoryResult> {

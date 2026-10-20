@@ -3,8 +3,10 @@
 
 import {
   type DataQueryOptions,
+  dataCrowd,
   dataMarkets,
   dataOdds,
+  dataPolls,
   dataSeries,
   dataSources,
 } from "../../forecast/data-query";
@@ -23,14 +25,28 @@ import { parseBound } from "../search-providers/index";
  *   data markets <query> [asof:<date>]
  *   data odds <sport_key> [team…] [asof:<date>] | data odds <team…>
  *   data series <FRED or BLS id | query> [asof:<date>]
+ *   data polls <approval|generic-ballot> <subject> [asof:<date>] [exclude:<pollster,…>]
+ *   data crowd <query> [asof:<date>]            (alias: data manifold)
  *   data sources
  */
 
-const DATA_SPEC: ModifierSpec = { asof: { type: "string", aliases: ["before"] } };
+const DATA_SPEC: ModifierSpec = {
+  asof: { type: "string", aliases: ["before"] },
+  exclude: { type: "string" },
+};
+/** Every `data` subcommand that reads a third-party source. */
+export const DATA_LOOKUP_SUBCOMMANDS = [
+  "markets",
+  "odds",
+  "series",
+  "polls",
+  "crowd",
+  "manifold",
+] as const;
 /** One query per entity per this long (ms). */
 export const DATA_MIN_INTERVAL_MS = 2_000;
 const USAGE =
-  "data markets <query> [asof:<date>] | data odds <sport_key> [team…] | data odds <team…> | data series <id|query> [asof:<date>] | data sources";
+  "data markets <query> [asof:<date>] | data odds <sport_key> [team…] | data odds <team…> | data series <id|query> [asof:<date>] | data polls <approval|generic-ballot> <subject> [asof:<date>] | data crowd <query> [asof:<date>] | data sources";
 
 export function dataCommand(
   deps: { options?: DataQueryOptions; now?: () => number } = {},
@@ -47,6 +63,13 @@ export function dataCommand(
       { syntax: "data series <id|query> [asof:<date>]", effect: "read" },
       { syntax: "data series UNRATE", effect: "read" },
       { syntax: "data series CPIAUCSL asof:2026-06-30", effect: "read" },
+      {
+        syntax:
+          "data polls <approval|generic-ballot> <subject> [asof:<date>] [exclude:<pollster,…>]",
+        effect: "read",
+      },
+      { syntax: "data polls approval Donald Trump", effect: "read" },
+      { syntax: "data crowd <query> [asof:<date>]", effect: "read" },
     ],
     name: "data",
     aliases: [],
@@ -61,6 +84,10 @@ Usage:
   data odds <team…>                         — every upcoming game naming those teams
   data series <id|query> [asof:<date>]      — official series (FRED, BLS): latest reading and recent
                                               history; a past asof: reads FRED as published then
+  data polls <approval|generic-ballot> <subject> [asof:<date>] [exclude:<pollster,…>]
+                                            — published polls (VoteHub): fieldwork in the four weeks
+                                              before asof:, newest first, with rolling means
+  data crowd <query> [asof:<date>]          — crowd probabilities (Manifold, play money; alias manifold)
 Read-only. Nothing returned is dated after now or after asof:.`,
     handler: async (ctx: RoomContext, input) => {
       const tokens = input.tokens;
@@ -73,7 +100,7 @@ Read-only. Nothing returned is dated after now or after asof:.`,
         ctx.send(input.entity, dataSources(deps.options?.env ?? process.env));
         return;
       }
-      if (sub !== "markets" && sub !== "odds" && sub !== "series") {
+      if (!(DATA_LOOKUP_SUBCOMMANDS as readonly string[]).includes(sub)) {
         ctx.send(input.entity, unknownSubcommand("data", sub, USAGE));
         return;
       }
@@ -104,12 +131,28 @@ Read-only. Nothing returned is dated after now or after asof:.`,
       }
       lastQuery.set(input.entity, t);
       const opts = deps.options ?? {};
+      const exclude =
+        typeof mods.values.exclude === "string"
+          ? mods.values.exclude
+              .split(",")
+              .map((x) => x.trim())
+              .filter(Boolean)
+          : undefined;
       const out =
         sub === "markets"
           ? await dataMarkets(rest, asOf, opts)
           : sub === "odds"
             ? await dataOdds(rest, asOf, opts)
-            : await dataSeries(rest, asOf, opts);
+            : sub === "series"
+              ? await dataSeries(rest, asOf, opts)
+              : sub === "polls"
+                ? await dataPolls(
+                    mods.rest[0] ?? "",
+                    mods.rest.slice(1).join(" "),
+                    asOf,
+                    exclude ? { ...opts, exclude } : opts,
+                  )
+                : await dataCrowd(rest, asOf, opts);
       ctx.send(input.entity, out);
     },
   };
