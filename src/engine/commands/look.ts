@@ -32,6 +32,8 @@ export function normalizeLookTarget(args: string): string {
 export function lookCommand(
   getRoom: (entity: EntityId) => LoadedRoom | undefined,
   getRoomBoards?: (roomId: string) => Board[],
+  /** Display label per occupant name (`Wren [claude]` for a supervised resident). */
+  labelOf?: (entityName: string) => string,
 ): CommandDef {
   return {
     category: "Navigation",
@@ -109,7 +111,7 @@ export function lookCommand(
         },
       };
 
-      let text = formatRoom(perception);
+      let text = formatRoom(perception, labelOf);
 
       // Append boards if available
       if (getRoomBoards) {
@@ -137,7 +139,7 @@ function resolveItems(
   return resolved;
 }
 
-function formatRoom(p: RoomPerception): string {
+function formatRoom(p: RoomPerception, labelOf?: (name: string) => string): string {
   const lines: string[] = [];
   lines.push(roomTitle(p.data.short));
   lines.push(p.data.long as string);
@@ -146,7 +148,7 @@ function formatRoom(p: RoomPerception): string {
   if (p.data.entities.length > 0) {
     const entList = p.data.entities.map((e) => {
       const short = e.short && e.short !== `${e.name} is here.` ? ` ${fmtDim(`— ${e.short}`)}` : "";
-      return `${fmtEntity(e.name)}${short}`;
+      return `${fmtEntity(labelOf ? labelOf(e.name) : e.name)}${short}`;
     });
     lines.push(`\n${fmtSectionHead("Present", 30)}`);
     // Show as comma-separated if 3 or fewer, otherwise one per line

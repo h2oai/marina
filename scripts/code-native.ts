@@ -15,7 +15,7 @@ import {
 import type { RoutingEventInput, RoutingSession } from "../src/sdk/routing-types";
 import { nativeEditDiff, readCurrentFile } from "./code-diff";
 import type { CodingHarness } from "./code-harness";
-import { participantInstructions } from "./supervise";
+import { residentSupervisorOptions } from "./supervise";
 
 export interface TerminalAgent {
   session: RoutingSession;
@@ -95,7 +95,7 @@ export class NativeTerminal {
         MARINA_TOKEN: this.options.token,
       },
       secrets: [this.options.token],
-      instructions: participantInstructions(),
+      ...residentSupervisorOptions(this.options.url),
       onEvent: (session, event) => this.event(session, event),
     });
     try {

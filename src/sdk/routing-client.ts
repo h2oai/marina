@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  ResidentCredential,
+  ResidentEnrolInput,
+  ResidentEnrolment,
   RoutingSyncInput,
   RoutingSyncResult,
   RuntimeControl,
@@ -206,6 +209,26 @@ export class MarinaRoutingClient {
     return this.request<RoutingMessage>(
       `${this.path(sourceId)}/control`,
       { targetId, clientMessageId, control },
+      signal,
+    );
+  }
+  /** Enrol a run's agent as its own world account (servers with supervised residents on). */
+  enrolResident(input: ResidentEnrolInput, signal?: AbortSignal) {
+    return this.request<ResidentEnrolment>("/residents", input, signal);
+  }
+  /** A fresh credential for a live owned run; the previous one stops working. */
+  renewResident(name: string, sessionId: string, signal?: AbortSignal) {
+    return this.request<{ name: string; credential: ResidentCredential }>(
+      `/residents/${encodeURIComponent(name)}/renew`,
+      { sessionId },
+      signal,
+    );
+  }
+  /** End this run's hold on the resident: credentials and session tokens are revoked. */
+  revokeResident(name: string, sessionId: string, signal?: AbortSignal) {
+    return this.request<{ name: string; revoked: number }>(
+      `/residents/${encodeURIComponent(name)}/revoke`,
+      { sessionId },
       signal,
     );
   }

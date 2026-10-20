@@ -16,6 +16,7 @@ import {
   routeTableFromEnv,
   routeTiersFromEnv,
 } from "../decisions/route";
+import { respawnsOnBoot } from "../engine/auto-respawn";
 import { applyRouteEvidence, routeEvidenceSettingsFromEnv } from "../engine/benchmark-evidence";
 import {
   MARINA_DEFAULT_MODEL,
@@ -581,7 +582,9 @@ export class AgentRuntime {
     // Skip operator-retired agents so a disable survives even if a stale config
     // row lingers in the DB (it normally won't — disable deletes it — but env
     // overlays and user-saved configs can both name a disabled agent).
-    const configs = db.getAllAgentConfigs().filter((c) => !isSeedDisabled(db, c.name));
+    const configs = db
+      .getAllAgentConfigs()
+      .filter((c) => respawnsOnBoot(c) && !isSeedDisabled(db, c.name));
 
     // Spawn in parallel with a 1.1s stagger between starts. Awaiting
     // spawn() sequentially blocks on each agent's discovery prompt (which
@@ -660,6 +663,13 @@ export class AgentRuntime {
       systemRespawn?: boolean;
     } = {},
   ): Promise<AgentHandle> {
+    // A supervised resident is run by its owner's local supervisor; the
+    // in-process runtime never drives (or takes over) that account.
+    if (this.db?.getAgentConfig(config.name)?.runtime === "supervised") {
+      throw new Error(
+        `"${config.name}" is a supervised resident; it runs from its owner's local supervisor.`,
+      );
+    }
     const principal = this.db?.getPrincipal("agent", config.name);
     if (principal && principal.status !== "active") {
       throw new Error(`Agent identity "${config.name}" is ${principal.status}.`);

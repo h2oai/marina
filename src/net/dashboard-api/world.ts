@@ -17,6 +17,7 @@ import { allRecipeNames, getRecipe } from "../../engine/commands/usecase";
 import type { Engine } from "../../engine/engine";
 import { evolutionSessionsWithEvidence } from "../../engine/evolution-qualification";
 import type { MarinaDB, MediaJobRow } from "../../persistence/database";
+import { supervisedResidentsEnabled } from "../../routing/residents";
 import type { EntityId, RoomId } from "../../types";
 import { ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
 import { isSentinelPrincipal, refuseOpenApiWrite } from "../auth-middleware";
@@ -153,6 +154,12 @@ function getEntityDetail(
     // Civic standing — surfaced in the entity view now that Entities is the
     // primary observe/control surface.
     result.standing = Math.round(getStanding(db, entity.id) * 10) / 10;
+    // A supervised resident's card shows `Wren [claude]` and its owner.
+    if (supervisedResidentsEnabled()) {
+      const config = db.getAgentConfig(entity.name);
+      if (config?.runtime === "supervised")
+        result.resident = { vendor: config.vendor ?? "", owner: config.spawned_by };
+    }
   }
 
   return json(result);

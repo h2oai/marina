@@ -416,6 +416,10 @@
 # Comma-separated agent names that seeders, autorespawn and room-agent spawning must not bring back. `agent disable <name>` does the same in-world and persists.
 # MARINA_DISABLED_AGENTS=
 
+# Experimental. `on`: every agent a local routing supervisor (`marina supervise`, `marina code` native agents) launches becomes its own world account, owned by the launching person: an agent config with runtime `supervised`, an owned agent principal, a 24-hour workload credential renewed while the run lives and revoked when it stops, and a world presence in the launcher's room. The native process gets that credential as MARINA_TOKEN, never the supervisor's. Set it on the server (enables `POST /api/routing/residents`) and in the supervisor's environment. Supervised residents are never respawned by the server. `off` (default): routing behaves as before.
+# @restart
+# MARINA_SUPERVISED_RESIDENTS=off
+
 # Renewable lease on a newly claimed task, in milliseconds. Workers renew with `task heartbeat <id>`; expired ordinary work reopens.
 # MARINA_TASK_LEASE_MS=900000
 

@@ -14,6 +14,8 @@ export function whoCommand(
   getLastActivityAt?: (entityName: string) => number | null,
   getCrews?: () => Crew[],
   isRuntimeAgent?: (entityName: string) => boolean,
+  /** Display label per name (`Wren [claude]` for a supervised resident). */
+  labelOf?: (entityName: string) => string,
 ): CommandDef {
   // Every login shares kind "agent" by design (humans and agents are equal
   // entities). For the roster, distinguish runtime-driven agents from other
@@ -68,7 +70,7 @@ export function whoCommand(
           }
         }
         rows.push([
-          `  ${entity(e.name)}`,
+          `  ${entity(labelOf ? labelOf(e.name) : e.name)}`,
           dim(displayKind(e)),
           rank(rankVal),
           dim(roomShort),

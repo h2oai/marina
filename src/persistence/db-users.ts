@@ -32,6 +32,13 @@ export function getUserByName(db: Database, name: string): UserRow | undefined {
   return (db.query("SELECT * FROM users WHERE name = ?").get(name) as UserRow | null) ?? undefined;
 }
 
+/** Account names equal to `name` ignoring case (names are stored case-sensitively). */
+export function getUserNamesIgnoringCase(db: Database, name: string): string[] {
+  return (
+    db.query("SELECT name FROM users WHERE name = ? COLLATE NOCASE").all(name) as { name: string }[]
+  ).map((row) => row.name);
+}
+
 /** All user rows, name-ordered. For maintenance/admin tooling. */
 export function listUsers(db: Database): UserRow[] {
   return db.query("SELECT * FROM users ORDER BY name").all() as UserRow[];

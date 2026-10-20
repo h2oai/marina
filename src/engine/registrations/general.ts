@@ -6,6 +6,7 @@ import { formatUntrustedContext } from "../../agent/prompts/support-prompts";
 import { arenaRoundLockAt } from "../../arena/service";
 import { worldMemoryService } from "../../memory/world-service";
 import { registerBuiltinResolvers } from "../../resolvers";
+import { residentLabeler } from "../../routing/residents";
 import { registerDeadlineSource } from "../../schedules/deadlines";
 import type { EntityId, RoomId } from "../../types";
 import { collectiveManager } from "../../world/world-collective-manager";
@@ -90,6 +91,7 @@ export function registerGeneralCommands(engine: Engine): void {
       engine.boardManager
         ? (roomId) => engine.boardManager!.getBoardsForScope("room", roomId)
         : undefined,
+      residentLabeler(engine.db),
     ),
   );
 
@@ -175,6 +177,7 @@ export function registerGeneralCommands(engine: Engine): void {
       (entityName) => engine.db?.getLastActivityAt(entityName) ?? null,
       engine.crewManager ? () => engine.crewManager!.list() : undefined,
       (entityName) => !!engine.agentRuntime?.get(entityName),
+      residentLabeler(engine.db),
     ),
   );
   engine.commands.registerBuiltin(
