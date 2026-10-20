@@ -10,6 +10,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import type { AgentSupports } from "../agent-types";
 import type { PlatformMemoryBackend } from "../memory-platform";
+import { createAnalysisTools } from "./analysis";
 import { createCommandTool } from "./command";
 import { createMediaTools } from "./media";
 import { createMemoryTool } from "./memory";
@@ -35,6 +36,9 @@ export function createAllTools(
     createCommandTool(ctx) as unknown as AgentTool,
     ...createWorldTools(ctx),
     ...createMediaTools(ctx),
+    // Forecast, research, swarm, quant, calc, data, decision check, triage,
+    // Arbiter, patterns: never in the resident core, so deferred in `full`.
+    ...createAnalysisTools(ctx),
     createThinkTool() as unknown as AgentTool,
     createMemoryTool(platformMemory) as unknown as AgentTool,
     createMemoryServiceTool(ctx) as unknown as AgentTool,
@@ -228,6 +232,10 @@ export const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "marina_feed",
   "marina_novelty",
   "marina_web",
+  "marina_calc",
+  "marina_quant",
+  "marina_triage",
+  "marina_arbiter",
   "think",
   "marina_code_read_file",
   "marina_code_list_files",

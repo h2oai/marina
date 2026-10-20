@@ -14,7 +14,13 @@ const TEST_DB = "test_builtin_skills_cmd.db";
 
 describe("built-in skill library", () => {
   it("ships the quantitative-estimates skill exactly as its seed file", () => {
-    expect(BUILTIN_SKILLS.map((s) => s.name)).toEqual(["quantitative-estimates", "intake-triage"]);
+    expect(BUILTIN_SKILLS.map((s) => s.name)).toEqual([
+      "quantitative-estimates",
+      "intake-triage",
+      "decompose-multihop",
+      "solve-math",
+      "answer-request",
+    ]);
     expect(builtinSkill(" Quantitative-Estimates ")).toEqual(
       loadSkillFile("seeds/skills/quantitative-estimates.md"),
     );

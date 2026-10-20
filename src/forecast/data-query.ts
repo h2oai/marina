@@ -14,8 +14,10 @@
  * money; every request goes through the URL guard.
  */
 
+import { manifoldLookup } from "./lookup-crowd";
 import { type OddsGame, oddsBoard } from "./lookup-odds";
-import type { ForecastLookup, LookupResult } from "./lookup-types";
+import { voteHubLookup } from "./lookup-polls";
+import type { ForecastLookup, LookupResult, PollHints } from "./lookup-types";
 import { availableLookupNames, type LookupName, lookupsFromSpec, runLookups } from "./lookups";
 
 export interface DataQueryOptions {
@@ -150,6 +152,72 @@ export async function dataSeries(
   return lines.join("\n");
 }
 
+/** An injected lookup by name (tests), else the built one. */
+function injected(
+  name: string,
+  opts: DataQueryOptions,
+  build: () => ForecastLookup,
+): ForecastLookup {
+  return opts.lookups?.find((l) => l.name === name) ?? build();
+}
+
+export const POLL_TYPES = ["approval", "generic-ballot"] as const;
+
+/**
+ * Published opinion polls of one quantity (VoteHub, keyless): `approval
+ * <subject>` (Approve − Disapprove) or `generic-ballot <cycle>` (Dem − Rep),
+ * fieldwork in the four weeks before `asOf`, newest first, with the rolling
+ * means the forecaster uses. `exclude` drops pollsters (substring match).
+ */
+export async function dataPolls(
+  type: string,
+  subject: string,
+  asOf: Date | undefined,
+  opts: DataQueryOptions & { exclude?: string[] } = {},
+): Promise<string> {
+  const kind = type.trim().toLowerCase();
+  if (!(POLL_TYPES as readonly string[]).includes(kind)) {
+    return `Usage: data polls <${POLL_TYPES.join("|")}> <subject> [asof:<date>] [exclude:<pollster,…>] (e.g. data polls approval Donald Trump)`;
+  }
+  const who = subject.trim();
+  if (!who) return `Usage: data polls ${kind} <subject> [asof:<date>]`;
+  const now = (opts.now ?? (() => new Date()))();
+  const at = when(asOf, now);
+  const polls: PollHints = {
+    type: kind as PollHints["type"],
+    subject: who,
+    ...(opts.exclude?.length ? { exclude: opts.exclude } : {}),
+  };
+  const results = await runLookups([injected("votehub", opts, voteHubLookup)], who, at, now, {
+    hints: { polls },
+    answerType: "number",
+  });
+  return [
+    `Polls: ${kind} ${who} (fieldwork before ${at.toISOString().slice(0, 10)})`,
+    ...resultLines(results),
+  ].join("\n");
+}
+
+/**
+ * Crowd forecasts (Manifold, play money, keyless): matching markets'
+ * community probabilities, read at `asOf` from bet history for a past date.
+ */
+export async function dataCrowd(
+  query: string,
+  asOf: Date | undefined,
+  opts: DataQueryOptions = {},
+): Promise<string> {
+  const now = (opts.now ?? (() => new Date()))();
+  const at = when(asOf, now);
+  const results = await runLookups([injected("manifold", opts, manifoldLookup)], query, at, now, {
+    hints: { markets: query },
+  });
+  return [
+    `Crowd: ${query} (as of ${at.toISOString().slice(0, 16)}Z; play money)`,
+    ...resultLines(results),
+  ].join("\n");
+}
+
 /** Which sources can answer here, and what each needs. */
 export function dataSources(env: NodeJS.ProcessEnv = process.env): string {
   const on = new Set<string>(availableLookupNames(env));
@@ -168,6 +236,7 @@ export function dataSources(env: NodeJS.ProcessEnv = process.env): string {
       `official series (FRED_API_KEY${env.FRED_API_KEY?.trim() ? " set: vintage-correct past dates and search" : " not set: live latest only"})`,
     ),
     row("bls", "official series, latest revision only (BLS_API_KEY raises the quota)"),
-    `  ${"manifold".padEnd(10)} opt-in  community probabilities, play money; past dates read bet history (keyless; name it in MARINA_FORECAST_LOOKUPS)`,
+    `  ${"manifold".padEnd(10)} opt-in  community probabilities, play money; past dates read bet history (keyless; \`data crowd\` reads it directly; forecasts use it only when named in MARINA_FORECAST_LOOKUPS)`,
+    `  ${"votehub".padEnd(10)} ready  published approval / generic-ballot polls (keyless; \`data polls\`)`,
   ].join("\n");
 }

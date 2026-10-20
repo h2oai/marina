@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { forecastLessonsFor } from "../../learning/forecast-bridge";
+import { lessonsMode } from "../../learning/modes";
 import {
   formatLesson,
   type Lesson,
@@ -8,7 +10,13 @@ import {
   OUTCOME_DOMAINS,
   type OutcomeDomain,
 } from "../../learning/outcomes";
-import { findLessons, recallAcross, retireLessons, supersedeLesson } from "../../learning/service";
+import {
+  findLessons,
+  recallAcross,
+  recallForWork,
+  retireLessons,
+  supersedeLesson,
+} from "../../learning/service";
 import { workScopeFor } from "../../learning/work";
 import { dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
@@ -24,6 +32,24 @@ const SUPERSEDE_USAGE = "lessons supersede <id> reason:<text> -- <replacement le
 /** Most lessons one criteria retirement touches; narrow the criteria for more. */
 const RETIRE_CAP = 200;
 const PREVIEW = 20;
+
+/**
+ * Kinds of work a `for:` recall is filtered to. `forecast` is exactly what a
+ * forecast sees (`forecastLessonsFor`: the forecast and arena pools plus the
+ * cross-board share, leakage rule at now); the others read their own domain
+ * plus the cross-board share (`recallForWork`). Without `for:`, every domain.
+ */
+export const LESSON_WORK_KINDS = ["forecast", "code", "research", "tools", "benchmark"] as const;
+export type LessonWork = (typeof LESSON_WORK_KINDS)[number];
+const WORK_DOMAINS: Record<Exclude<LessonWork, "forecast">, OutcomeDomain[]> = {
+  code: ["code", "meta"],
+  research: ["research", "meta"],
+  tools: ["tools", "meta"],
+  benchmark: ["benchmark", "meta"],
+};
+/** A `for:` recall's budget: lessons and bytes (a prompt section, not a listing). */
+export const LESSON_WORK_LIMIT = 4;
+export const LESSON_WORK_MAX_BYTES = 900;
 
 const tag = (l: Lesson) => dim(`[${l.domain}${l.id ? ` ${l.id.slice(0, 8)}` : ""}]`);
 
@@ -118,6 +144,33 @@ async function supersede(db: MarinaDB, entity: EntityId, input: CommandInput): P
   return `Superseded ${tag(found[0]!)} by ${tag(next)} (unverified): ${next.text}`;
 }
 
+/** `lessons <topic> for:<work>` — the domain-filtered, budgeted recall a resident's prompt uses. */
+async function workLessons(
+  db: MarinaDB,
+  work: LessonWork,
+  topic: string,
+  ctx: RoomContext,
+  input: CommandInput,
+): Promise<string> {
+  if (lessonsMode() === "off") return "Lessons are off (MARINA_LESSONS=off).";
+  const budget = { limit: LESSON_WORK_LIMIT, maxBytes: LESSON_WORK_MAX_BYTES };
+  let lines: string[];
+  if (work === "forecast") {
+    const got = await forecastLessonsFor(db).recall(topic, new Date().toISOString(), budget);
+    lines = got.map((l) => `- ${l.text} ${dim(`[forecast${l.id ? ` ${l.id.slice(0, 8)}` : ""}]`)}`);
+  } else {
+    const name = ctx.getEntity?.(input.entity)?.name;
+    const scope = name ? workScopeFor(db, name) : undefined;
+    const got = await recallForWork(db, WORK_DOMAINS[work], topic, {
+      ...budget,
+      ...(scope?.kind === "owner" ? { owner: scope.owner } : {}),
+    });
+    lines = got.recalled.map((l) => `- ${formatLesson(l)} ${tag(l)}`);
+  }
+  if (lines.length === 0) return `No ${work} lessons for "${topic}" yet.`;
+  return [header(`Lessons for ${work} — ${topic}`), separator(), ...lines].join("\n");
+}
+
 /**
  * `lessons <topic> [domain:<d>]` — what past outcomes taught (src/learning/):
  * judged lessons from benchmark runs, resolved forecasts, Code Mode
@@ -130,6 +183,7 @@ export function lessonsCommand(deps: { db?: MarinaDB }): CommandDef {
     usage: [
       { syntax: "lessons <topic>", effect: "read" },
       { syntax: `lessons <topic> domain:<${DOMAIN_HINT}>`, effect: "read" },
+      { syntax: `lessons <topic> for:<${LESSON_WORK_KINDS.join("|")}>`, effect: "read" },
       { syntax: "lessons retire <id> reason:<text>", effect: "write" },
       {
         syntax: "lessons retire source:<source> [domain:<d>] [confirm:yes] reason:<text>",
@@ -164,7 +218,10 @@ export function lessonsCommand(deps: { db?: MarinaDB }): CommandDef {
         ctx.send(input.entity, reply);
         return;
       }
-      const parsed = parseModifiers(input.tokens, { domain: { type: "string" } });
+      const parsed = parseModifiers(input.tokens, {
+        domain: { type: "string" },
+        for: { type: "string", aliases: ["work"] },
+      });
       const topic = parsed.rest.join(" ").trim();
       const rawDomain = parsed.values.domain;
       const domainArg = typeof rawDomain === "string" ? rawDomain.toLowerCase() : undefined;
@@ -177,6 +234,15 @@ export function lessonsCommand(deps: { db?: MarinaDB }): CommandDef {
           input.entity,
           `Unknown domain "${domainArg}". Domains: ${OUTCOME_DOMAINS.join(", ")}.`,
         );
+        return;
+      }
+      const work = typeof parsed.values.for === "string" ? parsed.values.for.toLowerCase() : "";
+      if (work) {
+        if (!(LESSON_WORK_KINDS as readonly string[]).includes(work)) {
+          ctx.send(input.entity, `for: takes one of ${LESSON_WORK_KINDS.join(", ")}.`);
+          return;
+        }
+        ctx.send(input.entity, await workLessons(deps.db, work as LessonWork, topic, ctx, input));
         return;
       }
       const domains = domainArg ? [domainArg as OutcomeDomain] : OUTCOME_DOMAINS;

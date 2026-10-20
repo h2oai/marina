@@ -171,13 +171,15 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   {
     name: "Research web agent, cited answers, fact pass",
     status: "siloed",
-    enable: "Benchmark scripts only (`scripts/mind2web2.ts`, deepresearch)",
+    enable:
+      "In world: `research ask` (rank 0, spend-guarded) and the typed `marina_research` tool; benchmark scripts (`scripts/mind2web2.ts`, deepresearch)",
     owner: "src/research",
   },
   {
     name: "Skills",
-    status: "siloed",
-    enable: "`skill`; seeds with `MARINA_SEED_SKILLS=true` (showcase)",
+    status: "core",
+    enable:
+      "`skill`; 5 built-ins (`skill builtin`); residents get the best-fitting skill in their prompt (`MARINA_SKILLS_RESIDENT`, default on); note seeds with `MARINA_SEED_SKILLS=true` (showcase)",
     owner: "src/agent",
   },
   // ── experimental ────────────────────────────────────────────────────────
@@ -238,10 +240,19 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/decisions/config.ts",
   },
   {
-    name: "Text patterns (`POST /v1/patterns/run`)",
+    name: "Text patterns (`pattern run`, `POST /v1/patterns/run`)",
     status: "experimental",
-    enable: "HTTP only; a `pattern run` command is planned",
-    owner: "src/orchestration/text-patterns.ts",
+    enable:
+      "`pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run`",
+    owner: "src/orchestration/text-patterns.ts, src/engine/commands/pattern.ts",
+    commands: ["pattern"],
+  },
+  {
+    name: "Typed resident analysis tools (`marina_forecast`, `marina_research`, `marina_swarm`, `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`, `marina_arbiter`, `marina_pattern`)",
+    status: "experimental",
+    enable:
+      "Deferred in the `full` tool profile: loaded by name through `marina_tool_search` (`MARINA_DEFERRED_TOOLS=off` keeps them resident); each runs its world command",
+    owner: "src/agent/tools/analysis.ts, src/agent/analysis-commands.ts",
   },
   {
     name: "Investigations",

@@ -23,6 +23,8 @@ const USAGE = [
   "Usage: forecast <question> [resolves:<venue>/<ticker>]   e.g. forecast Will the Fed cut rates in October 2026?",
   "       forecast <question> type:choice|multi|number|ranking|text [options:A,B,C] [size:N] [ends:<ISO time>]",
   "                                         a typed answer: plan → research rounds → several runs → critique",
+  "       forecast [formation:<name>] [retriever:<spec>] … -- <question>",
+  "                                         choose the formation (or verify / arbiter) and a retriever the operator allows",
   "       forecast list                     your saved forecasts and, once resolved, their scores",
   "       forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves",
   "       forecast competence [family]      what Marina's resolved record says each method is good at",
@@ -60,6 +62,10 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       {
         syntax:
           "forecast <question> type:<choice|multi|number|ranking|text> [options:<id,id,…>] [size:<n>] [ends:<iso>]",
+        effect: "execute",
+      },
+      {
+        syntax: "forecast [formation:<name>] [retriever:<spec>] [type:<t>] … -- <question>",
         effect: "execute",
       },
       { syntax: "forecast list", effect: "read" },
@@ -127,6 +133,8 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
         options: { type: "string" },
         size: { type: "string" },
         ends: { type: "string" },
+        formation: { type: "string" },
+        retriever: { type: "string" },
       });
       const sampleId = parsed.values.resolves as string | undefined;
       if (sampleId !== undefined && !parseSampleId(sampleId)) {
@@ -134,42 +142,92 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       }
       const typed = typedSpec(parsed.values);
       if (typed && "error" in typed) return ctx.send(input.entity, typed.error);
-      const modified = sampleId !== undefined || typed !== undefined;
+      const chosen =
+        typeof parsed.values.formation === "string" || typeof parsed.values.retriever === "string";
+      const modified =
+        sampleId !== undefined || typed !== undefined || chosen || /(^|\s)--(\s|$)/.test(args);
       const question = modified ? parsed.rest.join(" ").trim() : args;
       if (!question) return ctx.send(input.entity, USAGE);
-      const capped = dailyCapRefusal();
-      if (capped) {
-        ctx.send(input.entity, `Not forecasting: ${capped}.`);
-        return;
-      }
-      if (!limiter.consume(input.entity)) {
-        return ctx.send(
-          input.entity,
-          "Forecast budget used up for now — try again in a few minutes.",
-        );
-      }
-      ctx.send(
-        input.entity,
-        dim("Researching, checking sources, asking several models… (~20–60 s)"),
-      );
-      if (typed) {
-        return (async () => {
-          // The same builder as POST /v1/forecast: operator formation and
-          // routing, the prior / recalibration stage, and the lesson pool.
-          const { typedForecastFor } = await import("../../forecast/surface");
-          const made = await typedForecastFor(
-            { question, answer: typed.spec, ...(typed.endTime ? { endTime: typed.endTime } : {}) },
-            deps.lessonsDb ? { db: deps.lessonsDb } : {},
+      const run = (env?: NodeJS.ProcessEnv): Promise<void> | void => {
+        const surfaceOpts = {
+          ...(deps.lessonsDb ? { db: deps.lessonsDb } : {}),
+          ...(env ? { env } : {}),
+        };
+        const capped = dailyCapRefusal();
+        if (capped) {
+          ctx.send(input.entity, `Not forecasting: ${capped}.`);
+          return;
+        }
+        if (!limiter.consume(input.entity)) {
+          return ctx.send(
+            input.entity,
+            "Forecast budget used up for now — try again in a few minutes.",
           );
+        }
+        ctx.send(
+          input.entity,
+          dim("Researching, checking sources, asking several models… (~20–60 s)"),
+        );
+        if (typed) {
+          return (async () => {
+            // The same builder as POST /v1/forecast: operator formation and
+            // routing, the prior / recalibration stage, and the lesson pool.
+            const { typedForecastFor } = await import("../../forecast/surface");
+            const made = await typedForecastFor(
+              {
+                question,
+                answer: typed.spec,
+                ...(typed.endTime ? { endTime: typed.endTime } : {}),
+              },
+              surfaceOpts,
+            );
+            if ("error" in made) return ctx.send(input.entity, made.error);
+            const a = made.answer;
+            const saved = name && deps.db ? saveTypedAnswer(deps.db, name, a, sampleId) : undefined;
+            await startShadow(deps.lessonsDb, saved, a);
+            ctx.send(
+              input.entity,
+              renderTyped(a) +
+                scaleNote(made.scale) +
+                (saved === undefined ? "" : `\n${dim(`saved as forecast #${saved}`)}`),
+            );
+          })().catch((err) =>
+            ctx.send(
+              input.entity,
+              `Forecast failed: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
+        }
+        return (async () => {
+          const surface = await import("../../forecast/surface");
+          let made: { answer: ForecastAnswer; scale: ForecastScale } | { error: string };
+          if (surface.plainUsesLegacy(env)) {
+            const [{ forecastQuestion }, { forecastDeps }] = await Promise.all([
+              import("../../forecast/question"),
+              import("../../forecast/service"),
+            ]);
+            const wired = forecastDeps(env);
+            if ("error" in wired) made = wired;
+            else {
+              const answer = await forecastQuestion({ question }, wired.deps);
+              answer.costUsd = wired.costUsd();
+              made = { answer, scale: wired.scale };
+            }
+          } else {
+            // The full pipeline (lessons, formations, routing) for a plain question too.
+            made = await surface.plainForecastFor({ question }, surfaceOpts);
+          }
           if ("error" in made) return ctx.send(input.entity, made.error);
           const a = made.answer;
-          const saved = name && deps.db ? saveTypedAnswer(deps.db, name, a, sampleId) : undefined;
+          const saved = name && deps.db ? saveAnswer(deps.db, name, a, sampleId) : undefined;
           await startShadow(deps.lessonsDb, saved, a);
           ctx.send(
             input.entity,
-            renderTyped(a) +
+            render(a) +
               scaleNote(made.scale) +
-              (saved === undefined ? "" : `\n${dim(`saved as forecast #${saved}`)}`),
+              (saved === undefined
+                ? ""
+                : `\n${dim(`saved as forecast #${saved}${sampleId ? ` · scored when ${sampleId} resolves` : " · forecast track <id> <venue>/<ticker> to score it"}`)}`),
           );
         })().catch((err) =>
           ctx.send(
@@ -177,49 +235,43 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
             `Forecast failed: ${err instanceof Error ? err.message : String(err)}`,
           ),
         );
-      }
-      return (async () => {
-        const surface = await import("../../forecast/surface");
-        let made: { answer: ForecastAnswer; scale: ForecastScale } | { error: string };
-        if (surface.plainUsesLegacy()) {
-          const [{ forecastQuestion }, { forecastDeps }] = await Promise.all([
-            import("../../forecast/question"),
-            import("../../forecast/service"),
-          ]);
-          const wired = forecastDeps();
-          if ("error" in wired) made = wired;
-          else {
-            const answer = await forecastQuestion({ question }, wired.deps);
-            answer.costUsd = wired.costUsd();
-            made = { answer, scale: wired.scale };
-          }
-        } else {
-          // The full pipeline (lessons, formations, routing) for a plain question too.
-          made = await surface.plainForecastFor(
-            { question },
-            deps.lessonsDb ? { db: deps.lessonsDb } : {},
-          );
-        }
-        if ("error" in made) return ctx.send(input.entity, made.error);
-        const a = made.answer;
-        const saved = name && deps.db ? saveAnswer(deps.db, name, a, sampleId) : undefined;
-        await startShadow(deps.lessonsDb, saved, a);
-        ctx.send(
-          input.entity,
-          render(a) +
-            scaleNote(made.scale) +
-            (saved === undefined
-              ? ""
-              : `\n${dim(`saved as forecast #${saved}${sampleId ? ` · scored when ${sampleId} resolves` : " · forecast track <id> <venue>/<ticker> to score it"}`)}`),
-        );
-      })().catch((err) =>
-        ctx.send(
-          input.entity,
-          `Forecast failed: ${err instanceof Error ? err.message : String(err)}`,
-        ),
+      };
+      if (!chosen) return run();
+      // A caller-chosen formation / retriever is validated before any budget is spent.
+      return forecastSurfaceEnv(parsed.values).then((picked) =>
+        "error" in picked ? ctx.send(input.entity, picked.error) : run(picked.env),
       );
     },
   };
+}
+
+/**
+ * The env a caller-chosen `formation:` / `retriever:` runs under: the
+ * formation through `formationEnv` (an unknown name is an error, never the
+ * default), the retriever through `residentRetrieverSpec` (only entries that
+ * name no model, or one the operator configured). Empty when neither is set.
+ */
+export async function forecastSurfaceEnv(
+  values: Record<string, unknown>,
+  base: NodeJS.ProcessEnv = process.env,
+): Promise<{ env?: NodeJS.ProcessEnv } | { error: string }> {
+  const formation = typeof values.formation === "string" ? values.formation : undefined;
+  const retriever = typeof values.retriever === "string" ? values.retriever : undefined;
+  if (formation === undefined && retriever === undefined) return {};
+  let env = base;
+  if (formation !== undefined) {
+    const { formationEnv } = await import("../../forecast/surface");
+    const formed = formationEnv(formation, env);
+    if ("error" in formed) return { error: `formation: ${formed.error}` };
+    env = formed.env;
+  }
+  if (retriever !== undefined) {
+    const { residentRetrieverSpec } = await import("../../research/ask");
+    const picked = residentRetrieverSpec(retriever, base);
+    if ("error" in picked) return picked;
+    env = { ...env, MARINA_FORECAST_RETRIEVER: picked.spec };
+  }
+  return { env };
 }
 
 const TYPED = ["choice", "multi", "number", "ranking", "text"] as const;

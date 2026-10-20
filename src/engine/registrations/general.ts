@@ -38,6 +38,7 @@ import { meshCommand } from "../commands/mesh";
 import { moveCommand } from "../commands/move";
 import { mutationCommand } from "../commands/mutation";
 import { noteCommand } from "../commands/note";
+import { patternCommand } from "../commands/pattern";
 import { probeCommand } from "../commands/probe";
 import { quantCommand } from "../commands/quant";
 import { questCommand } from "../commands/quest";
@@ -208,6 +209,7 @@ export function registerGeneralCommands(engine: Engine): void {
   engine.commands.registerBuiltin(
     triageCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
+  engine.commands.registerBuiltin(patternCommand());
   engine.commands.registerBuiltin(timeCommand());
   engine.commands.registerBuiltin(uptimeCommand(() => engine.getUptime()));
   engine.commands.registerBuiltin(

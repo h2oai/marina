@@ -236,7 +236,10 @@ export function getToolRouting(tools: readonly string[] = BASELINE_TOOLS): strin
     via.push(
       "`marina_command` runs any command; a typed tool in your list is a shortcut for the same command.",
     );
-  if (has("marina_tool_search")) via.push("`marina_tool_search` loads more typed tools by name.");
+  if (has("marina_tool_search"))
+    via.push(
+      "`marina_tool_search` loads typed tools by name; analysis tools are marina_ + forecast, research, swarm, data, quant, calc, decision_check, triage, arbiter, pattern.",
+    );
   if (has("memory")) via.push("The `memory` tool writes and searches your private notes.");
   if (has("marina_memory_service")) via.push("`marina_memory_service`: durable evidence records.");
   const think = has("think") ? " `think` is not progress." : "";
