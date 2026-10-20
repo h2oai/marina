@@ -12,6 +12,9 @@
  *   bun run bench:native --task csp --seed 7 --port 40400 --db <world.db> \
  *     [--crew answerer] [--formation f] [--workspace dir] [--crash] \
  *     [--deadline 300] [--poll 15] [--settle 30] [--hab habitat.tsv] [--win windows.tsv] [--json]
+ *     [--file-to <url>] [--no-file] [--group <key>]
+ *   A live run scores formation adherence from the live brief and files a `crew` run into
+ *   the server's benchmark ledger (key: MARINA_LEDGER_API_KEY); --no-file turns that off.
  *
  * Lane hooks (split the run around the lane's own dispatch/poll):
  *   --setup-only  apply the setup, print NATIVE_* shell assignments (TID, TEXT, RE, OK) for eval
@@ -174,6 +177,9 @@ const res = await runNative({
   settleSec: flag("settle") ? Number(flag("settle")) : undefined,
   hab: flag("hab"),
   win: flag("win"),
+  fileTo: flag("file-to"),
+  noFile: has("no-file"),
+  group: flag("group"),
 });
 if (has("json")) process.stdout.write(`${JSON.stringify(res)}\n`);
 else

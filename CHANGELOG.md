@@ -274,6 +274,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     The bootstrap, Wilson and PRNG copies in the harnesses, `src/learned` and scripts now call
     it. `test/stats-equivalence.test.ts` checks each against a frozen copy of its original with
     exact equality.
+- **In-world `benchmark run` measures residents** (`src/engine/benchmark-target.ts`). Before,
+  a bare `benchmark run` sent every item to the upstream model with no resident involved.
+  - `crew:<name>` measures that crew. With no target, the run measures the world's one serving
+    crew; it is refused when there is none or several, and never falls back to the bare model.
+  - `model:<id>` is a bare-model control, recorded `targetKind: "model"`, `control: true`, and
+    labelled as one. `model:marina:<name>` still means the crew `<name>`.
+  - Crew runs always get a run key, and file as `crew` targets with trace-resolved participants,
+    so resident work reaches route evidence.
+- **No self-grading by default** (`src/engine/benchmark-judge.ts`, harness and in-world).
+  - Judge-scored benchmarks use `judge:` / `--judge-model`, else the new
+    `MARINA_BENCHMARK_JUDGE_MODEL`, else `marina/default`.
+  - A judge that names the target is refused unless `self-judge:on` / `--self-judge` opts in. The
+    opt-in is recorded, and the ledger judge reads `[self-judge]`.
+  - The harness default used to be the target itself. The tier0 direct-provider control keeps
+    target grading, now through an explicit `--self-judge`.
+  - Benchmarks that no judge grades record no judge.
+- **One benchmark registry** (`src/engine/benchmark-registry.ts`). The harness, the in-world
+  list and the web UI derive from it, and `test/benchmark-registry.test.ts` fails on drift. The
+  world can now run narrativeqa, mt-bench, retention and aime-2025.
+- **Native crew runs file to the ledger and score formation adherence.** A live
+  `bun run bench:native` run files a `crew` run (`native-<task>`, oracle judge) into its server's
+  ledger, with `--file-to`, `--group` and `--no-file` options. Its config carries formation
+  adherence over the run window.
+- **Formation adherence is scored from `CREW_BRIEFS`.** Hand-written checks count only while
+  their anchor phrase is still in the live brief, and every uncovered brief clause becomes a
+  judge question. Every formation is scorable, and an edited brief can no longer leave a stale
+  copy scoring the old protocol.
+
 - **Faster fresh installs**: new databases start from the schema-167 baseline (v0.8.0) instead of
   137, about 2.5× faster to create. Existing databases upgrade exactly as before (#500).
 - **Silent promise failures are logged or justified**: the empty-catch check covers
@@ -297,6 +325,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read as a fallback). Walk-forward on Season 0: mean per-round skill 0.129 → 0.180.
 
 ### Fixed
+
+- **`benchmark run` / `sweep` accept the documented `key:value` modifiers.** `arm:bare`,
+  `cap:5`, `lessons:on` and `model:…` were silently ignored before: only `--key value` parsed.
 
 - **Wikimedia client politeness**: MediaWiki action-API requests are spaced 500 ms apart
   (REST stays at 100 ms) and one HTTP 429 is retried after its `Retry-After` (up to 30 s).

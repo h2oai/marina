@@ -834,6 +834,9 @@
 # Where in-world `benchmark kit` runs keep their run directories (servers, scratch, logs). Default: `kit-runs/` beside the world DB (`DB_PATH`). The kit's runs file into the world DB either way.
 # MARINA_BENCHMARK_KIT_DIR=
 
+# The judge for judge-scored benchmark items (frames, simple-qa, hle-verified-gold*, narrativeqa, mt-bench) when a run names none: the in-world `benchmark run`/`sweep`/`compare-run` and `benchmarks/harness.ts` (src/engine/benchmark-judge.ts). Unset: `marina/default`. A run never grades itself: a judge that names the target model (aliases of the default model included) is refused unless the run opts in with `self-judge:on` / `--self-judge`, which the run records and the ledger marks `[self-judge]`.
+# MARINA_BENCHMARK_JUDGE_MODEL=
+
 # ── Forecasting ──────────────────────────────────────────────────────────────
 
 # `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). No vendor key is required: unset, every part sizes to what is configured (docs/guides/single-model.md). Analysts are a comma list of models (defaults with OPENROUTER_API_KEY: Claude Fable 5.1 and GPT-6 Astra through ANTHROPIC_API_KEY / OPENAI_API_KEY when set, else via OpenRouter, plus Gemini 3.1 Pro via OpenRouter; without OPENROUTER_API_KEY, the configured providers or a single local model, which then answers as the one analyst × K runs); the retriever defaults to OpenRouter web search on Gemini 3.1 Pro over Exa plus the `search` retriever (every planned query through the search backend chain, pages read and quoted), else `search` alone (keyless DuckDuckGo when no search key is set); the judge is jev (without OPENROUTER_API_KEY: the MARINA_DECISIONS backend, else no judge), decisions (the MARINA_DECISIONS backend, falling back to jev) or none. Substitutions are reported as the answer's `scale` (tier `degraded`); only having no model at all is an error.

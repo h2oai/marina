@@ -344,6 +344,8 @@ export class Engine {
           endpoint: localHttpBase(),
           apiKey: getInternalModelToken(),
         }),
+        // The model marina/default routes to: a judge naming it is the target too.
+        () => this.db?.getDefaultModel(),
       );
 
       // Initialize gateway runtime (must be after channelManager)

@@ -26,6 +26,7 @@ import {
 } from "../persistence/db-benchmarks";
 import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
 import { mcnemarExact, wilsonInterval } from "../stats";
+import { judgeLabel } from "./benchmark-judge";
 
 export const TARGET_KINDS: readonly BenchmarkTargetKind[] = ["model", "crew", "population"];
 
@@ -330,7 +331,7 @@ export interface HarnessResultFile {
     seed?: number;
     /** `measure` (same-board lessons excluded, `x-marina-eval`) or `live`. */
     lessons_mode?: string;
-    judge?: { model?: string; endpoint?: string };
+    judge?: { model?: string; endpoint?: string; self_judge?: boolean };
   };
   timestamp?: number;
   duration_ms?: number;
@@ -553,11 +554,7 @@ export function ledgerFromHarnessResult(
     (typeof file.metadata?.usage?.costUsd === "number" ? file.metadata.usage.costUsd : null);
   const summary = summarizeItems(items, runCost);
   const safeConfig = redactConfig(config);
-  const judge =
-    opts.judge ??
-    (config.judge?.model
-      ? `${config.judge.model}${config.judge.endpoint ? ` @ ${config.judge.endpoint}` : ""}`
-      : null);
+  const judge = opts.judge ?? (config.judge ? judgeLabel(config.judge) : null);
   const finished = typeof file.timestamp === "number" ? file.timestamp : opts.now;
   const duration = typeof file.duration_ms === "number" ? Math.round(file.duration_ms) : null;
   const configJson = JSON.stringify(safeConfig);

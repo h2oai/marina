@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { postLedgerBody } from "../benchmarks/ledger-file";
 import {
   type AggOracle,
   generateAggregation,
@@ -28,7 +29,16 @@ import {
   resolveTask,
 } from "../benchmarks/native/index";
 import { generatePipeline, runPipeline, scorePipeline } from "../benchmarks/native/pipeline";
-import { exactOkRe, loadCrewMembers, readDeliverables } from "../benchmarks/native/runner";
+import {
+  exactOkRe,
+  loadCrewFormation,
+  loadCrewMembers,
+  nativeAdherence,
+  nativeLedgerBody,
+  type RunResult,
+  readDeliverables,
+} from "../benchmarks/native/runner";
+import { MarinaDB } from "../src/persistence/database";
 
 const SEEDS = Array.from({ length: 12 }, (_, i) => i + 1);
 
@@ -334,6 +344,116 @@ describe("runner helpers", () => {
       const notes = readDeliverables(path, "eval-artifacts", generateCsp(9).deliverableRe);
       expect(notes.map((n) => n.id)).toEqual([1]);
       expect(readDeliverables(path, "missing-pool", "x")).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("native runs reach the ledger", () => {
+  const res: RunResult = {
+    task: "csp",
+    seed: 7,
+    tag: "CSP7",
+    formation: "verification",
+    members: ["Answerer", "Bo"],
+    found: true,
+    elapsedSec: 42,
+    notes: 1,
+    start: 1_000,
+    end: 1_050,
+    deliverable: "CSP7 SCHEDULE: secret text",
+    result: { correct: true, score: 1, details: {} },
+    adherence: { formation: "verification", brief: 0.75, convention: 0.5, judgeSteps: 2 },
+  };
+
+  test("the ledger body is a crew run with the oracle as judge, ids and numbers only", () => {
+    const body = nativeLedgerBody(res, { crew: "answerer" });
+    expect(body.targetKind).toBe("crew");
+    expect(body.target).toEqual({
+      crew: "answerer",
+      formation: "verification",
+      members: ["Answerer", "Bo"],
+    });
+    expect(body.judge).toBe("oracle:native-csp");
+    expect(body.result.config).toMatchObject({
+      dataset: "native-csp",
+      model: "marina:answerer",
+      formation: "verification",
+      adherence: { brief: 0.75 },
+    });
+    expect(body.result.items).toEqual([{ id: "CSP7", correct: true, score: 1, latencyMs: 42_000 }]);
+    // The deliverable text never leaves the runner.
+    expect(JSON.stringify(body)).not.toContain("secret text");
+  });
+
+  test("filing posts the body to /v1/benchmarks/runs with the ledger key", async () => {
+    let seen: { auth: string | null; body: unknown; path: string } | undefined;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        seen = {
+          auth: req.headers.get("authorization"),
+          body: await req.json(),
+          path: new URL(req.url).pathname,
+        };
+        return Response.json({ runId: "bench_x", created: true }, { status: 201 });
+      },
+    });
+    try {
+      const out = await postLedgerBody(
+        `http://127.0.0.1:${server.port}/`,
+        "k-ledger",
+        nativeLedgerBody(res, { crew: "answerer", group: "g1" }),
+      );
+      expect(out).toMatchObject({ ok: true, runId: "bench_x", created: true });
+      expect(seen?.path).toBe("/v1/benchmarks/runs");
+      expect(seen?.auth).toBe("Bearer k-ledger");
+      expect(seen?.body).toMatchObject({ targetKind: "crew", replicateGroup: "g1" });
+    } finally {
+      server.stop(true);
+    }
+    // An unreachable ledger is reported, never thrown.
+    const down = await postLedgerBody("http://127.0.0.1:1", undefined, {});
+    expect(down.ok).toBe(false);
+  });
+
+  test("adherence is scored over the run window from the crew's live brief", () => {
+    const dir = mkdtempSync(join(tmpdir(), "native-adh-"));
+    try {
+      const path = join(dir, "w.db");
+      new MarinaDB(path).close();
+      const db = new Database(path);
+      db.exec(`INSERT INTO crews (id, name, formation, owner_id, created_at, last_activity_at)
+          VALUES ('c1', 'answerer', 'verification', 'o', 0, 0);
+        INSERT INTO crew_members (crew_id, agent_name, role, joined_at)
+          VALUES ('c1', 'Answerer', 'lead', 0), ('c1', 'Bo', 'specialist', 0);`);
+      db.close();
+      expect(loadCrewFormation(path, "answerer")).toBe("verification");
+      expect(loadCrewFormation(path, "ghost")).toBeUndefined();
+      const adh = nativeAdherence({
+        db: path,
+        crew: "answerer",
+        formation: "verification",
+        pool: "eval-artifacts",
+        start: 0,
+        end: 10,
+      });
+      expect(adh?.formation).toBe("verification");
+      // Nothing happened in the window: no deliverable, every scored brief step at 0.
+      expect(adh?.brief).toBe(0);
+      expect(adh?.judgeSteps).toBeGreaterThan(0);
+      // An unknown formation leaves the run scored but without adherence.
+      expect(
+        nativeAdherence({
+          db: path,
+          crew: "answerer",
+          formation: "nope",
+          pool: "p",
+          start: 0,
+          end: 1,
+        }),
+      ).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

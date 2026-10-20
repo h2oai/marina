@@ -89,6 +89,26 @@ describe("benchmark command (rank-gated in-world primitive)", () => {
     }
   });
 
+  it("`benchmark run` with no target and no serving crew is refused, never a silent bare-model run", async () => {
+    const conn = new MockConnection("c-target");
+    engine.addConnection(conn);
+    engine.login("c-target", "Builder");
+    setTrustProfile("local");
+    try {
+      conn.clear();
+      await engine.dispatchCommand(conn.entity!, "benchmark run smoke --limit 1");
+      const text = stripAnsi(conn.allTextJoined());
+      expect(text).toContain("No serving crew in this world");
+      expect(text).toContain("model:<id>");
+      expect(db.queryBenchmarkRuns({ benchmark: "smoke", limit: 5 })).toEqual([]);
+      conn.clear();
+      await engine.dispatchCommand(conn.entity!, "benchmark run smoke crew:ghost");
+      expect(stripAnsi(conn.allTextJoined())).toContain("crew ghost is not serving");
+    } finally {
+      resetTrustProfileForTests();
+    }
+  });
+
   it("registers the benchmark command", () => {
     const names = engine.commands.allBuiltins().map((c) => c.name);
     expect(names).toContain("benchmark");

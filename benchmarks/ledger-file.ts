@@ -90,13 +90,32 @@ export async function fileToLedger(
   result: BenchmarkResult,
   opts: LedgerFileOptions,
 ): Promise<LedgerFileOutcome> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (opts.apiKey) headers.Authorization = `Bearer ${opts.apiKey}`;
+  let body: ReturnType<typeof ledgerFileBody>;
   try {
-    const resp = await fetch(`${opts.fileTo.replace(/\/+$/, "")}/v1/benchmarks/runs`, {
+    body = ledgerFileBody(result, opts);
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
+  }
+  return await postLedgerBody(opts.fileTo, opts.apiKey, body);
+}
+
+/**
+ * POST a ledger body (`{ result, targetKind, target, … }`) to a Marina's
+ * `/v1/benchmarks/runs` — for runners whose result is not a harness result
+ * (e.g. `benchmarks/native`). Never throws.
+ */
+export async function postLedgerBody(
+  fileTo: string,
+  apiKey: string | undefined,
+  payload: unknown,
+): Promise<LedgerFileOutcome> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  try {
+    const resp = await fetch(`${fileTo.replace(/\/+$/, "")}/v1/benchmarks/runs`, {
       method: "POST",
       headers,
-      body: JSON.stringify(ledgerFileBody(result, opts)),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(120_000),
     });
     const text = await resp.text();
