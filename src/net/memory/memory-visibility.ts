@@ -115,6 +115,12 @@ export function memoryObserver(engine: Engine, principal?: string) {
         case "rank_change":
         case "coordination_change":
           return true;
+        // Room speech is public to the room and the event names no words;
+        // a direct message's envelope goes to its two parties only.
+        case "say_sent":
+          return true;
+        case "tell_sent":
+          return own || (!!entity && entity.name.toLowerCase() === event.to.toLowerCase());
         // Asset ids can name a private asset, so the hint goes to the writer
         // and the owner only (operators passed above); others reread on poll.
         case "asset_created":

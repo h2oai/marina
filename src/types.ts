@@ -91,7 +91,12 @@ export interface RoomContext {
   broadcast(message: string, tag?: string): void;
 
   /** Broadcast to all except one entity */
-  broadcastExcept(exclude: EntityId, message: string, tag?: string): void;
+  broadcastExcept(
+    exclude: EntityId,
+    message: string,
+    tag?: string,
+    metadata?: Record<string, unknown>,
+  ): void;
 
   /** Get an entity by ID (if in this room) */
   getEntity(id: EntityId): Entity | undefined;
@@ -529,9 +534,42 @@ export type EngineEvent =
   | {
       type: "channel_message";
       entity: EntityId;
+      /** The stored `channel_messages.id` (feed ref `channel_msg:<id>`). */
       messageId: number;
       channelName: string;
       content: string;
+      /** Causal envelope (`src/engine/message-envelope.ts`). */
+      cause?: string;
+      depth?: number;
+      timestamp: number;
+    }
+  /**
+   * Room speech was delivered. Content-free by design: names, refs and the
+   * causal envelope only (`src/engine/message-envelope.ts`); the words stay in
+   * the perceptions of those present.
+   */
+  | {
+      type: "say_sent";
+      entity: EntityId;
+      /** Sender name. */
+      from: string;
+      room: RoomId;
+      messageRef: string;
+      cause?: string;
+      depth: number;
+      timestamp: number;
+    }
+  /** A direct message (`tell` / `re`) was delivered. Content-free, like `say_sent`. */
+  | {
+      type: "tell_sent";
+      entity: EntityId;
+      /** Sender name. */
+      from: string;
+      /** Recipient name. */
+      to: string;
+      messageRef: string;
+      cause?: string;
+      depth: number;
       timestamp: number;
     }
   | {

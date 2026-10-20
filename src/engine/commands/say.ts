@@ -3,6 +3,7 @@
 
 import { say, saySelf } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { envelopeFields, messageEnvelope, mintMessageRef } from "../message-envelope";
 
 export function sayCommand(getEntity: (id: EntityId) => Entity | undefined): CommandDef {
   return {
@@ -20,9 +21,26 @@ export function sayCommand(getEntity: (id: EntityId) => Entity | undefined): Com
         return;
       }
 
-      ctx.broadcastExcept(input.entity, say(entity.name, input.args), "say");
+      const messageRef = mintMessageRef("say");
+      const envelope = envelopeFields(messageEnvelope(input.entity));
+      ctx.broadcastExcept(input.entity, say(entity.name, input.args), "say", {
+        senderName: entity.name,
+        messageRef,
+        ...envelope,
+      });
       ctx.send(input.entity, saySelf(input.args), "say", {
         delivery: { kind: "say", target: entity.room, message: input.args },
+        messageRef,
+        ...envelope,
+      });
+      ctx.logEvent?.({
+        type: "say_sent",
+        entity: input.entity,
+        from: entity.name,
+        room: entity.room,
+        messageRef,
+        ...envelope,
+        timestamp: Date.now(),
       });
     },
   };

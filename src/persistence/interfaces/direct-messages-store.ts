@@ -16,6 +16,9 @@ export interface DirectMessagesStore {
     targetName: string;
     content: string;
     deadlineAt?: number;
+    /** Causal envelope (`src/engine/message-envelope.ts`). */
+    cause?: string;
+    depth?: number;
   }): DirectMessageRow;
   getDirectMessage(id: number): DirectMessageRow | undefined;
   listDirectMessageInbox(targetId: string, limit?: number): DirectMessageRow[];

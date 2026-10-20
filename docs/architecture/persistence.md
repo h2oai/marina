@@ -5,6 +5,18 @@
 ## Migrations
 - Migrations: append to `FORWARD_MIGRATIONS` in `src/persistence/schema.ts` (re-exported as `MIGRATIONS` by `database.ts`), never modify existing migrations. `MARINA_DB_DURABILITY=full` (fsync per commit) is the world default; migrations 96–109 are append-only like all others.
 
+## Message envelope
+
+Migration 171 adds `cause TEXT` and `depth INTEGER NOT NULL DEFAULT 0` to `direct_messages`
+and `channel_messages`. `cause` is the ref of the message a post answers (`tell:<id>`,
+`channel_msg:<id>`, `say:<uuid>`, `shout:<uuid>`) and `depth` is the cause's depth + 1, or 0
+when the cause is unknown. `src/engine/message-envelope.ts` holds the rule: an explicit reply
+(`re`) names the tell it answers; otherwise the command execution's cause applies
+(`CommandExecutionOptions.cause`, kept on the `runCommandScope` frame in `gate-context.ts` and
+inherited by macro and `batch` expansions); otherwise the message starts a thread at depth 0.
+Delivered perceptions carry `messageRef`, `cause` and `depth`; the `say_sent` / `tell_sent`
+events carry names, the ref and the envelope, never the words.
+
 ## Private investigations
 
 Migration 170 appends the prediction/research service tables after the media-memory migration

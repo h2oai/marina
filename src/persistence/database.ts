@@ -1034,8 +1034,16 @@ export class MarinaDB implements MarinaStores {
     senderId: string,
     senderName: string,
     content: string,
+    envelope?: { cause?: string; depth: number },
   ): number {
-    return channelsDb.addChannelMessage(this.db, channelId, senderId, senderName, content);
+    return channelsDb.addChannelMessage(
+      this.db,
+      channelId,
+      senderId,
+      senderName,
+      content,
+      envelope,
+    );
   }
   getChannelHistory(channelId: string, limit = 20): ChannelMessageRow[] {
     return channelsDb.getChannelHistory(this.db, channelId, limit);
@@ -1497,6 +1505,9 @@ export class MarinaDB implements MarinaStores {
     targetName: string;
     content: string;
     deadlineAt?: number;
+    /** Causal envelope (`src/engine/message-envelope.ts`). */
+    cause?: string;
+    depth?: number;
   }): DirectMessageRow {
     return directMessagesDb.createDirectMessage(this.db, message);
   }
