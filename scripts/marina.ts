@@ -12,7 +12,8 @@
  *   marina worlds [--json]       list the worlds built into this binary
  *   marina endpoint [--data-dir <dir>] [--show-key]
  *                                where the running instance for a data directory
- *                                listens (its endpoint.json; the key stays masked)
+ *                                listens (its endpoint.json; the key stays masked;
+ *                                experimental: for embedders, Flow Nov 2026)
  *   marina acp <name>            Agent Client Protocol over stdio for editors
  *                                (targets MARINA_URL, else the instance in MARINA_DATA_DIR)
  *   marina mcp-stdio [--url <mcp-url>] [--token <t>] [--data-dir <dir>]
@@ -382,7 +383,8 @@ Usage:
   marina worlds [--json]       list the worlds built into this binary
   marina endpoint [--data-dir <dir>] [--show-key]
                                where the running instance for a data directory
-                               listens (its endpoint.json; the key stays masked)
+                               listens (its endpoint.json; the key stays masked;
+                               experimental: for embedders, Flow Nov 2026)
   marina acp <name>            Agent Client Protocol over stdio for editors
                                (targets MARINA_URL, else the instance in MARINA_DATA_DIR)
   marina mcp-stdio [--url <mcp-url>] [--token <t>] [--data-dir <dir>]
@@ -793,12 +795,20 @@ if (import.meta.main) {
       await import("./memory-mcp");
       break;
     case "worlds": {
-      const { BUILTIN_WORLD_SLUGS, BUILTIN_WORLD_SUMMARIES } = await import("../worlds");
-      const worlds = [...BUILTIN_WORLD_SLUGS]
-        .sort()
-        .map((name) => ({ name, description: BUILTIN_WORLD_SUMMARIES[name] ?? "" }));
+      const { BUILTIN_WORLD_SLUGS, BUILTIN_WORLD_STATUS, BUILTIN_WORLD_SUMMARIES } = await import(
+        "../worlds"
+      );
+      const worlds = [...BUILTIN_WORLD_SLUGS].sort().map((name) => ({
+        name,
+        description: BUILTIN_WORLD_SUMMARIES[name] ?? "",
+        status: BUILTIN_WORLD_STATUS[name] ?? "demo",
+      }));
       if (dispatch.json) console.log(JSON.stringify(worlds, null, 2));
-      else for (const w of worlds) console.log(`${w.name.padEnd(20)} ${w.description}`);
+      else
+        for (const w of worlds)
+          console.log(
+            `${w.name.padEnd(20)} ${w.status === "demo" ? "[demo] " : ""}${w.description}`,
+          );
       break;
     }
     case "endpoint": {

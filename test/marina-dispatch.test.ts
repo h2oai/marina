@@ -25,7 +25,7 @@ import {
   USAGE,
 } from "../scripts/marina";
 import type { Perception } from "../src/sdk/client";
-import { BUILTIN_WORLD_SLUGS, BUILTIN_WORLD_SUMMARIES } from "../worlds";
+import { BUILTIN_WORLD_SLUGS, BUILTIN_WORLD_STATUS, BUILTIN_WORLD_SUMMARIES } from "../worlds";
 
 describe("marina dispatcher routing", () => {
   it("routes bare invocation to the coding flow with no dir", () => {
@@ -745,5 +745,12 @@ describe("embedding subcommands (SRV-8, SRV-11)", () => {
     for (const slug of BUILTIN_WORLD_SLUGS)
       expect(BUILTIN_WORLD_SUMMARIES[slug]?.length).toBeGreaterThan(10);
     expect(Object.keys(BUILTIN_WORLD_SUMMARIES).sort()).toEqual([...BUILTIN_WORLD_SLUGS].sort());
+  });
+
+  it("labels every builtin world core or demo: only default and empty are core", () => {
+    expect(Object.keys(BUILTIN_WORLD_STATUS).sort()).toEqual([...BUILTIN_WORLD_SLUGS].sort());
+    const core = BUILTIN_WORLD_SLUGS.filter((slug) => BUILTIN_WORLD_STATUS[slug] === "core");
+    expect(core.sort()).toEqual(["default", "empty"]);
+    expect(BUILTIN_WORLD_SLUGS.length - core.length).toBe(13);
   });
 });

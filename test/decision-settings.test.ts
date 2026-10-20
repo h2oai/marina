@@ -147,12 +147,36 @@ describe("console / CLI: admin decisions and decision settings", () => {
     const show = adminDecisions(deps(), person, []);
     for (const s of DECISION_SETTINGS) expect(show).toContain(s.name);
     expect(show).toContain("never set at runtime");
+    // The experimental H2O-Lightning preset reports its readiness in one line.
+    expect(show).toMatch(
+      /H2O-Lightning: (not configured|.+configured, but no OpenRouter key|available|active)/,
+    );
     expect(adminDecisions(deps(), person, ["set", "gate", "on"])).toContain(
       "gate (MARINA_DECISION_GATE) = on",
     );
     expect(adminDecisions(deps(), person, ["history"])).toContain("Operator  gate: (default) → on");
     expect(adminDecisions(deps(), person, ["unset", "gate"])).toContain("= (default)");
     expect(adminDecisions(deps(), person, ["set", "gate", "maybe"])).toContain("one of: on, off");
+  });
+
+  it("says when H2O-Lightning becomes available and lets an operator select it", () => {
+    using _env = scopeProcessState({
+      env: {
+        MARINA_LIGHTNING_MODEL: undefined,
+        OPENROUTER_API_KEY: "or",
+        MARINA_DECISION_API_KEY: undefined,
+      },
+    });
+    expect(adminDecisions(deps(), person, [])).toContain("H2O-Lightning: not configured");
+    process.env.MARINA_LIGHTNING_MODEL = "h2oai/lightning-test";
+    expect(adminDecisions(deps(), person, [])).toContain(
+      "H2O-Lightning: available (h2oai/lightning-test)",
+    );
+    expect(adminDecisions(deps(), person, ["set", "backend", "lightning"])).toContain(
+      "backend (MARINA_DECISIONS) = lightning",
+    );
+    expect(adminDecisions(deps(), person, [])).toContain("H2O-Lightning: active");
+    adminDecisions(deps(), person, ["unset", "backend"]);
   });
 
   it("an agent without the earned gate is told how to earn it, not refused forever", () => {

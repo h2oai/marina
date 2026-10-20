@@ -4,6 +4,10 @@
 /**
  * A daily spend ledger shared by several Marina processes (`MARINA_SPEND_LEDGER=<path>`).
  *
+ * Status: experimental — no production host configures it yet (the arena and
+ * FutureX scripts record spend scopes on the world database instead). It is
+ * the per-world cap story for embedders; see docs/reference/feature-status.md.
+ *
  * An embedding host can run one Marina process per world, each on its own
  * world database. Without this file each world keeps its own `spend_daily`
  * total, so N worlds get N caps. With it, every process that names the same

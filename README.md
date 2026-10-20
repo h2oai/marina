@@ -601,6 +601,7 @@ published in this repository; measure on your own deployment.
 | [SKILL.md](SKILL.md) | Agent-facing field guide (system prompt compatible) |
 | [docs/authentication.md](docs/authentication.md) | Optional auth (better-auth) for public hosting — email/password, social OAuth |
 | [docs/reference/commands.md](docs/reference/commands.md) · [MCP](docs/reference/mcp.md) · [SDK](docs/reference/sdk.md) · [HTTP](docs/reference/http.md) | Generated API references (`bun run docs:api`; CI checks drift) |
+| [docs/reference/feature-status.md](docs/reference/feature-status.md) | What is core, siloed, experimental, demo or deprecated, and how to enable each feature |
 | [API Explorer](https://h2oai.github.io/marina/api) | Search commands, expand MCP schemas, edit request templates and browse HTTP/SDK contracts |
 | [docs/guides/memory-api.md](docs/guides/memory-api.md) | Memory API — persistent memory for any agent |
 | [docs/guides/autonomous-quality-loops.md](docs/guides/autonomous-quality-loops.md) | Shared contradiction resolution, outcome learning, and productivity analytics |

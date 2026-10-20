@@ -101,8 +101,18 @@ export const DECISION_SETTINGS: readonly DecisionSettingSpec[] = [
   {
     name: "backend",
     env: "MARINA_DECISIONS",
-    describe: "decision backend: off | decisions-api (jev) | typesafe | chat-classifier",
-    ...choice(["off", "decisions-api", "jev", "typesafe", "chat-classifier", "classifier", "llm"]),
+    describe:
+      "decision backend: off | decisions-api (jev) | typesafe | lightning (experimental) | chat-classifier",
+    ...choice([
+      "off",
+      "decisions-api",
+      "jev",
+      "typesafe",
+      "lightning",
+      "chat-classifier",
+      "classifier",
+      "llm",
+    ]),
   },
   { name: "model", env: "MARINA_DECISION_MODEL", describe: "backend model id", parse: modelId },
   {

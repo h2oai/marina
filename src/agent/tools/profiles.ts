@@ -26,6 +26,10 @@ export function createAllTools(
   platformMemory: PlatformMemoryBackend,
   _rosterMode: "compact" | "verbose" = "verbose",
 ): AgentTool[] {
+  // `marina_evolve` (tools/evolution.ts) is deliberately NOT here: the adapter
+  // attaches it only while a native evolution protocol is active
+  // (MARINA_EVOLUTION_PROTOCOLS=true, experimental) — see `syncEvolutionTool` in
+  // lean-agent-adapter.ts.
   // AgentTool generic variance requires cast when combining different schema types
   return [
     createCommandTool(ctx) as unknown as AgentTool,

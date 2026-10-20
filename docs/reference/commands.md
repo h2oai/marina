@@ -3990,7 +3990,7 @@ Effect: write.
 
 ## evolve
 
-Your self-improvement loop: where you stand + the next step. `evolve` for status, `evolve loop` for the how-to.
+[experimental] Your self-improvement loop: where you stand + the next step. `evolve` for status, `evolve loop` for the how-to.
 
 Category: Growth. Minimum rank: 0.
 Aliases: `coach`.
@@ -4129,7 +4129,7 @@ Effect: execute.
 
 ## experiment
 
-Run a controlled A/B comparison — define arms, record metrics per arm, get a ranked winner.
+[experimental] Run a controlled A/B comparison — define arms, record metrics per arm, get a ranked winner.
 Use this when you're MEASURING which of several conditions wins on a metric — not for getting work done.
   • plain work for one person → task        • a team coordinating a bundle of work → project
   • scored capability runs (MMLU, etc.)  → benchmark   • forecasting an outcome → market / scenario
@@ -4394,7 +4394,7 @@ Effect: delete.
 
 ## gateway
 
-Bridge to peer Marina instances. Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it. Usage: gateway add <name> <ws-url> | gateway remove <name> | gateway list | gateway status <name> | gateway bridge <name> <channel> | gateway unbridge <name> <channel> | gateway send <name> <entity> <message>
+[experimental] Bridge to peer Marina instances. Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it. Usage: gateway add <name> <ws-url> | gateway remove <name> | gateway list | gateway status <name> | gateway bridge <name> <channel> | gateway unbridge <name> <channel> | gateway send <name> <entity> <message>
 
 Category: Federation. Minimum rank: 5. Gate: `gateway.connect`.
 Aliases: `gw`.
@@ -4794,7 +4794,7 @@ Effect: write.
 
 ## inquiry
 
-Private predictions and deep research, with durable evidence and agent delegation.
+[experimental] Private predictions and deep research, with durable evidence and agent delegation.
 inquiry predict [type:binary|number|choice] [unit:<unit>] [options:<a,b,c>] [runs:<n>] [case:<id>] [parent:<attempt>] [key:<key>] [horizon:<date>] [asof:<date>] -- <question>
 inquiry research [case:<id>] [parent:<attempt>] [key:<key>] -- <question>
 inquiry list
@@ -5232,7 +5232,7 @@ Effect: read.
 
 ## learned
 
-Inspect imported learned bundles (marina.learned.v1): artifacts, items and their trust, seeded default slots, evidence priors and the import audit. Read-only.
+[experimental] Inspect imported learned bundles (marina.learned.v1): artifacts, items and their trust, seeded default slots, evidence priors and the import audit. Read-only.
 Usage: learned | learned artifacts | learned items [artifact:<id>] [status:active|retired|revoked] | learned seeds | learned priors [family:<f>] | learned events [limit:<n>]
 
 Export and import are operator acts (`bun run learned export|import|verify|diff`). Imported lessons carry trust `imported` and are never trusted until local outcomes confirm them; seeds fill only empty default slots; priors are down-weighted and never ledger rows.
@@ -5496,7 +5496,7 @@ Effect: write.
 
 ## market
 
-Prediction market discovery and leaderboards.
+[experimental] Prediction market discovery and leaderboards.
 Usage: market list [open|resolved] | market search <query> | market show <id> (also view/info) | market live <venue> [duration] [limit] | market leaderboard | market score [entity] | market forecast <id>
 
 Examples:
@@ -6028,7 +6028,7 @@ Effect: write.
 
 ## mesh
 
-Transparent, voluntary, overlapping Marina meshes.
+[experimental] Transparent, voluntary, overlapping Marina meshes.
 Usage:
   mesh create <stable-id> | <name> | <charter-ref> | <protocol>
   mesh join <mesh> [| disclosure JSON]
@@ -6690,7 +6690,7 @@ Effect: read.
 
 ## position
 
-Place, list, close, and track P&L on real prediction-market positions.
+[experimental] Place, list, close, and track P&L on real prediction-market positions.
 
 Usage:
   position size <venue> <ticker> <yes|no> <our-prob> <market-price>  — Kelly-size a candidate position
@@ -7793,7 +7793,7 @@ Effect: write.
 
 ## schedule
 
-Schedules — run one of your own commands later or on a repeat.
+[experimental] Schedules — run one of your own commands later or on a repeat.
 A scheduled run is your command exactly as if you typed it: your rank, gates,
 challenges and spend caps apply. It keeps running while you are offline (a
 stopped agent's schedules wait), and repeated failures raise an alert.

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from "node:crypto";
+import { experimentalHelp } from "../../config/feature-status";
 import { investigationActor, investigationRecipient } from "../../investigations/identity";
 import { resolveInvestigation } from "../../investigations/resolve";
 import { investigationService } from "../../investigations/service";
@@ -49,7 +50,9 @@ export function inquiryCommand(deps: {
     category: "Cognition",
     minRank: 0,
     usage,
-    help: `Private predictions and deep research, with durable evidence and agent delegation.\n${usageText}\nWork runs in the background. Inspect it with show/events. A grant permits an account (human or agent) to read or initiate work; it never broadcasts private evidence to a room. New attempts use configured forecast/research providers and work limits; costs may be incomplete.`,
+    help: experimentalHelp(
+      `Private predictions and deep research, with durable evidence and agent delegation.\n${usageText}\nWork runs in the background. Inspect it with show/events. A grant permits an account (human or agent) to read or initiate work; it never broadcasts private evidence to a room. New attempts use configured forecast/research providers and work limits; costs may be incomplete.`,
+    ),
     handler: (ctx, input) => {
       const say = (text: string, attempt?: InvestigationAttempt) =>
         ctx.send(

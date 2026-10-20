@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import type { MarinaDB } from "../../persistence/database";
 import type { ScheduleRow } from "../../persistence/db-schedules";
 import { deadlineKinds, resolveDeadline } from "../../schedules/deadlines";
@@ -65,7 +66,7 @@ export function scheduleCommand(deps: {
     category: "Coordination",
     name: "schedule",
     aliases: ["schedules"],
-    help: HELP,
+    help: experimentalHelp(HELP),
     usage: [
       {
         syntax:

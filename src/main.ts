@@ -879,6 +879,7 @@ if (
 }
 
 // ─── Embedding: endpoint file, idle shutdown, parent watch ─────────────────────
+// Experimental: for embedders (Flow, Nov 2026) — no production host uses it yet.
 // endpoint.json (only with MARINA_DATA_DIR) tells a host where this instance
 // listens and with which key, so an on-demand caller adopts a running Marina
 // instead of starting a second one.
