@@ -82,6 +82,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   BrowseComp-Plus, LongMemEval and paired-run presets); `--bootstrap two-stage` resamples
   replicate runs then items as forecasting selection does; and `--inventory [root…]` finds every
   per-item result and ledger on disk and lists the baseline/candidate pairs each suite offers.
+- **Attention extraction for the Wikipedia specialist** (`src/arena/extraction/`,
+  `MARINA_ARENA_WIKI_EXTRACTORS=events,news,related,edits,gdelt`, off by default — unchanged
+  behaviour when unset; `wiki-specialist+extract:<list>` for a shadow arm): narrow extractors run
+  in parallel on the specialist's top candidates and emit typed, dated records (feature, value,
+  as-of, source, confidence) — MediaWiki revision activity and lead-link neighbourhood growth read
+  at the revision in force at the cutoff (`rvstart`/`rvend`), Portal:Current events mentions and
+  (with a model) direction, GDELT volume, and scheduled/ended events from as-of article sentences
+  that one cheap model call classifies and a mechanical check verifies. Records past the cutoff
+  are dropped; the specialist applies them only through bounded, testable multipliers with
+  transient-share widening, and keeps every record in the forecast detail. Over 67 walk-forward
+  weeks only the events channel gained (+0.010 to +0.014 mean skill, not yet significant), so the
+  other channels' multipliers default to neutral. `scripts/arena-wiki-extract.ts` replays the
+  extractors over reconstructed weeks (cached; Wikimedia `Retry-After` honoured).
+- **Per-item Wikipedia backtest output**: `scripts/arena-wiki-backtest.ts --out <file>` writes
+  `{id, score, at, variant, group: "arena-wikipedia", exclude?}` JSONL with diagnostics (loss,
+  persistence loss, hits, unseen entrants, ranking) for the transfer report's `items` adapter;
+  `--features <label>=<file>` adds extractor variants (fixed and walk-forward). Default text output
+  is unchanged.
+
 - **Search engines for research retrieval**: `openrouter-web:<model>@<engine>[:<mode>]` accepts
   every OpenRouter web plugin engine — `native`, `exa` (instant … deep-reasoning), `parallel`
   (turbo … advanced), `perplexity`, `firecrawl` — validates engine and mode, and adds the engine's
@@ -185,6 +204,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read as a fallback). Walk-forward on Season 0: mean per-round skill 0.129 → 0.180.
 
 ### Fixed
+
+- **Wikimedia client politeness**: MediaWiki action-API requests are spaced 500 ms apart
+  (REST stays at 100 ms) and one HTTP 429 is retried after its `Retry-After` (up to 30 s).
 
 - A research brief with only one of `until` / `untilAt` was searched as live (no upper date bound);
   either field now bounds the search.

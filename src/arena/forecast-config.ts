@@ -41,6 +41,18 @@ export function forecastSettings(spec: string, env: NodeJS.ProcessEnv, weight?: 
     ...(spec.includes("research:wiki-events") || spec.includes("wiki-specialist:")
       ? { wikiEventsMaxInsert: env.MARINA_ARENA_WIKI_EVENTS_MAX_INSERT ?? "3" }
       : {}),
+    // Only when the attention extractors are on, so the specialist keeps its fingerprint off.
+    ...((spec.includes("wiki-specialist") || spec === "routed") &&
+    (env.MARINA_ARENA_WIKI_EXTRACTORS?.trim() || spec.includes("+extract:"))
+      ? {
+          wikiExtractors: {
+            list: env.MARINA_ARENA_WIKI_EXTRACTORS?.trim() ?? "",
+            model: env.MARINA_ARENA_WIKI_EXTRACTOR_MODEL ?? "",
+            top: env.MARINA_ARENA_WIKI_EXTRACTOR_TOP ?? "",
+            retriever: env.MARINA_ARENA_WIKI_EXTRACTOR_RETRIEVER ?? "",
+          },
+        }
+      : {}),
   };
   return {
     ...settings,
