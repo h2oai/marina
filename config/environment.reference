@@ -982,6 +982,18 @@
 # `research:wiki-events:<model>[@<retrievers>]` and `wiki-specialist:<model>[,…][@<retrievers>]` (Wikipedia top-N with scheduled events): the most articles a run may add to the statistical list (recency, or the specialist's projected weekly views) from mechanically verified events (0 = none, the statistical list only).
 # MARINA_ARENA_WIKI_EVENTS_MAX_INSERT=3
 
+# Attention extractors for the Wikipedia specialist (`wiki-specialist`, src/arena/extraction/): a comma list of `edits` (MediaWiki revision counts and editors in the 28 days before the lock, `rvstart` at the cutoff), `related` (pageview growth of the articles the lead linked to at the cutoff), `news` (the days Portal:Current events linked the article in the week before the lock, each digest page read at its revision at the cutoff; with a model, the digest lines' direction), `gdelt` (GDELT coverage volume and trend before the cutoff; slow, GDELT allows about one query per five seconds) and `events` (dated sentences of the article's revision at the cutoff, and of a date-strict retriever's sources, classified by one narrow model call and mechanically verified). Each yields typed, dated records that move a candidate's projected weekly views through bounded multipliers (src/arena/extraction/adjust.ts). Unset or `off`: no extraction, the specialist is unchanged. A spec's own `+extract:<list>` suffix (`wiki-specialist+extract:events`, e.g. as a shadow challenger) overrides this list for that spec.
+# MARINA_ARENA_WIKI_EXTRACTORS=
+
+# The model the `events` and `news` extractors call (one narrow JSON call per candidate with evidence).
+# MARINA_ARENA_WIKI_EXTRACTOR_MODEL=openrouter/deepseek/deepseek-v4.1-flash
+
+# How many of the specialist's best candidates the extractors read (1–100).
+# MARINA_ARENA_WIKI_EXTRACTOR_TOP=30
+
+# A date-strict retriever (`asof:<providers>`) the `events` extractor also searches; unset, it reads the article's own revision only. Any non-date-strict spec is refused.
+# MARINA_ARENA_WIKI_EXTRACTOR_RETRIEVER=
+
 # Start forecast for noisy weekly poll toplines (scalar rounds of economist_yougov, morning_consult and aaii): the average of persistence and the arena's EWMA null (alpha 0.4), sd half the rule's own recent one-step RMS error (floor 0.5), chosen by walk-forward backtest on mean per-round skill. `off` files the persistence-based baseline instead. Formations and research start from whichever is filed.
 # MARINA_ARENA_POLL_LEVEL=on
 

@@ -29,31 +29,56 @@ import { type DailyTop, iso } from "./wiki-specialist";
 
 const DAY_MS = 86_400_000;
 export const WIKIMEDIA_USER_AGENT = "Marina-arena/1.0 (https://github.com/h2oai/marina)";
-/** Minimum gap between two Wikimedia requests from this process. */
+/** Minimum gap between two Wikimedia REST requests from this process. */
 export const MIN_SPACING_MS = 100;
+/** MediaWiki's action API (`/w/api.php`) asks for serial, unhurried clients. */
+export const API_SPACING_MS = 500;
+/** Longest `Retry-After` honoured before a 429 is an error. */
+const MAX_RETRY_AFTER_MS = 30_000;
 const CACHE_MAX = 512;
 
 export type FetchJson = (url: string) => Promise<unknown>;
 
-let nextSlot = 0;
+const nextSlot = new Map<string, number>();
 const cache = new Map<string, Promise<unknown>>();
 
-/** GET a Wikimedia JSON resource: guarded, rate-limited, cached (failures are not cached). */
+/** Wait for this host's next slot (REST and action API are spaced separately). */
+async function slot(url: string, defer = 0): Promise<void> {
+  const api = url.includes("/w/api.php");
+  const key = api ? "api" : "rest";
+  const now = Date.now();
+  const at = Math.max(now + defer, nextSlot.get(key) ?? 0);
+  nextSlot.set(key, at + (api ? API_SPACING_MS : MIN_SPACING_MS));
+  if (at > now) await new Promise((r) => setTimeout(r, at - now));
+}
+
+/**
+ * GET a Wikimedia JSON resource: guarded, rate-limited, cached (failures are
+ * not cached). A 429 is retried once after its `Retry-After` (up to 30 s).
+ */
 export const wikimediaFetchJson: FetchJson = (url) => {
   const hit = cache.get(url);
   if (hit) return hit;
   const run = (async () => {
-    const now = Date.now();
-    const wait = Math.max(0, nextSlot - now);
-    nextSlot = Math.max(now, nextSlot) + MIN_SPACING_MS;
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    const res = await guardedFetch(url, {
-      headers: { "User-Agent": WIKIMEDIA_USER_AGENT, Accept: "application/json" },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (res.status === 404) return undefined;
-    if (!res.ok) throw new Error(`Wikimedia ${res.status}`);
-    return res.json();
+    let defer = 0;
+    for (let attempt = 0; ; attempt++) {
+      await slot(url, defer);
+      const res = await guardedFetch(url, {
+        headers: { "User-Agent": WIKIMEDIA_USER_AGENT, Accept: "application/json" },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (res.status === 404) return undefined;
+      if (res.status === 429 && attempt === 0) {
+        const after = Number(res.headers.get("retry-after"));
+        defer = Math.min(
+          MAX_RETRY_AFTER_MS,
+          (Number.isFinite(after) && after > 0 ? after : 5) * 1000,
+        );
+        continue;
+      }
+      if (!res.ok) throw new Error(`Wikimedia ${res.status}`);
+      return res.json();
+    }
   })();
   cache.set(url, run);
   run.catch(() => cache.delete(url));
