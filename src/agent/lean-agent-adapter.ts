@@ -117,12 +117,7 @@ import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
 import type { Perception } from "../types";
 import { isHumanOnboardingNote } from "../world/seed-guide";
 import { suggestPatterns } from "../world/templates/orchestration";
-import {
-  classifyIncomingTell,
-  isPureAcknowledgement,
-  numericTokens,
-  outgoingAcknowledgementRefusal,
-} from "./acknowledgement";
+import { numericTokens, outgoingAcknowledgementRefusal } from "./acknowledgement";
 import { ActionHistory } from "./action-history";
 import {
   type AgentConfig,
@@ -133,6 +128,18 @@ import {
   type AgentThinkingLevel,
   resolveAgentThinkingLevel,
 } from "./agent-types";
+import {
+  type AttentionState,
+  acknowledgementReplyRefusal,
+  assessPerception,
+  CORRELATION_TAG_RE,
+  clampAttentionThreshold,
+  createAttentionState,
+  DEFAULT_ATTENTION_THRESHOLD,
+  forcedActionNudgeMode,
+  isAddressedOrCrewMessage,
+  shouldKeepPerception,
+} from "./attention";
 import {
   type BudgetPhase,
   budgetFinalRequest,
@@ -219,7 +226,7 @@ import {
   skillName,
   skillSection,
 } from "./resident-guidance";
-import { isAddressedTo, isCrewDispatch, SocialAwareness, withoutVocative } from "./social";
+import { SocialAwareness } from "./social";
 import { describeToolProbe } from "./tool-call-probe";
 import {
   classifyToolRisk,
@@ -254,83 +261,20 @@ export const LEAN_AGENT_LOG_CATEGORY = "lean-agent";
 /** Module-level fallback when no Logger is injected via the constructor. */
 const moduleLogger = new Logger();
 
-/** Buffer priority of a pure-acknowledgement tell: information, not work. */
-export const ACKNOWLEDGEMENT_PRIORITY = 30;
-
-/**
- * Buffer priority of an INFORMATION tell (a result, a statement, a status;
- * see `classifyIncomingTell`): read on the next cycle and kept by every
- * attention mode, but below the request tier (80) — no reply owed, no steer
- * into a run in flight.
- */
-export const INFORMATION_TELL_PRIORITY = 60;
+// The attention rules live in `./attention` (shared with every consumer that
+// delivers perceptions to an agent); re-exported here for existing importers.
+export {
+  ACKNOWLEDGEMENT_PRIORITY,
+  acknowledgementReplyRefusal,
+  forcedActionNudgeMode,
+  INFORMATION_TELL_PRIORITY,
+  isAddressedOrCrewMessage,
+  isSelfEchoPerception,
+  shouldKeepPerception,
+} from "./attention";
 
 /** Most numeric tokens remembered as "already seen" for status-echo checks. */
 const KNOWN_NUMBERS_CAP = 512;
-
-/**
- * An outgoing tell that only acknowledges a peer whose own latest tell was a
- * pure acknowledgement is not sent: neither side owes a reply, and each
- * acknowledgement would otherwise invite the next. Returns the refusal
- * reason, or undefined to let the tell through. `marina_tell` and a
- * `marina_command` `tell <target> <message>` are both covered.
- */
-export function acknowledgementReplyRefusal(
-  toolName: string,
-  args: Record<string, unknown>,
-  peersWhoAcknowledged: ReadonlySet<string>,
-): string | undefined {
-  let target: string | undefined;
-  let message: string | undefined;
-  if (toolName === "marina_tell") {
-    target = typeof args.target === "string" ? args.target : undefined;
-    message = typeof args.message === "string" ? args.message : undefined;
-  } else if (toolName === "marina_command" && typeof args.command === "string") {
-    const match = /^\s*tell\s+(\S+)\s+([\s\S]+)$/i.exec(args.command);
-    target = match?.[1];
-    message = match?.[2];
-  }
-  if (!target || !message) return undefined;
-  if (!peersWhoAcknowledged.has(target.toLowerCase())) return undefined;
-  if (!isPureAcknowledgement(message)) return undefined;
-  return `not sent: acknowledgement; ${target}'s last message was one (no reply owed).`;
-}
-
-/** Suffix marking a buffered tell that owes no reply. */
-function noReplyMarker(acknowledgement: boolean, information: boolean): string {
-  if (acknowledgement) return " (ack; no reply owed)";
-  return information ? " (info; no reply owed)" : "";
-}
-
-/**
- * `MARINA_FORCED_ACTION_NUDGE`: what makes a prompt "actionable" — the state
- * that drives the forced-action nudge (§11), the in-run silent recovery, the
- * declared-rest exemption and reply-ledger tracking.
- *
- * - `requests` (default): only a perception that owes a reply — a REQUEST
- *   tell, an addressed post whose body is a request (`classifyIncomingTell`),
- *   or a request already in the ledger. Addressed INFORMATION still wakes the
- *   loop and renders as `[!]`; it never forces a tool call.
- * - `all`: any first-party perception that should be answered or scored ≥ 80
- *   (the earlier default: every addressed status post became a reply debt,
- *   so two agents naming each other answered each other indefinitely).
- */
-export function forcedActionNudgeMode(
-  env: Record<string, string | undefined> = process.env,
-): "all" | "requests" {
-  return env.MARINA_FORCED_ACTION_NUDGE?.trim().toLowerCase() === "all" ? "all" : "requests";
-}
-
-export function shouldKeepPerception(
-  mode: "focused" | "balanced" | "open",
-  priority: number,
-  shouldRespond: boolean,
-  threshold = 50,
-): boolean {
-  if (shouldRespond) return true;
-  if (mode !== "focused") return true;
-  return priority >= threshold;
-}
 
 export function evolutionControlState(
   perception: Perception,
@@ -345,51 +289,6 @@ export function evolutionControlState(
     return undefined;
   }
   return { sessionId: perception.data.sessionId, active: perception.data.active };
-}
-
-/**
- * Self-echo rule (2026-09-22). The world answers every command an agent runs
- * with a `message` perception addressed back to the same agent. Two families
- * of those replies carry nothing the agent did not just do itself and, before
- * this rule, made up most of `[World Events]` (89 % of continuation prompts hit
- * the event-level re-queue, driven by the continuity journal's own
- * `memory api capture` / `save_checkpoint` acknowledgements):
- *
- *  (a) durable memory-service acknowledgements — `data.memory_service` (the
- *      `memory api …` reply envelope the journal, archive and checkpoint paths
- *      correlate on) and the legacy memory command payload
- *      `data.memory.schema === "marina.memory.command.v1"` (`note` / `recall` /
- *      `pool` replies, already returned to the tool call that issued them);
- *  (b) the agent's own send receipts — `You tell <name>: …` / `You say: …` /
- *      `You shout: …` echoes and the duplicate-suppressed tell receipt;
- *  (c) any non-tell perception tagged with the agent's own
- *      `command_request_id` (the correlated command's output).
- *
- * Everything addressed to the agent by someone else (`<name> tells you`,
- * channel messages, broadcasts, endpoint requests) is untouched. The tool
- * result path is separate (`MarinaClient.command` drains its own buffer), so
- * dropping these from the perception BUFFER loses no information.
- * `MARINA_PERCEIVE_SELF_ECHO=on` restores the old behaviour.
- */
-export function isSelfEchoPerception(p: Perception, text: string): boolean {
-  // (c) Output correlated to the agent's own command (`command_request_id`)
-  // already reached that command's tool result; a tell is never one.
-  if (p.command_request_id && p.tag !== "tell") return true;
-  if (p.kind !== "message") return false;
-  const data = (p.data ?? {}) as Record<string, unknown>;
-  if (data.memory_service !== undefined) return true;
-  const memory = data.memory;
-  if (
-    memory &&
-    typeof memory === "object" &&
-    (memory as { schema?: unknown }).schema === "marina.memory.command.v1"
-  )
-    return true;
-  // Command echoes are ANSI-coloured; strip before matching the prefix.
-  const plain = stripAnsi(text).replace(/^>\s*/, "").trimStart();
-  if (/^You (tell \S[^:]*|say|shout): /.test(plain)) return true;
-  if (/^Duplicate suppressed; existing message #\d+/.test(plain)) return true;
-  return false;
 }
 
 export interface TurnUsageMetrics {
@@ -709,9 +608,6 @@ export function agentHeartbeatMs(env: Record<string, string | undefined> = proce
   return raw && Number.isFinite(n) && n > 0 ? Math.round(n) : DEFAULT_AGENT_HEARTBEAT_MS;
 }
 
-/** Per-perception hot path — read the env once, not on every channel message. */
-const CHANNEL_REPLY_COOLDOWN_MS = Number(process.env.AGENT_CHANNEL_REPLY_COOLDOWN_MS) || 30_000;
-
 /** Max characters of any single recalled note / skill / orient block in the prompt. */
 const RECALL_BLOCK_MAX_CHARS = 600;
 /** Chars of an UNCHANGED focus repeated in the per-turn action directive. */
@@ -752,9 +648,6 @@ export function clampPerceptionLine(text: string, addressed = false): string {
   return lost.length > 0 ? `${clamped} ${lost.join(" ")}` : clamped;
 }
 
-/** A tellAndAwait correlation tag (`[re:<6 base-36 chars>]`) on an incoming tell. */
-const CORRELATION_TAG_RE = /\[re:([a-z0-9]{4,16})\]/;
-
 /** Correlation tags present in a perception line, in order, deduped. */
 export function correlationTagsIn(text: string): string[] {
   const out: string[] = [];
@@ -763,22 +656,6 @@ export function correlationTagsIn(text: string): string[] {
     if (!out.includes(tag)) out.push(tag);
   }
   return out;
-}
-
-/** Messages the channel-reply cooldown and the crew-responder idle skip must
- *  never demote: a correlated ask, a name-addressed message, a crew-channel
- *  post, or a crew dispatch. A coordinator asking twice inside 30 s is not
- *  ambient chatter. */
-export function isAddressedOrCrewMessage(
-  event: { channel?: string; message?: string; crewDispatch?: boolean } | undefined,
-  text: string,
-  name: string,
-): boolean {
-  const body = event?.message ?? text;
-  if (CORRELATION_TAG_RE.test(body) || CORRELATION_TAG_RE.test(text)) return true;
-  if (name && isAddressedTo(body, name)) return true;
-  if (event?.channel?.startsWith("marina:")) return true;
-  return !!event && isCrewDispatch({ message: body, crewDispatch: event.crewDispatch });
 }
 
 /** Sections that must never be deferred by the continuation-prompt budget. */
@@ -1538,14 +1415,18 @@ export class LeanAgentAdapter implements AgentHandle {
   /** Ceiling of the silent-turn backoff (it starts at the idle tick and doubles). */
   private static readonly SILENT_BACKOFF_MAX_MS = 30 * 60_000;
   private recentCommands: string[] = [];
-  /** Prevent named channel mentions from creating agent↔agent ping-pong. This
-   * is a per-agent channel cadence; direct tells and endpoint requests are never throttled. */
-  private lastChannelResponseAt = 0;
+  /** Attention memory between perceptions (`./attention`): recent-text
+   *  dedupe, the per-agent channel reply cadence (prevents named channel
+   *  mentions from creating agent↔agent ping-pong; direct tells and endpoint
+   *  requests are never throttled), and acknowledging peers. */
+  private readonly attentionState: AttentionState = createAttentionState();
   /** Peers (lower-cased names) whose latest tell to this agent was a pure
    *  acknowledgement. An acknowledgement back to one of them is not sent
    *  (see `acknowledgementReplyRefusal`), which ends ack ping-pong at the
    *  second message instead of letting each side owe the other a reply. */
-  private lastTellWasAck = new Set<string>();
+  private get lastTellWasAck(): Set<string> {
+    return this.attentionState.peersWhoAcknowledged;
+  }
   /** Numbers and IDs (`#245` → `245`) this agent has already seen in what
    *  peers told it and in its own sent messages (not its tool results: a value
    *  it computed is news to the peer) — insertion-ordered, capped.
@@ -1704,9 +1585,6 @@ export class LeanAgentAdapter implements AgentHandle {
   // The current coding task's wall-clock budget (epoch ms), if it has one.
   private codingTaskBudget: { startedAt: number; deadlineAt: number } | null = null;
 
-  // ─── Perception Dedup ──────────────────────────────────────────────
-  private recentPerceptionHashes = new Set<string>();
-
   private eventSubscribers: Array<(event: AgentEvent) => void> = [];
   private rolePrompt: string | null;
   private config: AgentConfig;
@@ -1748,7 +1626,9 @@ export class LeanAgentAdapter implements AgentHandle {
     this.focusTimeoutMs = config.focusTimeout ?? 5 * 60 * 1000;
     this.perceptionBufferCap = config.perceptionBufferCap ?? 20;
     this.attentionMode = config.attentionMode ?? "balanced";
-    this.attentionThreshold = Math.max(10, Math.min(90, config.attentionThreshold ?? 50));
+    this.attentionThreshold = clampAttentionThreshold(
+      config.attentionThreshold ?? DEFAULT_ATTENTION_THRESHOLD,
+    );
     const envPromptTimeout = positiveNumberFromEnv("MARINA_AGENT_PROMPT_TIMEOUT_MS");
     this.promptTimeoutMs = config.promptTimeoutMs ?? envPromptTimeout ?? DEFAULT_PROMPT_TIMEOUT_MS;
     this.promptTimeoutExplicit =
@@ -2455,116 +2335,30 @@ export class LeanAgentAdapter implements AgentHandle {
             stripAnsi((p.data?.text as string) ?? (p.data?.message as string) ?? `[${p.kind}]`),
           );
           if (text) {
-            // Self-echo filter — the agent's own memory-service acknowledgements
-            // and send receipts never enter the buffer (see isSelfEchoPerception).
-            if (!this.perceiveSelfEcho && isSelfEchoPerception(p, text)) {
-              this.selfEchoesDropped++;
+            // Attention (`./attention`): self-echo and duplicate filters,
+            // scoring, ack/information/request classification, the untrusted
+            // clamp, the mode/threshold keep rule, the channel cooldown, the
+            // owed-reply rule and the wake band. Side effects stay here.
+            const decision = assessPerception(
+              {
+                perception: p,
+                text,
+                selfName: this.name,
+                events,
+                scorer: this.socialAwareness,
+                perceiveSelfEcho: this.perceiveSelfEcho,
+              },
+              { mode: this.attentionMode, threshold: this.attentionThreshold },
+              this.attentionState,
+            );
+            if (!decision.keep) {
+              if (decision.reason === "self-echo") this.selfEchoesDropped++;
+              else if (decision.reason === "below-threshold") this.droppedPerceptions++;
               return;
             }
-            // Perception dedup — skip identical text seen recently
-            const percHash = Bun.hash(text).toString();
-            // New addressed requests must not disappear just because their text repeats.
-            const addressed =
-              p.tag === "tell" ||
-              p.data.to ||
-              isAddressedOrCrewMessage(events[events.length - 1], text, this.name) ||
-              text.includes('"type":"model_request"');
-            if (!addressed && this.recentPerceptionHashes.has(percHash)) return;
-            this.recentPerceptionHashes.add(percHash);
-            if (this.recentPerceptionHashes.size > 200) {
-              this.recentPerceptionHashes.clear();
-            }
-
-            const lastEvent = events[events.length - 1];
-            let priority = lastEvent
-              ? this.socialAwareness.scorePerception(lastEvent, this.name)
-              : 15;
-            // An arrival is a perception, not a request: a guide sees it and
-            // may greet, but owes nothing (a forced reply per visitor).
-            let respond =
-              priority >= 80 ||
-              (lastEvent ? this.socialAwareness.shouldRespond(lastEvent, this.name) : false);
-            // A tell is directed work (priority 100, reply owed) — unless it is
-            // a pure acknowledgement ("thanks", "noted", "no reply needed"),
-            // which owes nothing. Forcing a reply to those made each side of
-            // a conversation owe the other one in turn. The acknowledgement
-            // stays visible as low-priority information: never dropped by the
-            // attention filter, never tracked as a request, never a wake.
-            //
-            // Of the rest, only a REQUEST (a question, an ask, an imperative,
-            // a correlation tag, a dispatch, a model request) owes a reply.
-            // INFORMATION — a delivered result, a statement, a status — is
-            // read, wakes the loop and passes the attention filter, but owes
-            // nothing: forcing a reply to it made the recipient answer every
-            // result with a status echo, which owed the sender in turn.
-            let acknowledgement = false;
-            let information = false;
-            if (p.tag === "tell" && typeof p.data.senderName === "string") {
-              const body =
-                typeof p.data.message === "string"
-                  ? p.data.message
-                  : text.replace(/^[\s\S]*?\btells you:\s*/, "");
-              acknowledgement = isPureAcknowledgement(body);
-              const sender = p.data.senderName.toLowerCase();
-              if (acknowledgement) {
-                this.lastTellWasAck.add(sender);
-                priority = Math.min(priority, ACKNOWLEDGEMENT_PRIORITY);
-                respond = false;
-              } else if (classifyIncomingTell(body) === "information") {
-                this.lastTellWasAck.delete(sender);
-                information = true;
-                priority = INFORMATION_TELL_PRIORITY;
-                respond = false;
-              } else {
-                this.lastTellWasAck.delete(sender);
-                priority = 100;
-                respond = true;
-              }
-            } else if (
-              p.kind === "message" &&
-              typeof p.data.message === "string" &&
-              isPureAcknowledgement(withoutVocative(p.data.message, this.name))
-            ) {
-              // The same rule on a room or channel post: "thanks, no reply
-              // needed" addressed to this agent owes nothing.
-              acknowledgement = true;
-              priority = Math.min(priority, ACKNOWLEDGEMENT_PRIORITY);
-              respond = false;
-            }
-            // Gateway/cross-instance relayed content is untrusted. It stays
-            // VISIBLE (federation is a feature) but must never drive auto-action:
-            // force it off the high-priority path (no `steer` interrupt, no
-            // fast-tick, no crew-responder wake, no "respond now" social signal).
-            // The continuation prompt renders it under an explicit non-authoritative
-            // label. It informs; it never commands.
-            const untrusted = p.data?.untrusted === true;
-            if (untrusted) {
-              respond = false;
-              priority = Math.min(priority, 40);
-            }
-            if (
-              !acknowledgement &&
-              !information &&
-              !shouldKeepPerception(this.attentionMode, priority, respond, this.attentionThreshold)
-            ) {
-              this.droppedPerceptions++;
-              return;
-            }
-            if (this.attentionMode === "open") priority = Math.max(priority, 35);
-            if (
-              lastEvent?.type === "channel_message" &&
-              lastEvent.speaker &&
-              priority < 90 &&
-              !isAddressedOrCrewMessage(lastEvent, text, this.name)
-            ) {
-              const cooldownMs = CHANNEL_REPLY_COOLDOWN_MS;
-              if (Date.now() - this.lastChannelResponseAt < cooldownMs) {
-                priority = Math.min(priority, 40);
-                respond = false;
-              } else if (respond) {
-                this.lastChannelResponseAt = Date.now();
-              }
-            }
+            const lastEvent = decision.event;
+            const { priority, untrusted, information, requestBody } = decision;
+            const respond = decision.shouldRespond;
 
             // Priority-aware buffer trim. When buffer exceeds cap*5, keep
             // (a) all high-priority events (>=80) regardless of age, plus
@@ -2598,19 +2392,10 @@ export class LeanAgentAdapter implements AgentHandle {
             const perceptionId = ++this.perceptionSeq;
             // Links handed over with the message; untrusted content never seeds a trace.
             const carriedLinks = untrusted ? [] : parseTraceLinks(p.data?.traceLinks);
-            // Under `MARINA_FORCED_ACTION_NUDGE=requests` only a REQUEST owes a
-            // reply: a tell already classified above, otherwise an addressed
-            // post whose body classifies as a request. An INFORMATION post that
-            // scored high (a crew update naming this agent) stays a wake and a
-            // [!] line, but is neither tracked as owed nor nudged.
-            const requestBody = typeof p.data?.message === "string" ? p.data.message : text;
-            const owesReply =
-              forcedActionNudgeMode() === "requests"
-                ? respond &&
-                  (p.tag === "tell" ||
-                    (!isPureAcknowledgement(requestBody) &&
-                      classifyIncomingTell(requestBody) === "request"))
-                : respond || priority >= 80;
+            // Owed per `MARINA_FORCED_ACTION_NUDGE` (see `assessPerception`):
+            // an INFORMATION post that scored high stays a wake and a [!] line,
+            // but is neither tracked as owed nor nudged.
+            const owesReply = decision.owed;
             const tracked =
               !untrusted && owesReply
                 ? this.outstandingRequests.track(p, perceptionId, text)
@@ -2647,7 +2432,7 @@ export class LeanAgentAdapter implements AgentHandle {
             this.pendingPerceptions.push({
               id: perceptionId,
               requestId,
-              text: `[${p.kind}] ${text}${noReplyMarker(acknowledgement, information)}`,
+              text: `[${p.kind}] ${text}${decision.marker}`,
               priority,
               shouldRespond: respond,
               owesReply,
@@ -2668,7 +2453,7 @@ export class LeanAgentAdapter implements AgentHandle {
             // Ambient connects, movement, and channel chatter remain available
             // to the next reflective cycle but do not each purchase an LLM
             // turn. Addressed messages and endpoint requests still wake now.
-            if (respond || priority >= 80 || (information && !untrusted)) this.cycleWaiter.wake();
+            if (decision.wake === "now") this.cycleWaiter.wake();
 
             // High-priority perceptions interrupt a run in flight. When the
             // agent is idle the buffer alone delivers it on the next cycle
@@ -2679,8 +2464,7 @@ export class LeanAgentAdapter implements AgentHandle {
             // A channel post interrupts only at the dispatch tier (≥ 90: crew
             // tasks, model requests); an addressed chat post waits for the
             // next cycle instead of steering every run in flight.
-            const steerFloor = lastEvent?.type === "channel_message" ? 90 : 80;
-            if (priority >= steerFloor && this.agent.state.isStreaming) {
+            if (decision.steer && this.agent.state.isStreaming) {
               const speaker = lastEvent?.speaker ?? "Someone";
               this.agent.steer({
                 role: "user",
@@ -5943,15 +5727,20 @@ The goal is a smaller, sharper memory — not more notes.`;
     this.attentionMode = mode;
     if (mode === "focused") {
       const before = this.pendingPerceptions.length;
-      this.pendingPerceptions = this.pendingPerceptions.filter(
-        (perception) => perception.priority >= this.attentionThreshold || perception.shouldRespond,
+      this.pendingPerceptions = this.pendingPerceptions.filter((perception) =>
+        shouldKeepPerception(
+          "focused",
+          perception.priority,
+          perception.shouldRespond === true,
+          this.attentionThreshold,
+        ),
       );
       this.droppedPerceptions += before - this.pendingPerceptions.length;
     }
   }
 
   setAttentionThreshold(threshold: number): void {
-    this.attentionThreshold = Math.max(10, Math.min(90, Math.round(threshold)));
+    this.attentionThreshold = clampAttentionThreshold(Math.round(threshold));
   }
 
   async sendAttention(message: string): Promise<void> {
