@@ -90,6 +90,13 @@ export interface MarketPrice {
   p: number;
   /** ISO time of the price (the cutoff's last trade or candle, or now for a live read). */
   at: string;
+  /**
+   * Traded volume known at `at`, in `volumeUnit` (`USD`, `mana`, …), when the
+   * venue reports it: weighs venues against each other in a pooled prior, only
+   * when every pooled price uses the same unit.
+   */
+  volume?: number;
+  volumeUnit?: string;
 }
 
 export interface ForecastLookup {

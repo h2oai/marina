@@ -168,5 +168,6 @@ export function dataSources(env: NodeJS.ProcessEnv = process.env): string {
       `official series (FRED_API_KEY${env.FRED_API_KEY?.trim() ? " set: vintage-correct past dates and search" : " not set: live latest only"})`,
     ),
     row("bls", "official series, latest revision only (BLS_API_KEY raises the quota)"),
+    `  ${"manifold".padEnd(10)} opt-in  community probabilities, play money; past dates read bet history (keyless; name it in MARINA_FORECAST_LOOKUPS)`,
   ].join("\n");
 }

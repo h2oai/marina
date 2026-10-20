@@ -929,6 +929,8 @@ and provenance. Promote a snapshot to the new default by restarting with
 ```
 > batch look ; who ; brief           Run multiple commands in sequence
 > calc 128 * 1024                    Exact arithmetic scratchpad (one binary expression)
+> quant fit 41 42 40 43 44 steps:2   Series forecast: mean, sd, quantiles (persistence/EWMA/trend/damped/auto)
+> quant buckets mean:3.4 sd:0.3 -- <3, 3-4, >=4   Probability of each numeric range; most likely bucket
 > shell list                         Shell allowlist + saved output routing (rank 5 + `shell.exec` gate; `run <binary>` executes)
 > gateway list                       Bridges to peer Marina instances (rank 5 + `gateway.connect` gate)
 > demo preflight                     Demo health: score, warm agents, blockers (`demo reset` needs rank 2+)

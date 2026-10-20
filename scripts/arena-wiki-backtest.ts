@@ -15,12 +15,31 @@
  * (1 − RBO loss ÷ persistence RBO loss, p = 0.9).
  *
  *   bun run scripts/arena-wiki-backtest.ts --dir <wikitop dir> [--site data.json] [--grid]
+ *     [--out items.jsonl] [--features <label>=<file>[+<file>…][,…]] [--adjust '{…}']
+ *
+ * `--out` writes one JSON line per week and variant — `{id, score, at,
+ * variant, group: "arena-wikipedia", exclude?}` plus diagnostics (loss,
+ * persistence loss, hits, unseen entrants, the ranking) — for the transfer
+ * report's `items` adapter; the text output is unchanged. `--features` scores
+ * the attention extractors' records (`scripts/arena-wiki-extract.ts`) through
+ * the explicit adjustments (src/arena/extraction/adjust.ts) as the variant
+ * `specialist+<label>`, fixed parameters (`DEFAULT_ADJUST_PARAMS`, `--adjust`
+ * overrides) and, with `--grid`, elasticities re-chosen weekly on earlier
+ * weeks only (`specialist+<label>/wf`); a week the extractors did not cover is
+ * written with `exclude: "not extracted"`.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import {
+  type AdjustParams,
+  type AttentionFeature,
+  applyAdjustments,
+  DEFAULT_ADJUST_PARAMS,
+} from "../src/arena/extraction";
 import { rankingScores } from "../src/arena/forecast";
 import { WIKITOP_PUBLICATION_LAG_DAYS } from "../src/arena/research/civiqs-nowcast";
+import { rboLoss } from "../src/arena/score-shapes";
 import {
   type DailyTop,
   DEFAULT_SPECIALIST_PARAMS,
@@ -43,6 +62,9 @@ const { values } = parseArgs({
     grid: { type: "boolean" },
     params: { type: "string" },
     "min-train": { type: "string" },
+    out: { type: "string" },
+    features: { type: "string" },
+    adjust: { type: "string" },
   },
 });
 if (!values.dir) throw new Error("usage: --dir <wikitop dir> [--site data.json] [--grid]");
@@ -196,6 +218,196 @@ if (wf.length) {
   console.log(
     `walk-forward specialist (grid re-chosen weekly) ${mean(wf).toFixed(4)} vs nowcast ${mean(nowWf).toFixed(4)} on the same ${wf.length} weeks`,
   );
+}
+
+// ─── Extraction variants and per-item output ────────────────────────────────
+
+/** Seeded paired bootstrap 95 % interval of the mean of `d`. */
+function bootstrapCi(d: number[], reps = 4000): [number, number] {
+  if (d.length < 2) return [Number.NaN, Number.NaN];
+  let seed = 20261019;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 2 ** 32;
+  };
+  const means: number[] = [];
+  for (let r = 0; r < reps; r++) {
+    let s = 0;
+    for (let i = 0; i < d.length; i++) s += d[Math.floor(rand() * d.length)]!;
+    means.push(s / d.length);
+  }
+  means.sort((a, b) => a - b);
+  return [means[Math.floor(0.025 * reps)]!, means[Math.floor(0.975 * reps)]!];
+}
+
+interface ArmRow {
+  ranking: string[];
+  skill: number;
+  exclude?: string;
+}
+const specRuns = weeks.map((w) =>
+  specialistRanking(days, { weekEnd: w.weekEnd, lastDay: w.lastDay, params: chosenParams }),
+);
+const arms = new Map<string, ArmRow[]>();
+if (values.out || values.features) {
+  arms.set(
+    "persistence",
+    weeks.map((w) => ({ ranking: w.persistence, skill: 0 })),
+  );
+  arms.set(
+    "nowcast",
+    weeks.map((w, i) => ({ ranking: nowcast(w), skill: now[i]! })),
+  );
+  arms.set(
+    "specialist",
+    weeks.map((_, i) => ({ ranking: specRuns[i]!.ranking, skill: spec[i]! })),
+  );
+  arms.set(
+    "oracle-events",
+    weeks.map((w, i) => ({ ranking: oracleEvents(w, chosenParams), skill: oracle[i]! })),
+  );
+}
+
+/** Feature records per week, and the weeks every file of a label covered. */
+function loadFeatures(paths: string[]) {
+  const byWeek = new Map<string, AttentionFeature[]>();
+  let covered: Set<string> | undefined;
+  for (const path of paths) {
+    const mine = new Set<string>();
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      const r = JSON.parse(line) as AttentionFeature & { week: string; run?: boolean };
+      if (r.run) {
+        mine.add(r.week);
+        continue;
+      }
+      const list = byWeek.get(r.week) ?? [];
+      list.push(r);
+      byWeek.set(r.week, list);
+    }
+    covered = covered ? new Set([...covered].filter((w) => mine.has(w))) : mine;
+  }
+  return { byWeek, covered: covered ?? new Set<string>() };
+}
+
+/** Elasticity grid over the features a label actually has. */
+function adjustGrid(names: Set<string>): Array<Partial<AdjustParams>> {
+  const axes: Array<[keyof AdjustParams, number[]]> = [];
+  if (names.has("edits.surge")) axes.push(["editElasticity", [0, 0.1, 0.2, 0.35, 0.5]]);
+  if (names.has("related.growth")) axes.push(["relatedElasticity", [0, 0.1, 0.2, 0.35, 0.5]]);
+  if (names.has("news.trend")) axes.push(["newsElasticity", [0, 0.1, 0.2, 0.35]]);
+  if (names.has("news.portal_days")) axes.push(["portalElasticity", [0, 0.1, 0.2, 0.35]]);
+  if (names.has("news.direction")) axes.push(["directionStep", [1, 1.2, 1.5]]);
+  if (names.has("event.in_window")) axes.push(["eventMultiplier", [1, 1.3, 1.6, 2.2, 3]]);
+  if (names.has("event.ended")) axes.push(["endedMultiplier", [1, 0.6, 0.35]]);
+  let out: Array<Partial<AdjustParams>> = [{}];
+  for (const [k, vs] of axes) out = out.flatMap((g) => vs.map((v) => ({ ...g, [k]: v })));
+  return out;
+}
+
+if (values.features) {
+  const fixed: AdjustParams = {
+    ...DEFAULT_ADJUST_PARAMS,
+    ...(values.adjust ? (JSON.parse(values.adjust) as Partial<AdjustParams>) : {}),
+  };
+  console.log("\nattention extraction variants (paired with the specialist on covered weeks):");
+  for (const spec0 of values.features.split(",")) {
+    const eq = spec0.indexOf("=");
+    const label = spec0.slice(0, eq).trim();
+    const { byWeek, covered } = loadFeatures(spec0.slice(eq + 1).split("+"));
+    const adjusted = (i: number, p: AdjustParams) =>
+      applyAdjustments(specRuns[i]!.scored, byWeek.get(weeks[i]!.weekEnd) ?? [], p)
+        .scored.slice(0, 10)
+        .map((s) => s.title);
+    const rows: ArmRow[] = weeks.map((w, i) => {
+      const ranking = adjusted(i, fixed);
+      return {
+        ranking,
+        skill: skillOf(w, ranking),
+        ...(covered.has(w.weekEnd) ? {} : { exclude: "not extracted" }),
+      };
+    });
+    arms.set(`specialist+${label}`, rows);
+    const idx = weeks.map((w, i) => (covered.has(w.weekEnd) ? i : -1)).filter((i) => i >= 0);
+    const report = (name: string, r: ArmRow[], over: number[]) => {
+      const d = over.map((i) => r[i]!.skill - spec[i]!);
+      const [lo, hi] = bootstrapCi(d);
+      const changed = over.filter(
+        (i) => JSON.stringify(r[i]!.ranking) !== JSON.stringify(specRuns[i]!.ranking),
+      ).length;
+      console.log(
+        `  ${name.padEnd(36)} n=${over.length}  skill ${mean(over.map((i) => r[i]!.skill)).toFixed(4)} vs specialist ${mean(over.map((i) => spec[i]!)).toFixed(4)}  Δ ${mean(d).toFixed(4)} [${lo.toFixed(4)}, ${hi.toFixed(4)}]  better ${d.filter((x) => x > 1e-12).length} worse ${d.filter((x) => x < -1e-12).length}  lists changed ${changed}`,
+      );
+    };
+    report(`specialist+${label}`, rows, idx);
+    if (values.grid && idx.length >= 6) {
+      const names = new Set([...byWeek.values()].flat().map((f) => f.feature));
+      const axes = adjustGrid(names);
+      const grid = axes.map((g) => ({ ...fixed, ...g }));
+      const skills = grid.map((g) => idx.map((i) => skillOf(weeks[i]!, adjusted(i, g))));
+      const warm = Math.min(minTrain, Math.floor(idx.length / 3));
+      const wfRows: ArmRow[] = rows.map((r) => ({ ...r }));
+      const picks = new Map<string, number>();
+      for (let k = 0; k < idx.length; k++) {
+        const i = idx[k]!;
+        if (k < warm) {
+          wfRows[i] = { ...wfRows[i]!, exclude: "training" };
+          continue;
+        }
+        let best = 0;
+        let bestSkill = -Infinity;
+        grid.forEach((_, g) => {
+          const s = mean(skills[g]!.slice(0, k));
+          if (s > bestSkill + 1e-12) {
+            bestSkill = s;
+            best = g;
+          }
+        });
+        const ranking = adjusted(i, grid[best]!);
+        wfRows[i] = { ranking, skill: skillOf(weeks[i]!, ranking) };
+        const key = JSON.stringify(axes[best]);
+        picks.set(key, (picks.get(key) ?? 0) + 1);
+      }
+      arms.set(`specialist+${label}/wf`, wfRows);
+      report(`specialist+${label}/wf`, wfRows, idx.slice(warm));
+      const inSample = grid
+        .map((g, k) => ({ g, s: mean(skills[k]!) }))
+        .sort((a, b) => b.s - a.s)[0]!;
+      console.log(
+        `    in-sample best ${inSample.s.toFixed(4)} at ${JSON.stringify(axes[grid.indexOf(inSample.g)])}; most-picked walk-forward ${[...picks.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "-"}`,
+      );
+    }
+  }
+}
+
+if (values.out) {
+  const lines: string[] = [];
+  for (const [variant, rows] of arms) {
+    rows.forEach((r, i) => {
+      const w = weeks[i]!;
+      const pool = new Set(specRuns[i]!.scored.map((s) => s.title));
+      lines.push(
+        JSON.stringify({
+          id: `wiki-top10-${w.weekEnd}`,
+          score: Number(r.skill.toFixed(6)),
+          at: w.lockAt,
+          variant,
+          group: "arena-wikipedia",
+          ...(r.exclude ? { exclude: r.exclude } : {}),
+          weekEnd: w.weekEnd,
+          lastDay: w.lastDay,
+          loss: Number(rboLoss(r.ranking, w.truth, 0.9, w.truth.length).toFixed(6)),
+          persistenceLoss: Number(rboLoss(w.persistence, w.truth, 0.9, w.truth.length).toFixed(6)),
+          hits: r.ranking.filter((t) => w.truth.includes(t)).length,
+          unseen: w.truth.filter((t) => !pool.has(t)).length,
+          ranking: r.ranking,
+          truth: w.truth,
+        }),
+      );
+    });
+  }
+  writeFileSync(values.out, `${lines.join("\n")}\n`);
+  console.log(`\nper-item results: ${lines.length} lines (${arms.size} variants) → ${values.out}`);
 }
 
 if (values.site) {

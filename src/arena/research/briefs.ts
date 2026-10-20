@@ -55,6 +55,13 @@ export interface ResearchBrief {
    */
   readFirst?: string[];
   /**
+   * Publishers the question likely resolves against (research authority mode,
+   * `src/research/authority.ts`). Engines that search (`search`) add
+   * domain-restricted queries; the read swarm asks for the named field with its
+   * as-of date; others ignore it. Never a reason to bypass a cutoff.
+   */
+  authority?: import("../../research/authority").AuthorityTarget[];
+  /**
    * Sources the research must not use (a task that bars a source, a
    * benchmark's own published answers). Engines that read pages (`search`)
    * drop them before reading; others ignore it. See `excludedSource`.

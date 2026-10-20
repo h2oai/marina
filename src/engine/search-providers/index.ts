@@ -63,6 +63,12 @@ export interface SearchOpts {
   failures?: string[];
   /** Paid providers add each call's price here (it is also recorded in the spend ledger). */
   spend?: { usd: number };
+  /**
+   * Restrict results to these domains (and their subdomains). Only providers
+   * declaring `domainFilter` apply it; a caller restricting another provider
+   * writes a `site:` operator into the query instead.
+   */
+  domains?: string[];
 }
 
 /** The HTTP surface a provider needs — a `ConnectorRuntime`, or `standaloneSearchHttp()`. */
@@ -80,6 +86,8 @@ export interface SearchProvider {
   dateBound?: "strict";
   /** Only answers bounded searches or searches that name it in `opts.providers`. */
   boundOnly?: boolean;
+  /** Applies `opts.domains` as a native domain filter. */
+  domainFilter?: boolean;
   /** One line for `sources` listings: what it searches and how the bound is enforced. */
   describe?: string;
   search(

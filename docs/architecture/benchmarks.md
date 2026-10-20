@@ -52,6 +52,35 @@ The key is revoked when the run ends. A run stopped by its key is recorded **inv
 
 In-world runs record their per-item outcomes (item id, verdict, latency, cost, trace id; never question or answer text) and ledger columns when they complete, so `compare`, `replicates` and pooling read them like imported runs. A run key's measured spend is the run's cost; without one, the harness's usage report is. The run's target is `{model, stack, source}`: `source` is the server's git revision (`-dirty` with local changes), so runs on different code never pool as replicates. A bare run records no `stack` and stays model evidence for route selection; an instrumented arm is not counted as evidence for the model alone.
 
+## Transfer: the two-evaluation rule
+
+A paired win on one board is not yet a capability: a configuration built against one evaluation
+can fit that evaluation. `bun run eval:transfer --spec <file>` (`scripts/eval-transfer.ts`,
+library `benchmarks/transfer/`) judges a candidate env overlay against a baseline across several
+suites and says `transfers` only when it improves significantly on at least two independent suite
+groups and regresses significantly on none.
+
+- **Core is benchmark-free** (`core.ts`): suites are per-item scores, higher is better. Per suite,
+  items pair by id (replicates averaged), a seeded paired bootstrap gives the interval of the mean
+  delta and an exact sign test gives p. An improvement needs both (interval low > margin, p < α);
+  a regression needs either. Suites sharing a `group` count once.
+- **Adapters own the formats** (`adapters.ts`): generic `items` records (one file may hold every
+  arm by `variant` and replicate runs by `replicate`; field options map other record formats),
+  harness results, the benchmark ledger (`ledger.ts`: runs by label, id, group or date, read
+  without writing — immutable open, or a temporary copy when a `-wal` holds rows), FutureX clean
+  backtests (leak-audit-flagged rows excluded), `arena evaluate` / `shadow paired-score` reports,
+  and τ², BrowseComp-Plus, LongMemEval and paired-run presets.
+- **Replicates**: averaged per item; `bootstrap: two-stage` resamples runs then items, the same
+  cluster bootstrap as forecasting selection.
+- **Inventory** (`inventory.ts`, `--inventory`): finds every per-item result and ledger on disk,
+  lists per suite the variants and the pairs that share items, with ready suite entries.
+- **Held out by default**: only the `holdout` side of the promotion split (`itemSplit`, slot
+  `transfer:<group>`) counts, or a time split on each item's evidence cutoff; `all` is labelled.
+- **No spend by default**: it ingests existing files; a suite's `run` command executes only under
+  `--run`.
+
+Format, options and how to add a suite: [benchmarks/README.md](../../benchmarks/README.md#transfer-report).
+
 ## The reproduction kit, from inside the world
 
 `bun run repro` (`benchmarks/repro/`) is the kit for suites that need more than one harness call: isolated Marina servers per arm, third-party CLIs (τ², SWE-bench Verified, HLE through a judge, FutureX and arena backtests), a spend estimate refused above `--budget-usd`, and pooled replicate comparisons. The `benchmark kit` subcommand runs it from any surface (`src/engine/benchmark-kit.ts`):

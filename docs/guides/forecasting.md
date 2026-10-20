@@ -163,7 +163,8 @@ In the world: `forecast <question> type:choice options:A,B,C [ends:<ISO time>]` 
 `{"type":"choice","options":[{"id":"A","label":"…"}, …]}`, `{"type":"multi",…}`,
 `{"type":"number","unit"?:"…","integer"?:true}`, `{"type":"ranking","size"?:5,"candidates"?:[…]}`
 or `{"type":"text"}` — plus optional `endTime`, `asOf`, `context` (resolution rules or format
-notes), `runs` (1–9), `researchRounds` (1–4) and `critique` (boolean). Which models run stays an
+notes), `runs` (1–9), `researchRounds` (1–4), `critique` (boolean) and `contract` (an explicit
+[answer contract](#answer-contract)). Which models run stays an
 operator setting.
 
 What happens:
@@ -280,6 +281,40 @@ The typed answer object keeps every stage — plan, each research round (with it
 and warnings), lookups, every run with its reason and weight, the combination and its support, the
 critique, the cutoff, sources, verification, evidence budget, judge record, cost and time. In-world answers are saved like any other forecast.
 
+### Answer contract
+
+A question often says how its answer must be written: "End with the option letter in
+`\boxed{}`", "a date in YYYY-MM-DD", "rounded to one decimal place", "select up to two", "list
+the top 3", "in at most four words". `MARINA_FORECAST_CONTRACT` (default `off`) turns those
+instructions into an explicit **answer contract** (`src/forecast/answer-contract.ts`) — the form
+(single choice, multi-select with pick bounds, a number with unit / integer / decimals, a date
+in a format, a ranked list of a size, free text with a word limit), an optional `\boxed{…}`
+wrapper and the format line verbatim — read from the question and its `context` and refining the
+typed `answer` spec. A question that states no such instruction gets no contract.
+
+- `observe` parses the contract and records on the answer (`contract`) whether the final answer
+  meets it. No prompt and no answer changes.
+- `on` carries the contract to the planner, every run, the verifier, the critic, the Delphi and
+  tournament formations and the judge. Then a final validator checks the finished answer. A
+  lossless rewrite (letter case, an option's label to its id, a date in another notation, rounding
+  to the stated decimals, a list cut to its size) is applied directly. A real violation (not an
+  option, two dates, a short list, too many words) is re-asked once of the critic (else the
+  planner), and if that fails a deterministic fallback is used (the first option named, else the
+  most probable; the first number or date; a list or text cut to its limit). The answer keeps
+  `contract.status` (`ok`, `normalized`, `reasked`, `fallback` or `violation`), the pipeline's own
+  answer in `contract.before` and the required rendering in `contract.rendered`; the prediction
+  changes only when the contract's value is a valid typed answer. A forecast with no answer is
+  never filled in.
+
+A request that carries its own `contract` is enforced unless the mode is `observe`. Over HTTP,
+`POST /v1/forecast` accepts an optional `contract` beside `answer`: `{"form": …}` plus any of
+`minPicks`, `maxPicks`, `unit`, `integer`, `decimals`, `dateFormat` (`YYYY-MM-DD`, `YYYY-MM`,
+`YYYY`, `MM/DD/YYYY`, `DD/MM/YYYY`, `Month D, YYYY`, `D Month YYYY`), `size`, `maxWords`,
+`maxLength`, `wrapper` (`"boxed"`) and `formatLine`. The form must fit the answer type
+(`single-choice` for `choice`, `multi-select` for `multi`, `number`, `ranked-list` for
+`ranking`, `free-text` or `date` for `text`), options always come from `answer`, and an invalid
+contract is a 400.
+
 ## Priors, calibration, the skeptic crew and routing
 
 Four mechanisms from Marina's [Social Simulation Arena](arena.md) forecaster, generalised to any
@@ -316,7 +351,13 @@ stage. The priors, in order:
    observed — a prior observed after the cutoff is rejected and the rejection recorded). A
    `statistical` prior comes from data rather than people: a series' own history or a published
    reference class's base rate (see [Statistical priors](#statistical-priors));
-2. one priced market a lookup matched, for a yes/no question (two or more matches give no prior);
+2. one priced market a lookup matched, for a yes/no question. Two or more markets on one venue
+   are ambiguous and give no prior. When several venues each matched exactly one market and the
+   markets name the same question (every pair of titles shares at least two words), their prices
+   are pooled: a log-odds mean, weighted by log(1 + volume) when every venue reports volume in
+   the same unit (else equal weights, since USD and play money are not comparable). The prior's
+   `detail` lists each venue's price and weight and the spread, flagged when the venues are more
+   than 0.15 apart. A single venue's prior is unchanged;
 3. for a number, the freshest official reading (the lookups' anchor);
 4. the base rate of the question's class in resolved history (the caller's `category`, else the
    answer type) — per recurring option label for a choice, per class for a multi-select, smoothed
@@ -425,6 +466,48 @@ A **prior-only** forecast (`src/forecast/prior-answer.ts`) is the answer the bes
 its own, at no cost. Benchmark adapters include it as a candidate configuration: a model
 configuration that cannot beat its own prior on held-out questions is adding noise.
 
+### Numeric helpers for agents
+
+Every agent has two rank-0 commands for the arithmetic of forecasting. Neither calls a model.
+
+- `calc` does exact arithmetic, unit conversion, percent change and compound growth, for example
+  `calc (380 / 250)^(1/7) - 1`.
+- `quant fit <values> steps:N` (or `to:<date>`) fits a series and returns a mean, an sd and
+  quantiles. It chooses among persistence, EWMA, a persistence/EWMA blend, a linear trend, a
+  damped trend and a combination by their own past errors.
+- `quant buckets mean:<m> sd:<s> -- <ranges>` (or `q:<level>=<value>,…`) gives each numeric
+  range's probability and the most likely range. Use it for multiple-choice questions with
+  numeric ranges.
+
+The `quantitative-estimates` skill teaches when to use each command. It ships with the server, so
+any agent can read it with `skill builtin quantitative-estimates` (and `skill search` finds it)
+without importing anything. The `researcher` and `market-oracle` roles carry a
+`quantitative-estimates` trait that points to it. The mechanics are in
+[architecture/forecasting.md](../architecture/forecasting.md#quantitative-helpers-srcquant).
+
+#### The quant stage in typed forecasts
+
+`MARINA_FORECAST_QUANT` (default `off`) adds a deterministic stage to every typed forecast. It
+makes no model call.
+
+- **Series baseline.** When a lookup read an official series with history (FRED, BLS), the
+  series is fitted with `fitSeries` and projected to the question's end time.
+- **Range buckets.** When every option of a choice is a numeric range ("Below 2.5%",
+  "2.5% to 2.9%", "3.0% or higher", "Between 100,000 and 200,000", or counts such as "0", "1",
+  "2 or more"), each option's probability comes from that projection. Without one, it comes from a
+  supplied numeric prior with a value and sd. Ranges displayed with rounding gaps are joined at
+  the midpoints.
+
+The modes:
+
+- `observe` records the baseline, the bucket probabilities and the blend they would give on the
+  answer (`quant`). Nothing a model sees changes, and the answer does not change, so the effect can
+  be measured from resolved questions at no extra cost.
+- `on` also shows both to the runs (a dossier line, used as a reference class) and to the judge
+  (an evidence chunk). For a choice asked with probabilities, it also blends the bucket
+  probabilities into the runs' distribution with weight `MARINA_FORECAST_QUANT_WEIGHT` (default
+  0.25). The prediction then becomes the most probable option.
+
 ## Keeping score
 
 Every in-world answer is saved with its full audit trail (`forecast list` shows yours). To have
@@ -451,7 +534,8 @@ are saved with their answer as one string (`prediction`).
 | `MARINA_FORECAST_CRITIQUE` | `on` | `off` skips the critique |
 | `MARINA_FORECAST_SELECTION` | `agreement` | typed answers: `confidence` takes the most self-confident run instead of combining by agreement (see Combine) |
 | `MARINA_FORECAST_BUDGET_S` | unset (none) | typed answers: wall-clock budget per forecast. From about 75 % no further research round starts. At the cap, lookups, verification and the critique are skipped and the answer is combined from the runs that have finished (the first to finish, when none has). The answer then carries `budgetForced`, and a skipped check is `verified.verdict: "not_run"` |
-| `MARINA_FORECAST_LOOKUPS` | `auto` | structured sources: `auto` (every one that can run here), `off`, or a list of `polymarket`, `kalshi`, `odds`, `fred`, `bls`, `markets` / `all` (see [Lookups](#lookups)) |
+| `MARINA_FORECAST_LOOKUPS` | `auto` | structured sources: `auto` (every one that can run here), `off`, or a list of `polymarket`, `kalshi`, `odds`, `fred`, `bls`, `markets` / `all`, plus the opt-in `manifold` (see [Lookups](#lookups)) |
+| `MARINA_FORECAST_CONTRACT` | `off` | typed answers: the [answer contract](#answer-contract) — `observe` records whether the final answer meets the question's own format instructions; `on` carries them through every stage and enforces them |
 | `MARINA_FORECAST_MARINA_URL` / `_KEY` | `http://localhost:3300` | where `marina:<crew>` analysts are asked |
 
 An analyst may be a crew: `MARINA_FORECAST_ANALYSTS=marina:answerer` asks the `answerer` crew on a
@@ -491,6 +575,15 @@ read as FRED's current date).
 | `odds` | The Odds API head-to-head | current pre-game odds, margin removed, averaged across bookmakers | the snapshot at or before the cutoff (`/historical`, a paid-plan endpoint) | `ODDS_API_KEY` |
 | `fred` | FRED (St. Louis Fed) | latest observations | as published on the cutoff date (ALFRED vintages) | `FRED_API_KEY` for a past cutoff; keyless works live |
 | `bls` | BLS public API | latest monthly observations | skipped (BLS serves only the latest revision) | `BLS_API_KEY` optional (raises the quota) |
+| `manifold` (opt-in) | Manifold Markets (play money) | probability, volume and scheduled close of open markets; a multiple-choice market's leading answers | yes/no markets only: the probability after the last trade at or before the cutoff (bet history, within 30 days) and the mana traded up to it; never the current probability, volume, close date or resolution; nothing when the history is missing | none |
+
+Opt-in lookups run only when named (`MARINA_FORECAST_LOOKUPS=auto,manifold`, or
+`MARINA_ARENA_RESEARCH_LOOKUPS=fred,manifold`); `auto`, `all` and `markets` never include them, so
+adding one changes no default. A market created after the cutoff, or settled by then, contributes
+nothing. Good Judgment Open is not offered: it has no public API, its terms forbid automated
+collection, and its crowd forecasts are not published as of a past date, so no reading would be
+safe for a backtest. A further crowd source implements the same lookup interface in
+`src/forecast/lookup-crowd.ts` and adds one entry to `OPT_IN_LOOKUPS` in `src/forecast/lookups.ts`.
 
 Markets are matched to the question by their words (and by date when both sides know one) with a
 conservative threshold, so an unrelated market's price is never shown. Sports odds show only games

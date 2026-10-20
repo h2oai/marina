@@ -15,6 +15,16 @@
  *   bls         BLS series — live-only (latest revision); BLS_API_KEY raises the quota
  *   markets     = polymarket,kalshi;  all = every lookup above
  *
+ * Opt-in lookups (`OPT_IN_LOOKUP_NAMES`) run only when named — never under
+ * `auto`, `all` or `markets`, so turning one on is always an explicit choice:
+ *
+ *   manifold    Manifold Markets community probabilities (keyless, play money;
+ *               lookup-crowd.ts) — live, or the probability after the last
+ *               trade at/before a past cutoff from the bet history
+ *
+ * Good Judgment Open has no lookup: no public API, terms that forbid automated
+ * collection, and no as-of history (see lookup-crowd.ts for the extension point).
+ *
  * `voteHubLookup` (lookup-polls.ts: other pollsters' approval / generic-ballot
  * readings) is exported for callers that name a poll quantity (`DataHints.polls`,
  * today the arena's `MARINA_ARENA_RESEARCH_LOOKUPS=votehub`); it is not in
@@ -33,11 +43,13 @@
  */
 
 import { pricesHistory, searchEvents } from "../net/clients/polymarket-client";
+import { manifoldLookup } from "./lookup-crowd";
 import { kalshiLookup, polymarketLookup } from "./lookup-markets";
 import { oddsLookup } from "./lookup-odds";
 import { blsLookup, fredLookup } from "./lookup-series";
 import type { ForecastLookup, LookupContext, LookupResult } from "./lookup-types";
 
+export { manifoldLookup, priceAtCutoff } from "./lookup-crowd";
 export { kalshiLookup, polymarketLookup } from "./lookup-markets";
 export { impliedProbabilities, oddsLookup } from "./lookup-odds";
 export { pollAvailable, pollNet, voteHubLookup } from "./lookup-polls";
@@ -53,27 +65,42 @@ export type {
   ForecastLookup,
   LookupContext,
   LookupResult,
+  MarketPrice,
   PollHints,
   Reading,
 } from "./lookup-types";
 
 export const LOOKUP_NAMES = ["polymarket", "kalshi", "odds", "fred", "bls"] as const;
 
-export type LookupName = (typeof LOOKUP_NAMES)[number];
+/**
+ * Lookups that run only when named explicitly (never under `auto`, `all` or
+ * `markets`): a new source starts here, so no default changes when it lands.
+ */
+export const OPT_IN_LOOKUP_NAMES = ["manifold"] as const;
+
+export type DefaultLookupName = (typeof LOOKUP_NAMES)[number];
+export type OptInLookupName = (typeof OPT_IN_LOOKUP_NAMES)[number];
+export type LookupName = DefaultLookupName | OptInLookupName;
+
+/** How each opt-in lookup is built (the extension point for further crowd sources). */
+const OPT_IN_LOOKUPS: Record<OptInLookupName, (env: NodeJS.ProcessEnv) => ForecastLookup> = {
+  manifold: () => manifoldLookup(),
+};
 
 /**
  * The lookups that can run in this environment: every keyless one, plus the
  * keyed ones whose key is set. This is what `auto` (the default) turns on.
  */
-export function availableLookupNames(env: NodeJS.ProcessEnv = process.env): LookupName[] {
+export function availableLookupNames(env: NodeJS.ProcessEnv = process.env): DefaultLookupName[] {
   return LOOKUP_NAMES.filter((n) => n !== "odds" || !!env.ODDS_API_KEY?.trim());
 }
 
 /**
  * `MARINA_FORECAST_LOOKUPS`: unset or `auto` ⇒ every available lookup
  * (`availableLookupNames`); `off` / `none` / empty ⇒ none; otherwise a comma
- * list of names, `markets`, or `all`. Unknown names are ignored. Keys come
- * from the environment only.
+ * list of names, `markets`, or `all`, plus opt-in names (`manifold`) that only
+ * an explicit mention turns on. Unknown names are ignored. Keys come from the
+ * environment only.
  */
 export function lookupsFromSpec(
   spec: string | undefined,
@@ -101,6 +128,7 @@ export function lookupsFromSpec(
     else if (n === "fred") out.push(fredLookup(env.FRED_API_KEY?.trim() || undefined));
     else if (n === "bls") out.push(blsLookup(env.BLS_API_KEY?.trim() || undefined));
   }
+  for (const n of OPT_IN_LOOKUP_NAMES) if (names.has(n)) out.push(OPT_IN_LOOKUPS[n](env));
   return out;
 }
 

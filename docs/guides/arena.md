@@ -730,6 +730,39 @@ against the arena's recorded persistence loss for each round.
   (`MARINA_ARENA_SHADOW_CHALLENGERS="wikipedia=wiki-specialist:<model>"`); an oracle that inserts up
   to three true entrants unseen in the projected top 30 bounds that channel at about +0.04.
   Route the statistical specialist with `wikipedia=wiki-specialist` in `MARINA_ARENA_ROUTES`.
+- **Attention extractors for the Wikipedia specialist** (`MARINA_ARENA_WIKI_EXTRACTORS`, off by
+  default; `src/arena/extraction/`): several narrow extractors run in parallel on the specialist's
+  best `MARINA_ARENA_WIKI_EXTRACTOR_TOP` candidates (default 30), each turning raw information into
+  typed records — `{subject, feature, value, asOf, source, confidence}` — as of the round's cutoff:
+  `edits` (MediaWiki revisions and editors in the 28 days before the lock, queried with `rvstart` at
+  the cutoff and `rvend` 28 days earlier), `related` (the pageview growth of the articles the lead
+  linked to at the revision in force at the cutoff, to the last published day), `news` (the days
+  Portal:Current events linked the article in the week before the lock, each digest page read at
+  its revision at the cutoff; with a model, one call reads the digest's lines about it as rising,
+  steady or fading), `gdelt` (GDELT coverage volume and trend, bounded to the cutoff; slow) and
+  `events` (sentences of the article's own revision at the cutoff — and of a date-strict
+  `MARINA_ARENA_WIKI_EXTRACTOR_RETRIEVER`'s sources — that state a date in the target week or an
+  ending just before it; one call to `MARINA_ARENA_WIKI_EXTRACTOR_MODEL`, default
+  `openrouter/deepseek/deepseek-v4.1-flash`, picks the sentence, and the pick stands only if that
+  sentence states that date). A record dated after the cutoff is dropped whatever the extractor
+  returned. Records move a candidate's projected weekly views only through explicit, bounded
+  multipliers (`src/arena/extraction/adjust.ts`; added mass counts as transient, so the
+  specialist's risk discount widens for it), and every record and multiplier is kept in the
+  forecast detail (`wikiExtraction`). The same records convert to the Trends/Wikipedia
+  challengers' scenario effects (`toAttentionEvents`). `scripts/arena-wiki-extract.ts` replays the
+  extractors over reconstructed weeks (cached, Wikimedia spaced and `Retry-After` honoured) and
+  `scripts/arena-wiki-backtest.ts --features <label>=<file> --grid` scores them, with `--out`
+  writing per-item JSONL (`{id, score, at, variant, group: "arena-wikipedia", exclude?}`) for the
+  transfer report. Over the 67 weeks, with multipliers re-chosen each week on earlier weeks only,
+  the `events` channel gained +0.010 to +0.014 mean per-round skill over the specialist
+  (deepseek-v4.1-flash +0.014, 95 % bootstrap interval −0.008 to +0.037; MiniMax M3 +0.010;
+  top 60 with deepseek-v4-pro-0813 +0.011), better in 11–17 weeks and worse in 7–12 of 55 —
+  promising but not yet significant; `edits`, `related` and `news` did not beat zero (−0.008 to
+  −0.001), so their default multipliers are neutral and their records are audit-only. The models
+  postdate most backtest weeks, so the model channels are read as upper bounds even though a pick
+  must cite a dated, as-of sentence. To run them in shadow only, give a challenger its own list —
+  `MARINA_ARENA_SHADOW_CHALLENGERS="wikipedia=wiki-specialist+extract:events"` (the `+extract:`
+  suffix overrides `MARINA_ARENA_WIKI_EXTRACTORS` for that spec) — and let earned routing decide.
 - **Google Trends baskets**: Trends re-normalises its index in every snapshot. Forecasts use a
   newer complete basket from `trends/` when available; the original lock still defines the
   scoring baseline. Complete weeks only are used (`MARINA_ARENA_TRENDS_PARTIAL=on` adds the

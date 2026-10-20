@@ -27,6 +27,7 @@
  */
 
 import { dailyCapRefusal } from "../../engine/spend-ledger";
+import { parseContractSpec } from "../../forecast/answer-contract";
 import { parseAnswerSpec } from "../../forecast/answer-types";
 import {
   SUPPLIED_PRIOR_SOURCES,
@@ -267,6 +268,7 @@ async function typed(
     priors?: unknown;
     category?: unknown;
     board?: unknown;
+    contract?: unknown;
   },
   question: string,
   db: MarinaDB | undefined,
@@ -275,6 +277,11 @@ async function typed(
 ): Promise<Response> {
   const parsed = parseAnswerSpec(body.answer);
   if ("error" in parsed) return errorJson(400, parsed.error, { code: "invalid_request_error" });
+  const contract =
+    body.contract === undefined ? undefined : parseContractSpec(body.contract, parsed.spec);
+  if (contract && "error" in contract) {
+    return errorJson(400, contract.error, { code: "invalid_request_error" });
+  }
   const priors = parsePriors(body.priors);
   if ("error" in priors) return errorJson(400, priors.error, { code: "invalid_request_error" });
   if (
@@ -334,6 +341,8 @@ async function typed(
       ...(typeof body.context === "string" && body.context.trim() ? { context: body.context } : {}),
       ...(priors.priors.length ? { priors: priors.priors } : {}),
       ...(typeof body.category === "string" ? { category: body.category.trim() } : {}),
+      // An explicit answer contract is enforced unless MARINA_FORECAST_CONTRACT=observe.
+      ...(contract ? { contract: contract.contract } : {}),
     },
     {
       ...(db ? { db } : {}),

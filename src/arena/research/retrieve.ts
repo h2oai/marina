@@ -106,6 +106,12 @@ export interface Source {
    * report is stored.
    */
   text?: string;
+  /**
+   * On a publisher the research named as the question's authority (research
+   * authority mode); `verifyDossier` tags lines citing only such sources
+   * `[authoritative]`. Never set from the page's own claims.
+   */
+  authoritative?: boolean;
 }
 
 export interface ResearchReport {

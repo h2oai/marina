@@ -19,6 +19,13 @@
  *
  * and only [verified] lines count as evidence for the judge. A figureless
  * line that is not on its page stays untagged and is never evidence.
+ *
+ * A cited line whose every citation is a source flagged `authoritative` (the
+ * publisher research authority mode named, `src/research/authority.ts`) also
+ * carries `[authoritative]` — after the status tag in `annotated`, leading the
+ * line in `verifiedText` — so forecasters can weight it. The tag is derived
+ * from the sources on every run: an incoming tag is stripped first, so
+ * verifying a verified dossier again is idempotent.
  * Deterministic given the fetched pages; no model involved.
  */
 
@@ -50,6 +57,14 @@ export function fetchAllowed(url: string): boolean {
   }
 }
 
+/** Marks a dossier line drawn only from an authoritative source. */
+export const AUTHORITATIVE_TAG = "[authoritative]";
+
+/** The line without a leading `[authoritative]` tag (unchanged when it has none). */
+export function stripAuthorityTag(line: string): string {
+  return line.startsWith(`${AUTHORITATIVE_TAG} `) ? line.slice(AUTHORITATIVE_TAG.length + 1) : line;
+}
+
 export interface VerifiedLine {
   text: string;
   status: LineStatus;
@@ -57,6 +72,8 @@ export interface VerifiedLine {
   missing?: string[];
   /** Verified because the line's whole text is on the cited page (it has no figure). */
   quoted?: boolean;
+  /** Every page the line cites is an authoritative source. */
+  authoritative?: boolean;
 }
 
 export interface VerifiedDossier {
@@ -249,9 +266,10 @@ export function defaultPageText(timeoutMs = PAGE_TIMEOUT_MS, maxBytes = MAX_PAGE
 export async function verifyDossier(
   report: string,
   pageText: PageText,
-  sources: ReadonlyArray<{ url: string; text?: string }> = [],
+  sources: ReadonlyArray<{ url: string; text?: string; authoritative?: boolean }> = [],
 ): Promise<VerifiedDossier> {
-  const rawLines = report.split("\n");
+  const rawLines = report.split("\n").map(stripAuthorityTag);
+  const authorities = new Set(sources.flatMap((s) => (s.authoritative ? [s.url] : [])));
   const urls = new Set<string>();
   for (const line of rawLines) for (const m of line.matchAll(LINK)) urls.add(m[2]!);
   const given = new Map<string, string>();
@@ -300,6 +318,9 @@ export async function verifyDossier(
   for (const text of rawLines) {
     const cited = [...text.matchAll(LINK)].map((m) => m[2]!);
     const figures = figuresIn(text);
+    const auth = cited.length > 0 && cited.every((u) => authorities.has(u));
+    const tag = auth ? `${AUTHORITATIVE_TAG} ` : "";
+    const mark = auth ? { authoritative: true as const } : {};
     if (cited.length > 0 && figures.length === 0) {
       // No figure to check: the line counts only when its whole claim is on a
       // cited page, verbatim (a quoted passage). Otherwise it stays untagged
@@ -307,11 +328,11 @@ export async function verifyDossier(
       const readable = cited.filter((u) => pages.get(u));
       if (readable.length > 0 && quotedOnPage(text, readable.map(foldedPage))) {
         stats.verified++;
-        lines.push({ text, status: "verified", figures, quoted: true });
-        annotated.push(`[verified] ${text}`);
-        verified.push(text);
+        lines.push({ text, status: "verified", figures, quoted: true, ...mark });
+        annotated.push(`[verified] ${tag}${text}`);
+        verified.push(`${tag}${text}`);
       } else {
-        annotated.push(text);
+        annotated.push(`${tag}${text}`);
       }
       continue;
     }
@@ -336,11 +357,11 @@ export async function verifyDossier(
       status = missing.length === 0 ? "verified" : "unverified";
     }
     stats[status]++;
-    lines.push({ text, status, figures, ...(missing?.length ? { missing } : {}) });
+    lines.push({ text, status, figures, ...(missing?.length ? { missing } : {}), ...mark });
     annotated.push(
-      `[${status}${missing?.length ? `: ${missing.join(", ")} not on the cited page` : ""}] ${text}`,
+      `[${status}${missing?.length ? `: ${missing.join(", ")} not on the cited page` : ""}] ${tag}${text}`,
     );
-    if (status === "verified") verified.push(text);
+    if (status === "verified") verified.push(`${tag}${text}`);
   }
   return {
     annotated: annotated.join("\n"),

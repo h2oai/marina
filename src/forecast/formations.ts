@@ -34,6 +34,13 @@
 
 import { adjustActive, adjustForecast } from "./adjust";
 import {
+  type AnswerContract,
+  contractInstruction,
+  enforceContract,
+  parseAnswerContract,
+  reaskPrompt,
+} from "./answer-contract";
+import {
   type AnswerOption,
   type AnswerSpec,
   type AnswerValue,
@@ -120,9 +127,64 @@ export async function forecastFormed(
   deps: TypedForecastDeps,
   pattern: TypedFormation = "ensemble",
 ): Promise<FormedAnswer> {
-  const out = await formed(req, deps, pattern);
-  if (adjustActive(deps.adjust)) await adjustForecast(out, req, deps.adjust);
+  // The answer contract (`./answer-contract.ts`): a caller's own, else parsed
+  // from the question's instructions when the operator turned it on. Only
+  // `on` carries it into the prompts; `observe` checks the result and records.
+  const mode = deps.options?.contract ?? "off";
+  const contract: AnswerContract | undefined =
+    req.contract ?? (mode === "off" ? undefined : parseAnswerContract(req));
+  const enforce = !contract ? undefined : mode === "observe" ? "observe" : "on";
+  const { contract: _own, ...plain } = req;
+  const carried: TypedForecastRequest = enforce === "on" ? { ...plain, contract } : plain;
+  const out = await formed(carried, deps, pattern);
+  if (adjustActive(deps.adjust)) await adjustForecast(out, carried, deps.adjust);
+  if (contract && enforce) await applyContract(out, carried, deps, contract, enforce);
   return out;
+}
+
+/**
+ * The final validator: check the finished answer against the contract;
+ * under `on`, normalise it, else re-ask the critic (else the planner, else the
+ * first analyst) ONCE, else fall back deterministically — and when the
+ * contract's value is a valid typed answer, it becomes the prediction (the
+ * pipeline's own answer stays in `contract.before`). A forecast with no answer
+ * at all is recorded, never filled in: that is the caller's fallback to make.
+ */
+async function applyContract(
+  out: FormedAnswer,
+  req: TypedForecastRequest,
+  deps: TypedForecastDeps,
+  contract: AnswerContract,
+  mode: "observe" | "on",
+): Promise<void> {
+  if (out.formatted === undefined) {
+    out.contract = { contract, mode, status: "violation", violations: ["no answer"] };
+    return;
+  }
+  const model = deps.critic ?? deps.planner ?? deps.analysts[0];
+  const reask = model
+    ? async (violation: string) => {
+        const p = reaskPrompt(contract, req.question, out.formatted!, violation);
+        const { reply, error } = await askAnalyst(model, p.system, p.user);
+        return {
+          model: model.name,
+          ...(error !== undefined ? { error } : { answer: reply?.answer }),
+        };
+      }
+    : undefined;
+  const rec = await enforceContract(contract, out.prediction ?? out.formatted, {
+    mode,
+    ...(reask ? { reask } : {}),
+    ...(out.distribution ? { distribution: out.distribution } : {}),
+  });
+  out.contract = rec;
+  if (mode !== "on" || rec.value === undefined) return;
+  const v = validateAnswer(req.answer, rec.value);
+  if ("error" in v) return;
+  const formatted = formatAnswer(v.value);
+  if (formatted === out.formatted) return;
+  out.prediction = v.value;
+  out.formatted = formatted;
 }
 
 async function formed(
@@ -201,13 +263,13 @@ export function panelSummary(spec: AnswerSpec, runs: TypedRun[]): string {
   return lines.join("\n");
 }
 
-function reviseSystem(spec: AnswerSpec): string {
+function reviseSystem(spec: AnswerSpec, contract?: TypedForecastRequest["contract"]): string {
   return [
     "You are one member of an anonymous forecasting panel (Delphi method). You answered independently;",
     "now you see the panel's anonymous summary and the same research. Revise your forecast ONCE: move",
     "toward the others only where their reasons are better than yours; keep your view where yours is.",
     "Forecast AS OF the evidence cutoff; nothing after it exists.",
-    answerInstruction(spec),
+    answerInstruction(spec, contract),
     'Reply with ONE JSON object: {"answer": <as above>, "confidence": <0..1>,' +
       `${spec.type === "number" ? ' "sd": <number>,' : ""}${"options" in spec && (spec as { probabilities?: boolean }).probabilities ? ' "probabilities": {<option id>: <0..1>, …},' : ""} "reason": "<two sentences: what you kept or changed and why>"}.`,
   ].join("\n");
@@ -217,6 +279,7 @@ function baseUser(req: TypedForecastRequest, cutoff: string, evidence: string): 
   return [
     `Question: ${req.question}`,
     req.context ? `Notes: ${clip(req.context, 3_000)}` : "",
+    req.contract ? contractInstruction(req.contract) : "",
     `Evidence cutoff: ${cutoff}`,
     `RESEARCH (as the panel saw it):\n${evidence || "(none)"}`,
   ]
@@ -270,7 +333,7 @@ async function delphi(
 ): Promise<FormedAnswer> {
   const spec = req.answer;
   const summary = panelSummary(spec, usable);
-  const system = reviseSystem(spec);
+  const system = reviseSystem(spec, req.contract);
   const revisions = await Promise.all(
     usable.map(async (run, i) => {
       const member = memberFor(deps.analysts, run, i);

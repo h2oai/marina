@@ -61,6 +61,7 @@ export function claimTextKey(text: string): string {
     text
       .replace(/\[[^\]]*\]\(https?:\/\/[^)]+\)/g, "")
       .replace(/^\[verified\]\s*/i, "")
+      .replace(/^\[authoritative\]\s*/i, "")
       .replace(/^[\s>*]+/, "")
       .replace(/^[-•]\s+/, ""),
   );

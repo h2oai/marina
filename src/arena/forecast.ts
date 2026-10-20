@@ -12,6 +12,7 @@
  * nothing.
  */
 
+import { medianSpacingDays, rms, robustSpread, stepChanges, stepsAhead } from "../quant/series-fit";
 import {
   POLL_LEVEL_TRACKERS,
   type PollLevelEvidence,
@@ -54,31 +55,16 @@ export interface ScalarForecast extends Distribution {
   steps: number;
 }
 
-/** Release cadence of a series in days (median spacing of its points). */
-function spacingDays(points: ArenaPoint[]): number {
-  const gaps: number[] = [];
-  for (let i = 1; i < points.length; i++) {
-    const d = (Date.parse(points[i]!.date) - Date.parse(points[i - 1]!.date)) / DAY_MS;
-    if (d > 0) gaps.push(d);
-  }
-  if (gaps.length === 0) return 7;
-  gaps.sort((a, b) => a - b);
-  return gaps[Math.floor(gaps.length / 2)]!;
-}
+/** Release cadence of a series in days (median spacing of its points; `src/quant/series-fit.ts`). */
+const spacingDays = (points: ArenaPoint[]): number => medianSpacingDays(points);
 
 /** How many releases ahead the round's answer is from the last known point. */
 export function horizonSteps(points: ArenaPoint[], releaseAt: string): number {
-  const last = points.at(-1);
-  if (!last) return 1;
-  const days = (Date.parse(releaseAt) - Date.parse(last.date)) / DAY_MS;
-  return Math.max(1, Math.round(days / spacingDays(points)));
+  return stepsAhead(points, releaseAt);
 }
 
 function recentChanges(values: number[], steps: number): number[] | undefined {
-  const diffs: number[] = [];
-  for (let i = Math.max(steps, values.length - SD_WINDOW); i < values.length; i++) {
-    diffs.push(values[i]! - values[i - steps]!);
-  }
+  const diffs = stepChanges(values, steps, { window: SD_WINDOW, warmUp: 1 });
   return diffs.length < 6 ? undefined : diffs;
 }
 
@@ -91,10 +77,10 @@ function recentChanges(values: number[], steps: number): number[] | undefined {
 function candidateSpreads(values: number[], steps: number): Partial<Record<SpreadRule, number>> {
   const diffs = recentChanges(values, steps);
   if (!diffs) return {};
-  const rms = Math.sqrt(diffs.reduce((s, d) => s + d * d, 0) / diffs.length);
-  const abs = diffs.map(Math.abs).sort((a, b) => a - b);
-  const median = abs[Math.floor(abs.length / 2)]!;
-  return { calibrated: Math.max(rms, MIN_SD), robust: Math.max(1.4826 * median, MIN_SD) };
+  return {
+    calibrated: Math.max(rms(diffs), MIN_SD),
+    robust: Math.max(robustSpread(diffs), MIN_SD),
+  };
 }
 
 /**

@@ -176,6 +176,11 @@ describe("map: a row → a typed forecast request", () => {
     const req = requestFor(cut);
     expect(req.endTime).toBe("2026-10-02T12:00:00.000Z");
     expect(req.context).not.toContain("IMPORTANT: End with");
+    // The format line is kept only when asked (the default stays strip).
+    expect(requestFor(cut, { formatLine: "strip" })).toEqual(req);
+    const kept = requestFor(cut, { formatLine: "keep" });
+    expect(kept.context).toContain("IMPORTANT: End with");
+    expect({ ...kept, context: undefined }).toEqual({ ...req, context: undefined });
   });
 });
 

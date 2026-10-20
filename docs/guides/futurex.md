@@ -45,8 +45,13 @@ required and `TAVILY_API_KEY` enables date-filtered search.
 
 Each rule is checked against the shape of every resolved row's truth. `test/forecast-shape-scale-selection.test.ts` holds synthetic cases. With `FUTUREX_SHAPE_AUDIT_BATCH=<past batch json>` set, it also checks, by row id, the rows a failure analysis found mistyped.
 
-The full prompt goes along as the forecast's `context` (it carries the settlement rules and the
-requested format), and the row's end time becomes the evidence cutoff.
+The full prompt goes along as the forecast's `context` (it carries the settlement rules), and the
+row's end time becomes the evidence cutoff. The prompt's own format line (`IMPORTANT: End with …
+\boxed{…}`) is stripped by default. `--format-line keep` (or `"formatLine": "keep"` in a variant)
+keeps it, so the general [answer contract](forecasting.md#answer-contract) can read it when
+`MARINA_FORECAST_CONTRACT` is `observe` or `on`. The default is unchanged, so the line's effect can
+be measured as one switch; the choice is part of the variant, so a run's journal and ledger
+configuration record it.
 
 ## Freezing and filing
 
@@ -128,7 +133,7 @@ Built-ins are:
 - `crew`: a Marina crew as the analyst, via `marina:<crew>`.
 
 Model ids are pinned, never floating aliases. `--variants <file.json>` supplies others: an array of
-`{ label, model, analysts, planner?, critic?, verifier?, verify?, runs?, researchRounds?, critique?, selection?, budgetMs?, groundingFollowUp? }`.
+`{ label, model, analysts, planner?, critic?, verifier?, verify?, runs?, researchRounds?, critique?, selection?, budgetMs?, groundingFollowUp?, formatLine? }`.
 `selection: "confidence"` takes each row's most self-confident run (see [Forecasting](forecasting.md#typed-answers)). `budgetMs` is a per-row time budget: the answer is combined from what has finished, and is labelled `budget_forced` in the ledger.
 `groundingFollowUp` bounds the forecaster's follow-up when no run is grounded in verified evidence.
 With `"all"` (the default) one more research round runs, and every run is redone if that round

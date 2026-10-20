@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { advisoryMode } from "../decisions/advisory";
+import { authorityEnabled } from "./authority";
 
 export function researchFeatures(env: NodeJS.ProcessEnv) {
   const rounds = Number(env.MARINA_RESEARCH_LOOP_ROUNDS ?? 1);
   if (!Number.isSafeInteger(rounds) || rounds < 1 || rounds > 3)
     throw new Error("MARINA_RESEARCH_LOOP_ROUNDS must be 1–3");
+  const authority = authorityEnabled(env);
   return {
     capture:
+      authority ||
       env.MARINA_RESEARCH_EVIDENCE?.trim().toLowerCase() === "on" ||
       !!env.MARINA_RESEARCH_SURVEY_FILE?.trim() ||
       !!env.MARINA_RESEARCH_CALENDAR_FILE?.trim() ||
@@ -19,6 +22,9 @@ export function researchFeatures(env: NodeJS.ProcessEnv) {
     surveys: !!env.MARINA_RESEARCH_SURVEY_FILE?.trim(),
     calendar: !!env.MARINA_RESEARCH_CALENDAR_FILE?.trim(),
     rounds,
+    // Research authority mode (`MARINA_RESEARCH_AUTHORITY=on`; implies capture). Present
+    // only when on, so every existing configuration keeps its forecast-settings fingerprint.
+    ...(authority ? { authority: true as const } : {}),
     reviewer: env.MARINA_RESEARCH_LOOP_MODEL?.trim() || undefined,
     reader: env.MARINA_READ_SWARM_READER?.trim() || undefined,
   };

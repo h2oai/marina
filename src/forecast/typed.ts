@@ -57,6 +57,12 @@ import {
 } from "../repair/output-repair";
 import type { AdjustmentRecord, AdjustSettings } from "./adjust";
 import {
+  type AnswerContract,
+  type ContractMode,
+  type ContractRecord,
+  contractInstruction,
+} from "./answer-contract";
+import {
   type AnswerOption,
   type AnswerSpec,
   type AnswerValue,
@@ -94,6 +100,7 @@ import {
   runLookups,
 } from "./lookups";
 import type { SuppliedPrior } from "./prior";
+import { DEFAULT_QUANT_WEIGHT, type QuantMode, type QuantRecord, quantStage } from "./quant";
 
 export interface TypedForecastRequest {
   question: string;
@@ -116,6 +123,13 @@ export interface TypedForecastRequest {
    * with the time it was observed. One observed after the cutoff is rejected.
    */
   priors?: SuppliedPrior[];
+  /**
+   * The required FORM of the final answer (`answer-contract.ts`): carried to
+   * the planner, runs, verifier, critic, formations and judge, and enforced
+   * at the end of `forecastFormed`. Usually parsed from the question's own
+   * instructions under `MARINA_FORECAST_CONTRACT=on`; a caller may set it.
+   */
+  contract?: AnswerContract;
 }
 
 export interface TypedForecastOptions {
@@ -203,6 +217,24 @@ export interface TypedForecastOptions {
    * Skipped in the budget's final phase.
    */
   completion?: boolean;
+  /**
+   * The deterministic quantitative stage (`./quant.ts`, `MARINA_FORECAST_QUANT`):
+   * `off` (default) skips it; `observe` records a series baseline and
+   * numeric-range bucket probabilities on the answer (`quant`) without
+   * changing anything a model sees; `on` also shows them to the runs and the
+   * judge and blends the buckets into a choice's probabilities.
+   */
+  quant?: QuantMode;
+  /** Weight of the bucket distribution in that blend, 0–1 (default 0.25). */
+  quantWeight?: number;
+  /**
+   * The answer contract (`answer-contract.ts`, `MARINA_FORECAST_CONTRACT`):
+   * `off` (default) parses nothing; `observe` parses the question's format
+   * instructions and records whether the final answer meets them, changing
+   * nothing; `on` carries the contract through every stage and enforces it
+   * (normalise, re-ask once, deterministic fallback). Read by `forecastFormed`.
+   */
+  contract?: ContractMode;
 }
 
 export type GroundingFollowUpMode = "all" | "one" | "off";
@@ -394,6 +426,10 @@ export interface TypedForecastAnswer {
   budgetForced?: BudgetForced;
   /** Prior shrink and recalibration (`./adjust.ts`): the raw forecast, the prior, the learned settings. */
   adjustment?: AdjustmentRecord;
+  /** The quantitative stage (`options.quant` observe/on): series baseline, range buckets, blend. */
+  quant?: QuantRecord;
+  /** The answer contract's final check (`answer-contract.ts`): what it found and did. */
+  contract?: ContractRecord;
 }
 
 const MAX_DOSSIER_CHARS = 24_000;
@@ -401,8 +437,23 @@ const MAX_DOSSIER_CHARS = 24_000;
 const clampInt = (v: number | undefined, lo: number, hi: number, d: number) =>
   v === undefined || !Number.isFinite(v) ? d : Math.min(hi, Math.max(lo, Math.round(v)));
 
-/** How the answer must be given, per type — shared by runs and critic. */
-export function answerInstruction(spec: AnswerSpec): string {
+/**
+ * How the answer must be given, per type — shared by runs and critic; with a
+ * contract, its required form follows.
+ */
+export function answerInstruction(spec: AnswerSpec, contract?: AnswerContract): string {
+  const base = typeInstruction(spec);
+  return contract ? `${base}\n${contractInstruction(contract)}` : base;
+}
+
+/** The judge's view of the question: with a contract, the required answer form too. */
+export function judgeQuestion(req: TypedForecastRequest): string {
+  return req.contract
+    ? `${req.question}\n${contractInstruction(req.contract).split("\n")[0]}`
+    : req.question;
+}
+
+function typeInstruction(spec: AnswerSpec): string {
   switch (spec.type) {
     case "choice":
       return [
@@ -595,6 +646,7 @@ export async function forecastTyped(
     `Question: ${req.question}`,
     req.context ? `How it resolves / notes:\n${req.context.slice(0, 4_000)}` : "",
     req.endTime ? `The question closes: ${req.endTime}` : "",
+    req.contract ? contractInstruction(req.contract) : "",
     `Forecast made as of: ${cutoff.at} (the evidence cutoff — use nothing published after it; the event itself happens later)`,
     out.lessons?.length
       ? `Lessons from earlier resolved questions (apply where relevant):\n${out.lessons.map((l) => `- ${l.text}`).join("\n")}`
@@ -705,6 +757,23 @@ export async function forecastTyped(
       }
     }
   }
+  // ── Quant (opt-in): a series baseline and numeric-range bucket probabilities ─
+  const quantMode = opts.quant ?? "off";
+  let quantEvidence: string | undefined;
+  if (quantMode !== "off") {
+    const stage = quantStage({
+      mode: quantMode,
+      spec: req.answer,
+      readings: (out.lookups ?? []).flatMap((l) => l.readings ?? []),
+      ...(req.priors ? { priors: req.priors } : {}),
+      cutoff: cutoff.at,
+      ...(req.endTime ? { endTime: req.endTime } : {}),
+    });
+    out.quant = stage.record;
+    // `observe` returns no lines and no evidence: nothing a model sees changes.
+    lines.push(...stage.lines);
+    quantEvidence = stage.evidence;
+  }
   // A research outage is not a reason to give up: the runs still answer from
   // the question, its resolution notes and what the models know — with a caveat.
   const researchDown = lines.length === 0 && out.research.every((r) => r.error);
@@ -731,6 +800,7 @@ export async function forecastTyped(
         text: verifiedText.slice(i, i + EVIDENCE_CHUNK),
       });
     }
+    if (quantEvidence) evidence.push({ ref: "quant:1", text: quantEvidence });
     const user = `${header}\n\nRESEARCH DOSSIER${checked ? " (cited lines tagged by a mechanical check against the cited page)" : ""}:\n${dossier || (researchDown ? "(research unavailable — answer from the question, its notes and what you know as of the cutoff)" : "(nothing found)")}`;
     return { checked, dossier, evidence, verifiedChars: verifiedText.length, user };
   };
@@ -1014,6 +1084,15 @@ export async function forecastTyped(
       .map((r) => ({ distribution: r.distribution!, weight: r.weight }));
     const dist = logodds ? logOddsDistributions(items) : averageDistributions(items);
     if (dist) setDistribution(out, spec.options, dist);
+    const buckets = out.quant?.buckets;
+    if (buckets && out.distribution) {
+      const weight = Math.min(1, Math.max(0, opts.quantWeight ?? DEFAULT_QUANT_WEIGHT));
+      const before = out.distribution;
+      const after = blendDistributions(before, buckets.distribution, weight);
+      const applied = out.quant!.mode === "on";
+      out.quant!.blend = { weight, before, after, applied };
+      if (applied) setDistribution(out, spec.options, after);
+    }
   }
   if (spec.type === "multi" && spec.probabilities) {
     // Each option's own probability; the picked set stays the runs' combined answer.
@@ -1197,7 +1276,7 @@ async function runIndependent(
         judgeRecord,
         `Answer: ${run.formatted}. ${run.reason ?? ""}`,
         evidence,
-        req.question,
+        judgeQuestion(req),
         (g, q) => Math.max(0.05, (g ?? 0) * ((q ?? 0) / 2)),
       );
       run.weight = judged.weight;

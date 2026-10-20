@@ -27,7 +27,7 @@ import type {
 import { mergeEvidenceIndexes } from "../../src/research/evidence-index";
 import { idsDigest, openJournal } from "../journal";
 import type { FuturexRow } from "./dataset";
-import { requestFor } from "./map";
+import { type FormatLineMode, requestFor } from "./map";
 
 export interface Variant {
   /** Short name (`cheap`, `frontier`, …). */
@@ -55,6 +55,13 @@ export interface Variant {
    * skips the round.
    */
   groundingFollowUp?: GroundingFollowUpMode;
+  /**
+   * The row prompt's "IMPORTANT: End with …" format line: `strip` (default,
+   * unset) or `keep` — kept, the core answer contract can read it
+   * (`MARINA_FORECAST_CONTRACT`). Part of the variant, so a run's journal and
+   * ledger configuration say which was used.
+   */
+  formatLine?: FormatLineMode;
 }
 
 /**
@@ -321,7 +328,7 @@ async function runRow(
   now: Date,
   horizonDays: number | undefined,
 ): Promise<RowResult> {
-  const base = requestFor(row);
+  const base = requestFor(row, variant.formatLine ? { formatLine: variant.formatLine } : {});
   const end = base.endTime ? Date.parse(base.endTime) : Number.NaN;
   let asOf: string | undefined;
   if (Number.isFinite(end) && horizonDays !== undefined) {

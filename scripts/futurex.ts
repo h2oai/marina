@@ -22,7 +22,9 @@
  *
  * Common flags: --dir data/futurex (outside the repo's tracked tree), --variant <name> (repeatable;
  * built-ins cheap, frontier, crew), --variants <file.json> (Variant[]), --concurrency N,
- * --limit N, --org h2o.ai, --agent Marina, --model <segment>.
+ * --limit N, --org h2o.ai, --agent Marina, --model <segment>, --format-line keep|strip (the row
+ * prompt's "IMPORTANT: End with …" line; default strip — keep it to let MARINA_FORECAST_CONTRACT=on
+ * read it).
  *
  * Every finished row is appended to `rows.jsonl` beside the run's output as it lands. A run
  * stopped by a spend cap keeps them (labelled partial, never filed); `--resume` continues it
@@ -66,7 +68,7 @@ import {
   recordSubmission,
 } from "../benchmarks/futurex/ledger";
 import { futurexOutcome, futurexResolvedAt } from "../benchmarks/futurex/lessons";
-import { endTimeIso } from "../benchmarks/futurex/map";
+import { endTimeIso, FORMAT_LINE_MODES, type FormatLineMode } from "../benchmarks/futurex/map";
 import {
   type BatchRun,
   BUILTIN_VARIANTS,
@@ -149,6 +151,8 @@ const { positionals, values } = parseArgs({
     "lesson-writer": { type: "string", default: "openrouter/deepseek/deepseek-v4-pro-0813" },
     reference: { type: "string" },
     judge: { type: "string" },
+    // Keep or strip the row prompt's "IMPORTANT: End with …" line (default: the variant's, strip).
+    "format-line": { type: "string" },
   },
 });
 const [cmd] = positionals;
@@ -164,6 +168,7 @@ function variantsFromFlags(): Variant[] {
     ...Object.entries(BUILTIN_VARIANTS),
     ...file.map((v) => [v.label, v] as const),
   ]);
+  const formatLine = formatLineFlag();
   const names = values.variant?.length
     ? values.variant
     : file.length
@@ -175,8 +180,19 @@ function variantsFromFlags(): Variant[] {
       throw new Error(
         `unknown variant ${n} (built-ins: ${Object.keys(BUILTIN_VARIANTS).join(", ")})`,
       );
-    return values.model && names.length === 1 ? { ...v, model: values.model } : v;
+    const withLine = formatLine ? { ...v, formatLine } : v;
+    return values.model && names.length === 1 ? { ...withLine, model: values.model } : withLine;
   });
+}
+
+/** `--format-line keep|strip`: overrides every variant's `formatLine` (unset = the variant's own). */
+function formatLineFlag(): FormatLineMode | undefined {
+  const v = values["format-line"]?.trim().toLowerCase();
+  if (v === undefined) return undefined;
+  if (!(FORMAT_LINE_MODES as readonly string[]).includes(v)) {
+    throw new Error(`--format-line ${v}: expected ${FORMAT_LINE_MODES.join("|")}`);
+  }
+  return v as FormatLineMode;
 }
 
 const batchDir = (repo: string) => join(dir, repo.split("/")[1]!.toLowerCase());

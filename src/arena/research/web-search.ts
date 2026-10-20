@@ -48,6 +48,7 @@ import { tavilyProvider } from "../../engine/search-providers/tavily";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import { lowestReasoningEffort } from "../../net/model/reasoning-effort";
 import { guardedFetch } from "../../net/url-guard";
+import { authorityQueries, siteQuery } from "../../research/authority";
 import type { ResearchBrief, SourceExclusion } from "./briefs";
 import type { ResearchReport, Retriever, Source } from "./retrieve";
 import { fetchAllowed, readCapped, VERIFY_USER_AGENT } from "./verify";
@@ -94,6 +95,8 @@ export interface RetrievalFunnel {
   passageChars: number;
   /** Pages dropped because the brief bars them (`brief.exclude`); absent when nothing is barred. */
   excluded?: number;
+  /** Domain-restricted queries for the brief's `authority` publishers; absent when none. */
+  authorityQueries?: number;
 }
 
 export interface WebSearchOptions {
@@ -162,6 +165,7 @@ export function exaSearchProvider(
   return {
     name: "exa",
     engines: ["web", "news"],
+    domainFilter: true,
     async search(query, opts) {
       const capped = dailyCapRefusal();
       if (capped) throw new Error(`exa: ${capped}`);
@@ -178,6 +182,7 @@ export function exaSearchProvider(
             type: "auto",
             numResults: opts.maxResults ?? 8,
             ...(opts.before ? { endPublishedDate: opts.before } : {}),
+            ...(opts.domains?.length ? { includeDomains: opts.domains } : {}),
             contents: { text: { maxCharacters: 8_000 } },
           }),
           signal: AbortSignal.timeout(30_000),
@@ -735,20 +740,27 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
     );
     const failedHere = new Set<string>();
     const spend = { usd: 0 };
-    const batches: Array<{ query: number; results: SearchResult[] }> = [];
+    // Background (the extra batch after the queries) counts half: it frames, it does not decide.
+    const batches: Array<{ scale: number; results: SearchResult[] }> = [];
     let answered = 0;
+    // The brief's authority publishers: one domain-restricted query each, filtered
+    // natively where the backend can, else by a `site:` operator. Same cutoff as any query.
+    const restricted = authorityQueries(brief.authority ?? [], queries, brief.request);
 
     // ── Search: every query through the chain ────────────────────────────
     await pool(
-      queries.map((q, i) => ({ q, i })),
+      [
+        ...queries.map((q) => ({ q, domain: undefined as string | undefined })),
+        ...restricted.map((r) => ({ q: r.query, domain: r.domain })),
+      ],
       SEARCH_CONCURRENCY,
-      async ({ q, i }) => {
+      async ({ q, domain }) => {
         for (const backend of chainFor(backends, failedHere)) {
           const u = use.get(backend.name)!;
           u.calls++;
           try {
             const results = await backend.search(
-              q,
+              domain && !backend.domainFilter ? siteQuery(domain, q) : q,
               {
                 maxResults: perQuery,
                 engines: ["web", "news"],
@@ -756,12 +768,13 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
                 // A past cutoff bounds the search; the brief's window start is a hint.
                 ...(live ? {} : { before: new Date(bound).toISOString() }),
                 ...(sinceIso ? { after: sinceIso } : {}),
+                ...(domain && backend.domainFilter ? { domains: [domain] } : {}),
               },
               http,
             );
             recordSearchOutcome(backend.name);
             u.results += results.length;
-            batches.push({ query: i, results });
+            batches.push({ scale: 1, results });
             answered++;
             return;
           } catch (err) {
@@ -781,7 +794,7 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
           { maxResults: 2, before: new Date(bound).toISOString() },
           http,
         );
-        batches.push({ query: queries.length, results: bg });
+        batches.push({ scale: 0.5, results: bg });
       } catch {
         // allow-empty-catch: background is optional; the main chain is reported
       }
@@ -802,6 +815,7 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
       extractedChars: 0,
       passages: 0,
       passageChars: 0,
+      ...(restricted.length ? { authorityQueries: restricted.length } : {}),
     };
     if (answered === 0) {
       const why = funnel.backends.map((b) => `${b.name}: ${b.error ?? "failed"}`).join("; ");
@@ -815,9 +829,7 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
     if (brief.exclude) funnel.excluded = 0;
     const barredKeys = new Set<string>();
     const hits = new Map<string, Hit>();
-    for (const { query, results } of batches) {
-      // Background (the extra batch after the queries) counts half: it frames, it does not decide.
-      const scale = query >= queries.length ? 0.5 : 1;
+    for (const { scale, results } of batches) {
       results.forEach((r, rank) => {
         if (!r.url || !/^https?:\/\//i.test(r.url)) return;
         if (barred(r.url, r.title)) {

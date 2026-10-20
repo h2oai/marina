@@ -363,7 +363,11 @@ export async function forecasterFor(
   if (spec.startsWith(`${WIKI_EVENTS}:`)) {
     return wikiEventsForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness);
   }
-  if (spec === WIKI_SPECIALIST || spec.startsWith(`${WIKI_SPECIALIST}:`)) {
+  if (
+    spec === WIKI_SPECIALIST ||
+    spec.startsWith(`${WIKI_SPECIALIST}:`) ||
+    spec.startsWith(`${WIKI_SPECIALIST}+`)
+  ) {
     return wikiSpecialistForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness);
   }
   if (spec.startsWith("research:")) {
@@ -1232,8 +1236,12 @@ async function wikiSpecialistForecasterFor(
     import("./wiki-specialist"),
     import("./wikimedia"),
   ]);
-  const rest = spec.startsWith(`${WIKI_SPECIALIST}:`)
-    ? spec.slice(`${WIKI_SPECIALIST}:`.length)
+  // `+extract:<list>` turns the attention extractors on for this spec (else MARINA_ARENA_WIKI_EXTRACTORS).
+  const plus = spec.indexOf("+extract:");
+  const extractList = plus < 0 ? undefined : spec.slice(plus + "+extract:".length);
+  const head = plus < 0 ? spec : spec.slice(0, plus);
+  const rest = head.startsWith(`${WIKI_SPECIALIST}:`)
+    ? head.slice(`${WIKI_SPECIALIST}:`.length)
     : "";
   const at = rest.indexOf("@");
   const models = (at < 0 ? rest : rest.slice(0, at))
@@ -1248,8 +1256,13 @@ async function wikiSpecialistForecasterFor(
     ...(await liveCiviqs(env, strictFreshness)),
   });
   const params = specialist.DEFAULT_SPECIALIST_PARAMS;
+  // The attention extractors (MARINA_ARENA_WIKI_EXTRACTORS): off by default, and then nothing changes.
+  const extraction = await wikiExtractionTooling(
+    extractList === undefined ? env : { ...env, MARINA_ARENA_WIKI_EXTRACTORS: extractList },
+  );
+  const usage = combineUsage([tools?.usage, extraction?.usage]);
   return {
-    ...(tools ? { usage: tools.usage } : {}),
+    ...(usage ? { usage } : {}),
     forecaster: async (round, lock) => {
       if (round.target_type !== "ranking_list" || round.tracker !== "wikipedia")
         return fallback(round, lock);
@@ -1291,6 +1304,36 @@ async function wikiSpecialistForecasterFor(
         note: `marina wiki-specialist: projected target-week pageviews (decaying excess over base, half-life prior ${params.halfLifeDays} d) from ${sourceNote}`,
         wikiSpecialist: { params, read: projected.read, sources: read.sources, top },
       };
+      let scored = projected.scored;
+      if (extraction) {
+        const length = round.ranking?.length ?? 10;
+        const days = specialist.weekDays(weekEnd);
+        const run = await extraction.run(
+          scored.slice(0, extraction.settings.top).map((s) => s.title),
+          {
+            cutoff: forecastCutoff(round.lock_at, round.lock_at),
+            lastDay: read.lastDay,
+            window: { start: days[0]!, end: days[6]! },
+          },
+        );
+        const adjusted = extraction.mod.applyAdjustments(scored, run.features);
+        scored = adjusted.scored;
+        const moved = adjusted.adjustments.filter((a) => a.factor !== 1).length;
+        f = {
+          ...f,
+          ranking: scored.slice(0, length).map((s) => s.title),
+          note: `${f.note} + attention extractors ${extraction.settings.extractors.join(",")}: ${run.features.length} record(s), ${moved} page(s) adjusted`,
+          wikiExtraction: {
+            extractors: extraction.settings.extractors,
+            model: extraction.settings.model,
+            features: run.features,
+            adjustments: adjusted.adjustments,
+            errors: run.errors,
+            dropped: run.dropped.length,
+            timings: run.timings,
+          },
+        };
+      }
       if (tools) {
         const result = await tools.events.wikiEventsRanking(round, inputs, {
           retriever: tools.retriever,
@@ -1298,7 +1341,7 @@ async function wikiSpecialistForecasterFor(
           wiki: tools.wiki,
           maxInsert: tools.maxInsert,
           base: {
-            scored: projected.scored.map((s) => [s.title, s.score] as [string, number]),
+            scored: scored.map((s) => [s.title, s.score] as [string, number]),
             perDay: 7,
             label: "projected weekly views",
           },
@@ -1324,6 +1367,92 @@ async function wikiSpecialistForecasterFor(
         ? requireFreshForecast(round, inputs, f, forecastCutoff(round.lock_at))
         : f;
     },
+  };
+}
+
+/** Several usage meters as one (undefined when none is given). */
+function combineUsage(parts: Array<Usage | undefined>): Usage | undefined {
+  const got = parts.filter((u): u is Usage => !!u);
+  if (got.length <= 1) return got[0];
+  const sum = (k: keyof Usage) => got.reduce((s, u) => s + u[k], 0);
+  return {
+    get calls() {
+      return sum("calls");
+    },
+    get inputTokens() {
+      return sum("inputTokens");
+    },
+    get outputTokens() {
+      return sum("outputTokens");
+    },
+    get costUsd() {
+      return sum("costUsd");
+    },
+  };
+}
+
+/**
+ * The attention-extraction stage for the specialist (src/arena/extraction/),
+ * or undefined when MARINA_ARENA_WIKI_EXTRACTORS is unset. Wikimedia through
+ * the guarded, rate-limited client; GDELT spaced per its guidance; the model
+ * extractors' model only when `events` or `news` is on; a retriever only when
+ * MARINA_ARENA_WIKI_EXTRACTOR_RETRIEVER names a date-strict one.
+ */
+export async function wikiExtractionTooling(env: NodeJS.ProcessEnv) {
+  const mod = await import("./extraction");
+  const settings = mod.extractionSettings(env);
+  if (settings.extractors.length === 0) return undefined;
+  const [{ wikimediaFetchJson }, { wikimediaApi }, http, gdelt] = await Promise.all([
+    import("./wikimedia"),
+    import("./research/wiki-events"),
+    import("../engine/search-providers/asof-http"),
+    import("../engine/search-providers/gdelt"),
+  ]);
+  const needsModel = settings.extractors.some((n) => n === "events" || n === "news");
+  const made = needsModel
+    ? (await import("./model-backend")).modelComplete(settings.model, env, { maxTokens: 2_000 })
+    : undefined;
+  let retriever: import("./research/retrieve").Retriever | undefined;
+  if (settings.retriever) {
+    const retrieve = await import("./research/retrieve");
+    retriever = retrieve.retrieverFromSpec(
+      settings.retriever,
+      {
+        ...(env.OPENROUTER_API_KEY ? { openrouter: env.OPENROUTER_API_KEY } : {}),
+        ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
+        ...(env.EXA_API_KEY?.trim() ? { exa: env.EXA_API_KEY.trim() } : {}),
+      },
+      { requireDateStrict: true, env },
+    );
+  }
+  const searchHttp = http.standaloneSearchHttp();
+  const wiki = wikimediaApi(async (url) => {
+    const body = await wikimediaFetchJson(url);
+    if (body === undefined) throw new Error("Wikimedia 404");
+    return body;
+  });
+  const extractors = settings.extractors.map((n) => mod.extractorFor(n));
+  return {
+    mod,
+    settings,
+    ...(made ? { usage: made.usage } : {}),
+    run: (
+      subjects: string[],
+      at: { cutoff: string; lastDay: string; window: { start: string; end: string } },
+    ) =>
+      mod.runExtractors(extractors, {
+        subjects,
+        ...at,
+        fetchJson: wikimediaFetchJson,
+        dailyViews: (title, start, end) => wiki.dailyViews(title, start, end),
+        gdeltJson: async (url) => {
+          const reply = await http.politeGet(searchHttp, url, gdelt.GDELT_MIN_INTERVAL_MS);
+          if ("error" in reply || reply.status !== 200) return undefined;
+          return http.parseJson(reply.body);
+        },
+        ...(retriever ? { retriever } : {}),
+        ...(made ? { complete: made.complete } : {}),
+      }),
   };
 }
 

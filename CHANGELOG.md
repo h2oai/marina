@@ -9,6 +9,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Research authority mode** (`MARINA_RESEARCH_AUTHORITY=on`, default off): research can find and
+  read the publisher a question resolves against. A brief's settlement pages are authority targets
+  from the first round, and the evidence loop's gap reviewer may name one (domain, page URL, field)
+  as a validated part of its reply. The `search` retriever adds one domain-restricted query per
+  target (Tavily `include_domains`, Exa `includeDomains`, `site:` elsewhere); a named page is read
+  first only for a live cutoff, never in a date-strict backtest; the read swarm asks for the
+  field's exact value with its as-of date and reads the publisher first; and `verifyDossier` tags
+  lines citing only the publisher's sources `[authoritative]`. Off leaves prompts, briefs, dossiers
+  and forecast-settings fingerprints unchanged. See docs/guides/search.md.
+- **Quant stage for typed forecasts** (`MARINA_FORECAST_QUANT=off|observe|on`, default `off`).
+  When a lookup reads an official series with history, `fitSeries` projects it to the question's
+  end time. When every option of a choice is a numeric range ("Below 2.5%", "2.5% to 2.9%",
+  "3.0% or higher", counts), `bucketProbabilities` gives each option's probability from that
+  projection or from a supplied numeric prior. `observe` records all of this on the answer
+  (`quant`) and changes nothing a model sees. `on` shows it to the runs (as a reference class)
+  and to the judge, and blends the buckets into a choice's probabilities
+  (`MARINA_FORECAST_QUANT_WEIGHT`, default 0.25). `off` leaves answers and prompts byte-identical.
+- **Built-in skills**: `skill builtin [name]` shows skills shipped with the server, and
+  `skill search` finds them, with no import and no seeding. The first is `quantitative-estimates`.
+  A new `quantitative-estimates` trait on the `researcher` and `market-oracle` roles points to it.
+- **Quantitative helpers for every agent**: a new rank-0 `quant` command next to `calc`, with no
+  model call and no code sandbox. `quant fit <values> steps:N|to:<date>` fits a plain or dated
+  series and returns a mean, an sd and quantiles. The methods are persistence, EWMA, a
+  persistence/EWMA blend, a linear trend, a damped trend and a combination, and `auto` chooses
+  among them by their own rolling-origin errors. `quant buckets mean:<m> sd:<s> | q:<level>=<value>,… -- <ranges>`
+  gives each numeric range's probability and the most likely range, including open-ended ranges,
+  sd 0 and tied quantiles. The shared code lives in `src/quant/` (`fitSeries`,
+  `bucketProbabilities`, normal primitives). The arena's scalar baseline and poll-level rule now
+  call it, and a regression test checks bit-identical output against the earlier code. A new
+  `quantitative-estimates` skill (`seeds/skills/quantitative-estimates.md`) teaches `calc` for
+  units, percent change and growth, and `quant` for series and ranges.
+- **Forecast answer contract** (`src/forecast/answer-contract.ts`, `MARINA_FORECAST_CONTRACT`,
+  default `off`): a question's own answer-form instructions — single choice, multi-select with
+  pick bounds, a number with unit / integer / decimals, a date in a stated format, a ranked list of
+  a size, free text with a word limit, an optional `\boxed{…}` wrapper and the format line
+  verbatim — become a structured contract over the typed spec. `observe` records whether the final
+  answer meets it and changes nothing; `on` carries it to the planner, runs, verifier, critic,
+  formations and judge, then a final validator normalises losslessly, re-asks once on a real
+  violation and falls back deterministically, keeping `contract` (status, the pipeline's answer,
+  the rendered form) on the answer. FutureX's adapter can now keep the row prompt's
+  `IMPORTANT: End with …` line (`--format-line keep`, variant `formatLine`); the default still
+  strips it, so its effect can be measured.
+- **Manifold lookup** (opt-in `manifold` in `MARINA_FORECAST_LOOKUPS` /
+  `MARINA_ARENA_RESEARCH_LOOKUPS`; never part of `auto`, `all` or `markets`): Manifold Markets'
+  keyless API — probability, volume and close date live; for a past cutoff, the probability after
+  the last trade at or before it from the bet history and the mana traded up to it, and nothing
+  when the history is missing. Yes/no prices feed the market prior like Polymarket's. Good
+  Judgment Open is not added (no public API; its terms forbid automated collection); new crowd
+  sources register in `OPT_IN_LOOKUPS`.
+- **Market prior across venues**: when several venues (for example Polymarket and Manifold) each
+  matched exactly one market on the same question, the yes/no market-lookup prior now pools them —
+  a log-odds mean, weighted by log(1 + volume) when every venue reports volume in the same unit,
+  with the venues' spread (and disagreement) in its `detail` — instead of rejecting itself. Several
+  markets on one venue stay ambiguous, and a single venue's prior is unchanged.
+- **`contract` on `POST /v1/forecast`**: an optional explicit answer contract beside `answer`,
+  validated against the typed spec (400 when invalid) and enforced unless
+  `MARINA_FORECAST_CONTRACT=observe`.
+- **Transfer report** (`bun run eval:transfer --spec <file>`, `benchmarks/transfer/`): enforces
+  the rule that a capability counts only when it improves on at least two independent evaluations,
+  not just the one it was built for. Takes a baseline and a candidate env overlay and a list of
+  suites; ingests existing per-item results (generic `items` JSON/JSONL, harness results, FutureX
+  clean backtests, `arena evaluate` and `arena shadow paired-score` reports) or, only with `--run`,
+  runs each suite's command per arm and replicate. Per suite: a seeded paired bootstrap of the
+  mean delta and an exact sign test on held-out items (the promotion hash split by default, or a
+  time split); verdict `transfers` only with significant gains in ≥ 2 independent groups and no
+  significant regression. Writes a markdown and a JSON report; no benchmark logic in the core.
+  A `ledger` adapter reads per-item rows from any benchmark ledger DB without writing to it
+  (in-world `benchmark run`/`compare-run`, imported runs, ForecastBench/Metaculus selection runs;
+  runs selected by label, id, replicate group or date range); the `items` reader splits one file
+  into arms by `variant` and runs by `replicate` and remaps other record formats (τ²,
+  BrowseComp-Plus, LongMemEval and paired-run presets); `--bootstrap two-stage` resamples
+  replicate runs then items as forecasting selection does; and `--inventory [root…]` finds every
+  per-item result and ledger on disk and lists the baseline/candidate pairs each suite offers.
+- **Attention extraction for the Wikipedia specialist** (`src/arena/extraction/`,
+  `MARINA_ARENA_WIKI_EXTRACTORS=events,news,related,edits,gdelt`, off by default — unchanged
+  behaviour when unset; `wiki-specialist+extract:<list>` for a shadow arm): narrow extractors run
+  in parallel on the specialist's top candidates and emit typed, dated records (feature, value,
+  as-of, source, confidence) — MediaWiki revision activity and lead-link neighbourhood growth read
+  at the revision in force at the cutoff (`rvstart`/`rvend`), Portal:Current events mentions and
+  (with a model) direction, GDELT volume, and scheduled/ended events from as-of article sentences
+  that one cheap model call classifies and a mechanical check verifies. Records past the cutoff
+  are dropped; the specialist applies them only through bounded, testable multipliers with
+  transient-share widening, and keeps every record in the forecast detail. Over 67 walk-forward
+  weeks only the events channel gained (+0.010 to +0.014 mean skill, not yet significant), so the
+  other channels' multipliers default to neutral. `scripts/arena-wiki-extract.ts` replays the
+  extractors over reconstructed weeks (cached; Wikimedia `Retry-After` honoured).
+- **Per-item Wikipedia backtest output**: `scripts/arena-wiki-backtest.ts --out <file>` writes
+  `{id, score, at, variant, group: "arena-wikipedia", exclude?}` JSONL with diagnostics (loss,
+  persistence loss, hits, unseen entrants, ranking) for the transfer report's `items` adapter;
+  `--features <label>=<file>` adds extractor variants (fixed and walk-forward). Default text output
+  is unchanged.
+
 - **Search engines for research retrieval**: `openrouter-web:<model>@<engine>[:<mode>]` accepts
   every OpenRouter web plugin engine — `native`, `exa` (instant … deep-reasoning), `parallel`
   (turbo … advanced), `perplexity`, `firecrawl` — validates engine and mode, and adds the engine's
@@ -112,6 +204,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read as a fallback). Walk-forward on Season 0: mean per-round skill 0.129 → 0.180.
 
 ### Fixed
+
+- **Wikimedia client politeness**: MediaWiki action-API requests are spaced 500 ms apart
+  (REST stays at 100 ms) and one HTTP 429 is retried after its `Retry-After` (up to 30 s).
 
 - A research brief with only one of `until` / `untilAt` was searched as live (no upper date bound);
   either field now bounds the search.
