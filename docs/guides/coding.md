@@ -12,7 +12,8 @@ parts that make it more than a CLI.
 ## Start in your project folder
 
 Run `marina` in a project and describe a task. The default runtime is Marina's coding
-agent, using your configured provider. You can also use an installed coding tool and
+agent, using your configured provider (`~/.marina/.env`, or
+[per folder](configuration.md#where-the-marina-cli-reads-settings)). You can also use an installed coding tool and
 its existing credentials through the same terminal:
 
 ```bash

@@ -1,7 +1,7 @@
 # Configuration
 
-Marina reads process environment values first, then Bun's `.env` files in the instance's
-working directory. Every setting is optional. [`.env.example`](../../.env.example) is a short
+A Marina server reads process environment values first, then Bun's `.env` files in the instance's
+working directory. The `marina` CLI layers its own settings files instead (next section). Every setting is optional. [`.env.example`](../../.env.example) is a short
 starter to copy; [`config/environment.reference`](../../config/environment.reference) is the
 complete annotated catalog that the dashboard settings editor (Admin → Settings) and the
 generated [environment reference](../reference/environment.md) are built from.

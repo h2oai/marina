@@ -122,8 +122,10 @@ cd ~/your-project
 marina               # code in this folder (--tui fullscreen, -p "<task>" one-shot)
 ```
 
-`marina --agent claude|codex|pi` runs that coder instead; `marina --help` lists the rest. See the
-[coding guide](docs/guides/coding.md#start-in-your-project-folder).
+`marina --agent claude|codex|pi` runs that coder instead; `marina --help` lists the rest. Provider
+keys go in `~/.marina/.env` (`marina init` writes it) and apply in every folder; your project's own
+`.env` is never read ([settings](docs/guides/configuration.md#where-the-marina-cli-reads-settings)).
+See the [coding guide](docs/guides/coding.md#start-in-your-project-folder).
 
 Using a packaged desktop build instead? Open Marina and follow **Start Here**; provider setup and
 agent controls are clickable and no config file is required. See [Desktop App](#desktop-app).
