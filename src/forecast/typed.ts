@@ -73,6 +73,13 @@ import {
   validateAnswer,
 } from "./answer-types";
 import {
+  arbiterDecides,
+  arbiterReplacesVerify,
+  type ForecastArbiterMode,
+  type ForecastArbiterRecord,
+  forecastArbiterStage,
+} from "./arbiter";
+import {
   argmax,
   averageDistributions,
   averageMarginals,
@@ -235,6 +242,14 @@ export interface TypedForecastOptions {
    * (normalise, re-ask once, deterministic fallback). Read by `forecastFormed`.
    */
   contract?: ContractMode;
+  /**
+   * The Arbiter (`./arbiter.ts`, `MARINA_FORECAST_ARBITER`): `off` (default)
+   * changes nothing; `observe` adjudicates contested forecasts and records the
+   * verdict only; `on` makes verifier corrections and critic revisions advisory
+   * and lets only a bar-clearing overrule change the answer; `replace` is `on`
+   * without the per-run verifier.
+   */
+  arbiter?: ForecastArbiterMode;
 }
 
 export type GroundingFollowUpMode = "all" | "one" | "off";
@@ -257,6 +272,8 @@ export interface TypedForecastDeps {
   critic?: ModelPart;
   /** Checks each run's draft when `options.verify` (default: the critic). */
   verifier?: ModelPart;
+  /** Adjudicates contested forecasts when `options.arbiter` (default: the critic). */
+  arbiter?: ModelPart;
   /**
    * Lessons from resolved questions. Only lessons whose outcome was known at
    * the evidence cutoff are recalled (`visibleAt`); the ones used are recorded.
@@ -341,6 +358,8 @@ export interface TypedRun {
     /** The draft before a correction replaced it. */
     draft?: string;
     reason?: string;
+    /** Advisory check (`options.arbiter` on/replace): the correction, recorded and not applied. */
+    proposed?: string;
   };
 }
 
@@ -355,6 +374,8 @@ export interface Critique {
   reason?: string;
   /** True when the revision replaced the runs' answer. */
   applied: boolean;
+  /** The revision would have applied, but the Arbiter decides (`options.arbiter` on/replace). */
+  deferred?: "arbiter";
   counterEvidenceSources?: number;
   error?: string;
 }
@@ -430,6 +451,8 @@ export interface TypedForecastAnswer {
   quant?: QuantRecord;
   /** The answer contract's final check (`answer-contract.ts`): what it found and did. */
   contract?: ContractRecord;
+  /** The Arbiter's adjudication (`options.arbiter`): signals, verdict, bar, trust. */
+  arbiter?: ForecastArbiterRecord;
 }
 
 const MAX_DOSSIER_CHARS = 24_000;
@@ -1107,36 +1130,59 @@ export async function forecastTyped(
     if (sd !== undefined) out.uncertainty = { sd };
   }
 
+  /** A reviewed revision replaces the runs' answer (the critic's, or an Arbiter's overrule). */
+  const reviseAnswer = (value: AnswerValue, confidence?: number, distribution?: Distribution) => {
+    out.prediction = value;
+    out.formatted = formatAnswer(value);
+    out.confidence = confidence ?? out.confidence;
+    if (spec.type === "choice" && spec.probabilities && out.distribution) {
+      // The reviewer moves the probabilities halfway toward its own view,
+      // never all the way: the runs' evidence still counts.
+      const theirs = distribution ?? pickDistribution(spec.options, value as string, confidence);
+      setDistribution(out, spec.options, blendDistributions(out.distribution, theirs, 0.5));
+    }
+    if (spec.type === "multi" && spec.probabilities && out.distribution) {
+      const theirs = completeMarginals(spec.options, distribution, value as string[], confidence);
+      out.distribution = blendMarginals(out.distribution, theirs, 0.5);
+    }
+  };
+
   // ── Critique ──────────────────────────────────────────────────────────────
   if (opts.critique !== false && critic && phase() === "final") {
     skipped.push("critique");
     forced = true;
   } else if (opts.critique !== false && critic) {
     out.critique = await critique(req, deps, critic, header, dossier, out, since, cutoffDay);
+    // ── Arbiter hook (1/2): under on/replace the critic only advises ────────
+    if (out.critique.applied && arbiterDecides(opts.arbiter)) {
+      out.critique.applied = false;
+      out.critique.deferred = "arbiter";
+    }
     if (out.critique.applied && out.critique.proposed !== undefined) {
       const v = validateAnswer(req.answer, out.critique.proposed);
-      if (!("error" in v)) {
-        out.prediction = v.value;
-        out.formatted = formatAnswer(v.value);
-        out.confidence = out.critique.confidence ?? out.confidence;
-        if (spec.type === "choice" && spec.probabilities && out.distribution) {
-          // The critic moves the probabilities halfway toward its own view,
-          // never all the way: the runs' evidence still counts.
-          const theirs =
-            out.critique.distribution ??
-            pickDistribution(spec.options, v.value as string, out.critique.confidence);
-          setDistribution(out, spec.options, blendDistributions(out.distribution, theirs, 0.5));
-        }
-        if (spec.type === "multi" && spec.probabilities && out.distribution) {
-          const theirs = completeMarginals(
-            spec.options,
-            out.critique.distribution,
-            v.value as string[],
-            out.critique.confidence,
-          );
-          out.distribution = blendMarginals(out.distribution, theirs, 0.5);
-        }
-      }
+      if (!("error" in v))
+        reviseAnswer(v.value, out.critique.confidence, out.critique.distribution);
+    }
+  }
+  // ── Arbiter hook (2/2): adjudicate a contested forecast (./arbiter.ts) ────
+  if (opts.arbiter && opts.arbiter !== "off") {
+    const arbiter = deps.arbiter ?? critic;
+    if (!arbiter) out.arbiter = { mode: opts.arbiter, applied: false, skipped: "no model" };
+    else if (phase() === "final") {
+      out.arbiter = { mode: opts.arbiter, applied: false, skipped: "time budget spent" };
+      skipped.push("arbiter");
+    } else {
+      const staged = await forecastArbiterStage({
+        mode: opts.arbiter,
+        req,
+        out,
+        arbiter,
+        dossier,
+        ...(deps.adjust?.history ? { history: deps.adjust.history } : {}),
+        answerFormat: answerInstruction(req.answer),
+      });
+      out.arbiter = staged.record;
+      if (staged.apply) reviseAnswer(staged.apply.value, staged.apply.confidence);
     }
   }
   const lowGrounding = judge && out.runs.every((r) => (r.grounded ?? 0) < 0.3);
@@ -1261,13 +1307,13 @@ async function runIndependent(
     if (typeof reply?.reason === "string") run.reason = reply.reason.slice(0, 500);
     readUncertainty(req.answer, reply, run);
     run.weight = 1;
-    if (opts.verify && verifier) {
+    if (opts.verify && verifier && !arbiterReplacesVerify(opts.arbiter)) {
       if (budget.phase() === "final") {
         // The budget is spent: the draft counts unchecked, and says so.
         run.verified = { model: verifier.name, verdict: "not_run", reason: "time budget spent" };
         budget.spent("verification");
       } else {
-        await verifyRun(req, verifier, user, run);
+        await verifyRun(req, verifier, user, run, arbiterDecides(opts.arbiter));
       }
     }
     if (judge) {
@@ -1445,6 +1491,8 @@ async function verifyRun(
   verifier: ModelPart,
   user: string,
   run: TypedRun,
+  /** Record a correction without applying it (the Arbiter decides). */
+  advisory = false,
 ): Promise<void> {
   const { reply, error } = await askAnalyst(
     verifier,
@@ -1459,6 +1507,15 @@ async function verifyRun(
   if (reply?.verdict === "correct") {
     const v = validateAnswer(req.answer, reply.answer);
     if (!("error" in v) && formatAnswer(v.value) !== run.formatted) {
+      if (advisory) {
+        run.verified = {
+          model: verifier.name,
+          verdict: "correct",
+          proposed: formatAnswer(v.value),
+          ...(reason ? { reason } : {}),
+        };
+        return;
+      }
       run.verified = {
         model: verifier.name,
         verdict: "correct",
@@ -1588,6 +1645,7 @@ export function reselect(
   const c = answer.critique;
   if (
     c?.verdict === "revise" &&
+    c.deferred === undefined &&
     c.proposed !== undefined &&
     critiqueApplies(c.confidence, confidence)
   ) {

@@ -94,6 +94,12 @@ export interface ResolvedRecord {
   formation?: string;
   /** The board's score of the filed answer (higher is better) — routing evidence. */
   score?: number;
+  /**
+   * The Arbiter's part (`MARINA_FORECAST_ARBITER`): whether an overrule cleared
+   * the bar (applied or only observed), and whether it beat the majority once
+   * resolved — its earned-trust record. Booleans and a model name, never text.
+   */
+  arbiter?: { evaluator: string; overruled: boolean; applied: boolean; right?: boolean };
 }
 
 export interface ForecastHistory {

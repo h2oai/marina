@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Arbiter: adjudication only where answers disagree** (`src/orchestration/arbiter.ts`, all
+  surfaces default `off`). The trigger was always-on same-model verification: it overruled correct
+  answers too easily. On BrowseComp-Plus the `marina/verify:` arm lost accuracy and its gold recall
+  fell from 85 % to 66 %. An offline replay of stored runs found that, on the 82 items where four
+  unverified runs had a majority, the verify arm overruled a correct majority 15 times and fixed a
+  wrong one 0 times.
+  - Contested items are found from free signals: run agreement by answer type, verifier or critic
+    dissent, and judge spread. Only contested items reach the Arbiter, under a cap
+    (`MARINA_ARBITER_CAP`).
+  - The Arbiter keeps, overrules or abstains, with citations for every answer item and separate
+    source-quality and reasoning-quality scores. Overruling a majority needs grounded citations from
+    two independent registrable domains and confidence of at least 0.7 (`MARINA_ARBITER_*`);
+    anything less keeps the majority.
+  - Each overrule is scored when its question resolves (`ResolvedRecord.arbiter` in the forecast
+    history). The right to act can be gated on that earned record (`MARINA_ARBITER_UNEARNED=observe`).
+  - Wired into typed forecasts (`MARINA_FORECAST_ARBITER=off|observe|on|replace`, formation
+    `arbiter`). Under `on`, verifier corrections and critic revisions only advise; `replace` drops
+    the per-run verifier.
+  - Wired into `marina/verify:` (`MARINA_VERIFY_ARBITER`, `x-marina-arbiter` header,
+    `browsecomp-plus run --arbiter`). A checker's flag on a final answer is adjudicated instead of
+    freely revised; tool-call drafts are unchanged.
+  - In the world: the seeded `arbiter` role and `adjudication` trait, and a read-only
+    `arbiter contested|check|policy` command.
+  - The replay: `benchmarks/transfer/arbiter-replay.ts`, with no model calls.
+  - `off` is byte-identical, prompts included. See docs/architecture/orchestration.md.
 - **Research authority mode** (`MARINA_RESEARCH_AUTHORITY=on`, default off): research can find and
   read the publisher a question resolves against. A brief's settlement pages are authority targets
   from the first round, and the evidence loop's gap reviewer may name one (domain, page URL, field)

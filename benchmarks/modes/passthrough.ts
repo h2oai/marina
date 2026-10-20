@@ -109,9 +109,10 @@ export function verificationFromLabel(
   label: string | null | undefined,
 ): QueryResult["verification"] {
   if (!label) return undefined;
-  if (label === "approved") return "passed";
+  // `arbiter-kept`: the checker flagged the answer, the Arbiter weighed it and kept it.
+  if (label === "approved" || label === "arbiter-kept") return "passed";
   if (label === "checker-unavailable") return "not_run";
-  return "failed"; // revised, flagged, revision-failed, held-write: the check found a problem
+  return "failed"; // revised, flagged, revision-failed, held-write, arbiter-overruled: a problem found
 }
 
 /** The per-item labels a reply carries for the ledger (spread into a `ResultItem`). */

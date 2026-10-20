@@ -42,6 +42,9 @@
  *                              through every stage and enforced (`./answer-contract.ts`)
  *   MARINA_FORECAST_VERIFY     on | off (default on): each run's draft is checked by
  *                              MARINA_FORECAST_VERIFIER (default: the critic) before it counts
+ *   MARINA_FORECAST_ARBITER    off | observe | on | replace (default off): adjudication of
+ *                              contested forecasts only (`./arbiter.ts`); the model is
+ *                              MARINA_FORECAST_ARBITER_MODEL (default: the critic)
  *   MARINA_FORECAST_RETRIEVAL_FILTER  strict | none (default none): keep only report lines
  *                              whose cited pages are provably published by the cutoff
  *                              (src/arena/research/isolation.ts)
@@ -78,6 +81,7 @@ import { researchRetriever } from "../research/retriever";
 import { type AdjustSettings, adjustSettingsFromEnv } from "./adjust";
 import { contractModeFromEnv } from "./answer-contract";
 import { SELECTION_MODES, type SelectionMode } from "./answer-types";
+import { forecastArbiterModeFromEnv } from "./arbiter";
 import type { ForecastHistory } from "./history";
 import type { LessonStore } from "./lessons";
 import { lookupsFromSpec } from "./lookups";
@@ -347,8 +351,10 @@ export function typedOptionsFromEnv(
   const pool = env.MARINA_FORECAST_POOL?.trim().toLowerCase();
   const quant = quantModeFromEnv(env);
   const contract = contractModeFromEnv(env);
+  const arbiter = forecastArbiterModeFromEnv(env);
   return {
     ...(quant !== "off" ? { quant, quantWeight: quantWeightFromEnv(env) } : {}),
+    ...(arbiter !== "off" ? { arbiter } : {}),
     ...(contract !== "off" ? { contract } : {}),
     ...(SELECTION_MODES.includes(selection as SelectionMode)
       ? { selection: selection as SelectionMode }
@@ -377,6 +383,8 @@ export function typedForecastDeps(
     planner?: string;
     critic?: string;
     verifier?: string;
+    /** The Arbiter's model instead of MARINA_FORECAST_ARBITER_MODEL. */
+    arbiterModel?: string;
     /** A retriever spec instead of MARINA_FORECAST_RETRIEVER. */
     retriever?: string;
     /** Wrap retrieval in the strict pre-cutoff filter (MARINA_FORECAST_RETRIEVAL_FILTER=strict). */
@@ -409,7 +417,14 @@ export function typedForecastDeps(
   let planner: ModelPart | undefined;
   let critic: ModelPart | undefined;
   let verifier: ModelPart | undefined;
+  let arbiter: ModelPart | undefined;
   try {
+    const aSpec = overrides.arbiterModel ?? env.MARINA_FORECAST_ARBITER_MODEL?.trim();
+    if (aSpec) {
+      const a = modelPart(aSpec, env);
+      arbiter = a;
+      if (a.usage) extra.push(a.usage);
+    }
     const vSpec = overrides.verifier ?? env.MARINA_FORECAST_VERIFIER?.trim();
     if (vSpec) {
       const v = modelPart(vSpec, env);
@@ -436,6 +451,7 @@ export function typedForecastDeps(
     planner: _p,
     critic: _c,
     verifier: _v,
+    arbiterModel: _am,
     retriever: _r,
     strictRetrieval: _s,
     wrapRetriever,
@@ -467,6 +483,7 @@ export function typedForecastDeps(
       ...(planner ? { planner } : {}),
       ...(critic ? { critic } : {}),
       ...(verifier ? { verifier } : {}),
+      ...(arbiter ? { arbiter } : {}),
       ...(lessons ? { lessons } : {}),
       ...(w.judge ? { judge: w.judge } : {}),
       pageText: defaultPageText(),

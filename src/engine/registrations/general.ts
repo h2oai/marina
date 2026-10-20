@@ -10,6 +10,7 @@ import { registerDeadlineSource } from "../../schedules/deadlines";
 import type { EntityId, RoomId } from "../../types";
 import { collectiveManager } from "../../world/world-collective-manager";
 import { commandManifest } from "../command-manifest";
+import { arbiterCommand } from "../commands/arbiter";
 import { associationCommand } from "../commands/association";
 import { audioCommand } from "../commands/audio";
 import { bookmarkCommand } from "../commands/bookmark";
@@ -199,6 +200,9 @@ export function registerGeneralCommands(engine: Engine): void {
   );
   engine.commands.registerBuiltin(
     quantCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
+  );
+  engine.commands.registerBuiltin(
+    arbiterCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
   engine.commands.registerBuiltin(timeCommand());
   engine.commands.registerBuiltin(uptimeCommand(() => engine.getUptime()));

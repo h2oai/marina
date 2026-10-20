@@ -212,6 +212,16 @@ critic) checks its draft against the dossier and the resolution rules — option
 scale, the latest reading, arithmetic — and a concrete correction replaces the draft. Each run
 records the verdict and, on a correction, the draft it replaced.
 
+**The Arbiter** (`MARINA_FORECAST_ARBITER`, default `off`; `--formation arbiter`): adjudication only
+where answers disagree, in place of always-on verification. A forecast is contested when its runs'
+drafts disagree, the verifier or the critic dissents, or the judge's scores spread; only then is the
+Arbiter (`MARINA_FORECAST_ARBITER_MODEL`, default the critic) asked. It keeps the majority, overrules
+it with cited evidence, or abstains. An overrule of a majority needs citations from two independent
+domains and confidence of at least 0.7 (`MARINA_ARBITER_*`). `observe` records the verdict on the
+answer (`arbiter`) and changes nothing. `on` makes verifier corrections and critic revisions advisory,
+so only a bar-clearing overrule changes the answer. `replace` also skips the per-run verifier. See
+[the Arbiter](../architecture/orchestration.md#the-arbiter-adjudication-only-where-answers-disagree-2026-10-20).
+
 **Lessons.** A forecast can recall lessons from questions that have already resolved. There is
 one lesson system: the judged, audited outcome loop
 ([outcome lessons](../architecture/memory.md#outcome-lessons-srclearning)). A resolved forecast,
@@ -525,6 +535,7 @@ are saved with their answer as one string (`prediction`).
 | `MARINA_FORECAST_RETRIEVER` | `openrouter-web:google/gemini-3.1-pro-preview@exa,search` with an OpenRouter key; else `search` (the search backend chain, keyless DuckDuckGo at the end) | the research engine(s) |
 | `MARINA_FORECAST_DOSSIER_CHARS` | sized to the analysts' context window (12 000–60 000) | typed answers: research characters each run reads; verified lines are kept first |
 | `MARINA_FORECAST_FOLLOWUP` | `on` | typed answers: one extra research round — before the runs when fewer than `MARINA_FORECAST_MIN_EVIDENCE` (5) lines verify, else after them when no run is grounded |
+| `MARINA_FORECAST_ARBITER` | `off` | typed answers: `observe` records an Arbiter verdict on contested forecasts; `on` lets only a bar-clearing overrule change the answer (verifier and critic advise); `replace` also drops the per-run verifier |
 | `MARINA_FORECAST_DISAGREEMENT` | `on` | typed answers: when the runs disagree, search the crux and pool one more run |
 | `MARINA_FORECAST_JUDGE` | `jev` | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend — OpenJev, TypeSafe, a chat classifier; falls back to `jev` when none is set) or `none` (equal weights) |
 | `MARINA_FORECAST_PLANNER` | the first analyst | typed answers: plans and names research gaps |

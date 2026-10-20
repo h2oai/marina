@@ -391,6 +391,50 @@ Effect: write.
 - `field-0` (`name`): text, required.
 - Group `option-0`: `--keep-children`.
 
+## arbiter
+
+The Arbiter's rules, free and mechanical — no model call.
+Usage:
+  arbiter contested [type:choice|multi|number|ranking|text] -- <answer> | <answer> | …
+  arbiter check [type:<t>] [majority:<answer>] [agreement:<0-1>] -- <verdict JSON>
+  arbiter policy
+
+contested: the answers independent attempts gave (multi/ranking items comma-separated). Contested = they disagree.
+check: apply the overrule bar to an Arbiter verdict:
+  {"verdict":"keep"|"overrule"|"abstain","answer":…,"items":[{"item":…,"citations":[{"source":<url>,"quote":…}]}],
+   "source_quality":0-1,"reasoning_quality":0-1,"confidence":0-1,"reason":…}
+  Overruling a majority needs citations for every answer item from independent domains and enough confidence; short of that it is kept or abstained.
+Invite an Arbiter: a resident with role `arbiter` (`agent spawn <name> role:arbiter`), then `tell <name> arbitrate: <question> | answers: … | evidence: …`.
+
+Category: System. Minimum rank: 0.
+Aliases: none.
+
+### `arbiter contested [type:choice|multi|number|ranking|text] -- <a> | <b> | …`
+
+Effect: read.
+
+- `field-0` (`type`): text, optional group `option-0`, choices `choice`, `multi`, `number`, `ranking`, `text`.
+- `field-1` (`a`): text, required.
+- `field-2` (`b`): text, required.
+- Group `option-0`: `type:choice|multi|number|ranking|text`.
+
+### `arbiter check [type:<t>] [majority:<answer>] [agreement:<0-1>] -- <verdict JSON>`
+
+Effect: read.
+
+- `field-0` (`type`): text, optional group `option-0`.
+- `field-1` (`majority`): text, optional group `option-1`.
+- `field-2` (`agreement`): text, optional group `option-2`.
+- `field-3` (`verdict JSON`): json, required.
+- Group `option-0`: `type:t`.
+- Group `option-1`: `majority:answer`.
+- Group `option-2`: `agreement:0-1`.
+
+### `arbiter policy`
+
+Effect: read.
+
+
 ## arena
 
 Marina in the Social Simulation Arena: open questions, Marina's forecasts, its filed record.

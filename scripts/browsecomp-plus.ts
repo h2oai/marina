@@ -47,6 +47,11 @@
  * metadata and the ledger). Off by default: the official protocol ends a
  * capped run incomplete. The arm is its own target and label (`+final-answer`).
  *
+ * `--arbiter off|observe|on` sends `x-marina-arbiter` with every call: with a
+ * `marina/verify:` model, a checker's flag on a final answer goes to the
+ * Arbiter (src/orchestration/arbiter.ts) instead of a free revision — so the
+ * same arm can be re-run arbiter vs verify. Its own label (`+arbiter-<mode>`).
+ *
  * Output per replicate (`<out>/rep<i>/`): `runs/run_<id>.json` (the official
  * run format), `evals/…_eval.json`, `summary.json` (the leaderboard fields)
  * and `result.json` (ledger-shaped: ids and outcomes only). Keep `--out`
@@ -123,6 +128,7 @@ const { positionals, values } = parseArgs({
     "first-move-judge": { type: "boolean" },
     lessons: { type: "boolean" },
     "lessons-mode": { type: "string" },
+    arbiter: { type: "string" },
     "reader-model": { type: "string" },
     "swarm-docs": { type: "string" },
     "swarm-open": { type: "string" },
@@ -204,9 +210,14 @@ async function run(): Promise<number> {
   const offset = int("offset", values.offset, 0);
   const finalAnswer = values["final-answer"] === true;
   const swarm = swarmFlags(formation.kind);
+  const arbiter = values.arbiter?.trim().toLowerCase();
+  if (arbiter !== undefined && !["off", "observe", "on"].includes(arbiter)) {
+    console.error("--arbiter must be off, observe or on");
+    process.exit(2);
+  }
   const label =
     values.label ??
-    `${formation.kind === "single" ? values.model : `${formationLabel(formation)}:${values.model}`}${finalAnswer ? "+final-answer" : ""}`;
+    `${formation.kind === "single" ? values.model : `${formationLabel(formation)}:${values.model}`}${finalAnswer ? "+final-answer" : ""}${arbiter ? `+arbiter-${arbiter}` : ""}`;
   if (values.group && !validGroupKey(values.group))
     throw new Error(`invalid --group ${values.group}`);
   const out =
@@ -237,6 +248,7 @@ async function run(): Promise<number> {
     offset,
     limit: limit ?? null,
     ...(swarm ? { swarm: swarmLabel(swarm, values.model) } : {}),
+    ...(arbiter ? { arbiter } : {}),
     queriesHash: createHash("sha256")
       .update(queries.map((q) => q.query_id).join("\n"))
       .digest("hex")
@@ -261,6 +273,9 @@ async function run(): Promise<number> {
     headers: {
       "x-marina-eval": `benchmark=Tevatron/browsecomp-plus; mode=${lessonsMode}`,
       ...(values.lessons ? { "x-marina-lessons": "on" } : {}),
+      // The Arbiter in place of the checker's free revision of a final answer
+      // (`marina/verify:` models; src/net/model-api/verify.ts).
+      ...(arbiter ? { "x-marina-arbiter": arbiter } : {}),
     },
   };
   const timeoutMs = int("timeout-s", values["timeout-s"]) * 1000;
