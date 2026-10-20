@@ -435,7 +435,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Default change: fenced memory is reconstructed as of the cutoff** (`src/memory/as-of.ts`).
   Under an evidence cutoff, a note edited after creation was dropped, and the durable evidence and
   proposal tiers were withheld entirely. Now a revised note is served at the newest canonical
-  version known by the cutoff, with that version's own text (labelled `as-of vK/N`, never trusted).
+  version known by the cutoff, with that version's own text (labelled `as-of vK` — the version served, never the count past the cutoff, never trusted).
   Durable records, captured sources and assistance proposals are served by their own known-at
   time, taken from the service events the write path records. An item with no such event (bundle
   imports, events dropped before migration 171) is still withheld. Tests prove no post-cutoff text

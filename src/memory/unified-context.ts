@@ -271,7 +271,8 @@ function noteItem(
   note: ScoredNoteRow & { asOf?: AsOfServed },
 ): UnifiedContextItem {
   const bits = [`#${note.id}`, `imp=${note.importance}`];
-  if (note.asOf) bits.push(`as-of v${note.asOf.version}/${note.asOf.current}`);
+  // Never reveal how many versions exist past the cutoff: only the one served.
+  if (note.asOf) bits.push(`as-of v${note.asOf.version}`);
   if (tier === "trusted") {
     bits.push(
       note.verification_status === "verified"
@@ -468,7 +469,7 @@ function recordAsOf(
 
 function recordItem(record: SearchedRecord): UnifiedContextItem {
   const freshness = record.asOf
-    ? ` as-of (current v${record.asOf.current})`
+    ? " as-of" // never reveal the version count past the cutoff
     : record.freshness && record.freshness !== "current"
       ? ` ${record.freshness}`
       : "";

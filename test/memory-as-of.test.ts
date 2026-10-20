@@ -167,7 +167,9 @@ describe("memory as of the evidence cutoff", () => {
       .find((t) => t.tier === "evidence")!
       .items.find((i) => i.id === fx.recordId)!;
     expect(record.content).toBe("Amber deployment uses port 7419");
-    expect(record.provenance).toBe(`record ${fx.recordId} v1 as-of (current v2)`);
+    expect(record.provenance).toBe(`record ${fx.recordId} v1 as-of`);
+    // The label never reveals that a later version exists.
+    expect(record.provenance).not.toMatch(/current v|\/\d/);
     expect(served(fenced)).not.toContain("8800");
 
     // Revised BEFORE the cutoff: the revision is what was known (no longer dropped).
@@ -203,7 +205,7 @@ describe("memory as of the evidence cutoff", () => {
     const item = fenced.tiers.flatMap((t) => t.items).find((i) => i.id === String(fx.plainNoteId));
     expect(item?.tier).toBe("unverified");
     expect(item?.content).toContain("9100");
-    expect(item?.provenance).toBe(`#${fx.plainNoteId} imp=5 as-of v2/3`);
+    expect(item?.provenance).toBe(`#${fx.plainNoteId} imp=5 as-of v2`);
     expect(served(fenced)).not.toContain("9200");
     expect(served(fenced)).not.toContain("finally");
 
