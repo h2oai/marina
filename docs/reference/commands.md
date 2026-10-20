@@ -8687,6 +8687,43 @@ Effect: read.
 
 - `field-0` (`name`): text, required.
 
+## triage
+
+Intake triage — which method a question or task needs. No model call, milliseconds.
+Usage:
+  triage <question or task> [type:choice|multi|number|ranking|text] [options:A,B,…] [size:N] [ends:<ISO>] [resolves:<ISO>] [asof:<ISO>]
+
+The class is decided by dates, never guessed: a figure whose release (or event) is before NOW is a lookup.
+asof: sets NOW (default: the world clock); resolves: is when the answer becomes known.
+When to triage, and what each class does next: skill builtin intake-triage
+
+Examples:
+  triage What was the US CPI-U inflation rate for August 2026? type:number
+  triage Will Arsenal beat Aston Villa on 31 August 2026? type:choice options:Yes,No
+  triage Which five films will top the domestic box office for 18-20 September 2026? type:ranking size:5
+  triage What will EIA report for crude stocks for the week ending 28 August 2026? asof:2026-08-25
+
+Category: Markets & Forecasting. Minimum rank: 0.
+Aliases: none.
+
+### `triage <question or task> [type:<choice|multi|number|ranking|text>] [options:<id,id,…>] [size:<n>] [ends:<iso>] [resolves:<iso>] [asof:<iso>]`
+
+Effect: read.
+
+- `field-0` (`question or task`): text, required.
+- `field-1` (`type`): text, optional group `option-0`, choices `choice`, `multi`, `number`, `ranking`, `text`.
+- `field-2` (`options`): text, optional group `option-1`.
+- `field-3` (`size`): number, optional group `option-2`.
+- `field-4` (`ends`): text, optional group `option-3`.
+- `field-5` (`resolves`): text, optional group `option-4`.
+- `field-6` (`asof`): text, optional group `option-5`.
+- Group `option-0`: `type:choice|multi|number|ranking|text`.
+- Group `option-1`: `options:id,id,…`.
+- Group `option-2`: `size:n`.
+- Group `option-3`: `ends:iso`.
+- Group `option-4`: `resolves:iso`.
+- Group `option-5`: `asof:iso`.
+
 ## uptime
 
 Show how long the server has been running.

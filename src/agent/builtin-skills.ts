@@ -11,12 +11,16 @@
  * still be imported as notes with `skill import seeds/skills/<name>.md`.
  */
 
+import intakeTriage from "../../seeds/skills/intake-triage.md" with { type: "text" };
 import quantitativeEstimates from "../../seeds/skills/quantitative-estimates.md" with {
   type: "text",
 };
 import { parseSkillMarkdown, type SkillImport } from "./skill-import";
 
-export const BUILTIN_SKILLS: readonly SkillImport[] = [parseSkillMarkdown(quantitativeEstimates)];
+export const BUILTIN_SKILLS: readonly SkillImport[] = [
+  parseSkillMarkdown(quantitativeEstimates),
+  parseSkillMarkdown(intakeTriage),
+];
 
 export function builtinSkill(name: string): SkillImport | undefined {
   const n = name.trim().toLowerCase();

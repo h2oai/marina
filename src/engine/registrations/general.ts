@@ -49,6 +49,7 @@ import { scoreCommand } from "../commands/score";
 import { searchCommand } from "../commands/search";
 import { shoutCommand } from "../commands/shout";
 import { replyCommand, tellCommand } from "../commands/tell";
+import { triageCommand } from "../commands/triage";
 import { timeCommand, uptimeCommand } from "../commands/utility";
 import { videoCommand } from "../commands/video";
 import { watchCommand } from "../commands/watch";
@@ -203,6 +204,9 @@ export function registerGeneralCommands(engine: Engine): void {
   );
   engine.commands.registerBuiltin(
     arbiterCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
+  );
+  engine.commands.registerBuiltin(
+    triageCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
   engine.commands.registerBuiltin(timeCommand());
   engine.commands.registerBuiltin(uptimeCommand(() => engine.getUptime()));

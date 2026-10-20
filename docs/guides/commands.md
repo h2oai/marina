@@ -933,6 +933,7 @@ and provenance. Promote a snapshot to the new default by restarting with
 > quant buckets mean:3.4 sd:0.3 -- <3, 3-4, >=4   Probability of each numeric range; most likely bucket
 > arbiter contested -- A | A | B     Do these answers disagree? (free; the Arbiter's trigger)
 > arbiter check majority:A -- {…}    Apply the overrule bar to an Arbiter verdict (no model call)
+> triage What was US CPI for August 2026? type:number   Lookup, anchor, list or forecast — which method a question needs
 > shell list                         Shell allowlist + saved output routing (rank 5 + `shell.exec` gate; `run <binary>` executes)
 > gateway list                       Bridges to peer Marina instances (rank 5 + `gateway.connect` gate)
 > demo preflight                     Demo health: score, warm agents, blockers (`demo reset` needs rank 2+)

@@ -121,6 +121,7 @@
     "prune-agent-users": "bun run scripts/prune-agent-users.ts",
     "eval-prompt": "bun run scripts/eval-prompt.ts",
     "eval:transfer": "bun run scripts/eval-transfer.ts",
+    "eval:triage": "bun run scripts/eval-triage.ts",
     "qualify:prompt": "bun run scripts/eval-prompt.ts marina:answerer --min-score 13",
     "qualify:autonomy": "bun run scripts/qualify-autonomy.ts",
     "qualify:agents:handoff": "bun scripts/qualify-agent-handoff.ts",

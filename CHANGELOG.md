@@ -34,6 +34,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `arbiter contested|check|policy` command.
   - The replay: `benchmarks/transfer/arbiter-replay.ts`, with no model calls.
   - `off` is byte-identical, prompts included. See docs/architecture/orchestration.md.
+- **Intake triage** (`MARINA_FORECAST_TRIAGE=off|observe|on`, default `off`): before any method
+  runs, a question or task is classified as `lookup` (already published at the cutoff — read it),
+  `anchor` (a numeric official series not yet out — project the latest reading), `list` (a ranking
+  or board — rebuild, project, sort) or `forecast` (open — the full panel). Code derives the class
+  from facts and the clock, never a model: the stated resolution time, an official series that
+  already holds the period (FRED as published the day before the cutoff), a stated release date,
+  a dated event, the fact model's expected publication date, or a known statistic's usual lag. A
+  figure published after the cutoff is never a lookup. An optional cheap fact model
+  (`MARINA_FORECAST_TRIAGE_MODEL`, default `openrouter/deepseek/deepseek-v4.1-flash`, `none` for
+  fully deterministic) adds publisher, metric, period and expected publication date, and
+  `MARINA_FORECAST_TRIAGE_CALENDAR` reads the FRED release calendar. `observe` records the class,
+  facts and chosen method on the answer (`triage`) and changes nothing; `on` sends a lookup to an
+  authority read-off (one research round restricted to the publisher, the field read from
+  verified evidence and checked mechanically) and falls back to the full panel when the field is
+  not found, turns the quant stage on for an anchor, and gives a list the ranking method. `off`
+  leaves prompts, briefs and answers byte-identical. In-world agents get a rank-0 `triage
+  <question>` command (deterministic, no model call), a built-in `intake-triage` skill, and an
+  `intake-triage` trait on the `researcher` and `market-oracle` roles. `bun run eval:triage`
+  reports the class mix and per-class scores over stored results offline, at no cost.
 - **Research authority mode** (`MARINA_RESEARCH_AUTHORITY=on`, default off): research can find and
   read the publisher a question resolves against. A brief's settlement pages are authority targets
   from the first round, and the evidence loop's gap reviewer may name one (domain, page URL, field)

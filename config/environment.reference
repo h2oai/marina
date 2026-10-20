@@ -930,6 +930,14 @@
 # MARINA_ARBITER_EARN_MIN_RESOLVED=20
 # MARINA_ARBITER_EARN_MIN_PRECISION=0.6
 # MARINA_ARBITER_UNEARNED=strict
+# Intake triage for typed forecasts (src/forecast/triage.ts, triage-route.ts): before any method runs, each question is classified as `lookup` (the answer is already published at the evidence cutoff — read it), `anchor` (a numeric official series not yet out — project from the latest reading), `list` (a ranking or board — rebuild, project, sort) or `forecast` (open — the full panel). Code derives the class from facts and the cutoff, never a model: the question's stated resolution time, an official series that already holds the period (FRED as published the day before the cutoff), a stated release date, a dated event, the fact model's expected publication date, or a known statistic's usual release lag — a figure published after the cutoff is never a lookup. `off` (default) runs nothing and changes nothing; `observe` records the class, its reason, the facts and the method it would choose on the answer (`triage`) without changing any prompt or answer; `on` routes per class: a lookup gets an authority read-off (one research round restricted to the publisher, the field read from verified evidence, checked mechanically) that answers without the panel when it succeeds and falls back to the full panel when it does not; an anchor runs the panel with MARINA_FORECAST_QUANT on and the anchor method in its notes; a list runs it with the ranking method in its notes; a forecast runs unchanged. In-world agents reach the same classifier with the rank-0 `triage` command.
+# MARINA_FORECAST_TRIAGE=off
+
+# The cheap model that adds FACTS for triage (publisher, metric, period, expected publication date — never the class), told only the question, its answer type, its close and the cutoff as "today". Spend counts with the forecast's. `none` makes triage fully deterministic. Used only when MARINA_FORECAST_TRIAGE is observe or on; a model that cannot be built (no key) leaves triage deterministic and is recorded.
+# MARINA_FORECAST_TRIAGE_MODEL=openrouter/deepseek/deepseek-v4.1-flash
+
+# Release-calendar evidence for triage: when the facts name an official FRED series, read whether the period's figure is already in it (as published the day before the cutoff; a past cutoff needs FRED_API_KEY) and, for a live cutoff with FRED_API_KEY, the next scheduled release. `off` uses dates from the text only. Free, keyless where possible.
+# MARINA_FORECAST_TRIAGE_CALENDAR=on
 
 # Automatic resolution (src/outcomes/autoresolve.ts): every hour, the markets that open saved answers are linked to (`resolves:<venue>/<ticker>`) are read, at most 20 per pass, and a resolved one settles every answer waiting on it. Public Kalshi/Polymarket reads only. `off` waits for a `probe`.
 # MARINA_OUTCOME_AUTORESOLVE=on

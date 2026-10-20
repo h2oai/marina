@@ -289,6 +289,10 @@ export interface TypedForecastDeps {
    * applied once at the end of a formation (`forecastFormed`).
    */
   adjust?: AdjustSettings;
+  // ── Intake triage hook (`./triage-route.ts`, MARINA_FORECAST_TRIAGE) ──
+  /** Classify at intake and route per class; absent (`off`) changes nothing. */
+  triage?: import("./triage-route").TriageSettings;
+  // ── end intake triage hook ──
 }
 
 export interface ForecastPlan {
@@ -453,6 +457,10 @@ export interface TypedForecastAnswer {
   contract?: ContractRecord;
   /** The Arbiter's adjudication (`options.arbiter`): signals, verdict, bar, trust. */
   arbiter?: ForecastArbiterRecord;
+  // ── Intake triage hook (`./triage-route.ts`) ──
+  /** The class, its reason and facts, the method chosen, and the read-off (observe/on). */
+  triage?: import("./triage-route").TriageRecord;
+  // ── end intake triage hook ──
 }
 
 const MAX_DOSSIER_CHARS = 24_000;
