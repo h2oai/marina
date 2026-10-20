@@ -298,7 +298,7 @@ it("exposes adopt on the operation vocabulary and the world command grammar", ()
   expect(() => parseMemoryServiceCommand("adopt")).toThrow();
 });
 
-it("adopting a proposal from a helper the requester owns credits no one (one party)", async () => {
+it("a non-person (service) requester adopting from a helper it owns credits no one (one party)", async () => {
   const kid = make("kid", ownerId);
   const kidHelper = MarinaMemoryAssistance.http(kid.client);
   const saved = await owner.remember(space, { content: "Deployment uses port 7419." });
@@ -318,4 +318,41 @@ it("adopting a proposal from a helper the requester owns credits no one (one par
   expect(adopted.state).toBe("adopted");
   expect(adopted.credited).toEqual([]);
   expect(ledgerFor(db, kid.principalId)).toEqual([]);
+});
+
+it("a person adopting its own agent's proposal credits the agent (each account its own party)", async () => {
+  const person = db.ensurePrincipal({ type: "human", displayName: "person" });
+  const personCredential = db.issueMemoryCredential(person.principal_id);
+  const personClient = new MarinaMemoryClient("http://test", personCredential.token, 35000, (r) =>
+    handleMemoryServiceApi(r, service),
+  );
+  const personRequester = MarinaMemoryAssistance.http(personClient);
+  const personSpace = (await personClient.createSpace("person-private")).id;
+  const agent = make("persons-agent", person.principal_id);
+  const agentHelper = MarinaMemoryAssistance.http(agent.client);
+  const saved = await personClient.remember(personSpace, { content: "Deployment uses port 7419." });
+  const job = await personRequester.create(personSpace, {
+    worker_id: agent.principalId,
+    role: "librarian",
+    task: "Find the deployment instruction",
+  });
+  const claim = await agentHelper.claim(job.id);
+  await agentHelper.read(job.id, claim.lease_token, { operation: "get", id: saved.id });
+  await agentHelper.finish(job.id, claim.lease_token, {
+    status: "answered",
+    answer: "Deploy using the documented port.",
+    citations: [
+      { kind: "record", space_id: personSpace, id: saved.id, version: 1, quote: "port 7419" },
+    ],
+  });
+  const adopted = await personClient.adopt(undefined, job.id, { rationale: "verified" }, "k-p");
+  expect(adopted.state).toBe("adopted");
+  expect(adopted.credited).toEqual([
+    {
+      principal_id: agent.principalId,
+      kind: "assistance_adopted",
+      ref: `assistance:${job.id}`,
+      amount: STANDING_AMOUNTS.assistance_adopted,
+    },
+  ]);
 });

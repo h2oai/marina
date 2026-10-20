@@ -114,7 +114,7 @@ export function taskCommand(
     ],
     name: "task",
     aliases: [],
-    help: "Manage tasks with leased create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing\n  task create <title> | <description> [standing:N] [bounty]   (also !N; N = 0–10, default 1, paid only when someone independent of the claimant approves)\n  task goal <title> | <description> [priority:N]   (also !pN / --priority N)\n  task info <id>   (also show/view)\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector priority:7\n  task progress 3 +20\n  task claim 3\n  task heartbeat 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine",
+    help: "Manage tasks with leased create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing\n  task create <title> | <description> [standing:N] [bounty]   (also !N; N = 0–10, default 1, paid when another account approves — a person may approve its own agents)\n  task goal <title> | <description> [priority:N]   (also !pN / --priority N)\n  task info <id>   (also show/view)\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector priority:7\n  task progress 3 +20\n  task claim 3\n  task heartbeat 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine",
     handler: (ctx: RoomContext, input) => {
       const self = ctx.getEntity(input.entity);
       if (!self) return;
@@ -201,11 +201,11 @@ export function taskCommand(
           }
           const claims = tasks.getClaims(task.id);
           // What approval would actually pay: the capped value, to a claimant
-          // independent of the creator (who approves).
+          // the creator (who approves) may credit (`standingVerifierRefusal`).
           const paid = tasks.standingFor(task);
           const standingLabel =
             paid.amount > 0
-              ? ` | Standing: ${bold(`!${paid.amount}`)} ${dim("on independent approval")}`
+              ? ` | Standing: ${bold(`!${paid.amount}`)} ${dim("on approval by another account")}`
               : "";
           const statusKind =
             task.status === "completed" ? "done" : task.status === "cancelled" ? "fail" : "active";
@@ -248,8 +248,10 @@ export function taskCommand(
               const unpaid =
                 paid.amount > 0 &&
                 isActiveClaim(c) &&
-                !tasks.standingFor(task, c.entityName).credited
-                  ? dim(" — approval pays no standing (same party as the creator)")
+                !tasks.standingFor(task, c.entityName, c.entityId).credited
+                  ? dim(
+                      " — approval pays no standing (the creator's own account, or its agent reviewer in the claimant's lineage)",
+                    )
                   : "";
               lines.push(
                 `  ${c.entityName}: ${c.status}${c.submissionText ? ` — "${c.submissionText}"` : ""}${lease}${unpaid}`,
@@ -298,7 +300,7 @@ export function taskCommand(
           if (standing !== undefined && (standing < 0 || standing > TASK_STANDING_MAX)) {
             ctx.send(
               input.entity,
-              `task create: standing:${standing} is out of range — a task pays 0–${TASK_STANDING_MAX} standing, and only when someone independent of the claimant approves it.`,
+              `task create: standing:${standing} is out of range — a task pays 0–${TASK_STANDING_MAX} standing, and only when another account approves it (never the claimant itself).`,
             );
             return;
           }
@@ -804,7 +806,7 @@ export function taskCommand(
           lines.push(
             "",
             dim(
-              `Standing decays (60-day half-life) and is earned by verified work; see \`standing\`. A task pays up to ${TASK_STANDING_MAX} when someone independent of the claimant approves it (\`task info <id>\`).`,
+              `Standing decays (60-day half-life) and is earned by verified work; see \`standing\`. A task pays up to ${TASK_STANDING_MAX} when another account approves it (\`task info <id>\`).`,
             ),
           );
           ctx.send(input.entity, lines.join("\n"));

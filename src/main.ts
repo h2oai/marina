@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import { BUILTIN_WORLD_SLUGS } from "../worlds";
 import { agentModelMapProblems } from "../worlds/seed";
 import { getInternalModelToken } from "./agent/agent-runtime";
+import { chronicleCivicRuleChanges } from "./agent/civic-rules";
 import { RateLimiter } from "./auth/rate-limiter";
 import { parseExecUnrestricted } from "./coding/exec-approver";
 import { ensureConfiguredRoots } from "./coding/workspace-registry";
@@ -21,7 +22,7 @@ import {
 } from "./engine/constants";
 
 import { Engine } from "./engine/engine";
-import { logRejection } from "./engine/errors";
+import { logRejection, tryLog } from "./engine/errors";
 import { Logger } from "./engine/logger";
 import { projectTraces } from "./engine/trace-projection";
 import {
@@ -451,6 +452,12 @@ seedGuidePool(db, world.guideNotes, { commands: engine.commands.allBuiltins() })
 if (world.seed) {
   world.seed(db);
 }
+
+// Civic rule changes enter the chronicle once per world (idempotent).
+tryLog(logger, "main", "civic rule chronicle failed", () => {
+  for (const ref of chronicleCivicRuleChanges(db))
+    logger.info("main", `chronicled civic rule change ${ref}`);
+});
 for (const problem of agentModelMapProblems()) {
   logger.warn("main", `MARINA_AGENT_MODELS: ${problem}`);
 }

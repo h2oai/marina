@@ -4,21 +4,29 @@
 /**
  * Standing — the one civic-contribution score, earned by VERIFIED work.
  *
- * A credit lands only when someone independent of the worker verified the
- * work: a task's approver who is not the claimant's party, a requester
- * adopting a helper's proposal, an external resolution of a filed forecast, a
- * Code Mode check run in someone else's session, an independent replication
- * of an experiment, the engine checking a quest. Recognition (being
- * chronicled) and volume (pool notes, recalls, self-declared crew stages,
- * self-reported helping acts) earn nothing: those kinds are RETIRED — their
- * historical rows stay in the append-only ledger as history, no new row is
- * written (`record` refuses them), and by default they count toward no
- * standing (`MARINA_STANDING_RETIRED=decay` lets them fade out instead).
+ * A credit lands only when someone OTHER than the worker verified the work:
+ * a task's approver, a requester adopting a helper's proposal, an external
+ * resolution of a filed forecast, a reviewer approving a Code Mode attempt
+ * whose checks passed, a replication of an experiment, the engine checking a
+ * quest. Recognition (being chronicled) and volume (pool notes, recalls,
+ * self-declared crew stages, self-reported helping acts) earn nothing: those
+ * kinds are RETIRED — their historical rows stay in the append-only ledger as
+ * history, no new row is written (`record` refuses them), and by default they
+ * count toward no standing (`MARINA_STANDING_RETIRED=decay` lets them fade
+ * out instead).
  *
- * Independence (`independentParties`): a person and every agent in its spawn
- * lineage are ONE party — the worker's and the verifier's lineages must not
- * meet. Credits key on the durable world account (`accountKey`), so people
- * and external agents earn whether or not they are online.
+ * Contributors earn standing (2026-10-20, `standingVerifierRefusal`): for
+ * standing, each account is its own party. Self-verification — the same
+ * name or the same durable account — is always refused. A person verifying
+ * the work of an agent in its own spawn lineage (an owner approving its
+ * agent's task) credits the agent. An AGENT verifying work inside its own
+ * lineage (a sibling, a child, its owner) is a reviewer's verdict: it credits
+ * only when GROUNDED (the attempt's checks ran and passed), else the old
+ * lineage-independence rule applies. Safety gates keep the stricter rule:
+ * `independentParties` (a person and its lineage are one party) still decides
+ * which approvals demonstrate a gate (`approvalDemonstrates`). Credits key on
+ * the durable world account (`accountKey`), so people and external agents
+ * earn whether or not they are online.
  *
  * Storage: ledger rows in `entity_standing` (one per event, idempotent on
  * `(entity_id, kind, ref)`), rollup in `entity_standing_cache`. Permission
@@ -83,7 +91,7 @@ export type StandingKind =
 
 /**
  * Kinds that no longer earn. Each paid for recognition or volume rather than
- * work someone independent verified:
+ * work someone else verified:
  * - `pool_note`, `reflection_recalled`: writing and being read are volume
  *   (and recall owners were `memory:<uuid>` namespaces that never resolved);
  * - `chronicled`: being named by the Chronicler is recognition — it stays in
@@ -119,23 +127,26 @@ export const FORECAST_DAILY_CAP = 1;
  * value). Negatives are penalties — the rollup floors at 0.
  */
 export const STANDING_AMOUNTS: Record<StandingKind, number> = {
-  // The task's own value, ≤ TASK_STANDING_MAX, paid only when the approver is
-  // independent of the claimant (`TaskManager.approveSubmission`).
+  // The task's own value, ≤ TASK_STANDING_MAX, paid when the approver may
+  // credit the claimant (`standingVerifierRefusal`: another account; an agent
+  // approver inside the claimant's lineage has no grounding signal here).
   task_complete: 0,
   // An onboarding quest the ENGINE checked, once per quest. Kept small: it
   // moves a newcomer toward Citizen (rank 1 = 5) without clearing gates.
   quest_complete: 3,
-  // Code Mode checks that passed in a coding session someone independent of
-  // the worker created — once per session (`src/outcomes/live.ts`).
+  // A Code Mode attempt whose checks passed, approved by another account —
+  // grounded, so an agent reviewer in the worker's lineage may credit it;
+  // once per attempt (`src/outcomes/live.ts`).
   code_verified: 1,
-  // A filed forecast an external resolver (or an independent market
-  // resolver) settled, paid by skill: up to 0.5, at most FORECAST_DAILY_CAP a
+  // A filed forecast an external resolver (or a market resolver who may
+  // credit the filer) settled, paid by skill: up to 0.5, at most FORECAST_DAILY_CAP a
   // day, never for an evaluation filing (`src/outcomes/forecast.ts`).
   forecast_resolved: 0.5,
-  // A controlled comparison an independent party replicated (samples on ≥ 2
-  // arms from ≥ 2 independent parties).
+  // A controlled comparison another party replicated (samples on ≥ 2 arms,
+  // a recorder who may credit the completer under `standingVerifierRefusal`).
   experiment_complete: 3,
-  // A requester ADOPTING an independent helper's cited proposal: the credit
+  // A requester ADOPTING another party's cited proposal (a person may adopt
+  // its own agent's): the credit
   // lands on the HELPER's durable account, ref `assistance:<jobId>`. Delegated
   // trees split it: root worker 0.6, every other distinct answered worker
   // shares 0.4 evenly (`db-memory-adopt.ts:contributionShares`).
@@ -201,7 +212,9 @@ type LineageReader = Pick<MarinaDB, "spawnLineage">;
  * True when `a` and `b` are different parties: not the same name, and
  * neither's spawn lineage meets the other's (a person and the agents it
  * spawned — children, grandchildren, siblings — are one party). Lineage is
- * read from agent configs and agent principals (`spawnLineage`).
+ * read from agent configs and agent principals (`spawnLineage`). This is the
+ * GATE rule (`approvalDemonstrates`) and the producer rule for forecasts;
+ * standing's verifier rule is `standingVerifierRefusal`.
  */
 export function independentParties(db: LineageReader, a: string, b: string): boolean {
   if (!a || !b) return false;
@@ -223,6 +236,62 @@ export function accountKey(
   return db.durableKeyForName(name) ?? entityId;
 }
 
+type StandingPartyReader = Pick<
+  MarinaDB,
+  "spawnLineage" | "durableKeyForName" | "durableEntityKey" | "getAgentConfig" | "getPrincipal"
+>;
+
+/** An agent account: an agent config or an agent principal (the challenge rule's signal). */
+function isAgentAccountName(db: StandingPartyReader, name: string): boolean {
+  return !!db.getAgentConfig(name) || !!db.getPrincipal("agent", name);
+}
+
+/**
+ * The worker and the verifier are the same account: the same name, or the
+ * worker's credit target (its account by name, else its live entity id) is
+ * the verifier's account — a claim filed under another name from the
+ * verifier's own live entity is still self-verification.
+ */
+function sameAccount(
+  db: StandingPartyReader,
+  worker: { name: string; entityId?: string },
+  verifier: string,
+): boolean {
+  if (worker.name.toLowerCase() === verifier.toLowerCase()) return true;
+  const verifierKey = db.durableKeyForName(verifier);
+  if (!verifierKey) return false;
+  const workerKey = accountKey(db, worker.name, worker.entityId);
+  return !!workerKey && db.durableEntityKey(workerKey) === verifierKey;
+}
+
+/**
+ * Standing's party rule (2026-10-20: contributors earn standing). Returns why
+ * `verifier`'s verdict on `worker`'s work pays no standing, or undefined when
+ * it may:
+ * - the same account (name or durable account) is self-verification: refused;
+ * - a verifier independent of the worker's spawn lineage (`independentParties`)
+ *   pays, as before;
+ * - a PERSON inside the lineage (the owner deciding on its agent's work) pays;
+ * - an AGENT inside the lineage (sibling, child, or the worker's own agent)
+ *   is a reviewer's verdict: it pays only when `grounded` (checks that ran
+ *   and passed). With no grounding signal the lineage rule still holds.
+ * Gates do not use this: demonstrations keep `independentParties`.
+ */
+export function standingVerifierRefusal(
+  db: StandingPartyReader,
+  worker: { name: string; entityId?: string },
+  verifier: string,
+  opts: { grounded?: boolean } = {},
+): string | undefined {
+  if (!worker.name || !verifier) return "no verifier";
+  if (sameAccount(db, worker, verifier))
+    return `${verifier} verified its own work (same account); self-verification earns no standing`;
+  if (independentParties(db, worker.name, verifier)) return undefined;
+  if (!isAgentAccountName(db, verifier)) return undefined;
+  if (opts.grounded) return undefined;
+  return `${verifier} is an agent in ${worker.name}'s spawn lineage; its verdict earns standing only when grounded (checks that passed) or when a person decides`;
+}
+
 export interface VerifiedCredit {
   credited: boolean;
   amount: number;
@@ -231,10 +300,13 @@ export interface VerifiedCredit {
 }
 
 /**
- * Credit verified work. `verifier` is the independent party (a name), or
+ * Credit verified work. `verifier` is the party that verified (a name), or
  * `null` when the verification is mechanical or external (an external market
  * resolution, the engine's own check) — callers decide that, and pass a name
- * whenever a person or agent made the call. Idempotent per (account, kind, ref).
+ * whenever a person or agent made the call. `grounded` says the verdict rests
+ * on a mechanical signal (checks that ran and passed), which lets an agent
+ * reviewer in the worker's lineage credit (`standingVerifierRefusal`).
+ * Idempotent per (account, kind, ref).
  */
 export function recordVerified(
   db: MarinaDB,
@@ -243,6 +315,7 @@ export function recordVerified(
     ref: string;
     worker: { name: string; entityId?: string };
     verifier: string | null;
+    grounded?: boolean;
     amount?: number;
     taskId?: number;
   },
@@ -250,12 +323,12 @@ export function recordVerified(
   const amount = input.amount ?? STANDING_AMOUNTS[input.kind];
   if (RETIRED_STANDING_KINDS.has(input.kind))
     return { credited: false, amount: 0, reason: `${input.kind} no longer earns standing` };
-  if (input.verifier !== null && !independentParties(db, input.worker.name, input.verifier))
-    return {
-      credited: false,
-      amount: 0,
-      reason: `${input.verifier} and ${input.worker.name} are one party (same account or spawn lineage); only independent verification earns standing`,
-    };
+  if (input.verifier !== null) {
+    const refusal = standingVerifierRefusal(db, input.worker, input.verifier, {
+      grounded: input.grounded,
+    });
+    if (refusal) return { credited: false, amount: 0, reason: refusal };
+  }
   if (amount <= 0) return { credited: false, amount: 0, reason: "no standing value" };
   const key = accountKey(db, input.worker.name, input.worker.entityId);
   if (!key) return { credited: false, amount: 0, reason: `no account for ${input.worker.name}` };
@@ -263,7 +336,7 @@ export function recordVerified(
   return { credited: true, amount };
 }
 
-/** The standing a task pays when independently approved: its value (unset = default), capped. */
+/** The standing a task pays when approved by another party: its value (unset = default), capped. */
 export function taskStandingValue(standing: number | null | undefined): number {
   const value = standing ?? TASK_STANDING_DEFAULT;
   return Math.max(0, Math.min(TASK_STANDING_MAX, value));
