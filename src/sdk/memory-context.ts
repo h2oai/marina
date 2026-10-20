@@ -132,4 +132,11 @@ export interface UnifiedContextOptions {
    * records themselves pass false).
    */
   derivedSources?: boolean;
+  /**
+   * The as-of fence (epoch ms; `src/engine/evidence-fence.ts`): serve only
+   * what was known by then. Note tiers keep notes created at or before it and
+   * never revised since; the durable tiers and derived source excerpts carry
+   * no per-item as-of, so they are withheld and reported degraded `fenced`.
+   */
+  asOf?: number;
 }

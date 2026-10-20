@@ -969,6 +969,11 @@
 # MARINA_FORECAST_ROUTE_CANDIDATES=ensemble,delphi,tournament,skeptic
 # MARINA_FORECAST_ROUTE_MIN_N=30
 
+# Shadow challengers (src/forecast/shadow.ts): the paired evidence method routing needs, from live questions. `off` (default) runs nothing. A fraction (0–1) samples that share of FILED live forecasts (`forecast … resolves:`/`forecast track`, `POST /v1/forecast` with `save`; never a measurement run) and runs ONE challenger card beside it — the first card in the answer's routing `explore` order still short of ROUTE_MIN_N paired questions (the default card when routing answered with a challenger) — on the same request, deps and evidence cutoff. It is filed under `marina:shadow` (source `shadow`, `eval_mode = live`: no standing), tagged `shadow`, `method:`/`card:` (the card), `model:` (its models), the live answer's `family:` classes and its `q:` id or `pair:forecast:<live id>`, and settles with the live answer, so its outcome teaches lessons like any other but never writes history (the live answer already records the question). FutureX `earned` runs (filed at learn time) start the shadow when a row's standing answer is adopted and settle it at `futurex learn`; a revised standing answer supersedes it. The live answer is never changed. A cutoff more than an hour in the past gets backtest isolation (a date-filtered engine as is, any other behind the strict pre-cutoff filter). MAX_PER_DAY (default 10) and CAP_USD (default 2) bound shadows per UTC day, counting filed shadows and those in flight; the world's daily spend cap applies too. Routing `off` names no challenger, so nothing runs. `forecast routes` shows the paired evidence.
+# MARINA_FORECAST_SHADOW=off
+# MARINA_FORECAST_SHADOW_MAX_PER_DAY=10
+# MARINA_FORECAST_SHADOW_CAP_USD=2
+
 # Question features for method routing (src/forecast/featurise.ts). Mechanical features (answer type, group, category, board, horizon) are always used. `auto` (default) also asks the configured decision backend (MARINA_DECISIONS) two fixed questions — the question's domain from a fixed list and whether a scheduled event falls inside the horizon — and adds the domain to the class chain; `on` the same; `observe` asks and records them on the answer without using them; `off` asks nothing. Only the question text (emails and secrets masked, clipped), the answer type and the horizon are sent — never the asker's context, priors or identity. No backend, a timeout or the spend cap falls open to the mechanical features; the content-free receipt goes on the answer.
 # MARINA_FORECAST_FEATURES=auto
 
@@ -997,6 +1002,13 @@
 # MARINA_FORECAST_MARINA_URL=http://localhost:3300
 # MARINA_FORECAST_MARINA_KEY=
 
+# Residents as forecast analysts (`src/forecast/resident-part.ts`; default off). `on` makes `marina:<crew>` and `role:<r>` analysts residents asked in-process inside the server (over HTTP, with the fence and deadline headers, from a command-line process; `role:` needs the server), and enables `forecast <q> crew:<c>|role:<r> pattern:ensemble|delphi` (and the API's `pattern`/`crew`/`role`): a world task run as a Score by K residents with their own tools. A past cutoff (`asof:`) or a measurement fences their tools at the cutoff (the as-of fence, `src/engine/evidence-fence.ts`). Off, every forecast path is unchanged.
+# MARINA_FORECAST_RESIDENTS=off
+# Per resident forecast: resident calls (default 24), wall clock in seconds (default 900, each call's deadline is what is left — a crew answers with its best draft), and its own spend cap in USD (default none: only the daily caps).
+# MARINA_FORECAST_RESIDENT_CALLS=24
+# MARINA_FORECAST_RESIDENT_TIMEOUT_S=900
+# MARINA_FORECAST_RESIDENT_BUDGET_USD=
+
 # ── Social Simulation Arena ──────────────────────────────────────────────────
 
 # Signed participation in the MIT Social Simulation Arena (docs/guides/arena.md). Off unless an entrant id is set. The key file holds the Ed25519 private key (mode 0600, `bun run arena keygen <path>`).
@@ -1023,6 +1035,9 @@
 # MARINA_ARENA_ROUTING=on
 # MARINA_ARENA_ROUTE_MIN_N=8
 # MARINA_ARENA_SHADOW_CHALLENGERS=
+
+# Earned arena routes also read the shared outcome rows (src/arena/earned-routes.ts): a mechanical forecast outcome tagged `family:<tracker>`, `method:<runnable spec>` and `arena:<round>` whose filed answer is a number with an sd, scored on the arena's own skill scale (the same last-before-lock rule as shadow records). Our own arena filings (`marina:arena/<entrant>`) and any (round, spec) already in the arena tables are never counted twice, so existing routes are unchanged. `off` reads the arena tables only.
+# MARINA_ARENA_ROUTE_OUTCOMES=on
 
 # `research:wiki-events:<model>[@<retrievers>]` and `wiki-specialist:<model>[,…][@<retrievers>]` (Wikipedia top-N with scheduled events): the most articles a run may add to the statistical list (recency, or the specialist's projected weekly views) from mechanically verified events (0 = none, the statistical list only).
 # MARINA_ARENA_WIKI_EVENTS_MAX_INSERT=3
@@ -1173,6 +1188,12 @@
 
 # Resident agents' continuation prompt: `on` adds a [Lessons] section for the agent's focus every tenth cycle (judged lessons from every domain, cross-board included, labelled); `observe` logs the lesson ids it would show; `off` never asks. Default `on` (a lexical recall, no model call). Capped by MARINA_LESSONS.
 # MARINA_LESSONS_RESIDENT=on
+
+# Domain filter for the resident [Lessons] section (src/agent/resident-guidance.ts). `on` (default): when the agent's focus or its tools in the last 30 minutes show forecasting (marina_forecast, marina_quant, marina_triage, marina_market, or forecast/probability/odds wording), the section recalls exactly what a forecast recalls (`forecastLessonsFor`: the forecast and arena pools plus the cross-board share), and research work (marina_research, marina_swarm, research wording) recalls the research pool plus the cross-board share — `lessons <topic> for:<work>`, at most 4 lessons and 900 bytes, the section itself clamped to 600 bytes. Work of no clear kind keeps the lexical all-domain recall. `off` always uses the lexical all-domain recall. Under MARINA_LESSONS_RESIDENT and MARINA_LESSONS.
+# MARINA_LESSONS_RESIDENT_DOMAIN=on
+
+# Resident agents' continuation prompt: the ONE skill that fits the agent's focus (`skill top`: the agent's own stored skill first, else a built-in skill the skill search judges relevant — a query word naming the skill or a tag counts 2, a description word 1, at least 2 needed), every tenth cycle, at most 700 bytes, labelled advice and re-shown only when it changes or its section TTL lapses (src/agent/resident-guidance.ts). `on` (default) injects; `observe` logs the skill name it would show; `off` never asks and leaves the prompt unchanged. No model call.
+# MARINA_SKILLS_RESIDENT=on
 
 # Lessons from Marina's own tool work (src/learning/work.ts): agent tool errors (autonomous or request-driven) followed by a corrected call, calls that kept failing, run tool budgets reached, decision-gate holds, argument-check flags, challenge answers, task verdicts and verifier bounces, Code Mode exec denials, and an opted-in passthru conversation's recoveries (`x-marina-learn: on` or the `learn` member of its instrument stack, MARINA_PASSTHRU_STACK; bound keys only) are aggregated per tool and error class; an hourly job turns each recurring pattern into ONE judged `tools` (or `code`) lesson through the same writer, judge, leak guard and admission as every other outcome (at most 20 per hour, stopped at the daily spend cap). Work done for a person goes to that person's own lesson spaces and is served only to its own requests and agents; only world agents' work feeds the shared pools. `x-marina-eval` measurement requests teach too (their signals carry an `eval:<benchmark>` ref; the leak guard keeps item text, ids and answers out); a short-lived process flushes at shutdown and parks patterns still below their floor (counts, tool names and error classes only, for up to a day) for the next process. `observe` collects and logs counts per source with no model call; `on` learns; `off` collects nothing. Unset: `on` when a model provider is configured, else `observe`. Capped by MARINA_LESSONS.
 # MARINA_LESSONS_FROM_WORK=

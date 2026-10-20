@@ -5,6 +5,7 @@ import type { AnswerSpec } from "../../forecast/answer-types";
 import { type TriageResult, triageQuestion } from "../../forecast/triage";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { currentEvidenceCutoff } from "../evidence-fence";
 import { parseModifiers } from "../parse-input";
 import { typedSpec } from "./forecast";
 
@@ -94,7 +95,10 @@ export function runTriage(args: string, now: Date): string[] {
     return new Date(t).toISOString();
   };
   const resolvesAt = iso("resolves");
-  const at = iso("asof") ?? now.toISOString();
+  let at = iso("asof") ?? now.toISOString();
+  // The as-of fence (src/engine/evidence-fence.ts): NOW is never after the cutoff.
+  const fence = currentEvidenceCutoff();
+  if (fence && Date.parse(at) > Date.parse(fence)) at = fence;
   const r = triageQuestion({
     question: question.slice(0, 2_000),
     ...(spec ? { answer: spec } : {}),

@@ -22,7 +22,7 @@ import {
   STANDING_AMOUNTS,
 } from "../agent/standing";
 import { crpsNormal } from "../arena/score";
-import { routingRefs } from "../forecast/routing-refs";
+import { routingRefs, SHADOW_OWNER, shadowExternalId } from "../forecast/routing-refs";
 import type { TypedForecastAnswer } from "../forecast/typed";
 import { scoreTypedAnswer } from "../forecast/typed-score";
 import type { MarinaDB } from "../persistence/database";
@@ -282,7 +282,10 @@ export function resolveForecast(
     !db.resolveForecastAnswer(f.id, JSON.stringify({ ...s.outcomeJson, refs }), s.loss, resolvedAt)
   )
     return undefined;
-  if (!s.learn) return { answerId: f.id, loss: s.loss };
+  if (!s.learn) {
+    settleShadowOf(db, f, value, resolvedAt, opts);
+    return { answerId: f.id, loss: s.loss };
+  }
   const participants = opts.participants ?? forecastParticipants(db, f);
   const recorded = recordResolved(
     db,
@@ -298,6 +301,7 @@ export function resolveForecast(
   );
   if (recorded.created && (opts.basis !== "judged" || opts.deliverJudged === true))
     creditResolvedForecast(db, f, s.learn, opts.resolvedBy);
+  settleShadowOf(db, f, value, resolvedAt, opts);
   return {
     answerId: f.id,
     outcomeId: recorded.id,
@@ -305,6 +309,30 @@ export function resolveForecast(
     succeeded: s.learn.succeeded,
     ...(s.learn.quality !== undefined ? { quality: s.learn.quality } : {}),
   };
+}
+
+/**
+ * A shadow challenger filed against this answer (`src/forecast/shadow.ts`)
+ * settles with it, on the same value and basis, through this same path: its
+ * own outcome (tagged `shadow`, its card and models) teaches lessons and
+ * writes history like any other; as an `eval_mode` filing it earns no standing.
+ * None of the live answer's board refs are copied onto it.
+ */
+function settleShadowOf(
+  db: MarinaDB,
+  f: ForecastAnswerRow,
+  value: unknown,
+  resolvedAt: number,
+  opts: { basis?: OutcomeBasis; judge?: string; deliverJudged?: boolean },
+): void {
+  if (f.entity_name === SHADOW_OWNER) return;
+  const shadow = db.getForecastAnswerByExternalId(SHADOW_OWNER, shadowExternalId(f.id));
+  if (!shadow || shadow.resolved_at !== null) return;
+  resolveForecast(db, shadow.id, value, resolvedAt, {
+    ...(opts.basis ? { basis: opts.basis } : {}),
+    ...(opts.judge ? { judge: opts.judge } : {}),
+    ...(opts.deliverJudged ? { deliverJudged: true } : {}),
+  });
 }
 
 /**

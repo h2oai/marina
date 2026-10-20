@@ -80,7 +80,11 @@ export function needsRender(read: {
 export async function openBrowser(opts: BrowserOptions = {}): Promise<BrowserReader | undefined> {
   let chromium: typeof import("playwright-core").chromium;
   try {
-    ({ chromium } = await import("playwright-core"));
+    // A runtime-only specifier: the server bundle must not try to inline
+    // playwright-core (an optional dependency) now that `research ask` makes
+    // this module reachable from src/main.ts.
+    const specifier = "playwright-core";
+    ({ chromium } = (await import(specifier)) as typeof import("playwright-core"));
   } catch {
     return undefined;
   }

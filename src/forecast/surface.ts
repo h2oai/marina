@@ -15,12 +15,16 @@
  *               `resolveForecastDefaults` (env, then an earned slot, then the
  *               built-in — `src/forecast/defaults.ts`); the method card is
  *               routed by `MARINA_FORECAST_ROUTE` from tagged outcome evidence
- *               (`./card-routing.ts`; off = exactly that formation).
+ *               (`./card-routing.ts`; off = exactly that formation);
+ *   shadow      on a sampled fraction of filed answers one challenger card runs
+ *               beside it and is filed `eval_mode` (`./shadow.ts`,
+ *               `MARINA_FORECAST_SHADOW`, default off) — the live answer never changes.
  *
  * Callers add only what their surface allows (the API's `runs`,
  * `researchRounds`, `critique`); models stay operator-set.
  */
 
+import type { SourceExclusion } from "../arena/research/briefs";
 import { Logger } from "../engine/logger";
 import type { EvalContext } from "../learning/eval-context";
 import type { MarinaDB } from "../persistence/database";
@@ -52,6 +56,8 @@ export interface TypedSurfaceOptions {
   board?: string;
   /** `false`: recall no lessons (the database still supplies earned defaults). */
   lessons?: boolean;
+  /** Sources research may never use (a board's own dataset and answer pages). */
+  exclude?: SourceExclusion;
   /** Optional service instrumentation. Absent on legacy paths; never changes global defaults. */
   observe?: (
     deps: TypedForecastDeps,
@@ -112,6 +118,7 @@ export async function typedForecastFor(
     ...(opts.researchRounds !== undefined ? { researchRounds: opts.researchRounds } : {}),
     ...(opts.critique !== undefined ? { critique: opts.critique } : {}),
     ...(opts.analysts?.length ? { analysts: opts.analysts } : {}),
+    ...(opts.exclude ? { exclude: opts.exclude } : {}),
     ...(opts.db && opts.lessons !== false
       ? {
           lessons: forecastLessonsFor(opts.db, { env, ...(opts.eval ? { eval: opts.eval } : {}) }),
@@ -132,14 +139,27 @@ export async function typedForecastFor(
   const deps = opts.observe ? opts.observe(made.deps, made.scale, made.costUsd) : made.deps;
   // The method card routing earns for this question's class (the operator's
   // formation and options without evidence); the decision goes on the answer.
-  const answer = await cards.forecastCarded(
-    req,
-    deps,
-    resolved.formation,
-    routing.routeSettingsFromEnv(env),
-    { ...(opts.db ? { db: opts.db } : {}), ...(board ? { board } : {}), env },
-  );
+  const settings = routing.routeSettingsFromEnv(env);
+  const answer = await cards.forecastCarded(req, deps, resolved.formation, settings, {
+    ...(opts.db ? { db: opts.db } : {}),
+    ...(board ? { board } : {}),
+    env,
+  });
   answer.costUsd = made.costUsd();
+  // Shadow challenger (`./shadow.ts`, MARINA_FORECAST_SHADOW, default off): only a
+  // plan kept beside the finished answer; it runs once the answer is filed
+  // (`startForecastShadow`) and never changes it.
+  if (env.MARINA_FORECAST_SHADOW?.trim()) {
+    const { planForecastShadow } = await import("./shadow");
+    planForecastShadow(answer, {
+      req,
+      deps,
+      routing: answer.routing,
+      costUsd: made.costUsd,
+      env,
+      minN: settings.minN,
+    });
+  }
   return { answer, scale: made.scale };
 }
 

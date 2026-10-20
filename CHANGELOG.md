@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Yes/no forecasts lost their group class tag.** `group:binary:no|yes` failed the routing-ref
+  character check (`|`), so every yes/no outcome reached card routing and the competence map
+  without its coarsest class. Card evidence also no longer counts an answer twice when both its
+  outcome and its history record are on file.
+
 - **Operational rot that kept built features inert** (2026-10-20 usage audit of the live world).
   - **Dead memory-assistance jobs expire.** The live world held 334 pending and 15 running
     evaluator jobs, all past their deadline, after the Evaluator agent left; the state column never
@@ -46,6 +51,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     their own capped spend scope. It installs, enables and starts nothing.
 
 ### Added
+
+- **The starved earned loops get fed** (wiring item 4, "make Marina use Marina").
+  - **Forecast shadow challengers** (`src/forecast/shadow.ts`, `MARINA_FORECAST_SHADOW=off|<fraction>`,
+    default off; `_MAX_PER_DAY` 10, `_CAP_USD` $2 per UTC day). On a sampled share of filed live
+    forecasts, one challenger card from the answer's routing `explore` order runs in the background
+    on the same request, deps and cutoff. It is filed `eval_mode = live` under `marina:shadow`,
+    tagged `shadow`, `method:`, `card:`, `model:`, `family:` and `q:`/`pair:`, and settles with the
+    live answer through `resolveForecast`, so it teaches lessons; it never writes history, so prior
+    shrink and recalibration get no correlated second record per question. These are the paired
+    questions card routing (min 30) was missing. Live FutureX `earned` runs get shadows too: started
+    when a row's standing answer is adopted, superseded on revision, settled by `futurex learn`. The live answer never
+    changes; a past cutoff gets backtest isolation; no standing is earned.
+  - **Arena routing reads the shared outcome rows** (`src/arena/earned-routes.ts`,
+    `MARINA_ARENA_ROUTE_OUTCOMES`, default on). Outcomes tagged `family:`, `method:` and `arena:<round>`
+    count as paired evidence on the arena's own skill scale. Our own settled filings and anything the
+    arena tables already hold are never counted twice, so existing routes are unchanged.
+  - **`forecast routes [family]`** (read-only): per family and card or route, the paired n, win rate,
+    gain and whether the route is earned, across forecast and arena evidence.
+  - **Prophet write-back** (`benchmarks/prophet/writeback.ts`). The agent journals each
+    `/v1/forecast` answer; `file` files them under `marina:prophet` (source `prophet-arena`, `live`
+    or `measure`), and `resolve` scores resolved events through `resolveFiled`, so Prophet answers
+    record outcomes that teach lessons and write history.
+- **Residents can use what Marina built** (wiring item 3 of the 2026-10-20 usage audit: over 14
+  days the live agents used none of forecast, quant, data, research or decision tools).
+  - **Typed analysis tools.** Ten deferred agent tools, named in TOOL ROUTING and loaded through
+    `marina_tool_search`: `marina_forecast` (typed answers, optional `formation` and `retriever`),
+    `marina_research` (`research ask`), `marina_swarm` (`web swarm`), `marina_quant`, `marina_calc`,
+    `marina_data` (markets, odds, series, polls, crowd), `marina_decision_check`, `marina_triage`,
+    `marina_arbiter` and `marina_pattern`. Each builds one world command
+    (`src/agent/analysis-commands.ts`, shared with the tool policy), so rank, gates, rate limits,
+    spend caps and audit apply as typed. `crew` / `minimal` profiles are unchanged.
+  - **`research ask`.** `research ask [mode:agent|retrieve|evidence-loop|survey|authority]
+    [retriever:<spec>] -- <question>` runs the web-research agent with its citation audit, or one
+    retriever pass in a research mode (`src/research/ask.ts`). Rank 0, per-run budget (default $1,
+    at most $3), the daily cap, one run per entity. A resident may pick only retriever entries that
+    name no model, or one the operator configured.
+  - **`forecast formation:` / `retriever:`.** A caller-chosen formation (`formationEnv`) and a
+    resident-allowed retriever, validated before any budget is spent.
+  - **`pattern run`.** `pattern run <pattern> [budget:<usd>] -- <task>` (rank 0, `[experimental]`)
+    runs `runTextPattern` in world over the operator's models: per-run budget (default $0.50, at
+    most $2), the daily cap, one run per entity. `POST /v1/patterns/run` stays.
+  - **`data polls` / `data crowd`.** VoteHub polls (approval, generic ballot) and Manifold crowd
+    probabilities, with `asof:`; both are `egress` reads like the other lookups.
+  - **Skills in the prompt.** The three remaining seed skills (`decompose-multihop`, `solve-math`,
+    `answer-request`) ship built in. `skill top <query> [bytes:<n>]` returns the one best skill (the
+    agent's own first, else a built-in the skill search judges relevant). Residents get it as a
+    `[Skill]` section every tenth cycle, at most 700 bytes (`MARINA_SKILLS_RESIDENT=on|observe|off`,
+    default on).
+  - **Domain-filtered lessons.** `lessons <topic> for:<work>` (at most 4 lessons, 900 bytes;
+    `for:forecast` is exactly what a forecast recalls via `forecastLessonsFor`). A resident's
+    `[Lessons]` section uses it when its focus or recent tools show forecasting or research work
+    (`MARINA_LESSONS_RESIDENT_DOMAIN=off` keeps the lexical all-domain recall).
+
+- **Forecasts answered by residents, bounded by an as-of fence** (opt-in,
+  `MARINA_FORECAST_RESIDENTS=on`; off, every path is byte-identical).
+  - **The as-of fence** (`src/engine/evidence-fence.ts`). An evidence cutoff now binds a resident's
+    whole turn, not one call. It rides the per-execution command scope (`runCommandScope`), is set
+    for the responder of a `model_request` routed with a cutoff (`x-marina-asof` over HTTP; the
+    envelope's `asof`), and is relayed to every agent a fenced resident reaches. While it holds,
+    `web search` uses only date-strict providers at the cutoff, `web fetch` returns the archived
+    page, `data` reads as of the cutoff, `recall`/`context`/`lessons` serve only what was known by
+    then, and every other outbound or knowledge-reading command — a nested `forecast` included,
+    and any command or room command the policy table does not name — is refused with a message
+    naming the cutoff. `currentEvidenceCutoff()` is the one read for tools.
+  - **`ResidentPart`** (`src/forecast/resident-part.ts`): a forecast part answered by a resident —
+    `marina:<crew>` through `routeToChannel`, `role:<r>` by standing — in-process inside the
+    server, over HTTP with the fence and deadline headers outside it. Each call passes the
+    forecast's remaining deadline and trace, runs under the forecast's call budget and spend
+    scope, and records who answered; `/v1` replies now name the answering resident
+    (`x-marina-respondent`).
+  - **A forecast as a task, run as a Score** (`src/forecast/resident-forecast.ts`):
+    `forecast <q> crew:<c>|role:<r> pattern:ensemble|delphi [residents:N] [asof:] [measure:yes]`
+    and the same fields on `POST /v1/forecast` create a world task and run the formation through
+    the Score executor — research first, K resident steps (Delphi: a summary and K revisions),
+    then the pipeline's own pure-code combination. Each resident's run is filed as its own answer
+    tagged `q:`, `method:`, `model:` and `resident:`, so resolution credits the residents whose
+    runs scored. Bounds: `MARINA_FORECAST_RESIDENT_CALLS`, `_TIMEOUT_S`, `_BUDGET_USD`.
 
 - **An honest feature surface** ([docs/reference/feature-status.md](docs/reference/feature-status.md)).
   Every major feature now has one status: core, siloed, experimental, demo or deprecated. The page
@@ -291,6 +373,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with paired statistics; opt-in (#475).
 
 ### Changed
+
+- **Live FutureX uses the earned default.** `bun run futurex run`, `watch --run earned` and
+  `schedule` default to the `earned` variant: each row goes through `typedForecastFor` on board
+  `futurex` (env, then `forecast-config:futurex`, then the family slot, then the built-in; card
+  routing; lessons as a live run). A named variant (`--variant cheap`) is the fixed override for
+  controlled experiments; backtests stay fixed (`cheap` by default) and refuse `earned`.
+- **`rescore-selection --file` promotes through the one path.** `benchmarks/futurex/rescore-selection.ts
+  --file --variant <v>` records ledger runs per selection mode and files the challenger through
+  `fileSlotPromotion` on `forecast-config:futurex`, seeding an empty slot with the incumbent first.
+  Its own bootstrap verdict is now advisory.
 
 - **One shared model backend for library pipelines** (`src/model/`). Forecast, arena, research,
   lessons, outcome extraction, the web swarm and benchmark checkers call models through one core

@@ -59,6 +59,7 @@ import {
   pickDistribution,
 } from "./distribution";
 import { askAnalyst } from "./judge";
+import { fencedForResidents } from "./resident-part";
 import { type SkepticRecord, skepticCrew } from "./skeptic";
 import { forecastTriaged } from "./triage-route";
 import {
@@ -128,6 +129,10 @@ export async function forecastFormed(
   deps: TypedForecastDeps,
   pattern: TypedFormation = "ensemble",
 ): Promise<FormedAnswer> {
+  // ── As-of fence hook (`./resident-part.ts`): resident parts + a past cutoff ──
+  const fenced = fencedForResidents(req, deps, () => forecastFormed(req, deps, pattern));
+  if (fenced) return fenced;
+  // ── end as-of fence hook ──
   // The answer contract (`./answer-contract.ts`): a caller's own, else parsed
   // from the question's instructions when the operator turned it on. Only
   // `on` carries it into the prompts; `observe` checks the result and records.

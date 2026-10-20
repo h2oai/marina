@@ -7,9 +7,12 @@
  * Marina's general typed forecaster (`src/forecast/typed.ts`).
  *
  *   bun run futurex fetch [--past]                 download the batch (Hugging Face) at its commit sha
- *   bun run futurex run [--variant cheap] …        forecast every row, write the submission file
+ *   bun run futurex run [--variant earned] …       forecast every row, write the submission file
+ *                                                (default `earned`: the board's earned configuration
+ *                                                through the forecast surface; a named variant is a
+ *                                                fixed override for controlled experiments)
  *   bun run futurex backtest [--limit 40] …        resolved rows: forecast with an early cutoff, score, ledger
- *   bun run futurex watch [--once] [--run cheap]   poll the dataset sha; on a new batch, fetch (and run)
+ *   bun run futurex watch [--once] [--run earned]  poll the dataset sha; on a new batch, fetch (and run)
  *         [--daily] [--learn]                    …re-forecast OPEN rows daily + a final run before the
  *                                                batch's deadline; --learn feeds resolved weeks to
  *                                                lessons on EVERY tick (idempotent: once per row)
@@ -20,7 +23,7 @@
  *                                                late: each open row is answered ONCE, within
  *                                                --final-lead-hours of its own cutoff (no dailies)
  *   bun run futurex schedule [--answer late] …     PRINT a systemd user service + hourly timer for
- *         [--run cheap] [--out <dir>]            `watch --once` (default answers late); nothing is
+ *         [--run earned] [--out <dir>]           `watch --once` (default answers late); nothing is
  *         [--scope-cap 25] [--repo] [--bun]      installed or enabled — the operator copies it to
  *         [--env-file] [--db-path] [--name]      ~/.config/systemd/user and runs systemctl
  *   bun run futurex learn                          resolved rows of filed batches → outcome lessons
@@ -28,7 +31,8 @@
  *   bun run futurex status                         what has been filed (external_submissions)
  *
  * Common flags: --dir data/futurex (outside the repo's tracked tree), --variant <name> (repeatable;
- * built-ins cheap, frontier, crew), --variants <file.json> (Variant[]), --concurrency N,
+ * built-ins earned (live default), cheap (backtest default), frontier, crew), --variants
+ * <file.json> (Variant[]), --concurrency N,
  * --limit N, --org h2o.ai, --agent Marina, --model <segment>, --format-line keep|strip (the row
  * prompt's "IMPORTANT: End with …" line; default strip — keep it to let MARINA_FORECAST_CONTRACT=on
  * read it).
@@ -79,6 +83,8 @@ import { endTimeIso, FORMAT_LINE_MODES, type FormatLineMode } from "../benchmark
 import {
   type BatchRun,
   BUILTIN_VARIANTS,
+  describeEarned,
+  earnedForecaster,
   type RowResult,
   runBatch,
   type Variant,
@@ -97,6 +103,7 @@ import {
   scheduleState,
 } from "../benchmarks/futurex/schedule";
 import { parseTruth, scoreBatch, scoreItem } from "../benchmarks/futurex/score";
+import { settleRowShadow, startAdoptedShadows } from "../benchmarks/futurex/shadow";
 import {
   DEFAULT_IDENTITY,
   emailFields,
@@ -183,7 +190,14 @@ function openDb(): MarinaDB {
   return new MarinaDB(process.env.DB_PATH || "marina.db");
 }
 
-function variantsFromFlags(): Variant[] {
+/**
+ * The variants a command runs. A live run (`run`, `watch`) defaults to
+ * `earned` — the configuration the futurex board has earned, resolved through
+ * the forecast surface (`earnedForecaster`); `--variant` / `--run` /
+ * `--variants` name fixed configurations instead (the override for controlled
+ * experiments). Backtests default to the fixed `cheap` control.
+ */
+function variantsFromFlags(live = false): Variant[] {
   const file: Variant[] = values.variants ? JSON.parse(readFileSync(values.variants, "utf8")) : [];
   const byName = new Map<string, Variant>([
     ...Object.entries(BUILTIN_VARIANTS),
@@ -194,7 +208,7 @@ function variantsFromFlags(): Variant[] {
     ? values.variant
     : file.length
       ? file.map((v) => v.label)
-      : ["cheap"];
+      : [live ? "earned" : "cheap"];
   return names.map((n) => {
     const v = byName.get(n);
     if (!v)
@@ -343,7 +357,7 @@ async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise
   const kind = opts.kind ?? "run";
   const startedAt = new Date();
   const limited = values.limit ? batch.rows.slice(0, Number(values.limit)) : batch.rows;
-  const variants = variantsFromFlags();
+  const variants = variantsFromFlags(true);
   const mode: DailyRowsMode = opts.openOnly && kind === "daily" ? dailyRowsMode() : "all";
   const nearEndMs = Number(values["near-end-hours"]) * 3_600_000;
   const lateLeadMs = Number(values["final-lead-hours"]) * 3_600_000;
@@ -397,6 +411,10 @@ async function runVariants(
   // Live forecasts read every lesson learned so far (now is after every resolution),
   // from the one judged pool (MARINA_LESSONS on / observe / off).
   let lessons: LessonStore | undefined;
+  // The earned variant resolves through the forecast surface (its own lesson recall).
+  const earnedDb = values["no-ledger"] ? undefined : openDb();
+  if (variants.some((v) => v.earned))
+    console.log(`earned live configuration: ${describeEarned(earnedDb ? { db: earnedDb } : {})}`);
   if (values.lessons !== "off" && !values["no-ledger"]) {
     const ldb = openDb();
     await migrateLessons(ldb);
@@ -410,10 +428,20 @@ async function runVariants(
       console.log(`\n── variant ${v.label}: no rows to re-forecast`);
       continue;
     }
-    console.log(`\n── variant ${v.label} (${v.analysts.join(", ")}) · ${rows.length} rows`);
+    console.log(
+      `\n── variant ${v.label} (${v.earned ? "earned configuration" : v.analysts.join(", ")}) · ${rows.length} rows`,
+    );
     const out = join(dir, "out", batch.sha, v.label);
     const run = await runBatch(rows, v, depsFor(v, lessons), {
       concurrency: Number(values.concurrency),
+      ...(v.earned
+        ? {
+            forecastRow: earnedForecaster({
+              ...(earnedDb ? { db: earnedDb } : {}),
+              ...(values.lessons === "off" ? { lessons: false } : {}),
+            }),
+          }
+        : {}),
       journal: {
         path: join(out, "rows.jsonl"),
         config: {
@@ -453,7 +481,13 @@ async function runVariants(
       })),
     );
     const results = { ...prior.results };
-    for (const r of run.results) if (standing[r.id] !== prior.answers[r.id]) results[r.id] = r;
+    const adopted = run.results.filter((r) => standing[r.id] !== prior.answers[r.id]);
+    for (const r of adopted) results[r.id] = r;
+    // Shadow challengers for the adopted answers (MARINA_FORECAST_SHADOW; earned only).
+    if (v.earned && earnedDb && process.env.MARINA_FORECAST_SHADOW?.trim()) {
+      const sh = await startAdoptedShadows(earnedDb, out, v.label, adopted);
+      if (sh.started) console.log(`  shadows: ${sh.filed}/${sh.started} filed`);
+    }
     writeFileSync(
       join(out, "standing.json"),
       JSON.stringify({ answers: standing, results } satisfies Standing),
@@ -562,7 +596,10 @@ async function learnCmd(): Promise<number> {
             resolveFiled(db, filing.owner, filing.externalId, value, Date.parse(resolvedAt), [
               `batch:${sha.slice(0, 10)}`,
             ]);
+            // Its shadow challenger, if one ran, settles on the same resolution.
+            settleRowShadow(db, out, r.id, { value, resolvedAt: Date.parse(resolvedAt) });
           } else if (!r.fallback) {
+            settleRowShadow(db, out, r.id, "unfiled");
             noteOutcome(
               db,
               futurexOutcome({
@@ -575,6 +612,7 @@ async function learnCmd(): Promise<number> {
               }),
             );
           }
+          if (r.fallback) settleRowShadow(db, out, r.id, "unfiled");
           learned.add(r.id);
           queued++;
         }
@@ -861,7 +899,7 @@ function scheduleCmd(): number {
     bun: values.bun ?? process.execPath,
     ...(values["env-file"] ? { envFile: resolve(values["env-file"]) } : {}),
     dir: resolve(repo, dir),
-    run: values.run ?? "cheap",
+    run: values.run ?? "earned",
     ...(values.variants ? { variantsFile: resolve(values.variants) } : {}),
     answer: timing,
     // A scheduled late answer leaves a few hourly checks of slack before each cutoff.

@@ -21,17 +21,38 @@
  * including ones looked at on these rows, so fishing raises the bar.
  *
  * Prints ids-free aggregates only (no question or answer text).
+ *
+ * `--file` (opt-in; with `--variant <name>` or `--variants <file.json>`, the
+ * configuration the saved answers ran with, and `--db <path>`, default
+ * DB_PATH) files the comparison through the one promotion path instead of
+ * stopping at this script's own verdict: one ledger run per answers file per
+ * mode (target = the variant with `selection` set; one replicate group per
+ * mode so the files pool), then `fileSlotPromotion` on `--slot` (default
+ * `forecast-config:futurex` with `--file`, the slot live FutureX reads). An
+ * empty slot is seeded with the INCUMBENT first, so a challenger never takes
+ * an empty slot uncontested; the challenger then contests it, and the verdict
+ * printed is `fileSlotPromotion`'s (replicate minimum, holdout interval,
+ * fishing margin, append-only history).
  */
 
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { itemSplit } from "../../src/engine/benchmark-promotion";
+import {
+  type FiledPromotion,
+  fileSlotPromotion,
+  itemSplit,
+} from "../../src/engine/benchmark-promotion";
+import { boardSlotKey } from "../../src/engine/default-resolution";
 import { promotionMargin } from "../../src/engine/fishing-margin";
 import { SELECTION_MODES, type SelectionMode } from "../../src/forecast/answer-types";
+import { FORECAST_CONFIG_SLOT } from "../../src/forecast/defaults";
 import { reselect, type TypedForecastAnswer } from "../../src/forecast/typed";
+import { MarinaDB } from "../../src/persistence/database";
 import { mulberry32, percentileCeil, percentileFloor } from "../../src/stats";
 import type { FuturexRow } from "./dataset";
-import { LEVEL_WEIGHTS, scoreItem } from "./score";
+import { PAST_BENCHMARK, recordScoredRun } from "./ledger";
+import { BUILTIN_VARIANTS, type RowResult, type Variant } from "./run";
+import { LEVEL_WEIGHTS, scoreBatch, scoreItem } from "./score";
 
 export interface SavedRow {
   id: string;
@@ -181,6 +202,112 @@ export function promotionCheck(
   };
 }
 
+/** The slot live FutureX reads its earned configuration from. */
+export const FUTUREX_CONFIG_SLOT = boardSlotKey(FORECAST_CONFIG_SLOT, "futurex");
+
+export interface FiledRescore {
+  slot: string;
+  /** Ledger runs recorded per mode (one per answers file). */
+  runs: Record<"incumbent" | "challenger", string[]>;
+  /** The incumbent's seeding of an empty slot (absent when the slot had one). */
+  seeded?: FiledPromotion;
+  /** The challenger's filing: `fileSlotPromotion`'s verdict. */
+  filed: FiledPromotion;
+}
+
+/**
+ * File the comparison through `fileSlotPromotion`: one ledger run per answers
+ * file per mode (rows every file answered, scored with the published metric),
+ * the incumbent seeded into an empty slot first, then the challenger contested.
+ */
+export function fileRescore(
+  db: MarinaDB,
+  input: {
+    runs: readonly SavedRow[][];
+    truth: Map<string, FuturexRow>;
+    variant: Variant;
+    challenger: SelectionMode;
+    incumbent: SelectionMode;
+    slot?: string;
+    minReplicates?: number;
+    now?: number;
+  },
+): FiledRescore {
+  const slot = input.slot ?? FUTUREX_CONFIG_SLOT;
+  const now = input.now ?? Date.now();
+  // Only rows every file answered: replicates must share one item slice.
+  const ids = [...input.truth.keys()].filter((id) =>
+    input.runs.every((run) => run.some((r) => r.id === id)),
+  );
+  const rows = ids.map((id) => input.truth.get(id)!);
+  const record = (mode: SelectionMode): string[] =>
+    input.runs.map((run, i) => {
+      const byId = new Map(run.map((r) => [r.id, r]));
+      const predictions = new Map(ids.map((id) => [id, predictionUnder(byId.get(id)!, mode)]));
+      const at = new Date(now + i).toISOString();
+      const results = ids.map(
+        (id): RowResult => ({
+          id,
+          level: input.truth.get(id)!.level,
+          spec: byId.get(id)!.answer.answer.type,
+          prediction: predictions.get(id)!,
+          fallback: byId.get(id)!.fallback === true,
+          late: false,
+          cutoff: at,
+          costUsd: 0,
+          latencyMs: 0,
+          answer: byId.get(id)!.answer as TypedForecastAnswer,
+        }),
+      );
+      const variant: Variant = {
+        ...input.variant,
+        label: `${input.variant.label}+${mode}`,
+        selection: mode,
+      };
+      return recordScoredRun(db, {
+        benchmark: PAST_BENCHMARK,
+        batchSha: `rescore${String(i + 1).padStart(2, "0")}`,
+        variant,
+        run: { variant: variant.label, results, costUsd: 0, startedAt: at, finishedAt: at },
+        score: scoreBatch(rows, predictions),
+        replicateGroup: `rescore:${slot}:${input.variant.label}:${mode}`,
+        extra: { rescore: true, answersFile: i + 1 },
+        now: now + i,
+      }).id;
+    });
+  const runs = { incumbent: record(input.incumbent), challenger: record(input.challenger) };
+  const promote = (runId: string) =>
+    fileSlotPromotion(db, {
+      slot,
+      runId,
+      // The operator owns the database; the history records the operator key.
+      actor: { key: "operator", keyOf: (id) => db.durableEntityKey(id) },
+      ...(input.minReplicates !== undefined ? { minReplicates: input.minReplicates } : {}),
+      now,
+    });
+  const seeded = db.getBenchmarkDefault(slot)?.incumbent_run_id
+    ? undefined
+    : promote(runs.incumbent[0]!);
+  return { slot, runs, ...(seeded ? { seeded } : {}), filed: promote(runs.challenger[0]!) };
+}
+
+/** One line for a filing verdict. */
+export function describeFiled(f: FiledPromotion): string {
+  if (f.kind === "error") return `not filed: ${f.message}`;
+  if (f.kind === "seeded")
+    return `seeded ${f.slot} with ${f.challenger.id} (${f.replicates} replicates)`;
+  const e = f.evaluation;
+  return f.kind === "promoted"
+    ? `PROMOTED ${f.challenger.id} over ${f.incumbent.id} on ${f.slot}: holdout ${pts(e.stats.delta)} [${pts(e.stats.low)}, ${pts(e.stats.high)}], margin ${pts(e.margin)}`
+    : `refused on ${f.slot} (incumbent ${f.incumbent.id} stands): ${e.reasons.join("; ")}`;
+}
+
+/** A variant by name: a built-in or one from a variants file. */
+function variantNamed(name: string, file?: string): Variant | undefined {
+  const fromFile: Variant[] = file ? JSON.parse(readFileSync(file, "utf8")) : [];
+  return fromFile.find((v) => v.label === name) ?? BUILTIN_VARIANTS[name];
+}
+
 const round = (x: number) => Math.round(x * 10_000) / 10_000;
 const pts = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)} pts`;
 
@@ -192,11 +319,18 @@ function main(): number {
       runs: { type: "string" },
       holdout: { type: "string", default: "0.5" },
       tried: { type: "string", default: "0" },
-      slot: { type: "string", default: "forecast.selection" },
+      slot: { type: "string" },
       challenger: { type: "string", default: "confidence" },
       incumbent: { type: "string", default: "agreement" },
+      file: { type: "boolean" },
+      db: { type: "string" },
+      variant: { type: "string" },
+      variants: { type: "string" },
+      "min-replicates": { type: "string" },
     },
   });
+  // Filing reads the split `fileSlotPromotion` reads: the slot it files on.
+  values.slot ??= values.file ? FUTUREX_CONFIG_SLOT : "forecast.selection";
   if (!values.dataset || !values.runs) {
     console.error("usage: rescore-selection.ts --dataset <past.json> --runs <answers.json>[,…]");
     return 2;
@@ -230,8 +364,34 @@ function main(): number {
   }
   const check = promotionCheck(runs, truth, holdout, challenger, incumbent, Number(values.tried));
   console.log(
-    `holdout ${challenger} − ${incumbent}: ${pts(check.delta)} [${pts(check.low)}, ${pts(check.high)}] · margin ${pts(check.margin)} (tried ${values.tried}) → ${check.promotable ? "PROMOTABLE" : `stays opt-in: ${check.reasons.join("; ")}`}`,
+    `holdout ${challenger} − ${incumbent}: ${pts(check.delta)} [${pts(check.low)}, ${pts(check.high)}] · margin ${pts(check.margin)} (tried ${values.tried}) → ${check.promotable ? "PROMOTABLE" : `stays opt-in: ${check.reasons.join("; ")}`}${values.file ? " (advisory; the filing below decides)" : ""}`,
   );
+  if (!values.file) return 0;
+  const variant = values.variant ? variantNamed(values.variant, values.variants) : undefined;
+  if (!variant) {
+    console.error("--file needs --variant <name> (a built-in or one in --variants <file.json>)");
+    return 2;
+  }
+  const minReplicates = values["min-replicates"] ? Number(values["min-replicates"]) : undefined;
+  const db = new MarinaDB(values.db ?? (process.env.DB_PATH || "marina.db"));
+  try {
+    const filed = fileRescore(db, {
+      runs,
+      truth,
+      variant,
+      challenger,
+      incumbent,
+      slot: values.slot,
+      ...(minReplicates !== undefined && Number.isInteger(minReplicates) ? { minReplicates } : {}),
+    });
+    console.log(
+      `ledger runs: ${incumbent} ${filed.runs.incumbent.join(",")} · ${challenger} ${filed.runs.challenger.join(",")}`,
+    );
+    if (filed.seeded) console.log(`incumbent: ${describeFiled(filed.seeded)}`);
+    console.log(`challenger: ${describeFiled(filed.filed)}`);
+  } finally {
+    db.close();
+  }
   return 0;
 }
 

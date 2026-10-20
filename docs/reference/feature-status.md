@@ -42,8 +42,8 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | TabH2O | siloed | `TABH2O_API_KEY`; arena challenger, `market forecast` | src/arena, src/net/clients |
 | Quant helpers, data lookups, read swarm | siloed | `quant`, `data`, `web swarm` | src/quant, src/forecast, src/research |
 | Research evidence loop and survey | siloed | `MARINA_RESEARCH_*` | src/research |
-| Research web agent, cited answers, fact pass | siloed | Benchmark scripts only (`scripts/mind2web2.ts`, deepresearch) | src/research |
-| Skills | siloed | `skill`; seeds with `MARINA_SEED_SKILLS=true` (showcase) | src/agent |
+| Research web agent, cited answers, fact pass | siloed | In world: `research ask` (rank 0, spend-guarded) and the typed `marina_research` tool; benchmark scripts (`scripts/mind2web2.ts`, deepresearch) | src/research |
+| Skills | core | `skill`; 5 built-ins (`skill builtin`); residents get the best-fitting skill in their prompt (`MARINA_SKILLS_RESIDENT`, default on); note seeds with `MARINA_SEED_SKILLS=true` (showcase) | src/agent |
 | Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch) | experimental | Experimental: for embedders (Flow, Nov 2026). `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint` | src/net/instance-lifecycle.ts |
 | Shared spend ledger | experimental | `MARINA_SPEND_LEDGER=<path>` | src/engine/shared-spend-ledger.ts |
 | Adaptive load-balance routing | experimental | Request header `X-Load-Balance: adaptive` | src/net/model-api |
@@ -51,9 +51,11 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Earned forecast routing | experimental | `MARINA_FORECAST_HISTORY` with enough resolved outcomes | src/forecast |
 | Research authority mode | experimental | `MARINA_RESEARCH_AUTHORITY=on` | src/research |
 | The Arbiter | experimental | `MARINA_FORECAST_ARBITER`, `MARINA_VERIFY_ARBITER`; `arbiter` | src/orchestration/arbiter.ts |
+| Forecasts by residents (as-of fence) | experimental | `MARINA_FORECAST_RESIDENTS=on`; `forecast <q> crew:<c> pattern:<p>` | src/forecast/resident-part.ts, src/engine/evidence-fence.ts |
 | Hybrid and vector retrieval | experimental | `MARINA_MEMORY_EMBEDDINGS`, `MARINA_CORPUS_EMBEDDINGS` | src/memory, src/research |
 | H2O-Lightning decision preset | experimental | `MARINA_LIGHTNING_MODEL=<OpenRouter id>` then `MARINA_DECISIONS=lightning` (no default id; off) | src/decisions/config.ts |
-| Text patterns (`POST /v1/patterns/run`) | experimental | HTTP only; a `pattern run` command is planned | src/orchestration/text-patterns.ts |
+| Text patterns (`pattern run`, `POST /v1/patterns/run`) | experimental | `pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run` | src/orchestration/text-patterns.ts, src/engine/commands/pattern.ts |
+| Typed resident analysis tools (`marina_forecast`, `marina_research`, `marina_swarm`, `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`, `marina_arbiter`, `marina_pattern`) | experimental | Deferred in the `full` tool profile: loaded by name through `marina_tool_search` (`MARINA_DEFERRED_TOOLS=off` keeps them resident); each runs its world command | src/agent/tools/analysis.ts, src/agent/analysis-commands.ts |
 | Investigations | experimental | `inquiry`, `marina inquiry`, `/api/investigations` | src/investigations |
 | Schedules | experimental | `schedule add …` | src/schedules |
 | Evolution (coach, native protocols, `marina_evolve`, child worlds) | experimental | `evolve`; protocols and the `marina_evolve` tool need `MARINA_EVOLUTION_PROTOCOLS=true` | src/engine/commands/evolve.ts, src/agent/tools/evolution.ts |
@@ -81,8 +83,14 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
   Marina ships no model id, so the preset stays off until `MARINA_LIGHTNING_MODEL` names one.
   `decision settings` (and `admin decisions`) print one line: not configured, configured without an
   OpenRouter key, available, or active. Nothing is probed, so the line never costs a call.
-- **Text patterns.** `POST /v1/patterns/run` is reachable over HTTP only; a `pattern run` world
-  command is planned.
+- **Text patterns.** `pattern run <pattern> [budget:<usd>] -- <task>` runs the same protocols as
+  `POST /v1/patterns/run` in world (rank 0; per-run budget, default $0.50, at most $2; the daily cap;
+  one run per entity), over the operator's models only. Residents reach it as the typed
+  `marina_pattern` tool. Experimental until a world uses it.
+- **Typed analysis tools.** Residents load `marina_forecast`, `marina_research`, `marina_swarm`,
+  `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`,
+  `marina_arbiter` and `marina_pattern` through `marina_tool_search`. Each builds one world command,
+  so rank, gates, rate limits and spend caps apply as typed. Experimental until residents use them.
 - **Adaptive load balancing** runs only when a request sends `X-Load-Balance: adaptive`; otherwise
   routing is round-robin (or `least-busy` on request).
 - **Experimental is not unsafe.** Experimental commands go through the same rank, gates, challenges

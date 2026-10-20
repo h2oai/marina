@@ -17,6 +17,9 @@ from types import SimpleNamespace as NS
 
 import marina_agent as m  # noqa: E402  (run from this directory or with it on sys.path)
 
+# No test writes the write-back journal unless it asks for one.
+os.environ["PROPHET_ANSWER_JOURNAL"] = "off"
+
 
 def event(exclusive: bool, window: datetime | None = None) -> NS:
     return NS(
@@ -132,6 +135,42 @@ class Shapes(unittest.TestCase):
             "critique": {"model": "b/y"},
         }
         self.assertIn("ensemble of a/x · checked by b/y", m.rationale_from(answer))
+
+
+class Journal(unittest.TestCase):
+    def test_answers_are_journaled_for_write_back(self):
+        import tempfile
+
+        def fake(body):
+            return {
+                "question": body["question"],
+                "answer": body["answer"],
+                "distribution": {o["id"]: 0.02 for o in body["answer"]["options"]},
+                "runs": [],
+            }
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "sub", "answers.jsonl")
+            os.environ["PROPHET_ANSWER_JOURNAL"] = path
+            real, m.call_marina = m.call_marina, fake
+            try:
+                e = wide(100, exclusive=True)
+                e.slug = "kalshi event/42"
+                m.forecast_event(e)
+                m.forecast_event(event(True))
+            finally:
+                m.call_marina = real
+                os.environ["PROPHET_ANSWER_JOURNAL"] = "off"
+            with open(path, encoding="utf-8") as f:
+                lines = [json.loads(line) for line in f]
+        self.assertEqual([x.get("part") for x in lines], [0, 1, None])
+        self.assertEqual(lines[0]["event"], "kalshi-event/42")
+        self.assertEqual(lines[2]["event"], "synthetic-event")
+        self.assertEqual({x["mode"] for x in lines}, {"live"})
+        self.assertEqual(lines[2]["answer"]["answer"]["type"], "choice")
+
+    def test_off_writes_nothing(self):
+        self.assertIsNone(m.journal_answers(event(True), [], []))
 
 
 class Manifest(unittest.TestCase):

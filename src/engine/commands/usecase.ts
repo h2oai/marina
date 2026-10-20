@@ -14,6 +14,7 @@ import { rankName } from "../permissions";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import { isLocalUngated } from "../trust-profile";
 import { spawnBudget } from "./agent";
+import { RESEARCH_ASK_SYNTAX, RESEARCH_ASK_USAGE, researchAskHandler } from "./research-ask";
 
 /**
  * Use-case recipes — one-command scaffolding that creates a project,
@@ -1507,13 +1508,25 @@ const UNIVERSAL_INTENTS = ["research", "debate", "solve", "explore", "plan", "mo
 /** Direct, memorable front doors over the same durable use-case substrate. */
 export function universalIntentCommands(deps: UseCaseCommandDeps): CommandDef[] {
   const usecase = usecaseCommand(deps);
+  const ask = researchAskHandler();
   return UNIVERSAL_INTENTS.map((intent) => ({
     name: intent,
-    usage: [{ syntax: `${intent} <goal>`, effect: "execute" }],
+    usage: [
+      { syntax: `${intent} <goal>`, effect: "execute" },
+      ...(intent === "research"
+        ? [{ syntax: RESEARCH_ASK_SYNTAX, effect: "execute" as const }]
+        : []),
+    ],
     aliases: [],
     category: "Coordination",
-    help: `${intent} <goal> — launch an observable ${intent} project with tasks, shared memory, a fitting orchestration pattern, and an agent.`,
+    help:
+      intent === "research"
+        ? `research <goal> — launch an observable research project with tasks, shared memory, a fitting orchestration pattern, and an agent.\nresearch ask <question> — a cited answer now (web-research agent, or one retriever pass in a research mode); costs money.\n${RESEARCH_ASK_USAGE}`
+        : `${intent} <goal> — launch an observable ${intent} project with tasks, shared memory, a fitting orchestration pattern, and an agent.`,
     handler: (ctx, input) => {
+      if (intent === "research" && input.tokens[0]?.toLowerCase() === "ask") {
+        return ask(ctx, input);
+      }
       const topic = input.args.trim();
       if (!topic) {
         ctx.send(input.entity, `Usage: ${intent} <goal>`);

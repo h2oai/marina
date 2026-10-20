@@ -12,19 +12,20 @@ calls and writes the submission file. Nothing in Marina's core knows about Futur
 ```bash
 bun run futurex fetch                 # the current batch, at its Hugging Face commit sha
 bun run futurex fetch --past          # the resolved-questions dataset (for backtests)
-bun run futurex run --variant cheap   # forecast every row and write the submission file
+bun run futurex run                   # forecast every row with the earned live configuration
+bun run futurex run --variant cheap   # a fixed configuration instead (the override for experiments)
 bun run futurex run --variant cheap --variant frontier   # several variants, one file each
 bun run futurex backtest --limit 40   # resolved rows: forecast with an early cutoff, score, record
 bun run futurex backtest --clean --isolation closed-book --variant cheap --limit 160 --replicates 2 --lessons on
                                       # a non-leaking backtest (see Clean backtests)
-bun run futurex watch --once --run cheap   # poll for a new batch; on one, fetch and run
-bun run futurex watch --once --run cheap --daily --learn
+bun run futurex watch --once --run earned   # poll for a new batch; on one, fetch and run
+bun run futurex watch --once --run earned --daily --learn
                                       # …and re-forecast open rows daily (see Standing answers)
-bun run futurex watch --once --run cheap --daily --daily-rows stale --near-end-hours 48
+bun run futurex watch --once --run earned --daily --daily-rows stale --near-end-hours 48
                                       # …daily runs touch only stale rows (see Standing answers)
-bun run futurex watch --once --run cheap --answer late --final-lead-hours 6
+bun run futurex watch --once --run earned --answer late --final-lead-hours 6
                                       # …answer each row once, close to its cutoff (see Answering late)
-bun run futurex schedule --run cheap  # PRINT a systemd service + hourly timer for the late watcher
+bun run futurex schedule --run earned  # PRINT a systemd service + hourly timer for the late watcher
 bun run futurex learn                 # resolved rows of filed batches → outcome lessons
 bun run futurex status                # every submission recorded so far
 ```
@@ -123,12 +124,12 @@ an hourly timer that run `watch --once`, answering late by default, with a 6 h l
 never calls `systemctl`. The operator decides whether to activate it:
 
 ```bash
-bun run futurex schedule --run cheap --dir ~/futurex-data --env-file .env --scope-cap 25 --out /tmp/units
+bun run futurex schedule --run earned --dir ~/futurex-data --env-file .env --scope-cap 25 --out /tmp/units
 cp /tmp/units/marina-futurex-late.* ~/.config/systemd/user/ && systemctl --user daemon-reload
 systemctl --user enable --now marina-futurex-late.timer     # only when you mean it
 ```
 
-Options: `--answer early|late`, `--final-lead-hours N` (default 6 here), `--run <variants>`,
+Options: `--answer early|late`, `--final-lead-hours N` (default 6 here), `--run <variants>` (default `earned`),
 `--variants <file.json>`, `--dir`, `--learn`, `--repo` (working directory, default the current one),
 `--bun` (default the running Bun), `--env-file`, `--db-path` (sets `DB_PATH`) and `--name` (unit
 name, default `marina-futurex-late`). Every model call is charged to the unit's own spend scope
@@ -158,7 +159,15 @@ time, and a replay's cutoff is that end time, so a sibling's lesson can never re
 
 Built-ins are:
 
-- `cheap`: one strong low-cost model, three runs.
+- `earned` (the live default for `run`, `watch --run earned` and `schedule`): no fixed
+  configuration. Each row goes through Marina's forecast surface (`typedForecastFor`) on board
+  `futurex`: the operator's env, then the earned `forecast-config:futurex` slot, then the family
+  slot, then the installation's built-in (`resolveDefault`), plus card routing and the lesson pool
+  read as a live run. FutureX's own pages stay barred from research. The run log prints where each
+  field came from. A slot changes only through earned promotion (`fileSlotPromotion`, e.g.
+  `rescore-selection.ts --file`).
+- `cheap`: one strong low-cost model, three runs. The backtest default: backtests stay fixed
+  controls and never take `earned`.
 - `verify`: cheap runs with every draft checked by a different-vendor verifier.
 - `frontier`: three vendors' current models, three runs, a frontier critic.
 - `frontier-2607`: a frontier mix released before the latest resolved rows, so it can be backtested cleanly.
@@ -174,7 +183,7 @@ least-grounded run before the runs combine. With `"off"` the round is skipped. W
 fires, the answer records the mode, whether the round ran and how many runs were redone in its
 `groundingFollowUp` field.
 
-`bun benchmarks/futurex/rescore-selection.ts --dataset <past batch json> --runs <answers.json>,…` re-scores saved runs under each selection mode, with no model calls. Rows split into selection and holdout halves by a stable hash. It reports whether `confidence` clears the promotion margin over `agreement` on the holdout half; pass `--tried` with the number of candidates already examined.
+`bun benchmarks/futurex/rescore-selection.ts --dataset <past batch json> --runs <answers.json>,…` re-scores saved runs under each selection mode, with no model calls. Rows split into selection and holdout halves by a stable hash. It reports whether `confidence` clears the promotion margin over `agreement` on the holdout half; pass `--tried` with the number of candidates already examined. Its own verdict is advisory. To change the default, add `--file --variant <name>` (the configuration the saved answers ran with; `--db` defaults to `DB_PATH`). This records one ledger run per answers file per mode and files the challenger through the one promotion path on `forecast-config:futurex`, the slot live FutureX reads. An empty slot is first seeded with the incumbent, so a challenger never takes an empty slot uncontested. The printed verdict is the promotion path's: replicate minimum, holdout interval, fishing margin, and an append-only history row.
 
 Live runs recall from the one judged lesson pool (`forecast` and `arena` domains, the same
 `forecastLessonsFor` every forecasting surface uses; `MARINA_LESSONS` on / observe / off);

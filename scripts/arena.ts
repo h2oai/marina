@@ -244,7 +244,7 @@ async function main(): Promise<number> {
           throw new Error(`MARINA_ARENA_FORECASTER is ${spec}, not routed: no family routes`);
         const routes = parseRoutes(spec, process.env);
         const data = arenaData();
-        const evidence = await earned.loadRouteEvidence(db, data, config.entrant);
+        const evidence = await earned.loadRouteEvidence(db, data, config.entrant, db);
         const families = [
           ...new Set([
             ...(await data.rounds()).map((r) => r.tracker.toLowerCase()),

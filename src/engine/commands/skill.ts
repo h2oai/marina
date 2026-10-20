@@ -1,7 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { BUILTIN_SKILLS, builtinSkill, searchBuiltinSkills } from "../../agent/builtin-skills";
+import {
+  BUILTIN_SKILLS,
+  builtinSkill,
+  rankBuiltinSkills,
+  searchBuiltinSkills,
+} from "../../agent/builtin-skills";
 import {
   formatSkillContent,
   loadSkillFile,
@@ -12,6 +17,8 @@ import { memoryNoteResults, memoryResult } from "../../memory/command-result";
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { currentEvidenceCutoffMs } from "../evidence-fence";
+import { parseModifiers } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
 import { isLocalUngated } from "../trust-profile";
 import { requiresPersistence } from "./command-messages";
@@ -20,6 +27,19 @@ import {
   type CommandVocabulary,
   renderKnowledgeHygieneReport,
 } from "./knowledge-hygiene";
+
+/** Bytes `skill top` returns by default, and at most. */
+export const SKILL_TOP_DEFAULT_BYTES = 800;
+export const SKILL_TOP_MAX_BYTES = 2_000;
+
+/** `text` cut to `max` UTF-8 bytes at a line or word boundary, marked when cut. */
+export function clipBytes(text: string, max: number): string {
+  if (Buffer.byteLength(text) <= max) return text;
+  let cut = text;
+  while (Buffer.byteLength(cut) > max - 4) cut = cut.slice(0, Math.floor(cut.length * 0.9));
+  const at = Math.max(cut.lastIndexOf("\n"), cut.lastIndexOf(" "));
+  return `${(at > cut.length / 2 ? cut.slice(0, at) : cut).trimEnd()} …`;
+}
 
 export function skillCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
@@ -38,6 +58,7 @@ export function skillCommand(deps: {
       { syntax: "skill import <path>", effect: "write" },
       { syntax: "skill list", effect: "read" },
       { syntax: "skill search <query>", effect: "read" },
+      { syntax: "skill top <query> [bytes:<n>]", effect: "read" },
       { syntax: "skill share <id> <pool>", effect: "write" },
       { syntax: "skill store <name> | <desc> | <actions>", effect: "write" },
       { syntax: "skill store <name> | <description> | <action_sequence>", effect: "write" },
@@ -45,7 +66,7 @@ export function skillCommand(deps: {
     ],
     name: "skill",
     aliases: [],
-    help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd) | skill builtin [name] (skills shipped with the server, e.g. quantitative-estimates). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",
+    help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd) | skill builtin [name] (skills shipped with the server, e.g. quantitative-estimates) | skill top <query> [bytes:<n>] (the one best skill — your own first, else a built-in — clipped to a budget). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -165,6 +186,46 @@ export function skillCommand(deps: {
             lines.join("\n"),
             undefined,
             memoryResult("skill-search", { success: true, notes: memoryNoteResults(results) }),
+          );
+          return;
+        }
+
+        case "top": {
+          // The ONE best skill for a query — the agent's own first (its own
+          // procedure beats a generic one), else the best-fitting built-in —
+          // clipped to a byte budget. What a resident's continuation prompt
+          // injects (`[Skill]`); read-only, touches nothing.
+          const parsed = parseModifiers(input.tokens.slice(1), { bytes: { type: "int" } });
+          const query = parsed.rest.join(" ").trim();
+          if (!query) {
+            ctx.send(input.entity, "Usage: skill top <query> [bytes:<n>]");
+            return;
+          }
+          const budget = Math.min(
+            Math.max(Number(parsed.values.bytes ?? SKILL_TOP_DEFAULT_BYTES), 200),
+            SKILL_TOP_MAX_BYTES,
+          );
+          // The as-of fence (src/engine/evidence-fence.ts): only a skill written by the cutoff.
+          const fence = currentEvidenceCutoffMs();
+          const own = db
+            .recallNotesWithType(entity.name, query, "skill", {
+              weightImportance: 0.4,
+              weightRecency: 0.2,
+              weightRelevance: 0.4,
+            })
+            .find((n) => fence === undefined || n.created_at <= fence);
+          if (own) {
+            ctx.send(input.entity, clipBytes(`${own.content} (own skill #${own.id})`, budget));
+            return;
+          }
+          const best = rankBuiltinSkills(query)[0]?.skill;
+          if (!best) {
+            ctx.send(input.entity, "No skill fits.");
+            return;
+          }
+          ctx.send(
+            input.entity,
+            clipBytes(`[Skill: ${best.name}] (built-in) ${best.description}\n${best.body}`, budget),
           );
           return;
         }

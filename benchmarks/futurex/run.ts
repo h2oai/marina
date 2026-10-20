@@ -17,14 +17,19 @@
  * runs' best partial value otherwise) is recorded with `fallback: true`.
  */
 
+import type { DefaultSlotReader } from "../../src/engine/default-resolution";
 import type { AnswerSpec } from "../../src/forecast/answer-types";
+import { resolveForecastDefaults } from "../../src/forecast/defaults";
 import { forecastFormed, type TypedFormation } from "../../src/forecast/formations";
 import type {
   GroundingFollowUpMode,
   TypedForecastAnswer,
   TypedForecastDeps,
+  TypedForecastRequest,
 } from "../../src/forecast/typed";
+import type { MarinaDB } from "../../src/persistence/database";
 import { mergeEvidenceIndexes } from "../../src/research/evidence-index";
+import { BOARD_EXCLUSIONS } from "../forecasting/barred";
 import { idsDigest, openJournal } from "../journal";
 import type { FuturexRow } from "./dataset";
 import { type FormatLineMode, requestFor } from "./map";
@@ -62,6 +67,15 @@ export interface Variant {
    * ledger configuration say which was used.
    */
   formatLine?: FormatLineMode;
+  /**
+   * Resolve the configuration through Marina's forecast surface
+   * (`typedForecastFor` with board `futurex`): the earned default
+   * (`forecast-config:futurex`, then the family slot, then the installation's
+   * built-in), card routing and the lesson pool — the live default. The fields
+   * above are then unused; every other variant is a fixed configuration (an
+   * explicit override for controlled experiments, and every backtest).
+   */
+  earned?: true;
 }
 
 /**
@@ -70,6 +84,13 @@ export interface Variant {
  * clean backtest can bound what each model could have known.
  */
 export const BUILTIN_VARIANTS: Record<string, Variant> = {
+  /** The live default: whatever configuration the futurex board has earned (see `earned`). */
+  earned: {
+    label: "earned",
+    model: "marina",
+    analysts: [],
+    earned: true,
+  },
   cheap: {
     label: "cheap",
     model: "deepseek-v4-pro",
@@ -241,6 +262,64 @@ export interface RunOptions {
   shouldStop?: () => string | undefined;
   /** Keep finished rows on disk as they land, and continue from them (`RowJournal`). */
   journal?: RowJournal;
+  /**
+   * How an `earned` variant answers a row (`earnedForecaster`): through the
+   * forecast surface instead of the variant's fixed deps. Required for one.
+   */
+  forecastRow?: RowForecaster;
+}
+
+/** One row's typed request in, its answer and cost out (the surface path). */
+export type RowForecaster = (
+  req: TypedForecastRequest,
+) => Promise<{ answer: TypedForecastAnswer; costUsd: number }>;
+
+/**
+ * The live default for FutureX rows: `typedForecastFor` on board `futurex` —
+ * the earned `forecast-config:futurex` default (env, then the board's slot,
+ * then the family slot, then the built-in; `resolveDefault`), card routing,
+ * and the lesson pool read as a live run (every lesson may be used: the batch
+ * resolves later). FutureX's own pages are barred from research. An
+ * installation that cannot run the configuration is an error, never a silent
+ * fallback to a fixed variant.
+ */
+export function earnedForecaster(
+  opts: {
+    db?: MarinaDB;
+    env?: NodeJS.ProcessEnv;
+    /** `false`: recall no lessons. */
+    lessons?: boolean;
+  } = {},
+): RowForecaster {
+  return async (req) => {
+    const { typedForecastFor } = await import("../../src/forecast/surface");
+    const made = await typedForecastFor(req, {
+      ...(opts.db ? { db: opts.db } : {}),
+      ...(opts.env ? { env: opts.env } : {}),
+      board: "futurex",
+      eval: { benchmark: "futurex", mode: "live" },
+      exclude: BOARD_EXCLUSIONS.futurex!,
+      ...(opts.lessons === false ? { lessons: false } : {}),
+    });
+    if ("error" in made) throw new Error(made.error);
+    return { answer: made.answer, costUsd: made.answer.costUsd };
+  };
+}
+
+/**
+ * Where the earned live configuration comes from, per field (env, slot or
+ * built-in) — for the run log; the forecast itself resolves it again per row.
+ */
+export function describeEarned(
+  opts: { db?: DefaultSlotReader; env?: NodeJS.ProcessEnv } = {},
+): string {
+  const d = resolveForecastDefaults({
+    env: opts.env ?? process.env,
+    ...(opts.db ? { db: opts.db } : {}),
+    board: "futurex",
+    surface: "futurex:live",
+  });
+  return d.resolutions.map((r) => `${r.surface ?? r.slot} ← ${r.source} ${r.key}`).join(" · ");
 }
 
 /** Deps for one row: fresh per row so cost (and, when captured, evidence) is attributable to it. */
@@ -297,7 +376,7 @@ export async function runBatch(
       if (stopped) break;
       const i = todo[next++]!;
       const row = rows[i]!;
-      results[i] = await runRow(row, variant, makeDeps, now(), opts.horizonDays);
+      results[i] = await runRow(row, variant, makeDeps, now(), opts.horizonDays, opts.forecastRow);
       // On disk before anything else can fail: a paid-for row is never lost.
       journal?.append(results[i]!);
       if (opts.afterRow) await opts.afterRow(row, results[i]!);
@@ -327,6 +406,7 @@ async function runRow(
   makeDeps: DepsFactory,
   now: Date,
   horizonDays: number | undefined,
+  forecastRow?: RowForecaster,
 ): Promise<RowResult> {
   const base = requestFor(row, variant.formatLine ? { formatLine: variant.formatLine } : {});
   const end = base.endTime ? Date.parse(base.endTime) : Number.NaN;
@@ -336,13 +416,22 @@ async function runRow(
   }
   const late = Number.isFinite(end) && end <= now.getTime() && horizonDays === undefined;
   const req = { ...base, ...(asOf ? { asOf } : {}) };
-  const made = makeDeps();
-  const answer = await forecastFormed(
-    { ...req, id: row.id },
-    { ...made.deps, now: () => now },
-    variant.formation ?? "ensemble",
-  );
-  answer.costUsd = made.costUsd();
+  let answer: TypedForecastAnswer;
+  let evidence: (() => string) | undefined;
+  if (variant.earned) {
+    // The live default: the forecast surface resolves the configuration.
+    if (!forecastRow) throw new Error(`variant ${variant.label} needs a row forecaster`);
+    answer = (await forecastRow({ ...req, id: row.id })).answer;
+  } else {
+    const made = makeDeps();
+    answer = await forecastFormed(
+      { ...req, id: row.id },
+      { ...made.deps, now: () => now },
+      variant.formation ?? "ensemble",
+    );
+    answer.costUsd = made.costUsd();
+    evidence = made.evidence;
+  }
   const fb = answer.formatted === undefined ? fallbackPrediction(req.answer, answer) : undefined;
   return {
     id: row.id,
@@ -357,7 +446,7 @@ async function runRow(
     costUsd: answer.costUsd,
     latencyMs: answer.latencyMs,
     ...(answer.caveat ? { caveat: answer.caveat } : {}),
-    ...(made.evidence ? { evidence: made.evidence() } : {}),
+    ...(evidence ? { evidence: evidence() } : {}),
     evidenceIndex: mergeEvidenceIndexes(answer.research.map((r) => r.evidence?.index)),
     answer,
   };

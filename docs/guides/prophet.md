@@ -55,3 +55,33 @@ prophet submit h2oai-marina && prophet run marina_agent.py          # live (an o
 ```
 
 A typed forecast takes minutes. The agent waits up to 15 minutes per event.
+
+## Write-back: filing and resolving answers
+
+Prophet answers teach Marina only once they are filed on Marina's outcome path and resolved there.
+The agent appends each answer it gets to a journal: `data/answers.jsonl` under its working
+directory, or the path in `PROPHET_ANSWER_JOURNAL` (`off` disables it). A wide event asked in parts
+gets one line per part. The journal is local, and the agent never fails a forecast because of it.
+
+```bash
+# File the journal's answers on the world database (each answer once).
+bun run benchmarks/prophet/writeback.ts file --journal benchmarks/prophet/data/answers.jsonl --db marina.db
+# When events resolve: score every filed answer of each resolved event.
+bun run benchmarks/prophet/writeback.ts resolve --resolutions resolved.json --db marina.db
+```
+
+`--db` defaults to `DB_PATH`, then `marina.db`. Point it at the database of the server the agent
+calls.
+
+- **Filing.** Each answer is filed under the owner `marina:prophet`, with source `prophet-arena`
+  and board id `prophet:<event>` (or `prophet:<event>#<part>`). A live window files with eval
+  mode `live`: the answer teaches lessons and writes forecast history, but it never earns standing.
+  A dataset replay (a past window, sent as `measure`) files with eval mode `measure`: it teaches
+  other boards but never Prophet's own measurements, and it never writes history.
+- **Resolving.** `resolved.json` is a JSON array, or JSONL, of
+  `{ "event": "<id>", "outcomes": ["<names that happened>"], "resolvedAt": "<iso>" }`. A single
+  `"outcome": "<name>"` also works, and `resolvedAt` defaults to now. Each filed answer is scored
+  through the one outcome path, which records one outcome. The server's delivery pass then turns
+  that outcome into a lesson and a history record. A yes/no event resolves on whether its
+  outcome happened. A part with none of its outcomes resolved stays open, because a multi-select
+  needs at least one true option.

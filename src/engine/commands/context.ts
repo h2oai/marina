@@ -4,6 +4,7 @@ import { buildUnifiedContext, renderUnifiedContext } from "../../memory/unified-
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId } from "../../types";
 import { getErrorMessage } from "../errors";
+import { currentEvidenceCutoffMs, entityEvidenceFence } from "../evidence-fence";
 
 interface ContextReader {
   db?: MarinaDB;
@@ -33,10 +34,17 @@ export async function previewParticipantContext(
     budgetBytes > 16384
   )
     throw new Error("budgetBytes must be between 256 and 16384.");
+  // A fenced resident (src/engine/evidence-fence.ts) — whether it asks through
+  // the `context` command or the out-of-band `context_preview` message — sees
+  // only memory known by the cutoff.
+  const fence = [currentEvidenceCutoffMs(), entityEvidenceFence(id)?.cutoff].filter(
+    (c): c is number => c !== undefined,
+  );
   const context = await buildUnifiedContext(deps.db, entity.name, query, {
     scope,
     budgetBytes,
     creditReflections: false,
+    ...(fence.length ? { asOf: Math.min(...fence) } : {}),
   });
   if (deps.getEntity(id) !== entity) throw new Error("Resident session expired.");
   return {

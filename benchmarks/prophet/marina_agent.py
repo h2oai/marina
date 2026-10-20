@@ -22,6 +22,11 @@ Environment (operator-set, never sent anywhere but the Marina server):
   MARINA_URL      the Marina server (default http://localhost:3300)
   MARINA_API_KEY  one of that server's MODEL_API_KEYS
   ARENA_API_KEY   the Prophet Arena key (read by the SDK itself)
+  PROPHET_ANSWER_JOURNAL  where each answer is appended for write-back
+                  (default data/answers.jsonl under the working directory;
+                  "off" disables). `bun run benchmarks/prophet/writeback.ts
+                  file` files them on Marina's outcome path, `… resolve`
+                  scores them when their events resolve, so they teach.
 
 Run:  prophet eval marina_agent.py --dataset prophet-arena-subset-100
       prophet run marina_agent.py --dry-run --once
@@ -31,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import string
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -209,6 +215,37 @@ def call_marina(body: dict[str, Any]) -> dict[str, Any]:
         return json.loads(res.read())
 
 
+def event_key(event: Any) -> str:
+    """The event's stable id for write-back (its id, else its slug), as a safe token."""
+    raw = str(getattr(event, "id", None) or getattr(event, "slug", None) or "event")
+    key = re.sub(r"[^A-Za-z0-9._:/@+-]", "-", raw).strip("-") or "event"
+    return key[:160]
+
+
+def journal_answers(
+    event: Any, asked: list[tuple[dict[str, Any], dict[str, str]]], answers: list[dict[str, Any]]
+) -> None:
+    """Append each answer for write-back (best-effort: a forecast never fails on it)."""
+    path = os.environ.get("PROPHET_ANSWER_JOURNAL", "data/answers.jsonl").strip()
+    if not path or path.lower() == "off":
+        return
+    key = event_key(event)
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            for i, ((body, _), answer) in enumerate(zip(asked, answers)):
+                line: dict[str, Any] = {
+                    "event": key,
+                    "mode": "measure" if body.get("asOf") else "live",
+                    "answer": answer,
+                }
+                if len(asked) > 1:
+                    line["part"] = i
+                f.write(json.dumps(line) + "\n")
+    except OSError:
+        pass
+
+
 def forecast_event(event: Any) -> dict[str, Any]:
     """{probabilities, rationale} for one event (the SDK-independent core)."""
     asked = requests_for(event)
@@ -217,6 +254,7 @@ def forecast_event(event: Any) -> dict[str, Any]:
     else:
         with ThreadPoolExecutor(max_workers=len(asked)) as pool:
             answers = list(pool.map(call_marina, [body for body, _ in asked]))
+    journal_answers(event, asked, answers)
     probabilities: dict[str, float] = {}
     for (_, by_id), answer in zip(asked, answers):
         probabilities.update(probabilities_from(answer, by_id))

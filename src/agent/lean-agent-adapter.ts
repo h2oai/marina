@@ -210,6 +210,15 @@ import {
   reasoningHeadroomCap,
   shapeOpenRouterPayload,
 } from "./reasoning-control";
+import {
+  RESIDENT_LESSON_BYTES,
+  RESIDENT_SKILL_BYTES,
+  residentLessonsDomainEnabled,
+  residentLessonWork,
+  residentSkillsMode,
+  skillName,
+  skillSection,
+} from "./resident-guidance";
 import { isAddressedTo, isCrewDispatch, SocialAwareness, withoutVocative } from "./social";
 import { describeToolProbe } from "./tool-call-probe";
 import {
@@ -4043,6 +4052,15 @@ export class LeanAgentAdapter implements AgentHandle {
 
   // ─── Section Dedup Helper ─────────────────────────────────────────────
 
+  /** Tools this agent called in the last 30 minutes, most recent first. */
+  private recentToolNames(): string[] {
+    return this.actionHistory
+      .getActions(Date.now() - 30 * 60_000)
+      .filter((a) => a.type === "tool_call" && !!a.toolName)
+      .map((a) => a.toolName as string)
+      .reverse();
+  }
+
   private shouldIncludeSection(name: string, content: string): boolean {
     const hash = Bun.hash(content).toString();
     const entry = this.sectionHashes.get(name);
@@ -4458,9 +4476,18 @@ export class LeanAgentAdapter implements AgentHandle {
       !this.activeCodingTask
     ) {
       try {
-        const got = await this.platformMemory.lessonsFor(this.focus.description);
+        // Domain-filtered when the focus or recent tools show the kind of
+        // work (forecasting reads exactly what a forecast reads); otherwise
+        // the lexical all-domain recall.
+        const work = residentLessonsDomainEnabled()
+          ? residentLessonWork(this.focus.description, this.recentToolNames())
+          : undefined;
+        const got = await this.platformMemory.lessonsFor(this.focus.description, work);
         if (got.lines.length > 0 && residentLessons === "on") {
-          const content = clampText(got.lines.map((l) => `- ${l}`).join("\n"), 600);
+          const content = clampText(
+            got.lines.map((l) => `- ${l}`).join("\n"),
+            RESIDENT_LESSON_BYTES,
+          );
           if (this.shouldIncludeSection("lessons", content)) {
             parts.push(`[Lessons]\n${content}`);
           }
@@ -4472,6 +4499,42 @@ export class LeanAgentAdapter implements AgentHandle {
         }
       } catch {
         // best-effort; the agent works without lessons
+      }
+    }
+
+    // ── 2e. The best skill for the focus (every 10th cycle, offset 3) ──
+    // MARINA_SKILLS_RESIDENT=on (default) offers the ONE skill that fits the
+    // focus — the agent's own first, else a relevant built-in — budgeted and
+    // labelled advice; `observe` logs it; `off` never asks.
+    const residentSkills = residentSkillsMode();
+    if (
+      residentSkills !== "off" &&
+      cycle % 10 === 3 &&
+      this.focus &&
+      !this.crewResponderMode &&
+      !this.activeCodingTask
+    ) {
+      try {
+        const reply = await this.platformMemory.topSkill(
+          this.focus.description,
+          RESIDENT_SKILL_BYTES,
+        );
+        const content = reply
+          ? skillSection(reply, RESIDENT_SKILL_BYTES, neutralizeAuthoredBlock)
+          : undefined;
+        if (content && residentSkills === "on") {
+          if (this.shouldIncludeSection("skill", content)) {
+            this.currentTrustSources.add("memory");
+            parts.push(`[Skill]\n${content}`);
+          }
+        } else if (reply) {
+          this.log.info(LEAN_AGENT_LOG_CATEGORY, "skill observed for focus (not shown)", {
+            agent: this.name,
+            skill: skillName(reply) ?? "?",
+          });
+        }
+      } catch {
+        // best-effort; the agent works without a skill hint
       }
     }
 
