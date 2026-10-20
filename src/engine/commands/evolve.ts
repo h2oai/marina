@@ -4,6 +4,7 @@
 import { parsePartition } from "../../../benchmarks/partition";
 import { encodeRoleBundle, exportRoleBundle } from "../../agent/role-bundle";
 import { getStanding } from "../../agent/standing";
+import { experimentalHelp } from "../../config/feature-status";
 import { bold, category, dim, header, separator, status, stripAnsi } from "../../net/ansi";
 import type { EvolutionSessionRow, MarinaDB } from "../../persistence/database";
 import { isGrantedCompetence } from "../../persistence/db-competence";
@@ -164,7 +165,9 @@ export function evolveCommand(deps: {
     ],
     name: "evolve",
     aliases: ["coach"],
-    help: "Your self-improvement loop: where you stand + the next step. `evolve` for status, `evolve loop` for the how-to.",
+    help: experimentalHelp(
+      "Your self-improvement loop: where you stand + the next step. `evolve` for status, `evolve loop` for the how-to.",
+    ),
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

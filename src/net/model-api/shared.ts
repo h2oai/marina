@@ -453,6 +453,11 @@ export function extractConversationId(
   return body?.conversation_id ?? req.headers.get("X-Conversation-Id") ?? undefined;
 }
 
+/**
+ * The load-balance strategy a caller asked for with `X-Load-Balance`.
+ * `adaptive` (judgment-weighted routing) is experimental: only this header
+ * selects it, and no production caller sends it.
+ */
 export function extractStrategy(req: Request): "round-robin" | "least-busy" | "adaptive" {
   const header = req.headers.get("X-Load-Balance");
   if (header === "least-busy") return "least-busy";

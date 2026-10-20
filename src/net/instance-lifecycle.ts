@@ -6,6 +6,10 @@
  * process: find it (`endpoint.json`), let it go away when nobody uses it
  * (`MARINA_IDLE_SHUTDOWN`), and tie its life to a parent (`MARINA_PARENT_PID`).
  *
+ * Status: experimental: for embedders (Flow, Nov 2026). No production host
+ * sets `MARINA_DATA_DIR` or these knobs yet (marina-desktop embeds in-process);
+ * kept for the Flow integration. See docs/reference/feature-status.md.
+ *
  * Activity is EXTERNAL use: an HTTP or MCP request from a caller (in flight
  * until a streamed response body ends — an MCP client's open event stream
  * included), an open WebSocket or telnet connection, or a frame on one.

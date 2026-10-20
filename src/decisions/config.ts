@@ -20,6 +20,8 @@
  *   MARINA_DECISIONS           auto (default; alias on: a chat classifier on
  *                              Marina's own `/v1`, `marina-self`) | off | decisions-api
  *                              (alias jev) | typesafe (TypeSafe's direct API) |
+ *                              lightning (alias h2o-lightning; experimental, off
+ *                              until MARINA_LIGHTNING_MODEL names its id) |
  *                              chat-classifier (alias classifier, llm). A chat
  *                              classifier with no host of its own answers
  *                              through Marina's own `/v1` (`marina-self`).
@@ -93,7 +95,7 @@ export interface DecisionConfig {
  */
 export const TYPESAFE_INPUT_USD_PER_MTOK = 0.042;
 
-type Preset = "openrouter" | "typesafe" | "chat-classifier";
+type Preset = "openrouter" | "typesafe" | "lightning" | "chat-classifier";
 
 const PRESETS: Record<
   Preset,
@@ -115,6 +117,14 @@ const PRESETS: Record<
     model: "jev-latest",
     timeoutMs: 2_000,
   },
+  // H2O-Lightning through OpenRouter's Decisions API (experimental). No model
+  // id ships: the preset is off until MARINA_LIGHTNING_MODEL names one.
+  lightning: {
+    kind: "decisions-api",
+    baseUrl: "https://openrouter.ai/api/alpha",
+    path: "/decisions",
+    timeoutMs: 2_000,
+  },
   "chat-classifier": {
     kind: "chat-classifier",
     baseUrl: "https://openrouter.ai/api/v1",
@@ -134,6 +144,9 @@ function preset(raw: string | undefined): Preset | undefined {
       return "openrouter";
     case "typesafe":
       return "typesafe";
+    case "lightning":
+    case "h2o-lightning":
+      return "lightning";
     case "chat-classifier":
     case "classifier":
     case "llm":
@@ -227,8 +240,10 @@ export function decisionConfigFromEnv(
     return selfConfig(env);
   }
   const baseUrl = env.MARINA_DECISION_BASE_URL?.trim() || sized?.baseUrl || d.baseUrl;
+  // Lightning takes only its own id: a stale MARINA_DECISION_MODEL (a Jev id,
+  // say) must not answer under the Lightning name.
   const model =
-    env.MARINA_DECISION_MODEL?.trim() ||
+    (name === "lightning" ? lightningModel(env) : env.MARINA_DECISION_MODEL?.trim()) ||
     d.model ||
     (kind === "chat-classifier"
       ? defaultClassifierModel(baseUrl) ||
@@ -354,6 +369,61 @@ export function getDecisionProvider(
   return cached.provider;
 }
 
+// ─── H2O-Lightning (experimental) ────────────────────────────────────────────
+
+/**
+ * The OpenRouter model id for H2O-Lightning (`MARINA_LIGHTNING_MODEL`), or
+ * undefined. Lightning is expected to answer the Decisions API wire format
+ * (like Jev); its public id is not known, so Marina ships none — guessing one
+ * would send paid calls to a model that may not exist.
+ */
+export function lightningModel(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.MARINA_LIGHTNING_MODEL?.trim() || undefined;
+}
+
+export interface LightningReadiness {
+  /**
+   * `unconfigured`: no model id. `no-key`: an id but no OpenRouter key.
+   * `available`: selectable (`MARINA_DECISIONS=lightning`). `active`: selected.
+   */
+  status: "unconfigured" | "no-key" | "available" | "active";
+  model?: string;
+  /** One line for `decision settings` / `admin decisions`. */
+  detail: string;
+}
+
+/** Is the H2O-Lightning decision preset usable here? Config only — never a call. */
+export function lightningReadiness(env: NodeJS.ProcessEnv = process.env): LightningReadiness {
+  const model = lightningModel(env);
+  if (!model) {
+    return {
+      status: "unconfigured",
+      detail:
+        "H2O-Lightning: not configured (experimental; set MARINA_LIGHTNING_MODEL to its OpenRouter model id)",
+    };
+  }
+  const key = env.MARINA_DECISION_API_KEY?.trim() || env.OPENROUTER_API_KEY?.trim();
+  if (!key) {
+    return {
+      status: "no-key",
+      model,
+      detail: `H2O-Lightning: ${model} configured, but no OpenRouter key (OPENROUTER_API_KEY)`,
+    };
+  }
+  if (preset(env.MARINA_DECISIONS) === "lightning") {
+    return {
+      status: "active",
+      model,
+      detail: `H2O-Lightning: active — ${model} answers decisions`,
+    };
+  }
+  return {
+    status: "available",
+    model,
+    detail: `H2O-Lightning: available (${model}) — select with backend lightning`,
+  };
+}
+
 /** Send the agent's intent + trust labels with gate calls (default on; `off` sends the call only). */
 export function decisionGateContextEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.MARINA_DECISION_GATE_CONTEXT?.trim().toLowerCase() !== "off";
@@ -378,8 +448,8 @@ export const DEFAULT_JUDGE_MODEL = "typesafe/jev-1.13";
  *   none       no judge (equal weights)
  * Judging a whole research brief takes longer than a gate call, so the
  * timeout is at least `minTimeoutMs`. `model` is the Decisions-API model `jev`
- * asks on OpenRouter (default jev-1.13; any model with the same wire format,
- * e.g. H2O-Lightning, is one argument away).
+ * asks on OpenRouter (default jev-1.13; any model with the same wire format
+ * works — `lightningModel(env)` once H2O-Lightning is configured).
  */
 export function researchJudge(
   spec: string,

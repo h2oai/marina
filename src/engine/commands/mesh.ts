@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import type { MarinaDB, MeshMembershipEventRow, MeshWitnessRow } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
 import { getErrorMessage } from "../errors";
@@ -49,7 +50,7 @@ export function meshCommand(deps: {
     aliases: ["meshes"],
     category: "Lineage",
     minRank: 0,
-    help: HELP,
+    help: experimentalHelp(HELP),
     handler: (ctx, input) => {
       const actor = deps.getEntity(input.entity);
       if (!actor) return;

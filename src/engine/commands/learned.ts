@@ -7,6 +7,7 @@
  * (`bun run learned …`); in-world nothing here writes, imports or confirms.
  */
 
+import { experimentalHelp } from "../../config/feature-status";
 import { upstreamMode } from "../../learned/import";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
@@ -65,7 +66,9 @@ export function learnedCommand(deps: { db?: MarinaDB }): CommandDef {
     name: "learned",
     aliases: [],
     minRank: 0,
-    help: `Inspect imported learned bundles (marina.learned.v1): artifacts, items and their trust, seeded default slots, evidence priors and the import audit. Read-only.\nUsage: ${USAGE}\n\nExport and import are operator acts (\`bun run learned export|import|verify|diff\`). Imported lessons carry trust \`imported\` and are never trusted until local outcomes confirm them; seeds fill only empty default slots; priors are down-weighted and never ledger rows.`,
+    help: experimentalHelp(
+      `Inspect imported learned bundles (marina.learned.v1): artifacts, items and their trust, seeded default slots, evidence priors and the import audit. Read-only.\nUsage: ${USAGE}\n\nExport and import are operator acts (\`bun run learned export|import|verify|diff\`). Imported lessons carry trust \`imported\` and are never trusted until local outcomes confirm them; seeds fill only empty default slots; priors are down-weighted and never ledger rows.`,
+    ),
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("learned bundles"));

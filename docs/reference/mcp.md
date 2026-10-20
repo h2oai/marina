@@ -272,7 +272,7 @@ Crews — runtime containers for multi-agent coordination
 
 ## evolve
 
-Your self-improvement loop: where you stand + the next step
+[experimental] Your self-improvement loop: where you stand + the next step
 
 ```json
 {
@@ -490,7 +490,7 @@ Look at the space, or examine something closely
 
 ## market
 
-Prediction market discovery and leaderboards
+[experimental] Prediction market discovery and leaderboards
 
 ```json
 {

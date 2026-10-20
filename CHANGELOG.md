@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An honest feature surface** ([docs/reference/feature-status.md](docs/reference/feature-status.md)).
+  Every major feature now has one status: core, siloed, experimental, demo or deprecated. The page
+  also says how to enable each feature and which area owns it. The table mirrors `FEATURE_STATUS`
+  (`src/config/feature-status.ts`), and the documentation contract test keeps the two in step. It
+  is linked from the guides index and the README.
+  - World commands that only serve an experimental feature now start their help with
+    `[experimental]`: `inquiry`, `schedule`, `evolve`, `experiment`, `market`, `position`,
+    `gateway`, `mesh` and `learned`. Behaviour is unchanged, and they keep the same rank, gates and
+    spend caps.
+  - `marina worlds` marks the 13 demo worlds `[demo]` and adds `"status"` to `--json`.
+    `BUILTIN_WORLD_STATUS` lists `default` and `empty` as core.
+  - The following are now labelled experimental in code and in the environment reference:
+    - the embedding lifecycle (`MARINA_DATA_DIR` endpoint file, `MARINA_IDLE_SHUTDOWN`,
+      `MARINA_PARENT_PID`, `marina endpoint`), labelled "for embedders (Flow, Nov 2026)" and kept;
+    - the shared spend ledger (`MARINA_SPEND_LEDGER`);
+    - adaptive load balancing (`X-Load-Balance: adaptive`);
+    - `POST /v1/patterns/run`, kept for a planned `pattern run` command;
+    - native evolution protocols.
+  - The 16 orchestration templates are labelled demo.
+- **H2O-Lightning decision preset (experimental, off by default).**
+  - `MARINA_DECISIONS=lightning` (alias `h2o-lightning`, also settable at runtime with
+    `admin decisions set backend lightning`) asks H2O-Lightning through OpenRouter's Decisions API.
+  - No model id ships, so the preset stays off until `MARINA_LIGHTNING_MODEL` names its OpenRouter
+    id. A leftover `MARINA_DECISION_MODEL` is never used for it.
+  - `decision settings` / `admin decisions` print an `H2O-Lightning:` line: not configured,
+    configured without a key, available, or active. The line is read from configuration only and
+    never makes a billed call.
+  - This replaces a comment-only mention in `src/decisions/config.ts`.
+
 - **The Arbiter: adjudication only where answers disagree** (`src/orchestration/arbiter.ts`, all
   surfaces default `off`). The trigger was always-on same-model verification: it overruled correct
   answers too easily. On BrowseComp-Plus the `marina/verify:` arm lost accuracy and its gold recall

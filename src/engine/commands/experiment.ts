@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { independentParties, recordVerified } from "../../agent/standing";
+import { experimentalHelp } from "../../config/feature-status";
 import { bold, dim, id as fmtId, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
@@ -107,7 +108,7 @@ export function experimentCommand(deps: {
     ],
     name: "experiment",
     aliases: ["exp"],
-    help: `Run a controlled A/B comparison — define arms, record metrics per arm, get a ranked winner.
+    help: experimentalHelp(`Run a controlled A/B comparison — define arms, record metrics per arm, get a ranked winner.
 Use this when you're MEASURING which of several conditions wins on a metric — not for getting work done.
   • plain work for one person → task        • a team coordinating a bundle of work → project
   • scored capability runs (MMLU, etc.)  → benchmark   • forecasting an outcome → market / scenario
@@ -124,7 +125,7 @@ Examples:
   experiment record PromptStyle terse accuracy 0.82
   experiment record PromptStyle verbose accuracy 0.71
   experiment results PromptStyle      # ranked arms + winner
-  experiment complete PromptStyle     # records the outcome + credits you`,
+  experiment complete PromptStyle     # records the outcome + credits you`),
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

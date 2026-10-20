@@ -43,6 +43,7 @@ import {
 import { SocialAwareness } from "../src/agent/social";
 import {
   COMMAND_ROSTER,
+  createAllTools,
   createCommandTool,
   createEvolutionTool,
   createProfileToolset,
@@ -1330,6 +1331,17 @@ describe("tool profiles", () => {
     expect(
       evolutionControlState({ ...control, data: { ...control.data, active: "true" } }),
     ).toBeUndefined();
+  });
+
+  it("keeps marina_evolve out of every profile: the adapter attaches it per active protocol", () => {
+    // Intentional, not dead: an experimental tool only while
+    // MARINA_EVOLUTION_PROTOCOLS=true and a protocol is active (syncEvolutionTool).
+    const ctx = {
+      client: { isConnected: () => true, command: async () => [] },
+      gameState: { handlePerception: () => {} },
+    } as never;
+    expect(createAllTools(ctx, {} as never).map((t) => t.name)).not.toContain("marina_evolve");
+    expect(createEvolutionTool(ctx).name).toBe("marina_evolve");
   });
 
   it("maps the scoped evolution tool exclusively onto ordinary world commands", async () => {

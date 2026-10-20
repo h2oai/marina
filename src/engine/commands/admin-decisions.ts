@@ -19,6 +19,7 @@
  * settings and env-only base URLs / keys stay out of reach for everyone.
  */
 
+import { lightningReadiness } from "../../decisions/config";
 import {
   authorizeSettingsWrite,
   changeDecisionSetting,
@@ -128,6 +129,7 @@ function render(db: MarinaDB, usage: string): string {
       const where = r.locked ? "env, locked" : r.source;
       return `  ${r.name.padEnd(width)}  ${(r.value ?? "(default)").padEnd(24)}  [${where}]  ${r.describe}`;
     }),
+    lightningReadiness().detail,
     "Base URLs, paths and API keys are never set at runtime (environment / Admin → Keys).",
     `Change: ${verb} set <setting> <value> · unset <setting> · history`,
   ].join("\n");

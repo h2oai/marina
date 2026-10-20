@@ -8,6 +8,8 @@ import {
   decisionConfigFromEnv,
   decisionGateEnabled,
   getDecisionProvider,
+  lightningModel,
+  lightningReadiness,
 } from "../src/decisions/config";
 import { gateToolCall, redactToolCall } from "../src/decisions/gate";
 import {
@@ -311,6 +313,56 @@ describe("gate runtime", () => {
       subject: "marina_command",
       signals: { destructive: 0.95 },
     });
+  });
+});
+
+describe("H2O-Lightning preset (experimental)", () => {
+  const OR = { OPENROUTER_API_KEY: "or" };
+
+  it("is off with no model id: Marina ships none and never guesses one", () => {
+    expect(lightningModel({})).toBeUndefined();
+    expect(lightningModel({ MARINA_LIGHTNING_MODEL: "  " })).toBeUndefined();
+    expect(decisionConfigFromEnv({ ...OR, MARINA_DECISIONS: "lightning" })).toBeUndefined();
+    // A Jev id left in MARINA_DECISION_MODEL never answers under the Lightning name.
+    expect(
+      decisionConfigFromEnv({
+        ...OR,
+        MARINA_DECISIONS: "lightning",
+        MARINA_DECISION_MODEL: "typesafe/jev-1.13",
+      }),
+    ).toBeUndefined();
+    expect(lightningReadiness(OR)).toMatchObject({ status: "unconfigured" });
+    expect(lightningReadiness(OR).detail).toContain("MARINA_LIGHTNING_MODEL");
+  });
+
+  it("answers over OpenRouter's Decisions API once its id is configured", () => {
+    const env = { ...OR, MARINA_LIGHTNING_MODEL: "h2oai/lightning-test" };
+    for (const v of ["lightning", "h2o-lightning", "LIGHTNING"]) {
+      expect(decisionConfigFromEnv({ ...env, MARINA_DECISIONS: v })).toEqual({
+        kind: "decisions-api",
+        model: "h2oai/lightning-test",
+        baseUrl: "https://openrouter.ai/api/alpha",
+        path: "/decisions",
+        apiKey: "or",
+        timeoutMs: 2000,
+      });
+    }
+    // Configuring the id alone changes nothing: the default backend is untouched.
+    expect(decisionConfigFromEnv(env)).toMatchObject({ kind: "marina-self" });
+  });
+
+  it("reports readiness from configuration only", () => {
+    const model = { MARINA_LIGHTNING_MODEL: "h2oai/lightning-test" };
+    expect(lightningReadiness(model)).toMatchObject({
+      status: "no-key",
+      model: "h2oai/lightning-test",
+    });
+    expect(lightningReadiness({ ...model, ...OR })).toMatchObject({ status: "available" });
+    expect(lightningReadiness({ ...model, ...OR }).detail).toContain("backend lightning");
+    expect(lightningReadiness({ ...model, MARINA_DECISION_API_KEY: "k" }).status).toBe("available");
+    expect(
+      lightningReadiness({ ...model, ...OR, MARINA_DECISIONS: "h2o-lightning" }),
+    ).toMatchObject({ status: "active" });
   });
 });
 

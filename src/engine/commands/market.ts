@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import { bold, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import * as kalshi from "../../net/clients/kalshi-client";
 import * as polymarket from "../../net/clients/polymarket-client";
@@ -53,7 +54,7 @@ export function marketCommand(deps: {
     ],
     name: "market",
     aliases: ["mk"],
-    help: HELP,
+    help: experimentalHelp(HELP),
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
