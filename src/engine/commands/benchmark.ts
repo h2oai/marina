@@ -63,6 +63,7 @@ import {
   purgeBenchmarkContentNotes,
   retireOutcomeNotesForRun,
 } from "../benchmark-runner";
+import { resolveRunTarget, type ServingCrew } from "../benchmark-target";
 import { BENCHMARK_RUN_MIN_RANK } from "../constants";
 import { recentResolutions } from "../default-resolution";
 import { extractModifiers, parseModifiers, resolveMultiWordName } from "../parse-input";
@@ -88,8 +89,12 @@ const HELP = `Run, track, and rank benchmark evaluations from inside the world.
 Usage:
   benchmark list                                   — show available benchmarks + cache status
   benchmark orchestrations                         — show live marina:<name> endpoints
-  benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
-                                                   — kick off one run
+  benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [self-judge:on]
+                   [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
+                                                   — kick off one run. It measures RESIDENTS: crew:<name>,
+                                                     or with no target the world's serving crew (refused
+                                                     when there is none, or several). model:<id> is a
+                                                     bare-model CONTROL (no residents), labelled as one.
   benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]
                                                    — fan out across every live orchestration
   benchmark result <id>                            — show a single run's score + breakdown
@@ -149,12 +154,16 @@ Usage:
                                                      audited path (needs role.edit). Runs now teach
                                                      only through judged lessons (\`lessons\`).
 
-Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
-  hellaswag, musr, bbh, gsm8k, math, simple-qa, humaneval, ifeval, frames, aime
-  (run "benchmark list" for status)
+Benchmarks: ${Object.keys(BENCHMARKS).join(", ")}
+  (smoke is the 15-item prompt A/B set, always ready; run "benchmark list" for status)
 
---model M format: "marina" = the default local endpoint; "marina:<name>" = a named
-  orchestration (a model-* channel with a live agent). See "benchmark orchestrations".
+Targets: crew:<name> = the residents serving marina:<name> (a model-<name> channel with a live
+  agent; see "benchmark orchestrations"); model:<id> = the bare model as a control ("marina" =
+  the default upstream model; model:marina:<name> is the crew <name>).
+Judge: judge-scored benchmarks (frames, simple-qa, hle-verified-gold*, narrativeqa, mt-bench)
+  are graded by judge:<model>, else MARINA_BENCHMARK_JUDGE_MODEL, else marina/default — never
+  by the target itself: a judge that names the target is refused unless self-judge:on, which
+  the run records (its ledger judge is marked [self-judge]).
 
 Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
@@ -169,13 +178,48 @@ Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Di
 
 Examples:
   benchmark list
-  benchmark run aime --limit 10 --model marina:answerer
+  benchmark run aime --limit 10                    # the world's serving crew
+  benchmark run aime --limit 10 crew:answerer
+  benchmark run aime --limit 10 model:marina      # control: the bare default model
   benchmark sweep aime --limit 10 --seed 42        # aime × every live marina:<name>
   benchmark sweep all --limit 5 --seed 42          # every bench × every orchestration
   benchmark leaderboard aime
   benchmark reference                              # all models we have numbers for
   benchmark reference anthropic/claude-opus-4-6
   benchmark reference mmlu-pro                    # all models' published scores for mmlu-pro`;
+
+const RUN_MODIFIERS = [
+  "limit",
+  "seed",
+  "judge-model",
+  "model",
+  "crew",
+  "judge",
+  "self-judge",
+  "concurrency",
+  "partition",
+  "lessons",
+  "lessons-mode",
+  "arm",
+  "cap",
+];
+const SWEEP_MODIFIERS = ["limit", "seed", "judge", "judge-model", "concurrency"];
+
+/**
+ * The argument tokens with every `key:value` / `key=value` of a known key
+ * rewritten as `--key value`, so the canonical modifier grammar (`crew:answerer`,
+ * `model:marina`, `self-judge:on`) parses alongside `--key value`. Only the
+ * first `:`/`=` splits, so `model:marina:answerer` keeps its value.
+ */
+export function canonicalModifierArgs(tokens: readonly string[], known: readonly string[]): string {
+  return tokens
+    .map((t) => {
+      const m = /^([a-z][a-z-]*)[:=](.+)$/i.exec(t);
+      const key = m?.[1]?.toLowerCase();
+      return m && key && known.includes(key) ? `--${key} ${m[2]}` : t;
+    })
+    .join(" ");
+}
 
 function formatRunLine(row: BenchmarkRunRow): string {
   const score =
@@ -205,6 +249,11 @@ export function benchmarkCommand(deps: {
   logEvent?: (event: EngineEvent) => void;
   /** The agents behind a `marina:<name>` target (role, prompt version), recorded with the run. */
   describeTarget?: (model: string) => BenchmarkSubject[];
+  /**
+   * Crews serving a live `marina:<name>` endpoint, with their formation. A
+   * `benchmark run` without a target measures the one serving crew.
+   */
+  servingCrews?: () => ServingCrew[];
 }): CommandDef {
   const { db, runner, listOrchestrations } = deps;
   return {
@@ -236,10 +285,10 @@ export function benchmarkCommand(deps: {
       { syntax: "benchmark reference model", effect: "read" },
       { syntax: "benchmark result <id>", effect: "read" },
       { syntax: "benchmark revalidate <run> reason:<text>", effect: "write" },
-      { syntax: "benchmark run <name> [--limit N] [--seed N] [--model M]", effect: "execute" },
+      { syntax: "benchmark run <name> [crew:<name>] [--limit N] [--seed N]", effect: "execute" },
       {
         syntax:
-          "benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live] [arm:bare|on|full|<members>] [cap:<usd>]",
+          "benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [self-judge:on] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live] [arm:bare|on|full|<members>] [cap:<usd>]",
         effect: "execute",
       },
       { syntax: "benchmark runs [--benchmark X] [--limit N]", effect: "read" },
@@ -341,14 +390,8 @@ export function benchmarkCommand(deps: {
               consumed = resolved.consumed;
             }
           }
-          const rawArgs = tokens.slice(1 + consumed).join(" ");
-          const { modifiers } = extractModifiers(rawArgs, [
-            "limit",
-            "seed",
-            "judge",
-            "judge-model",
-            "concurrency",
-          ]);
+          const rawArgs = canonicalModifierArgs(tokens.slice(1 + consumed), SWEEP_MODIFIERS);
+          const { modifiers } = extractModifiers(rawArgs, SWEEP_MODIFIERS);
           const limit = Number.parseInt(modifiers.limit ?? "", 10);
           const seed = Number.parseInt(modifiers.seed ?? "", 10);
           const concurrency = Number.parseInt(modifiers.concurrency ?? "", 10);
@@ -371,6 +414,9 @@ export function benchmarkCommand(deps: {
           }
           const benches = sweepName === "all" ? Object.keys(BENCHMARKS) : [sweepName];
 
+          const formations = new Map(
+            (deps.servingCrews?.() ?? []).map((c) => [`marina:${c.name}`, c.formation]),
+          );
           const handles: { bench: string; orch: string; id: string; err?: string }[] = [];
           for (const bench of benches) {
             for (const orch of orchs) {
@@ -380,6 +426,7 @@ export function benchmarkCommand(deps: {
                   limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
                   seed: Number.isFinite(seed) ? seed : undefined,
                   model: orch,
+                  ...(formations.get(orch) ? { formation: formations.get(orch) } : {}),
                   subjects: deps.describeTarget?.(orch) ?? [],
                   judgeModel: modifiers.judge ?? modifiers["judge-model"],
                   concurrency:
@@ -428,7 +475,7 @@ export function benchmarkCommand(deps: {
           if (!tokens[1]) {
             ctx.send(
               input.entity,
-              "Usage: benchmark run <name> [--limit N] [--seed N] [--model M] [--partition holdout|tune]",
+              "Usage: benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [--partition holdout|tune]",
             );
             return;
           }
@@ -451,20 +498,8 @@ export function benchmarkCommand(deps: {
             return;
           }
           const name = resolved.name;
-          const rawArgs = tokens.slice(1 + resolved.consumed).join(" ");
-          const { modifiers } = extractModifiers(rawArgs, [
-            "limit",
-            "seed",
-            "judge-model",
-            "model",
-            "judge",
-            "concurrency",
-            "partition",
-            "lessons",
-            "lessons-mode",
-            "arm",
-            "cap",
-          ]);
+          const rawArgs = canonicalModifierArgs(tokens.slice(1 + resolved.consumed), RUN_MODIFIERS);
+          const { modifiers } = extractModifiers(rawArgs, RUN_MODIFIERS);
           const limit = Number.parseInt(modifiers.limit ?? "", 10);
           const seed = Number.parseInt(modifiers.seed ?? "", 10);
           const concurrency = Number.parseInt(modifiers.concurrency ?? "", 10);
@@ -479,19 +514,36 @@ export function benchmarkCommand(deps: {
             ctx.send(input.entity, "cap is a dollar amount above 0 (cap:5 or cap:$5).");
             return;
           }
+          // What the run measures: residents by default (src/engine/benchmark-target.ts).
+          const target = resolveRunTarget({
+            ...(modifiers.crew ? { crew: modifiers.crew } : {}),
+            ...(modifiers.model ? { model: modifiers.model } : {}),
+            orchestrations: listOrchestrations(),
+            crews: deps.servingCrews?.() ?? [],
+          });
+          if ("error" in target) {
+            ctx.send(input.entity, `benchmark run: ${target.error}`);
+            return;
+          }
           try {
             const handle = runner.start({
               benchmark: name,
               limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
               seed: Number.isFinite(seed) ? seed : undefined,
-              model: modifiers.model,
+              model: target.model,
+              ...(target.kind === "crew" && target.formation
+                ? { formation: target.formation }
+                : {}),
               ...(parsePartition(modifiers.partition)
                 ? { partition: parsePartition(modifiers.partition) }
                 : {}),
-              ...(modifiers.model
-                ? { subjects: deps.describeTarget?.(modifiers.model) ?? [] }
+              ...(target.kind === "crew"
+                ? { subjects: deps.describeTarget?.(target.model) ?? [] }
                 : {}),
               judgeModel: modifiers.judge ?? modifiers["judge-model"],
+              ...(/^(on|true|yes|1)$/i.test(modifiers["self-judge"] ?? "")
+                ? { selfJudge: true }
+                : {}),
               concurrency:
                 Number.isFinite(concurrency) && concurrency > 0 ? concurrency : undefined,
               agentId: entity.id,
@@ -500,9 +552,13 @@ export function benchmarkCommand(deps: {
               ...(modifiers.arm ? { arm: modifiers.arm } : {}),
               ...(cap !== undefined ? { capUsd: cap } : {}),
             });
+            const measured =
+              target.kind === "crew"
+                ? `crew ${target.crew} (residents${target.formation ? `, formation ${target.formation}` : ""})${target.defaulted ? dim(" — the world's serving crew") : ""}`
+                : `${target.model} ${fmtStatus("CONTROL", "warn")} ${dim("bare model, no residents")}`;
             ctx.send(
               input.entity,
-              `Benchmark run started.\n  ${bold("id")}:       ${fmtId(handle.id)}\n  ${bold("benchmark")}: ${category(name)}\n  ${bold("config")}:    ${handle.configHash}\n\nCheck status with: benchmark result ${handle.id}`,
+              `Benchmark run started.\n  ${bold("id")}:       ${fmtId(handle.id)}\n  ${bold("benchmark")}: ${category(name)}\n  ${bold("target")}:    ${measured}\n  ${bold("config")}:    ${handle.configHash}\n\nCheck status with: benchmark result ${handle.id}`,
             );
           } catch (err) {
             ctx.send(

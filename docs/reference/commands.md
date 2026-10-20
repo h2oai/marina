@@ -868,8 +868,12 @@ Run, track, and rank benchmark evaluations from inside the world.
 Usage:
   benchmark list                                   — show available benchmarks + cache status
   benchmark orchestrations                         — show live marina:<name> endpoints
-  benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
-                                                   — kick off one run
+  benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [self-judge:on]
+                   [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
+                                                   — kick off one run. It measures RESIDENTS: crew:<name>,
+                                                     or with no target the world's serving crew (refused
+                                                     when there is none, or several). model:<id> is a
+                                                     bare-model CONTROL (no residents), labelled as one.
   benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]
                                                    — fan out across every live orchestration
   benchmark result <id>                            — show a single run's score + breakdown
@@ -929,12 +933,16 @@ Usage:
                                                      audited path (needs role.edit). Runs now teach
                                                      only through judged lessons (`lessons`).
 
-Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
-  hellaswag, musr, bbh, gsm8k, math, simple-qa, humaneval, ifeval, frames, aime
-  (run "benchmark list" for status)
+Benchmarks: smoke, mmlu-pro, ifeval, truthfulqa, humaneval, narrativeqa, mt-bench, retention, arc-challenge, hellaswag, musr, bbh, gsm8k, math, simple-qa, frames, aime, aime-2025, gpqa, hle-verified-gold, hle-verified-gold-mm
+  (smoke is the 15-item prompt A/B set, always ready; run "benchmark list" for status)
 
---model M format: "marina" = the default local endpoint; "marina:<name>" = a named
-  orchestration (a model-* channel with a live agent). See "benchmark orchestrations".
+Targets: crew:<name> = the residents serving marina:<name> (a model-<name> channel with a live
+  agent; see "benchmark orchestrations"); model:<id> = the bare model as a control ("marina" =
+  the default upstream model; model:marina:<name> is the crew <name>).
+Judge: judge-scored benchmarks (frames, simple-qa, hle-verified-gold*, narrativeqa, mt-bench)
+  are graded by judge:<model>, else MARINA_BENCHMARK_JUDGE_MODEL, else marina/default — never
+  by the target itself: a judge that names the target is refused unless self-judge:on, which
+  the run records (its ledger judge is marked [self-judge]).
 
 Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
@@ -949,7 +957,9 @@ Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Di
 
 Examples:
   benchmark list
-  benchmark run aime --limit 10 --model marina:answerer
+  benchmark run aime --limit 10                    # the world's serving crew
+  benchmark run aime --limit 10 crew:answerer
+  benchmark run aime --limit 10 model:marina      # control: the bare default model
   benchmark sweep aime --limit 10 --seed 42        # aime × every live marina:<name>
   benchmark sweep all --limit 5 --seed 42          # every bench × every orchestration
   benchmark leaderboard aime
@@ -1100,44 +1110,47 @@ Effect: write.
 - `field-0` (`run`): text, required.
 - `field-1` (`reason`): text, required.
 
-### `benchmark run <name> [--limit N] [--seed N] [--model M]`
+### `benchmark run <name> [crew:<name>] [--limit N] [--seed N]`
 
 Effect: execute.
 
 - `field-0` (`name`): text, required.
-- `field-1` (`--limit`): number, optional group `option-0`.
-- `field-2` (`--seed`): number, optional group `option-1`.
-- `field-3` (`--model`): text, optional group `option-2`.
-- Group `option-0`: `--limit N`.
-- Group `option-1`: `--seed N`.
-- Group `option-2`: `--model M`.
+- `field-1` (`crew`): text, optional group `option-0`.
+- `field-2` (`--limit`): number, optional group `option-1`.
+- `field-3` (`--seed`): number, optional group `option-2`.
+- Group `option-0`: `crew:name`.
+- Group `option-1`: `--limit N`.
+- Group `option-2`: `--seed N`.
 
-### `benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live] [arm:bare|on|full|<members>] [cap:<usd>]`
+### `benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [self-judge:on] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live] [arm:bare|on|full|<members>] [cap:<usd>]`
 
 Effect: execute.
 
 - `field-0` (`name`): text, required.
-- `field-1` (`--limit`): number, optional group `option-0`.
-- `field-2` (`--seed`): number, optional group `option-1`.
-- `field-3` (`--model`): text, optional group `option-2`.
-- `field-4` (`--judge`): text, optional group `option-3`.
-- `field-5` (`--concurrency`): number, optional group `option-4`.
-- `field-6` (`holdout|tune`): choice, optional group `option-5`, choices `holdout`, `tune`.
-- `field-7` (`lessons`): text, optional group `option-6`.
-- `field-8` (`lessons-mode`): text, optional group `option-7`, choices `measure`, `live`.
-- `field-9` (`arm`): text, optional group `option-8`, choices `bare`, `on`, `full`.
-- `field-10` (`members`): text, optional group `option-8`.
-- `field-11` (`cap`): number, optional group `option-9`.
-- Group `option-0`: `--limit N`.
-- Group `option-1`: `--seed N`.
-- Group `option-2`: `--model M`.
+- `field-1` (`crew`): text, optional group `option-0`.
+- `field-2` (`model`): text, optional group `option-0`.
+- `field-3` (`--limit`): number, optional group `option-1`.
+- `field-4` (`--seed`): number, optional group `option-2`.
+- `field-5` (`--judge`): text, optional group `option-3`.
+- `field-6` (`self-judge`): text, optional group `option-4`.
+- `field-7` (`--concurrency`): number, optional group `option-5`.
+- `field-8` (`holdout|tune`): choice, optional group `option-6`, choices `holdout`, `tune`.
+- `field-9` (`lessons`): text, optional group `option-7`.
+- `field-10` (`lessons-mode`): text, optional group `option-8`, choices `measure`, `live`.
+- `field-11` (`arm`): text, optional group `option-9`, choices `bare`, `on`, `full`.
+- `field-12` (`members`): text, optional group `option-9`.
+- `field-13` (`cap`): number, optional group `option-10`.
+- Group `option-0`: `crew:name | model:id`.
+- Group `option-1`: `--limit N`.
+- Group `option-2`: `--seed N`.
 - Group `option-3`: `--judge M`.
-- Group `option-4`: `--concurrency N`.
-- Group `option-5`: `--partition holdout|tune`.
-- Group `option-6`: `lessons:on`.
-- Group `option-7`: `lessons-mode:measure|live`.
-- Group `option-8`: `arm:bare|on|full|members`.
-- Group `option-9`: `cap:usd`.
+- Group `option-4`: `self-judge:on`.
+- Group `option-5`: `--concurrency N`.
+- Group `option-6`: `--partition holdout|tune`.
+- Group `option-7`: `lessons:on`.
+- Group `option-8`: `lessons-mode:measure|live`.
+- Group `option-9`: `arm:bare|on|full|members`.
+- Group `option-10`: `cap:usd`.
 
 ### `benchmark runs [--benchmark X] [--limit N]`
 

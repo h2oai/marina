@@ -19,6 +19,62 @@ The in-world command is `benchmark list/run/sweep/runs/result/leaderboard/fronti
   - Read with `getPromotedDefault` (see Notes); environment variables win.
   - Invalid runs (migration 153): `benchmark invalidate|revalidate <run> reason:<text>` (`role.edit`; revalidate never by the run's author) or `benchmark:import --invalidate <run> --reason` set status `invalid` with an append-only `benchmark_run_validity` row; items are never deleted. A run whose items are more than `MARINA_BENCHMARK_MAX_FALLBACK_RATE` (0.25) fallbacks is recorded invalid automatically. Invalidating an incumbent never frees its slot: a challenger must beat the best earlier valid incumbent on the holdout (re-seed from replicates only if none is valid), and the invalidator can neither promote into the slot nor author the challenger. Every ranking reader reads only `completed` runs; `runs`/`result` show invalid ones with the reason.
 
+## What a run measures: residents, controls and judges
+
+Before 2026-10 a bare `benchmark run mmlu-pro` measured the upstream model. The runner called
+`/v1` with the internal token, and an internal caller takes the passthru branch unless the id
+names a live crew channel. Now (`src/engine/benchmark-target.ts`):
+
+- **`crew:<name>`** measures the residents serving `marina:<name>`. The crew's `model-<name>`
+  channel must have an online member; otherwise the run is refused and never falls back to
+  the bare model.
+- **No target: the world's serving crew.** This is the one crew (not dissolved) whose endpoint
+  has an online member. In a world with no crew records, it is the one live `marina:<name>`
+  endpoint. When there is none, or several, the run is refused, and the message says what to
+  pass. A refusal is less surprising than a silent bare-model run, or than picking one of
+  several crews.
+- **`model:<id>`** measures the bare model as a **control**: config `targetKind: "model"`,
+  `control: true`, and the start message and feed event say so. `model:marina:<name>` (the older
+  spelling) is the crew `<name>`.
+- `sweep` fans out over every live endpoint, as before. `compare-run` stays an instrument
+  comparison on one model (default `marina`), so its runs are controls.
+
+**Crew runs on the ledger.** A crew run always gets a run key, so its requests are the run's
+own and never the internal token's. It files as `target_kind: "crew"` with target
+`{crew, formation, model, …}`. Each item's participants are resolved from its trace exactly as
+for a filed run (`resolveParticipants`), so the residents' work reaches route evidence per
+participant and role. The run's cost is the harness's usage report plus the participants'
+reported costs. A crew's residents spend on their own turns, outside the key, so the key's
+spend is not the run's cost; a `cap:` on a crew run bounds only the requests the key itself
+makes.
+
+**Judges.** Judge-scored benchmarks (`benchmarkUsesJudge`: short-answer, HLE, judge-scored
+free-form) are never graded by their target (`src/engine/benchmark-judge.ts`, used by the runner
+and the harness). The judge is `judge:` / `--judge-model`, else `MARINA_BENCHMARK_JUDGE_MODEL`,
+else `marina/default`. A judge that names the target is refused at start. Aliases of the default
+model count, including the concrete model `marina/default` routes to. `self-judge:on` /
+`--self-judge` is the explicit opt-in: the run config records it, and the ledger judge reads
+`<model> @ <endpoint> [self-judge]`, so a self-graded run never pairs or pools with an
+independently graded one. Benchmarks that no judge grades record no judge.
+
+**One registry.** `src/engine/benchmark-registry.ts` declares every benchmark once. The harness
+(`benchmarks/registry.ts` adds the loaders), the in-world `BENCHMARKS` and the web UI
+(`benchmarkCatalog()`) derive from it, and `test/benchmark-registry.test.ts` fails on drift.
+
+**Native runs and formation adherence.** `bun run bench:native` runs fully in-world (crew
+dispatch, pools, formations). A live run scores formation adherence over its window and files a
+`crew` run (benchmark `native-<task>`, oracle judge, adherence in the config) into the server's
+ledger. Adherence is scored from the live `CREW_BRIEFS` (`adherenceSteps` in
+`benchmarks/formation-adherence.ts`):
+- A hand-written deterministic check counts only while its anchor phrase (`BRIEF_ANCHORS`) is
+  still in the brief.
+- Every brief clause no check covers becomes a judge question.
+- An edited brief therefore re-derives its steps, and no stale copy can score the old protocol.
+
+**Deliberate controls stay as they were:** the tier0 direct-provider arm (now explicitly
+`--self-judge`), the repro kit's plain-server arms, the fixed-formation forecast backtests, the
+memory benches and the official graders.
+
 ## Arms, caps and run keys
 
 `benchmark run <name> arm:bare|on|full|<members> cap:<usd>` measures one **arm**: the passthru instruments the run's requests get.
@@ -27,9 +83,9 @@ The in-world command is `benchmark list/run/sweep/runs/result/leaderboard/fronti
 - `full` sends `full`.
 - A member list (`lessons,obligations`) is sent as given.
 
-The arm and the cap are part of the run's configuration and its hash, so two arms are two configurations that `benchmark compare` can pair. A run with neither keeps the old behaviour: the harness uses the internal token, which gets no instruments.
+The arm and the cap are part of the run's configuration and its hash, so two arms are two configurations that `benchmark compare` can pair. A bare-model control with neither keeps the old behaviour: the harness uses the internal token, which gets no instruments.
 
-Given an arm or a cap, the runner mints a **run key** (`src/engine/benchmark-run-keys.ts`), a short-lived `/v1` credential held only in this process, and hands it to the harness child in its environment, never argv. A third-party harness can send only a base URL and a key, so the key carries what the run needs:
+Given an arm, a cap or a crew target, the runner mints a **run key** (`src/engine/benchmark-run-keys.ts`), a short-lived `/v1` credential held only in this process, and hands it to the harness child in its environment, never argv. A third-party harness can send only a base URL and a key, so the key carries what the run needs:
 
 - **The arm's `x-marina-stack`** is added to every request that names none.
 - **The eval context `x-marina-eval: benchmark=<name>; mode=measure|live`** is added the same way, so leakage rule 2 applies.
@@ -50,7 +106,7 @@ The key is revoked when the run ends. A run stopped by its key is recorded **inv
 - **Report.** Per arm: pooled accuracy with a Wilson 95% interval over item-attempts, spend, cost per success, and the `model@source` it measured. Then the paired two-stage bootstrap of A − B and the range of single-pair McNemar p. The Wilson intervals pool replicates and so understate run-to-run variance; the paired interval is the test. Arms that ran different models or code, items or judges are flagged as unpaired.
 - **Feed events:** `benchmark_compare_started|completed|failed`. The owner gets the report when the last run finishes.
 
-In-world runs record their per-item outcomes (item id, verdict, latency, cost, trace id; never question or answer text) and ledger columns when they complete, so `compare`, `replicates` and pooling read them like imported runs. A run key's measured spend is the run's cost; without one, the harness's usage report is. The run's target is `{model, stack, source}`: `source` is the server's git revision (`-dirty` with local changes), so runs on different code never pool as replicates. A bare run records no `stack` and stays model evidence for route selection; an instrumented arm is not counted as evidence for the model alone.
+In-world runs record their per-item outcomes (item id, verdict, latency, cost, trace id; never question or answer text) and ledger columns when they complete, so `compare`, `replicates` and pooling read them like imported runs. A run key's measured spend is the run's cost; without one, the harness's usage report is. The run's target is `{model, stack, source}` (a crew run adds `crew` and `formation`): `source` is the server's git revision (`-dirty` with local changes), so runs on different code never pool as replicates. A bare run records no `stack` and stays model evidence for route selection; an instrumented arm is not counted as evidence for the model alone.
 
 ## Transfer: the two-evaluation rule
 

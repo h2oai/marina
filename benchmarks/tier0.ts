@@ -61,8 +61,14 @@ export interface Tier0Target {
   apiKey?: string;
   /** Filesystem-safe name for the output directory. */
   label: string;
-  /** Judge model when `--judge-model` is not given (else the harness uses the target). */
+  /** Judge model when `--judge-model` is not given (else the harness's default judge). */
   defaultJudgeModel?: string;
+  /**
+   * The default judge IS the target (`--self-judge`): the direct-provider
+   * control arm has no Marina in its path to supply an independent judge, so
+   * it keeps grading with the target model, now explicitly and on the record.
+   */
+  defaultSelfJudge?: boolean;
   /** Per-request timeout when `--timeout` is not given (else the harness default). */
   defaultTimeoutMs?: number;
 }
@@ -111,6 +117,9 @@ export function resolveTier0Target(
       model,
       apiKey: opts.apiKey ?? env.OPENROUTER_API_KEY,
       label: safeLabel(endpoint),
+      // The deliberate control: unchanged grading (the target), now labelled.
+      defaultJudgeModel: model,
+      defaultSelfJudge: true,
     };
   }
   if (!/^https?:\/\//.test(endpoint)) {
@@ -212,6 +221,7 @@ export function tier0HarnessArgs(
   ];
   const judgeModel = opts.judgeModel ?? target.defaultJudgeModel;
   if (judgeModel) args.push("--judge-model", judgeModel);
+  if (!opts.judgeModel && target.defaultSelfJudge) args.push("--self-judge");
   if (opts.judgeEndpoint) args.push("--judge-endpoint", opts.judgeEndpoint);
   const timeoutMs = opts.timeoutMs ?? target.defaultTimeoutMs;
   if (timeoutMs) args.push("--timeout", String(timeoutMs));

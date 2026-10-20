@@ -763,13 +763,21 @@ and silent turns. Recruitment remains explicit: recommendations never pull an ag
 ## Benchmarks
 
 Run, track and rank evaluations from inside the world. `run` and `sweep` need rank 4 (they spend
-real tokens); everything else is rank 0. Runs call this instance's own `/v1` with the internal key.
+real tokens); everything else is rank 0. Runs call this instance's own `/v1`.
+
+A run measures the world's **residents**. `crew:<name>` names the crew. With no target, the
+run measures the world's one serving crew (a crew whose `model-<name>` channel has an online
+member), and it is refused when there is none or several. `model:<id>` measures the bare model
+as a **control** (no residents), and the run is labelled one. Judge-scored benchmarks are never
+graded by their target: the judge is `judge:<model>`, else `MARINA_BENCHMARK_JUDGE_MODEL`, else
+`marina/default`, and `self-judge:on` is the recorded opt-in.
 
 | Command | Description |
 |---------|-------------|
 | `benchmark list` | Available benchmarks and whether their datasets are cached |
-| `benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M]` | Start one run; `--model marina:<name>` targets a named orchestration |
-| `benchmark run smoke --model marina:answerer` | The frozen 15-item prompt A/B set (the same items as `bun run eval-prompt`) — run before and after a prompt, role or crew change and compare on the leaderboard |
+| `benchmark run <name> [crew:<name> \| model:<id>] [--limit N] [--seed N] [--judge M] [self-judge:on]` | Start one run on the serving crew, a named crew, or a bare-model control |
+| `benchmark run smoke crew:answerer` | The frozen 15-item prompt A/B set (the same items as `bun run eval-prompt`) — run before and after a prompt, role or crew change and compare on the leaderboard |
+| `benchmark run smoke model:marina` | The same set on the bare default model: a control, no residents |
 | `benchmark sweep <name\|all>` | Fan one benchmark out across every live orchestration |
 | `benchmark result <id>` · `benchmark runs` | One run's score and breakdown; recent runs |
 | `benchmark leaderboard <benchmark>` | Top runs, interleaved with published reference scores; runs that answered nothing are left out; ledger runs also show n, the 95 % interval and $/item |

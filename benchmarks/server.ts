@@ -12,6 +12,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { benchmarkCatalog } from "../src/engine/benchmark-registry";
 import type { BenchmarkResult } from "./types";
 
 const { values: args } = parseArgs({
@@ -42,66 +43,9 @@ interface RunState {
 const activeRuns = new Map<string, RunState>();
 let runCounter = 0;
 
-// --- Benchmark definitions (mirrors harness.ts registry) ---
+// --- Benchmark definitions: the ONE registry (src/engine/benchmark-registry.ts) ---
 
-const BENCHMARKS = [
-  {
-    key: "mmlu-pro",
-    name: "MMLU-Pro",
-    phase: "A",
-    adapter: "multiple-choice",
-    scoring: "accuracy",
-    description: "12K 10-choice MC questions across 57 subjects",
-  },
-  {
-    key: "ifeval",
-    name: "IFEval",
-    phase: "A",
-    adapter: "ifeval",
-    scoring: "ifeval",
-    description: "541 prompts with verifiable instruction constraints",
-  },
-  {
-    key: "truthfulqa",
-    name: "TruthfulQA MC2",
-    phase: "A",
-    adapter: "multiple-choice",
-    scoring: "accuracy",
-    description: "817 MC questions testing truthfulness",
-  },
-  {
-    key: "humaneval",
-    name: "HumanEval",
-    phase: "A",
-    adapter: "code-gen",
-    scoring: "pass-at-k",
-    description: "164 Python function completion tasks",
-  },
-  {
-    key: "narrativeqa",
-    name: "NarrativeQA",
-    phase: "B",
-    adapter: "free-form",
-    scoring: "judge",
-    description: "Story comprehension — memory vs no-memory",
-  },
-  {
-    key: "mt-bench",
-    name: "MT-Bench",
-    phase: "B",
-    adapter: "free-form",
-    scoring: "judge",
-    description: "80 multi-turn conversation quality questions",
-  },
-  {
-    key: "retention",
-    name: "Memory Retention",
-    phase: "B",
-    adapter: "free-form",
-    scoring: "accuracy",
-    description: "100 cross-session knowledge retention tasks",
-  },
-];
+const BENCHMARKS = benchmarkCatalog();
 
 // --- Results loading ---
 

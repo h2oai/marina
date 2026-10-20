@@ -1,19 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { BenchmarkAdapterKind, BenchmarkScoringKind } from "../src/engine/benchmark-registry";
+
 export interface BenchmarkConfig {
   name: string;
   dataset: string;
-  adapter:
-    | "multiple-choice"
-    | "code-gen"
-    | "ifeval"
-    | "free-form"
-    | "numeric"
-    | "short-answer"
-    | "hle"
-    | "checks";
-  scoring: "accuracy" | "pass-at-k" | "ifeval" | "judge" | "numeric-match" | "normalized-match";
+  adapter: BenchmarkAdapterKind;
+  scoring: BenchmarkScoringKind;
   mode: "passthrough" | "memory";
   /** Ground factual answers in live search evidence before answering (`search`). */
   ground?: "search";
@@ -25,7 +19,11 @@ export interface BenchmarkConfig {
   seed?: number;
   /** Fixed disjoint split of the items (benchmarks/partition.ts). */
   partition?: "holdout" | "tune";
-  judge?: { model: string; endpoint: string };
+  /**
+   * Who grades judge-scored items; absent for benchmarks no judge grades.
+   * `self_judge`: the judge is the target model, by explicit opt-in (`--self-judge`).
+   */
+  judge?: { model: string; endpoint: string; self_judge?: boolean };
   /**
    * The run's lesson regime toward a Marina target (`x-marina-eval`): `measure`
    * excludes lessons learned from this board, `live` uses every lesson.

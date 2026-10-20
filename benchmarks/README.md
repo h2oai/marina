@@ -58,9 +58,13 @@ bun run bench:tier0 --endpoint http://host:port --model <id>  # any OpenAI-compa
 - **Determinism.** The same `--seed` (default `42`) selects the same items and, for GPQA, the
   same option order (`shuffleChoices`: per-item permutation seeded by `(seed, item id)`). The
   cache keeps GPQA unshuffled, so a cached file never fixes the answer position.
-- **Judge.** Judge-scored items use `--judge-model` / `--judge-endpoint`. The default is the
-  target model, except `marina:<crew>` targets, which default to `marina/default` so a crew
-  never grades itself and every crew in a sweep shares one judge. A judge that fails is
+- **Judge.** Judge-scored items use `--judge-model` / `--judge-endpoint`. A run never grades
+  itself: the harness default is `MARINA_BENCHMARK_JUDGE_MODEL`, else `marina/default`, and a
+  judge that names the target is refused unless `--self-judge` opts in (recorded as
+  `config.judge.self_judge`, ledger judge marked `[self-judge]`). `marina:<crew>` targets are
+  judged by `marina/default`, so every crew in a sweep shares one judge. The
+  `openrouter/<vendor>/<model>` direct arm is the deliberate control with no Marina in its path:
+  it keeps grading with the target, now through an explicit `--self-judge`. A judge that fails is
   recorded as `judge: "error"` on the item and scored wrong. For a crew, keep the judge on the
   crew's own server: `--judge-model openrouter/<vendor>/<model>` reaches that upstream through
   Marina's passthru in every endpoint mode, so judge calls are traced and costed like any
@@ -292,8 +296,9 @@ never overwritten. The reporting standard, arm definitions, and an explicit "wha
 | `-e, --endpoint` | API endpoint URL | `http://localhost:3300` |
 | `-k, --api-key` | Bearer token | none |
 | `--model` | Model name | `marina` |
-| `--judge-model` | Judge model for judge-scored items | `--model` |
+| `--judge-model` | Judge model for judge-scored items (never the target, see `--self-judge`) | `MARINA_BENCHMARK_JUDGE_MODEL`, else `marina/default` |
 | `--judge-endpoint` | Judge endpoint | `--endpoint` |
+| `--self-judge` | Allow the judge to be the target model; recorded with the run | off |
 | `-c, --concurrency` | Parallel requests | `5` |
 | `-s, --seed` | Deterministic subset | none |
 | `--compare` | Run comparison mode | none |
@@ -320,6 +325,14 @@ Opens at `http://localhost:3303` with four tabs:
 - **Run** — Configure and launch benchmarks from the UI, with live progress tracking
 
 Supports multiple simultaneous benchmark runs with a persistent status bar showing progress for each.
+
+## One benchmark registry
+
+Every benchmark is declared once, in `src/engine/benchmark-registry.ts` (name, dataset,
+adapter, scoring, phase, where its items come from). The harness adds each one's loader
+(`benchmarks/registry.ts`), the in-world runner derives its `benchmark list`, and the web UI
+serves `benchmarkCatalog()`. `test/benchmark-registry.test.ts` fails if any of them drifts. To
+add a benchmark: one registry entry, one loader.
 
 ## Native crew tasks (seeded generators)
 
@@ -354,6 +367,18 @@ bun run bench:native --task bugs --seed 7 --setup-only --port 40400 --db world.d
   --workspace /path/in/MARINA_CODE_ROOTS                  # prints NATIVE_TID/TEXT/RE/OK for a lane's run_task
 bun run bench:native --task bugs --seed 7 --score-only --db world.db --workspace …
 ```
+
+A live run (`--port … --db …`) also:
+
+- **Scores formation adherence** over the run window from the crew's live brief
+  (`CREW_BRIEFS`, via `formation-adherence.ts`). The formation is `--formation`, else the
+  crew's own formation in the world DB.
+- **Files into the benchmark ledger** as a `crew` run (`POST /v1/benchmarks/runs`):
+  - Target `{crew, formation, members}`, benchmark `native-<task>`, judge `oracle:native-<task>`,
+    adherence in the config. Ids and numbers only, never the deliverable text.
+  - Default: the server the run used, with key `MARINA_LEDGER_API_KEY`. `--file-to <url>`
+    files elsewhere, `--group <key>` sets a replicate group, and `--no-file` turns filing off.
+  - A filing failure is printed and never fails the run.
 
 ## Native vs described vision
 

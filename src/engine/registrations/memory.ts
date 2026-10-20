@@ -183,6 +183,21 @@ export function registerMemoryCommands(engine: Engine): void {
           return orchs;
         },
         logEvent: (event) => engine.logEvent(event),
+        // Crews (not dissolved) whose model-<name> endpoint has an online member:
+        // what an untargeted `benchmark run` measures.
+        servingCrews: () => {
+          const cm = engine.channelManager;
+          const crews = engine.crewManager?.list() ?? [];
+          if (!cm || crews.length === 0) return [];
+          const onlineIds = new Set(engine.getOnlineAgents().map((e) => e.id));
+          return crews
+            .filter((c) => c.state !== "dissolved")
+            .filter((c) => {
+              const ch = cm.getChannelByName(`model-${c.name}`);
+              return !!ch && cm.getMembers(ch.id).some((m) => onlineIds.has(m as never));
+            })
+            .map((c) => ({ name: c.name, formation: c.formation }));
+        },
         describeTarget: (model) => {
           // `marina:<name>` → the online agents on its model-<name> channel.
           const cm = engine.channelManager;
