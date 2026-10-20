@@ -143,6 +143,20 @@ export function formatEvent(
         suffix: recipient ? ` → ${recipient}: ${clip(body)}` : ` tell: ${clip(body)}`,
       };
     }
+    // Typed message envelopes carry no words: who spoke where, and how deep
+    // in a reply thread (depth 0 = starts a thread).
+    case "say_sent":
+      return {
+        color: "text-primary",
+        prefix: event.from ?? entityName ?? "",
+        suffix: ` spoke in ${room}${event.depth ? ` (reply depth ${event.depth})` : ""}`,
+      };
+    case "tell_sent":
+      return {
+        color: "text-secondary",
+        prefix: event.from ?? entityName ?? "",
+        suffix: ` → ${event.to ?? "?"}${event.depth ? ` (reply depth ${event.depth})` : ""}`,
+      };
     case "command":
       return {
         color: "text-primary",

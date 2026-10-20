@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Messages carry a causal envelope, and the canvas sees speech.** `say`, `tell` and `re` emit
+  content-free `say_sent` / `tell_sent` events (names, a message ref, `cause`, `depth`; never the
+  words), so the canvas draws say and tell arcs again. Every say, tell, re, shout and channel post
+  records `cause` (the message it answers: `re` names the tell it replies to) and `depth`, stored on
+  direct and channel messages (migration 171) and carried on their perceptions. `channel_message`
+  events carry the stored message id instead of `0`, so each post has its own feed ref.
+
 - **Yes/no forecasts lost their group class tag.** `group:binary:no|yes` failed the routing-ref
   character check (`|`), so every yes/no outcome reached card routing and the competence map
   without its coarsest class. Card evidence also no longer counts an answer twice when both its

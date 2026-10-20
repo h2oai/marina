@@ -89,6 +89,7 @@ import { assetDerivativesPending, drainAssetDerivatives } from "./media/asset-li
 import { MediaManager, mediaGenerationAvailable } from "./media/manager";
 import { audioAvailable } from "./media/providers/audio-registry";
 import { engineSharedWriteHook } from "./memory-dispatch";
+import { envelopeFields, messageEnvelope } from "./message-envelope";
 import { getRank, rankName } from "./permissions";
 import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
@@ -1019,14 +1020,20 @@ export class Engine {
     }
   }
 
-  broadcastToRoomExcept(room: RoomId, exclude: EntityId, message: string, tag?: string): void {
+  broadcastToRoomExcept(
+    room: RoomId,
+    exclude: EntityId,
+    message: string,
+    tag?: string,
+    metadata?: Record<string, unknown>,
+  ): void {
     const sender = this.entities.get(exclude);
     const senderName = sender?.name;
     const entities = this.entities.inRoom(room);
     for (const entity of entities) {
       if (entity.id !== exclude) {
         if (senderName && isIgnoring(entity, senderName)) continue;
-        this.sendToEntity(entity.id, message, tag);
+        this.sendToEntity(entity.id, message, tag, metadata);
       }
     }
   }
@@ -1038,8 +1045,8 @@ export class Engine {
     return this.rooms.buildContext(roomId, {
       send: (target, msg, tag?, metadata?) => this.sendToEntity(target, msg, tag, metadata),
       broadcast: (room, msg, tag?) => this.broadcastToRoom(room, msg, tag),
-      broadcastExcept: (room, exclude, msg, tag?) =>
-        this.broadcastToRoomExcept(room, exclude, msg, tag),
+      broadcastExcept: (room, exclude, msg, tag?, metadata?) =>
+        this.broadcastToRoomExcept(room, exclude, msg, tag, metadata),
       entitiesInRoom: (room) => this.entities.inRoom(room),
       findEntity: (name, room) => this.entities.findByName(name, room),
       spawnNpc: (room, opts) => this.spawnNpc(room, opts),
@@ -1286,13 +1293,15 @@ export class Engine {
       send(channelName, senderId, senderName, content) {
         const ch = cm.getChannelByName(channelName);
         if (ch) {
-          cm.send(ch.id, senderId, senderName, content);
+          const envelope = messageEnvelope(senderId);
+          const { message } = cm.post(ch.id, senderId, senderName, content, { envelope });
           logEvent?.({
             type: "channel_message",
             entity: senderId as EntityId,
-            messageId: 0,
+            messageId: message.id,
             channelName,
             content,
+            ...envelopeFields(envelope),
             timestamp: Date.now(),
           });
         }

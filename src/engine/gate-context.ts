@@ -27,6 +27,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { CodingCommandTarget } from "../sdk/command-target";
 
+/** A delivered message an execution answers: its ref and its causal depth. */
+export interface MessageCause {
+  ref: string;
+  depth: number;
+}
+
 export interface GatePass {
   codingTarget?: CodingCommandTarget;
   /** Gate ids the approver authorized for this one run. */
@@ -64,6 +70,11 @@ interface CommandScope {
   pass?: GatePass;
   /** The request-local coding destination of this one execution. */
   codingTarget?: CodingCommandTarget;
+  /**
+   * The delivered message this execution answers (`src/engine/message-envelope.ts`).
+   * Unlike the pass, a nested frame of the same entity inherits it.
+   */
+  messageCause?: MessageCause;
   /** False once the execution returned: detached work it spawned sees nothing. */
   open: boolean;
   /**
@@ -117,6 +128,7 @@ export function runCommandScope<T>(
       scope.raw = undefined;
       scope.pass = undefined;
       scope.codingTarget = undefined;
+      scope.messageCause = undefined;
     }
   });
 }
@@ -159,6 +171,27 @@ export function getCurrentCodingTarget(entityId: string): CodingCommandTarget | 
   const scope = scopeFor(entityId);
   if (scope) return scope.open ? scope.codingTarget : undefined;
   return currentCodingTarget.get(entityId);
+}
+
+/**
+ * The message the execution running now answers. Only a frame sets it (no
+ * module-level fallback): outside a command execution there is no cause.
+ */
+export function setCurrentMessageCause(entityId: string, cause?: MessageCause): void {
+  const scope = scopeFor(entityId);
+  if (scope?.open) scope.messageCause = cause;
+}
+
+/**
+ * The innermost cause among this entity's open frames: a macro or `batch`
+ * expansion answers the same message its enclosing command answered.
+ */
+export function getCurrentMessageCause(entityId: string): MessageCause | undefined {
+  for (let scope = scopes.getStore(); scope; scope = scope.parent) {
+    if (scope.entityId !== entityId || !scope.open) continue;
+    if (scope.messageCause) return scope.messageCause;
+  }
+  return undefined;
 }
 
 export function setCurrentCommand(entityId: string, raw: string | undefined): void {

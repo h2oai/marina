@@ -134,13 +134,13 @@ export function registerGeneralCommands(engine: Engine): void {
   engine.commands.registerBuiltin(
     shoutCommand({
       getEntity: (id) => engine.entities.get(id),
-      broadcastAll: (senderId, msg, tag?) => {
+      broadcastAll: (senderId, msg, tag?, metadata?) => {
         const sender = engine.entities.get(senderId);
         const senderName = sender?.name;
         for (const entity of engine.entities.all()) {
           if (entity.kind === "agent" && entity.id !== senderId) {
             if (senderName && isIgnoring(entity, senderName)) continue;
-            engine.sendToEntity(entity.id, msg, tag);
+            engine.sendToEntity(entity.id, msg, tag, metadata);
           }
         }
       },
