@@ -969,6 +969,11 @@
 # MARINA_FORECAST_ROUTE_CANDIDATES=ensemble,delphi,tournament,skeptic
 # MARINA_FORECAST_ROUTE_MIN_N=30
 
+# Shadow challengers (src/forecast/shadow.ts): the paired evidence method routing needs, from live questions. `off` (default) runs nothing. A fraction (0–1) samples that share of FILED live forecasts (`forecast … resolves:`/`forecast track`, `POST /v1/forecast` with `save`; never a measurement run) and runs ONE challenger card beside it — the first card in the answer's routing `explore` order still short of ROUTE_MIN_N paired questions (the default card when routing answered with a challenger) — on the same request, deps and evidence cutoff. It is filed under `marina:shadow` (source `shadow`, `eval_mode = live`: no standing), tagged `shadow`, `method:`/`card:` (the card), `model:` (its models), the live answer's `family:` classes and its `q:` id or `pair:forecast:<live id>`, and settles with the live answer, so its outcome teaches lessons and writes history like any other. The live answer is never changed. A cutoff more than an hour in the past gets backtest isolation (a date-filtered engine as is, any other behind the strict pre-cutoff filter). MAX_PER_DAY (default 10) and CAP_USD (default 2) bound shadows per UTC day, counting filed shadows and those in flight; the world's daily spend cap applies too. Routing `off` names no challenger, so nothing runs. `forecast routes` shows the paired evidence.
+# MARINA_FORECAST_SHADOW=off
+# MARINA_FORECAST_SHADOW_MAX_PER_DAY=10
+# MARINA_FORECAST_SHADOW_CAP_USD=2
+
 # Question features for method routing (src/forecast/featurise.ts). Mechanical features (answer type, group, category, board, horizon) are always used. `auto` (default) also asks the configured decision backend (MARINA_DECISIONS) two fixed questions — the question's domain from a fixed list and whether a scheduled event falls inside the horizon — and adds the domain to the class chain; `on` the same; `observe` asks and records them on the answer without using them; `off` asks nothing. Only the question text (emails and secrets masked, clipped), the answer type and the horizon are sent — never the asker's context, priors or identity. No backend, a timeout or the spend cap falls open to the mechanical features; the content-free receipt goes on the answer.
 # MARINA_FORECAST_FEATURES=auto
 
@@ -1023,6 +1028,9 @@
 # MARINA_ARENA_ROUTING=on
 # MARINA_ARENA_ROUTE_MIN_N=8
 # MARINA_ARENA_SHADOW_CHALLENGERS=
+
+# Earned arena routes also read the shared outcome rows (src/arena/earned-routes.ts): a mechanical forecast outcome tagged `family:<tracker>`, `method:<runnable spec>` and `arena:<round>` whose filed answer is a number with an sd, scored on the arena's own skill scale (the same last-before-lock rule as shadow records). Our own arena filings (`marina:arena/<entrant>`) and any (round, spec) already in the arena tables are never counted twice, so existing routes are unchanged. `off` reads the arena tables only.
+# MARINA_ARENA_ROUTE_OUTCOMES=on
 
 # `research:wiki-events:<model>[@<retrievers>]` and `wiki-specialist:<model>[,…][@<retrievers>]` (Wikipedia top-N with scheduled events): the most articles a run may add to the statistical list (recency, or the specialist's projected weekly views) from mechanically verified events (0 = none, the statistical list only).
 # MARINA_ARENA_WIKI_EVENTS_MAX_INSERT=3

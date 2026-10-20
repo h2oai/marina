@@ -179,6 +179,7 @@ export async function handleForecast(
           save.target.filing,
         )
       : undefined;
+  await (await import("../../engine/commands/forecast")).startShadow(db, answerId, answer);
   return json({ ...answer, scale: made.scale, ...savedFields(save.target, answerId) });
 }
 
@@ -365,6 +366,7 @@ async function typed(
           save.filing,
         )
       : undefined;
+  await (await import("../../engine/commands/forecast")).startShadow(db, answerId, made.answer);
   return json({ ...made.answer, scale: made.scale, ...savedFields(save, answerId) });
 }
 

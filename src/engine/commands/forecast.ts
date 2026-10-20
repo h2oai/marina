@@ -26,6 +26,7 @@ const USAGE = [
   "       forecast list                     your saved forecasts and, once resolved, their scores",
   "       forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves",
   "       forecast competence [family]      what Marina's resolved record says each method is good at",
+  "       forecast routes [family]          paired evidence per family and method, and which routes are earned",
 ].join("\n");
 /** Each forecast spends real money (web research + several models): a small per-entity budget. */
 const limiter = new RateLimiter({ maxTokens: 5, refillRate: 1, refillInterval: 12 * 60_000 });
@@ -64,6 +65,7 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       { syntax: "forecast list", effect: "read" },
       { syntax: "forecast track <id> <venue>/<ticker>", effect: "write" },
       { syntax: "forecast competence [<family prefix>]", effect: "read" },
+      { syntax: "forecast routes [<family prefix>]", effect: "read" },
     ],
     name: "forecast",
     aliases: ["predict"],
@@ -89,6 +91,19 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
           ctx.send(input.entity, renderCompetence(competenceMap(db, family ? { family } : {})));
         })().catch((err) =>
           ctx.send(input.entity, `Competence map unavailable: ${getErrorMessage(err)}`),
+        );
+      }
+      if (sub === "routes" && rest.length <= 1) {
+        // Read-only: earned routing across forecast and arena evidence (src/forecast/route-view.ts).
+        if (!deps.lessonsDb) return ctx.send(input.entity, "The route view needs persistence.");
+        const db = deps.lessonsDb;
+        return (async () => {
+          const { loadRouteView, renderRouteView } = await import("../../forecast/route-view");
+          const family = rest[0]?.replace(/^family:/, "");
+          const view = await loadRouteView(db, family ? { family } : {});
+          ctx.send(input.entity, renderRouteView(view.rows, view.notes));
+        })().catch((err) =>
+          ctx.send(input.entity, `Route view unavailable: ${getErrorMessage(err)}`),
         );
       }
       if (sub === "track") {
@@ -149,6 +164,7 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
           if ("error" in made) return ctx.send(input.entity, made.error);
           const a = made.answer;
           const saved = name && deps.db ? saveTypedAnswer(deps.db, name, a, sampleId) : undefined;
+          await startShadow(deps.lessonsDb, saved, a);
           ctx.send(
             input.entity,
             renderTyped(a) +
@@ -187,6 +203,7 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
         if ("error" in made) return ctx.send(input.entity, made.error);
         const a = made.answer;
         const saved = name && deps.db ? saveAnswer(deps.db, name, a, sampleId) : undefined;
+        await startShadow(deps.lessonsDb, saved, a);
         ctx.send(
           input.entity,
           render(a) +
@@ -256,6 +273,21 @@ export interface AnswerFiling {
   source: string;
   externalId?: string;
   evalMode?: "live" | "measure";
+}
+
+/**
+ * A filed live answer's shadow challenger (`src/forecast/shadow.ts`; only when
+ * `MARINA_FORECAST_SHADOW` planned one). Runs in the background; the reply and
+ * the filed answer are never touched.
+ */
+export async function startShadow(
+  db: MarinaDB | undefined,
+  answerId: number | undefined,
+  answer: unknown,
+): Promise<void> {
+  if (!db || answerId === undefined || !process.env.MARINA_FORECAST_SHADOW?.trim()) return;
+  const { startForecastShadow } = await import("../../forecast/shadow");
+  startForecastShadow(db, answerId, answer);
 }
 
 /** Persist a typed answer (best-effort, like `saveAnswer`). */

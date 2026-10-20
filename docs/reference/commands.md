@@ -4321,6 +4321,7 @@ Usage: forecast <question> [resolves:<venue>/<ticker>]   e.g. forecast Will the 
        forecast list                     your saved forecasts and, once resolved, their scores
        forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves
        forecast competence [family]      what Marina's resolved record says each method is good at
+       forecast routes [family]          paired evidence per family and method, and which routes are earned
 
 Category: Markets & Forecasting. Minimum rank: 0.
 Aliases: `predict`.
@@ -4361,6 +4362,13 @@ Effect: write.
 - `field-2` (`ticker`): text, required.
 
 ### `forecast competence [<family prefix>]`
+
+Effect: read.
+
+- `field-0` (`family prefix`): text, optional group `option-0`.
+- Group `option-0`: `family prefix`.
+
+### `forecast routes [<family prefix>]`
 
 Effect: read.
 

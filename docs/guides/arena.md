@@ -613,7 +613,12 @@ then shadow them before trusting them — samples per family are small.
 Each route is its family's **default**, not a fixed choice (`src/arena/earned-routes.ts`). Before
 a routed round is filed, the evidence on record is read: our scored filing of every resolved round
 (matched to the default by method kind, so a model upgrade keeps the record) and the shadow
-ledger's last pre-lock record of every runnable forecaster spec. Only outcomes that were public by
+ledger's last pre-lock record of every runnable forecaster spec. The shared outcome rows count too:
+a mechanical forecast outcome tagged `family:<tracker>`, `method:<runnable spec>` and
+`arena:<round>`, whose filed answer is a number, is scored on the same skill scale with the same
+last-before-lock rule. Our own settled filings (`marina:arena/<entrant>`) and any round and spec the
+arena tables already hold are never counted twice, so existing routes are unchanged
+(`MARINA_ARENA_ROUTE_OUTCOMES=off` reads the arena tables only). Only outcomes that were public by
 then count, and rounds whose outcome was public before their lock never count. A challenger
 replaces the default only on the general forecaster's promotion rule (`earnedPick` in
 `src/forecast/routing.ts`):
@@ -631,6 +636,7 @@ filing's detail as `routing`.
 | Command | What it does |
 |---|---|
 | `bun run arena routes` | prints every family's decision now (read-only, no model calls) |
+| `forecast routes [family]` (in-world) | one table across forecast and arena evidence: paired n, win rate, gain and whether each route is earned |
 | `bun run arena shadow challengers <round_id\|due>` | runs the challengers the operator lists per family in `MARINA_ARENA_SHADOW_CHALLENGERS` (`civiqs=nowcast\|<spec>;aaii=<spec>`), so exploring costs only what is listed |
 
 `spike-decay` is a free challenger for Trends baskets (`src/arena/spike-decay.ts`): the nowcast,

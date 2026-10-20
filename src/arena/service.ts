@@ -829,7 +829,12 @@ export async function arenaDepsWithForecaster(
       ...(notes ? { notes } : {}),
       routeEvidence: async () => {
         const { loadRouteEvidence } = await import("./earned-routes");
-        return loadRouteEvidence(store, deps.data, deps.config.entrant);
+        // The shared outcome rows too, when the store is a Marina database.
+        const outcomes =
+          "listOutcomes" in store && "getForecastAnswer" in store
+            ? (store as unknown as import("./earned-routes").RouteOutcomeReader)
+            : undefined;
+        return loadRouteEvidence(store, deps.data, deps.config.entrant, outcomes, env);
       },
       previous: (roundId) => {
         const row = store.acceptedArenaSubmission(deps.config.entrant, roundId);
