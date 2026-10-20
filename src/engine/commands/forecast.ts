@@ -4,6 +4,7 @@
 import { RateLimiter } from "../../auth/rate-limiter";
 import type { AnswerSpec } from "../../forecast/answer-types";
 import type { ForecastAnswer } from "../../forecast/question";
+import { residentsMode } from "../../forecast/resident-mode";
 import type { ForecastScale } from "../../forecast/service";
 import type { TypedForecastAnswer } from "../../forecast/typed";
 import { bold, dim, header, separator } from "../../net/ansi";
@@ -26,6 +27,9 @@ const USAGE = [
   "       forecast list                     your saved forecasts and, once resolved, their scores",
   "       forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves",
   "       forecast competence [family]      what Marina's resolved record says each method is good at",
+  "       forecast <question> crew:<crew>|role:<role> [pattern:ensemble|delphi] [residents:N] [asof:<date>] [measure:yes]",
+  "                                         residents answer with their own tools, as a task run as a Score",
+  "                                         (MARINA_FORECAST_RESIDENTS=on; a past asof: or measure:yes fences their tools)",
 ].join("\n");
 /** Each forecast spends real money (web research + several models): a small per-entity budget. */
 const limiter = new RateLimiter({ maxTokens: 5, refillRate: 1, refillInterval: 12 * 60_000 });
@@ -64,6 +68,16 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       { syntax: "forecast list", effect: "read" },
       { syntax: "forecast track <id> <venue>/<ticker>", effect: "write" },
       { syntax: "forecast competence [<family prefix>]", effect: "read" },
+      {
+        syntax:
+          "forecast <question> crew:<crew> [pattern:<ensemble|delphi>] [residents:<n>] [asof:<iso>] [measure:yes]",
+        effect: "execute",
+      },
+      {
+        syntax:
+          "forecast <question> role:<role> [pattern:<ensemble|delphi>] [residents:<n>] [asof:<iso>] [measure:yes]",
+        effect: "execute",
+      },
     ],
     name: "forecast",
     aliases: ["predict"],
@@ -106,22 +120,21 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
             : `No open forecast #${id} of yours to track.`,
         );
       }
-      const parsed = parseModifiers(args.split(/\s+/), {
-        resolves: { type: "string" },
-        type: { type: "string" },
-        options: { type: "string" },
-        size: { type: "string" },
-        ends: { type: "string" },
-      });
+      const parsed = parseModifiers(args.split(/\s+/), forecastModifierSpec());
       const sampleId = parsed.values.resolves as string | undefined;
       if (sampleId !== undefined && !parseSampleId(sampleId)) {
         return ctx.send(input.entity, "resolves: takes a <venue>/<ticker> Sample id.");
       }
       const typed = typedSpec(parsed.values);
       if (typed && "error" in typed) return ctx.send(input.entity, typed.error);
-      const modified = sampleId !== undefined || typed !== undefined;
+      const residentAsked = ["crew", "role", "pattern", "residents", "asof", "measure"].some(
+        (k) => parsed.values[k] !== undefined,
+      );
+      const modified = sampleId !== undefined || typed !== undefined || residentAsked;
       const question = modified ? parsed.rest.join(" ").trim() : args;
       if (!question) return ctx.send(input.entity, USAGE);
+      const residentReq = residentAsked ? residentRequest(parsed.values) : undefined;
+      if (residentReq && "error" in residentReq) return ctx.send(input.entity, residentReq.error);
       const capped = dailyCapRefusal();
       if (capped) {
         ctx.send(input.entity, `Not forecasting: ${capped}.`);
@@ -132,6 +145,50 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
           input.entity,
           "Forecast budget used up for now — try again in a few minutes.",
         );
+      }
+      if (residentReq) {
+        ctx.send(
+          input.entity,
+          dim(`Asking residents (${residentReq.assignee}, ${residentReq.pattern}) as a task…`),
+        );
+        return (async () => {
+          const { forecastAsTask } = await import("../../forecast/resident-forecast");
+          const made = await forecastAsTask(
+            {
+              request: {
+                forecast: {
+                  question,
+                  answer: typed?.spec ?? { type: "choice", options: YES_NO, probabilities: true },
+                  ...(typed?.endTime ? { endTime: typed.endTime } : {}),
+                  ...(residentReq.asOf ? { asOf: residentReq.asOf } : {}),
+                },
+                pattern: residentReq.pattern,
+                assignee: residentReq.assignee,
+                ...(residentReq.k ? { k: residentReq.k } : {}),
+                measure: residentReq.measure,
+              },
+              filer: { id: input.entity, name: name ?? input.entity },
+              ...(sampleId ? { sampleId } : {}),
+            },
+            deps.lessonsDb ? { db: deps.lessonsDb } : {},
+          );
+          if ("error" in made) return ctx.send(input.entity, made.error);
+          const r = made.answer.residents;
+          ctx.send(
+            input.entity,
+            `${renderTyped(made.answer)}\n${dim(
+              `residents (${r.pattern}${r.fence ? `, fenced at ${r.fence}` : ""}): ${
+                r.producers.join(", ") || "none answered"
+              } · ${r.budget.attempted}/${r.budget.calls} calls${
+                made.taskId !== undefined ? ` · task #${made.taskId}` : ""
+              }${made.answerId !== undefined ? ` · saved as forecast #${made.answerId}` : ""}${
+                made.residentAnswerIds.length
+                  ? ` · ${made.residentAnswerIds.length} resident answer(s) filed`
+                  : ""
+              }`,
+            )}`,
+          );
+        })().catch((err) => ctx.send(input.entity, `Forecast failed: ${getErrorMessage(err)}`));
       }
       ctx.send(
         input.entity,
@@ -206,6 +263,72 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
 }
 
 const TYPED = ["choice", "multi", "number", "ranking", "text"] as const;
+const YES_NO = [{ id: "yes" }, { id: "no" }];
+const RESIDENT_MODIFIERS = {
+  crew: { type: "string" },
+  role: { type: "string" },
+  pattern: { type: "string" },
+  residents: { type: "string" },
+  asof: { type: "string" },
+  measure: { type: "string" },
+} as const;
+
+/**
+ * The `forecast` modifiers. Resident forecasts add theirs only when they are
+ * on (MARINA_FORECAST_RESIDENTS): off, every input parses exactly as before.
+ */
+export function forecastModifierSpec(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    resolves: { type: "string" },
+    type: { type: "string" },
+    options: { type: "string" },
+    size: { type: "string" },
+    ends: { type: "string" },
+    ...(residentsMode(env) === "on" ? RESIDENT_MODIFIERS : {}),
+  } as const;
+}
+
+/**
+ * `crew:` / `role:` / `pattern:` / `residents:` / `asof:` / `measure:` → a
+ * resident forecast (`src/forecast/resident-forecast.ts`).
+ */
+export function residentRequest(values: Record<string, unknown>):
+  | {
+      assignee: string;
+      pattern: "ensemble" | "delphi";
+      k?: number;
+      asOf?: string;
+      measure: boolean;
+    }
+  | { error: string } {
+  const str = (k: string) => (typeof values[k] === "string" ? (values[k] as string).trim() : "");
+  if (str("crew") && str("role")) return { error: "Name a crew: or a role:, not both." };
+  const slug = /^[A-Za-z0-9_.-]{1,64}$/;
+  for (const k of ["crew", "role"])
+    if (str(k) && !slug.test(str(k)))
+      return { error: `${k}: takes a name (letters, digits, - _ .).` };
+  const pattern = (str("pattern") || "ensemble").toLowerCase();
+  if (pattern !== "ensemble" && pattern !== "delphi")
+    return { error: "pattern: takes ensemble or delphi for a resident forecast." };
+  const k = str("residents") ? Number(str("residents")) : undefined;
+  if (k !== undefined && !(Number.isInteger(k) && k >= 1 && k <= 7))
+    return { error: "residents: takes a whole number 1–7." };
+  let asOf: string | undefined;
+  if (str("asof")) {
+    const raw = str("asof");
+    const t = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00Z` : raw);
+    if (!Number.isFinite(t)) return { error: "asof: takes an ISO time or YYYY-MM-DD." };
+    asOf = new Date(t).toISOString();
+  }
+  const measure = ["yes", "on", "true", "1"].includes(str("measure").toLowerCase());
+  return {
+    assignee: str("crew") ? `marina:${str("crew")}` : `role:${str("role") || "forecaster"}`,
+    pattern,
+    ...(k !== undefined ? { k } : {}),
+    ...(asOf ? { asOf } : {}),
+    measure,
+  };
+}
 
 /** `type:` / `options:` / `size:` / `ends:` → a typed answer spec (undefined without `type:`). */
 export function typedSpec(

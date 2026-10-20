@@ -591,12 +591,19 @@ function fetchLegacy(
   db: MarinaDB,
   entityName: string,
   query: string,
-  opts: Required<Pick<UnifiedContextOptions, "weights">> & Pick<UnifiedContextOptions, "noteType">,
+  opts: Required<Pick<UnifiedContextOptions, "weights">> &
+    Pick<UnifiedContextOptions, "noteType" | "asOf">,
 ): Fetched {
   const out: Fetched = { items: {}, degraded: [] };
   const terms = queryTerms(query);
   const distinctive = distinctiveTerms(db, entityName, terms);
-  const relevant = (n: { content: string }) => relevantToQuery(n.content, terms, distinctive);
+  // The as-of fence: a note written after the cutoff, or revised since it was
+  // written (its current text may be later than the cutoff), is not served.
+  const known = (n: { id: number; created_at: number }) =>
+    opts.asOf === undefined ||
+    (n.created_at <= opts.asOf && (findDurableTwin(db, n.id)?.version ?? 1) <= 1);
+  const relevant = (n: { id: number; content: string; created_at: number }) =>
+    known(n) && relevantToQuery(n.content, terms, distinctive);
   try {
     const skills = db
       .recallNotesWithType(entityName, query, "skill", {
@@ -618,8 +625,10 @@ function fetchLegacy(
     const trusted = expandMemoryRecall(db, seeds, entityName, {
       noteType: opts.noteType,
       trusted: true,
-    });
-    const ordinary = expandMemoryRecall(db, seeds, entityName, { noteType: opts.noteType });
+    }).filter(known);
+    const ordinary = expandMemoryRecall(db, seeds, entityName, { noteType: opts.noteType }).filter(
+      known,
+    );
     out.items.trusted = trusted.map((n) => noteItem("trusted", n));
     out.items.unverified = ordinary.map((n) => noteItem("unverified", n));
   } catch (error) {
@@ -1130,11 +1139,23 @@ async function retrieveUnifiedContext(
   const degraded: UnifiedDegraded[] = [];
   if (trimmed) {
     if (scope !== "evidence") {
-      const legacy = fetchLegacy(db, entityName, trimmed, { weights, noteType: opts.noteType });
+      const legacy = fetchLegacy(db, entityName, trimmed, {
+        weights,
+        noteType: opts.noteType,
+        ...(opts.asOf !== undefined ? { asOf: opts.asOf } : {}),
+      });
       Object.assign(fetched, legacy.items);
       degraded.push(...legacy.degraded);
     }
-    if (scope !== "legacy") {
+    if (scope !== "legacy" && opts.asOf !== undefined) {
+      // Durable records and assistance answers carry no per-item as-of: under
+      // the fence they are withheld, and said to be (fail closed).
+      const message = `withheld under the evidence cutoff ${new Date(opts.asOf).toISOString()}`;
+      degraded.push(
+        { tier: "evidence", code: "fenced", message },
+        { tier: "proposal", code: "fenced", message },
+      );
+    } else if (scope !== "legacy") {
       const represented = new Set<string>();
       for (const tier of LEGACY_TIERS)
         for (const item of fetched[tier] ?? []) {
@@ -1188,7 +1209,7 @@ async function retrieveUnifiedContext(
     valueDecision = judged.receipt;
   }
   const budgeted = applyBudget(served, perTier, budgetBytes, itemMaxBytes, values, trimmed);
-  if (trimmed && opts.derivedSources !== false)
+  if (trimmed && opts.derivedSources !== false && opts.asOf === undefined)
     await expandDerivedNotes(db, entityName, trimmed, budgeted, budgetBytes, itemMaxBytes);
   if (relevance && relevance.mode === "on" && relevance.outcome !== "fail_open")
     // A failed tier means "could not look", not "nothing relevant"; a missing

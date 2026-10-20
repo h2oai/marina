@@ -997,6 +997,13 @@
 # MARINA_FORECAST_MARINA_URL=http://localhost:3300
 # MARINA_FORECAST_MARINA_KEY=
 
+# Residents as forecast analysts (`src/forecast/resident-part.ts`; default off). `on` makes `marina:<crew>` and `role:<r>` analysts residents asked in-process inside the server (over HTTP, with the fence and deadline headers, from a command-line process; `role:` needs the server), and enables `forecast <q> crew:<c>|role:<r> pattern:ensemble|delphi` (and the API's `pattern`/`crew`/`role`): a world task run as a Score by K residents with their own tools. A past cutoff (`asof:`) or a measurement fences their tools at the cutoff (the as-of fence, `src/engine/evidence-fence.ts`). Off, every forecast path is unchanged.
+# MARINA_FORECAST_RESIDENTS=off
+# Per resident forecast: resident calls (default 24), wall clock in seconds (default 900, each call's deadline is what is left — a crew answers with its best draft), and its own spend cap in USD (default none: only the daily caps).
+# MARINA_FORECAST_RESIDENT_CALLS=24
+# MARINA_FORECAST_RESIDENT_TIMEOUT_S=900
+# MARINA_FORECAST_RESIDENT_BUDGET_USD=
+
 # ── Social Simulation Arena ──────────────────────────────────────────────────
 
 # Signed participation in the MIT Social Simulation Arena (docs/guides/arena.md). Off unless an entrant id is set. The key file holds the Ed25519 private key (mode 0600, `bun run arena keygen <path>`).

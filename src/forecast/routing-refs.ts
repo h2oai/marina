@@ -18,6 +18,9 @@ interface RoutingLike {
   families?: unknown;
   method?: unknown;
   question?: unknown;
+  /** A resident's own run (`./resident-forecast.ts`): its model and name. */
+  model?: unknown;
+  resident?: unknown;
 }
 
 /** An outcome row's refs (`refs_json`), tolerantly. */
@@ -49,5 +52,9 @@ export function routingRefs(answerJson: string | null | undefined): string[] {
   }
   if (typeof r.method === "string" && SAFE.test(r.method)) refs.push(`method:${r.method}`);
   if (typeof r.question === "string" && SAFE.test(r.question)) refs.push(`q:${r.question}`);
+  // ── Resident attribution (`./resident-forecast.ts`) ──
+  if (typeof r.model === "string" && SAFE.test(r.model)) refs.push(`model:${r.model}`);
+  if (typeof r.resident === "string" && SAFE.test(r.resident)) refs.push(`resident:${r.resident}`);
+  // ── end resident attribution ──
   return refs;
 }

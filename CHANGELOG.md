@@ -47,6 +47,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Forecasts answered by residents, bounded by an as-of fence** (opt-in,
+  `MARINA_FORECAST_RESIDENTS=on`; off, every path is byte-identical).
+  - **The as-of fence** (`src/engine/evidence-fence.ts`). An evidence cutoff now binds a resident's
+    whole turn, not one call. It rides the per-execution command scope (`runCommandScope`), is set
+    for the responder of a `model_request` routed with a cutoff (`x-marina-asof` over HTTP; the
+    envelope's `asof`), and is relayed to every agent a fenced resident reaches. While it holds,
+    `web search` uses only date-strict providers at the cutoff, `web fetch` returns the archived
+    page, `data` reads as of the cutoff, `recall`/`context`/`lessons` serve only what was known by
+    then, and every other outbound or knowledge-reading command — a nested `forecast` included,
+    and any command or room command the policy table does not name — is refused with a message
+    naming the cutoff. `currentEvidenceCutoff()` is the one read for tools.
+  - **`ResidentPart`** (`src/forecast/resident-part.ts`): a forecast part answered by a resident —
+    `marina:<crew>` through `routeToChannel`, `role:<r>` by standing — in-process inside the
+    server, over HTTP with the fence and deadline headers outside it. Each call passes the
+    forecast's remaining deadline and trace, runs under the forecast's call budget and spend
+    scope, and records who answered; `/v1` replies now name the answering resident
+    (`x-marina-respondent`).
+  - **A forecast as a task, run as a Score** (`src/forecast/resident-forecast.ts`):
+    `forecast <q> crew:<c>|role:<r> pattern:ensemble|delphi [residents:N] [asof:] [measure:yes]`
+    and the same fields on `POST /v1/forecast` create a world task and run the formation through
+    the Score executor — research first, K resident steps (Delphi: a summary and K revisions),
+    then the pipeline's own pure-code combination. Each resident's run is filed as its own answer
+    tagged `q:`, `method:`, `model:` and `resident:`, so resolution credits the residents whose
+    runs scored. Bounds: `MARINA_FORECAST_RESIDENT_CALLS`, `_TIMEOUT_S`, `_BUDGET_USD`.
+
 - **An honest feature surface** ([docs/reference/feature-status.md](docs/reference/feature-status.md)).
   Every major feature now has one status: core, siloed, experimental, demo or deprecated. The page
   also says how to enable each feature and which area owns it. The table mirrors `FEATURE_STATUS`

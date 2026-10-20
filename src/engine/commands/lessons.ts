@@ -14,6 +14,7 @@ import { dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, CommandInput, EntityId, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
+import { currentEvidenceCutoff } from "../evidence-fence";
 import { parseModifiers, splitOnTerminator } from "../parse-input";
 import { checkRoleEdit } from "../role-guard";
 import { requiresPersistence } from "./command-messages";
@@ -184,9 +185,12 @@ export function lessonsCommand(deps: { db?: MarinaDB }): CommandDef {
       // shared pool: a person reads its own, an agent its owner's.
       const name = ctx.getEntity?.(input.entity)?.name;
       const scope = name ? workScopeFor(deps.db, name) : undefined;
+      // The as-of fence (src/engine/evidence-fence.ts): only lessons known by the cutoff.
+      const asOf = currentEvidenceCutoff();
       const got = await recallAcross(deps.db, domains, topic, {
         limit: 8,
         maxBytes: 2_400,
+        ...(asOf ? { asOf } : {}),
         ...(scope?.kind === "owner" ? { owner: scope.owner } : {}),
       });
       if (got.mode === "off") {

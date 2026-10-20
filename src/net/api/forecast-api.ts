@@ -35,6 +35,7 @@ import {
   type SuppliedPriorSource,
 } from "../../forecast/prior";
 import type { ForecastAnswer, ForecastKind } from "../../forecast/question";
+import { residentsMode } from "../../forecast/resident-mode";
 import type { ForecastScale } from "../../forecast/service";
 import { type EvalContext, evalOption, sourceNamesBoard } from "../../learning/eval-context";
 import type { MarinaDB } from "../../persistence/database";
@@ -126,7 +127,8 @@ export async function handleForecast(
   }
   const save = saveTarget(body, req, db, auth);
   if ("error" in save) return errorJson(400, save.error, { code: "invalid_request_error" });
-  if (body.answer !== undefined) return typed(body, question, db, evalOption(req), save.target);
+  if (body.answer !== undefined)
+    return typed(body, question, db, evalOption(req), save.target, auth?.boundEntityName);
   if (body.kind !== undefined && body.kind !== "probability" && body.kind !== "number") {
     return errorJson(400, 'kind must be "probability" or "number"', {
       code: "invalid_request_error",
@@ -269,11 +271,16 @@ async function typed(
     category?: unknown;
     board?: unknown;
     contract?: unknown;
+    pattern?: unknown;
+    crew?: unknown;
+    role?: unknown;
+    residents?: unknown;
   },
   question: string,
   db: MarinaDB | undefined,
   measurement: { eval?: EvalContext } = {},
   save?: SaveTarget,
+  filer?: string,
 ): Promise<Response> {
   const parsed = parseAnswerSpec(body.answer);
   if ("error" in parsed) return errorJson(400, parsed.error, { code: "invalid_request_error" });
@@ -330,6 +337,58 @@ async function typed(
   if (capped) return errorJson(429, capped, { code: "spend_cap_reached" });
   const endTime = isoOrUndefined(body.endTime);
   const asOf = isoOrUndefined(body.asOf);
+  // ── Resident forecasts (`src/forecast/resident-forecast.ts`, MARINA_FORECAST_RESIDENTS=on) ──
+  if (
+    residentsMode() === "on" &&
+    [body.pattern, body.crew, body.role, body.residents].some((v) => v !== undefined)
+  ) {
+    const { residentRequest } = await import("../../engine/commands/forecast");
+    const asked = residentRequest({
+      ...(typeof body.crew === "string" ? { crew: body.crew } : {}),
+      ...(typeof body.role === "string" ? { role: body.role } : {}),
+      ...(typeof body.pattern === "string" ? { pattern: body.pattern } : {}),
+      ...(body.residents !== undefined ? { residents: String(body.residents) } : {}),
+    });
+    if ("error" in asked) return errorJson(400, asked.error, { code: "invalid_request_error" });
+    if (!filer) {
+      return errorJson(400, "a resident forecast needs an API key bound to an entity", {
+        code: "invalid_request_error",
+      });
+    }
+    const { forecastAsTask } = await import("../../forecast/resident-forecast");
+    const made = await forecastAsTask(
+      {
+        request: {
+          forecast: {
+            question,
+            answer: parsed.spec,
+            ...(endTime ? { endTime } : {}),
+            ...(asOf ? { asOf } : {}),
+            ...(typeof body.context === "string" && body.context.trim()
+              ? { context: body.context }
+              : {}),
+            ...(contract ? { contract: contract.contract } : {}),
+          },
+          pattern: asked.pattern,
+          assignee: asked.assignee,
+          ...(asked.k ? { k: asked.k } : {}),
+          measure: measurement.eval?.mode === "measure",
+        },
+        filer: { id: db?.durableKeyForName(filer) ?? filer, name: filer },
+        source: save?.filing.source ?? "api",
+        ...(save?.sampleId ? { sampleId: save.sampleId } : {}),
+      },
+      db ? { db } : {},
+    );
+    if ("error" in made) return errorJson(503, made.error, { code: "forecast_unavailable" });
+    return json({
+      ...made.answer,
+      ...(made.taskId !== undefined ? { taskId: made.taskId } : {}),
+      ...(made.answerId !== undefined ? { saved: true, answerId: made.answerId } : {}),
+      residentAnswerIds: made.residentAnswerIds,
+    });
+  }
+  // ── end resident forecasts ──
   // The same builder as the `forecast` command: operator formation and routing
   // (off = exactly that formation), the prior / recalibration stage, lessons.
   const made = await typedForecastFor(

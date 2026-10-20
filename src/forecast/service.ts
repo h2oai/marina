@@ -12,7 +12,10 @@
  *                              providers or local model).
  *                              `marina:<crew>` asks a crew on a Marina server
  *                              (MARINA_FORECAST_MARINA_URL / _KEY) — e.g. a crew
- *                              in the verification formation.
+ *                              in the verification formation. With
+ *                              MARINA_FORECAST_RESIDENTS=on, `marina:<crew>` and
+ *                              `role:<r>` are residents asked in-process
+ *                              (`./resident-part.ts`).
  *   MARINA_FORECAST_RETRIEVER  one or more of openrouter-web:<model>[@exa|@native],
  *                              sonar:<model>, tavily:<basic|advanced>, search[:<backends>]
  *                              (every planned query through a backend chain, pages read and
@@ -91,6 +94,7 @@ import type { LessonStore } from "./lessons";
 import { lookupsFromSpec } from "./lookups";
 import { quantModeFromEnv, quantWeightFromEnv } from "./quant";
 import type { ForecastDeps } from "./question";
+import { isResidentSpec, residentPart, residentsMode } from "./resident-part";
 import { DEFAULT_RETRIEVER, defaultRetrieverSpec } from "./retriever-default";
 import { triageModeFromEnv, triageModelFromEnv } from "./triage";
 import { triageCalendar, triageCalendarEnabled } from "./triage-calendar";
@@ -267,6 +271,9 @@ export function modelPart(
   spec: string,
   env: NodeJS.ProcessEnv = process.env,
 ): ModelPart & { usage?: { costUsd: number } } {
+  // ── Resident analysts hook (`./resident-part.ts`, MARINA_FORECAST_RESIDENTS=on) ──
+  if (residentsMode(env) === "on" && isResidentSpec(spec)) return residentPart(spec, { env });
+  // ── end resident analysts hook ──
   if (spec.startsWith("marina:")) return crewPart(spec, env);
   const made = modelComplete(spec, env, {
     purpose: "forecast",

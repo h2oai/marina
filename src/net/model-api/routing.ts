@@ -27,6 +27,7 @@ import {
   upstreamRefusalStatus,
 } from "../../coordination/request-deadline";
 import type { Engine } from "../../engine/engine";
+import { fenceEntity, parseEvidenceCutoff } from "../../engine/evidence-fence";
 import { compareTraceCohorts } from "../../engine/trace-dataset";
 import { projectTraces } from "../../engine/trace-projection";
 import { adviseTraceRouting, selectAdaptiveCandidate } from "../../engine/trace-routing-advice";
@@ -325,6 +326,11 @@ export interface RouteResult {
   budgetForced?: BudgetForced;
   /** The lesson ids the request was served (`x-marina-lessons`), when any were recalled. */
   lessons?: string;
+  /**
+   * The resident whose reply answered (`x-marina-respondent`), so a caller
+   * filing the answer can name its producer. Absent for a forced draft.
+   */
+  respondent?: { id: string; name: string };
 }
 
 /** A responder's `repaired` label, when it is one Marina issues. */
@@ -344,7 +350,22 @@ export interface RouteOptions {
   deadlineMs?: number;
   /** The request's eval context (`x-marina-eval`): self-exclusion for measurement runs. */
   eval?: EvalContext;
+  /**
+   * The as-of fence (`x-marina-asof`, `src/engine/evidence-fence.ts`): the
+   * responder is fenced at this ISO cutoff while the request is open — its
+   * web, data, recall and lessons are bounded by it, every other outbound
+   * command is refused, and whoever it hands work to is fenced too.
+   */
+  evidenceCutoff?: string;
+  /**
+   * Route to this member (an online member of the endpoint channel) instead
+   * of load balancing — a `role:` assignee resolved by standing.
+   */
+  pinTarget?: string;
 }
+
+/** How long past its deadline a request's fence still holds (a late tool call). */
+const FENCE_GRACE_MS = 30_000;
 
 /**
  * Non-retryable upstream refusals of the lead's model before a routed request
@@ -472,9 +493,15 @@ export async function routeToChannel(
   // Load balancing — over the serving crew's outward face when one serves.
   const plan = servingCrewPlan(engine, channelName, onlineMembers);
   const strategy = opts?.strategy ?? "round-robin";
-  const route = selectRouteTarget(engine, plan.eligible, channel.id, strategy);
+  const pinned =
+    opts?.pinTarget && onlineMembers.includes(opts.pinTarget) ? opts.pinTarget : undefined;
+  const route = pinned
+    ? { target: pinned, reason: "pinned" }
+    : selectRouteTarget(engine, plan.eligible, channel.id, strategy);
   const target = route.target;
   const protocol = plan.protocolFor(target);
+  const fenceMs = parseEvidenceCutoff(opts?.evidenceCutoff);
+  const asof = fenceMs !== undefined ? new Date(fenceMs).toISOString() : undefined;
   // Lessons from past outcomes for the lead to apply (MARINA_LESSONS; observe
   // and off inject nothing). Byte-budgeted: the perception is clamped.
   // Cross-board `meta` lessons ride a third of the budget.
@@ -482,7 +509,12 @@ export async function routeToChannel(
     engine.db,
     ["tools", "code", "forecast"],
     userContent.slice(0, 500),
-    { limit: 3, maxBytes: 600, ...(opts?.eval ? { eval: opts.eval } : {}) },
+    {
+      limit: 3,
+      maxBytes: 600,
+      ...(opts?.eval ? { eval: opts.eval } : {}),
+      ...(asof ? { asOf: asof } : {}),
+    },
   );
 
   // Multi-turn conversation
@@ -524,6 +556,7 @@ export async function routeToChannel(
     type: "model_request",
     id: requestId,
     ...evalEnvelope(opts?.eval),
+    ...(asof ? { asof } : {}),
     ...(protocol ? { protocol } : {}),
     ...(lessons.inject.length ? { lessons: lessons.inject.map(formatLesson) } : {}),
     trace: requestTrace(requestId),
@@ -550,6 +583,16 @@ export async function routeToChannel(
   );
   const targetName = engine.getOnlineAgents().find((e) => e.id === target)?.name;
   const drafts = new RequestDraftCollector(requestId, targetName);
+  // The fence binds the responder's whole turn: fenced before it hears the request.
+  const releaseFence =
+    fenceMs !== undefined
+      ? fenceEntity(
+          target,
+          `request:${requestId}`,
+          fenceMs,
+          Date.now() + deadlineMs + FENCE_GRACE_MS,
+        )
+      : undefined;
   // The member whose correlated reply fulfilled the request (usually `target`).
   let respondedBy = target;
   let detachEvents = () => {};
@@ -690,7 +733,22 @@ export async function routeToChannel(
       durationMs: Date.now() - startedAt,
       timestamp: Date.now(),
     });
-    return lessons.recalled.length ? { ...result, lessons: lessonsHeaderValue(lessons) } : result;
+    // Who answered: the correlated replier, or the lead whose own draft was forced.
+    const respondentId = result.budgetForced
+      ? result.budgetForced.source?.startsWith("lead")
+        ? target
+        : undefined
+      : respondedBy;
+    const respondentName = respondentId
+      ? engine.entities.get(respondentId as never)?.name
+      : undefined;
+    const attributed =
+      respondentId && respondentName
+        ? { ...result, respondent: { id: respondentId, name: respondentName } }
+        : result;
+    return lessons.recalled.length
+      ? { ...attributed, lessons: lessonsHeaderValue(lessons) }
+      : attributed;
   } catch (error) {
     engine.logEvent({
       type: "model_request_lifecycle",
@@ -709,6 +767,7 @@ export async function routeToChannel(
     });
     throw error;
   } finally {
+    releaseFence?.();
     cancelReminders();
     decrementPending(target);
   }
@@ -781,6 +840,10 @@ async function collectResponses(
   const runId = `req-${crypto.randomUUID().slice(0, 8)}`;
   const startedAt = Date.now();
   const targetByRequest = new Map<string, string>();
+  // The as-of fence binds every fanned-out responder until the fan-out settles.
+  const fenceMs = parseEvidenceCutoff(opts?.evidenceCutoff);
+  const asof = fenceMs !== undefined ? new Date(fenceMs).toISOString() : undefined;
+  const releaseFences: Array<() => void> = [];
   const fanoutTrace = (requestId: string) => ({
     runId,
     traceId: runId,
@@ -822,6 +885,7 @@ async function collectResponses(
         clearTimeout(overall);
         if (graceTimer) clearTimeout(graceTimer);
         unsub();
+        for (const release of releaseFences.splice(0)) release();
         for (const id of pending) finishTarget(id, "failed", unresolvedDetail);
         for (const t of targets) decrementPending(t);
       }
@@ -860,6 +924,15 @@ async function collectResponses(
         pending.add(requestId);
         targetByRequest.set(requestId, target);
         incrementPending(target);
+        if (fenceMs !== undefined)
+          releaseFences.push(
+            fenceEntity(
+              target,
+              `request:${requestId}`,
+              fenceMs,
+              Date.now() + REQUEST_TIMEOUT_MS + FENCE_GRACE_MS,
+            ),
+          );
         engine.logEvent({
           type: "model_request_lifecycle",
           phase: "received",
@@ -886,6 +959,7 @@ async function collectResponses(
             type: "model_request",
             id: requestId,
             ...evalEnvelope(opts?.eval),
+            ...(asof ? { asof } : {}),
             trace: fanoutTrace(requestId),
             content: userContent,
             target,
@@ -1033,9 +1107,15 @@ export function routeToChannelStreaming(
 
   const plan = servingCrewPlan(engine, channelName, onlineMembers);
   const strategy = opts?.strategy ?? "round-robin";
-  const route = selectRouteTarget(engine, plan.eligible, channel.id, strategy);
+  const pinned =
+    opts?.pinTarget && onlineMembers.includes(opts.pinTarget) ? opts.pinTarget : undefined;
+  const route = pinned
+    ? { target: pinned, reason: "pinned" }
+    : selectRouteTarget(engine, plan.eligible, channel.id, strategy);
   const target = route.target;
   const protocol = plan.protocolFor(target);
+  const fenceMs = parseEvidenceCutoff(opts?.evidenceCutoff);
+  const asof = fenceMs !== undefined ? new Date(fenceMs).toISOString() : undefined;
 
   const convId = opts?.conversationId ?? undefined;
   let convChannel: { id: string; name: string } | undefined;
@@ -1055,6 +1135,7 @@ export function routeToChannelStreaming(
     type: "model_request",
     id: reqId,
     ...evalEnvelope(opts?.eval),
+    ...(asof ? { asof } : {}),
     ...(protocol ? { protocol } : {}),
     trace: requestTrace(reqId),
     content: userContent,
@@ -1066,6 +1147,16 @@ export function routeToChannelStreaming(
   });
 
   incrementPending(target);
+  // The as-of fence binds the streaming responder too, until the stream settles.
+  const releaseFence =
+    fenceMs !== undefined
+      ? fenceEntity(
+          target,
+          `request:${reqId}`,
+          fenceMs,
+          Date.now() + REQUEST_TIMEOUT_MS + FENCE_GRACE_MS,
+        )
+      : undefined;
 
   engine.logEvent({
     type: "model_request_lifecycle",
@@ -1103,6 +1194,7 @@ export function routeToChannelStreaming(
     if (settled) return;
     settled = true;
     if (timer) clearTimeout(timer);
+    releaseFence?.();
     cancelReminders?.();
     unsub?.();
     decrementPending(target);
