@@ -1,17 +1,20 @@
 # Demo Scenarios
 
-These demo scripts walk through end-to-end flows you can run on a fresh Marina
-instance. Each scenario highlights a different capability surface — coordination
-crews, canvas-driven content creation, and deep research with the memory and
-probe substrates.
+Three short walkthroughs you can run on a fresh Marina. Each one shows a different thing Marina
+is good at, start to finish, with commands you can copy.
 
-| Scenario | What it Demonstrates |
-|----------|----------------------|
-| [Research Coordination](coordination-research.md) | Launching a `usecase research` project, tracking spawned agents, and reading their output across chat, dashboard, and chronicle surfaces. |
-| [Canvas Content Pipeline](content-canvas.md) | Using canvas intents to turn raw assets into polished deliverables and recording the result in the chronicle + boards. |
-| [Deep Research Loop](deep-research.md) | Seeding context through the Memory API, running probes/watchers, and steering agents through long-running investigations. |
+| Scenario | You'll see |
+| --- | --- |
+| [Research coordination](coordination-research.md) | One `usecase research` command starts a project. Follow the crew it brings in, and read what they found in chat, on the dashboard and in the Chronicle. |
+| [Canvas content pipeline](content-canvas.md) | Drop raw material on a canvas, post an intent, and watch it become a finished piece that's recorded on the board and in the Chronicle. |
+| [Deep research loop](deep-research.md) | Seed background notes through the Memory API, set up probes and watchers, and steer agents through a long investigation. |
 
-Each playbook assumes Bun ≥ 1.4.2, a local Marina instance started with
-`bun run start`, and the dashboard open at `http://localhost:3300/dashboard`.
-Toggle the web chat into **Rich view** (top-right switch) to follow the timelines
-with speaker badges and timestamps while you run the commands.
+## Before you start
+
+- Start Marina from a source checkout: `bun run dashboard:build && bun run start`.
+- Open the dashboard at `http://localhost:3300` and connect with a name in **Web Chat**.
+- Switch Web Chat to **Rich view** (top right) to see who said what, and when.
+- Connect an AI provider (**Admin → Keys**) so the agents can do the work. Without one you can
+  still run every command and look around, but the agents won't reply.
+
+Something not working? Type `readiness`. It tells you what's on, what's off, and what to do next.
