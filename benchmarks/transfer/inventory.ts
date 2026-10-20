@@ -17,7 +17,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { adapterFor, loadRuns, type Source } from "./adapters";
+import { adapterFor, collapseTrials, loadRuns, type Source } from "./adapters";
 import type { ItemScore } from "./core";
 import {
   DEFAULT_MAX_COPY_BYTES,
@@ -568,7 +568,7 @@ export function buildInventory(opts: InventoryOptions): Inventory {
             recorded: Math.min(...started),
             recordedTo: Math.max(...started),
           },
-          runs: list.map((r) => ledgerItems(h!.db, r.id)),
+          runs: list.map((r) => collapseTrials(ledgerItems(h!.db, r.id))),
         });
       }
     } catch (err) {

@@ -21,6 +21,7 @@ import {
   arenaEvaluateAdapter,
   arenaPairedAdapter,
   browsecompAdapter,
+  collapseTrials,
   futurexAdapter,
   harnessAdapter,
   itemsAdapter,
@@ -300,6 +301,51 @@ describe("adapters", () => {
       { id: "q2", score: 0 },
       { id: "q3", score: 0.4 },
     ]);
+  });
+
+  test("harness: <task>#<trial> items collapse to one item per task (mean over trials)", () => {
+    const p = write("h-trials.json", {
+      config: {},
+      items: [
+        { id: "13#0", correct: true },
+        { id: "13#1", correct: false },
+        { id: "13#2", correct: true },
+        { id: "13#3", correct: true },
+        { id: "8#0", correct: false },
+        { id: "8#1", correct: false },
+      ],
+    });
+    expect(harnessAdapter.load!({ path: p })).toEqual([
+      { id: "13", score: 0.75 },
+      { id: "8", score: 0 },
+    ]);
+    // Opt-out keeps the trial rows; a run with any other id shape is left alone.
+    expect(harnessAdapter.load!({ path: p, options: { trials: "keep" } })).toHaveLength(6);
+    expect(
+      collapseTrials([
+        { id: "a#1", score: 1 },
+        { id: "b", score: 0 },
+      ]),
+    ).toEqual([
+      { id: "a#1", score: 1 },
+      { id: "b", score: 0 },
+    ]);
+  });
+
+  test("trial collapse keeps one task on one side of the held-out split", () => {
+    const tasks = Array.from({ length: 40 }, (_, i) => String(i));
+    const items = tasks.flatMap((t) =>
+      [0, 1, 2, 3].map((k) => ({ id: `${t}#${k}`, correct: (Number(t) + k) % 2 === 0 })),
+    );
+    const p = write("h-split.json", { config: {}, items });
+    const removed = new Map<string, Set<string>>();
+    const kept = applySplit(harnessAdapter.load!({ path: p }), { kind: "hash" }, "tau2", removed);
+    expect(kept.length).toBeGreaterThan(0);
+    for (const x of kept) {
+      expect(x.id).not.toContain("#");
+      expect(itemSplit("transfer:tau2", x.id, 0.5)).toBe("holdout");
+    }
+    expect(kept.length + removed.get("not in holdout split")!.size).toBe(tasks.length);
   });
 
   test("futurex: run dir with cutoffs and leak-audit exclusions", () => {
@@ -833,6 +879,34 @@ describe("ledger adapter (read-only)", () => {
     expect(loadRuns(ledgerAdapter, { path, options: { run: "r3" } })).toHaveLength(1);
     expect(() => loadRuns(ledgerAdapter, { path })).toThrow(/select runs/);
     expect(() => loadRuns(ledgerAdapter, { path, arm: "zzz" })).toThrow(/no ledger run matches/);
+  });
+
+  test("τ²-style <task>#<trial> ledger items collapse to tasks", () => {
+    const tpath = join(ldir, "tau.db");
+    const db = makeLedger(tpath);
+    db.prepare(
+      "INSERT INTO benchmark_runs (id, benchmark, config_json, status, started_at, label) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("t1", "tau2-airline", "{}", "completed", Date.parse("2026-10-03"), "sig-A");
+    const add = db.prepare(
+      "INSERT INTO benchmark_items (run_id, item_id, correct, score) VALUES (?, ?, ?, ?)",
+    );
+    for (const [id, ok] of [
+      ["13#0", 1],
+      ["13#1", 0],
+      ["16#0", 1],
+      ["16#1", 1],
+    ] as const)
+      add.run("t1", id, ok, ok);
+    db.close();
+    expect(loadRuns(ledgerAdapter, { path: tpath, arm: "sig-A" })).toEqual([
+      [
+        { id: "13", score: 0.5 },
+        { id: "16", score: 1 },
+      ],
+    ]);
+    expect(
+      loadRuns(ledgerAdapter, { path: tpath, arm: "sig-A", options: { trials: "keep" } })[0],
+    ).toHaveLength(4);
   });
 
   test("reads rows still in the write-ahead log through a temporary copy", () => {
