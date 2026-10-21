@@ -50,7 +50,7 @@
  *                              MARINA_FORECAST_ARBITER_MODEL (default: the critic)
  *   MARINA_FORECAST_RETRIEVAL_FILTER  strict | none (default none): keep only report lines
  *                              whose cited pages are provably published by the cutoff
- *                              (src/arena/research/isolation.ts)
+ *                              (src/research/isolation.ts)
  *   MARINA_FORECAST_PRIOR, _PRIOR_WEIGHT, _CALIBRATION, _CALIBRATION_MARGIN,
  *   _CALIBRATION_SCORE, _HISTORY, _HISTORY_MIN   prior shrink and recalibration from
  *                              resolved history (`./adjust.ts`; all off by default)

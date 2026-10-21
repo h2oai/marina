@@ -10,17 +10,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ResearchBrief } from "../src/arena/research/briefs";
 import {
-  openRouterWebPluginUsd,
-  openRouterWebRetriever,
-  parseOpenRouterWebEngine,
-  retrieverFromSpec,
-} from "../src/arena/research/retrieve";
-import {
-  searchBackendsFromEnv,
-  WEB_SEARCH_BACKEND_NAMES,
-  webSearchRetriever,
-} from "../src/arena/research/web-search";
-import {
   DEEPSEEK_BILLING_STARTS_AT,
   DEEPSEEK_SEARCH_URL,
   DEEPSEEK_USD_PER_SEARCH,
@@ -31,6 +20,17 @@ import { resetSearchHealthForTests } from "../src/engine/search-providers/health
 import type { SearchHttp, SearchProvider } from "../src/engine/search-providers/index";
 import { describeSearchReadiness } from "../src/engine/search-readiness";
 import { resetSpendLedgerForTests, spentTodayUsd } from "../src/engine/spend-ledger";
+import {
+  openRouterWebPluginUsd,
+  openRouterWebRetriever,
+  parseOpenRouterWebEngine,
+  retrieverFromSpec,
+} from "../src/research/retrieve";
+import {
+  searchBackendsFromEnv,
+  WEB_SEARCH_BACKEND_NAMES,
+  webSearchRetriever,
+} from "../src/research/web-search";
 
 const BILLED = DEEPSEEK_BILLING_STARTS_AT + 1;
 const noHttp: SearchHttp = {

@@ -13,15 +13,6 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ResearchBrief } from "../src/arena/research/briefs";
-import type { ResearchReport, Retriever } from "../src/arena/research/retrieve";
-import { figuresMissing } from "../src/arena/research/verify";
-import {
-  excludedSource,
-  passagesOf,
-  rankPassages,
-  terms,
-  webSearchRetriever,
-} from "../src/arena/research/web-search";
 import { resetSearchHealthForTests } from "../src/engine/search-providers/health";
 import type { SearchProvider, SearchResult } from "../src/engine/search-providers/index";
 import { FileResearchCheckpoint, ResearchInterrupted } from "../src/research/checkpoint";
@@ -40,6 +31,15 @@ import {
   type ReportModel,
   writeResearchReport,
 } from "../src/research/report";
+import type { ResearchReport, Retriever } from "../src/research/retrieve";
+import { figuresMissing } from "../src/research/verify";
+import {
+  excludedSource,
+  passagesOf,
+  rankPassages,
+  terms,
+  webSearchRetriever,
+} from "../src/research/web-search";
 
 afterEach(() => resetSearchHealthForTests());
 

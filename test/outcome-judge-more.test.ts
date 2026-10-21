@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { Retriever } from "../src/arena/research/retrieve";
 import { TaskManager } from "../src/coordination/task-manager";
 import type { DecisionProvider } from "../src/decisions/types";
 import { judgeAgreement } from "../src/outcomes/agreement";
@@ -11,6 +10,7 @@ import { judgeOpenResolutions } from "../src/outcomes/judge-resolution";
 import { recordTaskVerdict } from "../src/outcomes/live";
 import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
+import type { Retriever } from "../src/research/retrieve";
 
 const DAY = 86_400_000;
 const NOW = Date.parse("2026-10-09T00:00:00Z");

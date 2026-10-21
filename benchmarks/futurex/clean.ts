@@ -13,7 +13,7 @@
  *                   vendors' published cutoffs are absent from the catalogue),
  *                   so this is conservative. A model with no known release
  *                   requires an explicit `--after`.
- *   retrieval       the run's isolation level (src/arena/research/isolation.ts):
+ *   retrieval       the run's isolation level (src/research/isolation.ts):
  *                   date-filtered engines, the strict post-filter, or closed-
  *                   book. An unfiltered engine is `contaminated` and refused.
  *   memory          lessons are visible only at or after their outcome
@@ -24,7 +24,7 @@
  * result language; headline scores are reported with flagged rows in and out.
  */
 
-import { daysMentioned } from "../../src/arena/research/isolation";
+import { daysMentioned } from "../../src/research/isolation";
 import {
   afterKnowledge,
   FLOATING_ALIASES,

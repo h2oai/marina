@@ -18,8 +18,6 @@ import {
   arenaSignalHints,
   withDataLookups,
 } from "../src/arena/research/data-evidence";
-import { retrieverFromSpec, withProvidedText } from "../src/arena/research/retrieve";
-import { defaultPageText } from "../src/arena/research/verify";
 import {
   type ExperimentAttempt,
   qualifyResearchExperiments,
@@ -37,8 +35,10 @@ import { dailyCapRefusal } from "../src/engine/spend-ledger";
 import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { MarinaDB } from "../src/persistence/database";
 import { evidenceHash } from "../src/research/evidence";
+import { retrieverFromSpec, withProvidedText } from "../src/research/retrieve";
 import { researchRetriever } from "../src/research/retriever";
 import { researchFeatures } from "../src/research/settings";
+import { defaultPageText } from "../src/research/verify";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,

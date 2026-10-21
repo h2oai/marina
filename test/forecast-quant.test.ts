@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import type { Retriever } from "../src/arena/research/retrieve";
 import type { AnswerSpec } from "../src/forecast/answer-types";
 import type { ForecastLookup, Reading } from "../src/forecast/lookup-types";
 import {
@@ -20,6 +19,7 @@ import {
   type TypedForecastOptions,
 } from "../src/forecast/typed";
 import { normalCdf } from "../src/quant/normal";
+import type { Retriever } from "../src/research/retrieve";
 
 const opts = (...labels: string[]) => labels.map((label, i) => ({ id: "ABCDEFG"[i]!, label }));
 

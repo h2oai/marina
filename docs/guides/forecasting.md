@@ -265,7 +265,7 @@ lesson loop.
 `MARINA_FORECAST_RETRIEVAL_FILTER=strict`, which keeps a research line only when every page it
 cites has a known publication day on or before the cutoff (the engine's date, else a date in the
 URL), it cites no live-result page (encyclopedias, scoreboards, markets, charts) and it names no
-later day (`src/arena/research/isolation.ts`). `closed-book` as the retriever does no retrieval at
+later day (`src/research/isolation.ts`). `closed-book` as the retriever does no retrieval at
 all — a lower bound.
 
 **Evidence cutoff.** Each answer uses nothing published after a cutoff: `asOf` when given, else

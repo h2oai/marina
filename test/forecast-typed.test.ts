@@ -3,7 +3,6 @@
 
 import { describe, expect, it } from "bun:test";
 import type { ResearchBrief } from "../src/arena/research/briefs";
-import type { Retriever } from "../src/arena/research/retrieve";
 import type { DecisionProvider } from "../src/decisions/types";
 import {
   type AnswerSpec,
@@ -14,6 +13,7 @@ import {
 } from "../src/forecast/answer-types";
 import { lookupsFromSpec, polymarketLookup } from "../src/forecast/lookups";
 import { completionGap, forecastTyped, type ModelPart } from "../src/forecast/typed";
+import type { Retriever } from "../src/research/retrieve";
 
 const choice: AnswerSpec = {
   type: "choice",

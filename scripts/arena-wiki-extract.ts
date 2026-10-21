@@ -37,10 +37,10 @@ import {
   runExtractors,
 } from "../src/arena/extraction";
 import { WIKITOP_PUBLICATION_LAG_DAYS } from "../src/arena/research/civiqs-nowcast";
-import { retrieverFromSpec } from "../src/arena/research/retrieve";
 import { type DailyTop, specialistRanking, weekDays } from "../src/arena/wiki-specialist";
 import { WIKIMEDIA_USER_AGENT } from "../src/arena/wikimedia";
 import { GDELT_MIN_INTERVAL_MS } from "../src/engine/search-providers/gdelt";
+import { retrieverFromSpec } from "../src/research/retrieve";
 
 const DAY_MS = 86_400_000;
 const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
