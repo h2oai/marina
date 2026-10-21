@@ -21,6 +21,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
+import { escapeRegExp } from "../engine/regexp";
 
 export type ScanReason = "secret" | "instance" | "human-name" | "benchmark-text";
 
@@ -90,10 +91,6 @@ export function scannableNames(names: readonly string[]): string[] {
   return names.filter(
     (n) => n.length >= 4 && !n.includes(":") && !NAME_STOPLIST.has(n.toLowerCase()),
   );
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Every string inside a value (keys excluded), for scanning. */

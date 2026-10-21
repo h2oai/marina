@@ -35,8 +35,8 @@ import { getErrorMessage } from "../engine/errors";
 import { currentEvidenceCutoff, fenceRefusal } from "../engine/evidence-fence";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { forecastRetrieverSpec } from "../forecast/retriever-default";
+import type { ModelTurns } from "../model/turns";
 import { strictDateFilter } from "./isolation";
-import type { ModelTurns } from "./model-turn";
 
 export const RESEARCH_ASK_MODES = [
   "agent",

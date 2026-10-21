@@ -23,9 +23,9 @@
  */
 
 import { MarinaAgent } from "../client";
+import { MARINA_ENDPOINT } from "./_shared";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
-const MARINA_ENDPOINT = (process.env.MARINA_ENDPOINT ?? "http://localhost:3300").replace(/\/$/, "");
 const AGENT_NAME = process.env.AGENT_NAME ?? "PoolSeeder";
 const SEED_MODEL = process.env.SEED_MODEL ?? "marina:sonnet";
 const SEED_PER_DOMAIN = Math.max(10, Number.parseInt(process.env.SEED_PER_DOMAIN ?? "50", 10));

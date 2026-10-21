@@ -106,10 +106,6 @@ export function attachResidentDispatcher(next: ResidentDispatcher): () => void {
   };
 }
 
-export function residentDispatcher(): ResidentDispatcher | undefined {
-  return dispatcher;
-}
-
 /** One resident call, as recorded on the part (and the forecast's audit trail). */
 export interface ResidentCall {
   spec: string;

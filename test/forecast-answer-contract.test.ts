@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import type { Retriever } from "../src/arena/research/retrieve";
 import {
   type AnswerContract,
   checkContract,
@@ -20,6 +19,7 @@ import type { AnswerSpec } from "../src/forecast/answer-types";
 import { forecastFormed } from "../src/forecast/formations";
 import { typedOptionsFromEnv } from "../src/forecast/service";
 import type { ModelPart } from "../src/forecast/typed";
+import type { Retriever } from "../src/research/retrieve";
 
 const abc: AnswerSpec = {
   type: "choice",

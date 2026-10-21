@@ -4,7 +4,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
-import type { RoomModule } from "../src/types";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
@@ -336,18 +335,6 @@ describe("Knowledge Rooms", () => {
   afterEach(() => {
     db.close();
     cleanupDb(TEST_DB);
-  });
-
-  it("workshop: should write and read contributions", () => {
-    const _workshopModule: RoomModule = {
-      short: "Workshop",
-      long: "A collaborative workspace.",
-      commands: {},
-    };
-    // We test the room commands directly through the engine
-    // But simpler to test via the room module pattern
-    // Let's just verify the room files exist and have correct structure
-    expect(true).toBe(true);
   });
 
   it("topic room: should create and list topics via store", () => {

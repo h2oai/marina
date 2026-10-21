@@ -12,13 +12,6 @@
  */
 
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import {
-  asOfBound,
-  asOfRetriever,
-  isDateStrict,
-  isDateStrictSpec,
-  retrieverFromSpec,
-} from "../src/arena/research/retrieve";
 import { parseWebSearchArgs } from "../src/engine/commands/web";
 import { arxivAsOfProvider } from "../src/engine/search-providers/arxiv";
 import { resetPoliteGetForTests } from "../src/engine/search-providers/asof-http";
@@ -38,6 +31,13 @@ import {
   wikipediaRevision,
   wikitextToPlain,
 } from "../src/engine/search-providers/wikipedia";
+import {
+  asOfBound,
+  asOfRetriever,
+  isDateStrict,
+  isDateStrictSpec,
+  retrieverFromSpec,
+} from "../src/research/retrieve";
 import type { CommandInput, EntityId, KeyValueStore, RoomContext, RoomId } from "../src/types";
 import { searchRoom, searchToolCommands } from "../src/world/rooms/search-room";
 

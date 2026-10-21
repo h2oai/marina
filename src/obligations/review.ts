@@ -259,7 +259,7 @@ export interface ReviewInput {
   rules?: readonly string[];
 }
 
-function clamp(s: string, n: number): string {
+function clip(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n)} […]`;
 }
 
@@ -270,7 +270,7 @@ function renderCall(c: PendingCall): string {
   } catch {
     a = String(c.args);
   }
-  return `${c.name}(${clamp(a ?? "", ARGS_MAX_CHARS)})`;
+  return `${c.name}(${clip(a ?? "", ARGS_MAX_CHARS)})`;
 }
 
 function renderRequest(o: Obligation): string {
@@ -295,7 +295,7 @@ export function reviewView(input: ReviewInput): string {
           .join("\n")}`
       : "",
     `DRAFTED CALLS:\n${input.calls.map(renderCall).join("\n")}`,
-    input.draft.trim() ? `DRAFTED TEXT:\n${clamp(input.draft.trim(), DRAFT_MAX_CHARS)}` : "",
+    input.draft.trim() ? `DRAFTED TEXT:\n${clip(input.draft.trim(), DRAFT_MAX_CHARS)}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -487,7 +487,7 @@ export function recentToolResults(messages: readonly unknown[]): RecentResult[] 
     out.push({
       name,
       ok: m.isError === true ? false : !looksLikeError(text),
-      result: clamp(text.replace(/\s+/g, " ").trim(), RESULT_MAX_CHARS),
+      result: clip(text.replace(/\s+/g, " ").trim(), RESULT_MAX_CHARS),
     });
   }
   return out.slice(-MAX_RECENT_RESULTS);

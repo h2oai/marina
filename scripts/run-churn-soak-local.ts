@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+export {};
+
 const basePort = 46_000 + Math.floor(Math.random() * 500) * 4;
 const stamp = `${process.pid}-${Date.now().toString(36)}`;
 const baseUrl = `http://localhost:${basePort}`;

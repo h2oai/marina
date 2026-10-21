@@ -3,13 +3,13 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { excludedSource } from "../../src/arena/research/web-search";
 import { standaloneSearchHttp } from "../../src/engine/search-providers/asof-http";
 import {
   initProvidersSync,
   type SearchResult,
   search,
 } from "../../src/engine/search-providers/index";
+import { excludedSource } from "../../src/research/web-search";
 import { queryWithUsage, replyLabels } from "../modes/passthrough";
 import { judgeResponseWithUsage } from "../scoring/judge";
 import type { BenchmarkConfig, DatasetItem, ItemUsage, Message, ResultItem } from "../types";

@@ -260,7 +260,9 @@ They measure different things, and both are reported:
 
 A 2,000-line module at 40% counts 2,000 lines in the weighted total but a single
 file in the mean, which is why the weighted number is the lower (and more
-honest) one. The floor is **75%**, measured the weighted way.
+honest) one. The floor is **75%**, measured the weighted way. Source files under `src/` that no
+test loads count as 0% covered (they are absent from `lcov.info`); `--loaded-only` reports only the
+loaded files.
 
 ### Why the floor is not `coverageThreshold`
 

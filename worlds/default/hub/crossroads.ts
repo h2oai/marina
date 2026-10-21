@@ -17,7 +17,8 @@ const room: RoomModule = {
     sw: "craft/review" as RoomId,
   },
   items: {
-    directory: "Use 'ls rooms' to list every room in the world — names, domains, and who's there right now. Then 'goto <room>' to navigate.",
+    directory:
+      "Use 'ls rooms' to list every room in the world — names, domains, and who's there right now. Then 'goto <room>' to navigate.",
     beacon: "Broadcasts world heartbeat — tick count, active entities, pending tasks.",
   },
 };

@@ -996,21 +996,14 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
   }),
 };
 
-// ─── Custom recipe registry (worlds can add to this) ───────────────────────
-
-const customRecipes = new Map<string, RecipeFactory>();
-
-export function registerRecipe(name: string, factory: RecipeFactory): void {
-  customRecipes.set(name, factory);
-}
+// ─── Recipe lookup ──────────────────────────────────────────────────────────
 
 export function getRecipe(name: string): RecipeFactory | undefined {
-  return customRecipes.get(name) ?? BUILTIN_RECIPES[name];
+  return BUILTIN_RECIPES[name];
 }
 
 export function allRecipeNames(): string[] {
-  const names = new Set([...Object.keys(BUILTIN_RECIPES), ...customRecipes.keys()]);
-  return [...names].sort();
+  return Object.keys(BUILTIN_RECIPES).sort();
 }
 
 function describeRecipeAgents(recipe: UseCaseRecipe): string {

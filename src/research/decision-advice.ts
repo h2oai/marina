@@ -6,9 +6,9 @@ import { normalizeAnswers } from "../decisions/answers";
 import { maskSensitiveText } from "../decisions/gate";
 import { choice } from "../decisions/questions";
 import { DecisionError, type DecisionProvider } from "../decisions/types";
+import { type ModelTurns, messageText } from "../model/turns";
 import { jsonObject } from "../retrieval/first-move";
 import type { AdvisoryMode } from "../sdk/decision-receipt";
-import { type ModelTurns, messageText } from "./model-turn";
 
 /** Standalone research has its own model; it does not need a running Marina HTTP server. */
 export function researchDecisionProvider(model: ModelTurns): DecisionProvider {

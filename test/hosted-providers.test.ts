@@ -14,11 +14,13 @@ import {
 } from "../src/agent/lean-agent-adapter";
 import type { PlatformMemoryBackend } from "../src/agent/memory-platform";
 import { piModels } from "../src/agent/pi-models";
-import { modelAccess, modelComplete } from "../src/arena/model-backend";
 import { decisionConfigFromEnv } from "../src/decisions/config";
 import { testKeyConnectivity } from "../src/engine/commands/key";
 import { dailyBudget, resetSpendLedgerForTests } from "../src/engine/spend-ledger";
 import { parseEmbeddingEnv } from "../src/memory/embedding-config";
+import { modelAccess } from "../src/model/access";
+import { modelComplete } from "../src/model/complete";
+import { modelTurns } from "../src/model/turns";
 import {
   fetchHostedModels,
   hostedPrice,
@@ -40,7 +42,6 @@ import {
   upstreamCostUsd,
 } from "../src/net/model-api/upstream";
 import { __setDnsResolverForTest } from "../src/net/url-guard";
-import { modelTurns } from "../src/research/model-turn";
 import type { EngineEvent } from "../src/types";
 import { createTestEngine } from "./engine-fixture";
 import { scopeProcessState, scopeProperty } from "./process-state";

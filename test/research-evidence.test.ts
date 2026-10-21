@@ -5,11 +5,11 @@ import { parseForecasterSpec } from "../src/arena/config";
 import { buildDossier } from "../src/arena/formations";
 import type { ResearchBrief } from "../src/arena/research/briefs";
 import { arenaSignalHints, withDataLookups } from "../src/arena/research/data-evidence";
-import type { ResearchReport } from "../src/arena/research/retrieve";
 import { DecisionError, type DecisionProvider } from "../src/decisions/types";
 import { recallForecastLessons } from "../src/forecast/lessons";
 import { captureEvidence, replayEvidence, validateEvidence } from "../src/research/evidence";
 import { evidenceLoopRetriever } from "../src/research/evidence-loop";
+import type { ResearchReport } from "../src/research/retrieve";
 
 const now = () => new Date("2026-10-07T12:00:00Z");
 const brief: ResearchBrief = {

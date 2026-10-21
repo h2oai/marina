@@ -28,9 +28,9 @@ import {
 } from "../src/arena/profile-shape";
 import { buildResearchBrief } from "../src/arena/research/briefs";
 import { researchForecastRound } from "../src/arena/research/forecaster";
-import type { Retriever } from "../src/arena/research/retrieve";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "../src/arena/types";
 import type { DecisionProvider } from "../src/decisions/types";
+import type { Retriever } from "../src/research/retrieve";
 
 const weekly = (values: number[], start = "2026-01-02"): ArenaPoint[] =>
   values.map((value, i) => ({

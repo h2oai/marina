@@ -37,7 +37,6 @@ import type { Reading } from "./lookup-types";
 import type { SuppliedPrior } from "./prior";
 
 export type QuantMode = "off" | "observe" | "on";
-export const QUANT_MODES: readonly QuantMode[] = ["off", "observe", "on"];
 export const DEFAULT_QUANT_WEIGHT = 0.25;
 
 /** `MARINA_FORECAST_QUANT`: `observe` or `on`; anything else (unset included) is `off`. */

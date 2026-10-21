@@ -23,10 +23,10 @@ import {
   type TournamentMatch,
   verificationScales,
 } from "../src/arena/formations";
-import type { Retriever } from "../src/arena/research/retrieve";
 import { replayDelphiSettlement } from "../src/arena/settlement-shadow";
 import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
 import type { DecisionProvider } from "../src/decisions/types";
+import type { Retriever } from "../src/research/retrieve";
 
 const weekly = (values: number[], start = "2026-01-02"): ArenaPoint[] =>
   values.map((value, i) => ({

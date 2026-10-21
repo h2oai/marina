@@ -22,6 +22,7 @@
 
 import { createHash } from "node:crypto";
 import { answerDigest } from "../engine/benchmark-ledger";
+import { escapeRegExp } from "../engine/regexp";
 import type { MarinaDB } from "../persistence/database";
 import { ANSWER_HASH_KEY_SETTING, keyedAnswerHash } from "../persistence/db-benchmarks";
 
@@ -149,8 +150,6 @@ function answerCandidate(phrase: string, vocabulary: ReadonlySet<string>): boole
   if (!/\p{L}/u.test(phrase)) return false;
   return words.length === 1 ? phrase.length >= 6 : phrase.length >= 8;
 }
-
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * Why `text` carries item content, or undefined when it does not.

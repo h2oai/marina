@@ -26,7 +26,6 @@ import {
   type Manifest,
   OPEN_LICENSE,
   REVOCATIONS_SCHEMA,
-  sha256Hex,
 } from "../src/learned/format";
 import {
   confirmImportedLesson,
@@ -49,6 +48,7 @@ import {
 import { ratifyPoolNote } from "../src/memory/institutional";
 import { keyIdOfPublicKey } from "../src/net/federation-crypto";
 import { MarinaDB } from "../src/persistence/database";
+import { sha256Hex } from "../src/security/hash";
 import type { Entity, EntityId, RoomContext } from "../src/types";
 import { approveAdoption, requestAdoption } from "../src/world/adoption";
 

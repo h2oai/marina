@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ENVIRONMENT_REFERENCE_PATH, environmentCatalog } from "../src/config/environment";
 import { Engine } from "../src/engine/engine";
 import { handleDashboardApi } from "../src/net/dashboard-api";
@@ -10,6 +12,7 @@ import { HOT_RELOADABLE_VARS, PROTECTED_ENV_KEYS } from "../src/net/dashboard-ap
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_env_config.db";
 
@@ -54,30 +57,38 @@ describe("env config editability", () => {
     return (await resp!.json()) as EnvEntry[];
   }
 
+  // An editable schema key, unset in the process and absent from an empty
+  // instance .env, so these tests never depend on the local environment.
+  const EDITABLE_KEY = environmentCatalog(readFileSync(ENVIRONMENT_REFERENCE_PATH, "utf8")).find(
+    (s) => !s.protected && !s.internal && !PROTECTED_ENV_KEYS.has(s.key),
+  )!.key;
+  function scopeUnset(extra: Record<string, string | undefined> = {}) {
+    const dataDir = mkdtempSync(join(tmpdir(), "env-config-"));
+    const state = scopeProcessState({
+      env: { MARINA_DATA_DIR: dataDir, [EDITABLE_KEY]: undefined, ...extra },
+    });
+    return {
+      [Symbol.dispose]() {
+        state[Symbol.dispose]();
+        rmSync(dataDir, { recursive: true, force: true });
+      },
+    };
+  }
+
   it("reports unset schema vars as editable (source=unset)", async () => {
-    const candidate = (await getEnv()).find((e) => e.source === "unset" && !e.protected);
-    // A populated environment could leave none unset; only assert when present.
-    if (candidate) {
-      expect(candidate.editable).toBe(true);
-      expect(candidate.isSet).toBe(false);
-    }
+    using _scope = scopeUnset();
+    const entry = (await getEnv()).find((e) => e.key === EDITABLE_KEY)!;
+    expect(entry.source).toBe("unset");
+    expect(entry.editable).toBe(true);
+    expect(entry.isSet).toBe(false);
   });
 
   it("flips a var to read-only (source=env) when set in the live environment", async () => {
-    // Pick a var that's genuinely unset (not in .env file, not in process.env),
-    // so the test is independent of any local .env contents.
-    const candidate = (await getEnv()).find((e) => e.source === "unset" && !e.protected);
-    if (!candidate) return; // nothing unset to exercise — skip rather than fail
-
-    process.env[candidate.key] = "from-the-environment";
-    try {
-      const entry = (await getEnv()).find((e) => e.key === candidate.key)!;
-      expect(entry.isSet).toBe(true);
-      expect(entry.editable).toBe(false);
-      expect(entry.source).toBe("env");
-    } finally {
-      delete process.env[candidate.key];
-    }
+    using _scope = scopeUnset({ [EDITABLE_KEY]: "from-the-environment" });
+    const entry = (await getEnv()).find((e) => e.key === EDITABLE_KEY)!;
+    expect(entry.isSet).toBe(true);
+    expect(entry.editable).toBe(false);
+    expect(entry.source).toBe("env");
   });
 
   async function putEnv(vars: Record<string, string>): Promise<number> {

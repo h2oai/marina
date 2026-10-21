@@ -39,7 +39,7 @@ import {
   wikiLinks,
 } from "../src/arena/extraction/wiki-deterministic";
 import { forecastSettings } from "../src/arena/forecast-config";
-import type { ResearchReport, Retriever } from "../src/arena/research/retrieve";
+import type { ResearchReport, Retriever } from "../src/research/retrieve";
 
 const CUTOFF = "2099-10-16T14:00:00.000Z";
 const LAST_DAY = "2099-10-14";

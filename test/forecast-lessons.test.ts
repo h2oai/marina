@@ -19,7 +19,6 @@ import {
   SETTLEMENT_MARGIN_MS,
 } from "../benchmarks/futurex/lessons";
 import { endTimeIso, requestFor } from "../benchmarks/futurex/map";
-import type { Retriever } from "../src/arena/research/retrieve";
 import type { AnswerSpec } from "../src/forecast/answer-types";
 import { LEGACY_LESSON_SUBJECT } from "../src/forecast/lessons";
 import { forecastTyped, type ModelPart } from "../src/forecast/typed";
@@ -41,6 +40,7 @@ import { findLessons, lessonSinkFor } from "../src/learning/service";
 import { durableLessonSink } from "../src/learning/store";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { MarinaDB } from "../src/persistence/database";
+import type { Retriever } from "../src/research/retrieve";
 import type { MemoryOperationRequest } from "../src/sdk/memory-operations";
 
 const ON = { MARINA_LESSONS: "on" } as NodeJS.ProcessEnv;

@@ -207,11 +207,23 @@ describe("RateLimiter", () => {
   });
 
   it("cleanup removes stale buckets", () => {
-    const limiter = new RateLimiter({ maxTokens: 5, refillRate: 1, refillInterval: 1000 });
+    let now = 1_000_000;
+    const limiter = new RateLimiter({
+      maxTokens: 5,
+      refillRate: 1,
+      refillInterval: 1000,
+      now: () => now,
+    });
     limiter.consume("user1");
-    // Can't easily test time-based cleanup without mocking, but verify it doesn't crash
-    const removed = limiter.cleanup();
-    expect(removed).toBeGreaterThanOrEqual(0);
+    // Fresh buckets are kept.
+    expect(limiter.cleanup()).toBe(0);
+    limiter.consume("user2");
+    // Past the stale threshold (60 refill intervals), every idle bucket goes.
+    now += 61_000;
+    expect(limiter.cleanup()).toBe(2);
+    expect(limiter.cleanup()).toBe(0);
+    // A removed bucket starts full again.
+    expect(limiter.getRemaining("user1")).toBe(5);
   });
 });
 

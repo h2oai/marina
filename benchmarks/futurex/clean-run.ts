@@ -11,13 +11,6 @@
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  type FilterStats,
-  type IsolationLevel,
-  isolationOfSpec,
-  strictDateFilter,
-} from "../../src/arena/research/isolation";
-import type { Retriever } from "../../src/arena/research/retrieve";
 import { SpendGuard } from "../../src/engine/spend-guard";
 import { recordFromAnswer } from "../../src/forecast/adjust";
 import { type AnswerSpec, matchOption } from "../../src/forecast/answer-types";
@@ -30,6 +23,13 @@ import {
   type Outcome,
   recordOutcome,
 } from "../../src/learning/outcomes";
+import {
+  type FilterStats,
+  type IsolationLevel,
+  isolationOfSpec,
+  strictDateFilter,
+} from "../../src/research/isolation";
+import type { Retriever } from "../../src/research/retrieve";
 import { lcg32, percentileFloor } from "../../src/stats";
 import { BOARD_EXCLUSIONS } from "../forecasting/barred";
 import { stamped } from "../run-version";

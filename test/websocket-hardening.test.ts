@@ -4,7 +4,7 @@
 // Split from websocket.test.ts (Connection Limits, Rate Limiting and HTTP
 // surface hardening describes). Assertions unchanged.
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { rmSync } from "node:fs";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { WS_MAX_CONNECTIONS_PER_IP, WS_MAX_TOTAL_CONNECTIONS } from "../src/engine/constants";
@@ -16,12 +16,21 @@ import {
   inlineScriptHashes,
   resetHttpRateLimitersForTests,
 } from "../src/net/http-utils";
+import { preserveListenPortsForTests } from "../src/net/listen-ports";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { LocalStorageProvider } from "../src/storage/local-provider";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 import { openWs, parse, tmpDbPath } from "./websocket-helpers";
+
+// Servers here bind ephemeral ports and record them process-wide; restore the
+// recorded ports so later files in the same process see the defaults.
+let listenPorts: Disposable | undefined;
+beforeAll(() => {
+  listenPorts = preserveListenPortsForTests();
+});
+afterAll(() => listenPorts?.[Symbol.dispose]());
 
 // ─── Connection Limits ──────────────────────────────────────────────────────
 
@@ -30,7 +39,7 @@ describe("WebSocket Connection Limits", () => {
   let wsServer: WebSocketServer;
   let db: MarinaDB;
   let dbPath: string;
-  const LIMIT_PORT = 15301;
+  let LIMIT_PORT = 0;
 
   beforeEach(() => {
     dbPath = tmpDbPath();
@@ -44,8 +53,9 @@ describe("WebSocket Connection Limits", () => {
       roomId("test/lobby"),
       makeTestRoom({ short: "Lobby", long: "Test lobby." }),
     );
-    wsServer = new WebSocketServer(engine, LIMIT_PORT);
+    wsServer = new WebSocketServer(engine, 0);
     wsServer.start();
+    LIMIT_PORT = wsServer.getPort();
     engine.start();
   });
 
@@ -103,7 +113,7 @@ describe("WebSocket Rate Limiting", () => {
   let wsServer: WebSocketServer;
   let db: MarinaDB;
   let dbPath: string;
-  const RATE_PORT = 15302;
+  let RATE_PORT = 0;
 
   beforeEach(() => {
     dbPath = tmpDbPath();
@@ -120,8 +130,9 @@ describe("WebSocket Rate Limiting", () => {
 
     // Very restrictive rate limiter: 2 tokens, no refill
     const limiter = new RateLimiter({ maxTokens: 2, refillRate: 0, refillInterval: 60_000 });
-    wsServer = new WebSocketServer(engine, RATE_PORT, limiter);
+    wsServer = new WebSocketServer(engine, 0, limiter);
     wsServer.start();
+    RATE_PORT = wsServer.getPort();
     engine.start();
   });
 
@@ -163,7 +174,7 @@ describe("HTTP surface hardening (headers, body cap, public-read throttle)", () 
   let wsServer: WebSocketServer;
   let db: MarinaDB;
   let dbPath: string;
-  const HARDEN_PORT = 15303;
+  let HARDEN_PORT = 0;
   const ASSET_DIR = `/tmp/marina-ws-hardening-assets-${process.pid}`;
   const prevBody = process.env.MARINA_MAX_REQUEST_BODY_BYTES;
   const prevUpload = process.env.MARINA_MAX_UPLOAD_BYTES;
@@ -178,10 +189,11 @@ describe("HTTP surface hardening (headers, body cap, public-read throttle)", () 
     engine.registerRoom(roomId("test/lobby"), makeTestRoom({ short: "Lobby", long: "Lobby." }));
     const storage = new LocalStorageProvider(ASSET_DIR);
     await storage.init();
-    wsServer = new WebSocketServer(engine, HARDEN_PORT);
+    wsServer = new WebSocketServer(engine, 0);
     wsServer.setDb(db);
     wsServer.setStorage(storage);
     wsServer.start();
+    HARDEN_PORT = wsServer.getPort();
     engine.start();
   });
 

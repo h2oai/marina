@@ -29,7 +29,7 @@
  * (`--replicate-concurrency C` runs up to C replicates at once). Each replicate
  * writes its own `rep-<i>/` directory, every filed run carries one replicate
  * group (`--group`, else a fresh `rep:<label>:<time>` key), and the closing
- * summary adds the pooled view per set (`replicate-stats.ts`): mean accuracy
+ * summary adds the pooled view per set (`src/stats/replicates.ts`): mean accuracy
  * over replicates, between-run SD and per-item agreement.
  *
  * Keys never go on the harness command line: the child gets MARINA_BENCH_API_KEY.

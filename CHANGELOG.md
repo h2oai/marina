@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   experimental; `scenario` help now says it posts boards and queues tasks for a resident to pick
   up.
 
+- **Code cleanup and wider checks.** The compatibility re-exports `src/arena/model-backend.ts`,
+  `src/research/model-turn.ts`, `src/arena/research/{retrieve,verify,web-search,isolation,barred,read-swarm-retriever}.ts`,
+  `benchmarks/stats.ts` and `benchmarks/replicate-stats.ts` are removed; import `src/model`,
+  `src/research` and `src/stats`. Unused exports are deleted, `sha256Hex` and `escapeRegExp` each
+  have one shared home, and the SDK examples share their helpers. `bun run lint` also covers
+  `worlds/`, `marina-desktop/src/` and `extensions/`; `bun run typecheck` also checks `scripts/`
+  and `worlds/`. `check:coverage` counts source files no test loads at 0%. Dependencies:
+  pi-agent-core and pi-ai 1.3.0, better-auth 1.7.12, claude-agent-sdk 0.3.306, Playwright 1.64.1.
+
 - **Page reads honour robots.txt; keyless web sources can be turned off.** Before Marina reads a
   third-party page for an agent or a person (`web fetch`, `web swarm`, `scenario` URL reads, the
   research page reader and citation check, the live Civiqs read), it checks the site's robots.txt

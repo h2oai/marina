@@ -40,7 +40,7 @@ describe("Telnet Integration", () => {
   let engine: Engine;
   let telnetServer: TelnetServer;
   let db: MarinaDB;
-  const TELNET_PORT = 14000;
+  let TELNET_PORT = 0;
 
   beforeEach(() => {
     db = new MarinaDB(TEST_DB);
@@ -58,8 +58,9 @@ describe("Telnet Integration", () => {
       }),
     );
 
-    telnetServer = new TelnetServer(engine, TELNET_PORT);
+    telnetServer = new TelnetServer(engine, 0);
     telnetServer.start();
+    TELNET_PORT = telnetServer.getPort();
     engine.start();
   });
 

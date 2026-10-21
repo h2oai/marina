@@ -44,9 +44,9 @@
  */
 
 import { MarinaAgent, type Perception } from "../client";
+import { extractChannelPayload, MARINA_ENDPOINT, perceptionsToText } from "./_shared";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
-const MARINA_ENDPOINT = (process.env.MARINA_ENDPOINT ?? "http://localhost:3300").replace(/\/$/, "");
 const MARINA_MODEL = process.env.MARINA_MODEL;
 if (!MARINA_MODEL) {
   console.error(
@@ -60,27 +60,6 @@ const TRANSLATOR_CHANNEL =
 const LEARN = process.env.MEMORY_LEARN !== "false";
 const MEMORY_MAX_BYTES = Number.parseInt(process.env.MEMORY_MAX_BYTES ?? "2000", 10);
 const TRACE = process.env.MEMORY_TRACE === "true";
-
-// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI strip
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-const stripAnsi = (t: string) => t.replace(ANSI_RE, "");
-
-function extractChannelPayload(
-  text: string,
-): { channel: string; sender: string; content: string } | undefined {
-  const clean = stripAnsi(text);
-  const match = clean.match(/^\[([^\]]+)\]\s+([^:]+):\s+(.*)/s);
-  if (!match) return undefined;
-  return { channel: match[1]!, sender: match[2]!.trim(), content: match[3]!.trim() };
-}
-
-function perceptionsToText(ps: Perception[]): string {
-  return ps
-    .map((p) => (typeof p.data?.text === "string" ? (p.data.text as string) : ""))
-    .map(stripAnsi)
-    .filter((t) => t.length > 0)
-    .join("\n");
-}
 
 function isEmptyRecall(text: string): boolean {
   const t = text.trim();

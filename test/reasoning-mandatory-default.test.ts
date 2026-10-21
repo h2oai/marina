@@ -16,10 +16,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { modelSourceEnvKeys } from "../src/agent/available-models";
 import { proposerModel } from "../src/arena/discovery/loop";
-import {
-  DEFAULT_OPENROUTER_SEARCH_MODEL,
-  openRouterSearchCarrier,
-} from "../src/arena/research/web-search";
 import { defaultClassifierModel } from "../src/decisions/config";
 import { Engine } from "../src/engine/engine";
 import { resetTrustProfileForTests } from "../src/engine/trust-profile";
@@ -40,6 +36,10 @@ import {
   SMALL_OUTPUT_CAP_TOKENS,
 } from "../src/net/model/reasoning-effort";
 import { MarinaDB } from "../src/persistence/database";
+import {
+  DEFAULT_OPENROUTER_SEARCH_MODEL,
+  openRouterSearchCarrier,
+} from "../src/research/web-search";
 import { roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
 import { scopeProcessState } from "./process-state";

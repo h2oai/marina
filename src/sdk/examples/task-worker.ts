@@ -25,10 +25,10 @@
  *   WORKER_TRACE      — "true" logs per-task activity
  */
 
-import { MarinaAgent, type Perception } from "../client";
+import { MarinaAgent } from "../client";
+import { callMarina as callMarinaChat, perceptionsToText } from "./_shared";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
-const MARINA_ENDPOINT = (process.env.MARINA_ENDPOINT ?? "http://localhost:3300").replace(/\/$/, "");
 const AGENT_NAME = process.env.WORKER_NAME ?? "Worker1";
 const SUBSTRATE = process.env.WORKER_SUBSTRATE ?? "marina:haiku";
 const PROJECT_NAME = process.env.PROJECT_NAME ?? "benchmark-pursuit";
@@ -36,31 +36,12 @@ const POLL_INTERVAL_MS = Number.parseInt(process.env.POLL_INTERVAL_MS ?? "1500",
 const CLAIM_COOLDOWN_MS = Number.parseInt(process.env.CLAIM_COOLDOWN_MS ?? "500", 10);
 const TRACE = process.env.WORKER_TRACE === "true";
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-const stripAnsi = (t: string) => t.replace(ANSI_RE, "");
-
-function perceptionsToText(ps: Perception[]): string {
-  return ps
-    .map((p) => (typeof p.data?.text === "string" ? (p.data.text as string) : ""))
-    .map(stripAnsi)
-    .filter((t) => t.length > 0)
-    .join("\n");
-}
-
 async function callMarina(userMsg: string, systemMsg?: string): Promise<string> {
   const messages = [
     ...(systemMsg ? [{ role: "system", content: systemMsg }] : []),
     { role: "user", content: userMsg },
   ];
-  const resp = await fetch(`${MARINA_ENDPOINT}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: SUBSTRATE, messages, temperature: 0 }),
-  });
-  if (!resp.ok) throw new Error(`Marina ${resp.status}`);
-  const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content ?? "";
+  return callMarinaChat(SUBSTRATE, messages, 0);
 }
 
 /** Parse `task list` output for open bounty tasks. Very forgiving — looks

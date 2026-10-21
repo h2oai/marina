@@ -25,7 +25,6 @@ import { buildResearchBrief } from "../src/arena/research/briefs";
 import { horizonOptionsFromEnv } from "../src/arena/research/civiqs-horizon";
 import { nowcastForecaster } from "../src/arena/research/civiqs-nowcast";
 import { arenaResearchLookups, withDataLookups } from "../src/arena/research/data-evidence";
-import { retrieverFromSpec, withProvidedText } from "../src/arena/research/retrieve";
 import { arenaData, lockForModels } from "../src/arena/service";
 import { parseRouteEvidence, selectTaskRoute } from "../src/coordination/task-routing";
 import { WorkBudget } from "../src/coordination/work-budget";
@@ -34,6 +33,7 @@ import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { getErrorMessage } from "../src/engine/errors";
 import { MarinaDB } from "../src/persistence/database";
 import { researchHypotheses } from "../src/research/hypotheses";
+import { retrieverFromSpec, withProvidedText } from "../src/research/retrieve";
 import { researchRetriever } from "../src/research/retriever";
 
 const { positionals, values } = parseArgs({

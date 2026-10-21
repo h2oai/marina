@@ -112,12 +112,14 @@ if (values.embeddings !== "none") {
                 ? { [EMBEDDING_ENV.dimensions]: String(config.dimensions) }
                 : {}),
             }
-          : {
-              [EMBEDDING_ENV.kind]: "ollama",
-              [EMBEDDING_ENV.url]: config.url,
-              [EMBEDDING_ENV.model]: config.model,
-              [EMBEDDING_ENV.revision]: config.revision,
-            };
+          : config.kind === "none"
+            ? {}
+            : {
+                [EMBEDDING_ENV.kind]: "ollama",
+                [EMBEDDING_ENV.url]: config.url,
+                [EMBEDDING_ENV.model]: config.model,
+                [EMBEDDING_ENV.revision]: config.revision,
+              };
     embeddings = { provider, env };
   } catch (error) {
     embeddings = { skipped: getErrorMessage(error) };

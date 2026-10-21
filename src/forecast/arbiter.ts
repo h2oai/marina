@@ -43,12 +43,6 @@ import { type ForecastHistory, type ResolvedRecord, visibleRecords } from "./his
 import type { ModelPart, TypedForecastAnswer, TypedForecastRequest } from "./typed";
 
 export type ForecastArbiterMode = "off" | "observe" | "on" | "replace";
-export const FORECAST_ARBITER_MODES: readonly ForecastArbiterMode[] = [
-  "off",
-  "observe",
-  "on",
-  "replace",
-];
 
 /** `MARINA_FORECAST_ARBITER` (default off; junk is off). */
 export function forecastArbiterModeFromEnv(

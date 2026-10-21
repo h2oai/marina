@@ -69,7 +69,7 @@ const log = new Logger();
 
 export const VERIFY_MODEL_PREFIX = "marina/verify:";
 
-/** Per-message clamp in the checker's transcript (tool results can be large). */
+/** Per-message clip in the checker's transcript (tool results can be large). */
 const REVIEW_MESSAGE_MAX_CHARS = 4000;
 /** Clamp for the whole system block shown to the checker. */
 const REVIEW_SYSTEM_MAX_CHARS = 24_000;
@@ -207,7 +207,7 @@ export function arbiterItemFor(messages: Msg[], draft: Msg, issues: string) {
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
   return {
     id: "verify",
-    question: clamp(textOf(lastUser?.content), 4_000),
+    question: clip(textOf(lastUser?.content), 4_000),
     type: "text" as const,
     runs: [{ answer: textOf(draft.content).trim(), label: "proposer" }],
     dissent: [{ by: "checker", reason: issues }],
@@ -309,7 +309,7 @@ export function textOf(content: unknown): string {
 /** The most recent image parts the checker should see alongside the text review. */
 const REVIEW_MAX_IMAGES = 4;
 
-function clamp(s: string, n: number): string {
+function clip(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n)} […+${s.length - n} chars]`;
 }
 
@@ -350,13 +350,13 @@ export function renderReviewHead(messages: Msg[], tools: unknown[] | undefined):
   const toolLines = (tools ?? [])
     .map((t) => {
       const f = (t as { function?: { name?: string; description?: string } }).function;
-      return f?.name ? `- ${f.name}: ${clamp(f.description ?? "", 300)}` : "";
+      return f?.name ? `- ${f.name}: ${clip(f.description ?? "", 300)}` : "";
     })
     .filter(Boolean)
     .join("\n");
   return [
     system
-      ? `RULES AND INSTRUCTIONS GIVEN TO THE ASSISTANT:\n${clamp(system, REVIEW_SYSTEM_MAX_CHARS)}`
+      ? `RULES AND INSTRUCTIONS GIVEN TO THE ASSISTANT:\n${clip(system, REVIEW_SYSTEM_MAX_CHARS)}`
       : "",
     toolLines ? `TOOLS AVAILABLE TO THE ASSISTANT:\n${toolLines}` : "",
   ]
@@ -367,11 +367,11 @@ export function renderReviewHead(messages: Msg[], tools: unknown[] | undefined):
 /** One conversation message as a self-contained review chunk (deterministic). */
 export function renderTurn(m: Msg): string {
   if (m.role === "assistant")
-    return `ASSISTANT:\n${clamp(renderAssistant(m), REVIEW_MESSAGE_MAX_CHARS)}`;
+    return `ASSISTANT:\n${clip(renderAssistant(m), REVIEW_MESSAGE_MAX_CHARS)}`;
   if (m.role === "tool") {
-    return `TOOL RESULT${m.name ? ` (${m.name})` : ""}:\n${clamp(textOf(m.content), REVIEW_MESSAGE_MAX_CHARS)}`;
+    return `TOOL RESULT${m.name ? ` (${m.name})` : ""}:\n${clip(textOf(m.content), REVIEW_MESSAGE_MAX_CHARS)}`;
   }
-  return `${(m.role ?? "user").toUpperCase()}:\n${clamp(textOf(m.content), REVIEW_MESSAGE_MAX_CHARS)}`;
+  return `${(m.role ?? "user").toUpperCase()}:\n${clip(textOf(m.content), REVIEW_MESSAGE_MAX_CHARS)}`;
 }
 
 /** The conversation's chunks: the first carries the section label. Append-only. */
@@ -585,11 +585,11 @@ export function revisionNote(draft: Msg, issues: string, conflict?: VerdictConfl
     ? ` (call ${conflict.call}${conflict.field ? `, argument ${conflict.field}` : ""})`
     : "";
   const cited = conflict
-    ? `Cited ${conflict.kind === "policy" ? "rule" : "tool result"}: "${clamp(conflict.quote, 500)}"${target}`
+    ? `Cited ${conflict.kind === "policy" ? "rule" : "tool result"}: "${clip(conflict.quote, 500)}"${target}`
     : "";
   return [
     "A reviewer checked your draft next message before it was sent and found a problem.",
-    `Draft: ${clamp(renderAssistant(draft), 2000)}`,
+    `Draft: ${clip(renderAssistant(draft), 2000)}`,
     `Reviewer: ${issues}`,
     cited,
     "Keep every state-changing tool call exactly as drafted unless the reviewer cited a concrete conflict;",

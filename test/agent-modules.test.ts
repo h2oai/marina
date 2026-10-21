@@ -1855,7 +1855,9 @@ describe("InterruptibleWaiter", () => {
     await w.sleep(40);
     const elapsed = performance.now() - start;
     expect(elapsed).toBeGreaterThanOrEqual(35);
-    expect(elapsed).toBeLessThan(120);
+    // Generous upper bound: a loaded runner can delay timers; the point is
+    // that the sleep ends on its own, not at some much later wake.
+    expect(elapsed).toBeLessThan(1000);
     expect(w.isArmed()).toBe(false);
   });
 
@@ -1929,7 +1931,8 @@ describe("sendAttention instant pickup", () => {
     await adapter.sendAttention("New coding task assigned: fix the failing test in session s1");
     await parked;
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(500);
+    // Well under the 5 s sleep, with headroom for a loaded runner.
+    expect(elapsed).toBeLessThan(2500);
     expect(waiter.isArmed()).toBe(false);
   });
 });

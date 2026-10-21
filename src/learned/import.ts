@@ -45,6 +45,7 @@ import { lessonFromRecord } from "../learning/store";
 import { residentMemoryOperation } from "../memory/resident-service";
 import type { MarinaDB } from "../persistence/database";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
+import { sha256Hex } from "../security/hash";
 import {
   REVOCATIONS_FILE,
   readRevocationsFile,
@@ -53,18 +54,17 @@ import {
   verifyRevocations,
 } from "./bundle";
 import { type EntitlementGrant, OWN_VERIFIER } from "./entitlement";
-import {
-  type ConventionItem,
-  type DefaultItem,
-  type EvidenceItem,
-  type LearnedItem,
-  type LessonItem,
-  type Manifest,
-  type RoleItem,
-  type RoomSourceItem,
-  type Slice,
-  sha256Hex,
-  type WorldItem,
+import type {
+  ConventionItem,
+  DefaultItem,
+  EvidenceItem,
+  LearnedItem,
+  LessonItem,
+  Manifest,
+  RoleItem,
+  RoomSourceItem,
+  Slice,
+  WorldItem,
 } from "./format";
 import { type BenchmarkTextIndex, Scanner, stringsOf } from "./scan";
 import { type PinnedKey, pinnedPublisherKeys } from "./sign";

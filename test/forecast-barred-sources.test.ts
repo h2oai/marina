@@ -3,9 +3,9 @@
 
 import { describe, expect, it } from "bun:test";
 import { BOARD_EXCLUSIONS, boardExclusion } from "../benchmarks/forecasting/barred";
-import { barredRetriever, mergeExclusions } from "../src/arena/research/barred";
 import type { ResearchBrief } from "../src/arena/research/briefs";
-import type { ResearchReport, Retriever } from "../src/arena/research/retrieve";
+import { barredRetriever, mergeExclusions } from "../src/research/barred";
+import type { ResearchReport, Retriever } from "../src/research/retrieve";
 
 const brief = { roundId: "q1", queries: ["q"] } as unknown as ResearchBrief;
 const report = (over: Partial<ResearchReport> = {}): ResearchReport => ({

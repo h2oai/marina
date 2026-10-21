@@ -14,7 +14,6 @@ import { pairedBootstrap as selectPairedBootstrap } from "../benchmarks/forecast
 import { bootstrapOverall, weightedOverall } from "../benchmarks/futurex/clean-run";
 import { bootstrapInterval as longmemevalInterval } from "../benchmarks/longmemeval/convert";
 import { wilson95 } from "../benchmarks/memory/genbench";
-import { mulberry32 as shimMulberry32, wilsonInterval as shimWilson } from "../benchmarks/stats";
 import {
   bootstrapMean as transferBootstrapMean,
   twoStageBootstrap,
@@ -75,15 +74,13 @@ function runs(seed: number, k: number, ids: string[]): Map<string, number>[] {
 }
 
 describe("stats dedupe is bit-identical to the frozen originals", () => {
-  test("mulberry32 (src/stats and the benchmarks shim) matches the legacy stream", () => {
+  test("mulberry32 (src/stats) matches the legacy stream", () => {
     for (const seed of SEEDS) {
       const a = mulberry32(seed);
-      const s = shimMulberry32(seed);
       const l = legacyMulberry32(seed);
       for (let i = 0; i < 1000; i++) {
         const x = l();
         same(a(), x);
-        same(s(), x);
       }
     }
   });
@@ -94,7 +91,6 @@ describe("stats dedupe is bit-identical to the frozen originals", () => {
       for (let k = 0; k <= n; k++) {
         for (const z of zs) {
           same(wilsonInterval(k, n, z), legacyWilsonInterval(k, n, z));
-          same(shimWilson(k, n, z), legacyWilsonInterval(k, n, z));
           same(wilsonLow(k, n, z), legacyWilsonLow(k, n, z));
         }
         same(wilson95(k, n), legacyWilson95(k, n));

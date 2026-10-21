@@ -63,12 +63,13 @@ import type { MarinaDB } from "../../persistence/database";
 import { type AssetCursor, type AssetRow, assetTypeOf } from "../../persistence/db-assets";
 import { MemoryClientError } from "../../sdk/memory-client";
 import type { MemoryOperationRequest } from "../../sdk/memory-operations";
+import { sha256Hex } from "../../security/hash";
 import type { StorageProvider } from "../../storage/provider";
 import type { EngineEvent } from "../../types";
 import { getErrorMessage, logRejection } from "../errors";
 import { Logger } from "../logger";
 import { dailyCapRefusal } from "../spend-ledger";
-import { derivativeMode, MAX_DERIVE_BYTES, setAssetText, sha256Hex } from "./asset-library";
+import { derivativeMode, MAX_DERIVE_BYTES, setAssetText } from "./asset-library";
 import {
   ASSET_MEMORY_KIND,
   assetMemorySubject,

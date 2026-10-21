@@ -21,8 +21,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SourceExclusion } from "../../src/arena/research/briefs";
 import { getErrorMessage } from "../../src/engine/errors";
+import { modelTurns } from "../../src/model/turns";
 import type { BrowserReader } from "../../src/research/browser-reader";
-import { modelTurns } from "../../src/research/model-turn";
 import { BARRED_REASON } from "../../src/research/page-reader";
 import { ProvenanceCache } from "../../src/research/provenance-cache";
 import {

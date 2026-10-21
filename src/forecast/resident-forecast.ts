@@ -47,7 +47,7 @@
 
 import { WorkBudget } from "../coordination/work-budget";
 import { getErrorMessage } from "../engine/errors";
-import { parseEvidenceCutoff, withEvidenceCutoff } from "../engine/evidence-fence";
+import { withEvidenceCutoff } from "../engine/evidence-fence";
 import { SpendGuard } from "../engine/spend-guard";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { modelComplete } from "../model/complete";
@@ -82,13 +82,6 @@ import {
 /** Every typed formation runs with resident (or model) slots: the catalogue's typed templates. */
 export const RESIDENT_PATTERNS = TYPED_FORMATIONS;
 export type ResidentPattern = TypedFormation;
-
-export function residentPattern(name: string | undefined): ResidentPattern | undefined {
-  const n = name?.trim().toLowerCase();
-  return (RESIDENT_PATTERNS as readonly string[]).includes(n ?? "")
-    ? (n as ResidentPattern)
-    : undefined;
-}
 
 /** Residents asked per forecast by default (K) and the range allowed. */
 export const RESIDENT_K_DEFAULT = 3;
@@ -603,15 +596,6 @@ export function fileResidentRuns(
 const SAFE_TAG = /^[A-Za-z0-9:._/+-]{1,120}$/;
 function safeTag(v: string | undefined): string | undefined {
   return v && SAFE_TAG.test(v) ? v : undefined;
-}
-
-/** The fence a request names (`asof:`), checked. */
-export function requestedCutoff(raw: string | undefined): string | { error: string } | undefined {
-  if (raw === undefined) return undefined;
-  const ms = parseEvidenceCutoff(raw);
-  return ms === undefined
-    ? { error: "asof: takes an ISO time or YYYY-MM-DD" }
-    : new Date(ms).toISOString();
 }
 
 // ─── The task ────────────────────────────────────────────────────────────────

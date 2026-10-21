@@ -5,7 +5,7 @@
  * Harness-side replicate helpers: `--replicates N` runs the same target N
  * times on the same items (same seed and slice) and the same judge; each run
  * keeps its own result file and is filed under one replicate group, and the
- * harness prints the pooled summary (`replicate-stats.ts`).
+ * harness prints the pooled summary (`src/stats/replicates.ts`).
  */
 
 import { type PooledGroup, poolGroup, type Replicate } from "../src/stats";

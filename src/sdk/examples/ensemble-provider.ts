@@ -37,9 +37,9 @@
  */
 
 import { MarinaAgent, type Perception } from "../client";
+import { callMarina, extractChannelPayload, extractLetter, type Message } from "./_shared";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
-const MARINA_ENDPOINT = (process.env.MARINA_ENDPOINT ?? "http://localhost:3300").replace(/\/$/, "");
 const AGENT_NAME = process.env.AGENT_NAME ?? "EnsembleProvider";
 const MODEL_CHANNEL = process.env.MODEL_CHANNEL ?? "model";
 const SUBSTRATES = (
@@ -59,56 +59,8 @@ const TEMPERATURES = (
   .map((s) => Number.parseFloat(s.trim()) || 0);
 const TRACE = (process.env.ENSEMBLE_TRACE ?? process.env.NSED_TRACE) === "true";
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI strip
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-const stripAnsi = (t: string) => t.replace(ANSI_RE, "");
-
-function extractChannelPayload(
-  text: string,
-): { channel: string; sender: string; content: string } | undefined {
-  const clean = stripAnsi(text);
-  const match = clean.match(/^\[([^\]]+)\]\s+([^:]+):\s+(.*)/s);
-  if (!match) return undefined;
-  return { channel: match[1]!, sender: match[2]!.trim(), content: match[3]!.trim() };
-}
-
 /** Same extractor as MC adapter — prefers explicit answer patterns, falls
  * back to last isolated [A-J]. */
-function extractLetter(response: string): string {
-  const cleaned = response.trim().toUpperCase();
-  const explicit = [...cleaned.matchAll(/ANSWER\s*(?:IS|:|=|WOULD BE)\s*\(?\**([A-J])\**\)?/g)];
-  if (explicit.length > 0) return explicit[explicit.length - 1]![1]!;
-  if (cleaned.length <= 5) {
-    const m = cleaned.match(/\b([A-J])\b/);
-    if (m) return m[1]!;
-  }
-  const all = [...cleaned.matchAll(/\b([A-J])\b/g)];
-  if (all.length > 0) return all[all.length - 1]![1]!;
-  if (cleaned.length > 0 && /[A-J]/.test(cleaned[0]!)) return cleaned[0]!;
-  return "";
-}
-
-interface Message {
-  role: string;
-  content: string;
-}
-
-async function callMarina(
-  model: string,
-  messages: Message[],
-  temperature: number,
-): Promise<string> {
-  const resp = await fetch(`${MARINA_ENDPOINT}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, temperature }),
-  });
-  if (!resp.ok) {
-    throw new Error(`Marina ${resp.status}`);
-  }
-  const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content ?? "";
-}
 
 interface Ballot {
   idx: number;

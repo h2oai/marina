@@ -4,8 +4,7 @@
 /**
  * Marina's one statistics module: Wilson intervals, McNemar's exact test, the
  * seeded PRNGs and every bootstrap the core and the harnesses use. Pure and
- * deterministic for a given seed. `benchmarks/stats.ts` and
- * `benchmarks/replicate-stats.ts` re-export from here for compatibility.
+ * deterministic for a given seed.
  */
 
 export * from "./bootstrap";

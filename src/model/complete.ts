@@ -3,8 +3,7 @@
 
 /**
  * One-shot `(system, user) → text` completions for any `provider/model`
- * (also `marina/…` through a Marina /v1 endpoint). Formerly
- * `src/arena/model-backend.ts`, which still re-exports it.
+ * (also `marina/…` through a Marina /v1 endpoint).
  */
 
 import type { Message } from "@earendil-works/pi-ai";

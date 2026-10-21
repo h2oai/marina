@@ -3,11 +3,11 @@
 
 import { describe, expect, it } from "bun:test";
 import { modelSourceEnvKeys } from "../src/agent/available-models";
-import type { Retriever } from "../src/arena/research/retrieve";
 import type { DecisionProvider } from "../src/decisions/types";
 import { forecastQuestion, inferKind } from "../src/forecast/question";
 import { handleForecast, saveTarget } from "../src/net/api/forecast-api";
 import type { MarinaDB } from "../src/persistence/database";
+import type { Retriever } from "../src/research/retrieve";
 import { scopeProcessState } from "./process-state";
 
 const retriever: Retriever = async () => ({
