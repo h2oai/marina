@@ -964,7 +964,15 @@ function tryGetModel(provider: string, modelId: string): Model<Api> | undefined 
  * silently switching the agent onto a different provider's default model.
  */
 function synthesizeModel(provider: string, modelId: string): Model<Api> | undefined {
-  const sibling = piModels.getModels(provider)[0];
+  // Template on the same vendor's listed model, else the provider's chat
+  // transport: OpenRouter lists a few Anthropic ids on its Messages API, and
+  // copying one sent every unlisted OpenRouter id to `/messages`.
+  const siblings = piModels.getModels(provider);
+  const vendor = modelId.includes("/") ? `${modelId.split("/")[0]}/` : undefined;
+  const sibling =
+    (vendor ? siblings.find((m) => m.id.startsWith(vendor)) : undefined) ??
+    siblings.find((m) => m.api === "openai-completions") ??
+    siblings[0];
   if (!sibling) return undefined;
   return {
     ...sibling,
@@ -1023,6 +1031,19 @@ export function marinaProxyCompat(env: NodeJS.ProcessEnv = process.env): OpenAIC
     sendSessionAffinityHeaders: true,
     ...(cache ? { cacheControlFormat: "anthropic" as const } : {}),
   };
+}
+
+/**
+ * `MARINA_AGENT_COMPACTION_MODEL`: the model that writes an agent's compaction
+ * summaries (`provider/model`). Unset, `self` or `default` ⇒ the agent's own
+ * model (the default).
+ */
+export function agentCompactionModelSpec(
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  const raw = env.MARINA_AGENT_COMPACTION_MODEL?.trim();
+  if (!raw || raw.toLowerCase() === "self" || raw.toLowerCase() === "default") return undefined;
+  return raw;
 }
 
 /** Resolve a "provider/model" string to a pi-ai Model. Falls back to MARINA_DEFAULT_MODEL. */
@@ -1772,17 +1793,42 @@ export class LeanAgentAdapter implements AgentHandle {
     // ("moved north, moved south") — intent, surprise, relationships, and
     // open threads are exactly what successor agents need to recall.
     // We use the agent's own model so on-device / self-hosted deployments
-    // pay no external cost. Economical, not cheap.
+    // pay no external cost. Economical, not cheap. An operator may name a
+    // separate summary model (`MARINA_AGENT_COMPACTION_MODEL`); when it fails,
+    // the agent's own model writes the summary, then the rule-based one.
+    const compactionModel = this.resolveCompactionModel();
+    const summaryKeyFor = async (target: Model<Api>): Promise<string | undefined> => {
+      if (target === this.model) return resolveKeyNow();
+      if (String(target.provider) === "openrouter") return this.routeKey("openrouter");
+      // Same provider and endpoint as the agent: its own key. Otherwise the
+      // provider's env key (pi-ai reads it when none is passed).
+      return String(target.provider) === String(this.model.provider) &&
+        target.baseUrl === this.model.baseUrl
+        ? resolveKeyNow()
+        : undefined;
+    };
     const summarizeWithLLM = async (
       messages: AgentMessage[],
       fallback: string,
       signal?: AbortSignal,
     ): Promise<string> => {
+      for (const target of compactionModel ? [compactionModel, this.model] : [this.model]) {
+        const summary = await summarizeOn(target, messages, signal);
+        if (summary) return summary;
+        signal?.throwIfAborted();
+      }
+      return fallback;
+    };
+    const summarizeOn = async (
+      target: Model<Api>,
+      messages: AgentMessage[],
+      signal?: AbortSignal,
+    ): Promise<string | undefined> => {
       try {
         // Summaries are model calls too. A capped agent can still compact
         // deterministically, using the same durable archive path below.
-        if (this.checkSpendCaps() || this.budgetExhausted) return fallback;
-        const routedCall = await this.routeFor(this.model, await resolveKeyNow());
+        if (this.checkSpendCaps() || this.budgetExhausted) return undefined;
+        const routedCall = await this.routeFor(target, await summaryKeyFor(target));
         const keyNow = routedCall.apiKey;
         signal?.throwIfAborted();
         const llmContext = {
@@ -1854,7 +1900,7 @@ export class LeanAgentAdapter implements AgentHandle {
           // A learned capability retry is a separately accounted model call.
           if (!this.checkSpendCaps() && !this.budgetExhausted) result = await ask();
         }
-        if (result.stopReason === "error" || result.stopReason === "aborted") return fallback;
+        if (result.stopReason === "error" || result.stopReason === "aborted") return undefined;
 
         const text = Array.isArray(result.content)
           ? result.content
@@ -1863,10 +1909,10 @@ export class LeanAgentAdapter implements AgentHandle {
               .join("\n")
               .trim()
           : "";
-        return text.length > 0 ? text : fallback;
+        return text.length > 0 ? text : undefined;
       } catch {
         signal?.throwIfAborted();
-        return fallback;
+        return undefined;
       }
     };
 
@@ -6455,6 +6501,30 @@ export class LeanAgentAdapter implements AgentHandle {
 
   /** Resolved `openrouter/<id>` models, so the fallback is built (and warned about) once. */
   private readonly fallbackModels = new Map<string, Model<Api>>();
+
+  /**
+   * The configured compaction model (`agentCompactionModelSpec`), reasoning
+   * off. Undefined ⇒ the agent's own model: unset, an unknown provider (no
+   * silent provider switch), or a `marina/*` proxy model for an agent that
+   * does not itself hold a proxy key.
+   */
+  private resolveCompactionModel(): Model<Api> | undefined {
+    const spec = agentCompactionModelSpec();
+    if (!spec) return undefined;
+    const refuse = (why: string) => {
+      this.log.warn(
+        LEAN_AGENT_LOG_CATEGORY,
+        `MARINA_AGENT_COMPACTION_MODEL "${spec}" ignored (${why}); summaries use the agent's own model.`,
+        { agent: this.name, model: spec },
+      );
+      return undefined;
+    };
+    if (classifyModelResolution(spec) === "fallback") return refuse("unknown provider");
+    const model = resolveModel(spec, this.wsPort);
+    if (isMarinaProxyModel(model) && !isMarinaProxyModel(this.model))
+      return refuse("a marina/* model needs an agent on marina/*");
+    return applyThinkingLevel(model, "off");
+  }
 
   /**
    * The route for one model call. A first-party model whose direct route is

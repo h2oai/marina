@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Agent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
-import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
+import { agentCompactionModelSpec, LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
 import type { PlatformMemoryBackend } from "../src/agent/memory-platform";
 import { dailyBudget, recordSpend, resetSpendLedgerForTests } from "../src/engine/spend-ledger";
 import { resetSamplingParamsForTests } from "../src/net/model/sampling-params";
@@ -231,3 +231,74 @@ for (const budgetCalls of [1, 2]) {
     expect(adapter.getStatus().budgetExhausted).toBe(true);
   });
 }
+
+describe("MARINA_AGENT_COMPACTION_MODEL", () => {
+  it("parses the spec: unset, self and default mean the agent's own model", () => {
+    expect(agentCompactionModelSpec({})).toBeUndefined();
+    expect(agentCompactionModelSpec({ MARINA_AGENT_COMPACTION_MODEL: " " })).toBeUndefined();
+    expect(agentCompactionModelSpec({ MARINA_AGENT_COMPACTION_MODEL: "self" })).toBeUndefined();
+    expect(agentCompactionModelSpec({ MARINA_AGENT_COMPACTION_MODEL: "Default" })).toBeUndefined();
+    expect(
+      agentCompactionModelSpec({
+        MARINA_AGENT_COMPACTION_MODEL: " openrouter/inception/mercury-3 ",
+      }),
+    ).toBe("openrouter/inception/mercury-3");
+  });
+
+  function routed(fail: (url: string) => boolean) {
+    const { adapter, internals } = setup();
+    const answer = internals.providerFetch;
+    const calls: { url: string; model: string; auth: string | null }[] = [];
+    internals.providerFetch = (async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const body = JSON.parse(String(init?.body));
+      calls.push({ url, model: body.model, auth: new Headers(init?.headers).get("authorization") });
+      if (fail(url)) return new Response("fixture unavailable", { status: 400 });
+      return answer(input, init);
+    }) as typeof fetch;
+    return { adapter, internals, calls };
+  }
+
+  it("writes the summary with the configured model and its route's key", async () => {
+    using _state = scopeProcessState({
+      trustProfile: "shared",
+      env: {
+        MARINA_AGENT_COMPACTION_MODEL: "openrouter/inception/mercury-3",
+        OPENROUTER_API_KEY: "fixture-or-key",
+      },
+    });
+    const { adapter, internals, calls } = routed(() => false);
+    const compacted = await adapter.compactNow();
+    expect(compacted!.after).toBeLessThan(compacted!.before);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(calls[0]!.model).toBe("inception/mercury-3");
+    expect(calls[0]!.auth).toBe("Bearer fixture-or-key");
+    expect(JSON.stringify(internals.agent.state.messages)).toContain("Keep constraint-0");
+  });
+
+  it("falls back to the agent's own model when the configured one fails", async () => {
+    using _state = scopeProcessState({
+      trustProfile: "shared",
+      env: {
+        MARINA_AGENT_COMPACTION_MODEL: "openrouter/inception/mercury-3",
+        OPENROUTER_API_KEY: "fixture-or-key",
+      },
+    });
+    const { adapter, internals, calls } = routed((url) => url.includes("openrouter.ai"));
+    await adapter.compactNow();
+    expect(calls.map((c) => c.model)).toEqual(["inception/mercury-3", "gpt-4o-mini"]);
+    expect(calls[1]!.auth).toBe("Bearer fixture-key");
+    expect(JSON.stringify(internals.agent.state.messages)).toContain("Keep constraint-0");
+  });
+
+  it("ignores an unknown provider and keeps the agent's own model", async () => {
+    using _state = scopeProcessState({
+      trustProfile: "shared",
+      env: { MARINA_AGENT_COMPACTION_MODEL: "nosuchprovider/x" },
+    });
+    const { adapter, calls } = routed(() => false);
+    await adapter.compactNow();
+    expect(calls.map((c) => c.model)).toEqual(["gpt-4o-mini"]);
+  });
+});

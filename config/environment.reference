@@ -493,6 +493,9 @@
 # MARINA_AGENT_CONTEXT_CAP_TOKENS=48000
 # MARINA_AGENT_CONTEXT_TARGET_TOKENS=16000
 
+# The model that writes an agent's compaction summaries (`provider/model`, e.g. `openrouter/inception/mercury-3`). Unset, `self` or `default`: the agent's own model (the default). The call uses the same compaction prompt, 500-token output cap, spend accounting and caps; reasoning is off. Key: the agent's own key for its own provider and endpoint, OPENROUTER_API_KEY for `openrouter/*`, else the provider's env key. When the configured model fails, the agent's own model writes the summary, then the rule-based summary. An unknown provider, or a `marina/*` model for an agent not on `marina/*`, is ignored with a warning. The `Pointers:` line is appended mechanically, whatever the model.
+# MARINA_AGENT_COMPACTION_MODEL=
+
 # How long a provider's prompt cache lives after a request. A prompt sent after a longer gap is a cold turn: the whole request is written to the cache again. A default (`5m`), per-family values (`anthropic=5m,openai=10m`) or both; `off` for a family means it keeps no cache, so its turns are never cold. Built in: 5 minutes for anthropic, bedrock, marina (the agents' proxy), openrouter and openai; any other provider and local servers keep none unless named here.
 # MARINA_PROMPT_CACHE_TTL=5m
 

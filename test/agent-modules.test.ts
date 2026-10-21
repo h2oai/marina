@@ -1964,6 +1964,10 @@ describe("model resolution", () => {
     expect(m.provider).toBe("openrouter");
     expect(m.id).toBe(id);
     expect(m.baseUrl).toContain("openrouter");
+    // The chat transport, never OpenRouter's Anthropic Messages endpoint.
+    expect(m.api).toBe("openai-completions");
+    expect(resolveModel("openrouter/inception/mercury-99").api).toBe("openai-completions");
+    expect(resolveModel("openrouter/anthropic/claude-new-unlisted").api).toBe("anthropic-messages");
   });
 
   it("falls back to the default model for an entirely unknown provider", () => {
