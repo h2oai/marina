@@ -27,7 +27,7 @@ try {
     "-p",
     "127.0.0.1::3300",
     "-e",
-    "MARINA_ALLOW_INSECURE_PUBLIC=true",
+    "MARINA_PUBLISHED_HOST=127.0.0.1",
     "-e",
     "MARINA_WORLD=empty",
     "-e",

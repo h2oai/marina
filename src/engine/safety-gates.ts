@@ -14,9 +14,11 @@
  * `checkGateForExecution()` after the standard `minRank` check and
  * `recordGateExecution()` on a pass. `agent.spawn` and `code.exec` are
  * enforced imperatively inside their commands with the same pair. Under the
- * `local` trust profile (`isLocalUngated()`) every gate auto-passes except
+ * `local` trust profile (`isLocalUngated()`) every gate auto-passes, except
  * `trading.live` (`holdsUnderLocalProfile`), which only `MARINA_AUTONOMY=sovereign`
- * or an explicit operator grant lifts.
+ * or an explicit operator grant lifts, and an AGENT's `shell.exec` /
+ * `code.exec.unrestricted`, held for a person's approval unless
+ * `MARINA_AUTONOMY=sovereign`.
  *
  * APPROVALS ARE THE PROOF (2026-10-14). Two kinds of gate:
  *
@@ -44,9 +46,9 @@
 import { getStanding } from "../agent/standing";
 import type { MarinaDB } from "../persistence/database";
 import { isGrantedCompetence } from "../persistence/db-competence";
-import { getAutonomyPosture } from "./autonomy";
-import { onGateRefused, takeArmedGatePass } from "./gate-context";
-import { isLocalUngated, isSovereign } from "./trust-profile";
+import { getAutonomyPosture, LOCAL_AGENT_HELD_GATES } from "./autonomy";
+import { onGateRefused, principalOf, takeArmedGatePass } from "./gate-context";
+import { isImplicitLocalUngated, isLocalUngated, isSovereign } from "./trust-profile";
 
 /**
  * Canonical gate registry. Each entry is the contract for a dangerous
@@ -284,6 +286,15 @@ export function operatorGrantReason(gate: GateDef): string {
   );
 }
 
+/** The refusal for an agent's held host command under the implicit local profile. */
+export function localAgentHoldReason(gate: GateDef): string {
+  return (
+    `Approval needed: on this local Marina an agent may ${gate.description} (${gate.id}) only ` +
+    `once a person approves the run. The operator can approve this one run, grant it ` +
+    `(\`gate grant <name> ${gate.id}\`), or lift the hold with MARINA_AUTONOMY=sovereign.`
+  );
+}
+
 export interface GateCheckResult {
   ok: boolean;
   reason?: string;
@@ -474,7 +485,8 @@ export interface GateExecutionResult {
  *   decayed holder falls through to the rules below exactly like an entity
  *   that never flipped, and its refusal names the decay (not "not yet").
  * - an answered challenge for THIS run → `approved` (all postures).
- * - the local operator's own instance → `profile-local`.
+ * - the local operator's own instance → `profile-local` (an agent's
+ *   `LOCAL_AGENT_HELD_GATES` excepted unless sovereign: held as below).
  * - `open` posture, earnable gate → `posture-open`. Operator-grant gates
  *   (`OPEN_POSTURE_CORE`) fall through even under `open`.
  * - `earned` posture, earnable gate, standing ≥ floor → `optimistic`: run it;
@@ -499,6 +511,16 @@ export function checkGateForExecution(
   // the owner and operators are asked, the caller is told it will run once
   // approved, and nothing waits — the refusal returns now.
   return { ...result, reason: onGateRefused(entityId, gateId, result.reason) };
+}
+
+/** The implicit local profile still holds an AGENT's host shell and arbitrary
+ *  host commands for a person's approval (src/engine/autonomy.ts invariant 4). */
+function holdsLocalAgent(entityId: string, gateId: string): boolean {
+  return (
+    isImplicitLocalUngated() &&
+    LOCAL_AGENT_HELD_GATES.has(gateId) &&
+    principalOf(entityId) === "agent"
+  );
 }
 
 function evaluateGateForExecution(
@@ -533,12 +555,28 @@ function evaluateGateForExecution(
   // caller still records the execution (audit). An admin who wants the gates
   // back on a personal instance sets MARINA_AUTONOMY=guarded explicitly, which
   // makes isLocalUngated() false while local performance defaults stay on.
-  if (isLocalUngated() && (!gate.holdsUnderLocalProfile || isSovereign())) {
+  // Two exceptions: `trading.live` (holdsUnderLocalProfile) passes only under
+  // `sovereign`; under the IMPLICIT local profile an AGENT's host shell and
+  // arbitrary host commands (LOCAL_AGENT_HELD_GATES) fall through to the
+  // operator-grant refusal below, which raises a challenge a person approves.
+  // `MARINA_AUTONOMY=sovereign` lifts both.
+  if (
+    isLocalUngated() &&
+    (!gate.holdsUnderLocalProfile || isSovereign()) &&
+    !holdsLocalAgent(entityId, gateId)
+  ) {
     return { ok: true, mode: "profile-local" };
   }
 
   // Operator-grant gates: no posture, standing or demonstration opens them.
-  if (gate.operatorGrant) return { ok: false, reason: operatorGrantReason(gate) };
+  if (gate.operatorGrant) {
+    return {
+      ok: false,
+      reason: holdsLocalAgent(entityId, gateId)
+        ? localAgentHoldReason(gate)
+        : operatorGrantReason(gate),
+    };
+  }
 
   const posture = getAutonomyPosture();
   if (posture === "open") return { ok: true, mode: "posture-open" };

@@ -28,7 +28,7 @@
 # @restart
 # WS_PORT=3300
 
-# Bind address for the WebSocket/HTTP and MCP listeners; the default is loopback only. Unless MARINA_ALLOW_INSECURE_PUBLIC=true, a non-loopback bind is fatal at startup when login is passwordless (MARINA_AUTH off, which also covers MARINA_AUTONOMY=open), when MARINA_OPEN_API=true, under MARINA_PROFILE=local, or under MARINA_AUTONOMY=sovereign.
+# Bind address for the WebSocket/HTTP and MCP listeners; the default is loopback only. Unless MARINA_ALLOW_INSECURE_PUBLIC=true, a non-loopback bind is fatal at startup when login is passwordless (MARINA_AUTH off, which also covers MARINA_AUTONOMY=open), when MARINA_OPEN_API=true, under MARINA_PROFILE=local, or under MARINA_AUTONOMY=sovereign. In a container, a wildcard bind (0.0.0.0 or ::) published only on host loopback (MARINA_PUBLISHED_HOST) counts as loopback for these checks.
 # @protected
 # @restart
 # WS_HOST=127.0.0.1
@@ -47,6 +47,11 @@
 # @protected
 # @restart
 # MARINA_ALLOW_INSECURE_PUBLIC=false
+
+# Host address the container's ports are published on (docker-compose.yml sets it from MARINA_BIND_IP, default 127.0.0.1). When Marina runs in a container with a wildcard bind and this is a loopback address, the startup exposure checks (see WS_HOST) treat the bind as loopback; a routable address gets the normal fatal refusal. The trust profile still follows the real bind. Keep it equal to the publish address: Marina cannot see Docker's port mapping.
+# @protected
+# @restart
+# MARINA_PUBLISHED_HOST=
 
 # Telnet port. 0 (the default) is off. Telnet is plaintext and unauthenticated, and telnet sessions can never run host commands.
 # @restart
@@ -149,12 +154,12 @@
 
 # ── Trust profile, autonomy and admins ───────────────────────────────────────
 
-# Who this Marina is for. Derived when unset: `local` when every listener binds loopback and MARINA_AUTH is off, `shared` when MARINA_AUTH=better-auth, `public` for any non-loopback bind. `local` is ungated: all safety gates pass, loopback logins are sovereign, rate limits, login caps and memory admission budgets are off, and database durability defaults to `normal`; audit (exec decisions, cognitive ledger, memory receipts, trust labels) stays on. `shared` enforces gates, ranks and limits with sign-in identifying people; `public` enforces everything. `local` with a non-loopback bind is fatal unless MARINA_ALLOW_INSECURE_PUBLIC=true.
+# Who this Marina is for. Derived when unset: `local` when every listener binds loopback and MARINA_AUTH is off, `shared` when MARINA_AUTH=better-auth, `public` for any non-loopback bind. `local` is ungated: all safety gates pass for the loopback operator (an agent's host shell and arbitrary host commands, shell.exec and code.exec.unrestricted, are held for a person's approval unless MARINA_AUTONOMY=sovereign), loopback person logins are sovereign, rate limits, login caps and memory admission budgets are off, and database durability defaults to `normal`; audit (exec decisions, cognitive ledger, memory receipts, trust labels) stays on. `shared` enforces gates, ranks and limits with sign-in identifying people; `public` enforces everything. `local` with a non-loopback bind is fatal unless MARINA_ALLOW_INSECURE_PUBLIC=true.
 # @protected
 # @restart
 # MARINA_PROFILE=local
 
-# Autonomy posture, env-only by design. `guarded`: a supervised gate attempt is held until a person approves it; approvals from outside the requester's lineage make the gate its own. `earned`: agents whose standing clears a gate's floor run supervised operations at once, and an operator attests the runs afterwards. `open`: every gate passes except the destructive core (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code); `open` does pass code.exec. `sovereign`: the all-gates-off switch for a sovereign, self-hosted Marina with no guests: every gate (core included), rank floor and hold is off for every principal in every profile; audit stays on and the profile still sets the performance defaults. Unset means `guarded`, except under the local profile, where unset is ungated and only an explicit `guarded` brings the gates back. `open` with a non-loopback bind and passwordless login is fatal; `sovereign` with a non-loopback bind is fatal, signed in or not, unless MARINA_ALLOW_INSECURE_PUBLIC=true.
+# Autonomy posture, env-only by design. `guarded`: a supervised gate attempt is held until a person approves it; approvals from outside the requester's lineage make the gate its own. `earned`: agents whose standing clears a gate's floor run supervised operations at once, and an operator attests the runs afterwards. `open`: every gate passes except the destructive core (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code); `open` does pass code.exec. `sovereign`: the all-gates-off switch for a sovereign, self-hosted Marina with no guests: every gate (core included), rank floor and hold is off for every principal in every profile; audit stays on and the profile still sets the performance defaults. Unset means `guarded`, except under the local profile, where unset is ungated for the operator (an agent's shell.exec and code.exec.unrestricted are still held for a person; `sovereign` lifts that too) and only an explicit `guarded` brings the gates back. `open` with a non-loopback bind and passwordless login is fatal; `sovereign` with a non-loopback bind is fatal, signed in or not, unless MARINA_ALLOW_INSECURE_PUBLIC=true.
 # @protected
 # @restart
 # MARINA_AUTONOMY=guarded
@@ -753,7 +758,7 @@
 
 # ── Federation ───────────────────────────────────────────────────────────────
 
-# Shared secret for the gateway handshake: outgoing gateway connections send it and incoming ones must present it before logging in, or the socket closes. It does not fence bridged-channel participation or cross-instance tells; a hard boundary also needs MARINA_AUTH=better-auth. Unset allows any peer.
+# Shared secret for the gateway handshake: outgoing gateway connections send it and incoming ones must present it before logging in, or the socket closes. It does not fence bridged-channel participation or cross-instance tells; a hard boundary also needs MARINA_AUTH=better-auth. Unset, the shared and public profiles refuse every inbound gateway connection (`readiness` shows federation-inbound off); only the local profile accepts any peer without it. Use a long random value (e.g. `openssl rand -hex 32`), the same on every peer.
 # @protected
 # GATEWAY_SECRET=
 

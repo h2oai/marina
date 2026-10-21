@@ -26,6 +26,7 @@ import { ALERT_AFTER_FAILURES, schedulesMode } from "../schedules/runner";
 import { autoRespawnEnabled } from "./auto-respawn";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
+import { GATEWAY_SECRET_REMEDIATION, gatewayIngressRefusal } from "./gateway-runtime";
 import { corpusEmbeddingStatus } from "./search-providers/corpus-vectors";
 import { searchBackendHealth } from "./search-providers/health";
 import { describeSearchReadiness } from "./search-readiness";
@@ -547,6 +548,31 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       detail: "no caller auth — /v1 rejects external clients",
       remediation: "Set MODEL_API_KEYS=<token> (or MARINA_OPEN_API=true for local dev).",
     });
+  }
+
+  // ── Federation — inbound gateway peers (src/engine/gateway-runtime.ts) ──
+  {
+    const refusal = gatewayIngressRefusal(env);
+    checks.push(
+      refusal
+        ? {
+            id: "federation-inbound",
+            label: "Federation (inbound gateway peers)",
+            status: "off",
+            optional: true,
+            detail: "inbound gateway connections are refused: shared/public needs GATEWAY_SECRET",
+            remediation: GATEWAY_SECRET_REMEDIATION,
+          }
+        : {
+            id: "federation-inbound",
+            label: "Federation (inbound gateway peers)",
+            status: "ok",
+            optional: true,
+            detail: env.GATEWAY_SECRET
+              ? "inbound gateway peers must present GATEWAY_SECRET"
+              : "local profile: inbound gateway peers accepted without a secret",
+          },
+    );
   }
 
   // ── Decisions — cheap per-step judgement calls (src/decisions) ───────────
