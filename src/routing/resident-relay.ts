@@ -1,9 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createConnection, createServer, type Server } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { getErrorMessage } from "../engine/errors";
 
@@ -15,6 +15,10 @@ import { getErrorMessage } from "../engine/errors";
  * that connection through the normal dispatch path (FIFO, rank, gates,
  * challenges, audit) as the resident, so a credential renewal never affects
  * it and revocation closes it.
+ *
+ * Location: the user's runtime directory (`XDG_RUNTIME_DIR`), else
+ * `~/.marina/relay` — never the temp directory, which native agent sandboxes
+ * replace with a private one (the socket would vanish from inside them).
  *
  * Access: the socket lives in a fresh 0700 directory and is itself 0600, so
  * only the supervisor's OS user can connect. (Bun exposes no SO_PEERCRED; the
@@ -39,9 +43,20 @@ export interface ResidentRelay {
   close(): void;
 }
 
+/** Where relay directories go: short, per-user, visible inside agent sandboxes. */
+export function relayBaseDirectory(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.XDG_RUNTIME_DIR) return env.XDG_RUNTIME_DIR;
+  const base = join(homedir(), ".marina", "relay");
+  mkdirSync(base, { recursive: true, mode: 0o700 });
+  return base;
+}
+
 /** Open a relay in a fresh private directory; resolves once it listens. */
-export async function openResidentRelay(run: RelayRunner): Promise<ResidentRelay> {
-  const directory = mkdtempSync(join(tmpdir(), "marina-relay-"));
+export async function openResidentRelay(
+  run: RelayRunner,
+  base: string = relayBaseDirectory(),
+): Promise<ResidentRelay> {
+  const directory = mkdtempSync(join(base, "marina-relay-"));
   chmodSync(directory, 0o700);
   const path = join(directory, "relay.sock");
   const server: Server = createServer((socket) => {
