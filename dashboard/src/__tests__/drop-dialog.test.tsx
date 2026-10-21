@@ -153,7 +153,9 @@ describe("DropDialog", () => {
     const onClose = vi.fn();
     render(<DropDialog files={[mkFile()]} onClose={onClose} onError={onError} />);
     fireEvent.click(screen.getByRole("button", { name: /set intent/i }));
-    await waitFor(() => expect(onError).toHaveBeenCalledWith("Only the node's author can change it."));
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith("Only the node's author can change it."),
+    );
     expect(onClose).toHaveBeenCalled();
   });
 });
