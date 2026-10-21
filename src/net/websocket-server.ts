@@ -20,7 +20,7 @@ import {
 import type { Engine } from "../engine/engine";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
-import { isOpenApiMode } from "../engine/trust-profile";
+import { isLocalProfile, isOpenApiMode } from "../engine/trust-profile";
 import { extensionGatewayAdmission } from "../extensions/loader";
 import type { MemoryService } from "../memory/service";
 import { worldMemoryService } from "../memory/world-service";
@@ -52,6 +52,12 @@ import { CanvasBroadcaster, type CanvasSubscriptionPrincipal } from "./canvas/ca
 import { corsHeaders, isTrustedBrowserOrigin } from "./cors";
 import { handleDashboardApi } from "./dashboard-api";
 import type { DashboardBroadcaster, DashboardWSData } from "./dashboard-ws";
+import {
+  hostHeaderAllowed,
+  mainListenerHostPolicy,
+  misdirectedHostResponse,
+  resolveBindHostname,
+} from "./host-allowlist";
 import {
   badPathEncodingResponse,
   clientIp,
@@ -215,24 +221,8 @@ let wsIdCounter = 0;
  * principal is explicitly "unauthenticated-but-local" rather than a real entity.
  */
 
-/**
- * Resolve the bind hostname from the environment. SECURE-BY-DEFAULT: an unset
- * WS_HOST/MARINA_HOST now binds LOOPBACK-ONLY (127.0.0.1) so a fresh desktop
- * node is never silently exposed on all interfaces. Public exposure is a
- * deliberate opt-in:
- *   - WS_HOST=0.0.0.0 (or any explicit non-loopback host), or
- *   - MARINA_PUBLIC=true (binds 0.0.0.0 without naming an interface).
- * An explicit WS_HOST/MARINA_HOST always wins over MARINA_PUBLIC. The value is
- * threaded into `Bun.serve({ hostname })` so the bind is real, and it is the
- * trust anchor behind loopback isolation (the headless-exec identity decision
- * stays per-connection and does not read it).
- */
-export function resolveWsBindHostname(env: NodeJS.ProcessEnv = process.env): string {
-  const explicit = (env.WS_HOST ?? env.MARINA_HOST ?? "").trim();
-  if (explicit) return explicit;
-  if ((env.MARINA_PUBLIC ?? "").trim().toLowerCase() === "true") return "0.0.0.0";
-  return "127.0.0.1";
-}
+/** Bind hostname for the main listener; see `resolveBindHostname` in host-allowlist.ts. */
+export const resolveWsBindHostname = resolveBindHostname;
 
 export class WebSocketServer {
   private draining = false;
@@ -244,6 +234,8 @@ export class WebSocketServer {
     this.draining = true;
   }
   private server: Server<WSData> | null = null;
+  /** Refused Host names already logged (bounded; one warning per name). */
+  private readonly warnedHosts = new Set<string>();
   private sockets = new Map<string, ServerWebSocket<WSData>>();
   private ipConnections = new Map<string, number>();
   private totalConnections = 0;
@@ -405,6 +397,28 @@ export class WebSocketServer {
           return badPathEncodingResponse(req.headers.get("Origin"));
         }
 
+        // Host validation (DNS-rebinding protection). On a loopback bind, under
+        // the `local` profile, or with MARINA_ALLOWED_HOSTS set, only loopback
+        // names and listed names are answered — for every HTTP route and
+        // WebSocket upgrade. `/mcp` applies its own Host list below.
+        const hostPolicy = mainListenerHostPolicy(bindHostname, loopbackBind, isLocalProfile());
+        const hostHeader = req.headers.get("Host");
+        if (
+          !(url.pathname === "/mcp" && self.mcpHandler) &&
+          !hostHeaderAllowed(hostHeader, hostPolicy)
+        ) {
+          const shown = (hostHeader ?? "").slice(0, 200);
+          if (self.warnedHosts.size < 32 && !self.warnedHosts.has(shown)) {
+            self.warnedHosts.add(shown);
+            logger.warn(
+              "ws",
+              `Refused Host ${JSON.stringify(shown)} (${url.pathname}); add it to MARINA_ALLOWED_HOSTS if clients use that name`,
+              { path: url.pathname, host: shown },
+            );
+          }
+          return misdirectedHostResponse(hostHeader);
+        }
+
         // CORS preflight
         if (req.method === "OPTIONS") {
           return new Response(null, {
@@ -431,7 +445,7 @@ export class WebSocketServer {
           // loopback principal (sovereign under the `local` profile). Non-browser
           // clients send no Origin and pass; see `isTrustedBrowserOrigin`.
           const origin = req.headers.get("Origin");
-          if (!isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind })) {
+          if (!isTrustedBrowserOrigin(origin, hostHeader, { loopbackBind, hostPolicy })) {
             logger.warn("ws", `Rejected ${url.pathname} upgrade from untrusted origin ${origin}`, {
               path: url.pathname,
               origin,
@@ -680,6 +694,7 @@ export class WebSocketServer {
           const dashPeerIp = server.requestIP(req)?.address;
           return await handleDashboardApi(req, url, req.method, engine, self.db, dashPeerIp, {
             loopbackBind,
+            hostPolicy,
           });
         }
 

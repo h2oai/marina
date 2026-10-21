@@ -163,6 +163,20 @@ cover. Agents saved with an explicit model keep it.
 WS_PORT=8080 TELNET_PORT=4001 MCP_PORT=8081 bun run start
 ```
 
+### Host names the server answers to
+
+On a loopback bind (the default) and under the `local` profile, the HTTP and WebSocket listener
+answers only to loopback `Host` names (`localhost`, `127.0.0.1`, `[::1]`) and the `BETTER_AUTH_URL` host, and returns `421` for
+anything else, so a web page on a DNS name that points at 127.0.0.1 cannot reach your instance.
+If you reach it by another name — a reverse proxy on the same host, a LAN name — list it:
+
+```bash
+MARINA_ALLOWED_HOSTS=marina.example.com,marina.lan:3300 bun run start
+```
+
+A bare name matches on any port, `name:port` only on that port. On a non-loopback bind `Host` is
+not checked unless you set this variable. `/mcp` on its own port uses `MARINA_MCP_ALLOWED_HOSTS`.
+
 ### Secure the model API
 
 ```bash

@@ -849,6 +849,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses keys outside its directory. The routing supervisor runs git with the hardened host-git
   settings. `MODEL_API_KEYS` is parsed in one place. `hono` is updated to 4.13.11.
 
+- **The main listener validates the `Host` header.** On a loopback bind or under the `local`
+  trust profile, HTTP routes and WebSocket upgrades (`/ws`, `/dashboard-ws`, `/canvas-ws`) answer
+  only to loopback names and to names listed in the new `MARINA_ALLOWED_HOSTS`; any other `Host`
+  gets `421`. A browser request whose `Origin` matches its `Host` counts as same-origin only when
+  that `Host` is allowed. A public bind is unchanged unless the variable is set. A reverse proxy on
+  the same host as a loopback-bound Marina must list its public name in `MARINA_ALLOWED_HOSTS` (or
+  forward a loopback `Host`). The standalone memory service and the log viewer apply the same
+  rule, and the log viewer's feed refuses a foreign browser `Origin`. `/mcp` keeps
+  `MARINA_MCP_ALLOWED_HOSTS`; every listener shares one implementation.
+
 - **Boards enforce their access rules on every path** (GHSA-rgp4-gg8w-xwxm). Reading a post by
   number, reply, search, scores, vote, archive and `export` skipped a board's rank floors, and no
   path kept a group's board members-only. One rule now covers them all: group boards are
