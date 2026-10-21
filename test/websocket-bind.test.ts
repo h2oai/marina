@@ -3,14 +3,23 @@
 
 // Split from websocket.test.ts (bind-hostname describe). Assertions unchanged.
 
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { preserveListenPortsForTests } from "../src/net/listen-ports";
 import { isLoopbackHostname } from "../src/net/loopback";
 import { resolveWsBindHostname, WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, makeTestRoom } from "./helpers";
 import { tmpDbPath } from "./websocket-helpers";
+
+// Servers here bind ephemeral ports and record them process-wide; restore the
+// recorded ports so later files in the same process see the defaults.
+let listenPorts: Disposable | undefined;
+beforeAll(() => {
+  listenPorts = preserveListenPortsForTests();
+});
+afterAll(() => listenPorts?.[Symbol.dispose]());
 
 describe("WebSocket bind hostname (secure-by-default loopback)", () => {
   it("resolveWsBindHostname defaults to loopback (127.0.0.1) when unset", () => {

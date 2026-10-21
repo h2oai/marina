@@ -10,8 +10,9 @@
  * The integration block runs the same primitive against a live engine.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { preserveListenPortsForTests } from "../src/net/listen-ports";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import {
@@ -23,6 +24,14 @@ import {
 } from "../src/sdk/client";
 import { type Perception, roomId } from "../src/types";
 import { cleanupDb, makeTestRoom } from "./helpers";
+
+// Servers here bind ephemeral ports and record them process-wide; restore the
+// recorded ports so later files in the same process see the defaults.
+let listenPorts: Disposable | undefined;
+beforeAll(() => {
+  listenPorts = preserveListenPortsForTests();
+});
+afterAll(() => listenPorts?.[Symbol.dispose]());
 
 // ─── Stubbed transport ───────────────────────────────────────────────────────
 

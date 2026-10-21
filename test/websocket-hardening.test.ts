@@ -4,7 +4,7 @@
 // Split from websocket.test.ts (Connection Limits, Rate Limiting and HTTP
 // surface hardening describes). Assertions unchanged.
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { rmSync } from "node:fs";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { WS_MAX_CONNECTIONS_PER_IP, WS_MAX_TOTAL_CONNECTIONS } from "../src/engine/constants";
@@ -16,12 +16,21 @@ import {
   inlineScriptHashes,
   resetHttpRateLimitersForTests,
 } from "../src/net/http-utils";
+import { preserveListenPortsForTests } from "../src/net/listen-ports";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { LocalStorageProvider } from "../src/storage/local-provider";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 import { openWs, parse, tmpDbPath } from "./websocket-helpers";
+
+// Servers here bind ephemeral ports and record them process-wide; restore the
+// recorded ports so later files in the same process see the defaults.
+let listenPorts: Disposable | undefined;
+beforeAll(() => {
+  listenPorts = preserveListenPortsForTests();
+});
+afterAll(() => listenPorts?.[Symbol.dispose]());
 
 // ─── Connection Limits ──────────────────────────────────────────────────────
 
