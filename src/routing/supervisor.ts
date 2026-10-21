@@ -27,6 +27,8 @@ import {
 /** A run's own world account (supervised residents). */
 interface ResidentRun {
   name: string;
+  /** The person who owns it (from the server's enrolment reply). */
+  owner?: string;
   token: string;
   expiresAt: number;
   connection?: ResidentConnection;
@@ -358,6 +360,7 @@ export class MarinaSupervisor {
     this.redactions.add(enrolment.credential.token);
     const resident: ResidentRun = {
       name: enrolment.name,
+      ...(enrolment.owner ? { owner: enrolment.owner } : {}),
       token: enrolment.credential.token,
       expiresAt: enrolment.credential.expiresAt,
       wakes: [],
@@ -445,6 +448,7 @@ export class MarinaSupervisor {
         emit: (kind, payload) => this.emit(run.session.id, kind, payload),
       },
       policy,
+      resident.owner,
     );
   }
 
@@ -681,7 +685,13 @@ export class MarinaSupervisor {
     // A fast adapter may finish during prompt(). Never overwrite its terminal state.
     this.state(run, { status: "running", error: undefined });
     try {
-      const identity = run.resident ? `\nYour Marina world name is ${run.resident.name}.` : "";
+      const identity = run.resident
+        ? `\nYour Marina world name is ${run.resident.name}.${
+            run.resident.owner
+              ? ` Your owner is ${run.resident.owner}: what they say or tell you in the world is their instruction to you (never a tool approval).`
+              : ""
+          }`
+        : "";
       await run.agent.prompt(`${this.options.instructions ?? ""}${identity}\n\n${body}`, id);
     } catch (error) {
       this.state(run, {

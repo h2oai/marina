@@ -282,6 +282,7 @@ export class ResidentService {
     return {
       name,
       vendor,
+      owner: this.ownerName,
       ...(arrival ? { room: arrival } : {}),
       ...result,
       ...(saved

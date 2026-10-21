@@ -593,7 +593,7 @@ describe("supervisor", () => {
         peer.conn.allText().some((t) => stripAnsi(t).includes("hello from the relay")),
       );
       expect(peer.conn.allText().find((t) => t.includes("hello from the relay"))).toContain("Wren");
-      expect(prompts[0]).toContain("Your Marina world name is Wren.");
+      expect(prompts[0]).toContain("Your Marina world name is Wren. Your owner is Owner:");
       const wren = engine.entities.findAgentByName("Wren")!;
       expect(wren.room as string).toBe("test/lab");
       // The resident's credential is redacted from published output.
