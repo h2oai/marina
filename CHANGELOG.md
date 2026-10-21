@@ -170,6 +170,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A review snapshot from a sandboxed resident no longer lists the empty read-only placeholder files a command sandbox mounts over dotfiles and settings while the request runs.
+
 - **Supervised residents show as residents in the dashboard.** The world snapshot's vendor,
   presence and owner now reach the client (the snapshot reconciler compared neither, so a
   resident's later status never replaced its first), and every surface that names an entity
