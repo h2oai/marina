@@ -51,6 +51,7 @@
  */
 
 import { getStanding } from "../agent/standing";
+import { roleModelFromEnv } from "../config/model-tiers";
 import { residentMemoryOperation } from "../memory/resident-service";
 import type { MarinaDB, NoteRow } from "../persistence/database";
 import type {
@@ -88,7 +89,7 @@ export function helperRoleName(role: MemoryHelperRole): string {
 /** The exact command that brings a helper online (docs/guides/memory-assistance.md). */
 export function helperSpawnCommand(role: MemoryHelperRole): string {
   const display = role.charAt(0).toUpperCase() + role.slice(1);
-  return `agent spawn ${display} model marina/default role ${helperRoleName(role)} budget 40`;
+  return `agent spawn ${display} model ${roleModelFromEnv("helper")} role ${helperRoleName(role)} budget 40`;
 }
 
 /**

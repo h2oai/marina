@@ -42,6 +42,7 @@
  * report and the log line carry counts, ids and numbers — never content.
  */
 
+import { roleModelFromEnv } from "../config/model-tiers";
 import { classifierEngine, type EngineDeps, harnessDecisionProvider } from "../decisions/engines";
 import { DecisionError, type DecisionProvider, type DecisionQuestions } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
@@ -63,8 +64,6 @@ class GateTimeout extends Error {}
 export type RelevanceGateMode = UnifiedRelevanceMode;
 export type RelevanceGateReport = UnifiedRelevanceReport;
 
-/** The single-LLM fallback model when no decision backend is configured. */
-export const DEFAULT_RELEVANCE_GATE_MODEL = "marina/default";
 /** Judged items kept at most (exempt items do not count). */
 export const RELEVANCE_GATE_MAX_ITEMS = 8;
 /** Items per decision request. */
@@ -90,10 +89,14 @@ export function relevanceGateMode(env: NodeJS.ProcessEnv = process.env): Relevan
   return "off";
 }
 
-/** `MARINA_MEMORY_RELEVANCE_GATE_MODEL`; undefined when set to `none` / `off`. */
+/**
+ * `MARINA_MEMORY_RELEVANCE_GATE_MODEL` (the single-LLM fallback when no decision
+ * backend is configured); unset, the `helper` model role (`marina/cheap` unless
+ * `role:helper=` says otherwise); undefined when set to `none` / `off`.
+ */
 export function relevanceGateModel(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const v = env.MARINA_MEMORY_RELEVANCE_GATE_MODEL?.trim();
-  if (!v) return DEFAULT_RELEVANCE_GATE_MODEL;
+  if (!v) return roleModelFromEnv("helper", env);
   if (v.toLowerCase() === "none" || v.toLowerCase() === "off") return undefined;
   return v;
 }

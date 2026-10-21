@@ -76,6 +76,7 @@
 
 import { availableModels } from "../agent/available-models";
 import type { SourceExclusion } from "../arena/research/briefs";
+import { strongRoleOverride } from "../config/model-tiers";
 import { researchJudge } from "../decisions/config";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { modelComplete } from "../model/complete";
@@ -436,7 +437,11 @@ export function typedForecastDeps(
   let verifier: ModelPart | undefined;
   let arbiter: ModelPart | undefined;
   try {
-    const aSpec = overrides.arbiterModel ?? env.MARINA_FORECAST_ARBITER_MODEL?.trim();
+    // The Arbiter grades and overrules: MARINA_FORECAST_ARBITER_MODEL, else
+    // `role:arbiter=` / MARINA_MODEL_TIER_STRONG, else the critic.
+    const aSpec =
+      overrides.arbiterModel ??
+      (env.MARINA_FORECAST_ARBITER_MODEL?.trim() || strongRoleOverride("arbiter", env));
     if (aSpec) {
       const a = modelPart(aSpec, env);
       arbiter = a;

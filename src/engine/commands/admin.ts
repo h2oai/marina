@@ -44,6 +44,8 @@ interface AdminDeps {
   entityCount: () => number;
   getUptime: () => number;
   reloadRoom?: (roomId: string) => Promise<string>;
+  /** The model-tier readout (`admin models`, src/config/model-tiers.ts). */
+  describeModels?: () => string[];
 }
 
 export function adminCommand(deps: AdminDeps): CommandDef {
@@ -56,6 +58,7 @@ export function adminCommand(deps: AdminDeps): CommandDef {
       { syntax: "admin decisions set <setting> <value>", effect: "write" },
       { syntax: "admin decisions unset <setting>", effect: "write" },
       { syntax: "admin decisions history", effect: "read" },
+      { syntax: "admin models", effect: "read" },
       { syntax: "admin ban <entity> [reason]", effect: "write" },
       { syntax: "admin bans", effect: "read" },
       { syntax: "admin export", effect: "write" },
@@ -72,9 +75,10 @@ export function adminCommand(deps: AdminDeps): CommandDef {
     // Reading the decision settings is open to all (as `decision settings`
     // is); changing them stays behind the gate.
     readOnlyForm: (input) =>
-      input.tokens[0]?.toLowerCase() === "decisions" &&
-      ["show", "list", "ls", "history"].includes(input.tokens[1]?.toLowerCase() ?? "show"),
-    help: "Admin commands. Requires the admin.destructive gate (operator grant). `admin decisions` and `admin decisions history` read for everyone.\nUsage: admin kick|ban|unban|bans|stats|announce|reload|export|snapshot|snapshots|decisions\n\nExamples:\n  admin kick Alice\n  admin ban Bob Griefing\n  admin stats\n  admin announce Server restart in 5 minutes\n  admin snapshot default-v1              — clone live DB to seeds/default-v1.db\n  admin snapshot default-v1 --force      — overwrite existing snapshot\n  admin snapshot gen-2 --compact         — clone + prune compaction-chaff before serializing\n  admin snapshots                        — list saved seed snapshots",
+      input.tokens[0]?.toLowerCase() === "models" ||
+      (input.tokens[0]?.toLowerCase() === "decisions" &&
+        ["show", "list", "ls", "history"].includes(input.tokens[1]?.toLowerCase() ?? "show")),
+    help: "Admin commands. Requires the admin.destructive gate (operator grant). `admin decisions`, `admin decisions history` and `admin models` read for everyone.\nUsage: admin kick|ban|unban|bans|stats|announce|reload|export|snapshot|snapshots|decisions|models\n\nExamples:\n  admin kick Alice\n  admin ban Bob Griefing\n  admin stats\n  admin announce Server restart in 5 minutes\n  admin snapshot default-v1              — clone live DB to seeds/default-v1.db\n  admin snapshot default-v1 --force      — overwrite existing snapshot\n  admin snapshot gen-2 --compact         — clone + prune compaction-chaff before serializing\n  admin snapshots                        — list saved seed snapshots\n  admin models                           — effective model per tier and role, and where each came from",
     handler(ctx, input) {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -86,6 +90,11 @@ export function adminCommand(deps: AdminDeps): CommandDef {
       }
 
       switch (sub) {
+        case "models": {
+          const lines = deps.describeModels?.() ?? ["Model tiers: not available on this server."];
+          ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
         case "decisions": {
           const isInternal = (id: string) =>
             [...deps.getConnections().values()].some((c) => c.entity === id && c.internal);

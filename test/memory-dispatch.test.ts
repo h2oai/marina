@@ -288,7 +288,7 @@ describe("accumulation → reflector", () => {
     expect(tells[0]!.text).toContain("No memory-reflector is running");
     expect(tells[0]!.text).toContain(helperSpawnCommand("reflector"));
     expect(helperSpawnCommand("reflector")).toBe(
-      "agent spawn Reflector model marina/default role memory-reflector budget 40",
+      "agent spawn Reflector model marina/cheap role memory-reflector budget 40",
     );
     expect(await openJobs()).toEqual([]);
     expect(receipts()).toEqual([]);

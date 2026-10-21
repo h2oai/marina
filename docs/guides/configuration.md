@@ -113,6 +113,45 @@ Available worlds:
 | `demos` | Lobby, workshop, bridge. Good for interactive demonstrations. |
 | `empty` | One empty space. Good for building everything from scratch. |
 
+### Choose models (cheap by default)
+
+Work that names no model runs on one of two **model tiers**
+(`src/config/model-tiers.ts`):
+
+| Tier | Runs | Unset |
+|------|------|-------|
+| `cheap` — `MARINA_MODEL_TIER_CHEAP` | residents spawned without a model, room agents, boot-seeded crews (the Workbench, answerer and orchestration crews, the Chronicler), memory helpers | `MARINA_DEFAULT_MODEL` or a runtime default when one is set; else the cheapest adequate tool-capable model for your keys (`openrouter/deepseek/deepseek-v4.1-flash` with an OpenRouter key; `anthropic/claude-haiku-5-5`, `openai/gpt-6-luna`, … otherwise); else `marina/default` |
+| `strong` — `MARINA_MODEL_TIER_STRONG` | what grades or overrules: the benchmark judge, outcome extractor, lesson writer and judge, decision classifier, the Arbiter | `marina/default`, exactly as before — judging never turns cheap by accident |
+
+One line moves a tier; one entry moves a single role:
+
+```bash
+MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash   # every resident and crew
+MARINA_MODEL_TIER_STRONG=openrouter/anthropic/claude-opus-5.5     # every judge and the Arbiter
+MARINA_AGENT_MODELS=role:crew=anthropic/claude-sonnet-5-5,Host=openai/gpt-6.1-sol
+```
+
+Roles are `resident`, `room`, `crew`, `helper`, `judge`, `outcome-judge`,
+`lessons-judge`, `decisions` and `arbiter`. Older specific variables still win
+over the tier (`MARINA_CREW_MODEL`, `MARINA_WORKBENCH_MODEL`,
+`MARINA_BENCHMARK_JUDGE_MODEL`, `MARINA_DECISION_MODEL`, …), and so do a
+model named on `agent spawn`, `agent config <name> model …`, and a per-agent
+`MARINA_AGENT_MODELS` entry. `marina/cheap` and `marina/strong` are also model
+ids on `/v1`, resolved per request, so an agent saved on `marina/cheap` follows
+a later tier change after a restart. The `/v1` `marina` model is unchanged.
+
+`admin models` (readable by everyone) prints the effective model for each tier
+and role and where it came from; the boot log prints the two tier lines.
+Escalation stays where it was: the Arbiter runs only on contested items, and
+`model:route` / earned routing can pick a stronger candidate per agent.
+
+**Upgrading:** with no model variable set, residents, room agents, seeded crews
+and memory helpers move from `marina/default` (and the Workbench from each
+provider's flagship) to the cheap tier. Judges, decisions and the Arbiter do
+not change. An operator who set `MARINA_DEFAULT_MODEL`, a runtime default,
+`MARINA_CREW_MODEL` or `MARINA_WORKBENCH_MODEL` sees no change for what those
+cover. Agents saved with an explicit model keep it.
+
 ### Change ports
 
 ```bash

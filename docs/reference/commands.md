@@ -66,8 +66,8 @@ Effect: read.
 
 ## admin
 
-Admin commands. Requires the admin.destructive gate (operator grant). `admin decisions` and `admin decisions history` read for everyone.
-Usage: admin kick|ban|unban|bans|stats|announce|reload|export|snapshot|snapshots|decisions
+Admin commands. Requires the admin.destructive gate (operator grant). `admin decisions`, `admin decisions history` and `admin models` read for everyone.
+Usage: admin kick|ban|unban|bans|stats|announce|reload|export|snapshot|snapshots|decisions|models
 
 Examples:
   admin kick Alice
@@ -78,6 +78,7 @@ Examples:
   admin snapshot default-v1 --force      — overwrite existing snapshot
   admin snapshot gen-2 --compact         — clone + prune compaction-chaff before serializing
   admin snapshots                        — list saved seed snapshots
+  admin models                           — effective model per tier and role, and where each came from
 
 Category: Admin & Security. Minimum rank: 5. Gate: `admin.destructive`.
 Aliases: none.
@@ -115,6 +116,11 @@ Effect: write.
 - `field-0` (`setting`): text, required.
 
 ### `admin decisions history`
+
+Effect: read.
+
+
+### `admin models`
 
 Effect: read.
 

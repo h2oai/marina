@@ -234,13 +234,13 @@
 # `false` suppresses every room-agent auto-spawn (the LLM agents rooms start on first entry). Any other value leaves it on. Room agents need a provider key.
 # MARINA_ROOM_AGENTS=true
 
-# Model for the default Workbench's Host, Builder, Critic and Chronicler. Unset tries MARINA_CREW_MODEL, then openai/gpt-6.1-sol (OPENAI_API_KEY), anthropic/claude-opus-5-5 (ANTHROPIC_API_KEY), openrouter/google/gemini-3.1-pro-preview (OPENROUTER_API_KEY), huggingface/zai-org/GLM-5.3-Flash (HUGGINGFACE_API_KEY or HF_TOKEN), then marina/default.
+# Model for the default Workbench's Host, Builder, Critic and Chronicler. Unset: MARINA_CREW_MODEL, then `role:crew=` in MARINA_AGENT_MODELS, then the cheap tier `marina/cheap` (MARINA_MODEL_TIER_CHEAP). Before 2026-10-20 the unset case picked each provider's flagship (gpt-6.1-sol, claude-opus-5-5, gemini-3.1-pro-preview).
 # @restart
 # MARINA_WORKBENCH_MODEL=openai/gpt-6.1-sol
 
-# Shared crew-model override for the Workbench, Showcase and focused single-outcome worlds.
+# Shared crew-model override for every boot-seeded crew: the Workbench, the answerer and orchestration crews, the Chronicler, the Showcase and focused single-outcome worlds. Unset: `role:crew=` in MARINA_AGENT_MODELS, then the cheap tier `marina/cheap`.
 # @restart
-# MARINA_CREW_MODEL=marina/default
+# MARINA_CREW_MODEL=marina/cheap
 
 # Showcase world only: size of the answerer crew and per-crew model overrides (each falls back to MARINA_CREW_MODEL).
 # @restart
@@ -249,9 +249,9 @@
 # MARINA_MATH_MODEL=
 # MARINA_REFLECTOR_MODEL=
 
-# Per-agent model map for boot-seeded agents, any world: comma list of Name=model (names case-insensitive; the model string passes through as-is). Wins over the per-role variables above and MARINA_CREW_MODEL. Applied on every boot to agents the seed still owns — a user-customized or retired agent is never touched — exactly like the per-role variables. A name matching no seeded agent, or a malformed entry, is logged as a warning at boot.
+# Per-agent model map for boot-seeded agents, any world: comma list of Name=model (names case-insensitive; the model string passes through as-is). Wins over the per-role variables above and MARINA_CREW_MODEL. Applied on every boot to agents the seed still owns — a user-customized or retired agent is never touched — exactly like the per-role variables. A name matching no seeded agent, or a malformed entry, is logged as a warning at boot. An entry `role:<role>=<model>` moves one model role off its tier instead (roles: resident, room, crew, helper, judge, outcome-judge, lessons-judge, decisions, arbiter; see MARINA_MODEL_TIER_CHEAP); a role's own older variable (MARINA_CREW_MODEL, MARINA_BENCHMARK_JUDGE_MODEL, …) still wins over it, and an unknown role is logged at boot. `admin models` shows the effect.
 # @restart
-# MARINA_AGENT_MODELS=Answerer=anthropic/claude-opus-5-5,Translator=openrouter/deepseek/deepseek-v4-pro-0813
+# MARINA_AGENT_MODELS=Answerer=anthropic/claude-opus-5-5,Translator=openrouter/deepseek/deepseek-v4-pro-0813,role:judge=openrouter/anthropic/claude-opus-5.5
 
 # Showcase world only: which autonomous coordinators to seed beyond marina:answerer (comma list of council, debate, decompose; empty or `none` seeds none). Unset seeds all three. Each is a loop that spends tokens even when its endpoint is never called.
 # @restart
@@ -374,10 +374,14 @@
 
 # ── Default and fallback models ──────────────────────────────────────────────
 
-# Model for agents spawned without one, and the fallback for unrecognized models. marina/default calls this instance's own /v1, which routes to whichever provider has a key. A default model set at runtime (dashboard or `admin`) wins.
+# Model tiers — the one place to choose models for work that names none (src/config/model-tiers.ts; `admin models` shows the effective model per tier and role and where each came from). CHEAP runs residents (agents spawned without a model), room agents, boot-seeded crews (Workbench, answerer/orchestration crews, Chronicler) and memory helpers. Unset: MARINA_DEFAULT_MODEL or a runtime default when one is set, else the cheapest adequate tool-capable model for the keys present — openrouter/deepseek/deepseek-v4.1-flash, deepseek/deepseek-flash, anthropic/claude-haiku-5-5, openai/gpt-6-luna, google/gemini-3.1-flash-lite, groq/openai/gpt-oss-120b, cerebras/gpt-oss-120b, huggingface/zai-org/GLM-5.3-Flash, mistral/mistral-small-latest, in that order (a configured local runtime first), else marina/default. STRONG runs what grades or overrules: the benchmark judge, the outcome extractor, lesson writer and judge, the decision classifier, and the Arbiter. Unset it is marina/default exactly as before, so judging never becomes cheap by accident. Both tiers are also live /v1 model ids, `marina/cheap` and `marina/strong`, resolved per request, so an agent saved on `marina/cheap` follows a later tier change. Move one role with `role:<role>=<model>` in MARINA_AGENT_MODELS; every older role variable still wins.
+# MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash
+# MARINA_MODEL_TIER_STRONG=openrouter/anthropic/claude-opus-5.5
+
+# Model for agents spawned without one, and the fallback for unrecognized models. marina/default calls this instance's own /v1, which routes to whichever provider has a key. A default model set at runtime (dashboard or `admin`) wins. Set (here or at runtime), it is also the cheap tier unless MARINA_MODEL_TIER_CHEAP is set; unset, agents spawned without a model run on `marina/cheap` (before 2026-10-20: marina/default). The /v1 `marina` model itself is unchanged.
 # MARINA_DEFAULT_MODEL=marina/default
 
-# Model /v1 uses on each provider when it proxies directly upstream (no model agent is online for the requested channel). The variable name is MARINA_DEFAULT_<PROVIDER>_MODEL.
+# Model /v1 uses on each provider when it proxies directly upstream (no model agent is online for the requested channel). The variable name is MARINA_DEFAULT_<PROVIDER>_MODEL. It shapes `marina/default` (and so the strong tier), not the cheap tier.
 # MARINA_DEFAULT_ANTHROPIC_MODEL=claude-opus-5-5
 # MARINA_DEFAULT_OPENAI_MODEL=gpt-6.1-sol
 # MARINA_DEFAULT_GEMINI_MODEL=gemini-3.1-pro-preview
@@ -760,7 +764,7 @@
 # Total deadline per advisory judgment, including fallback (1-60000 ms, default 4000). With two backends, half is reserved for fallback. Caller cancellation and the daily spend cap stop the chain. The normal safety gate retains its own failure policy.
 # MARINA_ADVISORY_TIMEOUT_MS=4000
 
-# Decision backend for cheap per-step judgements (it receives tool names and redacted arguments). `auto` (default; alias `on`): a chat classifier answering through this Marina's own /v1 with the world's default model (`marina-self`; MARINA_DECISION_MODEL overrides) — the strongest model the operator configured, on providers the world already uses, never a cheaper stand-in; with no provider at all decisions are off. `off` turns them off. `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `lightning` (alias `h2o-lightning`, experimental): H2O-Lightning over the Decisions API on OpenRouter — off until MARINA_LIGHTNING_MODEL names its model id. `chat-classifier` (aliases `classifier`, `llm`): any chat model (see MARINA_DECISION_MODEL). Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it.
+# Decision backend for cheap per-step judgements (it receives tool names and redacted arguments). `auto` (default; alias `on`): a chat classifier answering through this Marina's own /v1 with the world's default model (`marina-self`; MARINA_DECISION_MODEL overrides, then `role:decisions=`, then MARINA_MODEL_TIER_STRONG) — the strong tier, never the cheap one; with no provider at all decisions are off. `off` turns them off. `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `lightning` (alias `h2o-lightning`, experimental): H2O-Lightning over the Decisions API on OpenRouter — off until MARINA_LIGHTNING_MODEL names its model id. `chat-classifier` (aliases `classifier`, `llm`): any chat model (see MARINA_DECISION_MODEL). Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it.
 # MARINA_DECISIONS=auto
 
 # Backend model. Defaults: typesafe/jev-1.13 for decisions-api, jev-latest for typesafe; chat-classifier uses google/gemini-3.1-pro-preview on OpenRouter, zai-org/GLM-5.3-Flash on the Hugging Face router, or the local runtime's default model on a configured llama.cpp / Ollama / vLLM server, and any other base URL must name a model.
@@ -867,7 +871,7 @@
 # Where in-world `benchmark kit` runs keep their run directories (servers, scratch, logs). Default: `kit-runs/` beside the world DB (`DB_PATH`). The kit's runs file into the world DB either way.
 # MARINA_BENCHMARK_KIT_DIR=
 
-# The judge for judge-scored benchmark items (frames, simple-qa, hle-verified-gold*, narrativeqa, mt-bench) when a run names none: the in-world `benchmark run`/`sweep`/`compare-run` and `benchmarks/harness.ts` (src/engine/benchmark-judge.ts). Unset: `marina/default`. A run never grades itself: a judge that names the target model (aliases of the default model included) is refused unless the run opts in with `self-judge:on` / `--self-judge`, which the run records and the ledger marks `[self-judge]`.
+# The judge for judge-scored benchmark items (frames, simple-qa, hle-verified-gold*, narrativeqa, mt-bench) when a run names none: the in-world `benchmark run`/`sweep`/`compare-run` and `benchmarks/harness.ts` (src/engine/benchmark-judge.ts). Unset: `role:judge=` in MARINA_AGENT_MODELS, then MARINA_MODEL_TIER_STRONG, then `marina/default` — never the cheap tier. A run never grades itself: a judge that names the target model (aliases of the default model included) is refused unless the run opts in with `self-judge:on` / `--self-judge`, which the run records and the ledger marks `[self-judge]`.
 # MARINA_BENCHMARK_JUDGE_MODEL=
 
 # ── Forecasting ──────────────────────────────────────────────────────────────
@@ -953,7 +957,7 @@
 # MARINA_FORECAST_QUANT=off
 # MARINA_FORECAST_QUANT_WEIGHT=0.25
 
-# The Arbiter in typed forecasts (src/forecast/arbiter.ts, over src/orchestration/arbiter.ts): adjudication only where answers disagree. A forecast is contested when its runs' drafts disagree (by answer type), the verifier or the critic dissents, or the judge's scores spread; only contested forecasts reach the Arbiter, within MARINA_ARBITER_CAP. `off` (the default) changes nothing: no call, no field, prompts byte-identical. `observe` runs today's pipeline and records on the answer (`arbiter`) what the Arbiter would have done. `on` makes verifier corrections and critic revisions advisory (recorded as dissent) and lets only an overrule that clears the bar change the answer. `replace` is `on` without the per-run verifier, so the Arbiter replaces always-on verification. ARBITER_MODEL is the Arbiter's model (default: the critic). The forecast formation `arbiter` sets `replace`.
+# The Arbiter in typed forecasts (src/forecast/arbiter.ts, over src/orchestration/arbiter.ts): adjudication only where answers disagree. A forecast is contested when its runs' drafts disagree (by answer type), the verifier or the critic dissents, or the judge's scores spread; only contested forecasts reach the Arbiter, within MARINA_ARBITER_CAP. `off` (the default) changes nothing: no call, no field, prompts byte-identical. `observe` runs today's pipeline and records on the answer (`arbiter`) what the Arbiter would have done. `on` makes verifier corrections and critic revisions advisory (recorded as dissent) and lets only an overrule that clears the bar change the answer. `replace` is `on` without the per-run verifier, so the Arbiter replaces always-on verification. ARBITER_MODEL is the Arbiter's model (default: `role:arbiter=` in MARINA_AGENT_MODELS, then MARINA_MODEL_TIER_STRONG, then the critic; the same override applies to the passthru verify Arbiter, whose default is the checker). The forecast formation `arbiter` sets `replace`.
 # MARINA_FORECAST_ARBITER=off
 # MARINA_FORECAST_ARBITER_MODEL=openrouter/anthropic/claude-opus-5.5
 
@@ -984,7 +988,7 @@
 # - `off` (default): nothing. `observe`: every judgement is recorded as a judged outcome that settles and teaches nothing, measured against any mechanical result (`outcome agreement`). `on`: as observe, and a confident judgement (≥ 0.9) from a judge that has earned agreement (≥ 25 comparisons, Wilson lower bound ≥ 0.85) settles the answer or is delivered as a lesson, labelled judged.
 # MARINA_OUTCOME_JUDGE=off
 
-# The model that proposes a number's resolved value for judged resolution; default the first MARINA_FORECAST_ANALYSTS model, else marina/default.
+# The model that proposes a number's resolved value for judged resolution; default the first MARINA_FORECAST_ANALYSTS model, else `role:outcome-judge=`, then MARINA_MODEL_TIER_STRONG, then marina/default.
 # MARINA_OUTCOME_JUDGE_MODEL=
 
 # Method routing for every forecast surface (src/forecast/card-routing.ts): which method card answers. `off` answers with MARINA_FORECAST_FORMATION (outcomes are still tagged); `observe` records on each answer (`routing`) which card routing would pick and still answers with the default; `on` (default) uses it — without enough paired evidence the pick is the default card (the operator's formation and options), so `on` changes nothing until a challenger earns it. Evidence is per class, most specific first — the board, the caller's `category`, the judged domain (MARINA_FORECAST_FEATURES), then the answer group — using the first class with at least ROUTE_MIN_N records: resolved, mechanically scored outcomes tagged `family:<class>` and `method:<card>` (a measurement run counts only for its own board), plus formation records in MARINA_FORECAST_HISTORY. A challenger replaces the default only when, on at least ROUTE_MIN_N questions both answered, its paired gain has a 95 % lower bound above 0 and clears the fishing margin 0.02 + 0.01·log₂(1 + challengers tried); sibling classes only order what to explore next. A card whose preconditions fail here (a panel with one run, no retriever, no checker) is never a candidate. CANDIDATES is a comma list of formations or card specs `<formation>[+verify|+noverify][+closed-book]` (closed-book: no web research, lookups still run; default the four plain formations); an unknown entry is dropped.
@@ -1197,10 +1201,10 @@
 # Outcome learning (src/learning/): every verdict — a benchmark run scored, a forecast resolved, a Code Mode verification, an arena round — becomes a candidate lesson that the decision layer judges (grounded, general, leak-free, consistent); passing lessons are served by recall in pools `lessons:<domain>`, rejected ones stay as audit records. `on` (default) learns and injects; `observe` learns and records what recall WOULD inject without injecting (the ablation arm); `off` neither learns nor recalls. A lesson is never visible to work whose cutoff precedes the outcome it came from.
 # MARINA_LESSONS=on
 
-# Model that writes a lesson's rule. `marina/default` (default) asks this Marina's own /v1, i.e. whatever model the operator runs, local included; a provider/model id uses that vendor (falling back to marina/default when its key is missing); `none` keeps mechanical lessons only. No vendor key is ever required.
+# Model that writes a lesson's rule. Unset: `role:lessons-judge=`, then MARINA_MODEL_TIER_STRONG, then `marina/default`, which asks this Marina's own /v1, i.e. whatever model the operator runs, local included; a provider/model id uses that vendor (falling back to marina/default when its key is missing); `none` keeps mechanical lessons only. No vendor key is ever required.
 # MARINA_LESSONS_WRITER=marina/default
 
-# The judge when no decision backend is configured: a chat-classifier on this model through this Marina's /v1, uncalibrated (one cut at 0.5) and labelled as such on every lesson it passes. With no model reachable, lessons are recorded unverified and never promoted.
+# The judge when no decision backend is configured (unset: `role:lessons-judge=`, then MARINA_MODEL_TIER_STRONG, then marina/default): a chat-classifier on this model through this Marina's /v1, uncalibrated (one cut at 0.5) and labelled as such on every lesson it passes. With no model reachable, lessons are recorded unverified and never promoted.
 # MARINA_LESSONS_JUDGE_MODEL=marina/default
 
 # Outcomes processed per hour (writer + judge calls are bounded by it); excess outcomes are dropped and counted.
@@ -1263,7 +1267,7 @@
 # Memory relevance gate (src/memory/relevance-gate.ts): after retrieval and before memories are served, every unified-context surface (continuation prompt, `recall <q> all|evidence`, GET /mem/context, MCP think context, passthru injection) asks whether each retrieved item bears on the query and drops the ones that do not. `off` (default): no call, nothing changes. `observe`: items are scored and the would-be drops are reported in the context's `relevance` block; what is served is unchanged. `on`: irrelevant items are dropped, and when nothing relevant is left every render says "no relevant memory found" instead of serving keyword noise. Drop only (never rewritten or reordered), at most 8 positively judged items kept (unanswered items and negative model judgments of incomplete excerpts are preserved), `core` and pinned memory never judged or dropped. The judge is the decision layer (MARINA_DECISIONS / MARINA_DECISION_ENGINE) when configured; otherwise one model through this Marina's /v1 (MARINA_MEMORY_RELEVANCE_GATE_MODEL) scores each batch in one call, uncalibrated (one cut at 0.5). A backend outage, an incomplete reply or the daily spend cap serves the ungated set, labelled `fail_open`. Spend counts against the daily cap.
 # MARINA_MEMORY_RELEVANCE_GATE=off
 
-# The relevance gate's single-LLM fallback when no decision backend is configured: any model this Marina's /v1 serves (default `marina/default`, the operator's own model). `none` uses the mechanical floor instead: an item must contain at least 40 % of the query's distinct terms.
+# The relevance gate's single-LLM fallback when no decision backend is configured: any model this Marina's /v1 serves (default: `role:helper=` in MARINA_AGENT_MODELS, else the cheap tier `marina/cheap`; before 2026-10-20 `marina/default`). `none` uses the mechanical floor instead: an item must contain at least 40 % of the query's distinct terms.
 # MARINA_MEMORY_RELEVANCE_GATE_MODEL=marina/default
 
 # How long the relevance gate waits for its model backend, in milliseconds (default 30000). Past it the gate fails open and serves the ungated set, labelled `fail_open` with reason `timeout`. The single-LLM fallback asks an OpenRouter-routed model not to reason (`reasoning: { enabled: false }`, or a low effort for a model whose upstream says reasoning is mandatory), so a reasoning-by-default model answers within the bound.
@@ -1272,7 +1276,7 @@
 # Ingest-time memory notes (src/memory/ingest-notes.ts): when a long record (2 KB or more) is written or revised through the memory service (/v1/memory, resident memory, durableMemory.run) or a source is captured, a few concise derived notes are written beside it in the same space, by the same writer, each linked to its source (`depends_on`, or `source_ids` for a captured source) and labelled `derived: ingest-note`. Notes are grounded: a line whose names, numbers, dates or identifiers are not in the source is dropped; exact duplicates are skipped. Forgetting a source erases its notes; revising it stales them. Served context labels a note as derived and adds an excerpt of its source when budget is left. `off` (default): nothing changes. `on`: notes are written in the background after the write returns, never blocking or failing it. A write can opt in or out itself with `ingest_notes: true|false`. Spend counts against the daily cap; at the cap notes are skipped.
 # MARINA_MEMORY_INGEST_NOTES=off
 
-# The ingest-note writer: one call of this model per 12 KB chunk of the source, through this Marina's /v1 (default `marina/default`, the operator's own model). `none` uses the mechanical extractor instead (headed sections, final-state lines, numbered steps, the last line); a failing model also falls back to it, labelled.
+# The ingest-note writer: one call of this model per 12 KB chunk of the source, through this Marina's /v1 (default: `role:helper=` in MARINA_AGENT_MODELS, else the cheap tier `marina/cheap`; before 2026-10-20 `marina/default`). `none` uses the mechanical extractor instead (headed sections, final-state lines, numbered steps, the last line); a failing model also falls back to it, labelled.
 # MARINA_MEMORY_INGEST_NOTES_MODEL=marina/default
 
 # Durable record search for unified memory context: `lexical` (default, FTS5) or `hybrid` (lexical fused with the memory vector index; needs MARINA_MEMORY_EMBEDDINGS and an indexed space). A missing provider or an incomplete index answers lexically and is labelled `semantic_degraded` on the evidence tier, never an error. Evidence-gated: measure before enabling (`bun run qualify:paraphrase`).

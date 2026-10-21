@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { crewModelFromEnv } from "../src/config/model-tiers";
 import type { Engine } from "../src/engine/engine";
 import type { MarinaDB } from "../src/persistence/database";
 import type { RoomId } from "../src/types";
@@ -22,16 +23,16 @@ const WORKBENCH_AGENTS = ["Host", "Builder", "Critic", "Chronicler"] as const;
 const WORKBENCH_SEED_OWNER = "world:workbench";
 const DEMO_PULSE_KICKOFF = "demo-pulse-kickoff-posted";
 
+/**
+ * The Workbench agents' model: MARINA_WORKBENCH_MODEL, then MARINA_CREW_MODEL,
+ * then `role:crew=` in MARINA_AGENT_MODELS, then the cheap tier
+ * (`marina/cheap`, src/config/model-tiers.ts). Before 2026-10-20 the unset
+ * case picked each provider's flagship (Opus / GPT-6.1 Sol / Gemini Pro).
+ */
 function workbenchModel(): string {
-  if (process.env.MARINA_WORKBENCH_MODEL) return process.env.MARINA_WORKBENCH_MODEL;
-  if (process.env.MARINA_CREW_MODEL) return process.env.MARINA_CREW_MODEL;
-  if (process.env.OPENAI_API_KEY) return "openai/gpt-6.1-sol";
-  if (process.env.ANTHROPIC_API_KEY) return "anthropic/claude-opus-5-5";
-  // OpenRouter carries non-Anthropic, non-OpenAI models.
-  if (process.env.OPENROUTER_API_KEY) return "openrouter/google/gemini-3.1-pro-preview";
-  if (process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN)
-    return "huggingface/zai-org/GLM-5.3-Flash";
-  return "marina/default";
+  const workbench = process.env.MARINA_WORKBENCH_MODEL?.trim();
+  if (workbench) return workbench;
+  return crewModelFromEnv();
 }
 
 const GUIDE_NOTES: WorldDefinition["guideNotes"] = [

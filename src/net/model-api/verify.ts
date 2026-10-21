@@ -29,6 +29,7 @@
 // this review; a revision is one call by the picked draft's proposer.
 
 import { availableModels } from "../../agent/available-models";
+import { strongRoleOverride } from "../../config/model-tiers";
 import { type DefaultSlotReader, resolveDefault } from "../../engine/default-resolution";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage, logRejection } from "../../engine/errors";
@@ -62,7 +63,7 @@ import {
   unsupportedParam,
 } from "./shared";
 import { noteScopeFor } from "./sticky-notes";
-import { explicitUpstreamModel, proxyToUpstream } from "./upstream";
+import { explicitUpstreamModel, proxyToUpstream, tierRequestModel } from "./upstream";
 
 const log = new Logger();
 
@@ -232,9 +233,13 @@ async function adjudicateDraft(
   arbiterQuota ??= new ArbiterQuota(policy.cap);
   let costUsd = 0;
   let usage: unknown;
+  // The Arbiter overrules: `role:arbiter=` / MARINA_MODEL_TIER_STRONG when set
+  // (src/config/model-tiers.ts), else the formation's checker.
+  const override = strongRoleOverride("arbiter");
+  const evaluator = override ? (tierRequestModel(engine, override) ?? override) : checker;
   const result = await arbitrate(arbiterItemFor(messages, draft, issues), {
     mode,
-    evaluator: checker,
+    evaluator,
     policy,
     quota: arbiterQuota,
     complete: async (system, user) => {
@@ -246,7 +251,7 @@ async function adjudicateDraft(
             { role: "user", content: user },
           ],
         },
-        checker,
+        evaluator,
         signal,
         "verify:arbiter",
         entityId,

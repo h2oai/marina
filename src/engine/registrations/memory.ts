@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { MAX_AGENTS } from "../../agent/agent-runtime";
+import { roleModelFromEnv } from "../../config/model-tiers";
 import { describeDefaultUpstream } from "../../net/model-api/upstream";
 import type { EntityId } from "../../types";
 import { askCommand } from "../commands/ask";
@@ -87,7 +88,7 @@ export function registerMemoryCommands(engine: Engine): void {
         if (!existing) {
           await engine.agentRuntime.spawn({
             name,
-            model: "marina/default",
+            model: roleModelFromEnv("helper"),
             role,
             budgetCalls: REFLECTOR_SPAWN_BUDGET,
             spawnedBy: requestedBy,

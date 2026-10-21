@@ -13,7 +13,7 @@ MARINA_WORLD=deep-research AGENT_AUTORESPAWN=true bun run start
 ```
 
 Set `MARINA_CREW_MODEL` to put every seeded specialist on a specific configured model. Without an
-override, the examples use `marina/default`.
+override, the examples use the cheap model tier (`marina/cheap`; set `MARINA_MODEL_TIER_CHEAP`).
 
 | World | Golden-path project | Coordination loop | Done when |
 |---|---|---|---|
