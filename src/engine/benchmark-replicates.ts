@@ -18,7 +18,6 @@
  */
 
 import { createHash } from "node:crypto";
-import { validGroupKey } from "../../benchmarks/replicates";
 import type { BenchmarkItemRow, BenchmarkRunRow } from "../persistence/db-benchmarks";
 import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
 import {
@@ -40,6 +39,13 @@ export function promotionMinReplicates(env: NodeJS.ProcessEnv = process.env): nu
   if (!raw) return DEFAULT_PROMOTION_MIN_REPLICATES;
   const n = Number(raw);
   return Number.isInteger(n) && n >= 1 && n <= 100 ? n : DEFAULT_PROMOTION_MIN_REPLICATES;
+}
+
+const GROUP_RE = /^[A-Za-z0-9][A-Za-z0-9:._@/-]{0,119}$/;
+
+/** The rule the ledger applies to an explicit group key (the harness re-exports it). */
+export function validGroupKey(group: string): boolean {
+  return GROUP_RE.test(group) && !group.startsWith("auto:");
 }
 
 /** A valid explicit group key (labels, not free text) — the harness applies the same rule. */

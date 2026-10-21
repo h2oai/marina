@@ -4,7 +4,7 @@
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext, RoomId } from "../../types";
-import { getRank, requireRank } from "../permissions";
+import { getRank } from "../permissions";
 import { rankFloorRefusal } from "../rank-floor";
 
 export function observeCommand(deps: {
@@ -82,8 +82,9 @@ export function observeCommand(deps: {
         }
 
         case "log": {
-          if (!requireRank(entity, 7)) {
-            ctx.send(input.entity, "Requires steward rank (7).");
+          const refusal = rankFloorRefusal(entity, 7, "Requires steward rank (7).");
+          if (refusal) {
+            ctx.send(input.entity, refusal);
             return;
           }
           const targetName = tokens[1];

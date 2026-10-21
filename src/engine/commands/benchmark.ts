@@ -1,13 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { parsePartition } from "../../../benchmarks/partition";
-import {
-  knownReferenceModels,
-  REFERENCE_SCORES,
-  referenceScoresForBenchmark,
-  referenceScoresForModel,
-} from "../../../benchmarks/reference-scores";
 import { retireLessonsForRun } from "../../learning/intake";
 import { bold, category, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
@@ -43,12 +36,19 @@ import {
   runLabel,
   verificationCounts,
 } from "../benchmark-ledger";
+import { parsePartition } from "../benchmark-partition";
 import {
   type ChallengeEvaluation,
   fileSlotPromotion,
   lookupChallenge,
   type SplitStats,
 } from "../benchmark-promotion";
+import {
+  knownReferenceModels,
+  REFERENCE_SCORES,
+  referenceScoresForBenchmark,
+  referenceScoresForModel,
+} from "../benchmark-reference-scores";
 import {
   comparePooledGroups,
   type LoadedGroup,

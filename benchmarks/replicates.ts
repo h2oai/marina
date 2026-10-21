@@ -24,12 +24,7 @@ export function parseReplicates(raw: string | undefined): number {
   return n;
 }
 
-const GROUP_RE = /^[A-Za-z0-9][A-Za-z0-9:._@/-]{0,119}$/;
-
-/** The same rule the ledger applies to an explicit group key. */
-export function validGroupKey(group: string): boolean {
-  return GROUP_RE.test(group) && !group.startsWith("auto:");
-}
+export { validGroupKey } from "../src/engine/benchmark-replicates";
 
 /** A fresh group key for one multi-replicate invocation. */
 export function defaultReplicateGroup(label: string, now: number): string {

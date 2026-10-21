@@ -378,49 +378,9 @@ export async function search(
 let initialized = false;
 
 /**
- * Initialize providers based on available environment variables.
- * Call once at startup. Safe to call multiple times (idempotent).
- */
-export function initProviders(): void {
-  if (initialized) return;
-  initialized = true;
-
-  // Tier 1: key-gated providers (highest quality)
-  if (process.env.TAVILY_API_KEY) {
-    // Lazy import to avoid loading when not configured
-    import("./tavily").then((m) => registerProvider(m.tavilyProvider(process.env.TAVILY_API_KEY!)));
-  }
-  if (process.env.SEARXNG_URL) {
-    import("./searxng").then((m) => registerProvider(m.searxngProvider(process.env.SEARXNG_URL!)));
-  }
-
-  // Tier 2: always-available free providers, then DeepSeek's paid search as
-  // their fallback (DEEPSEEK_API_KEY is often set for chat models alone, so it
-  // never outranks the free engine). Chained so the order holds.
-  import("./duckduckgo")
-    .then((m) => registerProvider(m.duckDuckGoProvider()))
-    .then(() => (process.env.DEEPSEEK_API_KEY?.trim() ? import("./deepseek") : undefined))
-    .then((m) => {
-      if (m) registerProvider(m.deepSeekSearchProvider(process.env.DEEPSEEK_API_KEY!.trim()));
-    });
-
-  // Academic: always available, free, no keys
-  import("./academic").then((m) => registerProvider(m.academicProvider()));
-
-  // Date-bounded providers: always available, free, no keys; bounded searches only.
-  import("./asof-providers").then((m) => {
-    for (const p of m.dateBoundProviders()) registerProvider(p);
-  });
-
-  // Local corpora (offline BM25), named searches only.
-  import("./corpus").then((m) => {
-    for (const p of m.corpusProviders()) registerProvider(p);
-  });
-}
-
-/**
- * Synchronous initialization for providers that don't need async setup.
- * Prefer this over initProviders() when you need providers available immediately.
+ * Register the providers the environment configures (key-gated first, then the
+ * free engines, academic, date-bounded and local corpora). Call once at
+ * startup; idempotent.
  */
 export function initProvidersSync(): void {
   if (initialized) return;

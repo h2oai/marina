@@ -14,10 +14,6 @@ export function setRank(entity: Entity, rank: EntityRank): void {
   entity.properties.rank = rank;
 }
 
-export function requireRank(entity: Entity, min: EntityRank): boolean {
-  return getRank(entity) >= min;
-}
-
 export function rankName(rank: EntityRank): string {
   return RANK_NAMES[rank] ?? "unknown";
 }

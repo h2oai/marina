@@ -1003,6 +1003,16 @@ async function executeWorkspaceCommand(
 // In-memory only; a restart drops overrides and re-applies the instance's policy.
 const execModes = new Map<string, "prompt" | "auto" | "off">();
 
+/** Drop a closed session's exec-mode override (called with `clearSessionExecState`). */
+export function clearSessionExecMode(sessionId: string): void {
+  execModes.delete(sessionId);
+}
+
+/** Exported for tests: the session's exec-mode override, if any. */
+export function sessionExecModeForTests(sessionId: string): "prompt" | "auto" | "off" | undefined {
+  return execModes.get(sessionId);
+}
+
 /**
  * Exported for tests: the exec/loopback TRUST anchor. Consults ONLY the real,
  * unspoofable socket peer (`conn.peerIp`) plus the in-process/internal flag —

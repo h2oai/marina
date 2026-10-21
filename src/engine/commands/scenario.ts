@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
@@ -8,28 +9,24 @@ import { type ConnectorRuntime, readPageVia } from "../connector-runtime";
 import { extractReadableText } from "../html-text";
 
 /**
- * Scenario command — drives the society-of-agents forecasting pipeline.
+ * Scenario command — scaffolding for a society-of-agents forecast.
  *
- * Five subcommands, all single-word imperatives (TTS-friendly):
+ * Six subcommands, all single-word imperatives (TTS-friendly):
  *   scenario extract <url>          — fetch a URL into the scenario-graph board for entity extraction
  *   scenario extract board <name>   — re-extract from an existing board post
  *   scenario personas               — request persona drafting from extracted entities
  *   scenario inject <key>=<value>   — inject a counterfactual event into the running scenario
  *   scenario status                 — show scenario state across all four boards
- *   scenario report                 — request the synthesized forecast report
+ *   scenario report                 — queue a task to synthesize the forecast report
  *
  * Each subcommand composes existing primitives: board posts, tasks, notes,
- * channel broadcasts. No new tables, no new event types. The cognitive
- * heavy-lifting (entity extraction, persona drafting, debate, synthesis) is
- * done by the scenario-conductor agent reading these board posts and tasks
- * during its normal continuation prompt cycle.
- *
- * This is THE primitive the markets/Kalshi/Polymarket frequency-betting
- * stack is built on top of: a calibrated, evidence-linked, agent-society
- * forecast for any prediction market question.
+ * channel broadcasts. No new tables, no new event types. The command itself
+ * only posts and queues: entity extraction, persona drafting, debate and
+ * synthesis happen when a resident claims the queued tasks. No world seeds a
+ * dedicated agent for them (experimental; see docs/reference/feature-status.md).
  */
 
-const HELP = `Drive a scenario simulation — extract seed material, draft personas, inject counterfactuals, synthesize forecast.
+const HELP = `Scaffold a scenario forecast on boards and tasks — post seed material, queue persona drafting, record counterfactuals, queue the report. The command posts and queues only; a resident must claim the tasks to extract entities, draft personas and write the forecast.
 
 Usage:
   scenario extract <url>             — fetch URL and post raw text to scenario-graph for entity extraction
@@ -37,7 +34,7 @@ Usage:
   scenario personas                  — request persona drafting from extracted entities
   scenario inject <key>=<value>      — inject a counterfactual event into the running scenario
   scenario status                    — show scenario state (entities, personas, events, report)
-  scenario report                    — request the synthesized forecast report
+  scenario report                    — queue a task to synthesize the forecast report
 
 Examples:
   scenario extract https://kalshi.com/markets/will-fed-cut-rates
@@ -77,7 +74,7 @@ export function scenarioCommand(deps: {
     ],
     name: "scenario",
     aliases: ["sc"],
-    help: HELP,
+    help: experimentalHelp(HELP),
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -180,7 +177,7 @@ async function handleExtract(
     createExtractionTask(db, entity, target.id, target.title ?? "(untitled)");
     ctx.send(
       eid,
-      `${header("Re-extraction queued")}\n${separator()}\n  ${dim("Board:")} ${boardName}\n  ${dim("Post:")} #${target.id} ${target.title ?? ""}\n\n${dim("Conductor will pick up the task and re-extract entities into [entity:] notes.")}`,
+      `${header("Re-extraction queued")}\n${separator()}\n  ${dim("Board:")} ${boardName}\n  ${dim("Post:")} #${target.id} ${target.title ?? ""}\n\n${dim("A resident who claims the task re-extracts entities into [entity:] notes.")}`,
     );
     return;
   }
@@ -226,7 +223,7 @@ async function handleExtract(
 
   ctx.send(
     eid,
-    `${header("Seed material posted")}\n${separator()}\n  ${dim("Source:")} ${url}\n  ${dim("Words:")} ${extracted.wordCount}\n  ${dim("Board:")} ${SCENARIO_GRAPH_BOARD} (post #${postId})\n  ${dim("Task:")} created — conductor will extract entities\n\n${dim("Next: 'scenario personas' once entities are written.")}`,
+    `${header("Seed material posted")}\n${separator()}\n  ${dim("Source:")} ${url}\n  ${dim("Words:")} ${extracted.wordCount}\n  ${dim("Board:")} ${SCENARIO_GRAPH_BOARD} (post #${postId})\n  ${dim("Task:")} created — a resident who claims it extracts entities\n\n${dim("Next: 'scenario personas' once entities are written.")}`,
   );
   // Engine fires a board_post event for every createBoardPost — no custom
   // event needed, no core EngineEvent union change required.
@@ -271,7 +268,7 @@ function handlePersonas(
 
   ctx.send(
     eid,
-    `${header("Persona drafting queued")}\n${separator()}\n  ${dim("Entities found:")} ${entityCount}${entityCount === 0 ? dim(" — run 'scenario extract' first to populate") : ""}\n  ${dim("Task:")} #${taskId}\n  ${dim("Board:")} ${SCENARIO_PERSONAS_BOARD}\n\n${dim("Conductor will draft personas and post them for spawning approval.")}`,
+    `${header("Persona drafting queued")}\n${separator()}\n  ${dim("Entities found:")} ${entityCount}${entityCount === 0 ? dim(" — run 'scenario extract' first to populate") : ""}\n  ${dim("Task:")} #${taskId}\n  ${dim("Board:")} ${SCENARIO_PERSONAS_BOARD}\n\n${dim("A resident who claims the task drafts personas and posts them for spawning approval.")}`,
   );
 }
 
@@ -304,7 +301,7 @@ function handleInject(
   const boards = ensureScenarioBoards(db);
   const timestamp = new Date().toISOString();
   const title = `EVENT: ${key}=${value}`.slice(0, 200);
-  const body = `Counterfactual event injected by ${entity.name} at ${timestamp}.\n\n${key}: ${value}\n\nPersonas should react to this as a world fact in their next debate turn. Conductor: incorporate this event into the synthesized report's evidence chain.`;
+  const body = `Counterfactual event injected by ${entity.name} at ${timestamp}.\n\n${key}: ${value}\n\nPersonas should react to this as a world fact in their next debate turn. Report author: incorporate this event into the synthesized report's evidence chain.`;
 
   const postId = db.createBoardPost({
     boardId: boards.events,
@@ -405,6 +402,6 @@ function handleReport(
 
   ctx.send(
     eid,
-    `${header("Report synthesis queued")}\n${separator()}\n  ${dim("Task:")} #${taskId}\n  ${dim("Board:")} ${SCENARIO_REPORT_BOARD}\n\n${dim("Conductor will recall, synthesize, and write the calibrated forecast.")}`,
+    `${header("Report synthesis queued")}\n${separator()}\n  ${dim("Task:")} #${taskId}\n  ${dim("Board:")} ${SCENARIO_REPORT_BOARD}\n\n${dim("A resident who claims the task writes the calibrated forecast.")}`,
   );
 }

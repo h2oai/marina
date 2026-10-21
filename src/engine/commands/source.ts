@@ -6,7 +6,7 @@ import type { MarinaDB } from "../../persistence/database";
 import { MARINA_ROOT } from "../../runtime-paths";
 import type { CommandDef, Entity, EntityId, RoomContext, RoomId, RoomModule } from "../../types";
 import type { LoadedRoom } from "../../world/room-manager";
-import { requireRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 
 const ROOMS_DIR = join(MARINA_ROOT, "rooms");
 
@@ -67,8 +67,9 @@ export function sourceCommand(deps: SourceDeps): CommandDef {
 
       // ── Subcommand: source connector <name> (admin only) ──
       if (sub === "connector") {
-        if (!requireRank(entity, 7)) {
-          ctx.send(input.entity, "Requires steward rank (7).");
+        const refusal = rankFloorRefusal(entity, 7, "Requires steward rank (7).");
+        if (refusal) {
+          ctx.send(input.entity, refusal);
           return;
         }
         const name = tokens[1]?.toLowerCase();

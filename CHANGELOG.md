@@ -36,6 +36,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   woken turn's work for the attention judges. A resident's name later in a message addresses it in
   a vocative position written as the name (`Done. Swift, run the tests`, `can you check this,
   Swift?`), not as a mention.
+
+- **One rank-floor rule for every subcommand floor; honest feature status.** The write forms of
+  `bankroll` and `position`, `observe log`, `source connector`, `demo reset`, `code sandbox ops`,
+  the owner-or-rank overrides of `crew invite|dispatch|formation|persist|dissolve` and
+  `readiness providers` now check their floor through `rankFloorRefusal`: the local operator's
+  instance and the `open` posture pass, and elsewhere a refusal raises a challenge an owner or
+  operator can approve. The output-repair shot checks the spend caps before calling a model.
+  Closing a Code Mode session drops its exec-mode setting. The benchmark split, replicate-group
+  rule and reference scores moved under `src/engine/` (the `benchmarks/` paths re-export them), so
+  the published package carries every file `src/` imports. The `shared-team` preset now selects the
+  core `default` world. The feature status page adds crews and formations, desires and journeys,
+  novelty suggestions, resolvers/probes/watches, and lists `conduct` and `scenario` as
+  experimental; `scenario` help now says it posts boards and queues tasks for a resident to pick
+  up.
+
 - **Page reads honour robots.txt; keyless web sources can be turned off.** Before Marina reads a
   third-party page for an agent or a person (`web fetch`, `web swarm`, `scenario` URL reads, the
   research page reader and citation check, the live Civiqs read), it checks the site's robots.txt

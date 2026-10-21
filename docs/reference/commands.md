@@ -3434,7 +3434,7 @@ Effect: read.
 
 ## conduct
 
-Author, inspect, and run Scores — executable workflow plans (the Conductor grammar).
+[experimental] Author, inspect, and run Scores — executable workflow plans (the Conductor grammar).
 Usage:
   conduct list                          — stored Scores
   conduct show <name>                   — pretty-print a Score's layers
@@ -8041,7 +8041,7 @@ Effect: write.
 
 ## scenario
 
-Drive a scenario simulation — extract seed material, draft personas, inject counterfactuals, synthesize forecast.
+[experimental] Scaffold a scenario forecast on boards and tasks — post seed material, queue persona drafting, record counterfactuals, queue the report. The command posts and queues only; a resident must claim the tasks to extract entities, draft personas and write the forecast.
 
 Usage:
   scenario extract <url>             — fetch URL and post raw text to scenario-graph for entity extraction
@@ -8049,7 +8049,7 @@ Usage:
   scenario personas                  — request persona drafting from extracted entities
   scenario inject <key>=<value>      — inject a counterfactual event into the running scenario
   scenario status                    — show scenario state (entities, personas, events, report)
-  scenario report                    — request the synthesized forecast report
+  scenario report                    — queue a task to synthesize the forecast report
 
 Examples:
   scenario extract https://kalshi.com/markets/will-fed-cut-rates

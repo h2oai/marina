@@ -6,6 +6,7 @@ import type { TaskManager } from "../../coordination/task-manager";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId } from "../../types";
+import { rankFloorRefusal } from "../rank-floor";
 import { AUTONOMY_REQUIREMENTS, type ReadinessReport } from "../readiness";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 
@@ -79,8 +80,9 @@ export function demoCommand(deps: {
       if (!entity) return;
 
       if (action === "reset") {
-        if ((entity.properties.rank ?? 0) < 2) {
-          ctx.send(input.entity, "Demo reset requires coordinator rank (2).");
+        const refusal = rankFloorRefusal(entity, 2, "Demo reset requires coordinator rank (2).");
+        if (refusal) {
+          ctx.send(input.entity, refusal);
           return;
         }
         const project = deps.db.getProjectByName("Demo Pulse");
