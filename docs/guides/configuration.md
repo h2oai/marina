@@ -148,6 +148,16 @@ a later tier change after a restart. The `/v1` `marina` model is unchanged.
 
 `admin models` (readable by everyone) prints the effective model for each tier
 and role and where it came from; the boot log prints the two tier lines.
+
+A `marina/cheap` request that sets no `max_tokens` gets the cheap tier's output
+cap, `MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS` (default 16384; on OpenRouter
+also a reasoning budget of 3/4 of it), so a reasoning loop cannot run to the
+provider's own limit. A caller's own `max_tokens` always wins, larger or
+smaller; Marina's agents and helpers send their own caps and keep them; explicit
+model ids and the strong tier are never capped; `0`/`off` turns it off. A reply
+cut at the cap is marked `x-marina-output-cap: <n>; hit` and `outputCapHit` on
+its trace, the benchmark harness counts those as `outputCapHits`, and `admin
+models` shows the cap and how often it hit since start.
 Escalation stays where it was: the Arbiter runs only on contested items, and
 `model:route` / earned routing can pick a stronger candidate per agent.
 

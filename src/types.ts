@@ -905,6 +905,11 @@ export type EngineEvent =
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
       costUsd?: number;
+      /** The output cap Marina applied (the cheap tier's default, when the
+       * caller set none — `src/net/model/tier-output-cap.ts`). */
+      outputCap?: number;
+      /** True when the reply ended on that cap (`finish_reason: length`). */
+      outputCapHit?: boolean;
       errorKind?:
         | "auth"
         | "quota"

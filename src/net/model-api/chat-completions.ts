@@ -7,6 +7,7 @@
 // 503 → upstream fallback.
 
 import { BUDGET_FORCED_HEADER, DEADLINE_HEADER } from "../../agent/budget-terminal";
+import { tierOutputCapFor } from "../../config/model-tiers";
 import { parseDeadlineHeader } from "../../coordination/request-deadline";
 import type { Engine } from "../../engine/engine";
 import { ASOF_HEADER, parseEvidenceCutoff, RESPONDENT_HEADER } from "../../engine/evidence-fence";
@@ -18,6 +19,7 @@ import { lessonsFromWorkMode } from "../../learning/work";
 import type { ObligationsMode } from "../../obligations/mode";
 import { getEndpointConfig } from "../model/model-endpoint";
 import { type InjectionFormat, messageText, type OpenAIMessage } from "../model/passthru-context";
+import { withTierOutputCap } from "../model/tier-output-cap";
 import {
   ARGCHECK_HEADER,
   ARGCHECK_MODEL_PREFIX,
@@ -513,8 +515,16 @@ export async function runOpenaiChat(
     // `marina/cheap` / `marina/strong` (`cheap` / `strong` from a resident's
     // loopback) follow the model tiers (src/config/model-tiers.ts) at request
     // time, so a saved config tracks the operator's current tier choice.
+    const tierCap = tierOutputCapFor(body.model);
     const tiered = tierRequestModel(engine, body.model);
     if (tiered) body = { ...body, model: tiered };
+    // The cheap tier's default output cap, only when the caller set no limit
+    // (`tier-output-cap.ts`); a hit is traced on the proxied reply.
+    const tierCapped =
+      tierCap && tiered ? withTierOutputCap(body, tierCap, tiered.split("/")[0] ?? "") : undefined;
+    if (tierCapped) body = tierCapped;
+    const capTrace = <T extends object | undefined>(trace: T): T =>
+      tierCapped && tierCap ? ({ ...trace, outputCap: tierCap.maxTokens } as T) : trace;
     // `marina/ensemble:<a>,<b>[,…]` (the innermost prefix) or the `ensemble`
     // stack member: N drafts and one checker pick per turn (`ensemble.ts`).
     const listed = parseEnsembleModels(body.model);
@@ -733,7 +743,13 @@ export async function runOpenaiChat(
       const upstream = (trace: Parameters<typeof proxyToUpstream>[3], note?: string) =>
         ensembleRun
           ? ensembleTurn(ensembleRun, note)
-          : proxyToUpstream(engine, body, forceModel || undefined, trace, hintsWith(note));
+          : proxyToUpstream(
+              engine,
+              body,
+              forceModel || undefined,
+              capTrace(trace),
+              hintsWith(note),
+            );
       let resp = await upstream(passthruTraceOptions(prep), obligations?.note);
       if (obligations) {
         const { requestId: _first, ...retryTrace } = passthruTraceOptions(prep);
@@ -943,7 +959,7 @@ export async function runOpenaiChat(
           engine,
           body,
           ec.passthruModel || undefined,
-          { routeKind: "fallback" },
+          capTrace({ routeKind: "fallback" as const }),
           { clientSignal: req.signal },
         );
       }

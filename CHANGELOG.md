@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The cheap tier has a default output cap.** A `marina/cheap` request that sets no
+  `max_tokens` is sent `max_tokens: 16384`, and on OpenRouter `reasoning.max_tokens` at 3/4 of
+  that (`MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS`; `0`/`off` disables it). On the 2026-10-20
+  proof run, deepseek-v4.1-flash answers ran p95 6.3k and p99 13.1k output tokens; the 0.8 %
+  above 16k ran up to about 98k, averaged score 0.29 and were a third of the cheap arms' model
+  cost. A caller's own limit always wins, larger or smaller; agents, compaction and memory
+  helpers already send their own caps and are unchanged; explicit model ids and the strong tier
+  are never capped. `src/model` calls on `marina/cheap` keep their automatic cap and its grown
+  retry under the tier's. A reply cut at the cap is marked on its trace (`outputCap`,
+  `outputCapHit`) and on `x-marina-output-cap: <n>; hit`; the benchmark harness records
+  `outputCapHits` and reasoning tokens per item, and `admin models` shows the cap and its hits
+  since start.
+
 - **Each owed ask gets its own answer.** A supervised resident's digest shows how to answer every
   owed line (`→ re #<id>`, `→ say`, `→ channel send <c>`, `→ tell <name>`); what it answers itself
   is settled, and the final-reply relay covers only what is left. When several destinations are

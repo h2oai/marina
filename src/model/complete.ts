@@ -8,6 +8,7 @@
 
 import type { Message } from "@earendil-works/pi-ai";
 import { grownOutputCap, reasoningHeadroomCap } from "../agent/reasoning-control";
+import { tierOutputCapFor } from "../config/model-tiers";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { modelAccess, type Usage } from "./access";
 import { type CallBinding, type ModelCallOptions, modelCall, replyText } from "./call";
@@ -40,7 +41,13 @@ export function modelComplete(
   const { model, apiKey } = modelAccess(spec, env);
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   const own = (model as { maxTokens?: number }).maxTokens;
-  const ceiling = own && Number.isFinite(own) && own > 0 ? own : 64_000;
+  // `marina/cheap` with no caller cap: the tier's output cap bounds the
+  // automatic cap and its one grown retry (a runaway reasoning loop stops there).
+  const tierCap = opts.maxTokens === undefined ? tierOutputCapFor(spec, env) : undefined;
+  const ceiling = Math.min(
+    own && Number.isFinite(own) && own > 0 ? own : 64_000,
+    tierCap?.maxTokens ?? Number.POSITIVE_INFINITY,
+  );
   const automaticCap = reasoningHeadroomCap(AUTOMATIC_MAX_TOKENS, ceiling);
   const purpose = opts.purpose ?? "forecast";
   const binding: CallBinding = {
@@ -64,6 +71,7 @@ export function modelComplete(
         maxTokens,
         timeoutMs: opts.timeoutMs ?? 180_000,
         signals: [opts.signal],
+        ...(tierCap ? { tierCapped: true } : {}),
       });
       const text = replyText(result);
       return { text, truncated: result.stopReason === "length" && !text.trim() };

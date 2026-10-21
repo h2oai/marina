@@ -107,12 +107,18 @@ export interface ResultItem {
 export interface CallUsage {
   promptTokens?: number;
   completionTokens?: number;
+  /** Hidden reasoning tokens within `completionTokens` (`completion_tokens_details`). */
+  reasoningTokens?: number;
   costUsd?: number;
+  /** A Marina target cut this reply at the cap it applied (`x-marina-output-cap: <n>; hit`). */
+  outputCapHit?: boolean;
 }
 
 /** Usage summed over an item's calls; `calls` counts every call made. */
-export interface ItemUsage extends CallUsage {
+export interface ItemUsage extends Omit<CallUsage, "outputCapHit"> {
   calls: number;
+  /** Calls cut at a Marina-applied output cap (absent when none was). */
+  outputCapHits?: number;
 }
 
 /** Usage summed over a run. `pricedItems` counts items whose cost was reported. */
@@ -124,6 +130,9 @@ export interface UsageSummary {
   judgeCostUsd?: number;
   promptTokens?: number;
   completionTokens?: number;
+  reasoningTokens?: number;
+  /** Calls cut at a Marina-applied output cap (absent when none was). */
+  outputCapHits?: number;
 }
 
 export interface DatasetItem {

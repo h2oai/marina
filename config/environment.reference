@@ -381,6 +381,9 @@
 # MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash
 # MARINA_MODEL_TIER_STRONG=openrouter/anthropic/claude-opus-5.5
 
+# Default output cap for cheap-tier requests: a request on `marina/cheap` that sets no max_tokens (a /v1 client such as the benchmark harness, a `src/model` pipeline; agents always send their own cap and keep it) gets this many, and on an OpenRouter route also `reasoning.max_tokens` at 3/4 of it, so a runaway reasoning loop stops there with room left for the answer. A caller's own max_tokens / max_completion_tokens always wins, larger or smaller; explicit model ids and the strong tier are never capped. Default 16384: on the 2026-10-20 proof run deepseek-v4.1-flash answers ran p95 6.3k / p99 13.1k output tokens, and the 0.8 % above 16k (up to ~98k) scored 0.29 on average and were a third of the cost. A reply cut at the cap is marked on its trace (`outputCapHit`) and on `x-marina-output-cap: <n>; hit`; `admin models` shows the cap and the hits since start. `0` or `off` disables it.
+# MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS=16384
+
 # Model for agents spawned without one, and the fallback for unrecognized models. marina/default calls this instance's own /v1, which routes to whichever provider has a key. A default model set at runtime (dashboard or `admin`) wins. Set (here or at runtime), it is also the cheap tier unless MARINA_MODEL_TIER_CHEAP is set; unset, agents spawned without a model run on `marina/cheap` (before 2026-10-20: marina/default). The /v1 `marina` model itself is unchanged.
 # MARINA_DEFAULT_MODEL=marina/default
 

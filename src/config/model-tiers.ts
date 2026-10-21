@@ -148,6 +148,67 @@ function envValue(env: Env, name: string): string | undefined {
   return v ? v : undefined;
 }
 
+/**
+ * The cheap tier's default output cap (`MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS`).
+ * Measured on the 2026-10-20 proof run (1,132 single-call deepseek-v4.1-flash
+ * answers, FRAMES + SimpleQA): p95 6.3k, p99 13.1k output tokens; correct
+ * answers p99 7.1k. The 9 replies past 16k (0.8 %) averaged score 0.29 and were
+ * 33 % of the arms' model cost — reasoning loops that ran to the provider's
+ * ~98k limit. 16,384 cuts that tail and no normal answer.
+ */
+export const CHEAP_OUTPUT_CAP_ENV = "MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS";
+export const DEFAULT_CHEAP_OUTPUT_CAP_TOKENS = 16_384;
+/** The share of the cap a hidden-reasoning budget may take, leaving room for the answer. */
+export const CHEAP_REASONING_SHARE = 0.75;
+/** Below this a reasoning budget is not sent (providers' minimum budgets sit near 1k). */
+const MIN_REASONING_BUDGET_TOKENS = 1024;
+
+/** The output cap a tier applies to a request that sets none. */
+export interface TierOutputCap {
+  /** `max_tokens` sent when the caller sent no output limit. */
+  maxTokens: number;
+  /** OpenRouter `reasoning.max_tokens` sent with it, when the caller sent no reasoning directive. */
+  reasoningMaxTokens?: number;
+  /** `default` or `env:<NAME>`. */
+  source: string;
+}
+
+/**
+ * The cheap tier's output cap, or `undefined` when it is off (`0` / `off`).
+ * Unset or unparsable: {@link DEFAULT_CHEAP_OUTPUT_CAP_TOKENS}.
+ */
+export function cheapTierOutputCap(env: Env = process.env): TierOutputCap | undefined {
+  const raw = envValue(env, CHEAP_OUTPUT_CAP_ENV)?.toLowerCase();
+  if (raw && ["0", "off", "none", "false", "no"].includes(raw)) return undefined;
+  const n = raw && /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  const set = Number.isSafeInteger(n) && n > 0;
+  const maxTokens = set ? n : DEFAULT_CHEAP_OUTPUT_CAP_TOKENS;
+  const reasoning = Math.floor(maxTokens * CHEAP_REASONING_SHARE);
+  return {
+    maxTokens,
+    ...(reasoning >= MIN_REASONING_BUDGET_TOKENS ? { reasoningMaxTokens: reasoning } : {}),
+    source: set ? `env:${CHEAP_OUTPUT_CAP_ENV}` : "default",
+  };
+}
+
+/** The output cap for a request whose model id is `model`: the cheap tier's for `marina/cheap`, else none. */
+export function tierOutputCapFor(
+  model: unknown,
+  env: Env = process.env,
+): TierOutputCap | undefined {
+  return tierAliasOf(model) === "cheap" ? cheapTierOutputCap(env) : undefined;
+}
+
+/** One readout line for the cheap tier's output cap. */
+export function describeCheapOutputCap(env: Env = process.env): string {
+  const cap = cheapTierOutputCap(env);
+  if (!cap) return `  cheap output cap off  [env:${CHEAP_OUTPUT_CAP_ENV}]`;
+  const reasoning = cap.reasoningMaxTokens
+    ? `, OpenRouter reasoning ≤ ${cap.reasoningMaxTokens}`
+    : "";
+  return `  cheap output cap ${cap.maxTokens} tokens${reasoning}  [${cap.source}; set ${CHEAP_OUTPUT_CAP_ENV}, 0/off disables] — only when the caller sends no max_tokens`;
+}
+
 /** The tier a model id names when it is a tier alias (`marina/cheap`, `marina:cheap`, `cheap`). */
 export function tierAliasOf(model: unknown): ModelTier | undefined {
   if (typeof model !== "string") return undefined;
@@ -304,6 +365,7 @@ export function describeModelTiers(
   for (const tier of ["cheap", "strong"] as const) {
     const t = tierModel(tier, ctx);
     lines.push(`  ${tier.padEnd(6)} ${concrete(t.model)}  [${t.source}; set ${TIER_ENV[tier]}]`);
+    if (tier === "cheap") lines.push(describeCheapOutputCap(env));
   }
   const def = explicitDefaultModel(ctx);
   lines.push(
