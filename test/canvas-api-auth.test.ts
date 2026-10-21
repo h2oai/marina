@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { listRaisedBy, resetChallengesForTests } from "../src/engine/challenges";
 import { Engine } from "../src/engine/engine";
+import { grant } from "../src/engine/safety-gates";
 import { handleCanvasApi } from "../src/net/canvas/canvas-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
-import { roomId } from "../src/types";
+import { type EntityId, roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_canvas_api_auth.db";
 
@@ -211,7 +214,8 @@ describe("canvas API auth contract", () => {
     );
     const claimResp = await handleCanvasApi(claimUrl, claimMethod, claimReq, db);
     expect(claimResp.status).toBe(200);
-    expect(JSON.parse(db.getNode("node-intent-1")!.data).intent.claimedBy).toBe("Worker");
+    // With no authenticated identity the action is "api"; a body name never decides it.
+    expect(JSON.parse(db.getNode("node-intent-1")!.data).intent.claimedBy).toBe("api");
 
     const [_claimUrl2, _claimMethod2, claimReq2] = req(
       "/api/canvases/canvas-1/nodes/node-intent-1/intent/claim",
@@ -528,7 +532,7 @@ describe("canvas API auth contract", () => {
       }
     });
 
-    it("leaves PUBLIC canvas mutation policy unchanged (authenticated writer allowed)", async () => {
+    it("keeps creating nodes on a PUBLIC canvas open to an authenticated writer", async () => {
       const alice = loginEntity("c-alice", "Alice");
       db.createCanvas({ id: "pub", name: "public", scope: "global", creatorName: "system" });
       const resp = await call("/api/canvases/pub/nodes", "POST", {
@@ -743,5 +747,256 @@ describe("canvas API — sentinel writes, malformed bodies, mutation throttle", 
       }
     }
     expect(limited).toBe(true);
+  });
+});
+
+describe("canvas API — removals and edits follow the in-world ownership rule", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  let connCounter = 0;
+  const DB = `${TEST_DB}.ownership`;
+
+  beforeEach(() => {
+    delete process.env.MARINA_OPEN_API;
+    resetHttpRateLimitersForTests();
+    resetChallengesForTests();
+    db = new MarinaDB(DB);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom());
+    // Bob's shared canvas: one node and one relationship, all authored by Bob.
+    db.createCanvas({ id: "shared", name: "shared", scope: "global", creatorName: "Bob" });
+    for (const id of ["n1", "n2"]) {
+      db.createNode({
+        id,
+        canvasId: "shared",
+        type: "text",
+        creatorName: "Bob",
+        data: { content: id },
+      });
+    }
+    db.createCanvasEdge({
+      id: "e1",
+      canvasId: "shared",
+      sourceId: "n1",
+      targetId: "n2",
+      relationship: "supports",
+      creatorName: "Bob",
+    });
+  });
+
+  afterEach(() => {
+    resetChallengesForTests();
+    db.close();
+    cleanupDb(DB);
+    resetHttpRateLimitersForTests();
+  });
+
+  function login(name: string): { entityId: EntityId; token: string } {
+    const conn = new MockConnection(`canvas-own-${connCounter++}`);
+    engine.addConnection(conn);
+    const result = engine.login(conn.id, name);
+    if ("error" in result) throw new Error(result.error);
+    return { entityId: result.entityId as EntityId, token: result.token };
+  }
+
+  const call = (path: string, method: string, token: string, body?: unknown) => {
+    const [url, m, r] = req(path, method, token, body);
+    return handleCanvasApi(url, m, r, db, undefined, undefined, engine, undefined, "203.0.113.9");
+  };
+
+  const destructive: Array<[string, string, string, unknown?]> = [
+    ["delete canvas", "/api/canvases/shared", "DELETE"],
+    ["delete node", "/api/canvases/shared/nodes/n1", "DELETE"],
+    ["edit node", "/api/canvases/shared/nodes/n1", "PATCH", { x: 500 }],
+    ["delete relationship", "/api/canvases/shared/edges/e1", "DELETE"],
+  ];
+
+  const unchanged = () => {
+    expect(db.getCanvas("shared")).toBeDefined();
+    expect(db.getNode("n1")?.x).not.toBe(500);
+    expect(db.getCanvasEdge("e1")).toBeDefined();
+  };
+
+  for (const [label, path, method, body] of destructive) {
+    it(`refuses a non-owner (${label}) with 403 and the reason`, async () => {
+      const mallory = login("Mallory");
+      const resp = await call(path, method, mallory.token, body);
+      expect(resp.status).toBe(403);
+      const out = (await resp.json()) as { error: string; code: string };
+      expect(out.code).toBe("not_owner");
+      expect(out.error).toMatch(/Only the .*or an admin can/);
+      unchanged();
+    });
+
+    it(`lets the owner act (${label})`, async () => {
+      const bob = login("Bob");
+      const resp = await call(path, method, bob.token, body);
+      expect(resp.status).toBe(200);
+    });
+
+    it(`lets an admin act (${label})`, async () => {
+      const admin = login("Admin");
+      engine.entities.get(admin.entityId)!.properties.rank = 9;
+      const resp = await call(path, method, admin.token, body);
+      expect(resp.status).toBe(200);
+    });
+
+    it(`lets a holder of the operator gate act (${label})`, async () => {
+      const op = login("Operator");
+      grant(db, op.entityId, "admin.destructive");
+      const resp = await call(path, method, op.token, body);
+      expect(resp.status).toBe(200);
+    });
+  }
+
+  it("lets the canvas owner remove another author's node and relationship", async () => {
+    db.createNode({ id: "n3", canvasId: "shared", type: "text", creatorName: "Carol" });
+    const bob = login("Bob");
+    expect((await call("/api/canvases/shared/nodes/n3", "DELETE", bob.token)).status).toBe(200);
+  });
+
+  it("lets a node's author change it on someone else's canvas", async () => {
+    db.createNode({ id: "n4", canvasId: "shared", type: "text", creatorName: "Carol" });
+    const carol = login("Carol");
+    const resp = await call("/api/canvases/shared/nodes/n4", "PATCH", carol.token, { x: 7 });
+    expect(resp.status).toBe(200);
+    expect(db.getNode("n4")?.x).toBe(7);
+  });
+
+  it("raises the same challenge as `canvas delete` when a non-owner deletes a canvas", async () => {
+    const mallory = login("Mallory");
+    const resp = await call("/api/canvases/shared", "DELETE", mallory.token);
+    expect(resp.status).toBe(403);
+    const held = listRaisedBy(mallory.entityId);
+    expect(held.map((c) => c.command)).toContain("canvas delete shared");
+    const edge = await call("/api/canvases/shared/edges/e1", "DELETE", mallory.token);
+    expect(edge.status).toBe(403);
+    expect(listRaisedBy(mallory.entityId).map((c) => c.command)).toContain("canvas disconnect e1");
+  });
+
+  it("keeps creating nodes on a shared canvas open to any signed-in writer", async () => {
+    const mallory = login("Mallory");
+    const resp = await call("/api/canvases/shared/nodes", "POST", mallory.token, {
+      type: "text",
+      data: { content: "hello" },
+    });
+    expect(resp.status).toBe(201);
+  });
+
+  it("lets anyone act where ownership is not enforced (local profile)", async () => {
+    using _state = scopeProcessState({
+      trustProfile: "local",
+      env: { MARINA_AUTONOMY: undefined },
+    });
+    const mallory = login("Mallory");
+    expect((await call("/api/canvases/shared/edges/e1", "DELETE", mallory.token)).status).toBe(200);
+    expect((await call("/api/canvases/shared", "DELETE", mallory.token)).status).toBe(200);
+  });
+
+  it("keeps entity-scoped canvases private to their owner", async () => {
+    const alice = login("Alice");
+    const bob = login("Bob");
+    db.createCanvas({
+      id: "alice-own",
+      name: "alice-own",
+      scope: "entity",
+      scopeId: alice.entityId,
+      creatorName: "Alice",
+    });
+    expect((await call("/api/canvases/alice-own", "DELETE", bob.token)).status).toBe(404);
+    expect((await call("/api/canvases/alice-own", "DELETE", alice.token)).status).toBe(200);
+  });
+
+  it("attributes intent actions and intent events to the signed-in caller, not the body", async () => {
+    const bob = login("Bob");
+    const events: Array<{ type: string; entity: string }> = [];
+    engine.addEventListener((event) => events.push(event as { type: string; entity: string }));
+    const resp = await call("/api/canvases/shared/nodes/n1", "PATCH", bob.token, {
+      data: { intent: { prompt: "Draw", status: "active", claimedBy: "Mallory" } },
+    });
+    expect(resp.status).toBe(200);
+    const intentEvent = events.find((e) => e.type === "canvas_intent");
+    expect(intentEvent?.entity).toBe(bob.entityId);
+
+    db.createNode({
+      id: "pending",
+      canvasId: "shared",
+      type: "text",
+      creatorName: "Bob",
+      data: { intent: { prompt: "Do", status: "pending" } },
+    });
+    const carol = login("Carol");
+    const claim = await call(
+      "/api/canvases/shared/nodes/pending/intent/claim",
+      "POST",
+      carol.token,
+      {
+        actorName: "Mallory",
+        claimantName: "Mallory",
+      },
+    );
+    expect(claim.status).toBe(200);
+    expect(JSON.parse(db.getNode("pending")!.data).intent.claimedBy).toBe("Carol");
+  });
+});
+
+describe("canvas API — read budget", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  const DB = `${TEST_DB}.reads`;
+
+  beforeEach(() => {
+    delete process.env.MARINA_OPEN_API;
+    resetHttpRateLimitersForTests();
+    db = new MarinaDB(DB);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom());
+  });
+
+  afterEach(() => {
+    db.close();
+    cleanupDb(DB);
+    resetHttpRateLimitersForTests();
+  });
+
+  const anonymousGet = (path: string, peerIp: string) => {
+    const [url, m, r] = req(path, "GET");
+    return handleCanvasApi(url, m, r, db, undefined, undefined, engine, undefined, peerIp);
+  };
+
+  it("limits anonymous reads per client IP and leaves other clients unaffected", async () => {
+    let limited = false;
+    for (let i = 0; i < 31; i++) {
+      const resp = await anonymousGet("/api/canvases", "203.0.113.20");
+      if (resp.status === 429) {
+        limited = true;
+        break;
+      }
+    }
+    expect(limited).toBe(true);
+    expect((await anonymousGet("/api/canvases", "203.0.113.21")).status).toBe(200);
+  });
+
+  it("lists canvas detail when one stored row is damaged", async () => {
+    db.createCanvas({ id: "c", name: "c", creatorName: "system" });
+    db.createNode({ id: "a", canvasId: "c", type: "text", creatorName: "system" });
+    db.createNode({ id: "b", canvasId: "c", type: "text", creatorName: "system" });
+    db.createCanvasEdge({
+      id: "e",
+      canvasId: "c",
+      sourceId: "a",
+      targetId: "b",
+      relationship: "supports",
+      creatorName: "system",
+      data: { note: "x" },
+    });
+    const raw = (db as unknown as { db: { run(sql: string): unknown } }).db;
+    raw.run("UPDATE canvas_nodes SET data = '{broken' WHERE id = 'a'");
+    raw.run("UPDATE canvas_edges SET data = '{broken' WHERE id = 'e'");
+    const resp = await anonymousGet("/api/canvases/c", "203.0.113.30");
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { nodes: unknown[]; edges: Array<{ data: unknown }> };
+    expect(body.nodes).toHaveLength(2);
+    expect(body.edges[0]?.data).toBeNull();
   });
 });

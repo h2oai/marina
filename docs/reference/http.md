@@ -21,28 +21,28 @@ link for validation, HTTP statuses, streaming and deployment-specific availabili
 
 ### `url.pathname === "/api/assets/sign"`
 
-[Source](../../src/net/api/asset-api.ts#L115)
+[Source](../../src/net/api/asset-api.ts#L120)
 
 - Guard: `url.pathname === "/api/assets/sign" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/assets\/(.+)$/)`
 
-[Source](../../src/net/api/asset-api.ts#L149)
+[Source](../../src/net/api/asset-api.ts#L158)
 
 - Guard: `idMatch && method === "DELETE"`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L215)
+[Source](../../src/net/api/asset-api.ts#L224)
 
 - Guard: `url.pathname === "/api/assets" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L222)
+[Source](../../src/net/api/asset-api.ts#L231)
 
 - Guard: `url.pathname === "/api/assets" && method === "GET" && url.searchParams.get("view") === "library"`
 - Guard: `method === "GET"`
@@ -51,7 +51,7 @@ Fields read here: `["1", "true"].includes(url.searchParams.get("facets") ?? "")`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L244)
+[Source](../../src/net/api/asset-api.ts#L249)
 
 - Guard: `url.pathname === "/api/assets" && method === "GET"`
 - Guard: `method === "GET"`
@@ -293,14 +293,14 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 1
 
 ### `url.pathname.match( /^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)\/interaction$/, )`
 
-[Source](../../src/net/canvas/canvas-api.ts#L178)
+[Source](../../src/net/canvas/canvas-api.ts#L208)
 
 - Guard: `interactionMatch && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match( /^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)\/intent\/(claim&#124;complete&#124;fail)$/, )`
 
-[Source](../../src/net/canvas/canvas-api.ts#L204)
+[Source](../../src/net/canvas/canvas-api.ts#L234)
 
 - Guard: `intentActionMatch && method === "POST"`
 - Guard: `method === "POST"`
@@ -309,7 +309,7 @@ Fields read here: `data`, `reason`, `result`, `type`.
 
 ### `url.pathname.match(/^\/api\/canvases\/([^/]+)\/edges(?:\/([^/]+))?$/)`
 
-[Source](../../src/net/canvas/canvas-api.ts#L211)
+[Source](../../src/net/canvas/canvas-api.ts#L241)
 
 - Guard: `edgeMatch`
 - Guard: `method === "POST"`
@@ -319,7 +319,7 @@ Fields read here: `data`, `relationship`, `sourceId`, `targetId`.
 
 ### `url.pathname.match(/^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)$/)`
 
-[Source](../../src/net/canvas/canvas-api.ts#L370)
+[Source](../../src/net/canvas/canvas-api.ts#L406)
 
 - Guard: `nodeMatch`
 - Guard: `method === "GET"`
@@ -330,7 +330,7 @@ Fields read here: `data`, `height`, `revision`, `width`, `x`, `y`.
 
 ### `url.pathname.match(/^\/api\/canvases\/([^/]+)\/nodes$/)`
 
-[Source](../../src/net/canvas/canvas-api.ts#L496)
+[Source](../../src/net/canvas/canvas-api.ts#L542)
 
 - Guard: `nodesMatch && method === "POST"`
 - Guard: `method === "POST"`
@@ -339,7 +339,7 @@ Fields read here: `asset_id`, `data`, `height`, `parent_node_id`, `type`, `width
 
 ### `url.pathname.match(/^\/api\/canvases\/([^/]+)$/)`
 
-[Source](../../src/net/canvas/canvas-api.ts#L595)
+[Source](../../src/net/canvas/canvas-api.ts#L641)
 
 - Guard: `canvasMatch`
 - Guard: `method === "DELETE"`
@@ -347,7 +347,7 @@ Fields read here: `asset_id`, `data`, `height`, `parent_node_id`, `type`, `width
 
 ### `url.pathname === "/api/canvases"`
 
-[Source](../../src/net/canvas/canvas-api.ts#L630)
+[Source](../../src/net/canvas/canvas-api.ts#L684)
 
 - Guard: `url.pathname === "/api/canvases" && method === "POST"`
 - Guard: `method === "POST"`
@@ -356,7 +356,7 @@ Fields read here: `description`, `name`, `scope`, `scope_id`.
 
 ### `url.pathname === "/api/canvases"`
 
-[Source](../../src/net/canvas/canvas-api.ts#L677)
+[Source](../../src/net/canvas/canvas-api.ts#L731)
 
 - Guard: `url.pathname === "/api/canvases" && method === "GET"`
 - Guard: `method === "GET"`
