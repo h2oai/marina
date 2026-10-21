@@ -22,3 +22,13 @@ export function autoRespawnEnabled(
   if (raw) return raw === "true" || raw === "1" || raw === "on" || raw === "yes";
   return isLocalProfile(env) && hasProvider;
 }
+
+/**
+ * Whether a saved agent config is respawned by the server at boot. A
+ * supervised resident (`runtime = 'supervised'`, migration 173) is run by its
+ * owner's local supervisor, never by this process: it stays offline until
+ * that supervisor launches or resumes it.
+ */
+export function respawnsOnBoot(config: { runtime?: string | null }): boolean {
+  return config.runtime !== "supervised";
+}

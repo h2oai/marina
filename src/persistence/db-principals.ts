@@ -167,6 +167,19 @@ export function revokeWorkloadCredential(db: Database, credentialId: string): bo
   return result.changes > 0;
 }
 
+/**
+ * Revoke every live world credential of one principal (a supervised
+ * resident's relaunch, renewal or stop keeps at most the newest one live).
+ * Returns how many were revoked.
+ */
+export function revokeWorkloadCredentialsFor(db: Database, principalId: string): number {
+  return db.run(
+    `UPDATE principal_credentials SET revoked_at=?
+      WHERE principal_id=? AND audience='marina:world' AND revoked_at IS NULL`,
+    [Date.now(), principalId],
+  ).changes;
+}
+
 export const MEMORY_SCOPES = [
   "memory:read",
   "memory:write",

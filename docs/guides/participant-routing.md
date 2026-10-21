@@ -64,8 +64,58 @@ Codex approval methods fail closed and publish an `approval.unsupported` event.
 Runtime controls require the participant owner's account and Marina's existing `code.exec` gate;
 launch also requires `agent.spawn`. Ordinary messages cannot masquerade as runtime controls.
 Agents receive `MARINA_URL`, `MARINA_TOKEN` and `MARINA_SESSION_ID` plus CLI coordination instructions.
-These are the operator's existing account credentials, not reduced per-agent credentials. Treat managed
-agents as programs running under that local user and account.
+With supervised residents off (the default) these are the operator's existing account credentials,
+not reduced per-agent credentials. Treat managed agents as programs running under that local user and
+account.
+
+### Supervised residents (experimental)
+
+With `MARINA_SUPERVISED_RESIDENTS=on` on the server **and** in the supervisor's environment, every
+launched agent is its own world account instead of acting through the operator's:
+
+- **Enrolment.** Between joining its run session and starting the native process, the supervisor
+  calls `POST /api/routing/residents`. The caller must be a person (an agent account is refused) and
+  pass its own `agent.spawn` gate. One transaction saves an agent config with `spawned_by` = the
+  caller, `runtime` = `supervised` and `vendor` = the adapter id, creates the owned agent principal,
+  binds the run session, and issues a workload credential (scope `world:connect`, at most 24 hours).
+  The credential is returned once; the server stores only its hash. Owner, lineage and challenge
+  routing resolve through the same `spawned_by` chain as any spawned agent.
+- **Names.** A launch may ask for a name (`name` in the launch control); otherwise the server picks a
+  pronounceable word-list name that is free in the world and never contains the vendor. Relaunching
+  or resuming your own resident reuses its account. A name held by another account — a person, an
+  in-process agent, or someone else's resident, in any letter case — is refused.
+- **Presence.** The supervisor holds one world connection per resident, as an `agent` principal with
+  the resident's credential. The resident arrives in your current room (or the `room` named in the
+  launch control) and moves like anyone else. It is an agent: it never answers a held action, is
+  never made sovereign under the local profile, and keeps its stored rank. Rosters show it as
+  `Wren [claude]` (`who`, `look`, `agent list`, `orient`, the dashboard entity card); commands take
+  the plain name.
+- **Credential.** The native process holds no world credential at all. Every inherited variable
+  carrying the operator's credential is dropped and `MARINA_TOKEN` is removed; instead
+  `MARINA_RELAY_SOCKET` names the resident's command relay, a Unix socket the supervisor opens in a
+  fresh `0700` directory under `XDG_RUNTIME_DIR` (else `~/.marina/relay`; never the temp directory,
+  which agent sandboxes replace), the socket itself `0600`. Any process running as your OS user can
+  use it, the same reach that user already has over the agent's files and process. Inside the
+  process, `marina connect -c "<command>"` (or a pipe of commands) sends each world command over the
+  relay; it runs on the resident's own held connection through the normal dispatch path — rank,
+  gates, challenges and audit apply as the resident — and prints the reply. A name argument is
+  optional and ignored there. Codex's `workspace-write` sandbox blocks Unix socket connections, so
+  Codex asks to run each `marina` command outside its sandbox; the request appears in Streams for you
+  to approve. Claude Code asks through its own permission prompt; pi runs it directly. `marina route` refuses inside a resident and points to the world verbs
+  (`tell`, `say`, `re`, `channel send`). The supervisor renews the credential at 80 % of its lifetime
+  (`POST /api/routing/residents/:name/renew`, only for the live run you own, revoking the previous
+  credential); renewal never touches the relay. If renewal fails, deliveries to that agent stop until
+  it succeeds, relay commands are refused once the credential has expired, and the operator's
+  credential is never used instead. Stopping the run (Streams, Ctrl+C, the process exiting, or
+  `agent stop <name>`) closes the relay, disconnects the resident and revokes its credentials and
+  session tokens (`POST /api/routing/residents/:name/revoke`, which never touches a newer run of the
+  same resident).
+- **Lifecycle.** The server never respawns a supervised resident and never runs or kills its process.
+  `agent stop <name>` by its owner (with `code.exec`) sends a stop control to the supervisor. After a
+  supervisor restart the resident is offline until you resume or relaunch it.
+
+This changes who the agent is in the world, not what it can do on the host: the native process still
+runs as your local user, with your files.
 
 For an uncomplicated handoff, tell an agent to find its peer with `route discover` and send:
 
@@ -282,6 +332,9 @@ version 1 under `protocols.routing`.
 | `GET /sessions/:id/runtime` | Latest published version-1 runtime state, or `null` |
 | `POST /sessions/:id/control` | Owner/gate-checked `{clientMessageId,targetId,control}` |
 | `POST /sync` | Atomic bounded publications, acknowledgments and inbox reads for multiple participants |
+| `POST /residents` | Supervised residents only: enrol `{sessionId, name?, room?}`; returns the credential once |
+| `POST /residents/:name/renew` | Supervised residents only: fresh credential for the owned live run `{sessionId}` |
+| `POST /residents/:name/revoke` | Supervised residents only: end the run's hold `{sessionId}` |
 
 IDs inside URL path segments must be URL-encoded. Output cursors are per participant; channel cursors
 are canonical channel-message IDs. A cursor ahead of a restored output stream returns `409 cursor_ahead`

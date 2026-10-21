@@ -269,6 +269,10 @@ export function registerOperationCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       logEvent: (event) => engine.logEvent(event),
       db: engine.db,
+      isOnline: (name) => {
+        const entity = engine.entities.findAgentByName(name);
+        return !!entity && !!engine.getConnectionForEntity(entity.id);
+      },
     }),
   );
 

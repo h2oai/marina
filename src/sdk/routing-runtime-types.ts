@@ -24,6 +24,8 @@ export interface RuntimeState {
   adapters?: { id: string; label: string }[];
   root?: string;
   activeCount?: number;
+  /** World account of a supervised resident run (`MARINA_SUPERVISED_RESIDENTS=on`). */
+  resident?: string;
   updatedAt: number;
 }
 export type RuntimeControl =
@@ -35,6 +37,10 @@ export type RuntimeControl =
       workspace?: "worktree" | "shared";
       model?: string;
       prompt?: string;
+      /** Supervised residents only: the world name to run as (else one is chosen). */
+      name?: string;
+      /** Supervised residents only: the room to arrive in (else the launcher's room). */
+      room?: string;
     }
   | { action: "prompt"; text: string }
   | { action: "interrupt" | "stop" | "resume" | "detach" }
@@ -46,4 +52,28 @@ export interface RoutingSyncInput {
 }
 export interface RoutingSyncResult {
   inboxes: { sessionId: string; messages: import("./routing-types").RoutingMessage[] }[];
+}
+
+/** `POST /api/routing/residents` input: enrol the agent of one owned run session. */
+export interface ResidentEnrolInput {
+  /** The run's routing session; its `kind` (the adapter id) is the vendor. */
+  sessionId: string;
+  /** Requested world name. Omitted: a fresh name that never contains the vendor. */
+  name?: string;
+  /** Room to arrive in. Omitted: the launching person's current room. */
+  room?: string;
+}
+/** A resident's world credential, returned once and never stored by the server. */
+export interface ResidentCredential {
+  token: string;
+  expiresAt: number;
+}
+export interface ResidentEnrolment {
+  name: string;
+  vendor: string;
+  /** Room the resident should arrive in, when one is known. */
+  room?: string;
+  /** True when an existing resident account of the same owner was reused. */
+  reused: boolean;
+  credential: ResidentCredential;
 }

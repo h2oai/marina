@@ -266,6 +266,15 @@ export class MarinaClient {
     };
   }
 
+  /**
+   * Replace the internal/workload credential sent with later login and
+   * reconnect messages (a renewed workload credential). The live connection
+   * is unchanged.
+   */
+  setInternalToken(token: string | undefined): void {
+    this.options.internalToken = token;
+  }
+
   /** Check if connected to the server. */
   isConnected(): boolean {
     return this.connected;

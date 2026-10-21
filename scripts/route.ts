@@ -69,6 +69,10 @@ export async function runRoute(args: string[]): Promise<number> {
     if (!action || !arities[action]?.includes(args.length)) throw new Error(ROUTE_USAGE);
     const url = process.env.MARINA_URL ?? "ws://localhost:3300";
     const token = process.env.MARINA_TOKEN ?? (name ? routingCachedToken(name, url) : undefined);
+    if (!token && process.env.MARINA_RELAY_SOCKET)
+      throw new Error(
+        'A supervised resident speaks through world commands, not the routing API: marina connect -c "tell <name> <message>" (also say, re, channel send, who).',
+      );
     if (!token)
       throw new Error(
         "Set MARINA_TOKEN or use --name with an account authenticated by marina connect <name>.",

@@ -253,6 +253,12 @@ export declare class MarinaClient {
     }[] | undefined): void;
     private traceLinksField;
     constructor(url: string, options?: ClientOptions);
+    /**
+     * Replace the internal/workload credential sent with later login and
+     * reconnect messages (a renewed workload credential). The live connection
+     * is unchanged.
+     */
+    setInternalToken(token: string | undefined): void;
     /** Check if connected to the server. */
     isConnected(): boolean;
     /** True once automatic reconnection exhausted `maxReconnectAttempts`. */
@@ -3375,7 +3381,7 @@ export type EntityRank = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 [Source](../../src/sdk/routing-client.ts)
 
 ```typescript
-import type { RoutingSyncInput, RoutingSyncResult, RuntimeControl, RuntimeState } from "./routing-runtime-types.js";
+import type { ResidentCredential, ResidentEnrolInput, ResidentEnrolment, RoutingSyncInput, RoutingSyncResult, RuntimeControl, RuntimeState } from "./routing-runtime-types.js";
 import type { RoutingChannelPage, RoutingChannelReceipt, RoutingEvent, RoutingEventInput, RoutingEventPage, RoutingJoin, RoutingMessage, RoutingOverview, RoutingSend, RoutingSession, RoutingSessionPage } from "./routing-types.js";
 export type * from "./routing-runtime-types.js";
 export type * from "./routing-types.js";
@@ -3426,6 +3432,18 @@ export declare class MarinaRoutingClient {
         state: RuntimeState | null;
     }>;
     control(sourceId: string, targetId: string, clientMessageId: string, control: RuntimeControl, signal?: AbortSignal): Promise<RoutingMessage>;
+    /** Enrol a run's agent as its own world account (servers with supervised residents on). */
+    enrolResident(input: ResidentEnrolInput, signal?: AbortSignal): Promise<ResidentEnrolment>;
+    /** A fresh credential for a live owned run; the previous one stops working. */
+    renewResident(name: string, sessionId: string, signal?: AbortSignal): Promise<{
+        name: string;
+        credential: ResidentCredential;
+    }>;
+    /** End this run's hold on the resident: credentials and session tokens are revoked. */
+    revokeResident(name: string, sessionId: string, signal?: AbortSignal): Promise<{
+        name: string;
+        revoked: number;
+    }>;
     private path;
     /** Resumable polling subscription. Persist nextCursor after processing each page.
      * Errors surface to the consumer; retry with its last saved cursor. No hidden ack/retries.
@@ -3469,6 +3487,8 @@ export interface RuntimeState {
     }[];
     root?: string;
     activeCount?: number;
+    /** World account of a supervised resident run (`MARINA_SUPERVISED_RESIDENTS=on`). */
+    resident?: string;
     updatedAt: number;
 }
 export type RuntimeControl = {
@@ -3479,6 +3499,10 @@ export type RuntimeControl = {
     workspace?: "worktree" | "shared";
     model?: string;
     prompt?: string;
+    /** Supervised residents only: the world name to run as (else one is chosen). */
+    name?: string;
+    /** Supervised residents only: the room to arrive in (else the launcher's room). */
+    room?: string;
 } | {
     action: "prompt";
     text: string;
@@ -3506,6 +3530,29 @@ export interface RoutingSyncResult {
         sessionId: string;
         messages: import("./routing-types.js").RoutingMessage[];
     }[];
+}
+/** `POST /api/routing/residents` input: enrol the agent of one owned run session. */
+export interface ResidentEnrolInput {
+    /** The run's routing session; its `kind` (the adapter id) is the vendor. */
+    sessionId: string;
+    /** Requested world name. Omitted: a fresh name that never contains the vendor. */
+    name?: string;
+    /** Room to arrive in. Omitted: the launching person's current room. */
+    room?: string;
+}
+/** A resident's world credential, returned once and never stored by the server. */
+export interface ResidentCredential {
+    token: string;
+    expiresAt: number;
+}
+export interface ResidentEnrolment {
+    name: string;
+    vendor: string;
+    /** Room the resident should arrive in, when one is known. */
+    room?: string;
+    /** True when an existing resident account of the same owner was reused. */
+    reused: boolean;
+    credential: ResidentCredential;
 }
 ```
 

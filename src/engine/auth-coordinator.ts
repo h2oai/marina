@@ -5,6 +5,7 @@ import type { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
 import type { SessionManager } from "../auth/session-manager";
 import { disconnects } from "../net/ansi";
+import { isLoopbackIp } from "../net/loopback";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, Entity, EntityId, EntityRank, RoomContext, RoomId } from "../types";
 import type { EntityManager } from "../world/entity-manager";
@@ -161,7 +162,16 @@ export class AuthCoordinator {
     const isInternal = legacy || workloadMatches;
     if (isInternal) {
       const conn = this.host.connections.get(connId);
-      if (conn) conn.internal = true;
+      // A supervised resident's credential leaves this process: its local
+      // supervisor may run on another host. The credential still proves the
+      // account, but only a loopback peer becomes an in-process-trusted
+      // connection (the host-execution trust anchor).
+      const remoteResident =
+        !legacy &&
+        !!workload &&
+        this.host.db?.getAgentConfig(workload.display_name)?.runtime === "supervised" &&
+        !isLoopbackIp(conn?.peerIp);
+      if (conn && !remoteResident) conn.internal = true;
     }
     return isInternal;
   }
@@ -405,13 +415,27 @@ export class AuthCoordinator {
     token: string,
     internalToken?: string,
   ): { entityId: EntityId; name: string; token: string } | { error: string } {
-    if (
-      internalToken?.startsWith("marina-agent-") &&
-      !this.host.db?.verifyWorkloadCredential(internalToken)
-    ) {
+    const workloadPrincipal = internalToken?.startsWith("marina-agent-")
+      ? this.host.db?.verifyWorkloadCredential(internalToken)
+      : undefined;
+    if (internalToken?.startsWith("marina-agent-") && !workloadPrincipal) {
       return { error: "Workload credential is expired, revoked, or disabled." };
     }
-    const internal = this.resolveInternal(connId, internalToken);
+    // A workload credential speaks only for its own account: presented with
+    // another account's session token it must not make that reconnect
+    // internal (full stored rank, no login limits). Credentials now leave the
+    // process (supervised residents), so the subject is checked here too.
+    const sessionName = workloadPrincipal
+      ? this.host.sessionManager?.validate(token)?.name
+      : undefined;
+    if (
+      workloadPrincipal &&
+      sessionName !== undefined &&
+      workloadPrincipal.display_name.toLowerCase() !== sessionName.toLowerCase()
+    ) {
+      return { error: "Workload credential subject does not match the requested identity." };
+    }
+    const internal = this.resolveInternal(connId, internalToken, sessionName);
 
     if (!this.checkLoginRate(connId, internal)) {
       return { error: AuthCoordinator.ERR_LOGIN_RATE_LIMITED };

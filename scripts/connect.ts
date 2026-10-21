@@ -17,6 +17,7 @@
  *
  * Environment:
  *   MARINA_URL — WebSocket server URL (default: ws://localhost:3300)
+ *   MARINA_RELAY_SOCKET — a supervised resident's command relay (`connect-relay.ts`)
  */
 
 import { createInterface } from "node:readline";
@@ -25,6 +26,7 @@ import { formatPerception } from "../src/net/formatter";
 import type { CommandCatalogEntry } from "../src/sdk/capabilities";
 import { MarinaAgent } from "../src/sdk/client";
 import { runCliCommand } from "./connect-command";
+import { runRelayCli } from "./connect-relay";
 import { cachedParticipantToken, saveParticipantToken } from "./session-cache";
 
 const args = process.argv.slice(2);
@@ -67,7 +69,10 @@ Flags:
   -h, --help       show this help
 
 Environment:
-  MARINA_URL       WebSocket server URL (default: ws://localhost:3300)`);
+  MARINA_URL       WebSocket server URL (default: ws://localhost:3300)
+  MARINA_RELAY_SOCKET
+                   set by a supervisor for its resident agents: commands run
+                   over that relay as the resident, and <name> is optional`);
   process.exit(0);
 }
 
@@ -99,6 +104,10 @@ if (waitIdx !== -1) {
   consumed.add(waitIdx + 1);
 }
 const requestedName: string | undefined = args.filter((_, i) => !consumed.has(i))[0];
+
+// Inside a supervised resident's process: commands go over its relay, as it.
+const relaySocket = process.env.MARINA_RELAY_SOCKET;
+if (relaySocket) process.exit(await runRelayCli(relaySocket, oneShot));
 
 if (!requestedName) {
   console.error('Usage: marina connect <name> [-c "command"] [--wait <sec>]');

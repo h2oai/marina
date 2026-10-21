@@ -14,8 +14,11 @@ import { getStanding } from "../../agent/standing";
 import { residentDefaultModel } from "../../config/model-tiers";
 import { bold, dim, header, separator } from "../../net/ansi";
 import { providerSetupHint } from "../../net/model/provider-setup";
-import type { MarinaDB } from "../../persistence/database";
+import type { AgentConfigRow, MarinaDB } from "../../persistence/database";
 import { isGrantedCompetence } from "../../persistence/db-competence";
+import { RoutingError } from "../../routing/errors";
+import { residentLabeler, supervisedResidentsEnabled } from "../../routing/residents";
+import { RoutingService } from "../../routing/service";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
 import { sanitizeEntityName } from "../entity-name";
@@ -102,6 +105,8 @@ export function agentCommand(deps: {
   getEntity: (id: EntityId) => Entity | undefined;
   logEvent: (event: EngineEvent) => void;
   db?: MarinaDB;
+  /** Whether the named account has a live connection (supervised residents' status). */
+  isOnline?: (name: string) => boolean;
 }): CommandDef {
   return {
     category: "Agents",
@@ -192,7 +197,7 @@ Usage:
             ctx.send(input.entity, floor);
             return;
           }
-          return handleStop(ctx, input.entity, tokens[1], deps, {
+          return handleStop(ctx, input.entity, entity, tokens[1], deps, {
             keepChildren: tokens
               .slice(2)
               .some((t) => ["--keep-children", "keep-children"].includes(t.toLowerCase())),
@@ -388,11 +393,16 @@ Usage:
 function handleList(
   ctx: RoomContext,
   eid: EntityId,
-  deps: { agentRuntime: AgentRuntime; db?: MarinaDB },
+  deps: { agentRuntime: AgentRuntime; db?: MarinaDB; isOnline?: (name: string) => boolean },
 ): void {
   const agents = deps.agentRuntime.list();
   const disabled = listDisabledSeedAgents(deps.db);
-  if (agents.length === 0 && disabled.length === 0) {
+  // Supervised residents run from their owners' local supervisors, not here.
+  const label = supervisedResidentsEnabled() ? residentLabeler(deps.db) : undefined;
+  const residents = label
+    ? (deps.db?.getAllAgentConfigs().filter((c) => c.runtime === "supervised") ?? [])
+    : [];
+  if (agents.length === 0 && disabled.length === 0 && residents.length === 0) {
     ctx.send(eid, "No agents running.");
     return;
   }
@@ -409,6 +419,13 @@ function handleList(
       `${bold(a.name)} ${dim(`[${ops?.paused?.kind === "provider-auth" ? "blocked: provider auth" : (a.healthState ?? a.state)}]`)} ${a.model} ${a.role ? `role:${a.role}` : ""} ${dim(`${upMin}m · ${a.toolCalls} calls · ${cost}`)}${ops?.paused && ops.paused.kind !== "provider-auth" ? ` ${dim(`paused: ${ops.paused.kind}`)}` : ""}`,
     );
     if (a.focus) lines.push(`  ${dim(`focus: ${a.focus}`)}`);
+  }
+  if (label && residents.length > 0) {
+    lines.push(separator(), bold("Supervised residents"));
+    for (const r of residents)
+      lines.push(
+        `${bold(label(r.name))} ${dim(`[${deps.isOnline?.(r.name) ? "online" : "offline"}]`)} ${dim(`owner:${r.spawned_by}`)}`,
+      );
   }
   lines.push(separator(), dim(`${agents.length} agent(s) running`));
   if (disabled.length > 0) {
@@ -702,15 +719,22 @@ async function handleSpawn(
 async function handleStop(
   ctx: RoomContext,
   eid: EntityId,
+  caller: Entity,
   name: string | undefined,
   deps: {
     agentRuntime: AgentRuntime;
     logEvent: (event: EngineEvent) => void;
+    db?: MarinaDB;
   },
   opts: { keepChildren?: boolean } = {},
 ): Promise<void> {
   if (!name) {
     ctx.send(eid, "Usage: agent stop <name> [--keep-children]");
+    return;
+  }
+  const supervised = deps.db?.getAgentConfig(name);
+  if (deps.db && supervised?.runtime === "supervised") {
+    stopSupervisedResident(ctx, eid, caller, supervised, deps.db);
     return;
   }
 
@@ -762,6 +786,55 @@ async function handleStop(
   } catch (error) {
     ctx.send(eid, `Failed to stop agent: ${error instanceof Error ? error.message : error}`);
   }
+}
+
+/**
+ * `agent stop` on a supervised resident: the server runs no process for it, so
+ * the stop is a runtime control to the owner's local supervisor through the
+ * routing control path — the owner only, under the owner's `code.exec` gate.
+ * The supervisor stops the native process and revokes the resident's credential.
+ */
+function stopSupervisedResident(
+  ctx: RoomContext,
+  eid: EntityId,
+  caller: Entity,
+  config: AgentConfigRow,
+  db: MarinaDB,
+): void {
+  if (config.spawned_by !== caller.name) {
+    ctx.send(eid, `Only ${config.name}'s owner can stop it.`);
+    return;
+  }
+  const gate = checkGateForExecution(db, eid, "code.exec");
+  if (!gate.ok) {
+    ctx.send(eid, gate.reason ?? "Stopping a supervised resident needs the code.exec capability.");
+    return;
+  }
+  recordGateExecution(db, eid, "code.exec", gate, `agent stop ${config.name}`);
+  const session = config.run_session;
+  if (!session) {
+    ctx.send(eid, `${bold(config.name)} is not running: no supervised run holds it.`);
+    return;
+  }
+  try {
+    new RoutingService(db, db.durableEntityKey(eid)).control(session, {
+      targetId: session,
+      clientMessageId: `agent-stop:${crypto.randomUUID()}`,
+      control: { action: "stop" },
+    });
+  } catch (error) {
+    ctx.send(
+      eid,
+      error instanceof RoutingError && error.code === "session_left"
+        ? `${bold(config.name)}'s supervisor is offline; stop it from its terminal.`
+        : `Stop was not sent: ${error instanceof Error ? error.message : error}`,
+    );
+    return;
+  }
+  ctx.send(
+    eid,
+    `Stop sent to ${bold(config.name)}'s supervisor. It stops the native process and revokes the resident's credential.`,
+  );
 }
 
 /**
