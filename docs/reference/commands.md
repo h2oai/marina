@@ -1400,7 +1400,7 @@ Effect: write.
 ## build
 
 In-game building for rooms, templates, and dynamic commands.
-Usage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command
+Usage: build room|modify|formation|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command
 
 Rank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (operator grant; an operator may approve a single held run).
 
@@ -1512,6 +1512,21 @@ Effect: read.
 
 - `field-0` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
+
+### `build formation [room]`
+
+Effect: read.
+
+- `field-0` (`room`): text, optional group `option-0`.
+- Group `option-0`: `room`.
+
+### `build formation [room] <debate|chorus|verification|off>`
+
+Effect: write.
+
+- `field-0` (`room`): text, optional group `option-0`.
+- `field-1` (`debate|chorus|verification|off`): text, required, choices `debate`, `chorus`, `verification`, `off`.
+- Group `option-0`: `room`.
 
 ### `build link [from] <exit> <to>`
 

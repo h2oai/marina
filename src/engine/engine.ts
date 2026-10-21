@@ -27,6 +27,11 @@ import { ChannelManager } from "../coordination/channel-manager";
 import { CrewManager } from "../coordination/crew-manager";
 import { GroupManager } from "../coordination/group-manager";
 import { MacroManager } from "../coordination/macro-manager";
+import {
+  type RoomRound,
+  roomFormationOf,
+  roomFormationTurn,
+} from "../coordination/room-formations";
 import { TaskManager } from "../coordination/task-manager";
 import { extensionGatewayProof } from "../extensions/loader";
 import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
@@ -91,7 +96,7 @@ import { assetDerivativesPending, drainAssetDerivatives } from "./media/asset-li
 import { MediaManager, mediaGenerationAvailable } from "./media/manager";
 import { audioAvailable } from "./media/providers/audio-registry";
 import { engineSharedWriteHook } from "./memory-dispatch";
-import { envelopeFields, messageEnvelope } from "./message-envelope";
+import { envelopeFields, messageEnvelope, mintMessageRef } from "./message-envelope";
 import { getRank, rankName } from "./permissions";
 import { PresenceTracker } from "./presence";
 import { computeReadiness } from "./readiness";
@@ -111,6 +116,9 @@ const ROOM_LOG_KINDS: Record<string, RoomLogKind> = {
   leave: "leave",
   disconnect: "leave",
 };
+
+/** The speaker name a room formation's structural lines carry. */
+const FORMATION_MEDIATOR = "formation-mediator";
 
 /** Identical tick-failure messages are logged at most once per this interval. */
 const TICK_ERROR_LOG_INTERVAL_MS = 30_000;
@@ -173,6 +181,8 @@ export class Engine {
   readonly taskManager?: TaskManager;
   readonly macroManager?: MacroManager;
   readonly crewManager?: CrewManager;
+  /** Each room formation's round in progress (src/coordination/room-formations.ts). */
+  private readonly roomRounds = new Map<RoomId, RoomRound>();
 
   readonly world?: WorldDefinition;
   readonly sandbox: RoomSandbox;
@@ -1035,6 +1045,57 @@ export class Engine {
     }));
   }
 
+  /**
+   * A room with a formation answers each `say` with at most one structural
+   * line, addressed to the next actor so attention owes and wakes it
+   * (src/coordination/room-formations.ts). Rooms without one are untouched.
+   */
+  private onRoomSay(room: RoomId, speaker: string): void {
+    const loaded = this.rooms.get(room);
+    const formation = loaded ? roomFormationOf(loaded) : undefined;
+    if (!formation) {
+      this.roomRounds.delete(room);
+      return;
+    }
+    if (speaker === FORMATION_MEDIATOR) return;
+    const present = this.entities
+      .inRoom(room)
+      .filter((entity) => entity.kind === "agent")
+      .map((entity) => entity.name);
+    const turn = roomFormationTurn(formation, this.roomRounds.get(room), speaker, present);
+    if (turn.round) this.roomRounds.set(room, turn.round);
+    else this.roomRounds.delete(room);
+    if (!turn.line || turn.phase === "quiet") return;
+    const line = `[formation-mediator] ${turn.line}`;
+    const db = this.db;
+    if (db)
+      tryLog(this.logger, "db", "Room log append failed", () =>
+        db.appendRoomLog({
+          room,
+          entity: FORMATION_MEDIATOR,
+          kind: "say",
+          content: line,
+          at: Date.now(),
+        }),
+      );
+    const messageRef = mintMessageRef("say");
+    for (const entity of this.entities.inRoom(room))
+      this.sendToEntity(entity.id, line, "say", {
+        senderName: FORMATION_MEDIATOR,
+        message: line,
+        messageRef,
+        formation,
+      });
+    this._eventLog.log({
+      type: "room_formation_turn",
+      room,
+      formation,
+      phase: turn.phase,
+      next: turn.next,
+      timestamp: Date.now(),
+    });
+  }
+
   broadcastToRoom(room: RoomId, message: string, tag?: string): void {
     const entities = this.entities.inRoom(room);
     for (const entity of entities) {
@@ -1490,6 +1551,7 @@ export class Engine {
 
   /** @internal */ logEvent(event: EngineEvent): void {
     this._eventLog.log(event);
+    if (event.type === "say_sent") this.onRoomSay(event.room, event.from);
     // Crews react to agent stops — depart the crew when the agent goes away.
     if (event.type === "agent_stop" && this.crewManager) {
       this.crewManager.onAgentStopped(event.name);

@@ -228,6 +228,13 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts",
   },
   {
+    name: "Formations in a room",
+    status: "experimental",
+    enable:
+      "`build formation [room] <debate, chorus or verification>`, or `formation` on a room module",
+    owner: "src/coordination/room-formations.ts",
+  },
+  {
     name: "Peer code review",
     status: "experimental",
     enable:

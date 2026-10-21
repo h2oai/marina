@@ -24,6 +24,12 @@ export interface RoomModule {
   // toward the 200ms tick budget (which guards the synchronous portion).
   onTick?: (ctx: RoomContext) => void | Promise<void>;
   canEnter?: (ctx: RoomContext, entity: EntityId) => true | string;
+  /**
+   * The room's turn rule (`debate`, `chorus`, `verification`): after each `say`
+   * the formation mediator posts one structural line naming the next actor
+   * (src/coordination/room-formations.ts). Unset = no turn rule.
+   */
+  formation?: string;
 }
 
 // ─── Commands ────────────────────────────────────────────────────────────────
@@ -579,6 +585,18 @@ export type EngineEvent =
       status: "starting" | "idle" | "running" | "waiting" | "stopped" | "failed" | "disconnected";
       /** How world messages reach it while it works. */
       steer: "mid-turn" | "next-turn" | "none";
+      timestamp: number;
+    }
+  /**
+   * A room formation's mediator posted its structural line
+   * (src/coordination/room-formations.ts). Names only: who is now owed.
+   */
+  | {
+      type: "room_formation_turn";
+      room: RoomId;
+      formation: string;
+      phase: "open" | "turn" | "close" | "closed";
+      next: string[];
       timestamp: number;
     }
   /** A direct message (`tell` / `re`) was delivered. Content-free, like `say_sent`. */
