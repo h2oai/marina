@@ -35,7 +35,12 @@ export function shoutCommand(deps: {
         ...envelopeFields(messageEnvelope(input.entity)),
       };
       ctx.send(input.entity, shoutSelf(input.args), "shout", meta);
-      deps.broadcastAll(input.entity, shout(entity.name, input.args), "shout", meta);
+      // Listeners also get the words as `message`, as for `say`: attention reads
+      // a vocative or `@name` from it.
+      deps.broadcastAll(input.entity, shout(entity.name, input.args), "shout", {
+        ...meta,
+        message: input.args,
+      });
     },
   };
 }

@@ -23,8 +23,12 @@ export function sayCommand(getEntity: (id: EntityId) => Entity | undefined): Com
 
       const messageRef = mintMessageRef("say");
       const envelope = envelopeFields(messageEnvelope(input.entity));
+      // The words go in the perception data too (only those present get it, and
+      // they already read them in the text): attention reads a vocative
+      // ("Fern, …") from `message`, so without it no say is ever addressed.
       ctx.broadcastExcept(input.entity, say(entity.name, input.args), "say", {
         senderName: entity.name,
+        message: input.args,
         messageRef,
         ...envelope,
       });
