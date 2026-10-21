@@ -556,6 +556,13 @@ export class CodeConsole {
       await this.close(0);
       return;
     }
+    // `@name …`, `@a,b …`, `@all …`, `@@…`: world shorthand for `agent
+    // attention` (the server expands it, src/engine/parse-mentions.ts), never a
+    // prompt to the selected native agent.
+    if (text.startsWith("@") && text.length > 1) {
+      await this.command(text);
+      return;
+    }
     if (!text.startsWith("/")) {
       this.interrupted = false;
       if (this.selected) await this.task(text);

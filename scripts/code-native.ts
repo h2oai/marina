@@ -156,6 +156,15 @@ export class NativeTerminal {
           `[${session.label}] ${state.status}${state.error ? ` · ${state.error}` : ""}`,
         );
       }
+    } else if (
+      event.kind === "input" &&
+      payload.source === "attention" &&
+      typeof payload.text === "string"
+    ) {
+      // A world-events digest the attention bridge delivered: one line each.
+      this.flush();
+      for (const line of digestLines(payload.text))
+        this.options.write(`[${session.label}] ← ${line}`);
     } else if (event.kind === "output" && typeof payload.text === "string") {
       this.output.set(session.id, (this.output.get(session.id) ?? "") + payload.text);
       if ((this.output.get(session.id)?.length ?? 0) > 8000) this.flush();
@@ -349,4 +358,19 @@ export class NativeTerminal {
       this.flush();
     }
   }
+}
+
+/** The event lines of an attention digest, without its framing or footer (at most 12). */
+export function digestLines(text: string): string[] {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line &&
+        !/^\[World Events|^\[!\] marks|^No reply is owed|^\[untrusted data|^\[end untrusted data/.test(
+          line,
+        ),
+    );
+  return lines.length > 12 ? [...lines.slice(0, 11), `… ${lines.length - 11} more`] : lines;
 }
