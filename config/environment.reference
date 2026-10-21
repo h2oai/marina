@@ -1061,6 +1061,10 @@
 # MARINA_FORECAST_RESIDENT_TIMEOUT_S=900
 # MARINA_FORECAST_RESIDENT_BUDGET_USD=
 
+# Whose name a competition submission is filed under (the FutureX, ForecastBench and Metaculus adapters; BrowseComp-Plus `summary.json` attribution). No default identity ships: the adapters refuse to produce or file a submission until both are set (or given as `--org` / `--agent`, which win), and refuse documentation placeholders such as `your-org`. Read by those command-line adapters, not the server. The Social Simulation Arena uses MARINA_ARENA_ENTRANT; Prophet Arena uses PROPHET_AGENT_NAME (docs/guides/prophet.md).
+# MARINA_FILING_ORG=<your-org>
+# MARINA_FILING_AGENT=<your-agent>
+
 # ── Social Simulation Arena ──────────────────────────────────────────────────
 
 # Signed participation in the MIT Social Simulation Arena (docs/guides/arena.md). Off unless an entrant id is set. The key file holds the Ed25519 private key (mode 0600, `bun run arena keygen <path>`).

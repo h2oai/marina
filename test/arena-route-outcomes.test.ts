@@ -15,7 +15,7 @@ import type { ForecastAnswerRow } from "../src/persistence/db-markets";
 import type { OutcomeRow } from "../src/persistence/db-outcomes";
 
 const DELPHI = "formation:delphi:openrouter/vendor/model-a,openrouter/vendor/model-b";
-const ENTRANT = "h2oai-marina";
+const ENTRANT = "acme-marina";
 const NOW = Date.parse("2026-10-14T00:00:00Z");
 const before = Date.parse("2026-07-19T00:00:00Z");
 

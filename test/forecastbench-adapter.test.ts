@@ -31,9 +31,9 @@ import {
 } from "../benchmarks/forecastbench/run";
 import {
   coverage,
-  DEFAULT_SET_IDENTITY,
   setBody,
   setFileName,
+  setIdentityFor,
   validateForecasts,
 } from "../benchmarks/forecastbench/submission";
 import type { AnswerSpec } from "../src/forecast/answer-types";
@@ -175,13 +175,18 @@ describe("forecastbench: a round", () => {
   });
 
   it("names and shapes the file as ForecastBench requires", () => {
-    expect(setFileName(due, DEFAULT_SET_IDENTITY, 1)).toBe(`${due}.H2O-ai.1.json`);
-    expect(() => setFileName(due, DEFAULT_SET_IDENTITY, 4)).toThrow();
-    const body = JSON.parse(setBody(set, DEFAULT_SET_IDENTITY, []));
+    const operator = { organization: "Acme.Lab", agent: "LabBot" };
+    const id = setIdentityFor(operator, 1);
+    expect(setFileName(due, id, 1)).toBe(`${due}.Acme-Lab.1.json`);
+    expect(() => setFileName(due, id, 4)).toThrow();
+    // Sets of one round differ in `model`.
+    expect(setIdentityFor(operator, 2).model).toBe("LabBot (2)");
+    expect(setIdentityFor(operator, 2, "LabBot delphi").model).toBe("LabBot delphi");
+    const body = JSON.parse(setBody(set, id, []));
     expect(body).toEqual({
-      organization: "H2O.ai",
-      model: "Marina",
-      model_organization: "H2O.ai",
+      organization: "Acme.Lab",
+      model: "LabBot",
+      model_organization: "Acme.Lab",
       question_set: `${due}-llm.json`,
       forecasts: [],
     });

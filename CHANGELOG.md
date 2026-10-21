@@ -151,6 +151,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requester's lineage builds an earnable gate. Each world records the change once as a chronicle
   event (`civic-rule:contributors-earn-standing`).
 
+- **Competition adapters ship no filing identity.** The FutureX, ForecastBench and Metaculus
+  adapters no longer default to an organization or agent name: they refuse to produce or file a
+  submission (before spending anything) until you give one with `--org` / `--agent` or
+  `MARINA_FILING_ORG` / `MARINA_FILING_AGENT`, and they refuse the docs' placeholders such as
+  `your-org`. The Prophet Arena agent registers under `PROPHET_AGENT_NAME` (or the name you put in
+  `benchmarks/prophet/arena.toml`, which now ships placeholders) and refuses to load without one.
+  BrowseComp-Plus `summary.json` carries an `Attribution` only when you name one, and
+  `scripts/arena-wiki-backtest.ts` compares the entrant in `MARINA_ARENA_ENTRANT` (or
+  `--entrant`) instead of a built-in id. Operators who filed before must now set their identity.
+
 ### Fixed
 
 - **Supervised residents show as residents in the dashboard.** The world snapshot's vendor,

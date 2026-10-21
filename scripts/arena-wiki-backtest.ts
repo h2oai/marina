@@ -15,6 +15,8 @@
  * (1 − RBO loss ÷ persistence RBO loss, p = 0.9).
  *
  *   bun run scripts/arena-wiki-backtest.ts --dir <wikitop dir> [--site data.json] [--grid]
+ *     [--entrant <id>]   (whose filed skill `--site` compares; default MARINA_ARENA_ENTRANT,
+ *                        none: the column is left out)
  *     [--out items.jsonl] [--features <label>=<file>[+<file>…][,…]] [--adjust '{…}']
  *
  * `--out` writes one JSON line per week and variant — `{id, score, at,
@@ -66,8 +68,11 @@ const { values } = parseArgs({
     out: { type: "string" },
     features: { type: "string" },
     adjust: { type: "string" },
+    entrant: { type: "string" },
   },
 });
+/** Whose filed rounds `--site` compares with: the configured entrant, never a built-in one. */
+const entrant = (values.entrant ?? process.env.MARINA_ARENA_ENTRANT ?? "").trim() || undefined;
 if (!values.dir) throw new Error("usage: --dir <wikitop dir> [--site data.json] [--grid]");
 const dir = values.dir;
 const days: DailyTop[] = readdirSync(dir)
@@ -423,7 +428,7 @@ if (values.site) {
       JSON.stringify(w.truth) === JSON.stringify(r.outcome) &&
       JSON.stringify(w.persistence) === JSON.stringify(r.persistence_items);
     const best = Math.max(...r.entries.map((e) => e.skill));
-    const marina = r.entries.find((e) => e.entrant === "h2oai-marina")?.skill;
+    const marina = entrant ? r.entries.find((e) => e.entrant === entrant)?.skill : undefined;
     const n = skillOf(w, nowcast(w));
     const s = skillOf(w, specialist(w, chosenParams));
     cols.nowcast!.push(n);
@@ -431,7 +436,7 @@ if (values.site) {
     cols.best!.push(best);
     if (marina !== undefined) cols.marina!.push(marina);
     console.log(
-      `  ${r.round_id}  reconstruction ${same ? "matches" : "DIFFERS"}  nowcast ${n.toFixed(3)}  specialist ${s.toFixed(3)}  best entrant ${best.toFixed(3)}${marina !== undefined ? `  marina filed ${marina.toFixed(3)}` : ""}`,
+      `  ${r.round_id}  reconstruction ${same ? "matches" : "DIFFERS"}  nowcast ${n.toFixed(3)}  specialist ${s.toFixed(3)}  best entrant ${best.toFixed(3)}${marina !== undefined ? `  ${entrant} filed ${marina.toFixed(3)}` : ""}`,
     );
   }
   console.log(

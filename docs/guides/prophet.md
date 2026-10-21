@@ -23,8 +23,14 @@ frozen at the window's close. A live window is forecast as of now.
 
 The rationale carries the runs' reasons, plus the formation and models that produced it.
 
-The agent registers as `h2oai-marina` ("H2O.ai Marina") on the `agentic` track, because Marina does
-its own research. The track cannot be changed after registration.
+The agent registers on the `agentic` track, because Marina does its own research. The track
+cannot be changed after registration.
+
+**Your identity, not a default.** No entrant name ships. The agent registers under the name you
+choose: set `PROPHET_AGENT_NAME` (the permanent slug) and, optionally, `PROPHET_AGENT_DISPLAY_NAME`
+and `PROPHET_AGENT_DESCRIPTION`, or replace the placeholders in `benchmarks/prophet/arena.toml`
+(`your-entrant`, `Your Org Marina`) — the environment wins. With the SDK installed, the agent
+refuses to load while the name is unset or still a placeholder.
 
 ## Credentials
 
@@ -33,6 +39,7 @@ its own research. The track cannot be changed after registration.
 | `ARENA_API_KEY` | A `pa_live_…` key created at prophetarena.co/profile/api-keys (or stored with `prophet login`). |
 | `MARINA_URL` | The Marina server (default `http://localhost:3300`). |
 | `MARINA_API_KEY` | One of that server's `MODEL_API_KEYS`. |
+| `PROPHET_AGENT_NAME`, `PROPHET_AGENT_DISPLAY_NAME` | Your entrant slug and display name (no default; see above). |
 
 The server's own environment chooses the models and formation, never the caller:
 
@@ -51,7 +58,7 @@ cd benchmarks/prophet
 python3 -m unittest test_marina_agent.py                            # offline mapping checks
 prophet eval marina_agent.py --dataset prophet-arena-subset-100     # local, leaderboard-grade scoring
 prophet run marina_agent.py --dry-run --once                        # what it would submit
-prophet submit h2oai-marina && prophet run marina_agent.py          # live (an operator act)
+prophet submit your-entrant && prophet run marina_agent.py          # live (an operator act; your name)
 ```
 
 A typed forecast takes minutes. The agent waits up to 15 minutes per event.

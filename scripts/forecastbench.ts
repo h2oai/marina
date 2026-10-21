@@ -24,7 +24,9 @@
  * Flags: --dir data/forecastbench, --set N (1–3: set N files with the selection's pick N),
  * --config <label> (override), --configs <file.json>, --concurrency 6, --limit N (first N
  * questions), --sample N (N per source), --budget <usd> (stop starting new questions),
- * --dry-run (write the file, never record it; implied by --limit/--sample), --model <name>.
+ * --dry-run (write the file, never record it; implied by --limit/--sample), --model <name>,
+ * --org <your-org> --agent <your-agent> (or MARINA_FILING_ORG / MARINA_FILING_AGENT; required
+ * by run, write and upload — no default identity ships).
  *
  * Selection flags: --rounds <due,due> (default the newest resolved rounds), --sources <a,b>,
  * --include <model> (repeatable), --crew <name>, --ablate, --replicates 2, --items 40,
@@ -54,9 +56,9 @@ import { forecastsFrom } from "../benchmarks/forecastbench/map";
 import { assemble, meanCost, resolveRound, runRound } from "../benchmarks/forecastbench/run";
 import {
   coverage,
-  DEFAULT_SET_IDENTITY,
   setBody,
   setFileName,
+  setIdentityFor,
   sha256,
   validateForecasts,
 } from "../benchmarks/forecastbench/submission";
@@ -68,6 +70,11 @@ import {
   runSelection,
 } from "../benchmarks/forecasting/cli";
 import { depsForConfig, forecasterFor } from "../benchmarks/forecasting/configs";
+import {
+  type FilingIdentity,
+  filingIdentity,
+  MissingIdentityError,
+} from "../benchmarks/forecasting/identity";
 import { attachWorldSpend } from "../benchmarks/forecasting/shared";
 import { priorAnswer } from "../src/forecast/prior-answer";
 import type { TypedForecastAnswer } from "../src/forecast/typed";
@@ -111,6 +118,8 @@ const { positionals, values } = parseArgs({
     sample: { type: "string" },
     budget: { type: "string" },
     model: { type: "string" },
+    org: { type: "string" },
+    agent: { type: "string" },
     yes: { type: "boolean" },
     runs: { type: "string" },
     "dry-run": { type: "boolean" },
@@ -190,7 +199,21 @@ async function estimateCmd(): Promise<number> {
   return 0;
 }
 
+/**
+ * The operator's filing identity (`--org`/`--agent` or MARINA_FILING_ORG /
+ * MARINA_FILING_AGENT). No default ships: `run`, `write` and `upload` refuse
+ * without one (a run before it spends anything).
+ */
+function requireFiler(): FilingIdentity {
+  return filingIdentity({
+    adapter: "forecastbench",
+    ...(values.org !== undefined ? { org: values.org } : {}),
+    ...(values.agent !== undefined ? { agent: values.agent } : {}),
+  });
+}
+
 async function runCmd(db: MarinaDB): Promise<number> {
+  requireFiler();
   const set = await loadSet();
   const chosen = chosenConfig(db);
   const journal = journalPath(set.forecast_due_date, values.set!);
@@ -231,17 +254,12 @@ async function runCmd(db: MarinaDB): Promise<number> {
 }
 
 async function writeCmd(db: MarinaDB, given?: FbQuestionSet): Promise<number> {
+  const filer = requireFiler();
   const set = given ?? (await loadSet());
   const due = set.forecast_due_date;
   const n = Number(values.set);
+  const identity = setIdentityFor(filer, n, values.model);
   const chosen = chosenConfig(db);
-  // Sets of one round must differ in `model`; set 1 is plain "Marina".
-  const identity = {
-    ...DEFAULT_SET_IDENTITY,
-    model:
-      values.model ??
-      (n === 1 ? DEFAULT_SET_IDENTITY.model : `${DEFAULT_SET_IDENTITY.model} (${n})`),
-  };
   const a = assemble(set, journalPath(due, values.set!), savedPriors(values.dir!, due));
   const errors = validateForecasts(set.questions, a.forecasts);
   if (errors.length) {
@@ -298,8 +316,10 @@ async function writeCmd(db: MarinaDB, given?: FbQuestionSet): Promise<number> {
 }
 
 async function uploadCmd(): Promise<number> {
+  const filer = requireFiler();
   const set = await loadSet();
-  const name = setFileName(set.forecast_due_date, DEFAULT_SET_IDENTITY, Number(values.set));
+  const n = Number(values.set);
+  const name = setFileName(set.forecast_due_date, setIdentityFor(filer, n), n);
   const path = join(roundDir(set.forecast_due_date), name);
   if (!existsSync(path)) {
     log(`no ${path}; run \`write\` first`);
@@ -552,4 +572,12 @@ async function main(): Promise<number> {
   }
 }
 
-process.exit(await main());
+process.exit(
+  await main().catch((err: unknown) => {
+    if (err instanceof MissingIdentityError) {
+      console.error(err.message);
+      return 2;
+    }
+    throw err;
+  }),
+);
