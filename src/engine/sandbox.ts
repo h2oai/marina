@@ -96,6 +96,16 @@ function validateSource(source: string, kind: "Room" | "Command"): ValidationRes
   // require() and import() need \s*\( to match calls
   if (/\brequire\s*\(/.test(stripped)) errors.push("require() is forbidden");
   if (/\bimport\s*\(/.test(stripped)) errors.push("Dynamic import() is forbidden");
+  // Static imports and re-exports load modules just as import() does. Only a
+  // type-only import (erased when the source is transpiled) is allowed.
+  if (staticImportForbidden(stripped)) {
+    errors.push("Static import is forbidden (only `import type` is allowed)");
+  }
+  if (
+    /(?<![\w$.])export\s*(?:type\s*)?(?:\*|\{[^}]*\})\s*(?:as\s+[\w$]+\s*)?from\b/.test(stripped)
+  ) {
+    errors.push("Re-exporting from another module is forbidden");
+  }
   if (/\beval\s*\(/.test(stripped)) errors.push("eval() is forbidden");
   if (/\bfetch\s*\(/.test(stripped)) errors.push("fetch() is forbidden (no network access)");
   if (/\bWebSocket\b/.test(stripped)) errors.push("WebSocket is forbidden (no network access)");
@@ -165,6 +175,20 @@ function validateSource(source: string, kind: "Room" | "Command"): ValidationRes
   }
 
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Whether `stripped` (literals removed) has a static `import` statement other
+ * than a type-only one. `import(` and `import.meta` are refused separately.
+ */
+function staticImportForbidden(stripped: string): boolean {
+  const statement = /(?<![\w$.])import\b(?!\s*[(.:])/g;
+  const typeOnly = /^\s+type\s+(?:\{|\*|[A-Za-z_$][\w$]*\s+from\b)/;
+  for (const match of stripped.matchAll(statement)) {
+    const rest = stripped.slice(match.index + match[0].length);
+    if (!typeOnly.test(rest)) return true;
+  }
+  return false;
 }
 
 function escapeRegex(str: string): string {

@@ -28,15 +28,24 @@ interface DemoState {
 
 const TARGET_ROOM = "creations/first";
 const AGENT_NAME = "Maker";
-const MAX_WAIT_TICKS = 180; // 3 minutes
+const MAX_WAIT_TICKS = 600; // 10 minutes: the compile steps wait for an operator
 
-/** The room source the agent will write — kept short for reliable transmission. */
-const ROOM_SOURCE = [
-  'import type { RoomModule } from "../../src/types";',
+/** The channel the new room announces itself on (seeded by the demos world). */
+const ANNOUNCE_CHANNEL = "demos";
+/** What the new room posts once it is compiled, loaded and ticking. */
+const LIVE_MARKER = `[built] ${TARGET_ROOM} is live`;
+
+/**
+ * The room source the agent will write — kept short for reliable transmission.
+ * Its onTick posts LIVE_MARKER once under the room's own id: the Workshop marks
+ * the demo complete only when that message exists, i.e. the room really runs.
+ */
+export const ROOM_SOURCE = [
+  'import type { RoomId, RoomModule } from "../../src/types";',
   "const room: RoomModule = {",
   '  short: "The First Creation",',
   '  long: "A room that did not exist moments ago. An AI agent imagined this space, wrote its code, and brought it to life. The walls shimmer with newness.",',
-  '  exits: { workshop: "demos/workshop" as any },',
+  '  exits: { workshop: "demos/workshop" as RoomId },',
   "  items: {",
   '    plaque: "A glowing plaque reads: This room was created by the Maker agent during a live demonstration. No human wrote this code.",',
   '    origin: "A data crystal hovering in the corner replays the moment of creation.",',
@@ -45,6 +54,11 @@ const ROOM_SOURCE = [
   "    hello: (ctx, input) => {",
   '      ctx.send(input.entity, "The room resonates: Hello! I was built by an AI agent.");',
   "    },",
+  "  },",
+  "  onTick(ctx) {",
+  '    if (ctx.store.get("announced")) return;',
+  '    ctx.store.set("announced", true);',
+  `    ctx.channels?.send("${ANNOUNCE_CHANNEL}", "${TARGET_ROOM}", "${TARGET_ROOM}", "${LIVE_MARKER}");`,
   "  },",
   "  onEnter(ctx, entity) {",
   '    ctx.send(entity, "You step into a room that was built by an AI agent. Examine the plaque or origin. Try the hello command.");',
@@ -75,11 +89,13 @@ const DIALOGUE = {
       "and connect to external services. A room is not just a place — it is a capability.",
     ranks:
       "Capability is earned: standing unlocks ranks, and safety gates guard the riskier " +
-      "operations. The Maker has been pre-registered with what building needs — the build " +
-      "rank and the world.code gate — so it can write and compile room code.",
+      "operations. The Maker has been pre-registered at the build rank. Compiling room code " +
+      "also takes the world.code gate, which only an operator holds: the Maker's compile " +
+      "and reload steps wait for an operator's 'challenge approve <token>'.",
     begin:
       "Type 'begin' to start. The Maker agent will spawn, build a room, write its code, " +
-      "compile it, and then you can walk in. Watch this room for updates.",
+      "and ask an operator to approve compiling it. Once the room runs, you can walk in. " +
+      "Watch this room for updates.",
   },
 };
 
@@ -106,7 +122,16 @@ function statusBlock(state: DemoState | undefined): string {
   }
   return (
     `${B}Self-Bootstrap Demo${R} ${Y}IN PROGRESS${R} ${D}(${elapsed}s)${R}\n` +
-    `The Maker agent is working — building, writing code, compiling...`
+    `The Maker agent is working — building and writing code. Compiling waits for an ` +
+    `operator to approve the held run ('challenge approve <token>').`
+  );
+}
+
+/** Whether the built room has announced itself as running. */
+function roomIsLive(ctx: RoomContext): boolean {
+  const history = ctx.channels?.history(ANNOUNCE_CHANNEL, 50) ?? [];
+  return history.some(
+    (message) => message.senderName === TARGET_ROOM && message.content === LIVE_MARKER,
   );
 }
 
@@ -194,7 +219,8 @@ const room: RoomModule = {
 
         ctx.broadcast(
           `${G}${B}The Maker has arrived.${R} ${D}(${result.entityId ?? "connecting..."})${R}\n` +
-            `${D}Building room, writing code, compiling... watch for the result.${R}`,
+            `${D}Building room and writing code. Its compile and reload steps are held for ` +
+            `an operator: approve them with 'challenge approve <token>'.${R}`,
         );
       } catch {
         state.phase = "error";
@@ -215,7 +241,7 @@ const room: RoomModule = {
         ticksSinceStart: 0,
       });
       // Remove the dynamic exit if it was added
-      delete (room as any).exits.creation;
+      if (room.exits) delete room.exits.creation;
       ctx.send(input.entity, "Demo reset. Type 'begin' to start again.");
     },
   },
@@ -284,47 +310,13 @@ const room: RoomModule = {
 
     state.ticksSinceStart++;
 
-    // Check if the Maker agent is done — look for its "Done" message
-    // by checking if the Maker has said something in the room.
-    // Since we can't directly observe say commands, we detect completion
-    // by checking if the target room exit has been dynamically added
-    // OR if the agent has finished its work by checking the room store
-    // for a completion signal.
-
-    // The Maker agent's goal includes "say Done! The room is live."
-    // But rooms can't observe say. Instead, check if the Maker is still
-    // present and working, and use a room command as a signal.
-
-    // Simple approach: after sufficient time, check if the agent is still here
-    // and optimistically mark complete. The user can always type 'status'.
-
-    // Better: add a "done" room command that the agent's goal uses instead of "say".
-    // Actually even better: just poll the exits. If the creation exit exists,
-    // someone built the room and linked it.
-
-    // But the room source has `exits: { workshop: "demos/workshop" }` — the link
-    // goes from creation → workshop, not workshop → creation.
-    // The `build room` command creates the room. The `build reload` activates it.
-    // We can detect completion by seeing the Maker agent leave (it's done)
-    // or by tracking how long it's been working.
-
-    // Practical: use the Maker entity's presence + time elapsed.
-    const maker = ctx.entities.find((e) => e.name === AGENT_NAME && e.kind === "agent");
-
-    // If the Maker was here and has left, it's probably done
-    const makerWasHere = ctx.store.get<boolean>("maker_seen");
-    if (maker && !makerWasHere) {
-      ctx.store.set("maker_seen", true);
-    }
-
-    // Poll for completion: if 30+ seconds have passed and Maker was seen,
-    // assume building is complete. The user verifies by visiting the room.
-    if (state.phase === "working" && makerWasHere && state.ticksSinceStart > 30) {
+    // Completion is checked, not assumed: the new room's own onTick posts
+    // LIVE_MARKER under its room id once it is compiled and loaded.
+    if (state.phase === "working" && roomIsLive(ctx)) {
       state.phase = "complete";
 
       // Add exit to the new room
-      const exits = (room as any).exits as Record<string, RoomId>;
-      exits.creation = TARGET_ROOM as RoomId;
+      if (room.exits) room.exits.creation = TARGET_ROOM as RoomId;
 
       ctx.broadcast(
         `\n${G}${B}The anvil flares with light. A new corridor materializes.${R}\n\n` +

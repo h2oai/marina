@@ -12,8 +12,8 @@ export function moveCommand(deps: {
   moveEntity: (entity: EntityId, to: RoomId) => boolean;
   buildContext: (room: RoomId) => RoomContext | undefined;
   sendLook: (entity: EntityId) => void;
-  /** Why the entity may not enter a room (private rooms), or null. */
-  entryRefusal?: (entity: Entity, room: RoomId) => string | null;
+  /** Why the entity may not enter a room (private rooms, canEnter), or null. */
+  entryRefusal: (entity: Entity, room: RoomId) => string | null;
 }): CommandDef {
   return {
     category: "Navigation",
@@ -65,23 +65,13 @@ export function moveCommand(deps: {
         return;
       }
 
+      // The one entry check (src/engine/room-access.ts): private rooms, then
+      // the room's canEnter guard.
       const mover = deps.getEntity(input.entity);
-      const refusal = mover ? deps.entryRefusal?.(mover, targetId) : null;
+      const refusal = mover ? deps.entryRefusal(mover, targetId) : null;
       if (refusal) {
         _ctx.send(input.entity, refusal);
         return;
-      }
-
-      // Check canEnter guard
-      if (target.module.canEnter) {
-        const targetCtx = deps.buildContext(targetId);
-        if (targetCtx) {
-          const result = target.module.canEnter(targetCtx, input.entity);
-          if (result !== true) {
-            _ctx.send(input.entity, result);
-            return;
-          }
-        }
       }
 
       // Leave current room
