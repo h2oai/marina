@@ -127,3 +127,41 @@ export function buildFtsQuery(
 export function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
+
+// Materialize lexical hits once, then map each hit to the numeric handles
+// that show it: the row itself (a legacy note with its own body — never a
+// record version, which the view excludes), a handle on the record whose
+// current version it is, or a handle pinned to that version. The three are
+// disjoint, so no pair repeats.
+// Joining the projected numeric view to FTS directly makes SQLite read every
+// owned note through the view (and can rerun the MATCH per note), so a search
+// grew with history. `CROSS JOIN` fixes the order (hits first, then each
+// handle by id) so the planner cannot fall back to that scan, and
+// `n.content_id = fts.rowid` keeps exactly the pairs the direct join matched.
+// Retain every hit and its original rank: weighted top-N ranking and ACLs
+// must stay exact (a lexical LIMIT before scoring would change results).
+export const MATCHED_NOTES_CTE = `WITH matched_notes AS MATERIALIZED (
+  SELECT rowid, rank FROM notes_fts WHERE notes_fts MATCH ?
+),
+matched_handles(handle_id, rowid, rank) AS (
+  SELECT m.rowid, m.rowid, m.rank FROM matched_notes m
+  WHERE NOT EXISTS (SELECT 1 FROM memory_record_versions rv WHERE rv.note_id = m.rowid)
+  UNION ALL
+  SELECT p.note_id, m.rowid, m.rank FROM matched_notes m
+    CROSS JOIN memory_records r INDEXED BY idx_memory_records_note ON r.current_note_id = m.rowid
+    CROSS JOIN memory_note_projections p ON p.record_id = r.id AND p.version IS NULL
+  UNION ALL
+  SELECT p.note_id, m.rowid, m.rank FROM matched_notes m
+    CROSS JOIN memory_record_versions v ON v.note_id = m.rowid
+    CROSS JOIN memory_note_projections p ON p.record_id = v.record_id AND p.version = v.version
+)`;
+
+/** Numeric handles joined to their lexical hits (alias `fts`, as before),
+ *  reading each hit's handles by id: cost follows the number of hits. */
+export const MATCHED_FROM = `FROM matched_handles fts
+      CROSS JOIN numeric_notes n ON n.id = fts.handle_id AND n.content_id = fts.rowid`;
+
+/** The same pairs, reading the scoped notes and probing the materialized
+ *  hits: cost follows the number of scoped notes. */
+export const MATCHED_FROM_SCOPE = `FROM numeric_notes n
+      JOIN matched_notes fts ON n.content_id = fts.rowid`;
