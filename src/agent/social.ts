@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { escapeRegExp } from "../engine/regexp";
 import type { Perception } from "../types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -46,10 +47,6 @@ export type SocialEventType =
 
 /** Openers that may precede a vocative ("Hey Name, …", "Thanks Name"). */
 const GREETING = "(?:hey|hi|hello|yo|ok|okay|thanks|thank\\s+you|dear|ping)";
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /**
  * Whether `message` is addressed TO `name` — a vocative, not a mention:

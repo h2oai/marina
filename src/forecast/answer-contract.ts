@@ -34,6 +34,7 @@
  * re-ask. General capability: nothing here knows a benchmark.
  */
 
+import { escapeRegExp } from "../engine/regexp";
 import {
   type AnswerOption,
   type AnswerSpec,
@@ -550,7 +551,7 @@ export function fallbackFor(
   const done = (value: AnswerValue) => ({ value, rendered: renderContract(c, value) });
   const options = c.options ?? [];
   const named = options.filter((o) =>
-    new RegExp(`(^|[^A-Za-z0-9])${escapeRe(o.id)}($|[^A-Za-z0-9])`).test(text),
+    new RegExp(`(^|[^A-Za-z0-9])${escapeRegExp(o.id)}($|[^A-Za-z0-9])`).test(text),
   );
   const byProbability = [...options].sort(
     (a, b) => (distribution?.[b.id] ?? 0) - (distribution?.[a.id] ?? 0),
@@ -596,8 +597,6 @@ export function fallbackFor(
     }
   }
 }
-
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Every number written in the text (scale words applied), ignoring list numbering. */
 function numbersIn(text: string): number[] {

@@ -35,6 +35,7 @@
 
 import type { ResearchBrief, SourceExclusion } from "../arena/research/briefs";
 import { getErrorMessage } from "../engine/errors";
+import type { Complete } from "../model/reply";
 import { extractJsonValue } from "../repair/output-repair";
 import { type ResearchCheckpoint, ResearchInterrupted } from "./checkpoint";
 import {
@@ -56,8 +57,6 @@ import {
 } from "./prompts";
 import type { ResearchReport, Retriever } from "./retrieve";
 import { defaultPageText, type PageText, quoteBody, verifyDossier } from "./verify";
-
-export type Complete = (system: string, user: string) => Promise<string>;
 
 export interface ReportModel {
   /** `provider/model`, for the audit trail. */
