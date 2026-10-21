@@ -21,6 +21,7 @@
  * passing checks behind it earns nothing.
  */
 
+import { reviewJudgeLines } from "../../../agent/attention-judge";
 import { dim, header } from "../../../net/ansi";
 import { creditVerifiedCode } from "../../../outcomes/live";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
@@ -692,6 +693,8 @@ function showReview(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Deps,
           `closed: ${meta.closed.outcome} by ${meta.closed.by}${meta.closed.override ? " (override)" : ""}`,
         ]
       : []),
+    // Earned review judges only, under MARINA_ATTENTION_JUDGE=on: advice, never a verdict.
+    ...reviewJudgeLines(deps.db, id).map((line) => dim(line)),
     "",
     snap?.content_text.trim() || dim("(no snapshot)"),
     ...(snapMeta.truncated ? [dim("[snapshot cut at its size bound]")] : []),

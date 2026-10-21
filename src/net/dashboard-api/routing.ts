@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { judgeReportedWakes, recordWakeOutcomes } from "../../agent/attention-judge";
 import type { Engine } from "../../engine/engine";
 import { roomEntryRefusal } from "../../engine/room-access";
 import type { MarinaDB } from "../../persistence/database";
@@ -358,6 +359,10 @@ export async function handleRoutingRoutes(
         },
         revokeSessions: (id) => engine.sessionManager?.revokeByEntity(id as EntityId),
         logEvent: (event) => engine.logEvent(event),
+        attentionReported: (name, wakes, outcomes) => {
+          judgeReportedWakes(db, name, wakes);
+          recordWakeOutcomes(db, name, outcomes);
+        },
       };
       const [, rawName, action] = residentMatch;
       if (!rawName) {

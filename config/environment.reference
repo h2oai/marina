@@ -189,6 +189,9 @@
 # @protected
 # MARINA_CHALLENGE_JUDGE=observe
 
+# Attention judges (needs a decision backend; nothing is judged without one): whether a borderline wake of a supervised resident was needed now, whether a reply deep in an agent conversation (depth 3+) adds anything, whether a code review approval rests on specific checking, and how useful a review verdict is. `observe` (default) records each opinion and its later mechanical result on the outcome path, so agreement is measured per judge and model. `on` lets a judge that EARNED it (25+ comparisons, 95% lower bound 0.85 or better) act advisorily: wake and deep-reply opinions feed the `attention_useful`/`attention_noise` counters, review opinions show in `code review <id>`. A judge never blocks, closes or approves anything. `off` makes no calls and records nothing.
+# MARINA_ATTENTION_JUDGE=observe
+
 # Deepest spawn lineage an agent may extend (lead → sub-lead → specialist).
 # MARINA_MAX_SPAWN_DEPTH=3
 

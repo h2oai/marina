@@ -52,6 +52,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Earned forecast routing | experimental | `MARINA_FORECAST_HISTORY` with enough resolved outcomes | src/forecast |
 | Supervised residents | experimental | `MARINA_SUPERVISED_RESIDENTS=on` (server and supervisor) | src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts |
 | Formations in a room | experimental | `build formation [room] <debate, chorus or verification>`, or `formation` on a room module | src/coordination/room-formations.ts |
+| Attention judges | experimental | `MARINA_ATTENTION_JUDGE=observe` (default; records opinions and results) or `on` (earned judges advise) | src/agent/attention-judge.ts |
 | Peer code review | experimental | `code review request <name>` or `auto`; supervised residents attach worktree snapshots | src/engine/commands/code/review-request.ts, src/routing/review-snapshot.ts |
 | Private rooms | experimental | `build access <room> private` (owner or operator); `build invite <room> <name>` | src/engine/room-access.ts, src/engine/commands/build.ts |
 | Research authority mode | experimental | `MARINA_RESEARCH_AUTHORITY=on` | src/research |
