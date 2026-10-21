@@ -288,7 +288,7 @@ function isOperator(entity: Entity | undefined): boolean {
  * spawned by an agent is answered for by the person who started the chain).
  * Undefined when the chain ends in `system`, nobody, or a loop.
  */
-function personOwner(requester: { name: string }): string | undefined {
+export function personOwner(requester: { name: string }): string | undefined {
   if (!host) return undefined;
   const seen = new Set<string>([norm(requester.name)]);
   let name = host.creatorOf(requester);

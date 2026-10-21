@@ -4442,6 +4442,14 @@ export class MarinaDB implements MarinaStores {
   listRoutingEvents(sessionId: string, after: number, limit: number): RoutingEventPage {
     return routingDb.listRoutingEvents(this.db, sessionId, after, limit);
   }
+  listRoutingEventParts(
+    sessionId: string,
+    kind: string,
+    prefix: string,
+    limit: number,
+  ): RoutingEvent[] {
+    return routingDb.listRoutingEventParts(this.db, sessionId, kind, prefix, limit);
+  }
   sendRoutingMessage(sourceId: string, input: RoutingSend): RoutingMessage {
     return routingDb.sendRoutingMessage(this.db, sourceId, input);
   }

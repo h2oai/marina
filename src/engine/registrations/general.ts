@@ -59,6 +59,7 @@ import { whoCommand } from "../commands/who";
 import { worldCommand } from "../commands/world";
 import type { Engine } from "../engine";
 import { answerViaLocalModel } from "./model-helpers";
+import { engineTellDeps } from "./tell-deps";
 
 export function registerGeneralCommands(engine: Engine): void {
   if (engine.db) {
@@ -148,26 +149,7 @@ export function registerGeneralCommands(engine: Engine): void {
       },
     }),
   );
-  const tellDeps = {
-    getEntity: (id: EntityId) => engine.entities.get(id),
-    findEntityGlobal: (name: string) => {
-      const e = engine.findEntityGlobal(name);
-      return e ? { id: e.id, name: e.name } : undefined;
-    },
-    sendGlobal: (
-      target: EntityId,
-      msg: string,
-      senderId: EntityId,
-      tag?: string,
-      metadata?: Record<string, unknown>,
-    ) => {
-      const targetEntity = engine.entities.get(target);
-      const sender = engine.entities.get(senderId);
-      if (targetEntity && sender && isIgnoring(targetEntity, sender.name)) return;
-      engine.sendToEntity(target, msg, tag, metadata);
-    },
-    db: engine.db,
-  };
+  const tellDeps = engineTellDeps(engine);
   engine.commands.registerBuiltin(tellCommand(tellDeps));
   engine.commands.registerBuiltin(replyCommand(tellDeps));
   engine.commands.registerBuiltin(

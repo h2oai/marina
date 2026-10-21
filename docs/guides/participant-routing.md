@@ -114,6 +114,12 @@ launched agent is its own world account instead of acting through the operator's
   `agent stop <name>` by its owner (with `code.exec`) sends a stop control to the supervisor. After a
   supervisor restart the resident is offline until you resume or relaunch it.
 
+- **Review.** A resident asks a peer to review its worktree with `marina connect -c "code review
+  request <name|auto> -- <claims>"`. The relay sees the request, captures the worktree's changes
+  against `HEAD` (untracked files included, at most 512 KiB, a cut is labelled) and publishes them on
+  the resident's own run session; the server reads that snapshot only from the caller's own run.
+  See [Peer review](coding.md#peer-review-code-review-request) for the verdict and closing forms.
+
 This changes who the agent is in the world, not what it can do on the host: the native process still
 runs as your local user, with your files.
 

@@ -2863,6 +2863,38 @@ Effect: write.
 - `field-0` (`attempt`): text, required.
 - `field-1` (`reason`): text, required.
 
+### `code review request <name|auto|review_id> [author:<name>] [-- claims]`
+
+Effect: write.
+
+- `field-0` (`name|auto|review id`): text, required, choices `name`, `auto`, `review_id`.
+- `field-1` (`author`): text, optional group `option-0`.
+- `field-2` (`--`): text, optional group `option-1`.
+- Group `option-0`: `author:name`.
+- Group `option-1`: `-- claims`.
+
+### `code review verdict <review_id> approve|rework [-- findings]`
+
+Effect: write.
+
+- `field-0` (`review id`): text, required.
+- `field-1` (`approve|rework`): choice, required, choices `approve`, `rework`.
+- `field-2` (`--`): text, optional group `option-0`.
+- Group `option-0`: `-- findings`.
+
+### `code review <review_id>`
+
+Effect: read.
+
+- `field-0` (`review id`): text, required.
+
+### `code review approve|reject <review_id>`
+
+Effect: write.
+
+- `field-0` (`approve|reject`): choice, required, choices `approve`, `reject`.
+- `field-1` (`review id`): text, required.
+
 ### `code roles`
 
 Effect: read.
