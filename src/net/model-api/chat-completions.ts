@@ -93,7 +93,12 @@ import {
   stackHeaderValue,
   withoutMember,
 } from "./stack";
-import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
+import {
+  explicitUpstreamModel,
+  passthruForceModel,
+  proxyToUpstream,
+  tierRequestModel,
+} from "./upstream";
 import {
   maybeVerifyChat,
   VERIFY_MODEL_PREFIX,
@@ -505,6 +510,11 @@ export async function runOpenaiChat(
       (stack.members.has("argcheck") && !headerSaysOff(req, ARGCHECK_HEADER) ? "on" : undefined);
     const bare = stripOptInPrefixes(body.model);
     if (bare !== body.model) body = { ...body, model: bare };
+    // `marina/cheap` / `marina/strong` (`cheap` / `strong` from a resident's
+    // loopback) follow the model tiers (src/config/model-tiers.ts) at request
+    // time, so a saved config tracks the operator's current tier choice.
+    const tiered = tierRequestModel(engine, body.model);
+    if (tiered) body = { ...body, model: tiered };
     // `marina/ensemble:<a>,<b>[,…]` (the innermost prefix) or the `ensemble`
     // stack member: N drafts and one checker pick per turn (`ensemble.ts`).
     const listed = parseEnsembleModels(body.model);

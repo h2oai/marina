@@ -15,6 +15,7 @@ import {
   status,
 } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import { residentLabeler } from "../../routing/residents";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { DAY_MS, HOUR_MS } from "../constants";
 import { ACCUMULATION_NOTE_PREFIX, parseAccumulationReceipt } from "../memory-dispatch";
@@ -51,6 +52,12 @@ export function orientCommand(deps: {
       const db = deps.db;
       const now = Date.now();
       const lines: string[] = [header("Orientation Briefing"), separator()];
+      // A supervised resident sees who it is in the world and who owns it.
+      const shown = residentLabeler(db)?.(entity.name);
+      if (shown && shown !== entity.name) {
+        const owner = db.getAgentConfig(entity.name)?.spawned_by;
+        lines.push(label("You are", `${shown}${owner ? ` — owned by ${owner}` : ""}`), "");
+      }
 
       // Core memory (active beliefs & goals)
       const coreMemory = db.listCoreMemory(entity.name);

@@ -261,6 +261,11 @@ describe("approvals are the proof", () => {
     await send(rookie, "admin decisions history");
     expect(text(rookie)).not.toContain("Operator grant");
     rookie.clear();
+    await send(rookie, "admin models");
+    expect(text(rookie)).toContain("Model tiers");
+    expect(text(rookie)).toContain("judge");
+    expect(text(rookie)).not.toContain("Operator grant");
+    rookie.clear();
     await send(rookie, "admin decisions set gate on");
     expect(text(rookie)).toContain("Operator grant");
     rookie.clear();

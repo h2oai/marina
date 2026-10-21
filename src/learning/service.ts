@@ -34,6 +34,7 @@
  * Lessons live in one shared space per domain (`lessons:<domain>`).
  */
 
+import { roleModelFromEnv } from "../config/model-tiers";
 import { harnessDecisionProvider } from "../decisions/engines";
 import { chatClassifierProvider } from "../decisions/providers";
 import type { DecisionProvider } from "../decisions/types";
@@ -69,6 +70,7 @@ import { durableLessonSink } from "./store";
 const logger = new Logger();
 
 export const LESSONS_ACCOUNT = "marina:lessons";
+/** The fallback writer when a named vendor has no key: this Marina's default route. */
 export const DEFAULT_LESSONS_MODEL = "marina/default";
 const SELF_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_PER_HOUR = 120;
@@ -272,7 +274,7 @@ export function lessonWriterFromEnv(
   env: NodeJS.ProcessEnv = process.env,
   deps: SelfModelDeps = {},
 ): LessonWriter | undefined {
-  const spec = env.MARINA_LESSONS_WRITER?.trim() || DEFAULT_LESSONS_MODEL;
+  const spec = env.MARINA_LESSONS_WRITER?.trim() || roleModelFromEnv("lessons-judge", env);
   if (spec === "none" || spec === "off") return undefined;
   if (spec.startsWith("marina/")) return selfModelWriter(spec, env, deps);
   try {
@@ -304,7 +306,7 @@ export function lessonJudgeFromEnv(
 ): DecisionProvider {
   const configured = harnessDecisionProvider(env);
   if (configured) return configured;
-  const model = env.MARINA_LESSONS_JUDGE_MODEL?.trim() || DEFAULT_LESSONS_MODEL;
+  const model = env.MARINA_LESSONS_JUDGE_MODEL?.trim() || roleModelFromEnv("lessons-judge", env);
   let inner: DecisionProvider | undefined;
   return {
     kind: "marina-classifier",

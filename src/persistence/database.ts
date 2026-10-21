@@ -87,6 +87,7 @@ import type { StoreArguments } from "./interfaces/investigations-store";
 export type {
   AdapterRow,
   AgentConfigRow,
+  AgentRuntimeKind,
   ApiKeyRow,
   EditHistoryRow,
   RoleLoopSections,
@@ -121,6 +122,7 @@ export type { TaskClaimRow, TaskRow } from "./db-tasks";
 import type {
   AdapterRow,
   AgentConfigRow,
+  AgentRuntimeKind,
   ApiKeyRow,
   EditHistoryRow,
   RoleLoopSections,
@@ -1672,6 +1674,9 @@ export class MarinaDB implements MarinaStores {
 
   getUserByName(name: string): UserRow | undefined {
     return usersDb.getUserByName(this.db, name);
+  }
+  getUserNamesIgnoringCase(name: string): string[] {
+    return usersDb.getUserNamesIgnoringCase(this.db, name);
   }
 
   /** All user rows, name-ordered. For maintenance/admin tooling. */
@@ -4076,6 +4081,9 @@ export class MarinaDB implements MarinaStores {
     supports?: AgentSupports;
     /** Reasoning depth (migration 120). `undefined` keeps the stored value. */
     thinkingLevel?: AgentThinkingLevel;
+    /** Who runs the account (migration 173). `undefined` keeps the stored value. */
+    runtime?: AgentRuntimeKind;
+    vendor?: string;
   }): void {
     // Config row and agent principal commit together; the parent lookup reads
     // the writer so it sees the same snapshot.
@@ -4134,6 +4142,10 @@ export class MarinaDB implements MarinaStores {
 
   revokeWorkloadCredential(credentialId: string): boolean {
     return principalsDb.revokeWorkloadCredential(this.db, credentialId);
+  }
+
+  revokeWorkloadCredentialsFor(principalId: string): number {
+    return principalsDb.revokeWorkloadCredentialsFor(this.db, principalId);
   }
 
   createWorldVariant(
@@ -4217,6 +4229,9 @@ export class MarinaDB implements MarinaStores {
   }
   getAgentConfigsBySpawnedBy(spawnedBy: string): AgentConfigRow[] {
     return agentsDb.getAgentConfigsBySpawnedBy(this.db, spawnedBy);
+  }
+  setAgentRunSession(name: string, sessionId: string | null): boolean {
+    return agentsDb.setAgentRunSession(this.db, name, sessionId);
   }
   spawnLineage(name: string): string[] {
     return agentsDb.spawnLineage(this.db, name);

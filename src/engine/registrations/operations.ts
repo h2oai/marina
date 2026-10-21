@@ -7,7 +7,7 @@ import { VerificationRunner } from "../../coding/verification-runner";
 import { scratchRoot } from "../../config/data-dir";
 import { probeConfiguredProviders } from "../../net/model/model-api";
 import { describeRouteHealth } from "../../net/model/route-health";
-import { hasProviderKey } from "../../net/model-api/upstream";
+import { describeEngineModels, hasProviderKey } from "../../net/model-api/upstream";
 import type { EntityId } from "../../types";
 import { engineAssistanceExpiryDeps } from "../assistance-expiry";
 import { isOperatorPrincipal } from "../challenges";
@@ -257,6 +257,7 @@ export function registerOperationCommands(engine: Engine): void {
         entityCount: () => engine.entities.size,
         getUptime: () => engine.getUptime(),
         reloadRoom: (id) => engine.reloadRoom(id),
+        describeModels: () => describeEngineModels(engine),
       }),
     );
   }
@@ -268,6 +269,10 @@ export function registerOperationCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       logEvent: (event) => engine.logEvent(event),
       db: engine.db,
+      isOnline: (name) => {
+        const entity = engine.entities.findAgentByName(name);
+        return !!entity && !!engine.getConnectionForEntity(entity.id);
+      },
     }),
   );
 

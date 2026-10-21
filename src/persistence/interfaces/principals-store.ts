@@ -22,6 +22,8 @@ export interface PrincipalsStore {
   ): principalsDb.IssuedWorkloadCredential;
   verifyWorkloadCredential(token: string): principalsDb.PrincipalRow | undefined;
   revokeWorkloadCredential(credentialId: string): boolean;
+  /** Revoke every live world credential of a principal; returns the count. */
+  revokeWorkloadCredentialsFor(principalId: string): number;
 }
 
 /** Runtime mirror of `PrincipalsStore`'s method names — the drift test compares it to the facade. */
@@ -33,6 +35,7 @@ export const PRINCIPALS_STORE_METHODS = [
   "issueWorkloadCredential",
   "verifyWorkloadCredential",
   "revokeWorkloadCredential",
+  "revokeWorkloadCredentialsFor",
 ] as const satisfies readonly (keyof PrincipalsStore)[];
 
 export const PRINCIPALS_STORE_COMPLETE: ExactKeys<

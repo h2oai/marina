@@ -54,6 +54,8 @@ export interface EntityDetail {
   notes?: NoteEntry[];
   recentActivity?: ActivityEntry[];
   standing?: number;
+  /** Present for a supervised resident: the native adapter running it, and its owner. */
+  resident?: { vendor: string; owner: string };
 }
 
 export interface CoreMemoryEntry {

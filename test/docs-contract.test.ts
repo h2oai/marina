@@ -206,6 +206,8 @@ const ENV_VARS_OUTSIDE_SERVER_CATALOG = new Map<string, string>([
   ["MARINA_BENCH_RESULT_FILE", "internal: benchmark runner → harness child"],
   // Minted per boot by marina-desktop; never set by hand (still protected in keys.ts).
   ["MARINA_DESKTOP_API_TOKEN", "internal: desktop app capability token"],
+  // Set by a local supervisor for its resident agents (src/routing/resident-relay.ts).
+  ["MARINA_RELAY_SOCKET", "internal: supervisor → resident command relay"],
   // docs/guides/testing.md → Script and load-test knobs.
   ["MARINA_CHURN_CLIENTS", "script: soak:churn:local"],
   ["MARINA_CHURN_CYCLES", "script: soak:churn:local"],

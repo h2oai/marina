@@ -63,6 +63,7 @@ import { detectLocalContextWindow, detectOllamaDefaultModel } from "./net/model/
 import { providerSetupHint } from "./net/model/provider-setup";
 import { markServingProcess } from "./net/model/self-model-token";
 import { inProcessResidentDispatcher } from "./net/model-api/resident-dispatch";
+import { describeEngineModels } from "./net/model-api/upstream";
 import { TelnetServer } from "./net/telnet-server";
 import { resolveWsBindHostname, WebSocketServer } from "./net/websocket-server";
 import { MarinaDB } from "./persistence/database";
@@ -460,6 +461,10 @@ tryLog(logger, "main", "civic rule chronicle failed", () => {
 });
 for (const problem of agentModelMapProblems()) {
   logger.warn("main", `MARINA_AGENT_MODELS: ${problem}`);
+}
+// One line per tier so the boot log says what residents and judges run on.
+for (const line of describeEngineModels(engine).slice(1, 3)) {
+  logger.info("main", `model tier ${line.trim()}`);
 }
 
 // Seed canvas from world definition (idempotent)

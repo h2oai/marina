@@ -114,3 +114,8 @@ export function modelSourceEnvKeys(): string[] {
   for (const spec of Object.values(LOCAL_PROVIDERS)) keys.push(spec.keyEnv, spec.baseUrlEnv);
   return keys;
 }
+
+/** The env keys that unlock a cloud provider (`openrouter` → `OPENROUTER_API_KEY`); empty when unknown. */
+export function providerEnvKeys(provider: string): readonly string[] {
+  return CLOUD_PROVIDERS.find((p) => p.provider === provider)?.envKeys ?? [];
+}

@@ -14,6 +14,7 @@ import {
   openRouterIdCandidates,
   type TokenPrice,
 } from "../../agent/provider-cost";
+import { describeModelTiers, resolveTierAlias, type TierContext } from "../../config/model-tiers";
 import { noteRunKeyCall } from "../../engine/benchmark-run-keys";
 import { localOutputBudget } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
@@ -219,6 +220,36 @@ function resolveProviderKey(engine: Engine, provider: string): string | undefine
 /** True when `provider` has a key (env or admin panel) — presence only, never the value. */
 export function hasProviderKey(engine: Engine, provider: string): boolean {
   return !!resolveProviderKey(engine, provider);
+}
+
+/** The tier context for this instance: the runtime default and env + Admin → Keys. */
+export function engineTierContext(engine: Engine): TierContext {
+  const runtimeDefault = engine.db?.getSetting("default_model");
+  return {
+    ...(runtimeDefault ? { runtimeDefault } : {}),
+    hasKey: (provider) =>
+      (isLocalProvider(provider) && localProviderConfigured(provider)) ||
+      hasProviderKey(engine, provider),
+  };
+}
+
+/**
+ * The model id a request should carry when it names a tier alias
+ * (`marina/cheap`, `cheap`, `marina/strong`, …): the tier's model right now,
+ * `marina/default` when the tier is the default route. `undefined` for any
+ * other id (served unchanged).
+ */
+export function tierRequestModel(engine: Engine, model: unknown): string | undefined {
+  return resolveTierAlias(model, engineTierContext(engine))?.model;
+}
+
+/** The `admin models` readout: every tier and model role, effective model and source. */
+export function describeEngineModels(engine: Engine): string[] {
+  const defaultRoute = describeDefaultUpstream(engine);
+  return describeModelTiers({
+    ...engineTierContext(engine),
+    ...(defaultRoute ? { defaultRoute } : {}),
+  });
 }
 
 /**

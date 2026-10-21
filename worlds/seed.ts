@@ -12,6 +12,7 @@
 
 import { getSeedModel, isSeedDisabled, setSeedModel } from "../src/agent/seed-registry";
 import { discoverSkillFiles, formatSkillContent, loadSkillFile } from "../src/agent/skill-import";
+import { crewModelFromEnv, isRoleKey, roleOverrideProblems } from "../src/config/model-tiers";
 import { isRouteModel } from "../src/decisions/route";
 import type { Engine } from "../src/engine/engine";
 import type { MarinaDB } from "../src/persistence/database";
@@ -166,7 +167,8 @@ const seededAgentNames = new Set<string>();
 
 /**
  * Parse `MARINA_AGENT_MODELS` — `Name=model,Name=model` — into a map keyed by
- * lower-cased agent name. The model string passes through untouched (split at
+ * lower-cased agent name. `role:<role>=<model>` entries (a model role, see
+ * `src/config/model-tiers.ts`) are kept under their `role:` key. The model string passes through untouched (split at
  * the first `=`). Entries without a name or a model are returned in `invalid`.
  */
 export function parseAgentModelMap(raw: string | undefined): {
@@ -213,8 +215,11 @@ export function agentModelMapProblems(
   const { models, invalid } = parseAgentModelMap(env.MARINA_AGENT_MODELS);
   const problems = invalid.map((e) => `malformed entry "${e}" (want Name=model)`);
   for (const [key, { name }] of models) {
+    // `role:<role>=<model>` moves a model role off its tier (model-tiers.ts).
+    if (isRoleKey(key)) continue;
     if (!seededAgentNames.has(key)) problems.push(`"${name}" matches no seeded agent`);
   }
+  problems.push(...roleOverrideProblems(env));
   return problems;
 }
 
@@ -1586,7 +1591,7 @@ export function seedChroniclerRole(db: MarinaDB): void {
 export function seedChroniclerAgent(db: MarinaDB): void {
   seedSystemAgent(db, {
     name: "Chronicler",
-    model: "marina/default",
+    model: crewModelFromEnv(),
     role: "chronicler",
     goal:
       "You are the Chronicler. Keep the canonical record of this Marina. Every cycle: " +
@@ -1715,14 +1720,15 @@ export function seedAnswererCrew(
   } = {},
 ): void {
   const SYSTEM = "system";
-  // `marina/default` thinks with whatever model the world is configured for
-  // (it sizes to the providers present); experimenters override via opts to
-  // sweep heterogeneous model choices per role. The crew serves
-  // marina:answerer by joining the model-answerer channel, independent of
-  // what model each agent uses to think.
-  const answererModel = opts.answererModel ?? "marina/default";
-  const mathModel = opts.mathModel ?? "marina/default";
-  const reflectorModel = opts.reflectorModel ?? "marina/default";
+  // The crew's model tier (`marina/cheap` unless the operator chose one —
+  // src/config/model-tiers.ts) thinks with whatever the world has;
+  // experimenters override via opts to sweep heterogeneous model choices per
+  // role. The crew serves marina:answerer by joining the model-answerer
+  // channel, independent of what model each agent uses to think.
+  const crew = crewModelFromEnv();
+  const answererModel = opts.answererModel ?? crew;
+  const mathModel = opts.mathModel ?? crew;
+  const reflectorModel = opts.reflectorModel ?? crew;
   const answererCount = Math.max(1, opts.answererCount ?? 1);
 
   // ── Channels (the crew's coordination surfaces) ──────────────────────────
@@ -2174,8 +2180,8 @@ export function registerAnswererCrew(engine: Engine): void {
  * Skeptic, Verifier) via the `crew-bench` coordination channel + shared
  * topic pools. The same question routed through different
  * orchestrations should produce different trade-offs — latency, accuracy,
- * cost — that the harness measures. Agents default to `marina/default`
- * so the seed bakes in no vendor opinion; callers pass `opts.models` to
+ * cost — that the harness measures. Agents default to the crew tier
+ * (`marina/cheap`) so the seed bakes in no vendor opinion; callers pass `opts.models` to
  * sweep specific model choices per agent.
  */
 export function seedOrchestrationCrews(
@@ -2185,7 +2191,7 @@ export function seedOrchestrationCrews(
     /**
      * Per-agent model overrides, keyed by agent name (Historian, Scholar,
      * Skeptic, Verifier, Councilor, Debater, Decomposer). Any agent not
-     * listed here defaults to `marina/default` (self-referential, no
+     * listed here defaults to the crew tier (`marina/cheap`, no
      * vendor baked in). Use this to sweep heterogeneous combinations.
      */
     models?: Record<string, string>;
@@ -2193,9 +2199,10 @@ export function seedOrchestrationCrews(
 ): void {
   const SYSTEM = "system";
   const seedAgentConfigs = opts.seedAgentConfigs ?? true;
-  // Default specialist model: the world's own default (no vendor baked in).
+  // Default specialist model: the crew tier (no vendor baked in).
   // Overrideable per-agent via opts.models for sweeping heterogeneous combinations.
-  const m = (name: string): string => opts.models?.[name] ?? "marina/default";
+  const crew = crewModelFromEnv();
+  const m = (name: string): string => opts.models?.[name] ?? crew;
 
   // ── Specialist channels + role prompts (shared across orchestrations) ───
   seedChannel(db, "model-council");
@@ -2465,7 +2472,7 @@ export function seedOrchestrationCrews(
     });
   }
 
-  // ── Agent configs. Models default to `marina/default` — callers pick. ──
+  // ── Agent configs. Models default to the crew tier — callers pick. ──
   // System-owned crew configs are refreshed from the seed on every boot so
   // tuning goals or swapping crew models (via opts.models / MARINA_CREW_MODEL)
   // propagates to snapshots without a manual DB edit. User-spawned and
