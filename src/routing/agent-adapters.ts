@@ -57,6 +57,11 @@ export interface AgentAdapter {
   executable: string;
   start: (options: AgentOptions) => Promise<ManagedAgent>;
   supportsResume?: boolean;
+  /**
+   * Its turns end with a final reply (`AgentOptions.reply`), so an unnamed
+   * supervised resident can propose its own name in one throwaway turn.
+   */
+  proposesName?: boolean;
 }
 function record(value: unknown): WireMessage {
   return value && typeof value === "object" ? (value as WireMessage) : {};
@@ -520,9 +525,17 @@ export const BUILTIN_AGENT_ADAPTERS: AgentAdapter[] = [
     executable: "claude",
     start: createClaudeAdapter({ query, getSessionInfo }),
     supportsResume: true,
+    proposesName: true,
   },
-  { id: "codex", label: "Codex", executable: "codex", start: codex, supportsResume: true },
-  { id: "pi", label: "pi", executable: "pi", start: pi, supportsResume: true },
+  {
+    id: "codex",
+    label: "Codex",
+    executable: "codex",
+    start: codex,
+    supportsResume: true,
+    proposesName: true,
+  },
+  { id: "pi", label: "pi", executable: "pi", start: pi, supportsResume: true, proposesName: true },
 ];
 
 /**

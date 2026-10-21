@@ -275,6 +275,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Supervised residents choose their own names.** An unnamed launch asks the agent once, in a throwaway turn with no credentials, what it wants to be called; the server takes the proposal only as given, never a vendor or model word, and dedupes it. A late or unusable proposal falls back to the word list. An unnamed relaunch of the same adapter in the same directory reuses the resident last launched there instead of creating a new account. The enrolment reply and `resident.enrolled` event carry `nameSource`.
+
 - **A themed interactive terminal for `marina connect`.**
   - **Input area.** The prompt sits between rules at the bottom with a live status bar under it:
     health, agents, tasks, approvals, alerts, spend and standing, read with the session's own

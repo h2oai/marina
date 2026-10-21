@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { RoutingRunnerJournal } from "../persistence/db-routing-runner";
@@ -21,6 +23,7 @@ import {
   type WakeRecord,
 } from "./attention-bridge";
 import type { ResidentConnection, ResidentConnector } from "./resident-connection";
+import { nameFromReply } from "./resident-name";
 import { openResidentRelay, RELAY_SOCKET_ENV, type ResidentRelay } from "./resident-relay";
 import {
   captureReviewSnapshot,
@@ -68,6 +71,14 @@ interface Run {
   delivering: boolean;
 }
 const log = new Logger();
+
+/** Longest an unnamed launch waits for the agent's own name proposal. */
+export const NAME_PROPOSAL_TIMEOUT_MS = 30_000;
+/** The one question an unnamed resident is asked before it joins the world. */
+export const NAME_PROPOSAL_PROMPT =
+  "You are about to join Marina, a shared world where people and agents work together. " +
+  "Choose a short name to be known by there: one word, 2-20 letters, not the name of your " +
+  "model, vendor or product. Reply with only the name.";
 export interface SupervisorOptions {
   client: MarinaRoutingClient;
   root: string;
@@ -86,6 +97,8 @@ export interface SupervisorOptions {
    * supervisor's. Omitted: runs act through the supervisor's account as before.
    */
   residents?: { connect: ResidentConnector };
+  /** How long an unnamed launch waits for the agent's name proposal (default 30 s). */
+  nameProposalTimeoutMs?: number;
   /** Local presentation after durable journaling and credential redaction. */
   onEvent?: (session: RoutingSession, event: RoutingEventInput) => void;
 }
@@ -319,7 +332,12 @@ export class MarinaSupervisor {
     });
     try {
       // A resident exists in the world before its process starts.
-      await this.enrol(run, { name: control.name, room: control.room });
+      await this.enrolNamed(
+        run,
+        adapter,
+        { name: control.name, room: control.room },
+        `${adapter.id}\u0000${control.directory ?? "."}`,
+      );
       run.agent = await this.startAdapter(run, adapter);
       if (this.stopped) {
         await run.agent.stop();
@@ -339,7 +357,103 @@ export class MarinaSupervisor {
    * No-op unless supervised residents are on. Never falls back to the
    * supervisor's credential: a failure here fails the launch.
    */
-  private async enrol(run: Run, request: { name?: string; room?: string }) {
+  /**
+   * Enrol an unnamed launch under the resident last launched for the same
+   * adapter and directory (its account is reused), else under the agent's own
+   * proposal, else a word-list name. A requested name is used as given.
+   */
+  private async enrolNamed(
+    run: Run,
+    adapter: AgentAdapter & { executable: string },
+    request: { name?: string; room?: string },
+    key: string,
+  ) {
+    if (!this.options.residents) return;
+    const previous = request.name ? undefined : this.journal.residentName(key);
+    let enrolled = false;
+    if (previous)
+      try {
+        await this.enrol(run, { ...request, name: previous });
+        enrolled = true;
+      } catch (error) {
+        // Running elsewhere, or no longer this owner's: name this run afresh.
+        if (!(error instanceof RoutingApiError && error.status === 409)) throw error;
+      }
+    if (!enrolled) {
+      const proposedName =
+        request.name || !adapter.proposesName ? undefined : await this.proposeName(adapter, run);
+      await this.enrol(run, { ...request, ...(proposedName ? { proposedName } : {}) });
+    }
+    if (run.resident) this.journal.rememberResident(key, run.resident.name);
+  }
+  /**
+   * One throwaway turn asking the agent what it wants to be called: an empty
+   * scratch directory, no Marina variables or credentials, every tool request
+   * declined. Undefined on any failure or after the proposal timeout, so
+   * a launch never waits longer than that or fails because of it.
+   */
+  private async proposeName(
+    adapter: AgentAdapter & { executable: string },
+    run: Run,
+  ): Promise<string | undefined> {
+    let agent: ManagedAgent | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cwd = await mkdtemp(join(this.options.stateDirectory, "name-"));
+    try {
+      let settle: (text: string) => void = () => undefined;
+      const reply = new Promise<string>((resolve) => {
+        settle = resolve;
+        timer = setTimeout(
+          () => resolve(""),
+          this.options.nameProposalTimeoutMs ?? NAME_PROPOSAL_TIMEOUT_MS,
+        );
+      });
+      agent = await adapter.start({
+        cwd,
+        model: run.state.model,
+        executable: adapter.executable,
+        env: this.proposalEnvironment(),
+        emit: () => undefined,
+        reply: (text) => settle(text),
+        state: (patch) => {
+          if (patch.status === "failed" || patch.status === "stopped") settle("");
+        },
+        ask: async () => ({ allow: false }),
+      });
+      await agent.prompt(NAME_PROPOSAL_PROMPT, crypto.randomUUID());
+      const text = await reply;
+      const name = text ? nameFromReply(text) : undefined;
+      this.emit(run.session.id, "resident.name_proposed", { proposed: name !== undefined });
+      return name;
+    } catch (error) {
+      log.info("routing", "Resident name proposal skipped", { error: getErrorMessage(error) });
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+      try {
+        await agent?.stop();
+      } catch (error) {
+        log.info("routing", "Name proposal session did not stop cleanly", {
+          error: getErrorMessage(error),
+        });
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+  /** The supervisor's agent environment without Marina variables or known secrets. */
+  private proposalEnvironment(): NodeJS.ProcessEnv {
+    const secrets = (this.options.secrets ?? []).filter(Boolean);
+    const env: NodeJS.ProcessEnv = {};
+    for (const [key, value] of Object.entries(this.options.agentEnvironment ?? {}))
+      if (
+        value !== undefined &&
+        !key.startsWith("MARINA_") &&
+        !secrets.some((secret) => value.includes(secret))
+      )
+        env[key] = value;
+    return env;
+  }
+  private async enrol(run: Run, request: { name?: string; room?: string; proposedName?: string }) {
     const residents = this.options.residents;
     if (!residents) return;
     let enrolment: Awaited<ReturnType<MarinaRoutingClient["enrolResident"]>>;
@@ -348,6 +462,7 @@ export class MarinaSupervisor {
         {
           sessionId: run.session.id,
           ...(request.name ? { name: request.name } : {}),
+          ...(request.proposedName ? { proposedName: request.proposedName } : {}),
           ...(request.room ? { room: request.room } : {}),
         },
         AbortSignal.timeout(15_000),
@@ -401,6 +516,7 @@ export class MarinaSupervisor {
       vendor: enrolment.vendor,
       room: enrolment.room,
       reused: enrolment.reused,
+      ...(enrolment.nameSource ? { nameSource: enrolment.nameSource } : {}),
       expiresAt: resident.expiresAt,
     });
     this.scheduleRenewal(run, resident);
