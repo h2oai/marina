@@ -7,7 +7,7 @@
  * Provider resolution order:
  *   1. Tavily (if TAVILY_API_KEY set) — AI-native, highest quality
  *   2. SearXNG (if SEARXNG_URL set) — self-hosted meta-search, 150+ engines
- *   3. DuckDuckGo (always available) — free, no key needed
+ *   3. DuckDuckGo (on unless MARINA_SEARCH_DUCKDUCKGO=off) — free, no key needed
  *   4. DeepSeek Search (if DEEPSEEK_API_KEY set) — paid fallback when DuckDuckGo fails
  * A provider that fails (a key out of credit, an outage) throws; its engines
  * fall through to the next provider in this order, and the failure lands in
@@ -90,6 +90,8 @@ export interface SearchProvider {
   domainFilter?: boolean;
   /** One line for `sources` listings: what it searches and how the bound is enforced. */
   describe?: string;
+  /** Why the operator turned this provider off (it is then never called), else undefined. */
+  disabled?: () => string | undefined;
   search(
     query: string,
     opts: SearchOpts,
@@ -141,7 +143,7 @@ function providerForEngine(
   tried: ReadonlySet<SearchProvider> = new Set(),
 ): SearchProvider | undefined {
   const candidates = providers.filter(
-    (p) => !p.boundOnly && p.engines.includes(engine) && !tried.has(p),
+    (p) => !p.boundOnly && p.engines.includes(engine) && !tried.has(p) && !p.disabled?.(),
   );
   return candidates.find((p) => !searchBackendDown(p.name)) ?? candidates[0];
 }
@@ -264,6 +266,7 @@ async function boundedSearch(
   const chosen = providers.filter(
     (p) =>
       p.dateBound === "strict" &&
+      !p.disabled?.() &&
       (named ? named.includes(p.name) : p.engines.some((e) => engines.includes(e))),
   );
   const maxResults = opts.maxResults ?? 10;
@@ -325,7 +328,7 @@ export async function search(
     ensureCorpusProviders(named);
     const batches = await Promise.all(
       providers
-        .filter((p) => named.includes(p.name))
+        .filter((p) => named.includes(p.name) && !p.disabled?.())
         .map((p, i) =>
           p
             .search(query, { engines, maxResults }, runtime, i === 0 ? entityId : undefined)
@@ -353,6 +356,16 @@ export async function search(
       if (!seen.has(key)) {
         seen.add(key);
         results.push(result);
+      }
+    }
+  }
+
+  // Nothing found while a provider that serves these engines is turned off: say so.
+  if (results.length === 0 && opts.failures) {
+    for (const p of providers) {
+      const off = p.disabled?.();
+      if (off && !p.boundOnly && p.engines.some((e) => engines.includes(e))) {
+        opts.failures.push(`${p.name}: ${off}`);
       }
     }
   }

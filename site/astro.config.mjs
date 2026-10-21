@@ -125,6 +125,7 @@ export default defineConfig({
           collapsed: true,
           items: [
             { label: "Configuration", slug: "docs/guides/configuration" },
+            { label: "Data, privacy and terms", slug: "docs/guides/data-privacy-and-terms" },
             { label: "Deployment", slug: "docs/guides/deployment" },
             { label: "Operator runbook", slug: "docs/guides/operator-runbook" },
             { label: "Running on a single model", slug: "docs/guides/single-model" },

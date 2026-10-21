@@ -105,6 +105,7 @@ which.
 | Guide | What you'll get |
 | --- | --- |
 | [Configuration](configuration.md) | Settings, worlds and tuning. |
+| [Data, privacy and terms](data-privacy-and-terms.md) | What Marina stores, what it sends where (no telemetry), robots.txt, and how to turn each web source off. |
 | [Deployment](deployment.md) | Run Marina for a team: Docker, TLS, persistence, backups, cloud examples. |
 | [Operator runbook](operator-runbook.md) | Readiness, slow ticks, SQLite pressure, and when to reload or restart. |
 | [Running on a single model](single-model.md) | Everything on one local model (Ollama, llama.cpp) or a single key. |

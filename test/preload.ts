@@ -24,3 +24,7 @@ process.env.MARINA_ASSET_DERIVATIVES ??= "off";
 // test opts in (test/asset-memory.test.ts): the indexer runs in the asset tick
 // job and would otherwise write records into every test world with assets.
 process.env.MARINA_MEDIA_MEMORY ??= "off";
+// robots.txt checks on page reads (src/net/robots.ts) fetch the site's
+// robots.txt before a page; tests stub page fetches and never reach the
+// network, so the check is off unless a test opts in (test/robots.test.ts).
+process.env.MARINA_ROBOTS_TXT ??= "ignore";

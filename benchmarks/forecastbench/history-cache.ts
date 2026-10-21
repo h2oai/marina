@@ -70,7 +70,7 @@ export function cachedHistory(dir: string, env: NodeJS.ProcessEnv = process.env)
     const path = join(dir, "series", ref.source, `${safe}@${lastVisibleDay(cutoff)}.json`);
     const hit = cachedJson<SeriesHistory>(path);
     if (hit) return hit;
-    const h = await seriesHistory(ref, cutoff, fredApiKey ? { fredApiKey } : {});
+    const h = await seriesHistory(ref, cutoff, { ...(fredApiKey ? { fredApiKey } : {}), env });
     if (!("error" in h)) save(path, h);
     return h;
   };

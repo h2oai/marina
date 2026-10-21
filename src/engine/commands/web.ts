@@ -3,7 +3,7 @@
 
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
-import type { ConnectorRuntime } from "../connector-runtime";
+import { type ConnectorRuntime, readPageVia } from "../connector-runtime";
 import { getErrorMessage } from "../errors";
 import { currentEvidenceCutoff, fenceRefusal } from "../evidence-fence";
 import { extractReadableText } from "../html-text";
@@ -384,8 +384,13 @@ async function handleFetch(
     );
     return;
   }
-  const result = await runtime.httpGet(normalized, eid);
+  const result = await readPageVia(runtime, normalized, eid);
 
+  if ("refused" in result) {
+    // robots.txt disallows this page for MarinaResearch: a clear answer, not a failure.
+    ctx.send(eid, `Not read: ${result.error}.`);
+    return;
+  }
   if ("error" in result) {
     ctx.send(eid, `Fetch failed: ${result.error}`);
     return;

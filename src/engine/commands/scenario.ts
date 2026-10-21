@@ -4,7 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
-import type { ConnectorRuntime } from "../connector-runtime";
+import { type ConnectorRuntime, readPageVia } from "../connector-runtime";
 import { extractReadableText } from "../html-text";
 
 /**
@@ -194,7 +194,7 @@ async function handleExtract(
   const url = arg.startsWith("http") ? arg : `https://${arg}`;
   ctx.send(eid, dim(`Fetching ${url}...`));
 
-  const result = await deps.connectorRuntime.httpGet(url, eid);
+  const result = await readPageVia(deps.connectorRuntime, url, eid);
   if ("error" in result) {
     ctx.send(eid, `Fetch failed: ${result.error}`);
     return;

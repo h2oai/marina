@@ -9,9 +9,11 @@
  *             on the last day before the cutoff (vintage-correct, so a past
  *             cutoff never sees a later release or revision); keyless only
  *             for a live cutoff (latest revision)
- *   yahoo     daily closes (Yahoo Finance chart API), split-adjusted with the
- *             splits that happened before the cutoff only — never the
- *             dividend-adjusted close, whose factors come from later payouts
+ *   yahoo     daily closes (Yahoo Finance's unofficial, keyless chart API),
+ *             split-adjusted with the splits that happened before the cutoff
+ *             only — never the dividend-adjusted close, whose factors come
+ *             from later payouts. On by default; `MARINA_FORECAST_YAHOO=off`
+ *             turns it off and a yahoo series then has no history (no prior)
  *   dbnomics  any DBnomics series (`provider/dataset/series`)
  *
  * Every point is dated before the cutoff's UTC day (a cutoff at 00:00 sees
@@ -57,6 +59,17 @@ export interface SeriesHistoryDeps {
   years?: number;
   /** Waits before retrying an HTTP 429 (default `RATE_LIMIT_BACKOFF_MS`; `[]` never retries). */
   backoffMs?: readonly number[];
+  /** Read for `MARINA_FORECAST_YAHOO` (default `process.env`). */
+  env?: NodeJS.ProcessEnv;
+}
+
+/** The error a yahoo series returns while the operator has the source turned off. */
+export const YAHOO_DISABLED = "yahoo: turned off (MARINA_FORECAST_YAHOO=off)";
+
+/** `MARINA_FORECAST_YAHOO`: on unless off/false/0/no. */
+export function yahooFinanceEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env.MARINA_FORECAST_YAHOO?.trim().toLowerCase();
+  return !(v === "off" || v === "false" || v === "0" || v === "no");
 }
 
 const FRED_ID = /^[A-Za-z0-9][A-Za-z0-9_.]{1,39}$/;
@@ -109,6 +122,7 @@ export async function seriesHistory(
   deps: SeriesHistoryDeps = {},
 ): Promise<SeriesHistory | { error: string }> {
   if (!validSeriesRef(ref)) return { error: `not a ${ref.source} series id` };
+  if (ref.source === "yahoo" && !yahooFinanceEnabled(deps.env)) return { error: YAHOO_DISABLED };
   const now = deps.now?.() ?? new Date();
   if (cutoff.getTime() > now.getTime()) cutoff = now;
   const http = retryRateLimited(deps.http ?? lookupFetch(ref.source), deps.backoffMs);

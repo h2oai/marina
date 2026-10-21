@@ -30,6 +30,7 @@
  */
 
 import { extractReadableText } from "../engine/html-text";
+import { RESEARCH_USER_AGENT, robotsCheck } from "../net/robots";
 import { guardedFetch } from "../net/url-guard";
 
 export type LineStatus = "verified" | "unverified" | "unreachable" | "uncited";
@@ -108,9 +109,11 @@ const FETCH_CONCURRENCY = 6;
 export const MAX_PAGE_BYTES = 16 * 1024 * 1024;
 /** Per-page timeout: slow government sites (EIA, FRED) need more than 8 s. */
 export const PAGE_TIMEOUT_MS = 15_000;
-/** A descriptive agent with a contact URL; some sites (BLS) still refuse any bot. */
-export const VERIFY_USER_AGENT =
-  "Mozilla/5.0 (compatible; MarinaResearch/1.1; citation check; +https://github.com/h2oai/marina)";
+/**
+ * A descriptive agent with a contact URL; some sites (BLS) still refuse any bot.
+ * Page reads with it honour robots.txt for `MarinaResearch` (`src/net/robots.ts`).
+ */
+export const VERIFY_USER_AGENT = RESEARCH_USER_AGENT;
 
 /** Figures worth checking: percentages, decimals, and numbers of 3+ digits that are not years. */
 export function figuresIn(line: string): string[] {
@@ -235,6 +238,8 @@ export async function readCapped(res: Response, maxBytes = MAX_PAGE_BYTES): Prom
 
 export function defaultPageText(timeoutMs = PAGE_TIMEOUT_MS, maxBytes = MAX_PAGE_BYTES): PageText {
   return async (url) => {
+    // A page robots.txt disallows is not read: the citation stays unverified.
+    if (!(await robotsCheck(url)).allowed) return undefined;
     try {
       const res = await guardedFetch(
         url,

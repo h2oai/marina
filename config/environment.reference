@@ -704,6 +704,14 @@
 # MARINA_RESEARCH_MAX_PAGES=14
 # MARINA_RESEARCH_PASSAGE_CHARS=
 
+# Page reads honour robots.txt. Before Marina reads a third-party page for an agent or a person (`web fetch`, the `web swarm` read swarm, `scenario` URL reads, the research page reader and citation check, the live Civiqs read), it checks the site's robots.txt for its research user agent, product token `MarinaResearch` (`Mozilla/5.0 (compatible; MarinaResearch/1.1; …)`, also sent with the read): the group naming it, else `*`; the longest matching Allow/Disallow wins (Allow on a tie; `*` and a trailing `$` supported). A disallowed page is not requested and the read answers "blocked by robots.txt" — a result, never an error. robots.txt is fetched through the SSRF guard and cached per origin for 24 h; a 4xx means the site publishes no rules (allowed); a 5xx, 429, timeout or network error is treated as allowed (fail-open) and retried after 10 min. API calls (search providers, model APIs, market venues, data APIs) are not page reads and are not checked. `ignore` skips the check everywhere. IGNORE_ORIGINS lists origins (`https://host[:port]`) or bare hosts the operator owns or may read regardless, which skip the check.
+# MARINA_ROBOTS_TXT=respect
+# MARINA_ROBOTS_TXT_IGNORE_ORIGINS=https://docs.example.com,intranet.example.com
+
+# Keyless third-party sources, on by default (`off` turns each off; read per call). SEARCH_DUCKDUCKGO=off removes the DuckDuckGo lite / instant-answer fallback from `web search`, the search room and the `search` research retriever: searches fall through to the configured keyed backends (Tavily, Exa, SearXNG, DeepSeek); with none, web search answers no web results and names the switch, and readiness `search` reports "no web search backend". FORECAST_YAHOO=off stops reading daily closes from Yahoo Finance's unofficial chart API for statistical priors: a `yahoo` series then has no history (no prior) and says why.
+# MARINA_SEARCH_DUCKDUCKGO=on
+# MARINA_FORECAST_YAHOO=on
+
 # Where local corpora live: offline BM25 indexes built with `bun run corpus build <name> <docs.jsonl>` and searched with `web search engines:corpus:<name>`, the search room, or the `corpus:<name>` research retriever. Keep it on a disk with room (a 100k-document corpus is several GB), not a small temp filesystem.
 # MARINA_CORPUS_DIR=~/.local/share/marina/corpora
 

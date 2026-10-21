@@ -16,7 +16,7 @@ import { modelComplete } from "../../model/complete";
 import { dim, header, separator } from "../../net/ansi";
 import { ReadSwarm, renderCandidateTable } from "../../retrieval/read-swarm";
 import type { EntityId, RoomContext } from "../../types";
-import type { ConnectorRuntime } from "../connector-runtime";
+import { type ConnectorRuntime, readPageVia } from "../connector-runtime";
 import { getErrorMessage } from "../errors";
 import { extractReadableText } from "../html-text";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
@@ -110,7 +110,7 @@ export async function handleSwarm(
         }
         let text = pages.get(url);
         if (text === undefined) {
-          const res = await runtime.httpGet(url, eid);
+          const res = await readPageVia(runtime, url, eid);
           text =
             "error" in res || res.status !== 200
               ? ""
