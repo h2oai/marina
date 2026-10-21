@@ -24,13 +24,18 @@ import {
   OPEN_API_ENTITY_ID,
   refuseOpenApiWrite,
 } from "../auth-middleware";
-import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas/canvas-principal";
+import {
+  buildCanvasPrincipal,
+  consumeCanvasReadRate,
+  resolveCanvasHttpPrincipal,
+} from "../canvas/canvas-principal";
 import { corsHeaders } from "../cors";
 import {
   consumeHttpRate,
   maxUploadBytes,
   PDF_CSP,
   rateLimitedResponse,
+  safeJsonParse,
   securityHeaders,
 } from "../http-utils";
 import { resolveMediaScope } from "../media-scope";
@@ -117,6 +122,10 @@ export async function handleAssetApi(
   }
   const readerPrincipal =
     method === "GET" ? resolveCanvasHttpPrincipal(req, engine, peerIp) : undefined;
+  // Reads are open but budgeted: per IP when anonymous, per principal otherwise.
+  if (method === "GET" && !consumeCanvasReadRate(req, readerPrincipal, peerIp)) {
+    return rateLimitedResponse(req.headers.get("Origin"));
+  }
   const reader = method === "GET" ? buildCanvasPrincipal(readerPrincipal, engine, db) : undefined;
   const host = { db, entities: engine.entities, canvasGrants: engine.canvasGrants };
   const library: AssetLibraryHost = {
@@ -223,10 +232,6 @@ export async function handleAssetApi(
     method === "GET" &&
     url.searchParams.get("view") === "library"
   ) {
-    const rateKey = readerPrincipal ?? `ip:${peerIp ?? "unknown"}`;
-    if (!consumeHttpRate(readerPrincipal ? "dashboard" : "publicRead", rateKey)) {
-      return rateLimitedResponse(req.headers.get("Origin"));
-    }
     const viewerName = readerName(engine, readerPrincipal);
     const ctx = libraryContext(db, storage, host, readerPrincipal, reader, viewerName, engine);
     const q = parseLibraryQuery(url.searchParams, ctx.viewer);
@@ -250,7 +255,7 @@ export async function handleAssetApi(
     return json(
       assets.map((a) => ({
         ...a,
-        metadata: JSON.parse(a.metadata),
+        metadata: safeJsonParse(a.metadata, {}),
         url: storage.resolve(a.storage_key),
       })),
     );
@@ -463,13 +468,12 @@ async function handleUpload(
     data,
     origin: "upload",
     dedupe: true,
-    ext: filename.includes(".") ? filename.slice(filename.lastIndexOf(".")) : "",
     ...(writerId ? { actor: writerId } : {}),
   });
   return json(
     {
       ...asset,
-      metadata: JSON.parse(asset.metadata),
+      metadata: safeJsonParse(asset.metadata, {}),
       url: storage.resolve(asset.storage_key),
       ...(deduplicated ? { deduplicated: true } : {}),
     },

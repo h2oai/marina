@@ -32,6 +32,7 @@ import "@xyflow/react/dist/style.css";
 import "./unified-canvas.css";
 import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CanvasMutationErrorContext } from "../canvas/mutation-error-context";
 import { FetchErrorNotice } from "../components/FetchErrorNotice";
 import { useAssetViewer } from "../components/media/MediaViewer";
 import { useSetupStatus, useSystem } from "../hooks/use-api";
@@ -232,6 +233,10 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     });
   }, []);
   const commandBarRef = useRef<CommandBarHandle>(null);
+  // A refused or failed canvas save, with the server's reason, in the command bar.
+  const reportCanvasError = useCallback((message: string) => {
+    commandBarRef.current?.addMessage(null, message, true, "system");
+  }, []);
   const displayNodesRef = useRef<Node[]>([]);
   const fitWorldRef = useRef<(duration?: number) => void>(() => {});
 
@@ -1521,36 +1526,38 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
           allPositions={allNodePositions}
         />
 
-        <ReactFlow
-          nodes={displayNodes}
-          edges={allEdges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          onNodesChange={onNodesChange}
-          onConnect={onConnect}
-          onNodeClick={onNodeClick}
-          onNodeDoubleClick={onNodeDoubleClick}
-          onNodeContextMenu={onNodeContextMenu}
-          onEdgeContextMenu={onEdgeContextMenu}
-          onClick={onPaneClick}
-          onDoubleClick={onPaneDoubleClick}
-          defaultViewport={{ x: 0, y: 80, zoom: 0.6 }}
-          minZoom={0.05}
-          maxZoom={4}
-          panOnDrag
-          zoomOnScroll
-          panOnScroll={false}
-          proOptions={{ hideAttribution: true }}
-          style={{ background: "transparent", width: "100%", height: "100%" }}
-        >
-          <Background
-            variant={BackgroundVariant.Dots}
-            gap={24}
-            size={1}
-            color="var(--color-border)"
-          />
-          {/* MiniMap replaced by custom SVG in WorldNav panel */}
-        </ReactFlow>
+        <CanvasMutationErrorContext.Provider value={reportCanvasError}>
+          <ReactFlow
+            nodes={displayNodes}
+            edges={allEdges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            onNodesChange={onNodesChange}
+            onConnect={onConnect}
+            onNodeClick={onNodeClick}
+            onNodeDoubleClick={onNodeDoubleClick}
+            onNodeContextMenu={onNodeContextMenu}
+            onEdgeContextMenu={onEdgeContextMenu}
+            onClick={onPaneClick}
+            onDoubleClick={onPaneDoubleClick}
+            defaultViewport={{ x: 0, y: 80, zoom: 0.6 }}
+            minZoom={0.05}
+            maxZoom={4}
+            panOnDrag
+            zoomOnScroll
+            panOnScroll={false}
+            proOptions={{ hideAttribution: true }}
+            style={{ background: "transparent", width: "100%", height: "100%" }}
+          >
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={24}
+              size={1}
+              color="var(--color-border)"
+            />
+            {/* MiniMap replaced by custom SVG in WorldNav panel */}
+          </ReactFlow>
+        </CanvasMutationErrorContext.Provider>
 
         {/* Layer toggle chips (World · Canvas · Graph · Feed · Memory) */}
         {!clearView && (
@@ -1659,7 +1666,11 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
             upload finishes, walks one file at a time. */}
         <AnimatePresence>
           {dropQueue.length > 0 && (
-            <DropDialog files={dropQueue} onClose={() => setDropQueue([])} />
+            <DropDialog
+              files={dropQueue}
+              onClose={() => setDropQueue([])}
+              onError={reportCanvasError}
+            />
           )}
         </AnimatePresence>
       </div>

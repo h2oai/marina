@@ -14,11 +14,14 @@
 import { canvasReaderFor } from "../../engine/canvas-access";
 import type { Engine } from "../../engine/engine";
 import type { MarinaDB } from "../../persistence/database";
+import type { EntityId } from "../../types";
 import {
   authenticateRequest,
   DESKTOP_OPERATOR_ENTITY_ID,
+  isSentinelPrincipal,
   OPEN_API_ENTITY_ID,
 } from "../auth-middleware";
+import { clientIp, consumeHttpRate } from "../http-utils";
 import { isLoopbackIp } from "../loopback";
 import type { CanvasSubscriptionPrincipal } from "./canvas-ws";
 
@@ -89,4 +92,22 @@ export function resolveCanvasHttpPrincipal(
   // zero-config local desktop reader; otherwise the caller is anonymous.
   if (isLoopbackIp(peerIp)) return LOOPBACK_PRINCIPAL;
   return undefined;
+}
+
+/**
+ * Consume one read token for a canvas or asset GET. An anonymous reader
+ * spends the per-IP `publicRead` budget (`clientIp`, so forwarding headers
+ * count only behind a trusted proxy); a principal spends its own
+ * `dashboard`-sized read budget, kept apart from the dashboard REST bucket.
+ * Sentinel principals are shared ids, so they are keyed by client IP too.
+ */
+export function consumeCanvasReadRate(
+  req: Request,
+  principal: string | undefined,
+  peerIp: string | undefined,
+): boolean {
+  const ip = clientIp(req, peerIp);
+  if (!principal) return consumeHttpRate("publicRead", ip);
+  const shared = principal === LOOPBACK_PRINCIPAL || isSentinelPrincipal(principal as EntityId);
+  return consumeHttpRate("dashboard", `read:${shared ? `${principal}@${ip}` : principal}`);
 }

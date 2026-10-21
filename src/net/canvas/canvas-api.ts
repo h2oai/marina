@@ -4,6 +4,7 @@
 import { claimIntent, completeIntent, failIntent } from "../../coordination/canvas-intents";
 import { mayReadAsset, mayReadNode } from "../../engine/canvas-access";
 import { canvasDocumentData, panelRevision } from "../../engine/canvas-document";
+import { canvasItemOwners, canvasOwners } from "../../engine/canvas-ownership";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
 import type { MarinaDB } from "../../persistence/database";
@@ -12,9 +13,14 @@ import type { StorageProvider } from "../../storage/provider";
 import type { EntityId } from "../../types";
 import { authenticateRequest, refuseOpenApiWrite } from "../auth-middleware";
 import { corsHeaders } from "../cors";
-import { consumeHttpRate, rateLimitedResponse, readJsonBody } from "../http-utils";
+import { consumeHttpRate, rateLimitedResponse, readJsonBody, safeJsonParse } from "../http-utils";
+import { httpOwnershipRefusal } from "../owner-authorization";
 import { handlePanelInteraction } from "./canvas-panel-api";
-import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
+import {
+  buildCanvasPrincipal,
+  consumeCanvasReadRate,
+  resolveCanvasHttpPrincipal,
+} from "./canvas-principal";
 import { authorizeCanvasSubscription, type CanvasBroadcaster } from "./canvas-ws";
 
 const CANVAS_NODE_TYPES = new Set([
@@ -88,17 +94,16 @@ function encodeNodeDataForUpdate(data: unknown): string | undefined {
   }
 }
 
-function actorNameForRequest(
-  body: Record<string, unknown>,
-  engine: Engine | undefined,
-  entityId: EntityId | undefined,
-): string {
+/**
+ * The name a write is attributed to: the authenticated caller's entity. A
+ * caller with no in-world entity (a sentinel credential) is "api"; a name in
+ * the request body never decides attribution.
+ */
+function actorNameForRequest(engine: Engine | undefined, entityId: EntityId | undefined): string {
   if (engine && entityId) {
     const entity = engine.entities.get(entityId);
     if (entity) return entity.name;
   }
-  const explicit = body.actorName ?? body.claimantName ?? body.completerName;
-  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
   return "api";
 }
 
@@ -166,12 +171,37 @@ export async function handleCanvasApi(
   // Single owner/operator predicate for ALL private-canvas access (read AND
   // mutation). Loopback desktop reader → operator-equivalent (zero-config
   // preserved). Anonymous / non-owner remote caller → {} (public/shared allowed,
-  // private denied). Public/shared canvases stay open to reads; their write
-  // policy is unchanged — a valid session token is already required above for any
-  // non-GET method, and `authorizeCanvasSubscription` returns true for them.
+  // private denied). Public/shared canvases stay open to reads; a write needs a
+  // valid session token (above), and removing or changing an existing item also
+  // passes the ownership rule below.
+  const httpPrincipal = engine ? resolveCanvasHttpPrincipal(req, engine, peerIp) : undefined;
+  // Reads are open but budgeted: per IP when anonymous, per principal otherwise.
+  if (engine && method === "GET" && !consumeCanvasReadRate(req, httpPrincipal, peerIp)) {
+    return rateLimitedResponse(req.headers.get("Origin"));
+  }
   const canvasPrincipal = engine
-    ? buildCanvasPrincipal(resolveCanvasHttpPrincipal(req, engine, peerIp), engine, db)
+    ? buildCanvasPrincipal(httpPrincipal, engine, db)
     : { isOperator: true };
+  // Removing or changing a canvas, node or relationship follows the in-world
+  // ownership rule (`canvas delete` / `canvas disconnect`): the author or the
+  // canvas owner, an admin, or the operator. 403 with the same explanation;
+  // `heldCommand` raises the same challenge the world command would.
+  const ownershipDenied = (
+    subject: Parameters<typeof httpOwnershipRefusal>[3],
+    message: string,
+    heldCommand?: string,
+  ): Response | null => {
+    if (!engine || !authenticatedEntityId) return null;
+    const refusal = httpOwnershipRefusal(
+      engine,
+      db,
+      authenticatedEntityId,
+      subject,
+      message,
+      heldCommand,
+    );
+    return refusal ? json({ error: refusal, code: "not_owner" }, 403) : null;
+  };
   const canAccessCanvas = (canvasId: string): boolean =>
     authorizeCanvasSubscription(db, canvasId, canvasPrincipal);
 
@@ -236,7 +266,7 @@ export async function handleCanvasApi(
         return json({ error: "Both nodes must belong to this canvas" }, 400);
       }
       const id = crypto.randomUUID();
-      const creatorName = actorNameForRequest(body, engine, authenticatedEntityId);
+      const creatorName = actorNameForRequest(engine, authenticatedEntityId);
       const data =
         body.data && typeof body.data === "object" && !Array.isArray(body.data)
           ? (body.data as Record<string, unknown>)
@@ -271,7 +301,7 @@ export async function handleCanvasApi(
           sourceId,
           targetId,
           relationship,
-          data: row.data ? JSON.parse(row.data) : null,
+          data: safeJsonParse(row.data, null),
           creatorName,
           createdAt: row.created_at,
         },
@@ -283,6 +313,12 @@ export async function handleCanvasApi(
       const edge = db.getCanvasEdge(edgeId);
       if (!edge || edge.canvas_id !== canvasId)
         return json({ error: "Relationship not found" }, 404);
+      const denied = ownershipDenied(
+        canvasItemOwners(db, edge, canvas),
+        `Only the edge's author, the canvas owner, or an admin can remove edge ${edge.id.slice(0, 8)}.`,
+        `canvas disconnect ${edge.id}`,
+      );
+      if (denied) return denied;
       db.deleteCanvasEdge(edgeId);
       engine?.logEvent({
         type: "canvas_edge_deleted",
@@ -307,7 +343,7 @@ export async function handleCanvasApi(
 
     // allow-empty-catch: a missing or malformed body is validated below as empty
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-    const actorName = actorNameForRequest(body, engine, authenticatedEntityId);
+    const actorName = actorNameForRequest(engine, authenticatedEntityId);
 
     const entity = authenticatedEntityId ? engine?.entities.get(authenticatedEntityId) : undefined;
     const context = {
@@ -397,6 +433,11 @@ export async function handleCanvasApi(
     if (method === "DELETE") {
       const node = db.getNode(nodeId);
       if (!node || node.canvas_id !== canvasId) return json({ error: "Node not found" }, 404);
+      const denied = ownershipDenied(
+        canvasItemOwners(db, node, db.getCanvas(canvasId)),
+        `Only the node's author, the canvas owner, or an admin can delete node ${node.id.slice(0, 8)}.`,
+      );
+      if (denied) return denied;
       const deleted = db.deleteNode(nodeId);
       if (!deleted) return json({ error: "Node not found" }, 404);
       // A node only shows an asset; the asset library owns its lifetime. One
@@ -412,6 +453,11 @@ export async function handleCanvasApi(
       if (!existingNode || existingNode.canvas_id !== canvasId) {
         return json({ error: "Node not found" }, 404);
       }
+      const denied = ownershipDenied(
+        canvasItemOwners(db, existingNode, db.getCanvas(canvasId)),
+        `Only the node's author, the canvas owner, or an admin can change node ${existingNode.id.slice(0, 8)}.`,
+      );
+      if (denied) return denied;
       const jsonBody = await readJsonBody(req);
       if (!jsonBody.ok) return jsonBody.response;
       const body = jsonBody.body;
@@ -433,7 +479,7 @@ export async function handleCanvasApi(
             return json({ error: "Panel changed. Reload before revising." }, 409);
           nodeData = JSON.stringify({
             ...document,
-            panelEditor: actorNameForRequest(body, engine, authenticatedEntityId),
+            panelEditor: actorNameForRequest(engine, authenticatedEntityId),
           });
         } catch (error) {
           return json({ error: getErrorMessage(error) }, 400);
@@ -463,7 +509,7 @@ export async function handleCanvasApi(
         if (["pending", "active", "done", "failed"].includes(intentStatus)) {
           engine.logEvent({
             type: "canvas_intent",
-            entity: (parsed.intent.claimedBy ?? node.creator_name) as EntityId,
+            entity: (authenticatedEntityId ?? node.creator_name) as EntityId,
             canvasId,
             nodeId,
             prompt: parsed.intent.prompt,
@@ -555,7 +601,7 @@ export async function handleCanvasApi(
       height: body.height as number | undefined,
       assetId: body.asset_id as string | undefined,
       data: nodeData,
-      creatorName: actorNameForRequest(body, engine, authenticatedEntityId),
+      creatorName: actorNameForRequest(engine, authenticatedEntityId),
       parentNodeId,
     });
 
@@ -567,7 +613,7 @@ export async function handleCanvasApi(
       nodeId: id,
       canvasId,
       type: requestedType,
-      creatorName: actorNameForRequest(body, engine, authenticatedEntityId),
+      creatorName: actorNameForRequest(engine, authenticatedEntityId),
       parentNodeId: parentNodeId ?? null,
       data: parsed,
     });
@@ -600,6 +646,14 @@ export async function handleCanvasApi(
     if (!canAccessCanvas(id)) return json({ error: "Canvas not found" }, 404);
 
     if (method === "DELETE") {
+      const canvas = db.getCanvas(id);
+      if (!canvas) return json({ error: "Canvas not found" }, 404);
+      const denied = ownershipDenied(
+        canvasOwners(db, canvas),
+        `Only the owner of canvas "${canvas.name}" or an admin can delete it.`,
+        /\s/.test(canvas.name) ? undefined : `canvas delete ${canvas.name}`,
+      );
+      if (denied) return denied;
       const deleted = db.deleteCanvas(id);
       if (!deleted) return json({ error: "Canvas not found" }, 404);
       return json({ ok: true, id });
@@ -611,14 +665,14 @@ export async function handleCanvasApi(
       if (!canvas) return json({ error: "Canvas not found" }, 404);
       const nodes = db.getNodesByCanvas(id).map((n) => ({
         ...n,
-        data: enrichNodeData(n, JSON.parse(n.data), db, storage),
+        data: enrichNodeData(n, safeJsonParse<Record<string, unknown>>(n.data, {}), db, storage),
       }));
       const edges = db.getCanvasEdges(id).map((e) => ({
         id: e.id,
         sourceId: e.source_id,
         targetId: e.target_id,
         relationship: e.relationship,
-        data: e.data ? JSON.parse(e.data) : null,
+        data: safeJsonParse(e.data, null),
         creatorName: e.creator_name,
         createdAt: e.created_at,
       }));
@@ -664,7 +718,7 @@ export async function handleCanvasApi(
       description: (body.description as string) ?? "",
       scope: requestedScope,
       scopeId,
-      creatorName: actorNameForRequest(body, engine, authenticatedEntityId),
+      creatorName: actorNameForRequest(engine, authenticatedEntityId),
     });
 
     return json(db.getCanvas(id), 201);

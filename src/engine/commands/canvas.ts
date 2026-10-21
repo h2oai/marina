@@ -20,11 +20,12 @@ import {
   mayReadCanvasRow,
 } from "../canvas-access";
 import { canvasDocumentData } from "../canvas-document";
+import { canvasItemOwners, canvasOwners } from "../canvas-ownership";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
 import { ingestAsset } from "../media/asset-library";
 import { type LookReply, sendLookReply } from "../media/vision";
-import { type OwnershipSubject, ownershipRefusal } from "../ownership";
+import { ownershipRefusal } from "../ownership";
 import { rankFloorRefusal } from "../rank-floor";
 import { type AssetCommandDeps, runAssetCommand } from "./asset";
 import { handleCanvasIntent } from "./canvas-intent";
@@ -32,25 +33,6 @@ import { requiresPersistence } from "./command-messages";
 
 /** Module logger. */
 const logger = new Logger();
-
-/** An agent's creator may act for the agents it spawned. */
-function agentCreatorOf(db: MarinaDB): (ownerName: string) => string | undefined {
-  return (ownerName) => db.getAgentConfig(ownerName)?.spawned_by || undefined;
-}
-
-/**
- * Who owns a canvas: an entity-scoped canvas belongs to that entity (whoever
- * lazily created it); every other canvas belongs to its creator. System
- * canvases (creator "system") are admin-only.
- */
-function canvasOwners(
-  db: MarinaDB,
-  canvas: { scope: string; scope_id: string | null; creator_name: string },
-): OwnershipSubject {
-  return canvas.scope === "entity"
-    ? { ownerIds: [canvas.scope_id] }
-    : { owners: [canvas.creator_name], creatorOf: agentCreatorOf(db) };
-}
 
 /**
  * The caller's read access, from the shared canvas read check
@@ -430,14 +412,9 @@ function handleDisconnect(
     return;
   }
   // The edge's author or the canvas owner (or an admin) may remove it.
-  const canvasSubject = edgeCanvas ? canvasOwners(db, edgeCanvas) : undefined;
   const refusal = ownershipRefusal(
     entity,
-    {
-      owners: [edge.creator_name, ...(canvasSubject?.owners ?? [])],
-      ownerIds: canvasSubject?.ownerIds ?? [],
-      creatorOf: agentCreatorOf(db),
-    },
+    canvasItemOwners(db, edge, edgeCanvas),
     `Only the edge's author, the canvas owner, or an admin can remove edge ${edge.id.slice(0, 8)}.`,
   );
   if (refusal) {

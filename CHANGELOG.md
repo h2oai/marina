@@ -878,6 +878,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   browser on `/ws`, `/dashboard-ws`, `/canvas-ws` and `/api/command`. Loopback now means
   `localhost`, `::1` or an IPv4 literal in 127.0.0.0/8, through one shared check
   (`src/net/loopback.ts`) that replaces every local copy.
+- **Canvas HTTP writes follow the in-world ownership rule.** Deleting a canvas, deleting or
+  changing a node and removing a relationship over `/api/canvases` take the author or canvas
+  owner, an admin or the operator, as `canvas delete` and `canvas disconnect` do; a refusal is a
+  403 with the same explanation and raises the same challenge. Writes are attributed to the
+  signed-in caller, never a name in the request body. Canvas and asset reads are rate-limited
+  per client IP (per principal when signed in), uploads take a plain extension from the
+  filename, and one damaged stored row no longer fails a whole canvas or asset list.
 
 ## [0.8.0] — 2026-10-14
 

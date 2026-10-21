@@ -675,38 +675,38 @@ export function useCanvasIntegration(
 // ── Intent Action Helpers ──────────────────────────────────────────────────
 
 /**
- * Generic helper that patches intent data on a canvas node.
- * Fetches the current node data, merges the intent update, and PATCHes back.
+ * Drive a node's intent through the server's intent lifecycle endpoints
+ * (claim / complete / fail). The server attributes the action to the
+ * signed-in caller and checks the intent's state, so collaborators can work
+ * on intents on nodes they do not own.
  */
-async function updateIntent(
+async function intentAction(
   canvasId: string,
   nodeId: string,
-  intentUpdate: Record<string, unknown>,
+  action: "claim" | "complete" | "fail",
+  body: Record<string, unknown> = {},
 ): Promise<void> {
-  const resp = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`);
-  if (!resp.ok) throw new Error(`Failed to fetch node: ${resp.status}`);
-  const node = await resp.json();
-  const data = typeof node.data === "string" ? JSON.parse(node.data) : (node.data ?? {});
-  data.intent = { ...data.intent, ...intentUpdate };
-  const patchResp = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ data: JSON.stringify(data) }),
-  });
-  if (!patchResp.ok) throw new Error(`Failed to update intent: ${patchResp.status}`);
+  const resp = await authFetch(
+    `${API_BASE}/api/canvases/${encodeURIComponent(canvasId)}/nodes/${encodeURIComponent(nodeId)}/intent/${action}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!resp.ok) {
+    const detail = (await resp.json().catch(() => ({}))) as { error?: string };
+    throw new Error(detail.error ?? `Failed to ${action} intent: ${resp.status}`);
+  }
 }
 
-/** Claim a pending intent for the given user. */
+/** Claim a pending intent. The server records the signed-in caller as the claimant. */
 export async function claimIntent(
   canvasId: string,
   nodeId: string,
-  username: string,
+  _username?: string,
 ): Promise<void> {
-  await updateIntent(canvasId, nodeId, {
-    status: "active",
-    claimedBy: username,
-    claimedAt: Date.now(),
-  });
+  await intentAction(canvasId, nodeId, "claim");
 }
 
 /** Complete an active intent with a result string. */
@@ -715,10 +715,10 @@ export async function completeIntent(
   nodeId: string,
   result: string,
 ): Promise<void> {
-  await updateIntent(canvasId, nodeId, { status: "done", result });
+  await intentAction(canvasId, nodeId, "complete", { result, type: "text" });
 }
 
 /** Fail an active intent with a reason string. */
 export async function failIntent(canvasId: string, nodeId: string, reason: string): Promise<void> {
-  await updateIntent(canvasId, nodeId, { status: "failed", failReason: reason });
+  await intentAction(canvasId, nodeId, "fail", { reason });
 }
