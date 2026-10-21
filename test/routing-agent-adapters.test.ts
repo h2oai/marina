@@ -27,6 +27,7 @@ import {
   BUILTIN_AGENT_ADAPTERS,
   CLAUDE_RESUME_MISMATCH,
   type ClaudeSdk,
+  claudeResidentPermissions,
   createClaudeAdapter,
 } from "../src/routing/agent-adapters";
 import { prepareAgentWorkspace, restoreAgentWorkspace } from "../src/routing/agent-workspace";
@@ -236,6 +237,47 @@ describe("claude adapter resume", () => {
       await agent.prompt("hi", "66666666-6666-6666-6666-666666666666");
       await until(() => fake.calls.toolsRun === 1);
       expect(h.states).toContainEqual({ nativeSessionId: "fresh" });
+    } finally {
+      await agent.stop();
+    }
+  });
+});
+
+describe("claude resident permissions", () => {
+  const relaySocket = join(scratch, "relay", "relay.sock");
+  const resident = { MARINA_RELAY_SOCKET: relaySocket };
+
+  it("leaves a non-resident session asking for everything", () => {
+    expect(claudeResidentPermissions({}, () => true)).toEqual({ permissionMode: "default" });
+  });
+
+  it("gives a resident sandboxed commands and accepted edits, never an unsandboxed fallback", () => {
+    expect(claudeResidentPermissions(resident, () => true)).toEqual({
+      permissionMode: "acceptEdits",
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        autoAllowBashIfSandboxed: true,
+        allowUnsandboxedCommands: false,
+        filesystem: { allowWrite: [join(scratch, "relay")] },
+        network: { allowUnixSockets: [relaySocket] },
+      },
+    });
+  });
+
+  it("accepts only edits for a resident when the sandbox is unavailable", () => {
+    expect(claudeResidentPermissions(resident, () => false)).toEqual({
+      permissionMode: "acceptEdits",
+    });
+  });
+
+  it("passes the resident permissions to the query", async () => {
+    const fake = fakeClaudeSdk({ initSessionId: "fresh-session" });
+    const h = harness("claude", []);
+    h.options.env = { ...h.options.env, ...resident };
+    const agent = await createClaudeAdapter(fake.sdk)(h.options);
+    try {
+      expect(fake.calls.queries[0]?.permissionMode).toBe("acceptEdits");
     } finally {
       await agent.stop();
     }
