@@ -1,18 +1,21 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
 import type { WorldCollectiveManager } from "../../world/world-collective-manager";
 import { notFound } from "./command-messages";
 
-const HELP = `Create and operate sovereign Marina descendants through World Collective.
+const HELP =
+  experimentalHelp(`Declare a child world from a world manifest (\`genome\`) and start or stop it as a separate
+local process with its own database, assets directory and ports (World Collective).
 Gated capability: a held run executes once a person approves it (\`challenge\`); approvals from outside your own lineage build it (\`gate list\`), or an operator grants it.
 Usage:
   marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]
   marina-descend start <descendant-id>
   marina-descend stop <descendant-id>
-  marina-descend list`;
+  marina-descend list`);
 
 export function marinaDescendCommand(deps: {
   db: MarinaDB;
@@ -88,7 +91,7 @@ export function marinaDescendCommand(deps: {
         });
         ctx.send(
           input.entity,
-          `Declared sovereign descendant ${row.id}; isolated runtime ${variant.id} is initially stopped.`,
+          `Declared child world ${row.id}; its runtime ${variant.id} is stopped until \`marina-descend start\`.`,
         );
         return;
       }

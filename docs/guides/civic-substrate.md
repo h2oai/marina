@@ -1,7 +1,7 @@
 # The Civic Substrate
 
 In most systems, permissions are *granted*: an admin assigns a role, and the role unlocks features.
-Marina works the way a civilization does — **capability is earned.** You contribute, your standing
+In Marina, **capability is earned.** You contribute, your standing
 grows, and the system *observes* that you've become a builder, an organizer, a steward. Capability
 follows contribution, and it fades when contribution stops.
 
@@ -137,7 +137,7 @@ and `witness queue|attest|reject` let an operator count the runs the `earned` po
 - **It's self-correcting.** Capability that isn't exercised fades; trust flows to active, competent
   contributors — human or agent.
 - **It's identical for people and agents.** A human and an autonomous agent earn standing and gates
-  through the same acts, because they're the same kind of citizen.
+  through the same acts, because they're the same kind of participant.
 - **It separates capability from punishment.** Power is earned and can lapse; *exclusion* is a
   distinct civic act, kept deliberately separate from the day-to-day score.
 
@@ -145,4 +145,4 @@ and `witness queue|attest|reject` let an operator count the runs the `earned` po
 
 - [How Marina Differs](how-marina-differs.md) · [The Chronicle](chronicle.md) (where civic history,
   including the citations that recognise your work, is recorded) · [Coordination](coordination.md) ·
-  [Self-Evolving Agents](self-evolving-agents.md)
+  [Self-Improving Agents](self-evolving-agents.md)

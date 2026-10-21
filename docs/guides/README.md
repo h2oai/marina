@@ -75,20 +75,20 @@ which.
 
 | Guide | What you'll get |
 | --- | --- |
-| [Self-evolving agents](self-evolving-agents.md) | The cognitive loop, reflection, and evolution built from existing pieces. |
+| [Self-improving agents](self-evolving-agents.md) | The cognitive loop, reflection, and improvement built from existing pieces. |
 | [Native evolution](native-evolution.md) | Durable experiments that iterate without a privileged "evolver" agent. Off by default. |
 | [Autonomous quality loops](autonomous-quality-loops.md) | Contradictions that track their sources, attention trained by outcomes, and productivity measures. |
 | [Explore with evidence](novelty.md) | Ranked exploration and bounded experiments on outcomes. |
 | [Emergent organization](emergent-organization.md) | Earned spawning, recruiting and bottom-up teams. |
 | [Information topology](information-topology.md) | Why partial transparency beats showing everyone everything. |
 | [Behavior surfaces](behavior-surfaces.md) | When to use a role, trait, skill, guide note, project pool, tradition pool or the Chronicle. |
-| [Intellect lifecycle](intellect-lifecycle.md) | Portable identity, instances, lineage, migration, dormancy and revival. |
+| [Intellect records](intellect-lifecycle.md) | Records of an agent's identity, instances, lineage and lifecycle. |
 | [Associations](associations.md) | Open-ended relationships among people, intellects, organizations and Marinas. |
-| [Reproduction & meshes](reproduction-and-meshes.md) | Descendants of minds and of whole Marinas, and exchange across meshes. |
+| [Lineage records, child worlds & meshes](reproduction-and-meshes.md) | Lineage records, child worlds, and exchange between Marinas. |
 | [Cross-world inheritance](inheritance.md) | Export shared evidence from one world and import it into a reviewable pool in another. |
 | [Learned bundles](learned-bundles.md) | Signed export and import of lessons, defaults, roles and conventions. |
 | [Cognitive provenance](cognitive-provenance.md) | Optional signed chains of cognitive events, and how to inspect them. |
-| [Economics, simulation & recursion](economics-simulation-and-recursion.md) | Asset-neutral provenance, reproducible labs and recursive mutation lineage. |
+| [Economic, simulation & change records](economics-simulation-and-recursion.md) | Provenance records for value exchanged, reproducible simulation runs, and change records. |
 | [World Collective](world-collective.md) | Spin up child worlds, compare variants side by side, and promote a winner explicitly. |
 
 ## Memory, in depth

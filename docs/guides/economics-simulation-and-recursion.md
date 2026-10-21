@@ -1,75 +1,92 @@
-# Economics, Simulation, and Recursive Evolution
+# Economic, Simulation, and Change Records
 
-Marina can coordinate value, investigate possible worlds, and change its own inherited design
-without requiring a particular chain, model, institution, or federation.
+> **Experimental.** `economy`, `lab` and `mutation` are experimental: built and tested, but no
+> production deployment uses them yet, and their interfaces may change. See
+> [feature status](../reference/feature-status.md).
 
-## Economic provenance
+These three commands keep append-only, attributable records. None of them moves money, runs a
+simulation or applies a change by itself; they record what participants declare, with references to
+the evidence. Records are signed with Ed25519 when `MARINA_FEDERATION_SIGNING_KEY` is set.
 
-Create a contract around a canonical goal or journey:
+## Economic provenance (`economy`)
+
+A contract records the terms of a piece of work around a goal reference (for example a task or a
+[journey](journeys.md)):
 
 ```text
-economy contract journey:42 | {"deliverable":"report"} | two independent verifiers | appeal:mesh
+economy contract task:42 | {"deliverable":"market report","price_usd":250} | two independent reviewers | appeal:operator
 ```
 
-This creates an atomic `offer`, signed when the Marina has configured its federation signing key.
-Record later claims with causal references:
+Creating a contract also records an `offer` event. Later events are claims with references to what
+caused them:
 
 ```text
-economy event contract_… contribution | intellect:lumen | artifact:report |  |  |  | trace:7 | {"role":"analysis"}
-economy event contract_… settlement | escrow:external | human:ada | 25 | asset:USDC | base:0x… | artifact:report | {"observed":true}
+economy event contract_… contribution | human:alice | artifact:report-12 |  |  |  | trace:7 | {"role":"analysis"}
+economy event contract_… settlement | org:acme-finance | human:alice | 250 | currency:USD | invoice:INV-2026-0142 | artifact:report-12 | {"observed":true}
 ```
 
-`economy adapter` declares how an external network may be referenced, observed, or submitted to.
-Marina stores references, not funds or credentials. An event is a claim, signed only when a key is
-configured: it is not proof of payment, truth, ownership, licensing, or entitlement. Verification,
-disputes, appeals, and counterexamples remain distinct events so future institutions can interpret
-the complete record.
+Event kinds: `offer`, `acceptance`, `funding`, `escrow`, `resource_use`, `contribution`,
+`delivery`, `verification`, `counterexample`, `dispute`, `appeal`, `settlement`, `refund`,
+`royalty`, `license`, `transfer`, `donation`, `attribution`.
 
-## Simulation laboratory
+`economy adapter` declares how an outside system (an invoicing tool, a payment processor, a ledger)
+is referenced, observed or submitted to. Marina stores references only, never funds or credentials.
+An event is a claim, not proof of payment, ownership, licensing or entitlement. Verification,
+disputes, appeals and counterexamples are separate events, so the full history stays readable.
 
-Start with a content-addressed scenario manifest:
+## Simulation run records (`lab`)
+
+Start with a scenario manifest, stored under its SHA-256 hash:
 
 ```text
-lab manifest {"world":"research","population":["intellect:lumen"],"goal":"journey:42"}
+lab manifest {"world":"research","population":["intellect:reviewer-1"],"goal":"task:42"}
 lab run sha256:… | recorded | recorded-response | seed-a | {"memory":"graph"}
 ```
 
-Evidence enters through `lab event`. `lab fork` branches from a named point without rewriting the
-parent. `lab replicate` creates a population sweep, and `lab compare` packages runs and observations
-into an inspectable dataset without naming a universal winner.
+`lab run` declares a run; it does not execute anything, and no result is recorded until someone
+records it with `lab event`. `lab fork` records a variant run that branches from a named point of a
+parent run without changing the parent. `lab replicate` declares a batch of runs with different
+seeds, and `lab compare` packages runs and observations into a dataset without declaring a winner.
 
 Every run declares one reproducibility level:
 
-- `exact-engine`: deterministic engine state can be replayed exactly.
+- `exact-engine`: the engine state can be replayed exactly.
 - `recorded-response`: recorded model responses can be replayed, not regenerated identically.
-- `behavioral`: behavior is comparable under stated conditions.
-- `statistical`: conclusions require a population of runs.
+- `behavioral`: behaviour is comparable under the stated conditions.
+- `statistical`: conclusions need a population of runs.
 - `conceptual`: the scenario tests an idea, not a reproducible mechanism.
 
-Manifests may reference existing journeys, experiments, traces, snapshots, genomes, or mesh events.
-The laboratory is a control and evidence plane; declaring a run never invents an outcome.
+Manifests may reference existing journeys, experiments, traces, snapshots, world manifests or mesh
+events.
 
-## Recursive evolution
+## Change records
 
-Any inhabitant can append a mutation in an open domain:
-
-```text
-mutation record association association:odd | adopted | introduced mutual translation | {"semantics":"mutual-dreaming"} |  | observation:9 | association:new
-```
-
-For executable inheritance, derive a new content-addressed Marina genome:
+`mutation` records a change to a named target: who proposed, adopted, rejected, branched or observed
+it, the patch, the evidence, and any earlier changes it builds on.
 
 ```text
-mutation genome sha256:… | permit recombination | {"reproduction":{"method":"recombination"}} | experiment:12
+mutation record association association:<id> | adopted | added a weekly review step | {"cadence":"weekly"} |  | observation:9
+mutation lineage association association:<id>
+mutation list
 ```
 
-The new genome can produce a sovereign descendant through the reproduction commands. Its parent,
-patch, evidence, and descendant reference remain visible. Recorded mutation does not itself bypass
-the editor, safety, activation, or federation boundary of the affected subsystem; it supplies the
-shared lineage that makes rapid evolution auditable.
+Domains are free text (`role`, `association`, `charter`, `federation`, `reproduction`, `genome`,
+`protocol`, …). Recording a change does not apply it: the affected subsystem keeps its own editors,
+safety gates and approval rules. The record only gives every change one auditable history.
 
-## Discovery and portability
+To derive a new [world manifest](reproduction-and-meshes.md#world-manifests-genome) from an existing
+one, apply a JSON patch:
 
-Federation manifests advertise `economic.provenance.v1`, `simulation.manifest.v1`, and
-`civilization.mutation.v1`. All economic provenance, simulation and recursive-evolution records participate in Marina export/import, allowing a
-detached world to preserve them locally and later carry them into a mesh.
+```text
+mutation genome sha256:… | allow two-parent derivation | {"reproduction":{"method":"recombination"}} | experiment:12
+```
+
+This stores the new manifest under its own hash and records a `branched` change linking parent and
+child. `marina-descend create` can then start a child world from it.
+
+## Export and federation
+
+All economic, simulation and change records are included in Marina export/import. Federation
+manifests advertise them under the protocol ids `economic.provenance.v1`,
+`simulation.manifest.v1` and `civilization.mutation.v1` (fixed wire identifiers), so an instance
+that runs on its own can keep these records locally and share them through a mesh later.

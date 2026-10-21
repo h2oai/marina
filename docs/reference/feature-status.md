@@ -11,7 +11,7 @@ What Marina ships, and what actually runs. Every major feature has one status:
 | deprecated | Kept for compatibility; do not build on it. |
 
 The table mirrors `FEATURE_STATUS` in [`src/config/feature-status.ts`](../../src/config/feature-status.ts);
-`test/feature-status.test.ts` fails when the two disagree. A world command that exists only for an
+`test/docs-contract.test.ts` fails when the two disagree. A world command that exists only for an
 experimental feature starts its help text with `[experimental]`, and `marina worlds` marks demo worlds
 `[demo]` (`"status"` in `--json`).
 
@@ -66,6 +66,12 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Markets and positions | experimental | `market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true` | src/resolvers, src/net/clients |
 | Federation (gateways, meshes) | experimental | `gateway`, `mesh`; `GATEWAY_SECRET` | src/engine/gateway-runtime.ts |
 | Learned bundles | experimental | `learned`, `bun run learned` | src/learned |
+| Intellect records (identity across models and processes, lifecycle claims) | experimental | `intellect`; claims are signed when `MARINA_FEDERATION_SIGNING_KEY` is set | src/engine/commands/intellect.ts, src/persistence/db-intellects.ts |
+| Lineage records (derived intellects, world manifests, child worlds) | experimental | `reproduce`, `genome` (records only); `marina-descend` starts a child world as a local process and needs the `world.lineage` gate | src/engine/commands/reproduce.ts, src/engine/commands/genome.ts, src/engine/commands/marina-descend.ts, src/persistence/db-reproduction.ts, src/world/world-collective-manager.ts |
+| Change records (`mutation`) | experimental | `mutation` (append-only records; recording a change does not apply it) | src/engine/commands/mutation.ts, src/persistence/db-mutations.ts |
+| Associations (who takes part and how they relate) | experimental | `association` | src/engine/commands/association.ts, src/persistence/db-associations.ts |
+| Economic provenance records | experimental | `economy` (claims and references only; moves no funds, stores no credentials) | src/engine/commands/economy.ts, src/persistence/db-economics.ts |
+| Simulation run records (`lab`) | experimental | `lab` (declares and records runs; executes nothing) | src/engine/commands/lab.ts, src/persistence/db-simulations.ts |
 | Media generation jobs | experimental | `image generate`, `video generate`, `audio` (needs a media-capable provider) | src/engine/commands/image.ts, src/persistence/db-media.ts |
 | Built-in worlds other than `default` and `empty` (13) | demo | `MARINA_WORLD=<slug>`; `marina worlds` shows each status | worlds |
 | Orchestration templates (16 pool-note patterns) | demo | `project <name> orchestrate <pattern>` | src/world/templates/orchestration.ts |
@@ -74,6 +80,14 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 
 ## Notes
 
+- **Record-keeping research features.** `intellect`, `reproduce`, `genome`, `mutation`,
+  `association`, `economy` and `lab` write append-only, attributable records (signed with Ed25519
+  when `MARINA_FEDERATION_SIGNING_KEY` is set) and are exported with the world. They describe
+  identities, lineage, changes, relationships, economic claims and simulation runs; apart from
+  `marina-descend start`, which runs a child world as a separate local process, none of them
+  executes, trains, pays or changes anything else. No production deployment uses them yet. Guides:
+  [intellect records](../guides/intellect-lifecycle.md), [lineage records and meshes](../guides/reproduction-and-meshes.md),
+  [associations](../guides/associations.md), [economic, simulation and change records](../guides/economics-simulation-and-recursion.md).
 - **Embedding lifecycle.** Experimental: for embedding hosts. `MARINA_DATA_DIR`, the
   `endpoint.json` file, `MARINA_IDLE_SHUTDOWN` and `MARINA_PARENT_PID` let a host find, adopt and stop
   a Marina it did not start. No host uses them yet (the desktop app embeds Marina in-process); they are

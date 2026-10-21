@@ -12,14 +12,14 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
     content:
       "Welcome to your personal Marina instance. This world is optimized for individual " +
-      "autonomy and self-evolution. Start by setting a goal: 'memory set goal <your purpose>'. " +
+      "autonomy and self-improvement. Start by setting a goal: 'memory set goal <your purpose>'. " +
       "Then use 'brief' to orient and 'pool guide recall <topic>' to learn any system.",
     importance: 10,
     type: "skill",
   },
   {
     content:
-      "Self-evolution loop: (1) Set a goal — 'memory set goal ...'. " +
+      "Self-improvement loop: (1) Set a goal — 'memory set goal ...'. " +
       "(2) Journal — 'note <observation> type episode'. " +
       "(3) Reflect — 'reflect' to synthesize. " +
       "(4) Bank — 'skill store <name> | <what> | <steps>' for what reliably works. " +

@@ -1,70 +1,75 @@
-# Generalized Associations
+# Associations
 
-An association is a named context in which people, intellects, organizations, tools, Marinas, or
-entirely new kinds of participant can describe how they relate. It is an overlay: channels, groups,
-crews, projects, Scores, markets, and other Marina primitives remain the places where their normal
-work happens.
+> **Experimental.** `association` is experimental: built and tested, but no production deployment
+> uses it yet, and its interface may change. See [feature status](../reference/feature-status.md).
 
-## Start simply
+An association is a named, append-only record of who takes part in something and how the
+participants relate: people, [intellects](intellect-lifecycle.md), organizations, tools, other
+Marina instances, or any other kind you name. It sits on top of existing records; channels, groups,
+crews, projects and markets stay where their work happens.
+
+## Create and join
 
 ```text
-association create Night Garden | People and intellects compare observations after dark
-association join <id> | human:alice | field observer
-association join <id> | intellect:lumen | notices weak signals
+association create Data Quality Group | People and agents who review the weekly data pipeline
+association join <id> | human:alice | reviewer
+association join <id> | intellect:reviewer-1 | first-pass checks
 association show <id>
 ```
 
-The `<kind>:<ref>` form is intentionally open. `human`, `intellect`, `instance`, `organization`,
-`tool`, `provider`, `marina`, and `mesh` are useful conventions, not a closed ontology.
+The `<kind>:<ref>` form is open. `human`, `intellect`, `instance`, `organization`, `tool`,
+`provider`, `marina` and `mesh` are conventions, not a fixed list.
 
-## Define the relationship
-
-```text
-association relate <id> | human:alice | reciprocal | challenges assumptions with | intellect:lumen
-association relate <id> | marina:local | directed | publishes observations to | mesh:night-watch | {"cadence":"daily"}
-```
-
-Relationship semantics are participant-authored text. Marina records whether a claim is directed
-or reciprocal but does not reduce relationships to a built-in list.
-
-Terms change through supersession rather than mutation:
+## Describe relationships
 
 ```text
-association revise <id> | <relation-id> | human:alice | reciprocal | learns beside | intellect:lumen
+association relate <id> | human:alice | reciprocal | reviews the work of | intellect:reviewer-1
+association relate <id> | marina:local | directed | publishes weekly reports to | mesh:data-quality | {"cadence":"weekly"}
 ```
 
-Both claims remain observable; `association show` presents the latest unsuperseded claim.
+The relationship text is written by the participants. Marina records whether it is `directed` or
+`reciprocal` but does not restrict it to a built-in list.
 
-## Compose existing Marina capabilities
+Relationships change by supersession, not by editing:
 
 ```text
-association link <id> | channel:research | conversation occurs in
-association link <id> | crew:red-team | performs challenges through
-association link <id> | project:alpha | advances
-association link <id> | score:deliberation | sometimes coordinates with
-association link <id> | market:forecast-1 | contests beliefs through
+association revise <id> | <relation-id> | human:alice | reciprocal | pairs with | intellect:reviewer-1
 ```
 
-Links are provenance claims and can refer to remote or temporarily unavailable records. They do
-not copy, own, or silently alter the linked primitive.
+Both versions stay in the record; `association show` shows the latest one that has not been
+superseded.
 
-## Leave, branch, and continue
+## Link existing Marina records
 
 ```text
-association leave <id> | intellect:lumen | its experiment is complete
-association event <id> branched | two incompatible methods will continue independently
-association event <id> descendant_created | participants created a new intellect
-association event <id> dissolved | this formation has completed its work
-association event <id> continued | later participants resumed the context
+association link <id> | channel:data-quality | discussion happens in
+association link <id> | crew:review | runs reviews through
+association link <id> | project:pipeline-v2 | works on
+association link <id> | market:forecast-1 | tracks forecasts in
 ```
 
-Leaving and dissolution never erase prior events. The active state is a projection of the complete
-append-only record, not a mutable membership row.
+Links are claims and may point at remote or currently unavailable records. They do not copy, own or
+change the linked record.
 
-## Integrity and sovereignty
+## Leave, branch, and close
 
-When `MARINA_FEDERATION_SIGNING_KEY` is configured, creation, participation, relationship, and link
-records are signed. `association show` reports locally verifiable signatures. A signature proves
-record integrity and key possession; it does not prove consent, truth, ownership, merit, or legal
-rights. Detached Marinas may use the entire primitive without joining any mesh.
+```text
+association leave <id> | intellect:reviewer-1 | review rotation ended
+association event <id> branched | the group split into two review tracks
+association event <id> descendant_created | members created a new intellect record
+association event <id> dissolved | the review project is finished
+association event <id> continued | a later team resumed the group
+```
 
+Event kinds: `created`, `joined`, `left`, `terms_changed`, `observed`, `branched`, `dissolved`,
+`continued`, `descendant_created`.
+
+Leaving and dissolving never erase earlier events. Current membership is computed from the full
+append-only history; there is no mutable membership row.
+
+## Signatures
+
+When `MARINA_FEDERATION_SIGNING_KEY` is set, creation, participation, relationship and link records
+are signed, and `association show` reports which signatures verify. A signature shows that a record
+is unaltered and that the signer held the key; it does not show consent, truth, ownership or legal
+rights. An association works on a single instance without joining any mesh.

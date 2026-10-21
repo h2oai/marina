@@ -3166,7 +3166,7 @@ export class LeanAgentAdapter implements AgentHandle {
         // drift between coordinator messages. They re-enter the loop the
         // moment a perception arrives. See docs/architecture/agent-cognition.md
         // ("Fast crew dispatch").
-        // A responder may choose an autonomous life instead: `memory set
+        // A responder may choose self-scheduled cycles instead: `memory set
         // autonomy full` (crewResponderMode turns false, the full loop runs).
         // A bound coding task is already an explicit work obligation. Finish
         // its next cycle after a per-run yield even without a new peer message;
@@ -3983,7 +3983,7 @@ export class LeanAgentAdapter implements AgentHandle {
   }
 
   /** True when this agent runs as a thin crew responder — unless it opted
-   *  into an autonomous life with `memory set autonomy full`. */
+   *  into self-scheduled cycles with `memory set autonomy full`. */
   private get crewResponderMode(): boolean {
     return !!this.config.crewResponder && !this.loopPrefs.autonomyFull;
   }
@@ -4671,9 +4671,9 @@ export class LeanAgentAdapter implements AgentHandle {
     // prompt rewrite with no new commands or tables.
     // Crew-responder mode: LOW-CADENCE, not zero — a specialist that never
     // reflects accumulates nothing and leaves nothing for successors, which
-    // breaks the generational-memory thesis for exactly the agents that do
+    // breaks shared memory across agents for exactly the agents that do
     // the most work. Thin responders reflect every 300 cycles (vs 75), so the
-    // fast-dispatch economics survive while the inner life doesn't die.
+    // fast-dispatch economics survive and the reflection loop keeps running.
     // Coding-task mode: suppressed — reflection waits until the task is done.
     if (
       cycle - this.lastReflectionCycle >= (this.crewResponderMode ? 300 : 75) &&

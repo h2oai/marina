@@ -657,7 +657,8 @@ Effect: delete.
 
 ## association
 
-Association — open, attributable relationships across Marina primitives and worlds.
+[experimental] Association: a named, append-only record of who takes part in something and how the
+participants relate, linked to existing Marina records (channels, crews, projects, …).
 
 Usage:
   association create <name> | <purpose>
@@ -4003,7 +4004,9 @@ Effect: write.
 
 ## economy
 
-Asset-neutral economic provenance (signature-capable claims only; no implied transfer).
+[experimental] Economic provenance records: contracts and claimed events (offer, contribution,
+settlement, …) with references to outside systems. Records only: no funds move, no credentials
+are stored, and an event is not proof of payment.
 Usage:
   economy contract <goal-ref> | <terms JSON> | <verification method> | <dispute method> [| adapter] [| asset-ref]
   economy event <contract> <kind> | <actor-ref> | <subject-ref> | <amount> | <asset-ref> | <external-tx-ref> | <causal refs csv> | <data JSON>
@@ -4613,7 +4616,8 @@ Effect: write.
 
 ## genome
 
-Content-addressed Marina genomes.
+[experimental] World manifests ("genomes"): a JSON description of a world template, its components
+and compatibility tags, stored under its SHA-256 hash. Identical manifests get the same address.
 Usage:
   genome create <world-template> | <components csv> | <compatibility csv> [| notes]
   genome show <sha256:hash>
@@ -5111,7 +5115,8 @@ Effect: write.
 
 ## intellect
 
-Intellect — portable cognitive identity and append-only lifecycle claims.
+[experimental] Intellect: an identity record for an agent that can outlast any one model, harness or
+process, with append-only lifecycle claims (dormant, revived, migrated, …).
 
 Usage:
   intellect create <name> | <purpose> [| contributor-ids]
@@ -5314,7 +5319,8 @@ Effect: read.
 
 ## lab
 
-Unified simulation laboratory.
+[experimental] Simulation run records: content-addressed scenario manifests, declared runs, forks,
+replicates, observations and comparisons. Declaring a run executes nothing; you record the evidence.
 Usage:
   lab manifest <scenario JSON>
   lab run <manifest-hash> | <mode> | <reproducibility> | <seed> [| treatments JSON]
@@ -5636,7 +5642,8 @@ Effect: read.
 
 ## marina-descend
 
-Create and operate sovereign Marina descendants through World Collective.
+[experimental] Declare a child world from a world manifest (`genome`) and start or stop it as a separate
+local process with its own database, assets directory and ports (World Collective).
 Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it.
 Usage:
   marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]
@@ -6330,14 +6337,16 @@ Effect: write.
 
 ## mutation
 
-Recursive, signature-capable mutation lineage across cognition and civilization.
+[experimental] Append-only change records: a proposed, adopted, rejected, branched or observed change
+to a named target, with its patch, evidence and parent changes (signed when a signing key is set).
+Recording a change does not apply it; `mutation genome` derives a new world manifest.
 Usage:
   mutation record <domain> <target-ref> | <disposition> | <summary> | <patch JSON> [| parent mutation ids csv] [| evidence refs csv] [| descendant-ref]
   mutation genome <parent-genome-hash> | <summary> | <patch JSON> [| evidence refs csv]
   mutation show <id>
   mutation lineage <domain> <target-ref>
   mutation list [domain]
-Domains are open: cognition, association, institution, charter, federation, reproduction, genome, protocol, or future forms.
+Domains are free text, for example: role, association, charter, federation, reproduction, genome, protocol.
 
 Category: Lineage. Minimum rank: 0.
 Aliases: `mutations`.
@@ -7751,7 +7760,9 @@ Effect: execute.
 
 ## reproduce
 
-Create independently identified intellect descendants.
+[experimental] Record a new intellect derived from one or more parent intellects. This is a
+lineage record: it lists which components were inherited, changed, added or left out. Nothing is
+trained, copied or started.
 Usage:
   reproduce intellect <parent-ids csv> | <name> | <purpose> | <components JSON> [| contributors csv] [| evidence refs csv]
   reproduce show <reproduction-id>

@@ -928,7 +928,7 @@ function seed(db: MarinaDB): void {
     // not default/onboarding work. Discover them via `goto bench/arena` on demand.
     // ── Craft (goto craft/studio) ───────────────────────────────────────
     { title: "Write a spec for a small feature and submit it as a task for review", standing: 5 },
-    // ── Self-evolution ──────────────────────────────────────────────────
+    // ── Self-improvement ────────────────────────────────────────────────
     { title: "Set a constitution in core memory (memory set constitution ...)", standing: 3 },
     { title: "Take 10 notes and then reflect to synthesize", standing: 5 },
     // ── Exploration (optional) ──────────────────────────────────────────
