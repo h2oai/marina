@@ -80,6 +80,12 @@ export interface CommandDef {
    * behind both; the handler's own inline checks still apply.
    */
   readOnlyForm?: (input: CommandInput) => boolean;
+  /**
+   * Subcommands whose arguments carry credentials (`key add`, `connect auth`).
+   * The recorded `command` event keeps only `<verb> <subcommand> [redacted]`
+   * for these; `"*"` covers every form. See src/engine/command-redaction.ts.
+   */
+  sensitiveSubcommands?: readonly string[];
 }
 
 // ─── Room Context (injected into room modules) ──────────────────────────────

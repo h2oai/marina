@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Credentials stay out of the event log; operator-only reads and scopes are explicit.** A
+  command form that carries a credential (`key add`, `connect auth`, `adapter enable`; declared
+  with `CommandDef.sensitiveSubcommands`) is recorded as `<verb> <sub> [redacted]`, and key-shaped
+  strings are masked in every other recorded command; stored rows recorded in clear are removed
+  when the engine starts. `GET /api/events` no longer serves `command` events, matching the
+  dashboard WebSocket. `GET /api/keys`, `/api/principals`, `/api/federation/peers`,
+  `/api/operations/alerts` and `/api/models?refresh=1` need operator read capability; the
+  dashboard shows an "Operator only" state to other sessions. `/api/command` and `/api/ask` logins
+  count against the per-IP login-attempt limit. A supervision credential calls only the routing
+  endpoints the supervisor uses (an allowlist). The memory service API (`/v1/memory`) refuses a
+  client address that has spent its failed-credential budget, as `/mem` does.
+
 ### Changed
 
 - **Page reads honour robots.txt; keyless web sources can be turned off.** Before Marina reads a

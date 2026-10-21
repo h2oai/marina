@@ -7,6 +7,7 @@ import { DASHBOARD_OBSERVER_TTL_MS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import { Logger } from "../engine/logger";
 import type { EngineEvent } from "../types";
+import { dashboardEventShape } from "./dashboard-event-filter";
 import { memoryObserver } from "./memory/memory-visibility";
 
 /** Module logger: dashboard broadcast failures. */
@@ -130,7 +131,7 @@ export class DashboardBroadcaster {
     // principal's privilege is itself judged by a fresh observer.
     this.invalidateObservers(event);
     if (this.clients.size === 0) return;
-    const filtered = this.filterEvent(event);
+    const filtered = dashboardEventShape(event);
     if (!filtered) return;
     const msg = JSON.stringify({ type: "event", data: filtered });
     // Memory observability events are already reduced to ids/names/states by
@@ -147,47 +148,6 @@ export class DashboardBroadcaster {
         });
         this.clients.delete(ws);
       }
-    }
-  }
-
-  /**
-   * Strip sensitive fields from events before broadcasting to dashboard clients.
-   * Connection IDs and raw command input are internal details — dashboard viewers
-   * only need to know *that* something happened, not the internal identifiers.
-   */
-  private filterEvent(event: EngineEvent): Record<string, unknown> | null {
-    switch (event.type) {
-      case "connect":
-      case "disconnect":
-        // Raw transport-level connect/disconnect fire before entity binding and
-        // after teardown, so they carry no entity — only a connectionId, which
-        // we strip as an internal identifier. That leaves nothing to display
-        // (the feed rendered "undefined connected"), and they flood the feed on
-        // reconnect churn. The meaningful arrival/departure signal is the named
-        // entity_enter / entity_leave pair, so drop these entirely.
-        return null;
-      case "command":
-        // Drop entirely. Raw input is stripped (it may carry tokens/keys/
-        // passwords), which left a content-free row that rendered as a bare
-        // "> " — and the meaningful commands already surface as their own
-        // typed events (say_sent, tell_sent, note_created, recall_trace,
-        // task_*). So the bare command event is either empty noise or a
-        // duplicate of a better row beside it. Same rationale as
-        // connect/disconnect above.
-        return null;
-      case "say_sent":
-      case "tell_sent":
-        // Content-free by construction (names, a message ref and the causal
-        // envelope — src/engine/message-envelope.ts); who may see each one is
-        // decided per viewer in memoryObserver().event.
-        return event as Record<string, unknown>;
-      case "memory_job":
-      case "memory_service_event":
-        // Emitted by src/net/memory-observability.ts with ids/names/states
-        // only (never task/answer/record content) — pass through unchanged.
-        return event as Record<string, unknown>;
-      default:
-        return event as Record<string, unknown>;
     }
   }
 
