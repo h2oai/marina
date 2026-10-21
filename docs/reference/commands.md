@@ -1400,7 +1400,7 @@ Effect: write.
 ## build
 
 In-game building for rooms, templates, and dynamic commands.
-Usage: build room|modify|formation|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command
+Usage: build room|modify|formation|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command|access|invite|uninvite
 
 Rank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (operator grant; an operator may approve a single held run).
 
@@ -1411,8 +1411,23 @@ Examples:
   build command create weather
   build command reload weather
 
+Rooms are public by default. `build access <room> private` (owner or operator) makes entering need an invite (`build invite <room> <name>`); a person's agents share its invite.
+
 Category: Building. Minimum rank: 4.
 Aliases: none.
+
+### `build access <room>`
+
+Effect: read.
+
+- `field-0` (`room`): text, required.
+
+### `build access <room> private|public`
+
+Effect: write.
+
+- `field-0` (`room`): text, required.
+- `field-1` (`private|public`): choice, required, choices `private`, `public`.
 
 ### `build audit`
 
@@ -1615,6 +1630,20 @@ Effect: write.
 - `field-1` (`name`): text, required.
 - `field-2` (`description`): text, optional group `option-0`.
 - Group `option-0`: `description`.
+
+### `build invite <room> <name>`
+
+Effect: write.
+
+- `field-0` (`room`): text, required.
+- `field-1` (`name`): text, required.
+
+### `build uninvite <room> <name>`
+
+Effect: delete.
+
+- `field-0` (`room`): text, required.
+- `field-1` (`name`): text, required.
 
 ### `build unlink [from] <exit>`
 

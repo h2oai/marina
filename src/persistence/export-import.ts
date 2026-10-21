@@ -94,6 +94,8 @@ export const EXPORT_TABLES = [
   "macros",
   "room_sources",
   "room_templates",
+  // Private-room owners and invites (migration 176): world configuration, no content.
+  "room_access",
   "notes",
   // Historical snapshots may still carry uncommitted-to-canonical retirement intents.
   "legacy_memory_outbox",

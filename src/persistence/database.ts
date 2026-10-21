@@ -3706,6 +3706,23 @@ export class MarinaDB implements MarinaStores {
     return roomsDb.readRoomLog(this.db, room, since, limit);
   }
 
+  getRoomAccess(room: string): roomsDb.RoomAccess | undefined {
+    return roomsDb.getRoomAccess(this.db, room);
+  }
+
+  setRoomAccess(opts: {
+    room: string;
+    owner: string;
+    mode: "public" | "private";
+    invites?: string[];
+  }): roomsDb.RoomAccess {
+    return roomsDb.setRoomAccess(this.db, opts);
+  }
+
+  deleteRoomAccess(room: string): void {
+    roomsDb.deleteRoomAccess(this.db, room);
+  }
+
   clearDynamicCommands(): void {
     commandsDb.clearDynamicCommands(this.db);
   }

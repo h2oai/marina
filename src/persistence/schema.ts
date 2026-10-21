@@ -319,6 +319,21 @@ CREATE INDEX IF NOT EXISTS idx_room_log_room_id ON room_log(room, id);
 CREATE INDEX IF NOT EXISTS idx_room_log_at ON room_log(at);
 `,
   },
+  // `room_access` holds the rooms an owner made private (`build access <room>
+  // private`): owner and invite list by account name. A room with no row, or
+  // mode `public`, is open to everyone — the default for every room.
+  {
+    version: 176,
+    sql: `
+CREATE TABLE IF NOT EXISTS room_access (
+  room TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('public', 'private')),
+  invites TEXT NOT NULL DEFAULT '[]',
+  updated_at INTEGER NOT NULL
+);
+`,
+  },
 ];
 
 /** Migration 172 body — self-contained so later edits elsewhere never change it. */

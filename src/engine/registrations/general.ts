@@ -58,6 +58,7 @@ import { watchCommand } from "../commands/watch";
 import { whoCommand } from "../commands/who";
 import { worldCommand } from "../commands/world";
 import type { Engine } from "../engine";
+import { privateRoom, roomEntryRefusal } from "../room-access";
 import { answerViaLocalModel } from "./model-helpers";
 import { engineTellDeps } from "./tell-deps";
 
@@ -101,6 +102,9 @@ export function registerGeneralCommands(engine: Engine): void {
             }
           : {}),
         statusOf: (name: string) => engine.presence.statusOf(name),
+        ...(engine.db
+          ? { privateOwnerOf: (roomId: string) => privateRoom(engine.db!, roomId)?.owner }
+          : {}),
       },
     ),
   );
@@ -113,6 +117,8 @@ export function registerGeneralCommands(engine: Engine): void {
       moveEntity: (entityId, to) => engine.entities.move(entityId, to),
       buildContext: (room) => engine.buildContext(room),
       sendLook: (entityId) => engine.sendLook(entityId),
+      entryRefusal: (entity, room) =>
+        engine.db ? roomEntryRefusal(engine.db, entity, room) : null,
     }),
   );
 
@@ -136,6 +142,8 @@ export function registerGeneralCommands(engine: Engine): void {
       moveEntity: (entityId, to) => engine.entities.move(entityId, to),
       buildContext: (room) => engine.buildContext(room),
       sendLook: (entityId) => engine.sendLook(entityId),
+      entryRefusal: (entity, room) =>
+        engine.db ? roomEntryRefusal(engine.db, entity, room) : null,
       getAllEntities: () => engine.entities.all(),
       getEntityRoom: (entityId) => engine.getEntityRoom(entityId),
     }),

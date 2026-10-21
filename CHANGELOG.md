@@ -161,6 +161,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results written before stamping, pass `--allow-unversioned`; the report then carries a warning
   banner. **On upgrade**, existing result files have no stamp, so a spec over them reports
   `version-unknown` until they are rerun or `--allow-unversioned` is given.
+- **Private rooms, opt-in.** Every room stays public unless its owner (whoever built it, or an
+  operator) runs `build access <room> private`; entering then needs an invite (`build invite
+  <room> <name>`, `build uninvite`). A person's agents share its invite. `move`/exits, `goto` (to a
+  room or to someone inside) and a supervised resident's launch room are refused uninvited;
+  operators may enter. Whoever is inside when a room turns private stays, and `build access
+  <room>` lists them. The start room stays public; `say` already reaches only those present, and
+  tells, channels and groups are unaffected. Migration 176 (`room_access`, exported with the world).
 
 - **Formations in a room.** A room can run a turn rule — `debate`, `chorus` or `verification` —
   set with `build formation [room] <formation>|off` or `formation` on a room module (templates

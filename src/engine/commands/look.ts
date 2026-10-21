@@ -26,6 +26,8 @@ export interface LookExtras {
   readRoomLog?: (roomId: string, since: number, limit: number) => RoomLogRow[];
   /** An occupant's presence status. */
   statusOf?: (name: string) => Presence | undefined;
+  /** The room's owner when it is private (public rooms return undefined). */
+  privateOwnerOf?: (roomId: string) => string | undefined;
 }
 
 const LOOK_LOG_USAGE = "Usage: look log [since:<duration>] [limit:<n>]";
@@ -150,6 +152,9 @@ export function lookCommand(
           text += `\n${boardTag(names)}`;
         }
       }
+
+      const owner = extras.privateOwnerOf?.(room.id as string);
+      if (owner) text += `\n${fmtDim(`Private room (owner ${owner}) — build access ${room.id}`)}`;
 
       ctx.send(input.entity, text);
     },

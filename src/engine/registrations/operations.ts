@@ -64,6 +64,7 @@ export function registerOperationCommands(engine: Engine): void {
         unregisterCommand: (name) => engine.commands.unregisterOwned(`dynamic:${name}`, name),
         isBuiltinCommand: (name) => engine.commands.getDef(name) !== undefined,
         clearSandboxMetrics: (roomId) => engine.sandbox.clearMetrics(roomId),
+        startRoom: engine.config.startRoom,
       }),
     );
   }

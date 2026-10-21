@@ -1120,7 +1120,15 @@ export type EngineEvent =
   // event surface small while letting every list graduate to realtime.
   | {
       type: "coordination_change";
-      resource: "project" | "group" | "channel" | "pool" | "board" | "connector" | "command";
+      resource:
+        | "project"
+        | "group"
+        | "channel"
+        | "pool"
+        | "board"
+        | "connector"
+        | "command"
+        | "room";
       action: "create" | "update" | "delete";
       entity: EntityId;
       name?: string;
