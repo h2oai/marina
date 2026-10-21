@@ -124,6 +124,10 @@ describe("isWorkOnRequest", () => {
       ),
     ).toBe(true);
     expect(isWorkOnRequest(turn({ traceId: "req-1" }), "Bo", "req-1")).toBe(false);
+    // Events carry the config name, the holder is the sanitized entity name.
+    const hyphen = { type: "agent_turn_end", name: "Answerer-2", traceId: "req-1", timestamp: 1 };
+    expect(isWorkOnRequest(hyphen as EngineEvent, "Answerer2", "req-1")).toBe(true);
+    expect(isWorkOnRequest(hyphen as EngineEvent, "Answerer3", "req-1")).toBe(false);
     expect(isWorkOnRequest(turn({ traceId: "req-2" }), "Ann", "req-1")).toBe(false);
     expect(
       isWorkOnRequest(
@@ -199,6 +203,19 @@ describe("attention: one member owes each endpoint request", () => {
 
   it("a target naming the resident by name is its own", () => {
     expect(decide(request("bo"), "Bo", "e_bo").owed).toBe(true);
+    // The entity name ("Answerer2") names the resident whose config name is "Answerer-2".
+    expect(decide(request("Answerer2"), "Answerer-2", "e_2").owed).toBe(true);
+    expect(decide(request("Answerer3"), "Answerer-2", "e_2").keep).toBe(false);
+  });
+
+  it("the resident's own model_response, under its entity name, is not a peer's", () => {
+    const own = channelPerception(
+      JSON.stringify({ type: "model_response", id: "req-1", content: "42" }),
+      "Answerer2",
+    );
+    const d = decide(own, "Answerer-2", "e_2", ["req-1"]);
+    expect(d.reason).not.toBe("answered-elsewhere");
+    expect(d.release).toBeUndefined();
   });
 
   it("a re-offer addressed elsewhere releases the request the resident held", () => {
@@ -287,7 +304,10 @@ describe("lean adapter: endpoint requests addressed to another member", () => {
  * it is `silent`, and while working it reports traced turns (`workEveryMs`).
  */
 interface Member {
+  /** The config name: what the resident calls itself and its events carry ("Answerer-2"). */
   name: string;
+  /** The live entity's sanitized name, as the channel names it ("Answerer2"). */
+  entityName: string;
   id: string;
   claims: string[];
   released: string[];
@@ -328,6 +348,7 @@ describe("routed requests: exactly one claim per request", () => {
     cm.addMember(channelId, entity.id);
     const member: Member = {
       name,
+      entityName: entity.name,
       id: entity.id,
       claims: [],
       released: [],
@@ -370,7 +391,7 @@ describe("routed requests: exactly one claim per request", () => {
         cm.send(
           channelId,
           entity.id,
-          name,
+          entity.name, // the channel names the sender by its entity name
           JSON.stringify({
             type: "model_response",
             id: envelope.id,
@@ -473,6 +494,48 @@ describe("routed requests: exactly one claim per request", () => {
     expect(lifecycle("routed").some((e) => e.routeReason === "reoffered:claim-lapsed")).toBe(false);
   });
 
+  it("hyphenated config names: every working holder keeps its claim (no re-offer)", async () => {
+    using _state = scopeProcessState({
+      env: { MODEL_REQUEST_REMINDERS: "0", MARINA_REQUEST_CLAIM_LEASE_MS: "80" },
+    });
+    // Agent events say "Answerer-2"; the entities are "Answerer2" (sanitized at spawn).
+    const members = ["Answerer", "Answerer-2", "Answerer-3", "Answerer-4"].map((n) =>
+      addMember(n, { delayMs: 300, workEveryMs: 25 }),
+    );
+    expect(members.map((m) => m.entityName)).toEqual([
+      "Answerer",
+      "Answerer2",
+      "Answerer3",
+      "Answerer4",
+    ]);
+
+    const results = await Promise.all(
+      members.map((_, i) =>
+        routeToChannel(engine, "marina:crewx", `question ${i}`, { deadlineMs: 10_000 }),
+      ),
+    );
+
+    expect(lifecycle("routed").some((e) => e.routeReason === "reoffered:claim-lapsed")).toBe(false);
+    for (const m of members) {
+      expect(m.claims).toHaveLength(1); // its own request, held for the whole 300 ms
+      expect(m.released).toEqual([]);
+      const r = results.find((x) => x.requestId === m.claims[0])!;
+      expect(r.content).toBe(`${m.name}:${r.requestId}`);
+      expect(r.respondent?.name).toBe(m.entityName);
+    }
+  });
+
+  it("hyphenated config names: a silent holder still lapses and is re-offered", async () => {
+    using _state = scopeProcessState({
+      env: { MODEL_REQUEST_REMINDERS: "0", MARINA_REQUEST_CLAIM_LEASE_MS: "80" },
+    });
+    const stuck = addMember("Answerer-2", { silent: true });
+    const live = addMember("Answerer-3", { delayMs: 10 });
+    const result = await routeToChannel(engine, "marina:crewx", "q?", { deadlineMs: 10_000 });
+    expect(stuck.released).toEqual([result.requestId]);
+    expect(result.respondent?.name).toBe(live.entityName);
+  });
+
   it("deliberate fan-out (panel) still reaches every member, once each", async () => {
     using _state = scopeProcessState({ env: { MODEL_REQUEST_REMINDERS: "0" } });
     const members = ["Ann", "Bo", "Cy"].map((n) => addMember(n, { delayMs: 10 }));
@@ -480,5 +543,39 @@ describe("routed requests: exactly one claim per request", () => {
     const result = await routePanel(engine, "marina:crewx", "q?", undefined, 3, "concat");
     for (const m of members) expect(m.claims).toHaveLength(1);
     expect(result.content).toContain("### Answer 3");
+  });
+});
+
+describe("RequestDraftCollector: the lead under either spelling", () => {
+  it("finds the lead's text and draft whether named by config or entity name", async () => {
+    const { RequestDraftCollector } = await import("../src/coordination/request-deadline");
+    const text = new RequestDraftCollector("req-1", "Answerer2");
+    text.onEvent({
+      type: "agent_text_delta",
+      name: "Answerer-2",
+      delta: "42",
+      traceId: "req-1",
+      timestamp: 1,
+    } as EngineEvent);
+    text.onEvent({
+      type: "agent_turn_end",
+      name: "Answerer-2",
+      traceId: "req-1",
+      hadToolCalls: false,
+      toolCount: 0,
+      timestamp: 2,
+    } as EngineEvent);
+    text.onEvent({
+      type: "agent_text_delta",
+      name: "Answerer-3",
+      delta: "7",
+      traceId: "req-1",
+      timestamp: 3,
+    } as EngineEvent);
+    expect(text.best()).toEqual({ text: "42", source: "lead-text" });
+    const draft = new RequestDraftCollector("req-1", "Answerer2");
+    draft.addExplicit("Answerer2", "draft 42");
+    draft.addExplicit("Answerer3", "draft 7");
+    expect(draft.best()).toEqual({ text: "draft 42", source: "lead-draft" });
   });
 });

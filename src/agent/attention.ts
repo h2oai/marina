@@ -31,6 +31,7 @@
  *  7. the owed-reply rule (`MARINA_FORCED_ACTION_NUDGE`) and the wake band.
  */
 
+import { sameResidentName } from "../engine/entity-name";
 import { stripAnsi } from "../net/ansi";
 import type { Perception } from "../types";
 import { classifyIncomingTell, isPureAcknowledgement } from "./acknowledgement";
@@ -385,14 +386,14 @@ function endpointDispatchDrop(input: AttentionInput): AttentionDecision | undefi
   if (envelope.type === "model_request") {
     const target = envelope.target;
     if (!target || !input.selfId) return undefined;
-    if (target === input.selfId || target.toLowerCase() === selfName.toLowerCase())
-      return undefined;
+    if (target === input.selfId || sameResidentName(target, selfName)) return undefined;
     return { ...dropped("addressed-elsewhere", 0), ...release };
   }
   if (envelope.type === "model_response" || envelope.type === "model_response_end") {
     const sender = typeof p.data.senderName === "string" ? p.data.senderName : p.data.from;
-    if (typeof sender !== "string" || sender.toLowerCase() === selfName.toLowerCase())
-      return undefined;
+    // The channel names the sender by its entity name ("Answerer2"), the
+    // resident knows its config name ("Answerer-2"): compare them normalised.
+    if (typeof sender !== "string" || sameResidentName(sender, selfName)) return undefined;
     return { ...dropped("answered-elsewhere", 0), ...release };
   }
   return undefined;

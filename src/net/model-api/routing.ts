@@ -27,6 +27,7 @@ import {
   upstreamRefusalStatus,
 } from "../../coordination/request-deadline";
 import type { Engine } from "../../engine/engine";
+import { sameResidentName } from "../../engine/entity-name";
 import { fenceEntity, parseEvidenceCutoff } from "../../engine/evidence-fence";
 import { compareTraceCohorts } from "../../engine/trace-dataset";
 import { projectTraces } from "../../engine/trace-projection";
@@ -679,7 +680,7 @@ export async function routeToChannel(
       const onEvent = (event: EngineEvent) => {
         drafts.onEvent(event);
         if (holderName && isWorkOnRequest(event, holderName, requestId)) claim.renew();
-        if (event.type !== "agent_error" || event.name !== holderName) return;
+        if (event.type !== "agent_error" || !sameResidentName(event.name, holderName)) return;
         if (event.timestamp < startedAt) return;
         const status = upstreamRefusalStatus(event.error);
         if (status === undefined) return;

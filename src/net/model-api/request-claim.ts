@@ -13,6 +13,7 @@
 // request is re-offered to another eligible member, and the old holder,
 // seeing the re-offer addressed elsewhere, drops it.
 
+import { sameResidentName } from "../../engine/entity-name";
 import type { EngineEvent } from "../../types";
 
 /** Default claim lease: no sign of work on a request for this long re-offers it. */
@@ -43,6 +44,9 @@ const AGENT_WORK_EVENTS = new Set<EngineEvent["type"]>([
 /**
  * An agent event that is `agentName`'s work on request `requestId`: one of its
  * turn, tool or text events under the request's trace, or a span that links it.
+ * Agent events name the agent by its config name ("Answerer-2") and carry no
+ * entity id, while the holder is a live entity ("Answerer2"), so the names
+ * are compared normalised (`sameResidentName`), never as raw strings.
  */
 export function isWorkOnRequest(event: EngineEvent, agentName: string, requestId: string): boolean {
   if (!AGENT_WORK_EVENTS.has(event.type)) return false;
@@ -51,7 +55,7 @@ export function isWorkOnRequest(event: EngineEvent, agentName: string, requestId
     traceId?: string;
     links?: Array<{ traceId: string }>;
   };
-  if (e.name !== agentName) return false;
+  if (!sameResidentName(e.name, agentName)) return false;
   return e.traceId === requestId || !!e.links?.some((link) => link.traceId === requestId);
 }
 

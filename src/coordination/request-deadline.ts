@@ -20,6 +20,7 @@
  */
 
 import { mostAgreedDraft } from "../agent/budget-terminal";
+import { residentNameKey } from "../engine/entity-name";
 import type { EngineEvent } from "../types";
 
 /** Longest draft kept per member (characters). */
@@ -73,28 +74,39 @@ export class RequestDraftCollector {
   private readonly texts = new Map<string, string>();
   private readonly partial = new Map<string, string>();
 
+  /**
+   * Members are keyed by `residentNameKey`: explicit drafts arrive under the
+   * channel sender's entity name ("Answerer2"), model text under the agent's
+   * config name on its events ("Answerer-2"), and both must find the lead.
+   */
+  private readonly leadName: string | undefined;
+
   constructor(
     private readonly traceId: string,
-    private readonly leadName: string | undefined,
-  ) {}
+    leadName: string | undefined,
+  ) {
+    this.leadName = leadName === undefined ? undefined : residentNameKey(leadName);
+  }
 
   /** An explicit `model_draft` from a member on the request channel. */
   addExplicit(memberName: string, text: string): void {
     const t = text.trim();
-    if (t) this.explicit.set(memberName, t.slice(0, MAX_DRAFT_CHARS));
+    if (t) this.explicit.set(residentNameKey(memberName), t.slice(0, MAX_DRAFT_CHARS));
   }
 
   /** Feed every engine event; only this request's trace is read. */
   onEvent(event: EngineEvent): void {
     if (event.type === "agent_text_delta" && event.traceId === this.traceId) {
-      const had = this.partial.get(event.name) ?? "";
-      if (had.length < MAX_DRAFT_CHARS) this.partial.set(event.name, had + event.delta);
+      const member = residentNameKey(event.name);
+      const had = this.partial.get(member) ?? "";
+      if (had.length < MAX_DRAFT_CHARS) this.partial.set(member, had + event.delta);
       return;
     }
     if (event.type === "agent_turn_end" && event.traceId === this.traceId) {
-      const text = (this.partial.get(event.name) ?? "").trim();
-      this.partial.delete(event.name);
-      if (text) this.texts.set(event.name, text.slice(0, MAX_DRAFT_CHARS));
+      const member = residentNameKey(event.name);
+      const text = (this.partial.get(member) ?? "").trim();
+      this.partial.delete(member);
+      if (text) this.texts.set(member, text.slice(0, MAX_DRAFT_CHARS));
     }
   }
 
