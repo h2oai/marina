@@ -454,13 +454,31 @@ export const tau2Adapter = preset(
   { records: "simulations", id: "task_id", score: "reward_info.reward", replicate: "trial" },
 );
 
-/** BrowseComp-Plus evaluation directory (`evals/run_N_eval.json`, one file per query). */
+/**
+ * BrowseComp-Plus evaluation directory (`evals/run_N_eval.json`, one file per
+ * query). As in the official evaluator, an incomplete run (turn cap, empty
+ * reply: `is_completed: false`, never judged) is WRONG, not missing: dropping
+ * it would score only the queries an arm finished, and lose exactly the items
+ * where two formations differ in finishing. A completed run without a judge
+ * verdict (a failed judge call) stays unscored.
+ */
 export const browsecompAdapter: SuiteAdapter = {
-  ...preset(
-    "browsecomp",
-    "BrowseComp-Plus evals directory: run_N_eval.json per query, judge_result.correct",
-    { id: "query_id", score: "judge_result.correct" },
-  ),
+  name: "browsecomp",
+  description:
+    "BrowseComp-Plus evals directory: run_N_eval.json per query, judge_result.correct; an incomplete run scores 0",
+  loadRuns(source) {
+    const run = new Map<string, number>();
+    for (const r of readRecordsAt(source.path)) {
+      if (!isRecord(r)) continue;
+      const id = r.query_id;
+      if (typeof id !== "string" && typeof id !== "number") continue;
+      const correct = fieldAt(r, "judge_result.correct");
+      const score =
+        typeof correct === "boolean" ? (correct ? 1 : 0) : r.is_completed === false ? 0 : undefined;
+      if (score !== undefined) run.set(String(id), score);
+    }
+    return [[...run].map(([id, score]) => ({ id, score }))];
+  },
   // One stamp per query file: a resume across commits shows as mixed.
   versions: (source) => fileVersions(source.path, (f) => /_eval\.json$/.test(f)),
 };

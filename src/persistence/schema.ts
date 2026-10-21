@@ -298,6 +298,27 @@ CREATE INDEX IF NOT EXISTS idx_attention_wakes_at ON attention_wakes(at);
 ALTER TABLE agent_configs ADD COLUMN attention_relay TEXT;
 `,
   },
+  // `room_log` is each room's bounded recent history for `look log`: `say`,
+  // `emote`, arrivals and departures as those present saw them, with the
+  // message envelope's `cause`/`depth`. At most 200 rows per room (pruned on
+  // write, src/persistence/db-rooms.ts) and 7 days (src/engine/retention.ts).
+  {
+    version: 175,
+    sql: `
+CREATE TABLE IF NOT EXISTS room_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  room TEXT NOT NULL,
+  entity TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  content TEXT NOT NULL,
+  cause TEXT,
+  depth INTEGER NOT NULL DEFAULT 0,
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_room_log_room_id ON room_log(room, id);
+CREATE INDEX IF NOT EXISTS idx_room_log_at ON room_log(at);
+`,
+  },
 ];
 
 /** Migration 172 body — self-contained so later edits elsewhere never change it. */

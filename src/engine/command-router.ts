@@ -3,6 +3,7 @@
 
 import { namedFormsForCommand } from "../sdk/named-command-forms";
 import type { CommandDef, CommandHandler, CommandInput, EntityId, RoomId } from "../types";
+import { expandMention } from "./parse-mentions";
 
 function freezeMetadata(value: unknown, seen = new Set<object>()): void {
   if (!value || typeof value !== "object" || seen.has(value)) return;
@@ -109,6 +110,10 @@ export class CommandRouter {
   /** Parse raw input into a CommandInput */
   parse(raw: string, entity: EntityId, room: RoomId): CommandInput {
     const trimmed = raw.trim();
+
+    // `@name …`, `@a,b …`, `@all …`, `@@…` (src/engine/parse-mentions.ts).
+    const mention = trimmed.startsWith("@") ? expandMention(trimmed) : undefined;
+    if (mention) return this.parse(mention, entity, room);
 
     // Handle prefix aliases (e.g., 'hello → say hello)
     for (const [prefix, verb] of this.prefixAliases) {

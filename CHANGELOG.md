@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Paired benchmark arms compare like with like.** The BrowseComp transfer adapter scores an incomplete
+  run's missing items 0 instead of dropping them, so an arm that times out more is no longer
+  flattered. `MARINA_GROUND_CACHE=<file.json>` lets short-answer arms run with `--ground search`
+  share one grounding-evidence cache, so paired arms read byte-identical evidence.
+
 - **Messages carry a causal envelope, and the canvas sees speech.** `say`, `tell` and `re` emit
   content-free `say_sent` / `tell_sent` events (names, a message ref, `cause`, `depth`; never the
   words), so the canvas draws say and tell arcs again. Every say, tell, re, shout and channel post
@@ -107,6 +112,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results written before stamping, pass `--allow-unversioned`; the report then carries a warning
   banner. **On upgrade**, existing result files have no stamp, so a spec over them reports
   `version-unknown` until they are rerun or `--allow-unversioned` is given.
+
+- **World awareness.** `look log [since:<duration>]` reads your room's recent history (speech, emotes,
+  arrivals, departures; bounded per room, migration 175). `who` and `look` show every agent's status
+  (working, idle, blocked, needs you, resting, offline), and `who watch <name> [idle|blocked|any]
+  [once]` sends one notice per change. `@name`, `@a,b` and `@all` expand to `agent attention` before
+  dispatch (`agent attention` now takes a comma list or `all`); `@@` escapes to `say`. Supervised
+  residents' digests fold arrivals, departures and server notices.
 
 - **Peer code review with authority.** `code review request <name|auto> [-- claims]` snapshots the
   author's changes (a coding-session diff, or the worktree diff a supervised resident's supervisor

@@ -191,7 +191,6 @@ const READ_VERBS: ReadonlySet<string> = new Set([
   "examine",
   "ex",
   "x",
-  "who",
   "inventory",
   "i",
   "inv",
@@ -232,6 +231,8 @@ const has = (set: readonly string[], word: string | undefined) => !!word && set.
 
 /** Read-only subcommands per command (by canonical name and alias). */
 const READ_SUBCOMMANDS: Record<string, (words: string[]) => boolean> = {
+  // `who watch <name> …` registers a change notice; bare `who` / `who watch` read.
+  who: ([sub, target]) => sub !== "watch" || target === undefined,
   // `pool list`, `pool <name> recall|status|list|audit …`
   pool: ([a, b]) =>
     a === "list" || (!!a && a !== "create" && has(["recall", "status", "list", "audit"], b)),
@@ -598,6 +599,9 @@ const PEER_MESSAGE_READS: Record<string, (words: string[]) => boolean> = {
   board: ([a]) => !a || has(["list", "read", "search", "history"], a),
   tell: ([a]) => a === "inbox",
   feed: () => true,
+  // `look log`: what others in the room said.
+  look: ([a]) => a === "log",
+  l: ([a]) => a === "log",
 };
 
 function commandResultTrust(raw: string): { trust?: ResultTrust; peerMessages: boolean } {

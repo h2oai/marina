@@ -682,7 +682,8 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   // orbiting sprites inside RoomNode read the polled field and lied about
   // what the agent was actually doing).
   const entitiesByRoom = useMemo(() => {
-    const map: Record<string, { name: string; kind: string; state: string }[]> = {};
+    const map: Record<string, { name: string; kind: string; state: string; vendor?: string }[]> =
+      {};
     for (const entity of entities) {
       const roomId = entity.room;
       if (!map[roomId]) map[roomId] = [];
@@ -692,11 +693,12 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
         ? streaming && streaming.text.length > 0
           ? "speaking"
           : "thinking"
-        : (entity.agentStatus?.state ?? "online");
+        : (entity.presence ?? entity.agentStatus?.state ?? "online");
       map[roomId].push({
         name: entity.name,
         kind: entity.kind,
         state: liveState,
+        ...(entity.vendor ? { vendor: entity.vendor } : {}),
       });
     }
     return map;

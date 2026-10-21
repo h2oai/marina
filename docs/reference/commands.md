@@ -217,6 +217,13 @@ Effect: write.
 - `field-0` (`name`): text, required.
 - `field-1` (`msg`): text, required.
 
+### `agent attention <a,b|all> <message>`
+
+Effect: write.
+
+- `field-0` (`a,b|all`): text, required, choices `a,b`, `all`.
+- `field-1` (`message`): text, required.
+
 ### `agent attention-feedback <name> noise`
 
 Effect: write.
@@ -5537,7 +5544,7 @@ Effect: delete.
 
 ## look
 
-Look at the space, or examine something closely. Usage: look [target]
+Look at the space, or examine something closely. `look log [since:<duration>]` shows what was said here recently (speech, emotes, arrivals and departures). Usage: look [target]
 
 Category: Navigation. Minimum rank: 0.
 Aliases: `l`, `examine`, `ex`, `x`.
@@ -5548,6 +5555,15 @@ Effect: read.
 
 - `field-0` (`target`): text, optional group `option-0`.
 - Group `option-0`: `target`.
+
+### `look log [since:<duration>] [limit:<n>]`
+
+Effect: read.
+
+- `field-0` (`since`): text, optional group `option-0`.
+- `field-1` (`limit`): number, optional group `option-1`.
+- Group `option-0`: `since:duration`.
+- Group `option-1`: `limit:n`.
 
 ## ls
 
@@ -9242,7 +9258,7 @@ Effect: execute.
 
 ## who
 
-List all connected entities. Agents with no activity in 5m are tagged [silent].
+List all connected entities with each agent's status (working, idle, blocked, needs you, resting, offline). Agents with no activity in 5m are tagged [silent]. `who watch <name> [idle|blocked|any] [once]` sends you one notice per status change instead of polling.
 
 Category: Information. Minimum rank: 0.
 Aliases: none.
@@ -9251,6 +9267,26 @@ Aliases: none.
 
 Effect: read.
 
+
+### `who watch`
+
+Effect: read.
+
+
+### `who watch <name> [idle|blocked|any] [once]`
+
+Effect: write.
+
+- `field-0` (`name`): text, required.
+- `field-1` (`idle|blocked|any`): choice, optional group `option-0`, choices `idle`, `blocked`, `any`.
+- Group `option-0`: `idle|blocked|any`.
+- Group `option-1`: `once`.
+
+### `who watch <name> off`
+
+Effect: delete.
+
+- `field-0` (`name`): text, required.
 
 ## witness
 

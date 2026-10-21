@@ -121,6 +121,13 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "attention-bridge decisions per supervised resident (refs and reasons only)",
   },
   {
+    table: "room_log",
+    timeColumn: "at",
+    kind: "telemetry",
+    keepMs: 7 * DAY_MS,
+    note: "recent room history for `look log` (also bounded per room on write)",
+  },
+  {
     table: "schedule_runs",
     timeColumn: "started_at",
     kind: "telemetry",

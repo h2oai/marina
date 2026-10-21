@@ -41,13 +41,14 @@ import { memoryAccess } from "../memory/access";
 import { residentMemoryAPI } from "../memory/resident-service";
 import { attachModelTraceSink } from "../model/trace";
 import type { AdapterManager } from "../net/adapters/adapter-manager";
-import { connects } from "../net/ansi";
+import { connects, stripAnsi } from "../net/ansi";
 import { attachRouteHealthStore, coreMemoryRouteStore } from "../net/model/route-health";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import { fileResidentForecast } from "../outcomes/filing";
 import { observeOutcomeEvent } from "../outcomes/live";
 import type { MarinaDB } from "../persistence/database";
+import type { RoomLogKind } from "../persistence/db-rooms";
 import { writeSample } from "../resolvers/sample-writer";
 import type { StorageProvider } from "../storage/provider";
 import type { OtlpExporterStatus } from "../telemetry/otlp-exporter";
@@ -92,6 +93,7 @@ import { audioAvailable } from "./media/providers/audio-registry";
 import { engineSharedWriteHook } from "./memory-dispatch";
 import { envelopeFields, messageEnvelope } from "./message-envelope";
 import { getRank, rankName } from "./permissions";
+import { PresenceTracker } from "./presence";
 import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
@@ -99,6 +101,16 @@ import { ShellRuntime } from "./shell-runtime";
 import { attachWorldSpendLedger } from "./spend-ledger";
 import { registerTickJobs } from "./tick-jobs";
 import { type TickJobStatus, TickScheduler } from "./tick-scheduler";
+
+/** Room broadcasts recorded in the room log, by perception tag. */
+const ROOM_LOG_KINDS: Record<string, RoomLogKind> = {
+  say: "say",
+  emote: "emote",
+  arrive: "arrive",
+  connect: "arrive",
+  leave: "leave",
+  disconnect: "leave",
+};
 
 /** Identical tick-failure messages are logged at most once per this interval. */
 const TICK_ERROR_LOG_INTERVAL_MS = 30_000;
@@ -207,6 +219,13 @@ export class Engine {
   /** @internal — test seam for the command-phase budget. */
   commandPhaseBudgetMs = COMMAND_PHASE_BUDGET_MS;
   /** @internal */ readonly _eventLog: EventLog;
+  /** Presence status per agent, derived from engine events (src/engine/presence.ts). */
+  readonly presence = new PresenceTracker({
+    nameOf: (id) => this.entities.get(id)?.name,
+    notify: (watcher, text, data) => {
+      this.sendToEntity(watcher, text, "watch", data);
+    },
+  });
   /** @internal — backward-compatible accessor for the raw event array */
   get eventLog(): EngineEvent[] {
     return this._eventLog.getAll();
@@ -495,6 +514,8 @@ export class Engine {
     // The outcome path (src/outcomes/): a creator's verdict on a task
     // submission is a resolved result — recorded once, learned from.
     this.addEventListener((event) => observeOutcomeEvent(this.db, event));
+    // Presence (`who`, `look`, `who watch`): derived from agent events.
+    this.addEventListener((event) => this.presence.observe(event));
   }
 
   // ─── Room Registration ──────────────────────────────────────────────────
@@ -1021,6 +1042,30 @@ export class Engine {
     }
   }
 
+  /** One `look log` row per room broadcast of speech or movement (src/persistence/db-rooms.ts). */
+  private appendRoomLog(
+    room: RoomId,
+    entity: string | undefined,
+    message: string,
+    tag: string | undefined,
+    metadata: Record<string, unknown> | undefined,
+  ): void {
+    const kind = tag ? ROOM_LOG_KINDS[tag] : undefined;
+    if (!kind || !entity || !this.db) return;
+    const db = this.db;
+    tryLog(this.logger, "db", "Room log append failed", () => {
+      db.appendRoomLog({
+        room,
+        entity,
+        kind,
+        content: stripAnsi(message).slice(0, 2000),
+        ...(typeof metadata?.cause === "string" ? { cause: metadata.cause } : {}),
+        ...(typeof metadata?.depth === "number" ? { depth: metadata.depth } : {}),
+        at: Date.now(),
+      });
+    });
+  }
+
   broadcastToRoomExcept(
     room: RoomId,
     exclude: EntityId,
@@ -1030,6 +1075,7 @@ export class Engine {
   ): void {
     const sender = this.entities.get(exclude);
     const senderName = sender?.name;
+    this.appendRoomLog(room, senderName, message, tag, metadata);
     const entities = this.entities.inRoom(room);
     for (const entity of entities) {
       if (entity.id !== exclude) {

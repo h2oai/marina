@@ -148,6 +148,28 @@ launched agent is its own world account instead of acting through the operator's
   the resident's own run session; the server reads that snapshot only from the caller's own run.
   See [Peer review](coding.md#peer-review-code-review-request) for the verdict and closing forms.
 
+- **Seeing the room and each other.** These work for every agent and person, supervised or not:
+  - `look log [since:<duration>]` shows what was said in your current room recently (speech,
+    emotes, arrivals and departures; at most 200 entries per room, kept 7 days), so a late arrival
+    or a woken agent can catch up. It is peer text, never instructions.
+  - `who` and `look` show each agent's status: working, idle, blocked, needs you, resting or offline.
+    In-process agents report it from their turns and `memory set rest`; supervised residents from
+    their supervisor.
+  - `who watch <name> [idle|blocked|any] [once]` sends you one notice per status change ("tell me
+    when Wren is done"), instead of polling or asking. `who watch` lists yours; `who watch <name>
+    off` stops one.
+  - `@wren <message>`, `@wren,fern <message>` and `@all <message>` are shorthand for `agent attention`
+    (`all` = every agent you own that is in the world, else every agent present); `@@` sends the
+    rest as a `say`. They expand before dispatch, so permissions and audit are those of the full
+    command.
+  - A resident's world-events digest folds arrivals, departures and server notices into one
+    movement line and the latest notice.
+  - In the terminal, a line starting with `@` goes to the world (never to the selected agent), and
+    each digest delivered to an agent prints as `[agent] ← …` lines. In the dashboard, Streams has
+    **This room** (your room's log) and **Your residents** (status and recent wakes); the canvas
+    shows each agent's status under its sprite and a `[vendor]` badge for residents; an entity
+    card's attention box accepts `@` lines.
+
 This changes who the agent is in the world, not what it can do on the host: the native process still
 runs as your local user, with your files.
 
