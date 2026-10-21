@@ -640,12 +640,18 @@ function messageText(message: AgentMessage): string {
 }
 
 // URLs of any scheme (`https://…`, `marina-memory://…`), typed world ids
-// (`note:12`, `task#4`, `asset:ab12`), `#123` handles and file paths.
+// (`note:12`, `task#4`, `asset:ab12`), `#123` / `#W123` handles, file paths,
+// and — whatever the tool — the VALUE of any JSON field named like an id
+// (`"docid": "33294"`, `"user_id": "…"`, `"orderId": 7`) and snake_case
+// identifiers ending in a number (`credit_card_2112420`). A pattern with a
+// `ref` group contributes that group, not the whole match.
 const POINTER_PATTERNS = [
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`)\]}\\]+/gi,
   /\b(?:note|task|chronicle|asset|record|source|proposal|bench|trace|run|eval|canvas|project|crew|pool|skill|job|req|issue|pr|commit|arena|q|pair)[:#][A-Za-z0-9][\w.:/-]*/g,
-  /(?<![\w&#])#\d{1,9}\b/g,
+  /(?<![\w&#])#[A-Za-z]{0,3}\d{1,12}\b/g,
   /(?<![\w/.-])(?:[\w.-]+\/)+[\w-]+\.[a-z0-9]{1,6}\b/gi,
+  /\\?"[A-Za-z_]*(?:id|Id|ID)\\?"\s*:\s*(?:\\?"(?<ref>[^"\s\\]{3,80})\\?"|(?<ref2>\d{3,20})\b)/g,
+  /(?<![\w-])[a-z][a-z0-9]*(?:_[a-z0-9]+)*_\d{3,}(?![\w-])/g,
 ];
 
 /** The references `messages` name, oldest first, deduplicated, the most recent kept. */
@@ -654,7 +660,10 @@ export function extractPointers(messages: readonly AgentMessage[]): string[] {
   for (const message of messages) {
     const text = messageText(message).slice(0, POINTER_SCAN_CHARS);
     for (const pattern of POINTER_PATTERNS)
-      for (const match of text.matchAll(pattern)) found.push(match[0].replace(/[.,;:]+$/, ""));
+      for (const match of text.matchAll(pattern)) {
+        const ref = match.groups ? (match.groups.ref ?? match.groups.ref2) : match[0];
+        if (ref) found.push(ref.replace(/[.,;:]+$/, ""));
+      }
   }
   return mergePointers([], found);
 }
