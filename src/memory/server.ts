@@ -3,6 +3,8 @@
 
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { isLocalProfile } from "../engine/trust-profile";
+import { refuseDisallowedHost } from "../net/host-allowlist";
 import { handleMemoryServiceApi } from "../net/memory/memory-service-api";
 import { RequestDrain } from "../net/request-drain";
 import { MarinaDB } from "../persistence/database";
@@ -24,13 +26,17 @@ export function serveMemory(options: {
   const service = new MemoryService(db, options.embeddings);
   const requests = new RequestDrain();
   let draining = false;
+  const hostname = options.hostname ?? "127.0.0.1";
   const server = Bun.serve({
-    hostname: options.hostname ?? "127.0.0.1",
+    hostname,
     port: options.port ?? 3301,
     maxRequestBodySize: 2 * 1024 * 1024,
     idleTimeout: 60,
     fetch: async (req, server) => {
       if (draining) return Response.json({ error: "Instance is draining" }, { status: 503 });
+      // DNS-rebinding protection: same Host rule as the main listener.
+      const misdirected = refuseDisallowedHost(req, hostname, isLocalProfile());
+      if (misdirected) return misdirected;
       const leave = requests.enter();
       try {
         return await handleMemoryServiceApi(req, service, server);

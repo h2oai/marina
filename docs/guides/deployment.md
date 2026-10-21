@@ -153,6 +153,7 @@ Marina's HTTP API requires authentication **by default** — but it's easy to we
 - [ ] **Set `GATEWAY_SECRET`** if (and only if) you use [federation](federation.md). Otherwise leave it unset.
 - [ ] **Terminate TLS at a reverse proxy** (next section). Marina speaks plain HTTP/WS; never expose `3300` directly to the internet.
 - [ ] Rate limits are built in (WS 5/s, MCP 5/s, Model API 2/s per IP, Memory API 10/s per agent, dashboard REST 60/10 s per principal, canvas + asset writes 30/10 s per principal, public `/api/entity/*` 30/10 s per IP, MCP sessions 10/min per IP, pre-auth `/api/setup-status` 20/min per IP, model-API reads 120/min per IP, public asset reads 300/min per IP, and 20 failed `/v1` / `/mem` credentials per IP per minute before that address is refused) but a proxy-level limit is still wise. Per-IP limits key on the TCP peer; set `MARINA_TRUST_PROXY=true` behind your reverse proxy so they key on `X-Forwarded-For` instead.
+- [ ] **Public hostname on a loopback bind** (a reverse proxy on the same host forwarding to `127.0.0.1:3300`): set `MARINA_ALLOWED_HOSTS=marina.example.com` — a loopback bind answers only to loopback `Host` names and the names listed there (DNS-rebinding guard), so without it every proxied request gets `421`. On a non-loopback bind, setting it turns the same check on. See [security](../architecture/security.md).
 - [ ] **MCP behind a public hostname**: set `MARINA_MCP_ALLOWED_HOSTS=mcp.example.com` (DNS-rebinding guard; unset, a public bind accepts only loopback names, the bind address, the machine hostname and the `BETTER_AUTH_URL`/`ALLOWED_ORIGINS` hosts) — the transport already requires a `MODEL_API_KEYS` bearer on any non-loopback bind. See [mcp.md](../mcp.md#transport-security).
 - [ ] **Request bodies** are capped at 8 MiB (`MARINA_MAX_REQUEST_BODY_BYTES`); asset uploads at 50 MiB (`MARINA_MAX_UPLOAD_BYTES`). Uploaded assets are MIME-allowlisted and served with `nosniff` + a no-script CSP; every HTML page gets `X-Frame-Options: SAMEORIGIN` and the dashboard Content-Security-Policy below.
 
@@ -179,6 +180,11 @@ marina.example.com {
     reverse_proxy localhost:3300
 }
 ```
+
+Caddy forwards the client's `Host` (`marina.example.com`). When Marina binds loopback (the default
+outside Docker), list that name: `MARINA_ALLOWED_HOSTS=marina.example.com`; otherwise Marina
+answers `421 Misdirected Request`. Alternatively have the proxy send a loopback Host
+(`header_up Host {upstream_hostport}` in Caddy, `proxy_set_header Host localhost;` in nginx).
 
 Caddy proxies WebSockets transparently. The equivalent nginx `location /` needs `proxy_set_header Upgrade $http_upgrade;` and `proxy_set_header Connection "upgrade";`. Behind an AWS ALB, enable the WebSocket-compatible defaults and a generous idle timeout (the WS server caps idle at ~255s; set the ALB idle timeout to 300s+).
 

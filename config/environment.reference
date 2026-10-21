@@ -1392,6 +1392,10 @@
 # MCP session creations and login/auth tool calls per client IP per minute. 0 disables.
 # MARINA_MCP_SESSIONS_PER_MIN=10
 
+# Extra Host header values the main listener (HTTP routes and WebSocket upgrades) accepts, comma-separated; `name` matches on any port, `name:port` exactly. On a loopback bind or under the local trust profile only loopback names (localhost, 127.x, [::1]), the BETTER_AUTH_URL host and these are answered; anything else gets 421. On a non-loopback bind, setting it turns the same validation on (loopback names stay allowed) — set it to your public hostname behind a reverse proxy. Unset on a non-loopback bind: Host is not validated.
+# @protected
+# MARINA_ALLOWED_HOSTS=marina.example.com
+
 # Extra Host header values /mcp accepts (DNS-rebinding protection; validation is never off). Unset on a non-loopback bind: only loopback names, a specific bind address, the machine hostname and the BETTER_AUTH_URL / ALLOWED_ORIGINS hosts. List LAN IPs or other names clients use here.
 # @protected
 # MARINA_MCP_ALLOWED_HOSTS=mcp.example.com

@@ -41,11 +41,10 @@ import {
 } from "../../engine/trace-analytics";
 import { getTrustProfile, isLocalUngated, isOpenApiMode } from "../../engine/trust-profile";
 import type { EngineEvent, EntityId } from "../../types";
+import { loopbackBindFromEnv, transportAuthRequired } from "../host-allowlist";
 import { HTTP_RATE_LIMITS } from "../http-utils";
-import { isLoopbackHostname } from "../loopback";
 import { memoryObserver } from "../memory/memory-visibility";
 import { getLastProviderProbe } from "../model/model-api";
-import { modelApiKeySecrets } from "../model-api/api-keys";
 import type {
   AgentOperatorRow,
   OpsAgentStopResponse,
@@ -438,31 +437,8 @@ export function providerProbeSummary(): ProviderProbeSummary[] | null {
 
 // ─── Security posture ───────────────────────────────────────────────────────
 
-/**
- * Same resolution as `resolveWsBindHostname` in websocket-server.ts, kept local
- * so this module does not join the websocket-server → dashboard-api import
- * cycle; loopback itself is the shared `isLoopbackHostname`.
- */
-export function loopbackBindFromEnv(env: NodeJS.ProcessEnv = process.env): boolean {
-  const explicit = (env.WS_HOST ?? env.MARINA_HOST ?? "").trim();
-  const host = explicit
-    ? explicit
-    : (env.MARINA_PUBLIC ?? "").trim().toLowerCase() === "true"
-      ? "0.0.0.0"
-      : "127.0.0.1";
-  return isLoopbackHostname(host);
-}
-
-/**
- * Mirrors `mcpTransportAuthRequired` in mcp-server.ts: keys configured,
- * sign-in enabled, or a non-loopback bind turn the bearer requirement on.
- */
-export function mcpAuthRequiredFromEnv(
-  loopbackBind: boolean,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return modelApiKeySecrets(env).length > 0 || env.MARINA_AUTH === "better-auth" || !loopbackBind;
-}
+/** Shared with the listeners (host-allowlist.ts); re-exported for existing callers. */
+export { loopbackBindFromEnv, transportAuthRequired as mcpAuthRequiredFromEnv };
 
 const LIMITER_KEYING: Record<keyof typeof HTTP_RATE_LIMITS, OpsLimiter["keyedBy"]> = {
   dashboard: "principal",
@@ -481,7 +457,7 @@ export function securityPosture(engine: Engine): OpsSecurity {
     trustProfile: getTrustProfile(),
     ungated: isLocalUngated(),
     autonomy: getAutonomyPosture(),
-    mcpAuthRequired: mcpAuthRequiredFromEnv(loopbackBind),
+    mcpAuthRequired: transportAuthRequired(loopbackBind),
     openApi: isOpenApiMode(),
     trustProxy: process.env.MARINA_TRUST_PROXY === "true",
     authRequired: !!engine.config.authRequired,
