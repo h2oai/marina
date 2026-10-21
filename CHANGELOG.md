@@ -91,6 +91,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Peer code review with authority.** `code review request <name|auto> [-- claims]` snapshots the
+  author's changes (a coding-session diff, or the worktree diff a supervised resident's supervisor
+  captures) and asks a reviewer through an ordinary `tell`; `auto` prefers a different vendor,
+  then a different model. Only the reviewer answers with `code review verdict <id> approve|rework
+  [-- findings]`; rework reopens the work for the next round. The author can neither give a verdict
+  nor close the review: a person closes it with `code review approve|reject <id>`, and a decision
+  against the reviewer's verdict is recorded as an override. Standing follows the verified-code
+  rule. Events `review_requested`, `review_verdict` and `review_closed` are content-free.
+
 - **The starved earned loops get fed** (wiring item 4, "make Marina use Marina").
   - **Forecast shadow challengers** (`src/forecast/shadow.ts`, `MARINA_FORECAST_SHADOW=off|<fraction>`,
     default off; `_MAX_PER_DAY` 10, `_CAP_USD` $2 per UTC day). On a sampled share of filed live
