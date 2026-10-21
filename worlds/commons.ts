@@ -85,7 +85,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "World templates steer Marina instances toward different purposes. " +
       "The 'commons' world (this one) seeds coordination infrastructure. " +
-      "'research' seeds a research lab. 'personal' seeds a self-evolution environment. " +
+      "'research' seeds a research lab. 'personal' seeds a self-improvement environment. " +
       "'default' is an intent-first workbench. 'showcase' contains the full capability grid. " +
       "Set MARINA_WORLD to switch.",
     importance: 7,

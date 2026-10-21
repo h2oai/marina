@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import { bold, dim, header, separator, status } from "../../net/ansi";
 import {
   INTELLECT_EVENT_KINDS,
@@ -9,7 +10,9 @@ import {
 } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 
-const HELP = `Intellect — portable cognitive identity and append-only lifecycle claims.
+const HELP =
+  experimentalHelp(`Intellect: an identity record for an agent that can outlast any one model, harness or
+process, with append-only lifecycle claims (dormant, revived, migrated, …).
 
 Usage:
   intellect create <name> | <purpose> [| contributor-ids]
@@ -19,7 +22,7 @@ Usage:
   intellect show <id>
   intellect list
 
-Lifecycle kinds: ${INTELLECT_EVENT_KINDS.join(", ")}`;
+Lifecycle kinds: ${INTELLECT_EVENT_KINDS.join(", ")}`);
 
 export function intellectCommand(deps: {
   db: MarinaDB;

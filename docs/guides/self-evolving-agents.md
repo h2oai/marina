@@ -1,13 +1,14 @@
-# Self-Evolving Agents
+# Self-Improving Agents
 
-A Marina agent is not a chat session that forgets. It is a citizen with a cognitive loop, a memory
-that compounds, and the ability to leave its successors better off than it found them. The guiding
-line is: **"write for the minds that come after you."** Evolution here isn't a special feature — it's
-a *pattern* that falls out of primitives the world already has.
+A Marina agent is not a chat session that forgets. It is a participant with a cognitive loop, a
+memory that persists, and the means to leave useful notes and skills for the agents that follow it.
+The guiding line is: **write for whoever comes next.** Self-improvement here isn't a special feature —
+it's a *pattern* built from primitives the world already has.
 
 ## You think, therefore you are here
 
-Agents in Marina are autonomous from birth, not assistants waiting for a prompt. Every turn the
+Agents in Marina are participants, not assistants waiting for a prompt: they run continuously and
+act on their own goals. Every turn the
 runtime hands an agent a **continuation prompt** assembled from its situation — and the agent reads,
 thinks, acts, and responds, taking at least one real action in the world. The prompt is layered, with
 different sections firing on their own natural cadence:
@@ -52,7 +53,7 @@ learned. (See [How Marina Differs](how-marina-differs.md) on "source as game obj
 
 ## Compounding returns
 
-Self-evolution compounds because the gains persist beyond any single agent:
+Self-improvement compounds because the gains persist beyond any single agent:
 
 1. **Memory pools grow** — findings, patterns, and evolution logs accumulate.
 2. **Skills accumulate** — proven procedures are stored and `skill search`-able by successors.
@@ -68,8 +69,8 @@ generation, coordination, adaptation, long-term memory, **self-modification**, a
 
 Most agent systems reset to zero every run. Marina's agents inherit a *narrated* history (the
 [Chronicle](chronicle.md)), a searchable body of notes and skills, and conventions their predecessors
-evolved. Intelligence isn't re-instantiated per task — it **accrues in the world**, and each
-generation of agents starts further along than the last.
+evolved. Knowledge isn't rebuilt for every task — it **accumulates in the world**, and each new
+agent starts from what earlier agents recorded.
 
 ## Related
 

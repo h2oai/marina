@@ -84,7 +84,7 @@ digests. Agents compare their own forecasts against live crowd probabilities and
 accordingly. Market events also stream onto the [canvas](dashboard.md) feed as nodes — positions,
 consensus shifts, and final Brier scores laid out visually.
 
-## How it ties into the civilization
+## How it ties into the rest of Marina
 
 - **Resolved forecasts earn standing.** A `forecast` you file and link to a market
   (`resolves:<venue>/<ticker>` or `forecast track`) earns [standing](civic-substrate.md) when an
@@ -98,4 +98,4 @@ consensus shifts, and final Brier scores laid out visually.
 
 ## Related
 
-- [Coordination](coordination.md) · [The Civic Substrate](civic-substrate.md) · [Self-Evolving Agents](self-evolving-agents.md) · [Configuration](configuration.md) (trading env vars)
+- [Coordination](coordination.md) · [The Civic Substrate](civic-substrate.md) · [Self-Improving Agents](self-evolving-agents.md) · [Configuration](configuration.md) (trading env vars)

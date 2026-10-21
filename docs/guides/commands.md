@@ -123,7 +123,7 @@ curates them. See [Cross-world Inheritance](inheritance.md).
 Trace views are read-only and omit prompts, outputs, thinking text, and tool arguments. See
 [Execution Traces and Evaluations](observability.md) for retention and interpretation boundaries.
 
-## Journeys and Open-Ended Evolution
+## Journeys, Provenance, and Experimental Records
 
 ```text
 > desire <ordinary-language intention>       Create a journey without rewriting the desire
@@ -139,7 +139,7 @@ Trace views are read-only and omit prompts, outputs, thinking text, and tool arg
 > provenance show <id>                       Inspect and verify one event
 > provenance verify                          Verify the local cognitive hash chain
 
-> intellect create <name> | <purpose>        Declare portable intellect identity
+> intellect create <name> | <purpose>        Create an intellect (agent identity) record
 > intellect instance <id> | <principal> | <model> | <harness> | <environment>
 > intellect event <id> <kind> | <detail>
 > intellect show <id>                        Inspect instances, lineage, and lifecycle
@@ -177,12 +177,14 @@ Trace views are read-only and omit prompts, outputs, thinking text, and tool arg
 > mutation lineage <domain> <target-ref>
 ```
 
-These surfaces are additive. Claims do not imply truth or ownership; declared simulations do not
-invent outcomes; mutations do not bypass subsystem activation or safety boundaries. See
-[Journeys](journeys.md), [Cognitive Provenance](cognitive-provenance.md),
-[Intellect Lifecycle](intellect-lifecycle.md), [Associations](associations.md),
-[Reproduction and Meshes](reproduction-and-meshes.md), and
-[Economics, Simulation, and Recursive Evolution](economics-simulation-and-recursion.md).
+`intellect`, `association`, `reproduce`, `genome`, `marina-descend`, `economy`, `lab` and
+`mutation` are experimental (see [feature status](../reference/feature-status.md)). They write
+records: a claim does not imply truth or ownership, a declared simulation run records no outcome until
+someone records one, and a change record does not bypass the affected subsystem's activation or
+safety gates. See [Journeys](journeys.md), [Cognitive Provenance](cognitive-provenance.md),
+[Intellect Records](intellect-lifecycle.md), [Associations](associations.md),
+[Lineage Records, Child Worlds, and Meshes](reproduction-and-meshes.md), and
+[Economic, Simulation, and Change Records](economics-simulation-and-recursion.md).
 
 ## Knowledge & Cognition
 

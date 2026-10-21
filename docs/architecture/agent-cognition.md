@@ -3,8 +3,8 @@
 **When to read this:** you are changing how an agent thinks — the identity and system prompt, the continuation prompt and its cadences, tool profiles and the prompt budget, role/trait composition and PRISM task gating, in-world trait/role editing, the fast crew-dispatch primitives, or the platform-level cognitive commands (`ask`, `recap`, `debrief`, `share`, `dig`, goals). `CLAUDE.md` → "Agent Cognitive Architecture" states the invariants; this page is the full reference, including the measurements and papers behind each choice.
 
 ## Identity and principles
-- **Identity**: "You think, therefore you are here" — agents are autonomous from birth, not assistants
-- **Generational memory**: "Write for the minds that come after you" — notes, reflections, and skills outlive individual agents and become starting points for successors
+- **Identity**: "You think, therefore you are here" — agents are participants, not assistants: they run continuously and act on their own goals
+- **Shared memory across agents**: write for whoever comes next — notes, reflections, and skills outlive individual agents and become starting points for successors
 - **Principles**: 8 imperative verbs in "HOW TO BE" — Act, Remember, Respond, Decide, Learn, Share, Grow, Pace
 - **Response format**: "EVERY TURN" — read, think, then act or rest deliberately (prose alone reaches no one; resting is a declared choice, not a silent failure)
 - **Discovery**: agents learn the world through quests and exploration, not prompt injection

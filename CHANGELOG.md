@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prior. `readiness` (check `search`) reports all three. New guide:
   [Data, privacy and terms](docs/guides/data-privacy-and-terms.md).
 
+- **Plainer names for research features.** `intellect`, `reproduce`, `genome`, `marina-descend`,
+  `mutation`, `association`, `economy` and `lab` are now listed as experimental in the feature
+  status page and their help is labelled `[experimental]`; their guides describe what each records
+  in plain terms. Commands, names and protocol ids are unchanged. Docs, agent skill files and
+  comments drop metaphors such as "civilization" and "autonomous from birth".
+
 - **A new front door.** The README, landing page and docs overview are rewritten to be shorter
   and plainer, with the forecasting, research, orchestration and coding commands every participant
   gets up front. The docs sidebar and guides index are regrouped by what a reader wants to do, and

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import type {
   MarinaDB,
   ReproducibilityLevel,
@@ -23,7 +24,9 @@ const LEVELS = [
   "statistical",
   "conceptual",
 ] as const;
-const HELP = `Unified simulation laboratory.
+const HELP =
+  experimentalHelp(`Simulation run records: content-addressed scenario manifests, declared runs, forks,
+replicates, observations and comparisons. Declaring a run executes nothing; you record the evidence.
 Usage:
   lab manifest <scenario JSON>
   lab run <manifest-hash> | <mode> | <reproducibility> | <seed> [| treatments JSON]
@@ -32,7 +35,7 @@ Usage:
   lab event <run> <started|intervention|observation|measure|completed|failed|gap> | <source-ref> | <data JSON>
   lab compare <run-ids csv> | <questions csv> | <measures JSON> | <interpretation>
   lab show <run>
-  lab list`;
+  lab list`);
 export function labCommand(deps: {
   db: MarinaDB;
   getEntity: (id: string) => Entity | undefined;
