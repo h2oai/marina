@@ -38,7 +38,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AGENT_THINKING_LEVELS, parseAgentThinkingLevel } from "../src/agent/agent-types";
-import { MARINA_VERSION } from "../src/version";
+import { bunVersionRefusal, MARINA_VERSION } from "../src/version";
 import { ATTACH_USAGE } from "./code-attach";
 
 /** Verification a one-shot `-p` task must pass before it can submit. */
@@ -681,6 +681,9 @@ async function readStdinTask(): Promise<string> {
 }
 
 if (import.meta.main) {
+  // Run from source on an older Bun, every subcommand can misbehave; say why.
+  const bunRefusal = bunVersionRefusal();
+  if (bunRefusal) console.error(`marina: ${bunRefusal}`);
   // Preserve the original compiled server entry as an alias for foreground
   // start. Do not exit after import: active listeners keep the server alive.
   const dispatch = parseDispatch(

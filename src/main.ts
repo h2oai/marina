@@ -74,7 +74,7 @@ import { LocalStorageProvider } from "./storage/local-provider";
 import { loadOtlpExporterConfig, MarinaOtlpExporter } from "./telemetry/otlp-exporter";
 import { loadOtlpLogExporterConfig, MarinaOtlpLogExporter } from "./telemetry/otlp-log-exporter";
 import type { RoomId } from "./types";
-import { MARINA_VERSION } from "./version";
+import { bunVersionRefusal, MARINA_VERSION } from "./version";
 import { loadRooms } from "./world/room-loader";
 import { seedGuidePool } from "./world/seed-guide";
 import type { WorldDefinition } from "./world/world-definition";
@@ -249,6 +249,8 @@ if (
   logger.error("security", msg);
   throw new Error(msg);
 }
+const bunRefusal = bunVersionRefusal();
+if (bunRefusal) logger.warn("main", bunRefusal);
 if (getAutonomyPosture() !== "guarded") {
   logger.info("autonomy", `Autonomy posture: ${describeAutonomyPosture()}`);
 }
