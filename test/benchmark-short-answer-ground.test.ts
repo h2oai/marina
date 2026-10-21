@@ -139,3 +139,37 @@ describe("short-answer grounding execution", () => {
     }
   });
 });
+
+describe("short-answer grounding cache (MARINA_GROUND_CACHE)", () => {
+  it("serves a warmed entry without searching, and writes through only found evidence", async () => {
+    const { groundCacheKey, groundEvidence } = await import("../benchmarks/adapters/short-answer");
+    const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "ground-cache-"));
+    const path = join(dir, "cache.json");
+    writeFileSync(path, JSON.stringify({ [groundCacheKey("simpleqa", "Q1")]: ["T: cached"] }));
+    let calls = 0;
+    const search = spyOn(providers, "search").mockImplementation(async (q: string) => {
+      calls++;
+      return q === "Q2" ? [result("https://example.org/a", "A", "found")] : [];
+    });
+    try {
+      const stats = { items: 0, withEvidence: 0, barred: 0, failures: 0 };
+      expect(await groundEvidence("Q1", "simpleqa", stats, path)).toEqual(["T: cached"]);
+      expect(calls).toBe(0);
+      expect(await groundEvidence("Q2", "simpleqa", stats, path)).toEqual(["A: found"]);
+      expect(await groundEvidence("Q3", "simpleqa", stats, path)).toEqual([]);
+      expect(calls).toBe(2);
+      const disk = JSON.parse(readFileSync(path, "utf8")) as Record<string, string[]>;
+      expect(disk[groundCacheKey("simpleqa", "Q2")]).toEqual(["A: found"]);
+      expect(disk[groundCacheKey("simpleqa", "Q3")]).toBeUndefined();
+      expect(stats).toEqual({ items: 3, withEvidence: 2, barred: 0, failures: 0 });
+      // A second read of Q2 is a hit.
+      expect(await groundEvidence("Q2", "simpleqa", stats, path)).toEqual(["A: found"]);
+      expect(calls).toBe(2);
+    } finally {
+      search.mockRestore();
+    }
+  });
+});
