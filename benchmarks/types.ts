@@ -107,6 +107,15 @@ export interface ResultItem {
 export interface CallUsage {
   promptTokens?: number;
   completionTokens?: number;
+  /**
+   * Prompt tokens served from the provider's prompt cache (OpenAI
+   * `prompt_tokens_details.cached_tokens`, Anthropic `cache_read_input_tokens`),
+   * and tokens written to it. Both are part of `promptTokens`. A run whose
+   * prompts were cached by another run (two arms on the same items and key at
+   * once) reads cheap here: compare arms with this in view.
+   */
+  cachedPromptTokens?: number;
+  cacheWriteTokens?: number;
   costUsd?: number;
 }
 
@@ -124,6 +133,9 @@ export interface UsageSummary {
   judgeCostUsd?: number;
   promptTokens?: number;
   completionTokens?: number;
+  /** Answer and judge prompt tokens read from / written to the prompt cache (see `CallUsage`). */
+  cachedPromptTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 export interface DatasetItem {

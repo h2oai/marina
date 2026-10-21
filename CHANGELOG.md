@@ -79,6 +79,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Benchmark costs show prompt-cache reads and writes.** The harness now records the cached and
+  cache-written prompt tokens an endpoint reports (`prompt_tokens_details`, or Anthropic's raw
+  counters) per item and per run, and prints `Prompt cache: N read (x%) / M written`. A
+  `marina/verify:` reply sums them over the draft, check and revision calls instead of dropping
+  them. Two arms run at once on the same items and key share Anthropic's prompt cache, so one of
+  them reads cheap; this made an Opus verify arm look 1.2x plain when it is about 2.3x.
+
 - **Documentation matches the code.** The README and site say approvals apply on shared and public
   instances; the privacy guide lists the keyless market and economic-data lookups and the markets
   feed; gate, operator-grant and built-in skill lists are current; seeded agents' autostart, the
