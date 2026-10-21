@@ -471,6 +471,6 @@ JSON results are written to `benchmarks/results/` (gitignored) with the format:
 
 ## Requirements
 
-- Bun 1.4.2+
+- Bun 1.4.3+
 - Running Marina instance with provider agent
 - Python 3.10+ (for HumanEval only)

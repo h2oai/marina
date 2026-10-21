@@ -53,7 +53,7 @@
     "extensions/langgraph-store/README.md"
   ],
   "engines": {
-    "bun": ">=1.4.2"
+    "bun": ">=1.4.3"
   },
   "workspaces": [
     "dashboard",
@@ -218,5 +218,5 @@
     },
     "./*": "./*"
   },
-  "packageManager": "bun@1.4.2"
+  "packageManager": "bun@1.4.3"
 }

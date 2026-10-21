@@ -117,6 +117,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   world instead of the "start marina supervise" hint when none of their sessions are the viewer's,
   and a `tell_sent` envelope also reaches the person who launched either party.
 
+- **Backend test runs fail fast instead of hanging until the CI deadline.** Bun 1.4.3 is now the
+  minimum (`.bun-version`, `engines.bun`, `packageManager`, Docker images). Bun 1.4.2 could spin in
+  `spawnSync` after a garbage collection in large `--isolate` runs. The test wrapper stops a run
+  with no output for 240 s, or one where a process has not reaped an exited child for 60 s. It
+  prints the live process tree and the files still running. Benchmark result stamping reads git
+  with a timeout, without optional locks and without prompts.
 - **Documentation matches the code.** The README and site say approvals apply on shared and public
   instances; the privacy guide lists the keyless market and economic-data lookups and the markets
   feed; gate, operator-grant and built-in skill lists are current; seeded agents' autostart, the

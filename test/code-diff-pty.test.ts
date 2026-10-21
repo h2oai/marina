@@ -6,15 +6,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { terminalText } from "../scripts/code-terminal";
+import { git as gitIn } from "./git-helpers";
 import { until } from "./helpers";
 
 let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "marina-diff-pty-"));
-  const git = (...args: string[]) => {
-    const result = Bun.spawnSync(["git", ...args], { cwd: root, stderr: "pipe" });
-    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
-  };
+  // Hermetic, bounded git (test/git-helpers.ts): no host config, no prompts, a timeout.
+  const git = (...args: string[]) => gitIn(root, ...args);
   git("init", "-q");
   git("config", "user.email", "pty@example.invalid");
   git("config", "user.name", "PTY");
