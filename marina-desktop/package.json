@@ -10,7 +10,7 @@
     "build:stable": "bun run sync && bun run build:dashboard && bun scripts/electrobun.ts build --env=stable",
     "build:dashboard": "bunx --no-install vite build --config vite.desktop.config.ts && bun scripts/prepare-assets.ts",
     "typecheck": "bun scripts/configure-sdk.ts && tsc --noEmit -p tsconfig.json",
-    "test": "bun scripts/configure-sdk.ts && bun test test/",
+    "test": "bun scripts/configure-sdk.ts && bun test test/ src/",
     "sync": "bun scripts/electrobun.ts sync && bun scripts/configure-sdk.ts",
     "build:dev": "bun run sync && bun run build:dashboard && bun scripts/electrobun.ts build --env=dev"
   },

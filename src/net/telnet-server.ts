@@ -239,6 +239,11 @@ export class TelnetServer {
     logger.info("telnet", `Telnet server listening on port ${this.port}`, { port: this.port });
   }
 
+  /** The port the listener is bound to (the OS-assigned one when started on port 0). */
+  getPort(): number {
+    return (this.server?.port as number | undefined) ?? this.port;
+  }
+
   stop(): void {
     this.draining = true;
     for (const socket of this.sockets.values()) socket.end();

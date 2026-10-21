@@ -4,7 +4,7 @@
 // The bearer for this Marina's own /v1: the in-process token inside the
 // server, a key the server accepts from any other process (an operator CLI).
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,7 @@ import {
 describe("selfModelToken", () => {
   const dir = mkdtempSync(join(tmpdir(), "self-token-"));
   afterEach(() => resetServingProcessForTests());
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it("uses the operator's first key secret from a separate process", async () => {
     expect(await selfModelToken({ MODEL_API_KEYS: " sk-one:alice, sk-two" })).toBe("sk-one");
@@ -39,6 +40,4 @@ describe("selfModelToken", () => {
     markServingProcess();
     expect(await selfModelToken({ MODEL_API_KEYS: "sk-one" })).toBe(getInternalModelToken());
   });
-
-  it("cleans up", () => rmSync(dir, { recursive: true, force: true }));
 });

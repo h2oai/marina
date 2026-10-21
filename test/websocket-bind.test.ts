@@ -57,7 +57,7 @@ describe("WebSocket bind hostname (secure-by-default loopback)", () => {
     const db = new MarinaDB(dbPath);
     const engine = new Engine({ startRoom: roomId("test/lobby"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/lobby"), makeTestRoom({ short: "L", long: "L" }));
-    const server = new WebSocketServer(engine, 15398);
+    const server = new WebSocketServer(engine, 0);
     try {
       server.start();
       expect(server.getBoundHostname()).toBe("127.0.0.1");
@@ -81,7 +81,7 @@ describe("WebSocket bind hostname (secure-by-default loopback)", () => {
     const db = new MarinaDB(dbPath);
     const engine = new Engine({ startRoom: roomId("test/lobby"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/lobby"), makeTestRoom({ short: "L", long: "L" }));
-    const server = new WebSocketServer(engine, 15399);
+    const server = new WebSocketServer(engine, 0);
     try {
       server.start();
       expect(server.getBoundHostname()).toBe("127.0.0.1");

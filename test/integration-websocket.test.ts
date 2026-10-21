@@ -32,7 +32,7 @@ describe("WebSocket Integration", () => {
   let engine: Engine;
   let wsServer: WebSocketServer;
   let db: MarinaDB;
-  const WS_PORT = 13300;
+  let WS_PORT = 0;
 
   beforeEach(() => {
     db = new MarinaDB(TEST_DB);
@@ -61,8 +61,9 @@ describe("WebSocket Integration", () => {
       }),
     );
 
-    wsServer = new WebSocketServer(engine, WS_PORT);
+    wsServer = new WebSocketServer(engine, 0);
     wsServer.start();
+    WS_PORT = wsServer.getPort();
     engine.start();
   });
 

@@ -263,8 +263,7 @@ describe("tellAndAwait helpers", () => {
 
 // ─── Live engine ─────────────────────────────────────────────────────────────
 
-const TEST_PORT = 13398;
-const TEST_URL = `ws://localhost:${TEST_PORT}`;
+let TEST_URL = "";
 
 describe("tellAndAwait — live engine", () => {
   let db: MarinaDB;
@@ -279,8 +278,9 @@ describe("tellAndAwait — live engine", () => {
       roomId("test/start"),
       makeTestRoom({ short: "Starting Room", long: "A room for tellAndAwait testing." }),
     );
-    wsServer = new WebSocketServer(engine, TEST_PORT);
+    wsServer = new WebSocketServer(engine, 0);
     wsServer.start();
+    TEST_URL = `ws://localhost:${wsServer.getPort()}`;
     engine.start();
   });
 
