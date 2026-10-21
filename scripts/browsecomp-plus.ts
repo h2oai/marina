@@ -89,6 +89,7 @@ import {
   replicateFromResult,
   validGroupKey,
 } from "../benchmarks/replicates";
+import { stamped } from "../benchmarks/run-version";
 import type { BenchmarkResult } from "../benchmarks/types";
 import { CORPUS_LEAD_CHARS, corpusDir } from "../src/engine/search-providers/corpus";
 import { comparePooled, seedFromIds, wilsonInterval } from "../src/stats";
@@ -407,11 +408,17 @@ async function run(): Promise<number> {
     });
     // Fully resumed (nothing re-run): the same run as before, with the same
     // timestamp and duration, so filing it again is the same document.
-    if (prior && arm.resumed.length === arm.items.length && arm.items.length > 0) {
+    const fullyResumed = !!prior && arm.resumed.length === arm.items.length && arm.items.length > 0;
+    if (fullyResumed) {
       result.timestamp = prior.timestamp;
       result.duration_ms = prior.duration_ms;
     }
-    writeFileSync(resultPath, JSON.stringify(result, null, 1));
+    // The code that ran (a fully resumed arm keeps the stamp of the run that
+    // answered it; per-query stamps in evals/ show a resume across commits).
+    writeFileSync(
+      resultPath,
+      JSON.stringify(fullyResumed ? stamped(result, prior.marina) : stamped(result), null, 1),
+    );
     const n = arm.items.length;
     const k = arm.items.filter((i) => i.eval.correct).length;
     const ci = wilsonInterval(k, n);

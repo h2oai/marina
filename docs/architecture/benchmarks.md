@@ -141,6 +141,15 @@ groups and regresses significantly on none.
   `transfer:<group>`) counts, or a time split on each item's evidence cutoff; `all` is labelled.
 - **No spend by default**: it ingests existing files; a suite's `run` command executes only under
   `--run`.
+- **The right versions** (`versions.ts`): result files, BrowseComp-Plus query files, FutureX
+  `score.json`, ForecastBench `selection.json` and `arena evaluate` reports carry
+  `marina: {commit, dirty, describe}` from the writer's git (`benchmarks/run-version.ts`); filed
+  and backtest ledger runs keep it in `config_json.marina`, and in-world runs name their code in
+  `source`. By default every source of both arms must come from one clean commit; mixed commits
+  are `version-mismatch`, unstamped or dirty sources `version-unknown` — both reported, neither
+  counted (as an improvement or a regression). A commit behind `origin/main` (local git only) is a
+  warning. `versions: {baseline, candidate}` declares a deliberate release-vs-release or
+  regression test; `--allow-unversioned` lets old unstamped files count, labelled.
 
 Format, options and how to add a suite: [benchmarks/README.md](../../benchmarks/README.md#transfer-report).
 

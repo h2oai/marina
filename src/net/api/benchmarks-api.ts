@@ -165,6 +165,7 @@ export async function handleBenchmarkFile(
     ...(typeof result.timestamp === "number" ? { timestamp: result.timestamp } : {}),
     ...(typeof result.duration_ms === "number" ? { duration_ms: result.duration_ms } : {}),
     ...(result.metadata ? { metadata: result.metadata } : {}),
+    ...(result.marina !== undefined ? { marina: result.marina } : {}),
     items: result.items.map((it) =>
       slimItem(it as Record<string, unknown>),
     ) as HarnessResultFile["items"],

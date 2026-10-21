@@ -9,6 +9,7 @@
  *   bun run eval:transfer --spec <spec.json> [--out <prefix>] [--split all|holdout|selection|after:<date>]
  *                         [--seed N] [--resamples N] [--alpha A] [--margin M] [--min-items N]
  *                         [--bootstrap items|two-stage] [--run [--run-dir <dir>]] [--json]
+ *                         [--allow-unversioned]
  *   bun run eval:transfer --adapters
  *   bun run eval:transfer --inventory <root…> [--out <prefix>] [--min-items N] [--max-copy-mb N]
  *
@@ -18,6 +19,13 @@
  * spend money, so it is never implied. Writes `<prefix>.md` and
  * `<prefix>.json` (default `transfer-report`). Exit 0 when the verdict is
  * `transfers`, 2 for any other verdict, 1 on error.
+ *
+ * Test the right versions: every source's Marina commit stamp is checked. By
+ * default both arms of a suite must come from one clean commit (warned when
+ * it is behind origin/main); mixed, unstamped or dirty sources make the suite
+ * `version-mismatch` / `version-unknown`, reported and not counted. A spec's
+ * `versions: {baseline, candidate}` declares a deliberate release-vs-release
+ * comparison. `--allow-unversioned` ingests unstamped files, labelled loudly.
  *
  * `--inventory` walks the roots you name (directories or DB files; at least one is
  * required) read-only and writes `<prefix>.md` / `<prefix>.json`
@@ -55,6 +63,7 @@ const { values, positionals } = parseArgs({
     bootstrap: { type: "string" },
     inventory: { type: "boolean", default: false },
     "max-copy-mb": { type: "string" },
+    "allow-unversioned": { type: "boolean", default: false },
   },
 });
 
@@ -91,6 +100,7 @@ function main(): number {
     allowRun: values.run,
     ...(values["run-dir"] ? { outDir: values["run-dir"] } : {}),
     ...(split ? { split } : {}),
+    allowUnversioned: values["allow-unversioned"],
   });
   const flags: TransferOptions = {};
   const set = <K extends keyof TransferOptions>(k: K, v: number | undefined) => {
@@ -108,12 +118,25 @@ function main(): number {
   }
   const result = transferVerdict(suites, { ...(spec.stats ?? {}), ...flags });
   const generatedAt = new Date().toISOString();
-  const header = { baseline: spec.baseline, candidate: spec.candidate, generatedAt };
+  const header = {
+    baseline: spec.baseline,
+    candidate: spec.candidate,
+    generatedAt,
+    ...(spec.versions ? { versions: spec.versions } : {}),
+    ...(values["allow-unversioned"] ? { allowUnversioned: true } : {}),
+  };
   const markdown = renderMarkdown(result, header);
   const json = JSON.stringify({ generatedAt, ...header, ...result }, null, 2);
   writeFileSync(`${out}.md`, markdown);
   writeFileSync(`${out}.json`, `${json}\n`);
   console.log(values.json ? json : markdown);
+  for (const s of result.suites) {
+    if (s.version && !s.version.counted)
+      console.error(`version guard: ${s.name} ${s.outcome} — ${s.version.reason}`);
+    for (const w of s.version?.warnings ?? []) console.error(`version warning: ${s.name}: ${w}`);
+  }
+  if (values["allow-unversioned"])
+    console.error("WARNING: --allow-unversioned: unstamped result files were counted");
   console.error(`report → ${out}.md, ${out}.json`);
   return result.verdict === "transfers" ? 0 : 2;
 }

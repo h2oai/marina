@@ -11,13 +11,16 @@
  * Read-only: files are only read; ledgers are opened through `openReadOnly`
  * (immutable, or a temporary copy when a write-ahead log must be read).
  * Identical files (same bytes) are counted once; a ledger run seen in
- * several DB copies is counted once.
+ * several DB copies is counted once. Each variant lists the Marina commits
+ * its sources were stamped with, and each pair says whether both sides share
+ * one clean commit (the transfer report's default rule).
  */
 
 import { createHash } from "node:crypto";
 import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { adapterFor, collapseTrials, loadRuns, type Source } from "./adapters";
+import { versionLabel } from "../../src/engine/run-version";
+import { adapterFor, collapseTrials, loadRuns, type Source, sourceVersions } from "./adapters";
 import type { ItemScore } from "./core";
 import {
   DEFAULT_MAX_COPY_BYTES,
@@ -28,6 +31,7 @@ import {
   openReadOnly,
   runVariant,
 } from "./ledger";
+import { addStamp, type MarinaVersion, mergeScans, type VersionScan } from "./versions";
 
 export interface InventoryOptions {
   roots: string[];
@@ -56,12 +60,19 @@ export interface VariantInfo {
   /** When the runs were recorded (ledger start time, else file modification time). */
   recordedFrom?: string;
   recordedTo?: string;
+  /** Marina commits the sources were stamped with (`unstamped×N` for sources without one). */
+  commits: string[];
 }
 
 export interface PairInfo {
   baseline: string;
   candidate: string;
   overlap: number;
+  /**
+   * `same-commit`: both sides at one clean commit (counts by default);
+   * `mixed`: different or dirty commits; `unknown`: a side has no stamp.
+   */
+  versions: "same-commit" | "mixed" | "unknown";
   /** Mean |delta| over the shared items (replicate-averaged). */
   meanAbsDelta: number;
   /** A suite entry for a transfer spec. */
@@ -405,6 +416,7 @@ function detectBrowsecomp(dir: string, files: string[], mtime: number): Found | 
 interface Arm {
   found: Found;
   runs: ItemScore[][];
+  versions: VersionScan;
 }
 
 function* walk(
@@ -458,8 +470,9 @@ export function buildInventory(opts: InventoryOptions): Inventory {
 
   const addArm = (f: Found) => {
     try {
-      const runs = loadRuns(adapterFor(f.adapter), f.source).filter((r) => r.length > 0);
-      if (runs.length) arms.push({ found: f, runs });
+      const adapter = adapterFor(f.adapter);
+      const runs = loadRuns(adapter, f.source).filter((r) => r.length > 0);
+      if (runs.length) arms.push({ found: f, runs, versions: sourceVersions(adapter, f.source) });
     } catch (err) {
       skipped.push({ path: f.source.path, reason: `${f.adapter}: ${String(err).slice(0, 200)}` });
     }
@@ -569,6 +582,7 @@ export function buildInventory(opts: InventoryOptions): Inventory {
             recordedTo: Math.max(...started),
           },
           runs: list.map((r) => collapseTrials(ledgerItems(h!.db, r.id))),
+          versions: ledgerVersions(list),
         });
       }
     } catch (err) {
@@ -579,6 +593,27 @@ export function buildInventory(opts: InventoryOptions): Inventory {
   }
 
   return assemble(arms, { opts, minItems, skipped, files, candidates, dbs, ledgers, duplicates });
+}
+
+function ledgerVersions(runs: readonly LedgerRun[]): VersionScan {
+  const stamps: MarinaVersion[] = [];
+  let unstamped = 0;
+  for (const r of runs) {
+    if (r.version) addStamp(stamps, r.version);
+    else unstamped++;
+  }
+  return { stamps, unstamped };
+}
+
+const commitLabels = (v: VersionScan) => [
+  ...v.stamps.map(versionLabel),
+  ...(v.unstamped ? [`unstamped×${v.unstamped}`] : []),
+];
+
+function pairVersions(a: VersionScan, b: VersionScan): PairInfo["versions"] {
+  if (a.unstamped || b.unstamped) return "unknown";
+  const both = mergeScans([a, b]);
+  return both.stamps.length === 1 && !both.stamps[0]!.dirty ? "same-commit" : "mixed";
 }
 
 function assemble(
@@ -606,7 +641,9 @@ function assemble(
   const suites: SuiteInfo[] = [];
   let identicalPairs = 0;
   for (const [suite, vars] of [...bySuite].sort(([a], [b]) => a.localeCompare(b))) {
-    const infos: Array<VariantInfo & { ids: Set<string>; means: Map<string, number> }> = [];
+    const infos: Array<
+      VariantInfo & { ids: Set<string>; means: Map<string, number>; scan: VersionScan }
+    > = [];
     for (const [key, { arms: list }] of vars) {
       const runs = list.flatMap((a) => a.runs);
       const sets = runs.map((r) => new Set(r.map((x) => x.id)));
@@ -625,6 +662,7 @@ function assemble(
         a.found.recordedTo ?? a.found.recorded,
       ]);
       const f = list[0]!.found;
+      const scan = mergeScans(list.map((a) => a.versions));
       infos.push({
         key,
         label: f.label,
@@ -638,8 +676,10 @@ function assemble(
         ...(recorded.length
           ? { recordedFrom: iso(Math.min(...recorded)), recordedTo: iso(Math.max(...recorded)) }
           : {}),
+        commits: commitLabels(scan),
         ids,
         means,
+        scan,
       });
     }
     infos.sort(
@@ -676,6 +716,7 @@ function assemble(
           baseline: a.label,
           candidate: b.label,
           overlap,
+          versions: pairVersions(a.scan, b.scan),
           meanAbsDelta: Math.round((absDelta / overlap) * 1e4) / 1e4,
           suite: {
             name: `${suite}: ${a.label} vs ${b.label}`,
@@ -691,7 +732,7 @@ function assemble(
     suites.push({
       suite,
       group,
-      variants: infos.map(({ ids: _ids, means: _means, ...v }) => v),
+      variants: infos.map(({ ids: _ids, means: _means, scan: _scan, ...v }) => v),
       pairs,
     });
   }
@@ -759,19 +800,21 @@ export function renderInventory(inv: Inventory, opts: { pairsPerSuite?: number }
       "",
       `${s.variants.length} variant(s), ${s.pairs.length} usable pair(s).`,
       "",
-      "| Variant | Adapter | Replicates | Items | Item dates | Recorded |",
-      "|---|---|---:|---:|---|---|",
+      "| Variant | Adapter | Replicates | Items | Item dates | Recorded | Commits |",
+      "|---|---|---:|---:|---|---|---|",
     );
     for (const v of s.variants.slice(0, 40)) {
       lines.push(
-        `| ${v.label.replace(/\|/g, "\\|")} | ${v.adapter} | ${v.replicates} | ${v.items} | ${v.itemsFrom ? `${v.itemsFrom} … ${v.itemsTo}` : "—"} | ${v.recordedFrom ? `${v.recordedFrom} … ${v.recordedTo}` : "—"} |`,
+        `| ${v.label.replace(/\|/g, "\\|")} | ${v.adapter} | ${v.replicates} | ${v.items} | ${v.itemsFrom ? `${v.itemsFrom} … ${v.itemsTo}` : "—"} | ${v.recordedFrom ? `${v.recordedFrom} … ${v.recordedTo}` : "—"} | ${v.commits.join(", ") || "—"} |`,
       );
     }
-    if (s.variants.length > 40) lines.push(`| … ${s.variants.length - 40} more | | | | | |`);
+    if (s.variants.length > 40) lines.push(`| … ${s.variants.length - 40} more | | | | | | |`);
     if (s.pairs.length) {
       lines.push("", `Top pairs by shared items:`, "");
       for (const p of s.pairs.slice(0, top))
-        lines.push(`- ${p.overlap} items: \`${p.baseline}\` vs \`${p.candidate}\``);
+        lines.push(
+          `- ${p.overlap} items: \`${p.baseline}\` vs \`${p.candidate}\` (${p.versions === "same-commit" ? "same commit" : p.versions === "mixed" ? "MIXED commits: refused unless versions are declared" : "commit unknown: needs --allow-unversioned"})`,
+        );
     }
     const paths = [...new Set(s.variants.flatMap((v) => v.sources.map((x) => x.path)))];
     lines.push(

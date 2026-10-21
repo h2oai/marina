@@ -32,6 +32,7 @@ import {
 } from "../../src/learning/outcomes";
 import { lcg32, percentileFloor } from "../../src/stats";
 import { BOARD_EXCLUSIONS } from "../forecasting/barred";
+import { stamped } from "../run-version";
 import {
   auditRow,
   batchWeek,
@@ -510,9 +511,10 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
       };
       mkdirSync(out, { recursive: true });
       writeFileSync(join(out, "answers.json"), JSON.stringify(run, null, 1));
-      writeFileSync(join(out, "score.json"), JSON.stringify(score, null, 1));
+      // The code that produced this run (`marina`), read by the transfer report.
+      writeFileSync(join(out, "score.json"), JSON.stringify(stamped(score), null, 1));
       writeFileSync(join(out, "audit.json"), JSON.stringify(audits, null, 1));
-      writeFileSync(join(out, "summary.json"), JSON.stringify(summary, null, 1));
+      writeFileSync(join(out, "summary.json"), JSON.stringify(stamped(summary), null, 1));
       if (opts.ledger) {
         const rec = recordScoredRun(opts.ledger, {
           benchmark:

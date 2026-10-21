@@ -8,7 +8,7 @@
  * event log, so a run against a Marina crew lands ranked and attributed.
  *
  * What is sent: the credential-free config and per-item ids, outcomes, scores,
- * latency, cost, judge verdict, trace id, a `fallback` flag for items that
+ * latency, cost, judge verdict, trace id, the run's Marina commit stamp, a `fallback` flag for items that
  * errored, an answer digest (hashed again with a per-ledger key before it is
  * stored), and the `budgetForced` / `verification` labels — never the
  * question, expected answer or response text.
@@ -50,6 +50,8 @@ export function ledgerFileBody(result: BenchmarkResult, opts: LedgerFileOptions)
       timestamp: safe.timestamp,
       duration_ms: safe.duration_ms,
       metadata: safe.metadata,
+      // Which Marina code produced the run: the ledger keeps it in config_json.marina.
+      ...(safe.marina ? { marina: safe.marina } : {}),
       items: safe.items.map((it) => ({
         id: it.id,
         correct: it.correct,

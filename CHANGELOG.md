@@ -145,6 +145,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Test the right versions: results record their commit, and the transfer report refuses mixed
+  code.** Benchmark results now name the Marina code that produced them:
+  `marina: {commit, dirty, describe}` read from git at run time, on harness results (short-answer,
+  FRAMES and the rest), BrowseComp-Plus query files and results, FutureX `score.json`,
+  ForecastBench/Metaculus `selection.json` and `arena evaluate --out` reports. Filed and backtest
+  ledger runs keep it in `config_json.marina` (no migration; it stays out of the config and
+  content hashes, so re-filing is still a no-op). `eval:transfer` shows each arm's commits per
+  suite, and the inventory shows each variant's commits. By default every source of both arms of
+  a suite must come from one clean commit. Mixed commits make the suite `version-mismatch`;
+  unstamped or dirty sources make it `version-unknown`. Either is reported but never counted
+  toward the two-group verdict, as an improvement or as a regression. A commit behind
+  `origin/main` is a warning (local git only). To compare releases on purpose, a spec declares
+  `versions: {baseline, candidate}` (sha or tag) and each arm must match its own. To count
+  results written before stamping, pass `--allow-unversioned`; the report then carries a warning
+  banner. **On upgrade**, existing result files have no stamp, so a spec over them reports
+  `version-unknown` until they are rerun or `--allow-unversioned` is given.
+
 - **World awareness.** `look log [since:<duration>]` reads your room's recent history (speech, emotes,
   arrivals, departures; bounded per room, migration 175). `who` and `look` show every agent's status
   (working, idle, blocked, needs you, resting, offline), and `who watch <name> [idle|blocked|any]

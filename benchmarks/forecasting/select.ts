@@ -45,6 +45,7 @@ import type { MarinaStores } from "../../src/persistence/interfaces";
 import { twoStageBootstrap } from "../../src/stats";
 import { idsDigest, openJournal } from "../journal";
 import { defaultReplicateGroup } from "../replicates";
+import { stamped } from "../run-version";
 import {
   configModels,
   describeConfig,
@@ -441,7 +442,8 @@ function fileRun(
   stamp: number,
 ): string {
   const benchmark = `${opts.benchmark}-backtest`;
-  const file = {
+  // Stamped with the Marina code that ran (`config_json.marina` in the ledger).
+  const file = stamped({
     config: {
       dataset: benchmark,
       name: benchmark,
@@ -468,7 +470,7 @@ function fileRun(
       usage: { costUsd: answers[i]?.costUsd ?? 0 },
       judge: "1-brier",
     })),
-  };
+  });
   const raw = JSON.stringify(file);
   const built = ledgerFromHarnessResult(file, {
     targetKind: "population",

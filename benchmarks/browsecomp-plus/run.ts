@@ -18,6 +18,7 @@ import { draftAnswerKey } from "../../src/agent/budget-terminal";
 import { answerDigest } from "../../src/engine/benchmark-ledger";
 import { mulberry32 } from "../../src/stats";
 import { BudgetExhausted, isSpendCapRefusal } from "../call-spend-guard";
+import { stamped } from "../run-version";
 import type { BenchmarkResult, ResultItem } from "../types";
 import {
   type AgentOptions,
@@ -398,7 +399,9 @@ export async function runArm(queries: readonly Query[], opts: ArmOptions): Promi
     writeFileSync(
       join(evalsDir, `run_${q.query_id}_eval.json`),
       JSON.stringify(
-        {
+        // Each query file names the code that answered it, so a resumed run
+        // that spans two commits shows as mixed in the transfer report.
+        stamped({
           query_id: q.query_id,
           is_completed: run.record.status === "completed",
           judge_response: judge?.response ?? null,
@@ -424,7 +427,7 @@ export async function runArm(queries: readonly Query[], opts: ArmOptions): Promi
           latency_ms: run.latencyMs,
           trace_ids: run.traceIds,
           ...(judge?.traceId ? { judge_trace_id: judge.traceId } : {}),
-        },
+        }),
         null,
         2,
       ),

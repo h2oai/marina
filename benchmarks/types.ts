@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { BenchmarkAdapterKind, BenchmarkScoringKind } from "../src/engine/benchmark-registry";
+import type { MarinaVersion } from "../src/engine/run-version";
 
 export interface BenchmarkConfig {
   name: string;
@@ -35,6 +36,8 @@ export interface BenchmarkConfig {
 
 export interface BenchmarkResult {
   config: BenchmarkConfig;
+  /** The Marina code that produced the run (`benchmarks/run-version.ts`). Absent on older results. */
+  marina?: MarinaVersion;
   timestamp: number;
   duration_ms: number;
   scores: {

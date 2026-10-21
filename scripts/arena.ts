@@ -51,6 +51,7 @@ import { closeSync, mkdtempSync, openSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { stamped } from "../benchmarks/run-version";
 import {
   arenaConfigFromEnv,
   arenaWindowHours,
@@ -581,7 +582,7 @@ async function main(): Promise<number> {
       if (values.out) {
         await Bun.write(
           values.out,
-          `${JSON.stringify({ generatedAt: new Date().toISOString(), ...report, shapes }, null, 2)}\n`,
+          `${JSON.stringify(stamped({ generatedAt: new Date().toISOString(), ...report, shapes }), null, 2)}\n`,
         );
         console.error(`report → ${values.out}`);
       }

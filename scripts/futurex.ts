@@ -111,6 +111,7 @@ import {
   submissionBody,
   submissionFileName,
 } from "../benchmarks/futurex/submission";
+import { stamped } from "../benchmarks/run-version";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { memoryHistory } from "../src/forecast/history";
 import type { LessonStore } from "../src/forecast/lessons";
@@ -755,7 +756,7 @@ async function backtestCmd(): Promise<number> {
     });
     mkdirSync(out, { recursive: true });
     writeFileSync(join(out, "answers.json"), JSON.stringify(run, null, 1));
-    writeFileSync(join(out, "score.json"), JSON.stringify(score, null, 1));
+    writeFileSync(join(out, "score.json"), JSON.stringify(stamped(score), null, 1));
     console.log(
       `\n  ${v.label}: overall ${score.overall} · ${Object.entries(score.byLevel)
         .map(([l, s]) => `L${l} ${s.mean} (n=${s.n})`)

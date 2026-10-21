@@ -17,6 +17,11 @@ import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import {
+  asMarinaVersion,
+  type MarinaVersion,
+  versionFromSourceRevision,
+} from "../../src/engine/run-version";
 import type { ItemScore } from "./core";
 
 const SQLITE_OPEN_READONLY = 0x01;
@@ -93,6 +98,12 @@ export interface LedgerRun {
   /** The latest validity action was `invalidate`. */
   invalid: boolean;
   items: number;
+  /**
+   * The Marina code that produced the run: `config_json.marina` (stamped
+   * filings), else the in-world source revision (`config.source` /
+   * `target_json.source`). Absent for runs filed before stamping.
+   */
+  version?: MarinaVersion;
 }
 
 interface RunRow {
@@ -105,6 +116,7 @@ interface RunRow {
   started_at: number;
   completed_at: number | null;
   source: string | null;
+  target_json: string | null;
   items: number;
 }
 
@@ -120,7 +132,7 @@ export function listLedgerRuns(db: Database): LedgerRun[] {
   const rows = db
     .query<RunRow, []>(
       `SELECT r.id, r.benchmark, ${opt("label")}, r.config_json, ${opt("replicate_group")},
-              r.status, r.started_at, r.completed_at, ${opt("source")},
+              r.status, r.started_at, r.completed_at, ${opt("source")}, ${opt("target_json")},
               (SELECT COUNT(*) FROM benchmark_items i WHERE i.run_id = r.id) AS items
          FROM benchmark_runs r ORDER BY r.started_at, r.id`,
     )
@@ -145,11 +157,25 @@ export function listLedgerRuns(db: Database): LedgerRun[] {
   }
   return rows.map((r) => {
     let model: string | undefined;
+    let version: MarinaVersion | undefined;
     try {
-      const c = JSON.parse(r.config_json) as { model?: unknown };
+      const c = JSON.parse(r.config_json) as {
+        model?: unknown;
+        marina?: unknown;
+        source?: unknown;
+      };
       if (typeof c.model === "string") model = c.model;
+      version = asMarinaVersion(c.marina) ?? versionFromSourceRevision(c.source);
     } catch {
-      // allow-empty-catch: a malformed config only loses the model label
+      // allow-empty-catch: a malformed config only loses the model label and stamp
+    }
+    if (!version && r.target_json) {
+      try {
+        const t = JSON.parse(r.target_json) as { source?: unknown };
+        version = versionFromSourceRevision(t?.source);
+      } catch {
+        // allow-empty-catch: a malformed target only loses the stamp
+      }
     }
     const group = regroup.get(r.id) ?? r.replicate_group ?? undefined;
     return {
@@ -164,6 +190,7 @@ export function listLedgerRuns(db: Database): LedgerRun[] {
       source: r.source ?? "in-world",
       invalid: invalid.get(r.id) ?? false,
       items: r.items,
+      ...(version ? { version } : {}),
     };
   });
 }

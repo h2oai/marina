@@ -21,12 +21,20 @@ import type { ItemScore } from "./core";
 import {
   DEFAULT_MAX_COPY_BYTES,
   hasLedger,
+  type LedgerRun,
   ledgerItems,
   listLedgerRuns,
   openReadOnly,
   type RunFilter,
   selectRuns,
 } from "./ledger";
+import {
+  addStamp,
+  fileVersions,
+  futurexVersions,
+  type MarinaVersion,
+  type VersionScan,
+} from "./versions";
 
 /** Where one arm's run(s) of a suite live. */
 export interface Source {
@@ -48,6 +56,16 @@ export interface SuiteAdapter {
   load?(source: Source): ItemScore[];
   /** Several replicate runs from one source (a ledger, a file with a replicate field). */
   loadRuns?(source: Source): ItemScore[][];
+  /**
+   * Which Marina code produced the source (`marina` stamps). Default: the
+   * stamps in the file, or in every JSON file of a directory.
+   */
+  versions?(source: Source): VersionScan;
+}
+
+/** The commit stamps behind one source. */
+export function sourceVersions(adapter: SuiteAdapter, source: Source): VersionScan {
+  return adapter.versions ? adapter.versions(source) : fileVersions(source.path);
 }
 
 /** Every replicate run a source holds. */
@@ -311,6 +329,7 @@ export const futurexAdapter: SuiteAdapter = {
   description:
     "FutureX clean-backtest run dir or score.json; cutoff from answers.json, audit-flagged rows excluded",
   timed: true,
+  versions: (source) => futurexVersions(source.path),
   load(source) {
     const dir = statSync(source.path).isDirectory()
       ? source.path
@@ -460,6 +479,8 @@ export const browsecompAdapter: SuiteAdapter = {
     }
     return [[...run].map(([id, score]) => ({ id, score }))];
   },
+  // One stamp per query file: a resume across commits shows as mixed.
+  versions: (source) => fileVersions(source.path, (f) => /_eval\.json$/.test(f)),
 };
 
 /** LongMemEval harness `per_question.jsonl`. */
@@ -499,38 +520,59 @@ export const ledgerAdapter: SuiteAdapter = {
   description:
     "benchmark ledger DB (read-only): runs selected by arm/label, run ids, group, benchmark, date range",
   loadRuns(source) {
-    const o = source.options ?? {};
-    const filter: RunFilter = {
-      ...(o.run ? { run: o.run } : {}),
-      ...(o.label || source.arm ? { label: o.label ?? source.arm } : {}),
-      ...(o.group ? { group: o.group } : {}),
-      ...(o.benchmark ? { benchmark: o.benchmark } : {}),
-      ...(o.since ? { since: o.since } : {}),
-      ...(o.until ? { until: o.until } : {}),
-      ...(o.status ? { status: o.status } : {}),
-      includeInvalid: o.includeInvalid === "true",
-    };
-    if (!filter.run && !filter.label && !filter.group)
-      throw new Error(`ledger source ${source.path}: select runs by arm, label, run or group`);
-    const h = openReadOnly(source.path, {
-      maxCopyBytes: o.maxCopyMb ? Number(o.maxCopyMb) * 1024 * 1024 : DEFAULT_MAX_COPY_BYTES,
+    return withLedgerRuns(source, (db, runs) =>
+      runs.map((r) => collapseTrials(ledgerItems(db, r.id), source.options)),
+    );
+  },
+  versions(source) {
+    return withLedgerRuns(source, (_db, runs) => {
+      const stamps: MarinaVersion[] = [];
+      let unstamped = 0;
+      for (const r of runs) {
+        if (r.version) addStamp(stamps, r.version);
+        else unstamped++;
+      }
+      return { stamps, unstamped };
     });
-    try {
-      if (!hasLedger(h.db)) throw new Error(`${source.path}: no benchmark ledger tables`);
-      const runs = selectRuns(listLedgerRuns(h.db), filter);
-      if (runs.length === 0)
-        throw new Error(`${source.path}: no ledger run matches ${JSON.stringify(filter)}`);
-      const benchmarks = new Set(runs.map((r) => r.benchmark));
-      if (benchmarks.size > 1)
-        throw new Error(
-          `${source.path}: runs from several benchmarks (${[...benchmarks].join(", ")}): add options.benchmark`,
-        );
-      return runs.map((r) => collapseTrials(ledgerItems(h.db, r.id), o));
-    } finally {
-      h.close();
-    }
   },
 };
+
+/** Open a ledger source read-only and hand its selected runs to `fn`. */
+function withLedgerRuns<T>(
+  source: Source,
+  fn: (db: ReturnType<typeof openReadOnly>["db"], runs: LedgerRun[]) => T,
+): T {
+  const o = source.options ?? {};
+  const filter: RunFilter = {
+    ...(o.run ? { run: o.run } : {}),
+    ...(o.label || source.arm ? { label: o.label ?? source.arm } : {}),
+    ...(o.group ? { group: o.group } : {}),
+    ...(o.benchmark ? { benchmark: o.benchmark } : {}),
+    ...(o.since ? { since: o.since } : {}),
+    ...(o.until ? { until: o.until } : {}),
+    ...(o.status ? { status: o.status } : {}),
+    includeInvalid: o.includeInvalid === "true",
+  };
+  if (!filter.run && !filter.label && !filter.group)
+    throw new Error(`ledger source ${source.path}: select runs by arm, label, run or group`);
+  const h = openReadOnly(source.path, {
+    maxCopyBytes: o.maxCopyMb ? Number(o.maxCopyMb) * 1024 * 1024 : DEFAULT_MAX_COPY_BYTES,
+  });
+  try {
+    if (!hasLedger(h.db)) throw new Error(`${source.path}: no benchmark ledger tables`);
+    const runs = selectRuns(listLedgerRuns(h.db), filter);
+    if (runs.length === 0)
+      throw new Error(`${source.path}: no ledger run matches ${JSON.stringify(filter)}`);
+    const benchmarks = new Set(runs.map((r) => r.benchmark));
+    if (benchmarks.size > 1)
+      throw new Error(
+        `${source.path}: runs from several benchmarks (${[...benchmarks].join(", ")}): add options.benchmark`,
+      );
+    return fn(h.db, runs);
+  } finally {
+    h.close();
+  }
+}
 
 export const ADAPTERS: Record<string, SuiteAdapter> = Object.fromEntries(
   [

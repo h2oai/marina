@@ -149,6 +149,7 @@ bun run eval:transfer --spec transfer.json --out reports/x # writes reports/x.md
 bun run eval:transfer --spec transfer.json --split all     # every item, not just the held-out half
 bun run eval:transfer --spec transfer.json --run           # also run suites that have a `run` command
 bun run eval:transfer --spec transfer.json --bootstrap two-stage # resample replicate runs, then items
+bun run eval:transfer --spec transfer.json --allow-unversioned # also count result files with no commit stamp
 bun run eval:transfer --adapters                           # list the suite adapters
 bun run eval:transfer --inventory [root…] --out inv        # find every per-item result on disk
 ```
@@ -196,6 +197,41 @@ split keeps items whose evidence cutoff is on or after a date (`{"kind": "time",
 `--split after:<date>`; adapters that know item times only). `"all"` / `--split all` opts out, and
 the report labels it. Adapters drop what their own suite marks unsafe: FutureX rows flagged by the
 leak audit; arena rounds whose outcome was public before the lock are already gone.
+
+**Test the right versions.** A comparison changes one thing — the env overlay — so both arms must
+run the same code. Every result a benchmark writes records the code that produced it:
+`marina: {"commit", "dirty", "describe"}` from git at run time (`benchmarks/run-version.ts`) on
+harness results (short-answer, FRAMES, HLE, …), each BrowseComp-Plus query file in `evals/`, the
+BrowseComp-Plus result, FutureX `score.json`/`summary.json`, ForecastBench/Metaculus
+`selection.json`, and `arena evaluate --out` reports. Ledger runs carry it in `config_json.marina`
+(harness filings, FutureX and forecasting backtests; no migration), and in-world runs already name
+their code in `source`. (`arena shadow paired-score` reports score forecasts made earlier, so they
+are not stamped.) The transfer report reads each source's stamps and, per suite:
+
+| Status | When | Counted |
+|---|---|---|
+| `same-commit` | every source of both arms is at one clean commit | yes |
+| `version-comparison` | the spec declares `versions` and each arm is at its declared ref | yes |
+| `unversioned` | `--allow-unversioned`, some sources unstamped (the report carries a warning banner) | yes |
+| `version-mismatch` | sources on different commits (also across one arm's replicates), or an arm not at its declared ref | **no** |
+| `version-unknown` | a source with no stamp, run with uncommitted changes (`dirty`), or a declared tag that does not resolve | **no** |
+
+A suite that is not counted keeps its numbers in the report (with what the statistics alone said)
+but is neither an improvement nor a regression, and the verdict names it. When the shared commit is
+behind `origin/main` the report warns (local git only — fetch first; nothing goes to the network):
+the default is to test newest main. To test a prior release on purpose — release vs release, or a
+regression test — declare it in the spec (a suite may override it):
+
+```json
+{ "versions": { "baseline": "v0.7.0", "candidate": "v0.8.0" }, "baseline": {…}, "candidate": {…}, "suites": […] }
+```
+
+Each ref is a sha (a prefix of ≥ 7 hex works without git) or a tag resolved in the local repository
+(a stamp whose `describe` is the tag also matches). The report labels the run a version
+comparison. Results written before stamping are `version-unknown`; `--allow-unversioned` counts
+them, with a warning banner, when you know which code they came from. Dirty checkouts are never let
+in: commit, then run. The inventory shows each variant's commits and marks each pair `same commit`,
+`MIXED commits` or `commit unknown`.
 
 **Ingest first.** Suites read files that already exist; a suite with a `run` command executes it
 only under `--run` (argv, never a shell; `{out}`, `{arm}`, `{replicate}` substituted; the arm's
