@@ -3,9 +3,9 @@
 
 import { Database } from "bun:sqlite";
 /**
- * Write-path dedup finds a duplicate by its text through an index instead of
- * reading the entity's whole note history. These tests hold the indexed
- * lookup to the original full-scan query: the same duplicate (or none) for
+ * Note writes, searches and revisions must not read an entity's whole history.
+ * Write-path dedup finds a duplicate by its text through an index; these
+ * tests hold that lookup to the original full-scan query: the same duplicate (or none) for
  * every probe over a fixture with bound and legacy handles, revisions,
  * retired and superseded notes, other tiers, pools, other entities and
  * texts that share a 64-character prefix.
@@ -15,7 +15,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MarinaDB } from "../src/persistence/database";
+import { STALE_DEPENDENTS_SQL } from "../src/persistence/db-memory-dependencies";
 import { findDuplicateForWrite } from "../src/persistence/db-notes";
+import { MATCHED_FROM, MATCHED_FROM_SCOPE, MATCHED_NOTES_CTE } from "../src/persistence/fts";
 
 /** The dedup query before the text index (frozen: never edit to pass). */
 const ORIGINAL_DEDUP = `SELECT * FROM numeric_notes
@@ -132,5 +134,86 @@ describe("write-path dedup by text index", () => {
     expect(db.createNote("bob", "a fact bob repeats", undefined, { noteType: "plan" })).not.toBe(
       first,
     );
+  });
+});
+
+/** The lexical join every note search used before the hit mapping (frozen). */
+const ORIGINAL_LEXICAL_JOIN = `SELECT n.*, fts.rowid AS hit, fts.rank AS hit_rank
+  FROM numeric_notes n JOIN notes_fts fts ON n.content_id = fts.rowid
+  WHERE notes_fts MATCH ?`;
+
+describe("note search by mapped lexical hits", () => {
+  const MATCHES = [
+    '"same"',
+    '"text"',
+    '"old" OR "new"',
+    '"gone"',
+    '"legacy"',
+    '"xxxxxxxx*"',
+    '"first" OR "second"',
+    '"nonexistent"',
+  ];
+  const byKey = (rows: Record<string, unknown>[]) =>
+    [...rows].sort((a, b) => Number(a.id) - Number(b.id) || Number(a.hit) - Number(b.hit));
+
+  for (const [form, from] of [
+    ["hit-driven", MATCHED_FROM],
+    ["scope-driven", MATCHED_FROM_SCOPE],
+  ] as const)
+    test(`${form}: joins exactly the (note, hit) pairs the direct join did`, () => {
+      const original = raw.query(ORIGINAL_LEXICAL_JOIN);
+      const mapped = raw.query(
+        `${MATCHED_NOTES_CTE} SELECT n.*, fts.rowid AS hit, fts.rank AS hit_rank ${from}`,
+      );
+      let pairs = 0;
+      for (const match of MATCHES) {
+        const expected = byKey(original.all(match) as Record<string, unknown>[]);
+        const actual = byKey(mapped.all(match) as Record<string, unknown>[]);
+        expect({ match, rows: actual }).toEqual({ match, rows: expected });
+        pairs += expected.length;
+      }
+      expect(pairs).toBeGreaterThanOrEqual(10);
+    });
+
+  test("every search returns the same rows whichever form the scope picks", () => {
+    // A tiny scope picks the scope-driven form; a broad one the hit-driven form.
+    const tiny = db.searchNotes("carol", "legacy");
+    const wide = db.searchNotes("alice", "same");
+    expect(tiny.map((r) => r.content)).toEqual(["legacy text"]);
+    expect(wide.length).toBeGreaterThan(0);
+    for (const r of wide) expect(r.content).toBe("same text");
+    expect(db.countMatchingNotes("alice", "text").total).toBeGreaterThan(0);
+  });
+
+  test("reads numeric handles by id, not every owned note", () => {
+    const plan = (
+      raw
+        .query(
+          `EXPLAIN QUERY PLAN ${MATCHED_NOTES_CTE}
+           SELECT n.id ${MATCHED_FROM} WHERE n.entity_name = ?`,
+        )
+        .all('"same"', "alice") as { detail: string }[]
+    )
+      .map((p) => p.detail)
+      .join("\n");
+    // Each handle is a point lookup by id; nothing scans notes or projections.
+    expect(plan).toMatch(
+      /SEARCH n USING (INTEGER PRIMARY KEY|(COVERING )?INDEX \S+) \([^)]*rowid=\?\)/,
+    );
+    expect(plan).not.toMatch(/SCAN (n|p|r|v)\b/);
+  });
+});
+
+describe("revision propagation", () => {
+  test("walks dependents by index, never every record in the space", () => {
+    const plan = (
+      raw.query(`EXPLAIN QUERY PLAN ${STALE_DEPENDENTS_SQL}`).all("r", "s", "s", "{}") as {
+        detail: string;
+      }[]
+    )
+      .map((p) => p.detail)
+      .join("\n");
+    expect(plan).toContain("idx_memory_revision_dependency_target (depends_on_id=?)");
+    expect(plan).not.toMatch(/SEARCH r USING INDEX \S+ \(space_id=\? AND status=\?\)$/m);
   });
 });

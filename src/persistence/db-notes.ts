@@ -28,7 +28,7 @@ import {
   verifyNumericNote,
 } from "./db-memory-numeric";
 import { createStoredNote, deleteStoredNote } from "./db-note-storage";
-import { buildFtsQuery } from "./fts";
+import { buildFtsQuery, MATCHED_FROM, MATCHED_FROM_SCOPE, MATCHED_NOTES_CTE } from "./fts";
 
 /** Module logger. */
 const logger = new Logger();
@@ -52,6 +52,38 @@ function factLikeClause(alias: string): string {
 }
 
 // ─── Notes Persistence ──────────────────────────────────────────────────
+
+/**
+ * The cheaper of the two equivalent lexical joins for a search scoped to one
+ * entity or pool: start from the hits when there are fewer of them than
+ * scoped notes, else scan the scoped notes against the materialized hits.
+ * Both yield exactly the pairs the direct FTS join did; only the rows read
+ * differ. The hit count stops at the scope size, so deciding costs at most
+ * what the scan would.
+ */
+function lexicalFrom(
+  db: Database,
+  ftsQuery: string,
+  scope: { entity: string } | { pool: string },
+): string {
+  const scoped =
+    db
+      .query<{ n: number }, [string]>(
+        "entity" in scope
+          ? "SELECT count(*) AS n FROM notes WHERE entity_name = ?"
+          : "SELECT count(*) AS n FROM notes WHERE pool_id = ?",
+      )
+      .get("entity" in scope ? scope.entity : scope.pool)?.n ?? 0;
+  // Reading a hit's handles by id costs about twice a scanned row.
+  const cap = Math.floor(scoped / 2);
+  const hits =
+    db
+      .query<{ n: number }, [string, number]>(
+        "SELECT count(*) AS n FROM (SELECT 1 FROM notes_fts WHERE notes_fts MATCH ? LIMIT ?)",
+      )
+      .get(ftsQuery, cap + 1)?.n ?? 0;
+  return hits <= cap ? MATCHED_FROM : MATCHED_FROM_SCOPE;
+}
 
 export function createNote(
   db: Database,
@@ -279,9 +311,8 @@ export function searchAllNotes(db: Database, query: string, limit = 20): NoteRow
   try {
     return db
       .query(
-        `SELECT n.* FROM numeric_notes n
-         JOIN notes_fts fts ON n.content_id = fts.rowid
-         WHERE notes_fts MATCH ?
+        `${MATCHED_NOTES_CTE}
+         SELECT n.* ${MATCHED_FROM}
          ORDER BY fts.rank
          LIMIT ?`,
       )
@@ -297,13 +328,13 @@ export function searchNotes(db: Database, entityName: string, query: string): No
   if (!ftsQuery) return [];
   return db
     .query(
-      `SELECT n.* FROM numeric_notes n
-       JOIN notes_fts fts ON n.content_id = fts.rowid
-       WHERE n.entity_name = ? AND notes_fts MATCH ?
+      `${MATCHED_NOTES_CTE}
+       SELECT n.* ${lexicalFrom(db, ftsQuery, { entity: entityName })}
+       WHERE n.entity_name = ?
        ORDER BY fts.rank
        LIMIT 20`,
     )
-    .all(entityName, ftsQuery) as NoteRow[];
+    .all(ftsQuery, entityName) as NoteRow[];
 }
 
 export function deleteNote(db: Database, id: number, entityName: string): boolean {
@@ -942,14 +973,6 @@ const SHARED_SCORE_EXPR = SCORE_EXPR.replace(
         AS score`,
 );
 
-// Materialize lexical hits once. Joining the projected numeric view directly
-// to FTS can make SQLite rerun the virtual-table MATCH for every owned note.
-// Retain every hit and its original rank: weighted top-20 ranking and ACLs below
-// must stay exact (a lexical LIMIT before scoring would change recall results).
-const MATCHED_NOTES_CTE = `WITH matched_notes AS MATERIALIZED (
-  SELECT rowid, rank FROM notes_fts WHERE notes_fts MATCH ?
-)`;
-
 export function recallNotes(
   db: Database,
   entityName: string,
@@ -976,8 +999,7 @@ export function recallNotes(
       `${MATCHED_NOTES_CTE}
       SELECT n.*,
         ${SCORE_EXPR}
-      FROM numeric_notes n
-      JOIN matched_notes fts ON n.content_id = fts.rowid
+      ${lexicalFrom(db, ftsQuery, { entity: entityName })}
       WHERE n.entity_name = ? AND n.pool_id IS NULL AND n.verification_status != 'superseded' ${tierClause}
       ORDER BY score DESC
       LIMIT 20`,
@@ -1003,8 +1025,7 @@ export function recallNotesWithType(
       `${MATCHED_NOTES_CTE}
       SELECT n.*,
         ${SCORE_EXPR}
-      FROM numeric_notes n
-      JOIN matched_notes fts ON n.content_id = fts.rowid
+      ${lexicalFrom(db, ftsQuery, { entity: entityName })}
       WHERE n.entity_name = ? AND n.pool_id IS NULL AND n.note_type = ? AND n.verification_status != 'superseded'
       ORDER BY score DESC
       LIMIT 20`,
@@ -1024,13 +1045,13 @@ export function findSimilarNotes(
   try {
     const rows = db
       .query(
-        `SELECT n.*, -fts.rank as relevance FROM numeric_notes n
-         JOIN notes_fts fts ON n.content_id = fts.rowid
-         WHERE n.entity_name = ? AND n.pool_id IS NULL AND ${factLikeClause("n")} AND notes_fts MATCH ?
+        `${MATCHED_NOTES_CTE}
+         SELECT n.*, -fts.rank as relevance ${lexicalFrom(db, ftsQuery, { entity: entityName })}
+         WHERE n.entity_name = ? AND n.pool_id IS NULL AND ${factLikeClause("n")}
          ORDER BY relevance DESC
          LIMIT 5`,
       )
-      .all(entityName, ftsQuery) as (NoteRow & { relevance: number })[];
+      .all(ftsQuery, entityName) as (NoteRow & { relevance: number })[];
     return rows.filter((r) => r.id !== excludeId && r.relevance > SIMILAR_NOTE_RELEVANCE_THRESHOLD);
   } catch (err) {
     logger.warn("db", "findSimilarNotes FTS5 query failed", { error: (err as Error).message });
@@ -1048,13 +1069,13 @@ export function countMatchingNotes(
   try {
     const row = db
       .query(
-        `SELECT COUNT(*) as total,
+        `${MATCHED_NOTES_CTE}
+         SELECT COUNT(*) as total,
           SUM(CASE WHEN n.importance <= 2 THEN 1 ELSE 0 END) as fading
-         FROM numeric_notes n
-         JOIN notes_fts fts ON n.content_id = fts.rowid
-         WHERE n.entity_name = ? AND n.pool_id IS NULL AND ${factLikeClause("n")} AND notes_fts MATCH ?`,
+         ${lexicalFrom(db, ftsQuery, { entity: entityName })}
+         WHERE n.entity_name = ? AND n.pool_id IS NULL AND ${factLikeClause("n")}`,
       )
-      .get(entityName, ftsQuery) as { total: number; fading: number } | null;
+      .get(ftsQuery, entityName) as { total: number; fading: number } | null;
     return { total: row?.total ?? 0, fading: row?.fading ?? 0 };
   } catch (err) {
     logger.warn("db", "countMatchingNotes FTS5 query failed", { error: (err as Error).message });
@@ -1460,15 +1481,15 @@ export function recallPoolNotes(
   // carries no placeholders.
   return db
     .query(
-      `SELECT n.*,
+      `${MATCHED_NOTES_CTE}
+      SELECT n.*,
         ${SHARED_SCORE_EXPR}
-      FROM numeric_notes n
-      JOIN notes_fts fts ON n.content_id = fts.rowid
-      WHERE n.pool_id = ? AND n.verification_status != 'superseded' ${opts?.includeProcess ? "" : `AND ${factLikeClause("n")}`} AND notes_fts MATCH ?
+      ${lexicalFrom(db, ftsQuery, { pool: poolId })}
+      WHERE n.pool_id = ? AND n.verification_status != 'superseded' ${opts?.includeProcess ? "" : `AND ${factLikeClause("n")}`}
       ORDER BY score DESC
       LIMIT 20`,
     )
-    .all(alpha, beta, now, gamma, now, poolId, ftsQuery) as ScoredNoteRow[];
+    .all(ftsQuery, alpha, beta, now, gamma, now, poolId) as ScoredNoteRow[];
 }
 
 // ─── Memory API Keys ────────────────────────────────────────────────
