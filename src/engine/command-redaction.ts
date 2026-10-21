@@ -17,7 +17,8 @@
 
 import { maskSecretShapes } from "../decisions/gate";
 import type { MarinaDB } from "../persistence/database";
-import type { CommandDef, CommandInput } from "../types";
+import type { CommandDef, CommandInput, EntityId, RoomId } from "../types";
+import type { CommandRouter } from "./command-router";
 
 export const REDACTED_INPUT_MARK = "[redacted]";
 
@@ -40,6 +41,18 @@ export function commandInputForLog(
     return [input.verb, sub?.toLowerCase(), REDACTED_INPUT_MARK].filter(Boolean).join(" ");
   }
   return maskSecretShapes(raw);
+}
+
+/**
+ * `commandInputForLog` for raw text outside the command phase (challenge
+ * summaries, approver notices): parsed and resolved against the builtins.
+ */
+export function redactCommandText(
+  router: Pick<CommandRouter, "parse" | "getDef">,
+  raw: string,
+): string {
+  const input = router.parse(raw, "" as EntityId, "" as RoomId);
+  return commandInputForLog(raw, input, input.verb ? router.getDef(input.verb) : undefined);
 }
 
 /** SQL `LIKE` patterns (lower-case) matching a sensitive form typed in clear. */

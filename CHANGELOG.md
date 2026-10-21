@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count against the per-IP login-attempt limit. A supervision credential calls only the routing
   endpoints the supervisor uses (an allowlist). The memory service API (`/v1/memory`) refuses a
   client address that has spent its failed-credential budget, as `/mem` does.
+- **Held actions show credential forms redacted.** A challenge hold's summary — in approver
+  notices, the ops inbox, operator pushes, the stored hold and the challenge judge's input —
+  renders a declared credential form as `<verb> <sub> [redacted]` and masks key-shaped strings. Such
+  a held input is never stored: it re-runs on approval in the running process, and after a restart
+  the requester is asked to issue it again.
 
 ### Changed
 
