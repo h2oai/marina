@@ -11,12 +11,13 @@ import {
 import { formatUsd, operatorStatusOf } from "../../agent/lean-agent-adapter";
 import { isSeedDisabled, listDisabledSeedAgents, setSeedDisabled } from "../../agent/seed-registry";
 import { getStanding } from "../../agent/standing";
+import { residentDefaultModel } from "../../config/model-tiers";
 import { bold, dim, header, separator } from "../../net/ansi";
 import { providerSetupHint } from "../../net/model/provider-setup";
 import type { MarinaDB } from "../../persistence/database";
 import { isGrantedCompetence } from "../../persistence/db-competence";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
-import { MARINA_DEFAULT_MODEL, MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
+import { MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
 import { sanitizeEntityName } from "../entity-name";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
@@ -662,7 +663,7 @@ async function handleSpawn(
 
   ctx.send(
     eid,
-    `Spawning ${bold(name)} (${opts.model || deps.db?.getDefaultModel() || MARINA_DEFAULT_MODEL}${opts.role ? `, ${opts.role}` : ""}${opts.thinkingLevel ? `, thinking ${opts.thinkingLevel}` : ""})...`,
+    `Spawning ${bold(name)} (${opts.model || residentDefaultModel(deps.db)}${opts.role ? `, ${opts.role}` : ""}${opts.thinkingLevel ? `, thinking ${opts.thinkingLevel}` : ""})...`,
   );
 
   try {

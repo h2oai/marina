@@ -9,6 +9,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { residentDefaultModel } from "../config/model-tiers";
 import {
   isRouteModel,
   routeModelForGoal,
@@ -713,7 +714,9 @@ export class AgentRuntime {
       // conversation exists (src/decisions/route.ts). The resolved id is what
       // gets persisted, so respawns never re-route mid-history. A `route`
       // world/process default (`marina -p --model route`) routes the same way.
-      const askedModel = config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL;
+      // No model named: the operator's explicit default when set, else the cheap
+      // tier (`marina/cheap`, a live alias — src/config/model-tiers.ts).
+      const askedModel = config.model ?? residentDefaultModel(this.db);
       const routedModel = isRouteModel(askedModel)
         ? await resolveRouteModel(config, this.db, this.onEvent)
         : undefined;

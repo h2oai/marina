@@ -1883,7 +1883,7 @@ Fields read here: `all`, `expected_generation`, `field`, `record_ids`, `source_i
 
 ### `path.split(".")`
 
-[Source](../../src/net/model-api/verify.ts#L656)
+[Source](../../src/net/model-api/verify.ts#L661)
 
 ## src/net/model/model-api.ts
 

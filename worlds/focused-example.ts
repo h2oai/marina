@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { crewModelFromEnv } from "../src/config/model-tiers";
 import type { MarinaDB } from "../src/persistence/database";
 import type { RoomId, RoomModule } from "../src/types";
 import type { GuideNote, WorldDefinition } from "../src/world/world-definition";
@@ -149,7 +150,7 @@ export function focusedExampleWorld(spec: FocusedExampleSpec): WorldDefinition {
       // tasks: only a task's creator can approve it, and `system` never logs in.
       const reviewer = spec.agents.find((agent) => agent.role === "general")?.name;
       if (reviewer) assignSeededTaskReviewer(db, spec.project.name, reviewer);
-      const model = process.env.MARINA_CREW_MODEL ?? "marina/default";
+      const model = crewModelFromEnv();
       for (const agent of spec.agents) {
         const goal =
           agent.name === reviewer

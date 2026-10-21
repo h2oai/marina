@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Cheap by default, strong where it grades: model tiers.** Work that names no model now runs on
+  one of two tiers (`src/config/model-tiers.ts`). The cheap tier (`MARINA_MODEL_TIER_CHEAP`) runs
+  agents spawned without a model, room agents, boot-seeded crews (the Workbench, answerer and
+  orchestration crews, the Chronicler) and memory helpers. Unset, it is the operator's explicit
+  default model when one is set, else the cheapest adequate tool-capable model for the keys present
+  (`openrouter/deepseek/deepseek-v4.1-flash` with an OpenRouter key). The strong tier
+  (`MARINA_MODEL_TIER_STRONG`) runs the benchmark judge, the outcome extractor, the lesson writer
+  and judge, the decision classifier and the Arbiter. Unset, it is `marina/default` exactly as
+  before, so judging does not get cheaper silently. `marina/cheap` and `marina/strong` are live `/v1`
+  model ids, resolved per request. One entry moves a single role:
+  `MARINA_AGENT_MODELS=role:<role>=<model>`. `admin models` shows the effective model for each tier
+  and role and where it came from, and the boot log prints both tiers.
+  **On upgrade**, with no model variable set, residents, room agents, seeded crews and memory
+  helpers move from `marina/default` to the cheap tier. The Workbench moves from each provider's
+  flagship (Opus, GPT-6.1 Sol, Gemini Pro) to the cheap tier. `MARINA_DEFAULT_OPENROUTER_MODEL`
+  and the other per-provider defaults now shape only `marina/default` and the strong tier.
+  Unchanged: judges, decisions and the Arbiter; the `/v1` `marina` model; agents saved with an
+  explicit model; and anything covered by an explicit `MARINA_DEFAULT_MODEL`, runtime default,
+  `MARINA_CREW_MODEL`, `MARINA_WORKBENCH_MODEL` or role variable. `MARINA_CREW_MODEL` now also
+  reaches the answerer and orchestration crews and the Chronicler in every world.
+
 - **Contributors earn standing: every account is its own party.** Work another account verified
   now credits the worker, including a person approving its own agent's task, adopting its
   agent's proposal or replicating its agent's experiment, and a sibling agent reviewing a Code

@@ -48,6 +48,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { roleModelFromEnv } from "../config/model-tiers";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { localHttpBase } from "../net/listen-ports";
 import { samplingFor } from "../net/model/sampling-params";
@@ -60,8 +61,6 @@ import { queryTerms, termMatcher } from "./term-match";
 
 /** `metadata.derived` on every ingest note. */
 export const INGEST_NOTE_KIND = "ingest-note";
-/** The single-LLM default: the operator's own model through this Marina's `/v1`. */
-export const DEFAULT_INGEST_NOTES_MODEL = "marina/default";
 /** A source shorter than this gets no notes from the environment switch alone. */
 export const INGEST_NOTES_MIN_BYTES = 2048;
 /** Bytes of source text per model call. */
@@ -87,10 +86,14 @@ export function ingestNotesMode(env: NodeJS.ProcessEnv = process.env): "off" | "
   return v === "on" || v === "true" ? "on" : "off";
 }
 
-/** `MARINA_MEMORY_INGEST_NOTES_MODEL`; undefined when `none` / `off` (mechanical). */
+/**
+ * `MARINA_MEMORY_INGEST_NOTES_MODEL`; unset, the `helper` model role through this
+ * Marina's `/v1` (`marina/cheap` unless `role:helper=` says otherwise); undefined
+ * when `none` / `off` (mechanical).
+ */
 export function ingestNotesModel(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const v = env.MARINA_MEMORY_INGEST_NOTES_MODEL?.trim();
-  if (!v) return DEFAULT_INGEST_NOTES_MODEL;
+  if (!v) return roleModelFromEnv("helper", env);
   if (v.toLowerCase() === "none" || v.toLowerCase() === "off") return undefined;
   return v;
 }

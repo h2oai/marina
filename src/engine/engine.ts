@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { scratchRoot } from "../config/data-dir";
+import { roleModelFromEnv } from "../config/model-tiers";
 import { localHttpBase } from "../net/listen-ports";
 import { MARINA_ROOT } from "../runtime-paths";
 import { AuthCoordinator, type LoginIdentity, type LoginResult } from "./auth-coordinator";
@@ -1093,7 +1094,7 @@ export class Engine {
               try {
                 const handle = await this.agentRuntime.spawn({
                   ...config,
-                  model: config.model ?? "marina/default",
+                  model: config.model ?? roleModelFromEnv("room"),
                   room: roomId as string,
                 });
                 const s = handle.getStatus();

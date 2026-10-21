@@ -327,7 +327,7 @@ describe("runMemoryHygiene", () => {
     expect(tells[0]!.text).toContain("No memory-evaluator is running");
     expect(tells[0]!.text).toContain(HYGIENE_SPAWN_COMMAND);
     expect(HYGIENE_SPAWN_COMMAND).toBe(
-      "agent spawn Evaluator model marina/default role memory-evaluator budget 40",
+      "agent spawn Evaluator model marina/cheap role memory-evaluator budget 40",
     );
   });
 
