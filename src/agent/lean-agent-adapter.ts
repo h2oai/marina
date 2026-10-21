@@ -2398,6 +2398,42 @@ export class LeanAgentAdapter implements AgentHandle {
 
   // ─── Perception Handling ──────────────────────────────────────────────
 
+  /**
+   * Stop owing the endpoint request `modelRequestId`: the model API re-offered
+   * it to another member (this resident's claim lapsed) or another member
+   * answered it. The ledger entry, its buffered perception and its durable
+   * record go; the durable completion waits for any intake save still in
+   * flight, so the record is not written back after it is removed.
+   */
+  private releaseModelRequest(modelRequestId: string, reason: string): void {
+    const ids = this.outstandingRequests.idsForModelRequest(modelRequestId);
+    if (ids.length === 0) return;
+    const released = new Set(ids);
+    this.outstandingRequests.complete(ids);
+    for (const id of ids) {
+      this.unsavedRequests.delete(id);
+      this.evalRequestIds.delete(id);
+    }
+    this.pendingPerceptions = this.pendingPerceptions.filter(
+      (e) => !e.requestId || !released.has(e.requestId),
+    );
+    this.currentPromptActionable = this.outstandingRequests.presentedIds().size > 0;
+    this.log.info(LEAN_AGENT_LOG_CATEGORY, `released endpoint request ${modelRequestId}`, {
+      agent: this.name,
+      requestId: modelRequestId,
+      reason,
+    });
+    void (async () => {
+      await this.flushOutstandingRequests();
+      await this.platformMemory.completeOutstandingRequests(ids);
+    })().catch((error) => {
+      this.log.warn(LEAN_AGENT_LOG_CATEGORY, "request release checkpoint failed", {
+        agent: this.name,
+        error: getErrorMessage(error),
+      });
+    });
+  }
+
   private flushOutstandingRequests(): Promise<void> {
     if (this.requestSave) return this.requestSave;
     if (!this.unsavedRequests.size) return Promise.resolve();
@@ -2479,10 +2515,13 @@ export class LeanAgentAdapter implements AgentHandle {
                 events,
                 scorer: this.socialAwareness,
                 perceiveSelfEcho: this.perceiveSelfEcho,
+                selfId: this.gameState.getState().connection.entityId ?? undefined,
+                owedModelRequests: this.outstandingRequests.modelRequestIds(),
               },
               { mode: this.attentionMode, threshold: this.attentionThreshold },
               this.attentionState,
             );
+            if (decision.release) this.releaseModelRequest(decision.release, decision.reason);
             if (!decision.keep) {
               if (decision.reason === "self-echo") this.selfEchoesDropped++;
               else if (decision.reason === "below-threshold") this.droppedPerceptions++;

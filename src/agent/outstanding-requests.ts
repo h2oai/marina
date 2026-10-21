@@ -127,6 +127,29 @@ function jsonEnvelope(text: string, allowPrefix = false): Record<string, unknown
   }
 }
 
+/** The endpoint envelope a perception carries (`model_request`, `model_response`, …). */
+export interface ModelEnvelope {
+  type: string;
+  id: string;
+  /** The one member a `model_request` is addressed to (an entity id, or a name). */
+  target?: string;
+}
+
+/**
+ * The `model_*` envelope in a perception's message, when it has one with an
+ * id. Endpoint requests arrive as plain channel messages, so the shape is
+ * read from the content (an optional display prefix before the JSON is allowed).
+ */
+export function modelEnvelopeOf(p: Perception): ModelEnvelope | undefined {
+  const raw = p.data?.message ?? p.data?.content;
+  if (typeof raw !== "string" || !raw.includes('"type":"model_')) return undefined;
+  const envelope = jsonEnvelope(raw, true);
+  if (typeof envelope?.type !== "string" || !envelope.type.startsWith("model_")) return undefined;
+  if (typeof envelope.id !== "string" || !envelope.id) return undefined;
+  const target = typeof envelope.target === "string" ? envelope.target.trim() : "";
+  return { type: envelope.type, id: envelope.id, ...(target ? { target } : {}) };
+}
+
 /**
  * A measurement request: a `model_request` envelope carrying the `eval`
  * marker the model API adds for `x-marina-eval` traffic (`evalEnvelope` in
@@ -204,6 +227,19 @@ export class OutstandingRequests {
   }
   complete(ids: readonly string[]): void {
     for (const id of ids) this.requests.delete(id);
+  }
+  /** The endpoint request ids (`model_request` ids) this ledger still owes a reply to. */
+  modelRequestIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const request of this.entries())
+      if (request.modelRequestId) ids.add(request.modelRequestId);
+    return ids;
+  }
+  /** The ledger ids that track the endpoint request `modelRequestId`. */
+  idsForModelRequest(modelRequestId: string): string[] {
+    return this.entries()
+      .filter((request) => request.modelRequestId === modelRequestId)
+      .map((request) => request.id);
   }
   presentedIds(): Set<string> {
     return new Set(

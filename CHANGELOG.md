@@ -79,6 +79,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **One crew member claims each endpoint request.** A `marina:<crew>` request is addressed to one
+  member (`target`), but Marina's residents owed every `model_request` they perceived. With 4
+  Answerers on `marina:answerer`, every Answerer worked every request. Under 4-way load the backlog
+  grew, each reply ledger filled (32), obligations stayed unsettled until their 30-minute TTL, and
+  requests timed out. Now only the addressed member owes a request, and the others drop it and
+  peers' `model_response`s without waking (`src/agent/attention.ts`). The claim is a lease
+  (`MARINA_REQUEST_CLAIM_LEASE_MS`, default 120 s, `src/net/model-api/request-claim.ts`) renewed by
+  the holder's traced work. With no sign of work, the request is re-offered to another eligible
+  member, and the first holder releases it. Reminders follow the current holder. Pinned (`role:`)
+  requests, a lone member, `open`/`panel` fan-out and untargeted requests keep their behaviour.
+
 - **Documentation matches the code.** The README and site say approvals apply on shared and public
   instances; the privacy guide lists the keyless market and economic-data lookups and the markets
   feed; gate, operator-grant and built-in skill lists are current; seeded agents' autostart, the
