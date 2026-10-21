@@ -160,7 +160,6 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   const [entitiesExpanded, setEntitiesExpanded] = useState(false);
   const [worldNavExpanded, setWorldNavExpanded] = useState(false);
   // Feed merged into CommandBar "Events" tab — no separate panel
-  const [_showAdmin, setShowAdmin] = useState(false);
   const [showCommandBar, setShowCommandBar] = useState(true);
   const [clearView, setClearView] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -454,7 +453,6 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   // ── Panel layout reset ──────────────────────────────────────────────────
   const handleReset = useCallback(() => {
     setShowEntities(true);
-    setShowAdmin(false);
     setShowCommandBar(true);
     setClearView(false);
     closeContext();

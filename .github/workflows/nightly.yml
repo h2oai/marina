@@ -1,10 +1,10 @@
 # Copyright 2025-2026 H2O.ai, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-# Nightly qualification on main. Deliberately NOT triggered by pull_request so
-# it never becomes a required PR check: the browser suite needs a real Chromium
-# and a disposable Marina server, and the release qualifier runs the whole
-# repo (backend + dashboard + site + audit) — both too slow for the PR loop.
+# Nightly qualification on main: the full dashboard Playwright suite, a backend
+# coverage report and the release qualifier (backend + dashboard + site +
+# audit). Deliberately NOT triggered by pull_request, so none of it becomes a
+# required PR check; PR CI runs the shorter participation browser journeys.
 name: Nightly
 
 on:
@@ -71,8 +71,8 @@ jobs:
     name: Backend coverage (report only)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Non-blocking by design: the soft floor in bunfig.toml exists to surface a
-    # large regression, never to gate a merge. The PR CI sharded matrix is
+    # Non-blocking by design: the floor in scripts/check-coverage.ts surfaces a
+    # large regression, never gates a merge. The PR CI sharded matrix is
     # untouched — coverage runs the suite unsharded and is far too slow for it.
     continue-on-error: true
     steps:

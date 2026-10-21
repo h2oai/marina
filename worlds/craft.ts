@@ -28,20 +28,17 @@
  * with network-level separation of concerns.
  */
 
-import { join } from "node:path";
 import type { MarinaDB } from "../src/persistence/database";
-import { seedTraitsAndRoles } from "./seed";
 import type {
   CommandContext,
   CommandHandler,
-  CommandInput,
-  Entity,
   EntityId,
   RoomContext,
   RoomId,
   RoomModule,
 } from "../src/types";
 import type { WorldDefinition } from "../src/world/world-definition";
+import { seedTraitsAndRoles } from "./seed";
 
 // ─── ANSI ───────────────────────────────────────────────────────────────────
 
@@ -129,16 +126,6 @@ const POOL_SIGNALS: Record<string, (typeof KNOWLEDGE_POOLS)[number]> = {
   broke: "troubleshooting",
   workaround: "troubleshooting",
 };
-
-const TUNE_DIMENSIONS = [
-  "spec_quality",
-  "granularity",
-  "boundaries",
-  "knowledge_capture",
-  "testing",
-  "discovery_flow",
-  "session_discipline",
-] as const;
 
 const CRAFT_CHANNEL = "craft";
 
@@ -709,14 +696,13 @@ const reviewVerdict: CommandHandler = (ctx, input) => {
 const reviewStatus: CommandHandler = (ctx, input) => {
   const verdicts = ctx.store.get<Verdict[]>("verdicts") ?? [];
   const scenarioKeys = ctx.store.keys().filter((k) => k.startsWith("scenarios:"));
-  const specKeys = ctx.store.keys().filter((k) => k.startsWith("spec-"));
 
   const lines = [`${B}Craft Review Status${R}`, ""];
 
   if (verdicts.length) {
     lines.push(`${B}Verdicts:${R}`);
     for (const v of verdicts) {
-      const icon = v.pass ? G + "✓" + R : RED + "✗" + R;
+      const icon = v.pass ? `${G}✓${R}` : `${RED}✗${R}`;
       lines.push(`  ${icon} ${C}${v.specId}${R} by ${v.reviewer}: ${v.reason}`);
     }
   } else {
@@ -782,7 +768,7 @@ export function workshopRoom(): RoomModule {
     },
     onEnter(ctx, entity) {
       const ent = ctx.getEntity(entity);
-      if (!ent || ent.kind !== "agent") return;
+      if (ent?.kind !== "agent") return;
       ctx.send(entity, craftBanner());
       ctx.send(
         entity,
@@ -864,7 +850,7 @@ export function reviewRoom(): RoomModule {
     },
     onEnter(ctx, entity) {
       const ent = ctx.getEntity(entity);
-      if (!ent || ent.kind !== "agent") return;
+      if (ent?.kind !== "agent") return;
       ctx.send(entity, reviewBanner());
       ctx.send(entity, `${D}Type ${Y}help${R}${D} for review commands.${R}`);
     },
@@ -872,7 +858,7 @@ export function reviewRoom(): RoomModule {
       // Listen for specs/ship notifications from workshop via craft channel
       if (ctx.channels && !ctx.store.get<boolean>("channel_listening")) {
         ctx.store.set("channel_listening", true);
-        ctx.channels.onMessage(CRAFT_CHANNEL, (senderId, senderName, content) => {
+        ctx.channels.onMessage(CRAFT_CHANNEL, (_senderId, senderName, content) => {
           ctx.broadcast(`${D}[craft] ${senderName}: ${content}${R}`, "craft_channel");
 
           // Auto-import spec data when shipped

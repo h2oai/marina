@@ -14,7 +14,7 @@ do not bypass checks, reviews, or branch protection.
 ```bash
 bun run start          # Start server
 bun run test           # Run all backend tests (parallel workers; `test:serial` for one process)
-bun run typecheck      # TypeScript strict check (tsconfig.json, then tsconfig.benchmarks.json for benchmarks/)
+bun run typecheck      # TypeScript strict check (tsconfig.json, tsconfig.benchmarks.json for benchmarks/, tsconfig.scripts.json for scripts/ and worlds/)
 bun run lint           # Biome lint
 bun run format         # Biome auto-format (run before committing)
 bun run test:fast      # pre-commit loop: 138 engine-free files, ~10 s parallel (scripts/test-fast.ts --check reports drift; --serial opts out)

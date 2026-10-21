@@ -181,7 +181,7 @@ async function main() {
       provider,
       cases,
       undefined,
-      values.calibrate ? null : undefined,
+      values.calibrate ? { calibration: null } : undefined,
     );
     reports.push(report);
     if (values.calibrate) {
