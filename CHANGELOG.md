@@ -85,6 +85,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Docker ports and the MCP tool list (now a pointer to the generated reference) are corrected. The
   docs contract checks stated registry counts and requires commands to be documented as commands.
 
+- **Room entry checks apply to every movement command and fail closed.** `move` and `goto` (to a
+  room or to an entity) share one entry check: private rooms, then the room's `canEnter` guard,
+  which everyone obeys. A guard that throws, overruns its time limit, or belongs to a room the
+  sandbox disabled refuses entry. A room command that throws is recorded as a failed command (no
+  quest progress, failed usage, no `command` event), as a rejected async one already was. Room
+  and command source validation refuses static imports and re-exports; only `import type` is
+  allowed. The demos world no longer seeds a gate grant for its Maker agent (its compile steps are
+  held for an operator), and its Workshop and Bridge demos report completion only after checking
+  the outcome.
+
 - **Paired benchmark arms compare like with like.** The BrowseComp transfer adapter scores an incomplete
   run's missing items 0 instead of dropping them, so an arm that times out more is no longer
   flattered. `MARINA_GROUND_CACHE=<file.json>` lets short-answer arms run with `--ground search`

@@ -69,13 +69,25 @@ const DIALOGUE = {
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 const STEPS_ORDERED: Step[] = ["start", "launched", "connected", "bridged", "messaged"];
+// Steps up to "bridged" only record that the instructions were shown — the room
+// cannot observe the peer process or the gateway. "messaged" is reached only
+// when a message relayed from the peer is in the bridged channel's history.
 const STEP_LABELS: Record<Step, string> = {
   start: "Start the demo",
-  launched: "Peer instance running",
-  connected: "Gateway connected",
-  bridged: "Channel bridged",
-  messaged: "Cross-instance message sent",
+  launched: "Peer launch command shown",
+  connected: "Gateway command shown",
+  bridged: "Bridge commands shown",
+  messaged: "Message from the peer received",
 };
+
+/** Prefix the gateway puts on a channel message relayed from the peer. */
+const RELAY_PREFIX = `[from ${PEER_NAME}/`;
+
+/** Whether the bridged channel holds a message relayed from the peer. */
+function peerMessageReceived(ctx: RoomContext): boolean {
+  const history = ctx.channels?.history(BRIDGE_CHANNEL, 50) ?? [];
+  return history.some((message) => message.content.startsWith(RELAY_PREFIX));
+}
 
 function stepDone(state: BridgeState, step: Step): boolean {
   return STEPS_ORDERED.indexOf(state.step) >= STEPS_ORDERED.indexOf(step);
@@ -100,9 +112,13 @@ function statusBlock(state: BridgeState | undefined): string {
   } else if (state.step === "connected") {
     lines.push(`\n${C}Next:${R} Type '${C}link${R}' to bridge the ${BRIDGE_CHANNEL} channel.`);
   } else if (state.step === "bridged") {
-    lines.push(`\n${C}Next:${R} Type '${C}ping${R}' to send a cross-instance message.`);
+    lines.push(
+      `\n${C}Next:${R} Type '${C}ping${R}' to check for a message from the peer.`,
+    );
   } else if (state.step === "messaged") {
-    lines.push(`\n${G}${B}Federation demo complete!${R} Two Marina instances are talking.`);
+    lines.push(
+      `\n${G}${B}Federation demo complete.${R} A message from the peer reached this instance.`,
+    );
   }
   return lines.join("\n");
 }
@@ -177,7 +193,7 @@ const room: RoomModule = {
         `${D}Connecting to peer instance on port ${PEER_PORT}...${R}\n\n` +
           `Run this command now:\n\n` +
           `  ${C}gateway add ${PEER_NAME} ws://localhost:${PEER_PORT}/ws${R}\n\n` +
-          `${D}Once connected, type '${C}link${R}' to bridge a channel.${R}`,
+          `${D}Once 'gateway list' shows it connected, type '${C}link${R}' to bridge a channel.${R}`,
       );
 
       state.step = "connected";
@@ -203,8 +219,8 @@ const room: RoomModule = {
           `Run these commands:\n\n` +
           `  ${C}channel join ${BRIDGE_CHANNEL}${R}\n` +
           `  ${C}gateway bridge ${PEER_NAME} ${BRIDGE_CHANNEL}${R}\n\n` +
-          `${D}Now both instances share the '${BRIDGE_CHANNEL}' channel. ` +
-          `Type '${C}ping${R}' to send a message across.${R}`,
+          `${D}Then, on the peer instance, post a message in its '${BRIDGE_CHANNEL}' channel ` +
+          `and type '${C}ping${R}' here to check that it arrived.${R}`,
       );
 
       state.step = "bridged";
@@ -213,30 +229,33 @@ const room: RoomModule = {
       const ent = ctx.getEntity(input.entity);
       if (ent) ent.properties.quest_channel_bridged = true;
 
-      ctx.broadcast(
-        `\n${G}${B}Light streams begin to flow between the pylons!${R} ` +
-          `The channel bridge is active.`,
-      );
     },
 
-    ping: async (ctx: RoomContext, input: { entity: EntityId }) => {
+    ping: (ctx: RoomContext, input: { entity: EntityId }) => {
       const state = ctx.store.get<BridgeState>("bridge");
       if (!state || STEPS_ORDERED.indexOf(state.step) < 3) {
         ctx.send(input.entity, "Bridge a channel first. " + statusBlock(state));
         return;
       }
       if (state.step === "messaged") {
-        ctx.send(input.entity, "Already pinged. " + statusBlock(state));
+        ctx.send(input.entity, "Already received. " + statusBlock(state));
         return;
       }
 
-      ctx.broadcast(
-        `${D}Sending a message across the bridge...${R}\n\n` +
-          `Run this command:\n\n` +
-          `  ${C}channel ${BRIDGE_CHANNEL} Hello from the Bridge! This message crosses worlds.${R}\n\n` +
-          `${D}Check the second terminal — the message appears there too.${R}\n` +
-          `${D}Anyone on the peer instance typing in '${BRIDGE_CHANNEL}' will appear here.${R}`,
-      );
+      // Completion is checked, not assumed: only a message the gateway relayed
+      // from the peer into the bridged channel counts.
+      if (!peerMessageReceived(ctx)) {
+        ctx.send(
+          input.entity,
+          `${Y}No message from ${PEER_NAME} in '${BRIDGE_CHANNEL}' yet.${R}\n\n` +
+            `Send one from this side with:\n\n` +
+            `  ${C}channel ${BRIDGE_CHANNEL} Hello from the Bridge!${R}\n\n` +
+            `${D}On the peer instance, post a message in its '${BRIDGE_CHANNEL}' channel, ` +
+            `then type '${C}ping${R}' again. If nothing arrives, check 'gateway list' ` +
+            `and that '${BRIDGE_CHANNEL}' is bridged on both sides.${R}`,
+        );
+        return;
+      }
 
       state.step = "messaged";
       ctx.store.set("bridge", state);
@@ -246,17 +265,16 @@ const room: RoomModule = {
 
       ctx.broadcast(
         `\n${G}${B}The pylons blaze with synchronized light!${R}\n\n` +
-          `${B}Federation demo complete.${R} Two sovereign Marina instances are ` +
-          `communicating through a bridged channel. Each has its own database, ` +
-          `its own agents, its own world. The network scales by adding instances, ` +
-          `not by scaling infrastructure.\n\n` +
+          `${B}Federation demo complete.${R} A message posted on the peer instance ` +
+          `arrived here through the bridged '${BRIDGE_CHANNEL}' channel. Each instance has ` +
+          `its own database, its own agents, its own world.\n\n` +
           `${D}Try 'gateway send ${PEER_NAME} <name> <message>' for direct cross-instance tells.${R}`,
       );
 
       ctx.logEvent?.({
         type: "custom",
         detail: "federation_complete",
-        message: "Two Marina instances successfully bridged and communicating.",
+        message: `A message relayed from ${PEER_NAME} arrived in the bridged channel.`,
       } as any);
     },
 
