@@ -176,6 +176,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Write-path dedup read every earlier note of the same type (37 ms per write); it now finds the text through a new index (migration 177) and writes stay at 1.5 ms.
   - Note searches joined the note view to full-text search so that SQLite re-ran the text match for every note: `findSimilarNotes` took 19 s, `searchNotes` 1.3 s. Each search now starts from whichever side is smaller — the text hits, or the account's own notes — so they take 59 ms and 15 ms for a query that matches everything, and under 1 ms for a selective one.
   - A revision or deletion read every active record in the memory space to find dependents (10.5 ms); it now walks dependents by index (2 ms).
+- **A late answer settles a tell.** A tell whose deadline passed (status `expired`, for example while its recipient was blocked on a permission prompt) is now acknowledged and linked to its reply when the recipient answers it with `re #<id>`, `re` or `tell ack`. `tell status` reports it as `acknowledged after its deadline`. Expiry still never removes content.
+- **Supervised residents are told to run relay commands plainly**: one `connect -c "<command>"` per call, no `$(…)`, `$?`, pipes, loops or chains, which a command sandbox would stop to ask about.
+
 - A review snapshot from a sandboxed resident no longer lists the empty read-only placeholder files a command sandbox mounts over dotfiles and settings while the request runs.
 
 - **Supervised residents show as residents in the dashboard.** The world snapshot's vendor,
