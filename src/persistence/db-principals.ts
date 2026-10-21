@@ -180,6 +180,82 @@ export function revokeWorkloadCredentialsFor(db: Database, principalId: string):
   ).changes;
 }
 
+/**
+ * A supervision credential: a person's own local supervisor holds it for the
+ * routing API only (audience `marina:routing`). It is not a world session, so a
+ * later login by the same person never replaces it, and it is accepted nowhere
+ * outside `/api/routing/` (no world login, no challenge, no command).
+ */
+export interface SupervisionCredential {
+  credentialId: string;
+  principal: PrincipalRow;
+  expiresAt: number;
+}
+
+export function issueSupervisionCredential(
+  db: Database,
+  principalId: string,
+  ttlMs = 24 * 60 * 60_000,
+): IssuedWorkloadCredential {
+  const principal = db
+    .query("SELECT * FROM principals WHERE principal_id=?")
+    .get(principalId) as PrincipalRow | null;
+  if (principal?.principal_type !== "human" || principal.status !== "active") {
+    throw new Error("An active person principal is required to issue a supervision credential.");
+  }
+  const now = Date.now();
+  const expiresAt = now + Math.min(Math.max(ttlMs, 60_000), 24 * 60 * 60_000);
+  const credentialId = randomUUID();
+  const token = `marina-routing-${randomBytes(32).toString("base64url")}`;
+  db.run(
+    `INSERT INTO principal_credentials
+     (credential_id,principal_id,token_hash,audience,scopes,issued_at,expires_at,revoked_at)
+     VALUES (?,?,?,?,?,?,?,NULL)`,
+    [
+      credentialId,
+      principalId,
+      tokenHash(token),
+      "marina:routing",
+      '["routing:supervise"]',
+      now,
+      expiresAt,
+    ],
+  );
+  return { credentialId, token, principalId, expiresAt };
+}
+
+export function verifySupervisionCredential(
+  reader: Database,
+  token: string,
+): SupervisionCredential | undefined {
+  if (!token.startsWith("marina-routing-")) return undefined;
+  const row = reader
+    .query(
+      `SELECT p.*, c.credential_id AS credential_id, c.expires_at AS credential_expires_at
+       FROM principal_credentials c
+       JOIN principals p ON p.principal_id=c.principal_id
+       WHERE c.token_hash=? AND c.audience='marina:routing' AND c.revoked_at IS NULL
+         AND c.expires_at>? AND p.status='active' AND p.principal_type='human'`,
+    )
+    .get(tokenHash(token), Date.now()) as
+    | (PrincipalRow & { credential_id: string; credential_expires_at: number })
+    | null;
+  if (!row) return undefined;
+  const { credential_id, credential_expires_at, ...principal } = row;
+  return { credentialId: credential_id, principal, expiresAt: credential_expires_at };
+}
+
+/** Revoke one supervision credential. Returns whether a live one was revoked. */
+export function revokeSupervisionCredential(db: Database, credentialId: string): boolean {
+  return (
+    db.run(
+      `UPDATE principal_credentials SET revoked_at=?
+        WHERE credential_id=? AND audience='marina:routing' AND revoked_at IS NULL`,
+      [Date.now(), credentialId],
+    ).changes > 0
+  );
+}
+
 export const MEMORY_SCOPES = [
   "memory:read",
   "memory:write",

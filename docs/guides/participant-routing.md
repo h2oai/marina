@@ -80,6 +80,16 @@ launched agent is its own world account instead of acting through the operator's
   binds the run session, and issues a workload credential (scope `world:connect`, at most 24 hours).
   The credential is returned once; the server stores only its hash. Owner, lineage and challenge
   routing resolve through the same `spawned_by` chain as any spawned agent.
+- **Supervision credential.** At start the supervisor exchanges your world session for its own
+  routing credential (`POST /api/routing/supervision`; a person only, at most 24 hours, renewed at
+  80 % of its lifetime, revoked when the supervisor stops). Marina keeps one world session per
+  account, so logging in again as yourself — `marina connect <you>` in another terminal, the
+  dashboard — replaces your session; the supervisor keeps running on its credential and can still
+  renew and revoke its residents. The credential is accepted only under `/api/routing/`: it is not a
+  world session (no login, reconnect, command or challenge), and it cannot send controls, messages
+  or channel posts, which come from your own session. A renewal that fails is retried while the
+  credential is live and never falls back to your session. A server with residents off (or an older
+  server) offers no endpoint, and the supervisor keeps using your session token as before.
 - **Names.** A launch may ask for a name (`name` in the launch control); otherwise the server picks a
   pronounceable word-list name that is free in the world and never contains the vendor. Relaunching
   or resuming your own resident reuses its account. A name held by another account — a person, an
@@ -388,6 +398,9 @@ version 1 under `protocols.routing`.
 | `GET /sessions/:id/runtime` | Latest published version-1 runtime state, or `null` |
 | `POST /sessions/:id/control` | Owner/gate-checked `{clientMessageId,targetId,control}` |
 | `POST /sync` | Atomic bounded publications, acknowledgments and inbox reads for multiple participants |
+| `POST /supervision` | Supervised residents only: exchange a person's world session for a routing-only supervision credential `{credentialId, token, expiresAt}` |
+| `POST /supervision/renew` | Supervised residents only, with the supervision credential: a fresh credential; the presented one is revoked |
+| `POST /supervision/revoke` | Supervised residents only, with the supervision credential: revoke it |
 | `POST /residents` | Supervised residents only: enrol `{sessionId, name?, room?}`; returns the credential once |
 | `POST /residents/:name/renew` | Supervised residents only: fresh credential for the owned live run `{sessionId}` |
 | `POST /residents/:name/revoke` | Supervised residents only: end the run's hold `{sessionId}` |

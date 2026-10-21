@@ -51,6 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flattered. `MARINA_GROUND_CACHE=<file.json>` lets short-answer arms run with `--ground search`
   share one grounding-evidence cache, so paired arms read byte-identical evidence.
 
+- **Supervised residents: logging in again no longer cuts the supervisor off.** With
+  `MARINA_SUPERVISED_RESIDENTS=on`, the supervisor exchanges the person's world session for its own
+  routing-only supervision credential (`POST /api/routing/supervision`, at most 24 hours, renewed at
+  80 %, revoked on stop). A later `marina connect <same name>` replaces only the world session; the
+  supervisor keeps running and can still renew and revoke its residents. The credential is accepted
+  only under `/api/routing/`, is never a world session or an approver, and cannot send controls,
+  messages or channel posts. Off, nothing changes.
+
 - **Messages carry a causal envelope, and the canvas sees speech.** `say`, `tell` and `re` emit
   content-free `say_sent` / `tell_sent` events (names, a message ref, `cause`, `depth`; never the
   words), so the canvas draws say and tell arcs again. Every say, tell, re, shout and channel post
