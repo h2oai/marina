@@ -93,6 +93,15 @@ export function registerGeneralCommands(engine: Engine): void {
         ? (roomId) => engine.boardManager!.getBoardsForScope("room", roomId)
         : undefined,
       residentLabeler(engine.db),
+      {
+        ...(engine.db
+          ? {
+              readRoomLog: (roomId: string, since: number, limit: number) =>
+                engine.db!.readRoomLog(roomId, since, limit),
+            }
+          : {}),
+        statusOf: (name: string) => engine.presence.statusOf(name),
+      },
     ),
   );
 
@@ -160,6 +169,7 @@ export function registerGeneralCommands(engine: Engine): void {
       engine.crewManager ? () => engine.crewManager!.list() : undefined,
       (entityName) => !!engine.agentRuntime?.get(entityName),
       residentLabeler(engine.db),
+      engine.presence,
     ),
   );
   engine.commands.registerBuiltin(

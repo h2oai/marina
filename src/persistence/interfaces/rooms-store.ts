@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RoomSourceRow, RoomTemplateRow } from "../db-rooms";
+import type { RoomLogInput, RoomLogRow, RoomSourceRow, RoomTemplateRow } from "../db-rooms";
 import type { ExactKeys } from "./exact-keys";
 
 /** Room sources and templates (`db-rooms.ts`). */
@@ -30,6 +30,10 @@ export interface RoomsStore {
   getAllRoomTemplates(): RoomTemplateRow[];
   deleteRoomTemplate(name: string): void;
   clearDynamicRooms(): void;
+  /** Append one room-log entry (bounded per room). */
+  appendRoomLog(entry: RoomLogInput): number;
+  /** A room's recent log, oldest first. */
+  readRoomLog(room: string, since?: number, limit?: number): RoomLogRow[];
 }
 
 /** Runtime mirror of `RoomsStore`'s method names — the drift test compares it to the facade. */
@@ -46,6 +50,8 @@ export const ROOMS_STORE_METHODS = [
   "getAllRoomTemplates",
   "deleteRoomTemplate",
   "clearDynamicRooms",
+  "appendRoomLog",
+  "readRoomLog",
 ] as const satisfies readonly (keyof RoomsStore)[];
 
 export const ROOMS_STORE_COMPLETE: ExactKeys<RoomsStore, typeof ROOMS_STORE_METHODS> = true;

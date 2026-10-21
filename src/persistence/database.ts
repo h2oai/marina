@@ -295,7 +295,7 @@ export type { GatewayRow } from "./db-gateways";
 export type { MacroRow } from "./db-macros";
 export type { CompactionOpts, CompactionStats } from "./db-maintenance";
 export type { MarketPositionRow, MarketRow } from "./db-markets";
-export type { RoomSourceRow, RoomTemplateRow } from "./db-rooms";
+export type { RoomLogRow, RoomSourceRow, RoomTemplateRow } from "./db-rooms";
 export type { ShellLogRow } from "./db-shell";
 export type {
   PrimitiveUsageSummary,
@@ -3696,6 +3696,14 @@ export class MarinaDB implements MarinaStores {
 
   clearDynamicRooms(): void {
     roomsDb.clearDynamicRooms(this.db);
+  }
+
+  appendRoomLog(entry: roomsDb.RoomLogInput): number {
+    return roomsDb.appendRoomLog(this.db, entry);
+  }
+
+  readRoomLog(room: string, since?: number, limit?: number): roomsDb.RoomLogRow[] {
+    return roomsDb.readRoomLog(this.db, room, since, limit);
   }
 
   clearDynamicCommands(): void {
