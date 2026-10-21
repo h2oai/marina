@@ -392,6 +392,7 @@ export class MarinaSupervisor {
         ? withSnapshotModifier(command, await this.publishReviewSnapshot(run))
         : command;
       resident.bridge?.noteWork();
+      resident.bridge?.noteSent(command);
       return connection.command(relayed);
     });
     this.state(run, { resident: resident.name });

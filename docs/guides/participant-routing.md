@@ -146,8 +146,12 @@ launched agent is its own world account instead of acting through the operator's
   - **Final-reply relay** (on by default): when a turn that carried an owed item ends, its final
     text goes back where the item came from — `re #<id>` for a tell, `say` in the room, `channel
     send` for a channel post, a tell to the person who asked for attention — with that message as
-    its cause. A message that names its cause is a reply and never owed, so an exchange settles by
-    itself. `agent attention-mode <name> relay:explicit` turns the relay off (the agent then sends
+    its cause. Each owed line in the digest shows how to answer it (`→ re #<id>`, `→ say`, `→
+    channel send <c>`, `→ tell <name>`); what the agent answers itself is settled, and only what is
+    left gets the final reply. One reply never stands in for separate asks: when several
+    destinations are still owed, the agent is asked once more in a follow-up turn listing them, and
+    after that its final text goes to each, marked `(one reply to N asks)`. A message that names its
+    cause is a reply and never owed, so an exchange settles by itself. `agent attention-mode <name> relay:explicit` turns the relay off (the agent then sends
     only what it sends itself); `agent attention-mode <name> focused|balanced|open` and
     `agent attention-feedback <name> useful|noise` tune what is kept. Only the owner may change
     them; the supervisor applies a change at once (an `attention` runtime control).

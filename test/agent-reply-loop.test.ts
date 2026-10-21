@@ -147,6 +147,20 @@ describe("addressing", () => {
     expect(isAddressedTo("axb, hi", "a.b")).toBe(false);
   });
 
+  it("later in a message, only a vocative position written as the name addresses", () => {
+    expect(isAddressedTo("Done. Swift, run the tests", "Swift")).toBe(true);
+    expect(isAddressedTo("Okay.\nBriar: review it", "Briar")).toBe(true);
+    expect(isAddressedTo("Thanks all. Hey Swift, one more", "Swift")).toBe(true);
+    expect(isAddressedTo("can you check this, Swift?", "Swift")).toBe(true);
+    expect(isAddressedTo("can you check this, Swift", "Swift")).toBe(true);
+    // Names are often ordinary words: a mention, another case or a list is no address.
+    expect(isAddressedTo("I like Python, Swift, and Rust", "Swift")).toBe(false);
+    expect(isAddressedTo("I like Python, swift.", "Swift")).toBe(false);
+    expect(isAddressedTo("Done. swift, run it", "Swift")).toBe(false);
+    expect(isAddressedTo("The build is swift. Briar is a shrub.", "Briar")).toBe(false);
+    expect(isAddressedTo("We use Swift. It is fast", "Swift")).toBe(false);
+  });
+
   it("social scoring: a mention scores as ordinary chatter, a vocative at 80", () => {
     const social = new SocialAwareness();
     const at = (message: string) => ({
