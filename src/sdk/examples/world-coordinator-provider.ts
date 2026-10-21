@@ -26,9 +26,9 @@
  */
 
 import { MarinaAgent, type Perception } from "../client";
+import { callMarina as callMarinaChat, extractChannelPayload, perceptionsToText } from "./_shared";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
-const MARINA_ENDPOINT = (process.env.MARINA_ENDPOINT ?? "http://localhost:3300").replace(/\/$/, "");
 const AGENT_NAME = process.env.AGENT_NAME ?? "WorldCoordinator";
 const MODEL_CHANNEL = process.env.MODEL_CHANNEL ?? "model";
 const PROJECT_NAME = process.env.PROJECT_NAME ?? "benchmark-pursuit";
@@ -37,40 +37,12 @@ const POLL_INTERVAL_MS = Number.parseInt(process.env.POLL_INTERVAL_MS ?? "2000",
 const FALLBACK_SUBSTRATE = process.env.FALLBACK_SUBSTRATE ?? "marina:sonnet";
 const TRACE = process.env.COORDINATOR_TRACE === "true";
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-const stripAnsi = (t: string) => t.replace(ANSI_RE, "");
-
-function extractChannelPayload(
-  text: string,
-): { channel: string; sender: string; content: string } | undefined {
-  const clean = stripAnsi(text);
-  const match = clean.match(/^\[([^\]]+)\]\s+([^:]+):\s+(.*)/s);
-  if (!match) return undefined;
-  return { channel: match[1]!, sender: match[2]!.trim(), content: match[3]!.trim() };
-}
-
-function perceptionsToText(ps: Perception[]): string {
-  return ps
-    .map((p) => (typeof p.data?.text === "string" ? (p.data.text as string) : ""))
-    .map(stripAnsi)
-    .filter((t) => t.length > 0)
-    .join("\n");
-}
-
 async function callMarina(model: string, userMsg: string, systemMsg?: string): Promise<string> {
   const messages = [
     ...(systemMsg ? [{ role: "system", content: systemMsg }] : []),
     { role: "user", content: userMsg },
   ];
-  const resp = await fetch(`${MARINA_ENDPOINT}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, temperature: 0 }),
-  });
-  if (!resp.ok) throw new Error(`Marina ${resp.status}`);
-  const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content ?? "";
+  return callMarinaChat(model, messages, 0);
 }
 
 /** Parse "Created task #N" from task create response. */

@@ -27,6 +27,7 @@
  */
 
 import { MarinaAgent, type Perception } from "../client";
+import { extractChannelPayload, type Message } from "./_shared";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
 const AGENT_NAME = process.env.AGENT_NAME ?? "Provider";
@@ -39,30 +40,10 @@ const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT ?? "";
 
 // ─── Parse model_request from channel perception ─────────────────────────────
 
-/** Strip ANSI escape codes from text */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape stripping requires ESC control char
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-function stripAnsi(text: string): string {
-  return text.replace(ANSI_RE, "");
-}
-
 /** Extract JSON payload from a channel message perception.
  *  Channel messages arrive as "[channel] sender: content" with ANSI codes. */
-function extractChannelPayload(
-  text: string,
-): { channel: string; sender: string; content: string } | undefined {
-  const clean = stripAnsi(text);
-  const match = clean.match(/^\[([^\]]+)\]\s+([^:]+):\s+(.*)/s);
-  if (!match) return undefined;
-  return { channel: match[1]!, sender: match[2]!.trim(), content: match[3]!.trim() };
-}
 
 // ─── Provider call ───────────────────────────────────────────────────────────
-
-interface Message {
-  role: string;
-  content: string;
-}
 
 async function callProvider(
   messages: Message[],
