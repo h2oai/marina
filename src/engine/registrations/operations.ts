@@ -276,6 +276,7 @@ export function registerOperationCommands(engine: Engine): void {
         const entity = engine.entities.findAgentByName(name);
         return !!entity && !!engine.getConnectionForEntity(entity.id);
       },
+      findAgent: (name) => engine.entities.findAgentByName(name),
     }),
   );
 

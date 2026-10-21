@@ -9,8 +9,17 @@ import type { RelayReply } from "./resident-relay";
 export interface ResidentConnection {
   /** Use a renewed credential for later reconnects; the live connection stays. */
   setCredential(token: string): void;
-  /** Run one world command as the resident on this connection (the command relay). */
-  command(input: string): Promise<RelayReply>;
+  /**
+   * Run one world command as the resident on this connection (the command
+   * relay). `cause` names the delivered message it answers (the attention
+   * bridge's final-reply relay).
+   */
+  command(input: string, options?: { cause?: string }): Promise<RelayReply>;
+  /**
+   * World perceptions addressed to the resident (its own command output
+   * excluded): what its attention bridge reads.
+   */
+  onPerception?(handler: (perception: Perception) => void): void;
   close(): void;
 }
 
@@ -45,9 +54,19 @@ export function marinaResidentConnector(worldUrl: string): ResidentConnector {
     }
     return {
       setCredential: (next) => client.setInternalToken(next),
-      command: async (input) => {
+      onPerception: (handler) =>
+        client.onPerception((perception) => {
+          // A command's own output answers that command, never wakes anyone.
+          if (perception.command_request_id) return;
+          handler(perception);
+        }),
+      command: async (input, options) => {
         try {
-          return { ok: true, output: relayText(await client.command(input)) };
+          const result = await client.command(
+            input,
+            options?.cause ? { cause: options.cause } : undefined,
+          );
+          return { ok: true, output: relayText(result) };
         } catch (error) {
           if (!(error instanceof CommandError)) throw error;
           return { ok: false, output: relayText(error.perceptions) || error.message };

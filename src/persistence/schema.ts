@@ -271,6 +271,33 @@ ALTER TABLE agent_configs ADD COLUMN vendor TEXT;
 ALTER TABLE agent_configs ADD COLUMN run_session TEXT;
 `,
   },
+  // Migration 174 — the attention bridge (src/routing/attention-bridge.ts).
+  // `attention_wakes` audits what a supervised resident's supervisor decided
+  // for each world perception: refs, sources and reasons only, never message
+  // content. Append-only; pruned after 30 days (src/engine/retention.ts).
+  // `entity` is the resident's account name. `agent_configs.attention_relay`
+  // is the final-reply relay (`agent attention-mode <name> relay:all|explicit`):
+  // NULL or `all` relays a woken turn's final reply to whoever woke it,
+  // `explicit` sends only what the agent sends itself.
+  {
+    version: 174,
+    sql: `
+CREATE TABLE IF NOT EXISTS attention_wakes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity TEXT NOT NULL,
+  perception_ref TEXT,
+  source TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  hop INTEGER NOT NULL DEFAULT 0,
+  steered INTEGER NOT NULL DEFAULT 0,
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attention_wakes_entity_at ON attention_wakes(entity, at);
+CREATE INDEX IF NOT EXISTS idx_attention_wakes_at ON attention_wakes(at);
+ALTER TABLE agent_configs ADD COLUMN attention_relay TEXT;
+`,
+  },
 ];
 
 /** Migration 172 body — self-contained so later edits elsewhere never change it. */

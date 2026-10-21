@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  ResidentAttentionReport,
   ResidentCredential,
   ResidentEnrolInput,
   ResidentEnrolment,
@@ -229,6 +230,14 @@ export class MarinaRoutingClient {
     return this.request<{ name: string; revoked: number }>(
       `/residents/${encodeURIComponent(name)}/revoke`,
       { sessionId },
+      signal,
+    );
+  }
+  /** Report the run's attention-bridge decisions and the resident's presence. */
+  reportResidentAttention(name: string, report: ResidentAttentionReport, signal?: AbortSignal) {
+    return this.request<{ name: string; recorded: number }>(
+      `/residents/${encodeURIComponent(name)}/attention`,
+      report,
       signal,
     );
   }

@@ -225,7 +225,7 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     name: "Supervised residents",
     status: "experimental",
     enable: "`MARINA_SUPERVISED_RESIDENTS=on` (server and supervisor)",
-    owner: "src/routing/residents.ts, src/routing/supervisor.ts",
+    owner: "src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts",
   },
   {
     name: "Peer code review",

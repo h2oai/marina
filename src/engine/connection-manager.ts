@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Connection, EntityId, Perception } from "../types";
+import { rememberDeliveredMessage } from "./delivered-messages";
 import { relayEvidenceFence } from "./evidence-fence";
 import { stampTraceLinks } from "./trace-context";
 
@@ -106,6 +107,9 @@ export class ConnectionManager {
     // another entity carries the command's span links (src/engine/trace-context.ts).
     // A fenced execution fences whoever it reaches (src/engine/evidence-fence.ts).
     relayEvidenceFence(entityId, this.fenceRelayTo);
+    // A delivered message ref may later be named as a reply's cause
+    // (src/engine/delivered-messages.ts).
+    rememberDeliveredMessage(entityId, perception);
     conn.send(stampTraceLinks(entityId, perception));
     return true;
   }

@@ -238,9 +238,16 @@ export class RoutingService {
       throw new RoutingError(403, "not_owner", "Controls require the same owner");
     const control = object(input.control);
     if (
-      !["launch", "prompt", "interrupt", "stop", "resume", "detach", "respond"].includes(
-        String(control.action),
-      )
+      ![
+        "launch",
+        "prompt",
+        "interrupt",
+        "stop",
+        "resume",
+        "detach",
+        "respond",
+        "attention",
+      ].includes(String(control.action))
     )
       throw new RoutingError(400, "invalid_input", "Unknown runtime control");
     return this.db.sendRoutingMessage(id, {

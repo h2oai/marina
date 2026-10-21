@@ -194,6 +194,7 @@ Usage:
   agent enable <name>                         — clear a disable; the agent returns on next restart/room entry
   agent attention <name> <message>           — send attention to agent
   agent attention-mode <name> focused|balanced|open
+  agent attention-mode <name> relay:all|explicit — supervised residents: relay a woken turn's final reply, or not
   agent restart <name>                       — restart in place, preserving config/focus
   agent failover <name> <provider/model>     — restart on a fallback provider/model
   agent focus <name> <description>           — set agent focus
@@ -245,6 +246,13 @@ Effect: write.
 Effect: write.
 
 - `field-0` (`name`): text, required.
+
+### `agent attention-mode <name> relay:all|explicit`
+
+Effect: write.
+
+- `field-0` (`name`): text, required.
+- `field-1` (`relay:all|explicit`): choice, required, choices `relay:all`, `explicit`.
 
 ### `agent config <name> ..`
 
@@ -7524,7 +7532,7 @@ Effect: write.
 
 ## re
 
-Reply to the last person who sent you a tell. Usage: re <message>
+Reply to the last person who sent you a tell, or to one tell by id. Usage: re <message> | re #<id> <message>
 
 Category: Communication. Minimum rank: 0.
 Aliases: `reply`.
@@ -7534,6 +7542,13 @@ Aliases: `reply`.
 Effect: write.
 
 - `field-0` (`message`): text, required.
+
+### `re #<id> <message>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`message`): text, required.
 
 ## readiness
 

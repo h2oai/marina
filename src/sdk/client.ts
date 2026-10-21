@@ -68,6 +68,13 @@ export interface ClientOptions {
 export interface CommandOptions {
   signal?: AbortSignal;
   codingTarget?: CodingCommandTarget;
+  /**
+   * Ref of a delivered message this command answers (`tell:12`,
+   * `channel_msg:4`, `say:<uuid>`). The server accepts only a ref it
+   * delivered to this client's entity; messages the command sends record it
+   * as their cause. Correlated commands only.
+   */
+  cause?: string;
 }
 
 type PerceptionHandler = (p: Perception) => void;
@@ -447,8 +454,11 @@ export class MarinaClient {
 
   /** Confirmed results on current servers; explicitly unconfirmed observations on legacy servers. */
   async command(cmd: string, options?: AbortSignal | CommandOptions): Promise<CommandResult> {
-    const { signal, codingTarget: requestedTarget } =
-      options instanceof AbortSignal ? { signal: options } : (options ?? {});
+    const {
+      signal,
+      codingTarget: requestedTarget,
+      cause,
+    } = options instanceof AbortSignal ? { signal: options } : (options ?? {});
     const codingTarget =
       requestedTarget !== undefined ? parseCodingCommandTarget(requestedTarget) : undefined;
     signal?.throwIfAborted();
@@ -507,6 +517,7 @@ export class MarinaClient {
           command: cmd,
           request_id: requestId,
           ...(codingTarget ? { coding_target: codingTarget } : {}),
+          ...(cause ? { cause } : {}),
           ...this.traceLinksField(),
         });
       } catch (error) {

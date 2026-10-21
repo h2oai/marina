@@ -431,6 +431,67 @@ export function recordAttentionFeedback(
   return getAgentConfig(db, name);
 }
 
+/** The final-reply relay of a supervised resident (migration 174); `all` clears it. */
+export function setAttentionRelay(db: Database, name: string, relay: AttentionRelay): boolean {
+  return (
+    db.run("UPDATE agent_configs SET attention_relay = ? WHERE name = ?", [
+      relay === "all" ? null : relay,
+      name,
+    ]).changes > 0
+  );
+}
+
+/** One attention-bridge decision (migration 174): refs and reasons, never content. */
+export interface AttentionWakeInput {
+  entity: string;
+  perceptionRef?: string;
+  source: string;
+  decision: string;
+  reason: string;
+  hop: number;
+  steered: boolean;
+  at: number;
+}
+
+export interface AttentionWakeRow {
+  id: number;
+  entity: string;
+  perception_ref: string | null;
+  source: string;
+  decision: string;
+  reason: string;
+  hop: number;
+  steered: number;
+  at: number;
+}
+
+export function recordAttentionWakes(db: Database, wakes: readonly AttentionWakeInput[]): number {
+  const insert = db.prepare(
+    `INSERT INTO attention_wakes (entity, perception_ref, source, decision, reason, hop, steered, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  db.transaction(() => {
+    for (const wake of wakes)
+      insert.run(
+        wake.entity,
+        wake.perceptionRef ?? null,
+        wake.source,
+        wake.decision,
+        wake.reason,
+        wake.hop,
+        wake.steered ? 1 : 0,
+        wake.at,
+      );
+  })();
+  return wakes.length;
+}
+
+export function listAttentionWakes(db: Database, entity: string, limit = 50): AttentionWakeRow[] {
+  return db
+    .query("SELECT * FROM attention_wakes WHERE entity = ? ORDER BY id DESC LIMIT ?")
+    .all(entity, Math.max(1, Math.min(500, limit))) as AttentionWakeRow[];
+}
+
 export function recordAutomaticAttentionOutcome(
   db: Database,
   name: string,
@@ -701,7 +762,12 @@ export interface AgentConfigRow {
   attention_noise: number;
   attention_auto_success: number;
   attention_auto_failure: number;
+  /** Final-reply relay of a supervised resident (migration 174); NULL = `all`. */
+  attention_relay: AttentionRelay | null;
 }
+
+/** Whether a woken supervised turn's final reply is relayed (`all`) or not (`explicit`). */
+export type AttentionRelay = "all" | "explicit";
 
 export interface ApiKeyRow {
   name: string;

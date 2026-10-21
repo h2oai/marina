@@ -7,6 +7,9 @@ import type {
   AgentConfigRow,
   AgentRuntimeKind,
   ApiKeyRow,
+  AttentionRelay,
+  AttentionWakeInput,
+  AttentionWakeRow,
   EditHistoryRow,
   RoleLoopSections,
   RoleRow,
@@ -77,6 +80,11 @@ export interface AgentsStore {
     name: string,
     outcome: "success" | "failure",
   ): AgentConfigRow | undefined;
+  /** Final-reply relay of a supervised resident (migration 174). */
+  setAttentionRelay(name: string, relay: AttentionRelay): boolean;
+  /** Append attention-bridge decisions (migration 174): refs and reasons only. */
+  recordAttentionWakes(wakes: readonly AttentionWakeInput[]): number;
+  listAttentionWakes(entity: string, limit?: number): AttentionWakeRow[];
   saveApiKey(opts: {
     name: string;
     provider: string;
@@ -122,6 +130,9 @@ export const AGENTS_STORE_METHODS = [
   "updateAttentionPolicy",
   "recordAttentionFeedback",
   "recordAutomaticAttentionOutcome",
+  "setAttentionRelay",
+  "recordAttentionWakes",
+  "listAttentionWakes",
   "saveApiKey",
   "getApiKey",
   "getApiKeysByProvider",

@@ -6,6 +6,7 @@ import type { RateLimiter } from "../auth/rate-limiter";
 import { commandManifest } from "../engine/command-manifest";
 import { commandCompletion, withCommandResponse } from "../engine/command-response";
 import { previewParticipantContext } from "../engine/commands/context";
+import { ownedMessageCause } from "../engine/delivered-messages";
 import type { Engine } from "../engine/engine";
 import { getErrorMessage } from "../engine/errors";
 import { onboardParticipant } from "../engine/onboarding";
@@ -24,6 +25,8 @@ export interface ParticipantMessage {
   request_id?: string;
   coding_target?: unknown;
   trace_links?: unknown;
+  /** Ref of the delivered message this command answers (src/engine/delivered-messages.ts). */
+  cause?: unknown;
   capability_key?: string;
   options?: Record<string, unknown>;
 }
@@ -227,13 +230,16 @@ export function handleParticipantMessage(
       // Request traces this command serves: only ones Marina delivered
       // to this entity survive (a forged link is dropped).
       const traceLinks = ownedTraceLinks(entityId, parseTraceLinks(parsed.trace_links));
+      // The message this command answers: only a ref Marina delivered to this
+      // entity, at the depth Marina recorded (a forged cause is dropped).
+      const cause = ownedMessageCause(entityId, parsed.cause);
       const admitted = engine.submitCommand(entityId, command, async () => {
         // A queued command must never execute under a replaced/disconnected session.
         const execute = async () => {
           if (engine.getConnectionEntity(connId) !== entityId || ws.readyState !== 1)
             throw new Error("Command connection closed before execution.");
           await runWithTraceLinks(entityId, traceLinks, () =>
-            engine.processCommand(entityId, command, { codingTarget }),
+            engine.processCommand(entityId, command, { codingTarget, ...(cause ? { cause } : {}) }),
           );
         };
         if (requestId) await withCommandResponse(connId, requestId, execute, send);

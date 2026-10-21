@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { forgetDeliveredMessages } from "../engine/delivered-messages";
 import { forgetDeliveredTraces } from "../engine/trace-context";
 import type { MarinaDB } from "../persistence/database";
 import type { Entity, EntityId, EntityKind, RoomId } from "../types";
@@ -65,6 +66,7 @@ export class EntityManager {
     this.entities.delete(id);
     this.removeFromIndexes(id, entity);
     forgetDeliveredTraces(id);
+    forgetDeliveredMessages(id);
     if (this.db) {
       try {
         this.db.deleteEntity(id);

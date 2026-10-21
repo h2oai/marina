@@ -14,6 +14,7 @@ import type {
 } from "../sdk/routing-types";
 import type { AgentAdapter, ManagedAgent } from "./agent-adapters";
 import { prepareAgentWorkspace, restoreAgentWorkspace } from "./agent-workspace";
+import { AttentionBridge, type WakeRecord } from "./attention-bridge";
 import type { ResidentConnection, ResidentConnector } from "./resident-connection";
 import { openResidentRelay, RELAY_SOCKET_ENV, type ResidentRelay } from "./resident-relay";
 import {
@@ -35,7 +36,16 @@ interface ResidentRun {
   /** Set while renewal is failing: deliveries pause, never another credential. */
   blocked?: string;
   retired?: boolean;
+  /** Reads the resident's world perceptions and wakes its native session. */
+  bridge?: AttentionBridge;
+  /** Decisions not yet reported to the server (`attention_wakes`). */
+  wakes: WakeRecord[];
+  /** The presence last reported (`agent_status`). */
+  reportedStatus?: string;
 }
+
+/** Unreported wake decisions kept per resident while the server is unreachable. */
+const MAX_UNREPORTED_WAKES = 500;
 
 interface Run {
   session: RoutingSession;
@@ -350,6 +360,7 @@ export class MarinaSupervisor {
       name: enrolment.name,
       token: enrolment.credential.token,
       expiresAt: enrolment.credential.expiresAt,
+      wakes: [],
     };
     run.resident = resident;
     resident.connection = await residents.connect({
@@ -357,6 +368,9 @@ export class MarinaSupervisor {
       token: resident.token,
       ...(enrolment.room ? { room: enrolment.room } : {}),
     });
+    resident.bridge = this.attentionBridge(run, resident, enrolment.attention);
+    const bridge = resident.bridge;
+    resident.connection.onPerception?.((perception) => bridge.perceive(perception));
     resident.relay = await openResidentRelay(async (command) => {
       const connection = resident.connection;
       if (resident.retired || !connection)
@@ -398,6 +412,74 @@ export class MarinaSupervisor {
       );
     return snapshotId;
   }
+
+  /** The resident's attention bridge, bound to this run's native session. */
+  private attentionBridge(
+    run: Run,
+    resident: ResidentRun,
+    policy: Parameters<AttentionBridge["setPolicy"]>[0] | undefined,
+  ): AttentionBridge {
+    return new AttentionBridge(
+      resident.name,
+      {
+        status: () => run.state.status,
+        blocked: () => !!resident.blocked || resident.retired === true || run.requests.size > 0,
+        steerKind: () => run.agent?.capabilities?.steer ?? "none",
+        steer: async (text, urgent) => {
+          if (!run.agent?.steer) throw new Error("This harness cannot take input mid-turn");
+          const id = crypto.randomUUID();
+          this.emit(run.session.id, "input", { text, deliveryId: id, source: "attention" });
+          return run.agent.steer(text, id, urgent);
+        },
+        prompt: (text) => this.prompt(run, text, crypto.randomUUID(), "attention"),
+        command: (input, cause) => {
+          const connection = resident.connection;
+          if (resident.retired || !connection)
+            return Promise.resolve({ ok: false, output: "This resident has left Marina" });
+          return connection.command(input, cause ? { cause } : undefined);
+        },
+        record: (wake) => {
+          resident.wakes.push(wake);
+          if (resident.wakes.length > MAX_UNREPORTED_WAKES) resident.wakes.shift();
+        },
+        emit: (kind, payload) => this.emit(run.session.id, kind, payload),
+      },
+      policy,
+    );
+  }
+
+  /** Report wake decisions and presence for every resident (content-free). */
+  private async reportAttention() {
+    for (const run of this.runs.values()) {
+      const resident = run.resident;
+      if (!resident || resident.retired || resident.blocked) continue;
+      const status = run.state.status;
+      const statusChanged = status !== resident.reportedStatus;
+      if (!resident.wakes.length && !statusChanged) continue;
+      const wakes = resident.wakes.slice(0, 100);
+      try {
+        await this.options.client.reportResidentAttention(
+          resident.name,
+          {
+            sessionId: run.session.id,
+            ...(wakes.length ? { wakes } : {}),
+            ...(statusChanged
+              ? { status: { status, steer: run.agent?.capabilities?.steer ?? "none" } }
+              : {}),
+          },
+          AbortSignal.timeout(15_000),
+        );
+        resident.wakes.splice(0, wakes.length);
+        resident.reportedStatus = status;
+      } catch (error) {
+        log.warn("routing", "Resident attention report failed", {
+          name: resident.name,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+  }
+
   /** Renew at 80 % of the credential's remaining lifetime. */
   private scheduleRenewal(run: Run, resident: ResidentRun, delayMs?: number) {
     clearTimeout(resident.timer);
@@ -446,6 +528,7 @@ export class MarinaSupervisor {
     if (!resident || resident.retired) return;
     resident.retired = true;
     clearTimeout(resident.timer);
+    resident.bridge?.close();
     resident.relay?.close();
     try {
       resident.connection?.close();
@@ -501,10 +584,17 @@ export class MarinaSupervisor {
       executable: adapter.executable,
       env: this.childEnvironment(run),
       emit: (kind, payload) => this.emit(session.id, kind, payload),
+      // A woken turn's final reply goes back to what it owed (the bridge
+      // decides). Residents only: off, adapters run exactly as before.
+      ...(run.resident
+        ? { reply: (text: string) => void run.resident?.bridge?.replied(text) }
+        : {}),
       state: (patch) => {
         this.state(run, patch);
         // A native process that ended takes its world presence with it.
         if (patch.status === "stopped" || patch.status === "failed") void this.retire(run);
+        // Idle again: the bridge delivers what waited for the turn to end.
+        if (patch.status === "idle") void run.resident?.bridge?.idle();
       },
       ask: (request, signal) =>
         new Promise((resolve) => {
@@ -572,19 +662,27 @@ export class MarinaSupervisor {
       throw error;
     }
   }
-  private async prompt(run: Run, text: string, id: string) {
+  private async prompt(run: Run, text: string, id: string, source?: "attention") {
     if (!run.agent)
       throw new Error(
         "Native session is not connected; explicitly resume a supported session or launch new work",
       );
     if (typeof text !== "string" || !text.trim() || text.length > 16000)
       throw new Error("Prompt must contain 1–16000 characters");
-    this.emit(run.session.id, "input", { text, deliveryId: id });
+    // The owner's prompt carries what the world buffered meanwhile (the
+    // attention bridge's digest, once); a wake is already a digest.
+    const digest = source ? undefined : run.resident?.bridge?.takeDigest();
+    const body = digest ? `${text}\n\n${digest}` : text;
+    this.emit(run.session.id, "input", {
+      text: body,
+      deliveryId: id,
+      ...(source ? { source } : {}),
+    });
     // A fast adapter may finish during prompt(). Never overwrite its terminal state.
     this.state(run, { status: "running", error: undefined });
     try {
       const identity = run.resident ? `\nYour Marina world name is ${run.resident.name}.` : "";
-      await run.agent.prompt(`${this.options.instructions ?? ""}${identity}\n\n${text}`, id);
+      await run.agent.prompt(`${this.options.instructions ?? ""}${identity}\n\n${body}`, id);
     } catch (error) {
       this.state(run, {
         status: "failed",
@@ -627,6 +725,23 @@ export class MarinaSupervisor {
     }
     if (control.action === "resume") {
       await this.resume(run);
+      return;
+    }
+    if (control.action === "attention") {
+      const bridge = run.resident?.bridge;
+      if (!bridge) throw new Error("Attention settings apply to supervised residents");
+      const policy = bridge.setPolicy({
+        ...(control.mode && ["focused", "balanced", "open"].includes(control.mode)
+          ? { mode: control.mode }
+          : {}),
+        ...(typeof control.threshold === "number" && Number.isFinite(control.threshold)
+          ? { threshold: Math.max(10, Math.min(90, Math.round(control.threshold))) }
+          : {}),
+        ...(control.relay === "all" || control.relay === "explicit"
+          ? { relay: control.relay }
+          : {}),
+      });
+      this.emit(run.session.id, "attention.policy", policy);
       return;
     }
     if (!run.agent) throw new Error("Native session is not connected");
@@ -714,6 +829,7 @@ export class MarinaSupervisor {
     );
     if (batch.length) this.journal.published(batch[batch.length - 1]!.sequence);
     this.journal.acknowledged(acknowledgments.map((item) => item.messageId));
+    await this.reportAttention();
     if (this.stopped) return;
     for (const inbox of result.inboxes) {
       const run = this.runs.get(inbox.sessionId)!;

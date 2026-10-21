@@ -4,6 +4,7 @@
 import { tell } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { failCommandResponse } from "../command-response";
 import { envelopeFields, type MessageCause, messageEnvelope } from "../message-envelope";
 import { parseModifiers } from "../parse-input";
 
@@ -44,11 +45,16 @@ export function deliverTell(
 ): number | undefined {
   const target = deps.findEntityGlobal(targetName);
   if (!target) {
-    ctx.send(senderId, `No one named "${targetName}" is online.`);
+    // A refusal fails the command's result, so a correlated client (the
+    // resident command relay, MCP, the SDK) reports it rather than success.
+    const refusal = `No one named "${targetName}" is online.`;
+    ctx.send(senderId, refusal);
+    failCommandResponse(refusal);
     return undefined;
   }
   if (target.id === senderId) {
     ctx.send(senderId, "Talking to yourself again?");
+    failCommandResponse("A tell needs another recipient.");
     return undefined;
   }
 
@@ -219,13 +225,50 @@ export function tellCommand(deps: TellDeps): CommandDef {
 export function replyCommand(deps: TellDeps): CommandDef {
   return {
     category: "Communication",
-    usage: [{ syntax: "re <message>", effect: "write" }],
+    usage: [
+      { syntax: "re <message>", effect: "write" },
+      { syntax: "re #<id> <message>", effect: "write" },
+    ],
     name: "re",
     aliases: ["reply"],
-    help: "Reply to the last person who sent you a tell. Usage: re <message>",
+    help: "Reply to the last person who sent you a tell, or to one tell by id. Usage: re <message> | re #<id> <message>",
     handler: (ctx: RoomContext, input) => {
       const sender = deps.getEntity(input.entity);
       if (!sender) return;
+
+      // `re #<id> <message>`: answer (and acknowledge) one stored tell
+      // addressed to you, whoever sent you something since.
+      const pinned = /^#(\d+)$/.exec(input.tokens[0] ?? "");
+      if (pinned) {
+        const id = Number(pinned[1]);
+        const row = deps.db?.getDirectMessage(id);
+        if (
+          !row ||
+          (row.target_id !== input.entity &&
+            row.target_name.toLowerCase() !== sender.name.toLowerCase())
+        ) {
+          ctx.send(input.entity, `No tell #${id} addressed to you.`);
+          failCommandResponse(`No tell #${id} addressed to you.`);
+          return;
+        }
+        const message = input.tokens.slice(1).join(" ");
+        if (!message) {
+          ctx.send(input.entity, `Reply what? Usage: re #${id} <message>`);
+          return;
+        }
+        const replyId = deliverTell(
+          deps,
+          ctx,
+          input.entity,
+          sender,
+          row.sender_name,
+          message,
+          undefined,
+          { ref: `tell:${row.id}`, depth: row.depth ?? 0 },
+        );
+        if (replyId !== undefined) deps.db?.acknowledgeDirectMessage(id, input.entity, replyId);
+        return;
+      }
 
       const lastFrom = sender.properties.last_tell_from;
       if (!lastFrom) {

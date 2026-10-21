@@ -861,13 +861,13 @@ Fields read here: `url.searchParams.get("entity")`.
 
 ### `url.pathname.startsWith("/api/routing/")`
 
-[Source](../../src/net/dashboard-api/routing.ts#L65)
+[Source](../../src/net/dashboard-api/routing.ts#L121)
 
 - Guard: `!url.pathname.startsWith("/api/routing/")`
 
 ### `url.pathname === "/api/routing/overview"`
 
-[Source](../../src/net/dashboard-api/routing.ts#L75)
+[Source](../../src/net/dashboard-api/routing.ts#L131)
 
 - Guard: `url.pathname === "/api/routing/overview" && method === "GET"`
 - Guard: `method === "GET"`
@@ -876,14 +876,14 @@ Fields read here: `reply( router.overview( url.searchParams.get("after") ?? "", 
 
 ### `url.pathname === "/api/routing/sync"`
 
-[Source](../../src/net/dashboard-api/routing.ts#L83)
+[Source](../../src/net/dashboard-api/routing.ts#L139)
 
 - Guard: `url.pathname === "/api/routing/sync" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match( /^\/api\/routing\/sessions\/([^/]+)\/channels(?:\/([^/]+)\/messages)?$/, )`
 
-[Source](../../src/net/dashboard-api/routing.ts#L85)
+[Source](../../src/net/dashboard-api/routing.ts#L141)
 
 - Guard: `channelMatch`
 - Guard: `method === "GET"`
@@ -891,16 +891,16 @@ Fields read here: `reply( router.overview( url.searchParams.get("after") ?? "", 
 
 Fields read here: `Number(url.searchParams.get("after") ?? 0)`, `reply( router.channelEvents( sessionId, channelId, Number(url.searchParams.get("after") ?? 0), routingLimit(url.searchParams.get("limit")), ), )`, `router.channelEvents( sessionId, channelId, Number(url.searchParams.get("after") ?? 0), routingLimit(url.searchParams.get("limit")), )`, `routingLimit(url.searchParams.get("limit"))`, `url.searchParams.get("after")`, `url.searchParams.get("limit")`.
 
-### `url.pathname.match(/^\/api\/routing\/residents(?:\/([^/]+)\/(renew&#124;revoke))?$/)`
+### `url.pathname.match(/^\/api\/routing\/residents(?:\/([^/]+)\/(renew&#124;revoke&#124;attention))?$/)`
 
-[Source](../../src/net/dashboard-api/routing.ts#L132)
+[Source](../../src/net/dashboard-api/routing.ts#L188)
 
 - Guard: `residentMatch && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/routing/sessions"`
 
-[Source](../../src/net/dashboard-api/routing.ts#L159)
+[Source](../../src/net/dashboard-api/routing.ts#L217)
 
 - Guard: `url.pathname === "/api/routing/sessions"`
 - Guard: `method === "POST"`
@@ -910,7 +910,7 @@ Fields read here: `reply( router.list( url.searchParams.get("after") ?? "", rout
 
 ### `url.pathname.match( /^\/api\/routing\/sessions\/([^/]+)(?:\/(events&#124;heartbeat&#124;leave&#124;inbox&#124;messages&#124;deliveries&#124;runtime&#124;control)(?:\/([^/]+)(?:\/(ack))?)?)?$/, )`
 
-[Source](../../src/net/dashboard-api/routing.ts#L169)
+[Source](../../src/net/dashboard-api/routing.ts#L227)
 
 - Guard: `match`
 - Guard: `method === "GET"`
