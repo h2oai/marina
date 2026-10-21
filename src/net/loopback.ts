@@ -41,3 +41,30 @@ export function isLoopbackIp(ip: string | undefined): boolean {
   if (value === "::1" || isLoopbackIpv4(value)) return true;
   return value.startsWith("::ffff:") && isLoopbackIpv4(value.slice("::ffff:".length));
 }
+
+/** True for a wildcard ("every interface") bind address. */
+export function isWildcardBindHost(hostname: string): boolean {
+  const h = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, "$1");
+  return h === "0.0.0.0" || h === "::";
+}
+
+/**
+ * True when a container's wildcard bind is only reachable through a publish on
+ * the HOST's loopback: the process binds `0.0.0.0`/`::` inside the container
+ * (published ports need it) while the operator's publish spec — passed in as
+ * `MARINA_PUBLISHED_HOST` (docker-compose.yml sets it from MARINA_BIND_IP) —
+ * names a loopback address. Used ONLY by the boot-refusal checks: the trust
+ * profile is still derived from the real bind. False outside a container, for
+ * a non-wildcard bind, or for an empty / non-loopback published host.
+ */
+export function publishedLoopback(input: {
+  bindHost: string;
+  publishedHost: string | undefined;
+  inContainer: boolean;
+}): boolean {
+  if (!input.inContainer || !input.publishedHost?.trim()) return false;
+  return isWildcardBindHost(input.bindHost) && isLoopbackHostname(input.publishedHost);
+}

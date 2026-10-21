@@ -100,6 +100,7 @@ import {
   getCurrentCommand,
   grantCommandPass,
   setGateRefusalHook,
+  setPrincipalResolver,
 } from "./gate-context";
 import { Logger } from "./logger";
 import { notifyOperator } from "./ops-notify";
@@ -259,6 +260,14 @@ export function setChallengeHost(next: ChallengeHost | undefined, owner?: object
     }, CHALLENGE_SWEEP_INTERVAL_MS);
     (sweepTimer as { unref?: () => void }).unref?.();
   }
+  setPrincipalResolver(
+    next
+      ? (id) => {
+          const entity = next.getEntity(id);
+          return entity ? principalKind(entity) : "agent";
+        }
+      : undefined,
+  );
   setGateRefusalHook(
     next
       ? (entityId, gateId, reason) => {

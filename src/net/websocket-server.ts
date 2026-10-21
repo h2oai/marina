@@ -19,6 +19,7 @@ import {
 } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import { getErrorMessage } from "../engine/errors";
+import { gatewayIngressRefusal } from "../engine/gateway-runtime";
 import { Logger } from "../engine/logger";
 import { isLocalProfile, isOpenApiMode } from "../engine/trust-profile";
 import { extensionGatewayAdmission } from "../extensions/loader";
@@ -951,6 +952,20 @@ export class WebSocketServer {
             if (Number.isInteger(version) && version > 0) {
               self.gatewayPeerVersions.set(connId, version);
             }
+            // Shared/public instances refuse inbound federation outright
+            // until GATEWAY_SECRET is set (gatewayIngressRefusal).
+            const ingressRefusal = gatewayIngressRefusal();
+            if (ingressRefusal) {
+              ws.send(
+                JSON.stringify({
+                  kind: "error",
+                  timestamp: Date.now(),
+                  data: { text: ingressRefusal },
+                }),
+              );
+              ws.close();
+              return;
+            }
             const gatewaySecret = process.env.GATEWAY_SECRET;
             if (gatewaySecret && parsed.secret && secretsEqual(parsed.secret, gatewaySecret)) {
               self.gatewayAuthed.add(connId);
@@ -965,7 +980,7 @@ export class WebSocketServer {
               ws.close();
               return;
             }
-            // If GATEWAY_SECRET is not set, the secret is ignored (backward compatible).
+            // If GATEWAY_SECRET is not set (local profile only), the secret is ignored.
             // An extension admission check (e.g. an entitlement proof for a hosted
             // paid world) runs only when one is registered, and only AFTER the
             // secret check — it can refuse a peer, never admit one the secret refused.
@@ -992,6 +1007,21 @@ export class WebSocketServer {
             // still act as an ordinary local entity. Treat GATEWAY_SECRET as
             // "who may present as a gateway peer," and rely on MARINA_AUTH +
             // not exposing open login for a hard federation boundary.
+            // Shared/public without GATEWAY_SECRET: no Gateway_ login at all.
+            const ingressRefusal = parsed.name.startsWith("Gateway_")
+              ? gatewayIngressRefusal()
+              : null;
+            if (ingressRefusal) {
+              ws.send(
+                JSON.stringify({
+                  kind: "auth_error",
+                  timestamp: Date.now(),
+                  data: { text: ingressRefusal },
+                }),
+              );
+              ws.close();
+              return;
+            }
             const gatewaySecret = process.env.GATEWAY_SECRET;
             if (
               gatewaySecret &&

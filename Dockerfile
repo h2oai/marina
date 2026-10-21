@@ -89,7 +89,9 @@ USER bun
 # WS_HOST=0.0.0.0 is the CONTAINER-INTERNAL bind — without it the server binds
 # loopback inside the network namespace and published ports go nowhere. Actual
 # exposure is decided by the publish spec (`-p` / compose `ports:`), which
-# defaults to host-loopback in docker-compose.yml. Telnet stays off (no
+# defaults to host-loopback in docker-compose.yml. Pass that publish address as
+# MARINA_PUBLISHED_HOST (compose does) so the boot checks treat a host-loopback
+# publish as loopback; a routable one needs sign-in. Telnet stays off (no
 # TELNET_PORT) — plaintext and unauthenticated.
 ENV DB_PATH=/app/data/marina.db \
     ASSETS_DIR=/app/data/assets \

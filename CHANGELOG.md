@@ -25,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renders a declared credential form as `<verb> <sub> [redacted]` and masks key-shaped strings. Such
   a held input is never stored: it re-runs on approval in the running process, and after a restart
   the requester is asked to issue it again.
+- **Local stays ungated, but an agent's host shell asks.** Under the default `local` profile you,
+  the loopback operator, keep every gate open. An agent's host shell (`shell.exec`: `run raw`,
+  `shell`, stdio connectors) and arbitrary non-allowlisted host commands (`code.exec.unrestricted`,
+  Code Mode's arbitrary exec, which now defaults to `prompt` for an agent) are held as a challenge.
+  The agent gets an answer at once and the held run executes when a person approves it. An agent
+  also can no longer promote itself to sovereign rank or widen the shell allowlist on a local
+  instance without approval. `MARINA_AUTONOMY=sovereign` remains the one switch that lifts every
+  gate for everyone. Agents promoted on an older database may still hold shell grants:
+  `gate audit` lists them and `gate reset agents all apply` revokes them.
+- **Docker Compose no longer acknowledges an insecure public bind.** `docker-compose.yml` drops
+  `MARINA_ALLOW_INSECURE_PUBLIC=true` and passes its publish address in as the new
+  `MARINA_PUBLISHED_HOST` (default `127.0.0.1`). Inside a container, a wildcard bind published only
+  on host loopback passes the startup exposure checks; a routable `MARINA_BIND_IP` with
+  passwordless login is now refused at boot until you enable `MARINA_AUTH=better-auth` (or set the
+  acknowledgement yourself in `.env`). The trust profile still follows the real bind.
+- **Federation needs a secret outside the local profile.** On `shared` and `public` instances,
+  inbound gateway connections are refused unless `GATEWAY_SECRET` is set; the refusal, the boot log
+  and `readiness` (`federation-inbound`) say how to set it. The `local` profile is unchanged.
 
 ### Changed
 

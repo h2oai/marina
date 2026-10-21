@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { Engine } from "../src/engine/engine";
+import { setPrincipalResolver } from "../src/engine/gate-context";
 import { checkGateForExecution } from "../src/engine/safety-gates";
 import {
   assertTrustProfileSafe,
@@ -169,14 +170,46 @@ describe("trust profile — LOCAL removes friction, SHARED keeps it", () => {
       expect(checkGateForExecution(db, "e_nobody", gate).ok).toBe(false);
     }
     setTrustProfile("local");
-    for (const gate of [
-      "shell.exec",
-      "key.manage",
-      "admin.destructive",
-      "code.exec.unrestricted",
-      "agent.spawn",
-    ]) {
-      expect(checkGateForExecution(db, "e_nobody", gate)).toEqual({
+    // The loopback PERSON: every gate, the core included.
+    setPrincipalResolver(() => "person");
+    try {
+      for (const gate of [
+        "shell.exec",
+        "key.manage",
+        "admin.destructive",
+        "code.exec.unrestricted",
+        "agent.spawn",
+      ]) {
+        expect(checkGateForExecution(db, "e_nobody", gate)).toEqual({
+          ok: true,
+          mode: "profile-local",
+        });
+      }
+    } finally {
+      setPrincipalResolver(undefined);
+    }
+  });
+
+  it("under implicit LOCAL an AGENT's host shell and arbitrary host commands are held", () => {
+    using _processState = scopeProcessState();
+
+    setTrustProfile("local");
+    // No resolver wired ⇒ fail closed (agent).
+    for (const gate of ["shell.exec", "code.exec.unrestricted"]) {
+      const r = checkGateForExecution(db, "e_agent", gate);
+      expect(r.ok).toBe(false);
+      expect(r.reason).toMatch(/on this local Marina an agent may/);
+    }
+    for (const gate of ["key.manage", "admin.destructive", "agent.spawn", "code.exec"]) {
+      expect(checkGateForExecution(db, "e_agent", gate)).toEqual({
+        ok: true,
+        mode: "profile-local",
+      });
+    }
+    // `sovereign` is the one switch that lifts the agent hold too.
+    using _sovereign = scopeProcessState({ env: { MARINA_AUTONOMY: "sovereign" } });
+    for (const gate of ["shell.exec", "code.exec.unrestricted"]) {
+      expect(checkGateForExecution(db, "e_agent", gate)).toEqual({
         ok: true,
         mode: "profile-local",
       });
@@ -195,7 +228,7 @@ describe("trust profile — LOCAL removes friction, SHARED keeps it", () => {
       if (previous === undefined) delete process.env.MARINA_AUTONOMY;
       else process.env.MARINA_AUTONOMY = previous;
     }
-    expect(checkGateForExecution(db, "e_nobody", "shell.exec").ok).toBe(true);
+    expect(checkGateForExecution(db, "e_nobody", "agent.spawn").ok).toBe(true);
   });
 
   it("a loopback login is sovereign under LOCAL and rank floors are off; SHARED keeps rank 0", () => {

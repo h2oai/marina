@@ -90,7 +90,14 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 
 The overlay is safe only because `docker-compose.yml` publishes the ports on the host's
 `127.0.0.1`. Never use it with widened `ports:`, a reverse proxy in front of the host, or the
-EC2/server deploy (`scripts/deploy.sh` does not use it).
+EC2/server deploy (`scripts/deploy.sh` does not use it). Boot enforces this: `docker-compose.yml`
+passes the publish address into the container as `MARINA_PUBLISHED_HOST`, and with a non-loopback
+`MARINA_BIND_IP` the `local` profile is a fatal startup error.
+
+Under the local profile you, the operator, are ungated. An agent's host shell (`run raw`, `shell`)
+and arbitrary non-allowlisted host commands wait for your approval
+(`challenge approve <token>`, or `code exec-approve` in Code Mode); `MARINA_AUTONOMY=sovereign`
+lifts that hold as well.
 
 ### Publishing beyond loopback (`MARINA_BIND_IP`)
 
@@ -104,10 +111,17 @@ every health check fails. Set the host interface to publish on:
 MARINA_BIND_IP=0.0.0.0
 ```
 
-Before widening the bind, enable sign-in (`MARINA_AUTH=better-auth`) or set `MODEL_API_KEYS`, and
+Before widening the bind, enable sign-in (`MARINA_AUTH=better-auth`), set `MODEL_API_KEYS`, and
 keep the host firewall / security group scoped to the proxy or load balancer. Publishing on
 `0.0.0.0` makes the port reachable from anything that can route to the host; the network boundary is
 then your security group, not Docker.
+
+Compose passes the same address into the container as `MARINA_PUBLISHED_HOST`. Marina binds
+`0.0.0.0` inside the container either way, and its startup check treats that bind as loopback only
+when the published host is loopback (and Marina is running in a container). A routable
+`MARINA_BIND_IP` with passwordless login is therefore refused at boot until you enable
+`MARINA_AUTH=better-auth`. If you knowingly run a passwordless instance on a private network, set
+`MARINA_ALLOW_INSECURE_PUBLIC=true` in `.env`; Compose no longer sets it for you.
 
 ### Without Compose
 
@@ -117,12 +131,12 @@ docker run -d --name marina \
   -p 127.0.0.1:3300:3300 \
   -v marina-data:/app/data \
   --env-file .env \
-  -e MARINA_ALLOW_INSECURE_PUBLIC=true \
+  -e MARINA_PUBLISHED_HOST=127.0.0.1 \
   marina
-# The 127.0.0.1: publish prefix keeps the instance host-local (that's why the
-# acknowledgment flag is safe here — the container-internal bind is 0.0.0.0 so
-# the mapping works at all). Widening to -p 3300:3300 exposes passwordless
-# login to the network: enable MARINA_AUTH=better-auth first.
+# The 127.0.0.1: publish prefix keeps the instance host-local; MARINA_PUBLISHED_HOST
+# tells Marina so (the container-internal bind is 0.0.0.0 so the mapping works at
+# all). Keep the two in step. Widening to -p 3300:3300 exposes passwordless login
+# to the network: enable MARINA_AUTH=better-auth first.
 ```
 
 ## Configuration essentials

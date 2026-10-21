@@ -23,6 +23,7 @@ import {
 
 import { Engine } from "./engine/engine";
 import { logRejection, tryLog } from "./engine/errors";
+import { gatewayIngressRefusal } from "./engine/gateway-runtime";
 import { Logger } from "./engine/logger";
 import { projectTraces } from "./engine/trace-projection";
 import {
@@ -40,6 +41,7 @@ import { enableOutcomeLearning } from "./learning/service";
 import { parseEmbeddingEnv } from "./memory/embedding-config";
 import { closeWorldMemoryService, worldMemoryService } from "./memory/world-service";
 import { AdapterManager } from "./net/adapters/adapter-manager";
+import { bindSafetyRefusal, detectContainer } from "./net/bind-safety";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
 import { FeedPublisher } from "./net/feed-publisher";
 import { formatPerception } from "./net/formatter";
@@ -56,7 +58,7 @@ import {
 import { recordListenPort } from "./net/listen-ports";
 import { loadOrCreateLocalApiKey, localApiKeyPath } from "./net/local-api-key";
 import { LogServer } from "./net/log-server";
-import { isLoopbackHostname } from "./net/loopback";
+import { isLoopbackHostname, publishedLoopback } from "./net/loopback";
 import { McpServerAdapter } from "./net/mcp/mcp-server";
 import { describeDefaultUpstream } from "./net/model/model-api";
 import { detectLocalContextWindow, detectOllamaDefaultModel } from "./net/model/model-discovery";
@@ -172,6 +174,18 @@ const LOOPBACK_ONLY_BIND = isLoopbackHostname(RESOLVED_WS_HOST);
 // combined with passwordless login / open API. Without it, that combination is
 // a FATAL startup error rather than a warning.
 const INSECURE_PUBLIC_ACK = process.env.MARINA_ALLOW_INSECURE_PUBLIC === "true";
+// Container publish: the image binds 0.0.0.0 inside its network namespace, and
+// docker-compose.yml passes the HOST publish address in as MARINA_PUBLISHED_HOST.
+// A loopback publish makes the wildcard bind reachable from this machine only,
+// so the boot refusals below treat it as loopback. The trust profile still
+// derives from the real bind (a container stays `public` unless declared).
+const PUBLISHED_HOST = process.env.MARINA_PUBLISHED_HOST?.trim() || undefined;
+const PUBLISHED_LOOPBACK = publishedLoopback({
+  bindHost: RESOLVED_WS_HOST,
+  publishedHost: PUBLISHED_HOST,
+  inContainer: PUBLISHED_HOST !== undefined && detectContainer(),
+});
+const EXPOSURE_LOOPBACK = LOOPBACK_ONLY_BIND || PUBLISHED_LOOPBACK;
 
 // Trust profile — derived by default from the bind + auth situation
 // (loopback-only and no sign-in ⇒ LOCAL, ungated). `MARINA_PROFILE` overrides.
@@ -182,7 +196,7 @@ const TRUST = resolveTrustProfile({
 });
 assertTrustProfileSafe({
   profile: TRUST.profile,
-  loopbackOnlyBind: LOOPBACK_ONLY_BIND,
+  loopbackOnlyBind: EXPOSURE_LOOPBACK,
   authEnabled: AUTH_ENABLED,
   insecurePublicAck: INSECURE_PUBLIC_ACK,
   bindHost: RESOLVED_WS_HOST,
@@ -202,52 +216,29 @@ parseEmbeddingEnv(process.env);
 // the instance as an ordinary entity or an unauthenticated API caller. This is a
 // deliberate, dangerous configuration — refuse to start unless the operator has
 // (a) enabled real auth, or (b) explicitly accepted the risk. A warning is not
-// enough for this one.
-if (!LOOPBACK_ONLY_BIND && !INSECURE_PUBLIC_ACK) {
-  if (!AUTH_ENABLED) {
-    const msg =
-      `FATAL: Marina is configured to bind a NON-LOOPBACK interface ` +
-      `("${RESOLVED_WS_HOST}") while passwordless name-login is in effect ` +
-      `(MARINA_AUTH is not "better-auth"). Anyone who can reach this host could log ` +
-      `in as any entity. Fix ONE of:\n` +
-      `  • keep it local: unset WS_HOST/MARINA_HOST/MARINA_PUBLIC (binds 127.0.0.1), or\n` +
-      `  • require sign-in: set MARINA_AUTH=better-auth (+ MARINA_AUTH_ADMIN_EMAILS), or\n` +
-      `  • accept the risk explicitly: set MARINA_ALLOW_INSECURE_PUBLIC=true.`;
-    logger.error("security", msg);
-    throw new Error(msg);
+// enough for this one. The same rule covers MARINA_AUTONOMY=open (a radical
+// Marina is the OPERATOR's radical Marina) — src/net/bind-safety.ts.
+{
+  const refusal = bindSafetyRefusal({
+    bindHost: RESOLVED_WS_HOST,
+    loopbackExposure: EXPOSURE_LOOPBACK,
+    authEnabled: AUTH_ENABLED,
+    insecurePublicAck: INSECURE_PUBLIC_ACK,
+    openApi: isOpenApiMode(),
+    openPosture: getAutonomyPosture() === "open",
+    ...(PUBLISHED_HOST ? { publishedHost: PUBLISHED_HOST } : {}),
+  });
+  if (refusal) {
+    logger.error("security", refusal);
+    throw new Error(refusal);
   }
-  if (isOpenApiMode()) {
-    const msg =
-      `FATAL: MARINA_OPEN_API=true (unauthenticated API access) combined with a ` +
-      `NON-LOOPBACK bind ("${RESOLVED_WS_HOST}") exposes every API endpoint to the ` +
-      `network with no auth. Fix ONE of:\n` +
-      `  • unset MARINA_OPEN_API and configure MODEL_API_KEYS/MEM_API_KEYS, or\n` +
-      `  • bind loopback-only (unset WS_HOST/MARINA_HOST/MARINA_PUBLIC), or\n` +
-      `  • accept the risk explicitly: set MARINA_ALLOW_INSECURE_PUBLIC=true.`;
-    logger.error("security", msg);
-    throw new Error(msg);
+  if (PUBLISHED_LOOPBACK && !INSECURE_PUBLIC_ACK) {
+    logger.info(
+      "security",
+      `Container bind "${RESOLVED_WS_HOST}" is published on host loopback ` +
+        `(MARINA_PUBLISHED_HOST=${PUBLISHED_HOST}); exposure checks treat it as loopback.`,
+    );
   }
-}
-
-// Autonomy posture gate: an OPEN posture means any logged-in entity can spawn
-// agents, federate, and execute workspace code — combined with a public bind
-// and passwordless login that would hand those capabilities to the whole
-// network. A radical Marina is the OPERATOR's radical Marina.
-if (
-  getAutonomyPosture() === "open" &&
-  !LOOPBACK_ONLY_BIND &&
-  !AUTH_ENABLED &&
-  !INSECURE_PUBLIC_ACK
-) {
-  const msg =
-    `FATAL: MARINA_AUTONOMY=open combined with a NON-LOOPBACK bind ` +
-    `("${RESOLVED_WS_HOST}") and passwordless login would grant gated capabilities ` +
-    `to anyone who can reach this host. Fix ONE of:\n` +
-    `  • keep it local: unset WS_HOST/MARINA_HOST/MARINA_PUBLIC, or\n` +
-    `  • require sign-in: set MARINA_AUTH=better-auth, or\n` +
-    `  • accept the risk explicitly: set MARINA_ALLOW_INSECURE_PUBLIC=true.`;
-  logger.error("security", msg);
-  throw new Error(msg);
 }
 const bunRefusal = bunVersionRefusal();
 if (bunRefusal) logger.warn("main", bunRefusal);
@@ -267,10 +258,20 @@ if (isSovereign()) {
 } else if (TRUST.profile === "local" && isLocalUngated()) {
   logger.warn(
     "trust",
-    "LOCAL profile: agents can run host commands and manage keys without a prompt. " +
-      "Every action is still audited. A poisoned shared-pool note is the realistic risk; " +
-      "set MARINA_AUTONOMY=guarded to bring the gates back.",
+    "LOCAL profile: gates are off for this operator, and agents can manage keys without a prompt. " +
+      "An agent's host shell and arbitrary host commands still wait for your approval " +
+      "(`challenge approve`), so a poisoned shared-pool note cannot run host commands on its own. " +
+      "Every action is still audited. Agents promoted before this hold may still hold shell grants: " +
+      "`gate audit` lists them, `gate reset agents all apply` revokes them. " +
+      "Set MARINA_AUTONOMY=guarded to bring every gate back, sovereign to lift the agent hold too.",
   );
+}
+
+{
+  // Federation: shared/public instances accept inbound gateway peers only with
+  // a GATEWAY_SECRET (src/engine/gateway-runtime.ts gatewayIngressRefusal).
+  const gatewayRefusal = gatewayIngressRefusal();
+  if (gatewayRefusal) logger.info("gateway", gatewayRefusal);
 }
 
 // Durability: full fsync per commit for shared/public; `normal` (WAL, crash-safe,
@@ -727,7 +728,12 @@ engine.start();
 attachResidentDispatcher(inProcessResidentDispatcher(engine));
 
 // Security warnings
-if (!LOOPBACK_ONLY_BIND) {
+if (PUBLISHED_LOOPBACK) {
+  logger.info(
+    "security",
+    `Container bind "${RESOLVED_WS_HOST}" published on host loopback (${PUBLISHED_HOST}) — reachable from this machine only.`,
+  );
+} else if (!LOOPBACK_ONLY_BIND) {
   logger.warn(
     "security",
     `Bound to a NON-LOOPBACK interface ("${RESOLVED_WS_HOST}") — this instance is reachable ` +
