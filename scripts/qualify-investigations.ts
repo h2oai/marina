@@ -4,7 +4,7 @@
 
 /** Offline service qualification. Never dispatches a real provider or opens a world database.
  * Run: bun --no-env-file scripts/qualify-investigations.ts /tmp/investigation-qualification
- * Keep measured reports in marina-internal; this file is the reproducible harness. */
+ * Keep measured reports outside this repository; this file is the reproducible harness. */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { cpus, platform, release, totalmem } from "node:os";

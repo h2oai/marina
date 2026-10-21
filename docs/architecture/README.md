@@ -1,11 +1,11 @@
 # Marina Architecture — Deep Dives
 
-These pages hold the long-form design, history, measurements, and per-feature walkthroughs that used to live in `CLAUDE.md`. `CLAUDE.md` now keeps only what a contributor must follow to make a correct change and points here for the rest. Each page opens with a "when to read this" paragraph. User-facing how-to guides live in [`docs/guides/`](../guides/README.md).
+These pages are the design and reference material for contributors: how each subsystem works and per-feature walkthroughs. `CLAUDE.md` keeps only what a contributor must follow to make a correct change and points here for the rest. Each page opens with a "when to read this" paragraph. User-facing how-to guides live in [`docs/guides/`](../guides/README.md).
 
 | Page | Covers |
 |---|---|
 | [civic-substrate.md](civic-substrate.md) | Standing ledger and decay, rank derivation, the 14 safety gates, trust profile (`local` / `shared` / `public`), autonomy posture and witness ladder, exec-approver chain, Code Mode dispatch, Flywheel sandbox boundary |
-| [chronicle.md](chronicle.md) | Chronicle table, read/write commands, Chronicler agent, citation as recognition (not standing), `/who/<name>` pages (design note: [`docs/chronicle.md`](../chronicle.md)) |
+| [chronicle.md](chronicle.md) | Chronicle table, read/write commands, Chronicler agent, citation as recognition (not standing), `/who/<name>` pages |
 | [worlds.md](worlds.md) | World templates and the `MARINA_WORLD` catalogue, `seed()` semantics, room-agent spawning, auth, and cost control |
 | [agent-cognition.md](agent-cognition.md) | Identity and principles, the cadenced continuation prompt, tool profiles and prompt budget, role composition and PRISM gating, in-world trait/role editing, fast crew dispatch, platform-level cognitive commands |
 | [memory.md](memory.md) | Legacy notes vs. durable service, unified context tiers, legacy bridge and twins, hygiene and dispatch ticks, adoption/ratification, reputation-weighted retrieval, retrieval quality, gateway/receipts/response cache, contradiction `resolve`, workflows, benchmarks |

@@ -11,9 +11,9 @@
 - Every command a template note quotes must exist with that syntax — `test/orchestration-patterns.test.ts` runs the knowledge-hygiene auditor over every template
 
 ## Crew pools and the crew runtime layer
-- **Crew pools are members-only** (2026-09-16): every persisted crew's `crew:<name>` pool has a group object of the same id (`memory_pools.group_id`; the existing group-pool ACL in `src/memory/access.ts` and the `gatherRetrievalContext` guard are the fence). Roster = owner ∪ current members, re-synced on create/persist, add/remove, dispatch, deposit, dissolve (final sync) and `loadFromDb` (idempotent backfill of pre-existing ungrouped pools); dissolving keeps the pool and notes (generational memory) scoped to the final roster; a successor crew reusing the name inherits and re-syncs. `crew info <dissolved>` no longer prints pool notes to non-members. Tests: `test/crew-pool-group.test.ts`.
+- **Crew pools are members-only**: every persisted crew's `crew:<name>` pool has a group object of the same id (`memory_pools.group_id`; the existing group-pool ACL in `src/memory/access.ts` and the `gatherRetrievalContext` guard are the fence). Roster = owner ∪ current members, re-synced on create/persist, add/remove, dispatch, deposit, dissolve (final sync) and `loadFromDb` (idempotent backfill of pre-existing ungrouped pools); dissolving keeps the pool and notes (generational memory) scoped to the final roster; a successor crew reusing the name inherits and re-syncs. `crew info <dissolved>` no longer prints pool notes to non-members. Tests: `test/crew-pool-group.test.ts`.
 - **Crew runtime layer** (`src/coordination/crew-formations.ts`): `CREW_BRIEFS` — compact purpose-built runtime brief per formation, posted with a protocol-priority preamble on activation/formation change (replaces concatenated pool-note prose, because process-heavy briefs displace the crew's actual replies). `FORMATION_MEDIATORS` — deterministic event-driven nudges: crew-manager calls `onDispatch`/`onStageCompleted`/`onArtifact`, posting at most one `[formation-mediator]` line per event (pipeline handoffs, mapreduce fan-out/merge, foundry merge-gate, debate sealed-positions, deliberation one-round, blackboard no-fork). The other formations — swarm, chorus, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding — run on their brief alone. Briefs and dispatches name the real lead (`crewLeadName`: the `lead`-role member, else the first member), crew and channel in place of the `<lead>` / `<name>` / `<crew-channel>` placeholders, and a `Lead:` line says the requester is not part of the protocol. Every `[crew-task]` dispatch for delphi, tournament, verification, auction, ledger and sharding restates that formation's starting move for the task at hand (`dispatchStartMove`), so the essential protocol command sits where members act; the pool-note templates stay advisory reference, and `benchmarks/formation-adherence.ts` reports their markers as a diagnostic outside the headline brief score. Engine-side liveness is separate: pending `model_request` reminders in `src/net/model/model-api.ts` re-post unanswered requests at 25%/60%/85% of the deadline (`MODEL_REQUEST_REMINDERS=0` disables).
-- **Request deadlines: every budget ends in an answer** (2026-10-04, `src/coordination/request-deadline.ts`, shared mechanism `src/agent/budget-terminal.ts`). A routed `marina:<crew>` request has a deadline: `MODEL_REQUEST_TIMEOUT_MS`, or the client's own per-item deadline in `x-marina-deadline-ms` when that is sooner. The client's deadline is reduced by a margin of 10 % (at most 15 s) so the reply arrives first.
+- **Request deadlines: every budget ends in an answer** (`src/coordination/request-deadline.ts`, shared mechanism `src/agent/budget-terminal.ts`). A routed `marina:<crew>` request has a deadline: `MODEL_REQUEST_TIMEOUT_MS`, or the client's own per-item deadline in `x-marina-deadline-ms` when that is sooner. The client's deadline is reduced by a margin of 10 % (at most 15 s) so the reply arrives first.
   - **At the deadline** the request returns the crew's best draft so far instead of a 504, in this order:
     1. the lead's latest explicit draft (`{"type":"model_draft","id":…,"content":…}` on the request channel);
     2. the most-agreed explicit member draft;
@@ -53,7 +53,7 @@ late results from being attached to a newer attempt. Migration 126 adds lookup i
 unique active-attempt constraints per session and durable worker. Submission and task approval
 are distinct. See [the coding guide](../guides/coding.md) for the complete operator flow.
 
-## The formation catalogue: one formation, one template (2026-10-20)
+## The formation catalogue: one formation, one template
 
 A formation used to be implemented once per surface: pool-note templates, crew briefs, the arena's
 numeric protocols, the typed forecast formations and the free-text patterns. They shared names,
@@ -113,7 +113,7 @@ Follow-ups:
 - Let the arena crew forecaster (`src/arena/crew.ts`) reuse the skeptic entry.
 - Allow a resident referee or skeptic slot.
 
-## Budget terminal: every budget ends in an answer (2026-10-04)
+## Budget terminal: every budget ends in an answer
 
 `src/agent/budget-terminal.ts` is the one mechanism for loops with a turn, step or time budget.
 - Steer from 75 % (`budgetSteerAt`, also the lean agent's run-cap warning). At the cap, block tools and ask for the answer from what the loop has.
@@ -125,13 +125,12 @@ Follow-ups:
   - The submission verifier is not asked. Its opinion is `none`, like an outage, never a pass.
   - If nothing changed, the attempt ends `Blocked: BudgetForced: …` (`kind:impossible`) with the same label.
 
-## The Arbiter: adjudication only where answers disagree (2026-10-20)
+## The Arbiter: adjudication only where answers disagree
 
-Always-on verification asks a reviewer, often the same model, to check every answer. That reviewer
-overrules correct answers too easily. On BrowseComp-Plus the `marina/verify:` arm (October 2026,
-when its checker still reviewed every turn) revised 976 of 1,093 reviewed turns, made about a third
-fewer searches, and gold recall fell from 85 % to 66 %. The Arbiter (`src/orchestration/arbiter.ts`)
-is one general replacement for that pattern, shared by every surface:
+Always-on verification asks a reviewer, often the same model, to check every answer, and such a
+reviewer can overrule correct answers too easily. The Arbiter (`src/orchestration/arbiter.ts`) is
+one general replacement for that pattern, shared by every surface: it adjudicates only where
+answers already disagree.
 
 - **Disagreement detection is free.** `detectDisagreement` reads signals the pipeline already has:
   - agreement among independent runs, by answer type: choice and text by folded text, numbers

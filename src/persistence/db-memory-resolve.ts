@@ -12,7 +12,7 @@
  *                         `valid_from` (or now) through an ordinary revision.
  *  - evidence_weighted  — the assertion with the most *independent* supporting
  *                         evidence wins. Independence is counted over WRITERS,
- *                         not rows (Phase 3.6): distinct (content hash, author
+ *                         not rows: distinct (content hash, author
  *                         principal) pairs, excluding self-derived/twin sources,
  *                         and excluding sources captured by the record's own
  *                         author whenever another author supports it. Each

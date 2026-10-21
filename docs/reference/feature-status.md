@@ -45,7 +45,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Research evidence loop and survey | siloed | `MARINA_RESEARCH_*` | src/research |
 | Research web agent, cited answers, fact pass | siloed | In world: `research ask` (rank 0, spend-guarded) and the typed `marina_research` tool; benchmark scripts (`scripts/mind2web2.ts`, deepresearch) | src/research |
 | Skills | core | `skill`; 5 built-ins (`skill builtin`); residents get the best-fitting skill in their prompt (`MARINA_SKILLS_RESIDENT`, default on); note seeds with `MARINA_SEED_SKILLS=true` (showcase) | src/agent |
-| Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch) | experimental | Experimental: for embedders (Flow, Nov 2026). `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint` | src/net/instance-lifecycle.ts |
+| Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch) | experimental | Experimental: for embedding hosts. `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint` | src/net/instance-lifecycle.ts |
 | Shared spend ledger | experimental | `MARINA_SPEND_LEDGER=<path>` | src/engine/shared-spend-ledger.ts |
 | Adaptive load-balance routing | experimental | Request header `X-Load-Balance: adaptive` | src/net/model-api |
 | Benchmark route evidence for `model:route` | experimental | `MARINA_ROUTE_EVIDENCE=on` (default `observe` records only) | src/engine/benchmark-evidence.ts |
@@ -74,10 +74,10 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 
 ## Notes
 
-- **Embedding lifecycle.** Experimental: for embedders (Flow, Nov 2026). `MARINA_DATA_DIR`, the
+- **Embedding lifecycle.** Experimental: for embedding hosts. `MARINA_DATA_DIR`, the
   `endpoint.json` file, `MARINA_IDLE_SHUTDOWN` and `MARINA_PARENT_PID` let a host find, adopt and stop
   a Marina it did not start. No host uses them yet (the desktop app embeds Marina in-process); they are
-  kept for the Flow integration. The shared spend ledger (`MARINA_SPEND_LEDGER`) is the matching
+  kept for embedding hosts. The shared spend ledger (`MARINA_SPEND_LEDGER`) is the matching
   per-host cap for one process per world.
 - **`marina_evolve`.** The typed evolution tool is deliberately not in `createAllTools`: the agent
   adapter attaches it only while a native evolution protocol is active

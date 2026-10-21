@@ -310,7 +310,7 @@ export function reflectCommand(deps: {
       const args = tokens.join(" ");
       const sub = tokens[0]?.toLowerCase();
 
-      // TMA-NM non-laundering rule (Phase 3.7): a reflection SUMMARISES its
+      // TMA-NM non-laundering rule: a reflection SUMMARISES its
       // inputs, so it inherits the LOWEST authority among them —
       // confidence = min(inputs) and `verified` only when every input is
       // verified. Without this, "reflect" would launder N unverified notes
@@ -349,7 +349,7 @@ export function reflectCommand(deps: {
         authority.confidence === null
           ? dim("Authority: unverified (no citable inputs)")
           : `Authority: confidence=${authority.confidence.toFixed(2)} ${authority.verification} ${dim(`(lowest of ${authority.inputs} input${authority.inputs === 1 ? "" : "s"})`)}`;
-      // Generational loop (Phase 3.7): deposit the lesson into a shared pool
+      // Generational loop: deposit the lesson into a shared pool
       // as a reflection-tier note others recall (being recalled earns no
       // standing — standing is earned by verified work). Refuses unknown pools and
       // group pools the caller is not a member of — never creates a pool.
@@ -762,7 +762,7 @@ export function reflectCommand(deps: {
 
         let receipt: MemoryReceipt;
         try {
-          // Durable side: the shared `adopt` operation (Phase 3.3) writes the
+          // Durable side: the shared `adopt` operation writes the
           // proposal as a versioned record with pinned same-space citations,
           // stamps ratification for institutional targets, and credits the
           // helper's standing (`assistance_adopted`). Idempotent per

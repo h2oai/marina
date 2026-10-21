@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Operator notification hook (`MARINA_OPS_NOTIFY`, 2026-10-20).
+ * Operator notification hook (`MARINA_OPS_NOTIFY`).
  *
- * Held actions (challenges) wait for a person, but on the live world all 21
- * holds expired with nobody answering: the operator was never in the world
- * when one opened, and the `ops inbox` item is resolved when the hold
- * expires. This hook pushes a content-free notice OUT of the world the moment
+ * Held actions (challenges) wait for a person, but an operator who is not in
+ * the world when a hold opens never sees it, and the `ops inbox` item is
+ * resolved when the hold expires. This hook pushes a content-free notice OUT of the world the moment
  * a hold opens (and when holds expire unanswered), to somewhere the operator
  * actually looks:
  *

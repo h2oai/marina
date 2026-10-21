@@ -10,7 +10,7 @@
  *                         [--seed N] [--resamples N] [--alpha A] [--margin M] [--min-items N]
  *                         [--bootstrap items|two-stage] [--run [--run-dir <dir>]] [--json]
  *   bun run eval:transfer --adapters
- *   bun run eval:transfer --inventory [root…] [--out <prefix>] [--min-items N] [--max-copy-mb N]
+ *   bun run eval:transfer --inventory <root…> [--out <prefix>] [--min-items N] [--max-copy-mb N]
  *
  * Ingest-only by default: every suite reads result files that already exist.
  * `--run` lets a suite with a `run` command execute it (once per arm and
@@ -19,8 +19,8 @@
  * `<prefix>.json` (default `transfer-report`). Exit 0 when the verdict is
  * `transfers`, 2 for any other verdict, 1 on error.
  *
- * `--inventory` walks the roots (default: ~/.cache/marina-*, ~/.local/share/marina-*,
- * ~/Projects/GitHub/marina-internal) read-only and writes `<prefix>.md` / `<prefix>.json`
+ * `--inventory` walks the roots you name (directories or DB files; at least one is
+ * required) read-only and writes `<prefix>.md` / `<prefix>.json`
  * (default `transfer-inventory`): every per-item result source an adapter can read, per
  * suite its variants, items and dates, and the baseline/candidate pairs with ready suite
  * entries.
@@ -29,9 +29,7 @@
  * "Transfer report". Library: benchmarks/transfer/.
  */
 
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { ADAPTERS } from "../benchmarks/transfer/adapters";
 import { renderMarkdown, type TransferOptions, transferVerdict } from "../benchmarks/transfer/core";
@@ -120,25 +118,16 @@ function main(): number {
   return result.verdict === "transfers" ? 0 : 2;
 }
 
-/** The default inventory roots: local Marina caches, data and the internal design notes. */
-function defaultRoots(): string[] {
-  const home = homedir();
-  const under = (dir: string) =>
-    existsSync(dir)
-      ? readdirSync(dir)
-          .filter((n) => n.startsWith("marina-"))
-          .map((n) => join(dir, n))
-      : [];
-  return [
-    ...under(join(home, ".cache")),
-    ...under(join(home, ".local", "share")),
-    join(home, "Projects", "GitHub", "marina-internal"),
-  ].filter((p) => existsSync(p));
-}
-
 function inventory(): number {
+  if (positionals.length === 0) {
+    console.error(
+      "usage: bun run eval:transfer --inventory <root…> [--out <prefix>] [--min-items N] [--max-copy-mb N]\n" +
+        "  name at least one directory or DB file to walk (for example ~/.cache/marina-<name>)",
+    );
+    return 1;
+  }
   const out = values.out ?? "transfer-inventory";
-  const roots = positionals.length ? positionals : defaultRoots();
+  const roots = positionals;
   const maxCopy = num("max-copy-mb", values["max-copy-mb"]);
   const inv = buildInventory({
     roots,

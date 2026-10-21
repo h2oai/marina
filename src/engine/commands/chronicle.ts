@@ -32,7 +32,7 @@ Write (Chronicler role only):
   chronicle digest day|week <title> | <body> [refs <ids>] [period <token>]
 
 The chronicle is parallel to (and longer-lived than) the feed: feed events
-are ephemeral, the chronicle is permanent. See docs/chronicle.md.`;
+are ephemeral, the chronicle is permanent. See docs/guides/chronicle.md.`;
 
 function kindLabel(kind: ChronicleKind): string {
   switch (kind) {

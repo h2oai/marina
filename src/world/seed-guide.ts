@@ -319,7 +319,7 @@ export function seedGuidePool(
 
   // The guide pool's durable twin: an institutional, world-readable memory
   // space owned by the `guide` system principal. Ratified guide notes and
-  // adopted proposals land here (Phase 3.4). Idempotent by pool name; failure
+  // adopted proposals land here. Idempotent by pool name; failure
   // must never block the legacy seed the world depends on.
   tryLog(new Logger(), "seed", "Institutional guide space unavailable", () => {
     ensureInstitutionalSpace(db, POOL_NAME);

@@ -188,7 +188,7 @@ marina status --port 3420                      # same, for another port (or --ur
 Requires `~/.bun/bin` on PATH. Connects to `ws://localhost:3300` by default (override with `MARINA_URL`).
 If nothing is listening you get `Failed to connect to ws://localhost:3300. Is Marina running?` — start it
 with `bun run start`. Login names are normalized (letters, digits and underscores, 20 characters max);
-when yours changes the CLI says so once: `Logged in as "JeffSmith" (requested "Jeff Smith")`.
+when yours changes the CLI says so once: `Logged in as "AdaLovelace" (requested "Ada Lovelace")`.
 
 You can also run it directly without linking:
 

@@ -89,8 +89,8 @@ const ASSISTANCE_ACTION_TIME =
  * checkpoint saves use a fresh uuid key whose response is the `resident`
  * checkpoint. None of those keys is ever sent again once its process ends
  * (agents restart within MAX_AGENT_UPTIME_MS, 24 h), so the receipt guards
- * nothing after a few minutes. They were 94 % of the live world's 629k
- * `memory_requests` rows, none acknowledged. Every other receipt is kept.
+ * nothing after a few minutes, and they make up most `memory_requests` rows.
+ * Every other receipt is kept.
  */
 export const CONTINUITY_RECEIPT_WHERE =
   "(request_key GLOB 'archive:*' OR request_key GLOB 'archive-batch:*' OR " +

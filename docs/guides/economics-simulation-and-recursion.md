@@ -71,5 +71,5 @@ shared lineage that makes rapid evolution auditable.
 ## Discovery and portability
 
 Federation manifests advertise `economic.provenance.v1`, `simulation.manifest.v1`, and
-`civilization.mutation.v1`. All Phase 11–13 records participate in Marina export/import, allowing a
+`civilization.mutation.v1`. All economic provenance, simulation and recursive-evolution records participate in Marina export/import, allowing a
 detached world to preserve them locally and later carry them into a mesh.

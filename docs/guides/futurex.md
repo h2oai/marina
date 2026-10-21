@@ -24,7 +24,7 @@ bun run futurex watch --once --run earned --daily --learn
 bun run futurex watch --once --run earned --daily --daily-rows stale --near-end-hours 48
                                       # …daily runs touch only stale rows (see Standing answers)
 bun run futurex watch --once --run earned --answer late --final-lead-hours 6
-                                      # …answer each row once, close to its cutoff (see Answering late)
+                                      # …answer each row once, close to its cutoff (see Late answering)
 bun run futurex schedule --run earned  # PRINT a systemd service + hourly timer for the late watcher
 bun run futurex learn                 # resolved rows of filed batches → outcome lessons
 bun run futurex status                # every submission recorded so far
@@ -108,12 +108,12 @@ FutureX questions stay open for days, so a filed answer is a *standing* answer p
   prints the email fields again. A run that revises nothing reproduces the same file, which is
   already recorded, and prints nothing to send.
 
-## Answering late and scheduling
+## Late answering and scheduling
 
 `watch --answer late` does not forecast a batch when it arrives. Each open row is answered
 **once**, inside `--final-lead-hours` of its own cutoff. The cutoff is the batch deadline, or the
-row's end time when that comes first. So the answer sees as much news as possible and costs one
-forecast per row (`lateRows` in `benchmarks/futurex/schedule.ts`). A row whose answer is missing or a
+row's end time when that comes first. Each row costs one forecast (`lateRows` in
+`benchmarks/futurex/schedule.ts`). A row whose answer is missing or a
 fallback is retried on the next check inside its window. Nothing runs at or after the deadline,
 `--daily` is ignored, and the in-progress rule and `schedule.json` work as above. `watch` itself
 still defaults to `--answer early`.

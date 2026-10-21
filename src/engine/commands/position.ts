@@ -1171,7 +1171,7 @@ function recordOrder(db: MarinaDB, eid: EntityId, authorName: string, rec: Order
  * The watching role probes the venue every hour; on resolution, the
  * position-thesis calibration finder pairs this order with a WIN/LOSS
  * outcome note. Closes the operator-irreducible "create watches manually"
- * step from the Phase 2.6 paper-trading flow.
+ * step from the paper-trading flow.
  *
  * Idempotent on (kind, id) — repeated opens against the same ticker
  * reuse the existing watch (one watch covers all legs of one ticker).

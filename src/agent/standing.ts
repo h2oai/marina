@@ -349,10 +349,9 @@ export function taskStandingValue(standing: number | null | undefined): number {
  *   toward no standing, so no decision (rank derivation, gate standing
  *   floors, low-standing review, shared-retrieval weighting, recruiting,
  *   leaderboards) is made on credit that can no longer be earned.
- * - `decay`: the pre-2026-10-20 behaviour — they count and fade by the
- *   normal half-life.
- * On the live world 97 of 106 ledger rows were `chronicled` / `pool_note`,
- * so under `decay` the "verified work" number was mostly recognition.
+ * - `decay`: the earlier behaviour — they count and fade by the normal
+ *   half-life, so standing can be dominated by recognition rather than
+ *   verified work.
  */
 export type RetiredStandingMode = "exclude" | "decay";
 

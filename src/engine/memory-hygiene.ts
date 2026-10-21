@@ -169,7 +169,7 @@ async function hygieneForEntity(
   // folded into the count as the page size; the threshold is what matters.
   const stale = await reviewCount(op, "stale", deps, entity.name);
   const competing = await reviewCount(op, "competing", deps, entity.name);
-  // Contradictions parked under `resolve … await_confirmation` (Phase 2.5).
+  // Contradictions parked under `resolve … await_confirmation`.
   const pending = await reviewCount(op, "pending", deps, entity.name);
 
   // (b) legacy notes — skip process-tier (compaction/hygiene lines are noisy

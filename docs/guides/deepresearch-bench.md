@@ -43,7 +43,7 @@ occurs exactly once in the section, and only if it adds no figure missing from t
 It runs on a finished report, so a comparison with and without the pass shares the same research
 and draft.
 
-Same-model self-review is deliberately not offered: our measurements found it does not help.
+Same-model self-review is not offered; the fact pass always uses a second model.
 
 **Languages.** Passage ranking tokenises Chinese, Japanese and Korean text as character bigrams.
 It splits CJK sentences at full-width stops.
@@ -67,7 +67,7 @@ bun run deepresearch select                      # seeded dev / held-out ids →
 bun run deepresearch run --board drb1 --label A --lead openrouter/anthropic/claude-opus-5.5 \
     --split heldout --max-usd 20
 bun run deepresearch check --board drb1 --from A --label B --checker openrouter/openai/gpt-6.1-sol
-bun run deepresearch score --board drb1 --label A --max-usd 10   # official evaluator, our key, capped
+bun run deepresearch score --board drb1 --label A --max-usd 10   # official evaluator, your key, capped
 bun run deepresearch compare --board drb1 --a A --b B            # paired difference, bootstrap CI
 bun run deepresearch file --board drb1 --label A                 # ledger + judged lessons (DB_PATH)
 bun run deepresearch export --board drb1 --label A               # submission layout

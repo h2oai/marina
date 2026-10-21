@@ -12,9 +12,8 @@
  *    Runtime briefs replaced the concatenated project pool-note templates
  *    after the sweep showed process-heavy prose displacing the crew's actual
  *    work; every brief leads with the protocol-priority preamble.
- * 2. FORMATION MEDIATORS — deterministic, event-driven nudges (the
- *    long-promised Phase 4): on dispatch / stage-complete / artifact-deposit
- *    the mediator injects one structural next-step line. No timers, no LLM
+ * 2. FORMATION MEDIATORS — deterministic, event-driven nudges: on dispatch /
+ *    stage-complete / artifact-deposit the mediator injects one structural next-step line. No timers, no LLM
  *    calls — pure functions over events the crew manager already emits.
  * 3. ENGINE BACKSTOP — pending model_request reminders (model-api) guarantee
  *    a serving crew can never silently drop a request regardless of
@@ -434,7 +433,7 @@ export function requestProtocolLine(
   return protocol.render({ consultants: list, timeoutMs, count: consultants.length });
 }
 
-// ─── Formation mediators (Phase 4 — deterministic event-driven nudges) ──────
+// ─── Formation mediators (deterministic event-driven nudges) ────────────────
 
 /** Minimal crew view a mediator sees — no manager internals. */
 export interface MediatorCrewView {

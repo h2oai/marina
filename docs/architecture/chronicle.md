@@ -1,9 +1,9 @@
 # Chronicle — Canonical Record of the Marina
 
-**When to read this:** you are adding an engine-emitted chronicle event, changing the Chronicler agent or its write commands, wiring chronicle citations into standing, or touching the `/who/<name>` public pages. The design rationale (why a chronicle, the two-kind split, supersession semantics) lives in the design note [`docs/chronicle.md`](../chronicle.md) — this page is the implementation map that `CLAUDE.md` → "Chronicle" points to, and it does not repeat the design note.
+**When to read this:** you are adding an engine-emitted chronicle event, changing the Chronicler agent or its write commands, wiring chronicle citations into standing, or touching the `/who/<name>` public pages. This page is the implementation map that `CLAUDE.md` → "Chronicle" points to. For the user view (what the chronicle is for, the entry kinds, how to read and cite it) see [The Chronicle guide](../guides/chronicle.md).
 
 ## Data model and persistence
-- **Append-only civic history** parallel to `feed_events` (7-day ephemeral) and `notes` (entity-owned). Engine auto-emits on canonical happenings (task_approved, crew lifecycle, market_consensus, rank_change); the Chronicler agent writes narrative + digest entries on top, citing source ids. See `docs/chronicle.md` for the full design.
+- **Append-only civic history** parallel to `feed_events` (7-day ephemeral) and `notes` (entity-owned). Engine auto-emits on canonical happenings (task_approved, crew lifecycle, market_consensus, rank_change); the Chronicler agent writes narrative + digest entries on top, citing source ids. Engine `event` entries are immutable facts; `narrative`, `digest` and `correction` entries layer interpretation on top, and a correction supersedes an entry without changing it.
 - **Schema** (`chronicle` table, migration 41): `id`, `created_at`, `kind`, `source`, `title`, `body`, `participants` JSON, `refs` JSON, `period`, `supersedes`. Four kinds: `event` (engine, immutable), `narrative` (Chronicler synthesis), `digest` (period summary), `correction` (supersedes a prior narrative/digest — original untouched).
 - **Persistence**: `src/persistence/db-chronicle.ts` (`appendChronicle`, `queryChronicle`, `getChronicleEntry`, `getCorrectionsFor`). `queryChronicle` supports `since`, `until`, `kind`, `source`, `participant` (JSON-quoted substring match), `period`, `like` (title-OR-body substring), `limit`.
 
@@ -13,7 +13,7 @@
 
 ## The Chronicler agent and standing
 - **Chronicler agent** (`worlds/seed.ts seedChroniclerRole + seedChroniclerAgent`): `chronicling` trait + `chronicler` role + persistent agent config. Default world opts in. Trait prompt teaches interview discipline — one `tell` per cycle, never the same agent twice within ~5 cycles, track via own `memory set last_interview:<name>`.
-- **Citation is recognition, not standing (2026-10-14)**: being named in the chronicle earns no standing. Standing is earned by verified work (see `civic-substrate.md`); the `chronicled` kind is retired, so neither engine `event` entries nor a Chronicler's narrative, correction or digest write ledger rows. Historical `chronicled` rows stay in the append-only ledger and decay out. The citation itself stays in the chronicle, as recognition.
+- **Citation is recognition, not standing**: being named in the chronicle earns no standing. Standing is earned by verified work (see `civic-substrate.md`); the `chronicled` kind is retired, so neither engine `event` entries nor a Chronicler's narrative, correction or digest write ledger rows. Historical `chronicled` rows stay in the append-only ledger and decay out. The citation itself stays in the chronicle, as recognition.
 
 ## Cognitive integration and public surfaces
 - **Cognitive integration**: `recap chronicle [day|week]` is a retrieval lens grouped by kind; `recap <topic>` and `ask <topic>` include a Chronicle section showing entries whose title or body matches; `ask` forwards them to model context as `[chronicle:<kind>:<id>] <title> — <body>`.

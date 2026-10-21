@@ -631,7 +631,7 @@ export class CrewManager {
   }
 
   /**
-   * Formation mediation (Phase 4): deterministic event-driven nudges. At most
+   * Formation mediation: deterministic event-driven nudges. At most
    * one `[formation-mediator]` line per crew event, posted on the crew
    * channel. Silent when the formation has no mediator, the hook returns
    * nothing, or the channel isn't provisioned yet.

@@ -127,7 +127,7 @@ export class FeedPublisher {
   /**
    * Append a chronicle event entry. Pass 1 chronicles a small set of civic events:
    * task_approved, crew_created/completed/dissolved, market_consensus, rank_change.
-   * See docs/chronicle.md for what does (and does not) belong here.
+   * See docs/architecture/chronicle.md for what does (and does not) belong here.
    *
    * `refs` should include the originating feed_event id and the domain ref so
    * the Chronicler agent (pass 3) can reconstruct context without re-querying.

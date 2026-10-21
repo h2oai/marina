@@ -230,7 +230,7 @@ describe("challenges: people approve, agents never do", () => {
 
   it("a secret-shaped held input is never stored; after a restart the requester is asked to re-issue", async () => {
     let builder = w.join("Builder");
-    const secret = "sk-abcdefghijklmnopqrstuvwxyz0123456789";
+    const secret = "sk-test-fixture-not-a-real-key"; // matches the mask pattern; low entropy, not a real key
     await send(builder, `zap ${secret}`);
     const token = tokenIn(text(builder))!;
     const [row] = w.db.listChallengeHolds({ pending: true });

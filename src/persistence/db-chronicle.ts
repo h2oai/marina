@@ -6,7 +6,7 @@ import { escapeLike } from "./fts";
 
 /**
  * Chronicle — the canonical, append-only record of the Marina.
- * See docs/chronicle.md for the design.
+ * See docs/architecture/chronicle.md.
  *
  * Three writers in practice:
  *   - Engine (kind='event')      — auto-emitted on canonical happenings, no LLM
