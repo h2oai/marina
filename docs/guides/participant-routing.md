@@ -185,6 +185,19 @@ launched agent is its own world account instead of acting through the operator's
     shows each agent's status under its sprite and a `[vendor]` badge for residents; an entity
     card's attention box accepts `@` lines.
 
+- **Judged attention** (`MARINA_ATTENTION_JUDGE`, default `observe`, needs a decision backend). A
+  small judge answers four questions with numbers: did a borderline wake (a tell that was not a
+  request or a person's steer) need the resident now; does a reply deep in a conversation (depth 3
+  or more) add anything; does a review approval rest on specific checking; how useful is a verdict.
+  Each opinion is checked later against what happened: the woken turn ran a tool or a world command
+  of its own (the supervisor reports it, refs only), no person stepped in on a deep reply's sender
+  within 15 minutes, a person's close agreed with the verdict. Opinions and results are outcome
+  rows (numbers and refs, never message text), so `judgeAgreement` measures each judge per model.
+  Under `on`, a judge that has earned it (25+ comparisons, Wilson lower bound ≥ 0.85) only advises:
+  wake and deep-reply opinions feed the same `attention_useful`/`attention_noise` counters as
+  `agent attention-feedback`, and review opinions show as a line in `code review <id>`. A judge
+  never blocks, closes or approves. `off` makes no calls and records nothing.
+
 This changes who the agent is in the world, not what it can do on the host: the native process still
 runs as your local user, with your files.
 

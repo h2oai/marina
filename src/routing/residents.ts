@@ -80,6 +80,12 @@ export interface ResidentWorld {
   revokeSessions(entityId: string): void;
   /** Emit a content-free engine event (attention bridge reports). */
   logEvent?(event: EngineEvent): void;
+  /** A report's wakes and woken-turn outcomes (the attention judges, src/agent/attention-judge.ts). */
+  attentionReported?(
+    name: string,
+    wakes: readonly { perceptionRef?: string; decision: string; reason: string }[],
+    outcomes: readonly { ref: string; worked: boolean }[],
+  ): void;
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -351,7 +357,15 @@ export class ResidentService {
         at: Number.isFinite(at) && at > 0 ? Math.floor(at) : Date.now(),
       };
     });
+    const rawOutcomes = input.outcomes ?? [];
+    if (!Array.isArray(rawOutcomes) || rawOutcomes.length > 100)
+      throw new RoutingError(400, "invalid_input", "At most 100 outcomes per report");
+    const outcomes = rawOutcomes.map((entry) => {
+      const outcome = object(entry);
+      return { ref: text(outcome.ref, "ref", 128), worked: outcome.worked === true };
+    });
     if (wakes.length) this.db.recordAttentionWakes(wakes);
+    this.world.attentionReported?.(name, wakes, outcomes);
     for (const wake of wakes)
       if (wake.decision !== "drop")
         this.world.logEvent?.({

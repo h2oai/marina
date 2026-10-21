@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { observeAttentionJudgeEvent } from "../agent/attention-judge";
 import { scratchRoot } from "../config/data-dir";
 import { roleModelFromEnv } from "../config/model-tiers";
 import { localHttpBase } from "../net/listen-ports";
@@ -524,6 +525,9 @@ export class Engine {
     // The outcome path (src/outcomes/): a creator's verdict on a task
     // submission is a resolved result — recorded once, learned from.
     this.addEventListener((event) => observeOutcomeEvent(this.db, event));
+    // Attention judges (MARINA_ATTENTION_JUDGE, default observe; a no-op when
+    // off): deep replies and review verdicts, each checked against its outcome.
+    this.addEventListener((event) => observeAttentionJudgeEvent(this.db, event));
     // Presence (`who`, `look`, `who watch`): derived from agent events.
     this.addEventListener((event) => this.presence.observe(event));
   }

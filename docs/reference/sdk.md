@@ -3613,6 +3613,14 @@ export interface ResidentAttentionReport {
         steered: boolean;
         at: number;
     }[];
+    /**
+     * What woken turns did, at most 100: whether the agent ran a tool or a world
+     * command of its own after the wake (the attention judges' truth). Refs only.
+     */
+    outcomes?: {
+        ref: string;
+        worked: boolean;
+    }[];
     /** The resident's current presence, when it changed. */
     status?: {
         status: RuntimeState["status"];

@@ -235,6 +235,13 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/coordination/room-formations.ts",
   },
   {
+    name: "Attention judges",
+    status: "experimental",
+    enable:
+      "`MARINA_ATTENTION_JUDGE=observe` (default; records opinions and results) or `on` (earned judges advise)",
+    owner: "src/agent/attention-judge.ts",
+  },
+  {
     name: "Peer code review",
     status: "experimental",
     enable:

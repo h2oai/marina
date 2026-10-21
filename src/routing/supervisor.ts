@@ -14,7 +14,12 @@ import type {
 } from "../sdk/routing-types";
 import type { AgentAdapter, ManagedAgent } from "./agent-adapters";
 import { prepareAgentWorkspace, restoreAgentWorkspace } from "./agent-workspace";
-import { AttentionBridge, type WakeRecord } from "./attention-bridge";
+import {
+  AttentionBridge,
+  isNativeToolEvent,
+  type WakeOutcome,
+  type WakeRecord,
+} from "./attention-bridge";
 import type { ResidentConnection, ResidentConnector } from "./resident-connection";
 import { openResidentRelay, RELAY_SOCKET_ENV, type ResidentRelay } from "./resident-relay";
 import {
@@ -42,6 +47,8 @@ interface ResidentRun {
   bridge?: AttentionBridge;
   /** Decisions not yet reported to the server (`attention_wakes`). */
   wakes: WakeRecord[];
+  /** What woken turns did, not yet reported (the attention judges' truth). */
+  outcomes?: WakeOutcome[];
   /** The presence last reported (`agent_status`). */
   reportedStatus?: string;
 }
@@ -384,6 +391,7 @@ export class MarinaSupervisor {
       const relayed = isReviewRequestCommand(command)
         ? withSnapshotModifier(command, await this.publishReviewSnapshot(run))
         : command;
+      resident.bridge?.noteWork();
       return connection.command(relayed);
     });
     this.state(run, { resident: resident.name });
@@ -445,6 +453,11 @@ export class MarinaSupervisor {
           resident.wakes.push(wake);
           if (resident.wakes.length > MAX_UNREPORTED_WAKES) resident.wakes.shift();
         },
+        outcome: (outcome) => {
+          const outcomes = (resident.outcomes ??= []);
+          outcomes.push(outcome);
+          if (outcomes.length > MAX_UNREPORTED_WAKES) outcomes.shift();
+        },
         emit: (kind, payload) => this.emit(run.session.id, kind, payload),
       },
       policy,
@@ -459,14 +472,17 @@ export class MarinaSupervisor {
       if (!resident || resident.retired || resident.blocked) continue;
       const status = run.state.status;
       const statusChanged = status !== resident.reportedStatus;
-      if (!resident.wakes.length && !statusChanged) continue;
+      const pendingOutcomes = resident.outcomes ?? [];
+      if (!resident.wakes.length && !pendingOutcomes.length && !statusChanged) continue;
       const wakes = resident.wakes.slice(0, 100);
+      const outcomes = pendingOutcomes.slice(0, 100);
       try {
         await this.options.client.reportResidentAttention(
           resident.name,
           {
             sessionId: run.session.id,
             ...(wakes.length ? { wakes } : {}),
+            ...(outcomes.length ? { outcomes } : {}),
             ...(statusChanged
               ? { status: { status, steer: run.agent?.capabilities?.steer ?? "none" } }
               : {}),
@@ -474,6 +490,7 @@ export class MarinaSupervisor {
           AbortSignal.timeout(15_000),
         );
         resident.wakes.splice(0, wakes.length);
+        pendingOutcomes.splice(0, outcomes.length);
         resident.reportedStatus = status;
       } catch (error) {
         log.warn("routing", "Resident attention report failed", {
@@ -587,7 +604,10 @@ export class MarinaSupervisor {
       resumeSessionId,
       executable: adapter.executable,
       env: this.childEnvironment(run),
-      emit: (kind, payload) => this.emit(session.id, kind, payload),
+      emit: (kind, payload) => {
+        if (run.resident && isNativeToolEvent(kind, payload)) run.resident.bridge?.noteWork();
+        this.emit(session.id, kind, payload);
+      },
       // A woken turn's final reply goes back to what it owed (the bridge
       // decides). Residents only: off, adapters run exactly as before.
       ...(run.resident

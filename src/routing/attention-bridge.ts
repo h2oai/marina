@@ -75,6 +75,12 @@ export interface WakeRecord {
   at: number;
 }
 
+/** Whether the turn a wake started did work: a tool or a world command of the agent's own. */
+export interface WakeOutcome {
+  ref: string;
+  worked: boolean;
+}
+
 export interface AttentionBridgeHost {
   status(): RuntimeState["status"];
   /** A native question waits on the owner, or the credential renewal is failing. */
@@ -85,6 +91,8 @@ export interface AttentionBridgeHost {
   /** A world command as the resident (the relay of a final reply). */
   command(input: string, cause?: string): Promise<RelayReply>;
   record(wake: WakeRecord): void;
+  /** What a woken turn did (refs only): the attention judges' truth. */
+  outcome?(outcome: WakeOutcome): void;
   /** Local presentation (Streams/TUI): what was delivered, how, and relays. */
   emit(kind: string, payload: unknown): void;
 }
@@ -130,6 +138,8 @@ export class AttentionBridge {
   private pending: Item[] = [];
   /** Items the native session has seen in its current turn. */
   private turn: Item[] = [];
+  /** The current turn ran a tool or a world command of the agent's own. */
+  private worked = false;
   private flushing?: Promise<void>;
   private closed = false;
 
@@ -265,8 +275,26 @@ export class AttentionBridge {
     void this.flush();
   }
 
+  /**
+   * The agent did work in its current turn (its supervisor saw a tool call or
+   * a world command the agent sent itself — never the bridge's own relay).
+   */
+  noteWork(): void {
+    if (this.turn.length) this.worked = true;
+  }
+
+  /** Report what the turn did for each item that woke it, then forget the turn. */
+  private settleTurn(): void {
+    if (this.host.outcome)
+      for (const item of this.turn)
+        if (item.wake === "now" && item.ref)
+          this.host.outcome({ ref: item.ref, worked: this.worked });
+    this.worked = false;
+  }
+
   /** The native session became idle: relay is done, deliver what waits. */
   idle(): Promise<void> {
+    this.settleTurn();
     this.turn = [];
     return this.flush();
   }
@@ -287,6 +315,7 @@ export class AttentionBridge {
   /** The final text of a completed turn; relayed to what was owed in it. */
   async replied(text: string): Promise<void> {
     const owed = this.turn.filter((item) => item.owed);
+    this.settleTurn();
     this.turn = [];
     if (this.closed || this.policy.relay !== "all" || !owed.length) return;
     const body = text.replace(/\s+/g, " ").trim();
@@ -486,4 +515,25 @@ function relayRoute(item: Item, text: string): { key: string; command: string } 
     default:
       return undefined;
   }
+}
+
+/**
+ * Whether a native adapter event is the agent running a tool (Codex items
+ * other than messages and reasoning; a Claude `tool_use` block; a pi tool
+ * execution). The attention judges read it as "the woken turn did work".
+ */
+export function isNativeToolEvent(kind: string, payload: unknown): boolean {
+  const data = (payload ?? {}) as Record<string, unknown>;
+  if (kind === "native.item/started") {
+    const type = (data.item as { type?: unknown } | undefined)?.type;
+    return typeof type === "string" && !["agentMessage", "reasoning", "userMessage"].includes(type);
+  }
+  if (kind === "native.assistant") {
+    const content = (data.message as { content?: unknown } | undefined)?.content;
+    return (
+      Array.isArray(content) &&
+      content.some((c) => (c as { type?: unknown } | null)?.type === "tool_use")
+    );
+  }
+  return kind === "native.tool_execution_start";
 }

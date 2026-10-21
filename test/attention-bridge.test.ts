@@ -10,6 +10,8 @@ import { BUILTIN_AGENT_ADAPTERS } from "../src/routing/agent-adapters";
 import {
   AttentionBridge,
   type AttentionBridgeHost,
+  isNativeToolEvent,
+  type WakeOutcome,
   type WakeRecord,
 } from "../src/routing/attention-bridge";
 import type { RelayReply } from "../src/routing/resident-relay";
@@ -27,6 +29,7 @@ function fakeHost(steerKind: SteerKind = "mid-turn") {
     steers: [] as { text: string; urgent: boolean }[],
     commands: [] as { input: string; cause?: string }[],
     records: [] as WakeRecord[],
+    outcomes: [] as WakeOutcome[],
     events: [] as { kind: string; payload: unknown }[],
   };
   const host: AttentionBridgeHost = {
@@ -47,6 +50,7 @@ function fakeHost(steerKind: SteerKind = "mid-turn") {
       return { ok: true, output: "" };
     },
     record: (wake) => state.records.push(wake),
+    outcome: (outcome) => state.outcomes.push(outcome),
     emit: (kind, payload) => state.events.push({ kind, payload }),
   };
   return { host, state };
@@ -466,5 +470,56 @@ describe("the owner's words", () => {
     bridge.perceive(tell("jeff", "add a subtract function"));
     await until(() => state.prompts.length === 1);
     expect(state.prompts[0]).not.toContain("[From your owner");
+  });
+});
+
+describe("woken-turn outcomes (attention judges' truth)", () => {
+  it("reports whether the turn a wake started did work, once per wake", async () => {
+    const { host, state } = fakeHost();
+    const bridge = new AttentionBridge("Fern", host);
+    const first = tell("Wren", "can you run the tests?");
+    bridge.perceive(first);
+    await until(() => state.prompts.length === 1);
+    bridge.noteWork();
+    await bridge.replied("ran them: 12 pass");
+    expect(state.outcomes).toEqual([{ ref: String(first.data?.messageRef), worked: true }]);
+
+    state.status = "idle";
+    await bridge.idle();
+    const second = tell("Wren", "can you check the docs too?");
+    bridge.perceive(second);
+    await until(() => state.prompts.length === 2);
+    await bridge.idle();
+    expect(state.outcomes).toEqual([
+      { ref: String(first.data?.messageRef), worked: true },
+      { ref: String(second.data?.messageRef), worked: false },
+    ]);
+  });
+
+  it("work outside a woken turn is not counted", async () => {
+    const { host, state } = fakeHost();
+    const bridge = new AttentionBridge("Fern", host);
+    bridge.noteWork();
+    bridge.perceive(tell("Wren", "please summarise the plan"));
+    await until(() => state.prompts.length === 1);
+    await bridge.idle();
+    expect(state.outcomes.map((o) => o.worked)).toEqual([false]);
+  });
+
+  it("recognises native tool events per harness", () => {
+    expect(isNativeToolEvent("native.item/started", { item: { type: "commandExecution" } })).toBe(
+      true,
+    );
+    expect(isNativeToolEvent("native.item/started", { item: { type: "agentMessage" } })).toBe(
+      false,
+    );
+    expect(
+      isNativeToolEvent("native.assistant", { message: { content: [{ type: "tool_use" }] } }),
+    ).toBe(true);
+    expect(
+      isNativeToolEvent("native.assistant", { message: { content: [{ type: "text" }] } }),
+    ).toBe(false);
+    expect(isNativeToolEvent("native.tool_execution_start", {})).toBe(true);
+    expect(isNativeToolEvent("output", { text: "x" })).toBe(false);
   });
 });
