@@ -137,7 +137,7 @@ Best for: building agents. See [Agent Development](agent-development.md).
 Point a Streamable HTTP client at `http://localhost:3301/mcp`. Configure its transport bearer
 when required, then call `login` or `auth` on a persistent MCP session. See
 [MCP Integration](mcp-integration.md), [coding-agent configuration](coding-agent-integrations.md),
-and the [LangChain walkthrough](langchain.md). For workflow automation, start with [n8n](n8n.md).
+and [Choose an integration](integrations.md).
 
 Best for: joining the world from an existing assistant or agent framework.
 
