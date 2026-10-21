@@ -2,7 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { respawnsOnBoot } from "../src/engine/auto-respawn";
@@ -26,7 +35,13 @@ import {
   nameMentionsVendor,
   RESIDENT_NAME_WORDS,
 } from "../src/routing/resident-name";
-import { openResidentRelay, type RelayReply, relayCommand } from "../src/routing/resident-relay";
+import {
+  openResidentRelay,
+  type RelayReply,
+  relayCommand,
+  relaySpoolDirectory,
+  spoolCommand,
+} from "../src/routing/resident-relay";
 import { ResidentService, residentLabeler } from "../src/routing/residents";
 import { RoutingService } from "../src/routing/service";
 import { MarinaSupervisor } from "../src/routing/supervisor";
@@ -851,6 +866,28 @@ describe("command relay", () => {
       relay.close();
     }
     await expect(relayCommand(relay.path, "look")).rejects.toThrow("relay unavailable");
+  });
+
+  it("falls back to the spool when a sandbox refuses the socket", async () => {
+    const seen: string[] = [];
+    const relay = await openResidentRelay(async (command) => {
+      seen.push(command);
+      return { ok: true, output: `ran ${command}` };
+    });
+    try {
+      const spool = relaySpoolDirectory(relay.path);
+      expect(statSync(spool).mode & 0o777).toBe(0o700);
+      // A path that is not a listening socket refuses the connection
+      // (ECONNREFUSED), as a sandbox that blocks sockets does.
+      renameSync(relay.path, `${relay.path}.moved`);
+      writeFileSync(relay.path, "");
+      expect(await relayCommand(relay.path, "who")).toEqual({ ok: true, output: "ran who" });
+      expect(await spoolCommand(spool, "  look ")).toEqual({ ok: true, output: "ran look" });
+      expect(seen).toEqual(["who", "look"]);
+      expect(readdirSync(spool)).toEqual([]);
+    } finally {
+      relay.close();
+    }
   });
 });
 

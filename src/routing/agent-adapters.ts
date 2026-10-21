@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { dirname } from "node:path";
 import {
   getSessionInfo,
   type HookCallback,
@@ -10,6 +11,7 @@ import {
 import { getErrorMessage } from "../engine/errors";
 import type { RuntimeRequest, RuntimeState } from "../sdk/routing-runtime-types";
 import { AgentTransport, type WireMessage } from "./agent-transport";
+import { RELAY_SOCKET_ENV } from "./resident-relay";
 
 export interface AgentOptions {
   cwd: string;
@@ -184,6 +186,16 @@ async function codex(options: AgentOptions): Promise<ManagedAgent> {
         approvalPolicy: "on-request",
         approvalsReviewer: "user",
         sandbox: "workspace-write",
+        // A supervised resident's relay: its sandbox refuses sockets, so the
+        // CLI spools through the relay directory — granted as a writable root
+        // (that directory only; network access stays off).
+        ...(relayDirectory(options.env)
+          ? {
+              config: {
+                "sandbox_workspace_write.writable_roots": [relayDirectory(options.env)],
+              },
+            }
+          : {}),
       },
     });
     threadId = String(record(record(response.result).thread).id ?? "");
@@ -511,3 +523,9 @@ export const BUILTIN_AGENT_ADAPTERS: AgentAdapter[] = [
   { id: "codex", label: "Codex", executable: "codex", start: codex, supportsResume: true },
   { id: "pi", label: "pi", executable: "pi", start: pi, supportsResume: true },
 ];
+
+/** The relay directory a supervised resident's process was given, if any. */
+function relayDirectory(env: NodeJS.ProcessEnv | undefined): string | undefined {
+  const socket = env?.[RELAY_SOCKET_ENV];
+  return socket ? dirname(socket) : undefined;
+}

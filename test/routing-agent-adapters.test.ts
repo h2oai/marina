@@ -281,6 +281,43 @@ describe("codex adapter", () => {
     h.options.env = { ...process.env, FAKE_ACTIVE: "1" };
     await expect(adapter("codex").start(h.options)).rejects.toThrow("already active");
   });
+
+  it("grants a resident's relay directory, and only it, as a writable root", async () => {
+    const executable = fakeAgent(
+      "fake-codex-relay",
+      `function onLine(m) {
+      if (m.method === "initialize") return out({ id: m.id, result: {} });
+      if (m.method === "initialized") return;
+      if (m.method === "thread/start") {
+        out({ method: "echo", params: { msg: m } });
+        return out({ id: m.id, result: { thread: { id: "thread-r" } } });
+      }
+    }`,
+    );
+    const h = harness(executable, []);
+    h.options.env = {
+      ...process.env,
+      MARINA_RELAY_SOCKET: "/run/user/1/marina-relay-x/relay.sock",
+    };
+    const agent = await adapter("codex").start(h.options);
+    try {
+      const [start] = echoes(h.events) as { params: Record<string, unknown> }[];
+      expect(start?.params.sandbox).toBe("workspace-write");
+      expect(start?.params.config).toEqual({
+        "sandbox_workspace_write.writable_roots": ["/run/user/1/marina-relay-x"],
+      });
+    } finally {
+      await agent.stop();
+    }
+    const plain = harness(executable, []);
+    const other = await adapter("codex").start(plain.options);
+    try {
+      const [start] = echoes(plain.events) as { params: Record<string, unknown> }[];
+      expect(start?.params.config).toBeUndefined();
+    } finally {
+      await other.stop();
+    }
+  });
   const codexBin = fakeAgent(
     "fake-codex",
     `function onLine(m) {
