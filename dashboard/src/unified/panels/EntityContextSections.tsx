@@ -9,7 +9,7 @@ import { apiOrigin } from "../../lib/api-origin";
  */
 
 import { useQueryClient } from "@tanstack/react-query";
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { MediaJobsList } from "../../components/MediaJobsList";
 import {
   isForbiddenApiError,
@@ -20,6 +20,7 @@ import {
 import { useInvalidateOnEvent } from "../../hooks/use-realtime";
 import { useWorldState } from "../../hooks/use-world-state";
 import { authFetch } from "../../lib/api";
+import { ensureOk, errorText } from "../../lib/api-error";
 import type { DashboardEvent, MediaJob } from "../../lib/types";
 import { CascadeSection, PropRow } from "./context-panel-sections";
 
@@ -286,6 +287,7 @@ export const MediaSection = memo(function MediaSection({
   const queryClient = useQueryClient();
   const mediaQuery = useMediaJobs(entityName);
   const { data: jobs, isLoading, isError } = mediaQuery;
+  const [actionError, setActionError] = useState<string | null>(null);
   useInvalidateOnEvent(
     ["media-jobs", entityName],
     useCallback(
@@ -305,12 +307,11 @@ export const MediaSection = memo(function MediaSection({
         const res = await authFetch(`${API_BASE}/api/media-jobs/${job.id}/retry`, {
           method: "POST",
         });
-        if (!res.ok) {
-          throw new Error(`Retry failed (${res.status})`);
-        }
+        await ensureOk(res, "Retry failed");
+        setActionError(null);
         invalidate();
       } catch (error) {
-        console.error("[media] retry failed", error);
+        setActionError(errorText(error, "Retry failed."));
       }
     },
     [invalidate],
@@ -323,12 +324,11 @@ export const MediaSection = memo(function MediaSection({
         const res = await authFetch(`${API_BASE}/api/assets/${job.assetId}`, {
           method: "DELETE",
         });
-        if (!res.ok) {
-          throw new Error(`Delete failed (${res.status})`);
-        }
+        await ensureOk(res, "Delete failed");
+        setActionError(null);
         invalidate();
       } catch (error) {
-        console.error("[media] delete asset failed", error);
+        setActionError(errorText(error, "Delete failed."));
       }
     },
     [invalidate],
@@ -352,6 +352,14 @@ export const MediaSection = memo(function MediaSection({
           >
             Retry
           </button>
+        </div>
+      )}
+      {actionError && (
+        <div
+          role="alert"
+          className="rounded border border-border bg-bg px-2 py-2 text-[11px] text-danger"
+        >
+          {actionError}
         </div>
       )}
       {!isLoading && !isError && (

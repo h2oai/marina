@@ -17,6 +17,7 @@ import { apiOrigin } from "../../lib/api-origin";
 import { motion } from "motion/react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { authFetch } from "../../lib/api";
+import { ensureOk, errorText } from "../../lib/api-error";
 import { useAssetUrl } from "../../lib/asset-url";
 import type { DroppedFileResult } from "../hooks/use-canvas-integration";
 
@@ -67,9 +68,11 @@ export interface DropDialogProps {
   files: DroppedFileResult[];
   /** Called when the user finishes (or skips) every queued file. */
   onClose: () => void;
+  /** Reports a refused or failed intent save, with the server's reason. */
+  onError?: (message: string) => void;
 }
 
-export const DropDialog = memo(function DropDialog({ files, onClose }: DropDialogProps) {
+export const DropDialog = memo(function DropDialog({ files, onClose, onError }: DropDialogProps) {
   const [index, setIndex] = useState(0);
   const current = files[index];
   const initialPrompt = useMemo(
@@ -104,22 +107,28 @@ export const DropDialog = memo(function DropDialog({ files, onClose }: DropDialo
         const node = fetchRes.ok ? await fetchRes.json() : { data: {} };
         const existingData =
           typeof node.data === "string" ? JSON.parse(node.data) : (node.data ?? {});
-        await authFetch(`${API_BASE}/api/canvases/${current.canvasId}/nodes/${current.nodeId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            data: {
-              ...existingData,
-              intent: { prompt: intentPrompt, status: "pending" },
-            },
-          }),
-        });
+        const res = await authFetch(
+          `${API_BASE}/api/canvases/${current.canvasId}/nodes/${current.nodeId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              data: {
+                ...existingData,
+                intent: { prompt: intentPrompt, status: "pending" },
+              },
+            }),
+          },
+        );
+        await ensureOk(res, `Could not set the intent for "${current.filename}"`);
+      } catch (cause) {
+        onError?.(errorText(cause, `Could not set the intent for "${current.filename}".`));
       } finally {
         setSubmitting(false);
         advance();
       }
     },
-    [current, advance],
+    [current, advance, onError],
   );
 
   // Keyboard: Esc to skip, Cmd/Ctrl+Enter to submit

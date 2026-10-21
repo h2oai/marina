@@ -138,4 +138,22 @@ describe("DropDialog", () => {
     );
     expect(screen.queryByAltText("a.png")).toBeNull();
   });
+
+  it("reports a refused intent save with the server's reason and still advances", async () => {
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (!init || init.method === undefined) {
+        return new Response(JSON.stringify({ data: {} }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: "Only the node's author can change it." }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const onError = vi.fn();
+    const onClose = vi.fn();
+    render(<DropDialog files={[mkFile()]} onClose={onClose} onError={onError} />);
+    fireEvent.click(screen.getByRole("button", { name: /set intent/i }));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith("Only the node's author can change it."));
+    expect(onClose).toHaveBeenCalled();
+  });
 });
