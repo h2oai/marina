@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Command input cannot drive another participant's terminal.**
+  - Every command is cleaned once, at the command phase. This covers every transport and internal
+    callers alike.
+  - Removed: escape sequences (window titles, OSC 52 clipboard writes, hyperlinks, cursor moves,
+    screen clears), other C0/C1 control bytes and bidi overrides. Kept: newline, tab and CRLF.
+  - Before this, a WebSocket participant's `say` reached telnet clients with raw escapes.
+  - Telnet output keeps only the server's own colour codes.
 - **Credentials stay out of the event log; operator-only reads and scopes are explicit.** A
   command form that carries a credential (`key add`, `connect auth`, `adapter enable`; declared
   with `CommandDef.sensitiveSubcommands`) is recorded as `<verb> <sub> [redacted]`, and key-shaped
@@ -251,6 +258,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     their own capped spend scope. It installs, enables and starts nothing.
 
 ### Added
+
+- **A themed interactive terminal for `marina connect`.**
+  - **Input area.** The prompt sits between rules at the bottom with a live status bar under it:
+    health, agents, tasks, approvals, alerts, spend and standing, read with the session's own
+    credential. Asynchronous messages never break a draft.
+  - **Output.** Results hang off `⎿`, other voices show `●`, tells `◆` and agents `✦`. Slow
+    commands show their elapsed time, long results collapse (`ctrl+o` expands), and messages
+    render Markdown.
+  - **Prompt formats.** The prompt and status bar take starship-style formats (`$segment`,
+    `[text](style)`, `( … )`), set with `/prompt` or `MARINA_PROMPT` / `MARINA_STATUSLINE`.
+  - **Panels.** Local `/status`, `/agents`, `/spend`, `/alerts`, `/readiness`, `/world`, `/me`,
+    `/prompt` and `/theme`.
+  - **Themes and colour.** `harbor`, `harbor-light` and `ansi` (`MARINA_THEME`). `NO_COLOR`,
+    `FORCE_COLOR` and `--color` are respected.
+  - **History and reconnect.** History persists in `~/.marina/history/connect`. A dropped
+    connection reconnects instead of exiting.
+  - **Unchanged.** Pipe and one-shot output to a non-terminal is plain text, as before.
+  - **Code Mode (`marina .`).** It shares the palette: entries carry a glyph and colour by label,
+    and the prompt, help, suggestions and diffs are themed.
+  - **Server text is data.** The terminal keeps only colour and emphasis codes from it.
 
 - **Test the right versions: results record their commit, and the transfer report refuses mixed
   code.** Benchmark results now name the Marina code that produced them:

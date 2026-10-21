@@ -134,7 +134,17 @@ Diffs are rendered by the terminal from the structured result, not from the serv
 per-file stat comes first (`3 files · +42 −7`, then one line per file), followed by the hunks:
 added lines green, removed lines red, `@@` hunk headers cyan and file headers bold. Colour is
 added only on an interactive terminal and never when `NO_COLOR` is set; redirected output stays
-plain. A diff entry is kept whole in local history up to the server's 64 KB limit. When the
+plain.
+
+Code Mode shares its palette with `marina connect`:
+
+- **Themes.** `MARINA_THEME=harbor` (the default), `harbor-light` or `ansi`, which uses your
+  terminal's own colours; see [the interactive terminal](connecting.md#the-interactive-terminal).
+- **Labels.** Each kind of entry (`error`, `approval requested`, `checks`, `worker`, `review`,
+  `diff` …) gets a glyph as well as a colour.
+- **Commands.** Help rows and `/world …` suggestions are drawn in the command colour.
+- **Colour comes from structure.** The colour comes from the entry's label and structure,
+  never from bytes in the text. A diff entry is kept whole in local history up to the server's 64 KB limit. When the
 server cuts a larger diff, the terminal says so, with the bytes shown versus the total, and
 suggests `code diff <path>` to read one file in full. In `marina --tui`, `/diff` also opens a
 diff view: `n`/`p` jump between files, `]`/`[` between hunks, arrows and PageUp/PageDown scroll,

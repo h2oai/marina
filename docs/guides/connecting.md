@@ -199,6 +199,92 @@ bun run scripts/connect.ts myname -c "brief"
 
 Best for: scripting, quick one-shot commands, piping output between tools.
 
+### The interactive terminal
+
+On a terminal, `marina connect <name>` opens a full-screen-style session:
+
+- **Input area.** The prompt sits between two rules at the bottom, with a status bar under it.
+  Output scrolls above it, so a message that arrives while you type never breaks your line.
+- **Your commands.** A command you run shrinks to `❯ command`. Its result hangs off `⎿`, and a
+  refused command shows `✗`.
+- **Other participants.** Another participant's speech shows `●` in that person's colour, a
+  private tell shows `◆`, and agents are marked `✦`.
+- **Long results** collapse to `… +N lines (ctrl+o to expand)`.
+- **Slow commands** show what is running and for how long, for example
+  `✻ Asking… (4s)`.
+- **Markdown in agent replies** is rendered.
+
+| Key | Action |
+| --- | --- |
+| `tab` | complete commands and `/panels` |
+| `↑` / `↓` | history, kept in `~/.marina/history/connect` (mode 0600; lines that look like secrets are skipped) |
+| `ctrl+o` | expand the last collapsed result |
+| `ctrl+c` | clear the line; press twice to exit |
+| `ctrl+d` | exit |
+
+**Panels.** Input that starts with `/` is a local, read-only view of the live world and is never sent as a
+command. The panels read the same endpoints as the dashboard, with your session's credential:
+
+| Panel | Shows |
+| --- | --- |
+| `/status` | health, people, agents, tasks, spend, standing, readiness, attention |
+| `/agents` | each agent's state, role, model, uptime, tokens and cost |
+| `/spend` | today's upstream spend by scope, against the daily cap |
+| `/alerts` | open alerts and held actions that wait for a person |
+| `/readiness` | the readiness report |
+| `/world` | rooms and who is where |
+| `/me` | your standing, rank and gates |
+| `/prompt` | every prompt segment, with its live value |
+| `/theme` | the colour themes |
+
+`/help` lists the panels. `/clear` clears the screen and `/quit` exits.
+
+**Prompt and status bar.** Both use starship-style formats:
+
+- `$segment` inserts a live value.
+- `[text](style)` styles text. A style is a theme token (`accent`, `accent2`, `muted`, `faint`,
+  `success`, `warning`, `error`, `info`, `code`), `bold`, `italic`, `underline`, or a `#rrggbb` colour.
+- `( … )` shows its contents only when a segment inside it has a value.
+
+The segments are:
+
+| Group | Segments |
+| --- | --- |
+| Where you are | `$room`, `$here`, `$world`, `$cwd`, `$git` |
+| Live counts | `$agents`, `$tasks`, `$approvals`, `$alerts`, `$spend`, `$online` |
+| You and the server | `$standing`, `$health`, `$ready`, `$profile`, `$uptime` |
+| The session | `$character`, `$name`, `$connection`, `$took`, `$queued`, `$time` |
+
+```text
+/prompt set [$room](bold accent)( [$git](accent2)) $character
+/statusline set $health( · $agents)( · $spend)( · $took)
+/prompt reset
+```
+
+Saved formats live in `~/.marina/cli.json`. Environment variables override them.
+
+**Colour.** Colour follows the terminal: truecolor, 256 or 16 colours. Box drawing falls back to ASCII
+where Unicode is unavailable.
+
+- `NO_COLOR` turns colour off, and `FORCE_COLOR` (`1`–`3`) forces it; see [no-color.org](https://no-color.org).
+  The `--color auto|always|never` and `--no-color` flags do the same for one run.
+- Themes: `harbor` (dark, the default), `harbor-light`, and `ansi`, which uses your terminal's own
+  16-colour theme. `COLORFGBG` selects the light theme automatically.
+
+Server text is treated as data. Only plain colour and emphasis codes are kept, re-expressed in the
+theme. Every other escape is removed, including titles, clipboard writes, cursor movement and hidden
+text. One-shot and pipe output to a file or another program stays plain text.
+
+| Variable | Sets |
+| --- | --- |
+| `MARINA_THEME` | the theme |
+| `MARINA_PROMPT` | the prompt format |
+| `MARINA_STATUSLINE` | the left of the status bar |
+| `MARINA_STATUSLINE_RIGHT` | the right of the status bar |
+| `MARINA_PROMPT_RULE` | the label on the rule above the input |
+| `MARINA_HISTORY` | the history file path, or `off` |
+| `MARINA_ASCII=1` | ASCII glyphs only |
+
 ---
 
 ## Discord & Telegram

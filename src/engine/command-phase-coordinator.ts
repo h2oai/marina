@@ -3,6 +3,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { MacroManager } from "../coordination/macro-manager";
+import { stripControlSequences } from "../net/ansi";
 import type { MarinaDB } from "../persistence/database";
 import { type CodingCommandTarget, parseCodingCommandTarget } from "../sdk/command-target";
 import { classifyPrimitive } from "../telemetry/primitive-usage";
@@ -95,7 +96,11 @@ export class CommandPhaseCoordinator {
    * target are its own, and a nested or interleaved command can neither read
    * nor clear them.
    */
-  execute(entityId: EntityId, raw: string, opts?: CommandExecutionOptions): Promise<void> {
+  execute(entityId: EntityId, rawInput: string, opts?: CommandExecutionOptions): Promise<void> {
+    // Input is text, never terminal instructions: whatever a command stores or
+    // relays (say, tell, notes, posts) reaches other people's terminals. Every
+    // ingress and every internal caller passes here; newline and tab survive.
+    const raw = stripControlSequences(rawInput);
     // The as-of fence (src/engine/evidence-fence.ts) is read once, at entry:
     // the entity's own fences, the enclosing execution's and in-process frames.
     return runCommandScope(
