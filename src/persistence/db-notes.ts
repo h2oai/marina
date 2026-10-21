@@ -97,7 +97,7 @@ export function createNote(
  *  no false merges, catches agents re-writing the same fact verbatim.
  *  Fuzzy matching is a separate concern handled by reflection/consolidation
  *  passes. */
-function findDuplicateForWrite(
+export function findDuplicateForWrite(
   db: Database,
   entityName: string,
   content: string,
@@ -105,20 +105,43 @@ function findDuplicateForWrite(
 ): NoteRow | undefined {
   if (!content) return undefined;
   try {
+    // Compare canonical text; numeric handles deliberately have empty bodies,
+    // so the text is found first (idx_notes_content_prefix, migration 177) and
+    // mapped back to the handles that show it: the note itself, a handle on
+    // its record's current version, or a handle pinned to that version. The
+    // filters are the full original predicate, and the order is the one the
+    // entity scan used (the handle's own text prefix, then id), so the same
+    // duplicate wins; only the rows examined change.
     const row = db
       .query(
-        `SELECT * FROM numeric_notes
-         WHERE entity_name = ?
+        `WITH text_rows(id) AS (
+           SELECT id FROM notes
+           WHERE substr(content, 1, 64) = substr(?1, 1, 64) AND content = ?1
+         ),
+         handles(id) AS (
+           SELECT id FROM text_rows
+           UNION
+           SELECT p.note_id FROM memory_note_projections p
+             JOIN memory_records r ON r.id = p.record_id
+           WHERE p.version IS NULL AND r.current_note_id IN (SELECT id FROM text_rows)
+           UNION
+           SELECT p.note_id FROM memory_note_projections p
+             JOIN memory_record_versions v ON v.record_id = p.record_id AND v.version = p.version
+           WHERE v.note_id IN (SELECT id FROM text_rows)
+         )
+         SELECT * FROM numeric_notes
+         WHERE id IN (SELECT id FROM handles)
+           AND entity_name = ?2
            AND pool_id IS NULL
-           AND note_type = ?
+           AND note_type = ?3
            AND ${factLikeClause("numeric_notes")}
-           AND substr(content, 1, 64) = substr(?, 1, 64)
-           AND content = ?
+           AND substr(content, 1, 64) = substr(?1, 1, 64)
+           AND content = ?1
            AND verification_status != 'superseded'
+         ORDER BY (SELECT substr(h.content, 1, 64) FROM notes h WHERE h.id = numeric_notes.id), id
          LIMIT 1`,
       )
-      // Compare canonical text; numeric handles deliberately have empty bodies.
-      .get(entityName, noteType, content, content) as NoteRow | null;
+      .get(content, entityName, noteType) as NoteRow | null;
     return row ?? undefined;
   } catch {
     return undefined;

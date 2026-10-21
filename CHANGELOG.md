@@ -170,6 +170,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Note writes no longer slow down as an agent's history grows.** Write-path dedup read every earlier note of the same entity and type (joining each to its canonical text), so a write took 1.4 ms with no history and 8.4 ms at 5,000 notes. It now finds the text through a new index (migration 177) and maps it back to its handles, with the same duplicate chosen; writes stay flat.
 - A review snapshot from a sandboxed resident no longer lists the empty read-only placeholder files a command sandbox mounts over dotfiles and settings while the request runs.
 
 - **Supervised residents show as residents in the dashboard.** The world snapshot's vendor,
