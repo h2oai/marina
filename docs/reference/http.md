@@ -367,35 +367,35 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `url.pathname === "/api/panel-resources"`
 
-[Source](../../src/net/dashboard-api.ts#L103)
+[Source](../../src/net/dashboard-api.ts#L107)
 
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/traces"`
 
-[Source](../../src/net/dashboard-api.ts#L106)
+[Source](../../src/net/dashboard-api.ts#L110)
 
 - Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 
 ### `url.pathname === "/api/logs"`
 
-[Source](../../src/net/dashboard-api.ts#L107)
+[Source](../../src/net/dashboard-api.ts#L111)
 
 - Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 
 ### `url.pathname.startsWith("/api/evidence/")`
 
-[Source](../../src/net/dashboard-api.ts#L108)
+[Source](../../src/net/dashboard-api.ts#L112)
 
 - Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 
 ### `url.pathname === "/api/extensions/widgets"`
 
-[Source](../../src/net/dashboard-api.ts#L113)
+[Source](../../src/net/dashboard-api.ts#L117)
 
 - Guard: `url.pathname === "/api/extensions/widgets" && method === "GET"`
 - Guard: `method === "GET"`
@@ -403,7 +403,7 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `url.pathname.startsWith("/api/")`
 
-[Source](../../src/net/dashboard-api.ts#L142)
+[Source](../../src/net/dashboard-api.ts#L147)
 
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 - Guard: `url.pathname === "/api/extensions/widgets" && method === "GET"`
@@ -861,13 +861,26 @@ Fields read here: `url.searchParams.get("entity")`.
 
 ### `url.pathname.startsWith("/api/routing/")`
 
-[Source](../../src/net/dashboard-api/routing.ts#L121)
+[Source](../../src/net/dashboard-api/routing.ts#L44)
 
 - Guard: `!url.pathname.startsWith("/api/routing/")`
 
+### `url.pathname.startsWith("/api/routing/")`
+
+[Source](../../src/net/dashboard-api/routing.ts#L205)
+
+- Guard: `!url.pathname.startsWith("/api/routing/")`
+
+### `url.pathname.match(/^\/api\/routing\/supervision(?:\/(renew&#124;revoke))?$/)`
+
+[Source](../../src/net/dashboard-api/routing.ts#L215)
+
+- Guard: `supervisionMatch && method === "POST"`
+- Guard: `method === "POST"`
+
 ### `url.pathname === "/api/routing/overview"`
 
-[Source](../../src/net/dashboard-api/routing.ts#L131)
+[Source](../../src/net/dashboard-api/routing.ts#L233)
 
 - Guard: `url.pathname === "/api/routing/overview" && method === "GET"`
 - Guard: `method === "GET"`
@@ -876,14 +889,14 @@ Fields read here: `reply( router.overview( url.searchParams.get("after") ?? "", 
 
 ### `url.pathname === "/api/routing/sync"`
 
-[Source](../../src/net/dashboard-api/routing.ts#L139)
+[Source](../../src/net/dashboard-api/routing.ts#L241)
 
 - Guard: `url.pathname === "/api/routing/sync" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match( /^\/api\/routing\/sessions\/([^/]+)\/channels(?:\/([^/]+)\/messages)?$/, )`
 
-[Source](../../src/net/dashboard-api/routing.ts#L141)
+[Source](../../src/net/dashboard-api/routing.ts#L243)
 
 - Guard: `channelMatch`
 - Guard: `method === "GET"`
@@ -893,7 +906,7 @@ Fields read here: `Number(url.searchParams.get("after") ?? 0)`, `reply( router.c
 
 ### `url.pathname === "/api/routing/room-log"`
 
-[Source](../../src/net/dashboard-api/routing.ts#L187)
+[Source](../../src/net/dashboard-api/routing.ts#L289)
 
 - Guard: `url.pathname === "/api/routing/room-log" && method === "GET"`
 - Guard: `method === "GET"`
@@ -902,14 +915,14 @@ Fields read here: `Number(url.searchParams.get("since") ?? 0)`, `db.readRoomLog(
 
 ### `url.pathname.match(/^\/api\/routing\/residents(?:\/([^/]+)\/(renew&#124;revoke&#124;attention))?$/)`
 
-[Source](../../src/net/dashboard-api/routing.ts#L211)
+[Source](../../src/net/dashboard-api/routing.ts#L313)
 
 - Guard: `residentMatch && !residentMatch[1] && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/routing/sessions"`
 
-[Source](../../src/net/dashboard-api/routing.ts#L268)
+[Source](../../src/net/dashboard-api/routing.ts#L370)
 
 - Guard: `url.pathname === "/api/routing/sessions"`
 - Guard: `method === "POST"`
@@ -919,7 +932,7 @@ Fields read here: `reply( router.list( url.searchParams.get("after") ?? "", rout
 
 ### `url.pathname.match( /^\/api\/routing\/sessions\/([^/]+)(?:\/(events&#124;heartbeat&#124;leave&#124;inbox&#124;messages&#124;deliveries&#124;runtime&#124;control)(?:\/([^/]+)(?:\/(ack))?)?)?$/, )`
 
-[Source](../../src/net/dashboard-api/routing.ts#L278)
+[Source](../../src/net/dashboard-api/routing.ts#L380)
 
 - Guard: `match`
 - Guard: `method === "GET"`

@@ -9,6 +9,7 @@ import { getErrorMessage } from "../src/engine/errors";
 import { BUILTIN_AGENT_ADAPTERS } from "../src/routing/agent-adapters";
 import { marinaResidentConnector, residentWorldUrl } from "../src/routing/resident-connection";
 import { supervisedResidentsEnabled } from "../src/routing/residents";
+import { openSupervision, type SupervisionHold } from "../src/routing/supervision-credential";
 import { MarinaSupervisor } from "../src/routing/supervisor";
 import { IS_COMPILED } from "../src/runtime-paths";
 import { MarinaRoutingClient } from "../src/sdk/routing-client";
@@ -88,6 +89,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
     return 0;
   }
   let supervisor: MarinaSupervisor | undefined;
+  let supervision: SupervisionHold | undefined;
   let stopping = false;
   const shutdown = () => {
     stopping = true;
@@ -118,8 +120,12 @@ export async function runSupervisor(args: string[]): Promise<number> {
       return path ? [{ ...adapter, executable: path }] : [];
     });
     if (!adapters.length) throw new Error("No supported agent executables found in PATH");
+    // Residents on: the supervisor's own routing credential, so the person's
+    // next login (which replaces their world session) does not cut it off.
+    if (supervisedResidentsEnabled())
+      supervision = await openSupervision({ url, sessionToken: token });
     supervisor = new MarinaSupervisor({
-      client: new MarinaRoutingClient({ url, token }),
+      client: supervision?.client ?? new MarinaRoutingClient({ url, token }),
       root,
       stateDirectory,
       label: options.label,
@@ -163,6 +169,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
     process.off("SIGINT", shutdown);
     process.off("SIGTERM", shutdown);
     supervisor?.close();
+    await supervision?.close();
   }
 }
 if (import.meta.main) process.exit(await runSupervisor(process.argv.slice(2)));
