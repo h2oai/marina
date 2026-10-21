@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on host loopback passes the startup exposure checks; a routable `MARINA_BIND_IP` with
   passwordless login is now refused at boot until you enable `MARINA_AUTH=better-auth` (or set the
   acknowledgement yourself in `.env`). The trust profile still follows the real bind.
+- **Deploys check the configuration first.** `bun run src/main.ts --check-config` runs every boot
+  refusal and exits before opening the database or a port; `scripts/deploy.sh` runs it in the new
+  image before restarting, so a configuration the new code refuses leaves the running stack serving.
 - **Federation needs a secret outside the local profile.** On `shared` and `public` instances,
   inbound gateway connections are refused unless `GATEWAY_SECRET` is set; the refusal, the boot log
   and `readiness` (`federation-inbound`) say how to set it. The `local` profile is unchanged.

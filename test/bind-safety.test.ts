@@ -8,7 +8,8 @@
  * insecure public bind.
  */
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gatewayIngressRefusal } from "../src/engine/gateway-runtime";
 import { bindSafetyRefusal } from "../src/net/bind-safety";
@@ -104,5 +105,60 @@ describe("gatewayIngressRefusal", () => {
     }
     using _local = scopeProcessState({ trustProfile: "local" });
     expect(gatewayIngressRefusal({})).toBeNull();
+  });
+});
+
+describe("main.ts --check-config", () => {
+  async function checkConfig(env: Record<string, string>) {
+    const dir = mkdtempSync(join(tmpdir(), "marina-check-config-"));
+    try {
+      const child = Bun.spawn(
+        [process.execPath, "--env-file=/dev/null", join(ROOT, "src/main.ts"), "--check-config"],
+        {
+          cwd: dir,
+          env: {
+            PATH: process.env.PATH ?? "/usr/bin:/bin",
+            MARINA_WORLD: "empty",
+            DB_PATH: join(dir, "world.db"),
+            ...env,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const [out, err, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      return { code, output: out + err, dbCreated: existsSync(join(dir, "world.db")) };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("passes a loopback configuration without opening the database", async () => {
+    const result = await checkConfig({ WS_HOST: "127.0.0.1" });
+    expect(result.code).toBe(0);
+    expect(result.output).toContain("Configuration check passed.");
+    expect(result.dbCreated).toBe(false);
+  }, 30_000);
+
+  it("fails a routable bind with passwordless login, naming the fix", async () => {
+    const result = await checkConfig({ WS_HOST: "0.0.0.0", MARINA_PROFILE: "public" });
+    expect(result.code).not.toBe(0);
+    expect(result.output).toContain("FATAL");
+    expect(result.output).toContain("MARINA_AUTH=better-auth");
+    expect(result.dbCreated).toBe(false);
+  }, 30_000);
+});
+
+describe("scripts/deploy.sh", () => {
+  it("checks the new image's configuration before restarting the stack", () => {
+    const script = readFileSync(join(ROOT, "scripts/deploy.sh"), "utf8");
+    const check = script.indexOf("--check-config");
+    const restart = script.indexOf("$DC up -d");
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(restart);
   });
 });

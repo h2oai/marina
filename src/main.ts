@@ -280,6 +280,13 @@ const durability =
   process.env.MARINA_DB_DURABILITY ?? (TRUST.profile === "local" ? "normal" : "full");
 if (durability !== "full" && durability !== "normal")
   throw new Error("MARINA_DB_DURABILITY must be full or normal");
+// `--check-config`: run every boot refusal above, then exit before taking the
+// database lease or opening a port. scripts/deploy.sh runs it in the new image
+// so a configuration the new code refuses never replaces a running stack.
+if (process.argv.includes("--check-config")) {
+  logger.info("main", "Configuration check passed.");
+  process.exit(0);
+}
 const releaseDatabaseLease = acquireDatabaseLease(DB_PATH);
 const db = new MarinaDB(DB_PATH, { durability });
 // Operator-set decision settings (dashboard / `admin decisions`) survive a

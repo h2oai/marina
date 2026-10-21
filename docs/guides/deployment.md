@@ -123,6 +123,11 @@ when the published host is loopback (and Marina is running in a container). A ro
 `MARINA_AUTH=better-auth`. If you knowingly run a passwordless instance on a private network, set
 `MARINA_ALLOW_INSECURE_PUBLIC=true` in `.env`; Compose no longer sets it for you.
 
+`scripts/deploy.sh` runs `bun run src/main.ts --check-config` in the new image before it restarts
+the stack: every boot refusal runs against this host's configuration, and a refused configuration
+stops the deploy with the running stack unchanged. Run the same command yourself to check a `.env`
+change.
+
 ### Without Compose
 
 ```bash

@@ -61,6 +61,16 @@ aws ecr get-login-password --region "$AWS_REGION" \
 echo "[deploy] pulling image"
 $DC pull
 
+# --- configuration preflight ------------------------------------------------
+# Run the new image's boot checks against this host's configuration (.env and
+# compose environment) without a database or ports. A configuration the new
+# code refuses stops here and the running stack keeps serving.
+echo "[deploy] checking this configuration against the new image"
+if ! $DC run --rm --no-deps -T marina bun run src/main.ts --check-config; then
+  echo "[deploy] ERROR: the new image refuses this host's configuration (see the FATAL message above); the running stack was left unchanged" >&2
+  exit 1
+fi
+
 echo "[deploy] (re)starting stack"
 $DC up -d --wait --wait-timeout 180 --remove-orphans
 
