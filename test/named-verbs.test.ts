@@ -9,15 +9,24 @@ import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 
 const TEST_DB = `/tmp/marina-named-verbs-${process.pid}.db`;
 
-let previousAskModel: string | undefined;
+// These fixtures exercise retrieval, not a model server or the live web: every
+// Engine with a database has a connector runtime, and keyless DuckDuckGo answers
+// `dig`'s web step, so without the switch the test would wait on the internet.
+const OFFLINE = { MARINA_ASK_MODEL: "false", MARINA_SEARCH_DUCKDUCKGO: "off" } as const;
+let previous: Partial<Record<keyof typeof OFFLINE, string>> = {};
 beforeEach(() => {
-  // These fixtures exercise retrieval, not an external/local model server.
-  previousAskModel = process.env.MARINA_ASK_MODEL;
-  process.env.MARINA_ASK_MODEL = "false";
+  previous = {};
+  for (const [key, value] of Object.entries(OFFLINE) as [keyof typeof OFFLINE, string][]) {
+    previous[key] = process.env[key];
+    process.env[key] = value;
+  }
 });
 afterEach(() => {
-  if (previousAskModel === undefined) delete process.env.MARINA_ASK_MODEL;
-  else process.env.MARINA_ASK_MODEL = previousAskModel;
+  for (const key of Object.keys(OFFLINE) as (keyof typeof OFFLINE)[]) {
+    const value = previous[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 function lastFor(conn: MockConnection): string {
@@ -217,11 +226,10 @@ describe("dig", () => {
     expect(lastFor(conn)).toContain("Usage: dig <topic>");
   });
 
-  it("degrades gracefully without a connector runtime — internal sources only", async () => {
-    // engine constructed in beforeEach has no connectorRuntime (no
-    // ConnectorRuntime is initialized without the env wiring), so the dig
-    // path should produce the "Web search unavailable" hint rather than
-    // throwing or hanging.
+  it("degrades gracefully with no web backend — internal sources only", async () => {
+    // No keyed backend is configured and DuckDuckGo is off (OFFLINE above), so
+    // the web step returns nothing and dig answers from internal sources
+    // rather than throwing or hanging.
     await engine.processCommand(conn.entity!, "note thermal runaway scaling note");
     conn.clear();
     await engine.processCommand(conn.entity!, "dig thermal runaway");
