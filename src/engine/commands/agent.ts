@@ -116,6 +116,7 @@ export function agentCommand(deps: {
     usage: [
       { syntax: "agent attention <name> <message>", effect: "write" },
       { syntax: "agent attention <name> <msg>", effect: "write" },
+      { syntax: "agent attention <a,b|all> <message>", effect: "write" },
       { syntax: "agent attention-feedback <name> noise", effect: "write" },
       { syntax: "agent attention-feedback <name> useful", effect: "write" },
       { syntax: "agent attention-mode <name> balanced", effect: "write" },
@@ -377,10 +378,20 @@ Usage:
           const name = tokens[1];
           const message = tokens.slice(2).join(" ");
           if (!name || !message) {
-            ctx.send(input.entity, "Usage: agent attention <name> <message>");
+            ctx.send(input.entity, "Usage: agent attention <name|a,b|all> <message>");
             return;
           }
-          return handleAttention(ctx, input.entity, name, message, deps);
+          const names = attentionTargets(name, entity, ctx, deps);
+          if (!names.length) {
+            ctx.send(
+              input.entity,
+              "No agents to send attention to (you own none, and none are here).",
+            );
+            return;
+          }
+          for (const target of names)
+            await handleAttention(ctx, input.entity, target, message, deps);
+          return;
         }
 
         case "focus": {
@@ -880,6 +891,30 @@ function stopSupervisedResident(
 }
 
 /** The supervised resident named `name`, when supervised residents are on. */
+/**
+ * `agent attention` targets: one name, a comma list, or `all` — every agent
+ * the caller owns that is in the world, else every other agent present.
+ */
+function attentionTargets(
+  spec: string,
+  caller: Entity,
+  ctx: RoomContext,
+  deps: {
+    agentRuntime: AgentRuntime;
+    db?: MarinaDB;
+    findAgent?: (name: string) => { id: EntityId } | undefined;
+  },
+): string[] {
+  if (spec.toLowerCase() !== "all") return [...new Set(spec.split(",").filter(Boolean))];
+  const owned = (deps.db?.getAgentConfigsBySpawnedBy(caller.name) ?? [])
+    .map((config) => config.name)
+    .filter((name) => deps.agentRuntime.get(name) || deps.findAgent?.(name));
+  if (owned.length) return owned;
+  return ctx.entities
+    .filter((e) => e.id !== caller.id && e.kind === "agent" && deps.agentRuntime.get(e.name))
+    .map((e) => e.name);
+}
+
 function supervisedResident(
   db: MarinaDB | undefined,
   name: string | undefined,

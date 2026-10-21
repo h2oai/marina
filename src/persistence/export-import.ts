@@ -261,6 +261,8 @@ export function isExcludedFromExport(table: string): boolean {
   // Deployment-local backfill cursor (migration 172): the importing database has its own, and the
   // imported events date their rows through the known-at triggers.
   if (table === "memory_known_at_backfill") return true;
+  // Recent room history (migration 175): bounded, short-lived and local to this world's rooms.
+  if (table === "room_log") return true;
   return (
     table === "sessions" ||
     table === "principal_credentials" ||

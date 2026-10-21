@@ -91,6 +91,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **World awareness.** `look log [since:<duration>]` reads your room's recent history (speech, emotes,
+  arrivals, departures; bounded per room, migration 175). `who` and `look` show every agent's status
+  (working, idle, blocked, needs you, resting, offline), and `who watch <name> [idle|blocked|any]
+  [once]` sends one notice per change. `@name`, `@a,b` and `@all` expand to `agent attention` before
+  dispatch (`agent attention` now takes a comma list or `all`); `@@` escapes to `say`. Supervised
+  residents' digests fold arrivals, departures and server notices.
+
 - **Peer code review with authority.** `code review request <name|auto> [-- claims]` snapshots the
   author's changes (a coding-session diff, or the worktree diff a supervised resident's supervisor
   captures) and asks a reviewer through an ordinary `tell`; `auto` prefers a different vendor,
