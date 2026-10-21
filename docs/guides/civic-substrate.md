@@ -61,11 +61,11 @@ The genuinely powerful, irreversible operations aren't unlocked by a tier number
 
 ## Safety gates — approvals are the proof
 
-Fourteen operations are individually gated:
+Fifteen operations are individually gated:
 
 `code.exec` · `agent.spawn` · `role.edit` · `world.lineage` · `agent.run` · `decisions.configure` ·
 `adapter.enable` · `connect.manage` · `gateway.connect` · `shell.exec` · `world.code` ·
-`key.manage` · `admin.destructive` · `code.exec.unrestricted`
+`key.manage` · `admin.destructive` · `trading.live` · `code.exec.unrestricted`
 
 **Supervision is earned away, not permanent.** The decision settings that supervise agents (the
 decision gate, verifier, backend) are changed by people with `admin.destructive` and by agents
@@ -92,7 +92,7 @@ use), and nobody approves their own run.
 | `agent.spawn`, `role.edit`, `world.lineage` | 10 | 3 |
 | `agent.run` | 20 | 3 |
 | `decisions.configure`, `adapter.enable`, `connect.manage`, `gateway.connect` | 30 | 2 |
-| `shell.exec`, `world.code`, `key.manage`, `admin.destructive`, `code.exec.unrestricted` | operator grant | — |
+| `shell.exec`, `world.code`, `key.manage`, `admin.destructive`, `code.exec.unrestricted`, `trading.live` | operator grant | — |
 
 Standing is verified work — an approved task pays its value (default 1), and with a
 60-day half-life someone finishing one verified task every week or two holds about 10. The floors
@@ -121,14 +121,16 @@ and `witness queue|attest|reject` let an operator count the runs the `earned` po
 - **`earned`** — practice freely: earnable gates run at once once your standing clears the floor,
   each run recorded as a pending demonstration that counts when an operator attests it.
 - **`open`** — standing is purely descriptive and every gate auto-passes **except the
-  operator-grant core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). For radical,
+  operator-grant core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`, `trading.live`). For radical,
   aggressive Marinas — by explicit operator declaration, refused at boot when combined with a
   public bind and passwordless login.
 - **`sovereign`** — the all-gates-off switch for a sovereign, self-hosted Marina with no guests:
   every gate (the core included), rank floor and hold is off for every principal, in any trust
   profile. Audit stays on. On a non-loopback bind it refuses to boot unless
   `MARINA_ALLOW_INSECURE_PUBLIC=true`, signed in or not, because every account that can log in
-  gets every capability. On your own machine the `local` profile already behaves this way.
+  gets every capability. On your own machine the `local` profile already behaves this way, with one
+  exception: live (real-money) trading (`trading.live`) still asks a person per order there unless
+  an operator granted it — only `sovereign` lifts it.
 
 ## Why this design
 

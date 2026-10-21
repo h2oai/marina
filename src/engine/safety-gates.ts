@@ -9,12 +9,14 @@
  * for an entity once they've accumulated enough supervised demonstrations
  * — a witness-able proof that they can do the thing without breaking it.
  *
- * The gate registry below is the source of truth (14 gates). A command opts
+ * The gate registry below is the source of truth (15 gates). A command opts
  * in by declaring `gate: '<id>'` on its `CommandDef`; the command phase calls
  * `checkGateForExecution()` after the standard `minRank` check and
  * `recordGateExecution()` on a pass. `agent.spawn` and `code.exec` are
  * enforced imperatively inside their commands with the same pair. Under the
- * `local` trust profile (`isLocalUngated()`) every gate auto-passes.
+ * `local` trust profile (`isLocalUngated()`) every gate auto-passes except
+ * `trading.live` (`holdsUnderLocalProfile`), which only `MARINA_AUTONOMY=sovereign`
+ * or an explicit operator grant lifts.
  *
  * APPROVALS ARE THE PROOF (2026-10-14). Two kinds of gate:
  *
@@ -44,7 +46,7 @@ import type { MarinaDB } from "../persistence/database";
 import { isGrantedCompetence } from "../persistence/db-competence";
 import { getAutonomyPosture } from "./autonomy";
 import { onGateRefused, takeArmedGatePass } from "./gate-context";
-import { isLocalUngated } from "./trust-profile";
+import { isLocalUngated, isSovereign } from "./trust-profile";
 
 /**
  * Canonical gate registry. Each entry is the contract for a dangerous
@@ -77,6 +79,15 @@ export interface GateDef {
    * (`once`), which builds nothing.
    */
   operatorGrant?: true;
+  /**
+   * The local profile's ungated mode (`isLocalUngated()` without
+   * `MARINA_AUTONOMY=sovereign`) does NOT lift this gate: only an explicit
+   * operator grant or the sovereign switch does. Real money (`trading.live`)
+   * asks a person per order even on the operator's own machine.
+   */
+  holdsUnderLocalProfile?: true;
+  /** Extra sentence appended to an operator-grant refusal (the gate's other way out). */
+  refusalHint?: string;
 }
 
 /**
@@ -229,6 +240,22 @@ export const SAFETY_GATES: Record<string, GateDef> = {
     operatorGrant: true,
     description: "perform destructive admin operations",
   },
+  "trading.live": {
+    id: "trading.live",
+    // A real-money prediction-market order (`position open|confirm|close`
+    // while MARINA_TRADING_ENABLED=true and venue credentials are set). Paper
+    // orders never reach it. Operator grant only, NEVER in RANK_GATES (no
+    // bootstrap sovereign or `rank set` hands it out), and not lifted by the
+    // local profile: each live order asks a person unless an operator granted
+    // the gate explicitly or the instance runs MARINA_AUTONOMY=sovereign.
+    minStanding: 0,
+    demoThreshold: 0,
+    operatorGrant: true,
+    holdsUnderLocalProfile: true,
+    description: "place live (real-money) prediction-market orders",
+    refusalHint:
+      "Paper orders are never held; MARINA_AUTONOMY=sovereign lifts this on a self-hosted instance.",
+  },
   "code.exec.unrestricted": {
     id: "code.exec.unrestricted",
     // The highest-blast-radius code capability: running ARBITRARY
@@ -253,7 +280,7 @@ export function operatorGrantReason(gate: GateDef): string {
   return (
     `Operator grant: ${gate.description} (${gate.id}) is granted by an operator; standing and ` +
     `demonstrations never open it. An operator can approve this one run, or grant it ` +
-    `(\`gate grant <name> ${gate.id}\`).`
+    `(\`gate grant <name> ${gate.id}\`).${gate.refusalHint ? ` ${gate.refusalHint}` : ""}`
   );
 }
 
@@ -506,7 +533,9 @@ function evaluateGateForExecution(
   // caller still records the execution (audit). An admin who wants the gates
   // back on a personal instance sets MARINA_AUTONOMY=guarded explicitly, which
   // makes isLocalUngated() false while local performance defaults stay on.
-  if (isLocalUngated()) return { ok: true, mode: "profile-local" };
+  if (isLocalUngated() && (!gate.holdsUnderLocalProfile || isSovereign())) {
+    return { ok: true, mode: "profile-local" };
+  }
 
   // Operator-grant gates: no posture, standing or demonstration opens them.
   if (gate.operatorGrant) return { ok: false, reason: operatorGrantReason(gate) };
@@ -716,6 +745,9 @@ export function gateNextStep(g: GateProgress): string {
  * This is NOT grandfathering — it's an explicit, write-time grant policy
  * triggered when an operator is promoted, mirroring the semantic intent
  * of the historical rank ladder without the runtime short-circuit.
+ *
+ * Never listed: `code.exec.unrestricted` and `trading.live` — an operator
+ * grants each explicitly; no rank, bootstrap or sovereign login hands them out.
  */
 const RANK_GATES: Record<number, string[]> = {
   5: ["shell.exec", "agent.spawn", "code.exec", "role.edit", "world.lineage", "world.code"],

@@ -63,7 +63,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Schedules | experimental | `schedule add …` | src/schedules |
 | Evolution (coach, native protocols, `marina_evolve`, child worlds) | experimental | `evolve`; protocols and the `marina_evolve` tool need `MARINA_EVOLUTION_PROTOCOLS=true` | src/engine/commands/evolve.ts, src/agent/tools/evolution.ts |
 | Experiments | experimental | `experiment` | src/engine/commands/experiment.ts |
-| Markets and positions | experimental | `market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true` | src/resolvers, src/net/clients |
+| Markets and positions | experimental | `market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true` and a person's approval per order (`trading.live`) | src/resolvers, src/net/clients |
 | Federation (gateways, meshes) | experimental | `gateway`, `mesh`; `GATEWAY_SECRET` | src/engine/gateway-runtime.ts |
 | Learned bundles | experimental | `learned`, `bun run learned` | src/learned |
 | Intellect records (identity across models and processes, lifecycle claims) | experimental | `intellect`; claims are signed when `MARINA_FEDERATION_SIGNING_KEY` is set | src/engine/commands/intellect.ts, src/persistence/db-intellects.ts |

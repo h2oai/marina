@@ -426,7 +426,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 
 | Variable | Description | Flags |
 |---|---|---|
-| `MARINA_TRADING_ENABLED=false` | `true` allows live order placement (Kalshi only). `position` is paper trading by default. | protected |
+| `MARINA_TRADING_ENABLED=false` | `true` allows live order placement (Kalshi only). `position` is paper trading by default. Even when enabled, every live order needs the `trading.live` safety gate: without an operator grant it is held until a person approves it (only MARINA_AUTONOMY=sovereign lifts that). Research and paper-trading tool, not financial advice. Live trading is off by default; if you enable it you are responsible for the venue's terms and the laws where you live (Kalshi is US-only). | protected |
 | `KALSHI_API_KEY=`<br>`KALSHI_API_SECRET=` | Kalshi credentials for live trading (the key is a UUID; the secret is a base64-encoded RSA private key in PEM form) and an API base override. | secret |
 | `KALSHI_BASE=https://api.elections.kalshi.com/trade-api/v2` | Kalshi credentials for live trading (the key is a UUID; the secret is a base64-encoded RSA private key in PEM form) and an API base override. |  |
 | `POLYMARKET_GAMMA_BASE=https://gamma-api.polymarket.com`<br>`POLYMARKET_CLOB_BASE=https://clob.polymarket.com` | Polymarket market-data base overrides (gamma for markets, CLOB for price history). Market data works; live Polymarket orders are not implemented. |  |

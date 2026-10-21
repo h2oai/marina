@@ -5,6 +5,10 @@ positions** on real questions, the world scores how well-calibrated they turn ou
 score becomes part of their reputation. It's where epistemic rigor is *practiced and rewarded* — not
 "who's loudest," but "who's right, with appropriately-sized confidence."
 
+> **Not financial advice.** Research and paper-trading tool, not financial advice. Live trading is
+> off by default; if you enable it you are responsible for the venue's terms and the laws where you
+> live (Kalshi is US-only).
+
 Two layers work together: **forecasting & calibration** (track records on questions) and
 **positions** (Kelly-sized trading against Kalshi/Polymarket, paper by default).
 
@@ -57,20 +61,37 @@ position confirm <id>  /  position reject <id> [reason]     # decide a proposed 
 
 Venues: **kalshi** and **polymarket**.
 
-**Hard rules enforced at the data layer** (not just prompts):
-- A bankroll, position cap, and daily-loss floor must be set before any open.
-- **No self-hedge** — it refuses an opposing-side order on a ticker you already hold.
-- A single position can't exceed the bankroll cap. *(A daily-loss floor is configurable but not yet
-  enforced — realized-P&L tracking is still being wired, so treat the floor as advisory for now.)*
+**Hard rules enforced at the data layer** (not just prompts), checked on every open — paper and
+live alike:
+- A bankroll, position cap, and daily-loss floor (`bankroll set|cap|floor`) must be set before any
+  open. They are yours: each entity's own values, read from its core memory.
+- **No self-hedge** — it refuses an opposing-side order on a ticker already held. The ledger is
+  shared, so this applies across every entity in the world.
+- **Cap** — one order's stake can't exceed your bankroll cap. The stake is `count × limit price`;
+  a market order (no limit price) is costed at the worst case, **99¢ a contract**, because it may
+  fill anywhere up to that. Add a limit price to size against it. The cap is per order, not a total
+  across orders on the same ticker.
+- **Daily-loss floor** — enforced: once the realized loss since UTC midnight reaches your floor,
+  every new open is refused until the next UTC day (closes still work). Realized loss counts closes
+  and market settlements (a resolved market books 100¢ or 0¢), average-cost basis. Its scope is
+  **world-wide**: it sums every entity's orders on the shared `paper-orders` ledger, both venues,
+  paper and live together, and compares that with *your* floor.
 - **Paper is the default.** Live trading requires `MARINA_TRADING_ENABLED=true` plus venue
-  credentials.
+  credentials (Polymarket live orders are not supported yet and fail closed without sending).
+- **Live orders ask a person.** Every order that would reach a live venue — `position open`,
+  `position confirm`, `position close` — needs the `trading.live` safety gate. Without an operator
+  grant the order is **held** (nothing is sent, the command returns at once) and a person approves
+  it: `challenge approve <token> once` places that one order (a `confirm` is one hold for the whole
+  proposal), `always` grants the gate (operators only). Agents never approve. The `open` autonomy
+  posture and the `local` profile do not lift it; an explicit grant (`gate grant <name>
+  trading.live`) or `MARINA_AUTONOMY=sovereign` does. Paper orders are never held.
 
 Every position you open **auto-spawns a watch** on its ticker, so when the market resolves the
 outcome is recorded automatically — closing the calibration loop without any manual bookkeeping.
 
 ## The calibration loop closes itself
 
-This is the part that makes it *learning*, not just gambling: a forecast or position is paired with
+This is the part that makes it *learning*: a forecast or position is paired with
 its eventual real-world outcome, and the result is written as a scored, recallable note. Future
 agents `recall` that history and learn **when a given method (or a given forecaster) is trustworthy
 for this class of question.** Over time the world gets measurably better-calibrated, and that

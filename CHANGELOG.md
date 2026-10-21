@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in plain terms. Commands, names and protocol ids are unchanged. Docs, agent skill files and
   comments drop metaphors such as "civilization" and "autonomous from birth".
 
+- **Live (real-money) prediction-market orders ask a person.** A new operator-grant safety gate,
+  `trading.live`, guards every `position open`, `position confirm` and `position close` that would
+  reach a live venue (`MARINA_TRADING_ENABLED=true` plus credentials). Without an operator grant the
+  order is held as a challenge — nothing is sent and the command returns at once — and a person's
+  `challenge approve <token> once` places that one order (a `confirm` is one hold for the whole
+  proposal); `always` is an operator grant. Agents never approve. The gate is in the open-posture
+  core, never in `RANK_GATES`, and, unlike the other gates, is not lifted by the `local` profile:
+  only `gate grant <name> trading.live` or `MARINA_AUTONOMY=sovereign` passes live orders without a
+  per-order approval. Paper trading is unchanged. There are now 15 safety gates. `position`,
+  `bankroll`, the markets guide and `MARINA_TRADING_ENABLED` carry a plain not-financial-advice
+  note.
+
 - **A new front door.** The README, landing page and docs overview are rewritten to be shorter
   and plainer, with the forecasting, research, orchestration and coding commands every participant
   gets up front. The docs sidebar and guides index are regrouped by what a reader wants to do, and
@@ -79,6 +91,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   supervisor keeps running and can still renew and revoke its residents. The credential is accepted
   only under `/api/routing/`, is never a world session or an approver, and cannot send controls,
   messages or channel posts. Off, nothing changes.
+
+- **`position` cap counts a market order at its worst case.** A market order (no limit price) was
+  costed at an estimated 50¢ a contract for the bankroll-cap check, so its exposure could reach
+  about twice the cap. The cap now costs it at 99¢ in paper and live alike (the paper fill is still
+  recorded at the estimate); add a limit price to size against it. The markets guide now describes
+  the daily-loss floor as it is enforced — world-wide realized losses since UTC midnight against the
+  opener's own floor, refusing new opens — instead of calling it advisory.
 
 - **Messages carry a causal envelope, and the canvas sees speech.** `say`, `tell` and `re` emit
   content-free `say_sent` / `tell_sent` events (names, a message ref, `cause`, `depth`; never the
