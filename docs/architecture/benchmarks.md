@@ -26,7 +26,7 @@ Every interval and test the ledger, route evidence, outcomes, promotion and the 
 - `replicates.ts`: replicate pooling and the two-stage replicate comparison (`poolGroup`, `comparePooled`, `seedFromIds`).
 - `bootstrap.ts`: `bootstrapMean`, `twoStageBootstrap`, `resampleMeans`, the `lcg32` PRNG and the `percentileFloor` / `percentileCeil` index rules.
 
-`benchmarks/stats.ts` and `benchmarks/replicate-stats.ts` re-export it for compatibility. The harness copies (transfer, deepresearch, longmemeval, FutureX, forecast selection, genbench, `learned` export, arena-wiki backtest) are thin calls onto it; `test/stats-equivalence.test.ts` holds each bit-identical to its frozen original in `test/fixtures/stats-legacy.ts` (never edit the fixture to make it pass). A new statistic goes in `src/stats/`, not in a harness.
+The harness copies (transfer, deepresearch, longmemeval, FutureX, forecast selection, genbench, `learned` export, arena-wiki backtest) are thin calls onto it; `test/stats-equivalence.test.ts` holds each bit-identical to its frozen original in `test/fixtures/stats-legacy.ts` (never edit the fixture to make it pass). A new statistic goes in `src/stats/`, not in a harness.
 ## What a run measures: residents, controls and judges
 
 An in-world `benchmark run` measures residents, not the upstream model, unless you ask for a

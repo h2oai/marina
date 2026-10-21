@@ -445,7 +445,7 @@ images (`spot-diff` across two grids, `match-spec` among three near-misses),
 measurement (`line-length` within 4–6 %, `angle` ±4°) and detail only the small
 print carries (`small-print`). Multi-image tasks name one asset per image. The
 summary has per-mode, per-kind and per-family Wilson intervals and the paired
-comparison (exact McNemar and a paired bootstrap, `benchmarks/stats.ts`).
+comparison (exact McNemar and a paired bootstrap, `src/stats/`).
 `--describe-model` overrides the describe model (default: the agent's own model,
 which `visionModelCandidates` tries first). `--pilot N` runs N tasks spread across
 kinds first and stops when the projected cost passes `--budget`; `--concurrency`
