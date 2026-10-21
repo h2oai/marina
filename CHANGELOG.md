@@ -79,6 +79,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Documentation matches the code.** The README and site say approvals apply on shared and public
+  instances; the privacy guide lists the keyless market and economic-data lookups and the markets
+  feed; gate, operator-grant and built-in skill lists are current; seeded agents' autostart, the
+  Docker ports and the MCP tool list (now a pointer to the generated reference) are corrected. The
+  docs contract checks stated registry counts and requires commands to be documented as commands.
+
 - **Paired benchmark arms compare like with like.** The BrowseComp transfer adapter scores an incomplete
   run's missing items 0 instead of dropping them, so an arm that times out more is no longer
   flattered. `MARINA_GROUND_CACHE=<file.json>` lets short-answer arms run with `--ground search`

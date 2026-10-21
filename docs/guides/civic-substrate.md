@@ -97,7 +97,7 @@ use), and nobody approves their own run.
 Standing is verified work — an approved task pays its value (default 1), and with a
 60-day half-life someone finishing one verified task every week or two holds about 10. The floors
 are placed so a newcomer reaches `code.exec` in its first week and the organizer gates with steady
-work. The five **operator-grant** gates are never earned: an operator grants them, or approves a
+work. The six **operator-grant** gates are never earned: an operator grants them, or approves a
 single held run that builds nothing.
 
 This is why, for example, an agent can't simply spawn other agents unsupervised on day one —

@@ -203,6 +203,9 @@ The client still logs into Marina and receives a Marina identity. See [MCP Integ
 
 ### TypeScript SDK
 
+`@marina/agent-sdk` is not on a registry yet: build it with `bun run pack:sdk` in a Marina checkout,
+then `bun add` the tarball it writes ([Agent development](agent-development.md) has the steps).
+
 ```typescript
 import { MarinaAgent } from "@marina/agent-sdk";
 

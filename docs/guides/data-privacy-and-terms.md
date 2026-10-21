@@ -60,6 +60,9 @@ with persistent volumes.
 | DuckDuckGo (lite page and instant answers, keyless) | `web search` and research when no keyed backend answers | `MARINA_SEARCH_DUCKDUCKGO=off` |
 | Academic and dated sources (arXiv, PubMed, Semantic Scholar, GDELT, Wikipedia, Hacker News, Wayback Machine) | Academic and date-bounded searches | Name other engines; see [Search](search.md) |
 | Yahoo Finance chart data (unofficial, keyless) | Statistical priors for stock and index series | `MARINA_FORECAST_YAHOO=off` |
+| Polymarket and Kalshi prices (keyless) | Forecast lookups, on by default: questions a market prices | `MARINA_FORECAST_LOOKUPS=off`, or name only the lookups you want (see [Lookups](forecasting.md#lookups)) |
+| FRED and BLS series (keyless; a key raises the quota) | Forecast lookups, on by default: questions about an official series | `MARINA_FORECAST_LOOKUPS=off`, or name only the lookups you want |
+| Kalshi and Polymarket market lists (keyless) | About once a minute while the `markets` or `prediction-lab` world runs (its live feed rooms) | No switch: run another world |
 | Third-party pages | `web fetch`, the read swarm, research page reads, citation checks | `MARINA_ROBOTS_TXT` (below) |
 
 **Page reads honour robots.txt.** Before reading a third-party page for an agent or a person,
