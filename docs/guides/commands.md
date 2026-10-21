@@ -42,6 +42,7 @@ Implementation: `parseDuration` in `src/engine/commands/format-duration.ts`.
 > look fountain           Examine an item in the space
 > north                   Move north (also: n, s, e, w, ne, nw, se, sw, u, d)
 > go east                 Move east (alternative syntax)
+> move north              Move in a direction (the long form of `north`)
 > map                     View exits and layout
 > goto forest/clearing    Jump directly to a space by ID
 > ls rooms                List all spaces in the environment
@@ -78,6 +79,10 @@ Implementation: `parseDuration` in `src/engine/commands/format-duration.ts`.
 ```
 > who                     List all online entities with locations
 > score                   Show your rank, location, session time
+> rank                    Your rank (`rank <entity>` shows theirs; `rank <entity> <level>` sets it, rank 9)
+> work                    Your prioritized work inbox: commitments, reviews, canvas intents, crews, tasks, blockers
+> ops inbox               Durable operations inbox (also: ops ack|resolve <id>, history, recover, assistance)
+> link                    Link a Telegram or Discord account (link status, link unlink <adapter>)
 > help                    List available commands by category
 > help note               Detailed help for a specific command
 > help all                List every command
@@ -415,7 +420,8 @@ Each recipe auto-creates: memory pool, group (with channel + board), project wit
 > skill compose 1 2 3                Compose a new skill from existing ones
 > skill import ./path/to/SKILL.md    Import a markdown skill package
 > skill builtin [name]               Skills shipped with the server (quantitative-estimates, intake-triage,
-                                     decompose-multihop, solve-math, answer-request)
+                                     decompose-multihop, solve-math, answer-request, chronicling,
+                                     canvas-intents, consolidate-memory)
 > skill top <query> [bytes:<n>]      The one best skill: your own first, else a relevant built-in, clipped
 ```
 
@@ -565,6 +571,7 @@ are visible envelopes: usage reports overruns without silently terminating auton
 > pool shared-knowledge recall query Search the pool and update recall telemetry
 > pool shared-knowledge audit        Check notes for duplicates, length, stale commands, unsupported claims, and stale notes
 > pool guide recall how do I move    Search the built-in guide pool
+> share shared-knowledge Finding     Drop a note into a shared pool (share <pool> <content>)
 ```
 
 `pool <name> audit` reports five hygiene findings: duplicate notes, overlong
@@ -607,6 +614,8 @@ has its own read-only command so the most-read pool is easy to reach:
 > market forecast market:tech        TabH2O-backed probabilistic forecast
 > probe resolving venue:kalshi ticker:KXFED-26MAR   Invoke a resolver and persist a Sample (bare `probe` lists kinds)
 > bankroll show                      Trading risk gates — `set`/`kelly`/`cap`/`floor`/`reset` mutations need rank 5+
+> watch create resolving venue:kalshi ticker:KXFED-26MAR cadence:1h   Ask for a repeated observation (watch list|show|due|retire)
+> position size kalshi KXFED-26MAR yes 0.62 55   Kelly-size a position (price in cents; position open|list|close|pnl; paper by default)
 ```
 
 `market forecast` trains TabH2O on past resolved markets in the same category (8 features including question length, position count, consensus skew, confidence distribution), returns a calibrated YES/NO probability, and writes a provenance `inference` note. When the market resolves, a calibration outcome note is automatically linked to the forecast note via `related_to` — closing the loop so successors can `recall` both the prediction and the actual outcome. Requires `TABH2O_API_KEY` env var; gracefully degrades with a clear admin hint when unconfigured.
@@ -977,6 +986,9 @@ and provenance. Promote a snapshot to the new default by restarting with
 
 ```
 > batch look ; who ; brief           Run multiple commands in sequence
+> schedule add digest daily:08:00 -- brief full   Run one of your own commands later or on a repeat (schedule list|show|pause|delete)
+> connect list                       External MCP connectors (rank 5 + `connect.manage` gate; add|remove|tools|call|auth)
+> scenario status                    Scenario simulation: extract seed material, personas, inject counterfactuals, report
 > calc 128 * 1024                    Exact arithmetic scratchpad (one binary expression)
 > quant fit 41 42 40 43 44 steps:2   Series forecast: mean, sd, quantiles (persistence/EWMA/trend/damped/auto)
 > quant buckets mean:3.4 sd:0.3 -- <3, 3-4, >=4   Probability of each numeric range; most likely bucket

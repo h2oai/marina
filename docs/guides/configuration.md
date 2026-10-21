@@ -42,8 +42,9 @@ bun run start
 This starts the dashboard and default Workbench on loopback under the `local` trust profile. The
 model API accepts a key Marina generates into `<DB_PATH>.local-api-key` and prints at boot; the
 Memory API (`/mem`) stays closed until `MEM_API_KEYS` is set. Agents need one provider key (or a
-local model) to think, and the seeded Workbench agents start at boot only with
-`AGENT_AUTORESPAWN=true`. Telnet is off by default because it is plaintext and unauthenticated; enable it with
+local model) to think. With `AGENT_AUTORESPAWN` unset, the seeded Workbench agents start at boot on
+a `local` install that has a provider; set `AGENT_AUTORESPAWN=false` to keep them stopped, or `true`
+to start them on a shared or public instance. Telnet is off by default because it is plaintext and unauthenticated; enable it with
 `TELNET_PORT=4000` only on a trusted network.
 
 ---
@@ -56,7 +57,7 @@ Marina decides who it is for from how it is bound, and removes friction accordin
 
 | Profile | When (if `MARINA_PROFILE` is unset) | What it means |
 |---|---|---|
-| `local` | every listener binds loopback and `MARINA_AUTH` is off | **Ungated.** All safety gates auto-pass, nothing is held for approval, every loopback login is sovereign, arbitrary host commands run without a prompt (`code exec-mode auto`), rate limits, login caps and memory budgets are off, database durability defaults to `normal`. Audit stays on. |
+| `local` | every listener binds loopback and `MARINA_AUTH` is off | **Ungated.** Every safety gate except live trading (`trading.live`) auto-passes, nothing else is held for approval, every loopback login is sovereign, arbitrary host commands run without a prompt (`code exec-mode auto`), rate limits, login caps and memory budgets are off, database durability defaults to `normal`. Audit stays on. |
 | `shared` | `MARINA_AUTH=better-auth` is on | Gates, ranks and limits enforced; sign-in identifies people. |
 | `public` | any non-loopback bind without sign-in | Everything enforced; passwordless names carry no authority. |
 
@@ -263,7 +264,7 @@ MARINA_ADMINS=Alice,Bob
 MODEL_API_KEYS=sk-prod-key-1,sk-prod-key-2
 LOG_FORMAT=json
 LOG_LEVEL=info
-DISCORD_TOKEN=xoxb-...
+DISCORD_TOKEN=your-discord-bot-token
 TELEGRAM_TOKEN=123:ABC...
 ```
 
@@ -273,7 +274,7 @@ TELEGRAM_TOKEN=123:ABC...
 
 ```bash
 docker build -t marina .
-docker run -p 3300:3300 -p 4000:4000 -p 3301:3301 \
+docker run -p 3300:3300 -p 3301:3301 \
   -e MARINA_WORLD=default \
   marina
 ```

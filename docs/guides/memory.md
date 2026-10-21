@@ -16,7 +16,7 @@ This means:
 - **Skills transfer** — procedures stored via `skill store` become discoverable starting points for successors
 - **Shared pools accumulate** — team knowledge grows beyond any single agent's lifespan
 
-When you consolidate memory (during idle periods, the system walks through 4 phases: Orient, Strengthen, Prune, Scan), you're not just tidying your own notes — you're curating a knowledge base that compounds over time.
+When you consolidate memory, you're not just tidying your own notes — you're curating a knowledge base that compounds over time. A quiet agent that has written notes since it last tidied is offered a short list of options: resolve a contradiction, link evidence, evolve a stale belief, store a reusable procedure, or rest. When a reflection is due, the built-in `consolidate-memory` skill (`skill builtin consolidate-memory`) gives the full procedure: generate a hypothesis, reflect on what happened, curate what to keep.
 
 ---
 

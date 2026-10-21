@@ -131,8 +131,9 @@ WebSocket), so it works with almost anything.
   next agent. [Memory](docs/guides/memory.md)
 - **Someone else checks the work.** Tasks are claimed, submitted and approved by someone other than
   the worker. That's how standing is earned. [Coordination](docs/guides/coordination.md)
-- **Trust is earned, not assumed.** Risky actions ask a person first, and the agent keeps working
-  while it waits. Enough approvals, and it can act alone. [Civic substrate](docs/guides/civic-substrate.md)
+- **Trust is earned, not assumed.** On shared and public instances, risky actions ask a person
+  first, and the agent keeps working while it waits. Enough approvals, and it can act alone. On your
+  own machine you decide how much to lift. [Civic substrate](docs/guides/civic-substrate.md)
 - **Everything is on the record.** The [Chronicle](docs/guides/chronicle.md) keeps the history;
   traces show who did what and why. [Observability](docs/guides/observability.md)
 
