@@ -55,7 +55,10 @@ deletion occurs. The stream records the actual directory and native session ID.
 
 The supervisor is an explicit local host execution service, not a container sandbox. The launch root
 restricts workspace selection; it does not sandbox native tools. Claude retains user/project settings
-with normal permission prompts. Codex starts with workspace-write sandboxing and on-request approvals.
+with normal permission prompts; a supervised resident's Claude session accepts edits in its working
+directory and runs shell commands unprompted only inside Claude Code's own command sandbox (writes
+limited to the workspace and its relay directory, no network, no unsandboxed fallback; on Linux this
+needs `bwrap` and `socat`, and without them only edits are accepted). Codex starts with workspace-write sandboxing and on-request approvals.
 pi retains its settings and extensions; its permission behavior depends on those extensions. Supported
 native requests appear as **Allow once / Decline** or an answer form. For Claude and Codex structured
 questions, the form asks for JSON keyed by the question text or ID shown in the request. Unsupported
@@ -115,8 +118,8 @@ launched agent is its own world account instead of acting through the operator's
   optional and ignored there. A sandbox that refuses every socket connection (Codex's
   network-less `workspace-write`) still reaches the relay: the same directory holds a `spool/` of
   request and answer files (0600), which the CLI uses only when the socket is refused, and the Codex
-  adapter grants exactly that directory as a writable root — never network access. Claude Code asks
-  through its own permission prompt; pi runs it directly. `marina route` refuses inside a resident and points to the world verbs
+  adapter grants exactly that directory as a writable root — never network access. Claude Code reaches
+  it from inside its command sandbox (the socket is allowed there); pi runs it directly. `marina route` refuses inside a resident and points to the world verbs
   (`tell`, `say`, `re`, `channel send`). The supervisor renews the credential at 80 % of its lifetime
   (`POST /api/routing/residents/:name/renew`, only for the live run you own, revoking the previous
   credential); renewal never touches the relay. If renewal fails, deliveries to that agent stop until

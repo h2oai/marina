@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A supervised resident's Claude session accepts edits in its working directory and runs shell commands without a prompt only inside Claude Code's command sandbox (workspace and relay directory writable, no network, no unsandboxed fallback), matching Codex's `workspace-write` sandbox. Without the sandbox's host tools only edits are accepted. Other Claude sessions are unchanged.
+
 - **Each owed ask gets its own answer.** A supervised resident's digest shows how to answer every
   owed line (`→ re #<id>`, `→ say`, `→ channel send <c>`, `→ tell <name>`); what it answers itself
   is settled, and the final-reply relay covers only what is left. When several destinations are
