@@ -24,6 +24,8 @@ import { join } from "node:path";
 import { ContainerWorkspace, resolveContainerRunner } from "../src/coding/container-workspace";
 import { HOST_GIT_CONFIG_ARGS, hostGitArgv, hostGitEnv } from "../src/coding/host-git";
 import { LocalWorkspace, runCapture } from "../src/coding/local-workspace";
+import { prepareAgentWorkspace } from "../src/routing/agent-workspace";
+import { captureReviewSnapshot } from "../src/routing/review-snapshot";
 import { GIT_SYNC_TIMEOUT_MS, git, gitInit, testGitEnv } from "./git-helpers";
 
 let root: string;
@@ -151,6 +153,22 @@ describe("host git hardening", () => {
     const diff = await ws.pendingDiff();
     expect(diff).toContain("+two");
     expect(diff).toContain("untracked.txt");
+    expect(planted()).toBe(false);
+  });
+
+  it("the routing review snapshot never runs a planted fsmonitor or external diff", async () => {
+    writeFileSync(join(root, "untracked.txt"), "u\n");
+    const snapshot = await captureReviewSnapshot(root);
+    expect(snapshot.text).toContain("+two");
+    expect(snapshot.text).toContain("untracked.txt");
+    expect(planted()).toBe(false);
+  });
+
+  it("a routing worktree workspace never runs planted hooks", async () => {
+    const state = join(scratch, "state");
+    const result = await prepareAgentWorkspace(scratch, "repo", "worktree", state, "wt-route");
+    expect(existsSync(join(result.cwd, "a.txt"))).toBe(true);
+    expect(result.dirty).toBe(true);
     expect(planted()).toBe(false);
   });
 

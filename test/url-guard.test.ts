@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { __setDnsResolverForTest, guardedFetch, validateFetchUrl } from "../src/net/url-guard";
+import {
+  __setDnsResolverForTest,
+  guardedFetch,
+  isCredentialHeader,
+  validateFetchUrl,
+  validateFetchUrlSync,
+  validateOperatorLanUrl,
+} from "../src/net/url-guard";
 
 /** A public address every stubbed resolution maps to (example.com's own A record). */
 const PUBLIC_IP = "93.184.216.34";
@@ -555,5 +562,152 @@ describe("DNS resolution failure (fail closed by default)", () => {
     });
     expect(await validateFetchUrl("http://93.184.216.34/")).toBeNull();
     expect(await validateFetchUrl("http://10.0.0.1/")).not.toBeNull();
+  });
+});
+
+describe("IPv6 ranges are matched by prefix, not by spelling", () => {
+  const blocked = [
+    "http://[fe80::1]/",
+    "http://[fe81::1]/",
+    "http://[fe9a::1]/",
+    "http://[feab:1::1]/",
+    "http://[febf:ffff::1]/",
+    "http://[fc00::1]/",
+    "http://[fdff::1]/",
+    "http://[0:0:0:0:0:0:0:1]/",
+  ];
+  for (const url of blocked) {
+    it(`refuses ${url}`, () => {
+      expect(validateFetchUrlSync(url)).not.toBeNull();
+    });
+  }
+  const allowed = ["http://[fec0::1]/", "http://[2606:4700::1111]/", "http://[fe::1]/"];
+  for (const url of allowed) {
+    it(`accepts ${url}`, () => {
+      expect(validateFetchUrlSync(url)).toBeNull();
+    });
+  }
+  for (const host of ["fdroid.org", "fcbarcelona.com", "fe80.example.com"]) {
+    it(`accepts the host name ${host}`, () => {
+      expect(validateFetchUrlSync(`https://${host}/`)).toBeNull();
+    });
+  }
+});
+
+describe("validateOperatorLanUrl refuses link-local and metadata literals in every form", () => {
+  const blocked = [
+    "http://169.254.169.254/",
+    "http://[::ffff:169.254.169.254]/",
+    "http://[::ffff:a9fe:a9fe]/",
+    "http://[64:ff9b::a9fe:a9fe]/",
+    "http://100.100.100.200/",
+    "http://[::ffff:6464:64c8]/",
+    "http://192.0.0.192/",
+    "http://[::ffff:c000:c0]/",
+    "http://[fd00:ec2::254]/",
+    "http://[fe80::1]/",
+    "http://[febf::1]/",
+    "http://metadata.google.internal/",
+  ];
+  for (const url of blocked) {
+    it(`refuses ${url}`, () => {
+      expect(validateOperatorLanUrl(url)).not.toBeNull();
+    });
+  }
+  const allowed = [
+    "http://192.168.1.20:3300/",
+    "http://10.0.0.5/",
+    "http://localhost:3300/",
+    "http://[fd00::5]/",
+    "http://gpu-box.lan:3300/",
+  ];
+  for (const url of allowed) {
+    it(`accepts the LAN peer ${url}`, () => {
+      expect(validateOperatorLanUrl(url)).toBeNull();
+    });
+  }
+});
+
+describe("isCredentialHeader", () => {
+  const credentials = [
+    "Authorization",
+    "Proxy-Authorization",
+    "Cookie",
+    "X-Api-Key",
+    "x-goog-api-key",
+    "KALSHI-ACCESS-KEY",
+    "KALSHI-ACCESS-SIGNATURE",
+    "KALSHI-ACCESS-TIMESTAMP",
+    "POLY_API_KEY",
+    "POLY_SIGNATURE",
+    "POLY_TIMESTAMP",
+    "POLY_ADDRESS",
+    "POLY_PASSPHRASE",
+    "X-Auth-Token",
+    "X-Amz-Security-Token",
+    "X-Client-Secret",
+  ];
+  for (const name of credentials) {
+    it(`treats ${name} as a credential`, () => {
+      expect(isCredentialHeader(name)).toBe(true);
+    });
+  }
+  const ordinary = [
+    "Accept",
+    "Content-Type",
+    "User-Agent",
+    "X-Request-Id",
+    "Access-Control-Request-Method",
+  ];
+  for (const name of ordinary) {
+    it(`keeps ${name}`, () => {
+      expect(isCredentialHeader(name)).toBe(false);
+    });
+  }
+});
+
+describe("guardedFetch drops provider signing headers on a cross-origin redirect", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    __setDnsResolverForTest(null);
+  });
+
+  it("drops Kalshi and Polymarket auth headers, keeps them same-origin", async () => {
+    __setDnsResolverForTest(async () => [PUBLIC_IP]);
+    const seen: Headers[] = [];
+    globalThis.fetch = (async (_input: string | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      seen.push(headers);
+      const host = headers.get("host");
+      if (seen.length === 1) {
+        return new Response(null, { status: 307, headers: { location: "/same" } });
+      }
+      if (host === "trading.example.com") {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://elsewhere.example.net/x" },
+        });
+      }
+      return new Response("ok", { status: 200 });
+    }) as unknown as typeof fetch;
+    const signing = {
+      "KALSHI-ACCESS-KEY": "key-id",
+      "KALSHI-ACCESS-SIGNATURE": "sig",
+      "KALSHI-ACCESS-TIMESTAMP": "1700000000000",
+      POLY_API_KEY: "pk",
+      POLY_SIGNATURE: "ps",
+      POLY_PASSPHRASE: "pp",
+      POLY_TIMESTAMP: "1700000000",
+      Accept: "application/json",
+    };
+    await guardedFetch("https://trading.example.com/start", { headers: signing });
+    expect(seen).toHaveLength(3);
+    expect(seen[1]!.get("kalshi-access-signature")).toBe("sig");
+    const crossed = seen[2]!;
+    for (const name of Object.keys(signing).filter((n) => n !== "Accept")) {
+      expect(crossed.has(name)).toBe(false);
+    }
+    expect(crossed.get("accept")).toBe("application/json");
   });
 });

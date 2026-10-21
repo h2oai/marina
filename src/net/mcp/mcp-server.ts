@@ -21,6 +21,7 @@ import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "../http-u
 import { instanceActivity } from "../instance-lifecycle";
 import { recordListenPort } from "../listen-ports";
 import { isLoopbackHostname } from "../loopback";
+import { modelApiKeySecrets } from "../model-api/api-keys";
 import { RequestDrain } from "../request-drain";
 import { resolveWsBindHostname } from "../websocket-server";
 import { mcpAdmission } from "./mcp-admission";
@@ -34,20 +35,6 @@ const logger = new Logger();
 let mcpIdCounter = 0;
 
 // ─── Transport hardening ──────────────────────────────────────────────────────
-
-/** Secrets accepted from `MODEL_API_KEYS` (`secret` or `secret:entity` entries). */
-function modelApiKeySecrets(): string[] {
-  const raw = process.env.MODEL_API_KEYS;
-  if (!raw) return [];
-  return raw
-    .split(",")
-    .map((k) => k.trim())
-    .filter(Boolean)
-    .map((k) => {
-      const colon = k.indexOf(":");
-      return colon > 0 ? k.slice(0, colon) : k;
-    });
-}
 
 /**
  * Whether `/mcp` requires a bearer at the transport layer. The `local` posture

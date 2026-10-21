@@ -583,6 +583,7 @@ export class WebSocketServer {
             self.db,
             (event) => engine.logEvent(event),
             self.memRateLimiter,
+            { peer: server },
           );
           if (probeResp) return probeResp;
         }

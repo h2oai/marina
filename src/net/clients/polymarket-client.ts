@@ -331,7 +331,6 @@ async function jsonGet<T>(url: string, opts: PolymarketClientOpts): Promise<Poly
 
   try {
     const res = await guardedFetch(url, { method: "GET", signal: controller.signal });
-    clearTimeout(timer);
 
     if (!res.ok) {
       // allow-empty-catch: the error body is optional detail; the status is reported regardless
@@ -344,10 +343,12 @@ async function jsonGet<T>(url: string, opts: PolymarketClientOpts): Promise<Poly
     const json = (await res.json()) as T;
     return { ok: true, paper: false, response: json };
   } catch (err) {
-    clearTimeout(timer);
     if ((err as Error).name === "AbortError") {
       return { ok: false, error: `Polymarket request timed out after ${timeoutMs}ms.` };
     }
     return { ok: false, error: `Polymarket request failed: ${(err as Error).message}` };
+  } finally {
+    // The deadline covers the whole exchange, body included.
+    clearTimeout(timer);
   }
 }

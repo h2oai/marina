@@ -45,6 +45,7 @@ import { HTTP_RATE_LIMITS } from "../http-utils";
 import { isLoopbackHostname } from "../loopback";
 import { memoryObserver } from "../memory/memory-visibility";
 import { getLastProviderProbe } from "../model/model-api";
+import { modelApiKeySecrets } from "../model-api/api-keys";
 import type {
   AgentOperatorRow,
   OpsAgentStopResponse,
@@ -460,11 +461,7 @@ export function mcpAuthRequiredFromEnv(
   loopbackBind: boolean,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  const secrets = (env.MODEL_API_KEYS ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-  return secrets.length > 0 || env.MARINA_AUTH === "better-auth" || !loopbackBind;
+  return modelApiKeySecrets(env).length > 0 || env.MARINA_AUTH === "better-auth" || !loopbackBind;
 }
 
 const LIMITER_KEYING: Record<keyof typeof HTTP_RATE_LIMITS, OpsLimiter["keyedBy"]> = {

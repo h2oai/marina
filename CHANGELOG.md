@@ -797,6 +797,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Outbound requests and network helpers.** A cross-origin redirect followed by the URL guard
+  drops provider signing and token headers (`KALSHI-ACCESS-*`, Polymarket `POLY_*`, `*-token`,
+  `*-secret`, `*-signature`) as well as `Authorization`, cookies and API keys. IPv6 link-local
+  and unique-local ranges are matched by prefix (all of `fe80::/10`), so a host name such as
+  `fdroid.org` is no longer mistaken for an address. Under the `local` profile, peer URLs still
+  refuse link-local and cloud-metadata addresses in IPv4-mapped and tunnelled IPv6 forms, plus
+  `192.0.0.192`, `fd00:ec2::254` and metadata host names. `connect add` checks a connector URL's
+  resolved addresses before dialling it. The Kalshi, Polymarket, TabH2O, forecast-lookup,
+  connector and room HTTP clients keep their deadline until the response body is read.
+  `/api/probe` shares the `/mem` authentication path (constant-time key match, failed-auth
+  throttle, sanitized `X-Agent-Name`) and caps request bodies at 64 KiB. Local asset storage
+  refuses keys outside its directory. The routing supervisor runs git with the hardened host-git
+  settings. `MODEL_API_KEYS` is parsed in one place. `hono` is updated to 4.13.11.
+
 - **Boards enforce their access rules on every path** (GHSA-rgp4-gg8w-xwxm). Reading a post by
   number, reply, search, scores, vote, archive and `export` skipped a board's rank floors, and no
   path kept a group's board members-only. One rule now covers them all: group boards are

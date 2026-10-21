@@ -1456,14 +1456,13 @@ export class Engine {
     const urlError = await validateFetchUrl(url);
     if (urlError) return { error: urlError };
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ROOM_FETCH_TIMEOUT_MS);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), ROOM_FETCH_TIMEOUT_MS);
       const response = await guardedFetch(url, {
         method: "GET",
         signal: controller.signal,
       });
-      clearTimeout(timeout);
       const body = await response.text();
       // Limit response size to 10KB
       return {
@@ -1472,6 +1471,9 @@ export class Engine {
       };
     } catch (err) {
       return { error: `Fetch failed: ${getErrorMessage(err)}` };
+    } finally {
+      // The deadline covers the whole exchange, body included.
+      clearTimeout(timeout);
     }
   }
 
