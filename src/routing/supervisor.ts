@@ -16,6 +16,12 @@ import type { AgentAdapter, ManagedAgent } from "./agent-adapters";
 import { prepareAgentWorkspace, restoreAgentWorkspace } from "./agent-workspace";
 import type { ResidentConnection, ResidentConnector } from "./resident-connection";
 import { openResidentRelay, RELAY_SOCKET_ENV, type ResidentRelay } from "./resident-relay";
+import {
+  captureReviewSnapshot,
+  isReviewRequestCommand,
+  snapshotEvents,
+  withSnapshotModifier,
+} from "./review-snapshot";
 
 /** A run's own world account (supervised residents). */
 interface ResidentRun {
@@ -357,7 +363,11 @@ export class MarinaSupervisor {
         return { ok: false, output: "This resident has left Marina" };
       if (Date.now() >= resident.expiresAt)
         return { ok: false, output: "This resident's world credential has expired" };
-      return connection.command(command);
+      // A review request carries the worktree's changes, captured here.
+      const relayed = isReviewRequestCommand(command)
+        ? withSnapshotModifier(command, await this.publishReviewSnapshot(run))
+        : command;
+      return connection.command(relayed);
     });
     this.state(run, { resident: resident.name });
     this.emit(run.session.id, "resident.enrolled", {
@@ -368,6 +378,25 @@ export class MarinaSupervisor {
       expiresAt: resident.expiresAt,
     });
     this.scheduleRenewal(run, resident);
+  }
+  /**
+   * Attach the run's worktree changes to a review request: the supervisor (not
+   * the agent) captures the diff and publishes it on the run's own session, so
+   * the server reads a snapshot only this supervisor could have written.
+   */
+  private async publishReviewSnapshot(run: Run): Promise<string> {
+    const snapshot = await captureReviewSnapshot(run.state.cwd || this.options.root);
+    for (const secret of this.redactions)
+      snapshot.text = snapshot.text.replaceAll(secret, "[redacted]");
+    const snapshotId = `review-snapshot-${crypto.randomUUID()}`;
+    const events = snapshotEvents(snapshotId, snapshot);
+    for (let at = 0; at < events.length; at += 8)
+      await this.options.client.publish(
+        run.session.id,
+        events.slice(at, at + 8),
+        AbortSignal.timeout(15_000),
+      );
+    return snapshotId;
   }
   /** Renew at 80 % of the credential's remaining lifetime. */
   private scheduleRenewal(run: Run, resident: ResidentRun, delayMs?: number) {

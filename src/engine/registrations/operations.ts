@@ -42,6 +42,7 @@ import { roomMacroOwner } from "../macro-expansion";
 import { describeVisual, lookReply } from "../media/vision";
 import { computeReadiness } from "../readiness";
 import { answerCodeViaLocalModel, parseExecApprovalTimeout } from "./model-helpers";
+import { engineTellDeps } from "./tell-deps";
 
 export function registerOperationCommands(engine: Engine): void {
   // Build command (only if db-backed)
@@ -231,6 +232,8 @@ export function registerOperationCommands(engine: Engine): void {
       execApprovalTimeoutMs: parseExecApprovalTimeout(
         process.env.MARINA_CODE_EXEC_APPROVAL_TIMEOUT_MS,
       ),
+      // Review requests reach the reviewer as an ordinary (owed) tell.
+      tellDeps: engineTellDeps(engine),
       db: engine.db,
     }),
   );

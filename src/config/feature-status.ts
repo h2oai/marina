@@ -228,6 +228,13 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/routing/residents.ts, src/routing/supervisor.ts",
   },
   {
+    name: "Peer code review",
+    status: "experimental",
+    enable:
+      "`code review request <name>` or `auto`; supervised residents attach worktree snapshots",
+    owner: "src/engine/commands/code/review-request.ts, src/routing/review-snapshot.ts",
+  },
+  {
     name: "Research authority mode",
     status: "experimental",
     enable: "`MARINA_RESEARCH_AUTHORITY=on`",

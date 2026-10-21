@@ -572,6 +572,42 @@ export type EngineEvent =
       depth: number;
       timestamp: number;
     }
+  /**
+   * Code review lifecycle (`code review request|verdict|approve|reject`).
+   * Content-free: names, ids and outcomes only; the diff, claims and findings
+   * stay in the review's artifacts.
+   */
+  | {
+      type: "review_requested";
+      entity: EntityId;
+      reviewId: string;
+      author: string;
+      reviewer: string;
+      round: number;
+      /** How the reviewer was chosen: named, or `auto`'s tier. */
+      basis: string;
+      timestamp: number;
+    }
+  | {
+      type: "review_verdict";
+      entity: EntityId;
+      reviewId: string;
+      author: string;
+      reviewer: string;
+      verdict: "approve" | "rework";
+      round: number;
+      timestamp: number;
+    }
+  | {
+      type: "review_closed";
+      entity: EntityId;
+      reviewId: string;
+      author: string;
+      outcome: "merged" | "rejected";
+      /** The closing person decided against (or without) the reviewer's verdict. */
+      override: boolean;
+      timestamp: number;
+    }
   | {
       type: "market_position";
       entity: EntityId;

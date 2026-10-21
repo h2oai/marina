@@ -45,6 +45,12 @@ export interface RoutingStore {
   setRoutingSessionState(id: string, state: "active" | "left"): RoutingSession;
   appendRoutingEvents(sessionId: string, events: RoutingEventInput[]): RoutingEvent[];
   listRoutingEvents(sessionId: string, after: number, limit: number): RoutingEventPage;
+  listRoutingEventParts(
+    sessionId: string,
+    kind: string,
+    prefix: string,
+    limit: number,
+  ): RoutingEvent[];
   sendRoutingMessage(sourceId: string, input: RoutingSend): RoutingMessage;
   listRoutingInbox(sessionId: string, limit: number, controlsFirst?: boolean): RoutingMessage[];
   getRoutingMessage(id: string): RoutingMessage | null;
@@ -65,6 +71,7 @@ export const ROUTING_STORE_METHODS = [
   "setRoutingSessionState",
   "appendRoutingEvents",
   "listRoutingEvents",
+  "listRoutingEventParts",
   "sendRoutingMessage",
   "listRoutingInbox",
   "getRoutingMessage",

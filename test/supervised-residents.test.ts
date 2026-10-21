@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { respawnsOnBoot } from "../src/engine/auto-respawn";
@@ -35,6 +35,7 @@ import { MarinaRoutingClient, RoutingApiError } from "../src/sdk/routing-client"
 import type { RuntimeControl } from "../src/sdk/routing-runtime-types";
 import type { RoutingSession } from "../src/sdk/routing-types";
 import { type EntityId, roomId } from "../src/types";
+import { git, gitInit } from "./git-helpers";
 import { MockConnection, makeTestRoom, stripAnsi, until } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
@@ -873,5 +874,87 @@ describe("service", () => {
     const enrolled = service.enrol({ sessionId: run.id });
     expect(enrolled.credential.expiresAt - Date.now()).toBeLessThanOrEqual(24 * 60 * 60_000);
     expect(nameMentionsVendor(enrolled.name, "pi")).toBe(false);
+  });
+});
+
+describe("review snapshots through the relay", () => {
+  it("attaches the worktree's changes to a resident's review request", async () => {
+    using _state = scopeProcessState({ env: ON, rateLimitBypass: true });
+    const repo = join(directory, "repo");
+    mkdirSync(repo);
+    gitInit(repo);
+    writeFileSync(join(repo, "a.ts"), "export const a = 1;\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "init");
+    writeFileSync(join(repo, "a.ts"), "export const a = 2;\n");
+    writeFileSync(join(repo, "new.ts"), "export const fresh = true;\n");
+    const owner = person("Owner");
+    person("Peer", false);
+    let env: NodeJS.ProcessEnv | undefined;
+    const connector: ResidentConnector = async ({ name, token }) => {
+      const { conn, entity } = residentLogin(name, token);
+      return {
+        setCredential: () => undefined,
+        command: relayThrough(conn, entity.id as EntityId),
+        close: () => engine.removeConnection(conn.id, "explicit"),
+      };
+    };
+    const adapter: AgentAdapter & { executable: string } = {
+      id: "claude",
+      label: "Fixture",
+      executable: "fixture",
+      start: async (options) => {
+        env = options.env;
+        return { prompt: async () => undefined, interrupt: async () => undefined, stop: () => {} };
+      },
+    };
+    const supervisor = new MarinaSupervisor({
+      client: routingClient(owner.token),
+      root: directory,
+      stateDirectory: directory,
+      binding: "review",
+      label: "review",
+      adapters: [adapter],
+      agentEnvironment: { HOME: "/home/test" },
+      secrets: [owner.token],
+      residents: { connect: connector },
+    });
+    const router = new RoutingService(db, db.durableEntityKey(owner.entity.id));
+    try {
+      const sup = await supervisor.start();
+      router.control(sup.id, {
+        targetId: sup.id,
+        clientMessageId: crypto.randomUUID(),
+        control: {
+          action: "launch",
+          adapter: "claude",
+          label: "worker",
+          workspace: "shared",
+          directory: "repo",
+          name: "Wren",
+        },
+      });
+      await supervisor.tick();
+      await until(() => !!env?.MARINA_RELAY_SOCKET);
+      const reply = await relayCommand(
+        env!.MARINA_RELAY_SOCKET!,
+        "code review request Peer snapshot:forged -- bumped a",
+      );
+      expect(reply.ok).toBe(true);
+      const id = /review_[a-z0-9]{12}/.exec(reply.output)?.[0];
+      expect(id).toBeDefined();
+      const meta = JSON.parse(db.getCodingArtifact(id!)!.metadata_json);
+      const snapshot = db.getCodingArtifact(meta.snapshots[0])!;
+      expect(snapshot.content_text).toContain("+export const a = 2;");
+      expect(snapshot.content_text).toContain("+export const fresh = true;");
+      expect(JSON.parse(snapshot.metadata_json)).toMatchObject({
+        source: "supervisor",
+        claims: "bumped a",
+      });
+      expect(meta).toMatchObject({ author: "Wren", reviewer: "Peer" });
+    } finally {
+      await supervisor.stop();
+      supervisor.close();
+    }
   });
 });
