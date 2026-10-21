@@ -558,9 +558,17 @@ describe("CLI", () => {
     const sub = join(dir, "cli");
     mkdirSync(sub, { recursive: true });
     const suites = [synth("a", { shift: 0.1, seed: 1 }), synth("b", { shift: 0.1, seed: 2 })];
+    // Both arms stamped with one clean commit: the version guard lets them count.
+    const marina = { commit: "a".repeat(40), dirty: false, describe: "aaaaaaa" };
     for (const s of suites) {
-      writeFileSync(join(sub, `${s.name}-base.json`), JSON.stringify(s.baseline[0]));
-      writeFileSync(join(sub, `${s.name}-cand.json`), JSON.stringify(s.candidate[0]));
+      writeFileSync(
+        join(sub, `${s.name}-base.json`),
+        JSON.stringify({ marina, items: s.baseline[0] }),
+      );
+      writeFileSync(
+        join(sub, `${s.name}-cand.json`),
+        JSON.stringify({ marina, items: s.candidate[0] }),
+      );
     }
     const spec = {
       baseline: { label: "base" },

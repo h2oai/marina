@@ -273,6 +273,8 @@ export function fileRescore(
         replicateGroup: `rescore:${slot}:${input.variant.label}:${mode}`,
         extra: { rescore: true, answersFile: i + 1 },
         now: now + i,
+        // Saved answers from an earlier run: this process did not produce them.
+        marina: null,
       }).id;
     });
   const runs = { incumbent: record(input.incumbent), challenger: record(input.challenger) };

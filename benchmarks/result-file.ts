@@ -1,12 +1,14 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { stamped } from "./run-version";
 import type { BenchmarkResult } from "./types";
 
 /**
  * The result as written to disk: the endpoint credential never leaves the
  * process. `config.apiKey` (which the judge reuses) is dropped, along with any
- * key a judge config might carry.
+ * key a judge config might carry. The result is stamped with the Marina code
+ * that produced it (`marina: { commit, dirty, describe }`, `run-version.ts`).
  */
 export function resultForDisk(result: BenchmarkResult): BenchmarkResult {
   const { apiKey: _apiKey, ...config } = result.config;
@@ -17,5 +19,5 @@ export function resultForDisk(result: BenchmarkResult): BenchmarkResult {
     const { apiKey: _judgeKey, ...rest } = judge;
     config.judge = rest;
   }
-  return { ...result, config };
+  return stamped({ ...result, config });
 }
