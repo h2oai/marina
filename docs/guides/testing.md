@@ -70,7 +70,7 @@ reference for file layout and rules is `test/README.md`.
 
 ```bash
 bun run test:fast              # pre-commit subset, ~10 s (parallel)
-bun run test                   # full backend suite, four workers, progress + 15-minute watchdog
+bun run test                   # full backend suite, four workers, progress + stall/stuck-process/15-minute watchdog
 bun run test --parallel=2      # reduce contention on a small/shared machine
 bun run test:serial            # full suite in one process (debugging order-dependent failures)
 bun run test:shard 0 3         # one of three time-balanced CI buckets
@@ -108,10 +108,21 @@ lone process. Pass
 explicit `-- --parallel=N` or `-- --timeout=MS` wins. Tests that spawn a child
 `bun` process should set their own generous timeout.
 
-The full-suite wrapper prints progress every 30 seconds and a diagnostic naming
-the last observed file if its 15-minute wall-clock deadline expires (exit 124).
-This bounds a stuck runner; it does not assert which resource leaked. Debug the named
-file separately and inspect awaited teardown. Keep large build/browser jobs separate
+The full-suite and CI shard wrappers (`scripts/test-backend.ts`) print progress every
+30 seconds and stop a run that is not making progress, with exit 124:
+
+- **Stall**: no output for 240 s (above the largest per-test timeout in the suite).
+- **Stuck process**: a process in the run whose child exited but was not reaped for 60 s.
+  That parent is blocked in a synchronous call, such as a `Bun.spawnSync` that never
+  returns, so no test timeout can fire.
+- **Deadline**: the 15-minute wall-clock bound.
+
+Before stopping, the wrapper prints the run's live process tree (pid, state, CPU, elapsed
+time, argv; on Windows there is no listing). Unreaped children and busy processes are marked.
+Bun then lists the files still running, and the final line repeats them. Debug those files
+separately and inspect awaited teardown and synchronous spawns. Bun 1.4.2 could spin in
+`spawnSync` after a garbage collection in large `--isolate` runs; 1.4.3, the pinned
+minimum, fixes it. Keep large build/browser jobs separate
 from the SQLite-heavy backend run on constrained machines.
 The full-suite and CI shard wrappers also fail when known closed-database activity, telemetry or event-log
 warnings appear, even if Bun reports passing assertions.

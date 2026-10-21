@@ -558,7 +558,7 @@ rm -rf /tmp/marina-coding-agent-demo
 - **“No model provider is configured”:** the server found no provider key. Put one in the Marina
   repository's `.env` (or run `marina init`), or export it in the same shell, then relaunch. A
   native agent (`/use claude`, `/use codex`, `/use pi`) needs no Marina key.
-- **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.2, and
+- **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.3, and
   retry.
 - **“Marina is already open in this folder”:** another terminal has this folder's session open
   (the message names its process). Close it, or use `--fresh` for a separate disposable session.

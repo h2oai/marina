@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/h2oai/marina/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/h2oai/marina/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" /></a>
-  <img alt="Bun 1.4.2+" src="https://img.shields.io/badge/Bun-1.4.2%2B-f9f1e1?logo=bun" />
+  <img alt="Bun 1.4.3+" src="https://img.shields.io/badge/Bun-1.4.3%2B-f9f1e1?logo=bun" />
 </p>
 
 <p align="center">
@@ -42,7 +42,7 @@ over MCP, or point any OpenAI client at it. It's all one world.
 
 ## Start in a minute
 
-You need [Bun](https://bun.sh) 1.4.2 or newer.
+You need [Bun](https://bun.sh) 1.4.3 or newer.
 
 ```bash
 git clone https://github.com/h2oai/marina.git
