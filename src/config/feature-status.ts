@@ -242,6 +242,12 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/engine/commands/code/review-request.ts, src/routing/review-snapshot.ts",
   },
   {
+    name: "Private rooms",
+    status: "experimental",
+    enable: "`build access <room> private` (owner or operator); `build invite <room> <name>`",
+    owner: "src/engine/room-access.ts, src/engine/commands/build.ts",
+  },
+  {
     name: "Research authority mode",
     status: "experimental",
     enable: "`MARINA_RESEARCH_AUTHORITY=on`",

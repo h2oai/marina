@@ -111,7 +111,58 @@ export function clearDynamicRooms(db: Database): void {
   db.run("DELETE FROM room_sources");
 }
 
+// ─── Room access (private rooms are an explicit opt-in) ─────────────────────
+
+export function getRoomAccess(db: Database, room: string): RoomAccess | undefined {
+  const row = db.query("SELECT * FROM room_access WHERE room = ?").get(room) as {
+    room: string;
+    owner: string;
+    mode: "public" | "private";
+    invites: string;
+    updated_at: number;
+  } | null;
+  if (!row) return undefined;
+  let invites: string[] = [];
+  try {
+    const parsed = JSON.parse(row.invites) as unknown;
+    if (Array.isArray(parsed)) invites = parsed.filter((n): n is string => typeof n === "string");
+  } catch {
+    // allow-empty-catch: a malformed invite list reads as no invites (fails closed)
+  }
+  return { room: row.room, owner: row.owner, mode: row.mode, invites, updatedAt: row.updated_at };
+}
+
+/** Upsert a room's access row; `invites` replaces the stored list when given. */
+export function setRoomAccess(
+  db: Database,
+  opts: { room: string; owner: string; mode: "public" | "private"; invites?: string[] },
+): RoomAccess {
+  const current = getRoomAccess(db, opts.room);
+  const invites = opts.invites ?? current?.invites ?? [];
+  db.run(
+    `INSERT INTO room_access (room, owner, mode, invites, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(room) DO UPDATE SET owner = excluded.owner, mode = excluded.mode,
+         invites = excluded.invites, updated_at = excluded.updated_at`,
+    [opts.room, opts.owner, opts.mode, JSON.stringify(invites), Date.now()],
+  );
+  return getRoomAccess(db, opts.room) as RoomAccess;
+}
+
+export function deleteRoomAccess(db: Database, room: string): void {
+  db.run("DELETE FROM room_access WHERE room = ?", [room]);
+}
+
 // ─── Row types ────────────────────────────────────────────────────────────
+
+export interface RoomAccess {
+  room: string;
+  /** Account name of the room's owner. */
+  owner: string;
+  mode: "public" | "private";
+  /** Account names invited in. */
+  invites: string[];
+  updatedAt: number;
+}
 
 export interface RoomSourceRow {
   room_id: string;

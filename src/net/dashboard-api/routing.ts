@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Engine } from "../../engine/engine";
+import { roomEntryRefusal } from "../../engine/room-access";
 import type { MarinaDB } from "../../persistence/database";
 import type { SupervisionCredential } from "../../persistence/db-principals";
 import { RoutingError } from "../../routing/errors";
@@ -351,6 +352,10 @@ export async function handleRoutingRoutes(
         isConnected: (id) => engine.getConnectionForEntity(id as EntityId) !== undefined,
         hasRoom: (room) => !!engine.rooms.get(room as RoomId),
         roomOf: (id) => engine.entities.get(id as EntityId)?.room,
+        entryRefusal: (id, room) => {
+          const entity = engine.entities.get(id as EntityId);
+          return entity && engine.db ? roomEntryRefusal(engine.db, entity, room) : null;
+        },
         revokeSessions: (id) => engine.sessionManager?.revokeByEntity(id as EntityId),
         logEvent: (event) => engine.logEvent(event),
       };

@@ -19,9 +19,11 @@ import type {
   RoomId,
   RoomModule,
 } from "../../types";
+import { isOperatorPrincipal } from "../challenges";
 import { getErrorMessage } from "../errors";
 import { int, rest, token } from "../parse-input";
 import { getRank } from "../permissions";
+import { invitedTo } from "../room-access";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import {
   compileCommandModule,
@@ -42,6 +44,8 @@ export interface BuildDeps {
   unregisterCommand?: (name: string) => boolean;
   isBuiltinCommand?: (name: string) => boolean;
   clearSandboxMetrics?: (roomId: string) => void;
+  /** The world's start room: it always stays public (new arrivals land there). */
+  startRoom?: RoomId;
 }
 
 type SubHandler = (
@@ -1038,6 +1042,133 @@ function handleCommand(
 
 // ─── Top-level dispatch ───────────────────────────────────────────────────────
 
+// ─── Room access (private rooms are an explicit opt-in) ──────────────────────
+
+/** The room's owner: its access row, else whoever first built it (seeded rooms have none). */
+function roomOwner(deps: BuildDeps, room: string): string | undefined {
+  return deps.db.getRoomAccess(room)?.owner ?? deps.db.getRoomSource(room, 1)?.author_name;
+}
+
+function mayManageAccess(deps: BuildDeps, entity: Entity, room: string): boolean {
+  if (isOperatorPrincipal(entity)) return true;
+  const owner = roomOwner(deps, room);
+  return !!owner && owner.toLowerCase() === entity.name.toLowerCase();
+}
+
+function emitRoomAccessChange(ctx: RoomContext, entity: EntityId, room: string): void {
+  ctx.logEvent?.({
+    type: "coordination_change",
+    resource: "room",
+    action: "update",
+    entity,
+    name: room,
+    timestamp: Date.now(),
+  });
+}
+
+function handleAccess(
+  ctx: RoomContext,
+  input: CommandInput,
+  entity: Entity,
+  _rank: number,
+  deps: BuildDeps,
+): void {
+  const usage = "Usage: build access <room> [private|public]";
+  const room = token(input, 1);
+  if (!room) {
+    ctx.send(input.entity, usage);
+    return;
+  }
+  if (!deps.getRoom(room as RoomId)) {
+    ctx.send(input.entity, `No room "${room}".`);
+    return;
+  }
+  const mode = token(input, 2)?.toLowerCase();
+  if (!mode) {
+    const access = deps.db.getRoomAccess(room);
+    if (access?.mode !== "private") {
+      ctx.send(input.entity, `${room}: public (open to everyone).`);
+      return;
+    }
+    const uninvited = deps
+      .entitiesInRoom(room as RoomId)
+      .filter((e) => !isOperatorPrincipal(e) && !invitedTo(deps.db, access, e))
+      .map((e) => e.name);
+    const lines = [
+      `${room}: private`,
+      `  owner: ${access.owner}`,
+      `  invited: ${access.invites.length ? access.invites.join(", ") : "(none)"}`,
+    ];
+    if (uninvited.length) lines.push(`  inside, not invited: ${uninvited.join(", ")}`);
+    ctx.send(input.entity, lines.join("\n"));
+    return;
+  }
+  if (mode !== "private" && mode !== "public") {
+    ctx.send(input.entity, usage);
+    return;
+  }
+  if (!mayManageAccess(deps, entity, room)) {
+    ctx.send(input.entity, `Only ${room}'s owner or an operator can change its access.`);
+    return;
+  }
+  if (mode === "private" && deps.startRoom && room === deps.startRoom) {
+    ctx.send(input.entity, `${room} is where everyone arrives; it stays public.`);
+    return;
+  }
+  const owner = roomOwner(deps, room) ?? entity.name;
+  const access = deps.db.setRoomAccess({ room, owner, mode });
+  emitRoomAccessChange(ctx, input.entity, room);
+  if (mode === "public") {
+    ctx.send(input.entity, success(`${room} is public again: open to everyone.`));
+    return;
+  }
+  const uninvited = deps
+    .entitiesInRoom(room as RoomId)
+    .filter((e) => !isOperatorPrincipal(e) && !invitedTo(deps.db, access, e))
+    .map((e) => e.name);
+  ctx.send(
+    input.entity,
+    success(
+      `${room} is private (owner ${owner}). Entering needs an invite: build invite ${room} <name>.` +
+        (uninvited.length ? ` Already inside, not invited: ${uninvited.join(", ")}.` : ""),
+    ),
+  );
+}
+
+function inviteHandler(invite: boolean): SubHandler {
+  return (ctx, input, entity, _rank, deps) => {
+    const room = token(input, 1);
+    const name = token(input, 2);
+    if (!room || !name) {
+      ctx.send(input.entity, `Usage: build ${invite ? "invite" : "uninvite"} <room> <name>`);
+      return;
+    }
+    if (!deps.getRoom(room as RoomId)) {
+      ctx.send(input.entity, `No room "${room}".`);
+      return;
+    }
+    if (!mayManageAccess(deps, entity, room)) {
+      ctx.send(input.entity, `Only ${room}'s owner or an operator can change its invites.`);
+      return;
+    }
+    const current = deps.db.getRoomAccess(room);
+    const owner = current?.owner ?? roomOwner(deps, room) ?? entity.name;
+    const others = (current?.invites ?? []).filter((n) => n.toLowerCase() !== name.toLowerCase());
+    const invites = invite ? [...others, name] : others;
+    deps.db.setRoomAccess({ room, owner, mode: current?.mode ?? "public", invites });
+    emitRoomAccessChange(ctx, input.entity, room);
+    const mode = current?.mode ?? "public";
+    ctx.send(
+      input.entity,
+      success(
+        invite
+          ? `${name} is invited to ${room}${mode === "public" ? " (the room is public; the invite applies if it becomes private)" : ""}.`
+          : `${name} is no longer invited to ${room}.`,
+      ),
+    );
+  };
+}
+
 const BUILD_DISPATCH: Record<string, SubHandler> = {
   room: handleRoom,
   modify: handleModify,
@@ -1053,12 +1184,17 @@ const BUILD_DISPATCH: Record<string, SubHandler> = {
   destroy: handleDestroy,
   template: handleTemplate,
   command: handleCommand,
+  access: handleAccess,
+  invite: inviteHandler(true),
+  uninvite: inviteHandler(false),
 };
 
 export function buildCommand(deps: BuildDeps): CommandDef {
   return {
     category: "Building",
     usage: [
+      { syntax: "build access <room>", effect: "read" },
+      { syntax: "build access <room> private|public", effect: "write" },
       { syntax: "build audit", effect: "read" },
       { syntax: "build audit [args]", effect: "read" },
       { syntax: "build code <room> <typescript source>", effect: "write" },
@@ -1092,6 +1228,8 @@ export function buildCommand(deps: BuildDeps): CommandDef {
       { syntax: "build template apply <name> <newRoomId>", effect: "write" },
       { syntax: "build template list [args]", effect: "read" },
       { syntax: "build template save <room> <name> [description]", effect: "write" },
+      { syntax: "build invite <room> <name>", effect: "write" },
+      { syntax: "build uninvite <room> <name>", effect: "delete" },
       { syntax: "build unlink [from] <exit>", effect: "delete" },
       { syntax: "build validate", effect: "write" },
       { syntax: "build validate [args]", effect: "write" },
@@ -1099,7 +1237,7 @@ export function buildCommand(deps: BuildDeps): CommandDef {
     name: "build",
     aliases: [],
     minRank: 4,
-    help: "In-game building for rooms, templates, and dynamic commands.\nUsage: build room|modify|formation|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command\n\nRank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (operator grant; an operator may approve a single held run).\n\nExamples:\n  build room my/garden A Quiet Garden\n  build modify my/garden long Flowers bloom in every direction.\n  build link my/garden north hub/crossroads\n  build command create weather\n  build command reload weather",
+    help: "In-game building for rooms, templates, and dynamic commands.\nUsage: build room|modify|formation|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command|access|invite|uninvite\n\nRank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (operator grant; an operator may approve a single held run).\n\nExamples:\n  build room my/garden A Quiet Garden\n  build modify my/garden long Flowers bloom in every direction.\n  build link my/garden north hub/crossroads\n  build command create weather\n  build command reload weather\n\nRooms are public by default. `build access <room> private` (owner or operator) makes entering need an invite (`build invite <room> <name>`); a person's agents share its invite.",
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -1111,7 +1249,7 @@ export function buildCommand(deps: BuildDeps): CommandDef {
       if (!handler) {
         ctx.send(
           input.entity,
-          "Usage: build room|modify|formation|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command [args]",
+          "Usage: build room|modify|formation|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command|access|invite|uninvite [args]",
         );
         return;
       }

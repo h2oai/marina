@@ -74,6 +74,8 @@ export interface ResidentWorld {
   hasRoom(room: string): boolean;
   /** The caller's current room, when the caller is in the world. */
   roomOf(entityId: string): string | undefined;
+  /** Why the caller may not enter `room` (a private room), or null. */
+  entryRefusal?(entityId: string, room: string): string | null;
   /** End the account's session tokens (a stopped resident cannot reconnect). */
   revokeSessions(entityId: string): void;
   /** Emit a content-free engine event (attention bridge reports). */
@@ -236,6 +238,10 @@ export class ResidentService {
     const room = input.room === undefined ? undefined : text(input.room, "room");
     if (room !== undefined && !this.world.hasRoom(room))
       throw new RoutingError(400, "unknown_room", "No such room");
+    // A resident shares its owner's invites, so it may launch only where the owner may go.
+    const refusal =
+      room === undefined ? null : (this.world.entryRefusal?.(this.callerId, room) ?? null);
+    if (refusal) throw new RoutingError(403, "room_private", refusal);
     let name: string;
     if (input.name !== undefined) {
       name = text(input.name, "name", 64);

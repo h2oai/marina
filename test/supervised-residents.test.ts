@@ -875,6 +875,28 @@ describe("service", () => {
     expect(enrolled.credential.expiresAt - Date.now()).toBeLessThanOrEqual(24 * 60 * 60_000);
     expect(nameMentionsVendor(enrolled.name, "pi")).toBe(false);
   });
+
+  it("refuses to launch into a private room its owner may not enter", () => {
+    using _state = scopeProcessState({ env: ON, rateLimitBypass: true });
+    const owner = person("Owner");
+    const key = db.durableEntityKey(owner.entity.id);
+    const router = new RoutingService(db, key);
+    const run = router.join({ clientKey: "private-run", kind: "codex", label: "w" });
+    const world = {
+      findLive: () => undefined,
+      isConnected: () => false,
+      hasRoom: () => true,
+      roomOf: () => undefined,
+      revokeSessions: () => undefined,
+      entryRefusal: (_id: string, room: string) =>
+        room === "their/den" ? "their/den is private." : null,
+    };
+    const service = new ResidentService(db, key, owner.entity.id, world);
+    expect(() => service.enrol({ sessionId: run.id, room: "their/den" })).toThrow(
+      "their/den is private.",
+    );
+    expect(service.enrol({ sessionId: run.id, room: "open/hall" }).room).toBe("open/hall");
+  });
 });
 
 describe("review snapshots through the relay", () => {

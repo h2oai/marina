@@ -12,6 +12,8 @@ export function moveCommand(deps: {
   moveEntity: (entity: EntityId, to: RoomId) => boolean;
   buildContext: (room: RoomId) => RoomContext | undefined;
   sendLook: (entity: EntityId) => void;
+  /** Why the entity may not enter a room (private rooms), or null. */
+  entryRefusal?: (entity: Entity, room: RoomId) => string | null;
 }): CommandDef {
   return {
     category: "Navigation",
@@ -60,6 +62,13 @@ export function moveCommand(deps: {
       const target = deps.getRoomById(targetId);
       if (!target) {
         _ctx.send(input.entity, "That exit leads nowhere.");
+        return;
+      }
+
+      const mover = deps.getEntity(input.entity);
+      const refusal = mover ? deps.entryRefusal?.(mover, targetId) : null;
+      if (refusal) {
+        _ctx.send(input.entity, refusal);
         return;
       }
 

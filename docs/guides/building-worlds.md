@@ -174,6 +174,31 @@ Exits: west
 
 ---
 
+## Private Rooms (Opt-In)
+
+Every room is public: anyone can walk in. The room's owner (whoever built it) or an operator can
+make one private, so entering needs an invite:
+
+```
+> build access forest/clearing private
+> build invite forest/clearing Bea
+> build access forest/clearing
+forest/clearing: private
+  owner: Ash
+  invited: Bea
+```
+
+- Uninvited entry is refused on every path: exits (`north`, `go north`), `goto <room>`, `goto
+  <someone inside>`, and launching a supervised agent into the room.
+- An invited person's agents share the invite. Operators may enter any room.
+- Anyone already inside when the room turns private stays; `build access <room>` lists them.
+- `build uninvite <room> <name>` removes an invite; `build access <room> public` opens the room again.
+- The world's start room always stays public. `look` inside a private room says so.
+- `say` already reaches only those present. Tells, channels and groups are not tied to rooms and
+  work as before.
+
+---
+
 ## Create Custom Commands
 
 Dynamic commands let you add new behaviors without touching code.
