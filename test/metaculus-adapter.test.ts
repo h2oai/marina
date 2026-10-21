@@ -45,6 +45,8 @@ import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
 
 const config = { label: "test", description: "test configuration" };
+/** The operator's filing identity: tests always pass one (no default ships). */
+const identity = { organization: "Acme Forecasting", agent: "Lab Bot" };
 const binary: MetaculusQuestion = {
   id: 101,
   type: "binary",
@@ -160,11 +162,12 @@ describe("metaculus: mapping", () => {
     const a = answerFor(binary);
     const p = payloadFor(binary, a);
     if (!("payload" in p)) throw new Error("no payload");
-    const text = commentFor(binary, a, p.payload);
+    const text = commentFor(binary, a, p.payload, identity);
     expect(text).toContain("70% Yes");
     expect(text).toContain("Synthetic reason.");
     expect(text).toContain("https://example.org/a");
-    expect(text).toContain("H2O.ai Marina");
+    expect(text).toContain("Acme Forecasting Lab Bot");
+    expect(text).not.toContain("H2O");
   });
 });
 
@@ -232,7 +235,7 @@ describe("metaculus: the bot pass", () => {
       post(2, multiple),
       post(3, numeric),
     ]);
-    const opts = { client, db, forecast: fakeForecast, tournaments: ["t"], config };
+    const opts = { client, db, forecast: fakeForecast, tournaments: ["t"], config, identity };
     const r = await forecastPass(opts);
     expect(r).toMatchObject({ open: 3, forecast: 3, failed: [] });
     expect(sent.forecasts.map((f) => f.question)).toEqual([101, 102, 103]);
@@ -258,6 +261,7 @@ describe("metaculus: the bot pass", () => {
       forecast: fakeForecast,
       tournaments: ["t"],
       config,
+      identity,
       dailyCapUsd: 0.02,
     });
     expect(r.skipped).toEqual([{ questionId: 101, reason: "already forecast on Metaculus" }]);
@@ -276,13 +280,38 @@ describe("metaculus: the bot pass", () => {
       forecast: fakeForecast,
       tournaments: ["t"],
       config,
+      identity,
       dryRun: true,
       outDir: dir,
     });
     expect(r.forecast).toBe(1);
     const saved = JSON.parse(readFileSync(join(dir, "101.json"), "utf8"));
     expect(saved.payload.probability_yes).toBe(0.7);
-    expect(saved.comment).toContain("H2O.ai Marina");
+    expect(saved.comment).toContain("Acme Forecasting Lab Bot");
+    expect(db.listExternalSubmissions(BENCHMARK)).toHaveLength(0);
+    db.close();
+  });
+
+  it("refuses to forecast without an operator identity (no default ships)", async () => {
+    const db = new MarinaDB(":memory:");
+    const { client, sent } = recordingClient([post(1, binary)]);
+    let called = 0;
+    const counting = async (...args: Parameters<typeof fakeForecast>) => {
+      called++;
+      return fakeForecast(...args);
+    };
+    const base = { client, db, forecast: counting, tournaments: ["t"], config };
+    for (const bad of [
+      undefined,
+      { organization: "", agent: "Bot" },
+      { organization: "your-org", agent: "Bot" },
+    ]) {
+      await expect(
+        forecastPass({ ...base, identity: bad as unknown as typeof identity }),
+      ).rejects.toThrow(/metaculus: no filing identity.*MARINA_FILING_ORG|placeholder/);
+    }
+    expect(called).toBe(0);
+    expect(sent.forecasts).toHaveLength(0);
     expect(db.listExternalSubmissions(BENCHMARK)).toHaveLength(0);
     db.close();
   });
@@ -296,6 +325,7 @@ describe("metaculus: the bot pass", () => {
       forecast: async () => answerFor(binary, { distribution: undefined, caveat: "no run" }),
       tournaments: ["t"],
       config,
+      identity,
     });
     expect(r.failed[0]?.error).toContain("no probability");
     expect(sent.forecasts).toHaveLength(0);
@@ -319,6 +349,7 @@ describe("metaculus: the bot pass", () => {
       },
       tournaments: ["t"],
       config,
+      identity,
       dailyCapUsd: 10,
     };
     const first = await forecastPass(opts);
@@ -360,7 +391,14 @@ describe("metaculus: outcomes teach", () => {
   it("hands each resolved question to the learning loop once, never its text", async () => {
     const db = new MarinaDB(":memory:");
     const { client } = recordingClient([post(1, binary)]);
-    await forecastPass({ client, db, forecast: fakeForecast, tournaments: ["t"], config });
+    await forecastPass({
+      client,
+      db,
+      forecast: fakeForecast,
+      tournaments: ["t"],
+      config,
+      identity,
+    });
     const resolved = { ...binary, status: "resolved", resolution: "no" };
     const sink = memoryLessonSink();
     enableOutcomeLearning(db, { sink, writer: null, judge: null });
@@ -397,6 +435,7 @@ describe("metaculus: the outcome path", () => {
       forecast: fakeForecast,
       tournaments: ["t"],
       config,
+      identity,
       file: (a, externalId, sd) =>
         fileTypedAnswer(db, a, { owner, source: "metaculus", externalId, evalMode: "live" }, sd),
     });
@@ -486,6 +525,7 @@ describe("metaculus: the resolve pass stays inside the rate limit", () => {
       forecast: fakeForecast,
       tournaments: ["t"],
       config,
+      identity,
     });
   };
   const many = (n: number, resolveTime = "2027-01-01T00:00:00Z") =>

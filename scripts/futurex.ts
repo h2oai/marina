@@ -33,7 +33,9 @@
  * Common flags: --dir data/futurex (outside the repo's tracked tree), --variant <name> (repeatable;
  * built-ins earned (live default), cheap (backtest default), frontier, crew), --variants
  * <file.json> (Variant[]), --concurrency N,
- * --limit N, --org h2o.ai, --agent Marina, --model <segment>, --format-line keep|strip (the row
+ * --limit N, --org <your-org>, --agent <your-agent> (or MARINA_FILING_ORG / MARINA_FILING_AGENT;
+ * required by `run` and a forecasting `watch` — no default identity ships), --model <segment>,
+ * --format-line keep|strip (the row
  * prompt's "IMPORTANT: End with …" line; default strip — keep it to let MARINA_FORECAST_CONTRACT=on
  * read it).
  *
@@ -62,6 +64,11 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { BOARD_EXCLUSIONS } from "../benchmarks/forecasting/barred";
+import {
+  type FilingIdentity,
+  filingIdentity,
+  MissingIdentityError,
+} from "../benchmarks/forecasting/identity";
 import type { ReferenceScores } from "../benchmarks/futurex/clean";
 import { cleanBacktest, truthOutcome } from "../benchmarks/futurex/clean-run";
 import {
@@ -105,7 +112,6 @@ import {
 import { parseTruth, scoreBatch, scoreItem } from "../benchmarks/futurex/score";
 import { settleRowShadow, startAdoptedShadows } from "../benchmarks/futurex/shadow";
 import {
-  DEFAULT_IDENTITY,
   emailFields,
   sha256,
   submissionBody,
@@ -134,8 +140,8 @@ const { positionals, values } = parseArgs({
     batch: { type: "string" },
     limit: { type: "string" },
     concurrency: { type: "string", default: "4" },
-    org: { type: "string", default: DEFAULT_IDENTITY.org },
-    agent: { type: "string", default: DEFAULT_IDENTITY.agent },
+    org: { type: "string" },
+    agent: { type: "string" },
     model: { type: "string" },
     "horizon-days": { type: "string", default: "7" },
     since: { type: "string" },
@@ -353,6 +359,7 @@ function dailyRowsMode(): DailyRowsMode {
  * `done` or `failed` when it ends, so an overlapping or later check sees it.
  */
 async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise<number> {
+  requireFiler();
   const batch = loadBatch(ONLINE_REPO, values.batch) ?? (await fetchBatch(ONLINE_REPO));
   if (!loadBatch(ONLINE_REPO, batch.sha)) saveBatch(batch);
   const kind = opts.kind ?? "run";
@@ -402,6 +409,19 @@ async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise
   return 0;
 }
 
+/**
+ * The operator's filing identity (`--org`/`--agent` or MARINA_FILING_ORG /
+ * MARINA_FILING_AGENT). No default ships: a run that would produce a
+ * submission file refuses before it spends anything.
+ */
+function requireFiler(): FilingIdentity {
+  return filingIdentity({
+    adapter: "futurex",
+    ...(values.org !== undefined ? { org: values.org } : {}),
+    ...(values.agent !== undefined ? { agent: values.agent } : {}),
+  });
+}
+
 async function runVariants(
   batch: FuturexBatch,
   kind: string,
@@ -409,6 +429,7 @@ async function runVariants(
   variants: Variant[],
   rowsFor: (v: Variant) => FuturexRow[],
 ): Promise<void> {
+  const filer = requireFiler();
   // Live forecasts read every lesson learned so far (now is after every resolution),
   // from the one judged pool (MARINA_LESSONS on / observe / off).
   let lessons: LessonStore | undefined;
@@ -458,8 +479,8 @@ async function runVariants(
         ),
     });
     const identity = {
-      org: values.org!,
-      agent: values.agent!,
+      org: filer.organization,
+      agent: filer.agent,
       model: v.model,
       framework: "Marina",
     };
@@ -820,6 +841,8 @@ async function lateTick(sha: string): Promise<void> {
 }
 
 async function watchCmd(): Promise<number> {
+  // A watcher that forecasts (`--run`) produces submissions: refuse at once without an identity.
+  if (values.run) requireFiler();
   const interval = Math.max(60, Number(values.interval)) * 1000;
   const timing = answerTiming();
   if (timing === "late" && values.daily)
@@ -895,6 +918,16 @@ function scheduleCmd(): number {
   const timing: AnswerTiming = given("answer") ? answerTiming() : "late";
   const repo = resolve(values.repo ?? process.cwd());
   const name = values.name ?? "marina-futurex-late";
+  // Embed the identity when one is given here; otherwise the env file must carry it.
+  let filer: FilingIdentity | undefined;
+  try {
+    filer = requireFiler();
+  } catch {
+    console.log(
+      "# NOTE: no filing identity given (--org/--agent or MARINA_FILING_ORG/MARINA_FILING_AGENT);\n" +
+        "#   the watcher refuses to file until its env file sets MARINA_FILING_ORG and MARINA_FILING_AGENT.",
+    );
+  }
   const units = futurexSystemdUnits({
     repo,
     bun: values.bun ?? process.execPath,
@@ -909,6 +942,7 @@ function scheduleCmd(): number {
     ...(values["db-path"] ? { dbPath: resolve(values["db-path"]) } : {}),
     learn: values.learn === true,
     name,
+    ...(filer ? { identity: filer } : {}),
   });
   if (values.out) {
     mkdirSync(values.out, { recursive: true });
@@ -976,4 +1010,12 @@ async function main(): Promise<number> {
   }
 }
 
-process.exit(await main());
+process.exit(
+  await main().catch((err: unknown) => {
+    if (err instanceof MissingIdentityError) {
+      console.error(err.message);
+      return 2;
+    }
+    throw err;
+  }),
+);

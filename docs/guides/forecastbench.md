@@ -16,6 +16,11 @@ The set must be uploaded by 23:59:59 UTC that same day. Each round has 500 quest
   once as a multi-select over its dates, giving every date its own probability. All horizons
   share one research pass, so the forecasting work is one call per question, not one per date.
 
+**Your identity, not a default.** Marina ships no filing identity. A set file is written under the
+organization and agent name you give: `--org <your-org> --agent <your-agent>`, or
+`MARINA_FILING_ORG` / `MARINA_FILING_AGENT` once in the environment. Without both (or with a docs placeholder such as `your-org`), `run`, `write` and
+`upload` refuse; `run` refuses before it spends anything.
+
 ```bash
 bun run forecastbench fetch --due 2026-10-11         # save the set (data/forecastbench/<due>/)
 bun run forecastbench estimate --due 2026-10-11      # questions, forecasts, estimated cost
@@ -37,13 +42,14 @@ market price.
 `run` appends each answer to `set-<N>.jsonl` as it lands. Rerun it after an interruption: it
 resumes, and retries only the questions that are missing or failed.
 
-When `run` finishes, `write` builds `<due>.H2O-ai.<N>.json` with these fields:
+When `run` finishes, `write` builds `<due>.<org>.<N>.json` (the organization with every run of
+characters other than letters, digits and `-` replaced by `-`) with these fields:
 
 | Field | Value |
 |---|---|
-| `organization` | `H2O.ai` |
-| `model` | `Marina` for set 1; `Marina (N)` for sets 2 and 3 |
-| `model_organization` | `H2O.ai` |
+| `organization` | your organization (`--org` / `MARINA_FILING_ORG`) |
+| `model` | your agent name (`--agent` / `MARINA_FILING_AGENT`) for set 1; `<agent> (N)` for sets 2 and 3; `--model` overrides it |
+| `model_organization` | your organization |
 | `question_set` | the set's name |
 | `forecasts` | one entry per required forecast (`resolution_date` is `null` for market questions) |
 

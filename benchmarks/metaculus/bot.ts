@@ -30,7 +30,7 @@ import type { Outcome } from "../../src/learning/outcomes";
 import type { ExternalSubmissionRow } from "../../src/persistence/db-benchmarks";
 import type { MarinaStores } from "../../src/persistence/interfaces";
 import type { Forecaster } from "../forecasting/configs";
-import { ATTRIBUTION } from "../forecasting/shared";
+import { assertFilingIdentity, type FilingIdentity } from "../forecasting/identity";
 import type { ForecastPayload, MetaculusClient, MetaculusPost, MetaculusQuestion } from "./api";
 import { phi } from "./cdf";
 import { cdfQuestion, commentFor, numericSd, payloadFor, requestFor } from "./map";
@@ -78,6 +78,11 @@ export interface PassOptions {
   tournaments: Array<string | number>;
   /** The configuration filing (label + one-line description), disclosed with every forecast. */
   config: { label: string; description: string };
+  /**
+   * Whose forecasts these are (organization + agent), named in every comment
+   * and ledger row. The operator's — no default ships (`filingIdentity`).
+   */
+  identity: FilingIdentity;
   dryRun?: boolean;
   /** Where a dry run writes payloads and comments. */
   outDir?: string;
@@ -150,6 +155,8 @@ function recorded(db: Ledger): Map<string, ExternalSubmissionRow> {
 }
 
 export async function forecastPass(opts: PassOptions): Promise<PassResult> {
+  // No default identity: a pass that would post (or write a dry-run comment) needs the operator's.
+  assertFilingIdentity("metaculus", opts.identity);
   const now = opts.now ?? (() => new Date());
   const log = opts.log ?? (() => {});
   const cap = opts.dailyCapUsd ?? 10;
@@ -174,7 +181,7 @@ export async function forecastPass(opts: PassOptions): Promise<PassResult> {
         benchmark: ATTEMPT_BENCHMARK,
         batch_ref: day,
         variant: kind,
-        identity_json: JSON.stringify(ATTRIBUTION),
+        identity_json: JSON.stringify(opts.identity),
         file_name: `question/${qid}`,
         // A failure is one row per question per day; every dry run counts its own spend.
         file_sha256:
@@ -243,7 +250,7 @@ export async function forecastPass(opts: PassOptions): Promise<PassResult> {
         attempt(qid, answer.costUsd, error, "failed");
         continue;
       }
-      const comment = commentFor(q, answer, made.payload, opts.config.description);
+      const comment = commentFor(q, answer, made.payload, opts.identity, opts.config.description);
       const meta = { ...metaFor(post.id, q, answer, made.payload), config: opts.config.label };
       if (opts.dryRun) {
         const dir = opts.outDir ?? "data/metaculus/dry-run";
@@ -265,7 +272,7 @@ export async function forecastPass(opts: PassOptions): Promise<PassResult> {
           benchmark: BENCHMARK,
           batch_ref: String(tournament),
           variant: opts.config.label,
-          identity_json: JSON.stringify(ATTRIBUTION),
+          identity_json: JSON.stringify(opts.identity),
           file_name: `question/${qid}`,
           file_sha256: questionKey(qid),
           items: 1,

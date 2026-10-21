@@ -17,7 +17,9 @@
  * practice area), --config <label> (default: the earned `forecast-config:metaculus` slot that
  * `select` files through earned promotion, else the selection's pick, else a disclosed fallback),
  * --configs <file.json>, --daily-cap <usd> (default 10), --limit N, --fixture <posts.json>
- * (read-only offline questions; implies --dry-run), --out <dir> (dry-run output).
+ * (read-only offline questions; implies --dry-run), --out <dir> (dry-run output),
+ * --org <your-org> --agent <your-agent> (or MARINA_FILING_ORG / MARINA_FILING_AGENT; named in
+ * every comment — required by pass and forecast, no default identity ships).
  *
  * Selection flags: --backtest-tournament <id|slug> (repeatable; resolved questions, forecast as
  * of their opening), --include <model> (repeatable; default the current top tiers), --crew <name>,
@@ -40,6 +42,7 @@ import {
   runSelection,
 } from "../benchmarks/forecasting/cli";
 import { depsForConfig, forecasterFor } from "../benchmarks/forecasting/configs";
+import { filingIdentity, MissingIdentityError } from "../benchmarks/forecasting/identity";
 import { attachWorldSpend } from "../benchmarks/forecasting/shared";
 import {
   fixtureClient,
@@ -91,6 +94,8 @@ const { positionals, values } = parseArgs({
     // select: continue a stopped selection from its journals (same configuration only).
     resume: { type: "boolean" },
     retriever: { type: "string" },
+    org: { type: "string" },
+    agent: { type: "string" },
     "timer-dir": { type: "string", default: join(homedir(), ".local/share/marina-metaculus") },
   },
 });
@@ -160,6 +165,12 @@ async function selectCmd(db: MarinaDB): Promise<number> {
 }
 
 async function forecastCmd(db: MarinaDB): Promise<number> {
+  // Every forecast's comment names whose it is: the operator's identity, never a default.
+  const identity = filingIdentity({
+    adapter: "metaculus",
+    ...(values.org !== undefined ? { org: values.org } : {}),
+    ...(values.agent !== undefined ? { agent: values.agent } : {}),
+  });
   const chosen = liveConfig({
     selectionPath: values.selection!,
     board: BENCHMARK,
@@ -184,6 +195,7 @@ async function forecastCmd(db: MarinaDB): Promise<number> {
     forecast,
     tournaments,
     config: { label: chosen.config.label, description: chosen.description },
+    identity,
     dryRun,
     outDir: values.out!,
     dailyCapUsd: Number(values["daily-cap"]),
@@ -278,7 +290,7 @@ function timerCmd(): number {
   writeFileSync(join(dir, "marina-metaculus.timer"), units.timer);
   log(`wrote ${dir}/marina-metaculus.{service,timer} (NOT enabled)`);
   log(
-    `credentials: create ${envFile} (chmod 600) with METACULUS_TOKEN=…, OPENROUTER_API_KEY=…, DB_PATH=…`,
+    `credentials: create ${envFile} (chmod 600) with METACULUS_TOKEN=…, OPENROUTER_API_KEY=…, DB_PATH=…, MARINA_FILING_ORG=…, MARINA_FILING_AGENT=…`,
   );
   log("to enable after review:");
   log(
@@ -319,4 +331,12 @@ async function main(): Promise<number> {
   }
 }
 
-process.exit(await main());
+process.exit(
+  await main().catch((err: unknown) => {
+    if (err instanceof MissingIdentityError) {
+      console.error(err.message);
+      return 2;
+    }
+    throw err;
+  }),
+);
