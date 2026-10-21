@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Each owed ask gets its own answer.** A supervised resident's digest shows how to answer every
+  owed line (`→ re #<id>`, `→ say`, `→ channel send <c>`, `→ tell <name>`); what it answers itself
+  is settled, and the final-reply relay covers only what is left. When several destinations are
+  still owed, the resident is asked once more instead of one reply being sent to all of them; after
+  that, the reply goes to each marked `(one reply to N asks)`. A relayed answer now counts as the
+  woken turn's work for the attention judges. A resident's name later in a message addresses it in
+  a vocative position written as the name (`Done. Swift, run the tests`, `can you check this,
+  Swift?`), not as a mention.
 - **Page reads honour robots.txt; keyless web sources can be turned off.** Before Marina reads a
   third-party page for an agent or a person (`web fetch`, `web swarm`, `scenario` URL reads, the
   research page reader and citation check, the live Civiqs read), it checks the site's robots.txt
