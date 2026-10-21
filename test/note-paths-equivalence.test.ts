@@ -185,6 +185,16 @@ describe("note search by mapped lexical hits", () => {
     expect(db.countMatchingNotes("alice", "text").total).toBeGreaterThan(0);
   });
 
+  test("a stale scope count changes only the join chosen, never the rows", () => {
+    // Warm the per-connection count for carol, then grow carol past it
+    // without enough row changes to trigger a recount.
+    expect(db.searchNotes("carol", "legacy").map((r) => r.content)).toEqual(["legacy text"]);
+    for (let i = 0; i < 5; i++) db.createNote("carol", `growing note ${i} about orchids`);
+    const found = db.searchNotes("carol", "orchids").map((r) => r.content);
+    expect(found.sort()).toEqual([0, 1, 2, 3, 4].map((i) => `growing note ${i} about orchids`));
+    expect(db.countMatchingNotes("carol", "orchids").total).toBe(5);
+  });
+
   test("reads numeric handles by id, not every owned note", () => {
     const plan = (
       raw

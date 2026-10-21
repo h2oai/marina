@@ -54,19 +54,22 @@ function factLikeClause(alias: string): string {
 // ─── Notes Persistence ──────────────────────────────────────────────────
 
 /**
- * The cheaper of the two equivalent lexical joins for a search scoped to one
- * entity or pool: start from the hits when there are fewer of them than
- * scoped notes, else scan the scoped notes against the materialized hits.
- * Both yield exactly the pairs the direct FTS join did; only the rows read
- * differ. The hit count stops at the scope size, so deciding costs at most
- * what the scan would.
+ * Scoped note counts for choosing a lexical join, per connection. A count is
+ * reread once this connection has changed at least as many rows as the count
+ * itself (or 256), so a busy account is recounted as it grows and an idle one
+ * never is. A stale count can only change which of two equivalent joins
+ * runs, never a result.
  */
-function lexicalFrom(
-  db: Database,
-  ftsQuery: string,
-  scope: { entity: string } | { pool: string },
-): string {
-  const scoped =
+const scopeCounts = new WeakMap<Database, Map<string, { n: number; changes: number }>>();
+
+function scopedNoteCount(db: Database, scope: { entity: string } | { pool: string }): number {
+  const key = "entity" in scope ? `e:${scope.entity}` : `p:${scope.pool}`;
+  let counts = scopeCounts.get(db);
+  if (!counts) scopeCounts.set(db, (counts = new Map()));
+  const changes = db.query<{ c: number }, []>("SELECT total_changes() AS c").get()?.c ?? 0;
+  const cached = counts.get(key);
+  if (cached && changes - cached.changes < Math.max(256, cached.n)) return cached.n;
+  const n =
     db
       .query<{ n: number }, [string]>(
         "entity" in scope
@@ -74,8 +77,45 @@ function lexicalFrom(
           : "SELECT count(*) AS n FROM notes WHERE pool_id = ?",
       )
       .get("entity" in scope ? scope.entity : scope.pool)?.n ?? 0;
-  // Reading a hit's handles by id costs about twice a scanned row.
-  const cap = Math.floor(scoped / 2);
+  counts.set(key, { n, changes });
+  return n;
+}
+
+/** Recent note rows sampled to recognise a query that matches broadly. */
+const LEXICAL_SAMPLE_ROWS = 256;
+
+/**
+ * The cheaper of the two equivalent lexical joins for a search scoped to one
+ * entity or pool: start from the hits when there are at most half as many as
+ * scoped notes (reading a hit's handles by id costs about twice a scanned
+ * row), else scan the scoped notes against the materialized hits. Both yield
+ * exactly the pairs the direct FTS join did; only the rows read differ.
+ *
+ * Deciding must cost little next to the search. The hit density among the
+ * most recent note rows (an indexed rowid range of the full-text table)
+ * scales to an estimate of all hits; a query estimated at 1.5× the bound or
+ * more scans the scope with no exact count. Otherwise an exact count, capped
+ * at the bound, decides. A wrong estimate can only pick the scan — the form
+ * recall always used — never a different result.
+ */
+function lexicalFrom(
+  db: Database,
+  ftsQuery: string,
+  scope: { entity: string } | { pool: string },
+): string {
+  const cap = Math.floor(scopedNoteCount(db, scope) / 2);
+  if (cap === 0) return MATCHED_FROM_SCOPE;
+  const last =
+    db.query<{ m: number | null }, []>("SELECT max(rowid) AS m FROM notes").get()?.m ?? 0;
+  if (last > LEXICAL_SAMPLE_ROWS * 4) {
+    const sampled =
+      db
+        .query<{ n: number }, [string, number]>(
+          "SELECT count(*) AS n FROM notes_fts WHERE notes_fts MATCH ? AND rowid > ?",
+        )
+        .get(ftsQuery, last - LEXICAL_SAMPLE_ROWS)?.n ?? 0;
+    if ((sampled * last) / LEXICAL_SAMPLE_ROWS >= cap * 1.5) return MATCHED_FROM_SCOPE;
+  }
   const hits =
     db
       .query<{ n: number }, [string, number]>(
