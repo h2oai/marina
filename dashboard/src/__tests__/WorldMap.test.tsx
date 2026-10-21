@@ -103,10 +103,44 @@ describe("WorldMap", () => {
         ],
       }),
     );
+    // Newest on top of the room's stack.
     expect(screen.getAllByTestId("map-thread-mark").map((n) => n.textContent)).toEqual([
-      "Wren → Swift",
       "Swift → Wren ↳1",
+      "Wren → Swift",
     ]);
+  });
+
+  it("stacks a busy room's thread marks: three visible, the rest as +N, click opens the room", () => {
+    useWorldState.setState({
+      entities: [
+        { id: "e_1", name: "Wren", kind: "agent", room: "zone/lobby", vendor: "claude" },
+        { id: "e_3", name: "Swift", kind: "agent", room: "zone/lobby", vendor: "codex" },
+      ],
+      eventFeed: [],
+      selectedRoom: null,
+    });
+    renderWithProviders(<WorldMap worldData={SAMPLE_WORLD_DATA} />);
+    const feed = Array.from({ length: 6 }, (_, i) => ({
+      type: "tell_sent" as const,
+      from: i % 2 ? "Swift" : "Wren",
+      to: i % 2 ? "Wren" : "Swift",
+      depth: i,
+      messageRef: `tell:${i + 1}`,
+      timestamp: 10 + i,
+    })).reverse();
+    act(() => useWorldState.setState({ eventFeed: feed }));
+    expect(screen.getAllByTestId("map-thread-mark").map((n) => n.textContent)).toEqual([
+      "Swift → Wren ↳5",
+      "Wren → Swift ↳4",
+      "Swift → Wren ↳3",
+    ]);
+    const stacks = screen.getAllByTestId("map-thread-stack");
+    expect(stacks).toHaveLength(1);
+    expect(stacks[0]!.textContent).toContain("+3 more");
+    act(() => {
+      stacks[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(useWorldState.getState().selectedRoom).toBe("zone/lobby");
   });
 
   it("renders without crashing with no data", () => {
