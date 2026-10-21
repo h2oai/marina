@@ -82,7 +82,3 @@ export function loadWaveform(url: string, buckets = WAVEFORM_BUCKETS): Promise<n
   }
   return pending;
 }
-
-export function clearWaveformCache(): void {
-  cache.clear();
-}

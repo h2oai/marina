@@ -39,7 +39,6 @@
 
 /** off: never consulted; observe: adjudicates and records, changes nothing; on: acts. */
 export type ArbiterMode = "off" | "observe" | "on";
-export const ARBITER_MODES: readonly ArbiterMode[] = ["off", "observe", "on"];
 
 export type ArbiterAnswerType = "choice" | "multi" | "number" | "ranking" | "text";
 

@@ -233,9 +233,6 @@ export function MediaViewerProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/** @deprecated Use MediaViewerProvider (kept for existing imports). */
-export const AssetViewerProvider = MediaViewerProvider;
-
 const INFO_PREF = "marina:media-viewer-info";
 function loadInfoPref(): boolean {
   try {
