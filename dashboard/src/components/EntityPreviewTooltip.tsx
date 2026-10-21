@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import type { EntityPreview } from "../../../src/net/discovery-types";
 import { useChatState } from "../hooks/use-chat-state";
 import { fetchApi } from "../lib/api";
+import { ResidentName } from "./ResidentName";
 
 /** One delayed preview for all roster rows and SVG entity dots, including keyboard focus. */
 export function EntityPreviewTooltip() {
@@ -103,7 +104,9 @@ export function EntityPreviewTooltip() {
       className="pointer-events-none fixed z-[100] w-72 rounded border border-primary/40 bg-bg p-3 text-xs text-text shadow-xl"
       style={{ left: target.x, top: target.y }}
     >
-      <strong className="text-sm text-primary">{target.name}</strong>
+      <strong className="text-sm text-primary">
+        <ResidentName name={target.name} />
+      </strong>
       {query.isLoading ? (
         <p>Loading details…</p>
       ) : query.isError ? (

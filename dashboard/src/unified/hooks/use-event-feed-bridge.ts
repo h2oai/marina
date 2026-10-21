@@ -169,10 +169,13 @@ export function useLatestRoomMessages(
   const latestRef = useRef(latest);
 
   const recompute = useCallback(() => {
+    const { eventFeed, entities } = useWorldState.getState();
     const next = latestRoomMessages(
-      useWorldState.getState().eventFeed,
+      eventFeed,
       resolveRef.current,
       Date.now(),
+      undefined,
+      (name) => entities.find((e) => e.name === name)?.room,
     );
     if (sameRoomMessages(latestRef.current, next)) return;
     latestRef.current = next;

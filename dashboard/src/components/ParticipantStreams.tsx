@@ -1,12 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MarinaRoutingClient, RoutingApiError } from "../../../src/sdk/routing-client";
 import type { RoutingSession, RoutingSessionPage } from "../../../src/sdk/routing-types";
 import { useChatState } from "../hooks/use-chat-state";
 import { useParticipantOutput } from "../hooks/use-participant-output";
 import { useWorkspaceState } from "../hooks/use-workspace-state";
+import { useWorldState } from "../hooks/use-world-state";
 import { getToken } from "../lib/api";
 import { apiOrigin } from "../lib/api-origin";
 import { openBoundPanel } from "../lib/panel-bindings";
@@ -15,6 +16,7 @@ import { GlassPanel } from "./GlassPanel";
 import { ParticipantActivity } from "./ParticipantActivity";
 import { ParticipantDeliveryLog } from "./ParticipantDeliveryLog";
 import { ParticipantRuntimeControls } from "./ParticipantRuntimeControls";
+import { ResidentName } from "./ResidentName";
 import { ResidentsView, RoomLogView } from "./WorldConversation";
 
 function errorText(error: unknown): string {
@@ -159,6 +161,9 @@ export function ParticipantStreamWorkspace({
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [view, setView] = useState<"participants" | "room" | "residents">("participants");
+  // Supervised residents anyone can see in the world, whoever owns their sessions.
+  const entities = useWorldState((s) => s.entities);
+  const worldResidents = useMemo(() => entities.filter((e) => e.vendor), [entities]);
   const requested = useWorkspaceState((state) =>
     followWorkspaceSelection ? (state.participantId ?? targetId ?? null) : (targetId ?? null),
   );
@@ -291,7 +296,27 @@ export function ParticipantStreamWorkspace({
               Loading participants…
             </p>
           )}
-          {page?.sessions.length === 0 && (
+          {page?.sessions.length === 0 && worldResidents.length > 0 && (
+            <div role="status" className="text-sm text-text-dim">
+              <p className="mb-1">
+                {worldResidents.length === 1
+                  ? "1 supervised resident is in the world"
+                  : `${worldResidents.length} supervised residents are in the world`}
+                ; their output streams belong to their owners.
+              </p>
+              <ul className="mb-2">
+                {worldResidents.map((e) => (
+                  <li key={e.id} className="text-text">
+                    <ResidentName name={e.name} vendor={e.vendor} presence={e.presence} />
+                  </li>
+                ))}
+              </ul>
+              <button type="button" className="text-primary" onClick={() => setView("room")}>
+                Follow this room
+              </button>
+            </div>
+          )}
+          {page?.sessions.length === 0 && worldResidents.length === 0 && (
             <p className="text-sm text-text-dim">
               Start marina supervise --root /path/to/project to manage local agents here, or join
               with the routing SDK or HTTP API.

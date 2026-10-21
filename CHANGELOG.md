@@ -87,6 +87,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Supervised residents show as residents in the dashboard.** The world snapshot's vendor,
+  presence and owner now reach the client (the snapshot reconciler compared neither, so a
+  resident's later status never replaced its first), and every surface that names an entity
+  (Entities roster, hover card, inspector, room detail, entity card) shows `Wren [claude]` with its
+  presence; the roster groups residents under their own `resident` origin instead of "joined". The
+  Map labels residents, rings them with their presence, and floats a content-free
+  `from → to ↳depth` mark for each `say_sent` / `tell_sent`; the room pill reads those typed
+  envelopes too (it only knew the retired `say` events). Streams names the residents running in the
+  world instead of the "start marina supervise" hint when none of their sessions are the viewer's,
+  and a `tell_sent` envelope also reaches the person who launched either party.
+
 - **Documentation matches the code.** The README and site say approvals apply on shared and public
   instances; the privacy guide lists the keyless market and economic-data lookups and the markets
   feed; gate, operator-grant and built-in skill lists are current; seeded agents' autostart, the

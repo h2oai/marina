@@ -8,7 +8,7 @@
  */
 
 import { memo, useMemo, useState } from "react";
-import { formatResidentLabel } from "../../../../src/sdk/resident-label";
+import { ResidentName } from "../../components/ResidentName";
 import { useEntityDetail } from "../../hooks/use-api";
 import { useChatState } from "../../hooks/use-chat-state";
 import { useWorldState } from "../../hooks/use-world-state";
@@ -225,7 +225,7 @@ const EntityContextInner = memo(function EntityContextInner({
     <>
       {/* Name banner with kind-specific color */}
       <div className="uc-context-name" style={{ color: entityNameColor(entity.kind) }}>
-        {formatResidentLabel(entity.name, entity.resident?.vendor)}
+        <ResidentName name={entity.name} vendor={entity.resident?.vendor || undefined} />
       </div>
       {entity.resident?.owner && (
         <div style={{ padding: "0 14px 6px", color: "#888", fontSize: "12px" }}>

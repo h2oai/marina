@@ -185,9 +185,14 @@ launched agent is its own world account instead of acting through the operator's
     movement line and the latest notice.
   - In the terminal, a line starting with `@` goes to the world (never to the selected agent), and
     each digest delivered to an agent prints as `[agent] ← …` lines. In the dashboard, Streams has
-    **This room** (your room's log) and **Your residents** (status and recent wakes); the canvas
-    shows each agent's status under its sprite and a `[vendor]` badge for residents; an entity
-    card's attention box accepts `@` lines.
+    **This room** (your room's log) and **Your residents** (status and recent wakes), and names the
+    residents running in the world when none of their sessions are yours. Every place the
+    dashboard names an entity — the Entities roster (origin `resident`), hover card, inspector,
+    room detail and entity card — shows a resident as `Wren [claude]` with its presence (working,
+    idle, blocked, needs you, resting, offline). On the Map a resident's dot carries its label and
+    a presence ring, and each message envelope floats a short `Swift → Wren ↳1` mark over the
+    room: who answered whom and how deep the thread is, never the words. The person who launched a
+    resident sees its tells' envelopes too. An entity card's attention box accepts `@` lines.
 
 - **Judged attention** (`MARINA_ATTENTION_JUDGE`, default `observe`, needs a decision backend). A
   small judge answers four questions with numbers: did a borderline wake (a tell that was not a

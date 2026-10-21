@@ -13,9 +13,11 @@ import {
 } from "lucide-react";
 import { type AnimationPlaybackControlsWithThen, animate, motion } from "motion/react";
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { formatResidentLabel } from "../../../src/sdk/resident-label";
 import { useOperationalAlerts } from "../hooks/use-api";
 import { useWorldState } from "../hooks/use-world-state";
 import { prefersReducedMotion } from "../lib/motion-prefs";
+import { PRESENCE_COLORS, presenceLabel } from "../lib/presence";
 import type { DashboardEvent, WorldData } from "../lib/types";
 import {
   computeLayout,
@@ -231,7 +233,7 @@ const RoomNode = React.memo(function RoomNode({
 interface EntityDotsProps {
   svgPrefix: string;
   roomId: string;
-  entities: { id: string; name: string; kind: string }[];
+  entities: { id: string; name: string; kind: string; vendor?: string; presence?: string }[];
   pos: RoomPosition;
   isHub: boolean;
   onSelectEntity: (name: string) => void;
@@ -260,8 +262,42 @@ const EntityDots = React.memo(function EntityDots({
               ? "var(--color-warning)"
               : "var(--color-text-dim)";
 
+        const label = formatResidentLabel(ent.name, ent.vendor);
+        const ring = ent.presence ? PRESENCE_COLORS[ent.presence] : undefined;
         return (
           <g key={ent.id}>
+            {ring && (
+              <circle
+                data-testid="map-presence-ring"
+                cx={ex}
+                cy={ey}
+                r={5.5}
+                fill="none"
+                stroke={ring}
+                strokeWidth={1.2}
+                opacity={0.9}
+                style={{ pointerEvents: "none" }}
+              >
+                <title>{`${label}: ${presenceLabel(ent.presence!)}`}</title>
+              </circle>
+            )}
+            {ent.vendor && (
+              <text
+                data-testid="map-resident-label"
+                // Outward along the dot's orbit angle, so neighbours never overlap.
+                x={pos.x + Math.cos(angle) * (orbitR + 8)}
+                y={pos.y + Math.sin(angle) * (orbitR + 8) + 2}
+                textAnchor={
+                  Math.cos(angle) > 0.3 ? "start" : Math.cos(angle) < -0.3 ? "end" : "middle"
+                }
+                fill="var(--color-text-dim)"
+                fontSize={5.5}
+                fontFamily="Share Tech Mono, monospace"
+                style={{ pointerEvents: "none" }}
+              >
+                {label}
+              </text>
+            )}
             <circle
               cx={ex}
               cy={ey}
@@ -285,7 +321,7 @@ const EntityDots = React.memo(function EntityDots({
               width={14}
               height={14}
               entityName={ent.name}
-              label={`Inspect ${ent.name}`}
+              label={`Inspect ${label}${ent.presence ? `, ${presenceLabel(ent.presence)}` : ""}`}
               onActivate={() => onSelectEntity(ent.name)}
             />
           </g>
@@ -334,6 +370,8 @@ export function WorldMap({
   const [viewBox, setViewBox] = useState(DEFAULT_VIEWBOX);
   const svgRef = useRef<SVGSVGElement>(null);
   const trailsRef = useRef<SVGGElement>(null);
+  const threadsRef = useRef<SVGGElement>(null);
+  const lastThreadAtRef = useRef(0);
   const rippleRef = useRef<SVGGElement>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const [tooltip, setTooltip] = useState<{
@@ -531,6 +569,67 @@ export function WorldMap({
     });
     return unsub;
   }, [posMap, allPositions, svgPrefix]);
+
+  // ── 2.25: Message threads ─────────────────────────────────────────
+  // Each typed message envelope (say_sent / tell_sent: names, ref and depth,
+  // never words) floats a short "from → to ↳depth" mark over the sender's
+  // room, so a viewer can follow who answered whom and how deep the thread
+  // is. Imperative like the trails above: events never re-render the map.
+  useEffect(() => {
+    if (allPositions.length === 0) return;
+    const reduced = prefersReducedMotion();
+    const processThreads = (eventFeed: DashboardEvent[]) => {
+      const layer = threadsRef.current;
+      if (!layer) return;
+      const fresh = eventFeed
+        .filter(
+          (ev) =>
+            (ev.type === "say_sent" || ev.type === "tell_sent") &&
+            ev.timestamp > lastThreadAtRef.current,
+        )
+        .slice(0, 6)
+        .reverse();
+      if (fresh.length === 0) return;
+      lastThreadAtRef.current = Math.max(...fresh.map((ev) => ev.timestamp));
+      const wsEntities = useWorldState.getState().entities;
+      for (const ev of fresh) {
+        const sender = ev.from ?? "";
+        const roomId = ev.room ?? wsEntities.find((e) => e.name === sender)?.room;
+        const pos = roomId ? posMap.get(roomId) : undefined;
+        if (!pos || !sender) continue;
+        const depth = ev.depth ?? 0;
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", String(pos.x));
+        text.setAttribute("y", String(pos.y - 30 - (layer.childElementCount % 4) * 8));
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("font-size", "6.5");
+        text.setAttribute("font-family", "Share Tech Mono, monospace");
+        text.setAttribute("fill", ev.type === "tell_sent" ? "#8b5cf6" : "#06b6d4");
+        text.setAttribute("data-testid", "map-thread-mark");
+        text.textContent = `${sender}${ev.to ? ` → ${ev.to}` : " (room)"}${depth > 0 ? ` ↳${depth}` : ""}`;
+        layer.appendChild(text);
+        if (reduced) {
+          setTimeout(() => text.remove(), 4000);
+          continue;
+        }
+        animate(
+          text,
+          { opacity: [1, 1, 0] },
+          {
+            duration: 4,
+            times: [0, 0.7, 1],
+            ease: "linear",
+            onComplete: () => text.remove(),
+          },
+        );
+      }
+    };
+    lastThreadAtRef.current = useWorldState.getState().eventFeed[0]?.timestamp ?? 0;
+    const unsub = useWorldState.subscribe((state, prev) => {
+      if (state.eventFeed !== prev.eventFeed) processThreads(state.eventFeed);
+    });
+    return unsub;
+  }, [posMap, allPositions]);
 
   // ── 2.3: Room Activity Breathing ──────────────────────────────────
   useEffect(() => {
@@ -1156,7 +1255,7 @@ export function WorldMap({
             {allPositions.map((room) => {
               const pop = roomPops[room.id] ?? 0;
               const ents = entityPositions.get(room.id);
-              const names = ents?.map((ent) => ent.name) || [];
+              const names = ents?.map((ent) => formatResidentLabel(ent.name, ent.vendor)) || [];
               const short = roomShorts.get(room.id) ?? room.id.split("/")[1] ?? room.id;
               return (
                 <RoomNode
@@ -1246,6 +1345,9 @@ export function WorldMap({
 
             {/* ── Layer 8: Entity movement trails ─────────────── */}
             <g ref={trailsRef} />
+
+            {/* ── Layer 8.5: Message thread marks (content-free) ─ */}
+            <g ref={threadsRef} />
 
             {/* ── Layer 9: Selection ripples ──────────────────── */}
             <g ref={rippleRef} />
