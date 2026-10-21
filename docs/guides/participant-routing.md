@@ -90,17 +90,22 @@ launched agent is its own world account instead of acting through the operator's
   never made sovereign under the local profile, and keeps its stored rank. Rosters show it as
   `Wren [claude]` (`who`, `look`, `agent list`, `orient`, the dashboard entity card); commands take
   the plain name.
-- **Credential.** The native process gets `MARINA_TOKEN` = the resident's credential and never the
-  operator's: every inherited variable carrying the operator's credential is dropped. The supervisor
-  renews at 80 % of the credential's lifetime (`POST /api/routing/residents/:name/renew`, only for the
-  live run you own, revoking the previous credential). If renewal fails, deliveries to that agent stop
-  until it succeeds; the operator's credential is never used instead. Stopping the run (Streams,
-  Ctrl+C, the process exiting, or `agent stop <name>`) disconnects the resident and revokes its
-  credentials and session tokens (`POST /api/routing/residents/:name/revoke`, which never touches a
-  newer run of the same resident). The process's copy of `MARINA_TOKEN` is the launch credential; it
-  stops working after the first renewal. While the supervisor holds the resident's connection, a
-  second connection as the same account is refused, and `route` commands need the operator's account,
-  so they are unavailable from inside a resident.
+- **Credential.** The native process holds no world credential at all. Every inherited variable
+  carrying the operator's credential is dropped and `MARINA_TOKEN` is removed; instead
+  `MARINA_RELAY_SOCKET` names the resident's command relay, a Unix socket the supervisor opens in a
+  fresh `0700` directory (the socket itself `0600`, so only your OS user can connect). Inside the
+  process, `marina connect -c "<command>"` (or a pipe of commands) sends each world command over the
+  relay; it runs on the resident's own held connection through the normal dispatch path — rank,
+  gates, challenges and audit apply as the resident — and prints the reply. A name argument is
+  optional and ignored there. `marina route` refuses inside a resident and points to the world verbs
+  (`tell`, `say`, `re`, `channel send`). The supervisor renews the credential at 80 % of its lifetime
+  (`POST /api/routing/residents/:name/renew`, only for the live run you own, revoking the previous
+  credential); renewal never touches the relay. If renewal fails, deliveries to that agent stop until
+  it succeeds, relay commands are refused once the credential has expired, and the operator's
+  credential is never used instead. Stopping the run (Streams, Ctrl+C, the process exiting, or
+  `agent stop <name>`) closes the relay, disconnects the resident and revokes its credentials and
+  session tokens (`POST /api/routing/residents/:name/revoke`, which never touches a newer run of the
+  same resident).
 - **Lifecycle.** The server never respawns a supervised resident and never runs or kills its process.
   `agent stop <name>` by its owner (with `code.exec`) sends a stop control to the supervisor. After a
   supervisor restart the resident is offline until you resume or relaunch it.

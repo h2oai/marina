@@ -53,14 +53,14 @@ export interface AgentsStore {
     spawnedBy: string;
     supports?: AgentSupports /** Reasoning depth (migration 120). `undefined` keeps the stored value. */;
     thinkingLevel?: AgentThinkingLevel;
-    /** Who runs the account (migration 172). `undefined` keeps the stored value. */
+    /** Who runs the account (migration 173). `undefined` keeps the stored value. */
     runtime?: AgentRuntimeKind;
     vendor?: string;
   }): void;
   getAgentConfig(name: string): AgentConfigRow | undefined;
   getAllAgentConfigs(): AgentConfigRow[];
   getAgentConfigsBySpawnedBy(spawnedBy: string): AgentConfigRow[];
-  /** Bind or clear the routing session of a supervised resident's run (migration 172). */
+  /** Bind or clear the routing session of a supervised resident's run (migration 173). */
   setAgentRunSession(name: string, sessionId: string | null): boolean;
   /** `name` and its spawn ancestors, lower-cased, nearest first (`db-agents.ts:spawnLineage`). */
   spawnLineage(name: string): string[];

@@ -4081,7 +4081,7 @@ export class MarinaDB implements MarinaStores {
     supports?: AgentSupports;
     /** Reasoning depth (migration 120). `undefined` keeps the stored value. */
     thinkingLevel?: AgentThinkingLevel;
-    /** Who runs the account (migration 172). `undefined` keeps the stored value. */
+    /** Who runs the account (migration 173). `undefined` keeps the stored value. */
     runtime?: AgentRuntimeKind;
     vendor?: string;
   }): void {

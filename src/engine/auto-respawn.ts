@@ -25,7 +25,7 @@ export function autoRespawnEnabled(
 
 /**
  * Whether a saved agent config is respawned by the server at boot. A
- * supervised resident (`runtime = 'supervised'`, migration 172) is run by its
+ * supervised resident (`runtime = 'supervised'`, migration 173) is run by its
  * owner's local supervisor, never by this process: it stays offline until
  * that supervisor launches or resumes it.
  */

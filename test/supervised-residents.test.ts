@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { respawnsOnBoot } from "../src/engine/auto-respawn";
 import {
   listAnswerable,
@@ -20,12 +20,13 @@ import { handleDashboardApi } from "../src/net/dashboard-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
 import type { AgentAdapter, AgentOptions } from "../src/routing/agent-adapters";
-import type { ResidentConnector } from "../src/routing/resident-connection";
+import { type ResidentConnector, relayText } from "../src/routing/resident-connection";
 import {
   generateResidentName,
   nameMentionsVendor,
   RESIDENT_NAME_WORDS,
 } from "../src/routing/resident-name";
+import { openResidentRelay, type RelayReply, relayCommand } from "../src/routing/resident-relay";
 import { ResidentService, residentLabeler } from "../src/routing/residents";
 import { RoutingService } from "../src/routing/service";
 import { MarinaSupervisor } from "../src/routing/supervisor";
@@ -93,6 +94,15 @@ async function post(token: string, path: string, body: unknown) {
   });
   const res = (await handleDashboardApi(req, new URL(req.url), "POST", engine, db))!;
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+/** A relay runner over a test connection: the command's own replies, as `marina connect` prints them. */
+function relayThrough(conn: MockConnection, entityId: EntityId) {
+  return async (input: string): Promise<RelayReply> => {
+    const before = conn.messages.length;
+    await engine.processCommand(entityId, input);
+    return { ok: true, output: relayText(conn.messages.slice(before)) };
+  };
 }
 
 /** Log the resident in the way the supervisor's connector does: its own credential. */
@@ -477,12 +487,15 @@ describe("supervisor", () => {
     let native: AgentOptions | undefined;
     const prompts: string[] = [];
     const residentConns: MockConnection[] = [];
+    let credential = "";
     const connector: ResidentConnector = async ({ name, token, room }) => {
+      credential = token;
       const { conn, entity } = residentLogin(name, token);
       residentConns.push(conn);
       if (room) await engine.processCommand(entity.id as EntityId, `goto ${room}`);
       return {
         setCredential: () => undefined,
+        command: relayThrough(conn, entity.id as EntityId),
         close: () => engine.removeConnection(conn.id, "explicit"),
       };
     };
@@ -496,7 +509,7 @@ describe("supervisor", () => {
         return {
           prompt: async (text) => {
             prompts.push(text);
-            options.emit("output", { text: `leak ${options.env?.MARINA_TOKEN}` });
+            options.emit("output", { text: `leak ${credential}` });
           },
           interrupt: async () => undefined,
           stop: () => undefined,
@@ -540,16 +553,30 @@ describe("supervisor", () => {
       await supervisor.tick();
       await until(() => prompts.length === 1);
       const run = router.list().sessions.find((s) => s.kind === "claude")!;
-      const credential = env!.MARINA_TOKEN!;
       expect(credential.startsWith("marina-agent-")).toBe(true);
       expect(db.verifyWorkloadCredential(credential)?.display_name).toBe("Wren");
-      for (const value of Object.values(env!)) expect(value).not.toContain(owner.token);
+      // The child holds no world credential at all: only the relay's path.
+      for (const value of Object.values(env!)) {
+        expect(value).not.toContain(owner.token);
+        expect(value).not.toContain(credential);
+      }
+      const socket = env!.MARINA_RELAY_SOCKET!;
       expect(env).toEqual({
         MARINA_URL: "http://local.test",
         HOME: "/home/test",
         MARINA_SESSION_ID: run.id,
-        MARINA_TOKEN: credential,
+        MARINA_RELAY_SOCKET: socket,
       });
+      expect(statSync(socket).mode & 0o777).toBe(0o600);
+      expect(statSync(dirname(socket)).mode & 0o777).toBe(0o700);
+      // A relay command runs on the resident's own connection, as the resident.
+      const peer = person("Peer", false);
+      const sent = await relayCommand(socket, "tell Peer hello from the relay");
+      expect(sent.ok).toBe(true);
+      await until(() =>
+        peer.conn.allText().some((t) => stripAnsi(t).includes("hello from the relay")),
+      );
+      expect(peer.conn.allText().find((t) => t.includes("hello from the relay"))).toContain("Wren");
       expect(prompts[0]).toContain("Your Marina world name is Wren.");
       const wren = engine.entities.findAgentByName("Wren")!;
       expect(wren.room as string).toBe("test/lab");
@@ -570,7 +597,86 @@ describe("supervisor", () => {
       });
       expect(db.getAgentConfig("Wren")!.run_session).toBeNull();
       expect(engine.getConnectionForEntity(wren.id)).toBeUndefined();
+      // Revocation closes the relay with the connection.
+      expect(existsSync(socket)).toBe(false);
+      await expect(relayCommand(socket, "who")).rejects.toThrow("relay unavailable");
       expect(native).toBeDefined();
+    } finally {
+      await supervisor.stop();
+      supervisor.close();
+    }
+  });
+
+  it("keeps the relay through a credential renewal; the child never sees either credential", async () => {
+    using _state = scopeProcessState({ env: ON, rateLimitBypass: true });
+    const owner = person("Owner");
+    const real = routingClient(owner.token);
+    const client = Object.assign(Object.create(real) as MarinaRoutingClient, {
+      enrolResident: async (input: Parameters<MarinaRoutingClient["enrolResident"]>[0]) => {
+        const result = await real.enrolResident(input);
+        return { ...result, credential: { ...result.credential, expiresAt: Date.now() + 400 } };
+      },
+    });
+    const credentials: string[] = [];
+    let env: NodeJS.ProcessEnv | undefined;
+    const supervisor = new MarinaSupervisor({
+      client,
+      root: directory,
+      stateDirectory: directory,
+      binding: "relay",
+      label: "relay",
+      adapters: [
+        {
+          id: "claude",
+          label: "Fixture",
+          executable: "fixture",
+          start: async (options) => {
+            env = options.env;
+            return {
+              prompt: async () => undefined,
+              interrupt: async () => undefined,
+              stop: () => undefined,
+            };
+          },
+        },
+      ],
+      agentEnvironment: { MARINA_TOKEN: owner.token },
+      secrets: [owner.token],
+      residents: {
+        connect: async ({ name, token }) => {
+          credentials.push(token);
+          const { conn, entity } = residentLogin(name, token);
+          return {
+            setCredential: (next) => void credentials.push(next),
+            command: relayThrough(conn, entity.id as EntityId),
+            close: () => engine.removeConnection(conn.id, "explicit"),
+          };
+        },
+      },
+    });
+    const router = new RoutingService(db, db.durableEntityKey(owner.entity.id));
+    try {
+      const sup = await supervisor.start();
+      router.control(sup.id, {
+        targetId: sup.id,
+        clientMessageId: "launch",
+        control: { action: "launch", adapter: "claude", label: "w", workspace: "shared" },
+      });
+      await supervisor.tick();
+      await until(() => !!env?.MARINA_RELAY_SOCKET);
+      const socket = env!.MARINA_RELAY_SOCKET!;
+      const run = router.list().sessions.find((s) => s.kind === "claude")!;
+      await until(async () => {
+        await supervisor.tick();
+        return router.events(run.id).events.some((e) => e.kind === "resident.renewed");
+      });
+      expect(credentials).toHaveLength(2);
+      const reply = await relayCommand(socket, "who");
+      expect(reply.ok).toBe(true);
+      expect(reply.output).toContain("Owner");
+      for (const value of Object.values(env!))
+        for (const credential of [owner.token, ...credentials])
+          expect(value).not.toContain(credential);
     } finally {
       await supervisor.stop();
       supervisor.close();
@@ -618,7 +724,11 @@ describe("supervisor", () => {
       residents: {
         connect: async ({ token }) => {
           credentials.push(token);
-          return { setCredential: (next) => void credentials.push(next), close: () => undefined };
+          return {
+            setCredential: (next) => void credentials.push(next),
+            command: async (input) => ({ ok: true, output: `ran ${input}` }),
+            close: () => undefined,
+          };
         },
       },
     });
@@ -685,7 +795,13 @@ describe("supervisor", () => {
       ],
       agentEnvironment: { MARINA_TOKEN: owner.token },
       secrets: [owner.token],
-      residents: { connect: async () => ({ setCredential: () => {}, close: () => {} }) },
+      residents: {
+        connect: async () => ({
+          setCredential: () => {},
+          command: async () => ({ ok: true, output: "" }),
+          close: () => {},
+        }),
+      },
     });
     const router = new RoutingService(db, db.durableEntityKey(owner.entity.id));
     try {
@@ -710,6 +826,30 @@ describe("supervisor", () => {
       await supervisor.stop();
       supervisor.close();
     }
+  });
+});
+
+describe("command relay", () => {
+  it("returns each reply, refusals included, and rejects malformed requests", async () => {
+    const seen: string[] = [];
+    const relay = await openResidentRelay(async (command) => {
+      seen.push(command);
+      return command === "bad"
+        ? { ok: false, output: "Unknown command" }
+        : { ok: true, output: "ok" };
+    });
+    try {
+      expect(await relayCommand(relay.path, "  look ")).toEqual({ ok: true, output: "ok" });
+      expect(await relayCommand(relay.path, "bad")).toEqual({
+        ok: false,
+        output: "Unknown command",
+      });
+      expect((await relayCommand(relay.path, "   ")).ok).toBe(false);
+      expect(seen).toEqual(["look", "bad"]);
+    } finally {
+      relay.close();
+    }
+    await expect(relayCommand(relay.path, "look")).rejects.toThrow("relay unavailable");
   });
 });
 

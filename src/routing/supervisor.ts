@@ -15,6 +15,7 @@ import type {
 import type { AgentAdapter, ManagedAgent } from "./agent-adapters";
 import { prepareAgentWorkspace, restoreAgentWorkspace } from "./agent-workspace";
 import type { ResidentConnection, ResidentConnector } from "./resident-connection";
+import { openResidentRelay, RELAY_SOCKET_ENV, type ResidentRelay } from "./resident-relay";
 
 /** A run's own world account (supervised residents). */
 interface ResidentRun {
@@ -22,6 +23,8 @@ interface ResidentRun {
   token: string;
   expiresAt: number;
   connection?: ResidentConnection;
+  /** The command relay the native process uses instead of a credential. */
+  relay?: ResidentRelay;
   timer?: ReturnType<typeof setTimeout>;
   /** Set while renewal is failing: deliveries pause, never another credential. */
   blocked?: string;
@@ -348,6 +351,14 @@ export class MarinaSupervisor {
       token: resident.token,
       ...(enrolment.room ? { room: enrolment.room } : {}),
     });
+    resident.relay = await openResidentRelay(async (command) => {
+      const connection = resident.connection;
+      if (resident.retired || !connection)
+        return { ok: false, output: "This resident has left Marina" };
+      if (Date.now() >= resident.expiresAt)
+        return { ok: false, output: "This resident's world credential has expired" };
+      return connection.command(command);
+    });
     this.state(run, { resident: resident.name });
     this.emit(run.session.id, "resident.enrolled", {
       name: resident.name,
@@ -406,6 +417,7 @@ export class MarinaSupervisor {
     if (!resident || resident.retired) return;
     resident.retired = true;
     clearTimeout(resident.timer);
+    resident.relay?.close();
     try {
       resident.connection?.close();
     } catch (error) {
@@ -431,9 +443,10 @@ export class MarinaSupervisor {
     }
   }
   /**
-   * The native process environment. With residents on it carries the run's
-   * own credential and never the supervisor's: every variable whose value
-   * holds a supervisor secret is dropped before MARINA_TOKEN is set.
+   * The native process environment. With residents on it carries NO world
+   * credential: every variable whose value holds a supervisor secret is
+   * dropped, MARINA_TOKEN is removed, and MARINA_RELAY_SOCKET names the
+   * resident's command relay (its own held connection).
    */
   private childEnvironment(run: Run): NodeJS.ProcessEnv {
     const base = { ...this.options.agentEnvironment, MARINA_SESSION_ID: run.session.id };
@@ -445,7 +458,9 @@ export class MarinaSupervisor {
     for (const [key, value] of Object.entries(base))
       if (value !== undefined && !secrets.some((secret) => value.includes(secret)))
         env[key] = value;
-    env.MARINA_TOKEN = resident.token;
+    delete env.MARINA_TOKEN;
+    if (!resident.relay) throw new Error("Resident relay is not open; the agent was not started");
+    env[RELAY_SOCKET_ENV] = resident.relay.path;
     return env;
   }
   private startAdapter(run: Run, adapter: AgentAdapter, resumeSessionId?: string) {

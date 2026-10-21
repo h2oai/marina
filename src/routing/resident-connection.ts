@@ -1,12 +1,16 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { MarinaClient } from "../sdk/client";
+import { formatPerception } from "../net/formatter";
+import { CommandError, MarinaClient, type Perception } from "../sdk/client";
+import type { RelayReply } from "./resident-relay";
 
 /** One resident's world presence, held by the supervisor for the whole run. */
 export interface ResidentConnection {
   /** Use a renewed credential for later reconnects; the live connection stays. */
   setCredential(token: string): void;
+  /** Run one world command as the resident on this connection (the command relay). */
+  command(input: string): Promise<RelayReply>;
   close(): void;
 }
 
@@ -41,7 +45,24 @@ export function marinaResidentConnector(worldUrl: string): ResidentConnector {
     }
     return {
       setCredential: (next) => client.setInternalToken(next),
+      command: async (input) => {
+        try {
+          return { ok: true, output: relayText(await client.command(input)) };
+        } catch (error) {
+          if (!(error instanceof CommandError)) throw error;
+          return { ok: false, output: relayText(error.perceptions) || error.message };
+        }
+      },
       close: () => client.disconnect(),
     };
   };
+}
+
+/** A command's perceptions as the plain text `marina connect -c` prints. */
+export function relayText(perceptions: Perception[]): string {
+  return perceptions
+    .filter((p) => !p.data?.capabilities)
+    .map((p) => formatPerception(p, "plaintext"))
+    .filter(Boolean)
+    .join("\n");
 }
