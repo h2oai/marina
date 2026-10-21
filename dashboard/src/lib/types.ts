@@ -793,6 +793,10 @@ export interface WorldSnapshot {
     room: string;
     properties?: Record<string, unknown>;
     agentStatus?: AgentStatusInfo;
+    /** Presence status: working, idle, blocked, needs_you, resting or offline. */
+    presence?: string;
+    /** A supervised resident's native adapter (`claude`, `codex`, `pi`). */
+    vendor?: string;
     /** AgentConfig.spawned_by for agent entities: "system" (world-seeded),
      *  "operator" (launched from the dashboard/CLI), or a spawning agent's
      *  name (crew sub-agent). Absent for humans / externally-connected agents.

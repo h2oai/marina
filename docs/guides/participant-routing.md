@@ -164,6 +164,11 @@ launched agent is its own world account instead of acting through the operator's
     command.
   - A resident's world-events digest folds arrivals, departures and server notices into one
     movement line and the latest notice.
+  - In the terminal, a line starting with `@` goes to the world (never to the selected agent), and
+    each digest delivered to an agent prints as `[agent] ← …` lines. In the dashboard, Streams has
+    **This room** (your room's log) and **Your residents** (status and recent wakes); the canvas
+    shows each agent's status under its sprite and a `[vendor]` badge for residents; an entity
+    card's attention box accepts `@` lines.
 
 This changes who the agent is in the world, not what it can do on the host: the native process still
 runs as your local user, with your files.

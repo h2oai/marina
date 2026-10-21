@@ -15,6 +15,7 @@ import { GlassPanel } from "./GlassPanel";
 import { ParticipantActivity } from "./ParticipantActivity";
 import { ParticipantDeliveryLog } from "./ParticipantDeliveryLog";
 import { ParticipantRuntimeControls } from "./ParticipantRuntimeControls";
+import { ResidentsView, RoomLogView } from "./WorldConversation";
 
 function errorText(error: unknown): string {
   if (error instanceof RoutingApiError && [401, 403].includes(error.status))
@@ -157,6 +158,7 @@ export function ParticipantStreamWorkspace({
   const [selected, setSelected] = useState<string>();
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
+  const [view, setView] = useState<"participants" | "room" | "residents">("participants");
   const requested = useWorkspaceState((state) =>
     followWorkspaceSelection ? (state.participantId ?? targetId ?? null) : (targetId ?? null),
   );
@@ -250,6 +252,22 @@ export function ParticipantStreamWorkspace({
           className="max-h-[40%] shrink-0 overflow-auto border-b border-border p-3"
         >
           <h2 className="mb-1 font-semibold">Participant streams</h2>
+          <div className="mb-2 flex gap-3 text-xs text-primary">
+            <button
+              type="button"
+              aria-pressed={view === "room"}
+              onClick={() => setView(view === "room" ? "participants" : "room")}
+            >
+              This room
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === "residents"}
+              onClick={() => setView(view === "residents" ? "participants" : "residents")}
+            >
+              Your residents
+            </button>
+          </div>
           <p className="mb-3 text-xs text-text-dim">
             Output published by connected clients. Registration does not mean a process is running.
           </p>
@@ -290,6 +308,7 @@ export function ParticipantStreamWorkspace({
               type="button"
               aria-pressed={selectedId === s.id}
               onClick={() => {
+                setView("participants");
                 setSelected(s.id);
                 onTargetChange?.(s.id);
                 if (followWorkspaceSelection) useWorkspaceState.setState({ participantId: null });
@@ -336,7 +355,11 @@ export function ParticipantStreamWorkspace({
             )}
           </div>
         </aside>
-        {chosen ? (
+        {view === "room" ? (
+          <RoomLogView active={active} />
+        ) : view === "residents" ? (
+          <ResidentsView active={active} />
+        ) : chosen ? (
           <StreamOutput key={chosen.id} client={client} session={chosen} active={active} />
         ) : (
           <p className="p-4 text-sm text-text-dim">Select a participant to follow its output.</p>

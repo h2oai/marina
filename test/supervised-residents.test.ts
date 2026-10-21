@@ -958,3 +958,71 @@ describe("review snapshots through the relay", () => {
     }
   });
 });
+
+describe("Streams room and residents views", () => {
+  async function get(token: string, path: string) {
+    const req = new Request(`http://local.test${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const res = (await handleDashboardApi(req, new URL(req.url), "GET", engine, db))!;
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  it("lists the caller's residents with presence and wakes, and nobody else's", async () => {
+    using _state = scopeProcessState({ env: ON, rateLimitBypass: true });
+    const owner = person("Owner");
+    const other = person("Other");
+    const router = new RoutingService(db, db.durableEntityKey(owner.entity.id));
+    const run = router.join({ clientKey: "run:v", kind: "codex", label: "worker" });
+    const enrolled = await post(owner.token, "/api/routing/residents", { sessionId: run.id });
+    const name = enrolled.body.name as string;
+    residentLogin(name, (enrolled.body.credential as { token: string }).token);
+    engine.logEvent({
+      type: "agent_status",
+      name,
+      status: "waiting",
+      steer: "mid-turn",
+      timestamp: Date.now(),
+    });
+    db.recordAttentionWakes([
+      {
+        entity: name,
+        source: "tell",
+        decision: "now",
+        reason: "request",
+        hop: 1,
+        steered: true,
+        at: 1,
+      },
+    ]);
+    const mine = await get(owner.token, "/api/routing/residents");
+    expect(mine.status).toBe(200);
+    expect(mine.body.residents).toEqual([
+      {
+        name,
+        vendor: "codex",
+        presence: "needs_you",
+        room: "test/start",
+        wakes: [
+          { source: "tell", decision: "now", reason: "request", hop: 1, steered: true, at: 1 },
+        ],
+      },
+    ]);
+    expect((await get(other.token, "/api/routing/residents")).body.residents).toEqual([]);
+  });
+
+  it("serves the room log only to those present", async () => {
+    using _state = scopeProcessState({ env: ON, rateLimitBypass: true });
+    const owner = person("Owner");
+    const away = person("Away");
+    engine.entities.move(away.entity.id, roomId("test/lab"));
+    await engine.processCommand(owner.entity.id, "say hello room");
+    const here = await get(owner.token, "/api/routing/room-log");
+    expect(here.status).toBe(200);
+    expect(here.body.room).toBe("test/start");
+    expect(JSON.stringify(here.body.entries)).toContain("Owner says: hello room");
+    const peek = await get(away.token, "/api/routing/room-log?room=test/start");
+    expect(peek.status).toBe(403);
+    expect(peek.body.code).toBe("not_present");
+  });
+});

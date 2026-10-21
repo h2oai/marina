@@ -182,11 +182,62 @@ export async function handleRoutingRoutes(
         return reply(result);
       }
     }
+    // The Streams room view: the caller's room log (`look log`), readable only
+    // by someone present in that room.
+    if (url.pathname === "/api/routing/room-log" && method === "GET") {
+      const self = ctx.engine.entities.get(callerId as EntityId);
+      const room = url.searchParams.get("room") ?? self?.room;
+      if (!self || !room || self.room !== room)
+        return reply(
+          {
+            error: "Only those present read a room's log; join the world first",
+            code: "not_present",
+          },
+          403,
+        );
+      const since = Number(url.searchParams.get("since") ?? 0);
+      return reply({
+        room,
+        entries: db.readRoomLog(
+          room,
+          Number.isFinite(since) && since > 0 ? since : 0,
+          routingLimit(url.searchParams.get("limit")),
+        ),
+      });
+    }
     // Supervised residents (MARINA_SUPERVISED_RESIDENTS=on). Off, these paths
     // fall through to the unknown-endpoint reply exactly as before.
     const residentMatch = supervisedResidentsEnabled()
       ? url.pathname.match(/^\/api\/routing\/residents(?:\/([^/]+)\/(renew|revoke|attention))?$/)
       : null;
+    // The Streams residents view: the caller's own residents, their presence
+    // and recent wake decisions (refs and reasons, no content).
+    if (residentMatch && !residentMatch[1] && method === "GET") {
+      const owner = ctx.engine.entities.get(callerId as EntityId)?.name;
+      if (!owner)
+        return reply({ error: "Join the world to see your residents", code: "not_present" }, 403);
+      const residents = db
+        .getAgentConfigsBySpawnedBy(owner)
+        .filter((config) => config.runtime === "supervised")
+        .map((config) => {
+          const live = ctx.engine.entities.findAgentByName(config.name);
+          return {
+            name: config.name,
+            vendor: config.vendor ?? "",
+            presence: ctx.engine.presence.statusOf(config.name)?.status ?? "offline",
+            ...(live && live.name === config.name ? { room: live.room } : {}),
+            wakes: db.listAttentionWakes(config.name, 20).map((wake) => ({
+              source: wake.source,
+              decision: wake.decision,
+              reason: wake.reason,
+              hop: wake.hop,
+              steered: wake.steered === 1,
+              at: wake.at,
+            })),
+          };
+        });
+      return reply({ residents });
+    }
     if (residentMatch && method === "POST") {
       const input = await body(req);
       const engine = ctx.engine;

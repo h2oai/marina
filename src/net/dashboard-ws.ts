@@ -47,6 +47,10 @@ export interface WorldSnapshot {
       /** Consecutive zero-tool-call turns — the "stuck" signal. */
       silentTurns?: number;
     };
+    /** Presence status (src/engine/presence.ts): working, idle, blocked, needs_you, resting, offline. */
+    presence?: string;
+    /** A supervised resident's native adapter (`claude`, `codex`, `pi`), for its badge. */
+    vendor?: string;
     /** AgentConfig.spawned_by — "system" (seeded), "operator" (dashboard/CLI),
      *  or a spawning agent's name (crew). Undefined for non-runtime entities. */
     spawnedBy?: string;
@@ -290,9 +294,12 @@ export class DashboardBroadcaster {
     // One bulk read per snapshot (broadcast every 2s) — a per-entity
     // getAgentConfig lookup was ~N queries/snapshot just for spawned_by.
     const spawnedByName = new Map<string, string | null>();
+    const vendorOf = new Map<string, string>();
     if (engine.db) {
       for (const config of engine.db.getAllAgentConfigs()) {
         spawnedByName.set(config.name, config.spawned_by);
+        if (config.runtime === "supervised" && config.vendor)
+          vendorOf.set(config.name, config.vendor);
       }
     }
     const roomPopulations: Record<string, number> = {};
@@ -328,6 +335,8 @@ export class DashboardBroadcaster {
       // spawning agent's name (crew). Read from the persisted AgentConfig; only
       // meaningful for agent entities (humans / external agents have no config).
       const spawnedBy = agentHandle ? (spawnedByName.get(e.name) ?? undefined) : undefined;
+      const presence = engine.presence.statusOf(e.name)?.status;
+      const vendor = vendorOf.get(e.name);
 
       const shape = (privateView: boolean): SnapshotEntity => ({
         id: e.id,
@@ -339,6 +348,8 @@ export class DashboardBroadcaster {
           : { rank: e.properties.rank, role: e.properties.role },
         agentStatus: agentStatus(privateView),
         spawnedBy,
+        ...(presence ? { presence } : {}),
+        ...(vendor ? { vendor } : {}),
       });
       return { id: e.id as string, pub: shape(false), priv: shape(true) };
     });

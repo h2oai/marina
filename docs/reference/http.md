@@ -891,16 +891,25 @@ Fields read here: `reply( router.overview( url.searchParams.get("after") ?? "", 
 
 Fields read here: `Number(url.searchParams.get("after") ?? 0)`, `reply( router.channelEvents( sessionId, channelId, Number(url.searchParams.get("after") ?? 0), routingLimit(url.searchParams.get("limit")), ), )`, `router.channelEvents( sessionId, channelId, Number(url.searchParams.get("after") ?? 0), routingLimit(url.searchParams.get("limit")), )`, `routingLimit(url.searchParams.get("limit"))`, `url.searchParams.get("after")`, `url.searchParams.get("limit")`.
 
+### `url.pathname === "/api/routing/room-log"`
+
+[Source](../../src/net/dashboard-api/routing.ts#L187)
+
+- Guard: `url.pathname === "/api/routing/room-log" && method === "GET"`
+- Guard: `method === "GET"`
+
+Fields read here: `Number(url.searchParams.get("since") ?? 0)`, `db.readRoomLog( room, Number.isFinite(since) && since > 0 ? since : 0, routingLimit(url.searchParams.get("limit")), )`, `reply({ room, entries: db.readRoomLog( room, Number.isFinite(since) && since > 0 ? since : 0, routingLimit(url.searchParams.get("limit")), ), })`, `routingLimit(url.searchParams.get("limit"))`, `url.searchParams.get("limit")`, `url.searchParams.get("room")`, `url.searchParams.get("since")`.
+
 ### `url.pathname.match(/^\/api\/routing\/residents(?:\/([^/]+)\/(renew&#124;revoke&#124;attention))?$/)`
 
-[Source](../../src/net/dashboard-api/routing.ts#L188)
+[Source](../../src/net/dashboard-api/routing.ts#L211)
 
-- Guard: `residentMatch && method === "POST"`
-- Guard: `method === "POST"`
+- Guard: `residentMatch && !residentMatch[1] && method === "GET"`
+- Guard: `method === "GET"`
 
 ### `url.pathname === "/api/routing/sessions"`
 
-[Source](../../src/net/dashboard-api/routing.ts#L217)
+[Source](../../src/net/dashboard-api/routing.ts#L268)
 
 - Guard: `url.pathname === "/api/routing/sessions"`
 - Guard: `method === "POST"`
@@ -910,7 +919,7 @@ Fields read here: `reply( router.list( url.searchParams.get("after") ?? "", rout
 
 ### `url.pathname.match( /^\/api\/routing\/sessions\/([^/]+)(?:\/(events&#124;heartbeat&#124;leave&#124;inbox&#124;messages&#124;deliveries&#124;runtime&#124;control)(?:\/([^/]+)(?:\/(ack))?)?)?$/, )`
 
-[Source](../../src/net/dashboard-api/routing.ts#L227)
+[Source](../../src/net/dashboard-api/routing.ts#L278)
 
 - Guard: `match`
 - Guard: `method === "GET"`
