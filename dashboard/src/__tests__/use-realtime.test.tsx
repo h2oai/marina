@@ -115,4 +115,59 @@ describe("useInvalidateOnEvent", () => {
 
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
   });
+
+  it("keeps a pending invalidation when a non-matching event follows inside the debounce", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    renderHook(() => useInvalidateOnEvent(["work"], (e) => e.type === "canvas_node_created", 50), {
+      wrapper: wrapperWith(client),
+    });
+    act(() => {
+      useWorldState
+        .getState()
+        .pushEvent({ type: "canvas_node_created", timestamp: Date.now() } as DashboardEvent);
+    });
+    act(() => {
+      useWorldState
+        .getState()
+        .pushEvent({ type: "entity_enter", timestamp: Date.now() } as DashboardEvent);
+    });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["work"] }));
+  });
+
+  it("sees a matching event that shares its millisecond with one already seen", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const at = Date.now();
+    renderHook(() => useInvalidateOnEvent(["work"], (e) => e.type === "canvas_node_created", 0), {
+      wrapper: wrapperWith(client),
+    });
+    act(() => {
+      useWorldState.getState().pushEvent({ type: "entity_enter", timestamp: at } as DashboardEvent);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(invalidate).not.toHaveBeenCalled();
+    act(() => {
+      useWorldState
+        .getState()
+        .pushEvent({ type: "canvas_node_created", timestamp: at } as DashboardEvent);
+    });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["work"] }));
+  });
+
+  it("rereads after the dashboard socket reconnects, since missed events never arrive", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    renderHook(() => useInvalidateOnEvent(["work"], () => false, 0), {
+      wrapper: wrapperWith(client),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(invalidate).not.toHaveBeenCalled();
+    act(() => {
+      useWorldState.setState((state) => ({
+        connectionGeneration: state.connectionGeneration + 1,
+      }));
+    });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["work"] }));
+  });
 });
