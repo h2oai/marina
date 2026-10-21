@@ -5,11 +5,13 @@ import { Logger } from "../engine/logger";
 import type { MarinaStores } from "../persistence/interfaces";
 import { formatResidentLabel } from "../sdk/resident-label";
 import type {
+  ResidentAttentionReport,
   ResidentCredential,
   ResidentEnrolInput,
   ResidentEnrolment,
 } from "../sdk/routing-runtime-types";
 import type { RoutingSession } from "../sdk/routing-types";
+import type { EngineEvent } from "../types";
 import { RoutingError } from "./errors";
 import { generateResidentName, residentNameProblem } from "./resident-name";
 
@@ -61,6 +63,7 @@ type Store = Pick<
   | "issueWorkloadCredential"
   | "revokeWorkloadCredentialsFor"
   | "getRoutingSession"
+  | "recordAttentionWakes"
 >;
 
 /** The live world, as enrolment needs it (an `Engine` provides every member). */
@@ -73,6 +76,8 @@ export interface ResidentWorld {
   roomOf(entityId: string): string | undefined;
   /** End the account's session tokens (a stopped resident cannot reconnect). */
   revokeSessions(entityId: string): void;
+  /** Emit a content-free engine event (attention bridge reports). */
+  logEvent?(event: EngineEvent): void;
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -96,6 +101,26 @@ function text(value: unknown, field: string, max = 128): string {
 }
 
 const NAME_TAKEN = "That name belongs to another account; choose another";
+
+const WAKE_DECISIONS = new Set(["now", "next", "context", "drop"]);
+const RESIDENT_STATUSES = new Set([
+  "starting",
+  "idle",
+  "running",
+  "waiting",
+  "stopped",
+  "failed",
+  "disconnected",
+]);
+const STEER_KINDS = new Set(["mid-turn", "next-turn", "none"]);
+type ResidentAttentionStatus = NonNullable<ResidentAttentionReport["status"]>["status"];
+
+/** A short machine token (a source or reason name), never free text. */
+function token(value: unknown, field: string): string {
+  if (typeof value !== "string" || !/^[a-z][a-z0-9_-]{0,31}$/.test(value))
+    throw new RoutingError(400, "invalid_input", `${field} must be a short lower-case token`);
+  return value;
+}
 
 /**
  * Supervised-resident accounts. Every call is attributed to the durable world
@@ -247,7 +272,22 @@ export class ResidentService {
       session: session.id,
       reused: result.reused,
     });
-    return { name, vendor, ...(arrival ? { room: arrival } : {}), ...result };
+    const saved = this.db.getAgentConfig(name);
+    return {
+      name,
+      vendor,
+      ...(arrival ? { room: arrival } : {}),
+      ...result,
+      ...(saved
+        ? {
+            attention: {
+              mode: saved.attention_mode,
+              threshold: saved.attention_threshold,
+              relay: saved.attention_relay ?? "all",
+            },
+          }
+        : {}),
+    };
   }
 
   /** A fresh credential for a live run the caller owns; the previous one is revoked. */
@@ -268,6 +308,68 @@ export class ResidentService {
       session: session.id,
     });
     return { name, credential };
+  }
+
+  /**
+   * Record what the run's attention bridge decided (refs and reasons, never
+   * content) and the resident's presence. Only the run that holds the
+   * resident reports; each kept decision and each presence change becomes one
+   * content-free engine event (`attention_wake`, `agent_status`).
+   */
+  attention(name: string, value: unknown): { name: string; recorded: number } {
+    const input = object(value) as Partial<ResidentAttentionReport>;
+    const config = this.owned(name);
+    const session = this.run(text(input.sessionId, "sessionId"));
+    if (config.run_session !== session.id)
+      throw new RoutingError(409, "run_mismatch", "This run no longer holds the resident");
+    const raw = input.wakes ?? [];
+    if (!Array.isArray(raw) || raw.length > 100)
+      throw new RoutingError(400, "invalid_input", "At most 100 wakes per report");
+    const wakes = raw.map((entry) => {
+      const wake = object(entry);
+      const decision = String(wake.decision);
+      if (!WAKE_DECISIONS.has(decision))
+        throw new RoutingError(400, "invalid_input", "Unknown wake decision");
+      const ref = wake.ref === undefined ? undefined : text(wake.ref, "ref", 128);
+      const hop = Number(wake.hop);
+      const at = Number(wake.at);
+      return {
+        entity: name,
+        ...(ref ? { perceptionRef: ref } : {}),
+        source: token(wake.source, "source"),
+        decision,
+        reason: token(wake.reason, "reason"),
+        hop: Number.isFinite(hop) ? Math.max(0, Math.min(1_000_000, Math.floor(hop))) : 0,
+        steered: wake.steered === true,
+        at: Number.isFinite(at) && at > 0 ? Math.floor(at) : Date.now(),
+      };
+    });
+    if (wakes.length) this.db.recordAttentionWakes(wakes);
+    for (const wake of wakes)
+      if (wake.decision !== "drop")
+        this.world.logEvent?.({
+          type: "attention_wake",
+          name,
+          source: wake.source,
+          decision: wake.decision as "now" | "next" | "context",
+          steered: wake.steered,
+          timestamp: wake.at,
+        });
+    if (input.status !== undefined) {
+      const status = object(input.status);
+      const state = String(status.status);
+      const steer = String(status.steer);
+      if (!RESIDENT_STATUSES.has(state) || !STEER_KINDS.has(steer))
+        throw new RoutingError(400, "invalid_input", "Unknown resident status");
+      this.world.logEvent?.({
+        type: "agent_status",
+        name,
+        status: state as ResidentAttentionStatus,
+        steer: steer as "mid-turn" | "next-turn" | "none",
+        timestamp: Date.now(),
+      });
+    }
+    return { name, recorded: wakes.length };
   }
 
   /**

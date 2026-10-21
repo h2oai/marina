@@ -44,7 +44,14 @@ export type RuntimeControl =
     }
   | { action: "prompt"; text: string }
   | { action: "interrupt" | "stop" | "resume" | "detach" }
-  | { action: "respond"; requestId: string; allow: boolean; answer?: string };
+  | { action: "respond"; requestId: string; allow: boolean; answer?: string }
+  /** Supervised residents: the attention policy the run's bridge applies (`agent attention-mode`). */
+  | {
+      action: "attention";
+      mode?: "focused" | "balanced" | "open";
+      threshold?: number;
+      relay?: "all" | "explicit";
+    };
 export interface RoutingSyncInput {
   publications?: { sessionId: string; events: import("./routing-types").RoutingEventInput[] }[];
   acknowledgments?: { sessionId: string; messageId: string }[];
@@ -76,4 +83,28 @@ export interface ResidentEnrolment {
   /** True when an existing resident account of the same owner was reused. */
   reused: boolean;
   credential: ResidentCredential;
+  /** The resident's stored attention policy (supervised residents' attention bridge). */
+  attention?: ResidentAttentionPolicy;
+}
+/** How a supervised resident's attention bridge decides and relays. */
+export interface ResidentAttentionPolicy {
+  mode: "focused" | "balanced" | "open";
+  threshold: number;
+  relay: "all" | "explicit";
+}
+/** `POST /api/routing/residents/:name/attention`: bridge decisions and presence. */
+export interface ResidentAttentionReport {
+  sessionId: string;
+  /** Wake decisions (refs and reasons only, never content), at most 100. */
+  wakes?: {
+    ref?: string;
+    source: string;
+    decision: "now" | "next" | "context" | "drop";
+    reason: string;
+    hop: number;
+    steered: boolean;
+    at: number;
+  }[];
+  /** The resident's current presence, when it changed. */
+  status?: { status: RuntimeState["status"]; steer: "mid-turn" | "next-turn" | "none" };
 }

@@ -86,6 +86,8 @@ export const EXPORT_TABLES = [
   "routing_events",
   "routing_messages",
   "routing_channel_receipts",
+  // Attention-bridge decisions (migration 174): refs and reasons, no content.
+  "attention_wakes",
   "tasks",
   "task_claims",
   "task_votes",

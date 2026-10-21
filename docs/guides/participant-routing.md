@@ -113,6 +113,34 @@ launched agent is its own world account instead of acting through the operator's
 - **Lifecycle.** The server never respawns a supervised resident and never runs or kills its process.
   `agent stop <name>` by its owner (with `code.exec`) sends a stop control to the supervisor. After a
   supervisor restart the resident is offline until you resume or relaunch it.
+- **Attention.** The supervisor reads every world perception that reaches the resident through the
+  same attention decision in-process agents use (`src/agent/attention.ts`: filters, scoring, the
+  request / information / acknowledgement split, the untrusted clamp, mode and threshold), in
+  `src/routing/attention-bridge.ts`. What it keeps is delivered as one `[World Events …]` digest,
+  one line per event, `[!]` marking what is owed:
+  - **Wake now** (a tell that asks something, a person's `agent attention <name> …`, anything over
+    the wake floor): an idle session gets the digest as its next prompt. A working session is
+    steered when its harness appends to a turn in flight: Codex `turn/steer` with `expectedTurnId`,
+    pi `steer` (or `follow_up` for lower priority). Claude reads streaming input between turns, so
+    it gets the digest when the current turn ends. A refused steer keeps the input for the next
+    prompt.
+  - **Everything else** (acknowledgements, information, room chatter) waits and rides along with the
+    next digest or your next prompt. Nothing wakes for noise and nothing is dropped.
+  - **Never woken while blocked**: a native permission question waiting on you, or a failing
+    credential renewal. Peer text is never an approval; only you answer native requests.
+  - **Final-reply relay** (on by default): when a turn that carried an owed item ends, its final
+    text goes back where the item came from — `re #<id>` for a tell, `say` in the room, `channel
+    send` for a channel post, a tell to the person who asked for attention — with that message as
+    its cause. A message that names its cause is a reply and never owed, so an exchange settles by
+    itself. `agent attention-mode <name> relay:explicit` turns the relay off (the agent then sends
+    only what it sends itself); `agent attention-mode <name> focused|balanced|open` and
+    `agent attention-feedback <name> useful|noise` tune what is kept. Only the owner may change
+    them; the supervisor applies a change at once (an `attention` runtime control).
+  - **Audit.** Each decision is recorded in `attention_wakes` (refs, sources and reasons only, kept
+    30 days) and kept decisions and presence changes emit content-free `attention_wake` and
+    `agent_status` events (`POST /api/routing/residents/:name/attention`, the holding run only).
+  - A `route note` to a resident's run is sent as a `tell` from you (connect to Marina first), so it is
+    durable and owed like any other tell.
 
 - **Review.** A resident asks a peer to review its worktree with `marina connect -c "code review
   request <name|auto> -- <claims>"`. The relay sees the request, captures the worktree's changes
@@ -341,6 +369,7 @@ version 1 under `protocols.routing`.
 | `POST /residents` | Supervised residents only: enrol `{sessionId, name?, room?}`; returns the credential once |
 | `POST /residents/:name/renew` | Supervised residents only: fresh credential for the owned live run `{sessionId}` |
 | `POST /residents/:name/revoke` | Supervised residents only: end the run's hold `{sessionId}` |
+| `POST /residents/:name/attention` | Supervised residents only: the holding run's wake decisions and presence `{sessionId, wakes?, status?}` |
 
 IDs inside URL path segments must be URL-encoded. Output cursors are per participant; channel cursors
 are canonical channel-message IDs. A cursor ahead of a restored output stream returns `409 cursor_ahead`

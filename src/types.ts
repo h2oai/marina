@@ -559,6 +559,28 @@ export type EngineEvent =
       depth: number;
       timestamp: number;
     }
+  /**
+   * A supervised resident's attention bridge kept a world perception
+   * (src/routing/attention-bridge.ts): `now` woke or steered it, `next` and
+   * `context` wait for its next digest. Names and reasons only.
+   */
+  | {
+      type: "attention_wake";
+      name: string;
+      source: string;
+      decision: "now" | "next" | "context";
+      steered: boolean;
+      timestamp: number;
+    }
+  /** A supervised resident's presence changed (idle, running, waiting for its owner…). */
+  | {
+      type: "agent_status";
+      name: string;
+      status: "starting" | "idle" | "running" | "waiting" | "stopped" | "failed" | "disconnected";
+      /** How world messages reach it while it works. */
+      steer: "mid-turn" | "next-turn" | "none";
+      timestamp: number;
+    }
   /** A direct message (`tell` / `re`) was delivered. Content-free, like `say_sent`. */
   | {
       type: "tell_sent";

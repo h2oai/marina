@@ -24,11 +24,29 @@ export interface AgentOptions {
     request: Omit<RuntimeRequest, "id">,
     signal?: AbortSignal,
   ) => Promise<{ allow: boolean; answer?: string }>;
+  /** The final assistant text of each completed turn (the attention bridge's reply relay). */
+  reply?: (text: string) => void;
 }
+/**
+ * How input reaches a native session while it works:
+ * - `mid-turn`: appended to the turn in flight (Codex `turn/steer`, pi `steer`);
+ * - `next-turn`: queued and read when the current turn ends (Claude streaming input);
+ * - `none`: only between turns.
+ */
+export type SteerKind = "mid-turn" | "next-turn" | "none";
 export interface ManagedAgent {
   prompt(text: string, id: string): Promise<void>;
   interrupt(): Promise<void>;
   stop(): void | Promise<void>;
+  readonly capabilities?: { steer: SteerKind };
+  /**
+   * Deliver input to the turn in flight (`urgent`), or queue it as a follow-up
+   * read after the turn (`urgent: false`, where the harness has one). Resolves
+   * `steered` when the harness accepted it into the running turn, `queued`
+   * when it will be read next; rejects when nothing accepted it (the caller
+   * keeps the input for the next prompt).
+   */
+  steer?(text: string, id: string, urgent: boolean): Promise<"steered" | "queued">;
 }
 export interface AgentAdapter {
   id: string;
@@ -44,6 +62,9 @@ function record(value: unknown): WireMessage {
 async function codex(options: AgentOptions): Promise<ManagedAgent> {
   let threadId = "";
   let turnId = "";
+  // The turn's last agent message, its final reply.
+  let messageItem = "";
+  let messageText = "";
   let stopping = false;
   const transport = new AgentTransport({
     command: options.executable,
@@ -100,16 +121,36 @@ async function codex(options: AgentOptions): Promise<ManagedAgent> {
         });
         return;
       }
+      if (method === "item/agentMessage/delta") {
+        const itemId = String(params.itemId ?? "");
+        if (itemId !== messageItem) {
+          messageItem = itemId;
+          messageText = "";
+        }
+        messageText += String(params.delta ?? "");
+      }
+      if (method === "item/completed") {
+        const item = record(params.item);
+        if (item.type === "agentMessage" && typeof item.text === "string") {
+          messageItem = String(item.id ?? messageItem);
+          messageText = item.text;
+        }
+      }
       if (method === "item/agentMessage/delta" || method === "item/commandExecution/outputDelta")
         options.emit("output", { text: params.delta, method, itemId: params.itemId });
       else if (!method.endsWith("/delta"))
         options.emit(`native.${method || "notification"}`, params);
       if (method === "turn/started") {
         turnId = String(record(params.turn).id);
+        messageItem = "";
+        messageText = "";
         options.state({ status: "running" });
       }
       if (method === "turn/completed") {
         turnId = "";
+        const final = messageText.trim();
+        messageText = "";
+        if (final) options.reply?.(final);
         options.state({ status: "idle" });
       }
     },
@@ -170,6 +211,22 @@ async function codex(options: AgentOptions): Promise<ManagedAgent> {
       });
       turnId = String(record(record(response.result).turn).id ?? "");
     },
+    capabilities: { steer: "mid-turn" },
+    async steer(text) {
+      // `expectedTurnId` makes the append conditional on the turn still being
+      // the one we saw; a finished or replaced turn rejects and the caller
+      // keeps the input for the next prompt.
+      if (!turnId) throw new Error("Codex has no turn in flight to steer");
+      await transport.request({
+        method: "turn/steer",
+        params: {
+          threadId,
+          expectedTurnId: turnId,
+          input: [{ type: "text", text, text_elements: [] }],
+        },
+      });
+      return "steered";
+    },
     async interrupt() {
       if (turnId)
         await transport.request({ method: "turn/interrupt", params: { threadId, turnId } });
@@ -206,7 +263,19 @@ async function pi(options: AgentOptions): Promise<ManagedAgent> {
         options.emit("output", { text: assistant.delta });
       else if (type !== "message_update") options.emit(`native.${type}`, message);
       if (type === "agent_start") options.state({ status: "running" });
-      if (type === "agent_settled") options.state({ status: "idle" });
+      if (type === "agent_settled") {
+        // The settled run's final reply, read from pi itself (never the stream).
+        if (options.reply)
+          void transport
+            .request({ type: "get_last_assistant_text" })
+            .then((response) => {
+              const text = record(response.data).text;
+              if (typeof text === "string" && text.trim()) options.reply?.(text.trim());
+            })
+            .catch((error) => options.emit("adapter.error", { text: getErrorMessage(error) }))
+            .finally(() => options.state({ status: "idle" }));
+        else options.state({ status: "idle" });
+      }
       if (
         type === "extension_ui_request" &&
         ["confirm", "select", "input", "editor"].includes(String(message.method))
@@ -246,6 +315,12 @@ async function pi(options: AgentOptions): Promise<ManagedAgent> {
   return {
     async prompt(message) {
       await transport.request({ type: "prompt", message, streamingBehavior: "followUp" });
+    },
+    capabilities: { steer: "mid-turn" },
+    async steer(message, _id, urgent) {
+      // `steer` reaches the run in flight; `follow_up` waits for it to end.
+      await transport.request({ type: urgent ? "steer" : "follow_up", message });
+      return urgent ? "steered" : "queued";
     },
     async interrupt() {
       await transport.request({ type: "abort" });
@@ -372,7 +447,11 @@ async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAge
         if (event.type === "stream_event" && delta.type === "text_delta")
           options.emit("output", { text: delta.text });
         else if (message.type !== "stream_event") options.emit(`native.${message.type}`, message);
-        if (message.type === "result") options.state({ status: "idle" });
+        if (message.type === "result") {
+          const final = typeof event.result === "string" ? event.result.trim() : "";
+          if (final) options.reply?.(final);
+          options.state({ status: "idle" });
+        }
       }
       if (mismatch) return;
       options.state({
@@ -388,18 +467,25 @@ async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAge
     }
   })();
   options.state({ status: "idle" });
+  const prompt = async (text: string, id: string) => {
+    if (mismatch) throw new Error(mismatch);
+    if (stopped) throw new Error("Claude session stopped");
+    pending.push({
+      type: "user",
+      message: { role: "user", content: text },
+      parent_tool_use_id: null,
+      session_id: "",
+      uuid: id as `${string}-${string}-${string}-${string}-${string}`,
+    });
+    wake?.();
+  };
   return {
-    async prompt(text, id) {
-      if (mismatch) throw new Error(mismatch);
-      if (stopped) throw new Error("Claude session stopped");
-      pending.push({
-        type: "user",
-        message: { role: "user", content: text },
-        parent_tool_use_id: null,
-        session_id: "",
-        uuid: id as `${string}-${string}-${string}-${string}-${string}`,
-      });
-      wake?.();
+    prompt,
+    // Streaming input is read when the current turn ends: honestly `next-turn`.
+    capabilities: { steer: "next-turn" },
+    async steer(text, id) {
+      await prompt(text, id);
+      return "queued";
     },
     async interrupt() {
       await stream.interrupt();

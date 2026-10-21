@@ -4259,6 +4259,15 @@ export class MarinaDB implements MarinaStores {
   ): AgentConfigRow | undefined {
     return agentsDb.recordAutomaticAttentionOutcome(this.db, name, outcome);
   }
+  setAttentionRelay(name: string, relay: agentsDb.AttentionRelay): boolean {
+    return agentsDb.setAttentionRelay(this.db, name, relay);
+  }
+  recordAttentionWakes(wakes: readonly agentsDb.AttentionWakeInput[]): number {
+    return agentsDb.recordAttentionWakes(this.db, wakes);
+  }
+  listAttentionWakes(entity: string, limit?: number): agentsDb.AttentionWakeRow[] {
+    return agentsDb.listAttentionWakes(this.db, entity, limit);
+  }
 
   // ─── Settings (delegated to db-agents.ts) ──────────────────────────────
 

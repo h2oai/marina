@@ -15,6 +15,7 @@ import { residentDefaultModel } from "../../config/model-tiers";
 import { bold, dim, header, separator } from "../../net/ansi";
 import { providerSetupHint } from "../../net/model/provider-setup";
 import type { AgentConfigRow, MarinaDB } from "../../persistence/database";
+import type { AttentionRelay } from "../../persistence/db-agents";
 import { isGrantedCompetence } from "../../persistence/db-competence";
 import { RoutingError } from "../../routing/errors";
 import { residentLabeler, supervisedResidentsEnabled } from "../../routing/residents";
@@ -107,6 +108,8 @@ export function agentCommand(deps: {
   db?: MarinaDB;
   /** Whether the named account has a live connection (supervised residents' status). */
   isOnline?: (name: string) => boolean;
+  /** The live entity of an agent account (supervised residents' attention). */
+  findAgent?: (name: string) => { id: EntityId } | undefined;
 }): CommandDef {
   return {
     category: "Agents",
@@ -118,6 +121,7 @@ export function agentCommand(deps: {
       { syntax: "agent attention-mode <name> balanced", effect: "write" },
       { syntax: "agent attention-mode <name> focused", effect: "write" },
       { syntax: "agent attention-mode <name> open", effect: "write" },
+      { syntax: "agent attention-mode <name> relay:all|explicit", effect: "write" },
       { syntax: "agent config <name> ..", effect: "write" },
       { syntax: "agent config <name> key <value>", effect: "write" },
       { syntax: "agent config <name> model <value>", effect: "write" },
@@ -163,6 +167,7 @@ Usage:
   agent enable <name>                         — clear a disable; the agent returns on next restart/room entry
   agent attention <name> <message>           — send attention to agent
   agent attention-mode <name> focused|balanced|open
+  agent attention-mode <name> relay:all|explicit — supervised residents: relay a woken turn's final reply, or not
   agent restart <name>                       — restart in place, preserving config/focus
   agent failover <name> <provider/model>     — restart on a fallback provider/model
   agent focus <name> <description>           — set agent focus
@@ -265,6 +270,32 @@ Usage:
           }
           const name = tokens[1];
           const mode = tokens[2] as "focused" | "balanced" | "open" | undefined;
+          const resident = supervisedResident(deps.db, name);
+          if (resident && deps.db) {
+            const { values, rest, errors } = parseModifiers(tokens.slice(2), {
+              relay: { type: "string" },
+            });
+            const nextMode = rest[0] as "focused" | "balanced" | "open" | undefined;
+            const relay = values.relay as AttentionRelay | undefined;
+            if (
+              errors.length > 0 ||
+              (relay !== undefined && relay !== "all" && relay !== "explicit") ||
+              rest.length > 1 ||
+              (nextMode !== undefined && !["focused", "balanced", "open"].includes(nextMode)) ||
+              (!nextMode && !relay)
+            ) {
+              ctx.send(
+                input.entity,
+                "Usage: agent attention-mode <name> [focused|balanced|open] [relay:all|explicit]",
+              );
+              return;
+            }
+            setResidentAttention(ctx, input.entity, entity, resident, deps.db, {
+              ...(nextMode ? { mode: nextMode } : {}),
+              ...(relay ? { relay } : {}),
+            });
+            return;
+          }
           if (!name || !mode || !["focused", "balanced", "open"].includes(mode)) {
             ctx.send(input.entity, "Usage: agent attention-mode <name> focused|balanced|open");
             return;
@@ -291,6 +322,17 @@ Usage:
           const feedback = tokens[2] as "useful" | "noise" | undefined;
           if (!name || !feedback || !["useful", "noise"].includes(feedback)) {
             ctx.send(input.entity, "Usage: agent attention-feedback <name> useful|noise");
+            return;
+          }
+          const resident = supervisedResident(deps.db, name);
+          if (resident && deps.db) {
+            if (resident.spawned_by !== entity.name) {
+              ctx.send(input.entity, `Only ${resident.name}'s owner can tune its attention.`);
+              return;
+            }
+            const saved = deps.db.recordAttentionFeedback(resident.name, feedback);
+            const threshold = saved?.attention_threshold ?? resident.attention_threshold;
+            setResidentAttention(ctx, input.entity, entity, resident, deps.db, { threshold });
             return;
           }
           try {
@@ -837,6 +879,68 @@ function stopSupervisedResident(
   );
 }
 
+/** The supervised resident named `name`, when supervised residents are on. */
+function supervisedResident(
+  db: MarinaDB | undefined,
+  name: string | undefined,
+): AgentConfigRow | undefined {
+  if (!db || !name || !supervisedResidentsEnabled()) return undefined;
+  const config = db.getAgentConfig(name);
+  return config?.runtime === "supervised" ? config : undefined;
+}
+
+/**
+ * Change a supervised resident's attention (mode, threshold, final-reply
+ * relay): stored on its agent config, then sent to its supervisor as an
+ * `attention` runtime control so the running bridge applies it at once. The
+ * owner only. With no run holding the resident, the stored setting applies
+ * at its next launch.
+ */
+function setResidentAttention(
+  ctx: RoomContext,
+  eid: EntityId,
+  caller: Entity,
+  config: AgentConfigRow,
+  db: MarinaDB,
+  change: { mode?: "focused" | "balanced" | "open"; threshold?: number; relay?: AttentionRelay },
+): void {
+  if (config.spawned_by !== caller.name) {
+    ctx.send(eid, `Only ${config.name}'s owner can change its attention.`);
+    return;
+  }
+  if (change.mode) db.updateAttentionPolicy(config.name, change.mode);
+  if (change.relay) db.setAttentionRelay(config.name, change.relay);
+  const saved = db.getAgentConfig(config.name) ?? config;
+  const policy = {
+    mode: saved.attention_mode,
+    threshold: change.threshold ?? saved.attention_threshold,
+    relay: saved.attention_relay ?? "all",
+  };
+  const summary = `mode ${policy.mode} · threshold ${policy.threshold} · relay ${policy.relay}`;
+  const session = config.run_session;
+  if (!session) {
+    ctx.send(
+      eid,
+      `Agent ${bold(config.name)} attention saved (${summary}); applies at its next launch.`,
+    );
+    return;
+  }
+  try {
+    new RoutingService(db, db.durableEntityKey(eid)).control(session, {
+      targetId: session,
+      clientMessageId: `agent-attention:${crypto.randomUUID()}`,
+      control: { action: "attention", ...policy },
+    });
+  } catch (error) {
+    ctx.send(
+      eid,
+      `Agent ${bold(config.name)} attention saved (${summary}); its supervisor did not take it: ${error instanceof Error ? error.message : error}`,
+    );
+    return;
+  }
+  ctx.send(eid, `Agent ${bold(config.name)} attention set: ${summary}.`);
+}
+
 /**
  * Retire a seeded agent durably: persist a disable marker (so the world seed,
  * autorespawn, and room-agent spawn all skip it across restarts) and stop the
@@ -904,8 +1008,35 @@ async function handleAttention(
   eid: EntityId,
   name: string,
   message: string,
-  deps: { agentRuntime: AgentRuntime },
+  deps: {
+    agentRuntime: AgentRuntime;
+    db?: MarinaDB;
+    getEntity: (id: EntityId) => Entity | undefined;
+    findAgent?: (name: string) => { id: EntityId } | undefined;
+  },
 ): Promise<void> {
+  const resident = supervisedResident(deps.db, name);
+  if (resident) {
+    // A supervised resident's supervisor wakes it (src/routing/attention-bridge.ts):
+    // the owner's attention is a priority perception, steered in when it can be.
+    const caller = deps.getEntity(eid);
+    if (!caller || resident.spawned_by !== caller.name) {
+      ctx.send(eid, `Only ${resident.name}'s owner sends it attention; use tell instead.`);
+      return;
+    }
+    const target = deps.findAgent?.(resident.name);
+    if (!target) {
+      ctx.send(eid, `${bold(resident.name)} is not in the world right now.`);
+      return;
+    }
+    ctx.send(target.id, `${caller.name} asks for your attention: ${message}`, "attention", {
+      attention: true,
+      senderName: caller.name,
+      message,
+    });
+    ctx.send(eid, `Attention sent to ${bold(resident.name)}.`);
+    return;
+  }
   const agent = deps.agentRuntime.get(name);
   if (!agent) {
     ctx.send(eid, `Agent "${name}" is not running.`);

@@ -58,6 +58,62 @@ async function body(req: Request): Promise<Record<string, unknown>> {
   return parsed as Record<string, unknown>;
 }
 
+/**
+ * A route note to a supervised resident's run is a world `tell` from the
+ * caller (src/routing/attention-bridge.ts wakes the resident with it), so it is
+ * durable, owed and visible like any other tell. The caller must be in the
+ * world to speak as themselves; otherwise the note is refused with that hint.
+ * Anything else (supervised residents off, other kinds, other targets) is
+ * left to the routing service unchanged.
+ */
+async function residentNoteAsTell(
+  ctx: DashboardRouteContext,
+  router: RoutingService,
+  sessionId: string,
+  input: Record<string, unknown>,
+): Promise<Response | undefined> {
+  const { db, callerId, req } = ctx;
+  if (!db || !supervisedResidentsEnabled() || input.kind !== "note") return undefined;
+  const targetId = input.targetId;
+  if (typeof targetId !== "string") return undefined;
+  const resident = db
+    .getAllAgentConfigs()
+    .find((config) => config.runtime === "supervised" && config.run_session === targetId);
+  if (!resident) return undefined;
+  const reply = (value: unknown, status = 200) =>
+    json(value, status, req.headers.get("Origin") ?? undefined);
+  const source = router.get(sessionId);
+  if (source.ownerId !== db.durableEntityKey(callerId) || source.state !== "active")
+    throw new RoutingError(404, "not_found", "Participant session not found");
+  const payload = input.payload as { text?: unknown } | undefined;
+  const text = typeof payload?.text === "string" ? payload.text.replace(/\s+/g, " ").trim() : "";
+  if (!text || text.length > 16000)
+    throw new RoutingError(
+      400,
+      "invalid_input",
+      "A note to a resident is text of 1–16000 characters",
+    );
+  const engine = ctx.engine;
+  if (!engine.getConnectionForEntity(callerId as EntityId))
+    return reply(
+      {
+        error: `${resident.name} is a world resident: connect to Marina and \`tell ${resident.name} …\``,
+        code: "connect_required",
+      },
+      409,
+    );
+  const admitted = await engine.dispatchCommand(
+    callerId as EntityId,
+    `tell ${resident.name} ${text}`,
+  );
+  if (!admitted)
+    return reply(
+      { error: "World command capacity reached; the tell was not sent", code: "busy" },
+      503,
+    );
+  return reply({ deliveredAs: "tell", target: resident.name });
+}
+
 export async function handleRoutingRoutes(
   ctx: DashboardRouteContext,
 ): Promise<Response | undefined> {
@@ -129,7 +185,7 @@ export async function handleRoutingRoutes(
     // Supervised residents (MARINA_SUPERVISED_RESIDENTS=on). Off, these paths
     // fall through to the unknown-endpoint reply exactly as before.
     const residentMatch = supervisedResidentsEnabled()
-      ? url.pathname.match(/^\/api\/routing\/residents(?:\/([^/]+)\/(renew|revoke))?$/)
+      ? url.pathname.match(/^\/api\/routing\/residents(?:\/([^/]+)\/(renew|revoke|attention))?$/)
       : null;
     if (residentMatch && method === "POST") {
       const input = await body(req);
@@ -143,6 +199,7 @@ export async function handleRoutingRoutes(
         hasRoom: (room) => !!engine.rooms.get(room as RoomId),
         roomOf: (id) => engine.entities.get(id as EntityId)?.room,
         revokeSessions: (id) => engine.sessionManager?.revokeByEntity(id as EntityId),
+        logEvent: (event) => engine.logEvent(event),
       };
       const [, rawName, action] = residentMatch;
       if (!rawName) {
@@ -154,6 +211,7 @@ export async function handleRoutingRoutes(
       if (!rawName) return reply(residents.enrol(input));
       const name = decodeURIComponent(rawName);
       if (action === "renew") return reply(residents.renew(name, input));
+      if (action === "attention") return reply(residents.attention(name, input));
       return reply(residents.revoke(name, input));
     }
     if (url.pathname === "/api/routing/sessions") {
@@ -204,7 +262,11 @@ export async function handleRoutingRoutes(
           if (method === "POST") {
             if (action === "events")
               return reply({ events: router.publish(id, (await body(req)).events) });
-            if (action === "messages") return reply(router.send(id, await body(req)));
+            if (action === "messages") {
+              const input = await body(req);
+              const asTell = await residentNoteAsTell(ctx, router, id, input);
+              return asTell ?? reply(router.send(id, input));
+            }
             if (action === "heartbeat") return reply(router.heartbeat(id));
             if (action === "leave") return reply(router.leave(id));
           }

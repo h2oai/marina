@@ -50,7 +50,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Adaptive load-balance routing | experimental | Request header `X-Load-Balance: adaptive` | src/net/model-api |
 | Benchmark route evidence for `model:route` | experimental | `MARINA_ROUTE_EVIDENCE=on` (default `observe` records only) | src/engine/benchmark-evidence.ts |
 | Earned forecast routing | experimental | `MARINA_FORECAST_HISTORY` with enough resolved outcomes | src/forecast |
-| Supervised residents | experimental | `MARINA_SUPERVISED_RESIDENTS=on` (server and supervisor) | src/routing/residents.ts, src/routing/supervisor.ts |
+| Supervised residents | experimental | `MARINA_SUPERVISED_RESIDENTS=on` (server and supervisor) | src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts |
 | Peer code review | experimental | `code review request <name>` or `auto`; supervised residents attach worktree snapshots | src/engine/commands/code/review-request.ts, src/routing/review-snapshot.ts |
 | Research authority mode | experimental | `MARINA_RESEARCH_AUTHORITY=on` | src/research |
 | The Arbiter | experimental | `MARINA_FORECAST_ARBITER`, `MARINA_VERIFY_ARBITER`; `arbiter` | src/orchestration/arbiter.ts |

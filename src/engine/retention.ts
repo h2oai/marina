@@ -114,6 +114,13 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "7-day ephemeral timeline (was trimmed only at startup)",
   },
   {
+    table: "attention_wakes",
+    timeColumn: "at",
+    kind: "telemetry",
+    keepMs: 30 * DAY_MS,
+    note: "attention-bridge decisions per supervised resident (refs and reasons only)",
+  },
+  {
     table: "schedule_runs",
     timeColumn: "started_at",
     kind: "telemetry",

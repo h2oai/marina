@@ -149,6 +149,13 @@ export interface ClientOptions {
 export interface CommandOptions {
     signal?: AbortSignal;
     codingTarget?: CodingCommandTarget;
+    /**
+     * Ref of a delivered message this command answers (`tell:12`,
+     * `channel_msg:4`, `say:<uuid>`). The server accepts only a ref it
+     * delivered to this client's entity; messages the command sends record it
+     * as their cause. Correlated commands only.
+     */
+    cause?: string;
 }
 type PerceptionHandler = (p: Perception) => void;
 /** Legacy results are observations, without guaranteed attribution or completion. */
@@ -3381,7 +3388,7 @@ export type EntityRank = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 [Source](../../src/sdk/routing-client.ts)
 
 ```typescript
-import type { ResidentCredential, ResidentEnrolInput, ResidentEnrolment, RoutingSyncInput, RoutingSyncResult, RuntimeControl, RuntimeState } from "./routing-runtime-types.js";
+import type { ResidentAttentionReport, ResidentCredential, ResidentEnrolInput, ResidentEnrolment, RoutingSyncInput, RoutingSyncResult, RuntimeControl, RuntimeState } from "./routing-runtime-types.js";
 import type { RoutingChannelPage, RoutingChannelReceipt, RoutingEvent, RoutingEventInput, RoutingEventPage, RoutingJoin, RoutingMessage, RoutingOverview, RoutingSend, RoutingSession, RoutingSessionPage } from "./routing-types.js";
 export type * from "./routing-runtime-types.js";
 export type * from "./routing-types.js";
@@ -3443,6 +3450,11 @@ export declare class MarinaRoutingClient {
     revokeResident(name: string, sessionId: string, signal?: AbortSignal): Promise<{
         name: string;
         revoked: number;
+    }>;
+    /** Report the run's attention-bridge decisions and the resident's presence. */
+    reportResidentAttention(name: string, report: ResidentAttentionReport, signal?: AbortSignal): Promise<{
+        name: string;
+        recorded: number;
     }>;
     private path;
     /** Resumable polling subscription. Persist nextCursor after processing each page.
@@ -3513,6 +3525,13 @@ export type RuntimeControl = {
     requestId: string;
     allow: boolean;
     answer?: string;
+}
+/** Supervised residents: the attention policy the run's bridge applies (`agent attention-mode`). */
+ | {
+    action: "attention";
+    mode?: "focused" | "balanced" | "open";
+    threshold?: number;
+    relay?: "all" | "explicit";
 };
 export interface RoutingSyncInput {
     publications?: {
@@ -3553,6 +3572,33 @@ export interface ResidentEnrolment {
     /** True when an existing resident account of the same owner was reused. */
     reused: boolean;
     credential: ResidentCredential;
+    /** The resident's stored attention policy (supervised residents' attention bridge). */
+    attention?: ResidentAttentionPolicy;
+}
+/** How a supervised resident's attention bridge decides and relays. */
+export interface ResidentAttentionPolicy {
+    mode: "focused" | "balanced" | "open";
+    threshold: number;
+    relay: "all" | "explicit";
+}
+/** `POST /api/routing/residents/:name/attention`: bridge decisions and presence. */
+export interface ResidentAttentionReport {
+    sessionId: string;
+    /** Wake decisions (refs and reasons only, never content), at most 100. */
+    wakes?: {
+        ref?: string;
+        source: string;
+        decision: "now" | "next" | "context" | "drop";
+        reason: string;
+        hop: number;
+        steered: boolean;
+        at: number;
+    }[];
+    /** The resident's current presence, when it changed. */
+    status?: {
+        status: RuntimeState["status"];
+        steer: "mid-turn" | "next-turn" | "none";
+    };
 }
 ```
 
