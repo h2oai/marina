@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { RoutingError } from "../../routing/errors";
+import {
+  ResidentService,
+  type ResidentWorld,
+  supervisedResidentsEnabled,
+} from "../../routing/residents";
 import { RoutingService, routingLimit } from "../../routing/service";
+import type { EntityId, RoomId } from "../../types";
 import { isSentinelPrincipal } from "../auth-middleware";
 import { authorizePrivileged, type DashboardRouteContext, json } from "./shared";
 
@@ -119,6 +125,36 @@ export async function handleRoutingRoutes(
         }
         return reply(result);
       }
+    }
+    // Supervised residents (MARINA_SUPERVISED_RESIDENTS=on). Off, these paths
+    // fall through to the unknown-endpoint reply exactly as before.
+    const residentMatch = supervisedResidentsEnabled()
+      ? url.pathname.match(/^\/api\/routing\/residents(?:\/([^/]+)\/(renew|revoke))?$/)
+      : null;
+    if (residentMatch && method === "POST") {
+      const input = await body(req);
+      const engine = ctx.engine;
+      const world: ResidentWorld = {
+        findLive: (name) => {
+          const entity = engine.entities.findAgentByName(name);
+          return entity && entity.name === name ? { id: entity.id } : undefined;
+        },
+        isConnected: (id) => engine.getConnectionForEntity(id as EntityId) !== undefined,
+        hasRoom: (room) => !!engine.rooms.get(room as RoomId),
+        roomOf: (id) => engine.entities.get(id as EntityId)?.room,
+        revokeSessions: (id) => engine.sessionManager?.revokeByEntity(id as EntityId),
+      };
+      const [, rawName, action] = residentMatch;
+      if (!rawName) {
+        // Enrolment creates an agent account: the caller's own agent.spawn gate.
+        const denied = authorizePrivileged(engine, db, callerId, "agent.spawn");
+        if (denied) return denied;
+      }
+      const residents = new ResidentService(db, db.durableEntityKey(callerId), callerId, world);
+      if (!rawName) return reply(residents.enrol(input));
+      const name = decodeURIComponent(rawName);
+      if (action === "renew") return reply(residents.renew(name, input));
+      return reply(residents.revoke(name, input));
     }
     if (url.pathname === "/api/routing/sessions") {
       if (method === "POST") return reply(router.join(await body(req)));

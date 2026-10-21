@@ -256,6 +256,21 @@ CREATE TABLE IF NOT EXISTS memory_known_at_backfill (
 `,
     apply: installMemoryKnownAt,
   },
+  // Migration 173 — supervised residents. `runtime` says who runs an agent
+  // account: `internal` (the in-process agent runtime, every existing row) or
+  // `supervised` (a native agent launched by a person's local routing
+  // supervisor, never respawned by the server). `vendor` is the native
+  // adapter id (`claude`, `codex`, `pi`), display only; NULL for internal rows.
+  // `run_session` is the routing session of the resident's current supervised
+  // run (renewal and `agent stop` address it); NULL when no run holds it.
+  {
+    version: 173,
+    sql: `
+ALTER TABLE agent_configs ADD COLUMN runtime TEXT NOT NULL DEFAULT 'internal';
+ALTER TABLE agent_configs ADD COLUMN vendor TEXT;
+ALTER TABLE agent_configs ADD COLUMN run_session TEXT;
+`,
+  },
 ];
 
 /** Migration 172 body — self-contained so later edits elsewhere never change it. */

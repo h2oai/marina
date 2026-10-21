@@ -14,11 +14,28 @@ import type {
 } from "../sdk/routing-types";
 import type { AgentAdapter, ManagedAgent } from "./agent-adapters";
 import { prepareAgentWorkspace, restoreAgentWorkspace } from "./agent-workspace";
+import type { ResidentConnection, ResidentConnector } from "./resident-connection";
+import { openResidentRelay, RELAY_SOCKET_ENV, type ResidentRelay } from "./resident-relay";
+
+/** A run's own world account (supervised residents). */
+interface ResidentRun {
+  name: string;
+  token: string;
+  expiresAt: number;
+  connection?: ResidentConnection;
+  /** The command relay the native process uses instead of a credential. */
+  relay?: ResidentRelay;
+  timer?: ReturnType<typeof setTimeout>;
+  /** Set while renewal is failing: deliveries pause, never another credential. */
+  blocked?: string;
+  retired?: boolean;
+}
 
 interface Run {
   session: RoutingSession;
   state: RuntimeState;
   agent?: ManagedAgent;
+  resident?: ResidentRun;
   requests: Map<
     string,
     { request: RuntimeRequest; resolve: (answer: { allow: boolean; answer?: string }) => void }
@@ -37,6 +54,13 @@ export interface SupervisorOptions {
   /** Exact credential strings stripped from published native events. */
   secrets?: string[];
   instructions?: string;
+  /**
+   * Supervised residents (`MARINA_SUPERVISED_RESIDENTS=on`): enrol each run's
+   * agent as its own world account before its process starts, hold its world
+   * connection, and give the process that account's credential instead of the
+   * supervisor's. Omitted: runs act through the supervisor's account as before.
+   */
+  residents?: { connect: ResidentConnector };
   /** Local presentation after durable journaling and credential redaction. */
   onEvent?: (session: RoutingSession, event: RoutingEventInput) => void;
 }
@@ -52,11 +76,14 @@ export class MarinaSupervisor {
   private cursor = 0;
   private lastHeartbeat = 0;
   private actions = new Set<Promise<void>>();
+  /** Credentials stripped from everything journaled or published. */
+  private readonly redactions: Set<string>;
   readonly id: string;
   get failure(): string | undefined {
     return this.fatalError;
   }
   constructor(private readonly options: SupervisorOptions) {
+    this.redactions = new Set((options.secrets ?? []).filter(Boolean));
     this.journal = new RoutingRunnerJournal(`${options.stateDirectory}/journal.db`);
     try {
       this.id = this.journal.identity(options.binding);
@@ -137,8 +164,7 @@ export class MarinaSupervisor {
   private emit(sessionId: string, kind: string, payload: unknown) {
     if (this.closed || this.fatalError) return;
     let json = JSON.stringify(payload) ?? "null";
-    for (const secret of this.options.secrets ?? [])
-      if (secret) json = json.replaceAll(secret, "[redacted]");
+    for (const secret of this.redactions) json = json.replaceAll(secret, "[redacted]");
     const bytes = Buffer.byteLength(json);
     const eventId = crypto.randomUUID();
     try {
@@ -196,8 +222,7 @@ export class MarinaSupervisor {
     if (this.closed) return;
     run.state = { ...run.state, ...patch, updatedAt: Date.now() };
     let saved = JSON.stringify(run.state);
-    for (const secret of this.options.secrets ?? [])
-      if (secret) saved = saved.replaceAll(secret, "[redacted]");
+    for (const secret of this.redactions) saved = saved.replaceAll(secret, "[redacted]");
     this.journal.save(run.session, JSON.parse(saved) as RuntimeState);
     this.emit(run.session.id, "runtime.state", run.state);
   }
@@ -220,6 +245,14 @@ export class MarinaSupervisor {
       (typeof control.prompt !== "string" || control.prompt.length > 16000)
     )
       throw new Error("Initial prompt exceeds 16000 characters");
+    if (
+      this.options.residents &&
+      ((control.name !== undefined &&
+        (typeof control.name !== "string" || control.name.length > 64)) ||
+        (control.room !== undefined &&
+          (typeof control.room !== "string" || control.room.length > 128)))
+    )
+      throw new Error("Invalid resident name or room");
     const workspace = await prepareAgentWorkspace(
       this.options.root,
       control.directory,
@@ -260,17 +293,175 @@ export class MarinaSupervisor {
         : "Workspace prepared",
     });
     try {
+      // A resident exists in the world before its process starts.
+      await this.enrol(run, { name: control.name, room: control.room });
       run.agent = await this.startAdapter(run, adapter);
       if (this.stopped) {
         await run.agent.stop();
+        await this.retire(run);
         return;
       }
       if (control.prompt?.trim()) await this.prompt(run, control.prompt, deliveryId);
     } catch (error) {
       this.state(run, { status: "failed", error: getErrorMessage(error) });
       await run.agent?.stop();
+      await this.retire(run);
       throw error;
     }
+  }
+  /**
+   * Enrol the run's agent as its own world account and hold its connection.
+   * No-op unless supervised residents are on. Never falls back to the
+   * supervisor's credential: a failure here fails the launch.
+   */
+  private async enrol(run: Run, request: { name?: string; room?: string }) {
+    const residents = this.options.residents;
+    if (!residents) return;
+    let enrolment: Awaited<ReturnType<MarinaRoutingClient["enrolResident"]>>;
+    try {
+      enrolment = await this.options.client.enrolResident(
+        {
+          sessionId: run.session.id,
+          ...(request.name ? { name: request.name } : {}),
+          ...(request.room ? { room: request.room } : {}),
+        },
+        AbortSignal.timeout(15_000),
+      );
+    } catch (error) {
+      // A server without supervised residents answers the unknown-endpoint 404.
+      if (
+        error instanceof RoutingApiError &&
+        error.status === 404 &&
+        error.message.startsWith("Unknown routing endpoint")
+      )
+        throw new Error(
+          "This Marina server does not enable supervised residents (MARINA_SUPERVISED_RESIDENTS=on); the agent was not started",
+        );
+      throw error;
+    }
+    this.redactions.add(enrolment.credential.token);
+    const resident: ResidentRun = {
+      name: enrolment.name,
+      token: enrolment.credential.token,
+      expiresAt: enrolment.credential.expiresAt,
+    };
+    run.resident = resident;
+    resident.connection = await residents.connect({
+      name: resident.name,
+      token: resident.token,
+      ...(enrolment.room ? { room: enrolment.room } : {}),
+    });
+    resident.relay = await openResidentRelay(async (command) => {
+      const connection = resident.connection;
+      if (resident.retired || !connection)
+        return { ok: false, output: "This resident has left Marina" };
+      if (Date.now() >= resident.expiresAt)
+        return { ok: false, output: "This resident's world credential has expired" };
+      return connection.command(command);
+    });
+    this.state(run, { resident: resident.name });
+    this.emit(run.session.id, "resident.enrolled", {
+      name: resident.name,
+      vendor: enrolment.vendor,
+      room: enrolment.room,
+      reused: enrolment.reused,
+      expiresAt: resident.expiresAt,
+    });
+    this.scheduleRenewal(run, resident);
+  }
+  /** Renew at 80 % of the credential's remaining lifetime. */
+  private scheduleRenewal(run: Run, resident: ResidentRun, delayMs?: number) {
+    clearTimeout(resident.timer);
+    if (resident.retired || this.closed) return;
+    const delay = delayMs ?? Math.max(0, (resident.expiresAt - Date.now()) * 0.8);
+    resident.timer = setTimeout(() => void this.renew(run, resident), delay);
+    (resident.timer as { unref?: () => void }).unref?.();
+  }
+  private async renew(run: Run, resident: ResidentRun) {
+    if (resident.retired || this.closed || run.resident !== resident) return;
+    try {
+      const { credential } = await this.options.client.renewResident(
+        resident.name,
+        run.session.id,
+        AbortSignal.timeout(15_000),
+      );
+      if (resident.retired) return;
+      this.redactions.add(credential.token);
+      resident.token = credential.token;
+      resident.expiresAt = credential.expiresAt;
+      resident.connection?.setCredential(credential.token);
+      if (resident.blocked) {
+        resident.blocked = undefined;
+        this.state(run, { error: undefined });
+      }
+      this.emit(run.session.id, "resident.renewed", {
+        name: resident.name,
+        expiresAt: resident.expiresAt,
+      });
+      this.scheduleRenewal(run, resident);
+    } catch (error) {
+      if (resident.retired) return;
+      resident.blocked = getErrorMessage(error);
+      this.emit(run.session.id, "resident.renewal_failed", {
+        name: resident.name,
+        text: `Credential renewal failed: ${resident.blocked}. Deliveries are paused; no other credential is used.`,
+      });
+      this.state(run, { error: `Resident credential renewal failed: ${resident.blocked}` });
+      const left = resident.expiresAt - Date.now();
+      if (left > 5_000) this.scheduleRenewal(run, resident, Math.min(60_000, left / 2));
+    }
+  }
+  /** Disconnect the resident and revoke this run's credential (idempotent). */
+  private async retire(run: Run) {
+    const resident = run.resident;
+    if (!resident || resident.retired) return;
+    resident.retired = true;
+    clearTimeout(resident.timer);
+    resident.relay?.close();
+    try {
+      resident.connection?.close();
+    } catch (error) {
+      log.warn("routing", "Resident disconnect failed", { error: getErrorMessage(error) });
+    }
+    try {
+      await this.options.client.revokeResident(
+        resident.name,
+        run.session.id,
+        AbortSignal.timeout(15_000),
+      );
+      this.emit(run.session.id, "resident.retired", { name: resident.name });
+    } catch (error) {
+      // The credential still expires on its own; report, never retry silently.
+      log.warn("routing", "Resident credential revoke failed", {
+        name: resident.name,
+        error: getErrorMessage(error),
+      });
+      this.emit(run.session.id, "resident.revoke_failed", {
+        name: resident.name,
+        text: getErrorMessage(error),
+      });
+    }
+  }
+  /**
+   * The native process environment. With residents on it carries NO world
+   * credential: every variable whose value holds a supervisor secret is
+   * dropped, MARINA_TOKEN is removed, and MARINA_RELAY_SOCKET names the
+   * resident's command relay (its own held connection).
+   */
+  private childEnvironment(run: Run): NodeJS.ProcessEnv {
+    const base = { ...this.options.agentEnvironment, MARINA_SESSION_ID: run.session.id };
+    if (!this.options.residents) return base;
+    const resident = run.resident;
+    if (!resident) throw new Error("Resident is not enrolled; the agent was not started");
+    const secrets = (this.options.secrets ?? []).filter(Boolean);
+    const env: NodeJS.ProcessEnv = {};
+    for (const [key, value] of Object.entries(base))
+      if (value !== undefined && !secrets.some((secret) => value.includes(secret)))
+        env[key] = value;
+    delete env.MARINA_TOKEN;
+    if (!resident.relay) throw new Error("Resident relay is not open; the agent was not started");
+    env[RELAY_SOCKET_ENV] = resident.relay.path;
+    return env;
   }
   private startAdapter(run: Run, adapter: AgentAdapter, resumeSessionId?: string) {
     const session = run.session;
@@ -279,9 +470,13 @@ export class MarinaSupervisor {
       model: run.state.model,
       resumeSessionId,
       executable: adapter.executable,
-      env: { ...this.options.agentEnvironment, MARINA_SESSION_ID: session.id },
+      env: this.childEnvironment(run),
       emit: (kind, payload) => this.emit(session.id, kind, payload),
-      state: (patch) => this.state(run, patch),
+      state: (patch) => {
+        this.state(run, patch);
+        // A native process that ended takes its world presence with it.
+        if (patch.status === "stopped" || patch.status === "failed") void this.retire(run);
+      },
       ask: (request, signal) =>
         new Promise((resolve) => {
           const id = crypto.randomUUID();
@@ -326,10 +521,13 @@ export class MarinaSupervisor {
       cwd: run.state.cwd,
     });
     try {
+      // Resume runs as the same resident account (its owner is checked again).
+      await this.enrol(run, { name: run.state.resident });
       run.agent = await this.startAdapter(run, adapter, id);
       if (this.stopped) {
         await run.agent.stop();
         run.agent = undefined;
+        await this.retire(run);
         return;
       }
       this.emit(run.session.id, "native.resumed", {
@@ -341,6 +539,7 @@ export class MarinaSupervisor {
       await run.agent?.stop();
       run.agent = undefined;
       this.state(run, { status: "failed", error: getErrorMessage(error) });
+      await this.retire(run);
       throw error;
     }
   }
@@ -355,7 +554,8 @@ export class MarinaSupervisor {
     // A fast adapter may finish during prompt(). Never overwrite its terminal state.
     this.state(run, { status: "running", error: undefined });
     try {
-      await run.agent.prompt(`${this.options.instructions ?? ""}\n\n${text}`, id);
+      const identity = run.resident ? `\nYour Marina world name is ${run.resident.name}.` : "";
+      await run.agent.prompt(`${this.options.instructions ?? ""}${identity}\n\n${text}`, id);
     } catch (error) {
       this.state(run, {
         status: "failed",
@@ -414,6 +614,7 @@ export class MarinaSupervisor {
       await run.agent.stop();
       run.agent = undefined;
       this.state(run, { status: "stopped", request: undefined });
+      await this.retire(run);
       return;
     }
     throw new Error("This managed session does not support that control");
@@ -494,6 +695,10 @@ export class MarinaSupervisor {
           entry.kind === "marina.control"
             ? (entry.payload as { action?: string })?.action
             : undefined;
+        // A resident whose credential renewal is failing gets no deliveries,
+        // only the owner's controls (stop, interrupt, approvals).
+        if (run.resident?.blocked && (entry.kind !== "marina.control" || action === "prompt"))
+          return false;
         // Busy agents retain queued prompts. Approval/interrupt/stop can pass them.
         return (
           (entry.kind === "marina.control" && action !== "prompt") ||
@@ -515,6 +720,7 @@ export class MarinaSupervisor {
       [...this.runs.values()].map(async (run) => {
         for (const request of run.requests.values()) request.resolve({ allow: false });
         await run.agent?.stop();
+        await this.retire(run);
       }),
     );
     await Promise.allSettled(this.actions);
@@ -524,6 +730,7 @@ export class MarinaSupervisor {
   }
   close() {
     this.closed = true;
+    for (const run of this.runs.values()) clearTimeout(run.resident?.timer);
     this.journal.close();
   }
 }

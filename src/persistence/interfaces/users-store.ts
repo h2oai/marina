@@ -15,6 +15,8 @@ export interface UsersStore {
   createUser(user: { id: string; name: string; rank?: number }): void;
   getUser(id: string): UserRow | undefined;
   getUserByName(name: string): UserRow | undefined;
+  /** Account names equal to `name` ignoring case. */
+  getUserNamesIgnoringCase(name: string): string[];
   /** All user rows, name-ordered. For maintenance/admin tooling. */
   listUsers(): UserRow[];
   updateUserLastLogin(id: string): void;
@@ -51,6 +53,7 @@ export const USERS_STORE_METHODS = [
   "createUser",
   "getUser",
   "getUserByName",
+  "getUserNamesIgnoringCase",
   "listUsers",
   "updateUserLastLogin",
   "updateUserRank",
