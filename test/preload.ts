@@ -16,7 +16,13 @@
  * test/asset-library.test.ts opts into `sync` (inline, awaited). An explicit
  * value wins only under `MARINA_TEST_KEEP_ENV=1`.
  */
+import { bunVersionRefusal } from "../src/version";
 import { scrubTestEnvironment } from "./hermetic-env";
+
+// The suite runs on the Bun CI pins; an older runtime fails tests for reasons
+// that are not in Marina, so refuse up front with the version named.
+const bunRefusal = bunVersionRefusal();
+if (bunRefusal) throw new Error(bunRefusal);
 
 scrubTestEnvironment();
 process.env.MARINA_ASSET_DERIVATIVES ??= "off";
