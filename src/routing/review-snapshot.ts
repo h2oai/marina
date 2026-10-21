@@ -3,6 +3,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { hostGitArgv, hostGitEnv } from "../coding/host-git";
 import type { RoutingEventInput } from "../sdk/routing-types";
 
 const exec = promisify(execFile);
@@ -58,8 +59,16 @@ export function withSnapshotModifier(command: string, snapshotId: string): strin
   return `${head} ${REVIEW_SNAPSHOT_MODIFIER}:${snapshotId}${tail}`;
 }
 
+/**
+ * Hardened host git (`hostGitArgv` / `hostGitEnv`): a worktree's own config
+ * cannot run an fsmonitor, hooks or diff drivers; `diff` gets `--no-ext-diff
+ * --no-textconv`, `diff --no-index` included.
+ */
 async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await exec("git", ["-C", cwd, ...args], {
+  const [cmd, ...argv] = hostGitArgv(["git", ...args]);
+  const { stdout } = await exec(cmd!, argv, {
+    cwd,
+    env: hostGitEnv(),
     maxBuffer: REVIEW_SNAPSHOT_MAX_BYTES * 4,
     encoding: "utf8",
   });
@@ -69,7 +78,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
 /** git diff --no-index exits 1 when the files differ; that is its success. */
 async function untrackedDiff(cwd: string, path: string): Promise<string> {
   try {
-    return await git(cwd, ["diff", "--no-index", "--", "/dev/null", path]);
+    return await git(cwd, ["diff", "--no-index", "--no-ext-diff", "--", "/dev/null", path]);
   } catch (error) {
     const out = (error as { stdout?: unknown }).stdout;
     if (typeof out === "string") return out;

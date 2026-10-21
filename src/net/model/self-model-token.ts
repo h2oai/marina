@@ -15,6 +15,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { localApiKeyPath } from "../local-api-key";
+import { modelApiKeySecrets } from "../model-api/api-keys";
 
 let serving = false;
 
@@ -39,13 +40,8 @@ function readLocalKey(dbPath: string): string | undefined {
 
 export async function selfModelToken(env: NodeJS.ProcessEnv = process.env): Promise<string> {
   if (!serving) {
-    const operator = env.MODEL_API_KEYS?.split(",")
-      .map((k) => k.trim())
-      .find(Boolean);
-    if (operator) {
-      const i = operator.indexOf(":");
-      return i < 0 ? operator : operator.slice(0, i);
-    }
+    const operator = modelApiKeySecrets(env)[0];
+    if (operator) return operator;
     const local = env.MARINA_LOCAL_API_KEY?.trim() || readLocalKey(env.DB_PATH || "marina.db");
     if (local) return local;
   }

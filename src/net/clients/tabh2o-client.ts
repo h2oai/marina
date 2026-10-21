@@ -233,7 +233,6 @@ export async function tabh2oPredict(
       body: JSON.stringify(toWireRequest(request)),
       signal: controller.signal,
     });
-    clearTimeout(timer);
 
     if (!res.ok) {
       // allow-empty-catch: the error body is optional detail; the status is reported regardless
@@ -253,10 +252,12 @@ export async function tabh2oPredict(
     }
     return { ok: true, response: fromWireResponse(request, json) };
   } catch (err) {
-    clearTimeout(timer);
     if ((err as Error).name === "AbortError") {
       return { ok: false, error: `TabH2O request timed out after ${timeoutMs}ms.` };
     }
     return { ok: false, error: `TabH2O request failed: ${(err as Error).message}` };
+  } finally {
+    // The deadline covers the whole exchange, body included.
+    clearTimeout(timer);
   }
 }

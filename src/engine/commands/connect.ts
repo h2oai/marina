@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { header, separator } from "../../net/ansi";
-import { validateFetchUrlSync } from "../../net/url-guard";
+import { validateFetchUrl } from "../../net/url-guard";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import type { ConnectorRuntime } from "../connector-runtime";
@@ -151,10 +151,18 @@ export function connectCommand(deps: {
             return;
           }
 
-          // SSRF protection: block private/internal URLs
-          const urlError = validateFetchUrlSync(url);
+          // The runtime dials the URL as soon as it is added: run the full
+          // fetch-time check (resolved addresses included), not only the literal one.
+          const urlError = await validateFetchUrl(url);
           if (urlError) {
             ctx.send(input.entity, `Blocked URL: ${urlError}`);
+            return;
+          }
+          if (db.getConnectorByName(name)) {
+            ctx.send(
+              input.entity,
+              `Connector "${name}" already exists. Use 'connect remove ${name}' first.`,
+            );
             return;
           }
 

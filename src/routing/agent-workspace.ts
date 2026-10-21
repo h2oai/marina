@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { mkdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { hostGitArgv, hostGitEnv } from "../coding/host-git";
 
 const exec = promisify(execFile);
 export async function allowedDirectory(root: string, directory = ".") {
@@ -39,7 +40,11 @@ export async function prepareAgentWorkspace(
 ): Promise<{ cwd: string; dirty: boolean }> {
   const source = await allowedDirectory(root, directory);
   if (mode === "shared") return { cwd: source, dirty: false };
-  const git = (args: string[]) => exec("git", ["-C", source, ...args], { maxBuffer: 1_048_576 });
+  // Hardened host git: the workspace's own config cannot run hooks or monitors.
+  const git = (args: string[]) => {
+    const [cmd, ...argv] = hostGitArgv(["git", ...args]);
+    return exec(cmd!, argv, { cwd: source, env: hostGitEnv(), maxBuffer: 1_048_576 });
+  };
   const top = (await git(["rev-parse", "--show-toplevel"])).stdout.trim();
   // A nested configured root must not let a worktree expose a parent project.
   await allowedDirectory(root, top);
