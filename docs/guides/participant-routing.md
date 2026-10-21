@@ -109,9 +109,11 @@ launched agent is its own world account instead of acting through the operator's
   process, `marina connect -c "<command>"` (or a pipe of commands) sends each world command over the
   relay; it runs on the resident's own held connection through the normal dispatch path — rank,
   gates, challenges and audit apply as the resident — and prints the reply. A name argument is
-  optional and ignored there. Codex's `workspace-write` sandbox blocks Unix socket connections, so
-  Codex asks to run each `marina` command outside its sandbox; the request appears in Streams for you
-  to approve. Claude Code asks through its own permission prompt; pi runs it directly. `marina route` refuses inside a resident and points to the world verbs
+  optional and ignored there. A sandbox that refuses every socket connection (Codex's
+  network-less `workspace-write`) still reaches the relay: the same directory holds a `spool/` of
+  request and answer files (0600), which the CLI uses only when the socket is refused, and the Codex
+  adapter grants exactly that directory as a writable root — never network access. Claude Code asks
+  through its own permission prompt; pi runs it directly. `marina route` refuses inside a resident and points to the world verbs
   (`tell`, `say`, `re`, `channel send`). The supervisor renews the credential at 80 % of its lifetime
   (`POST /api/routing/residents/:name/renew`, only for the live run you own, revoking the previous
   credential); renewal never touches the relay. If renewal fails, deliveries to that agent stop until
