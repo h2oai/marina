@@ -264,6 +264,14 @@ Compat profiles (`src/net/adapters/compat-profiles.ts`) are self-contained — t
 - `src/net/acp-server.ts` — Agent Client Protocol (ACP) stdio JSON-RPC server for editor clients (Zed, JetBrains, VS Code, Neovim); launched via `bun run scripts/acp.ts <name>`
 - `src/engine/gateway-runtime.ts` — federation: structured JSON relay with protocol versioning
 - `scripts/connect.ts` — CLI binary (`marina` command): REPL, one-shot (-c), pipe modes. One-shot lingers until output has been quiet for 2.5 s but only starts counting once the command produced SOME output (capped by `--wait`), so slow commands such as `readiness providers` or a model-backed `ask` are not cut off by their initial silence
+- `scripts/connect-repl.ts` + `scripts/term-*.ts` — the interactive `marina connect` terminal.
+  - `term-caps`: NO_COLOR / FORCE_COLOR / `--color`, colour depth, Unicode.
+  - `term-theme`: palettes and tokens; the only place raw colours live.
+  - `term-sanitize`: every server byte passes `sanitizeServerText`, which keeps vetted SGR only and drops OSC, cursor moves and hidden text.
+  - `term-render`: `⎿` / `●` / `◆` gutters and Markdown.
+  - `term-repl`: the bottom input area, collapse and history.
+  - `term-status` / `term-prompt` / `term-panels`: live dashboard data with the session's own bearer token, starship-style `$segment` formats and `/panels`.
+  - Pipe and one-shot output to a non-TTY stays plain and byte-identical to the old formatter.
 - `test/helpers.ts` — shared test utilities
 
 ## Environment Variables

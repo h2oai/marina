@@ -318,3 +318,33 @@ const ANSI_RE = /\x1b\[[0-9;]*m/g;
 export function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, "");
 }
+
+// ─── Terminal control sanitising ───────────────────────────────────────────
+
+// One escape sequence: CSI (7- or 8-bit), OSC / DCS / SOS / PM / APC strings up
+// to BEL or ST (or the end of the text), or a short escape (ESC, intermediates, final).
+const CONTROL_SEQUENCE_RE =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching escape sequences requires ESC and C1 bytes
+  /(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]?|(?:\x1b[\]PX^_]|[\x90\x98\x9d\x9e\x9f])[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?|\x1b[ -/]*[0-~]?/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the C0/C1 control ranges are the point
+const CONTROL_BYTES_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]|\r(?!\n)/g;
+// Bidi embeddings/overrides/isolates ("Trojan Source"): reorder what a reader sees.
+const BIDI_CONTROLS_RE = /[‪-‮⁦-⁩]/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: an SGR sequence starts with ESC
+const SGR_ONLY_RE = /^\x1b\[[0-9;:]*m$/;
+const CONTROL_RE = new RegExp(`${CONTROL_SEQUENCE_RE.source}|${CONTROL_BYTES_RE.source}`, "g");
+
+/**
+ * Text that cannot drive a terminal: every escape sequence (window titles,
+ * OSC 52 clipboard writes, hyperlinks, cursor moves, screen clears) and every
+ * other control byte removed; newline, tab and CRLF kept (a lone CR, which
+ * can overwrite a line on screen, is removed). With
+ * `keepSgr`, plain colour/emphasis sequences (`ESC [ … m`) survive — for
+ * output the server itself styled.
+ */
+export function stripControlSequences(text: string, options: { keepSgr?: boolean } = {}): string {
+  // One pass, sequences first in the alternation, so a kept SGR is never re-scanned for its ESC.
+  return text
+    .replace(CONTROL_RE, (match) => (options.keepSgr && SGR_ONLY_RE.test(match) ? match : ""))
+    .replace(BIDI_CONTROLS_RE, "");
+}

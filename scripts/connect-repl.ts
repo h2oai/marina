@@ -1,0 +1,458 @@
+// Copyright 2025-2026 H2O.ai, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * The interactive `marina connect` session: banner, the bottom input area,
+ * one command at a time (later lines queue, as in Claude Code), local slash
+ * panels, and a status bar fed by the live world. Scripted modes never come
+ * here — `connect.ts` keeps their output plain.
+ */
+
+import { visibleWidth } from "@earendil-works/pi-tui";
+import type { CommandCatalogEntry } from "../src/sdk/capabilities";
+import type { MarinaAgent, Perception } from "../src/sdk/client";
+import { MARINA_VERSION } from "../src/version";
+import { runCliCommand } from "./connect-command";
+import type { TermCaps } from "./term-caps";
+import { findPanel, PANELS } from "./term-panels";
+import {
+  type CliConfig,
+  type CliFormats,
+  DEFAULT_FORMATS,
+  loadCliConfig,
+  renderFormat,
+  type SegmentContext,
+  saveCliSetting,
+} from "./term-prompt";
+import { glyphsFor, type RenderOptions, renderPerception } from "./term-render";
+import { defaultHistoryFile, ReplScreen } from "./term-repl";
+import { httpBase, WorldStatus } from "./term-status";
+import { createTheme, gradientAt, PALETTES, paletteFor, type Theme } from "./term-theme";
+
+const WORDMARK = [
+  "▗▖  ▗▖ ▗▄▖ ▗▄▄▖ ▗▄▄▄▖▗▖  ▗▖ ▗▄▖ ",
+  "▐▛▚▞▜▌▐▌ ▐▌▐▌ ▐▌  █  ▐▛▚▖▐▌▐▌ ▐▌",
+  "▐▌  ▐▌▐▛▀▜▌▐▛▀▚▖  █  ▐▌ ▝▜▌▐▛▀▜▌",
+  "▐▌  ▐▌▐▌ ▐▌▐▌ ▐▌▗▄█▄▖▐▌  ▐▌▐▌ ▐▌",
+];
+
+/** Plain verbs for the busy line (no whimsy in a shared world). */
+const VERBS: Record<string, string> = {
+  ask: "Asking",
+  forecast: "Forecasting",
+  research: "Researching",
+  recall: "Recalling",
+  search: "Searching",
+  web: "Searching the web",
+  readiness: "Checking readiness",
+  look: "Looking",
+  move: "Moving",
+  goto: "Moving",
+  benchmark: "Benchmarking",
+  agent: "Working with agents",
+  code: "Coding",
+  task: "Updating tasks",
+  note: "Writing",
+  think: "Thinking",
+};
+
+export function busyLabel(input: string): string {
+  const verb = input.split(/\s+/, 1)[0]!.toLowerCase();
+  return `${VERBS[verb] ?? `Running ${verb}`}…`;
+}
+
+interface Session {
+  name: string;
+  entityId: string;
+}
+
+export interface InteractiveOptions {
+  agent: MarinaAgent;
+  session: Session;
+  url: string;
+  caps: TermCaps;
+  capabilities: CommandCatalogEntry[];
+  /** Restore the same identity after a dropped connection (the cached session token). */
+  reconnect?: () => Promise<void>;
+  /** Stop the login-time collector and take what it buffered (welcome, look, brief). */
+  handoff: () => Perception[];
+}
+
+export async function runInteractive(options: InteractiveOptions): Promise<void> {
+  const { agent, session, url } = options;
+  let config: CliConfig = loadCliConfig();
+  const out = process.stdout;
+  const makeTheme = () =>
+    createTheme(
+      { ...options.caps, columns: out.columns || options.caps.columns },
+      PALETTES[(config.theme ?? "").toLowerCase()] ?? paletteFor(options.caps),
+    );
+  let theme: Theme = makeTheme();
+  const status = new WorldStatus(httpBase(url), () => agent.getSession()?.token, session.name);
+  let capabilities = options.capabilities;
+  let connected = true;
+  let last: { ok: boolean; ms: number } | undefined;
+  const queue: string[] = [];
+  let running = false;
+  let closing = false;
+  let reconnecting = false;
+
+  const segmentContext = (): SegmentContext => ({
+    theme,
+    name: session.name,
+    connected,
+    snapshot: status.snapshot,
+    room: status.room(),
+    here: status.roomPopulation(),
+    last,
+    queued: queue.length,
+  });
+
+  const renderOptions = (): RenderOptions => {
+    const agents = new Set((status.snapshot.ops?.agents ?? []).map((a) => a.name));
+    return { theme, self: session.name, width: out.columns || 80, isAgent: (n) => agents.has(n) };
+  };
+
+  const screen = new ReplScreen({
+    input: process.stdin,
+    output: out,
+    theme,
+    historyFile: defaultHistoryFile(),
+    chrome: () => {
+      const c = segmentContext();
+      return {
+        prompt: renderFormat(config.prompt, c),
+        rule: renderFormat(config.rule, c),
+        left: renderFormat(config.status, c),
+        right: renderFormat(config.statusRight, c),
+      };
+    },
+    queued: () => queue.length,
+    completer: async (line) => complete(line),
+    onLine: (line) => {
+      queue.push(line);
+      void drain();
+    },
+    onClose: () => {
+      closing = true;
+      status.stop();
+      out.write(`${theme.fg("faint")(`${glyphsFor(theme).ellipsis} disconnected from ${url}`)}\n`);
+      agent.disconnect();
+      process.exit(0);
+    },
+  });
+
+  // ── output ────────────────────────────────────────────────────────────────
+  const pending = new Map<Perception, boolean>();
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const onPerception = (p: Perception) => {
+    if (p.data?.capabilities) return;
+    // Your command's own output waits for its outcome (so a refusal renders as
+    // one), unless the command runs long — then it streams.
+    if (running && p.command_request_id) {
+      pending.set(p, false);
+      flushTimer ??= setTimeout(flushPending, 1_200);
+      return;
+    }
+    screen.print(renderPerception(p, renderOptions(), { own: !!p.command_request_id }));
+  };
+  // A dropped socket (server restart, network) is a state, not an exit: the
+  // status bar says offline and the session comes back on its own token.
+  agent.on("disconnect", () => {
+    if (closing) return;
+    connected = false;
+    screen.refresh();
+    void reconnectLoop();
+  });
+  async function reconnectLoop() {
+    if (reconnecting || !options.reconnect) return;
+    reconnecting = true;
+    for (let attempt = 0; !connected && !closing; attempt++) {
+      await new Promise((r) => setTimeout(r, Math.min(1_000 * 2 ** attempt, 15_000)));
+      try {
+        await options.reconnect();
+        connected = true;
+        screen.flash("reconnected");
+        void status.refresh(true);
+      } catch {
+        screen.flash(`offline · retrying (${attempt + 1})`, 1_500);
+      }
+    }
+    reconnecting = false;
+    screen.refresh();
+  }
+
+  function flushPending() {
+    flushTimer = undefined;
+    const lines: string[] = [];
+    for (const [p, shown] of pending) {
+      if (shown) continue;
+      pending.set(p, true);
+      lines.push(...renderPerception(p, renderOptions(), { own: true }));
+    }
+    if (lines.length) screen.print(lines);
+  }
+
+  async function drain() {
+    if (running) {
+      screen.refresh();
+      return;
+    }
+    running = true;
+    while (queue.length) {
+      const line = queue.shift()!;
+      if (line.startsWith("/")) {
+        await slash(line);
+        continue;
+      }
+      const started = Date.now();
+      screen.setBusy(busyLabel(line));
+      let failed = false;
+      const report = (message: string) => {
+        failed = true;
+        screen.print([
+          `  ${theme.fg("faint")(glyphsFor(theme).result)}  ${theme.fg("error")(`${glyphsFor(theme).error} ${message}`)}`,
+        ]);
+      };
+      let ok = false;
+      try {
+        ok = await runCliCommand(agent, line, report);
+      } catch (err) {
+        // Not a refusal: the transport failed. Say so; the line is not retried.
+        report(`${err instanceof Error ? err.message : String(err)} — not run; reconnecting`);
+        if (!agent.isConnected()) {
+          connected = false;
+          void reconnectLoop();
+        }
+      }
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = undefined;
+      const lines: string[] = [];
+      for (const [p, shown] of pending)
+        if (!shown) lines.push(...renderPerception(p, renderOptions(), { own: true, failed: !ok }));
+      pending.clear();
+      last = { ok: ok && !failed, ms: Date.now() - started };
+      screen.setBusy(undefined);
+      if (lines.length) screen.printResult([...lines, ""]);
+      else if (!failed)
+        screen.print([`  ${theme.fg("faint")(`${glyphsFor(theme).result}  done`)}`, ""]);
+      // Movement, tasks and standing change with commands; read them now.
+      void status.refresh(true, ["world", "system", "profile"]);
+    }
+    running = false;
+    screen.refresh();
+  }
+
+  // ── slash commands ────────────────────────────────────────────────────────
+  const LOCAL: { name: string; describe: string }[] = [
+    { name: "help", describe: "keys, panels and how the prompt works" },
+    ...PANELS.map((p) => ({ name: p.name, describe: p.describe })),
+    { name: "statusline", describe: "show or change the status bar format" },
+    { name: "expand", describe: "show the last collapsed result in full (ctrl+o)" },
+    { name: "clear", describe: "clear the screen" },
+    { name: "quit", describe: "disconnect and exit (ctrl+d)" },
+  ];
+
+  async function slash(line: string) {
+    const [raw, ...rest] = line.slice(1).trim().split(/\s+/);
+    const name = (raw ?? "").toLowerCase();
+    const arg = rest.join(" ");
+    const g = glyphsFor(theme);
+    if (name === "" || name === "help" || name === "?")
+      return void screen.print([...helpCard(), ""]);
+    if (name === "quit" || name === "exit" || name === "q") return void screen.close();
+    if (name === "clear") return void screen.clear();
+    if (name === "expand") return void screen.expand();
+    if ((name === "prompt" || name === "statusline") && rest.length) {
+      const key: keyof CliFormats = name === "prompt" ? "prompt" : "status";
+      const [verb, ...formatParts] = rest;
+      // Keep the format exactly as typed after the verb (spaces matter).
+      const format = line.replace(/^\/\S+\s+\S+\s?/, "");
+      if (verb === "reset") {
+        saveCliSetting(key, undefined);
+        config = loadCliConfig();
+        screen.print([`  ${theme.fg("success")(g.ok)} ${name} reset to the default`, ""]);
+      } else if (verb === "set" && formatParts.length) {
+        saveCliSetting(key, format);
+        config = loadCliConfig();
+        screen.print([`  ${theme.fg("success")(g.ok)} ${name} saved to ~/.marina/cli.json`, ""]);
+      } else
+        screen.print([
+          `  ${theme.fg("error")(g.error)} usage: /${name} set <format> | /${name} reset`,
+          "",
+        ]);
+      screen.refresh(true);
+      return;
+    }
+    if (name === "statusline") {
+      screen.print([
+        `  ${theme.fg("muted")("now")}      ${renderFormat(config.status, segmentContext())}`,
+        `  ${theme.fg("muted")("format")}   ${theme.fg("code")(config.status)}`,
+        `  ${theme.fg("muted")("default")}  ${theme.fg("faint")(DEFAULT_FORMATS.status)}`,
+        `  ${theme.fg("faint")("/prompt lists every segment")}`,
+        "",
+      ]);
+      return;
+    }
+    if (name === "theme" && arg) {
+      const palette = PALETTES[arg.toLowerCase()];
+      if (!palette) {
+        screen.print([
+          `  ${theme.fg("error")(g.error)} no theme ${arg}; try ${Object.keys(PALETTES).join(", ")}`,
+          "",
+        ]);
+        return;
+      }
+      saveCliSetting("theme", palette.name);
+      config = loadCliConfig();
+      theme = makeTheme();
+      screen.setTheme(theme);
+      screen.print([`  ${theme.fg("success")(g.ok)} theme ${palette.name}`, ""]);
+      return;
+    }
+    const panel = findPanel(name);
+    if (!panel) {
+      const near = LOCAL.filter((l) => l.name.startsWith(name.slice(0, 2))).map(
+        (l) => `/${l.name}`,
+      );
+      screen.print([
+        `  ${theme.fg("error")(g.error)} no panel /${name}${near.length ? ` ${theme.fg("muted")(`— did you mean ${near.join(", ")}?`)}` : ""}`,
+        `    ${theme.fg("faint")("world commands need no slash; /help lists panels")}`,
+        "",
+      ]);
+      return;
+    }
+    if (panel.needs) {
+      screen.setBusy(`Reading ${panel.name}…`);
+      await status.refresh(true, panel.needs);
+      screen.setBusy(undefined);
+    }
+    screen.printResult([...panel.render(segmentContext()), ""]);
+  }
+
+  function helpCard(): string[] {
+    const t = theme;
+    const pad = Math.max(...LOCAL.map((l) => l.name.length)) + 3;
+    const keys: [string, string][] = [
+      ["enter", "run a world command (look, say hi, task list, ask <question> …)"],
+      ["tab", "complete commands and /panels"],
+      ["↑ ↓", "history (kept in ~/.marina/history, secrets skipped; MARINA_HISTORY=off)"],
+      ["ctrl+o", "expand the last collapsed result"],
+      ["ctrl+c", "clear the line; twice to exit"],
+      ["ctrl+d", "exit"],
+    ];
+    return [
+      `${t.bold(t.fg("accent")("Panels"))} ${t.fg("faint")("— local views of the live world; never sent as commands")}`,
+      ...LOCAL.map(
+        (l) => `  ${t.fg("code")(`/${l.name}`.padEnd(pad))}${t.fg("muted")(l.describe)}`,
+      ),
+      "",
+      t.bold(t.fg("accent")("Keys")),
+      ...keys.map(([k, v]) => `  ${t.fg("code")(k.padEnd(pad))}${t.fg("muted")(v)}`),
+      "",
+      `${t.fg("muted")("World help:")} ${t.fg("code")("help")}${t.fg("muted")(" · one command:")} ${t.fg("code")("help <command>")}${t.fg("muted")(" · what next:")} ${t.fg("code")("next")}`,
+    ];
+  }
+
+  async function complete(line: string): Promise<string[]> {
+    const words = line.trimStart();
+    if (words.startsWith("/")) {
+      const names = LOCAL.flatMap((l) => [l.name, ...(findPanel(l.name)?.aliases ?? [])]).map(
+        (n) => `/${n}`,
+      );
+      if (words.startsWith("/theme "))
+        return Object.keys(PALETTES)
+          .map((p) => `/theme ${p}`)
+          .filter((c) => c.startsWith(words));
+      return names.filter((n) => n.startsWith(words));
+    }
+    try {
+      capabilities = (await agent.capabilities()).commands;
+    } catch {
+      // allow-empty-catch: keep the last authenticated snapshot while disconnected.
+    }
+    const matches = capabilities
+      .flatMap((entry) => [
+        entry.name,
+        ...entry.aliases,
+        ...(entry.forms ?? []).map((form) => form.syntax.split(/ [<[]/)[0]!),
+      ])
+      .filter((candidate) => candidate.startsWith(words));
+    return [...new Set(matches)];
+  }
+
+  // ── banner ────────────────────────────────────────────────────────────────
+  await status.refresh(true, ["world", "health", "system", "profile"]);
+  printBanner();
+  // Same tick: nothing arrives between taking the burst and listening.
+  const burst = options
+    .handoff()
+    // The pre-login greeting is moot once the banner shows you logged in.
+    .filter((p) => !/Enter your name to begin/i.test(String(p.data?.text ?? "")))
+    .flatMap((p) => renderPerception(p, renderOptions(), { own: false }));
+  if (burst.length) out.write(`${burst.join("\n")}\n\n`);
+  agent.onPerception(onPerception);
+  status.onChange(() => screen.refresh());
+  status.start();
+  screen.setTitle(`marina · ${status.room() ?? session.name}`);
+  screen.show();
+
+  function printBanner() {
+    const t = theme;
+    const g = glyphsFor(t);
+    const width = Math.min(out.columns || 80, 100);
+    const lines: string[] = [""];
+    if (t.unicode && width >= 50) {
+      const span = WORDMARK[0]!.length + WORDMARK.length * 2;
+      for (const [row, text] of WORDMARK.entries()) {
+        const chars = [...text];
+        lines.push(
+          `  ${chars
+            .map((ch, col) =>
+              ch === " " || t.level < 2
+                ? t.level
+                  ? t.fg("accent")(ch)
+                  : ch
+                : `\x1b[${hexParams(gradientAt(t.palette.gradient, (col + row * 2) / span), t.level)}m${ch}\x1b[0m`,
+            )
+            .join("")}`,
+        );
+      }
+      lines.push("");
+    }
+    const c = segmentContext();
+    const world = status.snapshot.world?.name;
+    const info: string[] = [
+      `${t.fg("accent2")(t.unicode ? "✻" : "*")} ${t.bold("Welcome to Marina")}  ${t.fg("faint")(`v${MARINA_VERSION}`)}`,
+      "",
+      ...(world
+        ? [
+            `  ${t.fg("muted")("world")}    ${t.bold(world)}${status.snapshot.readiness?.profile ? t.fg("muted")(`  ·  ${status.snapshot.readiness.profile} profile`) : ""}`,
+          ]
+        : []),
+      ...(world ? [`  ${t.fg("muted")("world")}    ${t.bold(world)}`] : []),
+      `  ${t.fg("muted")("you")}      ${t.identity(session.name)(session.name)}${c.room ? t.fg("muted")(`  in ${c.room}`) : ""}${status.snapshot.profile ? t.fg("muted")(`  ·  standing ${status.snapshot.profile.standing.toFixed(1)}  ·  rank ${status.snapshot.profile.rank}`) : ""}`,
+      `  ${t.fg("muted")("server")}   ${t.fg("link")(url)}${status.snapshot.health ? t.fg("muted")(`  ·  ${status.snapshot.health.connections} online  ·  ${status.snapshot.health.agents} agents`) : ""}`,
+      "",
+      `  ${t.fg("code")("/help")} ${t.fg("muted")("for help,")} ${t.fg("code")("/status")} ${t.fg("muted")("for the world,")} ${t.fg("code")("next")} ${t.fg("muted")("for what to do")}`,
+    ];
+    const box = g.box;
+    const inner = width - 4;
+    const b = t.fg("accent");
+    lines.push(b(`${box.tl}${box.h.repeat(width - 2)}${box.tr}`));
+    for (const line of info)
+      lines.push(
+        `${b(box.v)} ${line}${" ".repeat(Math.max(0, inner - visibleWidth(line)))} ${b(box.v)}`,
+      );
+    lines.push(b(`${box.bl}${box.h.repeat(width - 2)}${box.br}`), "");
+    out.write(`${lines.join("\n")}\n`);
+  }
+}
+
+function hexParams(hex: string, level: number): string {
+  const n = Number.parseInt(hex.slice(1), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  if (level === 3) return `38;2;${r};${g};${b}`;
+  return `38;5;${16 + 36 * Math.round((r / 255) * 5) + 6 * Math.round((g / 255) * 5) + Math.round((b / 255) * 5)}`;
+}

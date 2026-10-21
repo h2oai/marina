@@ -13,6 +13,7 @@ import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harne
 import { fastestModelFor, inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters, NativeTerminal, type TerminalAgent } from "./code-native";
 import { codePerceptionFormat, codingSessionPhase, workerActivityLabel } from "./code-presentation";
+import { styleCodeEntry, themeFor } from "./code-style";
 import {
   CodeTerminal,
   type CodeTerminalOptions,
@@ -166,8 +167,10 @@ export class CodeConsole {
     if (this.terminal) this.terminal.write(text, view, urgent, format);
     else {
       const out = this.options.plainOutput ?? process.stdout;
+      const stream = out as { isTTY?: boolean; columns?: number };
+      const theme = themeFor(stream.isTTY ? stream : undefined);
       out.write(
-        `${format === "diff" ? colorizeDiff(text, diffColorEnabled(out as { isTTY?: boolean })) : text}\n`,
+        `${format === "diff" ? colorizeDiff(text, diffColorEnabled(stream), theme) : styleCodeEntry(text, theme)}\n`,
       );
     }
   }

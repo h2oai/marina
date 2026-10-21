@@ -14,6 +14,7 @@ import { terminalCompletionItems } from "./code-completion";
 import { colorizeDiff, diffColorEnabled } from "./code-diff";
 import type { CodeEditor, CodeEditorOptions, CodeEditorState } from "./code-editor";
 import { terminalText } from "./code-presentation";
+import { styleCodeEntry, stylePrompt, themeFor } from "./code-style";
 import type { EntryFormat, TerminalView } from "./code-views";
 
 interface Draft {
@@ -141,6 +142,7 @@ export class ReadlineCodeEditor implements CodeEditor {
     const folder = basename(location?.split(" · ").at(-1)?.trim() || "") || "marina";
     const agent = target && !target.startsWith("marina") ? ` · ${compact(target, 18)}` : "";
     const busy = status ? ` · ${compact(status, Math.max(8, limit - 24))}` : "";
+    const coding = !answer && focus !== "world" && focus !== "panel";
     const destination = answer
       ? "answer"
       : focus === "world"
@@ -148,8 +150,23 @@ export class ReadlineCodeEditor implements CodeEditor {
         : focus === "panel"
           ? "panel control"
           : `${compact(folder, 24)}${agent}${busy}`;
-    const waiting = badge ? ` · ${badge}` : "";
-    this.rl.setPrompt(`${destination}${waiting}${multiline && !answer ? " …" : ""} › `);
+    this.rl.setPrompt(
+      stylePrompt(
+        {
+          destination,
+          ...(coding
+            ? {
+                folder: compact(folder, 24),
+                agent: agent ? agent.slice(3) : undefined,
+                status: busy ? busy.slice(3) : undefined,
+              }
+            : {}),
+          badge: badge || undefined,
+          more: !!multiline && !answer,
+        },
+        themeFor(this.tty ? this.options.output : undefined),
+      ),
+    );
     this.rl.prompt(true);
   }
 
@@ -164,9 +181,11 @@ export class ReadlineCodeEditor implements CodeEditor {
   print(text: string, format?: EntryFormat) {
     const rows = this.tty && !this.closed ? this.clearPrompt() : 0;
     const safe = terminalText(text);
-    // Colour is added after sanitising, only from the structured diff hint.
+    // Colour is added after sanitising, only from structure: the diff hint
+    // and the entry's label, never from bytes in the text.
+    const theme = themeFor(this.tty ? this.options.output : undefined);
     this.options.output.write(
-      `${format === "diff" ? colorizeDiff(safe, diffColorEnabled(this.options.output)) : safe}\n`,
+      `${format === "diff" ? colorizeDiff(safe, diffColorEnabled(this.options.output), theme) : styleCodeEntry(safe, theme)}\n`,
     );
     if (rows) this.options.output.write("\n".repeat(rows));
     this.redraw();
