@@ -41,6 +41,8 @@ Please include:
 - DoS via excessive command queuing on an unauthenticated dev instance running with `MARINA_OPEN_API=true`. The flag is documented as dev-only.
 - Findings in dependencies that have no impact on Marina's actual usage of them — please open an issue against the dependency itself.
 
+What Marina stores and sends (no telemetry) is described in [Data, privacy and terms](docs/guides/data-privacy-and-terms.md).
+
 ## Hall of fame
 
 Reporters who follow this policy and help us ship a fix are credited in the corresponding advisory and in `CHANGELOG.md`. We don't run a paid bounty program.

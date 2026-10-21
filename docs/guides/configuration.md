@@ -25,6 +25,10 @@ when using the installed CLI. Process environment overrides remain effective at 
 Use `readiness` for actual capability configuration and `readiness providers` for live
 connectivity checks (the latter may spend provider tokens).
 
+What Marina stores, what it sends where, and the switches for each web source (robots.txt,
+the keyless DuckDuckGo and Yahoo Finance fallbacks) are in
+[Data, privacy and terms](data-privacy-and-terms.md).
+
 ---
 
 ## Minimal Setup

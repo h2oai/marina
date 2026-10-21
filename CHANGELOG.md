@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Page reads honour robots.txt; keyless web sources can be turned off.** Before Marina reads a
+  third-party page for an agent or a person (`web fetch`, `web swarm`, `scenario` URL reads, the
+  research page reader and citation check, the live Civiqs read), it checks the site's robots.txt
+  for its `MarinaResearch` user agent (`src/net/robots.ts`: its own group, else `*`; longest
+  Allow/Disallow match, `*` and `$` patterns) and sends that user agent with the read. A disallowed
+  page is not requested and the read answers "blocked by robots.txt" instead of failing. robots.txt
+  goes through the SSRF guard and is cached per origin for 24 h; a 4xx means no rules; a 5xx, 429
+  or timeout fails open and is retried after 10 min. API calls are not page reads.
+  `MARINA_ROBOTS_TXT=ignore` turns the check off and `MARINA_ROBOTS_TXT_IGNORE_ORIGINS` exempts
+  sites the operator owns. The keyless DuckDuckGo search fallback (`MARINA_SEARCH_DUCKDUCKGO=off`)
+  and Yahoo Finance series history (`MARINA_FORECAST_YAHOO=off`) stay on by default and can now
+  be turned off: search falls through to the keyed backends and says so, a Yahoo series has no
+  prior. `readiness` (check `search`) reports all three. New guide:
+  [Data, privacy and terms](docs/guides/data-privacy-and-terms.md).
+
 - **A new front door.** The README, landing page and docs overview are rewritten to be shorter
   and plainer, with the forecasting, research, orchestration and coding commands every participant
   gets up front. The docs sidebar and guides index are regrouped by what a reader wants to do, and

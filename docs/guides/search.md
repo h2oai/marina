@@ -19,6 +19,10 @@ quota or key problem, is skipped for ten minutes. `readiness` shows each backend
 `search`), from real calls only — it never spends a credit to probe. Tavily calls are priced into
 the daily spend ledger (source `search`).
 
+`web fetch` honours the site's robots.txt for Marina's `MarinaResearch` user agent; a disallowed
+page answers "Not read: blocked by robots.txt". `MARINA_SEARCH_DUCKDUCKGO=off` removes the keyless
+DuckDuckGo fallback. See [Data, privacy and terms](data-privacy-and-terms.md) for both switches.
+
 ## Searching as of a date
 
 Add `before:<date>` (alias `asof:`) and only **date-strict** providers answer. A bare
