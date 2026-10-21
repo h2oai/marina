@@ -36,7 +36,7 @@ const VERSION_MARKER = /\n?\[guidelines_version=(\d+)\]\s*$/;
 const SYSTEM = "system";
 const HISTORY_SCAN = 500;
 
-/** Curator duty appended to each helper's guidelines (Phase 3.1). */
+/** Curator duty appended to each helper's guidelines. */
 export const MEMORY_HELPER_CURATOR_DUTIES: Record<MemoryHelperRole, string> = {
   evaluator:
     "Steward duty — when a job names competing, stale, or pending assertions (a [hygiene] or [shared-write-review] task), adjudicate each one with citations: say which assertion the evidence supports, what is missing, and which resolve policy you recommend — last_writer_wins, evidence_weighted, await_confirmation, or keep_both — with the reason, as part of your answer. Never apply a policy yourself; the owner runs memory resolve, or does not.",

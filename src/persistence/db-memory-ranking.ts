@@ -65,7 +65,7 @@ export function rankMemoryVectors(
   };
 }
 
-// ─── Reputation-weighted shared ranking (Phase 3.6) ─────────────────────────
+// ─── Reputation-weighted shared ranking ─────────────────────────
 //
 // The durable `search` fuses lexical + semantic ranks in `src/memory/service.ts`
 // (RRF, k=60) and never sees who wrote a record. Authorship IS recoverable

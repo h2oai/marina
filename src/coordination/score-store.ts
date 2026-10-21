@@ -5,7 +5,7 @@
  * Persistence for Score artifacts — a thin layer over the `scores` memory pool.
  *
  * Shared by the `conduct` command (author/inspect) and the calibration finder
- * (Phase 5 automatic closure), so both agree on how a stored Score is tagged
+ * (automatic closure), so both agree on how a stored Score is tagged
  * and parsed. Storage is intentionally pool-notes, not a table: Scores are
  * artifacts agents author, fork, and mutate (docs/architecture/orchestration.md).
  */

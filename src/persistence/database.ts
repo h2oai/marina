@@ -2484,7 +2484,7 @@ export class MarinaDB implements MarinaStores {
   }
 
   // ─── Chronicle (delegated to db-chronicle.ts) ──────────────────────────
-  // The canonical, append-only record of the Marina. See docs/chronicle.md.
+  // The canonical, append-only record of the Marina. See docs/architecture/chronicle.md.
 
   appendChronicle(entry: chronicleDb.InsertChronicle): number {
     return chronicleDb.appendChronicle(this.db, entry);

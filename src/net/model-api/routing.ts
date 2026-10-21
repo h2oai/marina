@@ -1309,7 +1309,7 @@ export function routeToChannelStreaming(
           return;
         }
 
-        // Phase 1 compat: single model_response → wrap as one chunk + end
+        // Compat: single model_response → wrap as one chunk + end
         if (parsed.type === "model_response" && parsed.id === reqId) {
           cleanup();
           finishTrace("completed");

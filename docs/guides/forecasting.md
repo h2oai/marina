@@ -1,7 +1,7 @@
 # Forecasting any question
 
 Marina answers forecasting questions with a probability or a number, backed by cited and checked
-evidence and several models, in about 20–60 seconds for $0.03–0.10. It also answers **typed**
+evidence and several models, typically in under a minute. It also answers **typed**
 questions — pick one option, pick a set of options, give a number, rank a list, or name something —
 with a planning step, iterative research, several independent runs and a critique pass
 ([Typed answers](#typed-answers)).
@@ -120,8 +120,8 @@ bun run qualify:investigations:replay /path/to/live/report.json
 Replay needs Chromium and opens a local server without provider credentials. It checks the same
 saved revisions and citations in the web UI, dashboard, private chat, CLI and native terminal,
 including narrow screens and reloads, and rejects new admissions or spend during those reads.
-Keep pilot databases, screenshots, captured evidence and qualification reports private; project
-qualification records belong in `marina-internal`.
+Keep pilot databases, screenshots, captured evidence and qualification reports private; keep
+qualification records outside this repository.
 
 ## What happens
 
@@ -220,7 +220,7 @@ it with cited evidence, or abstains. An overrule of a majority needs citations f
 domains and confidence of at least 0.7 (`MARINA_ARBITER_*`). `observe` records the verdict on the
 answer (`arbiter`) and changes nothing. `on` makes verifier corrections and critic revisions advisory,
 so only a bar-clearing overrule changes the answer. `replace` also skips the per-run verifier. See
-[the Arbiter](../architecture/orchestration.md#the-arbiter-adjudication-only-where-answers-disagree-2026-10-20).
+[the Arbiter](../architecture/orchestration.md#the-arbiter-adjudication-only-where-answers-disagree).
 
 **Lessons.** A forecast can recall lessons from questions that have already resolved. There is
 one lesson system: the judged, audited outcome loop

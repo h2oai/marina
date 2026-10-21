@@ -29,7 +29,7 @@
  * them than a fading spike of the same projected mass.
  *
  * Defaults were chosen by walk-forward backtest on mean per-round skill
- * (`scripts/arena-wiki-backtest.ts`, docs/guides/arena.md).
+ * (`scripts/arena-wiki-backtest.ts`).
  */
 
 import { isExcludedTitle } from "./forecast";

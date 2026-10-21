@@ -3,10 +3,10 @@
 
 /**
  * The spec sheet (`spec.json`) of a learned bundle: what is in it and how well
- * it is evidenced, so a reader can judge it before importing. Phase 1 fills
+ * it is evidenced, so a reader can judge it before importing. It records
  * counts, rank distribution, judge labels, confirmation rates, default
  * evidence summaries, scan audit counts and tier sizes. Parity results (this
- * version vs none, single-model arm included) are a later phase.
+ * version vs none, single-model arm included) are not included yet.
  */
 
 import type { MarinaDB } from "../persistence/database";

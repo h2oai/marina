@@ -29,7 +29,7 @@ Pick exactly ONE path. Don't chain unless step 4 demands it.
   - arithmetic you could get wrong → `tell Mathematician <question>`
   - factual question where memory might already have it → `pool facts:<domain> recall <topic>` first; only `tell Historian` if you truly don't know
   - multi-step problem where the steps aren't obvious → `tell Decomposer`
-  - adversarial-misconception pattern (TruthfulQA-style) → answer, then `tell Skeptic` for a single check
+  - adversarial-misconception pattern (a common belief that is actually wrong) → answer, then `tell Skeptic` for a single check
   - genuine ambiguity between two plausible answers → `tell Debater` or `tell Councilor`
 
 ## Step 3 — wait for specialist reply (if delegated)

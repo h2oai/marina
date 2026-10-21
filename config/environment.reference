@@ -64,11 +64,11 @@
 # @restart
 # MARINA_SINGLE_PORT=false
 
-# Experimental: for embedders (Flow, Nov 2026). Shut down gracefully after this long with no external use, no open agent turn and no pending background work (`15m`, `900s`, `1h`; 0 or unset = never). External use is an HTTP or MCP request (in flight until a streamed response — SSE or NDJSON, an MCP client's event stream included — ends), an open WebSocket (dashboard, chat, SDK) or telnet connection, or a frame on one; the clock starts when the last of them ends. An idle MCP session with no open stream does not count. Health probes and Marina's own agents calling its /v1 are not activity, autonomous agent turns never reset the clock, and an open turn stops postponing the exit when its agent stops or after 30 minutes. For on-demand instances that a host starts when needed (see endpoint.json under MARINA_DATA_DIR).
+# Experimental: for embedding hosts. Shut down gracefully after this long with no external use, no open agent turn and no pending background work (`15m`, `900s`, `1h`; 0 or unset = never). External use is an HTTP or MCP request (in flight until a streamed response — SSE or NDJSON, an MCP client's event stream included — ends), an open WebSocket (dashboard, chat, SDK) or telnet connection, or a frame on one; the clock starts when the last of them ends. An idle MCP session with no open stream does not count. Health probes and Marina's own agents calling its /v1 are not activity, autonomous agent turns never reset the clock, and an open turn stops postponing the exit when its agent stops or after 30 minutes. For on-demand instances that a host starts when needed (see endpoint.json under MARINA_DATA_DIR).
 # @restart
 # MARINA_IDLE_SHUTDOWN=0
 
-# Experimental: for embedders (Flow, Nov 2026). Exit gracefully when this process id no longer exists — for a Marina owned by a host process that may die without stopping it.
+# Experimental: for embedding hosts. Exit gracefully when this process id no longer exists — for a Marina owned by a host process that may die without stopping it.
 # @restart
 # MARINA_PARENT_PID=
 
@@ -275,7 +275,7 @@
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 
-# One directory for everything this instance writes. When set, every path setting below that is unset moves under it (DB_PATH → <dir>/marina.db, ASSETS_DIR → <dir>/assets, MARINA_SCRATCH_DIR → <dir>/scratch, BETTER_AUTH_DB_PATH, the embedding model caches), the dashboard settings editor reads and writes <dir>/.env, a running instance publishes <dir>/endpoint.json (url, MCP url, pid, local key; mode 600; removed on clean exit — written only with this setting; the endpoint file is experimental: for embedders (Flow, Nov 2026)), and keys from that file fill only variables the process environment leaves unset. Nothing is written to the working directory. An explicit path setting still wins. Created (mode 700) when missing.
+# One directory for everything this instance writes. When set, every path setting below that is unset moves under it (DB_PATH → <dir>/marina.db, ASSETS_DIR → <dir>/assets, MARINA_SCRATCH_DIR → <dir>/scratch, BETTER_AUTH_DB_PATH, the embedding model caches), the dashboard settings editor reads and writes <dir>/.env, a running instance publishes <dir>/endpoint.json (url, MCP url, pid, local key; mode 600; removed on clean exit — written only with this setting; the endpoint file is experimental: for embedding hosts), and keys from that file fill only variables the process environment leaves unset. Nothing is written to the working directory. An explicit path setting still wins. Created (mode 700) when missing.
 # @restart
 # MARINA_DATA_DIR=
 

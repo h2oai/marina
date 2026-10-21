@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The shape→outcome prior store — Phase 5's learning loop.
+ * The shape→outcome prior store behind the Conductor's learning loop.
  *
  * When a Score finishes and its outcome is known, we record the Score's *shape*
  * (topology, step count, workers) alongside the outcome score into a shared

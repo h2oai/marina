@@ -30,8 +30,8 @@ free_gb() { df -BG --output=avail / | tail -1 | tr -dc '0-9'; }
 
 # Reclaim every image not used by a running container, plus build cache. The
 # `-a` is load-bearing: a bare `docker image prune -f` only removes dangling
-# (<none>) layers and leaves the tagged sha-<...> ECR images behind, which is
-# how this host accumulated 185 images / 200GB+ and ran / to 100%.
+# (<none>) layers and leaves the tagged sha-<...> ECR images behind; old
+# images then accumulate across deploys and can fill the disk.
 reclaim() {
   echo "[deploy] reclaiming unused images and build cache"
   docker image prune -af || true

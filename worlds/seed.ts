@@ -1499,8 +1499,7 @@ export function seedWatchingRole(db: MarinaDB): void {
  * Chronicler's loop: every cycle, `chronicle pending` → write narratives for
  * the noteworthy events, leave the rest alone.
  *
- * Pass 2 of the chronicle design — see docs/chronicle.md. Interview budget,
- * standing flow on citation, and the arrival digest are still ahead.
+ * See docs/architecture/chronicle.md.
  */
 export function seedChroniclerRole(db: MarinaDB): void {
   const SYSTEM = "system";

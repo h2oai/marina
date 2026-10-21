@@ -302,7 +302,7 @@ export function registerGeneralCommands(engine: Engine): void {
   // Chronicle — the canonical, append-only record of the Marina.
   // Read at rank 0; write commands gated to entities with role=chronicler.
   // Citation flows `chronicled` standing via the name → id resolver.
-  // See docs/chronicle.md.
+  // See docs/architecture/chronicle.md.
   if (engine.db) {
     engine.commands.registerBuiltin(
       associationCommand({

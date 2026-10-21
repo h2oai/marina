@@ -58,37 +58,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without its coarsest class. Card evidence also no longer counts an answer twice when both its
   outcome and its history record are on file.
 
-- **Operational rot that kept built features inert** (2026-10-20 usage audit of the live world).
-  - **Dead memory-assistance jobs expire.** The live world held 334 pending and 15 running
-    evaluator jobs, all past their deadline, after the Evaluator agent left; the state column never
-    moved. An hourly pass (`src/engine/assistance-expiry.ts`) sets a new terminal state `expired`
-    when the deadline passed, or when the worker's world account has no running agent or live
-    connection (15 min grace, never during a live lease). It writes one
-    `assistance.expired.<reason>` memory event per job and deletes nothing.
+- **Built features that stayed inert now run, expire or report.**
+  - **Dead memory-assistance jobs expire.** An hourly pass (`src/engine/assistance-expiry.ts`)
+    sets a new terminal state `expired` when a job's deadline has passed, or when the worker's
+    world account has no running agent or live connection (15 min grace, never during a live
+    lease). It writes one `assistance.expired.<reason>` memory event per job and deletes nothing.
     `ops assistance [expire|restore <job>]` reports, runs the pass or reopens a job, and
     `ops recover` includes the pass. The memory overview counts `expired24h`.
-  - **Unanswered challenges reach the operator.** All 21 live holds expired unanswered. Expiries
-    now keep one rolling `challenge:unanswered` ops-inbox item open until an operator resolves it.
+  - **Unanswered challenges reach the operator.** Expiries keep one rolling
+    `challenge:unanswered` ops-inbox item open until an operator resolves it.
     `challenge summary [days]` reports outcomes by class and requester.
     `MARINA_OPS_NOTIFY` (default off; webhook URL or `cmd:<program>`) pushes content-free notices
     when a hold opens and when holds go unanswered. The dashboard attention drawer's desktop
     notification also fires for held actions.
-  - **Retired standing kinds no longer count.** 97 of 106 live ledger rows were `chronicled` or
-    `pool_note`, which can no longer be earned. They stay as history (shown separately by
-    `standing`) but count toward no standing, rank or decision by default
-    (`MARINA_STANDING_RETIRED=exclude`; `decay` restores the old fade-out). Every live kind is
-    covered by a test.
+  - **Retired standing kinds no longer count.** Rows of kinds that can no longer be earned (such as
+    `chronicled` and `pool_note`) stay as history (shown separately by `standing`) but count toward
+    no standing, rank or decision by default (`MARINA_STANDING_RETIRED=exclude`; `decay` restores
+    the old fade-out). Every live kind is covered by a test.
   - **Agents are no longer made sovereign at login.** Under the `local` profile a loopback MCP,
-    declared-agent or agent-account login was still promoted to rank 9 with every safety gate at the
-    999 grant sentinel. That is how all 13 gates × 10 live accounts were pre-seeded, so gates never
-    bit. Only a loopback person is now. Existing databases are not reset on boot: `gate audit` lists
-    grant rows by holder, and `gate reset <entity|agents> [gate|all]` is a dry run until `apply`
-    (operator only). It revokes sentinel rows only and chronicles each holder.
+    declared-agent or agent-account login was promoted to rank 9 with every safety gate at the
+    999 grant sentinel. Now only a loopback person is. Existing databases are not reset on boot:
+    `gate audit` lists grant rows by holder, and `gate reset <entity|agents> [gate|all]` is a dry
+    run until `apply` (operator only). It revokes sentinel rows only and chronicles each holder.
   - **Fewer `memory` round trips and receipts.** `DurableResidentMemory` checkpoint-only saves
     reuse the remembered checkpoint instead of re-reading it (the CAS still guards it; archive and
-    journal writes still read fresh). Saves that only change `timestamp` are skipped. Preference reads back off from every 50 to every 400 cycles while
-    unchanged. The retention pass prunes continuity-journal receipts in `memory_requests` after
-    7 days (94 % of the live world's 629k rows); every other receipt is kept.
+    journal writes still read fresh). Saves that only change `timestamp` are skipped. Preference
+    reads back off from every 50 to every 400 cycles while unchanged. The retention pass prunes
+    continuity-journal receipts in `memory_requests` after 7 days; every other receipt is kept.
   - **FutureX can answer late on an opt-in schedule.** `watch --answer late` answers each open row
     once, within `--final-lead-hours` of its own cutoff. `bun run futurex schedule` prints (or
     writes with `--out`) a systemd user service and hourly timer that answer late by default, with
@@ -105,7 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against the reviewer's verdict is recorded as an override. Standing follows the verified-code
   rule. Events `review_requested`, `review_verdict` and `review_closed` are content-free.
 
-- **The starved earned loops get fed** (wiring item 4, "make Marina use Marina").
+- **Earned loops get more evidence.**
   - **Forecast shadow challengers** (`src/forecast/shadow.ts`, `MARINA_FORECAST_SHADOW=off|<fraction>`,
     default off; `_MAX_PER_DAY` 10, `_CAP_USD` $2 per UTC day). On a sampled share of filed live
     forecasts, one challenger card from the answer's routing `explore` order runs in the background
@@ -126,8 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `/v1/forecast` answer; `file` files them under `marina:prophet` (source `prophet-arena`, `live`
     or `measure`), and `resolve` scores resolved events through `resolveFiled`, so Prophet answers
     record outcomes that teach lessons and write history.
-- **Residents can use what Marina built** (wiring item 3 of the 2026-10-20 usage audit: over 14
-  days the live agents used none of forecast, quant, data, research or decision tools).
+- **Residents can use the forecast, quant, data, research and decision tools.**
   - **Typed analysis tools.** Ten deferred agent tools, named in TOOL ROUTING and loaded through
     `marina_tool_search`: `marina_forecast` (typed answers, optional `formation` and `retriever`),
     `marina_research` (`research ask`), `marina_swarm` (`web swarm`), `marina_quant`, `marina_calc`,
@@ -195,7 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `BUILTIN_WORLD_STATUS` lists `default` and `empty` as core.
   - The following are now labelled experimental in code and in the environment reference:
     - the embedding lifecycle (`MARINA_DATA_DIR` endpoint file, `MARINA_IDLE_SHUTDOWN`,
-      `MARINA_PARENT_PID`, `marina endpoint`), labelled "for embedders (Flow, Nov 2026)" and kept;
+      `MARINA_PARENT_PID`, `marina endpoint`), labelled "for embedding hosts" and kept;
     - the shared spend ledger (`MARINA_SPEND_LEDGER`);
     - adaptive load balancing (`X-Load-Balance: adaptive`);
     - `POST /v1/patterns/run`, kept for a planned `pattern run` command;
@@ -212,11 +207,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - This replaces a comment-only mention in `src/decisions/config.ts`.
 
 - **The Arbiter: adjudication only where answers disagree** (`src/orchestration/arbiter.ts`, all
-  surfaces default `off`). The trigger was always-on same-model verification: it overruled correct
-  answers too easily. On BrowseComp-Plus the `marina/verify:` arm lost accuracy and its gold recall
-  fell from 85 % to 66 %. An offline replay of stored runs found that, on the 82 items where four
-  unverified runs had a majority, the verify arm overruled a correct majority 15 times and fixed a
-  wrong one 0 times.
+  surfaces default `off`). Always-on same-model verification overruled correct answers too easily;
+  the Arbiter is consulted only where answers disagree.
   - Contested items are found from free signals: run agreement by answer type, verifier or critic
     dissent, and judge spread. Only contested items reach the Arbiter, under a cap
     (`MARINA_ARBITER_CAP`).
@@ -337,10 +329,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (with a model) direction, GDELT volume, and scheduled/ended events from as-of article sentences
   that one cheap model call classifies and a mechanical check verifies. Records past the cutoff
   are dropped; the specialist applies them only through bounded, testable multipliers with
-  transient-share widening, and keeps every record in the forecast detail. Over 67 walk-forward
-  weeks only the events channel gained (+0.010 to +0.014 mean skill, not yet significant), so the
-  other channels' multipliers default to neutral. `scripts/arena-wiki-extract.ts` replays the
-  extractors over reconstructed weeks (cached; Wikimedia `Retry-After` honoured).
+  transient-share widening, and keeps every record in the forecast detail. Only the events
+  channel's multipliers are active by default; the other channels' multipliers default to
+  neutral. `scripts/arena-wiki-extract.ts` replays the extractors over reconstructed weeks
+  (cached; Wikimedia `Retry-After` honoured).
 - **Per-item Wikipedia backtest output**: `scripts/arena-wiki-backtest.ts --out <file>` writes
   `{id, score, at, variant, group: "arena-wikipedia", exclude?}` JSONL with diagnostics (loss,
   persistence loss, hits, unseen entrants, ranking) for the transfer report's `items` adapter;
@@ -380,9 +372,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by projected weekly sum with a discount on the transient share), read from the arena's daily top
   lists and, for missing days, the Wikimedia REST API (rate-limited, cached, guarded, never after
   the lock day − 2). Optional event models pool mechanically verified scheduled events into it,
-  capped by `MARINA_ARENA_WIKI_EVENTS_MAX_INSERT`. Walk-forward over 67 reconstructed weeks: mean
-  skill 0.106 against the recency nowcast's 0.041 (`scripts/arena-wiki-backtest.ts`). Runs as a
-  route (`wikipedia=wiki-specialist`) or a shadow challenger.
+  capped by `MARINA_ARENA_WIKI_EVENTS_MAX_INSERT`. `scripts/arena-wiki-backtest.ts` replays it
+  walk-forward over reconstructed weeks. Runs as a route (`wikipedia=wiki-specialist`) or a
+  shadow challenger.
 
 - **Installable SDK**: `bun run pack:sdk` builds `@marina/agent-sdk` as a tarball you install with
   `bun add`, `npm install` or `pnpm add`. The docs import it by package name (#498).
@@ -454,16 +446,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     turn. A 16k local model's prefix falls from about 17.5 KB to 9.6 KB.
 - **Cache-aware idle handling for residents** (`src/agent/prompt-cache.ts`). A prompt sent more
   than the provider's cache lifetime (5 min) after the agent's last request is cold: the whole
-  request is written to the cache again. In a week of five Opus residents, 89 % of turns 5–60 min
-  after the previous one were cold, and those rewrites were 31 % of agent spend ($60 of $195).
+  request is written to the cache again. For residents that pause between turns, those rewrites
+  can be a large share of spend.
   - **Default change: compaction before a cold turn.** When the cache has expired and the history
     holds at least the cap's target + 8000 estimated tokens (24 000 by default), it is compacted to
-    the target before the prompt, through the same archived compaction as the 48k cap. Estimated
-    saving on the measured week: about $29/week, summarizer cost included.
+    the target before the prompt, through the same archived compaction as the 48k cap.
     `MARINA_AGENT_COLD_COMPACT=off` restores the old behaviour; `…_MIN_TOKENS` tunes the threshold.
   - **Default change: one-hour cache lifetime for the static prefix** (tool schemas and system
-    prompt) on direct Anthropic requests; the conversation keeps 5 minutes. Estimated saving about
-    $10/week. `MARINA_PROMPT_CACHE_STATIC_TTL=off` restores it.
+    prompt) on direct Anthropic requests; the conversation keeps 5 minutes.
+    `MARINA_PROMPT_CACHE_STATIC_TTL=off` restores it.
   - **The system prompt no longer changes when an agent moves.** The roster's `This room:` line
     put room-specific command names in the system prompt, so every room change rewrote the cached
     static prefix. The line now rides in the per-turn context, shown when the room's commands
@@ -472,8 +463,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Keep-alive pings, off by default** (`MARINA_AGENT_CACHE_KEEPALIVE=on`): a `max_tokens: 1`
     replay of the last request shortly before the cache expires, bounded per idle gap, per window
     and per agent per day, and turned off for an agent at the first reply that did not read the
-    cache. Estimated about −$24/week alone, about −$16/week on top of cold-turn compaction, at the
-    cost of extra calls.
+    cache. They trade extra calls for fewer cold rewrites.
   - Cache lifetimes are configurable per provider family (`MARINA_PROMPT_CACHE_TTL`); local servers
     and providers with no known cache never count as cold.
   - `agent status` shows cold turns, compactions before them, the cache writes they avoided, and
@@ -482,7 +472,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     re-summarized, and every summary carries a `Pointers:` line (URLs, typed ids, `#` handles, file
     paths) that is handed on when an old summary is dropped.
 - **Default change: `[Focus Review Due]` counts prompts, not minutes.** The 5-minute wall-clock
-  horizon fired on 45 % of prompts, because idle gaps are longer than that. A focus is now reviewed
+  horizon fired on most prompts, because idle gaps are longer than that. A focus is now reviewed
   after 10 prompts under it (`MARINA_FOCUS_REVIEW_CYCLES`, or the agent config's
   `focusReviewCycles`, which replaces `focusTimeout`); idle time never counts.
 - **Default change: fenced memory is reconstructed as of the cutoff** (`src/memory/as-of.ts`).
@@ -639,10 +629,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`project budget` durations** go through the shared duration parser, which now accepts the
   same decimals and `ms` (#499).
 - **Arena poll-level start**: scalar rounds of Economist/YouGov, Morning Consult and AAII start
-  from the average of persistence and the arena's EWMA with sd half its own recent RMS error
-  (walk-forward mean per-round skill 0.11 / 0.15 over pre-lock history, 0.15 / 0.30 / 0.43 on
-  resolved rounds, vs 0.00 for the persistence start); the rule and its evidence are recorded in
-  the filing detail. `MARINA_ARENA_POLL_LEVEL=off` restores the old start.
+  from the average of persistence and the arena's EWMA with sd half its own recent RMS error; the
+  rule and its evidence are recorded in the filing detail. `MARINA_ARENA_POLL_LEVEL=off` restores
+  the old start.
 
 - **Arena**: a first filing for a round outside the filing window is refused unless `--early` is
   passed; `arena-filing-watch` alerts on a filing that was never refreshed (#466).
@@ -652,7 +641,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to [0.35, 3], cut at min(now, lock), and applied after the measured-error floor. It replaces
   the per-key held-out calibrator, which needed 8 records per key and never fired.
   `MARINA_ARENA_SPREAD_CALIBRATION=on|observe|off` (default on; `MARINA_ARENA_CALIBRATION` is
-  read as a fallback). Walk-forward on Season 0: mean per-round skill 0.129 → 0.180.
+  read as a fallback).
 
 ### Fixed
 
@@ -914,7 +903,7 @@ demonstrations and standing rows are kept):
   `split:` line says whether a difference came from better answers or from answering more often
   (also in `evolve adoption` offers and `world adopt` requests). The gates still judge the overall
   score — a role that does not answer is worse.
-- Bringing a winner home (Phase 4): `evolve adoption <role>` in a child offers a role only with an
+- Bringing a winner home: `evolve adoption <role>` in a child offers a role only with an
   accepted run whose trial EARNED its win (the same `earnedWin` test as replication);
   `world adopt <child> <role> [into:<existing>]` records a pending request with that evidence,
   `world adopt approve` by someone other than the requester applies it (replacing an existing role
