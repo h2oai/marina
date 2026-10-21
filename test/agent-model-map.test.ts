@@ -104,7 +104,7 @@ describe("MARINA_AGENT_MODELS at seed time", () => {
       model: "user/model",
       role: "r",
       goal: "g",
-      spawnedBy: "Jeff",
+      spawnedBy: "Alice",
     });
     process.env.MARINA_AGENT_MODELS = "Mine=m/override";
     seedSystemAgent(db, { name: "Mine", model: "seed/default", role: "r", goal: "g" });

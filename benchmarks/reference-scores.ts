@@ -25,6 +25,12 @@
  *    in one commit with the source URL from their model card or blog.
  *
  * Benchmark keys match the BENCHMARKS registry in `harness.ts`.
+ *
+ * ── Historical snapshot ──
+ * This table is a point-in-time snapshot, not a live leaderboard: entries
+ * carry as-of dates from 2025-10-15 to 2026-04-23, and each score is as
+ * reported by the source listed on its row. Newer model releases and later
+ * revisions of these numbers are not reflected here.
  */
 
 export interface ReferenceScore {
@@ -68,18 +74,6 @@ export const REFERENCE_SCORES: ReferenceScore[] = [
     sourceUrl: "https://www.anthropic.com/news/claude-haiku-4-5",
     asOf: "2025-10-15",
   },
-  // Claude Haiku 4.5 — TruthfulQA measured in-house 2026-04-23 via thin
-  // Anthropic proxy. Kept as an empirical anchor; will replace with an
-  // Anthropic-published number when we find one.
-  {
-    modelId: "anthropic/claude-haiku-4-5",
-    benchmark: "truthfulqa",
-    score: 0.95,
-    n: 20,
-    sourceUrl: "internal://gen-0-haiku-experiment-2026-04-23",
-    asOf: "2026-04-23",
-    note: "N=20 seed=42 via thin provider — replace when vendor publishes",
-  },
 
   // Claude Sonnet 4.6 — from morphllm's curated Claude benchmark roundup.
   {
@@ -96,14 +90,6 @@ export const REFERENCE_SCORES: ReferenceScore[] = [
     sourceUrl: "https://www.morphllm.com/claude-benchmarks",
     asOf: "2026-04-23",
     note: "GPQA Diamond",
-  },
-  {
-    modelId: "anthropic/claude-sonnet-4-6",
-    benchmark: "mmlu-pro",
-    score: 0.893,
-    sourceUrl: "https://iternal.ai/llm-selection-guide",
-    asOf: "2026-03-01",
-    note: "source reports as MMLU — most 2026 frontier reporting is MMLU-Pro-shape",
   },
 
   // Claude Opus 4.6 — morphllm & Vellum (two independent sources for GPQA
@@ -137,14 +123,6 @@ export const REFERENCE_SCORES: ReferenceScore[] = [
     score: 0.998,
     sourceUrl: "https://www.vellum.ai/llm-leaderboard",
     asOf: "2026-04-23",
-  },
-  {
-    modelId: "anthropic/claude-opus-4-6",
-    benchmark: "mmlu-pro",
-    score: 0.911,
-    sourceUrl: "https://iternal.ai/llm-selection-guide",
-    asOf: "2026-03-01",
-    note: "source reports as MMLU — likely MMLU-Pro-shape",
   },
 
   // ── OpenAI ───────────────────────────────────────────────────────────
@@ -223,14 +201,6 @@ export const REFERENCE_SCORES: ReferenceScore[] = [
     score: 0.806,
     sourceUrl: "https://iternal.ai/llm-selection-guide",
     asOf: "2026-03-01",
-  },
-  {
-    modelId: "google/gemini-3-1-pro",
-    benchmark: "mmlu-pro",
-    score: 0.926,
-    sourceUrl: "https://iternal.ai/llm-selection-guide",
-    asOf: "2026-03-01",
-    note: "source reports as MMLU — likely MMLU-Pro-shape",
   },
   {
     modelId: "google/gemini-3-flash",

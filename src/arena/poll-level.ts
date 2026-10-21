@@ -14,7 +14,7 @@
  * persistence at sd 1.5, and rounds where the poll barely moves dominate that
  * average, so the per-round-skill optimum is narrower than the CRPS optimum.
  * The scale and the family list were chosen by walk-forward backtest over
- * every resolved round and every pre-lock history (docs/guides/arena.md).
+ * every resolved round and every pre-lock history.
  *
  * Gated per tracker family: monthly series that trend (UMich sentiment and
  * party splits) lose to persistence under any shrink, and Civiqs's daily

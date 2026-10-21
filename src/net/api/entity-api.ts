@@ -11,7 +11,7 @@
  *
  *   GET /api/entity/:name/profile
  *
- * See docs/chronicle.md for the design rationale.
+ * See docs/architecture/chronicle.md.
  *
  * Privacy: deliberately excludes connection_id, IP addresses, session tokens,
  * private notes (non-pool), raw command input, and core_memory keys other

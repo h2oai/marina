@@ -55,7 +55,8 @@ When `run` finishes, `write` builds `<due>.H2O-ai.<N>.json` with these fields:
 - records the file in `external_submissions` (append-only).
 
 A question that could not be forecast gets a fallback: the market's freeze price for a market
-question, 0.5 for dataset forecasts (what ForecastBench imputes anyway). Fallbacks are counted
+question, 0.5 for dataset forecasts (the value ForecastBench imputes for a missing forecast).
+Fallbacks are counted
 and reported. A dry run (`--dry-run`, `--limit` or `--sample`) writes the file but never records
 it.
 
@@ -64,12 +65,12 @@ it.
 
 ## Up to three sets
 
-ForecastBench counts up to three forecast sets per round. `select` chooses three configurations
-by a held-out backtest on past resolved rounds:
+ForecastBench accepts up to three forecast sets per round. `select` ranks candidate
+configurations by a held-out backtest on past resolved rounds and writes the top three picks:
 
 - Each candidate forecasts every question as of its round's due date, with date-strict `asof`
   retrieval.
-- It is scored by the board's own metric: mean 1 − Brier over the resolved forecasts.
+- It is scored by the board's metric: mean 1 − Brier over the resolved forecasts.
 - It is scored only on rounds after its models' release dates. Replicates go into the benchmark
   ledger.
 - It is excluded when its measured cost per question is over `--live-per-question`.

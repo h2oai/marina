@@ -346,13 +346,13 @@ describe("export allow-list and scans", () => {
 
   it("drops items with secrets, instance ids, human names or benchmark text — never redacts", async () => {
     const db = freshDb();
-    db.createUser({ id: "u-j", name: "jeffrey" });
+    db.createUser({ id: "u-j", name: "zebulon" });
     const sink = lessonSinkFor(db);
     const secret = "sk-proj-ABCDEFGHIJKLMNOPQRSTUV123456";
     await sink.write(lesson("code", `rotate the key ${secret} before running`));
     await sink.write(lesson("code", "mail ops@example.com when the deploy fails"));
     await sink.write(lesson("code", "logs live under /home/someone/marina/logs"));
-    await sink.write(lesson("code", "ask jeffrey before merging the release branch"));
+    await sink.write(lesson("code", "ask zebulon before merging the release branch"));
     await sink.write(
       lesson("benchmark", "remember that the capital city of the fictional land is zorbania today"),
     );
@@ -364,7 +364,7 @@ describe("export allow-list and scans", () => {
     expect(reasons).toEqual(["benchmark-text", "human-name", "instance", "instance", "secret"]);
     expect(result.items.filter((i) => i.kind === "lesson")).toHaveLength(1);
     const text = fileText(outDir) + readFileSync(join(outDir, "spec.json"), "utf8");
-    for (const leak of [secret, "ops@example.com", "/home/someone", "jeffrey", "zorbania"])
+    for (const leak of [secret, "ops@example.com", "/home/someone", "zebulon", "zorbania"])
       expect(text).not.toContain(leak);
     expect(text).not.toContain("[REDACTED]");
     expect(result.spec.scan).toMatchObject({ dropped: 5, exported: 1 });

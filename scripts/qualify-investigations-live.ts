@@ -5,7 +5,7 @@
 /** Explicitly opt-in, bounded pilot using the production executor and HTTP/SDK/CLI paths.
  * Dry run prints the concrete plan; --live permits paid work. Never opens an existing DB.
  * bun scripts/qualify-investigations-live.ts --model openai/MODEL --budget-usd 2 [--live]
- * Reports and captured evidence belong in marina-internal, never the public repository. */
+ * Reports and captured evidence are kept outside this repository. */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";

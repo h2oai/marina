@@ -12,9 +12,9 @@
  * Above rank 4 (the safety threshold) standing keeps accruing but does NOT
  * auto-promote. The named tiers above 4 (engineer / steward / guardian /
  * sovereign) are honorifics, not progression states. Existing rank-≥5
- * entities are grandfathered: their stored rank stays put. Phase 3 will
- * gate dangerous operations through per-operation competence proofs rather
- * than tier ladders, so above-threshold rank no longer controls capability.
+ * entities are grandfathered: their stored rank stays put. Dangerous
+ * operations are gated by per-operation competence proofs rather than tier
+ * ladders, so above-threshold rank no longer controls capability.
  *
  * An operator-set rank below 5 (`rank <name> <level>`) is a FLOOR stored on
  * the account (`users.rank_floor`, migration 167): progression never lowers
@@ -73,8 +73,8 @@ export function deriveRankFromStanding(standing: number): EntityRank {
  */
 export function checkRankProgression(db: MarinaDB, entity: Entity): EntityRank | null {
   const currentRank = getRank(entity);
-  // Grandfather: above-threshold entities keep their stored rank. Phase 3
-  // safety gates handle their capability access.
+  // Grandfather: above-threshold entities keep their stored rank. Safety
+  // gates handle their capability access.
   if (currentRank >= SAFETY_THRESHOLD) return null;
 
   const standing = standingOf(db, entity.name, entity.id);

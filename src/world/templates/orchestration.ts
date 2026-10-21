@@ -3,8 +3,7 @@
 
 /**
  * Status: demo. The 16 patterns are pool-note templates written by
- * `project <name> orchestrate <pattern>`; the live world has used them only in
- * demos (no persisted crews). See docs/reference/feature-status.md.
+ * `project <name> orchestrate <pattern>`, used mostly in demos. See docs/reference/feature-status.md.
  *
  * Every pattern here is an entry in the formation catalogue
  * (`src/orchestration/formations/catalogue.ts`): its one-line description is

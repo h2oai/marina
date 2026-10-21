@@ -463,7 +463,7 @@ curl -si http://localhost:3300/v1/chat/completions -H "Authorization: Bearer sec
 The receipt's `requestId` equals the response's `x-request-id`; `trace show <id>` renders a
 **Memory** section (entity, budget, used bytes, one line per tier with ids), and the native
 `GET /api/traces` format exposes it as the span attribute `memoryReceipt`. Receipts are on in every
-trust profile — YOLO applies to permissions, never to records.
+trust profile — the local profile relaxes permissions, never records.
 
 ### Response cache
 

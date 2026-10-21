@@ -17,8 +17,8 @@ describe("work outcomes carry family / method / scope", () => {
   let db: MarinaDB;
   beforeEach(() => {
     db = new MarinaDB(":memory:");
-    db.createUser({ id: "u_jeff", name: "jeff" });
-    db.saveAgentConfig({ name: "Helper", model: "vendor/a", role: "coder", spawnedBy: "jeff" });
+    db.createUser({ id: "u_alice", name: "alice" });
+    db.saveAgentConfig({ name: "Helper", model: "vendor/a", role: "coder", spawnedBy: "alice" });
     db.saveAgentConfig({ name: "Roamer", model: "vendor/b", role: "coder", spawnedBy: "system" });
   });
   afterEach(async () => {
@@ -39,7 +39,7 @@ describe("work outcomes carry family / method / scope", () => {
     expect(roamer).toContain("family:work:task:role:coder");
     expect(roamer).toContain("method:model:vendor/b");
     expect(scopeOf(roamer)).toBe("shared");
-    expect(scopeOf(refsOf("task:2:Helper"))).toBe("owner:jeff");
+    expect(scopeOf(refsOf("task:2:Helper"))).toBe("owner:alice");
   });
 
   it("tags Code Mode checks as code work and judged opinions as judged", () => {
@@ -59,13 +59,13 @@ describe("work outcomes carry family / method / scope", () => {
   });
 
   it("a person directly, or someone unknown, is never shared", () => {
-    expect(scopeOf(workRefs(db, { kind: "task", actor: "jeff" }))).toBe("owner:jeff");
+    expect(scopeOf(workRefs(db, { kind: "task", actor: "alice" }))).toBe("owner:alice");
     expect(scopeOf(workRefs(db, { kind: "task", actor: "nobody" }))).toBe("unscoped");
     expect(scopeOf(workRefs(undefined, { kind: "task", actor: "Roamer" }))).toBe("unscoped");
     // A person's own work names no method: it is not a model's record.
-    expect(workRefs(db, { kind: "task", actor: "jeff" }).some((r) => r.startsWith("method:"))).toBe(
-      false,
-    );
+    expect(
+      workRefs(db, { kind: "task", actor: "alice" }).some((r) => r.startsWith("method:")),
+    ).toBe(false);
   });
 
   it("only shared work feeds live routing evidence", () => {
@@ -98,7 +98,7 @@ describe("work outcomes carry family / method / scope", () => {
     const shared = competenceMap(db, { family: "work:task" });
     expect(shared.map((c) => c.method)).toEqual(["model:vendor/b", "model:vendor/b"]);
     expect(shared.every((c) => c.basis === "mechanical")).toBe(true);
-    const mine = competenceMap(db, { family: "work:task", viewer: "jeff" });
+    const mine = competenceMap(db, { family: "work:task", viewer: "alice" });
     expect(mine.map((c) => c.method)).toContain("model:vendor/a");
     const judged = competenceMap(db, { family: "work:task", includeJudged: true });
     expect(judged.some((c) => c.basis === "judged")).toBe(true);
@@ -109,7 +109,7 @@ describe("work outcomes carry family / method / scope", () => {
     recordTaskVerdict(db, { taskId: 2, claimant: "Helper", approved: true, at: 2 });
     const sent: string[] = [];
     const ctx = { send: (_: EntityId, msg: string) => sent.push(msg) } as unknown as RoomContext;
-    const cmd = competenceCommand({ db, getEntity: () => ({ name: "jeff" }) });
+    const cmd = competenceCommand({ db, getEntity: () => ({ name: "alice" }) });
     const run = (args: string) =>
       cmd.handler(ctx, {
         entity: "e_1" as EntityId,
@@ -129,10 +129,10 @@ describe("scope helpers and defaults", () => {
   it("untagged rows (boards, older producers) stay shared; owner and unscoped do not", () => {
     expect(sharedEvidence(["family:civiqs", "method:nowcast"])).toBe(true);
     expect(sharedEvidence(["scope:shared"])).toBe(true);
-    expect(sharedEvidence(["scope:owner:jeff"])).toBe(false);
+    expect(sharedEvidence(["scope:owner:alice"])).toBe(false);
     expect(sharedEvidence(["scope:unscoped"])).toBe(false);
-    expect(visibleTo(["scope:owner:jeff"], "jeff")).toBe(true);
-    expect(visibleTo(["scope:owner:jeff"], "ann")).toBe(false);
+    expect(visibleTo(["scope:owner:alice"], "alice")).toBe(true);
+    expect(visibleTo(["scope:owner:alice"], "ann")).toBe(false);
   });
 
   it("live route evidence is on unless explicitly off; acting stays observe by default", () => {

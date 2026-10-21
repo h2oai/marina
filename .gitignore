@@ -41,7 +41,7 @@ marina-desktop/artifacts/
 __pycache__/
 *.py[cod]
 
-# Internal research and qualification reports belong in marina-internal.
+# Internal research and qualification reports are kept outside this repository.
 /docs/research/
 
 # Generated browser qualification artifacts

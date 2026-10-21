@@ -175,34 +175,34 @@ describe("scope: owner by default, shared only for world agents", () => {
       { id: "p_world", type: "agent", name: "Builder" },
       { id: "p_sys", type: "system", name: "system" },
       { id: "p_room", type: "agent", name: "Guide", owner: "p_sys" },
-      { id: "p_jeff", type: "human", name: "jeff" },
-      { id: "p_helper", type: "agent", name: "Helper", owner: "p_jeff" },
+      { id: "p_alice", type: "human", name: "alice" },
+      { id: "p_helper", type: "agent", name: "Helper", owner: "p_alice" },
       { id: "p_sub", type: "agent", name: "Sub", owner: "p_helper" },
       { id: "p_crit", type: "agent", name: "Critic" },
       { id: "p_eval", type: "agent", name: "Evaluator", owner: "p_crit" },
     ],
-    ["jeff", "Builder"],
+    ["alice", "Builder"],
   );
 
   it("resolves world, room, person, owned and sub-owned agents", () => {
     expect(workScopeFor(r, "Builder")).toEqual({ kind: "shared" });
     expect(workScopeFor(r, "Guide")).toEqual({ kind: "shared" });
     expect(workScopeFor(r, "Evaluator")).toEqual({ kind: "shared" });
-    expect(workScopeFor(r, "Helper")).toEqual({ kind: "owner", owner: "jeff" });
-    expect(workScopeFor(r, "Sub")).toEqual({ kind: "owner", owner: "jeff" });
-    expect(workScopeFor(r, "jeff")).toEqual({ kind: "owner", owner: "jeff" });
+    expect(workScopeFor(r, "Helper")).toEqual({ kind: "owner", owner: "alice" });
+    expect(workScopeFor(r, "Sub")).toEqual({ kind: "owner", owner: "alice" });
+    expect(workScopeFor(r, "alice")).toEqual({ kind: "owner", owner: "alice" });
     expect(workScopeFor(r, "nobody")).toBeUndefined();
   });
 
   it("works over a real database: an agent spawned by a person is that person's work", () => {
     const db = freshDb();
     try {
-      db.createUser({ id: "u_jeff", name: "jeff" });
-      db.saveAgentConfig({ name: "Helper", model: "m", spawnedBy: "jeff" });
+      db.createUser({ id: "u_alice", name: "alice" });
+      db.saveAgentConfig({ name: "Helper", model: "m", spawnedBy: "alice" });
       db.saveAgentConfig({ name: "Roamer", model: "m", spawnedBy: "system" });
-      expect(workScopeFor(db, "Helper")).toEqual({ kind: "owner", owner: "jeff" });
+      expect(workScopeFor(db, "Helper")).toEqual({ kind: "owner", owner: "alice" });
       expect(workScopeFor(db, "Roamer")).toEqual({ kind: "shared" });
-      expect(canHoldOwnLessons(db, "jeff")).toBe(true);
+      expect(canHoldOwnLessons(db, "alice")).toBe(true);
       expect(canHoldOwnLessons(db, "marina:lessons")).toBe(false);
     } finally {
       db.close();
@@ -467,10 +467,10 @@ describe("learnPatterns: floors, dedupe, caps, spend, no model", () => {
   it("owner patterns never reach the shared sink and are never mirrored to meta", async () => {
     const shared = memoryLessonSink();
     const own = memoryLessonSink();
-    const r = await learnPatterns([pattern({ scope: { kind: "owner", owner: "jeff" } })], {
+    const r = await learnPatterns([pattern({ scope: { kind: "owner", owner: "alice" } })], {
       mode: "on",
       sharedSink: shared,
-      ownerSink: (o) => (o === "jeff" ? own : undefined),
+      ownerSink: (o) => (o === "alice" ? own : undefined),
       judge: judge(),
       stopReason: () => undefined,
     });
@@ -493,7 +493,7 @@ describe("aggregation and modes", () => {
   it("aggregates per source/tool/class/result/scope with bounded refs and samples", () => {
     const a = new WorkAggregator();
     for (let i = 0; i < 12; i++) a.add(signal({ ref: `trace:${i}`, privateText: `case ${i}` }));
-    a.add(signal({ scope: { kind: "owner", owner: "jeff" } }));
+    a.add(signal({ scope: { kind: "owner", owner: "alice" } }));
     const ps = a.take();
     expect(ps).toHaveLength(2);
     const shared = ps.find((p) => p.scope.kind === "shared")!;
@@ -565,18 +565,22 @@ describe("aggregation and modes", () => {
 
 describe("passthru: explicit opt-in, owner-scoped, never measurement", () => {
   const req = (headers: Record<string, string>) => ({ headers: new Headers(headers) });
-  const bound = { internal: false, openMode: false, boundEntityName: "jeff" } as PassthruAuthResult;
+  const bound = {
+    internal: false,
+    openMode: false,
+    boundEntityName: "alice",
+  } as PassthruAuthResult;
 
   it("needs the opt-in or the stack, a bound key, not an internal caller; eval traffic teaches", () => {
-    expect(passthruLearnOwner(req({ "x-marina-learn": "on" }), bound)).toBe("jeff");
+    expect(passthruLearnOwner(req({ "x-marina-learn": "on" }), bound)).toBe("alice");
     expect(passthruLearnOwner(req({}), bound)).toBeUndefined();
-    expect(passthruLearnOwner(req({}), bound, true)).toBe("jeff");
+    expect(passthruLearnOwner(req({}), bound, true)).toBe("alice");
     expect(passthruLearnOwner(req({ "x-marina-learn": "off" }), bound, true)).toBeUndefined();
     const measured = req({
       "x-marina-learn": "on",
       "x-marina-eval": "benchmark=tau2-retail; mode=measure",
     });
-    expect(passthruLearnOwner(measured, bound)).toBe("jeff");
+    expect(passthruLearnOwner(measured, bound)).toBe("alice");
     expect(evalRef(measured)).toBe("eval:tau2-retail:measure");
     expect(
       passthruLearnOwner(req({ "x-marina-learn": "on" }), { ...bound, internal: true }),
@@ -619,12 +623,12 @@ describe("passthru: explicit opt-in, owner-scoped, never measurement", () => {
     try {
       {
         using _off = scopeProcessState({ env: { MARINA_LESSONS_FROM_WORK: "off" } });
-        notePassthruRecoveries(db, "jeff", conversation);
+        notePassthruRecoveries(db, "alice", conversation);
         expect(pendingWorkPatterns(db)).toBe(0); // off: nothing collected
       }
       resetPassthruLearnForTests();
       using _env = scopeProcessState({ env: { MARINA_LESSONS_FROM_WORK: "observe" } });
-      for (let i = 0; i < 3; i++) notePassthruRecoveries(db, "jeff", conversation);
+      for (let i = 0; i < 3; i++) notePassthruRecoveries(db, "alice", conversation);
       const report = await flushWorkLessons(db, { env: OBSERVE });
       // Seen once (a pattern of one occurrence, below its floor of two), owner-scoped.
       expect(report?.belowFloor).toBe(1);
@@ -640,9 +644,9 @@ describe("owner lessons: durable, private, and recalled on passthru and by the l
   it("writes to the owner's own spaces; served only to that owner", async () => {
     const db = freshDb();
     try {
-      db.createUser({ id: "u_jeff", name: "jeff" });
+      db.createUser({ id: "u_alice", name: "alice" });
       db.createUser({ id: "u_ann", name: "ann" });
-      const r = await learnPatterns([pattern({ scope: { kind: "owner", owner: "jeff" } })], {
+      const r = await learnPatterns([pattern({ scope: { kind: "owner", owner: "alice" } })], {
         mode: "on",
         sharedSink: lessonSinkFor(db),
         ownerSink: (o) => (canHoldOwnLessons(db, o) ? ownerLessonSink(db, o) : undefined),
@@ -653,7 +657,7 @@ describe("owner lessons: durable, private, and recalled on passthru and by the l
       const q = "confirm the id exists with a lookup before acting";
       const shared = await recallLessons(db, "tools", q, { env: {} });
       expect(shared.recalled).toHaveLength(0);
-      const own = await recallLessons(db, "tools", q, { env: {}, owner: "jeff" });
+      const own = await recallLessons(db, "tools", q, { env: {}, owner: "alice" });
       expect(own.recalled).toHaveLength(1);
       expect(own.recalled[0]!.source).toBe("work:tool-recovery:marina_command:not-found:ok");
       const other = await recallLessons(db, "tools", q, { env: {}, owner: "ann" });
@@ -665,7 +669,7 @@ describe("owner lessons: durable, private, and recalled on passthru and by the l
       // Passthru recall (the tools/code domains) serves the owner's own lessons.
       const passthru = await recallForWork(db, PASSTHRU_LESSON_DOMAINS, q, {
         env: {},
-        owner: "jeff",
+        owner: "alice",
       });
       expect(passthru.inject.map((l: Lesson) => l.source)).toContain(
         "work:tool-recovery:marina_command:not-found:ok",
@@ -674,10 +678,10 @@ describe("owner lessons: durable, private, and recalled on passthru and by the l
       const out: string[] = [];
       const ctx = {
         send: (_e: EntityId, m: string) => out.push(m),
-        getEntity: () => ({ name: "jeff" }),
+        getEntity: () => ({ name: "alice" }),
       } as unknown as RoomContext;
       await lessonsCommand({ db }).handler(ctx, {
-        entity: "e_jeff" as EntityId,
+        entity: "e_alice" as EntityId,
         verb: "lessons",
         args: "confirm lookup domain:tools",
         tokens: ["confirm", "lookup", "domain:tools"],
@@ -708,8 +712,8 @@ describe("backfill scan (read-only)", () => {
       "CREATE TABLE coding_events (id TEXT, session_id TEXT, actor TEXT, kind TEXT, payload_json TEXT, created_at INTEGER)",
     );
     raw.run("INSERT INTO principals VALUES ('p1','agent','Builder',NULL,'active')");
-    raw.run("INSERT INTO principals VALUES ('p2','human','jeff',NULL,'active')");
-    raw.run("INSERT INTO users VALUES ('p2','jeff')");
+    raw.run("INSERT INTO principals VALUES ('p2','human','alice',NULL,'active')");
+    raw.run("INSERT INTO users VALUES ('p2','alice')");
     const ev = (type: string, data: Record<string, unknown>, t: number) =>
       raw.run("INSERT INTO event_log (type, data, timestamp) VALUES (?, ?, ?)", [
         type,
@@ -731,7 +735,7 @@ describe("backfill scan (read-only)", () => {
     raw.run(
       "INSERT INTO challenge_outcomes (token, kind, class, requester_name, answer, summary, reason, answered_at) VALUES ('ch_1','tool','tool:marina_command','Builder','deny','agent stop X','held',5)",
     );
-    raw.run("INSERT INTO coding_sessions VALUES ('s1','jeff')");
+    raw.run("INSERT INTO coding_sessions VALUES ('s1','alice')");
     for (let i = 0; i < 2; i++)
       raw.run("INSERT INTO coding_events VALUES (?, 's1', 'e', 'exec_decision', ?, ?)", [
         `ce${i}`,
@@ -747,7 +751,7 @@ describe("backfill scan (read-only)", () => {
     expect(scan.byScope).toEqual({ shared: 2, owner: 1 });
     const denied = scan.patterns.find((p) => p.source === "code-exec-denied")!;
     expect(denied.tool).toBe("curl");
-    expect(denied.scope).toEqual({ kind: "owner", owner: "jeff" });
+    expect(denied.scope).toEqual({ kind: "owner", owner: "alice" });
     raw.close();
   });
 });

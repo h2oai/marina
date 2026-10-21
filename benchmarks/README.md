@@ -19,9 +19,9 @@ bun run benchmarks/harness.ts --list
 bun run benchmarks/harness.ts --results
 ```
 
-## Phase A — Baseline Benchmarks
+## Baseline benchmarks
 
-Standard automated benchmarks proving Marina works as a competent LLM endpoint.
+Standard automated benchmarks for Marina as an LLM endpoint.
 
 | Benchmark | Questions | Type | Metric |
 |-----------|-----------|------|--------|
@@ -223,8 +223,8 @@ one suite can pair, say, a harness file against ledger runs of the same benchmar
 with its log to a temporary directory and the copy is read (`maxCopyMb` option, default 1 GB;
 above it the log is not read and the inventory says so).
 
-**Inventory.** `--inventory [root…]` (default roots: `~/.cache/marina-*`, `~/.local/share/marina-*`,
-`~/Projects/GitHub/marina-internal`; a root may be one DB file) walks the roots read-only,
+**Inventory.** `--inventory <root…>` (at least one root is required, for example
+`~/.cache/marina-<name>`; a root may be one DB file) walks the roots read-only,
 skipping source trees (`src/`, `node_modules/`, `checkout/`, … — a checkout's `benchmarks/` only
 for its `results/`), recognises every file and ledger an adapter reads, and writes
 `<out>.md` / `<out>.json` (default `transfer-inventory`): per suite its variants (adapter,
@@ -246,9 +246,9 @@ teach `benchmarks/transfer/inventory.ts` to recognise its files, and add a fixtu
 `test/eval-transfer.test.ts`. Keep benchmark knowledge in the adapter;
 `benchmarks/transfer/core.ts` (the statistics and the verdict) stays benchmark-free.
 
-## Phase B — Memory Delta Experiments
+## Memory comparisons
 
-The core thesis test: does Marina's memory system measurably improve outcomes?
+These benchmarks compare Marina's memory mode with plain passthrough on the same questions.
 
 | Benchmark | Questions | Type | Metric |
 |-----------|-----------|------|--------|
@@ -265,10 +265,10 @@ bun run benchmarks/harness.ts --benchmark retention --mode memory --compare pass
 bun run benchmarks/harness.ts --benchmark mt-bench --limit 10
 ```
 
-## Phase C — Memory Delta under the Reporting Standard (genbench)
+## Memory comparisons with the reporting standard (genbench)
 
-Phase B measures memory with the retention task and judge scores; `benchmarks/memory/genbench.ts`
-is the harness for making a *citable* memory-delta claim. It runs five arms under one protocol —
+The memory comparisons above use the retention task and judge scores;
+`benchmarks/memory/genbench.ts` runs a memory comparison under a fixed reporting protocol. It runs five arms under one protocol —
 `bare`, `cold`, `warm`, and the matched controls `fullcontext` and `bm25` — on a held-out
 seed/eval split, injects memory through the resident agent path, and reports Wilson 95% CIs,
 seed-level CIs, token-F1 alongside judge accuracy, tokens injected, latency, and cost.

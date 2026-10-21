@@ -1098,7 +1098,7 @@ function seed(db: MarinaDB): void {
   // To suppress, delete the config row (`agent stop Chronicler` then
   // remove from agent_configs) or run with MARINA_ROOM_AGENTS=false to
   // suppress room agents (does not suppress saved-config agents — those
-  // need explicit removal). See docs/chronicle.md.
+  // need explicit removal). See docs/architecture/chronicle.md.
   seedChroniclerAgent(db);
   // The showcase and markets worlds advertise the TabH2O connector. Actual
   // usage happens via `market forecast` today; agents seeing the connector

@@ -194,7 +194,7 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     name: "Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch)",
     status: "experimental",
     enable:
-      "Experimental: for embedders (Flow, Nov 2026). `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint`",
+      "Experimental: for embedding hosts. `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint`",
     owner: "src/net/instance-lifecycle.ts",
   },
   {
