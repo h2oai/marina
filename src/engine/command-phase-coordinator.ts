@@ -10,6 +10,7 @@ import type { CommandContext, EngineEvent, Entity, EntityId, RoomContext, RoomId
 import type { EntityManager } from "../world/entity-manager";
 import type { RoomManager } from "../world/room-manager";
 
+import { commandInputForLog } from "./command-redaction";
 import { failCommandResponse } from "./command-response";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
@@ -320,7 +321,7 @@ export class CommandPhaseCoordinator {
     this.host.logEvent({
       type: "command",
       entity: entityId,
-      input: routedRaw,
+      input: commandInputForLog(routedRaw, input, def),
       timestamp: Date.now(),
     });
   }

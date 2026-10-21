@@ -92,7 +92,6 @@ describe("supervision credential", () => {
     expect((await call(owner.token, "/api/routing/overview", "GET")).status).toBe(401);
 
     // The supervisor keeps working, as the same account.
-    expect((await hold.client.heartbeat(supervisor.id)).id).toBe(supervisor.id);
     const run = await hold.client.join({ clientKey: "run:wren", kind: "claude", label: "worker" });
     expect(run.ownerId).toBe(supervisor.ownerId);
     expect((await call(fresh, `/api/routing/sessions/${run.id}`, "GET")).status).toBe(200);
@@ -165,6 +164,29 @@ describe("supervision credential", () => {
       expect(res.status).toBe(403);
       expect(res.body.code).toBe("supervision_scope");
     }
+    // Reads and lifecycle calls the supervisor never makes answer only the
+    // person's own session (an explicit allowlist, not a denylist).
+    for (const [path, method] of [
+      ["/api/routing/overview", "GET"],
+      ["/api/routing/sessions", "GET"],
+      [`/api/routing/sessions/${run.id}`, "GET"],
+      [`/api/routing/sessions/${run.id}/events`, "GET"],
+      [`/api/routing/sessions/${run.id}/inbox`, "GET"],
+      [`/api/routing/sessions/${run.id}/heartbeat`, "POST"],
+      ["/api/routing/room-log", "GET"],
+    ] as const) {
+      const res = await call(token, path, method, method === "POST" ? {} : undefined);
+      expect({ path, status: res.status, code: res.body.code }).toEqual({
+        path,
+        status: 403,
+        code: "supervision_scope",
+      });
+    }
+    // Publishing the run's own output stays open to the supervisor.
+    const published = await call(token, `/api/routing/sessions/${run.id}/events`, "POST", {
+      events: [{ id: "e1", kind: "status", payload: { state: "idle" } }],
+    });
+    expect(published.status).toBe(200);
     expect((await call(token, "/api/routing/supervision")).body.code).toBe("session_required");
   });
 
@@ -174,8 +196,9 @@ describe("supervision credential", () => {
     const first = (await call(owner.token, "/api/routing/supervision")).body;
     const renewed = (await call(first.token as string, "/api/routing/supervision/renew")).body;
     expect(renewed.token).not.toBe(first.token);
+    // A live credential is out of scope here (403); a revoked one is unknown (401).
     expect((await call(first.token as string, "/api/routing/overview", "GET")).status).toBe(401);
-    expect((await call(renewed.token as string, "/api/routing/overview", "GET")).status).toBe(200);
+    expect((await call(renewed.token as string, "/api/routing/overview", "GET")).status).toBe(403);
     expect((await call(renewed.token as string, "/api/routing/supervision/revoke")).body).toEqual({
       revoked: true,
     });

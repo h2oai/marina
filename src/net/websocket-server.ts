@@ -602,7 +602,7 @@ export class WebSocketServer {
         }
 
         if (url.pathname.startsWith("/v1/memory") && self.memoryService)
-          return await handleMemoryServiceApi(req, self.memoryService);
+          return await handleMemoryServiceApi(req, self.memoryService, server);
 
         // Model API routes (OpenAI + Ollama compatible). A routed request may
         // outlive the listener's 255 s idle cap; its bound is

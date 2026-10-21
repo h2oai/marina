@@ -9,6 +9,7 @@ import { AuthGate } from "./components/AuthGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { MediaViewerProvider } from "./components/media/MediaViewer";
 import { initTheme } from "./hooks/use-theme";
+import { retryUnlessForbidden } from "./lib/api";
 import "./index.css";
 
 const LazyUnifiedCanvas = lazy(() =>
@@ -33,6 +34,8 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 30_000,
       refetchOnWindowFocus: false,
+      // A 403 is a permission answer (operator-only lists), never retried.
+      retry: retryUnlessForbidden,
     },
   },
 });

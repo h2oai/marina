@@ -14,6 +14,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { WorldVariantRow } from "../../persistence/db-world-variants";
 import { isKeyEncryptionEnabled } from "../../persistence/key-crypto";
 import { collectiveManager } from "../../world/world-collective-manager";
+import { dashboardEventShape } from "../dashboard-event-filter";
 import {
   federationSigningAvailable,
   signFederationDocument,
@@ -142,9 +143,13 @@ function getEvents(
   visible: ReturnType<typeof memoryObserver>["event"],
 ): Response {
   const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 500);
+  // Same shape rule as the WebSocket broadcast: raw command input and
+  // transport connect/disconnect rows are never served.
   const events = engine
     .getEventLog()
     .filter((e) => e.type !== "tick" && visible(e))
+    .map(dashboardEventShape)
+    .filter((e) => e !== null)
     .slice(-limit);
   return json(events);
 }

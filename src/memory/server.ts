@@ -29,11 +29,11 @@ export function serveMemory(options: {
     port: options.port ?? 3301,
     maxRequestBodySize: 2 * 1024 * 1024,
     idleTimeout: 60,
-    fetch: async (req) => {
+    fetch: async (req, server) => {
       if (draining) return Response.json({ error: "Instance is draining" }, { status: 503 });
       const leave = requests.enter();
       try {
-        return await handleMemoryServiceApi(req, service);
+        return await handleMemoryServiceApi(req, service, server);
       } finally {
         leave();
       }

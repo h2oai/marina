@@ -86,8 +86,11 @@ launched agent is its own world account instead of acting through the operator's
   account, so logging in again as yourself — `marina connect <you>` in another terminal, the
   dashboard — replaces your session; the supervisor keeps running on its credential and can still
   renew and revoke its residents. The credential is accepted only under `/api/routing/`: it is not a
-  world session (no login, reconnect, command or challenge), and it cannot send controls, messages
-  or channel posts, which come from your own session. A renewal that fails is retried while the
+  world session (no login, reconnect, command or challenge). Within routing it calls exactly what
+  the supervisor needs — `POST /sessions`, `POST /sessions/:id/events`, `POST /sync`,
+  `POST /residents`, `POST /residents/:name/renew|revoke|attention` and
+  `POST /supervision/renew|revoke` — and every other endpoint (reads, controls, messages, channel
+  posts) answers only your own session. A renewal that fails is retried while the
   credential is live and never falls back to your session. A server with residents off (or an older
   server) offers no endpoint, and the supervisor keeps using your session token as before.
 - **Names.** A launch may ask for a name (`name` in the launch control); otherwise the server picks a

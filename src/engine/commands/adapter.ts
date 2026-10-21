@@ -25,6 +25,7 @@ export function adapterCommand(deps: {
     aliases: [],
     minRank: 7,
     gate: "adapter.enable",
+    sensitiveSubcommands: ["enable"],
     help: `Manage platform adapters (Telegram, Discord, Slack, Signal).
 Requires rank 7 and the adapter.enable gate.
 Gated capability: a held run executes once a person approves it (\`challenge\`); approvals from outside your own lineage build it (\`gate list\`), or an operator grants it.

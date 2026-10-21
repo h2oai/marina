@@ -52,6 +52,18 @@ export type { DashboardApiOptions } from "./dashboard-api/shared";
 
 // --- Route handler ---
 
+/**
+ * Operator-only reads: stored API key names/providers, the identity registry,
+ * federation peers and the operational-alert queue. Served only to a caller
+ * with the privileged-read capability (`memoryObserver().privilegedRead`).
+ */
+const OPERATOR_READ_PATHS = new Set([
+  "/api/keys",
+  "/api/principals",
+  "/api/federation/peers",
+  "/api/operations/alerts",
+]);
+
 export async function handleDashboardApi(
   req: Request,
   url: URL,
@@ -109,7 +121,11 @@ async function dispatchDashboardApi(
   if (
     (url.pathname === "/api/traces" ||
       url.pathname === "/api/logs" ||
-      url.pathname.startsWith("/api/evidence/")) &&
+      url.pathname.startsWith("/api/evidence/") ||
+      (method === "GET" && OPERATOR_READ_PATHS.has(url.pathname)) ||
+      // A refresh calls every configured provider with the operator's keys;
+      // the cached list stays readable by every session.
+      (url.pathname === "/api/models" && url.searchParams.get("refresh") === "1")) &&
     !memory.privilegedRead
   )
     return json({ error: "Operator read capability required" }, 403);

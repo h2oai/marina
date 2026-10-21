@@ -256,7 +256,7 @@ export interface ChallengeHoldInput {
   creatorName?: string;
   gateId?: string;
   minRank?: number;
-  /** The requester's own held input; omitted when it carried a secret-shaped value. */
+  /** The requester's own held input; omitted when it carried a credential or secret-shaped value. */
   command?: string;
   toolName?: string;
   /** JSON of the request-local coding target, when the hold carried one. */

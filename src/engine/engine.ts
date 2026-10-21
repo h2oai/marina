@@ -80,6 +80,7 @@ import { BenchmarkRunner } from "./benchmark-runner";
 import { BriefManager } from "./brief-manager";
 import { CanvasReadGrants } from "./canvas-access";
 import { recordEngineCognition } from "./cognitive-provenance";
+import { purgeSensitiveCommandEvents } from "./command-redaction";
 import { registerBuiltinCommands } from "./command-registry";
 import { CommandRouter } from "./command-router";
 import { stopCodeStreamsFor } from "./commands/code/stream";
@@ -797,6 +798,17 @@ export class Engine {
   start(): void {
     if (this.running) return;
     this.running = true;
+    // Command events recorded with a credential-carrying form in clear (before
+    // inputs were redacted at the source) are removed once per start.
+    const db = this.db;
+    if (db) {
+      tryLog(this.logger, "engine", "Sensitive command event cleanup failed", () => {
+        const removed = purgeSensitiveCommandEvents(db, this.commands.allBuiltins());
+        if (removed > 0) {
+          this.logger.info("engine", `Removed ${removed} stored command events with credentials`);
+        }
+      });
+    }
     this.flywheel?.reconcile?.().catch((error) => {
       this.logger.warn("flywheel", "Workspace reconciliation failed", {
         error: error instanceof Error ? error.message : String(error),
