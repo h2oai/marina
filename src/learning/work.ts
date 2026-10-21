@@ -5,7 +5,7 @@
  * Lessons from work: Marina's own non-benchmark tool use becomes judged
  * `tools` / `code` lessons through the ONE outcome loop (`recordOutcome`).
  *
- *   MARINA_LESSONS_FROM_WORK=off|observe|on   (default off)
+ *   MARINA_LESSONS_FROM_WORK=off|observe|on   (unset: on with a model provider, else observe)
  *     off      nothing is collected
  *     observe  signals are collected and aggregated; each flush logs the
  *              candidate outcomes per source (counts only) — no model call

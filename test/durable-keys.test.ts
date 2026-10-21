@@ -204,7 +204,7 @@ describe("durable keys survive re-login", () => {
       title: "crew result",
       body: "shipped the durable keys",
     });
-    const macros = new MacroManager(db, () => {});
+    const macros = new MacroManager(db);
     const macro = macros.create("ship", "e_1", "board post results done");
 
     // Stored under the durable key …

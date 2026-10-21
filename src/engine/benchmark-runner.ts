@@ -175,7 +175,7 @@ export interface BenchmarkRunOptions {
    * `evolve evaluate benchmark:<id>` can tie a score to a candidate role.
    */
   subjects?: BenchmarkSubject[];
-  /** Judge on the fixed `holdout` split, iterate on `tune` (benchmarks/partition.ts). */
+  /** Judge on the fixed `holdout` split, iterate on `tune` (src/engine/benchmark-partition.ts). */
   partition?: "holdout" | "tune";
   /** Recall judged lessons on the target's requests (`--lessons`). */
   lessons?: boolean;

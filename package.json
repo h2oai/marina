@@ -34,7 +34,6 @@
     "worlds",
     "rooms",
     "scripts",
-    "benchmarks/reference-scores.ts",
     "dist/dashboard",
     ".env.example",
     "config/environment.reference",

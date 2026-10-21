@@ -346,9 +346,7 @@ export class Engine {
         (event) => this.logEvent(event),
       );
       this.taskManager = new TaskManager(this.db);
-      this.macroManager = new MacroManager(this.db, (entityId, raw) =>
-        this.processCommand(entityId, raw),
-      );
+      this.macroManager = new MacroManager(this.db);
       this.crewManager = new CrewManager({
         channels: this.channelManager,
         db: this.db,
@@ -520,8 +518,9 @@ export class Engine {
     this.registerBuiltinCommands();
     this.tickScheduler = new TickScheduler(this.logger);
     this.registerTickJobs();
-    // Lessons from work (MARINA_LESSONS_FROM_WORK, default off — a cheap no-op
-    // then): agent tool results, gate holds and task verdicts become signals.
+    // Lessons from work (MARINA_LESSONS_FROM_WORK; unset: on with a model
+    // provider, else observe; `off` is a cheap no-op): agent tool results,
+    // gate holds and task verdicts become signals.
     this.addEventListener((event) => observeWorkEvent(this.db, event));
     // The outcome path (src/outcomes/): a creator's verdict on a task
     // submission is a resolved result — recorded once, learned from.

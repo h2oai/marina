@@ -132,7 +132,7 @@ export const STANDING_AMOUNTS: Record<StandingKind, number> = {
   // approver inside the claimant's lineage has no grounding signal here).
   task_complete: 0,
   // An onboarding quest the ENGINE checked, once per quest. Kept small: it
-  // moves a newcomer toward Citizen (rank 1 = 5) without clearing gates.
+  // moves a newcomer toward rank 1 (standing 5) without clearing gates.
   quest_complete: 3,
   // A Code Mode attempt whose checks passed, approved by another account —
   // grounded, so an agent reviewer in the worker's lineage may credit it;

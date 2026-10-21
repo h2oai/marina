@@ -444,12 +444,14 @@ export async function forecasterFor(
             learner: (round, lock, filed, outcome) => {
               const summary = crew.roundSummary(lock, filed, outcome);
               if (summary)
-                void import("../learning/service").then(({ noteOutcome }) =>
-                  noteOutcome(
-                    notes,
-                    crew.crewLessonOutcome(round, round.round_id, summary, round.release_at),
-                  ),
-                );
+                void import("../learning/service")
+                  .then(({ noteOutcome }) =>
+                    noteOutcome(
+                      notes,
+                      crew.crewLessonOutcome(round, round.round_id, summary, round.release_at),
+                    ),
+                  )
+                  .catch(logRejection(logger, "arena", "backtest lesson outcome failed"));
             },
           }
         : {}),

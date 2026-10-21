@@ -5,6 +5,7 @@ import type { ProviderProbeResult } from "../../net/model/model-api";
 import type { AutonomyPulseRow } from "../../persistence/db-telemetry";
 import type { CommandContext, CommandDef } from "../../types";
 import { ungatedPostureNote } from "../autonomy";
+import { rankFloorRefusal } from "../rank-floor";
 import {
   AUTONOMY_REQUIREMENTS,
   type ReadinessCheck,
@@ -13,7 +14,6 @@ import {
   type ReadinessTrustProfile,
   readinessCounts,
 } from "../readiness";
-import { isLocalUngated } from "../trust-profile";
 
 const ICON: Record<ReadinessStatus, string> = { ok: "✓", degraded: "⚠", off: "✗" };
 
@@ -196,11 +196,13 @@ export function readinessCommand(deps: {
           ctx.send(input.entity, "Provider probing is not available on this instance.");
           return;
         }
-        if (!isLocalUngated() && rank < PROVIDER_PROBE_MIN_RANK) {
-          ctx.send(
-            input.entity,
-            `readiness providers spends provider tokens; it needs rank ${PROVIDER_PROBE_MIN_RANK}+ on a gated instance (yours: ${rank}).`,
-          );
+        const refusal = rankFloorRefusal(
+          { id: input.entity, properties: { rank } },
+          PROVIDER_PROBE_MIN_RANK,
+          `readiness providers spends provider tokens; it needs rank ${PROVIDER_PROBE_MIN_RANK}+ on a gated instance (yours: ${rank}).`,
+        );
+        if (refusal) {
+          ctx.send(input.entity, refusal);
           return;
         }
         const only = input.tokens.slice(1).map((a) => a.toLowerCase());

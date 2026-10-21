@@ -4,6 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { rankFloorRefusal } from "../rank-floor";
 
 /**
  * Bankroll command — risk gates at the data layer.
@@ -99,8 +100,13 @@ const WRITE_MIN_RANK = 5;
 
 function requireWriteRank(ctx: RoomContext, entity: Entity, eid: Entity["id"]): boolean {
   const rank = (entity.properties.rank as number) ?? 0;
-  if (rank < WRITE_MIN_RANK) {
-    ctx.send(eid, `This subcommand requires rank ${WRITE_MIN_RANK}+ (you are ${rank}).`);
+  const refusal = rankFloorRefusal(
+    entity,
+    WRITE_MIN_RANK,
+    `This subcommand requires rank ${WRITE_MIN_RANK}+ (you are ${rank}).`,
+  );
+  if (refusal) {
+    ctx.send(eid, refusal);
     return false;
   }
   return true;

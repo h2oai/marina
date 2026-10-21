@@ -17,6 +17,7 @@ import type { AgentEvent, AgentHandle, AgentStatus } from "../src/agent/agent-ty
 import { HostExecForbiddenError, LocalWorkspace } from "../src/coding/local-workspace";
 import { WorkspaceRegistry } from "../src/coding/workspace-registry";
 import { codeCommand, isLoopbackConnection } from "../src/engine/commands/code";
+import { sessionExecModeForTests } from "../src/engine/commands/code/exec";
 import { Engine } from "../src/engine/engine";
 import { grant } from "../src/engine/safety-gates";
 import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
@@ -341,6 +342,31 @@ describe("code command", () => {
       expect(decisions.length).toBe(1);
       expect(decisions[0]!.status).toBe("denied");
       expect(JSON.parse(decisions[0]!.metadata_json).approved).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("closing a session drops its exec-mode override", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        findEntityByName: () => entity,
+        notify: () => {},
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Closing"));
+      const session = db.listCodingSessions(entity.name, 1)[0]!;
+      await command.handler(ctx, inputFor(entity, "code exec-mode off"));
+      expect(sessionExecModeForTests(session.id)).toBe("off");
+      await command.handler(ctx, inputFor(entity, "code done finished"));
+      expect(db.getCodingSession(session.id)?.status).toBe("complete");
+      expect(sessionExecModeForTests(session.id)).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1040,7 +1066,7 @@ describe("code command", () => {
     expect(calls).toEqual(["create", "hibernate", "resume", "stop"]);
   });
 
-  it("keeps fleet operations steward-gated and reclamation dry-run by default", async () => {
+  it("keeps fleet operations behind the rank-5 floor and reclamation dry-run by default", async () => {
     const entity = engine.entities.get(conn.entity!)!;
     let applied = false;
     const flywheel: FlywheelToolBackend = {
@@ -1089,7 +1115,7 @@ describe("code command", () => {
     const ctx = testRoomContext(sent);
 
     await command.handler(ctx, inputFor(entity, "code sandbox ops inventory"));
-    expect(sent.at(-1)).toContain("require steward rank");
+    expect(sent.at(-1)).toContain("require architect rank (5)");
     entity.properties.rank = 5;
     await command.handler(ctx, inputFor(entity, "code sandbox ops reclaim"));
     expect(applied).toBe(false);

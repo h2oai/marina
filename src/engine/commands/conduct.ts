@@ -3,6 +3,7 @@
 
 import type { AgentStatus } from "../../agent/agent-types";
 import { getStanding } from "../../agent/standing";
+import { experimentalHelp } from "../../config/feature-status";
 import {
   parseAssignee,
   parseScore,
@@ -90,22 +91,23 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
     name: "conduct",
     aliases: [],
     minRank: 0,
-    help:
+    help: experimentalHelp(
       "Author, inspect, and run Scores — executable workflow plans (the Conductor grammar).\n" +
-      "Usage:\n" +
-      "  conduct list                          — stored Scores\n" +
-      "  conduct show <name>                   — pretty-print a Score's layers\n" +
-      "  conduct json <name>                   — raw Score JSON (for tools/scripts)\n" +
-      "  conduct validate -- <json>            — check a Score without storing\n" +
-      "  conduct create <name> -- <json>       — validate and store a Score\n" +
-      "  conduct fork <name> <newname>         — copy a stored Score under a new name\n" +
-      "  conduct resolve <assignee>            — resolve role:/model:/entity to a live target\n" +
-      "  conduct track <name> <sampleId> predict=<0..1> [category=<c>]  — bet a Score on an outcome\n" +
-      "  conduct ran <name> -- <summary>       — report a finished run (to the feed)\n" +
-      "  conduct outcome <name> <0..1> [category=<c>] [-- <label>]  — record how a run went\n" +
-      "  conduct learned [category]            — recall which shapes worked (priors)\n" +
-      "Step JSON: { goal, steps: [{ id, instruction, assignee, access: [ids] }] }\n" +
-      "Assignee: <agent> | role:<r> | model:<prov/id> | conduct",
+        "Usage:\n" +
+        "  conduct list                          — stored Scores\n" +
+        "  conduct show <name>                   — pretty-print a Score's layers\n" +
+        "  conduct json <name>                   — raw Score JSON (for tools/scripts)\n" +
+        "  conduct validate -- <json>            — check a Score without storing\n" +
+        "  conduct create <name> -- <json>       — validate and store a Score\n" +
+        "  conduct fork <name> <newname>         — copy a stored Score under a new name\n" +
+        "  conduct resolve <assignee>            — resolve role:/model:/entity to a live target\n" +
+        "  conduct track <name> <sampleId> predict=<0..1> [category=<c>]  — bet a Score on an outcome\n" +
+        "  conduct ran <name> -- <summary>       — report a finished run (to the feed)\n" +
+        "  conduct outcome <name> <0..1> [category=<c>] [-- <label>]  — record how a run went\n" +
+        "  conduct learned [category]            — recall which shapes worked (priors)\n" +
+        "Step JSON: { goal, steps: [{ id, instruction, assignee, access: [ids] }] }\n" +
+        "Assignee: <agent> | role:<r> | model:<prov/id> | conduct",
+    ),
     handler: (ctx: RoomContext, input) => {
       const caller = deps.getEntity(input.entity);
       if (!caller) return;

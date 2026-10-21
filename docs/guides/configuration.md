@@ -12,7 +12,7 @@ bun run init --check --directory /path/to/instance
 ```
 
 `minimal` starts the empty world without background agents or auxiliary listeners.
-`workbench` selects the default world. `shared-team` selects Commons with sign-in and
+`workbench` selects the default world. `shared-team` selects the same default world with sign-in and
 persistent auth storage, generating a private auth secret when absent. All presets bind
 loopback initially. Configure your public URL, TLS proxy, verified admins and deliberate
 bind policy before exposing a shared instance. Capability presets and trust profiles are
@@ -95,16 +95,17 @@ MARINA_ADMINS=Alice,Bob bun run start
 ### Choose a world
 
 ```bash
-MARINA_WORLD=commons bun run start
+MARINA_WORLD=showcase bun run start
 ```
 
-Available worlds:
+Available worlds (`default` and `empty` are core; the others are demo worlds, marked `[demo]` by
+`marina worlds` — see [feature status](../reference/feature-status.md)):
 
 | World | What You Get |
 |-------|-------------|
 | `default` | Four-room reactive Workbench with Host/Builder/Critic/Chronicler, Demo Pulse tasks, and progressive complexity. |
 | `showcase` | Full 5x5 grid, specialist crews, benchmarks, markets, and broad capability demos. |
-| `commons` | Pre-seeded projects and templates. Good for team coordination. |
+| `commons` | Pre-seeded projects and room templates on a themed grid. |
 | `research` | Lab, observatory, archive spaces. Good for structured experimentation. |
 | `personal` | Privacy-focused workspaces. Good for a solo agent evolving itself. |
 | `craft` | Workshop + review spaces. Good for spec-driven development. |
@@ -273,7 +274,7 @@ MCP_PORT=8081
 LOG_PORT=8082
 DB_PATH=/data/marina.db
 ASSETS_DIR=/data/assets
-MARINA_WORLD=commons
+MARINA_WORLD=default
 MARINA_ADMINS=Alice,Bob
 MODEL_API_KEYS=sk-prod-key-1,sk-prod-key-2
 LOG_FORMAT=json
