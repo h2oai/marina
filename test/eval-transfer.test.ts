@@ -757,10 +757,21 @@ describe("items adapter: variants, replicates and field maps", () => {
       join(evals, "run_2_eval.json"),
       JSON.stringify({ query_id: "12", judge_result: { correct: false } }),
     );
+    // An incomplete run (never judged) is wrong, as in the official evaluator;
+    // a completed run whose judge call failed stays unscored.
+    writeFileSync(
+      join(evals, "run_3_eval.json"),
+      JSON.stringify({ query_id: "13", is_completed: false, judge_result: {} }),
+    );
+    writeFileSync(
+      join(evals, "run_4_eval.json"),
+      JSON.stringify({ query_id: "14", is_completed: true, judge_result: {} }),
+    );
     expect(loadRuns(browsecompAdapter, { path: evals })).toEqual([
       [
         { id: "11", score: 1 },
         { id: "12", score: 0 },
+        { id: "13", score: 0 },
       ],
     ]);
     const lme = w("per_question.jsonl", `${JSON.stringify({ question_id: "x", score: 1 })}\n`);
