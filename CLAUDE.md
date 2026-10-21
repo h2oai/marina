@@ -8,7 +8,10 @@ Use a feature branch and pull request for every repository change. Never push di
 `main`. A request to commit and push means publishing the feature branch and opening or
 updating its PR; it does not authorize merging. Leave the PR for review unless merging is
 explicitly requested. Required CI checks must pass on the latest revision before merge;
-do not bypass checks, reviews, or branch protection.
+do not bypass checks, reviews, or branch protection. `main` is protected by a ruleset with a
+merge queue: `gh pr merge <n> --squash` queues the PR, CI reruns on it merged onto current
+`main`, and it lands only when that passes. A workflow that a required check comes from must
+also run on `merge_group`.
 
 ## Build & Test
 ```bash
