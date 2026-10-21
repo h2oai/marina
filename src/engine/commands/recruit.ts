@@ -9,7 +9,6 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { RECRUIT_MIN_STANDING } from "../constants";
-import { getRank } from "../permissions";
 import { rankFloorRefusal } from "../rank-floor";
 
 /** Runtime states in which a running agent can be pulled into a crew. */
@@ -36,7 +35,6 @@ function recruitPermission(
   eid: string,
   caller: Entity,
 ): { ok: boolean; reason?: string } {
-  if (getRank(caller) >= 2) return { ok: true };
   if (deps.db && getStanding(deps.db, eid) >= RECRUIT_MIN_STANDING) return { ok: true };
   const have = deps.db ? getStanding(deps.db, eid).toFixed(1) : "n/a";
   // The one rank-floor rule: the local operator's instance and the `open`

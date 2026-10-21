@@ -3,7 +3,6 @@
 
 import { describe, expect, it } from "bun:test";
 import type { ResearchBrief } from "../src/arena/research/briefs";
-import type { Retriever } from "../src/arena/research/retrieve";
 import type { AnswerSpec } from "../src/forecast/answer-types";
 import { type FormedAnswer, forecastFormed } from "../src/forecast/formations";
 import type { LookupFetch } from "../src/forecast/lookup-http";
@@ -26,6 +25,7 @@ import {
 import { triageCalendar, triageCalendarEnabled } from "../src/forecast/triage-calendar";
 import { READOFF_CONFIDENCE, type TriageSettings } from "../src/forecast/triage-route";
 import type { ModelPart, TypedForecastAnswer, TypedForecastDeps } from "../src/forecast/typed";
+import type { Retriever } from "../src/research/retrieve";
 
 const yesNo: AnswerSpec = {
   type: "choice",

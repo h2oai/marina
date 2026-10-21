@@ -11,23 +11,6 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import type { ResearchBrief } from "../src/arena/research/briefs";
-import {
-  combineRetrievers,
-  openRouterWebRetriever,
-  type Retriever,
-  retrieverFromSpec,
-} from "../src/arena/research/retrieve";
-import { verifyDossier } from "../src/arena/research/verify";
-import {
-  exaSearchProvider,
-  openRouterSearchProvider,
-  pageKey,
-  passagesOf,
-  rankPassages,
-  searchBackendsFromEnv,
-  siteOf,
-  webSearchRetriever,
-} from "../src/arena/research/web-search";
 import { extractPublishedDate, extractReadableText } from "../src/engine/html-text";
 import {
   resetSearchHealthForTests,
@@ -49,6 +32,23 @@ import {
   type ModelPart,
   type TypedRun,
 } from "../src/forecast/typed";
+import {
+  combineRetrievers,
+  openRouterWebRetriever,
+  type Retriever,
+  retrieverFromSpec,
+} from "../src/research/retrieve";
+import { verifyDossier } from "../src/research/verify";
+import {
+  exaSearchProvider,
+  openRouterSearchProvider,
+  pageKey,
+  passagesOf,
+  rankPassages,
+  searchBackendsFromEnv,
+  siteOf,
+  webSearchRetriever,
+} from "../src/research/web-search";
 import { scopeProcessState } from "./process-state";
 
 afterEach(() => {

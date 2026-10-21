@@ -16,7 +16,7 @@ env-set autopilot); the in-world `arena` command is read-only.
 
 ## Enter Marina (one time)
 
-1. **Choose the entrant id** — lower-case, permanent (for example `h2oai-marina`) — and the
+1. **Choose the entrant id** — lower-case, permanent (for example `your-org-marina`) — and the
    GitHub account that will own it. Only that account can change the registration later.
 2. **Generate the signing key** on the server that will file:
 
@@ -27,15 +27,15 @@ env-set autopilot); the in-world `arena` command is read-only.
 3. **Configure** (`.env`):
 
    ```bash
-   MARINA_ARENA_ENTRANT=h2oai-marina
+   MARINA_ARENA_ENTRANT=your-org-marina
    MARINA_ARENA_KEY_FILE=/srv/marina/arena-key.pem
    ```
 
 4. **Write the registration** and open the pull request from the owning account:
 
    ```bash
-   bun run arena registration --name "Marina" --org "H2O.ai" --github <login> \
-     --out entrants/h2oai-marina.json
+   bun run arena registration --name "Your Org Marina" --org "Your Org" --github <login> \
+     --out entrants/your-org-marina.json
    ```
 
    Add the file to a fork of

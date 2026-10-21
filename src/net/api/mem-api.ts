@@ -308,9 +308,20 @@ function matchEnvKey(envKeys: MemApiKeySet, token: string): string | undefined {
   return agent;
 }
 
-type MemAuthOutcome = { agent: string } | { error: Response; credentialRejected?: true };
+export type MemAuthOutcome = { agent: string } | { error: Response; credentialRejected?: true };
 
-function authenticate(req: Request, db: MarinaDB): MemAuthOutcome {
+/**
+ * Authenticate a caller of a `MEM_API_KEYS`-keyed surface (`/mem`, `/api/probe`):
+ * constant-time env-key match, the local profile's model-API key, DB keys, then
+ * open mode with a sanitized `X-Agent-Name`. `credentialRejected` marks a
+ * presented-but-wrong credential, which the caller charges to the failed-auth
+ * throttle. `surface` names the API in the "requires authentication" message.
+ */
+export function authenticateMemCaller(
+  req: Request,
+  db: MarinaDB,
+  surface = "Memory API",
+): MemAuthOutcome {
   const envKeys = getEnvKeys();
 
   // Check Bearer token first
@@ -349,8 +360,8 @@ function authenticate(req: Request, db: MarinaDB): MemAuthOutcome {
       error: error(
         401,
         localModelApiKey()
-          ? "Memory API requires authentication. Send Authorization: Bearer <local model-API key> (printed at boot; <DB_PATH>.local-api-key) plus X-Agent-Name: <name>, or set MEM_API_KEYS for per-agent keys."
-          : "Memory API requires authentication. Set MEM_API_KEYS or MARINA_OPEN_API=true for development.",
+          ? `${surface} requires authentication. Send Authorization: Bearer <local model-API key> (printed at boot; <DB_PATH>.local-api-key) plus X-Agent-Name: <name>, or set MEM_API_KEYS for per-agent keys.`
+          : `${surface} requires authentication. Set MEM_API_KEYS or MARINA_OPEN_API=true for development.`,
       ),
     };
   }
@@ -448,7 +459,7 @@ export async function handleMemApi(
   if (authFailuresExhausted(ip)) {
     return error(429, "Too many failed authentication attempts. Please slow down.", "rate_limited");
   }
-  const auth = authenticate(req, db);
+  const auth = authenticateMemCaller(req, db);
   if ("error" in auth) {
     if (auth.credentialRejected) recordAuthFailure(ip);
     return auth.error;

@@ -3,7 +3,7 @@
 
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { qualifyAgentHandoff } from "../scripts/qualify-agent-handoff";
@@ -18,6 +18,7 @@ import {
 import { MarinaDB } from "../src/persistence/database";
 import { readBenchmarkSourceEvidence } from "../src/persistence/db-benchmarks";
 import { exportState, importState } from "../src/persistence/export-import";
+import { scopeProcessState } from "./process-state";
 
 const participant = {
   agent: "Answerer",
@@ -277,7 +278,16 @@ describe("source execution evidence", () => {
     }
   });
 
-  // Importing this module must not launch a provider/server. Also includes the
-  // reusable live harness in strict TypeScript checking without a paid CI job.
-  test("live probe is opt-in", () => expect(typeof qualifyAgentHandoff).toBe("function"));
+  // Importing the live harness launches nothing, and without a provider key it
+  // refuses before creating its evidence directory or starting a server.
+  test("live probe is opt-in", async () => {
+    using _state = scopeProcessState({ env: { OPENAI_API_KEY: undefined } });
+    const dir = join(mkdtempSync(join(tmpdir(), "handoff-optin-")), "evidence");
+    try {
+      await expect(qualifyAgentHandoff(dir)).rejects.toThrow("OPENAI_API_KEY is unavailable");
+      expect(existsSync(dir)).toBe(false);
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
 });

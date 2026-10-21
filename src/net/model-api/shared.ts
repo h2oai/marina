@@ -21,6 +21,7 @@ import {
   unsupportedParameterBody,
 } from "../model/openai-errors";
 import { RESPONSE_CACHE_HEADER } from "../response-cache";
+import { type ModelApiKeyEntry, parseModelApiKeys } from "./api-keys";
 
 /**
  * Cost and cache response headers on every proxied (passthru / internal /
@@ -119,32 +120,6 @@ export interface PassthruAuthResult {
   runKey?: RunKeyState;
 }
 
-interface KeyEntry {
-  secret: string;
-  /** Scoped binding from `secret:entity` — the key resolves to exactly this entity. */
-  entity?: string;
-  /** `secret:*` — an explicitly-flagged multi-tenant operator key that MAY name-map. */
-  multiTenant?: boolean;
-}
-
-/**
- * Parse a MODEL_API_KEYS entry. Backward compatible: a plain `secret` maps to
- * the default passthru entity; `secret:entity` binds (scopes) the key to a named
- * entity (mirrors the MEM_API_KEYS `secret:agent` convention); the reserved
- * `secret:*` marks a multi-tenant operator key authorized to name-map via
- * `X-Marina-Agent`. Splits on the FIRST colon so entity names may not contain
- * one, consistent with MEM_API_KEYS.
- */
-function parseKeyEntry(entry: string): KeyEntry {
-  const idx = entry.indexOf(":");
-  if (idx < 0) return { secret: entry };
-  const secret = entry.slice(0, idx);
-  const rest = entry.slice(idx + 1).trim();
-  if (!rest) return { secret };
-  if (rest === "*") return { secret, multiTenant: true };
-  return { secret, entity: rest };
-}
-
 /**
  * The local profile's generated key (src/net/local-api-key.ts), honoured ONLY
  * under the `local` trust profile: an inherited or hand-set
@@ -155,14 +130,10 @@ export function localModelApiKey(env: NodeJS.ProcessEnv = process.env): string |
   return key && isLocalProfile(env) ? key : undefined;
 }
 
-function getApiKeyEntries(): KeyEntry[] | null {
-  const raw = [process.env.MODEL_API_KEYS, localModelApiKey()].filter(Boolean).join(",");
-  if (!raw) return null;
-  const entries = raw
-    .split(",")
-    .map((k) => k.trim())
-    .filter(Boolean)
-    .map(parseKeyEntry);
+function getApiKeyEntries(): ModelApiKeyEntry[] | null {
+  const entries = parseModelApiKeys();
+  const local = localModelApiKey();
+  if (local) entries.push({ secret: local });
   return entries.length > 0 ? entries : null;
 }
 
@@ -227,7 +198,7 @@ export function authenticate(req: Request): AuthOutcome {
   // Non-short-circuiting constant-time membership check (every comparison runs
   // regardless of an early match) so timing doesn't leak which/whether a key
   // matched. secretsEqual is itself constant-time per comparison.
-  let matched: KeyEntry | undefined;
+  let matched: ModelApiKeyEntry | undefined;
   for (const e of entries) {
     if (secretsEqual(token, e.secret)) matched = e;
   }

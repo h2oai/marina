@@ -18,6 +18,7 @@ import {
 } from "../agent/provider-cost";
 import { isHostedProvider } from "../net/model/hosted-providers";
 import { HUGGINGFACE_ENV_KEYS, LOCAL_PROVIDERS } from "../net/model/model-discovery";
+import { modelApiKeySecrets } from "../net/model-api/api-keys";
 
 export const PROVIDER_KEYS: Record<string, readonly string[]> = {
   anthropic: ["ANTHROPIC_API_KEY"],
@@ -93,7 +94,7 @@ export function modelAccess(
   const provider = specProvider(spec);
   if (provider === "marina") {
     // A Marina /v1 endpoint (this server, or `marina@<host>/…`): any key it accepts.
-    const apiKey = env.MODEL_API_KEYS?.split(",")[0]?.split(":")[0]?.trim();
+    const apiKey = modelApiKeySecrets(env)[0];
     if (!apiKey) throw new Error("no key for marina/* (set MODEL_API_KEYS)");
     return { model: resolveModel(spec), apiKey };
   }

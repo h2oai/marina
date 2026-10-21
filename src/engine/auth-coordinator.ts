@@ -36,7 +36,13 @@ export interface AuthHost {
   readonly loginRateLimiter?: Pick<RateLimiter, "consume">;
   readonly connections: Pick<
     ConnectionManager,
-    "get" | "bindEntity" | "unbindEntity" | "isEntityConnected" | "boundExternalCount" | "remove"
+    | "get"
+    | "bindEntity"
+    | "unbindEntity"
+    | "isEntityConnected"
+    | "boundExternalCount"
+    | "remove"
+    | "getConnectionForEntity"
   >;
   readonly entities: Pick<EntityManager, "get" | "findAgentByName" | "remove">;
   readonly briefs: Pick<BriefManager, "subscribe" | "unsubscribe">;
@@ -69,6 +75,31 @@ export class AuthCoordinator {
    * close so a token-bearing reconnect can reclaim the same EntityId. */
   private entityEvictionTimers = new Map<EntityId, ReturnType<typeof setTimeout>>();
   private static readonly RECONNECT_GRACE_MS = 60_000;
+
+  /**
+   * The refusal for a second connection to a connected account. One account
+   * has one live connection; a second never evicts the first (a leaked token
+   * must not kick its owner, and two controllers would race on one session),
+   * so the refusal names where the first is and what to do.
+   */
+  private nameInUse(entityId: EntityId): string {
+    const holder = this.host.connections.getConnectionForEntity(entityId);
+    const via = holder?.internal
+      ? "an internal agent connection"
+      : holder?.protocol === "mcp"
+        ? "an MCP connection"
+        : holder?.protocol
+          ? `a ${holder.protocol} connection`
+          : "another connection";
+    const since = holder?.connectedAt
+      ? ` since ${new Date(holder.connectedAt).toISOString().slice(11, 16)} UTC`
+      : "";
+    return (
+      `That name is already in use: it is connected on ${via}${since}. ` +
+      "One account has one live connection, and a second never replaces the first. " +
+      "Use that session, or close it and connect again."
+    );
+  }
 
   /** Cancel a pending grace-period eviction for an entity (it's being rebound). */
   private cancelEviction(entityId: EntityId): void {
@@ -273,7 +304,7 @@ export class AuthCoordinator {
     // the same name would race on entity state. Mirrors the same logic `reconnect()` uses.
     const existing = this.host.entities.findAgentByName(cleanName);
     if (existing && this.host.connections.isEntityConnected(existing.id)) {
-      return { error: "That name is already in use." };
+      return { error: this.nameInUse(existing.id) };
     }
     if (existing) {
       // Re-attach still consumes a cap slot — this branch is what every user
@@ -470,7 +501,7 @@ export class AuthCoordinator {
     let entity: Entity | undefined;
     if (existing) {
       if (this.host.connections.isEntityConnected(existing.id)) {
-        return { error: "That name is already in use." };
+        return { error: this.nameInUse(existing.id) };
       }
       // The cap applies to every unbound→bound transition — a grace-window
       // reconnect that finds the instance full is rejected (hard cap; the

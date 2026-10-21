@@ -97,6 +97,14 @@ describe("ConnectorRuntime.loadFromDB re-validates stored URLs", () => {
     expect(db.getConnectorByName("private")!.status).toBe("active");
   });
 
+  it("addHttpServer checks the resolved address before registering", async () => {
+    await expect(runtime.addHttpServer("rb", "https://rebind.example.com/mcp")).rejects.toThrow(
+      /Blocked URL/,
+    );
+    await runtime.addHttpServer("ok", "https://mcp.example.com/mcp");
+    expect(registered.map((r) => r.name)).toEqual(["ok"]);
+  });
+
   it("stdio connectors are unaffected by the URL guard", async () => {
     db.createConnector({
       id: "c_stdio",

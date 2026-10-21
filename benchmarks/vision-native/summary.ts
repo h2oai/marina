@@ -4,7 +4,7 @@
 /**
  * Per-mode accuracy with Wilson intervals, per kind and per family, and the
  * paired native-vs-describe comparison (exact McNemar and a paired bootstrap)
- * over the tasks both modes answered. Pure; reuses `benchmarks/stats.ts`.
+ * over the tasks both modes answered. Pure; reuses `src/stats`.
  */
 
 import { type Interval, mcnemarExact, pairedBootstrap, wilsonInterval } from "../../src/stats";

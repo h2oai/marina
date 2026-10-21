@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { useEntityDetail } from "../hooks/use-api";
 import { useChatState } from "../hooks/use-chat-state";
 import { useWorldState } from "../hooks/use-world-state";
+import { ResidentName } from "./ResidentName";
 
 export function EntitySymmetryBar() {
   const selected = useWorldState((s) => s.selectedEntity);
@@ -59,7 +60,9 @@ export function EntitySymmetryBar() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1 text-text-bright">
           <User size={12} className="text-primary" />
-          <span className="font-semibold">{summary.name}</span>
+          <span className="font-semibold">
+            <ResidentName name={summary.name} />
+          </span>
           <span className="rounded bg-border px-1 py-0.5 text-[10px] uppercase text-text-dim">
             {summary.kind}
           </span>

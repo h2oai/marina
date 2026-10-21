@@ -117,6 +117,8 @@ export class ConnectorRuntime {
   /** Register an HTTP MCP server. */
   async addHttpServer(name: string, url: string, headers?: Record<string, string>): Promise<void> {
     if (!this.available) throw new Error("Connector runtime not available.");
+    const urlError = await validateFetchUrl(url);
+    if (urlError) throw new Error(`Blocked URL: ${urlError}`);
     await this.runtime.registerDefinition({
       name,
       command: { kind: "http", url: new URL(url), headers },
@@ -249,7 +251,6 @@ export class ConnectorRuntime {
     const timeout = setTimeout(() => controller.abort(), CONNECTOR_HTTP_TIMEOUT_MS);
     try {
       const response = await guardedFetch(url, { ...init, signal: controller.signal });
-      clearTimeout(timeout);
       const body = await response.text();
       return {
         status: response.status,

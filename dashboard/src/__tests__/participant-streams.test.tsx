@@ -7,6 +7,7 @@ import type { RoutingEventPage, RoutingSession } from "../../../src/sdk/routing-
 import { ParticipantStreams, ParticipantStreamsPanel } from "../components/ParticipantStreams";
 import { useChatState } from "../hooks/use-chat-state";
 import { useWorkspaceState } from "../hooks/use-workspace-state";
+import { useWorldState } from "../hooks/use-world-state";
 import { clearToken, setToken } from "../lib/api";
 
 const session: RoutingSession = {
@@ -53,6 +54,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   act(() => {
+    useWorldState.setState({ entities: [] });
     clearToken();
     useChatState.setState({ loggedIn: false, entityName: null });
   });
@@ -180,6 +182,33 @@ describe("participant streams", () => {
       expect(screen.queryByRole("region", { name: "Build worker output" })).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("alert")).toHaveTextContent("not found");
+  });
+  it("names running residents instead of the supervise hint when none of their sessions are the viewer's", async () => {
+    fetcher.mockImplementation(async () => Response.json({ sessions: [], nextCursor: null }));
+    useWorldState.setState({
+      entities: [
+        {
+          id: "e_7",
+          name: "Wren",
+          kind: "agent",
+          room: "w/start",
+          vendor: "claude",
+          presence: "working",
+        },
+        { id: "e_8", name: "qop", kind: "human", room: "w/start" },
+      ],
+    });
+    render(<ParticipantStreams active />);
+    expect(await screen.findByText(/1 supervised resident is in the world/)).toBeVisible();
+    expect(screen.getByText("[claude]")).toBeVisible();
+    expect(screen.getByText("working")).toBeVisible();
+    expect(screen.queryByText(/Start marina supervise/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Follow this room" })).toBeVisible();
+  });
+  it("keeps the supervise hint when the world has no residents", async () => {
+    fetcher.mockImplementation(async () => Response.json({ sessions: [], nextCursor: null }));
+    render(<ParticipantStreams active />);
+    expect(await screen.findByText(/Start marina supervise/)).toBeVisible();
   });
   it("does not poll while hidden or before login", () => {
     const view = render(<ParticipantStreams active={false} />);

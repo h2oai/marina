@@ -62,8 +62,9 @@ import { isLoopbackIp } from "../../../net/loopback";
 import { recordVerification } from "../../../outcomes/live";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Connection, Entity, EntityId, RoomContext } from "../../../types";
+import { principalOf } from "../../gate-context";
 import { getRank } from "../../permissions";
-import { isLocalUngated } from "../../trust-profile";
+import { isImplicitLocalUngated, isLocalUngated } from "../../trust-profile";
 import {
   findStoredRecipe,
   parseRecipeCommands,
@@ -1003,6 +1004,16 @@ async function executeWorkspaceCommand(
 // In-memory only; a restart drops overrides and re-applies the instance's policy.
 const execModes = new Map<string, "prompt" | "auto" | "off">();
 
+/** Drop a closed session's exec-mode override (called with `clearSessionExecState`). */
+export function clearSessionExecMode(sessionId: string): void {
+  execModes.delete(sessionId);
+}
+
+/** Exported for tests: the session's exec-mode override, if any. */
+export function sessionExecModeForTests(sessionId: string): "prompt" | "auto" | "off" | undefined {
+  return execModes.get(sessionId);
+}
+
 /**
  * Exported for tests: the exec/loopback TRUST anchor. Consults ONLY the real,
  * unspoofable socket peer (`conn.peerIp`) plus the in-process/internal flag —
@@ -1128,8 +1139,19 @@ function selectExecApprover(
 
   // LOCAL trust profile: arbitrary host commands run without a prompt (mode
   // `auto`) unless the launcher chose otherwise; the exec_decision audit row
-  // is still written for every attempt.
-  const mode = execModes.get(session.id) ?? (isLocalUngated() ? "auto" : undefined);
+  // is still written for every attempt. Under the IMPLICIT local profile an
+  // AGENT's arbitrary host commands are held for the creator's approval
+  // (`prompt`; LOCAL_AGENT_HELD_GATES) — only `sovereign`, or the verified
+  // loopback creator's explicit `code exec-mode auto`, runs them unprompted.
+  const mode =
+    execModes.get(session.id) ??
+    (isImplicitLocalUngated()
+      ? principalOf(entity.id) === "agent"
+        ? "prompt"
+        : "auto"
+      : isLocalUngated()
+        ? "auto"
+        : undefined);
   if (mode === "off") return undefined;
   if (mode && deps.notify && verifyInteractiveEligible(deps, session)) {
     const creator = resolveCreatorExact(deps, session);

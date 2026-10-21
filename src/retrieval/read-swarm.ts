@@ -42,7 +42,7 @@
  * `read` (a document from an offset; without it the search candidate's text
  * is the document). BrowseComp-Plus uses it as the `read-swarm` formation;
  * research retrievers wrap any `Retriever` with it (`readSwarmRetriever` in
- * `src/arena/research/read-swarm-retriever.ts`).
+ * `src/research/read-swarm-retriever.ts`).
  */
 
 import type { DecisionProvider } from "../decisions/types";

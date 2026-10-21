@@ -160,6 +160,8 @@ export interface FuturexUnitOptions {
   /** World database for the spend ledger and submissions (DB_PATH), absolute. */
   dbPath?: string;
   learn: boolean;
+  /** The filing identity, passed as `--org`/`--agent` (else the env file must set it). */
+  identity?: { organization: string; agent: string };
   /** Unit base name (`<name>.service` / `<name>.timer`). */
   name: string;
 }
@@ -199,6 +201,7 @@ export function futurexSystemdUnits(o: FuturexUnitOptions): { service: string; t
     o.dir,
     ...(o.variantsFile ? ["--variants", o.variantsFile] : []),
     ...(o.learn ? ["--learn"] : []),
+    ...(o.identity ? ["--org", o.identity.organization, "--agent", o.identity.agent] : []),
   ];
   const when =
     o.answer === "late"

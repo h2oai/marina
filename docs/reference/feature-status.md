@@ -35,6 +35,9 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Outcomes and lessons | core | `MARINA_LESSONS` | src/outcomes, src/learning |
 | Memory assistance (evaluator/reflector jobs) | core | Workers with the evaluator/reflector roles | src/persistence |
 | Code Mode | core | `code` | src/engine/commands/code |
+| Crews and formations (the runtime form of the orchestration patterns) | core | `crew`; a crew serves `/v1` model requests and is the default benchmark target | src/coordination/crew-manager.ts, src/engine/commands/crew.ts |
+| Desires and journeys | core | `desire`, `journey`; the dashboard first-run guide | src/engine/commands/desire.ts, src/engine/commands/journey.ts, src/engine/journey-state.ts |
+| Novelty suggestions (advisory exploration) | core | `novelty`; residents see suggestions in their continuation prompt | src/engine/novelty.ts, src/engine/commands/novelty.ts |
 | Canvas | siloed | `canvas`; the feed publisher writes the `feed` canvas | src/engine/commands/canvas.ts, src/net/feed-publisher.ts |
 | Forecast pipeline | siloed | `forecast`, `POST /v1/forecast`, forecasting scripts | src/forecast |
 | Social Simulation Arena (routed forecaster, shadow challengers) | siloed | `arena`, `scripts/arena.ts`, `MARINA_ARENA_*` | src/arena |
@@ -45,6 +48,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Research evidence loop and survey | siloed | `MARINA_RESEARCH_*` | src/research |
 | Research web agent, cited answers, fact pass | siloed | In world: `research ask` (rank 0, spend-guarded) and the typed `marina_research` tool; benchmark scripts (`scripts/mind2web2.ts`, deepresearch) | src/research |
 | Skills | core | `skill`; 5 built-ins (`skill builtin`); residents get the best-fitting skill in their prompt (`MARINA_SKILLS_RESIDENT`, default on); note seeds with `MARINA_SEED_SKILLS=true` (showcase) | src/agent |
+| Resolvers, probes and watches | siloed | `probe`, `watch`; `position open` adds a resolving watch | src/resolvers, src/engine/commands/probe.ts, src/engine/commands/watch.ts |
 | Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch) | experimental | Experimental: for embedding hosts. `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint` | src/net/instance-lifecycle.ts |
 | Shared spend ledger | experimental | `MARINA_SPEND_LEDGER=<path>` | src/engine/shared-spend-ledger.ts |
 | Adaptive load-balance routing | experimental | Request header `X-Load-Balance: adaptive` | src/net/model-api |
@@ -76,8 +80,10 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Economic provenance records | experimental | `economy` (claims and references only; moves no funds, stores no credentials) | src/engine/commands/economy.ts, src/persistence/db-economics.ts |
 | Simulation run records (`lab`) | experimental | `lab` (declares and records runs; executes nothing) | src/engine/commands/lab.ts, src/persistence/db-simulations.ts |
 | Media generation jobs | experimental | `image generate`, `video generate`, `audio` (needs a media-capable provider) | src/engine/commands/image.ts, src/persistence/db-media.ts |
+| Scores (`conduct`, `marina_conduct`) | experimental | `conduct`; residents run a stored Score with `marina_conduct`; SDK `runScore` | src/engine/commands/conduct.ts, src/sdk/conduct.ts |
+| Scenario boards | experimental | `scenario` (posts boards and tasks; a resident must pick up the work) | src/engine/commands/scenario.ts |
 | Built-in worlds other than `default` and `empty` (13) | demo | `MARINA_WORLD=<slug>`; `marina worlds` shows each status | worlds |
-| Orchestration templates (16 pool-note patterns) | demo | `project <name> orchestrate <pattern>` | src/world/templates/orchestration.ts |
+| Orchestration templates (16 pool-note patterns; crews run them as formations) | demo | `project <name> orchestrate <pattern>` | src/world/templates/orchestration.ts |
 | `MARINA_HOST` | deprecated | Alias of `WS_HOST` (`WS_HOST` wins) | src/net |
 | `NSED` pattern name | deprecated | Accepted as Deliberation, never advertised | src/world/templates/orchestration.ts |
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { header, separator } from "../../net/ansi";
-import { validateFetchUrlSync } from "../../net/url-guard";
+import { validateFetchUrl } from "../../net/url-guard";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import type { ConnectorRuntime } from "../connector-runtime";
@@ -33,6 +33,7 @@ export function connectCommand(deps: {
     aliases: ["conn"],
     minRank: 5,
     gate: "connect.manage",
+    sensitiveSubcommands: ["auth"],
     help: "Manage external MCP connectors. Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it. Usage: connect add <name> <url> | connect add <name> stdio <cmd> [args] (shell.exec gate; spawns a local process) | connect remove <name> | connect list | connect tools <name> | connect call <name> <tool> [json] | connect auth <name> bearer <token> | connect auth <name> header <key> <value>",
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
@@ -151,10 +152,18 @@ export function connectCommand(deps: {
             return;
           }
 
-          // SSRF protection: block private/internal URLs
-          const urlError = validateFetchUrlSync(url);
+          // The runtime dials the URL as soon as it is added: run the full
+          // fetch-time check (resolved addresses included), not only the literal one.
+          const urlError = await validateFetchUrl(url);
           if (urlError) {
             ctx.send(input.entity, `Blocked URL: ${urlError}`);
+            return;
+          }
+          if (db.getConnectorByName(name)) {
+            ctx.send(
+              input.entity,
+              `Connector "${name}" already exists. Use 'connect remove ${name}' first.`,
+            );
             return;
           }
 

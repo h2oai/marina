@@ -30,9 +30,9 @@
  */
 
 import { MarinaAgent } from "../client";
+import { callMarina } from "./_shared";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
-const MARINA_ENDPOINT = (process.env.MARINA_ENDPOINT ?? "http://localhost:3300").replace(/\/$/, "");
 const AGENT_NAME = process.env.AGENT_NAME ?? "WorldSetup";
 const PROJECT_NAME = process.env.PROJECT_NAME ?? "benchmark-pursuit";
 const SKIP_POOLS = process.env.SKIP_POOLS === "true";
@@ -85,21 +85,6 @@ const ORIENT_NOTES = [
   "Multiple agents may be claiming in parallel. First-to-claim wins the bounty. Don't hoard — finish and move on.",
   "After answering, `note <principle>` to store a learning. Link your note to pool notes you used via `note link <yourId> <poolNoteId> supports` to grow the knowledge graph.",
 ];
-
-async function callMarina(
-  model: string,
-  messages: Array<{ role: string; content: string }>,
-  temperature = 0,
-): Promise<string> {
-  const resp = await fetch(`${MARINA_ENDPOINT}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, temperature }),
-  });
-  if (!resp.ok) throw new Error(`Marina ${resp.status}`);
-  const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content ?? "";
-}
 
 async function seedPoolsInline(agent: MarinaAgent): Promise<number> {
   const DOMAINS: Record<string, string> = {

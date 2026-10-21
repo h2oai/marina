@@ -8,7 +8,7 @@ import type { Engine } from "../engine/engine";
 import { Logger } from "../engine/logger";
 import { onboardParticipant } from "../engine/onboarding";
 import type { Connection, EntityId, Perception } from "../types";
-import { A } from "./ansi";
+import { A, stripControlSequences } from "./ansi";
 import { formatPerception } from "./formatter";
 import { clientIp } from "./http-utils";
 import { instanceActivity } from "./instance-lifecycle";
@@ -117,7 +117,11 @@ export class TelnetServer {
             // carried into the unspoofable exec/loopback trust anchor.
             peerIp: socket.remoteAddress,
             send(perception: Perception) {
-              const text = formatPerception(perception, "ansi");
+              // The server's own colour stays; anything else that could drive the
+              // client's terminal (titles, clipboard, cursor) is removed on the way out.
+              const text = stripControlSequences(formatPerception(perception, "ansi"), {
+                keepSgr: true,
+              });
               if (text) {
                 socket.write(`${text}\r\n`);
               }
@@ -237,6 +241,11 @@ export class TelnetServer {
     });
 
     logger.info("telnet", `Telnet server listening on port ${this.port}`, { port: this.port });
+  }
+
+  /** The port the listener is bound to (the OS-assigned one when started on port 0). */
+  getPort(): number {
+    return (this.server?.port as number | undefined) ?? this.port;
   }
 
   stop(): void {

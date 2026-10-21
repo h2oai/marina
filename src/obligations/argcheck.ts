@@ -42,6 +42,7 @@ import { formatUntrustedContext } from "../agent/prompts/support-prompts";
 import { ARGCHECK_QUESTION, decideArgcheck } from "../decisions/policy";
 import { extractJsonObject } from "../decisions/providers";
 import type { DecisionProvider } from "../decisions/types";
+import { escapeRegExp } from "../engine/regexp";
 import type { CompleteText } from "./extract";
 import { idTokens } from "./ledger";
 import { dispatchedCall } from "./tool-call";
@@ -459,21 +460,17 @@ function paragraphs(text: string): string[] {
     const parts = block.length > PARAGRAPH_MAX_CHARS ? block.split(/\n/) : [block];
     for (const part of parts) {
       const t = part.replace(/\s+/g, " ").trim();
-      if (t.length >= 8) out.push(clamp(t, PARAGRAPH_MAX_CHARS));
+      if (t.length >= 8) out.push(clip(t, PARAGRAPH_MAX_CHARS));
     }
   }
   return out;
-}
-
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** `"key": "value"` / `key: value` / `key=value` (the value captured), or undefined for no key. */
 function keyedValues(key: string): RegExp | undefined {
   if (!key || key.length < 2) return undefined;
   return new RegExp(
-    `["']?\\b${escapeRe(key)}\\b["']?\\s*[:=]\\s*["']?([^"'\\n,;}\\]]{1,60})`,
+    `["']?\\b${escapeRegExp(key)}\\b["']?\\s*[:=]\\s*["']?([^"'\\n,;}\\]]{1,60})`,
     "gi",
   );
 }
@@ -488,7 +485,7 @@ function idShape(value: string): RegExp | undefined {
   const pattern = value
     .split(/([^a-z0-9]+)/)
     .map((run, i) => {
-      if (i % 2 === 1) return escapeRe(run);
+      if (i % 2 === 1) return escapeRegExp(run);
       if (!run) return "";
       if (/^\d+$/.test(run)) return `\\d{${run.length}}`;
       if (/^[a-z]+$/.test(run)) return run;
@@ -621,7 +618,7 @@ const JUDGE_ARGS_CHARS = 1200;
 /** Values listed for the judge (the rest are in the call text). */
 const JUDGE_MAX_VALUES = 12;
 
-function clamp(s: string, n: number): string {
+function clip(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n)} […]`;
 }
 
@@ -631,9 +628,9 @@ function fold(s: string): string {
 
 function renderArgs(args: unknown): string {
   try {
-    return clamp(typeof args === "string" ? args : JSON.stringify(args), JUDGE_ARGS_CHARS);
+    return clip(typeof args === "string" ? args : JSON.stringify(args), JUDGE_ARGS_CHARS);
   } catch {
-    return clamp(String(args), JUDGE_ARGS_CHARS);
+    return clip(String(args), JUDGE_ARGS_CHARS);
   }
 }
 
@@ -743,13 +740,13 @@ function buildJudgeState(input: ArgcheckJudgeInput): { state: string; rules: num
     .excerpts(excerptTerms(toolName, toolArgs, input.findings))
     .filter((t) => !ruleText.includes(t.replace(/ \[…\]$/, "")));
   const users = [
-    ...(firstUser ? [`- ${clamp(fold(firstUser), JUDGE_FIRST_USER_CHARS)}`] : []),
-    ...laterUsers.map((t) => `- ${clamp(fold(t), JUDGE_MSG_CHARS)}`),
+    ...(firstUser ? [`- ${clip(fold(firstUser), JUDGE_FIRST_USER_CHARS)}`] : []),
+    ...laterUsers.map((t) => `- ${clip(fold(t), JUDGE_MSG_CHARS)}`),
   ];
   const state = [
     `TOOL CALL ABOUT TO RUN (state-changing):\n${input.name}(${renderArgs(input.args)})${
       input.dispatched
-        ? `\n(a dispatcher call: it runs \`${clamp(input.dispatched.name, 128)}\` with the arguments inside)`
+        ? `\n(a dispatcher call: it runs \`${clip(input.dispatched.name, 128)}\` with the arguments inside)`
         : ""
     }`,
     values.length
@@ -771,12 +768,10 @@ function buildJudgeState(input: ArgcheckJudgeInput): { state: string; rules: num
     `LATEST TOOL RESULTS (latest last):\n${
       e.tool
         .slice(-JUDGE_TOOL_RESULTS)
-        .map((t) => `- ${clamp(fold(t), JUDGE_TOOL_CHARS)}`)
+        .map((t) => `- ${clip(fold(t), JUDGE_TOOL_CHARS)}`)
         .join("\n") || "(none)"
     }`,
-    lastAssistant
-      ? `ASSISTANT'S LAST MESSAGE:\n${clamp(fold(lastAssistant), JUDGE_MSG_CHARS)}`
-      : "",
+    lastAssistant ? `ASSISTANT'S LAST MESSAGE:\n${clip(fold(lastAssistant), JUDGE_MSG_CHARS)}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");

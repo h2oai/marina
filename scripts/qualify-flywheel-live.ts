@@ -215,14 +215,12 @@ if (!token) {
     if (detected.result.exitCode !== 0 || !python.startsWith("/")) {
       throw new SkipStep("Sandbox image has no Python HTTP server capability.");
     }
-    const active = projects.active(owner);
     service = await services.start({
       entityId: owner,
       sessionId: "live-qualification",
       name: "qualification-web",
       command: [python, "-m", "http.server", "43821", "--bind", "127.0.0.1"],
       port: 43821,
-      projectId: active?.id,
     });
     await Bun.sleep(500);
     const probe = await services.probe(owner, service, "/");

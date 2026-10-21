@@ -3632,6 +3632,8 @@ export class LeanAgentAdapter implements AgentHandle {
         : "";
     if (!prose) return false;
     const shot = async (system: string, user: string): Promise<string> => {
+      const capped = this.checkSpendCaps();
+      if (capped) throw new Error(capped);
       const routed = await this.routeFor(this.model, await this.resolveKeyNow());
       await prepareHostedModel(routed.model, routed.apiKey, this.providerFetch, undefined, {
         updateContext: false,

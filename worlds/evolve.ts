@@ -123,7 +123,7 @@ const ROOM_NAVIGATION: RoomModule = {
     }
     // Reset per-attempt flags on fresh entry if quest just started
     const entity = ctx.getEntity(entityId);
-    if (!entity || entity.kind !== "agent") return;
+    if (entity?.kind !== "agent") return;
     if (isQuestActive(entity, "bench_navigation") && !entity.properties.bench_nav_active) {
       entity.properties.bench_nav_active = true;
       entity.properties.bench_nav_found = false;
@@ -294,7 +294,7 @@ const ROOM_RETRIEVAL: RoomModule = {
       }
     }
     const entity = ctx.getEntity(entityId);
-    if (!entity || entity.kind !== "agent") return;
+    if (entity?.kind !== "agent") return;
     if (isQuestActive(entity, "bench_retrieval") && !entity.properties.bench_ret_active) {
       entity.properties.bench_ret_active = true;
       entity.properties.bench_ret_idx = 0;
@@ -465,7 +465,7 @@ const ROOM_CODEGEN: RoomModule = {
       }
     }
     const entity = ctx.getEntity(entityId);
-    if (!entity || entity.kind !== "agent") return;
+    if (entity?.kind !== "agent") return;
     if (isQuestActive(entity, "bench_codegen") && !entity.properties.bench_cg_spec_given) {
       entity.properties.bench_cg_spec_given = true;
       ctx.send(
@@ -599,7 +599,7 @@ const ROOM_COORDINATION: RoomModule = {
       }
     }
     const entity = ctx.getEntity(entityId);
-    if (!entity || entity.kind !== "agent") return;
+    if (entity?.kind !== "agent") return;
     if (
       isQuestActive(entity, "bench_coordination") &&
       !(entity.properties.bench_co_fragments as string[])?.length
@@ -799,7 +799,7 @@ const ROOM_ADAPTATION: RoomModule = {
       }
     }
     const entity = ctx.getEntity(entityId);
-    if (!entity || entity.kind !== "agent") return;
+    if (entity?.kind !== "agent") return;
     if (isQuestActive(entity, "bench_adaptation") && !entity.properties.bench_ad_rules_read) {
       const variantIdx = (ctx.store.get<number>("adapt_variant") ?? 0) % ADAPT_VARIANTS.length;
       const variant = ADAPT_VARIANTS[variantIdx]!;
@@ -997,7 +997,7 @@ const ROOM_MEMORY: RoomModule = {
       }
     }
     const entity = ctx.getEntity(entityId);
-    if (!entity || entity.kind !== "agent") return;
+    if (entity?.kind !== "agent") return;
     if (isQuestActive(entity, "bench_memory") && !entity.properties.bench_mem_phase) {
       entity.properties.bench_mem_phase = "study";
       entity.properties.bench_mem_studied = 0;
@@ -1178,7 +1178,7 @@ const ROOM_SELFMOD: RoomModule = {
       }
     }
     const entity = ctx.getEntity(entityId);
-    if (!entity || entity.kind !== "agent") return;
+    if (entity?.kind !== "agent") return;
     if (isQuestActive(entity, "bench_selfmod")) {
       ctx.send(
         entityId,
@@ -1334,7 +1334,7 @@ const ROOM_COLLABORATION: RoomModule = {
       }
     }
     const entity = ctx.getEntity(entityId);
-    if (!entity || entity.kind !== "agent") return;
+    if (entity?.kind !== "agent") return;
     if (
       isQuestActive(entity, "bench_collaboration") &&
       entity.properties.bench_col_half === undefined
@@ -1478,7 +1478,7 @@ const ROOM_HUB: RoomModule = {
       "Code-Gen, Coordination, Collaboration, then Self-Modification.\n" +
       "New here? Run 'evolve' for the self-improvement loop and your next step.",
   },
-  onEnter(ctx: RoomContext, entityId: EntityId) {
+  onEnter(ctx: RoomContext, _entityId: EntityId) {
     const hasEntity = ctx.entities.some((e) => e.name === "ArenaMaster");
     if (!hasEntity) {
       if (ctx.spawnRoomAgent) {

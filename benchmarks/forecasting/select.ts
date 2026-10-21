@@ -36,12 +36,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { IsolationLevel } from "../../src/arena/research/isolation";
 import { answerDigest, ledgerFromHarnessResult } from "../../src/engine/benchmark-ledger";
 import { SpendGuard } from "../../src/engine/spend-guard";
 import { dailyCapRefusal } from "../../src/engine/spend-ledger";
 import type { TypedForecastAnswer, TypedForecastRequest } from "../../src/forecast/typed";
 import type { MarinaStores } from "../../src/persistence/interfaces";
+import type { IsolationLevel } from "../../src/research/isolation";
 import { twoStageBootstrap } from "../../src/stats";
 import { idsDigest, openJournal } from "../journal";
 import { defaultReplicateGroup } from "../replicates";

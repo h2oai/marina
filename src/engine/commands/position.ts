@@ -8,6 +8,7 @@ import * as polymarket from "../../net/clients/polymarket-client";
 import type { MarinaDB } from "../../persistence/database";
 import { createWatchNote, listActiveWatches } from "../../resolvers/watch-spec";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { rankFloorRefusal } from "../rank-floor";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import { type BankrollState, readBankrollState } from "./bankroll";
 
@@ -176,8 +177,13 @@ const POSITION_WRITE_MIN_RANK = 5;
 
 function requirePositionWriteRank(ctx: RoomContext, entity: Entity, eid: EntityId): boolean {
   const rank = (entity.properties.rank as number) ?? 0;
-  if (rank < POSITION_WRITE_MIN_RANK) {
-    ctx.send(eid, `This subcommand requires rank ${POSITION_WRITE_MIN_RANK}+ (you are ${rank}).`);
+  const refusal = rankFloorRefusal(
+    entity,
+    POSITION_WRITE_MIN_RANK,
+    `This subcommand requires rank ${POSITION_WRITE_MIN_RANK}+ (you are ${rank}).`,
+  );
+  if (refusal) {
+    ctx.send(eid, refusal);
     return false;
   }
   return true;

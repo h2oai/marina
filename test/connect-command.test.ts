@@ -45,9 +45,13 @@ describe("connect CLI command runner", () => {
     await expect(runCliCommand(broken, "look")).rejects.toThrow("bug");
   });
 
-  test("every command call site in connect.ts goes through the runner", () => {
-    const source = readFileSync(join(import.meta.dir, "../scripts/connect.ts"), "utf8");
-    expect(source).not.toMatch(/await agent\.command\(/);
+  test("every command call site in connect.ts and the REPL goes through the runner", () => {
+    const read = (file: string) => readFileSync(join(import.meta.dir, "../scripts", file), "utf8");
+    const source = read("connect.ts");
+    const repl = read("connect-repl.ts");
+    for (const text of [source, repl]) expect(text).not.toMatch(/await agent\.command\(/);
+    // one-shot, pipe, redirected-stdout prompt; the interactive screen.
     expect(source.match(/runCliCommand\(agent,/g)?.length).toBe(3);
+    expect(repl.match(/runCliCommand\(agent,/g)?.length).toBe(1);
   });
 });

@@ -15,6 +15,8 @@
  * run only where text is rendered INTO an agent's prompt or tool result.
  */
 
+import { escapeRegExp } from "../engine/regexp";
+
 /** Every line-break form a model reads as a new line. */
 const LINE_BREAKS = /[ \t]*(?:\r\n|[\r\n\v\f\u0085\u2028\u2029])+[ \t]*/g;
 
@@ -79,9 +81,8 @@ const RESERVED_MARKERS = [
   "!",
 ];
 
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const RESERVED_LINE = new RegExp(
-  `^([ \\t]*)(\\[\\s*(?:${RESERVED_MARKERS.map(escapeRe).join("|")})(?=[\\s\\]—–:-]|$))`,
+  `^([ \\t]*)(\\[\\s*(?:${RESERVED_MARKERS.map(escapeRegExp).join("|")})(?=[\\s\\]—–:-]|$))`,
   "gim",
 );
 /** Tags the harness uses to fence content; a closer or opener at any position. */

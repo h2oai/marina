@@ -76,11 +76,15 @@ function isPrivateIp(hostname: string): boolean {
     return false;
   }
 
-  // IPv6
+  // IPv6 (only a literal with a colon; a hostname such as `fdroid.org` is not an address)
   const lower = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!lower.includes(":")) return false;
   if (lower === "::1" || lower === "::") return true;
-  if (lower.startsWith("fe80:")) return true; // link-local
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique-local (fc00::/7)
+  const v6 = parseIpv6Groups(lower);
+  if (!v6) return true; // an address that cannot be decoded cannot be range-checked
+  if (v6.every((g, i) => g === 0 || (i === 7 && g === 1))) return true; // :: and ::1
+  if (isLinkLocalV6(v6)) return true; // fe80::/10
+  if ((v6[0]! & 0xfe00) === 0xfc00) return true; // unique-local (fc00::/7)
 
   // IPv4-mapped IPv6 — dotted form: ::ffff:10.0.0.1
   const mapped = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
@@ -231,13 +235,47 @@ export function validateFetchUrlSync(urlStr: string): string | null {
   return null;
 }
 
-/** Link-local (169.254/16, fe80::/10) and cloud-metadata literals, incl. IPv4-mapped IPv6 forms. */
+/** True for an address in fe80::/10 (fe80:: through febf::). */
+function isLinkLocalV6(groups: number[]): boolean {
+  return (groups[0]! & 0xffc0) === 0xfe80;
+}
+
+/**
+ * Every IPv4 address a literal denotes: itself when it is IPv4, else the address
+ * carried by an IPv4-mapped (`::ffff:a.b.c.d` / `::ffff:a9fe:a9fe`) or tunnel
+ * (NAT64 / 6to4 / Teredo) IPv6 form.
+ */
+function ipv4Views(hostname: string, groups: number[] | null): string[] {
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return [hostname];
+  if (!groups) return [];
+  const out = embeddedV4Candidates(groups);
+  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+    const [hi, lo] = [groups[6]!, groups[7]!];
+    out.push(`${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`);
+  }
+  return out;
+}
+
+/** Cloud instance-metadata IPv4 literals outside 169.254/16 (Alibaba, Oracle). */
+const METADATA_V4 = new Set(["100.100.100.200", "192.0.0.192"]);
+/** Cloud instance-metadata IPv6 literals (AWS IMDS over IPv6). */
+const METADATA_V6 = ["fd00:ec2::254"];
+
+/**
+ * Link-local (169.254/16, fe80::/10) and cloud-metadata literals and names, in
+ * every IPv4-mapped or tunnel-wrapped IPv6 form the strict path also decodes.
+ */
 function isLinkLocalOrMetadataIp(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  const v4 = h.startsWith("::ffff:") ? h.slice("::ffff:".length) : h;
-  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(v4)) return true;
-  if (v4 === "100.100.100.200") return true; // Alibaba Cloud metadata
-  return /^fe[89ab][0-9a-f]:/i.test(h);
+  if (h !== "localhost" && BLOCKED_HOSTS.has(h)) return true; // metadata host names
+  const groups = h.includes(":") ? parseIpv6Groups(h) : null;
+  if (h.includes(":") && !groups) return true; // undecodable address: refuse
+  for (const v4 of ipv4Views(h, groups)) {
+    if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(v4) || METADATA_V4.has(v4)) return true;
+  }
+  if (!groups) return false;
+  if (isLinkLocalV6(groups)) return true;
+  return METADATA_V6.some((m) => parseIpv6Groups(m)!.every((g, i) => g === groups[i]));
 }
 
 /**
@@ -458,21 +496,25 @@ function isBodyHeader(name: string): boolean {
   return BODY_HEADERS.has(name.toLowerCase());
 }
 
+/** Name fragments that mark a header as carrying a credential or a request signature. */
+const CREDENTIAL_HEADER_PATTERN =
+  /api[-_]?key|auth|cookie|signature|passphrase|secret|token|password|session/;
+
 /**
- * True for a header that carries a caller credential: `Authorization`,
- * `Proxy-Authorization`, `Cookie`, and every API-key header (`x-api-key`,
- * `x-goog-api-key`, `api-key`, `apikey`, ...).
+ * True for a header that carries a caller credential or binds a signed request:
+ * `Authorization`, `Proxy-Authorization`, `Cookie`, every API-key header
+ * (`x-api-key`, `x-goog-api-key`, `api-key`, `apikey`, ...), token / secret /
+ * signature / passphrase headers, provider access-header families
+ * (`KALSHI-ACCESS-KEY`, `-SIGNATURE`, `-TIMESTAMP`) and Polymarket's L2 family
+ * (`POLY_API_KEY`, `POLY_SIGNATURE`, `POLY_TIMESTAMP`, `POLY_ADDRESS`, ...).
  */
 export function isCredentialHeader(name: string): boolean {
   const n = name.toLowerCase();
-  return (
-    n === "authorization" ||
-    n === "proxy-authorization" ||
-    n === "cookie" ||
-    n.includes("api-key") ||
-    n.includes("apikey") ||
-    n.includes("api_key")
-  );
+  if (CREDENTIAL_HEADER_PATTERN.test(n)) return true;
+  // `<vendor>-access-<part>` (key, signature, timestamp); CORS preflight
+  // headers (`access-control-*`) are not credentials.
+  if (/(^|[-_])access[-_]/.test(n) && !n.startsWith("access-control-")) return true;
+  return /^poly[-_]/.test(n);
 }
 
 function withoutHeaders(headers: Headers, drop: (name: string) => boolean): Headers {

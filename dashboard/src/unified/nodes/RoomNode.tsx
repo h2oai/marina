@@ -1136,6 +1136,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
 const ROOM_MSG_KIND_COLOR: Record<RoomMessage["kind"], string> = {
   say: "#06b6d4", // cyan — matches INTERACTION_COLORS.say
   emote: "#ec4899", // fuchsia — matches INTERACTION_COLORS.emote
+  tell: "#8b5cf6", // violet — matches INTERACTION_COLORS.tell
 };
 
 /**
@@ -1204,8 +1205,20 @@ const RoomMessagePill = memo(function RoomMessagePill({
         <span style={{ color, fontWeight: 700, marginRight: 6 }}>
           {message.sender}
           {message.kind === "emote" ? " *" : ""}
+          {message.recipient ? ` → ${message.recipient}` : ""}
         </span>
-        <span style={{ opacity: 0.92 }}>{bodyClipped}</span>
+        {!!message.depth && (
+          <span
+            data-testid="room-message-depth"
+            title={`Reply, ${message.depth} ${message.depth === 1 ? "hop" : "hops"} into the thread`}
+            style={{ color, marginRight: 6 }}
+          >
+            ↳{message.depth}
+          </span>
+        )}
+        <span style={{ opacity: 0.92 }}>
+          {bodyClipped || (message.kind === "tell" ? "told" : "spoke")}
+        </span>
       </div>
     </motion.div>
   );

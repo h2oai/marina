@@ -167,7 +167,7 @@ Each replicate writes to `<out>/rep<i>/` (or straight to `<out>` for one replica
 |---|---|
 | `runs/run_<query_id>.json` | The official run format: `query_id`, `status`, `tool_call_counts`, `retrieved_docids`, `result[]`. The official `evaluate_run.py` accepts this directory as-is. |
 | `evals/run_<query_id>_eval.json` | The judge's reply and verdict, citations, retrieval recall, cost and trace ids. |
-| `summary.json` | The leaderboard fields: LLM, Retriever, Accuracy (%), Recall (%), Search Calls, Calibration Error (%), Link, Evaluation Date and `per_query_metrics`. |
+| `summary.json` | The leaderboard fields: LLM, Retriever, Accuracy (%), Recall (%), Search Calls, Calibration Error (%), Link, Evaluation Date and `per_query_metrics`. `Attribution` is added only when you name one (`--org`/`--agent` or `MARINA_FILING_ORG`/`MARINA_FILING_AGENT`); no default ships. |
 | `result.json` | The ledger result: item ids, outcomes, cost and judge verdicts. It holds no query or answer text. |
 
 `--file-to <url>` files each replicate into that server's benchmark ledger (`POST /v1/benchmarks/runs`) under one replicate group (`--group`, or a generated one). `benchmark compare` and `benchmark replicates` then pool the runs. Locally, compare two arms on their common queries:

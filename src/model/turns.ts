@@ -7,7 +7,7 @@
  * local model works as well as a vendor one). Every turn goes through the
  * shared core (`modelCall`): priced, recorded in the daily spend ledger,
  * refused once the daily cap is reached, traced and retried on transient
- * errors. Formerly `src/research/model-turn.ts`, which still re-exports it.
+ * errors.
  */
 
 import type { AssistantMessage, Context, ToolChoice } from "@earendil-works/pi-ai";

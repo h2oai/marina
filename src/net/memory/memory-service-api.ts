@@ -21,6 +21,12 @@ import { memoryWorkflow } from "../../memory/workflows";
 import { memoryStorageFailure } from "../../persistence/db-memory-failures";
 import type { MemoryActor } from "../../persistence/db-principals";
 import { withMemoryAbort } from "../../sdk/memory-abort";
+import {
+  authFailuresExhausted,
+  clientIp,
+  type PeerAddressSource,
+  recordAuthFailure,
+} from "../http-utils";
 
 const limiters = new WeakMap<MemoryService, RateLimiter>();
 const headers = {
@@ -126,9 +132,16 @@ function searchInput(body: Record<string, unknown>): MemorySearchInput {
   };
 }
 
+/**
+ * `peer` is the listener's socket-peer source (`server` or an address): with it,
+ * each client address has a failed-credential budget, spent only by a
+ * rejected credential and checked before any credential is compared (the
+ * same rule as `/mem`). In-process callers pass none and are not counted.
+ */
 export async function handleMemoryServiceApi(
   req: Request,
   service: MemoryService,
+  peer?: PeerAddressSource | string,
 ): Promise<Response> {
   try {
     if (req.signal.aborted)
@@ -147,8 +160,16 @@ export async function handleMemoryServiceApi(
         healthy ? 200 : 503,
       );
     }
+    const ip = peer === undefined ? undefined : clientIp(req, peer);
+    if (ip !== undefined && authFailuresExhausted(ip))
+      throw new MemoryError(
+        429,
+        "rate_limited",
+        "Too many failed authentication attempts. Please slow down.",
+      );
     const token = req.headers.get("Authorization")?.match(/^Bearer (.+)$/)?.[1];
     const actor = token ? service.db.verifyMemoryCredential(token) : undefined;
+    if (token && !actor && ip !== undefined) recordAuthFailure(ip);
     if (!actor)
       throw new MemoryError(
         401,

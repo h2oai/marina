@@ -393,62 +393,65 @@ describe("LongMemEval sidecar flag plumbing (offline)", () => {
     expect(bad.err).toMatch(/--ingest-notes must be one of/);
   });
 
-  it("the Python backend passes every flag to the sidecar and never a key", async () => {
-    const python = Bun.which("python3");
-    if (!python) return; // the harness side is Python; skip where it is absent
-    const stub = join(dir, "memory_modules");
-    mkdirSync(stub);
-    writeFileSync(join(stub, "__init__.py"), "");
-    writeFileSync(
-      join(stub, "memory.py"),
-      [
-        "class Memory:",
-        "    def __init__(self, params): pass",
-        "MemoryContextItem = dict",
-        "def register_memory(cls): return cls",
-      ].join("\n"),
-    );
-    const script = [
-      "import json, sys",
-      `sys.path.insert(0, ${JSON.stringify(dir)})`,
-      `sys.path.insert(0, ${JSON.stringify(join(import.meta.dir, "../benchmarks/longmemeval"))})`,
-      "import marina_memory",
-      `m = marina_memory.MarinaMemory({"marina_root": ${JSON.stringify(join(import.meta.dir, ".."))}, "gate": "on", "gate_backend": "model", "gate_model": "qwen/qwen3.5-9b", "gate_max": 5, "ingest_notes": "on", "notes_model": "openrouter/google/gemini-2.5-flash-lite", "notes_api_key_env": "LME_NOTES_KEY", "notes_max_bytes": 24000})`,
-      "print(json.dumps(m.argv('/tmp/x.db')))",
-      "try:",
-      `    marina_memory.MarinaMemory({"marina_root": ${JSON.stringify(join(import.meta.dir, ".."))}, "gate": "on", "retrieval": "raw"})`,
-      "    print('accepted')",
-      "except RuntimeError as e:",
-      "    print('refused')",
-    ].join("\n");
-    const proc = Bun.spawn([python, "-c", script], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...process.env,
-        OPENAI_API_KEY: "sk-test-never-on-argv",
-        LME_NOTES_KEY: "sk-notes-never-on-argv",
-      },
-    });
-    const out = await new Response(proc.stdout).text();
-    expect(await proc.exited).toBe(0);
-    const [argvLine, verdict] = out.trim().split("\n");
-    const argv = JSON.parse(argvLine!) as string[];
-    const flag = (name: string) => argv[argv.indexOf(name) + 1];
-    expect(flag("--retrieval")).toBe("unified");
-    expect(flag("--gate")).toBe("on");
-    expect(flag("--gate-backend")).toBe("model");
-    expect(flag("--gate-model")).toBe("qwen/qwen3.5-9b");
-    expect(flag("--gate-max")).toBe("5");
-    expect(flag("--gate-api-key-env")).toBe("OPENAI_API_KEY");
-    expect(flag("--ingest-notes")).toBe("on");
-    expect(flag("--notes-model")).toBe("openrouter/google/gemini-2.5-flash-lite");
-    expect(flag("--notes-api-key-env")).toBe("LME_NOTES_KEY");
-    expect(flag("--notes-max-bytes")).toBe("24000");
-    expect(argv.join(" ")).not.toContain("sk-test-never-on-argv");
-    expect(argv.join(" ")).not.toContain("sk-notes-never-on-argv");
-    expect(verdict).toBe("refused");
-  });
+  // The harness side is Python; skipped where python3 is absent.
+  it.skipIf(!Bun.which("python3"))(
+    "the Python backend passes every flag to the sidecar and never a key",
+    async () => {
+      const python = Bun.which("python3")!;
+      const stub = join(dir, "memory_modules");
+      mkdirSync(stub);
+      writeFileSync(join(stub, "__init__.py"), "");
+      writeFileSync(
+        join(stub, "memory.py"),
+        [
+          "class Memory:",
+          "    def __init__(self, params): pass",
+          "MemoryContextItem = dict",
+          "def register_memory(cls): return cls",
+        ].join("\n"),
+      );
+      const script = [
+        "import json, sys",
+        `sys.path.insert(0, ${JSON.stringify(dir)})`,
+        `sys.path.insert(0, ${JSON.stringify(join(import.meta.dir, "../benchmarks/longmemeval"))})`,
+        "import marina_memory",
+        `m = marina_memory.MarinaMemory({"marina_root": ${JSON.stringify(join(import.meta.dir, ".."))}, "gate": "on", "gate_backend": "model", "gate_model": "qwen/qwen3.5-9b", "gate_max": 5, "ingest_notes": "on", "notes_model": "openrouter/google/gemini-2.5-flash-lite", "notes_api_key_env": "LME_NOTES_KEY", "notes_max_bytes": 24000})`,
+        "print(json.dumps(m.argv('/tmp/x.db')))",
+        "try:",
+        `    marina_memory.MarinaMemory({"marina_root": ${JSON.stringify(join(import.meta.dir, ".."))}, "gate": "on", "retrieval": "raw"})`,
+        "    print('accepted')",
+        "except RuntimeError as e:",
+        "    print('refused')",
+      ].join("\n");
+      const proc = Bun.spawn([python, "-c", script], {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          OPENAI_API_KEY: "sk-test-never-on-argv",
+          LME_NOTES_KEY: "sk-notes-never-on-argv",
+        },
+      });
+      const out = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      const [argvLine, verdict] = out.trim().split("\n");
+      const argv = JSON.parse(argvLine!) as string[];
+      const flag = (name: string) => argv[argv.indexOf(name) + 1];
+      expect(flag("--retrieval")).toBe("unified");
+      expect(flag("--gate")).toBe("on");
+      expect(flag("--gate-backend")).toBe("model");
+      expect(flag("--gate-model")).toBe("qwen/qwen3.5-9b");
+      expect(flag("--gate-max")).toBe("5");
+      expect(flag("--gate-api-key-env")).toBe("OPENAI_API_KEY");
+      expect(flag("--ingest-notes")).toBe("on");
+      expect(flag("--notes-model")).toBe("openrouter/google/gemini-2.5-flash-lite");
+      expect(flag("--notes-api-key-env")).toBe("LME_NOTES_KEY");
+      expect(flag("--notes-max-bytes")).toBe("24000");
+      expect(argv.join(" ")).not.toContain("sk-test-never-on-argv");
+      expect(argv.join(" ")).not.toContain("sk-notes-never-on-argv");
+      expect(verdict).toBe("refused");
+    },
+  );
 });
 
 describe("LongMemEval ledger conversion", () => {

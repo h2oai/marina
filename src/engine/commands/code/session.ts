@@ -18,6 +18,7 @@ import type { Entity, EntityId, RoomContext } from "../../../types";
 import { getErrorMessage } from "../../errors";
 import { parseModifiers } from "../../parse-input";
 import { reassignWriter } from "./crew";
+import { clearSessionExecMode } from "./exec";
 import { formatProfileTry } from "./profiles";
 import {
   ACTIVE_MODAL_KEY,
@@ -887,6 +888,7 @@ export async function completeSession(
   // A closed session must not leave live exec grants behind: drop its
   // approve-always allow-set and deny any still-pending exec prompts.
   clearSessionExecState(session.id);
+  clearSessionExecMode(session.id);
   // Persist the closing summary into the bound project pool (if any) + a
   // personal note, so the session's takeaways outlive the ephemeral artifacts.
   if (summary.trim()) depositSessionSummary(deps, entity, session, text);

@@ -11,6 +11,7 @@ import { apiOrigin } from "../../lib/api-origin";
 
 import type { Node } from "@xyflow/react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
+import { ensureOk, errorText } from "../../lib/api-error";
 import { claimIntent, completeIntent, failIntent } from "../hooks/use-canvas-integration";
 import type { CommandBarHandle } from "../panels/CommandBar";
 import type { ContextType } from "../panels/ContextPanel";
@@ -187,26 +188,30 @@ export function NodeContextMenu({
                       try {
                         const { authFetch } = await import("../../lib/api");
                         const existingData = (node?.data as Record<string, unknown>) ?? {};
-                        await authFetch(`${apiOrigin()}/api/canvases/${canvasId}/nodes/${rawId}`, {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            data: {
-                              ...existingData,
-                              intent: { prompt: noteText.trim(), status: "pending" },
-                            },
-                          }),
-                        });
+                        const res = await authFetch(
+                          `${apiOrigin()}/api/canvases/${canvasId}/nodes/${rawId}`,
+                          {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              data: {
+                                ...existingData,
+                                intent: { prompt: noteText.trim(), status: "pending" },
+                              },
+                            }),
+                          },
+                        );
+                        await ensureOk(res, "Failed to set intent");
                         commandBarRef.current?.addMessage(
                           null,
                           `Intent set: "${noteText.trim()}"`,
                           true,
                           "system",
                         );
-                      } catch {
+                      } catch (cause) {
                         commandBarRef.current?.addMessage(
                           null,
-                          "Failed to set intent",
+                          errorText(cause, "Failed to set intent"),
                           true,
                           "system",
                         );
@@ -272,10 +277,10 @@ export function NodeContextMenu({
                           true,
                           "system",
                         );
-                      } catch {
+                      } catch (cause) {
                         commandBarRef.current?.addMessage(
                           null,
-                          "Failed to claim intent",
+                          errorText(cause, "Failed to claim intent"),
                           true,
                           "system",
                         );
@@ -314,10 +319,10 @@ export function NodeContextMenu({
                                   true,
                                   "system",
                                 );
-                              } catch {
+                              } catch (cause) {
                                 commandBarRef.current?.addMessage(
                                   null,
-                                  "Failed to complete intent",
+                                  errorText(cause, "Failed to complete intent"),
                                   true,
                                   "system",
                                 );
@@ -384,10 +389,10 @@ export function NodeContextMenu({
                                   true,
                                   "system",
                                 );
-                              } catch {
+                              } catch (cause) {
                                 commandBarRef.current?.addMessage(
                                   null,
-                                  "Failed to update intent",
+                                  errorText(cause, "Failed to update intent"),
                                   true,
                                   "system",
                                 );
@@ -468,15 +473,19 @@ export function NodeContextMenu({
                       method: "DELETE",
                     },
                   );
-                  if (res.ok) {
-                    // Remove from both canvas integration state AND display nodes
-                    removeCanvasNode(rawNodeId);
-                    setDisplayNodes((nds) => nds.filter((n) => n.id !== reactFlowId));
-                    commandBarRef.current?.addMessage(null, "Canvas node deleted", true, "system");
-                  }
+                  await ensureOk(res, "Failed to delete node");
+                  // Remove from both canvas integration state AND display nodes
+                  removeCanvasNode(rawNodeId);
+                  setDisplayNodes((nds) => nds.filter((n) => n.id !== reactFlowId));
+                  commandBarRef.current?.addMessage(null, "Canvas node deleted", true, "system");
                 }
-              } catch {
-                commandBarRef.current?.addMessage(null, "Failed to delete node", true, "system");
+              } catch (cause) {
+                commandBarRef.current?.addMessage(
+                  null,
+                  errorText(cause, "Failed to delete node"),
+                  true,
+                  "system",
+                );
               }
             }}
           >

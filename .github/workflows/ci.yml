@@ -7,6 +7,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The main-branch merge queue tests each queued PR merged onto current main.
+  merge_group:
 
 permissions:
   contents: read
@@ -249,7 +251,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Prepare comparison checkout
         env:
-          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           if [ -z "$BASE_REF" ] || [ "$BASE_REF" = "0000000000000000000000000000000000000000" ]; then
             BASE_REF=$(git rev-parse HEAD^)

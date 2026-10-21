@@ -60,6 +60,9 @@ function entityEqual(a: SnapshotEntity, b: SnapshotEntity): boolean {
     a.properties?.active_modal === b.properties?.active_modal &&
     a.properties?.code_profile === b.properties?.code_profile &&
     propertyValueEqual(a.properties?.code_context, b.properties?.code_context) &&
+    a.presence === b.presence &&
+    a.vendor === b.vendor &&
+    a.spawnedBy === b.spawnedBy &&
     agentStatusEqual(a.agentStatus, b.agentStatus)
   );
 }

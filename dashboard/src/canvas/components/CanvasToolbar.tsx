@@ -4,6 +4,7 @@
 import type { Node } from "@xyflow/react";
 import { motion } from "motion/react";
 import { authFetch } from "../../lib/api";
+import { responseErrorMessage } from "../../lib/api-error";
 import { apiOrigin } from "../../lib/api-origin";
 import { defaultSize } from "../lib/layout";
 
@@ -83,6 +84,7 @@ export function CanvasToolbar({
 
     // Persist to backend
     let failures = 0;
+    let reason: string | undefined;
     for (const [nodeId, target] of targetMap) {
       try {
         const response = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
@@ -95,14 +97,17 @@ export function CanvasToolbar({
             height: target.h,
           }),
         });
-        if (!response.ok) failures++;
+        if (!response.ok) {
+          failures++;
+          reason ??= await responseErrorMessage(response, "Could not save the layout");
+        }
       } catch {
         failures++;
       }
     }
     if (failures > 0)
       onMutationError?.(
-        `Could not save the grid layout for ${failures} node${failures === 1 ? "" : "s"}.`,
+        `Could not save the grid layout for ${failures} node${failures === 1 ? "" : "s"}.${reason ? ` ${reason}` : ""}`,
       );
   };
 
@@ -133,6 +138,7 @@ export function CanvasToolbar({
 
     // Persist to backend
     let failures = 0;
+    let reason: string | undefined;
     for (const [nodeId, target] of targetMap) {
       try {
         const response = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
@@ -145,14 +151,17 @@ export function CanvasToolbar({
             height: target.h,
           }),
         });
-        if (!response.ok) failures++;
+        if (!response.ok) {
+          failures++;
+          reason ??= await responseErrorMessage(response, "Could not save the layout");
+        }
       } catch {
         failures++;
       }
     }
     if (failures > 0)
       onMutationError?.(
-        `Could not save the timeline layout for ${failures} node${failures === 1 ? "" : "s"}.`,
+        `Could not save the timeline layout for ${failures} node${failures === 1 ? "" : "s"}.${reason ? ` ${reason}` : ""}`,
       );
   };
 

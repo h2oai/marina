@@ -7,13 +7,15 @@
  * wandered in". Derived from kind + whether a runtime agent is attached +
  * AgentConfig.spawned_by (surfaced in the world snapshot).
  */
-export type EntityOrigin = "manual" | "crew" | "system" | "player" | "joined";
+export type EntityOrigin = "manual" | "resident" | "crew" | "system" | "player" | "joined";
 
 export function entityOrigin(e: {
   kind: string;
   agentStatus?: unknown;
   spawnedBy?: string;
+  vendor?: string;
 }): EntityOrigin {
+  if (e.vendor) return "resident"; // a supervised native agent (claude, codex, pi)
   if (e.kind === "human") return "player"; // a person who joined
   if (e.kind !== "agent") return "system"; // npc / object — world fixtures
   if (!e.agentStatus) return "joined"; // agent connected externally, not runtime-managed
@@ -33,28 +35,34 @@ export const ORIGIN_META: Record<
     title: "Launched manually from the dashboard or CLI",
     rank: 0,
   },
+  resident: {
+    label: "resident",
+    color: "#38bdf8",
+    title: "Supervised resident — a native agent its owner launched",
+    rank: 1,
+  },
   crew: {
     label: "crew",
     color: "#a78bfa",
     title: "Spawned by another agent (crew sub-agent)",
-    rank: 1,
+    rank: 2,
   },
   system: {
     label: "system",
     color: "var(--color-secondary)",
     title: "Part of the selected world — seeded on boot",
-    rank: 2,
+    rank: 3,
   },
   player: {
     label: "player",
     color: "var(--color-text-bright)",
     title: "A human who joined",
-    rank: 3,
+    rank: 4,
   },
   joined: {
     label: "joined",
     color: "#22c55e",
     title: "Connected opportunistically (external agent, not runtime-managed)",
-    rank: 4,
+    rank: 5,
   },
 };

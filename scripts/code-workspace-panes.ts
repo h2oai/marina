@@ -4,6 +4,7 @@
 import { HStack, ScrollView, Text, truncateToWidth, VStack } from "@earendil-works/pi-tui";
 import type { CodeEditorState } from "./code-editor";
 import { terminalText } from "./code-presentation";
+import { styleCodeEntry, themeFor } from "./code-style";
 import type { TerminalView } from "./code-views";
 
 export type WorkspaceLayout = "auto" | "focus" | "split";
@@ -95,7 +96,16 @@ export class WorkspacePanes {
           (view === state.focus ? (state.transcript ?? "") : pane.content),
       );
       if (content === pane.content) continue;
-      pane.text.setText(content);
+      // Entries are separated by a blank line; each is styled from its own label.
+      const theme = themeFor(process.stdout);
+      pane.text.setText(
+        theme.level
+          ? content
+              .split("\n\n")
+              .map((entry) => styleCodeEntry(entry, theme, { width: Number.POSITIVE_INFINITY }))
+              .join("\n\n")
+          : content,
+      );
       pane.content = content;
       if (view === "approvals") pane.scroll.scrollToStart();
     }

@@ -6,11 +6,11 @@ import { createAgentEventRelay } from "../src/agent/agent-runtime";
 import { normalizeAnswers } from "../src/decisions/answers";
 import {
   decisionConfigFromEnv,
-  decisionGateEnabled,
   getDecisionProvider,
   lightningModel,
   lightningReadiness,
 } from "../src/decisions/config";
+import { harnessGateEnabled } from "../src/decisions/engines";
 import { gateToolCall, redactToolCall } from "../src/decisions/gate";
 import {
   DEFAULT_GATE_POLICY,
@@ -434,8 +434,8 @@ describe("config", () => {
     });
     expect(local?.apiKey).toBeUndefined();
     expect(local?.timeoutMs).toBe(8000);
-    expect(decisionGateEnabled({ MARINA_DECISION_GATE: "on" })).toBe(false);
-    expect(decisionGateEnabled({ MARINA_DECISION_GATE: "on", MARINA_DECISIONS: "jev" })).toBe(true);
+    expect(harnessGateEnabled({ MARINA_DECISION_GATE: "on" })).toBe(false);
+    expect(harnessGateEnabled({ MARINA_DECISION_GATE: "on", MARINA_DECISIONS: "jev" })).toBe(true);
   });
 });
 

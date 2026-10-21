@@ -89,9 +89,9 @@ describe("configuration", () => {
     expect(arenaConfigFromEnv({})).toBeUndefined();
     expect(() => arenaConfigFromEnv({ MARINA_ARENA_ENTRANT: "Bad Id" })).toThrow();
     expect(() =>
-      arenaConfigFromEnv({ MARINA_ARENA_ENTRANT: "h2oai-marina", MARINA_ARENA_URL: "http://x" }),
+      arenaConfigFromEnv({ MARINA_ARENA_ENTRANT: "acme-marina", MARINA_ARENA_URL: "http://x" }),
     ).toThrow("https");
-    expect(arenaConfigFromEnv({ MARINA_ARENA_ENTRANT: "h2oai-marina" })).toMatchObject({
+    expect(arenaConfigFromEnv({ MARINA_ARENA_ENTRANT: "acme-marina" })).toMatchObject({
       keyId: "k1",
       autopilot: false,
       windowHours: 24,
@@ -109,11 +109,11 @@ describe("configuration", () => {
       chmodSync(path, 0o600);
       expect(loadArenaKey(path).asymmetricKeyType).toBe("ed25519");
       const status = arenaStatus({
-        MARINA_ARENA_ENTRANT: "h2oai-marina",
+        MARINA_ARENA_ENTRANT: "acme-marina",
         MARINA_ARENA_KEY_FILE: path,
       });
       expect(status.publicKey).toHaveLength(44);
-      expect(arenaStatus({ MARINA_ARENA_ENTRANT: "h2oai-marina" }).keyError).toContain(
+      expect(arenaStatus({ MARINA_ARENA_ENTRANT: "acme-marina" }).keyError).toContain(
         "MARINA_ARENA_KEY_FILE",
       );
     } finally {

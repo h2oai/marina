@@ -80,6 +80,7 @@ import { BenchmarkRunner } from "./benchmark-runner";
 import { BriefManager } from "./brief-manager";
 import { CanvasReadGrants } from "./canvas-access";
 import { recordEngineCognition } from "./cognitive-provenance";
+import { purgeSensitiveCommandEvents } from "./command-redaction";
 import { registerBuiltinCommands } from "./command-registry";
 import { CommandRouter } from "./command-router";
 import { stopCodeStreamsFor } from "./commands/code/stream";
@@ -345,9 +346,7 @@ export class Engine {
         (event) => this.logEvent(event),
       );
       this.taskManager = new TaskManager(this.db);
-      this.macroManager = new MacroManager(this.db, (entityId, raw) =>
-        this.processCommand(entityId, raw),
-      );
+      this.macroManager = new MacroManager(this.db);
       this.crewManager = new CrewManager({
         channels: this.channelManager,
         db: this.db,
@@ -519,8 +518,9 @@ export class Engine {
     this.registerBuiltinCommands();
     this.tickScheduler = new TickScheduler(this.logger);
     this.registerTickJobs();
-    // Lessons from work (MARINA_LESSONS_FROM_WORK, default off — a cheap no-op
-    // then): agent tool results, gate holds and task verdicts become signals.
+    // Lessons from work (MARINA_LESSONS_FROM_WORK; unset: on with a model
+    // provider, else observe; `off` is a cheap no-op): agent tool results,
+    // gate holds and task verdicts become signals.
     this.addEventListener((event) => observeWorkEvent(this.db, event));
     // The outcome path (src/outcomes/): a creator's verdict on a task
     // submission is a resolved result — recorded once, learned from.
@@ -797,6 +797,17 @@ export class Engine {
   start(): void {
     if (this.running) return;
     this.running = true;
+    // Command events recorded with a credential-carrying form in clear (before
+    // inputs were redacted at the source) are removed once per start.
+    const db = this.db;
+    if (db) {
+      tryLog(this.logger, "engine", "Sensitive command event cleanup failed", () => {
+        const removed = purgeSensitiveCommandEvents(db, this.commands.allBuiltins());
+        if (removed > 0) {
+          this.logger.info("engine", `Removed ${removed} stored command events with credentials`);
+        }
+      });
+    }
     this.flywheel?.reconcile?.().catch((error) => {
       this.logger.warn("flywheel", "Workspace reconciliation failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -1456,14 +1467,13 @@ export class Engine {
     const urlError = await validateFetchUrl(url);
     if (urlError) return { error: urlError };
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ROOM_FETCH_TIMEOUT_MS);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), ROOM_FETCH_TIMEOUT_MS);
       const response = await guardedFetch(url, {
         method: "GET",
         signal: controller.signal,
       });
-      clearTimeout(timeout);
       const body = await response.text();
       // Limit response size to 10KB
       return {
@@ -1472,6 +1482,9 @@ export class Engine {
       };
     } catch (err) {
       return { error: `Fetch failed: ${getErrorMessage(err)}` };
+    } finally {
+      // The deadline covers the whole exchange, body included.
+      clearTimeout(timeout);
     }
   }
 

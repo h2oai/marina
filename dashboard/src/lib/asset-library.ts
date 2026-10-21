@@ -15,9 +15,7 @@ import {
   keepPreviousData,
   useInfiniteQuery,
   useQuery,
-  useQueryClient,
 } from "@tanstack/react-query";
-import { useCallback } from "react";
 import { authFetch } from "./api";
 import { apiOrigin } from "./api-origin";
 import { stripSignature } from "./asset-url";
@@ -348,12 +346,6 @@ export function useCanvasList(enabled: boolean) {
     enabled,
     staleTime: 15_000,
   });
-}
-
-/** Invalidate every assets query (after a local write; the server event does the same). */
-export function useInvalidateAssets() {
-  const qc = useQueryClient();
-  return useCallback(() => qc.invalidateQueries({ queryKey: ["assets"] }), [qc]);
 }
 
 // ─── Formatting ──────────────────────────────────────────────────────────────

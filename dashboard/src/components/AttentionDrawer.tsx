@@ -5,7 +5,7 @@ import { Bell, Clock3, ExternalLink, RefreshCw, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useOperationalAlerts } from "../hooks/use-api";
-import { describeApiError, postApi } from "../lib/api";
+import { describeApiError, isForbiddenApiError, OPERATOR_ONLY_TEXT, postApi } from "../lib/api";
 import { ParticipantAttention } from "./ParticipantAttention";
 
 function desktopAttentionEnabled(): boolean {
@@ -151,11 +151,16 @@ export function AttentionDrawer({ open, onClose }: { open: boolean; onClose: () 
             {query.isLoading && (
               <div className="p-4 text-center text-text-dim">Loading attention…</div>
             )}
-            {query.isError && (
-              <div role="alert" className="p-4 text-center text-red-300">
-                Could not load attention.
-              </div>
-            )}
+            {query.isError &&
+              (isForbiddenApiError(query.error) ? (
+                <div className="p-4 text-center text-text-dim">
+                  Operational alerts: {OPERATOR_ONLY_TEXT}
+                </div>
+              ) : (
+                <div role="alert" className="p-4 text-center text-red-300">
+                  Could not load attention.
+                </div>
+              ))}
             {!query.isLoading && !query.isError && items.length === 0 && (
               <div className="p-5 text-center text-success">No operational alerts.</div>
             )}

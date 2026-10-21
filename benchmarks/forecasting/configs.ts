@@ -11,7 +11,6 @@
  */
 
 import type { SourceExclusion } from "../../src/arena/research/briefs";
-import type { Retriever } from "../../src/arena/research/retrieve";
 import { forecastFormed, type TypedFormation, typedFormation } from "../../src/forecast/formations";
 import type { LessonStore } from "../../src/forecast/lessons";
 import { priorAnswer } from "../../src/forecast/prior-answer";
@@ -21,6 +20,7 @@ import type {
   TypedForecastDeps,
   TypedForecastRequest,
 } from "../../src/forecast/typed";
+import type { Retriever } from "../../src/research/retrieve";
 import type { CatalogueModel } from "./catalogue";
 
 export interface ForecastConfig {

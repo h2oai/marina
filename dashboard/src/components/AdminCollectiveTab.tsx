@@ -6,7 +6,7 @@
 import { Radio } from "lucide-react";
 import { useState } from "react";
 import { useFederationPeers, useWorldVariants } from "../hooks/use-api";
-import { describeApiError, postApi } from "../lib/api";
+import { describeApiError, isForbiddenApiError, OPERATOR_ONLY_TEXT, postApi } from "../lib/api";
 
 export function CollectiveTab() {
   const query = useWorldVariants();
@@ -280,6 +280,7 @@ export function CollectiveTab() {
         >
           Register unverified peer
         </button>
+        {isForbiddenApiError(peers.error) && <p className="text-text-dim">{OPERATOR_ONLY_TEXT}</p>}
         {(peers.data ?? []).map((peer) => (
           <article key={peer.world_id} className="rounded border border-border bg-bg/50 p-2">
             <div className="flex justify-between gap-2">

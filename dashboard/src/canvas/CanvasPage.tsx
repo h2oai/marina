@@ -25,6 +25,7 @@ import { UploadTray } from "../components/media/UploadControls";
 import { useUploads } from "../hooks/use-uploads";
 import { useWorkspaceState } from "../hooks/use-workspace-state";
 import { authFetch } from "../lib/api";
+import { ensureOk } from "../lib/api-error";
 import { CreateCanvasDialog, CreateRelationshipDialog } from "./components/CanvasDialogs";
 import { CanvasToolbar } from "./components/CanvasToolbar";
 import { ContextMenu } from "./components/ContextMenu";
@@ -38,6 +39,7 @@ import { canvasPermalink, canvasSelectionFromSearch } from "./lib/canvas-links";
 import { defaultSize } from "./lib/layout";
 import { selectInitialCanvas } from "./lib/select-canvas";
 import type { CanvasData, CanvasEdgeData } from "./lib/types";
+import { CanvasMutationErrorContext } from "./mutation-error-context";
 import { nodeTypes } from "./nodes";
 
 const savedViewports = new Map<string, { x: number; y: number; zoom: number }>();
@@ -200,6 +202,13 @@ function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
       setSnapshotRefreshKey((key) => key + 1);
     },
   });
+
+  // A node component's refused save: show the server's reason and reload the
+  // snapshot so the node shows what the server kept.
+  const reportNodeMutationError = useCallback((message: string) => {
+    setNotice({ tone: "error", message });
+    setSnapshotRefreshKey((key) => key + 1);
+  }, []);
 
   useEffect(() => setLiveEdges(canvas?.edges ?? []), [canvas?.edges]);
   const handleCanvasEvent = useCallback(
@@ -493,7 +502,7 @@ function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
         `${API_BASE}/api/canvases/${encodeURIComponent(selectedId)}`,
         { method: "DELETE" },
       );
-      if (!response.ok) throw new Error(`Could not delete canvas (${response.status}).`);
+      await ensureOk(response, "Could not delete canvas");
       setDetailNode(null);
       inspect(null);
       setSelectedId(null);
@@ -546,7 +555,7 @@ function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
         `${API_BASE}/api/canvases/${selectedId}/edges/${selectedEdgeId}`,
         { method: "DELETE" },
       );
-      if (!response.ok) throw new Error(`Request failed (${response.status})`);
+      await ensureOk(response, "Could not remove the relationship");
       setLiveEdges((current) => current.filter((item) => item.id !== selectedEdgeId));
       setSelectedEdgeId(null);
       setNotice({ tone: "success", message: "Relationship removed." });
@@ -987,49 +996,51 @@ function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
             </div>
           </div>
         )}
-        <ReactFlow
-          nodes={displayNodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          onNodesChange={handleNodesChange}
-          onNodeDragStop={onNodeDragStop}
-          onConnect={(connection) =>
-            void createRelationship(connection.source, connection.target, "relates_to")
-          }
-          onNodesDelete={onNodesDelete}
-          onSelectionChange={onSelectionChange}
-          onNodeClick={(event, node) => {
-            if (embedded && !fullscreen && !event.ctrlKey && !event.metaKey)
-              onNodeDoubleClick(event, node);
-          }}
-          onMoveEnd={(_event, viewport) => {
-            if (selectedId && active) viewports.current.set(selectedId, viewport);
-          }}
-          onNodeDoubleClick={onNodeDoubleClick}
-          onNodeContextMenu={onNodeContextMenu}
-          onEdgeClick={(_event, edge) => setSelectedEdgeId(edge.id)}
-          onPaneClick={() => {
-            setContextMenu(null);
-            setSelectedEdgeId(null);
-          }}
-          minZoom={0.1}
-          maxZoom={4}
-          proOptions={{ hideAttribution: true }}
-          className="bg-bg"
-        >
-          <Background
-            variant={BackgroundVariant.Dots}
-            gap={20}
-            size={1}
-            color="var(--color-border)"
-          />
-          <Controls className="!bg-bg-hover !border-border !shadow-lg [&>button]:!bg-bg-hover [&>button]:!border-border [&>button]:!text-text [&>button:hover]:!bg-bg-hover" />
-          <MiniMap
-            className="!bg-bg-card !border-border"
-            nodeColor="var(--color-primary)"
-            maskColor="var(--color-bg-hover)"
-          />
-        </ReactFlow>
+        <CanvasMutationErrorContext.Provider value={reportNodeMutationError}>
+          <ReactFlow
+            nodes={displayNodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodesChange={handleNodesChange}
+            onNodeDragStop={onNodeDragStop}
+            onConnect={(connection) =>
+              void createRelationship(connection.source, connection.target, "relates_to")
+            }
+            onNodesDelete={onNodesDelete}
+            onSelectionChange={onSelectionChange}
+            onNodeClick={(event, node) => {
+              if (embedded && !fullscreen && !event.ctrlKey && !event.metaKey)
+                onNodeDoubleClick(event, node);
+            }}
+            onMoveEnd={(_event, viewport) => {
+              if (selectedId && active) viewports.current.set(selectedId, viewport);
+            }}
+            onNodeDoubleClick={onNodeDoubleClick}
+            onNodeContextMenu={onNodeContextMenu}
+            onEdgeClick={(_event, edge) => setSelectedEdgeId(edge.id)}
+            onPaneClick={() => {
+              setContextMenu(null);
+              setSelectedEdgeId(null);
+            }}
+            minZoom={0.1}
+            maxZoom={4}
+            proOptions={{ hideAttribution: true }}
+            className="bg-bg"
+          >
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={20}
+              size={1}
+              color="var(--color-border)"
+            />
+            <Controls className="!bg-bg-hover !border-border !shadow-lg [&>button]:!bg-bg-hover [&>button]:!border-border [&>button]:!text-text [&>button:hover]:!bg-bg-hover" />
+            <MiniMap
+              className="!bg-bg-card !border-border"
+              nodeColor="var(--color-primary)"
+              maskColor="var(--color-bg-hover)"
+            />
+          </ReactFlow>
+        </CanvasMutationErrorContext.Provider>
         {selectedEdgeId && liveEdges.some((edge) => edge.id === selectedEdgeId) && (
           <div className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded border border-cyan-900/70 bg-bg-card px-3 py-2 text-xs shadow-xl">
             <span className="text-text-dim">

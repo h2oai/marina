@@ -112,9 +112,7 @@ function statusBlock(state: BridgeState | undefined): string {
   } else if (state.step === "connected") {
     lines.push(`\n${C}Next:${R} Type '${C}link${R}' to bridge the ${BRIDGE_CHANNEL} channel.`);
   } else if (state.step === "bridged") {
-    lines.push(
-      `\n${C}Next:${R} Type '${C}ping${R}' to check for a message from the peer.`,
-    );
+    lines.push(`\n${C}Next:${R} Type '${C}ping${R}' to check for a message from the peer.`);
   } else if (state.step === "messaged") {
     lines.push(
       `\n${G}${B}Federation demo complete.${R} A message from the peer reached this instance.`,
@@ -228,7 +226,6 @@ const room: RoomModule = {
 
       const ent = ctx.getEntity(input.entity);
       if (ent) ent.properties.quest_channel_bridged = true;
-
     },
 
     ping: (ctx: RoomContext, input: { entity: EntityId }) => {

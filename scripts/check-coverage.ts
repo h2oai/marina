@@ -12,9 +12,16 @@
  * exits non-zero when overall line coverage is below `MARINA_COVERAGE_MIN_LINES`
  * (default: `DEFAULT_LINE_FLOOR_PERCENT` below).
  *
+ * Source files under `src/` that no test ever loaded are absent from the lcov
+ * report; they are counted at 0% (their code lines estimated from the source)
+ * so an untested module lowers the figure instead of vanishing from it.
+ * `--loaded-only` restores the old loaded-files-only view.
+ *
  * Usage:
- *   bun run scripts/check-coverage.ts [path/to/lcov.info] [--strict] [--min N]
+ *   bun run scripts/check-coverage.ts [path/to/lcov.info] [--strict] [--min N] [--loaded-only]
  */
+
+import { readFileSync } from "node:fs";
 
 const DEFAULT_LCOV = "coverage/lcov.info";
 
@@ -48,7 +55,7 @@ const HIGHLIGHT_PREFIXES = [
   "src/agent/tools/",
 ];
 
-interface FileCoverage {
+export interface FileCoverage {
   file: string;
   linesFound: number;
   linesHit: number;
@@ -77,6 +84,41 @@ export function parseLcov(text: string): FileCoverage[] {
     }
   }
   return files;
+}
+
+/** A line that is code: not blank and not only a comment (a deliberately simple estimate). */
+function isCodeLine(line: string): boolean {
+  const t = line.trim();
+  return t !== "" && !t.startsWith("//") && !t.startsWith("/*") && !t.startsWith("*");
+}
+
+/** True when a module has runtime statements (a types-only module is erased and never "loaded"). */
+export function hasRuntimeCode(text: string): boolean {
+  return /^\s*(export\s+)?(default\s+)?(async\s+)?(function|const|let|var|class|enum)\b/m.test(
+    text,
+  );
+}
+
+/**
+ * Add every source file the report never mentions as 0% covered. `sources`
+ * are repo-relative paths; `read` returns a file's text. Declaration files and
+ * types-only modules are skipped.
+ */
+export function withUnloadedSources(
+  files: FileCoverage[],
+  sources: Iterable<string>,
+  read: (path: string) => string,
+): FileCoverage[] {
+  const seen = new Set(files.map((f) => f.file));
+  const out = [...files];
+  for (const path of sources) {
+    if (seen.has(path) || path.endsWith(".d.ts") || path.endsWith(".test.ts")) continue;
+    const text = read(path);
+    if (!hasRuntimeCode(text)) continue;
+    const linesFound = text.split("\n").filter(isCodeLine).length;
+    if (linesFound > 0) out.push({ file: path, linesFound, linesHit: 0 });
+  }
+  return out;
 }
 
 const pct = (hit: number, found: number): number => (found === 0 ? 100 : (hit / found) * 100);
@@ -170,6 +212,7 @@ function report(files: FileCoverage[], minLines: number, strict: boolean): numbe
 if (import.meta.main) {
   const argv = process.argv.slice(2);
   const strict = argv.includes("--strict");
+  const loadedOnly = argv.includes("--loaded-only");
   const minFlagAt = argv.indexOf("--min");
   const minLines = Number(
     minFlagAt >= 0 ? argv[minFlagAt + 1] : (process.env.MARINA_COVERAGE_MIN_LINES ?? ""),
@@ -185,5 +228,10 @@ if (import.meta.main) {
     process.exit(strict ? 1 : 0);
   }
 
-  process.exit(report(parseLcov(await file.text()), floor, strict));
+  let files = parseLcov(await file.text());
+  if (!loadedOnly) {
+    const sources = new Bun.Glob("src/**/*.ts").scanSync({ cwd: process.cwd() });
+    files = withUnloadedSources(files, sources, (p) => readFileSync(p, "utf8"));
+  }
+  process.exit(report(files, floor, strict));
 }

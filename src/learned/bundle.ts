@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FederationSignature } from "../net/federation-crypto";
+import { sha256Hex } from "../security/hash";
 import {
   contentHash,
   type DiffEntry,
@@ -28,7 +29,6 @@ import {
   manifestDigest,
   REVOCATIONS_SCHEMA,
   type Revocations,
-  sha256Hex,
 } from "./format";
 import { type PinnedKey, signLearned, verifyAgainstPinned } from "./sign";
 

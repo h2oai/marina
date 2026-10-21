@@ -56,7 +56,9 @@
  * run format), `evals/…_eval.json`, `summary.json` (the leaderboard fields)
  * and `result.json` (ledger-shaped: ids and outcomes only). Keep `--out`
  * outside the repository — run files hold query and answer text. NOTHING IS
- * SUBMITTED: submission is a manual, operator-approved step.
+ * SUBMITTED: submission is a manual, operator-approved step. `summary.json` carries an
+ * `Attribution` only when the operator names one (`--org`/`--agent` or MARINA_FILING_ORG /
+ * MARINA_FILING_AGENT); no default identity ships.
  */
 
 import { createHash } from "node:crypto";
@@ -80,6 +82,7 @@ import {
   writeFiled,
 } from "../benchmarks/browsecomp-plus/run";
 import { CallSpendGuard, parseMaxUsd } from "../benchmarks/call-spend-guard";
+import { filingIdentity } from "../benchmarks/forecasting/identity";
 import { fileToLedger } from "../benchmarks/ledger-file";
 import {
   defaultReplicateGroup,
@@ -141,10 +144,25 @@ const { positionals, values } = parseArgs({
     label: { type: "string" },
     llm: { type: "string" },
     link: { type: "string", default: "https://github.com/h2oai/marina" },
+    org: { type: "string" },
+    agent: { type: "string" },
     "max-usd": { type: "string" },
     resume: { type: "boolean", default: false },
   },
 });
+
+/** The operator's attribution for `summary.json`, when one is given (never a default). */
+const attribution = (() => {
+  const org = values.org ?? process.env.MARINA_FILING_ORG;
+  const agent = values.agent ?? process.env.MARINA_FILING_AGENT;
+  if (!org?.trim() && !agent?.trim()) return undefined;
+  const id = filingIdentity({
+    adapter: "browsecomp-plus",
+    ...(org !== undefined ? { org } : {}),
+    ...(agent !== undefined ? { agent } : {}),
+  });
+  return `${id.organization} ${id.agent}`;
+})();
 
 /** Marina harness options from the flags (none set = the official harness). */
 function harnessFlags(): {
@@ -370,7 +388,7 @@ async function run(): Promise<number> {
       llm: values.llm ?? values.model,
       link: values.link!,
       extra: {
-        Attribution: "H2O.ai Marina",
+        ...(attribution ? { Attribution: attribution } : {}),
         Marina: {
           model: values.model,
           formation: formationLabel(formation),

@@ -103,7 +103,8 @@ function main(): number {
     allowUnversioned: values["allow-unversioned"],
   });
   const flags: TransferOptions = {};
-  const set = <K extends keyof TransferOptions>(k: K, v: number | undefined) => {
+  type NumericOption = Exclude<keyof TransferOptions, "bootstrap">;
+  const set = (k: NumericOption, v: number | undefined) => {
     if (v !== undefined) flags[k] = v;
   };
   set("seed", num("seed", values.seed));
@@ -119,14 +120,14 @@ function main(): number {
   const result = transferVerdict(suites, { ...(spec.stats ?? {}), ...flags });
   const generatedAt = new Date().toISOString();
   const header = {
+    generatedAt,
     baseline: spec.baseline,
     candidate: spec.candidate,
-    generatedAt,
     ...(spec.versions ? { versions: spec.versions } : {}),
     ...(values["allow-unversioned"] ? { allowUnversioned: true } : {}),
   };
   const markdown = renderMarkdown(result, header);
-  const json = JSON.stringify({ generatedAt, ...header, ...result }, null, 2);
+  const json = JSON.stringify({ ...header, ...result }, null, 2);
   writeFileSync(`${out}.md`, markdown);
   writeFileSync(`${out}.json`, `${json}\n`);
   console.log(values.json ? json : markdown);

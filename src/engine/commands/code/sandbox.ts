@@ -6,6 +6,7 @@ import type { FlywheelToolBackend } from "../../../integrations/flywheel-manager
 import { dim, header, success } from "../../../net/ansi";
 import type { MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { rankFloorRefusal } from "../../rank-floor";
 import {
   type CodeDeps,
   getActiveSessionId,
@@ -105,8 +106,14 @@ export async function sandboxLifecycle(
 
 async function sandboxOps(call: SandboxCall): Promise<void> {
   const { ctx, eid, entity, deps, flywheel, args } = call;
-  if ((entity.properties.rank ?? 0) < 5) {
-    throw new Error("Sandbox fleet operations require steward rank or higher.");
+  const refusal = rankFloorRefusal(
+    entity,
+    5,
+    "Sandbox fleet operations require architect rank (5) or higher.",
+  );
+  if (refusal) {
+    ctx.send(eid, refusal);
+    return;
   }
   const operation = args[1]?.toLowerCase() ?? "inventory";
   if (operation === "inventory") {

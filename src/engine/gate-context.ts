@@ -279,8 +279,33 @@ export function onGateRefused(entityId: string, gateId: string, reason: string):
   }
 }
 
+/** Person or agent, as the challenge layer decides (`principalKind`). */
+export type GatePrincipal = "person" | "agent";
+let principalResolver: ((entityId: string) => GatePrincipal) | undefined;
+
+/** Installed by the challenge host (src/engine/challenges.ts); kept here so
+ *  safety-gates.ts and rank-floor.ts read it without an import cycle. */
+export function setPrincipalResolver(
+  resolver: ((entityId: string) => GatePrincipal) | undefined,
+): void {
+  principalResolver = resolver;
+}
+
+/** Person or agent for a gate decision. No resolver wired, or a resolver that
+ *  throws, ⇒ "agent": the held side, fail closed. */
+export function principalOf(entityId: string): GatePrincipal {
+  if (!principalResolver) return "agent";
+  try {
+    return principalResolver(entityId);
+  } catch {
+    // A failed lookup must hold the action, never pass it.
+    return "agent";
+  }
+}
+
 /** Test seam. */
 export function resetGateContextForTests(): void {
+  principalResolver = undefined;
   currentCommand.clear();
   currentCodingTarget.clear();
   commandPasses.clear();

@@ -3,12 +3,12 @@
 
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { modelAccess } from "../src/arena/model-backend";
 import { historyPath } from "../src/forecast/history";
 import { formationEnv, plainFromTyped } from "../src/forecast/surface";
 import type { TypedForecastAnswer } from "../src/forecast/typed";
 import { EVAL_REF_PREFIX, evalExclusion, sourceNamesBoard } from "../src/learning/eval-context";
 import type { Lesson } from "../src/learning/outcomes";
+import { modelAccess } from "../src/model/access";
 
 const typed = (over: Partial<TypedForecastAnswer>): TypedForecastAnswer =>
   ({

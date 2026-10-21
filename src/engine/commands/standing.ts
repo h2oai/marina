@@ -37,6 +37,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
     usage: [
       { syntax: "standing", effect: "read" },
       { syntax: "standing show <name>", effect: "read" },
+      { syntax: "standing <name>", effect: "read" },
       { syntax: "standing top [N]", effect: "read" },
     ],
     name: "standing",
@@ -47,7 +48,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       "Civic standing — earned by verified work (60-day half-life).\n" +
       "Usage:\n" +
       "  standing                — your current standing + ledger\n" +
-      "  standing show <name>    — another entity's standing (online or not)\n" +
+      "  standing show <name>    — another entity's standing (online or not; `standing <name>` too)\n" +
       "  standing top [N]        — leaderboard\n" +
       "Standing is earned when someone other than you verifies the work — every account is its " +
       "own party, so a person approving its own agent's work, or a sibling agent reviewing " +
@@ -95,16 +96,21 @@ export function standingCommand(deps: StandingDeps): CommandDef {
         return;
       }
 
-      // standing | standing show <name>
+      // standing | standing show <name> | standing <name>
       // Standing belongs to the durable world account, so `show` works for
       // entities that are offline (evicted) as long as the account exists.
-      const targetName = sub === "show" ? tokens[1] : undefined;
+      // A bare name is the same as `show <name>`, never the caller's own.
+      const targetName = sub === "show" ? tokens[1] : tokens[0];
+      if (sub === "show" && !targetName) {
+        ctx.send(input.entity, "Usage: standing show <name>");
+        return;
+      }
       const liveTarget = targetName
         ? deps.findAgentByName(targetName)
         : deps.getEntity(input.entity);
       const account = targetName && !liveTarget ? db.getUserByName(targetName) : undefined;
       if (!liveTarget && !account) {
-        ctx.send(input.entity, `Unknown entity: ${targetName ?? input.entity}`);
+        ctx.send(input.entity, `No one named ${targetName ?? input.entity} has standing here.`);
         return;
       }
       const target = liveTarget
