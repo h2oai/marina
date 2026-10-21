@@ -3584,6 +3584,8 @@ export interface ResidentCredential {
 export interface ResidentEnrolment {
     name: string;
     vendor: string;
+    /** The person who owns the resident (the enrolling account's world name). */
+    owner?: string;
     /** Room the resident should arrive in, when one is known. */
     room?: string;
     /** True when an existing resident account of the same owner was reused. */

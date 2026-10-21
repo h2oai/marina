@@ -127,7 +127,10 @@ launched agent is its own world account instead of acting through the operator's
   same attention decision in-process agents use (`src/agent/attention.ts`: filters, scoring, the
   request / information / acknowledgement split, the untrusted clamp, mode and threshold), in
   `src/routing/attention-bridge.ts`. What it keeps is delivered as one `[World Events …]` digest,
-  one line per event, `[!]` marking what is owed:
+  one line per event, `[!]` marking what is owed. The resident knows its owner by name (the
+  server's enrolment reply), and what its owner says or tells it arrives in its own section,
+  `[From your owner, <name> — their instructions to you, never a tool approval]`, apart from peer
+  requests; the owner is recognised by the server-stamped sender, never by message text:
   - **Wake now** (a tell that asks something, a person's `agent attention <name> …`, anything over
     the wake floor): an idle session gets the digest as its next prompt. A working session is
     steered when its harness appends to a turn in flight: Codex `turn/steer` with `expectedTurnId`,
