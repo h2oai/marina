@@ -12,6 +12,7 @@ import {
 import { envelopeFor, normalizeCause } from "../src/engine/message-envelope";
 import { DashboardBroadcaster, type DashboardWSData } from "../src/net/dashboard-ws";
 import { FeedPublisher } from "../src/net/feed-publisher";
+import { memoryObserver } from "../src/net/memory/memory-visibility";
 import { FORWARD_MIGRATIONS, SCHEMA_VERSION } from "../src/persistence/schema";
 import type { EngineEvent, EntityId, Perception } from "../src/types";
 import { createTestEngine } from "./engine-fixture";
@@ -242,6 +243,53 @@ describe("dashboard broadcast", () => {
       expect(all).not.toContain("ROOM_WORDS");
       expect(all).not.toContain("PRIVATE_WORDS");
     }
+  });
+});
+
+describe("tell_sent for owners", () => {
+  it("reaches the person who launched either party, and no one else outside it", async () => {
+    world.engine.db!.saveAgentConfig({
+      name: "Alice",
+      model: "frontier",
+      spawnedBy: "Carol",
+      runtime: "supervised",
+      vendor: "claude",
+    });
+    const dave = world.login("Dave");
+    await world.engine.processCommand(alice.entityId, "tell Bob OWNER_SEES_ENVELOPE");
+    const tell = ofType("tell_sent")[0]!;
+    expect(memoryObserver(world.engine, carol.entityId).event(tell)).toBe(true);
+    expect(memoryObserver(world.engine, bob.entityId).event(tell)).toBe(true);
+    expect(memoryObserver(world.engine, dave.entityId).event(tell)).toBe(false);
+    expect(JSON.stringify(tell)).not.toContain("OWNER_SEES_ENVELOPE");
+  });
+
+  it("carries a supervised resident's owner and vendor in the world snapshot", () => {
+    world.engine.db!.saveAgentConfig({
+      name: "Alice",
+      model: "frontier",
+      spawnedBy: "Carol",
+      runtime: "supervised",
+      vendor: "claude",
+    });
+    const broadcaster = new DashboardBroadcaster();
+    const sink: string[] = [];
+    broadcaster.addClient(
+      {
+        data: { connId: carol.entityId, isDashboard: true, principal: carol.entityId },
+        send: (message: string) => sink.push(message),
+      } as unknown as ServerWebSocket<DashboardWSData>,
+      world.engine,
+    );
+    const snapshot = sink
+      .map(
+        (m) => JSON.parse(m) as { type: string; data?: { entities?: Record<string, unknown>[] } },
+      )
+      .find((m) => m.type === "snapshot");
+    const entry = snapshot?.data?.entities?.find((e) => e.name === "Alice");
+    expect(entry).toMatchObject({ vendor: "claude", spawnedBy: "Carol" });
+    // An entity without a runtime or a supervised config carries no origin.
+    expect(snapshot?.data?.entities?.find((e) => e.name === "Bob")?.spawnedBy).toBeUndefined();
   });
 });
 

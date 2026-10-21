@@ -294,9 +294,11 @@ export class DashboardBroadcaster {
       // Origin: world-seeded ("system"), operator-launched ("operator"), or a
       // spawning agent's name (crew). Read from the persisted AgentConfig; only
       // meaningful for agent entities (humans / external agents have no config).
-      const spawnedBy = agentHandle ? (spawnedByName.get(e.name) ?? undefined) : undefined;
-      const presence = engine.presence.statusOf(e.name)?.status;
+      // A supervised resident runs outside the runtime but has its owner's config.
       const vendor = vendorOf.get(e.name);
+      const spawnedBy =
+        agentHandle || vendor ? (spawnedByName.get(e.name) ?? undefined) : undefined;
+      const presence = engine.presence.statusOf(e.name)?.status;
 
       const shape = (privateView: boolean): SnapshotEntity => ({
         id: e.id,

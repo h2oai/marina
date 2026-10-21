@@ -213,6 +213,57 @@ describe("hasLiveRoomMessage", () => {
   });
 });
 
+describe("latestRoomMessages — typed message envelopes", () => {
+  const now = 2_000_000;
+  const rooms: Record<string, string> = { Wren: "w/start", Swift: "w/start", Briar: "w/lib" };
+  const roomOf = (name: string) => rooms[name];
+
+  it("shows a same-room tell with its recipient and reply depth, never words", () => {
+    const out = latestRoomMessages(
+      [
+        evt({ type: "tell_sent", from: "Swift", to: "Wren", depth: 1, timestamp: now - 100 }),
+        evt({ type: "tell_sent", from: "Wren", to: "Swift", depth: 0, timestamp: now - 900 }),
+      ],
+      resolve,
+      now,
+      undefined,
+      roomOf,
+    );
+    expect(out["w/start"]).toEqual({
+      kind: "tell",
+      sender: "Swift",
+      recipient: "Wren",
+      body: "",
+      depth: 1,
+      timestamp: now - 100,
+    });
+  });
+
+  it("places say_sent in its room and leaves cross-room tells to the arcs", () => {
+    const out = latestRoomMessages(
+      [
+        evt({ type: "tell_sent", from: "Wren", to: "Briar", depth: 0, timestamp: now - 50 }),
+        evt({ type: "say_sent", from: "Briar", room: "w/lib", depth: 2, timestamp: now - 80 }),
+      ],
+      resolve,
+      now,
+      undefined,
+      roomOf,
+    );
+    expect(out["w/start"]).toBeUndefined();
+    expect(out["w/lib"]).toMatchObject({ kind: "say", sender: "Briar", body: "", depth: 2 });
+  });
+
+  it("ignores tells without a room resolver (older callers stay unchanged)", () => {
+    const out = latestRoomMessages(
+      [evt({ type: "tell_sent", from: "Wren", to: "Swift", depth: 0, timestamp: now - 10 })],
+      resolve,
+      now,
+    );
+    expect(out).toEqual({});
+  });
+});
+
 describe("pillFade", () => {
   it("holds full opacity until the fade point, then fades to zero over the rest", () => {
     const f = pillFade(0);

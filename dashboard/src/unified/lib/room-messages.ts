@@ -12,11 +12,18 @@ export const ROOM_MESSAGE_LIFETIME_MS = 6000;
 
 export interface RoomMessage {
   /** The kind drives the pill color. */
-  kind: "say" | "emote";
+  kind: "say" | "emote" | "tell";
   /** Resolved sender name (entity id resolved upstream). */
   sender: string;
-  /** Parsed body text without the verb prefix. */
+  /** A tell's recipient. */
+  recipient?: string;
+  /**
+   * Parsed body text without the verb prefix. Empty for the typed message
+   * envelopes (`say_sent` / `tell_sent`), which never carry words.
+   */
   body: string;
+  /** Reply depth from the message envelope: 0 starts a thread, N answers N hops in. */
+  depth?: number;
   timestamp: number;
 }
 
@@ -39,12 +46,18 @@ export function latestRoomMessages(
   resolveEntityName: (id: string) => string | undefined,
   now: number,
   lifetimeMs: number = ROOM_MESSAGE_LIFETIME_MS,
+  roomOf?: (name: string) => string | undefined,
 ): Record<string, RoomMessage> {
   const out: Record<string, RoomMessage> = {};
   const cutoff = now - lifetimeMs;
 
   for (const event of events) {
     if (event.timestamp < cutoff) break; // newest-first — nothing older qualifies
+    const envelope = messageEnvelope(event, roomOf);
+    if (envelope) {
+      if (!out[envelope.room]) out[envelope.room] = envelope.message;
+      continue;
+    }
     if (!IN_ROOM_KINDS.has(event.type)) continue;
     if (!event.room || !event.entity) continue;
     if (out[event.room]) continue; // already have a newer one for this room
@@ -62,6 +75,44 @@ export function latestRoomMessages(
   }
 
   return out;
+}
+
+/**
+ * A typed, content-free message envelope as a room message: `say_sent` in its
+ * room, a `tell_sent` in the sender's room when both parties share it (a tell
+ * across rooms is drawn as an arc instead). Names and depth only, no words.
+ */
+function messageEnvelope(
+  event: DashboardEvent,
+  roomOf?: (name: string) => string | undefined,
+): { room: string; message: RoomMessage } | null {
+  if (event.type === "say_sent" && event.from && event.room)
+    return {
+      room: event.room,
+      message: {
+        kind: "say",
+        sender: event.from,
+        body: "",
+        depth: event.depth ?? 0,
+        timestamp: event.timestamp,
+      },
+    };
+  if (event.type === "tell_sent" && event.from && event.to && roomOf) {
+    const room = roomOf(event.from);
+    if (!room || room !== roomOf(event.to)) return null;
+    return {
+      room,
+      message: {
+        kind: "tell",
+        sender: event.from,
+        recipient: event.to,
+        body: "",
+        depth: event.depth ?? 0,
+        timestamp: event.timestamp,
+      },
+    };
+  }
+  return null;
 }
 
 /** True if any room-message in the map is still within its lifetime window. */
@@ -95,6 +146,7 @@ export function sameRoomMessages(
     if (!y || !x) return false;
     if (x.timestamp !== y.timestamp || x.kind !== y.kind) return false;
     if (x.sender !== y.sender || x.body !== y.body) return false;
+    if (x.recipient !== y.recipient || x.depth !== y.depth) return false;
   }
   return true;
 }

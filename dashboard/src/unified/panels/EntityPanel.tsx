@@ -12,10 +12,12 @@
 
 import type { ReactElement } from "react";
 import { memo, useCallback, useMemo, useState } from "react";
+import { ResidentName } from "../../components/ResidentName";
 import { useAgents, useKeys, useRoles } from "../../hooks/use-api";
 import { useWorldState } from "../../hooks/use-world-state";
 import { postApi } from "../../lib/api";
 import { mediaCapability } from "../../lib/model-catalog";
+import { PRESENCE_COLORS } from "../../lib/presence";
 import type { AgentStatusFull, RoleEntry } from "../../lib/types";
 
 /** Props for the EntityPanel component. */
@@ -197,7 +199,7 @@ const OnlineTab = memo(function OnlineTab({
   return (
     <div style={{ overflow: "auto", flex: 1 }}>
       {sorted.map((entity) => {
-        const state = entity.agentStatus?.state ?? "online";
+        const state = entity.presence ?? entity.agentStatus?.state ?? "online";
         return (
           <button
             key={entity.name}
@@ -240,13 +242,13 @@ const OnlineTab = memo(function OnlineTab({
                 whiteSpace: "nowrap",
               }}
             >
-              {entity.name}
+              <ResidentName name={entity.name} vendor={entity.vendor} showPresence={false} />
             </span>
             {/* State */}
             <span
               style={{
                 fontSize: "clamp(10px, 0.7vw, 14px)",
-                color: STATE_COLORS[state] ?? "#666",
+                color: STATE_COLORS[state] ?? PRESENCE_COLORS[state] ?? "#666",
                 flexShrink: 0,
               }}
             >

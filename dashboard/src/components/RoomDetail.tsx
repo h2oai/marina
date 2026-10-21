@@ -12,6 +12,7 @@ import { cn } from "../lib/utils";
 import { getDistrictColor } from "../lib/world-graph";
 import { EventLine } from "./EventLine";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
+import { ResidentName } from "./ResidentName";
 import { WhoLink } from "./WhoLink";
 
 /** Events whose arrival means a room inspector's cached payload is stale. */
@@ -234,7 +235,7 @@ export function RoomDetail({
                               )}
                               onClick={() => selectEntity(e.name)}
                             >
-                              {e.name}
+                              <ResidentName name={e.name} />
                             </button>
                             <WhoLink name={e.name} size={10} />
                           </span>
