@@ -158,6 +158,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requester's lineage builds an earnable gate. Each world records the change once as a chronicle
   event (`civic-rule:contributors-earn-standing`).
 
+- **The maintainers' own deployment workflow is no longer part of the repository.**
+  `.github/workflows/deploy-ec2.yml` is removed; `scripts/deploy.sh` stays as the host-side half
+  of the example pipeline in the deployment guide.
+
 - **Competition adapters ship no filing identity.** The FutureX, ForecastBench and Metaculus
   adapters no longer default to an organization or agent name: they refuse to produce or file a
   submission (before spending anything) until you give one with `--org` / `--agent` or

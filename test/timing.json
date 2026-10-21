@@ -216,7 +216,6 @@
     "test/spawn-gate-sites.test.ts": 148,
     "test/worktree.test.ts": 146,
     "test/mem-api.test.ts": 144,
-    "test/deployment-gate.test.ts": 129,
     "test/new-features.test.ts": 112,
     "test/note-contradiction-twin.test.ts": 112,
     "test/getting-started-examples.test.ts": 111,

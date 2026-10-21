@@ -7,8 +7,8 @@ exists today; steps without tooling are listed under [Release steps without tool
 
 Everything here needs only a GitHub repository, its Actions runners and a local checkout. No
 cloud account is part of the release path. Deploying a released revision anywhere is the
-operator's choice; the repository's **Deploy to EC2** workflow is the maintainers' own optional
-deployment, not a release step, and a fork never needs it.
+operator's choice and not a release step; the repository carries no deployment workflow (see
+[Deployment](deployment.md#continuous-deployment-cicd) for the pattern).
 
 ## How a release is made
 
