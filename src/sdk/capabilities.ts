@@ -89,6 +89,36 @@ export interface RosterOptions {
   maxLineChars?: number;
   /** List only the core work commands (and this room's) — nothing past them. */
   coreOnly?: boolean;
+  /** Command names to leave out because the surrounding prompt already teaches them. */
+  omit?: ReadonlySet<string>;
+  /**
+   * Lead with the `This room:` line (default true). A cached system prompt
+   * passes false: room commands change with the room, so they belong in the
+   * per-turn context (`renderRoomCommands`), not in a static prefix.
+   */
+  includeRoom?: boolean;
+}
+
+/** Bytes the `This room:` line may take. */
+const ROOM_LINE_MAX_BYTES = 240;
+
+/**
+ * The caller's room commands as one `This room: a, b` line (names only — a
+ * room handler carries no summary), byte-bounded; "" when the room has none.
+ */
+export function renderRoomCommands(
+  entries: readonly CommandCatalogEntry[],
+  options: RosterOptions = {},
+  maxBytes = ROOM_LINE_MAX_BYTES,
+): string {
+  const encoder = new TextEncoder();
+  const names: string[] = [];
+  for (const entry of entries) {
+    if (entry.scope !== "room" || !rosterEligible(entry, options)) continue;
+    if (encoder.encode(`This room: ${[...names, entry.name].join(", ")}`).length > maxBytes) break;
+    names.push(entry.name);
+  }
+  return names.length ? `This room: ${names.join(", ")}` : "";
 }
 
 /** First line of a summary, clamped at a word boundary. */
@@ -136,19 +166,23 @@ export function renderCapabilityRoster(
   const sorted = eligible
     .filter(
       (entry) =>
-        entry.scope !== "room" && (!options.coreOnly || ROSTER_PRIORITY.includes(entry.name)),
+        entry.scope !== "room" &&
+        !options.omit?.has(entry.name) &&
+        (!options.coreOnly || ROSTER_PRIORITY.includes(entry.name)),
     )
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   let result = "Commands (`help <name>` for syntax; `help catalog [name]` lists forms):";
   const encoder = new TextEncoder();
   // This room's own commands lead, names only (a room handler carries no summary).
-  const roomNames: string[] = [];
-  for (const entry of eligible.filter((e) => e.scope === "room")) {
-    const next = `\nThis room: ${[...roomNames, entry.name].join(", ")}`;
-    if (encoder.encode(result + next).length > Math.min(maxBytes, result.length + 240)) break;
-    roomNames.push(entry.name);
+  if (options.includeRoom !== false) {
+    const roomNames: string[] = [];
+    for (const entry of eligible.filter((e) => e.scope === "room")) {
+      const next = `\nThis room: ${[...roomNames, entry.name].join(", ")}`;
+      if (encoder.encode(result + next).length > Math.min(maxBytes, result.length + 240)) break;
+      roomNames.push(entry.name);
+    }
+    if (roomNames.length) result += `\nThis room: ${roomNames.join(", ")}`;
   }
-  if (roomNames.length) result += `\nThis room: ${roomNames.join(", ")}`;
   for (const entry of sorted) {
     const line = `\n${entry.name}: ${clampSummary(entry.description ?? entry.help, maxLine)}`;
     if (encoder.encode(result + line).length <= maxBytes) result += line;

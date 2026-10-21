@@ -39,8 +39,14 @@ import {
 import { piModels } from "../src/agent/pi-models";
 import {
   COMMAND_ROSTER,
+  FULL_SYSTEM_PROMPT_BYTE_CAP,
   getLeanSystemPrompt,
+  getRoomCommandsLine,
   LEAN_SYSTEM_PROMPT_BYTE_CAP,
+  LEAN_TIER_MAX_CONTEXT_TOKENS,
+  type PromptTier,
+  promptTierForContextWindow,
+  systemPromptByteCap,
 } from "../src/agent/prompts/lean-system";
 import {
   applyStrictToolSchemas,
@@ -107,17 +113,37 @@ describe("system prompt byte budget", () => {
   it("stays under the cap with the command roster included", () => {
     const p = getLeanSystemPrompt(null);
     expect(bytes(p)).toBeLessThanOrEqual(LEAN_SYSTEM_PROMPT_BYTE_CAP);
-    expect(LEAN_SYSTEM_PROMPT_BYTE_CAP).toBeLessThanOrEqual(6300);
+    // Two tiers (2026-10-20): lean ratcheted below the old 6,300 B; full has headroom.
+    expect(LEAN_SYSTEM_PROMPT_BYTE_CAP).toBeLessThanOrEqual(5800);
+    expect(FULL_SYSTEM_PROMPT_BYTE_CAP).toBeGreaterThan(LEAN_SYSTEM_PROMPT_BYTE_CAP);
+    expect(FULL_SYSTEM_PROMPT_BYTE_CAP).toBeLessThanOrEqual(10_000);
+    expect(systemPromptByteCap("lean")).toBe(LEAN_SYSTEM_PROMPT_BYTE_CAP);
+    expect(systemPromptByteCap("full")).toBe(FULL_SYSTEM_PROMPT_BYTE_CAP);
     // ONE copy of the roster, in the stable prefix.
     expect(p.split("\n# COMMANDS\n").length - 1).toBe(1);
     expect(p).toContain("# COMMANDS");
     expect(p).toContain(COMMAND_ROSTER);
   });
 
-  it("stays under the cap with the LIVE roster agents get, in every profile and posture", async () => {
+  it("picks the tier from the model's context window (≤ 32k tokens ⇒ lean)", () => {
+    expect(LEAN_TIER_MAX_CONTEXT_TOKENS).toBe(32_768);
+    expect(promptTierForContextWindow(16_384)).toBe("lean");
+    expect(promptTierForContextWindow(32_768)).toBe("lean");
+    expect(promptTierForContextWindow(32_769)).toBe("full");
+    expect(promptTierForContextWindow(128_000)).toBe("full");
+    expect(promptTierForContextWindow(1_000_000)).toBe("full");
+    // Unknown windows keep the large-model behaviour.
+    expect(promptTierForContextWindow(undefined)).toBe("full");
+    expect(promptTierForContextWindow(0)).toBe("full");
+    expect(promptTierForContextWindow(Number.NaN)).toBe("full");
+  });
+
+  it("stays under each tier's cap with the LIVE roster agents get, in every profile and posture", async () => {
     // Agents receive the live manifest (`client.capabilities()`), not the static
     // fallback: measure what they actually get, with a busy room's commands and
-    // the full toolset, under every trust profile x autonomy posture.
+    // the widest toolset (every resident tool, marina_code and think included)
+    // and the lean tier's minimal set, under every trust profile x autonomy
+    // posture, against BOTH tier caps.
     const roomCommands = Object.fromEntries(
       Array.from({ length: 12 }, (_, i) => [`roomverb${i}`, () => undefined]),
     );
@@ -135,6 +161,12 @@ describe("system prompt byte budget", () => {
         "marina_memory_service",
         "marina_tool_search",
       ];
+      const minimalTools = [
+        "marina_command",
+        "memory",
+        "marina_memory_service",
+        "marina_tool_search",
+      ];
       for (const trustProfile of ["local", "shared", "public"] as const) {
         for (const autonomy of ["guarded", "earned", "open"]) {
           using _state = scopeProcessState({ trustProfile, env: { MARINA_AUTONOMY: autonomy } });
@@ -143,22 +175,116 @@ describe("system prompt byte budget", () => {
               rank,
               roomCommands: roomCommands as never,
             });
-            const p = getLeanSystemPrompt(null, entries, fullTools);
-            expect({
-              trustProfile,
-              autonomy,
-              rank,
-              ok: bytes(p) <= LEAN_SYSTEM_PROMPT_BYTE_CAP,
-            }).toEqual({ trustProfile, autonomy, rank, ok: true });
-            // Room commands and the core work commands are listed; operator surfaces are not.
-            expect(p).toContain("This room: roomverb0");
-            for (const core of ["work:", "task:", "channel:", "web:", "canvas:", "challenge:"])
-              expect(p).toContain(`\n${core}`);
-            for (const operator of ["\nadmin:", "\nkey:", "\nadapter:", "\nquit:", "\narena:"])
-              expect(p).not.toContain(operator);
+            for (const tools of [fullTools, minimalTools]) {
+              const byTier = new Map<PromptTier, string>();
+              for (const tier of ["lean", "full"] as const) {
+                const p = getLeanSystemPrompt(null, entries, tools, tier);
+                byTier.set(tier, p);
+                expect({
+                  trustProfile,
+                  autonomy,
+                  rank,
+                  tier,
+                  tools: tools.length,
+                  ok: bytes(p) <= systemPromptByteCap(tier),
+                }).toEqual({ trustProfile, autonomy, rank, tier, tools: tools.length, ok: true });
+              }
+              // Large models are not worse off: both tiers render the same text.
+              expect(byTier.get("full")).toBe(byTier.get("lean")!);
+              const p = byTier.get("full")!;
+              // Room commands ride in the per-turn context, never the static prefix.
+              expect(p).not.toContain("This room:");
+              expect(p).not.toContain("roomverb");
+              expect(getRoomCommandsLine(entries)).toStartWith("This room: roomverb0");
+              // The core work commands are listed; operator surfaces are not.
+              for (const core of ["work:", "web:", "challenge:"]) expect(p).toContain(`\n${core}`);
+              // Commands TOOL ROUTING or MEMORY already teach are named there, not re-listed.
+              for (const taught of [
+                "task",
+                "channel",
+                "canvas",
+                "note",
+                "recall",
+                "pool",
+                "look",
+              ]) {
+                expect(p).toContain(`\`${taught}`);
+                expect(p).not.toContain(`\n${taught}:`);
+              }
+              for (const operator of ["\nadmin:", "\nkey:", "\nadapter:", "\nquit:", "\narena:"])
+                expect(p).not.toContain(operator);
+            }
           }
         }
       }
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it("renders a byte-identical system prompt across room changes", async () => {
+    // The `This room:` line used to sit in the roster, so a move rewrote the
+    // system prompt and invalidated the cached static prefix.
+    const roomA = Object.fromEntries(
+      Array.from({ length: 4 }, (_, i) => [`alphaverb${i}`, () => undefined]),
+    );
+    const roomB = { betaverb: () => undefined };
+    const fixture = createTestEngine();
+    try {
+      const tools = ["marina_command", "memory", "marina_memory_service", "marina_tool_search"];
+      for (const tier of ["lean", "full"] as const) {
+        const prompts = [roomA, roomB, undefined].map((roomCommands) =>
+          getLeanSystemPrompt(
+            null,
+            commandManifest(fixture.engine.commands, {
+              rank: 0,
+              ...(roomCommands ? { roomCommands: roomCommands as never } : {}),
+            }),
+            tools,
+            tier,
+          ),
+        );
+        expect(prompts[1]).toBe(prompts[0]!);
+        expect(prompts[2]).toBe(prompts[0]!);
+        expect(bytes(prompts[0]!)).toBeLessThanOrEqual(systemPromptByteCap(tier));
+      }
+      // The room-specific part moved to the per-turn context instead.
+      const lineA = getRoomCommandsLine(
+        commandManifest(fixture.engine.commands, { rank: 0, roomCommands: roomA as never }),
+      );
+      const lineB = getRoomCommandsLine(
+        commandManifest(fixture.engine.commands, { rank: 0, roomCommands: roomB as never }),
+      );
+      expect(lineA).toBe("This room: alphaverb0, alphaverb1, alphaverb2, alphaverb3");
+      expect(lineB).toBe("This room: betaverb");
+      expect(getRoomCommandsLine(commandManifest(fixture.engine.commands, { rank: 0 }))).toBe("");
+
+      // The adapter carries it per turn: shown when the room changes, and the
+      // system prompt it swaps in after a catalog refresh is the same bytes.
+      const adapter = new LeanAgentAdapter(
+        { name: "room-mover" } as never,
+        "ws://127.0.0.1:3300",
+        null,
+      );
+      const internals = adapter as unknown as {
+        capabilityEntries?: unknown;
+        buildContinuationPrompt(): Promise<string>;
+        currentSystemPrompt(): string;
+      };
+      internals.capabilityEntries = commandManifest(fixture.engine.commands, {
+        rank: 0,
+        roomCommands: roomA as never,
+      });
+      const systemA = internals.currentSystemPrompt();
+      expect(await internals.buildContinuationPrompt()).toContain(lineA);
+      internals.capabilityEntries = commandManifest(fixture.engine.commands, {
+        rank: 0,
+        roomCommands: roomB as never,
+      });
+      expect(internals.currentSystemPrompt()).toBe(systemA);
+      const next = await internals.buildContinuationPrompt();
+      expect(next).toContain(lineB);
+      expect(next).not.toContain("alphaverb");
     } finally {
       await fixture.dispose();
     }

@@ -60,9 +60,12 @@ export function createAllTools(
  *  - `"crew"`    : the core set — command, code, tell, pool, brief, channel,
  *                  think, memory, memory service. Mid-tier for dispatchers.
  *  - `"minimal"` : command, think, memory, memory service. Functionally
- *                  complete via `command`; for Haiku-tier one-shot specialists.
+ *                  complete via `command`; for Haiku-tier one-shot specialists
+ *                  and every model in the `lean` prompt tier (`resolveToolProfile`).
  *
- * An agent config's `toolProfile` field selects; defaults to `"full"`.
+ * With deferral on, `marina_code` and `think` are on demand in every acting
+ * profile (`ON_DEMAND_TOOL_NAMES`). An agent config's `toolProfile` field
+ * selects; defaults to `"full"`.
  */
 export type ToolProfile = "full" | "crew" | "minimal" | "plan";
 
@@ -87,11 +90,42 @@ export const TOOL_PROFILE_NAMES: Record<ToolProfile, string[]> = {
   plan: [], // read-only — built from READ_ONLY_TOOL_NAMES in createProfileToolset
 };
 
+/**
+ * Profile tools sent only on demand (2026-10-20). With deferral on they leave
+ * the resident set of every acting profile and are listed in
+ * `marina_tool_search` instead: `marina_code` (~4 KB) is resident only while
+ * a coding task is bound or the agent asked for it (`codeResident`), and
+ * `think` (0 of 3,368 recorded resident tool calls) loads by name.
+ * `MARINA_DEFERRED_TOOLS=off` keeps both resident as before.
+ */
+export const ON_DEMAND_TOOL_NAMES: readonly string[] = ["marina_code", "think"];
+
+/** Roles whose work is coding: `marina_code` stays resident for them. */
+export const CODE_TOOL_ROLES: ReadonlySet<string> = new Set(["coding-agent"]);
+
 /** Resident (always-sent) tools of the `full` profile when deferral is on —
- *  the crew core set. Everything else loads on demand. */
-export const FULL_RESIDENT_TOOL_NAMES: readonly string[] = [...TOOL_PROFILE_NAMES.crew];
+ *  the crew core set minus the on-demand tools. Everything else loads by name. */
+export const FULL_RESIDENT_TOOL_NAMES: readonly string[] = TOOL_PROFILE_NAMES.crew.filter(
+  (name) => !ON_DEMAND_TOOL_NAMES.includes(name),
+);
 
 export const TOOL_SEARCH_NAME = "marina_tool_search";
+
+/**
+ * The tool profile an agent runs with. An explicitly chosen profile always
+ * wins; otherwise (unset, or inferred from the role at spawn) a model in the
+ * `lean` prompt tier (context window ≤ 32k tokens) gets `minimal`, whose
+ * `marina_command` still reaches every command.
+ */
+export function resolveToolProfile(
+  config: { toolProfile?: ToolProfile; toolProfileInferred?: boolean },
+  tier: "lean" | "full",
+): ToolProfile {
+  const explicit = config.toolProfile !== undefined && !config.toolProfileInferred;
+  if (explicit) return config.toolProfile as ToolProfile;
+  if (tier === "lean") return "minimal";
+  return config.toolProfile ?? "full";
+}
 
 /** `MARINA_DEFERRED_TOOLS=off` restores the pre-2026-09 all-schemas `full` profile. */
 export function deferredToolsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -133,9 +167,10 @@ export function createToolSearchTool(
   onLoad?: (tools: AgentTool[]) => void,
   residentNames: readonly string[] = [],
 ): AgentTool<typeof toolSearchSchema> {
-  // With `marina_code` resident, its typed twins stay loadable by name but are
-  // summarized in one line instead of one catalog line each.
-  const codeResident = residentNames.includes("marina_code");
+  // With `marina_code` resident or itself listed, its typed twins stay
+  // loadable by name but are summarized in one line instead of one line each.
+  const codeResident =
+    residentNames.includes("marina_code") || deferred.some((t) => t.name === "marina_code");
   const listed = deferred.filter((t) => !(codeResident && t.name.startsWith(CODE_TYPED_PREFIX)));
   const codeTwins = deferred.length - listed.length;
   const catalog = [
@@ -192,6 +227,9 @@ export interface ToolsetOptions {
   onLoadTools?: (tools: AgentTool[]) => void;
   /** Media generation this installation serves (`mediaGenerationAvailable`). */
   mediaGeneration?: { image?: boolean; video?: boolean; transcribe?: boolean; speak?: boolean };
+  /** Keep `marina_code` resident: a coding task is bound, or the agent's role or
+   *  config asks for it. Otherwise it is listed in `marina_tool_search`. */
+  codeResident?: boolean;
 }
 
 export interface ProfileToolset {
@@ -400,9 +438,11 @@ export function applyToolReplayPolicy<T extends AgentTool>(tools: T[]): T[] {
 }
 
 /**
- * Build the resident + deferred tool sets for a profile. `full` with deferral
- * on = core set + `marina_tool_search`; the rest are deferred. `onLoadTools`
- * is how loaded schemas reach the agent's live tool list.
+ * Build the resident + deferred tool sets for a profile. With deferral on,
+ * `full` = core set + `marina_tool_search` (every other tool deferred);
+ * `crew` / `minimal` = their declared set minus the on-demand tools, which
+ * their own `marina_tool_search` lists. `onLoadTools` is how loaded schemas
+ * reach the agent's live tool list.
  */
 
 export function createProfileToolset(
@@ -439,14 +479,22 @@ export function createProfileToolset(
       deferred: [],
     };
   }
-  if (profile !== "full") {
+  if (!deferredToolsEnabled()) {
+    if (profile === "full") return { resident: all, deferred: [] };
     const want = new Set(TOOL_PROFILE_NAMES[profile]);
     return { resident: all.filter((t) => want.has(t.name)), deferred: [] };
   }
-  if (!deferredToolsEnabled()) return { resident: all, deferred: [] };
-  const residentNames = new Set(FULL_RESIDENT_TOOL_NAMES);
+  // On-demand tools leave the resident set (marina_code stays while wanted).
+  const onDemand = (name: string) =>
+    ON_DEMAND_TOOL_NAMES.includes(name) && !(name === "marina_code" && options?.codeResident);
+  const declared = TOOL_PROFILE_NAMES[profile === "full" ? "crew" : profile];
+  const residentNames = new Set(declared.filter((name) => !onDemand(name)));
   const resident = all.filter((t) => residentNames.has(t.name));
-  const deferred = all.filter((t) => !residentNames.has(t.name));
+  const deferred =
+    profile === "full"
+      ? all.filter((t) => !residentNames.has(t.name))
+      : all.filter((t) => TOOL_PROFILE_NAMES[profile].includes(t.name) && onDemand(t.name));
+  if (deferred.length === 0) return { resident, deferred };
   resident.push(
     ...applyToolExecutionModes([
       createToolSearchTool(

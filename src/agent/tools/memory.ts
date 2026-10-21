@@ -10,19 +10,18 @@ import type { PlatformMemoryBackend } from "../memory-platform";
 
 // ─── Memory Tool (platform-only) ───────────────────────────────────────────
 
+/** A string enum as ONE `enum` keyword (not an anyOf of literals): the same
+ *  validation in ~40 % of the bytes (as `marina_memory_service` does). */
+function stringEnum(values: readonly string[], description: string) {
+  return Type.String({ enum: [...values], description });
+}
+
+type NoteImportance = "low" | "medium" | "high";
+
 const memorySchema = Type.Object({
-  action: Type.Union(
-    [
-      Type.Literal("write"),
-      Type.Literal("search"),
-      Type.Literal("reflect"),
-      Type.Literal("orient"),
-      Type.Literal("skill_store"),
-      Type.Literal("skill_search"),
-      Type.Literal("rest"),
-      Type.Literal("wake"),
-    ],
-    { description: "Action" },
+  action: stringEnum(
+    ["write", "search", "reflect", "orient", "skill_store", "skill_search", "rest", "wake"],
+    "Action",
   ),
   content: Type.Optional(Type.String({ description: "Content (for write/reflect)" })),
   query: Type.Optional(Type.String({ description: "Search query (for search/skill_search)" })),
@@ -33,23 +32,12 @@ const memorySchema = Type.Object({
     }),
   ),
   category: Type.Optional(
-    Type.Union(
-      [
-        Type.Literal("observation"),
-        Type.Literal("inference"),
-        Type.Literal("decision"),
-        Type.Literal("fact"),
-        Type.Literal("principle"),
-        Type.Literal("episode"),
-      ],
-      { description: "Note type (for write)" },
+    stringEnum(
+      ["observation", "inference", "decision", "fact", "principle", "episode"],
+      "Note type (for write)",
     ),
   ),
-  importance: Type.Optional(
-    Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")], {
-      description: "Importance level (for write)",
-    }),
-  ),
+  importance: Type.Optional(stringEnum(["low", "medium", "high"], "Importance level (for write)")),
   tags: Type.Optional(Type.Array(Type.String(), { description: "Tags (for write)" })),
   skill_name: Type.Optional(Type.String({ description: "Skill name (for skill_store)" })),
   skill_description: Type.Optional(
@@ -65,10 +53,9 @@ export function createMemoryTool(
     name: "memory",
     label: "Platform Memory",
     description:
-      "Platform memory, persisted on the server.\n" +
-      "Actions: write, search (recall), reflect, orient (health), skill_store, skill_search, " +
-      "rest (content=why; no model calls until a reply is owed), wake.\n" +
-      "Use trusted=true for decisions. For provenance use marina_command: note claim/source/derive/verify/explain.",
+      "Your private notes as typed actions (the verbs are explained once, in # MEMORY): write, " +
+      "search (recall), reflect, orient (health), skill_store, skill_search, " +
+      "rest (content=why; no model calls until a reply is owed), wake. Use trusted=true for decisions.",
     parameters: memorySchema,
     execute: async (_id, params: Static<typeof memorySchema>) => {
       try {
@@ -83,7 +70,7 @@ export function createMemoryTool(
             const r = await platformMemory.write(
               params.category ?? "observation",
               params.content,
-              params.importance ?? "medium",
+              (params.importance ?? "medium") as NoteImportance,
               params.tags ?? [],
             );
             return {

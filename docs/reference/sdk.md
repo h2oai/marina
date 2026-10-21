@@ -53,7 +53,20 @@ export interface RosterOptions {
     maxLineChars?: number;
     /** List only the core work commands (and this room's) — nothing past them. */
     coreOnly?: boolean;
+    /** Command names to leave out because the surrounding prompt already teaches them. */
+    omit?: ReadonlySet<string>;
+    /**
+     * Lead with the `This room:` line (default true). A cached system prompt
+     * passes false: room commands change with the room, so they belong in the
+     * per-turn context (`renderRoomCommands`), not in a static prefix.
+     */
+    includeRoom?: boolean;
 }
+/**
+ * The caller's room commands as one `This room: a, b` line (names only — a
+ * room handler carries no summary), byte-bounded; "" when the room has none.
+ */
+export declare function renderRoomCommands(entries: readonly CommandCatalogEntry[], options?: RosterOptions, maxBytes?: number): string;
 /** First line of a summary, clamped at a word boundary. */
 export declare function clampSummary(text: string, max: number): string;
 /**

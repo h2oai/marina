@@ -392,6 +392,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Resident context budget: two prompt tiers, a deduplicated prompt and on-demand tools.**
+  The fixed prefix every resident sends on every turn is smaller, and small-window models get a
+  budget of their own.
+  - **Two tiers**, picked from the agent model's context window. `lean` (≤ 32k tokens) caps the
+    system prompt frame at 5,800 B (was 6,300 B for everyone) and gives the agent the `minimal`
+    tool profile unless its profile was set explicitly. `full` (larger, cached models) caps it at
+    9,000 B. Both render the same text, and the tests check both caps in every trust profile ×
+    autonomy posture.
+  - **Each command is introduced once.** The `# COMMANDS` roster skips commands that TOOL ROUTING
+    or MEMORY already name, TOOL ROUTING no longer repeats the analysis-tool list that
+    `marina_tool_search` carries, and the memory tools' descriptions defer to MEMORY. AUTHORITY
+    AND TRUST and HOW TO BE are unchanged. The worst-case frame fell from 6,279 B to 5,213 B.
+  - **`marina_code` and `think` load on demand.** `marina_code` (~4 KB) is resident while a coding
+    task is bound, for the `coding-agent` role and for an explicitly chosen profile; otherwise
+    each profile's `marina_tool_search` lists it. `think` (no calls among 3,368 recorded resident
+    tool calls) is listed the same way. `memory` and `marina_memory_service` were not merged — they
+    have different backends and callers — but `memory` now sends its enums as one `enum` keyword
+    (1,860 → 1,415 B). `MARINA_DEFERRED_TOOLS=off` keeps everything resident as before.
+  - **Long procedures moved to built-in skills.** The chronicling trait (1,879 → 727 B), the
+    `canvas-watcher` trait that every `general` agent carries (832 → 464 B) and the
+    `[Reflection Due]` procedure keep one line per rule and point at `skill builtin chronicling`,
+    `canvas-intents` and `consolidate-memory`.
+  - Resident tool schemas: `full` 13,983 → 8,763 B, `crew` 11,216 → 6,512 B, `minimal`
+    5,174 → 4,373 B. A crew-profile Opus resident sends about 5.8 KB (~1.5k tokens) less per
+    turn. A 16k local model's prefix falls from about 17.5 KB to 9.6 KB.
+- **Cache-aware idle handling for residents** (`src/agent/prompt-cache.ts`). A prompt sent more
+  than the provider's cache lifetime (5 min) after the agent's last request is cold: the whole
+  request is written to the cache again. In a week of five Opus residents, 89 % of turns 5–60 min
+  after the previous one were cold, and those rewrites were 31 % of agent spend ($60 of $195).
+  - **Default change: compaction before a cold turn.** When the cache has expired and the history
+    holds at least the cap's target + 8000 estimated tokens (24 000 by default), it is compacted to
+    the target before the prompt, through the same archived compaction as the 48k cap. Estimated
+    saving on the measured week: about $29/week, summarizer cost included.
+    `MARINA_AGENT_COLD_COMPACT=off` restores the old behaviour; `…_MIN_TOKENS` tunes the threshold.
+  - **Default change: one-hour cache lifetime for the static prefix** (tool schemas and system
+    prompt) on direct Anthropic requests; the conversation keeps 5 minutes. Estimated saving about
+    $10/week. `MARINA_PROMPT_CACHE_STATIC_TTL=off` restores it.
+  - **The system prompt no longer changes when an agent moves.** The roster's `This room:` line
+    put room-specific command names in the system prompt, so every room change rewrote the cached
+    static prefix. The line now rides in the per-turn context, shown when the room's commands
+    change (`getRoomCommandsLine`). The system prompt is byte-identical across rooms, and both tier
+    caps still hold (`test/prompt-budget.test.ts`).
+  - **Keep-alive pings, off by default** (`MARINA_AGENT_CACHE_KEEPALIVE=on`): a `max_tokens: 1`
+    replay of the last request shortly before the cache expires, bounded per idle gap, per window
+    and per agent per day, and turned off for an agent at the first reply that did not read the
+    cache. Estimated about −$24/week alone, about −$16/week on top of cold-turn compaction, at the
+    cost of extra calls.
+  - Cache lifetimes are configurable per provider family (`MARINA_PROMPT_CACHE_TTL`); local servers
+    and providers with no known cache never count as cold.
+  - `agent status` shows cold turns, compactions before them, the cache writes they avoided, and
+    keep-alives.
+  - **Compaction is incremental.** Earlier summaries are kept verbatim instead of being
+    re-summarized, and every summary carries a `Pointers:` line (URLs, typed ids, `#` handles, file
+    paths) that is handed on when an old summary is dropped.
+- **Default change: `[Focus Review Due]` counts prompts, not minutes.** The 5-minute wall-clock
+  horizon fired on 45 % of prompts, because idle gaps are longer than that. A focus is now reviewed
+  after 10 prompts under it (`MARINA_FOCUS_REVIEW_CYCLES`, or the agent config's
+  `focusReviewCycles`, which replaces `focusTimeout`); idle time never counts.
+- **Default change: fenced memory is reconstructed as of the cutoff** (`src/memory/as-of.ts`).
+  Under an evidence cutoff, a note edited after creation was dropped, and the durable evidence and
+  proposal tiers were withheld entirely. Now a revised note is served at the newest canonical
+  version known by the cutoff, with that version's own text (labelled `as-of vK` — the version served, never the count past the cutoff, never trusted).
+  Durable records, captured sources and assistance proposals are served by their own known-at
+  time, taken from the service events the write path records. An item with no such event (bundle
+  imports, events dropped before migration 172) is still withheld. Tests prove no post-cutoff text
+  reaches any fenced surface.
+  - **Fenced search is ranked on the as-of text.** `recall`, `recall … all|evidence`, the
+    continuation context and `context` used to select and order notes and records by their
+    CURRENT text and scores, then serve the as-of text. Which notes appeared, and their order,
+    could reveal a post-cutoff edit. Under a cutoff, notes are now picked from every handle
+    known by the cutoff whose any version matches, reduced to the as-of version, dropped unless
+    that text matches, and ordered by its term coverage, then by creation time (`fencedNoteRecall`,
+    `rankAsOf`). Durable records and sources are re-scored the same way. Query vocabulary, term
+    distinctiveness and link expansion, all current state, are skipped under a cutoff.
+  - **Known-at times survive event retention (migration 172).** The dating events were pruned
+    after 30 days, so older revisions could no longer be dated. The time is now stored on the row:
+    `memory_record_versions.known_at`, `memory_sources.known_at` and
+    `memory_assistance_jobs.completed_known_at`. Each is set by a trigger on the event, in the same
+    transaction. The migration is additive and idempotent: three nullable columns, three triggers,
+    and a one-row cursor. Existing rows are filled from the surviving events by the
+    `memory-known-at-backfill` tick job, in seq-range batches of short transactions (5,000 event
+    seqs each, 8 per pass every 10 ticks). Boot never waits. Until the backfill passes a dating
+    event, retention keeps it. Fenced reads use the stored time and fall back to the event log
+    only while the backfill is still running. This was chosen over exempting the events from
+    retention: on a large database, the as-of lookup becomes a primary-key read instead of a scan
+    of the unindexed event log, and the log stays bounded.
+
 - **One formation catalogue** (`src/orchestration/formations/`). Formations were implemented once
   per surface: crew briefs, project templates, arena protocols, typed forecast formations and text
   patterns shared names but not code. Each formation is now one catalogue entry: a one-line

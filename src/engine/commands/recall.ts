@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { TaskManager } from "../../coordination/task-manager";
+import { fencedNoteRecall } from "../../memory/as-of";
 import { memoryNoteResults, memoryResult } from "../../memory/command-result";
-import { findDurableTwin } from "../../memory/legacy-projection";
 import {
   expandedFtsQueries,
   expansionForEntityCached,
@@ -246,33 +246,42 @@ export function recallCommand(deps: {
         })();
       }
 
-      // Query expansion ties the silos: when the caller's durable resident space
-      // carries an authored vocabulary, recall also runs its bounded alternative
-      // phrasings and fuses the lists (RRF). No vocabulary → the single query.
-      // Synchronous by design: the vocabulary comes from a per-entity cache that
-      // refreshes in the background, so plain `recall` never awaits a durable
-      // round-trip (the SDK's reply window and the quest tracker both depend on
-      // the reply landing in the same tick).
-      const expansion = expansionForEntityCached(db, entity.name, query);
-      const recallOne = (q: string) =>
-        noteType
-          ? db.recallNotesWithType(entity.name, q, noteType, weights)
-          : db.recallNotes(entity.name, q, weights);
-      let results = expansion
-        ? fuseRecallResults(
-            expandedFtsQueries(query, expansion).map(recallOne),
-            (row) => row.id,
-            RECALL_LIMIT,
-          )
-        : recallOne(query);
-      results = expandMemoryRecall(db, results, entity.name, {
-        noteType,
-        trusted: flags.has("trusted"),
-      });
-      if (asOf !== undefined)
-        results = results.filter(
-          (n) => n.created_at <= asOf && (findDurableTwin(db, n.id)?.version ?? 1) <= 1,
-        );
+      // The as-of fence: notes are selected and ranked on the text known by
+      // the cutoff (`fencedNoteRecall`), never on their current text, current
+      // scores, query vocabulary or links — any of those can carry what changed
+      // after the cutoff. A historical version is never listed as trusted.
+      let results: ScoredNoteRow[];
+      if (asOf !== undefined) {
+        results = fencedNoteRecall(db, entity.name, query, asOf, {
+          noteType,
+          trusted: flags.has("trusted"),
+          limit: RECALL_LIMIT,
+        });
+      } else {
+        // Query expansion ties the silos: when the caller's durable resident space
+        // carries an authored vocabulary, recall also runs its bounded alternative
+        // phrasings and fuses the lists (RRF). No vocabulary → the single query.
+        // Synchronous by design: the vocabulary comes from a per-entity cache that
+        // refreshes in the background, so plain `recall` never awaits a durable
+        // round-trip (the SDK's reply window and the quest tracker both depend on
+        // the reply landing in the same tick).
+        const expansion = expansionForEntityCached(db, entity.name, query);
+        const recallOne = (q: string) =>
+          noteType
+            ? db.recallNotesWithType(entity.name, q, noteType, weights)
+            : db.recallNotes(entity.name, q, weights);
+        results = expansion
+          ? fuseRecallResults(
+              expandedFtsQueries(query, expansion).map(recallOne),
+              (row) => row.id,
+              RECALL_LIMIT,
+            )
+          : recallOne(query);
+        results = expandMemoryRecall(db, results, entity.name, {
+          noteType,
+          trusted: flags.has("trusted"),
+        });
+      }
 
       // Touch each returned note to update last_accessed and recall_count.
       for (const note of results) {

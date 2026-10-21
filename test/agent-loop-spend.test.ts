@@ -20,7 +20,11 @@ import { describe, expect, it } from "bun:test";
 import type { Agent } from "@earendil-works/pi-agent-core";
 import { type AssistantMessage, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "@sinclair/typebox";
-import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
+import {
+  DEFAULT_FOCUS_REVIEW_CYCLES,
+  focusReviewCycles,
+  LeanAgentAdapter,
+} from "../src/agent/lean-agent-adapter";
 import {
   defaultLoopPreferences,
   type LoopPreferences,
@@ -58,7 +62,7 @@ type Internals = {
   silentTurns: number;
   currentPromptActionable: boolean;
   currentPromptAddressed: boolean;
-  focus: { description: string; startedAt: number } | null;
+  focus: { description: string; startedAt: number; cycles?: number } | null;
   loopIterationCount: number;
   computeDynamicDelay(): number;
   getTickRate(): { min: number; normal: number; idle: number };
@@ -497,18 +501,44 @@ describe("declared rest registers through every surface, on success only", () =>
 // ─── 6. Focus ───────────────────────────────────────────────────────────────
 
 describe("focus", () => {
-  it("the agent's own focus survives its time horizon (review, not deletion)", async () => {
+  it("the agent's own focus survives its horizon (review, not deletion)", async () => {
     const h = harness("Focus1");
-    h.i.focus = { description: "map the grid", startedAt: Date.now() - 6 * 60_000 };
+    h.i.focus = { description: "map the grid", startedAt: Date.now(), cycles: 10 };
     const prompt = await h.i.buildContinuationPrompt();
     expect(prompt).toContain("[Focus Review Due]");
     expect(h.i.focus?.description).toBe("map the grid");
     expect(h.saved).not.toContain(null);
   });
 
+  it("the review horizon counts prompts, never idle wall-clock time", async () => {
+    using _s = scopeProcessState({ env: { MARINA_FOCUS_REVIEW_CYCLES: undefined } });
+    const h = harness("FocusCycles");
+    // An hour-old focus after a long idle gap: no review (the old 5-minute
+    // wall-clock horizon fired on nearly every prompt after a gap).
+    h.i.focus = { description: "map the grid", startedAt: Date.now() - 60 * 60_000 };
+    const seen: boolean[] = [];
+    for (let i = 0; i < 12; i++) {
+      const prompt = await h.i.buildContinuationPrompt();
+      seen.push(prompt.includes("[Focus Review Due]"));
+    }
+    // Ten prompts of work, then the review on the eleventh; the count restarts.
+    expect(seen.indexOf(true)).toBe(10);
+    expect(seen.filter(Boolean)).toHaveLength(1);
+    expect(h.i.focus?.description).toBe("map the grid");
+    expect(h.i.focus?.cycles).toBe(1);
+  });
+
+  it("the review horizon is configurable per agent and by env", () => {
+    expect(focusReviewCycles(undefined, {})).toBe(DEFAULT_FOCUS_REVIEW_CYCLES);
+    expect(focusReviewCycles(undefined, { MARINA_FOCUS_REVIEW_CYCLES: "25" })).toBe(25);
+    expect(focusReviewCycles(undefined, { MARINA_FOCUS_REVIEW_CYCLES: "junk" })).toBe(10);
+    expect(focusReviewCycles(3, { MARINA_FOCUS_REVIEW_CYCLES: "25" })).toBe(3);
+    expect(focusReviewCycles(0, {})).toBe(10);
+  });
+
   it("an operator/config goal never expires", async () => {
     const h = harness("Focus2", { goal: "keep the ledger balanced" });
-    h.i.focus = { description: "keep the ledger balanced", startedAt: Date.now() - 60 * 60_000 };
+    h.i.focus = { description: "keep the ledger balanced", startedAt: Date.now(), cycles: 50 };
     const prompt = await h.i.buildContinuationPrompt();
     expect(prompt).not.toContain("[Focus Review Due]");
     expect(h.i.focus?.description).toBe("keep the ledger balanced");
@@ -517,7 +547,7 @@ describe("focus", () => {
   it("focus_persistent is honoured on expiry", async () => {
     const h = harness("Focus3");
     h.i.loopPrefs = { ...defaultLoopPreferences(), focusPersistent: true };
-    h.i.focus = { description: "map the grid", startedAt: Date.now() - 6 * 60_000 };
+    h.i.focus = { description: "map the grid", startedAt: Date.now(), cycles: 10 };
     const prompt = await h.i.buildContinuationPrompt();
     expect(prompt).not.toContain("[Focus Review Due]");
     expect(h.i.focus?.description).toBe("map the grid");

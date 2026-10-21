@@ -473,6 +473,11 @@ function handleStatus(
       : []),
     `${bold("Tokens:")} ${(ops?.totalInputTokens ?? s.totalInputTokens ?? 0).toLocaleString()} in · ${(ops?.totalOutputTokens ?? s.totalOutputTokens ?? 0).toLocaleString()} out`,
     `${bold("Cost:")} ${formatUsd(ops?.totalCostUsd ?? s.totalCostUsd ?? 0)} total · ${formatUsd(ops?.costLastHourUsd ?? 0)} last hour${capText ? dim(` (caps: ${capText})`) : ""}`,
+    ...(ops?.promptCache && (ops.promptCache.coldTurns > 0 || ops.promptCache.keepAlives > 0)
+      ? [
+          `${bold("Prompt cache:")} ${ops.promptCache.coldTurns} cold turn(s) · ${ops.promptCache.coldCompactions} compacted first (~${ops.promptCache.coldWriteTokensAvoided.toLocaleString()} tokens / ${Math.round(ops.promptCache.coldWriteBytesAvoided / 1024).toLocaleString()} KB of cache writes avoided)${ops.promptCache.keepAlives > 0 ? ` · ${ops.promptCache.keepAlives} keep-alive(s), ${formatUsd(ops.promptCache.keepAliveCostUsd)}` : ""}`,
+        ]
+      : []),
     `${bold("Errors:")} ${s.errors}${ops?.consecutiveErrors ? ` · ${ops.consecutiveErrors} consecutive` : ""}`,
     `${bold("Last error:")} ${ops?.lastError ? `${ops.lastError.text} ${dim(`(${formatAgo(ops.lastError.at)})`)}` : dim("none")}`,
     ...(ops?.paused

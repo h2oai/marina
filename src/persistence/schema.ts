@@ -233,7 +233,65 @@ ALTER TABLE channel_messages ADD COLUMN cause TEXT;
 ALTER TABLE channel_messages ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
 `,
   },
+  // Migration 172 — known-at times on the rows the as-of fence dates
+  // (src/memory/as-of.ts). The `memory.created` / `memory.revised`,
+  // `source.captured` and `assistance.completed` service events were the ONLY
+  // record of when a version, source or proposal became known, and the event
+  // log is pruned at 30 days. Additive and idempotent (columns added only when
+  // missing, `IF NOT EXISTS` everywhere): `known_at` on versions and sources,
+  // `completed_known_at` on assistance jobs, each kept by an AFTER INSERT
+  // trigger on the event itself (same transaction, any write path), plus a
+  // one-row backfill cursor. Existing rows are filled from the surviving
+  // events by the bounded `memory-known-at-backfill` tick job, in short
+  // seq-range batches — never at boot, never one long transaction. Until the
+  // cursor passes an event, retention keeps it (`KNOWN_AT_RETENTION_WHERE`).
+  {
+    version: 172,
+    sql: `
+CREATE TABLE IF NOT EXISTS memory_known_at_backfill (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  cursor INTEGER NOT NULL,
+  upto INTEGER NOT NULL
+);
+`,
+    apply: installMemoryKnownAt,
+  },
 ];
+
+/** Migration 172 body — self-contained so later edits elsewhere never change it. */
+function installMemoryKnownAt(db: Database): void {
+  const addColumn = (table: string, column: string) => {
+    const columns = db.query(`PRAGMA table_info("${table}")`).all() as { name: string }[];
+    if (!columns.some((c) => c.name === column))
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} INTEGER`);
+  };
+  addColumn("memory_record_versions", "known_at");
+  addColumn("memory_sources", "known_at");
+  addColumn("memory_assistance_jobs", "completed_known_at");
+  db.exec(`
+CREATE TRIGGER IF NOT EXISTS memory_known_at_version AFTER INSERT ON memory_service_events
+WHEN new.operation IN ('memory.created','memory.revised') AND new.reference_id IS NOT NULL BEGIN
+  UPDATE memory_record_versions SET known_at = max(coalesce(known_at, 0), new.created_at)
+   WHERE record_id = new.reference_id AND version = new.version;
+END;
+CREATE TRIGGER IF NOT EXISTS memory_known_at_source AFTER INSERT ON memory_service_events
+WHEN new.operation = 'source.captured' AND new.reference_id IS NOT NULL BEGIN
+  UPDATE memory_sources SET known_at = max(coalesce(known_at, 0), new.created_at)
+   WHERE id = new.reference_id;
+END;
+CREATE TRIGGER IF NOT EXISTS memory_known_at_proposal AFTER INSERT ON memory_service_events
+WHEN new.operation = 'assistance.completed' AND new.reference_id IS NOT NULL BEGIN
+  UPDATE memory_assistance_jobs SET completed_known_at = max(coalesce(completed_known_at, 0), new.created_at)
+   WHERE id = new.reference_id;
+END;
+`);
+  // Everything at or below today's last event is the backfill's; later events
+  // are dated by the triggers above. An empty log has nothing to backfill.
+  db.run(
+    `INSERT OR IGNORE INTO memory_known_at_backfill (id, cursor, upto)
+     SELECT 1, 0, coalesce(max(seq), 0) FROM memory_service_events`,
+  );
+}
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */
 function hashMemApiKeySecrets(db: Database): void {

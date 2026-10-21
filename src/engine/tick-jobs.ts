@@ -17,6 +17,7 @@ import { deliverOutcomes } from "../outcomes/deliver";
 import { judgeWaitingWork } from "../outcomes/judge-quality";
 import { judgeOpenResolutions } from "../outcomes/judge-resolution";
 import type { MarinaDB } from "../persistence/database";
+import { backfillMemoryKnownAt } from "../persistence/db-memory-known-at";
 import { refreshDeadlines, runDueSchedules } from "../schedules/runner";
 import {
   ASSISTANCE_EXPIRY_PHASE,
@@ -476,7 +477,26 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       );
     },
   });
+
+  // Every 10 ticks (phase 5, clear of schedules' 3): copy the dates of the
+  // memory events that predate migration 172 onto their version, source and
+  // proposal rows (src/persistence/db-memory-known-at.ts) — a few short
+  // seq-range batches per pass; boot never waits, and a finished backfill
+  // costs one row read.
+  s.register({
+    name: "memory-known-at-backfill",
+    every: KNOWN_AT_BACKFILL_INTERVAL,
+    phase: KNOWN_AT_BACKFILL_PHASE,
+    failureMessage: "Memory known-at backfill failed",
+    run: () => {
+      if (host.db) backfillMemoryKnownAt(host.db.memoryRepository().raw);
+    },
+  });
 }
+
+/** The known-at backfill's interval (ticks) and phase. */
+export const KNOWN_AT_BACKFILL_INTERVAL = 10;
+export const KNOWN_AT_BACKFILL_PHASE = 5;
 
 /** Wall-clock cadence of the asset backfill. */
 export const ASSET_BACKFILL_MS = 30_000;

@@ -312,6 +312,7 @@ export function spawnConfigFromSaved(saved: AgentConfigRow): AgentConfig {
     spawnedBy: saved.spawned_by || undefined,
     supports: parseSupports(saved.supports),
     toolProfile: inferToolProfile(saved.role),
+    toolProfileInferred: true,
     crewResponder: inferCrewResponder(saved.role),
     // Persisted reasoning depth (migration 120); NULL stays undefined so
     // `resolveAgentThinkingLevel` applies the crew/env default at spawn.
@@ -1265,6 +1266,7 @@ export class AgentRuntime {
       // An explicit launch profile (e.g. "minimal") wins; otherwise infer it
       // from the role exactly as boot does.
       toolProfile: launch?.toolProfile ?? inferToolProfile(role),
+      toolProfileInferred: launch?.toolProfile === undefined || launch.toolProfileInferred === true,
       crewResponder: launch?.crewResponder ?? inferCrewResponder(role),
       // A new model re-derives its modalities and context window.
       supports: modelChanged
