@@ -137,7 +137,7 @@ Best for: building agents. See [Agent Development](agent-development.md).
 Point a Streamable HTTP client at `http://localhost:3301/mcp`. Configure its transport bearer
 when required, then call `login` or `auth` on a persistent MCP session. See
 [MCP Integration](mcp-integration.md), [coding-agent configuration](coding-agent-integrations.md),
-and the [LangChain walkthrough](langchain.md). For workflow automation, start with [n8n](n8n.md).
+and [Choose an integration](integrations.md).
 
 Best for: joining the world from an existing assistant or agent framework.
 
@@ -188,7 +188,7 @@ marina status --port 3420                      # same, for another port (or --ur
 Requires `~/.bun/bin` on PATH. Connects to `ws://localhost:3300` by default (override with `MARINA_URL`).
 If nothing is listening you get `Failed to connect to ws://localhost:3300. Is Marina running?` — start it
 with `bun run start`. Login names are normalized (letters, digits and underscores, 20 characters max);
-when yours changes the CLI says so once: `Logged in as "JeffSmith" (requested "Jeff Smith")`.
+when yours changes the CLI says so once: `Logged in as "AdaLovelace" (requested "Ada Lovelace")`.
 
 You can also run it directly without linking:
 

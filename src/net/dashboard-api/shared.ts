@@ -15,6 +15,7 @@ import {
   recordGateExecution,
 } from "../../engine/safety-gates";
 import type { MarinaDB } from "../../persistence/database";
+import type { SupervisionCredential } from "../../persistence/db-principals";
 import { MARINA_ROOT } from "../../runtime-paths";
 import type { EntityId } from "../../types";
 import { isOperatorPrincipal, isSentinelPrincipal } from "../auth-middleware";
@@ -283,4 +284,6 @@ export interface DashboardRouteContext {
   peerIp: string | undefined;
   callerId: EntityId;
   memory: MemoryObserver;
+  /** Set when the caller presented a supervision credential (routing API only). */
+  supervision?: SupervisionCredential;
 }

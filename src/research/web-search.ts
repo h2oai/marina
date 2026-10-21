@@ -41,13 +41,18 @@ import { extractPublishedDate, extractReadableText } from "../engine/html-text";
 import { standaloneSearchHttp } from "../engine/search-providers/asof-http";
 import { dateBoundProvider } from "../engine/search-providers/asof-providers";
 import { deepSeekSearchProvider } from "../engine/search-providers/deepseek";
-import { duckDuckGoProvider } from "../engine/search-providers/duckduckgo";
+import {
+  DUCKDUCKGO_DISABLED,
+  duckDuckGoEnabled,
+  duckDuckGoProvider,
+} from "../engine/search-providers/duckduckgo";
 import { recordSearchOutcome, searchBackendDown } from "../engine/search-providers/health";
 import type { SearchHttp, SearchProvider, SearchResult } from "../engine/search-providers/index";
 import { searxngProvider } from "../engine/search-providers/searxng";
 import { tavilyProvider } from "../engine/search-providers/tavily";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { lowestReasoningEffort } from "../net/model/reasoning-effort";
+import { robotsCheck } from "../net/robots";
 import { guardedFetch } from "../net/url-guard";
 import { authorityQueries, siteQuery } from "./authority";
 import type { ResearchReport, Retriever, Source } from "./retrieve";
@@ -333,7 +338,8 @@ export const WEB_SEARCH_BACKEND_NAMES = [
  * paid fallbacks when the free engine is throttled: DeepSeek's Search API
  * (DEEPSEEK_API_KEY, $0.75 per 1,000 searches) and OpenRouter's Exa plugin
  * (OPENROUTER_API_KEY). A named backend without its key is left out and
- * reported in `skipped`.
+ * reported in `skipped`; DuckDuckGo turned off (`MARINA_SEARCH_DUCKDUCKGO=off`)
+ * is always left out and reported.
  */
 export function searchBackendsFromEnv(env: NodeJS.ProcessEnv = process.env): {
   backends: SearchProvider[];
@@ -359,7 +365,8 @@ export function searchBackendsFromEnv(env: NodeJS.ProcessEnv = process.env): {
       if (searx) backends.push(searxngProvider(searx));
       else if (listed) skipped.push("searxng (no SEARXNG_URL)");
     } else if (name === "duckduckgo") {
-      backends.push(duckDuckGoProvider());
+      if (duckDuckGoEnabled(env)) backends.push(duckDuckGoProvider());
+      else skipped.push(`duckduckgo (${DUCKDUCKGO_DISABLED})`);
     } else if (name === "deepseek") {
       const key = env.DEEPSEEK_API_KEY?.trim();
       if (key) backends.push(deepSeekSearchProvider(key));
@@ -643,6 +650,8 @@ export function rankPassages(
 async function guardedPage(
   url: string,
 ): Promise<{ body: string; contentType: string } | undefined> {
+  // robots.txt for MarinaResearch: a disallowed page is skipped like an unreadable one.
+  if (!(await robotsCheck(url)).allowed) return undefined;
   try {
     const res = await guardedFetch(
       url,

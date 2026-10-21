@@ -64,11 +64,11 @@
 # @restart
 # MARINA_SINGLE_PORT=false
 
-# Experimental: for embedders (Flow, Nov 2026). Shut down gracefully after this long with no external use, no open agent turn and no pending background work (`15m`, `900s`, `1h`; 0 or unset = never). External use is an HTTP or MCP request (in flight until a streamed response — SSE or NDJSON, an MCP client's event stream included — ends), an open WebSocket (dashboard, chat, SDK) or telnet connection, or a frame on one; the clock starts when the last of them ends. An idle MCP session with no open stream does not count. Health probes and Marina's own agents calling its /v1 are not activity, autonomous agent turns never reset the clock, and an open turn stops postponing the exit when its agent stops or after 30 minutes. For on-demand instances that a host starts when needed (see endpoint.json under MARINA_DATA_DIR).
+# Experimental: for embedding hosts. Shut down gracefully after this long with no external use, no open agent turn and no pending background work (`15m`, `900s`, `1h`; 0 or unset = never). External use is an HTTP or MCP request (in flight until a streamed response — SSE or NDJSON, an MCP client's event stream included — ends), an open WebSocket (dashboard, chat, SDK) or telnet connection, or a frame on one; the clock starts when the last of them ends. An idle MCP session with no open stream does not count. Health probes and Marina's own agents calling its /v1 are not activity, autonomous agent turns never reset the clock, and an open turn stops postponing the exit when its agent stops or after 30 minutes. For on-demand instances that a host starts when needed (see endpoint.json under MARINA_DATA_DIR).
 # @restart
 # MARINA_IDLE_SHUTDOWN=0
 
-# Experimental: for embedders (Flow, Nov 2026). Exit gracefully when this process id no longer exists — for a Marina owned by a host process that may die without stopping it.
+# Experimental: for embedding hosts. Exit gracefully when this process id no longer exists — for a Marina owned by a host process that may die without stopping it.
 # @restart
 # MARINA_PARENT_PID=
 
@@ -275,7 +275,7 @@
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 
-# One directory for everything this instance writes. When set, every path setting below that is unset moves under it (DB_PATH → <dir>/marina.db, ASSETS_DIR → <dir>/assets, MARINA_SCRATCH_DIR → <dir>/scratch, BETTER_AUTH_DB_PATH, the embedding model caches), the dashboard settings editor reads and writes <dir>/.env, a running instance publishes <dir>/endpoint.json (url, MCP url, pid, local key; mode 600; removed on clean exit — written only with this setting; the endpoint file is experimental: for embedders (Flow, Nov 2026)), and keys from that file fill only variables the process environment leaves unset. Nothing is written to the working directory. An explicit path setting still wins. Created (mode 700) when missing.
+# One directory for everything this instance writes. When set, every path setting below that is unset moves under it (DB_PATH → <dir>/marina.db, ASSETS_DIR → <dir>/assets, MARINA_SCRATCH_DIR → <dir>/scratch, BETTER_AUTH_DB_PATH, the embedding model caches), the dashboard settings editor reads and writes <dir>/.env, a running instance publishes <dir>/endpoint.json (url, MCP url, pid, local key; mode 600; removed on clean exit — written only with this setting; the endpoint file is experimental: for embedding hosts), and keys from that file fill only variables the process environment leaves unset. Nothing is written to the working directory. An explicit path setting still wins. Created (mode 700) when missing.
 # @restart
 # MARINA_DATA_DIR=
 
@@ -703,6 +703,14 @@
 # MARINA_RESEARCH_DOMAIN_CAP=3
 # MARINA_RESEARCH_MAX_PAGES=14
 # MARINA_RESEARCH_PASSAGE_CHARS=
+
+# Page reads honour robots.txt. Before Marina reads a third-party page for an agent or a person (`web fetch`, the `web swarm` read swarm, `scenario` URL reads, the research page reader and citation check, the live Civiqs read), it checks the site's robots.txt for its research user agent, product token `MarinaResearch` (`Mozilla/5.0 (compatible; MarinaResearch/1.1; …)`, also sent with the read): the group naming it, else `*`; the longest matching Allow/Disallow wins (Allow on a tie; `*` and a trailing `$` supported). A disallowed page is not requested and the read answers "blocked by robots.txt" — a result, never an error. robots.txt is fetched through the SSRF guard and cached per origin for 24 h; a 4xx means the site publishes no rules (allowed); a 5xx, 429, timeout or network error is treated as allowed (fail-open) and retried after 10 min. API calls (search providers, model APIs, market venues, data APIs) are not page reads and are not checked. `ignore` skips the check everywhere. IGNORE_ORIGINS lists origins (`https://host[:port]`) or bare hosts the operator owns or may read regardless, which skip the check.
+# MARINA_ROBOTS_TXT=respect
+# MARINA_ROBOTS_TXT_IGNORE_ORIGINS=https://docs.example.com,intranet.example.com
+
+# Keyless third-party sources, on by default (`off` turns each off; read per call). SEARCH_DUCKDUCKGO=off removes the DuckDuckGo lite / instant-answer fallback from `web search`, the search room and the `search` research retriever: searches fall through to the configured keyed backends (Tavily, Exa, SearXNG, DeepSeek); with none, web search answers no web results and names the switch, and readiness `search` reports "no web search backend". FORECAST_YAHOO=off stops reading daily closes from Yahoo Finance's unofficial chart API for statistical priors: a `yahoo` series then has no history (no prior) and says why.
+# MARINA_SEARCH_DUCKDUCKGO=on
+# MARINA_FORECAST_YAHOO=on
 
 # Where local corpora live: offline BM25 indexes built with `bun run corpus build <name> <docs.jsonl>` and searched with `web search engines:corpus:<name>`, the search room, or the `corpus:<name>` research retriever. Keep it on a disk with room (a 100k-document corpus is several GB), not a small temp filesystem.
 # MARINA_CORPUS_DIR=~/.local/share/marina/corpora
@@ -1150,7 +1158,7 @@
 
 # ── Prediction markets ───────────────────────────────────────────────────────
 
-# `true` allows live order placement (Kalshi only). `position` is paper trading by default.
+# `true` allows live order placement (Kalshi only). `position` is paper trading by default. Even when enabled, every live order needs the `trading.live` safety gate: without an operator grant it is held until a person approves it (only MARINA_AUTONOMY=sovereign lifts that). Research and paper-trading tool, not financial advice. Live trading is off by default; if you enable it you are responsible for the venue's terms and the laws where you live (Kalshi is US-only).
 # @protected
 # MARINA_TRADING_ENABLED=false
 

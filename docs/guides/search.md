@@ -19,6 +19,10 @@ quota or key problem, is skipped for ten minutes. `readiness` shows each backend
 `search`), from real calls only — it never spends a credit to probe. Tavily calls are priced into
 the daily spend ledger (source `search`).
 
+`web fetch` honours the site's robots.txt for Marina's `MarinaResearch` user agent; a disallowed
+page answers "Not read: blocked by robots.txt". `MARINA_SEARCH_DUCKDUCKGO=off` removes the keyless
+DuckDuckGo fallback. See [Data, privacy and terms](data-privacy-and-terms.md) for both switches.
+
 ## Searching as of a date
 
 Add `before:<date>` (alias `asof:`) and only **date-strict** providers answer. A bare
@@ -60,25 +64,28 @@ page the question names as its resolution source is read before any search.
 
 ### Engines and prices
 
-| Form | Engine | Price (list, estimated into the spend ledger) |
+Marina estimates each paid search into the spend ledger at the engine's list price for the mode
+used. Prices change; check the vendor's pricing page for current figures.
+
+| Form | Engine | Pricing |
 | --- | --- | --- |
 | `search:duckduckgo` | DuckDuckGo HTML | free (throttles bulk callers) |
-| `search:deepseek` | DeepSeek Search API (`DEEPSEEK_API_KEY`) | $0.75 per 1,000 searches that return results; empty results are free; billed from 2026-10-31 16:00 UTC |
-| `search:tavily` / `tavily:basic\|advanced` | Tavily (`TAVILY_API_KEY`) | $0.008 per credit (basic 1, advanced 2) |
-| `search:exa` / `exa:auto\|neural\|keyword` | Exa (`EXA_API_KEY`) | ~$0.006 per search |
+| `search:deepseek` | DeepSeek Search API (`DEEPSEEK_API_KEY`) | [DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing); empty results are not charged |
+| `search:tavily` / `tavily:basic\|advanced` | Tavily (`TAVILY_API_KEY`) | [Tavily pricing](https://tavily.com/pricing) (per credit; basic 1, advanced 2) |
+| `search:exa` / `exa:auto\|neural\|keyword` | Exa (`EXA_API_KEY`) | [Exa pricing](https://exa.ai/pricing) (per search) |
 | `search:openrouter` | OpenRouter web plugin on Exa | the carrier model's tokens + the plugin |
 | `openrouter-web:<model>@native` | the model vendor's own search | passed through by OpenRouter |
-| `openrouter-web:<model>@exa[:<mode>]` | Exa via OpenRouter | `instant`/`fast`/`auto` (default) $0.007, `deep-lite`/`deep` $0.012, `deep-reasoning` $0.015 per request; +$0.001 per result beyond 10 |
-| `openrouter-web:<model>@parallel[:<mode>]` | Parallel via OpenRouter | `turbo`/`fast` $0.001, `basic` (default)/`advanced` $0.005 per request; +$0.001 per result beyond 10 |
-| `openrouter-web:<model>@perplexity` | Perplexity via OpenRouter | $0.005 per request |
-| `openrouter-web:<model>@firecrawl` | Firecrawl via OpenRouter | $0.005 per search + $0.0125 per result (5 results asked: ~$0.07) |
+| `openrouter-web:<model>@exa[:<mode>]` | Exa via OpenRouter | per request by mode (`instant`/`fast`/`auto` (default), `deep-lite`/`deep`, `deep-reasoning`), plus a charge per result beyond 10; see [OpenRouter web search](https://openrouter.ai/docs/guides/features/plugins/web-search) |
+| `openrouter-web:<model>@parallel[:<mode>]` | Parallel via OpenRouter | per request by mode (`turbo`/`fast`, `basic` (default)/`advanced`), plus a charge per result beyond 10; see [OpenRouter web search](https://openrouter.ai/docs/guides/features/plugins/web-search) |
+| `openrouter-web:<model>@perplexity` | Perplexity via OpenRouter | per request; see [OpenRouter web search](https://openrouter.ai/docs/guides/features/plugins/web-search) |
+| `openrouter-web:<model>@firecrawl` | Firecrawl via OpenRouter | per search plus per result; see [OpenRouter web search](https://openrouter.ai/docs/guides/features/plugins/web-search) |
 | `sonar:<model>` | Perplexity Sonar (native search) | the model's price |
 
 `openrouter-web` asks the plugin for 10 results (Firecrawl: 5) and records the model's
 `usage.cost` plus the engine's list price for the mode (`@native` also sends
 `web_search_options.search_context_size: medium`). OpenRouter does not document whether
 `usage.cost` already includes the plugin, so the spend ledger may err high, never low. `@exa` and
-`@native` without a mode behave as before. An unknown engine or mode is refused when the spec is
+`@native` without a mode keep their default behaviour. An unknown engine or mode is refused when the spec is
 read.
 
 The DeepSeek backend sends each query (cut to the API's 128 characters) with the brief's window as

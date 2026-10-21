@@ -72,7 +72,7 @@ export function channelCommand(
         }
 
         case "join": {
-          // ACL note (FEDERATION-TRUST hardening): channels are PUBLIC-BY-DESIGN.
+          // ACL note: channels are PUBLIC-BY-DESIGN.
           // The `channels` schema (id, type, name, owner_id, persistence,
           // retention_hours, created_at) has NO visibility / scope / private
           // column, so there is nothing to enforce on join — any logged-in
@@ -82,7 +82,7 @@ export function channelCommand(
           // `visibility` column on `channels` (e.g. public/unlisted/private),
           // (2) an owner-managed invite/grant ACL table, and (3) a join check
           // here that rejects non-invited entities for private channels. That is
-          // deliberately NOT implemented as a half-model — see the report.
+          // deliberately NOT implemented as a half-model.
           const name = tokens[1];
           if (!name) {
             ctx.send(input.entity, "Usage: channel join <name>");

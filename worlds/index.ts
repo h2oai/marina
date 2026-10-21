@@ -61,7 +61,7 @@ export const BUILTIN_WORLD_SUMMARIES: Record<string, string> = {
   empty: "Minimal: a single room and nothing else",
   evolve: "Capability benchmarks: eight benchmark objectives for agents to improve against",
   markets: "Prediction markets: live Kalshi/Polymarket feed rooms and binary market rooms",
-  personal: "Self-evolving agent: focused rooms with self-evolution objectives",
+  personal: "Self-improving agent: focused rooms with self-improvement objectives",
   "prediction-lab":
     "Calibration sprint: the markets world plus forecasting agents and a forecast channel",
   "red-team": "Adversarial review: stress-test a plan through structured challenge and rebuttal",

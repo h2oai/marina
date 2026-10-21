@@ -5,8 +5,8 @@
  * Anchor freshness: a forecast starts from the latest published reading its
  * inputs saw (the "anchor"). The arena scores every round against persistence
  * — the last value IT treats as published at the lock — so a filing anchored
- * on an older release loses skill by construction (2026-10-11: two
- * Economist/YouGov rounds filed on 36/18 locked against 38/21).
+ * on an older release starts from the wrong level and loses skill by
+ * construction.
  *
  * This module compares Marina's anchor with the arena's own latest value for
  * the round's series (or each profile cell), read from the arena's published

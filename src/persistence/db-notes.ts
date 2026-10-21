@@ -890,7 +890,7 @@ const SCORE_EXPR = `(? * (n.importance / 10.0)) +
 // confidence term above and in calibrateMemoryConfidence.
 
 /**
- * Reputation weight for SHARED retrieval only (Phase 3.6). A pool note's
+ * Reputation weight for SHARED retrieval only. A pool note's
  * writer earns at most this much extra score from their civic standing:
  * `REPUTATION_WEIGHT * clamp(writer_standing / 100, 0, 1)`. Standing 100 is
  * the rank-4 safety threshold, so the term saturates exactly where rank stops
@@ -1098,7 +1098,7 @@ export function calibrateMemoryConfidence(db: Database): number {
 }
 
 /**
- * Independence key for one `note_sources` row (Phase 3.6 — "writers, not
+ * Independence key for one `note_sources` row ("writers, not
  * rows"). External origins (`url` / `dataset` source types) are independent
  * per URL: the note author captures its own URL sources by construction, so
  * `captured_by` alone would collapse every two-URL claim to one source.

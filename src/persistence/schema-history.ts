@@ -1142,7 +1142,7 @@ CREATE INDEX idx_entity_competence_entity ON entity_competence(entity_id);
   // the polity; narrative/digest entries are written by the Chronicler agent
   // (pass 3) and must cite source ids in refs. Corrections supersede prior
   // narrative entries without mutating them — the log is monotonic,
-  // interpretation is layered. See docs/chronicle.md for the full design.
+  // interpretation is layered. See docs/architecture/chronicle.md.
   {
     version: 41,
     sql: `

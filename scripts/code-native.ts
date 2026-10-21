@@ -6,6 +6,8 @@ import { isAbsolute } from "node:path";
 import { diffStat, formatDiffStat } from "../src/coding/unified-diff";
 import { getErrorMessage } from "../src/engine/errors";
 import { type AgentAdapter, BUILTIN_AGENT_ADAPTERS } from "../src/routing/agent-adapters";
+import { supervisedResidentsEnabled } from "../src/routing/residents";
+import { openSupervision, type SupervisionHold } from "../src/routing/supervision-credential";
 import { MarinaSupervisor } from "../src/routing/supervisor";
 import {
   MarinaRoutingClient,
@@ -67,6 +69,7 @@ export class NativeTerminal {
   readonly agents = new Map<string, TerminalAgent>();
   private client: MarinaRoutingClient;
   private supervisor?: MarinaSupervisor;
+  private supervision?: SupervisionHold;
   private owner?: RoutingSession;
   private deliveries = new Map<string, string | null>();
   private listeners = new Set<() => void>();
@@ -82,8 +85,16 @@ export class NativeTerminal {
   }
   async start() {
     mkdirSync(this.options.directory, { recursive: true, mode: 0o700 });
+    // Residents on: the supervisor holds its own routing credential, so a
+    // later login as this person does not cut it off. The console's own
+    // controls keep the person's session.
+    if (!this.options.client && supervisedResidentsEnabled())
+      this.supervision = await openSupervision({
+        url: this.options.url,
+        sessionToken: this.options.token,
+      });
     this.supervisor = new MarinaSupervisor({
-      client: this.client,
+      client: this.supervision?.client ?? this.client,
       root: this.options.root,
       stateDirectory: this.options.directory,
       binding: `terminal:${this.options.root}`,
@@ -103,6 +114,7 @@ export class NativeTerminal {
       this.loop = this.pump();
     } catch (error) {
       this.supervisor.close();
+      await this.supervision?.close();
       throw error;
     }
   }
@@ -355,6 +367,7 @@ export class NativeTerminal {
       );
     } finally {
       this.supervisor?.close();
+      await this.supervision?.close();
       this.flush();
     }
   }

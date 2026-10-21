@@ -1,6 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { Engine } from "../../engine/engine";
+import type { MarinaDB } from "../../persistence/database";
+import type { SupervisionCredential } from "../../persistence/db-principals";
 import { RoutingError } from "../../routing/errors";
 import {
   ResidentService,
@@ -10,7 +13,88 @@ import {
 import { RoutingService, routingLimit } from "../../routing/service";
 import type { EntityId, RoomId } from "../../types";
 import { isSentinelPrincipal } from "../auth-middleware";
+import { corsHeaders } from "../cors";
 import { authorizePrivileged, type DashboardRouteContext, json } from "./shared";
+
+const SUPERVISION_PREFIX = "marina-routing-";
+const SUPERVISION_REFUSED =
+  /^\/api\/routing\/sessions\/[^/]+\/(?:control|messages|channels\/[^/]+\/messages)$/;
+
+/**
+ * A supervision credential (`marina-routing-…`, supervised residents on) as the
+ * caller: the person it was issued to, on the routing API only. Returns
+ * undefined for any other bearer (and for every bearer while the switch is
+ * off, so the normal session check answers exactly as before).
+ */
+export function authenticateSupervision(
+  req: Request,
+  url: URL,
+  engine: Engine,
+  db: MarinaDB | undefined,
+): { entityId: EntityId; credential: SupervisionCredential } | { error: Response } | undefined {
+  const bearer = req.headers.get("Authorization");
+  if (!bearer?.startsWith(`Bearer ${SUPERVISION_PREFIX}`) || !supervisedResidentsEnabled())
+    return undefined;
+  const refuse = (error: string) => ({
+    error: Response.json(
+      { error, code: "unauthorized" },
+      { status: 401, headers: corsHeaders(req.headers.get("Origin")) },
+    ),
+  });
+  if (!url.pathname.startsWith("/api/routing/"))
+    return refuse("A supervision credential is valid only for the routing API");
+  const credential = db?.verifySupervisionCredential(bearer.slice(7));
+  if (!credential) return refuse("Invalid or expired supervision credential");
+  const name = credential.principal.display_name;
+  if (db!.isBanned(name) || db!.getUserByName(name)?.id !== credential.principal.principal_id)
+    return refuse("The supervision credential's account is not available");
+  // The person's live entity when connected; otherwise the durable account id
+  // itself (an offline person's entity is evicted), which every routing, gate
+  // and ownership lookup resolves to the same account.
+  const live = engine.entities.findAgentByName(name);
+  const entityId = (
+    live && live.name === name ? live.id : credential.principal.principal_id
+  ) as EntityId;
+  return { entityId, credential };
+}
+
+/**
+ * Supervision credential lifecycle: issue (from a person's world session),
+ * renew and revoke (with the credential itself). Routing-only, 24 h at most.
+ */
+function supervisionRoutes(ctx: DashboardRouteContext, action: string): Response {
+  const { db, callerId, req, supervision } = ctx;
+  const reply = (value: unknown, status = 200) =>
+    json(value, status, req.headers.get("Origin") ?? undefined);
+  const account = db!.getUser(db!.durableEntityKey(callerId));
+  if (!account) throw new RoutingError(403, "account_required", "Log in with a Marina account");
+  if (!action) {
+    if (supervision)
+      throw new RoutingError(403, "session_required", "Issue supervision from a world session");
+    // People supervise. An agent account (config or principal) is refused.
+    if (db!.getAgentConfig(account.name) || db!.getPrincipal("agent", account.name))
+      throw new RoutingError(403, "person_required", "Only a person may supervise agents");
+    const principal = db!.getPrincipal("human", account.name);
+    if (!principal || principal.principal_id !== account.id)
+      throw new RoutingError(403, "person_required", "Only a person may supervise agents");
+    return reply(publicCredential(db!.issueSupervisionCredential(principal.principal_id)));
+  }
+  if (!supervision)
+    throw new RoutingError(403, "supervision_required", "Present the supervision credential");
+  if (action === "renew") {
+    const issued = db!.transaction(() => {
+      if (!db!.revokeSupervisionCredential(supervision.credentialId))
+        throw new RoutingError(401, "unauthorized", "Invalid or expired supervision credential");
+      return db!.issueSupervisionCredential(supervision.principal.principal_id);
+    });
+    return reply(publicCredential(issued));
+  }
+  return reply({ revoked: db!.revokeSupervisionCredential(supervision.credentialId) });
+}
+
+function publicCredential(issued: { credentialId: string; token: string; expiresAt: number }) {
+  return { credentialId: issued.credentialId, token: issued.token, expiresAt: issued.expiresAt };
+}
 
 /** Bound streamed bodies too: Content-Length alone is not an admission check. */
 async function body(req: Request): Promise<Record<string, unknown>> {
@@ -127,6 +211,24 @@ export async function handleRoutingRoutes(
   if (isSentinelPrincipal(callerId))
     return reply({ error: "Log in to use participant streams", code: "account_required" }, 403);
   try {
+    const supervisionMatch = supervisedResidentsEnabled()
+      ? url.pathname.match(/^\/api\/routing\/supervision(?:\/(renew|revoke))?$/)
+      : null;
+    if (supervisionMatch && method === "POST") {
+      await body(req);
+      return supervisionRoutes(ctx, supervisionMatch[1] ?? "");
+    }
+    // A supervision credential runs the supervisor's own routing traffic. It
+    // never speaks for the person: no controls, sends or channel posts (those
+    // come from the person's own session).
+    if (ctx.supervision && method === "POST" && SUPERVISION_REFUSED.test(url.pathname))
+      return reply(
+        {
+          error: "A supervision credential cannot send controls or messages",
+          code: "supervision_scope",
+        },
+        403,
+      );
     const router = new RoutingService(db, db.durableEntityKey(callerId));
     if (url.pathname === "/api/routing/overview" && method === "GET")
       return reply(

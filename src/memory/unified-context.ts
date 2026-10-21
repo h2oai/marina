@@ -570,7 +570,7 @@ function proposalItem(
   if (result?.status !== "answered") return null;
   const answer = typeof result.answer === "string" ? result.answer : JSON.stringify(result.answer);
   const citations = result.citations.length;
-  // Provenance stays byte-identical to Phase 1 (surfaces assert it verbatim);
+  // Provenance stays byte-identical across surfaces (surfaces assert it verbatim);
   // the inherited authority rides in `meta` and is rendered as a marker after
   // the bracket by `renderUnifiedContext`.
   return {

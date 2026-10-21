@@ -2484,7 +2484,7 @@ export class MarinaDB implements MarinaStores {
   }
 
   // ─── Chronicle (delegated to db-chronicle.ts) ──────────────────────────
-  // The canonical, append-only record of the Marina. See docs/chronicle.md.
+  // The canonical, append-only record of the Marina. See docs/architecture/chronicle.md.
 
   appendChronicle(entry: chronicleDb.InsertChronicle): number {
     return chronicleDb.appendChronicle(this.db, entry);
@@ -4154,6 +4154,18 @@ export class MarinaDB implements MarinaStores {
 
   revokeWorkloadCredentialsFor(principalId: string): number {
     return principalsDb.revokeWorkloadCredentialsFor(this.db, principalId);
+  }
+  issueSupervisionCredential(
+    principalId: string,
+    ttlMs?: number,
+  ): principalsDb.IssuedWorkloadCredential {
+    return principalsDb.issueSupervisionCredential(this.db, principalId, ttlMs);
+  }
+  verifySupervisionCredential(token: string): principalsDb.SupervisionCredential | undefined {
+    return principalsDb.verifySupervisionCredential(this.reader, token);
+  }
+  revokeSupervisionCredential(credentialId: string): boolean {
+    return principalsDb.revokeSupervisionCredential(this.db, credentialId);
   }
 
   createWorldVariant(

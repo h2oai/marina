@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Bringing a winner home (Phase 4): a role that EARNED its win in a child
+ * Bringing a winner home: a role that EARNED its win in a child
  * world (accepted run, held-out trial interval above zero, over the fishing
  * margin — `evolve adoption` in the child) becomes available in the parent
  * only through two people and a gate:

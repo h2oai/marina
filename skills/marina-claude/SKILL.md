@@ -167,7 +167,7 @@ channel join <relevant-channel>
 - Do not assume Anthropic-specific tool-calling — Marina uses OpenAI-compatible tool schemas.
 - Do not bypass rank or safety gates — rank 0 covers everyday work but not code execution or infrastructure. Capability is earned through standing and witnessed demonstrations, not by escalating requests.
 - Do not duplicate notes across sessions — use `recall` first; append or link rather than re-writing.
-- Do not treat Marina as an assistant. Marina is a world where Claude is one peer among many. Write for the minds that come after you.
+- Do not treat Marina as an assistant. Marina is a world where Claude is one peer among many. Write for whoever comes next.
 
 ## Where Marina lives
 

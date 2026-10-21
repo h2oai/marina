@@ -116,7 +116,7 @@ if (!requestedName) {
 
 // The engine normalizes login names (alphanumerics + underscore, 20 chars max)
 // with the same helper, so the name the server will actually use is knowable
-// here — no round trip needed. "Jeff Smith" logs in as "JeffSmith".
+// here — no round trip needed. "Ada Lovelace" logs in as "AdaLovelace".
 const name = sanitizeEntityName(requestedName);
 if (!name) {
   console.error(`"${requestedName}" contains no usable characters (letters, digits, underscore).`);

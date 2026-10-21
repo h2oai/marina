@@ -4,7 +4,7 @@
 /**
  * Feature status: an honest map of what Marina ships and what actually runs.
  * `docs/reference/feature-status.md` renders this table for readers;
- * `test/feature-status.test.ts` keeps the page, the command help text and this
+ * `test/docs-contract.test.ts` keeps the page, the command help text and this
  * list in step.
  *
  *   core          used broadly; on by default or by every world
@@ -194,7 +194,7 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     name: "Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch)",
     status: "experimental",
     enable:
-      "Experimental: for embedders (Flow, Nov 2026). `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint`",
+      "Experimental: for embedding hosts. `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint`",
     owner: "src/net/instance-lifecycle.ts",
   },
   {
@@ -315,7 +315,8 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   {
     name: "Markets and positions",
     status: "experimental",
-    enable: "`market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true`",
+    enable:
+      "`market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true` and a person's approval per order (`trading.live`)",
     owner: "src/resolvers, src/net/clients",
     commands: ["market", "position"],
   },
@@ -332,6 +333,50 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     enable: "`learned`, `bun run learned`",
     owner: "src/learned",
     commands: ["learned"],
+  },
+  {
+    name: "Intellect records (identity across models and processes, lifecycle claims)",
+    status: "experimental",
+    enable: "`intellect`; claims are signed when `MARINA_FEDERATION_SIGNING_KEY` is set",
+    owner: "src/engine/commands/intellect.ts, src/persistence/db-intellects.ts",
+    commands: ["intellect"],
+  },
+  {
+    name: "Lineage records (derived intellects, world manifests, child worlds)",
+    status: "experimental",
+    enable:
+      "`reproduce`, `genome` (records only); `marina-descend` starts a child world as a local process and needs the `world.lineage` gate",
+    owner:
+      "src/engine/commands/reproduce.ts, src/engine/commands/genome.ts, src/engine/commands/marina-descend.ts, src/persistence/db-reproduction.ts, src/world/world-collective-manager.ts",
+    commands: ["reproduce", "genome", "marina-descend"],
+  },
+  {
+    name: "Change records (`mutation`)",
+    status: "experimental",
+    enable: "`mutation` (append-only records; recording a change does not apply it)",
+    owner: "src/engine/commands/mutation.ts, src/persistence/db-mutations.ts",
+    commands: ["mutation"],
+  },
+  {
+    name: "Associations (who takes part and how they relate)",
+    status: "experimental",
+    enable: "`association`",
+    owner: "src/engine/commands/association.ts, src/persistence/db-associations.ts",
+    commands: ["association"],
+  },
+  {
+    name: "Economic provenance records",
+    status: "experimental",
+    enable: "`economy` (claims and references only; moves no funds, stores no credentials)",
+    owner: "src/engine/commands/economy.ts, src/persistence/db-economics.ts",
+    commands: ["economy"],
+  },
+  {
+    name: "Simulation run records (`lab`)",
+    status: "experimental",
+    enable: "`lab` (declares and records runs; executes nothing)",
+    owner: "src/engine/commands/lab.ts, src/persistence/db-simulations.ts",
+    commands: ["lab"],
   },
   {
     name: "Media generation jobs",

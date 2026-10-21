@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import {
   ECONOMIC_EVENT_KINDS,
   type EconomicEventKind,
@@ -9,14 +10,17 @@ import {
 import type { CommandDef, Entity } from "../../types";
 import { notFound } from "./command-messages";
 
-const HELP = `Asset-neutral economic provenance (signature-capable claims only; no implied transfer).
+const HELP =
+  experimentalHelp(`Economic provenance records: contracts and claimed events (offer, contribution,
+settlement, …) with references to outside systems. Records only: no funds move, no credentials
+are stored, and an event is not proof of payment.
 Usage:
   economy contract <goal-ref> | <terms JSON> | <verification method> | <dispute method> [| adapter] [| asset-ref]
   economy event <contract> <kind> | <actor-ref> | <subject-ref> | <amount> | <asset-ref> | <external-tx-ref> | <causal refs csv> | <data JSON>
   economy adapter <id> | <kind> | <network> | <reference|observe|submit> [| endpoint-ref] [| configuration-ref]
   economy show <contract>
   economy list
-Kinds: ${ECONOMIC_EVENT_KINDS.join(", ")}`;
+Kinds: ${ECONOMIC_EVENT_KINDS.join(", ")}`);
 export function economyCommand(deps: {
   db: MarinaDB;
   getEntity: (id: string) => Entity | undefined;

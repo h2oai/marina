@@ -377,7 +377,7 @@ bun run src/sdk/examples/publisher.ts
 # Bridges model API requests to an external LLM (Ollama, OpenAI, etc.)
 PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=qwen3:4b bun run src/sdk/examples/provider.ts
 
-# Self-evolving agent that runs benchmarks and improves
+# Self-improving agent that runs benchmarks and records what helped
 bun run src/sdk/examples/evolver.ts
 ```
 

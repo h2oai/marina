@@ -467,7 +467,7 @@ async function renderLiveFeed(
     return;
   }
   // Polymarket events don't have a uniform close_time on the gamma response;
-  // for Phase 2.5 we render all active events and rely on the ranking +
+  // for now we render all active events and rely on the ranking +
   // limit. The bettor agent reads the descriptions to assess timing.
   const top = res.response.slice(0, limit);
   if (top.length === 0) {

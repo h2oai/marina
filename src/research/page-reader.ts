@@ -9,13 +9,15 @@
  * failed — is filed in the provenance cache when one is given.
  *
  * Policy refusals happen before any request: `NO_FETCH_DOMAINS` (publishers
- * whose terms bar automated access) and the caller's deny list (`deny`), e.g.
- * an evaluation's own answer key.
+ * whose terms bar automated access), the caller's deny list (`deny`), e.g.
+ * an evaluation's own answer key, and the site's robots.txt for
+ * `MarinaResearch` (`src/net/robots.ts`; `MARINA_ROBOTS_TXT`).
  */
 
 import { spawn } from "node:child_process";
 import { getErrorMessage } from "../engine/errors";
 import { decodeEntities, extractReadableText } from "../engine/html-text";
+import { robotsCheck } from "../net/robots";
 import { guardedFetch } from "../net/url-guard";
 import { type BrowserReader, needsRender } from "./browser-reader";
 import { isPdf, type PageCapture, type ProvenanceCache } from "./provenance-cache";
@@ -388,6 +390,9 @@ export async function readPage(url: string, opts: ReadPageOptions = {}): Promise
   if (deniedByPattern(url, opts.deny))
     return refusal(url, "refused by this run's deny list", opts.cache);
   if (opts.barred?.(url)) return refusal(url, BARRED_REASON, opts.cache);
+  // robots.txt for MarinaResearch (src/net/robots.ts); a disallowed page is a refusal, not a throw.
+  const robots = await robotsCheck(url, opts.fetcher ? { fetcher: opts.fetcher } : {});
+  if (!robots.allowed) return refusal(url, robots.reason, opts.cache);
   let attempt = await plainRead(url, opts);
   if (attempt.read.error?.startsWith(BARRED_REASON))
     return refusal(url, attempt.read.error, opts.cache);

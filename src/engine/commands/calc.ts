@@ -17,7 +17,7 @@ import type { CommandDef, Entity, RoomContext } from "../../types";
  *   - Fractions, complex numbers, units, matrices
  *   - Statistics: mean, median, std, sum, prod
  *
- * Rank 0 by design: every agent can do exact arithmetic from birth.
+ * Rank 0 by design: every agent can do exact arithmetic from its first turn.
  * This is the primitive that lets multi-agent orchestrations beat bare
  * LLMs on math benchmarks (GSM8K, MATH-500, AIME) — no Python, no
  * subprocess, all TypeScript.

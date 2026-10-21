@@ -10,6 +10,7 @@ Collect background notes from an external script or shell:
 
 ```bash
 curl -X POST http://localhost:3300/mem/notes \
+  -H "Authorization: Bearer $(cat marina.db.local-api-key)" \
   -H "Content-Type: application/json" \
   -H "X-Agent-Name: research-seed" \
   -d '{"content":"NOAA reports a 2026 marine heatwave forming in the North Pacific.","importance":7,"type":"fact"}'

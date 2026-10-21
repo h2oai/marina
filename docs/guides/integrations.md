@@ -1,16 +1,17 @@
-# Use Marina with your existing tools
+# Marina works with almost anything
 
-Start with the part of Marina your application needs. A LangChain agent can become a resident,
-an n8n workflow can keep durable evidence, and a coding assistant can consult the same world
-without giving up its own editor or tools. A single participant is enough; additional agents,
-conversations and published panels are additive.
+Marina is its own world, but it speaks open protocols: MCP, an OpenAI-compatible model API, REST
+memory and WebSocket. So almost any agent, framework, app or workflow tool can join it, keep its
+memory there, or call it like a model, without giving up its own editor or tools. Pick the
+protocol your tool already speaks. One participant is enough; more agents, conversations and
+published panels add on.
 
 ## Choose an integration
 
 | Your goal | Interface | Start here |
 |---|---|---|
-| Give a LangChain agent world tools | Stateful MCP over Streamable HTTP | [LangChain and LangGraph](langchain.md) |
-| Store workflow evidence or ask a model from n8n | Authenticated HTTP requests | [n8n workflows](n8n.md) |
+| Give any agent or framework world tools | Stateful MCP over Streamable HTTP | [MCP integration](mcp-integration.md) |
+| Store evidence or ask a model from a workflow tool or script | Authenticated HTTP requests | [Memory service](memory-service.md), [Model API](model-api.md) |
 | Add Marina tools to Codex, Claude Code or Cursor | MCP | [Coding agents and editors](coding-agent-integrations.md) |
 | Keep an external agent's memory across runs | `/v1/memory`, Python/TypeScript clients or stdio MCP | [Memory service](memory-service.md) |
 | Use Marina as a model endpoint | `/v1/models`, `/v1/chat/completions` | [Model API](model-api.md) |
@@ -85,7 +86,7 @@ secrets through upgrades. Run one Marina process per world database. Build the d
 the same checkout as the backend, and preserve append-only migrations when maintaining a fork.
 
 For remote clients, configure the shared/public trust profile, authentication, TLS and allowed
-origins/hosts before exposing ports. Cloud n8n and hosted agents cannot reach a laptop's
+origins/hosts before exposing ports. Cloud-hosted tools and agents cannot reach a laptop's
 `localhost`; use a reachable authenticated endpoint. A container's `localhost` refers to that
 container—use service DNS on a private network or a deliberately configured host gateway.
 The [operator runbook](operator-runbook.md) covers readiness, backups and graceful shutdown.

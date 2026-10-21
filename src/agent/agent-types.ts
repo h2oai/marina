@@ -91,7 +91,7 @@ export interface AgentConfig {
    * Name of the entity that spawned this agent. Persisted to
    * agent_configs.spawned_by so lineage is attributable — an agent that
    * assembles a team is recorded as the parent. Defaults to "system" for
-   * world-seeded / operator-spawned agents. Walking this chain (Phase 2)
+   * world-seeded / operator-spawned agents. Walking this chain
    * bounds spawn depth and sizes the standing-scaled spawn budget.
    */
   spawnedBy?: string;

@@ -1596,7 +1596,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "Self-evolution loop using benchmarks: (1) Run benchmarks to establish baseline scores. " +
+      "Self-improvement loop using benchmarks: (1) Run benchmarks to establish baseline scores. " +
       "(2) Change one thing: notes, recall queries, a stored skill, or a successor role " +
       "('role create <role>-v2'). (3) Re-run benchmarks. (4) Keep what improved the score; drop the rest. " +
       "(5) Reflect periodically: 'reflect evolution'. The self-modification benchmark formalizes this loop.",

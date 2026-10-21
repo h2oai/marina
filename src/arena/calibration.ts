@@ -313,9 +313,9 @@ export const MIN_POLL_LEVEL_RECORDS = 4;
  * A scalar filing that recorded no anchor (filed before the anchor guard), was
  * made at least `STALE_FILING_LEAD_MS` before the lock, and whose mean differs
  * from the arena's persistence value at the lock: it was scored against a
- * release it never saw (Economist/YouGov w42, filed 36/18 on 2026-09-30 while
- * persistence at the 2026-10-11 lock was 38/21). Its miss measures the stale
- * anchor, which the anchor guard now prevents, not the forecaster's spread.
+ * release it never saw (for example, filed days before a newer weekly poll
+ * moved the arena's persistence value). Its miss measures the stale anchor,
+ * which the anchor guard now prevents, not the forecaster's spread.
  */
 export function staleLegacyFiling(
   row: Pick<ArenaSubmissionRow, "created_at">,

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import { bold, dim, header, separator, status } from "../../net/ansi";
 import {
   ASSOCIATION_DIRECTIONS,
@@ -11,7 +12,9 @@ import {
 } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 
-const HELP = `Association — open, attributable relationships across Marina primitives and worlds.
+const HELP =
+  experimentalHelp(`Association: a named, append-only record of who takes part in something and how the
+participants relate, linked to existing Marina records (channels, crews, projects, …).
 
 Usage:
   association create <name> | <purpose>
@@ -25,7 +28,7 @@ Usage:
   association list
 
 Kinds are open vocabularies. Examples include human, intellect, instance, organization, tool,
-provider, marina, mesh, channel, group, crew, project, score, and market.`;
+provider, marina, mesh, channel, group, crew, project, score, and market.`);
 
 export function associationCommand(deps: {
   db: MarinaDB;

@@ -3397,6 +3397,12 @@ export declare class RoutingApiError extends Error {
     readonly code: string;
     constructor(status: number, code: string, message: string);
 }
+/** A routing-only supervision credential (supervised residents). */
+export interface SupervisionCredentialGrant {
+    credentialId: string;
+    token: string;
+    expiresAt: number;
+}
 export interface RoutingClientOptions {
     url: string;
     /** Existing Marina world-account credential; never placed in the URL. */
@@ -3445,6 +3451,17 @@ export declare class MarinaRoutingClient {
     renewResident(name: string, sessionId: string, signal?: AbortSignal): Promise<{
         name: string;
         credential: ResidentCredential;
+    }>;
+    /**
+     * Exchange this client's world session for a supervision credential: the
+     * routing API only, never replaced by a later login of the same person.
+     */
+    issueSupervision(signal?: AbortSignal): Promise<SupervisionCredentialGrant>;
+    /** Replace the presented supervision credential with a fresh one. */
+    renewSupervision(signal?: AbortSignal): Promise<SupervisionCredentialGrant>;
+    /** Revoke the presented supervision credential. */
+    revokeSupervision(signal?: AbortSignal): Promise<{
+        revoked: boolean;
     }>;
     /** End this run's hold on the resident: credentials and session tokens are revoked. */
     revokeResident(name: string, sessionId: string, signal?: AbortSignal): Promise<{

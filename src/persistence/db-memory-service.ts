@@ -1577,7 +1577,7 @@ export function memoryRepository(db: Database) {
     /** Raw handle for read-only ranking helpers (db-memory-ranking.ts). */
     raw: db,
     assistance: memoryAssistanceRepository(db),
-    /** Adoption + ratification of assistance proposals (Phase 3.3–3.5). */
+    /** Adoption + ratification of assistance proposals. */
     adopt: memoryAdoptRepository(db),
     healthy: () => memoryDatabaseHealth(db),
     knowledgeGraph: (actor: MemoryActor, space: string, input: unknown, key: string) =>

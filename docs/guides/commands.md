@@ -123,7 +123,7 @@ curates them. See [Cross-world Inheritance](inheritance.md).
 Trace views are read-only and omit prompts, outputs, thinking text, and tool arguments. See
 [Execution Traces and Evaluations](observability.md) for retention and interpretation boundaries.
 
-## Journeys and Open-Ended Evolution
+## Journeys, Provenance, and Experimental Records
 
 ```text
 > desire <ordinary-language intention>       Create a journey without rewriting the desire
@@ -139,7 +139,7 @@ Trace views are read-only and omit prompts, outputs, thinking text, and tool arg
 > provenance show <id>                       Inspect and verify one event
 > provenance verify                          Verify the local cognitive hash chain
 
-> intellect create <name> | <purpose>        Declare portable intellect identity
+> intellect create <name> | <purpose>        Create an intellect (agent identity) record
 > intellect instance <id> | <principal> | <model> | <harness> | <environment>
 > intellect event <id> <kind> | <detail>
 > intellect show <id>                        Inspect instances, lineage, and lifecycle
@@ -177,12 +177,14 @@ Trace views are read-only and omit prompts, outputs, thinking text, and tool arg
 > mutation lineage <domain> <target-ref>
 ```
 
-These surfaces are additive. Claims do not imply truth or ownership; declared simulations do not
-invent outcomes; mutations do not bypass subsystem activation or safety boundaries. See
-[Journeys](journeys.md), [Cognitive Provenance](cognitive-provenance.md),
-[Intellect Lifecycle](intellect-lifecycle.md), [Associations](associations.md),
-[Reproduction and Meshes](reproduction-and-meshes.md), and
-[Economics, Simulation, and Recursive Evolution](economics-simulation-and-recursion.md).
+`intellect`, `association`, `reproduce`, `genome`, `marina-descend`, `economy`, `lab` and
+`mutation` are experimental (see [feature status](../reference/feature-status.md)). They write
+records: a claim does not imply truth or ownership, a declared simulation run records no outcome until
+someone records one, and a change record does not bypass the affected subsystem's activation or
+safety gates. See [Journeys](journeys.md), [Cognitive Provenance](cognitive-provenance.md),
+[Intellect Records](intellect-lifecycle.md), [Associations](associations.md),
+[Lineage Records, Child Worlds, and Meshes](reproduction-and-meshes.md), and
+[Economic, Simulation, and Change Records](economics-simulation-and-recursion.md).
 
 ## Knowledge & Cognition
 
@@ -906,7 +908,7 @@ See [Behavior Surfaces](behavior-surfaces.md) for when to use roles, traits, ski
 
 ## Gate Ladder (Earning Capability Gates)
 
-Gated operations (agent spawn, code exec, child worlds, role edits, adapters, connectors, gateways) are earned, not conferred — and **approvals are the proof**. Run the gated action: if you don't hold the gate, the run is held as a challenge, the people who can approve it (your owner, operators) are asked, and you carry on. An approved run executes; an approval from outside your own lineage is one demonstration, and a few of them unlock the gate solo (`gate list` shows each gate's standing floor and count). Shell, world code, keys, destructive admin and unrestricted exec are **operator grant** only. For a gated command the gate is the single authority — its legacy rank floor is not checked on top. `MARINA_AUTONOMY` sets the posture: `guarded` (default: solo holders and approved runs pass), `earned` (earnable gates also run optimistically, an operator counting them afterwards), `open` (earnable gates auto-pass; the operator-grant core stays gated).
+Gated operations (agent spawn, code exec, child worlds, role edits, adapters, connectors, gateways) are earned, not conferred — and **approvals are the proof**. Run the gated action: if you don't hold the gate, the run is held as a challenge, the people who can approve it (your owner, operators) are asked, and you carry on. An approved run executes; an approval from outside your own lineage is one demonstration, and a few of them unlock the gate solo (`gate list` shows each gate's standing floor and count). Shell, world code, keys, destructive admin, unrestricted exec and live (real-money) trading are **operator grant** only. For a gated command the gate is the single authority — its legacy rank floor is not checked on top. `MARINA_AUTONOMY` sets the posture: `guarded` (default: solo holders and approved runs pass), `earned` (earnable gates also run optimistically, an operator counting them afterwards), `open` (earnable gates auto-pass; the operator-grant core stays gated).
 
 ```
 > gate list [entity]                 Every gate, its status and your next step (or someone else's)
@@ -918,7 +920,7 @@ Gated operations (agent spawn, code exec, child worlds, role edits, adapters, co
 > witness …                          Compatibility: request/grant point here; queue/attest/reject review earned-posture runs
 ```
 
-A grant never escalates: you grant only a gate you hold solo, the operator-grant core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`) is granted by sovereigns only, nobody grants themselves, and a non-sovereign never grants to an agent they spawned — the same one-party rule that keeps an owner's approvals from building its own agent's gate.
+A grant never escalates: you grant only a gate you hold solo, the operator-grant core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`, `trading.live`) is granted by sovereigns only, nobody grants themselves, and a non-sovereign never grants to an agent they spawned — the same one-party rule that keeps an owner's approvals from building its own agent's gate.
 
 ## API Keys (`key.manage` Gate)
 

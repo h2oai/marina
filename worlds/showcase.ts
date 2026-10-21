@@ -928,7 +928,7 @@ function seed(db: MarinaDB): void {
     // not default/onboarding work. Discover them via `goto bench/arena` on demand.
     // ── Craft (goto craft/studio) ───────────────────────────────────────
     { title: "Write a spec for a small feature and submit it as a task for review", standing: 5 },
-    // ── Self-evolution ──────────────────────────────────────────────────
+    // ── Self-improvement ────────────────────────────────────────────────
     { title: "Set a constitution in core memory (memory set constitution ...)", standing: 3 },
     { title: "Take 10 notes and then reflect to synthesize", standing: 5 },
     // ── Exploration (optional) ──────────────────────────────────────────
@@ -1098,7 +1098,7 @@ function seed(db: MarinaDB): void {
   // To suppress, delete the config row (`agent stop Chronicler` then
   // remove from agent_configs) or run with MARINA_ROOM_AGENTS=false to
   // suppress room agents (does not suppress saved-config agents — those
-  // need explicit removal). See docs/chronicle.md.
+  // need explicit removal). See docs/architecture/chronicle.md.
   seedChroniclerAgent(db);
   // The showcase and markets worlds advertise the TabH2O connector. Actual
   // usage happens via `market forecast` today; agents seeing the connector

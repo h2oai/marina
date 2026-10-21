@@ -19,6 +19,7 @@
  * with their notices intact; there is no API, and the arena reads the same page.
  */
 
+import { robotsCheck } from "../../net/robots";
 import { guardedFetch } from "../../net/url-guard";
 
 export const CIVIQS_RESULTS_URL = "https://civiqs.com/results/";
@@ -161,13 +162,17 @@ function paced<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-const defaultFetch: CiviqsFetch = (url) =>
-  paced(() =>
+const defaultFetch: CiviqsFetch = async (url) => {
+  // A page read: robots.txt for MarinaResearch applies (src/net/robots.ts).
+  const robots = await robotsCheck(url);
+  if (!robots.allowed) throw new Error(robots.reason);
+  return paced(() =>
     guardedFetch(url, {
       headers: { "User-Agent": USER_AGENT },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     }),
   );
+};
 
 /** Read one tracker (optionally a subgroup) from the live dashboard. */
 export async function fetchCiviqsLive(

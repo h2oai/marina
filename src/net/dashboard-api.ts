@@ -24,7 +24,7 @@ import {
 } from "./dashboard-api/memory";
 import { handleOpsRoutes } from "./dashboard-api/ops";
 import { handleProductivityRoute, handleReadinessRoutes } from "./dashboard-api/readiness";
-import { handleRoutingRoutes } from "./dashboard-api/routing";
+import { authenticateSupervision, handleRoutingRoutes } from "./dashboard-api/routing";
 import type { DashboardApiOptions, DashboardRouteContext } from "./dashboard-api/shared";
 import { ensureErrorCode, json } from "./dashboard-api/shared";
 import { handleSystemRoutes } from "./dashboard-api/system";
@@ -89,7 +89,11 @@ async function dispatchDashboardApi(
   // valid session token. The pre-auth surface above (`/api/setup-status`,
   // `/api/command`, `/api/ask`) is intentionally open / self-gated and runs
   // before this check.
-  const auth = authenticateRequest(req, engine);
+  // A person's supervision credential (supervised residents) reaches the
+  // routing API only; it is never a world session.
+  const supervision = authenticateSupervision(req, url, engine, db);
+  if (supervision && "error" in supervision) return supervision.error;
+  const auth = supervision ?? authenticateRequest(req, engine);
   if ("error" in auth) return auth.error;
   const callerId = auth.entityId;
   // Per-principal budget for the authenticated REST surface (DASHBOARD_API
@@ -118,6 +122,7 @@ async function dispatchDashboardApi(
     });
 
   const ctx: DashboardRouteContext = { req, url, method, engine, db, peerIp, callerId, memory };
+  if (supervision) return handleRoutingRoutes({ ...ctx, supervision: supervision.credential });
 
   // Dispatch in exactly the pre-split order — route precedence is load-bearing
   // (greedy `(.+)` detail matchers must stay ahead of the list routes, the

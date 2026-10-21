@@ -398,7 +398,7 @@ export function roleCommand(deps: {
         }
 
         case "import": {
-          // Creating is free (Phase 0): import only ever creates — an existing
+          // Creating is free: import only ever creates — an existing
           // role, or a same-named trait with different content, is refused.
           const entity = deps.getEntity?.(input.entity);
           const floor =

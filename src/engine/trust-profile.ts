@@ -8,7 +8,7 @@
  * admission budgets, exec approval prompts, full-fsync durability) is the
  * right default for a SHARED or PUBLIC instance. A LOCAL instance — one
  * operator on their own machine, loopback-only — runs completely ungated for
- * performance and usability, with the audit trail intact. YOLO applies to
+ * performance and usability, with the audit trail intact. The relaxation applies to
  * permissions, never to records: the exec-decision audit, the cognitive
  * ledger, memory receipts, journaling, trusted/unverified labels and
  * untrusted-context framing stay on in every profile.

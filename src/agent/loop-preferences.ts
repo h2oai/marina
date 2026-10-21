@@ -16,7 +16,7 @@
  *   ceiling `MARINA_CHANNEL_SENDS_PER_RUN`. Default 1; 0 opts out.
  * - `focus_persistent true` — stuck detection only SUGGESTS releasing the
  *   focus; the harness never clears it.
- * - `autonomy full` — a crew responder opts into an autonomous life (own
+ * - `autonomy full` — a crew responder opts into self-scheduled cycles (own
  *   cycles, reflection, consolidation) instead of waking only on messages.
  * - `review off|observe|auto|on` — the pre-write review on the agent's own
  *   state-changing calls, within the operator ceiling `MARINA_OBLIGATIONS_REVIEW`

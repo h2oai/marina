@@ -46,8 +46,8 @@ export interface AdjustParams {
 }
 
 /**
- * Chosen by the walk-forward backtest over 67 weeks (`scripts/arena-wiki-backtest.ts
- * --features … --grid`, docs/guides/arena.md). Only the verified-event channel
+ * Chosen by walk-forward backtest (`scripts/arena-wiki-backtest.ts --features …
+ * --grid`). Only the verified-event channel
  * earned a non-neutral setting (the weekly re-selection picked ×3 for an
  * in-window event and ×0.6 for an ended one); edit surge, related-page growth,
  * news trend, the current-events digest and the news direction did not beat

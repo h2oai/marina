@@ -94,9 +94,10 @@ This means a scaffold or correlation alone cannot masquerade as work in progress
 ## Compatibility and limits
 
 The feature is additive. Existing commands and APIs do not require a journey, and deleting or
-editing canonical work is outside the journey layer. Phase 2 projects live status from linked tasks
+editing canonical work is outside the journey layer. Journeys project live status from linked tasks
 and projects; other correlation kinds contribute traceability but do not yet supply automatic live
 state. Result projection currently resolves tasks, notes, board posts, Chronicle entries, coding
-artifacts, and canvas nodes when explicitly correlated. Cognitive provenance, intellect identity,
-federation, economics, and simulation are separate optional layers that can reference the same
-journey without changing its source-of-truth semantics.
+artifacts, and canvas nodes when explicitly correlated. Cognitive provenance and the experimental
+intellect, federation, economic and simulation records (see
+[feature status](../reference/feature-status.md)) are separate optional layers that can reference the
+same journey without changing it.

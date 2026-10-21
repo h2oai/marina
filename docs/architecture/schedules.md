@@ -63,9 +63,8 @@ The error class comes from the failure message (`rank`, `gate`, `unknown-command
 
 The limits are visible in the refusal message and are raised by the operator. They bound amplification (a schedule may itself add schedules) without hiding anything.
 
-## Not yet
+## Limitations
 
-Phase 1 of the plan:
-- **Per-run spend caps:** a run spends under the owner's normal daily and scope caps.
-- **A dashboard card.**
-- **A cross-owner operator view:** the readiness check names failing schedules.
+- **No per-run spend cap:** a run spends under the owner's normal daily and scope caps.
+- **No dashboard card:** schedules are managed with the `schedule` command.
+- **No cross-owner operator view:** the readiness check names failing schedules.
