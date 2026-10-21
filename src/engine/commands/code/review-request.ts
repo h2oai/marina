@@ -32,7 +32,12 @@ import {
   type ReviewSnapshot,
 } from "../../../routing/review-snapshot";
 import type { Entity, EntityId, RoomContext } from "../../../types";
-import { isOperatorPrincipal, personOwner, principalKind } from "../../challenges";
+import {
+  agentPrincipalReason,
+  isOperatorPrincipal,
+  personOwner,
+  principalKind,
+} from "../../challenges";
 import { failCommandResponse } from "../../command-response";
 import { parseModifiers, splitOnTerminator } from "../../parse-input";
 import { deliverTell } from "../tell";
@@ -590,7 +595,7 @@ async function closeReview(
     return refuse(
       ctx,
       eid,
-      "A person closes a review: the author's owner, the person who asked for it, or an operator.",
+      `A person closes a review: the author's owner, the person who asked for it, or an operator.${person ? "" : ` ${agentPrincipalReason(entity)}`}`,
     );
   if (row.status === "merged" || row.status === "rejected")
     return refuse(ctx, eid, `Review ${id} is already ${row.status}.`);

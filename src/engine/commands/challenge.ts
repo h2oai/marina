@@ -11,6 +11,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, Entity } from "../../types";
 import {
+  agentPrincipalReason,
   CHALLENGE_SUMMARY_WINDOW_MS,
   type Challenge,
   type ChallengeAnswer,
@@ -183,8 +184,7 @@ export function challengeCommand(deps: {
         if (!result.ok) {
           const why: Record<typeof result.error, string> = {
             self: "You can't answer your own ask, or one raised by the agent that spawned you.",
-            agent:
-              "People answer held actions, agents don't (whatever their rank): the requester's owner or an operator decides. Carry on with your own work.",
+            agent: `People answer held actions, agents don't (whatever their rank): the requester's owner or an operator decides. ${agentPrincipalReason(me)}`,
             not_authorized:
               "Only the requester's creator or an admin can answer it — and only for what they could do themselves.",
             absent:

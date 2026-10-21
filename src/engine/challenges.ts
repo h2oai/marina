@@ -284,6 +284,26 @@ export function principalKind(entity: Entity): PrincipalKind {
   return host.isAgentAccount(entity.name) ? "agent" : "person";
 }
 
+/**
+ * Why a participant counts as an agent, and how a person acts instead — for
+ * refusals that hinge on principal kind. Empty for a person.
+ */
+export function agentPrincipalReason(entity: Entity): string {
+  if (principalKind(entity) === "person") return "";
+  const conn = host?.connectionOf(entity.id);
+  const why = conn?.internal
+    ? "it is on an internal agent connection"
+    : conn?.protocol === "mcp"
+      ? "it is connected over MCP"
+      : conn?.agent
+        ? "its client declared itself an agent (a one-shot or piped `marina connect`, or an SDK client)"
+        : "the account is an agent's (an agent config or agent principal)";
+  const how = host?.isAgentAccount(entity.name)
+    ? "Its owner or an operator decides."
+    : "A person acts from an interactive `marina connect` on a terminal or from the dashboard.";
+  return `${entity.name} counts as an agent here because ${why}. ${how}`;
+}
+
 /** An operator: a person at sovereign rank. A rank-9 agent is not one. */
 function isOperator(entity: Entity | undefined): boolean {
   return !!entity && getRank(entity) >= ADMIN_RANK && principalKind(entity) === "person";
