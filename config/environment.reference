@@ -1158,7 +1158,7 @@
 
 # ── Prediction markets ───────────────────────────────────────────────────────
 
-# `true` allows live order placement (Kalshi only). `position` is paper trading by default.
+# `true` allows live order placement (Kalshi only). `position` is paper trading by default. Even when enabled, every live order needs the `trading.live` safety gate: without an operator grant it is held until a person approves it (only MARINA_AUTONOMY=sovereign lifts that). Research and paper-trading tool, not financial advice. Live trading is off by default; if you enable it you are responsible for the venue's terms and the laws where you live (Kalshi is US-only).
 # @protected
 # MARINA_TRADING_ENABLED=false
 

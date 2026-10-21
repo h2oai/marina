@@ -163,17 +163,21 @@ describe("gates are the authority", () => {
     expect(ran).toEqual(["tinker", "tinker"]);
   });
 
-  it("the yolo switch: local-ungated lifts EVERY gate (core included) and every rank floor", async () => {
-    // A sovereign, self-hosted, no-guest Marina can drop all gating
-    // (MARINA_PROFILE=local, autonomy not guarded). No permission change may
-    // narrow this: every gate passes for a rank-0 agent, no hold is raised.
+  it("the yolo switch: local-ungated lifts every gate (core included) but live trading, and every rank floor", async () => {
+    // A self-hosted, no-guest Marina can drop gating (MARINA_PROFILE=local,
+    // autonomy not guarded): every gate passes for a rank-0 agent, no hold is
+    // raised — except real-money orders (`trading.live`, holdsUnderLocalProfile),
+    // which only MARINA_AUTONOMY=sovereign (the next test) or a grant lifts.
     delete process.env.MARINA_AUTONOMY;
     setTrustProfile("local");
     const rookie = engine.entities.get(id(builder))!; // an agent, rank 0, no standing
     for (const gateId of Object.keys(SAFETY_GATES)) {
-      expect(checkGateForExecution(db, String(rookie.id), gateId).ok, gateId).toBe(true);
+      const held = SAFETY_GATES[gateId]!.holdsUnderLocalProfile === true;
+      expect(checkGateForExecution(db, String(rookie.id), gateId).ok, gateId).toBe(!held);
     }
+    expect(SAFETY_GATES["trading.live"]!.holdsUnderLocalProfile).toBe(true);
     for (const core of OPEN_POSTURE_CORE) {
+      if (core === "trading.live") continue;
       expect(checkGateForExecution(db, String(rookie.id), core).ok, core).toBe(true);
     }
     for (const floor of [1, 2, 3, 4]) expect(rankFloorRefusal(rookie, floor)).toBeUndefined();

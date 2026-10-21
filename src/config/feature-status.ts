@@ -315,7 +315,8 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   {
     name: "Markets and positions",
     status: "experimental",
-    enable: "`market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true`",
+    enable:
+      "`market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true` and a person's approval per order (`trading.live`)",
     owner: "src/resolvers, src/net/clients",
     commands: ["market", "position"],
   },

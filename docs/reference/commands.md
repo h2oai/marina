@@ -815,12 +815,14 @@ Effect: write.
 
 Bankroll & risk gates for trading. State stored in core memory; the 'position' command reads these before placing any order.
 
+Research and paper-trading tool, not financial advice. Live trading is off by default; if you enable it you are responsible for the venue's terms and the laws where you live (Kalshi is US-only).
+
 Usage:
   bankroll show                    — display current bankroll, kelly fraction, position cap, daily floor
   bankroll set <usd>               — set total trading bankroll (e.g., 'bankroll set 10000')
   bankroll kelly <fraction>        — set Kelly fraction 0-1 (default 0.5 = half-Kelly)
-  bankroll cap <usd>               — max single position size (defense against typos + concentration)
-  bankroll floor <usd>             — max daily loss in USD before trading halts
+  bankroll cap <usd>               — max stake of one order (a market order is costed at 99¢ a contract)
+  bankroll floor <usd>             — no new opens once today's realized loss (all entities, UTC day) reaches it
   bankroll reset                   — clear all bankroll keys
 
 Ranks: 'bankroll show' works at rank 2+; set/kelly/cap/floor/reset need rank 5+.
@@ -4518,7 +4520,7 @@ Usage:
                                 — dry run by default: what would be revoked. `apply`
                                   (operator) revokes operator-grant rows only, chronicled;
                                   demonstrated competence stays; `gate grant` restores
-Operator-grant gates (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code) are granted by sovereigns only; nobody grants themselves.
+Operator-grant gates (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code, trading.live) are granted by sovereigns only; nobody grants themselves.
 Earning a gate instead: run the gated action — the held run executes once a person approves it, and
 approvals from outside your own lineage build the gate (`challenge`).
 
@@ -6921,7 +6923,9 @@ Effect: read.
 
 ## position
 
-[experimental] Place, list, close, and track P&L on real prediction-market positions.
+[experimental] Place, list, close, and track P&L on paper (or, when enabled, live) prediction-market positions.
+
+Research and paper-trading tool, not financial advice. Live trading is off by default; if you enable it you are responsible for the venue's terms and the laws where you live (Kalshi is US-only).
 
 Usage:
   position size <venue> <ticker> <yes|no> <our-prob> <market-price>  — Kelly-size a candidate position
@@ -6947,7 +6951,11 @@ Examples:
 Hard rules:
   • bankroll > 0, cap > 0, floor > 0 required before any open (paper or live)
   • NO SELF-HEDGE: refuses opposing-side orders on tickers we already hold
+  • cap: one order's stake ≤ your bankroll cap; a market order (no limit) is costed at 99¢
+  • floor: no new opens once today's realized loss (all entities, UTC day) reaches your floor
   • Paper mode default; MARINA_TRADING_ENABLED=true + creds required for live
+  • Live: every order that reaches a venue needs the trading.live gate — without an
+    operator grant it is held until a person approves it (paper is never held)
 
 Category: Markets & Forecasting. Minimum rank: 2.
 Aliases: `pos`.

@@ -43,7 +43,7 @@
  *    (`key.manage`), world erasure (`admin.destructive`), raw shell
  *    (`shell.exec`) and arbitrary non-allowlisted host commands
  *    (`code.exec.unrestricted`, which also keeps its independent
- *    exec-approver chain). Allowlisted workspace execution (`code.exec`) is
+ *    exec-approver chain) and real-money orders (`trading.live`). Allowlisted workspace execution (`code.exec`) is
  *    NOT in the core: `open` passes it.
  */
 
@@ -59,6 +59,9 @@ export const OPEN_POSTURE_CORE: ReadonlySet<string> = new Set([
   // Room and command code runs inside the engine (a static denylist, not a
   // process boundary), so authoring it stays gated even under `open`.
   "world.code",
+  // Real-money prediction-market orders: each asks a person unless an
+  // operator granted the gate (the local profile does not lift it either).
+  "trading.live",
 ]);
 
 export function getAutonomyPosture(env: NodeJS.ProcessEnv = process.env): AutonomyPosture {
@@ -83,7 +86,7 @@ export function describeAutonomyPosture(posture: AutonomyPosture = getAutonomyPo
     case "sovereign":
       return "SOVEREIGN — every gate (core included), rank floor and hold is off for every principal; audit stays on";
     case "open":
-      return "OPEN — standing is descriptive; every gate auto-passes (incl. allowlisted code.exec) except the core (keys, world erasure, shell, unrestricted exec)";
+      return "OPEN — standing is descriptive; every gate auto-passes (incl. allowlisted code.exec) except the core (keys, world erasure, shell, unrestricted exec, world code, live trading)";
     case "earned":
       return "EARNED — supervised operations on earnable gates run freely; capability flips when an operator attests the recorded runs or approves held ones; the core stays operator-grant";
     default:

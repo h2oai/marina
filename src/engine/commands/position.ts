@@ -8,11 +8,13 @@ import * as polymarket from "../../net/clients/polymarket-client";
 import type { MarinaDB } from "../../persistence/database";
 import { createWatchNote, listActiveWatches } from "../../resolvers/watch-spec";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import { type BankrollState, readBankrollState } from "./bankroll";
 
 /**
- * Position command — sizing, opening, listing, closing, P&L for real (or
- * paper) Kalshi/Polymarket positions.
+ * Position command — sizing, opening, listing, closing, P&L for paper (or,
+ * when enabled, live) Kalshi/Polymarket positions. Research and
+ * paper-trading tool, not financial advice.
  *
  * Storage model: every position event (open, close) is appended as a board
  * post on the `paper-orders` board (same board for both venues — distinguish
@@ -24,8 +26,10 @@ import { type BankrollState, readBankrollState } from "./bankroll";
  *   2. NO SELF-HEDGE — if any open Marina position exists on the ticker
  *      on the opposite side, refuse the new order. Sizing up the SAME side
  *      is allowed (increasing conviction). Different markets are independent.
- *   3. Single position size ≤ bankroll cap
- *   4. Daily realized loss ≤ bankroll floor — close-realized AND
+ *   3. Single order stake ≤ the opener's bankroll cap. A market order (no
+ *      limit price) is costed at the worst case, 99¢ a contract, in paper
+ *      and live alike — the fill price is unknown until the venue fills it.
+ *   4. Daily realized loss < the opener's bankroll floor — close-realized AND
  *      settlement-realized losses (average-cost basis over the order history).
  *      When a market resolves, the resolving watch that `position open`
  *      spawned produces a resolved Sample; the `position-settlement`
@@ -33,9 +37,16 @@ import { type BankrollState, readBankrollState } from "./bankroll";
  *      (winning side) or 0¢ (losing side), so the P&L replay, the position
  *      list and the no-self-hedge net all see the settlement.
  *
+ *      The realized loss is WORLD-WIDE: every entity's orders on the shared
+ *      `paper-orders` board, both venues, paper and live, since UTC midnight.
+ *
  * Paper mode is the default. Live trading requires
  *   MARINA_TRADING_ENABLED=true
  *   + venue credentials (KALSHI_API_KEY/SECRET or POLYMARKET_*)
+ *   + the `trading.live` safety gate for every order that reaches a venue
+ *     (open, confirm, close): without an operator grant each one is held as a
+ *     challenge a person approves (`challenge approve <token> once`), and the
+ *     local profile does not lift it — only MARINA_AUTONOMY=sovereign does.
  *
  * Subcommands:
  *   position size <venue> <ticker> <yes|no> <our-prob> <market-price-cents>
@@ -50,7 +61,9 @@ import { type BankrollState, readBankrollState } from "./bankroll";
 const POSITIONS_BOARD = "paper-orders";
 const PROPOSALS_BOARD = "portfolio-thesis";
 
-const HELP = `Place, list, close, and track P&L on real prediction-market positions.
+const HELP = `Place, list, close, and track P&L on paper (or, when enabled, live) prediction-market positions.
+
+Research and paper-trading tool, not financial advice. Live trading is off by default; if you enable it you are responsible for the venue's terms and the laws where you live (Kalshi is US-only).
 
 Usage:
   position size <venue> <ticker> <yes|no> <our-prob> <market-price>  — Kelly-size a candidate position
@@ -76,7 +89,11 @@ Examples:
 Hard rules:
   • bankroll > 0, cap > 0, floor > 0 required before any open (paper or live)
   • NO SELF-HEDGE: refuses opposing-side orders on tickers we already hold
-  • Paper mode default; MARINA_TRADING_ENABLED=true + creds required for live`;
+  • cap: one order's stake ≤ your bankroll cap; a market order (no limit) is costed at 99¢
+  • floor: no new opens once today's realized loss (all entities, UTC day) reaches your floor
+  • Paper mode default; MARINA_TRADING_ENABLED=true + creds required for live
+  • Live: every order that reaches a venue needs the trading.live gate — without an
+    operator grant it is held until a person approves it (paper is never held)`;
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -97,6 +114,54 @@ export interface OrderRecord {
   ts: number;
   /** Operator/agent name who placed the order. */
   by: string;
+}
+
+// ─── Venue clients ──────────────────────────────────────────────────────────
+
+/** The venue calls this command makes — swappable in tests (no network). */
+export interface VenueClients {
+  kalshi: Pick<typeof kalshi, "placeOrder" | "cancelOrder" | "isPaperMode">;
+  polymarket: Pick<typeof polymarket, "placeOrder" | "cancelOrder" | "isPaperMode">;
+}
+
+const REAL_VENUES: VenueClients = { kalshi, polymarket };
+let venues: VenueClients = REAL_VENUES;
+
+/** Test seam: replace the venue clients; returns the restore function. */
+export function setVenueClientsForTests(next: Partial<VenueClients>): () => void {
+  const prev = venues;
+  venues = { ...venues, ...next };
+  return () => {
+    venues = prev;
+  };
+}
+
+/** Whether an order on `venue` would leave paper mode and reach the venue. */
+export function isLiveVenue(venue: Venue): boolean {
+  return !venues[venue].isPaperMode();
+}
+
+/** The safety gate every live (real-money) order passes. */
+export const LIVE_TRADING_GATE = "trading.live";
+
+/**
+ * Worst-case price of one contract (cents) — what a market order without a
+ * limit is costed at for the cap check, since it may fill anywhere up to it.
+ */
+export const WORST_CASE_PRICE_CENTS = 99;
+
+/**
+ * The `trading.live` check for an order that will reach a venue. Undefined =
+ * proceed (the execution is recorded); otherwise the refusal text. Inside a
+ * command the refusal has raised a challenge: the order is held and nothing
+ * was sent; a person's `challenge approve <token> once` re-runs this command
+ * with a single-use pass, and `always` is an operator grant.
+ */
+function liveOrderRefusal(db: MarinaDB, entity: Entity, evidence: string): string | undefined {
+  const gate = checkGateForExecution(db, String(entity.id), LIVE_TRADING_GATE);
+  if (!gate.ok) return `Live order held — nothing was sent. ${gate.reason ?? "refused"}`;
+  recordGateExecution(db, String(entity.id), LIVE_TRADING_GATE, gate, evidence);
+  return undefined;
 }
 
 // ─── Command factory ────────────────────────────────────────────────────────
@@ -351,8 +416,20 @@ interface OpenRequest {
   ticker: string;
   side: "yes" | "no";
   count: number;
-  /** Limit price in cents (1-99). If undefined, market order at est. 50¢. */
+  /**
+   * Limit price in cents (1-99). If undefined, a market order: recorded at an
+   * estimated 50¢ fill, but costed at the worst case (99¢) for the cap check.
+   */
   priceCents?: number;
+}
+
+interface OpenOptions {
+  /**
+   * The caller already passed the `trading.live` gate for this run (`position
+   * confirm` checks it once for the whole proposal). Default: attemptOpen
+   * checks it itself before any live order.
+   */
+  liveAuthorized?: boolean;
 }
 
 interface OpenResult {
@@ -363,6 +440,8 @@ interface OpenResult {
   record?: OrderRecord;
   /** Stake in USD that this open consumed (only on ok=true). */
   stakeUsd?: number;
+  /** Refused by the `trading.live` gate (held as a challenge inside a command). */
+  held?: boolean;
 }
 
 /**
@@ -370,15 +449,17 @@ interface OpenResult {
  * `position confirm` (batch from a proposal). All risk gates run here:
  *   1. Bankroll readiness (set/cap/floor/kelly all > 0)
  *   2. No-self-hedge invariant
- *   3. Per-position cap
+ *   3. Per-order cap (a market order costed at WORST_CASE_PRICE_CENTS)
  *   4. Daily floor — enforced on close- and settlement-realized losses
- *      since UTC midnight (see computeRealizedPnl).
+ *      since UTC midnight, world-wide (see computeRealizedPnl).
+ *   5. `trading.live` — only when the order would reach a live venue.
  * Returns a structured result so callers can decide how to format output.
  */
 export async function attemptOpen(
   db: MarinaDB,
   entity: Entity,
   req: OpenRequest,
+  opts: OpenOptions = {},
 ): Promise<OpenResult> {
   // ─── Risk gates ─────────────────────────────────────────────────────────
   const state = readBankrollState(db, entity.name);
@@ -388,12 +469,21 @@ export async function attemptOpen(
   const hedgeError = checkNoSelfHedge(db, req.venue, req.ticker, req.side);
   if (hedgeError) return { ok: false, message: hedgeError };
 
-  const priceForStake = req.priceCents ?? 50;
-  const stakeUsd = (req.count * priceForStake) / 100;
-  if (state.cap > 0 && stakeUsd > state.cap) {
+  // The cap is checked against the most the order can cost: its limit price,
+  // or for a market order the worst case (99¢), so a market order can never
+  // commit more than the cap. Paper and live check alike (paper is practice
+  // for live); the paper fill is still recorded at the 50¢ estimate.
+  const fillCents = req.priceCents ?? 50;
+  const stakeUsd = (req.count * fillCents) / 100;
+  const maxStakeUsd = (req.count * (req.priceCents ?? WORST_CASE_PRICE_CENTS)) / 100;
+  if (state.cap > 0 && maxStakeUsd > state.cap) {
+    const how =
+      req.priceCents === undefined
+        ? ` (market order costed at the worst case, ${WORST_CASE_PRICE_CENTS}¢ a contract — add a limit price to size against it)`
+        : "";
     return {
       ok: false,
-      message: `Stake $${stakeUsd.toFixed(2)} exceeds bankroll cap $${state.cap.toFixed(2)}. Reduce count or raise cap.`,
+      message: `Stake $${maxStakeUsd.toFixed(2)} exceeds bankroll cap $${state.cap.toFixed(2)}${how}. Reduce count or raise cap.`,
     };
   }
 
@@ -405,12 +495,18 @@ export async function attemptOpen(
     };
   }
 
+  // ─── Live orders ask a person (trading.live) ────────────────────────────
+  if (isLiveVenue(req.venue) && !opts.liveAuthorized) {
+    const held = liveOrderRefusal(db, entity, `position:open:${req.venue}:${req.ticker}`);
+    if (held) return { ok: false, held: true, message: held };
+  }
+
   // ─── Place order via venue client ───────────────────────────────────────
   let orderId = "";
   let venueStatus: "paper" | "live" = "paper";
 
   if (req.venue === "kalshi") {
-    const res = await kalshi.placeOrder({
+    const res = await venues.kalshi.placeOrder({
       ticker: req.ticker,
       side: req.side,
       action: "buy",
@@ -423,7 +519,7 @@ export async function attemptOpen(
     orderId = res.response.order_id;
     venueStatus = res.response.status === "paper" ? "paper" : "live";
   } else {
-    const res = await polymarket.placeOrder({
+    const res = await venues.polymarket.placeOrder({
       market: req.ticker,
       token_id: `${req.ticker}-${req.side}`,
       side: "BUY",
@@ -588,17 +684,27 @@ async function handleClose(
     return;
   }
 
+  // A close that reaches a live venue is a real-money order: it asks a person
+  // like an open does (paper closes never do).
+  if (isLiveVenue(opener.venue)) {
+    const held = liveOrderRefusal(db, entity, `position:close:${opener.venue}:${opener.ticker}`);
+    if (held) {
+      ctx.send(eid, held);
+      return;
+    }
+  }
+
   // Cancel via venue client (paper mode = synthetic).
   let cancelOk = true;
   let cancelError = "";
   if (opener.venue === "kalshi") {
-    const res = await kalshi.cancelOrder(orderId);
+    const res = await venues.kalshi.cancelOrder(orderId);
     if (!res.ok) {
       cancelOk = false;
       cancelError = res.error;
     }
   } else {
-    const res = await polymarket.cancelOrder(orderId);
+    const res = await venues.polymarket.cancelOrder(orderId);
     if (!res.ok) {
       cancelOk = false;
       cancelError = res.error;
@@ -1018,18 +1124,35 @@ async function handleConfirm(
     return;
   }
 
+  // A proposal with any live leg asks a person ONCE for the whole confirm:
+  // the held run is `position confirm <id>`, so an approval re-runs every leg
+  // together (per-leg holds would re-place already placed legs on re-run).
+  const live = parsed.value.items.some((item) => isLiveVenue(item.venue));
+  if (live) {
+    const held = liveOrderRefusal(db, entity, `position:confirm:${proposalId}`);
+    if (held) {
+      ctx.send(eid, held);
+      return;
+    }
+  }
+
   // Walk legs. attemptOpen enforces all data-layer invariants per leg
   // (including no-self-hedge between legs of THIS proposal vs. prior orders).
   const opened: { item: ProposalItem; record: OrderRecord; stakeUsd: number }[] = [];
   const refused: { item: ProposalItem; reason: string }[] = [];
   for (const item of parsed.value.items) {
-    const r = await attemptOpen(db, entity, {
-      venue: item.venue,
-      ticker: item.ticker,
-      side: item.side,
-      count: item.count,
-      priceCents: item.price,
-    });
+    const r = await attemptOpen(
+      db,
+      entity,
+      {
+        venue: item.venue,
+        ticker: item.ticker,
+        side: item.side,
+        count: item.count,
+        priceCents: item.price,
+      },
+      { liveAuthorized: live },
+    );
     if (r.ok && r.record) {
       recordOrder(db, eid, entity.name, r.record);
       ensureResolvingWatch(db, entity.name, r.record.venue, r.record.ticker);
