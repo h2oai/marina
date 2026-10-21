@@ -302,3 +302,68 @@ describe("MARINA_AGENT_COMPACTION_MODEL", () => {
     expect(calls.map((c) => c.model)).toEqual(["gpt-4o-mini"]);
   });
 });
+
+describe("the compaction summary call", () => {
+  function capture(reply: string) {
+    const { adapter, internals } = setup();
+    const bodies: Record<string, unknown>[] = [];
+    internals.providerFetch = (async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      const chunk = {
+        id: "fixture",
+        object: "chat.completion.chunk",
+        created: 1,
+        model: "fixture",
+        choices: [
+          { index: 0, delta: { role: "assistant", content: reply }, finish_reason: "stop" },
+        ],
+        usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+      };
+      return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+    return { adapter, internals, bodies };
+  }
+
+  it("turns reasoning off and uses the 800-token default cap", async () => {
+    using _state = scopeProcessState({
+      trustProfile: "shared",
+      env: {
+        MARINA_AGENT_COMPACTION_MODEL: "openrouter/deepseek/deepseek-v4.1-flash",
+        MARINA_AGENT_COMPACTION_MAX_TOKENS: undefined,
+        OPENROUTER_API_KEY: "fixture-or-key",
+      },
+    });
+    const { adapter, bodies } = capture("Keep constraint-0.");
+    await adapter.compactNow();
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.reasoning).toEqual({ enabled: false });
+    expect(bodies[0]!.max_completion_tokens ?? bodies[0]!.max_tokens).toBe(800);
+  });
+
+  it("honours MARINA_AGENT_COMPACTION_MAX_TOKENS", async () => {
+    using _state = scopeProcessState({
+      trustProfile: "shared",
+      env: { MARINA_AGENT_COMPACTION_MAX_TOKENS: "1200" },
+    });
+    const { adapter, bodies } = capture("Keep constraint-0.");
+    await adapter.compactNow();
+    expect(bodies[0]!.max_completion_tokens ?? bodies[0]!.max_tokens).toBe(1200);
+  });
+
+  it("strips leaked reasoning, and falls back when the reply is only reasoning", async () => {
+    using _state = scopeProcessState({ trustProfile: "shared" });
+    const leaked = capture("<think>first I will plan</think>Keep constraint-0 and open work.");
+    await leaked.adapter.compactNow();
+    const text = JSON.stringify(leaked.internals.agent.state.messages);
+    expect(text).toContain("Keep constraint-0 and open work.");
+    expect(text).not.toContain("first I will plan");
+
+    const only = capture("Thinking Process:\n\n1. **Analyze the Request:** compress it");
+    await only.adapter.compactNow();
+    const fallback = JSON.stringify(only.internals.agent.state.messages);
+    expect(fallback).not.toContain("Analyze the Request");
+    expect(fallback).toContain("[Context summary");
+  });
+});

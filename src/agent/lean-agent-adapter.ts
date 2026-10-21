@@ -150,6 +150,13 @@ import {
   SPEND_STOP_EVENT_CONTEXT,
 } from "./budget-terminal";
 import {
+  compactionMaxTokens,
+  disableReasoningPayload,
+  stripLeakedReasoning,
+  summaryCallMaxTokens,
+  summaryCallModel,
+} from "./compaction-call";
+import {
   type ConversationTokenCap,
   computeContextBudget,
   conversationBytes,
@@ -1843,8 +1850,12 @@ export class LeanAgentAdapter implements AgentHandle {
             },
           ] as Message[],
         };
-        const model = routedCall.model;
+        // The provider's own reasoning switch is armed (`summaryCallModel`) and,
+        // where pi-ai sends none, added to the body (`disableReasoningPayload`):
+        // hidden reasoning otherwise fills the summary cap.
+        const model = summaryCallModel(routedCall.model);
         const proxied = isMarinaProxyModel(model);
+        const maxTokens = summaryCallMaxTokens(model, compactionMaxTokens());
         const ask = async () => {
           const accounting: {
             providerCost?: number;
@@ -1857,9 +1868,10 @@ export class LeanAgentAdapter implements AgentHandle {
           const result = await piModels.completeSimple(model, llmContext, {
             apiKey: keyNow,
             ...samplingFor(model.id, 0.3),
-            maxTokens: 500,
+            maxTokens,
             signal,
             maxRetries: PROVIDER_MAX_RETRIES,
+            onPayload: (payload) => disableReasoningPayload(payload, model),
             // Keep auxiliary accounting separate from a concurrent agent turn.
             fetch: (async (input, init) => {
               const response = await upstream(input, init);
@@ -1900,6 +1912,15 @@ export class LeanAgentAdapter implements AgentHandle {
           // A learned capability retry is a separately accounted model call.
           if (!this.checkSpendCaps() && !this.budgetExhausted) result = await ask();
         }
+        if (
+          result.stopReason === "error" &&
+          noteUpstreamRejection(model.id, String(result.errorMessage ?? "")) ===
+            "reasoning-mandatory" &&
+          !this.checkSpendCaps() &&
+          !this.budgetExhausted
+        )
+          // The disable was refused: once more at a low, excluded effort.
+          result = await ask();
         if (result.stopReason === "error" || result.stopReason === "aborted") return undefined;
 
         const text = Array.isArray(result.content)
@@ -1909,7 +1930,8 @@ export class LeanAgentAdapter implements AgentHandle {
               .join("\n")
               .trim()
           : "";
-        return text.length > 0 ? text : undefined;
+        const summary = stripLeakedReasoning(text);
+        return summary.length > 0 ? summary : undefined;
       } catch {
         signal?.throwIfAborted();
         return undefined;
