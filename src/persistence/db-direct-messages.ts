@@ -77,6 +77,13 @@ export function listDirectMessageInbox(
     .all(targetId, limit) as DirectMessageRow[];
 }
 
+/**
+ * The recipient answered or acknowledged a tell. A tell past its deadline
+ * (`expired` = unanswered in time) is still settled by a late answer: the
+ * reply happened, so the receipt says so, and `acknowledged_at` after
+ * `deadline_at` keeps the lateness visible. Expiry never removes content,
+ * so nothing is restored here.
+ */
 export function acknowledgeDirectMessage(
   db: Database,
   id: number,
@@ -86,7 +93,7 @@ export function acknowledgeDirectMessage(
   const result = db.run(
     `UPDATE direct_messages SET status = 'acknowledged', acknowledged_at = ?,
        reply_message_id = COALESCE(?, reply_message_id)
-       WHERE id = ? AND target_id = ? AND status = 'delivered'`,
+       WHERE id = ? AND target_id = ? AND status IN ('delivered', 'expired')`,
     [Date.now(), replyMessageId ?? null, id, targetId],
   );
   return result.changes > 0;
