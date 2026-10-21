@@ -321,6 +321,24 @@ Source History: tavern/bar
 
 ---
 
+## Give a Room a Turn Rule
+
+A room can run a formation (`debate`, `chorus` or `verification`). After each `say`, one
+`[formation-mediator]` line names who goes next:
+
+```
+> build formation debate
+Formation of "my/garden": debate. Each `say` here gets one [formation-mediator] line naming who is next.
+> build formation
+Formation of "my/garden": debate.
+> build formation off
+Formation of "my/garden" cleared.
+```
+
+The setting is saved with the room and survives a restart, also for rooms that come from the
+world's own files. It is written into the room's source too, so `build template save` carries it to
+every room made from the template. See [Formations in a room](coordination.md#formations-in-a-room).
+
 ## Room Templates
 
 Templates are pre-built room patterns you can reuse:

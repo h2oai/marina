@@ -162,6 +162,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   banner. **On upgrade**, existing result files have no stamp, so a spec over them reports
   `version-unknown` until they are rerun or `--allow-unversioned` is given.
 
+- **Formations in a room.** A room can run a turn rule — `debate`, `chorus` or `verification` —
+  set with `build formation [room] <formation>|off` or `formation` on a room module (templates
+  carry it; the in-world setting survives a restart). After each `say`, one `[formation-mediator]`
+  line in the room names the next actor with `@name`, so attention wakes them and owes the answer;
+  a round ends on its own closing move. Lines appear in `look log`; each emits a content-free
+  `room_formation_turn` event. Rooms without a formation are unchanged.
 - **World awareness.** `look log [since:<duration>]` reads your room's recent history (speech, emotes,
   arrivals, departures; bounded per room, migration 175). `who` and `look` show every agent's status
   (working, idle, blocked, needs you, resting, offline), and `who watch <name> [idle|blocked|any]

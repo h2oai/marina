@@ -1,6 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  ROOM_FORMATION_KEY,
+  ROOM_FORMATIONS,
+  roomFormationName,
+  roomFormationOf,
+} from "../../coordination/room-formations";
 import { error as fmtError, header, separator, success } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type {
@@ -8,6 +14,7 @@ import type {
   CommandInput,
   Entity,
   EntityId,
+  KeyValueStore,
   RoomContext,
   RoomId,
   RoomModule,
@@ -27,7 +34,7 @@ import {
 export interface BuildDeps {
   getEntity: (id: string) => Entity | undefined;
   db: MarinaDB;
-  getRoom: (id: RoomId) => { id: RoomId; module: RoomModule } | undefined;
+  getRoom: (id: RoomId) => { id: RoomId; module: RoomModule; store?: KeyValueStore } | undefined;
   registerRoom: (id: RoomId, module: RoomModule) => void;
   replaceRoom: (id: RoomId, module: RoomModule) => void;
   entitiesInRoom: (room: RoomId) => Entity[];
@@ -184,6 +191,67 @@ function handleModify(
     valid: true,
   });
   ctx.send(input.entity, `Modified ${field} of "${targetRoomId}".`);
+}
+
+/**
+ * `build formation [room] [debate|chorus|verification|off]` — the room's turn
+ * rule (src/coordination/room-formations.ts). Kept in the room's saved source,
+ * so `build template save` carries it and every applied copy runs it.
+ */
+function handleFormation(
+  ctx: RoomContext,
+  input: CommandInput,
+  entity: Entity,
+  _rank: number,
+  deps: BuildDeps,
+): void {
+  // One argument names a room to read, else the formation (or `off`) for this room.
+  const args = input.tokens.slice(1);
+  const single = args.length === 1 && !deps.getRoom(args[0] as RoomId);
+  const targetRoomId = (args.length >= 2 || (args[0] && !single) ? args[0] : entity.room) as RoomId;
+  const value = args.length >= 2 ? args[1] : single ? args[0] : undefined;
+  const room = deps.getRoom(targetRoomId);
+  if (!room) {
+    ctx.send(input.entity, `Room "${targetRoomId}" not found.`);
+    return;
+  }
+  if (!value) {
+    const current = roomFormationOf(room);
+    ctx.send(
+      input.entity,
+      current
+        ? `Formation of "${targetRoomId}": ${current}.`
+        : `"${targetRoomId}" has no formation. Set one: build formation [room] ${ROOM_FORMATIONS.join("|")}`,
+    );
+    return;
+  }
+  const off = value.toLowerCase() === "off";
+  const formation = off ? undefined : roomFormationName(value);
+  if (!off && !formation) {
+    ctx.send(
+      input.entity,
+      `Unknown room formation "${value}". Use: ${ROOM_FORMATIONS.join(", ")}, or off.`,
+    );
+    return;
+  }
+  // The store keeps the setting across restarts (world-defined rooms reload
+  // from their files); the module and its saved source carry it into templates.
+  room.store?.set(ROOM_FORMATION_KEY, formation ?? "off");
+  if (formation) room.module.formation = formation;
+  else delete room.module.formation;
+  deps.db.saveRoomSource({
+    roomId: targetRoomId,
+    source: generateRoomSource(room.module),
+    authorId: input.entity,
+    authorName: entity.name,
+    valid: true,
+  });
+  ctx.send(
+    input.entity,
+    formation
+      ? `Formation of "${targetRoomId}": ${formation}. Each \`say\` here gets one [formation-mediator] line naming who is next.`
+      : `Formation of "${targetRoomId}" cleared.`,
+  );
 }
 
 function handleLink(
@@ -973,6 +1041,7 @@ function handleCommand(
 const BUILD_DISPATCH: Record<string, SubHandler> = {
   room: handleRoom,
   modify: handleModify,
+  formation: handleFormation,
   link: handleLink,
   unlink: handleUnlink,
   code: handleCode,
@@ -1006,6 +1075,11 @@ export function buildCommand(deps: BuildDeps): CommandDef {
       { syntax: "build destroy <room>", effect: "delete" },
       { syntax: "build diff", effect: "read" },
       { syntax: "build diff [args]", effect: "read" },
+      { syntax: "build formation [room]", effect: "read" },
+      {
+        syntax: "build formation [room] <debate|chorus|verification|off>",
+        effect: "write",
+      },
       { syntax: "build link [from] <exit> <to>", effect: "write" },
       { syntax: "build modify [room] <short|long|item> <value>", effect: "write" },
       { syntax: "build modify item <key> <description>", effect: "write" },
@@ -1025,7 +1099,7 @@ export function buildCommand(deps: BuildDeps): CommandDef {
     name: "build",
     aliases: [],
     minRank: 4,
-    help: "In-game building for rooms, templates, and dynamic commands.\nUsage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command\n\nRank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (operator grant; an operator may approve a single held run).\n\nExamples:\n  build room my/garden A Quiet Garden\n  build modify my/garden long Flowers bloom in every direction.\n  build link my/garden north hub/crossroads\n  build command create weather\n  build command reload weather",
+    help: "In-game building for rooms, templates, and dynamic commands.\nUsage: build room|modify|formation|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command\n\nRank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (operator grant; an operator may approve a single held run).\n\nExamples:\n  build room my/garden A Quiet Garden\n  build modify my/garden long Flowers bloom in every direction.\n  build link my/garden north hub/crossroads\n  build command create weather\n  build command reload weather",
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -1037,7 +1111,7 @@ export function buildCommand(deps: BuildDeps): CommandDef {
       if (!handler) {
         ctx.send(
           input.entity,
-          "Usage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command [args]",
+          "Usage: build room|modify|formation|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command [args]",
         );
         return;
       }
@@ -1071,6 +1145,8 @@ function generateRoomSource(module: RoomModule): string {
   } else {
     lines.push("  exits: {},");
   }
+
+  if (module.formation) lines.push(`  formation: ${JSON.stringify(module.formation)},`);
 
   if (module.items && Object.keys(module.items).length > 0) {
     lines.push("  items: {");
