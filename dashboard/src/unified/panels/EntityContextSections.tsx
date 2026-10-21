@@ -113,7 +113,7 @@ export const EntityActivitySection = memo(function EntityActivitySection({
               whiteSpace: "nowrap",
             }}
           >
-            {("input" in act ? act.input : null) ?? act.type}
+            {activityLabel(act)}
           </span>
         </div>
       ))}
@@ -374,3 +374,10 @@ export const MediaSection = memo(function MediaSection({
     </CascadeSection>
   );
 });
+
+/** The row's text: its input (private view), else the command verb, else the event type. */
+function activityLabel(act: { type: string; input?: unknown; verb?: unknown }): string {
+  if (typeof act.input === "string" && act.input) return act.input;
+  if (typeof act.verb === "string" && act.verb) return act.verb;
+  return act.type;
+}
