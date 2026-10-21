@@ -30,6 +30,11 @@ import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { SvgAction } from "./SvgAction";
 
 const DEFAULT_VIEWBOX = { x: 50, y: 10, w: 900, h: 730 };
+/** Message thread marks: how many a room shows, keeps, and for how long. */
+const THREAD_MARKS_VISIBLE = 3;
+const THREAD_MARKS_KEPT = 30;
+const THREAD_MARK_TTL_MS = 20_000;
+const THREAD_MARK_LINE = 8;
 
 function avg(nums: number[]): number {
   return nums.reduce((a, b) => a + b, 0) / nums.length;
@@ -351,6 +356,8 @@ export function WorldMap({
   const svgPrefix = useId();
   const selectedRoom = useWorldState((s) => s.selectedRoom);
   const selectRoom = useWorldState((s) => s.selectRoom);
+  const selectRoomRef = useRef(selectRoom);
+  selectRoomRef.current = selectRoom;
   const selectEntity = useWorldState((s) => s.selectEntity);
   const wsEntities = useWorldState((s) => s.entities);
   const wsRooms = useWorldState((s) => s.rooms);
@@ -372,6 +379,8 @@ export function WorldMap({
   const trailsRef = useRef<SVGGElement>(null);
   const threadsRef = useRef<SVGGElement>(null);
   const lastThreadAtRef = useRef(0);
+  /** Recent thread marks per room (content-free envelope lines). */
+  const threadMarksRef = useRef(new Map<string, { text: string; color: string; at: number }[]>());
   const rippleRef = useRef<SVGGElement>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const [tooltip, setTooltip] = useState<{
@@ -572,63 +581,102 @@ export function WorldMap({
 
   // ── 2.25: Message threads ─────────────────────────────────────────
   // Each typed message envelope (say_sent / tell_sent: names, ref and depth,
-  // never words) floats a short "from → to ↳depth" mark over the sender's
-  // room, so a viewer can follow who answered whom and how deep the thread
-  // is. Imperative like the trails above: events never re-render the map.
+  // never words) adds a short "from → to ↳depth" mark to a small stack over
+  // the sender's room, newest on top. A room shows at most
+  // THREAD_MARKS_VISIBLE marks plus a "+N" line, each lingering
+  // THREAD_MARK_TTL_MS; clicking a stack opens the room, whose "Activity
+  // here" keeps the same lines. Imperative like the trails above: events
+  // never re-render the map.
   useEffect(() => {
     if (allPositions.length === 0) return;
-    const reduced = prefersReducedMotion();
-    const processThreads = (eventFeed: DashboardEvent[]) => {
+    const marks = threadMarksRef.current;
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const renderRoom = (roomId: string) => {
       const layer = threadsRef.current;
-      if (!layer) return;
+      const pos = posMap.get(roomId);
+      if (!layer || !pos) return;
+      layer.querySelector(`g[data-thread-room="${CSS.escape(roomId)}"]`)?.remove();
+      const live = (marks.get(roomId) ?? []).filter((m) => Date.now() - m.at < THREAD_MARK_TTL_MS);
+      if (live.length === 0) {
+        marks.delete(roomId);
+        return;
+      }
+      marks.set(roomId, live);
+      const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      group.setAttribute("data-thread-room", roomId);
+      group.setAttribute("data-testid", "map-thread-stack");
+      group.setAttribute("role", "button");
+      group.setAttribute("aria-label", `Message threads in ${roomId}: open the room`);
+      group.style.cursor = "pointer";
+      group.addEventListener("click", () => selectRoomRef.current(roomId));
+      const shown = live.slice(-THREAD_MARKS_VISIBLE).reverse();
+      const lines = [...shown.map((m) => ({ text: m.text, color: m.color }))];
+      const hidden = live.length - shown.length;
+      if (hidden > 0) lines.push({ text: `+${hidden} more`, color: "var(--color-text-dim)" });
+      lines.forEach((line, i) => {
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", String(pos.x));
+        text.setAttribute("y", String(pos.y - 30 - i * THREAD_MARK_LINE));
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("font-size", "6.5");
+        text.setAttribute("font-family", "Share Tech Mono, monospace");
+        text.setAttribute("fill", line.color);
+        // A halo in the page colour keeps marks readable over rooms and arcs.
+        text.setAttribute("stroke", "var(--color-bg, #fff)");
+        text.setAttribute("stroke-width", "2");
+        text.setAttribute("paint-order", "stroke");
+        text.setAttribute("opacity", String(i === 0 ? 1 : 0.8));
+        if (i < shown.length) text.setAttribute("data-testid", "map-thread-mark");
+        text.textContent = line.text;
+        group.appendChild(text);
+      });
+      layer.appendChild(group);
+    };
+    const processThreads = (eventFeed: DashboardEvent[]) => {
       const fresh = eventFeed
         .filter(
           (ev) =>
             (ev.type === "say_sent" || ev.type === "tell_sent") &&
             ev.timestamp > lastThreadAtRef.current,
         )
-        .slice(0, 6)
+        .slice(0, 20)
         .reverse();
       if (fresh.length === 0) return;
       lastThreadAtRef.current = Math.max(...fresh.map((ev) => ev.timestamp));
       const wsEntities = useWorldState.getState().entities;
+      const touched = new Set<string>();
       for (const ev of fresh) {
         const sender = ev.from ?? "";
         const roomId = ev.room ?? wsEntities.find((e) => e.name === sender)?.room;
-        const pos = roomId ? posMap.get(roomId) : undefined;
-        if (!pos || !sender) continue;
+        if (!roomId || !sender || !posMap.has(roomId)) continue;
         const depth = ev.depth ?? 0;
-        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        text.setAttribute("x", String(pos.x));
-        text.setAttribute("y", String(pos.y - 30 - (layer.childElementCount % 4) * 8));
-        text.setAttribute("text-anchor", "middle");
-        text.setAttribute("font-size", "6.5");
-        text.setAttribute("font-family", "Share Tech Mono, monospace");
-        text.setAttribute("fill", ev.type === "tell_sent" ? "#8b5cf6" : "#06b6d4");
-        text.setAttribute("data-testid", "map-thread-mark");
-        text.textContent = `${sender}${ev.to ? ` → ${ev.to}` : " (room)"}${depth > 0 ? ` ↳${depth}` : ""}`;
-        layer.appendChild(text);
-        if (reduced) {
-          setTimeout(() => text.remove(), 4000);
-          continue;
-        }
-        animate(
-          text,
-          { opacity: [1, 1, 0] },
-          {
-            duration: 4,
-            times: [0, 0.7, 1],
-            ease: "linear",
-            onComplete: () => text.remove(),
-          },
-        );
+        const list = marks.get(roomId) ?? [];
+        list.push({
+          text: `${sender}${ev.to ? ` → ${ev.to}` : " (room)"}${depth > 0 ? ` ↳${depth}` : ""}`,
+          color: ev.type === "tell_sent" ? "#8b5cf6" : "#06b6d4",
+          at: Date.now(),
+        });
+        marks.set(roomId, list.slice(-THREAD_MARKS_KEPT));
+        touched.add(roomId);
+      }
+      for (const roomId of touched) {
+        renderRoom(roomId);
+        const timer = setTimeout(() => {
+          timers.delete(timer);
+          renderRoom(roomId);
+        }, THREAD_MARK_TTL_MS + 50);
+        timers.add(timer);
       }
     };
     lastThreadAtRef.current = useWorldState.getState().eventFeed[0]?.timestamp ?? 0;
+    for (const roomId of marks.keys()) renderRoom(roomId);
     const unsub = useWorldState.subscribe((state, prev) => {
       if (state.eventFeed !== prev.eventFeed) processThreads(state.eventFeed);
     });
-    return unsub;
+    return () => {
+      unsub();
+      for (const timer of timers) clearTimeout(timer);
+    };
   }, [posMap, allPositions]);
 
   // ── 2.3: Room Activity Breathing ──────────────────────────────────

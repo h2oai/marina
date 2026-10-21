@@ -109,7 +109,10 @@ export function formatEvent(
   event: DashboardEvent,
   resolveEntityName: (id: string) => string | undefined,
 ): { color: string; prefix: string; suffix: string } {
-  const entityName = event.entity ? (resolveEntityName(event.entity) ?? event.entity) : undefined;
+  // A departed entity is no longer in the roster: its event carries the name it had.
+  const entityName = event.entity
+    ? (resolveEntityName(event.entity) ?? event.name ?? event.entity)
+    : undefined;
   const room = event.room?.split("/")[1] ?? event.room ?? "";
 
   const clip = (s: string, n = 100): string => (s.length > n ? `${s.slice(0, n)}…` : s);

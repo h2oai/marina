@@ -578,7 +578,13 @@ export class Engine {
 
   /** World lifecycle uses the same leave event for disconnects and explicit despawns. */
   private emitEntityLeave(entityId: EntityId, room: RoomId): void {
-    this.logEvent({ type: "entity_leave", entity: entityId, room, timestamp: Date.now() });
+    this.logEvent({
+      type: "entity_leave",
+      entity: entityId,
+      name: this.entities.get(entityId)?.name,
+      room,
+      timestamp: Date.now(),
+    });
   }
 
   /** Bind a connection to a new entity (login) */
@@ -609,6 +615,7 @@ export class Engine {
     this.logEvent({
       type: "entity_enter",
       entity: entity.id,
+      name: entity.name,
       room: entity.room,
       timestamp: Date.now(),
     });
