@@ -37,6 +37,7 @@ import {
   routeLimited,
   sameModelFallback,
 } from "../net/model/route-health";
+import { noteTierOutputCapReply } from "../net/model/tier-output-cap";
 import { callCost, isLoopbackMarinaSpec, type ResolvedModel, type Usage } from "./access";
 import type { ModelPurpose } from "./purpose";
 import {
@@ -99,6 +100,9 @@ export interface CallRequest {
   toolChoice?: ToolChoice;
   timeoutMs: number;
   signals: readonly (AbortSignal | undefined)[];
+  /** Set when `maxTokens` is the tier's default cap (`marina/cheap`, the caller
+   *  set none): a reply that stops on its length limit is a cap hit. */
+  tierCapped?: boolean;
 }
 
 /** The OpenRouter route for the same model while `target`'s direct route is limited. */
@@ -214,6 +218,8 @@ export async function modelCall(
       if (ledger) recordPurposeSpend(binding.purpose, binding.source, cost, env);
       binding.onCost?.(cost);
       if (!binding.failOn.has(result.stopReason)) {
+        const capHit = !!request.tierCapped && result.stopReason === "length";
+        if (request.tierCapped) noteTierOutputCapReply(capHit);
         emitModelTrace(
           lifecycle(binding, requestId, "completed", {
             ...(routed ? { routeKind: "fallback" as const, target: target.spec } : {}),
@@ -221,6 +227,8 @@ export async function modelCall(
             inputTokens: tokens.input,
             outputTokens: tokens.output,
             costUsd: tokens.cost,
+            ...(request.tierCapped ? { outputCap: request.maxTokens } : {}),
+            ...(capHit ? { outputCapHit: true } : {}),
             ...(attempt > 0 ? { detail: `retries:${attempt}` } : {}),
           }),
         );

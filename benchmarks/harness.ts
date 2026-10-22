@@ -154,8 +154,11 @@ function printSummary(result: BenchmarkResult): void {
     );
     if (usage.promptTokens !== undefined || usage.completionTokens !== undefined) {
       console.log(
-        `  Tokens: ${usage.promptTokens ?? "n/a"} in / ${usage.completionTokens ?? "n/a"} out`,
+        `  Tokens: ${usage.promptTokens ?? "n/a"} in / ${usage.completionTokens ?? "n/a"} out${usage.reasoningTokens !== undefined ? ` (${usage.reasoningTokens} reasoning)` : ""}`,
       );
+    }
+    if (usage.outputCapHits !== undefined) {
+      console.log(`  Output cap hits: ${usage.outputCapHits} (of ${usage.items} items)`);
     }
     const cache = formatCacheUsage(usage);
     if (cache) console.log(`  ${cache}`);

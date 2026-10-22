@@ -17,15 +17,19 @@ function addOptional(a: number | undefined, b: number | undefined): number | und
 
 /** Fold one call's usage into an item's running total. */
 export function addCallUsage(total: ItemUsage | undefined, call: CallUsage): ItemUsage {
+  const reasoningTokens = addOptional(total?.reasoningTokens, call.reasoningTokens);
+  const outputCapHits = addOptional(total?.outputCapHits, call.outputCapHit ? 1 : undefined);
   const cached = addOptional(total?.cachedPromptTokens, call.cachedPromptTokens);
   const written = addOptional(total?.cacheWriteTokens, call.cacheWriteTokens);
   return {
     calls: (total?.calls ?? 0) + 1,
     promptTokens: addOptional(total?.promptTokens, call.promptTokens),
     completionTokens: addOptional(total?.completionTokens, call.completionTokens),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
     ...(written !== undefined ? { cacheWriteTokens: written } : {}),
     costUsd: addOptional(total?.costUsd, call.costUsd),
+    ...(outputCapHits !== undefined ? { outputCapHits } : {}),
   };
 }
 
@@ -41,6 +45,11 @@ export function summarizeUsage(items: ResultItem[]): UsageSummary {
       summary.cachedPromptTokens = addOptional(summary.cachedPromptTokens, u.cachedPromptTokens);
       summary.cacheWriteTokens = addOptional(summary.cacheWriteTokens, u.cacheWriteTokens);
     }
+    const answer = item.usage;
+    if (answer?.reasoningTokens !== undefined)
+      summary.reasoningTokens = addOptional(summary.reasoningTokens, answer.reasoningTokens);
+    if (answer?.outputCapHits !== undefined)
+      summary.outputCapHits = addOptional(summary.outputCapHits, answer.outputCapHits);
     if (item.usage?.costUsd !== undefined) {
       summary.pricedItems++;
       summary.costUsd = addOptional(summary.costUsd, item.usage.costUsd);
