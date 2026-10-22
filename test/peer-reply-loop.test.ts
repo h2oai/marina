@@ -6,8 +6,8 @@
  * real attention (`assessPerception`), the real reply ledger
  * (`OutstandingRequests`), the real outgoing acknowledgement refusal and the
  * real `tell` delivery (`deliverTell` over an in-memory `MarinaDB`, which
- * stamps the envelope depth). Only the model is replaced: a policy that
- * writes the reply text.
+ * stamps the causal envelope and the sender kind). Only the model is
+ * replaced: a policy that writes the reply text.
  *
  * Regression for the 2026-10-21 answerer crew run, where two Answerers traded
  * "[re:mapping] terminal, no reply needed" tells without bound: the echoed
@@ -21,6 +21,8 @@ import {
   type AttentionState,
   assessPerception,
   createAttentionState,
+  type PeerChainPolicy,
+  peerChainPolicy,
   rememberThreadTags,
 } from "../src/agent/attention";
 import { type OutstandingRequest, OutstandingRequests } from "../src/agent/outstanding-requests";
@@ -58,7 +60,7 @@ class Member {
     readonly world: World,
     readonly reply: ReplyPolicy,
     readonly chat?: ChatPolicy,
-    readonly peerReplyDepth = 6,
+    readonly peerChain: PeerChainPolicy = { mode: "observe", threshold: 6 },
   ) {}
 
   get name(): string {
@@ -77,12 +79,14 @@ class Member {
         events,
         scorer: this.social,
         nudgeMode: "requests",
-        peerReplyDepth: this.peerReplyDepth,
+        peerChain: this.peerChain,
       },
       { mode: "balanced", threshold: 50 },
       this.attention,
     );
-    if (decision.releasePeer) this.ledger.complete(this.ledger.idsForPeer(decision.releasePeer));
+    const thread = decision.releaseThread;
+    if (thread)
+      this.ledger.complete(this.ledger.idsForThread(thread.peer, thread.tags, thread.cause));
     if (!decision.keep) return;
     const from = String(p.data.senderName ?? "");
     this.decisions.push({ from, decision });
@@ -143,8 +147,8 @@ class World {
     } as unknown as Entity;
   }
 
-  add(name: string, reply: ReplyPolicy, chat?: ChatPolicy, peerReplyDepth?: number): Member {
-    const member = new Member(this.entity(name), this, reply, chat, peerReplyDepth);
+  add(name: string, reply: ReplyPolicy, chat?: ChatPolicy, peerChain?: PeerChainPolicy): Member {
+    const member = new Member(this.entity(name), this, reply, chat, peerChain);
     this.members.set(name.toLowerCase(), member);
     return member;
   }
@@ -320,15 +324,30 @@ describe("acknowledgement loops between two agents", () => {
     }
   });
 
-  it("a peer's 'no reply needed' releases the replies still owed to that peer", () => {
-    const b = world.add("Bea", () => undefined); // silent: the ask stays owed
-    world.add("Ada", () => undefined);
-    world.tell(world.members.get("ada")!, "Bea", "Can you check the e_3 queue?");
+  it("a peer's 'no reply needed' on a thread releases only that thread's reply", () => {
+    const b = world.add("Bea", () => undefined); // silent: the asks stay owed
+    const ada = world.add("Ada", () => undefined);
+    world.tell(ada, "Bea", "Can you check the e_3 queue? [re:aa11bb]");
+    world.tell(ada, "Bea", "Separately: which source backs item 4?");
+    b.turn();
+    expect(b.ledger.size).toBe(2);
+    world.tell(ada, "Bea", "[re:aa11bb] Never mind, found it myself — no reply needed.");
+    b.turn();
+    // The closed thread's ask is released; the other question is still owed.
+    expect(b.ledger.entries().map((r) => r.text)).toEqual([
+      expect.stringContaining("which source backs item 4"),
+    ]);
+  });
+
+  it("an untagged 'no reply needed' owes nothing itself and releases nothing else", () => {
+    const b = world.add("Bea", () => undefined);
+    const ada = world.add("Ada", () => undefined);
+    world.tell(ada, "Bea", "Can you check the e_3 queue?");
+    b.turn();
+    world.tell(ada, "Bea", "FYI the nightly run finished — no reply needed.");
     b.turn();
     expect(b.ledger.size).toBe(1);
-    world.tell(world.members.get("ada")!, "Bea", "Never mind, found it myself — no reply needed.");
-    b.turn();
-    expect(b.ledger.size).toBe(0);
+    expect(b.decisions.at(-1)!.decision.owed).toBe(false);
   });
 });
 
@@ -340,7 +359,8 @@ describe("real collaboration still works", () => {
     world.run();
     const thread = world.between("Ada", "Bea");
     expect(thread.map((t) => t.from)).toEqual(["Ada", "Bea"]);
-    expect(thread[1]!.depth).toBe(1);
+    // A plain tell names no cause: the envelope stays causal (depth 0).
+    expect(thread[1]!.depth).toBe(0);
   });
 
   it("a tellAndAwait-style tagged ask gets one tagged reply, which owes the asker nothing", () => {
@@ -368,47 +388,78 @@ describe("real collaboration still works", () => {
   });
 });
 
-describe("the depth bound on agent-only reply chains", () => {
+describe("long exchanges between two agents", () => {
   /** Two chatty agents: each owed request and each message that wakes them gets a substantive reply. */
   const chatty: ChatPolicy = (_d, _from, m) =>
     `Noting e_${++n} for ${m.name}: the second source agrees (${n}).`;
   const asks: ReplyPolicy = (_r, m) => `${m.name} here — which source did you use for item ${++n}?`;
 
-  it("a chain of genuine-looking questions between two agents stops at the depth limit", () => {
-    const ada = world.add("Ada", asks, chatty, 4);
-    world.add("Bea", asks, chatty, 4);
+  it("by default a long real exchange keeps waking both sides and owing replies", () => {
+    const ada = world.add("Ada", asks, chatty);
+    const bea = world.add("Bea", asks, chatty);
     ada.send("Bea", "Which year did Chelsea last win the UCL?");
-    world.run();
+    world.run(14);
     const thread = world.between("Ada", "Bea");
-    // Depths 0..4 are delivered; the depth-4 tell owes nothing and wakes no one.
-    expect(thread.map((t) => t.depth)).toEqual([0, 1, 2, 3, 4]);
-    const deepest = [...world.members.values()]
-      .flatMap((m) => m.decisions)
-      .find((d) => d.decision.reason === "depth-limit");
-    expect(deepest?.decision.owed).toBe(false);
-    expect(deepest?.decision.wake).toBe("next");
+    expect(thread.length).toBeGreaterThanOrEqual(12);
+    const decisions = [...ada.decisions, ...bea.decisions].map((d) => d.decision);
+    expect(decisions.every((d) => d.reason !== "chain-limit")).toBe(true);
+    expect(decisions.filter((d) => d.owed).length).toBeGreaterThanOrEqual(10);
+    // Envelope depth is causal: plain tells name no cause.
+    expect(thread.every((t) => t.depth === 0)).toBe(true);
   });
 
-  it("the default limit bounds a chain that never reads as an acknowledgement", () => {
+  it("observes the exchange once it passes the threshold, without changing it", () => {
     const ada = world.add("Ada", asks, chatty);
     world.add("Bea", asks, chatty);
     ada.send("Bea", "Which year did Chelsea last win the UCL?");
-    world.run(100);
-    expect(world.between("Ada", "Bea")).toHaveLength(7); // depths 0..6
+    world.run(14);
+    const observed = ada.decisions.map((d) => d.decision).filter((d) => d.peerChain !== undefined);
+    expect(observed.length).toBeGreaterThan(0);
+    expect(observed[0]!.peerChain).toBe(7);
+    expect(observed.every((d) => d.wake === "now")).toBe(true);
   });
 
-  it("MARINA_PEER_REPLY_DEPTH=0 turns the bound off (the chain runs to the round cap)", () => {
-    const ada = world.add("Ada", asks, chatty, 0);
-    world.add("Bea", asks, chatty, 0);
+  it("enforce:<n> is an explicit opt-in that stops owing and waking past n turns", () => {
+    const enforce: PeerChainPolicy = { mode: "enforce", threshold: 4 };
+    const ada = world.add("Ada", asks, chatty, enforce);
+    world.add("Bea", asks, chatty, enforce);
     ada.send("Bea", "Which year did Chelsea last win the UCL?");
-    world.run(12);
-    expect(world.between("Ada", "Bea").length).toBeGreaterThan(7);
+    world.run(40);
+    const limited = [...world.members.values()]
+      .flatMap((m) => m.decisions)
+      .find((d) => d.decision.reason === "chain-limit");
+    expect(limited?.decision.owed).toBe(false);
+    expect(limited?.decision.wake).toBe("next");
+    expect(world.between("Ada", "Bea").length).toBeLessThan(12);
+  });
+
+  it("off counts nothing", () => {
+    const off: PeerChainPolicy = { mode: "off", threshold: 0 };
+    const ada = world.add("Ada", asks, chatty, off);
+    world.add("Bea", asks, chatty, off);
+    ada.send("Bea", "Which year did Chelsea last win the UCL?");
+    world.run(10);
+    expect(ada.decisions.every((d) => d.decision.peerChain === undefined)).toBe(true);
+  });
+
+  it("reads MARINA_PEER_REPLY_CHAIN", () => {
+    expect(peerChainPolicy({})).toEqual({ mode: "observe", threshold: 6 });
+    expect(peerChainPolicy({ MARINA_PEER_REPLY_CHAIN: "off" }).mode).toBe("off");
+    expect(peerChainPolicy({ MARINA_PEER_REPLY_CHAIN: "enforce:8" })).toEqual({
+      mode: "enforce",
+      threshold: 8,
+    });
+    expect(peerChainPolicy({ MARINA_PEER_REPLY_CHAIN: "observe:3" }).threshold).toBe(3);
+    expect(peerChainPolicy({ MARINA_PEER_REPLY_CHAIN: "junk" })).toEqual({
+      mode: "observe",
+      threshold: 6,
+    });
   });
 });
 
 describe("a person's message is unaffected", () => {
   it("a person keeps getting answers however long the conversation runs", () => {
-    const bea = world.add("Bea", answers, undefined, 2);
+    const bea = world.add("Bea", answers, undefined, { mode: "enforce", threshold: 2 });
     const jeff = world.person("Jeff");
     for (let i = 0; i < 6; i++) {
       world.tell(jeff, "Bea", `Question ${i}: which source backs item ${i}?`);
@@ -445,6 +496,10 @@ describe("declinesReply", () => {
     "No reply needed unless you disagree — do you?",
     "Which source did you use?",
     "Reply when the queue is clear.",
+    "Do not reply until you've run the tests.",
+    "don't answer yet — check the logs first",
+    "No reply needed — fix the parser and push.",
+    "Don't respond before the build is green.",
     "",
   ])("does not decline: %s", (m) => expect(declinesReply(m)).toBe(false));
 });

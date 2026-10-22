@@ -243,17 +243,21 @@ export class OutstandingRequests {
       .map((request) => request.id);
   }
   /**
-   * The ledger ids of the conversational replies owed to `peer` (a tell or
-   * say asked by them; endpoint requests excluded), matched by normalised
-   * resident name.
+   * The ledger ids of the conversational reply owed to `peer` on one thread:
+   * a request from them carrying one of `tags` (lower-cased `[re:…]` ids), or
+   * the request `cause` names (`tell:<id>`). Other asks from that peer and
+   * endpoint requests are never included.
    */
-  idsForPeer(peer: string): string[] {
+  idsForThread(peer: string, tags: readonly string[], cause?: string): string[] {
+    const wanted = new Set(tags.map((tag) => tag.toLowerCase()));
     return this.entries()
       .filter(
         (request) =>
           !request.modelRequestId &&
           request.kind !== "channel" &&
-          sameResidentName(request.speaker ?? request.target, peer),
+          sameResidentName(request.speaker ?? request.target, peer) &&
+          ((request.correlation !== undefined && wanted.has(request.correlation.toLowerCase())) ||
+            (cause !== undefined && request.id === cause)),
       )
       .map((request) => request.id);
   }

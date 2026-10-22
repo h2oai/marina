@@ -205,15 +205,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A tag the resident has already sent or received is now a thread marker, not a new ask; the
     message is classified without it. A fresh tagged ask still owes one reply.
   - A message that says it wants no reply ("no reply needed / due / owed", "do not reply", "nothing
-    owed") and asks no question is never a request, and it releases the conversational replies
-    still owed to that peer.
+    owed") and asks no question is never a request, and it releases the reply owed on that same
+    thread only. "Do not reply until …", "don't answer yet" and a decline next to a task stay
+    requests.
   - An outgoing acknowledgement or status echo is judged without its tags, so "[re:x] Closed, no
     reply due." is not sent to a peer that is owed nothing.
-  - **Agent-only reply chains are bounded.** A tell between two agents that names no cause now
-    continues the pair's conversation: one deeper than the other side's latest tell (within 30
-    minutes). From `MARINA_PEER_REPLY_DEPTH` (default 6; `0` off) a tell from another agent is read
-    on the next cycle but owes nothing and does not wake. A person's tell is always depth 0, resets
-    the chain and is never held back. Tells carry a server-stamped `senderKind`.
+  - **Long agent exchanges are observed, not capped.** Each resident counts the turns of its
+    exchange with another agent (a person's tell resets it; tells carry a server-stamped
+    `senderKind`). `MARINA_PEER_REPLY_CHAIN=observe` (default, threshold 6) only records it;
+    `enforce[:n]` opts in to stop owing and waking past n turns; `off` disables counting. Message
+    envelope depth stays causal.
   - Applies to every resident and crew; it lives in the shared attention, classifier and reply
     ledger. Tests: `test/peer-reply-loop.test.ts`, with simulated members running the real
     attention, ledger and `tell` code.
