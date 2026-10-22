@@ -248,8 +248,8 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   },
   {
     name: "Supervised residents",
-    status: "experimental",
-    enable: "`MARINA_SUPERVISED_RESIDENTS=on` (server and supervisor)",
+    status: "core",
+    enable: "On by default; `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) turns it off",
     owner: "src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts",
   },
   {

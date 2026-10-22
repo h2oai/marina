@@ -58,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Supervised residents are on by default.** Every agent `marina supervise` or the console launches (Claude Code, Codex, pi) is its own world account, owned by the launching person, with no credential in its environment. `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) restores the earlier routing; a supervisor whose server offers no supervision endpoint falls back to it and says so. `readiness` gains an optional `supervised-residents` check; feature status: core.
 - **The cheap tier has a default output cap.** A `marina/cheap` request that sets no
   `max_tokens` is sent `max_tokens: 16384`, and on OpenRouter `reasoning.max_tokens` at 3/4 of
   that (`MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS`; `0`/`off` disables it). On the 2026-10-20

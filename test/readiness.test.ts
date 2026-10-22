@@ -8,7 +8,12 @@ import {
 } from "../src/agent/tool-call-probe";
 import { readinessCommand, renderTrustProfileLine } from "../src/engine/commands/readiness";
 import { Engine } from "../src/engine/engine";
-import { computeReadiness, computeTrustProfile, readinessCounts } from "../src/engine/readiness";
+import {
+  computeReadiness,
+  computeTrustProfile,
+  readinessCounts,
+  supervisedResidentsCheck,
+} from "../src/engine/readiness";
 import { setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, EntityId, RoomContext } from "../src/types";
@@ -61,6 +66,24 @@ describe("computeReadiness", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
+  });
+
+  it("reports supervised residents: on by default with the enrolled count, off when set off", () => {
+    db.saveAgentConfig({
+      name: "Wren",
+      model: "claude",
+      spawnedBy: "Ann",
+      runtime: "supervised",
+      vendor: "claude",
+    });
+    db.saveAgentConfig({ name: "Helper", model: "marina/default", spawnedBy: "Ann" });
+    const on = supervisedResidentsCheck(engine, {});
+    expect(on).toMatchObject({ id: "supervised-residents", status: "ok", optional: true });
+    expect(on.detail).toContain("1 enrolled, 0 present");
+    const off = supervisedResidentsCheck(engine, { MARINA_SUPERVISED_RESIDENTS: "off" });
+    expect(off).toMatchObject({ status: "off", optional: true });
+    expect(off.remediation).toContain("MARINA_SUPERVISED_RESIDENTS");
+    expect(computeReadiness(engine).checks.some((c) => c.id === "supervised-residents")).toBe(true);
   });
 
   /** Run the `readiness` command against a report and capture its text. */

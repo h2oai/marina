@@ -17,7 +17,7 @@ import { MockConnection, makeTestRoom } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
 const ON = { MARINA_SUPERVISED_RESIDENTS: "on" };
-const OFF = { MARINA_SUPERVISED_RESIDENTS: undefined };
+const OFF = { MARINA_SUPERVISED_RESIDENTS: "off" };
 
 let directory: string;
 let db: MarinaDB;

@@ -71,10 +71,13 @@ With supervised residents off (the default) these are the operator's existing ac
 not reduced per-agent credentials. Treat managed agents as programs running under that local user and
 account.
 
-### Supervised residents (experimental)
+### Supervised residents
 
-With `MARINA_SUPERVISED_RESIDENTS=on` on the server **and** in the supervisor's environment, every
-launched agent is its own world account instead of acting through the operator's:
+By default (`MARINA_SUPERVISED_RESIDENTS` unset or `on`), every agent a supervisor launches is its
+own world account instead of acting through the operator's. Set `MARINA_SUPERVISED_RESIDENTS=off` on
+the server or in the supervisor's environment to keep the earlier behaviour; a supervisor whose
+server does not offer residents (off, or an older server) falls back to it and says so at start.
+`readiness` reports the setting and how many residents are enrolled and present.
 
 - **Enrolment.** Between joining its run session and starting the native process, the supervisor
   calls `POST /api/routing/residents`. The caller must be a person (an agent account is refused) and
