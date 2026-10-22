@@ -33,6 +33,8 @@ export interface ReplScreenOptions {
   queued: () => number;
   completer?: (line: string) => Promise<string[]>;
   onLine: (line: string) => void;
+  /** Esc while a command runs; true when it stopped a wait. */
+  onEscape?: () => boolean;
   onClose: () => void;
   historyFile?: string;
 }
@@ -120,6 +122,7 @@ export class ReplScreen {
       this.expand();
       return;
     }
+    if (key?.name === "escape" && this.busy && this.options.onEscape?.()) return;
     // Readline repaints the prompt row with clear-to-end-of-screen; put the footer back.
     setImmediate(() => this.drawBelow());
   };
@@ -338,7 +341,11 @@ export class ReplScreen {
     const glyph = frames[this.busy.frame % frames.length]!;
     const seconds = Math.floor((Date.now() - this.busy.started) / 1000);
     const queued = this.options.queued();
-    const meta = [`${seconds}s`, ...(queued ? [`${queued} queued`] : [])].join(` ${this.g.dot} `);
+    const meta = [
+      `${seconds}s`,
+      ...(queued ? [`${queued} queued`] : []),
+      ...(this.options.onEscape ? ["esc to stop waiting"] : []),
+    ].join(` ${this.g.dot} `);
     return `${this.theme.fg("accent2")(glyph)} ${this.theme.fg("accent2")(this.busy.label)}${this.theme.fg("faint")(` (${meta})`)}`;
   }
 

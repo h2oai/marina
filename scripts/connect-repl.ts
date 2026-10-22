@@ -24,7 +24,7 @@ import {
   type SegmentContext,
   saveCliSetting,
 } from "./term-prompt";
-import { glyphsFor, type RenderOptions, renderPerception } from "./term-render";
+import { glyphsFor, type RenderOptions, renderPerception, wrap } from "./term-render";
 import { defaultHistoryFile, ReplScreen } from "./term-repl";
 import { httpBase, WorldStatus } from "./term-status";
 import { createTheme, gradientAt, PALETTES, paletteFor, type Theme } from "./term-theme";
@@ -94,6 +94,14 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
   let last: { ok: boolean; ms: number } | undefined;
   const queue: string[] = [];
   let running = false;
+  /** The wait Esc can stop (the command itself keeps running on the server). */
+  let waiting: AbortController | undefined;
+  /** Commands whose wait you stopped; their output may still arrive. */
+  const abandoned: string[] = [];
+  const lateHeader = () => {
+    const from = abandoned.length === 1 ? `“${abandoned[0]}”` : "a command you stopped waiting for";
+    return `  ${theme.fg("faint")(`${glyphsFor(theme).result}  late output from ${from}`)}`;
+  };
   let closing = false;
   let reconnecting = false;
 
@@ -128,6 +136,11 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
       };
     },
     queued: () => queue.length,
+    onEscape: () => {
+      if (!waiting) return false;
+      waiting.abort();
+      return true;
+    },
     completer: async (line) => complete(line),
     onLine: (line) => {
       queue.push(line);
@@ -155,7 +168,8 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
       flushTimer ??= setTimeout(flushPending, 1_200);
       return;
     }
-    screen.print(renderPerception(p, renderOptions(), { own: !!p.command_request_id }));
+    const lines = renderPerception(p, renderOptions(), { own: !!p.command_request_id });
+    screen.print(p.command_request_id && abandoned.length ? [lateHeader(), ...lines] : lines);
   };
   // A dropped socket (server restart, network) is a state, not an exit: the
   // status bar says offline and the session comes back on its own token.
@@ -216,8 +230,16 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
         ]);
       };
       let ok = false;
+      let result: Perception[] | undefined;
+      const stop = new AbortController();
+      waiting = stop;
       try {
-        ok = await runCliCommand(agent, line, report);
+        ok = await runCliCommand(agent, line, report, {
+          signal: stop.signal,
+          onResult: (perceptions) => {
+            result = perceptions;
+          },
+        });
       } catch (err) {
         // Not a refusal: the transport failed. Say so; the line is not retried.
         report(`${err instanceof Error ? err.message : String(err)} — not run; reconnecting`);
@@ -225,14 +247,40 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
           connected = false;
           void reconnectLoop();
         }
+      } finally {
+        waiting = undefined;
       }
       if (flushTimer) clearTimeout(flushTimer);
       flushTimer = undefined;
+      // This request's output is exactly the SDK's per-request list; anything
+      // else held back meanwhile is late output of a command you stopped waiting for.
+      const mine = new Set(result ?? []);
+      const late: string[] = [];
       const lines: string[] = [];
-      for (const [p, shown] of pending)
-        if (!shown) lines.push(...renderPerception(p, renderOptions(), { own: true, failed: !ok }));
+      for (const [p, shown] of pending) {
+        if (shown) continue;
+        if (mine.has(p) || !result)
+          lines.push(...renderPerception(p, renderOptions(), { own: true, failed: !ok }));
+        else late.push(...renderPerception(p, renderOptions(), { own: true }));
+      }
       pending.clear();
-      last = { ok: ok && !failed, ms: Date.now() - started };
+      if (late.length) screen.print([lateHeader(), ...late, ""]);
+      // Commands run in order per participant: once a later one completes,
+      // everything abandoned before it has finished and delivered its output.
+      if (!stop.signal.aborted && result) abandoned.length = 0;
+      if (stop.signal.aborted) {
+        failed = true;
+        const note = `${theme.fg("warning")("stopped waiting")} ${theme.fg("muted")("— it keeps running on the server and your next commands wait behind it; its output prints here when it arrives")}`;
+        lines.push(
+          ...wrap(note, (out.columns || 80) - 5).map(
+            (part, i) =>
+              `${i ? "     " : `  ${theme.fg("faint")(glyphsFor(theme).result)}  `}${part}`,
+          ),
+        );
+        abandoned.push(line);
+      }
+      // Stopping a wait is your choice, not a refusal: the chevron stays calm.
+      last = { ok: stop.signal.aborted || (ok && !failed), ms: Date.now() - started };
       screen.setBusy(undefined);
       if (lines.length) screen.printResult([...lines, ""]);
       else if (!failed)

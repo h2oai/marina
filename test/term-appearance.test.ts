@@ -378,12 +378,31 @@ describe("starship-style formats", () => {
     const seg = (name: string) => plainText(renderFormat(`$${name}`, c));
     expect(seg("agents")).toBe("✦ 1 agent");
     expect(seg("tasks")).toBe("◇ 7 open 2 to review");
-    expect(seg("approvals")).toBe("⚑ 1 approval");
+    // Without the holds endpoint, an operator's approval alerts still count.
+    expect(seg("approvals")).toBe("⚑ 1 to approve");
+    expect(seg("held")).toBe("");
     expect(seg("alerts")).toBe("✗ 1 alert");
     expect(seg("spend")).toMatch(/^\$4\.00\/\$10\.00 /);
     expect(seg("standing")).toBe("◈ 12.5 r2");
     expect(seg("health")).toBe("● live");
     expect(seg("cwd")).toBe("/tmp");
+  });
+
+  test("held actions come from the caller's own holds", () => {
+    const c = context();
+    const hold = {
+      token: "t1",
+      kind: "gate",
+      requester: "Ada",
+      summary: "x",
+      reason: "y",
+      expiresAt: 0,
+    };
+    c.snapshot.challenges = { answerable: [hold, hold], raised: [hold] };
+    expect(plainText(renderFormat("$approvals", c))).toBe("⚑ 2 to approve");
+    expect(plainText(renderFormat("$held", c))).toBe("⧗ 1 held");
+    c.snapshot.challenges = { answerable: [], raised: [] };
+    expect(renderFormat("($approvals)($held)", c)).toBe("");
   });
 
   test("the chevron turns red after a refused command; took appears past 2 s", () => {

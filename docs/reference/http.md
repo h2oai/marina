@@ -841,28 +841,35 @@ Fields read here: `error`, `setting`, `value`.
 
 ### `url.pathname === "/api/readiness"`
 
-[Source](../../src/net/dashboard-api/readiness.ts#L19)
+[Source](../../src/net/dashboard-api/readiness.ts#L20)
 
 - Guard: `url.pathname === "/api/readiness" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/operations/alerts"`
 
-[Source](../../src/net/dashboard-api/readiness.ts#L22)
+[Source](../../src/net/dashboard-api/readiness.ts#L23)
 
 - Guard: `url.pathname === "/api/operations/alerts" && method === "GET" && db`
 - Guard: `method === "GET"`
 
+### `url.pathname === "/api/challenges/mine"`
+
+[Source](../../src/net/dashboard-api/readiness.ts#L36)
+
+- Guard: `url.pathname === "/api/challenges/mine" && method === "GET"`
+- Guard: `method === "GET"`
+
 ### `url.pathname.match(/^\/api\/operations\/alerts\/(\d+)\/(ack&#124;resolve)$/)`
 
-[Source](../../src/net/dashboard-api/readiness.ts#L32)
+[Source](../../src/net/dashboard-api/readiness.ts#L51)
 
 - Guard: `opsAlertMatch && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/operations\/alerts\/(\d+)\/snooze$/)`
 
-[Source](../../src/net/dashboard-api/readiness.ts#L42)
+[Source](../../src/net/dashboard-api/readiness.ts#L61)
 
 - Guard: `opsAlertSnoozeMatch && method === "POST" && db`
 - Guard: `method === "POST"`
@@ -871,7 +878,7 @@ Fields read here: `durationMs`, `error`.
 
 ### `url.pathname === "/api/productivity"`
 
-[Source](../../src/net/dashboard-api/readiness.ts#L64)
+[Source](../../src/net/dashboard-api/readiness.ts#L83)
 
 - Guard: `url.pathname === "/api/productivity" && method === "GET" && db`
 - Guard: `method === "GET"`

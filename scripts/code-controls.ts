@@ -71,6 +71,11 @@ export const TERMINAL_CONTROLS = [
   { name: "/stop", usage: "/stop", help: "Interrupt the selected agent" },
   { name: "/dashboard", usage: "/dashboard", help: "Open the dashboard" },
   {
+    name: "/live",
+    usage: "/live [status|agents|spend|alerts|readiness|world|me]",
+    help: "Live world panels (the dashboard's data, drawn here)",
+  },
+  {
     name: "/world",
     usage: "/world <command>",
     help: "Send a Marina world command without leaving this view",
@@ -129,6 +134,7 @@ export function terminalEssentials(connected = false, runtimes: string[] = []): 
     ["/model <id>", "switch model (or /fast for cheapest)"],
     ["/continue", "resume this folder's session"],
     ["/cost", "today's spend vs the cap"],
+    ["/live", "the live world: status, agents, spend, alerts"],
     ["/compact", "compact context now"],
     ["/quit", connected ? "detach; the world keeps running" : "exit"],
   ];

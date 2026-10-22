@@ -218,19 +218,22 @@ On a terminal, `marina connect <name>` opens a full-screen-style session:
 | --- | --- |
 | `tab` | complete commands and `/panels` |
 | `↑` / `↓` | history, kept in `~/.marina/history/connect` (mode 0600; lines that look like secrets are skipped) |
+| `esc` | stop waiting for a running command (it keeps running on the server, and your next commands wait behind it; late output is labelled with the command it came from) |
 | `ctrl+o` | expand the last collapsed result |
 | `ctrl+c` | clear the line; press twice to exit |
 | `ctrl+d` | exit |
 
 **Panels.** Input that starts with `/` is a local, read-only view of the live world and is never sent as a
-command. The panels read the same endpoints as the dashboard, with your session's credential:
+command. The panels read the same endpoints as the dashboard, with your session's credential.
+Each shows what that credential may see: operational alerts are operator-only, so other sessions
+see their own held actions in `/alerts` and the status bar, but not the alert queue.
 
 | Panel | Shows |
 | --- | --- |
 | `/status` | health, people, agents, tasks, spend, standing, readiness, attention |
 | `/agents` | each agent's state, role, model, uptime, tokens and cost |
 | `/spend` | today's upstream spend by scope, against the daily cap |
-| `/alerts` | open alerts and held actions that wait for a person |
+| `/alerts` | held actions that wait on your answer, your own held actions, and (for operators) open operational alerts |
 | `/readiness` | the readiness report |
 | `/world` | rooms and who is where |
 | `/me` | your standing, rank and gates |
@@ -251,7 +254,7 @@ The segments are:
 | Group | Segments |
 | --- | --- |
 | Where you are | `$room`, `$here`, `$world`, `$cwd`, `$git` |
-| Live counts | `$agents`, `$tasks`, `$approvals`, `$alerts`, `$spend`, `$online` |
+| Live counts | `$agents`, `$tasks`, `$approvals` (waiting on your answer), `$held` (yours, waiting on someone), `$alerts` (operators), `$spend`, `$online` |
 | You and the server | `$standing`, `$health`, `$ready`, `$profile`, `$uptime` |
 | The session | `$character`, `$name`, `$connection`, `$took`, `$queued`, `$time` |
 
