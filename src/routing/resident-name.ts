@@ -88,3 +88,58 @@ export function generateResidentName(
   }
   return undefined;
 }
+
+/**
+ * Model, vendor and product words a resident's own proposal may not contain:
+ * a resident is named as a member of the world, not after what runs it.
+ */
+const MODEL_WORDS = [
+  "claude",
+  "codex",
+  "anthropic",
+  "openai",
+  "chatgpt",
+  "gpt",
+  "gemini",
+  "opus",
+  "sonnet",
+  "haiku",
+  "fable",
+  "llama",
+  "mistral",
+  "grok",
+  "deepseek",
+  "qwen",
+  "marina",
+];
+
+/** The first name-shaped word of an agent's reply ("**Wren**." → "Wren"), if any. */
+export function nameFromReply(reply: string): string | undefined {
+  const line = reply.trim().split("\n")[0] ?? "";
+  const word = /[A-Za-z][A-Za-z0-9_]*/.exec(line.replace(/[*_`"'“”‘’]/g, " "))?.[0];
+  return word && word.length >= 2 && word.length <= 20 ? word : undefined;
+}
+
+/**
+ * A free name from an agent's own proposal: a sanitized fixed point, never the vendor or a
+ * model word, deduped with a numeric suffix when taken. Undefined when the
+ * proposal is unusable or every variant is taken (the caller falls back).
+ */
+export function residentNameFromProposal(
+  proposal: string,
+  vendor: string,
+  isTaken: (name: string) => boolean,
+): string | undefined {
+  // Only a sanitized fixed point: a proposal sanitizing would rewrite is not the agent's choice.
+  const base = proposal.trim();
+  if (base.length > 18 || residentNameProblem(base)) return undefined;
+  const lower = base.toLowerCase();
+  if (nameMentionsVendor(base, vendor) || MODEL_WORDS.some((word) => lower.includes(word)))
+    return undefined;
+  if (!isTaken(base)) return base;
+  for (let suffix = 2; suffix <= 99; suffix++) {
+    const candidate = `${base}${suffix}`;
+    if (!isTaken(candidate)) return candidate;
+  }
+  return undefined;
+}

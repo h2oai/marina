@@ -23,6 +23,7 @@ import { ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
 import { isSentinelPrincipal, refuseOpenApiWrite } from "../auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas/canvas-principal";
 import { authorizeCanvasSubscription } from "../canvas/canvas-ws";
+import { publicActivity, publicEntityProperties, seesEntityPrivate } from "../entity-visibility";
 import { isMediaOperator, mayReadMediaJob, resolveMediaScope } from "../media-scope";
 import type { memoryObserver } from "../memory/memory-visibility";
 import { authorizeOwnerOrPrivileged } from "../owner-authorization";
@@ -137,20 +138,27 @@ function getEntityDetail(
   const entity = engine.findEntityGlobal(name);
   if (!entity) return json({ error: "Entity not found" }, 404);
 
+  // Raw command input, the full property bag and core memory are private to
+  // the entity and privileged readers (the route already refuses others; this
+  // keeps the shape right if that check ever widens).
+  const privateView = seesEntityPrivate(memory, entity.id);
   const result: Record<string, unknown> = {
     id: entity.id,
     name: entity.name,
     kind: entity.kind,
     room: entity.room,
     rank: (entity.properties.rank as number) ?? 0,
-    properties: entity.properties,
+    properties: privateView ? entity.properties : publicEntityProperties(entity.properties),
     inventory: entity.inventory,
   };
 
   if (db) {
-    result.coreMemory = db.listCoreMemory(entity.name);
+    if (privateView) result.coreMemory = db.listCoreMemory(entity.name);
     result.notes = db.getNotesByEntity(entity.name, 10).filter(memory.read);
-    result.recentActivity = db.getEventsByEntity(entity.id, 20);
+    const activity = db.getEventsByEntity(entity.id, 20);
+    result.recentActivity = privateView
+      ? activity
+      : publicActivity(activity, (verb) => engine.commands.getDef(verb)?.name);
     // Civic standing — surfaced in the entity view now that Entities is the
     // primary observe/control surface.
     result.standing = Math.round(getStanding(db, entity.id) * 10) / 10;

@@ -103,6 +103,8 @@ const RECENT_SPEAKERS_SWEEP_EVERY = 64;
 export class SocialAwareness {
   private socialEvents: SocialEvent[] = [];
   private entitiesInRoom: Set<string> = new Set();
+  /** Names seen connecting and not yet seen leaving (connects say no room). */
+  private joined: Set<string> = new Set();
   /**
    * Speaker name → last-heard timestamp. Bounded by eviction in `noteSpeaker`:
    * entries older than the five-minute window are swept every
@@ -216,18 +218,19 @@ export class SocialAwareness {
           entityName?: string;
         };
 
+        const who = data.entityName || data.entity;
         if (data.type === "login" || data.type === "connect") {
-          events.push({
-            type: "player_joined",
-            speaker: data.entityName || data.entity,
-            timestamp,
-          });
+          events.push({ type: "player_joined", speaker: who, timestamp });
+          if (who) {
+            this.joined.delete(who);
+            this.joined.add(who);
+            // Bounded like the speaker map: the oldest connects fall out first.
+            if (this.joined.size > RECENT_SPEAKERS_MAX)
+              this.joined.delete(this.joined.values().next().value as string);
+          }
         } else if (data.type === "logout" || data.type === "disconnect") {
-          events.push({
-            type: "player_left",
-            speaker: data.entityName || data.entity,
-            timestamp,
-          });
+          events.push({ type: "player_left", speaker: who, timestamp });
+          if (who) this.joined.delete(who);
         }
         break;
       }
@@ -252,11 +255,29 @@ export class SocialAwareness {
     return Array.from(this.entitiesInRoom);
   }
 
+  /** Whether `message` is addressed to a known name other than `myName`. */
+  addressesSomeoneElse(message: string | undefined, myName: string): boolean {
+    if (!message) return false;
+    const me = myName.toLowerCase();
+    const names = new Set([
+      ...this.entitiesInRoom,
+      ...this.joined,
+      ...this.recentSpeakers.keys(),
+      ...this.relationships.keys(),
+    ]);
+    for (const name of names)
+      if (name && name.toLowerCase() !== me && isAddressedTo(message, name)) return true;
+    return false;
+  }
+
   shouldRespond(event: SocialEvent, myName: string): boolean {
     // Always respond to direct messages and to posts addressed to us by name
     // (a vocative — a mere mention of the name is not an address).
     if (event.type === "player_tells") return true;
     if (isAddressedTo(event.message, myName)) return true;
+    // A post addressed by name to someone else is theirs to answer: the
+    // question heuristics below must not wake a bystander for it.
+    if (this.addressesSomeoneElse(event.message, myName)) return false;
 
     // Relationship-aware response: more likely to respond to known collaborators
     const interactions = event.speaker ? (this.relationships.get(event.speaker) ?? 0) : 0;
