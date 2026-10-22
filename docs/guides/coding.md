@@ -12,7 +12,8 @@ parts that make it more than a CLI.
 ## Start in your project folder
 
 Run `marina` in a project and describe a task. The default runtime is Marina's coding
-agent, using your configured provider. You can also use an installed coding tool and
+agent, using your configured provider (`~/.marina/.env`, or
+[per folder](configuration.md#where-the-marina-cli-reads-settings)). You can also use an installed coding tool and
 its existing credentials through the same terminal:
 
 ```bash
@@ -144,7 +145,14 @@ Code Mode shares its palette with `marina connect`:
   `diff` …) gets a glyph as well as a colour.
 - **Commands.** Help rows and `/world …` suggestions are drawn in the command colour.
 - **Colour comes from structure.** The colour comes from the entry's label and structure,
-  never from bytes in the text. A diff entry is kept whole in local history up to the server's 64 KB limit. When the
+  never from bytes in the text.
+- **Live status.** On a colour terminal, the line above the prompt carries the same live segments
+  as `marina connect`'s status bar (health, agents, tasks, approvals, held actions, spend,
+  standing). `MARINA_STATUSLINE` changes it.
+- **Live panels.** `/live [status|agents|spend|alerts|readiness|world|me]` draws the
+  dashboard's views of the world in the transcript; your draft is kept.
+
+A diff entry is kept whole in local history up to the server's 64 KB limit. When the
 server cuts a larger diff, the terminal says so, with the bytes shown versus the total, and
 suggests `code diff <path>` to read one file in full. In `marina --tui`, `/diff` also opens a
 diff view: `n`/`p` jump between files, `]`/`[` between hunks, arrows and PageUp/PageDown scroll,
@@ -565,8 +573,10 @@ rm -rf /tmp/marina-coding-agent-demo
 
 ### If it does not start
 
-- **“No model provider is configured”:** the server found no provider key. Put one in the Marina
-  repository's `.env` (or run `marina init`), or export it in the same shell, then relaunch. A
+- **“No model provider is configured”:** the server found no provider key. Put one in
+  `~/.marina/.env` (or run `marina init`), or export it in the same shell, then relaunch. Your
+  project's own `.env` is never read; see
+  [where the CLI reads settings](configuration.md#where-the-marina-cli-reads-settings). A
   native agent (`/use claude`, `/use codex`, `/use pi`) needs no Marina key.
 - **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.3, and
   retry.

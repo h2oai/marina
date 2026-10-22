@@ -210,7 +210,14 @@ async function call(
   model: string,
   forceModel: string | undefined,
   reason: string,
-  o: { signal?: AbortSignal; entityId?: EntityId; trailingNote?: string; noteScope?: string },
+  o: {
+    signal?: AbortSignal;
+    entityId?: EntityId;
+    trailingNote?: string;
+    noteScope?: string;
+    /** The cheap tier's cap already on `body` (a hit is traced). */
+    outputCap?: number;
+  },
 ): Promise<Draft> {
   try {
     const resp = await proxyToUpstream(
@@ -221,6 +228,7 @@ async function call(
         routeKind: "passthru",
         routeReason: reason,
         ...(o.entityId ? { entityId: o.entityId } : {}),
+        ...(o.outputCap !== undefined ? { outputCap: o.outputCap } : {}),
       },
       {
         ...(o.signal ? { clientSignal: o.signal } : {}),
@@ -275,6 +283,9 @@ export interface EnsembleTurn {
   /** Output repair on the pick (default true). Off when `verify` reviews the pick:
    *  verify repairs its final message once. */
   repair?: boolean;
+  /** The cheap tier's output cap already applied to `body` (`tier-output-cap.ts`):
+   *  each proposer draft cut at it is traced as a hit. */
+  outputCap?: number;
 }
 
 /** An ensemble turn's reply and the proposer whose draft it carries (none on failure). */
@@ -308,6 +319,7 @@ export async function ensembleTurn(engine: Engine, t: EnsembleTurn): Promise<Ens
         ...o,
         ...(t.note ? { trailingNote: t.note } : {}),
         ...(t.noteScope ? { noteScope: t.noteScope } : {}),
+        ...(t.outputCap !== undefined ? { outputCap: t.outputCap } : {}),
       }),
     ),
   );

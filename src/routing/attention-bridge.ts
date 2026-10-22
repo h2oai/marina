@@ -69,6 +69,7 @@ export type WakeSource =
   | { kind: "tell"; sender: string; messageId?: number }
   | { kind: "attention"; sender: string }
   | { kind: "say"; sender?: string }
+  | { kind: "shout"; sender: string }
   | { kind: "channel"; channel: string; sender?: string }
   | { kind: "system" };
 
@@ -321,7 +322,9 @@ export class AttentionBridge {
       const to = m[1]!.toLowerCase();
       mark(
         (item) =>
-          (item.source.kind === "tell" || item.source.kind === "attention") &&
+          (item.source.kind === "tell" ||
+            item.source.kind === "attention" ||
+            item.source.kind === "shout") &&
           item.source.sender.toLowerCase() === to,
       );
     } else if (/^(?:say\s|')/i.test(input)) {
@@ -332,6 +335,20 @@ export class AttentionBridge {
         (item) => item.source.kind === "channel" && item.source.channel.toLowerCase() === channel,
       );
     }
+  }
+
+  /**
+   * The message a relayed command answers, as its `cause`: the owed item it
+   * settles, else the latest message that woke the current turn. A turn the
+   * owner started directly (nothing woke it) has none, so its commands stay
+   * fresh (depth 0).
+   */
+  causeFor(command: string): string | undefined {
+    const before = new Set(this.turn.filter((item) => item.answered));
+    this.noteSent(command);
+    const answered = this.turn.find((item) => item.answered && !before.has(item) && item.ref);
+    if (answered) return answered.ref;
+    return this.turn.filter((item) => item.wake === "now" && item.ref).at(-1)?.ref;
   }
 
   /** Report what a turn did for each item that woke it. */
@@ -553,6 +570,7 @@ function answerHint(source: WakeSource): string | undefined {
     case "tell":
       return source.messageId !== undefined ? `re #${source.messageId}` : `tell ${source.sender}`;
     case "attention":
+    case "shout":
       return `tell ${source.sender}`;
     case "say":
       return "say";
@@ -605,6 +623,8 @@ function sourceOf(p: Perception): WakeSource {
   if (typeof data.channel === "string")
     return { kind: "channel", channel: data.channel, ...(sender ? { sender } : {}) };
   if (p.tag === "say") return { kind: "say", ...(sender ? { sender } : {}) };
+  // A shout reaches the whole world; an answer goes back to the shouter alone.
+  if (p.tag === "shout" && sender) return { kind: "shout", sender };
   return { kind: "system" };
 }
 
@@ -617,6 +637,7 @@ function relayRoute(item: Item, text: string): { key: string; command: string } 
         ? { key: `tell:${source.messageId}`, command: `re #${source.messageId} ${text}` }
         : { key: `to:${source.sender}`, command: `tell ${source.sender} ${text}` };
     case "attention":
+    case "shout":
       return { key: `to:${source.sender}`, command: `tell ${source.sender} ${text}` };
     case "say":
       return { key: "say", command: `say ${text}` };

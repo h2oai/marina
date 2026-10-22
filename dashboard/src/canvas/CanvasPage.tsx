@@ -634,10 +634,13 @@ function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
         const feedType = n.data.feedType as string | undefined;
         const isIntentResult = feedType === "intent_result";
         const isConversation = feedType === "conversation";
+        // A feed channel post answering an earlier post: the thread, with its depth.
+        const isReply = feedType === "channel_message";
+        const depth = typeof n.data.depth === "number" ? n.data.depth : 0;
 
         let stroke = "var(--color-primary)"; // default: theme primary
         if (isIntentResult) stroke = "#10b981"; // emerald
-        if (isConversation) stroke = "#8b5cf6"; // violet
+        if (isConversation || isReply) stroke = "#8b5cf6"; // violet
 
         return {
           id: `e-${n.data.parent_node_id}-${n.id}`,
@@ -645,7 +648,14 @@ function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
           target: n.id,
           type: "smoothstep",
           animated: isIntentResult || isConversation,
-          style: { stroke, strokeWidth: 1.5, opacity: 0.5 },
+          ...(isReply && depth > 0
+            ? {
+                label: `↳${depth}`,
+                labelStyle: { fill: "var(--color-text-dim)", fontSize: 10 },
+                labelBgStyle: { fill: "var(--color-bg-card)" },
+              }
+            : {}),
+          style: { stroke, strokeWidth: 1.5, opacity: isReply ? 0.8 : 0.5 },
           markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
         };
       });

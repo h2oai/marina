@@ -141,11 +141,12 @@ for (const failCommit of [false, true])
     ];
     f.before(async (request) => {
       const data = request.input?.data as Record<string, unknown> | undefined;
-      if (
-        request.operation === "save_checkpoint" &&
-        data?.journal &&
-        readRequestLedger(data.outstandingRequests).length === 0
-      ) {
+      // The journal entry that settles the reply commits through the atomic
+      // capture (`field: "journal"`) or, on the read-first path, a checkpoint save.
+      const journalCommit =
+        (request.operation === "save_checkpoint" && data?.journal) ||
+        (request.operation === "capture_checkpoint" && request.input?.field === "journal");
+      if (journalCommit && readRequestLedger(data?.outstandingRequests).length === 0) {
         if (failCommit) throw new Error("checkpoint storage unavailable");
         // A new perception while the old reply's commit is in progress must survive it.
         i.client.emit("perception", original);

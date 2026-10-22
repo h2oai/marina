@@ -1,0 +1,77 @@
+name: Install apt packages (cached, bounded)
+description: >
+  apt-get install with the downloaded .debs cached between runs, no recommended
+  extras, and each attempt bounded so a crawling mirror cannot eat the job's
+  whole timeout. A slow first attempt retries against archive.ubuntu.com.
+inputs:
+  packages:
+    description: Space-separated package names
+    required: true
+  attempt-seconds:
+    description: Time limit for one update + install attempt (two attempts at most)
+    default: "240"
+  optional:
+    description: >
+      "true" turns a failed install into a warning instead of a failed step, for
+      tools whose tests skip without them
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - id: key
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        echo "dir=$RUNNER_TEMP/apt-archives" >> "$GITHUB_OUTPUT"
+        echo "hash=$(echo "$ImageOS-$ImageVersion-$PACKAGES" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+    # Restore and save separately: the save runs right after a good install,
+    # not at job end, so a later test failure still leaves a warm cache.
+    # Merge-queue runs read only main's caches, which main's own CI writes.
+    - id: restore
+      uses: actions/cache/restore@v6.1.0
+      with:
+        path: ${{ steps.key.outputs.dir }}
+        key: apt-${{ runner.os }}-${{ steps.key.outputs.hash }}
+        restore-keys: apt-${{ runner.os }}-
+    - id: install
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+        ARCHIVES: ${{ steps.key.outputs.dir }}
+        ATTEMPT_SECONDS: ${{ inputs.attempt-seconds }}
+        OPTIONAL: ${{ inputs.optional }}
+      run: |
+        mkdir -p "$ARCHIVES/partial"
+        opts=(-o "Dir::Cache::Archives=$ARCHIVES" -o APT::Sandbox::User=root
+              -o Acquire::Retries=3 -o Acquire::http::Timeout=30)
+        # One limit over update + install, so two attempts stay inside the
+        # step's timeout-minutes.
+        attempt() {
+          sudo timeout "$ATTEMPT_SECONDS" env DEBIAN_FRONTEND=noninteractive PACKAGES="$PACKAGES" bash -c '
+            apt-get "$@" update -q &&
+              apt-get "$@" install -y -q --no-install-recommends $PACKAGES' _ "${opts[@]}"
+        }
+        ok=true
+        if ! attempt; then
+          echo "::warning::apt attempt 1 failed or timed out; retrying against archive.ubuntu.com"
+          sudo sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+          attempt || ok=false
+        fi
+        # Leave only finished .debs, readable by the cache step.
+        sudo rm -rf "$ARCHIVES/partial" "$ARCHIVES/lock"
+        sudo chown -R "$(id -u):$(id -g)" "$ARCHIVES"
+        echo "ok=$ok" >> "$GITHUB_OUTPUT"
+        if [ "$ok" != true ]; then
+          if [ "$OPTIONAL" = true ]; then
+            echo "::warning::could not install $PACKAGES; tests that need them will skip their tool paths"
+          else
+            echo "::error::could not install $PACKAGES"; exit 1
+          fi
+        fi
+    - if: steps.install.outputs.ok == 'true' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6.1.0
+      with:
+        path: ${{ steps.key.outputs.dir }}
+        key: apt-${{ runner.os }}-${{ steps.key.outputs.hash }}

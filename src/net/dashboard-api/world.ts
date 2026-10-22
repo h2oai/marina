@@ -23,6 +23,12 @@ import { ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
 import { isSentinelPrincipal, refuseOpenApiWrite } from "../auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas/canvas-principal";
 import { authorizeCanvasSubscription } from "../canvas/canvas-ws";
+import {
+  entityOwner,
+  publicActivity,
+  publicEntityProperties,
+  seesEntityPrivate,
+} from "../entity-visibility";
 import { isMediaOperator, mayReadMediaJob, resolveMediaScope } from "../media-scope";
 import type { memoryObserver } from "../memory/memory-visibility";
 import { authorizeOwnerOrPrivileged } from "../owner-authorization";
@@ -137,20 +143,33 @@ function getEntityDetail(
   const entity = engine.findEntityGlobal(name);
   if (!entity) return json({ error: "Entity not found" }, 404);
 
+  // Raw command input, the full property bag, inventory, core memory and
+  // notes are private to the entity, its owning person and privileged readers;
+  // everyone else gets the public view.
+  const privateView = seesEntityPrivate(memory, {
+    id: entity.id,
+    owner: entityOwner(entity.name),
+  });
   const result: Record<string, unknown> = {
     id: entity.id,
     name: entity.name,
     kind: entity.kind,
     room: entity.room,
     rank: (entity.properties.rank as number) ?? 0,
-    properties: entity.properties,
-    inventory: entity.inventory,
+    properties: privateView ? entity.properties : publicEntityProperties(entity.properties),
+    ...(privateView ? { inventory: entity.inventory } : {}),
+    private: privateView,
   };
+  const presence = engine.presence.statusOf(entity.name)?.status;
+  if (presence) result.presence = presence;
 
   if (db) {
-    result.coreMemory = db.listCoreMemory(entity.name);
-    result.notes = db.getNotesByEntity(entity.name, 10).filter(memory.read);
-    result.recentActivity = db.getEventsByEntity(entity.id, 20);
+    if (privateView) result.coreMemory = db.listCoreMemory(entity.name);
+    if (privateView) result.notes = db.getNotesByEntity(entity.name, 10).filter(memory.read);
+    const activity = db.getEventsByEntity(entity.id, 20);
+    result.recentActivity = privateView
+      ? activity
+      : publicActivity(activity, (verb) => engine.commands.getDef(verb)?.name);
     // Civic standing — surfaced in the entity view now that Entities is the
     // primary observe/control surface.
     result.standing = Math.round(getStanding(db, entity.id) * 10) / 10;
@@ -781,10 +800,9 @@ export async function handleEntityRoutes(
         deleteEntity(engine, entityName)
       );
     }
-    // Entity detail bundles the entity's private core memory + notes, so it is
-    // scoped like the dedicated memory routes below.
-    const denied = authorizeEntityRead(engine, db, callerId, entityName);
-    if (denied) return denied;
+    // Any dashboard viewer gets the public view; the private parts (raw
+    // activity, full properties, core memory, notes) follow seesEntityPrivate
+    // inside the builder. The memory routes stay private-only.
     return getEntityDetail(engine, db, entityName, memory);
   }
 

@@ -1,10 +1,26 @@
 # Configuration
 
-Marina reads process environment values first, then Bun's `.env` files in the instance's
-working directory. Every setting is optional. [`.env.example`](../../.env.example) is a short
+A Marina server reads process environment values first, then Bun's `.env` files in the instance's
+working directory. The `marina` CLI layers its own settings files instead (next section). Every setting is optional. [`.env.example`](../../.env.example) is a short
 starter to copy; [`config/environment.reference`](../../config/environment.reference) is the
 complete annotated catalog that the dashboard settings editor (Admin → Settings) and the
 generated [environment reference](../reference/environment.md) are built from.
+
+### Where the `marina` CLI reads settings
+
+The `marina` command works the same in every folder and never reads your project's own `.env`
+(that belongs to your app). Highest first:
+
+| Layer | File | Use it for |
+|-------|------|------------|
+| Shell | `export KEY=…` | one-off overrides |
+| This folder's Marina | `~/.marina/projects/<folder>/.env` | settings for one project's sessions (next to its database) |
+| You | `~/.marina/.env` | provider keys and defaults for every folder; `marina init` writes here |
+| Source checkout | `<marina checkout>/.env` | a checkout's existing settings, when running from one |
+
+Each layer fills only what a higher one leaves unset. `marina start` treats its working directory
+as the instance, so a server folder's `.env` sits in the second row. `marina init` writes
+`~/.marina/.env` unless run inside the checkout or given `--directory`.
 
 ```bash
 bun run init --yes --preset minimal --directory /path/to/instance
@@ -152,6 +168,18 @@ a later tier change after a restart. The `/v1` `marina` model is unchanged.
 
 `admin models` (readable by everyone) prints the effective model for each tier
 and role and where it came from; the boot log prints the two tier lines.
+
+A `marina/cheap` request that sets no `max_tokens` gets the cheap tier's output
+cap, `MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS` (default 16384; on OpenRouter
+also a reasoning budget of 3/4 of it), so a reasoning loop cannot run to the
+provider's own limit. A caller's own `max_tokens` always wins, larger or
+smaller; Marina's agents and helpers send their own caps and keep them; explicit
+model ids and the strong tier are never capped; `0`/`off` turns it off. A reply
+cut at the cap is marked `x-marina-output-cap: <n>; hit` and `outputCapHit` on
+its trace, the benchmark harness counts those as `outputCapHits`, and `admin
+models` shows the cap and how often it hit since start. The same holds inside
+`marina/verify:<proposer>+<checker>`: a `marina/cheap` or `marina/strong` member
+resolves through the tiers, and a cheap one gets the cap on its calls.
 Escalation stays where it was: the Arbiter runs only on contested items, and
 `model:route` / earned routing can pick a stronger candidate per agent.
 

@@ -169,7 +169,13 @@ export class AuthCoordinator {
    * grace-window reconnect rebinds the same id without re-emitting enter).
    */
   private emitEntityLeave(entityId: EntityId, room: RoomId): void {
-    this.host.logEvent({ type: "entity_leave", entity: entityId, room, timestamp: Date.now() });
+    this.host.logEvent({
+      type: "entity_leave",
+      entity: entityId,
+      name: this.host.entities.get(entityId)?.name,
+      room,
+      timestamp: Date.now(),
+    });
   }
 
   private static readonly ERR_LOGIN_RATE_LIMITED =

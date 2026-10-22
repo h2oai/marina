@@ -20,6 +20,8 @@ const proc = Bun.spawn(
     "build",
     "scripts/marina.ts",
     "--compile",
+    // Settings come from scripts/cli-env.ts, never the caller's working directory.
+    "--no-compile-autoload-dotenv",
     "--outfile",
     "dist/marina",
     "--define",

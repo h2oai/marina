@@ -25,6 +25,8 @@ import type {
   MemoryCacheResult,
   MemoryCacheWrite,
   MemoryCheckpoint,
+  MemoryCheckpointCapture,
+  MemoryCheckpointCaptureReceipt,
   MemoryFederatedRead,
   MemoryFederatedResult,
   MemoryFederatedRetrievalResult,
@@ -136,7 +138,7 @@ export class MarinaMemoryClient {
     const retryAfter = /^(\d+)(\.\d+)?$/.test(response.headers.get("Retry-After") ?? "")
       ? Number(response.headers.get("Retry-After")) * 1000
       : undefined;
-    let result: T & { error?: { code: string; message: string } };
+    let result: T & { error?: { code: string; message: string; retry_after_ms?: unknown } };
     try {
       result = await withMemoryAbort(() => response.json(), signal);
     } catch (error) {
@@ -158,13 +160,16 @@ export class MarinaMemoryClient {
         );
       throw error;
     }
-    if (!response.ok)
+    if (!response.ok) {
+      // The body's millisecond hint is exact; the header is whole seconds.
+      const hinted = result?.error?.retry_after_ms;
       throw new MemoryClientError(
         response.status,
         result?.error?.code ?? "request_failed",
         result?.error?.message ?? "Memory request failed",
-        retryAfter,
+        typeof hinted === "number" && Number.isFinite(hinted) && hinted >= 0 ? hinted : retryAfter,
       );
+    }
     return result;
   }
   private path(space: string, rest = "") {
@@ -562,6 +567,15 @@ export class MarinaMemoryClient {
       this.path(space, `/checkpoints/${encodeURIComponent(name)}`),
       "POST",
       { expected_version, data, source_cursor, source_ids },
+      key,
+    );
+  }
+  /** Capture sources, their manifest and the checkpoint naming them in one transaction. */
+  captureCheckpoint(space: string, name: string, input: MemoryCheckpointCapture, key?: string) {
+    return this.request<MemoryCheckpointCaptureReceipt>(
+      this.path(space, `/checkpoints/${encodeURIComponent(name)}/capture`),
+      "POST",
+      input,
       key,
     );
   }

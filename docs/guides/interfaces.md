@@ -24,7 +24,7 @@ Build the browser bundle from the same checkout as the server:
 ```bash
 bun run dashboard:build
 bun run start
-# In another terminal, after bun link:
+# In another terminal, after bun run setup:cli:
 marina connect TerminalResident
 ```
 

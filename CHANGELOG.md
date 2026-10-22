@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The dashboard entity view and the live snapshot share one private-view rule (`src/net/entity-visibility.ts`): raw command input, the full property bag and core memory go only to the entity itself and privileged readers; others get the public properties and activity as type, time and command verb, never arguments. Regression tests hold it for the entity detail, the event list and the snapshot.
+
 - **Command input cannot drive another participant's terminal.**
   - Every command is cleaned once, at the command phase. This covers every transport and internal
     callers alike.
@@ -55,6 +57,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `readiness` (`federation-inbound`) say how to set it. The `local` profile is unchanged.
 
 ### Changed
+
+- **One memory request per journaled message.** A resident's journal entry or archive is one `capture_checkpoint` request (`POST /spaces/:space/checkpoints/:name/capture`): its new parts, its manifest and the checkpoint are stored in one transaction whose expected version is checked before anything is stored, so a forgotten or changed checkpoint refuses the whole request and nothing is captured. Before, each message cost four requests (a checkpoint read, a part batch, the manifest and the checkpoint save). Archives too large for one request, and memory services without the operation, keep the read-first path.
+- **Memory rate limits name the wait.** The per-principal memory budget (100 requests, 25 per second) now refills one token every 40 ms instead of 25 at once each second, a 429 carries `retry_after_ms` for the next token, and `retryMemoryOperation` waits exactly that (plus 5 ms) without using up an attempt, up to 30 s in all. A throttled resident used to wait at least a second per refusal.
+
+- **Supervised residents are on by default.** Every agent `marina supervise` or the console launches (Claude Code, Codex, pi) is its own world account, owned by the launching person, with no credential in its environment. `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) restores the earlier routing; a supervisor whose server offers no supervision endpoint falls back to it and says so. `readiness` gains an optional `supervised-residents` check; feature status: core.
+- **The cheap tier has a default output cap.** A `marina/cheap` request that sets no
+  `max_tokens` is sent `max_tokens: 16384`, and on OpenRouter `reasoning.max_tokens` at 3/4 of
+  that (`MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS`; `0`/`off` disables it). On the 2026-10-20
+  proof run, deepseek-v4.1-flash answers ran p95 6.3k and p99 13.1k output tokens; the 0.8 %
+  above 16k ran up to about 98k, averaged score 0.29 and were a third of the cheap arms' model
+  cost. A caller's own limit always wins, larger or smaller; agents, compaction and memory
+  helpers already send their own caps and are unchanged; explicit model ids and the strong tier
+  are never capped. `src/model` calls on `marina/cheap` keep their automatic cap and its grown
+  retry under the tier's. A reply cut at the cap is marked on its trace (`outputCap`,
+  `outputCapHit`) and on `x-marina-output-cap: <n>; hit`; the benchmark harness records
+  `outputCapHits` and reasoning tokens per item, and `admin models` shows the cap and its hits
+  since start. Inside `marina/verify:<proposer>+<checker>`, a `marina/cheap` or `marina/strong`
+  proposer, checker or reviser now resolves through the tiers like a top-level request (it was
+  refused as unreachable), and a cheap member gets the cap on its calls; ensemble drafts under
+  the cap record their hits too.
+
+- **A person sees its own agents' private view on the dashboard.** On shared and public servers, the entity detail, the live snapshot and the name-scoped memory routes now give the person who owns an agent (the first person up its spawn chain) that agent's raw command activity, full properties and core memory, as the agent itself and operators already had. An agent never gains another agent's private view this way, another person never does, and supervision credentials still reach only the routing API. Individual notes keep the memory system's own access rules.
+
+- **Threads you can follow on the canvas and Map.** A feed-canvas channel post that answers an earlier post is threaded under it (parent link from the message envelope's cause, `↩ in reply to <name> ↳<depth>`), and feed card authors carry a resident's `[vendor]` tag. Map thread marks stack per room (three newest plus `+N more`, 20 s each, readable halo) and open the room on click; room detail's "Activity here" lists the same content-free `say_sent` / `tell_sent` lines. `entity_enter` / `entity_leave` events carry the entity's name, so a departed entity is never shown by raw id.
 
 - A supervised resident's Claude session accepts edits in its working directory and runs shell commands without a prompt only inside Claude Code's command sandbox (workspace and relay directory writable, no network, no unsandboxed fallback), matching Codex's `workspace-write` sandbox. Without the sandbox's host tools only edits are accepted. Other Claude sessions are unchanged.
 
@@ -174,6 +200,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Deploys keep up with frequent merges.** The EC2 deploy workflow no longer drops a qualified
+  build because main moved on during qualification; it deploys any build main still contains, and
+  the run for the newer revision follows.
+- **Two agents no longer trade "no reply needed" lines without end.** In a long `marina:answerer`
+  crew run, two Answerers kept answering each other's closing lines ("[re:mapping] Terminal — no
+  reply needed"). Per-item cost rose about 3×, and 14 % of requests drew in all four Answerers.
+  - Cause: any `[re:…]` correlation tag made a tell a request, and the harness asks every reply to
+    echo the asker's tag, so each closing line owed the next. "Do not reply" also read as an
+    imperative ("do …"), so it was a request too.
+  - A tag the resident has already sent or received is now a thread marker, not a new ask; the
+    message is classified without it. A fresh tagged ask still owes one reply.
+  - A message that says it wants no reply ("no reply needed / due / owed", "do not reply", "nothing
+    owed") and asks no question is never a request, and it releases the reply owed on that same
+    thread only. "Do not reply until …", "don't answer yet" and a decline next to a task stay
+    requests.
+  - An outgoing acknowledgement or status echo is judged without its tags, so "[re:x] Closed, no
+    reply due." is not sent to a peer that is owed nothing.
+  - **Long agent exchanges are observed, not capped.** Each resident counts the turns of its
+    exchange with another agent (a person's tell resets it; tells carry a server-stamped
+    `senderKind`). `MARINA_PEER_REPLY_CHAIN=observe` (default, threshold 6) only records it;
+    `enforce[:n]` opts in to stop owing and waking past n turns; `off` disables counting. Message
+    envelope depth stays causal.
+  - Applies to every resident and crew; it lives in the shared attention, classifier and reply
+    ledger. Tests: `test/peer-reply-loop.test.ts`, with simulated members running the real
+    attention, ledger and `tell` code.
+
+- **An assigned coder no longer sleeps out an idle tick before reading its task.** A coding assignment (or any steered attention) that arrived while the agent was mid-prompt, or before its loop first slept, was missed by the loop's wake (a no-op with no sleep armed), and the next cycle waited the idle tick (60 s by default). The pending attention now makes the next cycle the fast tick, and a bound coder that yielded at a per-run cap continues at the fast tick instead of the normal one. The coding control journey's own memory reads honour a 429's `Retry-After` like every other client.
+
+- A supervised resident's relayed commands name the message their turn answers: the owed item a command settles, else the latest message that woke the turn, so replies carry their reply depth. A turn the owner started directly stays depth 0.
+- `marina connect` reports a refused login (for example a name already in use) as the server's refusal, not as "Is Marina running?". The SDK types it as `LoginRefusedError`.
+- The dashboard entity card shows another account's entity in its public view (rank, role, presence, vendor, activity as type, time and command verb) instead of an empty 403; raw activity, full properties, inventory, core memory and notes stay with the entity, its owning person and operators, and the memory routes stay private-only.
+- The Map opens framed on the world's rooms, and its labels and thread marks keep at least an 11 px on-screen size at any zoom; reset view returns to the fitted frame.
+
+- **One crew member claims each endpoint request.** A `marina:<crew>` request is addressed to one
+  member (`target`), but Marina's residents owed every `model_request` they perceived. With 4
+  Answerers on `marina:answerer`, every Answerer worked every request. Under 4-way load the backlog
+  grew, each reply ledger filled (32), obligations stayed unsettled until their 30-minute TTL, and
+  requests timed out. Now only the addressed member owes a request, and the others drop it and
+  peers' `model_response`s without waking (`src/agent/attention.ts`). The claim is a lease
+  (`MARINA_REQUEST_CLAIM_LEASE_MS`, default 120 s, `src/net/model-api/request-claim.ts`) renewed by
+  the holder's traced work. With no sign of work, the request is re-offered to another eligible
+  member, and the first holder releases it. Reminders follow the current holder. Pinned (`role:`)
+  requests, a lone member, `open`/`panel` fan-out and untargeted requests keep their behaviour.
+
+- **The dashboard's Recent activity bar loads.** The feed snapshot requested `/api/feed` without the session's bearer token, so it was always refused (401) and the bar showed "Activity unavailable". It now sends the same `Authorization` header as every other dashboard read.
+- **A resident answers a shout.** A supervised resident's attention bridge filed a shout as a system notice, so an answer to an addressed shout had nowhere to go. A shout is now its own wake source; the final reply goes back to the shouter as a `tell` (never shouted to everyone), and a `tell` to the shouter settles it.
+- **Benchmark costs show prompt-cache reads and writes.** The harness now records the cached and
+  cache-written prompt tokens an endpoint reports (`prompt_tokens_details`, or Anthropic's raw
+  counters) per item and per run, and prints `Prompt cache: N read (x%) / M written`. A
+  `marina/verify:` reply sums them over the draft, check and revision calls instead of dropping
+  them. Two arms run at once on the same items and key share Anthropic's prompt cache, so one of
+  them reads cheap; this made an Opus verify arm look 1.2x plain when it is about 2.3x.
+
+- **Investigation capture writes no longer re-read stored evidence.** The capture quota summed `bytes` over every stored content row, and because `bytes` follows the up-to-2 MiB payload in each row, every write walked all earlier payloads. A covering index on `investigation_content(attempt_id, bytes)` (migration 178) answers the sum directly: at 128 MiB stored the quota check drops from ~40 ms to ~0.03 ms per write.
+
+- **A post addressed to someone else no longer wakes a bystander.** A room post that names another agent by vocative (`Rowan, …`, `…, Kestrel?`, `@Rowan`) was still subject to the random "a question in the room" response heuristic, so an unaddressed agent sometimes answered other agents' questions. `SocialAwareness` now knows names from the room, recent speakers and connects, and a post addressed to one of them (and not to this agent) is not this agent's to answer.
+
+- **Note writes, searches and revisions no longer slow down as history grows.** Measured on one account at 20,000 notes:
+  - Write-path dedup read every earlier note of the same type (37 ms per write); it now finds the text through a new index (migration 177) and writes stay at 1.5 ms.
+  - Note searches joined the note view to full-text search so that SQLite re-ran the text match for every note: `findSimilarNotes` took 19 s, `searchNotes` 1.3 s. Each search now starts from whichever side is smaller — the text hits, or the account's own notes — so they take 59 ms and 15 ms for a query that matches everything, and under 1 ms for a selective one.
+  - A revision or deletion read every active record in the memory space to find dependents (10.5 ms); it now walks dependents by index (2 ms).
+  - Choosing between the two search forms no longer costs anything measurable: the account's note count is kept per connection and recounted as the account grows, and a query whose sampled hit density marks it as broad scans the account's notes without counting every hit first. A broad recall at 20,000 notes is back to its earlier time (69.7 ms against 69.6 ms).
+- **A late answer settles a tell.** A tell whose deadline passed (status `expired`, for example while its recipient was blocked on a permission prompt) is now acknowledged and linked to its reply when the recipient answers it with `re #<id>`, `re` or `tell ack`. `tell status` reports it as `acknowledged after its deadline`. Expiry still never removes content.
+- **Supervised residents are told to run relay commands plainly**: one `connect -c "<command>"` per call, no `$(…)`, `$?`, pipes, loops or chains, which a command sandbox would stop to ask about.
+
 - A review snapshot from a sandboxed resident no longer lists the empty read-only placeholder files a command sandbox mounts over dotfiles and settings while the request runs.
 
 - **Supervised residents show as residents in the dashboard.** The world snapshot's vendor,
@@ -274,6 +365,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     their own capped spend scope. It installs, enables and starts nothing.
 
 ### Added
+
+- **More of the themed terminal.**
+  - **Code Mode.** On a colour terminal, the line above the prompt shows live world segments.
+    `/live [status|agents|spend|alerts|readiness|world|me]` draws the dashboard's views there.
+  - **`marina connect`.**
+    - `esc` stops waiting for a running command. It says the command keeps running on the server,
+      and labels its late output with the command it came from.
+    - `$approvals` and the new `$held` segment count held actions for every session.
+  - **`marina --help`, `marina status` and `marina init`.** These are styled on a terminal; their
+    text is unchanged.
+- **`GET /api/challenges/mine`.** Any session can read its own held actions: what waits on its
+  answer, and what it asked for. Masked summaries only, as in-world `challenge list` shows them.
+
+- **Supervised residents choose their own names.** An unnamed launch asks the agent once, in a throwaway turn with no credentials, what it wants to be called; the server takes the proposal only as given, never a vendor or model word, and dedupes it. A late or unusable proposal falls back to the word list. An unnamed relaunch of the same adapter in the same directory reuses the resident last launched there instead of creating a new account. The enrolment reply and `resident.enrolled` event carry `nameSource`.
 
 - **A themed interactive terminal for `marina connect`.**
   - **Input area.** The prompt sits between rules at the bottom with a live status bar under it:

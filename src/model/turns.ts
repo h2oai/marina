@@ -11,6 +11,7 @@
  */
 
 import type { AssistantMessage, Context, ToolChoice } from "@earendil-works/pi-ai";
+import { tierOutputCapFor } from "../config/model-tiers";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { modelAccess, type Usage } from "./access";
 import { type CallBinding, type ModelCallOptions, modelCall } from "./call";
@@ -28,6 +29,9 @@ export interface ModelTurns {
 }
 
 const FAIL_ON_ERROR_OR_ABORT = new Set(["error", "aborted"] as const);
+
+/** A turn's output cap when the caller sets none. */
+const DEFAULT_TURN_MAX_TOKENS = 16_000;
 
 export interface ModelTurnsOptions extends ModelCallOptions {
   maxTokens?: number;
@@ -49,6 +53,12 @@ export function modelTurns(
   const { model, apiKey } = modelAccess(spec, env);
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   const purpose = opts.purpose ?? "research";
+  // `marina/cheap` with no caller cap: the tier's output cap bounds every turn.
+  const tierCap = opts.maxTokens === undefined ? tierOutputCapFor(spec, env) : undefined;
+  const defaultMax = Math.min(
+    DEFAULT_TURN_MAX_TOKENS,
+    tierCap?.maxTokens ?? Number.POSITIVE_INFINITY,
+  );
   const binding: CallBinding = {
     target: { spec, model, apiKey },
     env,
@@ -64,9 +74,15 @@ export function modelTurns(
     opts.signal?.throwIfAborted();
     const capped = dailyCapRefusal(env);
     if (capped) throw new Error(capped);
+    const maxTokens = Math.min(
+      opts.maxTokens ?? defaultMax,
+      o.maxTokens ?? Number.POSITIVE_INFINITY,
+    );
     return modelCall(binding, {
       context,
-      maxTokens: Math.min(opts.maxTokens ?? 16_000, o.maxTokens ?? Number.POSITIVE_INFINITY),
+      maxTokens,
+      // A per-turn cap below the tier's is the caller's own, not a tier hit.
+      ...(tierCap && maxTokens === defaultMax ? { tierCapped: true } : {}),
       ...(o.toolChoice ? { toolChoice: o.toolChoice } : {}),
       timeoutMs: opts.timeoutMs ?? 300_000,
       signals: [opts.signal, o.signal],

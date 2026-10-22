@@ -1060,6 +1060,7 @@ Portable memory service: retrieve with input {task} finds and reads citable evid
         "retrieve",
         "checkpoint",
         "save_checkpoint",
+        "capture_checkpoint",
         "grant",
         "forget",
         "export",

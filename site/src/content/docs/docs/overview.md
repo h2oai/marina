@@ -91,3 +91,6 @@ You can explore without any AI provider. When you want the agents to wake up, ad
 **Admin → Keys**, or start with one local model. Type `readiness` any time to see what's working
 and what to switch on next. The [Getting started guide](../guides/getting-started/) takes it from
 there.
+
+To code in your own projects the way you would with Claude Code or Codex, run
+`bun run setup:cli` once, then `marina` in any project folder (see [Coding](../guides/coding/)).

@@ -11,6 +11,8 @@ import { codingRunMetadata } from "../src/coding/task-run";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import type { MarinaDB } from "../src/persistence/database";
 import type { MarinaAgent, Perception } from "../src/sdk/client";
+import type { MemoryOperationRequest } from "../src/sdk/memory-operations";
+import { retryMemoryOperation } from "../src/sdk/memory-retry";
 import { CodeConsole } from "./code-console";
 import { HarnessStore } from "./code-harness";
 
@@ -79,6 +81,16 @@ export class CodingControlJourney {
     return hash.digest("hex");
   }
 
+  /**
+   * Read the worker's resident memory as an ordinary client does: the read
+   * shares the worker's per-principal request budget, so it honours a 429's
+   * Retry-After like the worker's own memory calls (`retryMemoryOperation`).
+   */
+  private memory(request: MemoryOperationRequest) {
+    const { db, worker } = this.options;
+    return retryMemoryOperation(() => residentMemoryOperation(db, worker.name, request));
+  }
+
   private async wait(check: () => boolean, label: string) {
     const deadline = Date.now() + this.options.timeoutMs;
     while (!check()) {
@@ -137,17 +149,15 @@ export class CodingControlJourney {
       match && Number(match[2]) < Number(match[1]),
       `Manual compaction did not reduce eligible history: ${text}`,
     );
-    const { db, worker } = this.options;
-    const checkpoint = (
-      await residentMemoryOperation(db, worker.name, { operation: "checkpoint", id: "resident" })
-    ).result as { data: { archive?: { source_ids?: string[] } } };
+    const checkpoint = (await this.memory({ operation: "checkpoint", id: "resident" })).result as {
+      data: { archive?: { source_ids?: string[] } };
+    };
     const sources = checkpoint.data.archive?.source_ids;
     assert.ok(sources?.length, "Compaction did not preserve original sources");
     let original = "";
     for (const id of sources)
       original += (
-        (await residentMemoryOperation(db, worker.name, { operation: "source_range", id }))
-          .result as { text: string }
+        (await this.memory({ operation: "source_range", id })).result as { text: string }
       ).text;
     assert.ok(
       original.includes(this.nonce),

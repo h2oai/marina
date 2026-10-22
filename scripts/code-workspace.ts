@@ -91,7 +91,7 @@ export class WorkspaceCodeEditor implements CodeEditor {
         {
           component: line(
             () =>
-              `${palette.bold(palette.gradient("MARINA"))}${palette.fg("faint")("  ·  ")}${palette.fg("muted")(this.state?.location ?? this.state?.target ?? "marina")}`,
+              `${palette.bold(palette.gradient("MARINA"))}${palette.fg("faint")("  ·  ")}${palette.fg("muted")(this.state?.location ?? this.state?.target ?? "marina")}${this.state?.statusLine && palette.level ? `${palette.fg("faint")("  ·  ")}${this.state.statusLine}` : ""}`,
           ),
           basis: 1,
           visible: ({ height }) => (height ?? 0) >= 12,

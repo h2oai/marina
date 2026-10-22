@@ -32,8 +32,10 @@ import type { AgentAdapter, AgentOptions } from "../src/routing/agent-adapters";
 import { type ResidentConnector, relayText } from "../src/routing/resident-connection";
 import {
   generateResidentName,
+  nameFromReply,
   nameMentionsVendor,
   RESIDENT_NAME_WORDS,
+  residentNameFromProposal,
 } from "../src/routing/resident-name";
 import {
   openResidentRelay,
@@ -42,9 +44,13 @@ import {
   relaySpoolDirectory,
   spoolCommand,
 } from "../src/routing/resident-relay";
-import { ResidentService, residentLabeler } from "../src/routing/residents";
+import {
+  ResidentService,
+  residentLabeler,
+  supervisedResidentsEnabled,
+} from "../src/routing/residents";
 import { RoutingService } from "../src/routing/service";
-import { MarinaSupervisor } from "../src/routing/supervisor";
+import { MarinaSupervisor, NAME_PROPOSAL_PROMPT } from "../src/routing/supervisor";
 import { formatResidentLabel } from "../src/sdk/resident-label";
 import { MarinaRoutingClient, RoutingApiError } from "../src/sdk/routing-client";
 import type { RuntimeControl } from "../src/sdk/routing-runtime-types";
@@ -55,7 +61,7 @@ import { MockConnection, makeTestRoom, stripAnsi, until } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
 const ON = { MARINA_SUPERVISED_RESIDENTS: "on" };
-const OFF = { MARINA_SUPERVISED_RESIDENTS: undefined };
+const OFF = { MARINA_SUPERVISED_RESIDENTS: "off" };
 
 let directory: string;
 let db: MarinaDB;
@@ -845,6 +851,17 @@ describe("supervisor", () => {
   });
 });
 
+describe("the switch", () => {
+  it("is on by default and off only when set off", () => {
+    expect(supervisedResidentsEnabled({})).toBe(true);
+    expect(supervisedResidentsEnabled({ MARINA_SUPERVISED_RESIDENTS: "" })).toBe(true);
+    for (const on of ["on", "true", "1", "yes", "ON"])
+      expect(supervisedResidentsEnabled({ MARINA_SUPERVISED_RESIDENTS: on })).toBe(true);
+    for (const off of ["off", "false", "0", "no", " Off "])
+      expect(supervisedResidentsEnabled({ MARINA_SUPERVISED_RESIDENTS: off })).toBe(false);
+  });
+});
+
 describe("command relay", () => {
   it("returns each reply, refusals included, and rejects malformed requests", async () => {
     const seen: string[] = [];
@@ -1083,5 +1100,149 @@ describe("Streams room and residents views", () => {
     const peek = await get(away.token, "/api/routing/room-log?room=test/start");
     expect(peek.status).toBe(403);
     expect(peek.body.code).toBe("not_present");
+  });
+});
+
+describe("self-chosen names", () => {
+  it("takes a usable proposal, refuses vendor and model words, and dedupes", () => {
+    const none = () => false;
+    expect(residentNameFromProposal("Nova", "claude", none)).toBe("Nova");
+    expect(residentNameFromProposal("  nova  ", "claude", none)).toBe("nova");
+    for (const bad of ["Claude", "ClaudeBot", "GPTina", "Opus", "Marina", "a", "two words"])
+      expect(residentNameFromProposal(bad, "claude", none)).toBeUndefined();
+    expect(residentNameFromProposal("Pippa", "pi", none)).toBeUndefined();
+    expect(residentNameFromProposal("Nova", "codex", (n) => n === "Nova")).toBe("Nova2");
+    expect(nameFromReply("**Nova**.\nThat is my pick.")).toBe("Nova");
+    expect(nameFromReply('"Quillon"')).toBe("Quillon");
+    expect(nameFromReply("")).toBeUndefined();
+  });
+
+  it("enrols under the proposal; an unusable or taken one falls back or dedupes", async () => {
+    using _state = scopeProcessState({ env: ON, rateLimitBypass: true });
+    const owner = person("Owner");
+    const router = new RoutingService(db, db.durableEntityKey(owner.entity.id));
+    const join = (key: string) => router.join({ clientKey: key, kind: "codex", label: "w" });
+    const first = await post(owner.token, "/api/routing/residents", {
+      sessionId: join("run:a").id,
+      proposedName: "Nova",
+    });
+    expect(first.body).toMatchObject({ name: "Nova", nameSource: "proposed", reused: false });
+    const second = await post(owner.token, "/api/routing/residents", {
+      sessionId: join("run:b").id,
+      proposedName: "Nova",
+    });
+    expect(second.body).toMatchObject({ name: "Nova2", nameSource: "proposed" });
+    const vendor = await post(owner.token, "/api/routing/residents", {
+      sessionId: join("run:c").id,
+      proposedName: "Codexer",
+    });
+    expect(vendor.status).toBe(200);
+    expect(vendor.body.nameSource).toBe("generated");
+    expect(RESIDENT_NAME_WORDS.some((w) => (vendor.body.name as string).startsWith(w))).toBe(true);
+    person("Orbit", false);
+    const person_ = await post(owner.token, "/api/routing/residents", {
+      sessionId: join("run:d").id,
+      proposedName: "Orbit",
+    });
+    expect(person_.body).toMatchObject({ name: "Orbit2", nameSource: "proposed" });
+  });
+
+  it("asks the agent once, reuses the account on relaunch, and falls back on timeout", async () => {
+    using _state = scopeProcessState({ env: ON, rateLimitBypass: true });
+    const owner = person("Owner");
+    const client = routingClient(owner.token);
+    const proposals: AgentOptions[] = [];
+    const prompts: string[] = [];
+    let answer: string | undefined = "Nova";
+    const connector: ResidentConnector = async ({ name, token }) => {
+      const { conn, entity } = residentLogin(name, token);
+      return {
+        setCredential: () => undefined,
+        command: relayThrough(conn, entity.id as EntityId),
+        close: () => engine.removeConnection(conn.id, "explicit"),
+      };
+    };
+    const adapter: AgentAdapter & { executable: string } = {
+      id: "claude",
+      label: "Fixture",
+      executable: "fixture",
+      proposesName: true,
+      start: async (options) => ({
+        prompt: async (text) => {
+          if (text !== NAME_PROPOSAL_PROMPT) return void prompts.push(text);
+          proposals.push(options);
+          if (answer) options.reply?.(answer);
+        },
+        interrupt: async () => undefined,
+        stop: () => undefined,
+      }),
+    };
+    const supervisor = new MarinaSupervisor({
+      client,
+      root: directory,
+      stateDirectory: directory,
+      binding: "names",
+      label: "names",
+      adapters: [adapter],
+      agentEnvironment: { MARINA_URL: "http://local.test", HOME: "/home/test" },
+      secrets: [owner.token],
+      residents: { connect: connector },
+      nameProposalTimeoutMs: 50,
+    });
+    const router = new RoutingService(db, db.durableEntityKey(owner.entity.id));
+    try {
+      const sup = await supervisor.start();
+      const launch = async (directory?: string) => {
+        const before = prompts.length;
+        router.control(sup.id, {
+          targetId: sup.id,
+          clientMessageId: crypto.randomUUID(),
+          control: {
+            action: "launch",
+            adapter: "claude",
+            label: "worker",
+            workspace: "shared",
+            prompt: "hello",
+            ...(directory ? { directory } : {}),
+          },
+        });
+        await supervisor.tick();
+        await until(() => prompts.length === before + 1);
+        return /world name is (\w+)/.exec(prompts.at(-1)!)![1]!;
+      };
+      const stop = async (name: string) => {
+        const run = router
+          .list()
+          .sessions.find((s) => s.id === db.getAgentConfig(name)!.run_session)!;
+        router.control(sup.id, {
+          targetId: run.id,
+          clientMessageId: crypto.randomUUID(),
+          control: { action: "stop" },
+        });
+        await until(async () => {
+          await supervisor.tick();
+          return db.getAgentConfig(name)!.run_session === null;
+        });
+      };
+      expect(await launch()).toBe("Nova");
+      expect(proposals).toHaveLength(1);
+      // The proposal ran in a scratch directory with no Marina variables.
+      expect(proposals[0]!.cwd).not.toBe(directory);
+      expect(proposals[0]!.env).toEqual({ HOME: "/home/test" });
+      expect(existsSync(proposals[0]!.cwd)).toBe(false);
+      await stop("Nova");
+      // Relaunching the same adapter and directory reuses the account, unasked.
+      expect(await launch()).toBe("Nova");
+      expect(proposals).toHaveLength(1);
+      // Another directory, and an agent that never answers: the word list, after the timeout.
+      answer = undefined;
+      mkdirSync(join(directory, "other"), { recursive: true });
+      const fallback = await launch("other");
+      expect(proposals).toHaveLength(2);
+      expect(RESIDENT_NAME_WORDS.some((w) => fallback.startsWith(w))).toBe(true);
+    } finally {
+      await supervisor.stop();
+      supervisor.close();
+    }
   });
 });

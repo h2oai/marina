@@ -62,6 +62,18 @@ OLLAMA_BASE_URL=http://localhost:11434/v1 bun run start   # or one local model
 A daily spend cap ($50 by default) keeps an eager agent from surprising you. The
 [Getting Started guide](docs/guides/getting-started.md) walks you to your first reviewed result.
 
+### Use `marina` like Claude Code or Codex
+
+```bash
+bun run setup:cli    # once, from the checkout: puts `marina` on your PATH
+cd ~/your-project
+marina               # code in this folder (--tui fullscreen, -p "<task>" one-shot)
+```
+
+Provider keys go in `~/.marina/.env` (`marina init` writes it) and apply in every folder; your
+project's own `.env` is never read ([settings](docs/guides/configuration.md#where-the-marina-cli-reads-settings)).
+See the [coding guide](docs/guides/coding.md#start-in-your-project-folder).
+
 ## Try this first
 
 ```text

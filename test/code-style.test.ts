@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, test } from "bun:test";
+import { PassThrough } from "node:stream";
 import { colorizeDiff } from "../scripts/code-diff";
 import {
   labelStyle,
@@ -9,9 +10,12 @@ import {
   styleStartupLine,
   themeFor,
 } from "../scripts/code-style";
+import { CodeTerminal } from "../scripts/code-terminal";
 import type { TermCaps } from "../scripts/term-caps";
 import { plainText } from "../scripts/term-sanitize";
 import { createTheme } from "../scripts/term-theme";
+import { until } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const caps = (over: Partial<TermCaps> = {}): TermCaps => ({
   color: 3,
@@ -94,5 +98,49 @@ describe("Code Mode prompt and startup", () => {
   test("a stream that is not a terminal gets no colour", () => {
     expect(themeFor({ isTTY: false }).level).toBe(0);
     expect(themeFor(undefined).level).toBe(0);
+  });
+});
+
+describe("Code Mode live status line", () => {
+  async function render(env: Record<string, string | undefined>) {
+    using _env = scopeProcessState({
+      env: { TERM: "xterm-256color", COLORTERM: undefined, FORCE_COLOR: undefined, ...env },
+    });
+    const input = Object.assign(new PassThrough(), { isTTY: true });
+    const output = Object.assign(new PassThrough(), { isTTY: true, columns: 100 });
+    let transcript = "";
+    output.on("data", (data) => {
+      transcript += data.toString();
+    });
+    const terminal = new CodeTerminal({
+      input,
+      output,
+      views: true,
+      statusLine: () => "● live · ✦ 2 agents",
+      line: () => {},
+      interrupt: () => {},
+      close: () => {},
+    });
+    try {
+      terminal.write("hello", "coding");
+      await until(() => transcript.includes("hello"));
+      terminal.refreshStatus();
+      await until(() => plainText(transcript).includes("›"));
+      return plainText(transcript);
+    } finally {
+      terminal.close();
+      input.destroy();
+      output.destroy();
+    }
+  }
+
+  test("sits on the line above the prompt on a colour terminal", async () => {
+    const text = await render({ NO_COLOR: undefined });
+    expect(text).toMatch(/● live · ✦ 2 agents\n[^\n]*›/);
+  });
+
+  test("never appears with colour off (the plain layout is unchanged)", async () => {
+    const text = await render({ NO_COLOR: "1" });
+    expect(text).not.toContain("2 agents");
   });
 });

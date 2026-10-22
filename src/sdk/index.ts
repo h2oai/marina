@@ -13,7 +13,7 @@ export type {
   RoomView,
   SessionInfo,
 } from "./client";
-export { CommandError, MarinaAgent, MarinaClient } from "./client";
+export { CommandError, LoginRefusedError, MarinaAgent, MarinaClient } from "./client";
 export { codingDesk } from "./coding-desk";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms";
 export {

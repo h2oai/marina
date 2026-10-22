@@ -861,7 +861,7 @@ export function EntityExpandedDetail({
                 // biome-ignore lint/suspicious/noArrayIndexKey: activity slice is rendered in fixed order
                 <div key={i} className="flex gap-1 text-[10px] leading-tight">
                   <span className="text-text-dim">{formatTime(a.timestamp)}</span>
-                  <span className="text-text">{a.input ?? a.type}</span>
+                  <span className="text-text">{a.input ?? a.verb ?? a.type}</span>
                 </div>
               ))}
             </div>

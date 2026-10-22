@@ -41,6 +41,8 @@ export interface CodeTerminalOptions {
   /** Opt-in full workspace. Never used for redirected or one-shot output. */
   tui?: boolean;
   location?: string;
+  /** The live status bar line (starship-style segments), re-read on every redraw. */
+  statusLine?: () => string;
   connected?: boolean;
   completions?: CodeEditorOptions["completions"];
   /** Terminal device injection for renderer tests; no world/session authority. */
@@ -266,7 +268,13 @@ export class CodeTerminal {
       answer: !!this.question && focus === "approvals",
       multiline: this.multiline[focus].length > 0,
       panel: this.panelState,
+      statusLine: this.options.statusLine?.() || undefined,
     });
+  }
+
+  /** The live status changed: repaint the prompt area (drafts are preserved). */
+  refreshStatus() {
+    this.scheduleRedraw();
   }
 
   setTarget(label: string) {

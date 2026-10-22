@@ -106,7 +106,8 @@ export class NativeTerminal {
         MARINA_TOKEN: this.options.token,
       },
       secrets: [this.options.token],
-      ...residentSupervisorOptions(this.options.url),
+      // Residents only when the server granted a supervision credential.
+      ...residentSupervisorOptions(this.options.url, this.supervision?.held === true),
       onEvent: (session, event) => this.event(session, event),
     });
     try {

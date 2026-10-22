@@ -162,6 +162,10 @@ type PerceptionHandler = (p: Perception) => void;
 export type CommandResult = Perception[] & {
     readonly completion: "confirmed" | "unconfirmed";
 };
+/** The server refused a login or reconnect (as opposed to the transport failing). */
+export declare class LoginRefusedError extends Error {
+    readonly name = "LoginRefusedError";
+}
 export declare class CommandError extends Error {
     readonly perceptions: Perception[];
     constructor(message: string, perceptions?: Perception[]);
@@ -802,7 +806,7 @@ export interface MarinaExtension {
 export type { CapabilityManifest, CommandCatalogEntry } from "./capabilities.js";
 export { renderCapabilityRoster } from "./capabilities.js";
 export type { ClientOptions, CommandOptions, CommandResult, ConnectionState, RoomView, SessionInfo, } from "./client.js";
-export { CommandError, MarinaAgent, MarinaClient } from "./client.js";
+export { CommandError, LoginRefusedError, MarinaAgent, MarinaClient } from "./client.js";
 export { codingDesk } from "./coding-desk.js";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms.js";
 export { commandFormPrefix, compileCommandForms, composeCommand, matchCommandForm, } from "./command-forms.js";
@@ -1381,7 +1385,7 @@ export declare class MarinaMemoryAssistance {
 ```typescript
 import type { MemoryGraphAction, MemoryGraphInputs, MemoryGraphResults } from "./memory-knowledge-graph.js";
 import type { MemoryTransferFilter, MemoryTransferHeader, MemoryTransferList, MemoryTransferPage, MemoryTransferStatus } from "./memory-transfer.js";
-import type { ForgetMemoryInput, MemoryAdoptInput, MemoryAdoptResult, MemoryBundle, MemoryCachedRetrievalInput, MemoryCachedRetrievalResult, MemoryCacheInput, MemoryCacheResult, MemoryCacheWrite, MemoryCheckpoint, MemoryFederatedRead, MemoryFederatedResult, MemoryFederatedRetrievalResult, MemoryFederatedSearch, MemoryGraphQuery, MemoryGraphResult, MemoryJobStatus, MemoryPlan, MemoryPlanResult, MemoryPlanStep, MemoryQuery, MemoryQueryResult, MemoryReceipt, MemoryRecord, MemoryRecordInput, MemoryResolveInput, MemoryResolveResult, MemoryRetrievalInput, MemoryRetrievalResult, MemoryReviewResult, MemorySearchInput, MemorySearchResult, MemorySource, MemorySourceRange, MemorySourceSearch, MemorySourceSearchResult, MemorySpace, MemoryStorageUsage, MemoryVocabulary, MemoryVocabularyDefinition } from "./memory-types.js";
+import type { ForgetMemoryInput, MemoryAdoptInput, MemoryAdoptResult, MemoryBundle, MemoryCachedRetrievalInput, MemoryCachedRetrievalResult, MemoryCacheInput, MemoryCacheResult, MemoryCacheWrite, MemoryCheckpoint, MemoryCheckpointCapture, MemoryCheckpointCaptureReceipt, MemoryFederatedRead, MemoryFederatedResult, MemoryFederatedRetrievalResult, MemoryFederatedSearch, MemoryGraphQuery, MemoryGraphResult, MemoryJobStatus, MemoryPlan, MemoryPlanResult, MemoryPlanStep, MemoryQuery, MemoryQueryResult, MemoryReceipt, MemoryRecord, MemoryRecordInput, MemoryResolveInput, MemoryResolveResult, MemoryRetrievalInput, MemoryRetrievalResult, MemoryReviewResult, MemorySearchInput, MemorySearchResult, MemorySource, MemorySourceRange, MemorySourceSearch, MemorySourceSearchResult, MemorySpace, MemoryStorageUsage, MemoryVocabulary, MemoryVocabularyDefinition } from "./memory-types.js";
 import { MarinaMemoryWorkflows } from "./memory-workflows.js";
 export declare class MemoryClientError extends Error {
     status: number;
@@ -1541,6 +1545,8 @@ export declare class MarinaMemoryClient {
     }): Promise<MemorySourceRange>;
     checkpoint(space: string, name: string): Promise<MemoryCheckpoint>;
     saveCheckpoint(space: string, name: string, expected_version: number, data: Record<string, unknown>, source_cursor?: number, key?: string, source_ids?: string[]): Promise<MemoryReceipt>;
+    /** Capture sources, their manifest and the checkpoint naming them in one transaction. */
+    captureCheckpoint(space: string, name: string, input: MemoryCheckpointCapture, key?: string): Promise<MemoryCheckpointCaptureReceipt>;
     grant(space: string, principal_id: string, role: "reader" | "writer" | null, key?: string): Promise<MemoryReceipt>;
     forget(space: string, input: ForgetMemoryInput, key?: string): Promise<MemoryReceipt>;
     export(space: string): Promise<Record<string, unknown>>;
@@ -1826,7 +1832,7 @@ export interface MemoryGraphResults {
 
 ```typescript
 import { type MarinaMemoryClient } from "./memory-client.js";
-export declare const MEMORY_OPERATIONS: readonly ["workflow", "federated_retrieve", "retrieve_cached", "assist_create", "assist_jobs", "assist_get", "assist_claim", "assist_heartbeat", "assist_read", "assist_finish", "assist_cancel", "assist_delegate", "adopt", "capabilities", "usage", "federation_mounts", "federated_search", "federated_read", "export_bundle", "import_bundle", "knowledge_graph", "export_page", "transfer_begin", "transfer_status", "transfers", "transfer_page", "transfer_commit", "transfer_abort", "acknowledge", "review", "reaffirm", "resolve", "cache_delete", "cache_get", "cache_put", "me", "spaces", "create_space", "space", "remember", "get", "revise", "query", "join", "json_store", "save_rule", "run_rule", "materialize_rule", "graph", "search", "context", "capture", "capture_batch", "sources", "source_headers", "source_search", "source_range", "vocabulary", "save_vocabulary", "plan", "execute_plan", "retrieve", "checkpoint", "save_checkpoint", "grant", "forget", "export", "job", "reindex"];
+export declare const MEMORY_OPERATIONS: readonly ["workflow", "federated_retrieve", "retrieve_cached", "assist_create", "assist_jobs", "assist_get", "assist_claim", "assist_heartbeat", "assist_read", "assist_finish", "assist_cancel", "assist_delegate", "adopt", "capabilities", "usage", "federation_mounts", "federated_search", "federated_read", "export_bundle", "import_bundle", "knowledge_graph", "export_page", "transfer_begin", "transfer_status", "transfers", "transfer_page", "transfer_commit", "transfer_abort", "acknowledge", "review", "reaffirm", "resolve", "cache_delete", "cache_get", "cache_put", "me", "spaces", "create_space", "space", "remember", "get", "revise", "query", "join", "json_store", "save_rule", "run_rule", "materialize_rule", "graph", "search", "context", "capture", "capture_batch", "sources", "source_headers", "source_search", "source_range", "vocabulary", "save_vocabulary", "plan", "execute_plan", "retrieve", "checkpoint", "save_checkpoint", "capture_checkpoint", "grant", "forget", "export", "job", "reindex"];
 export interface MemoryOperationRequest {
     operation: (typeof MEMORY_OPERATIONS)[number];
     request_id?: string;
@@ -1944,7 +1950,12 @@ export declare function compareMemoryRecipes(observation: MemoryRetrievalObserva
 [Source](../../src/sdk/memory-retry.ts)
 
 ```typescript
-/** Opt-in retry of the SAME request/key. Never reinterpret conflicts or denial. */
+/**
+ * Opt-in retry of the SAME request/key. Never reinterpret conflicts or denial.
+ * A rate limit that names its wait (the next token) is waited out exactly and
+ * does not use up an attempt — it is not a failure — up to a total of
+ * `RATE_LIMIT_WAIT_CAP_MS`; other transient errors back off exponentially.
+ */
 export declare function retryMemoryOperation<T>(operation: () => Promise<T>, options?: {
     attempts?: number;
     sleep?: (ms: number) => Promise<void>;
@@ -2414,6 +2425,40 @@ export interface MemoryCheckpoint {
     source_cursor: number;
     data: Record<string, unknown>;
     updated_at: number;
+}
+/** Input of an atomic checkpoint capture (`capture_checkpoint`). */
+export interface MemoryCheckpointCapture {
+    expected_version: number;
+    session_id?: string;
+    /** New sources; `order` refers to them by index. At most 64, 1 MiB. */
+    items?: {
+        content: unknown;
+        key: string;
+    }[];
+    /** The manifest's sources in order: an existing source id or a new item's index. */
+    order: (string | number)[];
+    /** The server adds `source_ids` (resolved `order`) to this content. */
+    manifest: {
+        key: string;
+        content: Record<string, unknown>;
+    };
+    /** Checkpoint data field set to `entry` plus `source_ids` and `manifest_source_id`. */
+    field: string;
+    entry: Record<string, unknown>;
+    /** The rest of the checkpoint data. */
+    data: Record<string, unknown>;
+    /** Other sources the checkpoint keeps referring to. */
+    source_ids?: string[];
+    /** `"manifest"` = the manifest's sequence number, else an explicit cursor. */
+    cursor?: "manifest" | number;
+    checkpoint_key: string;
+}
+export interface MemoryCheckpointCaptureReceipt extends MemoryReceipt {
+    manifest: {
+        id: string;
+        seq: number;
+    };
+    source_ids: string[];
 }
 export interface MemoryReceipt {
     id: string;
@@ -3571,8 +3616,14 @@ export interface RoutingSyncResult {
 export interface ResidentEnrolInput {
     /** The run's routing session; its `kind` (the adapter id) is the vendor. */
     sessionId: string;
-    /** Requested world name. Omitted: a fresh name that never contains the vendor. */
+    /** Requested world name. Omitted: the agent's proposal, else a fresh word-list name. */
     name?: string;
+    /**
+     * The agent's own proposal (used only without `name`). The server sanitizes
+     * and dedupes it and never takes a vendor or model word; an unusable proposal
+     * falls back to the word list instead of failing.
+     */
+    proposedName?: string;
     /** Room to arrive in. Omitted: the launching person's current room. */
     room?: string;
 }
@@ -3581,6 +3632,8 @@ export interface ResidentCredential {
     token: string;
     expiresAt: number;
 }
+/** Where a resident's name came from. */
+export type ResidentNameSource = "requested" | "proposed" | "generated";
 export interface ResidentEnrolment {
     name: string;
     vendor: string;
@@ -3590,6 +3643,8 @@ export interface ResidentEnrolment {
     room?: string;
     /** True when an existing resident account of the same owner was reused. */
     reused: boolean;
+    /** Where the name came from: the launch request, the agent's proposal, or the word list. */
+    nameSource?: ResidentNameSource;
     credential: ResidentCredential;
     /** The resident's stored attention policy (supervised residents' attention bridge). */
     attention?: ResidentAttentionPolicy;

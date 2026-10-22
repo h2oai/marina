@@ -8,6 +8,7 @@ import type { Engine } from "../engine/engine";
 import { Logger } from "../engine/logger";
 import type { EngineEvent } from "../types";
 import { dashboardEventShape } from "./dashboard-event-filter";
+import { entityOwner, publicEntityProperties, seesEntityPrivate } from "./entity-visibility";
 import { memoryObserver } from "./memory/memory-visibility";
 
 /** Module logger: dashboard broadcast failures. */
@@ -75,7 +76,7 @@ type Observer = ReturnType<typeof memoryObserver>;
  *  of every entity so a client payload is a per-entity pick, not a rebuild. */
 interface BaseSnapshot {
   shared: Omit<WorldSnapshot, "entities">;
-  entities: { id: string; pub: SnapshotEntity; priv: SnapshotEntity }[];
+  entities: { id: string; owner?: string; pub: SnapshotEntity; priv: SnapshotEntity }[];
 }
 
 /**
@@ -231,9 +232,7 @@ export class DashboardBroadcaster {
   /** Pick each entity's private or public shape for one observer. Field order
    *  is fixed here so every principal's payload has the same wire layout. */
   private maskSnapshot(base: BaseSnapshot, observer: Observer): WorldSnapshot {
-    const { privilegedRead, entity } = observer;
-    const own = entity?.id;
-    const entities = base.entities.map((e) => (privilegedRead || own === e.id ? e.priv : e.pub));
+    const entities = base.entities.map((e) => (seesEntityPrivate(observer, e) ? e.priv : e.pub));
     const s = base.shared;
     return {
       timestamp: s.timestamp,
@@ -305,15 +304,21 @@ export class DashboardBroadcaster {
         name: e.name,
         kind: e.kind,
         room,
-        properties: privateView
-          ? e.properties
-          : { rank: e.properties.rank, role: e.properties.role },
+        properties: privateView ? e.properties : publicEntityProperties(e.properties),
         agentStatus: agentStatus(privateView),
         spawnedBy,
         ...(presence ? { presence } : {}),
         ...(vendor ? { vendor } : {}),
       });
-      return { id: e.id as string, pub: shape(false), priv: shape(true) };
+      // Its owning person sees an agent's private shape; computed once per
+      // snapshot, only for configured agents (a person owns no one above it).
+      const owner = spawnedByName.has(e.name) || vendor ? entityOwner(e.name) : undefined;
+      return {
+        id: e.id as string,
+        ...(owner ? { owner } : {}),
+        pub: shape(false),
+        priv: shape(true),
+      };
     });
 
     const rooms = engine.rooms.all().map((r) => ({

@@ -25,16 +25,17 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { homedir, hostname, tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { hostname, tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { diffStat } from "../src/coding/unified-diff";
 import { formatAge } from "../src/engine/commands/format-duration";
 import { waitForDatabaseLease } from "../src/persistence/database-lease";
 import { IS_COMPILED } from "../src/runtime-paths";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
 import { MARINA_VERSION } from "../src/version";
+import { applyCliEnvironment, userMarinaDir } from "./cli-env";
 import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
 import { inferCodeDefaultModel } from "./code-model";
@@ -590,6 +591,21 @@ export function pushTailLines(tail: string[], lines: string[], max = STDERR_TAIL
   }
 }
 
+/** Delete a `--fresh` database and every file the server keeps beside it
+ *  (`-wal`, `-shm`, `.instance-lock`, `.key-secret`, `.runner/`, …). The name
+ *  is unique per launch (port + timestamp), so its prefix is the whole set. */
+export function removeEphemeralDatabase(dbPath: string): void {
+  const base = basename(dbPath);
+  try {
+    for (const name of readdirSync(dirname(dbPath))) {
+      if (name === base || name.startsWith(`${base}.`) || name.startsWith(`${base}-`))
+        rmSync(join(dirname(dbPath), name), { recursive: true, force: true });
+    }
+  } catch {
+    // allow-empty-catch: best-effort removal of a throwaway database
+  }
+}
+
 /** Boot a folder-scoped Marina and run the Code Mode REPL (or a one-shot
  *  `print` task). Never returns. */
 export async function runCodeSession(
@@ -598,12 +614,15 @@ export async function runCodeSession(
 ): Promise<void> {
   const dir = resolve(targetDir);
   if (!statSync(dir).isDirectory()) throw new Error(`Not a project directory: ${dir}`);
+  // This folder's Marina home: its database, harnesses and optional `.env`
+  // (settings for this folder only, above ~/.marina/.env; scripts/cli-env.ts).
+  const projectDirectory = join(userMarinaDir(), "projects", projectSlug(dir));
+  applyCliEnvironment({ instanceDir: projectDirectory });
   const fresh = opts.fresh ?? /^(1|true|on)$/i.test(process.env.MARINA_CODE_FRESH ?? "");
   // Host-exec approval posture. Neither flag → "off" (allowlist-only, no
   // exec-mode sent). Either flag demands an owned TTY; a pipe is never consent.
   const execResolution = resolveExecMode(opts, process.stdin.isTTY === true);
   const execMode = execResolution.mode;
-  const projectDirectory = join(homedir(), ".marina", "projects", projectSlug(dir));
   const harnessStore = new HarnessStore(projectDirectory);
   const savedHarness = opts.harness
     ? harnessStore.load(opts.harness)
@@ -627,9 +646,8 @@ export async function runCodeSession(
   } else {
     // Persistent per-folder home: sessions, artifacts, and memory survive
     // restarts, so re-entering `code` resumes where the last launch left off.
-    const dbDir = join(homedir(), ".marina", "projects", projectSlug(dir));
-    mkdirSync(dbDir, { recursive: true });
-    dbPath = join(dbDir, "marina.db");
+    mkdirSync(projectDirectory, { recursive: true });
+    dbPath = join(projectDirectory, "marina.db");
   }
   const defaultModel =
     harness.agent === "marina" && harness.model
@@ -642,7 +660,7 @@ export async function runCodeSession(
   const noProviderKey = harness.agent === "marina" && defaultModel === undefined;
   if (noProviderKey) {
     console.error(
-      "No LLM provider key — set one (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, …) or run `marina init`.",
+      `No LLM provider key — set one (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, …) in ${join(userMarinaDir(), ".env")} or run \`marina init\`.`,
     );
   }
 
@@ -702,6 +720,11 @@ export async function runCodeSession(
     }
   }
 
+  // The compiled server's working directory: the folder's home, or for --fresh
+  // a sibling of the throwaway database (removed with it).
+  const serverHome = fresh ? `${dbPath}.home` : projectDirectory;
+  if (IS_COMPILED) mkdirSync(serverHome, { recursive: true });
+
   // Boot a minimal, folder-scoped server. MARINA_ADMINS=coder makes the local
   // user the operator (so it may launch the bound coding agent); the empty world
   // + no room agents keep it light; the DB is per-folder (or a throwaway with
@@ -710,7 +733,9 @@ export async function runCodeSession(
   const server = Bun.spawn(
     IS_COMPILED ? [process.execPath, "start"] : [process.execPath, "run", "src/main.ts"],
     {
-      cwd: IS_COMPILED ? dir : REPO_ROOT,
+      // Never the project folder: Bun would load its `.env`, and relative data
+      // paths would land in it. The launcher already passes every setting.
+      cwd: IS_COMPILED ? serverHome : REPO_ROOT,
       env: {
         ...process.env,
         WS_PORT: String(port),
@@ -763,15 +788,7 @@ export async function runCodeSession(
       if (!fresh) rmSync(serverInfoPath(projectDirectory), { force: true });
       // Only ephemeral (--fresh) DBs are deleted — the per-folder persistent
       // DB is the whole point of resume.
-      if (fresh) {
-        try {
-          rmSync(dbPath, { force: true });
-          rmSync(`${dbPath}-wal`, { force: true });
-          rmSync(`${dbPath}-shm`, { force: true });
-        } catch {
-          /* best-effort */
-        }
-      }
+      if (fresh) removeEphemeralDatabase(dbPath);
       process.exit(code);
     })();
     return cleaning;
@@ -863,12 +880,12 @@ export async function runCodeSession(
   }
 
   say(`Marina ${MARINA_VERSION} · ${folderName} · ${agentLabel}`);
-  // The provider check asks the SERVER, which loads its own environment (the
-  // repo .env): the launcher's environment says nothing about what it can use.
-  // The zero-config line above already named the missing key: say it once.
+  // The provider check asks the SERVER: a key can be valid in the environment
+  // and still unusable. The zero-config line above already named a missing key:
+  // say it once.
   if (harness.agent === "marina" && !noProviderKey && !(await serverHasModel(port))) {
     console.error(
-      `No model provider is configured for the agent. Set a key in ${join(IS_COMPILED ? dir : REPO_ROOT, ".env")} or run marina init; or use /use claude, /use codex or /use pi.`,
+      `No model provider is configured for the agent. Set a key in ${join(userMarinaDir(), ".env")} or run marina init; or use /use claude, /use codex or /use pi.`,
     );
   }
   if (verbose) {

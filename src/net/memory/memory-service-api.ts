@@ -178,20 +178,32 @@ export async function handleMemoryServiceApi(
       );
     let limiter = limiters.get(service);
     if (!limiter) {
-      limiter = new RateLimiter({ maxTokens: 100, refillRate: 25 });
+      // 100-request burst, refilled smoothly at 25/s (one token every 40 ms):
+      // a throttled caller waits for the next token, not for a whole second.
+      limiter = new RateLimiter({ maxTokens: 100, refillRate: 1, refillInterval: 40 });
       limiters.set(service, limiter);
     }
     limiter.cleanup();
-    if (!limiter.consume(actor.principalId))
+    if (!limiter.consume(actor.principalId)) {
+      const wait = Math.max(1, limiter.retryAfterMs(actor.principalId));
       return new Response(
         JSON.stringify({
-          error: { code: "rate_limited", message: "Memory request budget exhausted" },
+          error: {
+            code: "rate_limited",
+            message: "Memory request budget exhausted",
+            retry_after_ms: wait,
+          },
         }),
         {
           status: 429,
-          headers: { ...headers, "Content-Type": "application/json", "Retry-After": "1" },
+          headers: {
+            ...headers,
+            "Content-Type": "application/json",
+            "Retry-After": String(Math.ceil(wait / 1000)),
+          },
         },
       );
+    }
     const key = req.headers.get("Idempotency-Key") ?? "";
     if (
       ["POST", "PATCH", "DELETE"].includes(req.method) &&
@@ -682,6 +694,11 @@ export async function handleMemoryServiceApi(
         const sources = repo.sources(actor, space, after, limit);
         return json({ sources, next_cursor: sources.at(-1)?.seq ?? after });
       }
+    }
+    const captureCheckpoint = rest.match(/^checkpoints\/([^/]+)\/capture$/);
+    if (captureCheckpoint && req.method === "POST") {
+      const name = textValue(decodeURIComponent(captureCheckpoint[1]!), "name", 256);
+      return json(repo.captureCheckpoint(actor, space, name, await readBody(req), key), 201);
     }
     const checkpoint = rest.match(/^checkpoints\/([^/]+)$/);
     if (checkpoint) {

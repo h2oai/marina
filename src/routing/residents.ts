@@ -9,11 +9,16 @@ import type {
   ResidentCredential,
   ResidentEnrolInput,
   ResidentEnrolment,
+  ResidentNameSource,
 } from "../sdk/routing-runtime-types";
 import type { RoutingSession } from "../sdk/routing-types";
 import type { EngineEvent } from "../types";
 import { RoutingError } from "./errors";
-import { generateResidentName, residentNameProblem } from "./resident-name";
+import {
+  generateResidentName,
+  residentNameFromProposal,
+  residentNameProblem,
+} from "./resident-name";
 
 const log = new Logger();
 
@@ -21,14 +26,15 @@ const log = new Logger();
 export const RESIDENT_CREDENTIAL_TTL_MS = 24 * 60 * 60_000;
 
 /**
- * `MARINA_SUPERVISED_RESIDENTS=on|off` (default off). On, every agent a local
+ * `MARINA_SUPERVISED_RESIDENTS=on|off` (default on). On, every agent a local
  * routing supervisor launches is enrolled as its own world account, owned by
- * the launching person. Off, routing behaves exactly as before: no resident
- * endpoints, no accounts, the supervisor passes its own credential through.
+ * the launching person. Off (`off`, `false`, `0`, `no`), routing behaves as
+ * before: no resident endpoints, no accounts, the supervisor passes its own
+ * credential through.
  */
 export function supervisedResidentsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.MARINA_SUPERVISED_RESIDENTS?.trim().toLowerCase();
-  return raw === "on" || raw === "true" || raw === "1" || raw === "yes";
+  return !(raw === "off" || raw === "false" || raw === "0" || raw === "no");
 }
 
 /**
@@ -249,14 +255,23 @@ export class ResidentService {
       room === undefined ? null : (this.world.entryRefusal?.(this.callerId, room) ?? null);
     if (refusal) throw new RoutingError(403, "room_private", refusal);
     let name: string;
+    let nameSource: ResidentNameSource;
+    const taken = (candidate: string) => this.claim(candidate) !== "new";
     if (input.name !== undefined) {
       name = text(input.name, "name", 64);
       const problem = residentNameProblem(name);
       if (problem) throw new RoutingError(400, "invalid_name", problem);
+      nameSource = "requested";
     } else {
-      const fresh = generateResidentName(vendor, (candidate) => this.claim(candidate) !== "new");
+      // The agent's own proposal, else the word list: an unusable proposal never fails a launch.
+      const proposed =
+        input.proposedName === undefined
+          ? undefined
+          : residentNameFromProposal(text(input.proposedName, "proposedName", 64), vendor, taken);
+      const fresh = proposed ?? generateResidentName(vendor, taken);
       if (!fresh) throw new RoutingError(409, "name_taken", "No free resident name; pass one");
       name = fresh;
+      nameSource = proposed ? "proposed" : "generated";
     }
     const arrival = room ?? this.world.roomOf(this.callerId);
     const result = this.db.transaction(() => {
@@ -283,6 +298,7 @@ export class ResidentService {
       vendor,
       session: session.id,
       reused: result.reused,
+      nameSource,
     });
     const saved = this.db.getAgentConfig(name);
     return {
@@ -290,6 +306,7 @@ export class ResidentService {
       vendor,
       owner: this.ownerName,
       ...(arrival ? { room: arrival } : {}),
+      nameSource,
       ...result,
       ...(saved
         ? {

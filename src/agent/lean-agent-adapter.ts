@@ -118,7 +118,7 @@ import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
 import type { Perception } from "../types";
 import { isHumanOnboardingNote } from "../world/seed-guide";
 import { suggestPatterns } from "../world/templates/orchestration";
-import { numericTokens, outgoingAcknowledgementRefusal } from "./acknowledgement";
+import { numericTokens, outgoingAcknowledgementRefusal, outgoingMessage } from "./acknowledgement";
 import { ActionHistory } from "./action-history";
 import {
   type AgentConfig,
@@ -130,6 +130,7 @@ import {
   resolveAgentThinkingLevel,
 } from "./agent-types";
 import {
+  type AttentionDecision,
   type AttentionState,
   acknowledgementReplyRefusal,
   assessPerception,
@@ -139,6 +140,8 @@ import {
   DEFAULT_ATTENTION_THRESHOLD,
   forcedActionNudgeMode,
   isAddressedOrCrewMessage,
+  peerChainPolicy,
+  rememberThreadTags,
   shouldKeepPerception,
 } from "./attention";
 import {
@@ -1612,6 +1615,14 @@ export class LeanAgentAdapter implements AgentHandle {
    * ("Fast crew dispatch").
    */
   private cycleWaiter = new InterruptibleWaiter();
+  /**
+   * An attention (assignment/steer) arrived that no prompt has started on
+   * since. `wake()` is a no-op when no sleep is armed, so an attention that
+   * lands while a prompt runs (or before the loop's first sleep) would
+   * otherwise leave the loop sleeping a full idle tick; the next cycle delay
+   * is the fast tick while this is set. Cleared when a prompt starts.
+   */
+  private attentionPending = false;
 
   // ─── Section Dedup ─────────────────────────────────────────────────
   /**
@@ -2217,6 +2228,10 @@ export class LeanAgentAdapter implements AgentHandle {
             this.knownNumbers,
           );
         if (ackRefusal) return { block: true, reason: ackRefusal };
+        // Tags this agent sends mark its threads: a peer's reply that echoes
+        // one answers this agent, it is not a new ask (`rememberThreadTags`).
+        const outgoing = outgoingMessage(context.toolCall.name, args);
+        if (outgoing?.kind === "tell") rememberThreadTags(this.attentionState, outgoing.message);
         this.rememberNumbers(JSON.stringify(args));
         this.hookRegistry.runBeforeToolCall(context.toolCall.name, args);
         return undefined;
@@ -2398,6 +2413,76 @@ export class LeanAgentAdapter implements AgentHandle {
 
   // ─── Perception Handling ──────────────────────────────────────────────
 
+  /**
+   * Stop owing the endpoint request `modelRequestId`: the model API re-offered
+   * it to another member (this resident's claim lapsed) or another member
+   * answered it. The ledger entry, its buffered perception and its durable
+   * record go; the durable completion waits for any intake save still in
+   * flight, so the record is not written back after it is removed.
+   */
+  private releaseModelRequest(modelRequestId: string, reason: string): void {
+    this.releaseRequests(
+      this.outstandingRequests.idsForModelRequest(modelRequestId),
+      `released endpoint request ${modelRequestId}`,
+      { requestId: modelRequestId, reason },
+    );
+  }
+
+  /**
+   * Stop owing the reply on the thread a peer's "no reply needed" closed: the
+   * request carrying the same `[re:…]` tag, or the one its cause names. Other
+   * open asks from that peer and endpoint requests stay owed.
+   */
+  private releaseThreadReplies(thread: NonNullable<AttentionDecision["releaseThread"]>): void {
+    this.releaseRequests(
+      this.outstandingRequests.idsForThread(thread.peer, thread.tags, thread.cause),
+      `released the reply owed to ${thread.peer} on a closed thread`,
+      { peer: thread.peer, reason: "no-reply-requested" },
+    );
+  }
+
+  /** Log once each time an exchange with another agent passes the chain threshold. */
+  private observePeerChain(peer: string, turns: number): void {
+    const key = peer.toLowerCase();
+    const policy = peerChainPolicy();
+    if (turns !== policy.threshold + 1) return;
+    this.log.info(LEAN_AGENT_LOG_CATEGORY, "long exchange with another agent", {
+      agent: this.name,
+      peer: key,
+      turns,
+      mode: policy.mode,
+    });
+  }
+
+  /** Drop ledger entries, their buffered perceptions and their durable records. */
+  private releaseRequests(
+    ids: readonly string[],
+    message: string,
+    fields: Record<string, unknown>,
+  ): void {
+    if (ids.length === 0) return;
+    const released = new Set(ids);
+    this.outstandingRequests.complete(ids);
+    for (const id of ids) {
+      this.unsavedRequests.delete(id);
+      this.evalRequestIds.delete(id);
+    }
+    this.pendingPerceptions = this.pendingPerceptions.filter(
+      (e) => !e.requestId || !released.has(e.requestId),
+    );
+    this.currentPromptActionable = this.outstandingRequests.presentedIds().size > 0;
+    this.log.info(LEAN_AGENT_LOG_CATEGORY, message, { agent: this.name, ...fields });
+    void (async () => {
+      await this.flushOutstandingRequests();
+      await this.platformMemory.completeOutstandingRequests(ids);
+    })().catch((error) => {
+      this.log.warn(LEAN_AGENT_LOG_CATEGORY, "request release checkpoint failed", {
+        agent: this.name,
+        error: getErrorMessage(error),
+      });
+    });
+  }
+
   private flushOutstandingRequests(): Promise<void> {
     if (this.requestSave) return this.requestSave;
     if (!this.unsavedRequests.size) return Promise.resolve();
@@ -2479,10 +2564,16 @@ export class LeanAgentAdapter implements AgentHandle {
                 events,
                 scorer: this.socialAwareness,
                 perceiveSelfEcho: this.perceiveSelfEcho,
+                selfId: this.gameState.getState().connection.entityId ?? undefined,
+                owedModelRequests: this.outstandingRequests.modelRequestIds(),
               },
               { mode: this.attentionMode, threshold: this.attentionThreshold },
               this.attentionState,
             );
+            if (decision.release) this.releaseModelRequest(decision.release, decision.reason);
+            if (decision.releaseThread) this.releaseThreadReplies(decision.releaseThread);
+            if (decision.peerChain !== undefined && typeof p.data?.senderName === "string")
+              this.observePeerChain(p.data.senderName, decision.peerChain);
             if (!decision.keep) {
               if (decision.reason === "self-echo") this.selfEchoesDropped++;
               else if (decision.reason === "below-threshold") this.droppedPerceptions++;
@@ -3210,6 +3301,7 @@ export class LeanAgentAdapter implements AgentHandle {
         // restated on the next prompt.
         if (this.connectionUnavailable()) continue;
         this.lastPromptAt = Date.now();
+        this.attentionPending = false;
 
         // Hard-bound the prompt so a hung upstream can't wedge the loop.
         // When the timeout fires we call agent.abort() which propagates
@@ -3763,6 +3855,13 @@ export class LeanAgentAdapter implements AgentHandle {
         return rate.min;
       return this.outstandingRequests.size > 0 ? rate.normal : rate.idle;
     }
+
+    // A steered attention no prompt has taken yet: pick it up now.
+    if (this.attentionPending) return rate.min;
+    // A bound coder whose run stopped at a per-run cap (not a spend stop)
+    // continues its active task next cycle; waiting out a full tick there
+    // only adds latency, the calls happen anyway.
+    if (this.activeCodingTask && this.runYielded && !this.spendStopLogged) return rate.min;
 
     const hasActionablePerceptions = this.pendingPerceptions.some(
       (perception) => perception.shouldRespond || perception.addressed || perception.priority >= 80,
@@ -6085,6 +6184,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // handled now. Scope: only attention/assign delivery wakes; rate-limit
     // backoffs (LLM-error, loop-exception, streaming guard) intentionally
     // stay on the non-wakeable sleep().
+    this.attentionPending = true;
     this.cycleWaiter.wake();
   }
 

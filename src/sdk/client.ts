@@ -90,6 +90,11 @@ function commandResult(
   return Object.defineProperty(perceptions, "completion", { value: completion }) as CommandResult;
 }
 
+/** The server refused a login or reconnect (as opposed to the transport failing). */
+export class LoginRefusedError extends Error {
+  override readonly name = "LoginRefusedError";
+}
+
 export class CommandError extends Error {
   constructor(
     message: string,
@@ -391,7 +396,7 @@ export class MarinaClient {
         if (p.kind === "error" || p.kind === "auth_error") {
           clearTimeout(timer);
           this.removeInternalHandler(handler);
-          reject(new Error((p.data?.text as string) ?? "Login failed"));
+          reject(new LoginRefusedError((p.data?.text as string) ?? "Login failed"));
         }
       };
       this.addInternalHandler(handler);
@@ -439,7 +444,7 @@ export class MarinaClient {
         if (p.kind === "error" || p.kind === "auth_error") {
           clearTimeout(timer);
           this.removeInternalHandler(handler);
-          reject(new Error((p.data?.text as string) ?? "Reconnection failed"));
+          reject(new LoginRefusedError((p.data?.text as string) ?? "Reconnection failed"));
         }
       };
       this.addInternalHandler(handler);

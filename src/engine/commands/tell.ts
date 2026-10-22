@@ -19,6 +19,12 @@ export interface TellDeps {
     metadata?: Record<string, unknown>,
   ) => void;
   db?: MarinaDB;
+  /**
+   * Whether an entity is driven by an agent (internal resident, MCP or a
+   * client that declared itself an agent, or an account with an agent config
+   * or principal). Without it no tell is treated as agent-to-agent.
+   */
+  isAgent?: (id: EntityId) => boolean;
 }
 
 const TELL_USAGE = "Usage: tell <entity> [ttl:30s] <message>   (also --ttl=30s)";
@@ -59,6 +65,7 @@ export function deliverTell(
   }
 
   const envelope = messageEnvelope(senderId, cause);
+  const senderIsAgent = deps.isAgent?.(senderId) ?? false;
   const correlationId = crypto.randomUUID();
   const receipt = deps.db?.createDirectMessage({
     correlationId,
@@ -89,6 +96,8 @@ export function deliverTell(
     correlationId: receipt?.correlation_id,
     deadlineAt: receipt?.deadline_at,
     messageRef,
+    // Server-stamped (never peer text): attention follows agent-only exchanges.
+    ...(deps.isAgent ? { senderKind: senderIsAgent ? "agent" : "person" } : {}),
     ...envelopeFields(envelope),
   });
   // Record who just messaged the recipient so they can `re`ply without retyping
@@ -190,7 +199,7 @@ export function tellCommand(deps: TellDeps): CommandDef {
         }
         ctx.send(
           input.entity,
-          `Message #${id}: ${row.status} · ${row.sender_name} → ${row.target_name}${row.deadline_at ? ` · deadline ${new Date(row.deadline_at).toISOString()}` : ""}`,
+          `Message #${id}: ${row.status}${lateAnswer(row) ? " after its deadline" : ""} · ${row.sender_name} → ${row.target_name}${row.deadline_at ? ` · deadline ${new Date(row.deadline_at).toISOString()}` : ""}`,
         );
         return;
       }
@@ -220,6 +229,20 @@ export function tellCommand(deps: TellDeps): CommandDef {
       deliverTell(deps, ctx, input.entity, sender, targetName, message, ttl);
     },
   };
+}
+
+/** Answered, but only after the deadline had passed. */
+function lateAnswer(row: {
+  status: string;
+  deadline_at: number | null;
+  acknowledged_at: number | null;
+}) {
+  return (
+    row.status === "acknowledged" &&
+    row.deadline_at !== null &&
+    row.acknowledged_at !== null &&
+    row.acknowledged_at > row.deadline_at
+  );
 }
 
 export function replyCommand(deps: TellDeps): CommandDef {

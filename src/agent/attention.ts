@@ -14,11 +14,18 @@
  *
  * The rules, in order:
  *  1. the agent's own command echoes are dropped (`isSelfEchoPerception`);
+ *     an endpoint `model_request` addressed (`target`) to another member is
+ *     dropped, and so is a peer's `model_response` (one member claims each
+ *     request; see {@link endpointDispatchDrop});
  *  2. a repeat of recently seen text is dropped unless it is addressed;
  *  3. the social score sets the priority (`SocialAwareness.scorePerception`);
  *     a tell is a REQUEST (100, reply owed), INFORMATION (60, read, owes
  *     nothing) or a pure acknowledgement (≤ 30, owes nothing); a room or
- *     channel post that only acknowledges is capped the same way;
+ *     channel post that only acknowledges is capped the same way. A message
+ *     that says it wants no reply is never a request, and a `[re:…]` tag
+ *     the thread already carries is read as a reply marker, not an ask; a
+ *     long exchange with another agent is observed ({@link peerChainPolicy})
+ *     and stops owing or waking only under an explicit `enforce` policy;
  *  4. untrusted (gateway-relayed) content is clamped below the wake tier and
  *     never owes a reply;
  *  5. the attention mode and threshold decide keep/drop
@@ -28,9 +35,17 @@
  *  7. the owed-reply rule (`MARINA_FORCED_ACTION_NUDGE`) and the wake band.
  */
 
+import { sameResidentName } from "../engine/entity-name";
 import { stripAnsi } from "../net/ansi";
 import type { Perception } from "../types";
-import { classifyIncomingTell, isPureAcknowledgement } from "./acknowledgement";
+import {
+  classifyIncomingTell,
+  correlationTagIds,
+  declinesReply,
+  isPureAcknowledgement,
+  withoutCorrelationTags,
+} from "./acknowledgement";
+import { modelEnvelopeOf } from "./outstanding-requests";
 import { isAddressedTo, isCrewDispatch, type SocialEvent, withoutVocative } from "./social";
 
 /** Attention modes: `focused` drops what scores below the threshold; `balanced` and `open` keep everything. */
@@ -70,6 +85,71 @@ export const UNSCORED_PRIORITY = 15;
 
 /** Recently seen perception hashes kept for de-duplication before the set resets. */
 export const DEDUPE_WINDOW = 200;
+
+/** Correlation-tag ids a resident remembers (sent or received) before the oldest is forgotten. */
+export const THREAD_TAG_WINDOW = 256;
+
+/** How long a quiet gap must be before an exchange with another agent starts over. */
+export const PEER_CHAIN_WINDOW_MS = 30 * 60_000;
+
+/** Default {@link PeerChainPolicy.threshold}. */
+export const DEFAULT_PEER_CHAIN_THRESHOLD = 6;
+
+/**
+ * What attention does with a long exchange between this resident and another
+ * agent. `observe` (default): past `threshold` turns the decision carries
+ * `peerChain` (the turn count) and nothing else changes — the agent is still
+ * woken and still owes its reply. `enforce`: past `threshold` a tell from that
+ * agent is read on the next cycle but owes nothing and does not wake (reason
+ * `chain-limit`). `off`: not counted.
+ */
+export interface PeerChainPolicy {
+  mode: "off" | "observe" | "enforce";
+  threshold: number;
+}
+
+/**
+ * `MARINA_PEER_REPLY_CHAIN`: `observe` (default, threshold 6), `observe:<n>`,
+ * `enforce`, `enforce:<n>` or `off`. Junk falls back to the default. A person's
+ * tell resets every count, so this never holds back a person.
+ */
+export function peerChainPolicy(
+  env: Record<string, string | undefined> = process.env,
+): PeerChainPolicy {
+  const raw = env.MARINA_PEER_REPLY_CHAIN?.trim().toLowerCase();
+  const fallback: PeerChainPolicy = { mode: "observe", threshold: DEFAULT_PEER_CHAIN_THRESHOLD };
+  if (!raw) return fallback;
+  const [mode, count] = raw.split(":", 2);
+  if (mode === "off") return { mode: "off", threshold: 0 };
+  if (mode !== "observe" && mode !== "enforce") return fallback;
+  if (count === undefined) return { mode, threshold: DEFAULT_PEER_CHAIN_THRESHOLD };
+  const n = Number(count);
+  return Number.isInteger(n) && n > 0 ? { mode, threshold: n } : fallback;
+}
+
+/**
+ * Count this tell in the resident's exchange with `peer`: a turn from another
+ * agent extends the exchange (a quiet gap of {@link PEER_CHAIN_WINDOW_MS}
+ * starts it over); a person's tell resets every exchange. Resident-local — the
+ * message envelope's `depth` stays strictly causal.
+ */
+export function countPeerTurn(
+  state: AttentionState,
+  peer: string,
+  senderKind: unknown,
+  now: number,
+): number {
+  if (senderKind === "person") {
+    state.peerChains.clear();
+    return 0;
+  }
+  if (senderKind !== "agent") return 0;
+  const key = peer.toLowerCase();
+  const prior = state.peerChains.get(key);
+  const turns = prior && now - prior.lastAt <= PEER_CHAIN_WINDOW_MS ? prior.turns + 1 : 1;
+  state.peerChains.set(key, { turns, lastAt: now });
+  return turns;
+}
 
 /** Default attention threshold and the range every threshold is held to. */
 export const DEFAULT_ATTENTION_THRESHOLD = 50;
@@ -204,7 +284,7 @@ export function acknowledgementReplyRefusal(
   }
   if (!target || !message) return undefined;
   if (!peersWhoAcknowledged.has(target.toLowerCase())) return undefined;
-  if (!isPureAcknowledgement(message)) return undefined;
+  if (!isPureAcknowledgement(withoutCorrelationTags(message))) return undefined;
   return `not sent: acknowledgement; ${target}'s last message was one (no reply owed).`;
 }
 
@@ -235,10 +315,45 @@ export interface AttentionState {
   peersWhoAcknowledged: Set<string>;
   /** When this resident last took an ambient channel post as one to answer (ms). */
   lastChannelResponseAt: number;
+  /**
+   * Correlation-tag ids (`[re:<id>]`, lower-cased) this resident has already
+   * sent or received, oldest first. A tag seen again is a thread marker — the
+   * reply to an ask, or a follow-up in it — not a new caller waiting.
+   */
+  threadTags: Set<string>;
+  /**
+   * The resident's current exchange with each other agent (lower-cased name):
+   * turns since a person last spoke to it or since a quiet gap.
+   */
+  peerChains: Map<string, { turns: number; lastAt: number }>;
 }
 
 export function createAttentionState(): AttentionState {
-  return { recentHashes: new Set(), peersWhoAcknowledged: new Set(), lastChannelResponseAt: 0 };
+  return {
+    recentHashes: new Set(),
+    peersWhoAcknowledged: new Set(),
+    lastChannelResponseAt: 0,
+    threadTags: new Set(),
+    peerChains: new Map(),
+  };
+}
+
+/**
+ * Remember the correlation tags in a message this resident sent or received
+ * (bounded by {@link THREAD_TAG_WINDOW}, oldest forgotten first). The adapter
+ * calls it for outgoing tells; {@link assessPerception} does for incoming
+ * tells and the resident's own send receipts.
+ */
+export function rememberThreadTags(state: AttentionState, message: string): void {
+  for (const id of correlationTagIds(message)) {
+    state.threadTags.delete(id);
+    state.threadTags.add(id);
+  }
+  while (state.threadTags.size > THREAD_TAG_WINDOW) {
+    const oldest = state.threadTags.values().next().value;
+    if (oldest === undefined) break;
+    state.threadTags.delete(oldest);
+  }
 }
 
 /** The social model's scoring of an event: `SocialAwareness` satisfies it. */
@@ -262,6 +377,15 @@ export interface AttentionInput {
   nudgeMode?: "all" | "requests";
   /** Clock for the channel-reply cooldown (ms); defaults to `Date.now()`. */
   now?: () => number;
+  /**
+   * The resident's own entity id. With it, an endpoint `model_request`
+   * addressed to another member is not this resident's to answer.
+   */
+  selfId?: string;
+  /** The endpoint request ids this resident still owes a reply to. */
+  owedModelRequests?: ReadonlySet<string>;
+  /** Long agent-exchange policy; defaults to {@link peerChainPolicy}. */
+  peerChain?: PeerChainPolicy;
 }
 
 /**
@@ -277,8 +401,11 @@ export type WakeBand = "now" | "next" | "context" | "drop";
 export type AttentionReason =
   | "self-echo"
   | "duplicate"
+  | "addressed-elsewhere"
+  | "answered-elsewhere"
   | "below-threshold"
   | "untrusted"
+  | "chain-limit"
   | "acknowledgement"
   | "information"
   | "request"
@@ -288,6 +415,25 @@ export type AttentionReason =
 export interface AttentionDecision {
   keep: boolean;
   reason: AttentionReason;
+  /**
+   * An endpoint request id this resident no longer owes: it was re-offered to
+   * another member, or another member answered it. The caller drops it from
+   * its reply ledger.
+   */
+  release?: string;
+  /**
+   * A peer's tell that says it wants no reply (`declinesReply`) closes its
+   * own thread: the reply this resident still owes that peer on the same
+   * thread — a request carrying one of `tags`, or the message `cause` names —
+   * is released. Other open asks from that peer stay owed; endpoint requests
+   * are never released this way. The caller drops them from its ledger.
+   */
+  releaseThread?: { peer: string; tags: string[]; cause?: string };
+  /**
+   * Turns in this resident's current exchange with another agent, set once
+   * the exchange passes the policy threshold (content-free; for observation).
+   */
+  peerChain?: number;
   wake: WakeBand;
   /** Buffer priority (meaningful only when kept). */
   priority: number;
@@ -309,7 +455,12 @@ export interface AttentionDecision {
 }
 
 function dropped(
-  reason: "self-echo" | "duplicate" | "below-threshold",
+  reason:
+    | "self-echo"
+    | "duplicate"
+    | "below-threshold"
+    | "addressed-elsewhere"
+    | "answered-elsewhere",
   priority: number,
 ): AttentionDecision {
   return {
@@ -340,6 +491,41 @@ function addressedForDedupe(input: AttentionInput, event: SocialEvent | undefine
 }
 
 /**
+ * Endpoint dispatch on a `model-<name>` channel. The model API addresses each
+ * `model_request` to ONE member (`target`, its entity id) and posts it on the
+ * channel, so every member perceives it. Only the addressee owes the reply:
+ * for the others it is dropped, not owed and no wake, the rule the SDK
+ * provider has always applied. A request without a `target` stays everyone's
+ * (unchanged). A re-offer of a request this resident held, now addressed to
+ * someone else (its claim lapsed, `request-claim.ts`), releases it. A peer's
+ * `model_response` for a request is the caller's, not this resident's: it is
+ * dropped too, and releases the request when this resident still owed it.
+ * Undefined: not an endpoint envelope, or this resident's to handle.
+ */
+function endpointDispatchDrop(input: AttentionInput): AttentionDecision | undefined {
+  const { perception: p, selfName } = input;
+  if (p.kind !== "message" || typeof p.data?.channel !== "string") return undefined;
+  const envelope = modelEnvelopeOf(p);
+  if (!envelope) return undefined;
+  const owed = input.owedModelRequests?.has(envelope.id) ?? false;
+  const release = owed ? { release: envelope.id } : {};
+  if (envelope.type === "model_request") {
+    const target = envelope.target;
+    if (!target || !input.selfId) return undefined;
+    if (target === input.selfId || sameResidentName(target, selfName)) return undefined;
+    return { ...dropped("addressed-elsewhere", 0), ...release };
+  }
+  if (envelope.type === "model_response" || envelope.type === "model_response_end") {
+    const sender = typeof p.data.senderName === "string" ? p.data.senderName : p.data.from;
+    // The channel names the sender by its entity name ("Answerer2"), the
+    // resident knows its config name ("Answerer-2"): compare them normalised.
+    if (typeof sender !== "string" || sameResidentName(sender, selfName)) return undefined;
+    return { ...dropped("answered-elsewhere", 0), ...release };
+  }
+  return undefined;
+}
+
+/**
  * Decide what to do with one perception. Updates `state` (de-duplication,
  * acknowledging peers, the channel cooldown) exactly as the lean adapter
  * always has, and returns the decision; it performs no other side effect.
@@ -350,8 +536,17 @@ export function assessPerception(
   state: AttentionState,
 ): AttentionDecision {
   const { perception: p, text, selfName } = input;
+  // The resident's own tell receipt names the tags it just sent: a reply that
+  // echoes one is an answer to this resident, not a new ask of it.
+  const delivery = p.data?.delivery as { kind?: unknown; message?: unknown } | undefined;
+  if (delivery?.kind === "tell" && typeof delivery.message === "string")
+    rememberThreadTags(state, delivery.message);
+  else if (/^You tell \S[^:]*: /.test(stripAnsi(text).replace(/^>\s*/, "").trimStart()))
+    rememberThreadTags(state, text);
   // 1. Self-echo — the resident's own memory-service acknowledgements and send receipts.
   if (!input.perceiveSelfEcho && isSelfEchoPerception(p, text)) return dropped("self-echo", 0);
+  const elsewhere = endpointDispatchDrop(input);
+  if (elsewhere) return elsewhere;
 
   // 2. Dedupe — skip identical text seen recently; addressed requests never disappear for repeating.
   const event = input.events[input.events.length - 1];
@@ -379,15 +574,35 @@ export function assessPerception(
   // passes the attention filter, but owes nothing: forcing a reply to it made
   // the recipient answer every result with a status echo, which owed the
   // sender in turn.
+  //
+  // A `[re:<id>]` tag this resident has already sent or received marks a
+  // reply inside a thread, not a caller waiting: the message is classified
+  // without it. Echoing the tag is what the harness asks of a reply, so a
+  // tag-carrying reply that still counted as a request made each answer owe
+  // the next one (2026-10-21, the answerer crew's `[re:mapping]` loop).
   let acknowledgement = false;
   let information = false;
+  let chainLimited = false;
+  let peerChain: number | undefined;
+  let releaseThread: AttentionDecision["releaseThread"];
+  const knownTags = new Set(state.threadTags);
   if (p.tag === "tell" && typeof p.data.senderName === "string") {
-    const body =
+    const raw =
       typeof p.data.message === "string"
         ? p.data.message
         : text.replace(/^[\s\S]*?\btells you:\s*/, "");
+    const body = withoutCorrelationTags(raw, knownTags);
+    rememberThreadTags(state, raw);
     acknowledgement = isPureAcknowledgement(body);
     const sender = p.data.senderName.toLowerCase();
+    if (!p.data.untrusted && declinesReply(body)) {
+      const cause = typeof p.data.cause === "string" ? p.data.cause : undefined;
+      releaseThread = {
+        peer: p.data.senderName,
+        tags: correlationTagIds(raw),
+        ...(cause ? { cause } : {}),
+      };
+    }
     if (acknowledgement) {
       state.peersWhoAcknowledged.add(sender);
       priority = Math.min(priority, ACKNOWLEDGEMENT_PRIORITY);
@@ -401,6 +616,26 @@ export function assessPerception(
       state.peersWhoAcknowledged.delete(sender);
       priority = REQUEST_TELL_PRIORITY;
       respond = true;
+    }
+    // A long exchange with another agent is observed by default; only an
+    // explicit `enforce` policy stops it owing or waking. A person's tell
+    // resets the count, so a person is never held back.
+    const policy = input.peerChain ?? peerChainPolicy();
+    if (policy.mode !== "off" && !p.data.untrusted) {
+      const turns = countPeerTurn(
+        state,
+        p.data.senderName,
+        p.data.senderKind,
+        (input.now ?? Date.now)(),
+      );
+      if (turns > policy.threshold) {
+        peerChain = turns;
+        if (policy.mode === "enforce") {
+          chainLimited = true;
+          priority = Math.min(priority, INFORMATION_TELL_PRIORITY);
+          respond = false;
+        }
+      }
     }
   } else if (
     p.kind === "message" &&
@@ -429,6 +664,7 @@ export function assessPerception(
   if (
     !acknowledgement &&
     !information &&
+    !chainLimited &&
     !shouldKeepPerception(config.mode, priority, respond, config.threshold)
   ) {
     return dropped("below-threshold", priority);
@@ -457,19 +693,24 @@ export function assessPerception(
   // request. An INFORMATION post that scored high (a crew update naming this
   // agent) stays a wake and a [!] line, but is neither owed nor nudged.
   const requestBody = typeof p.data?.message === "string" ? p.data.message : text;
+  const classifiedBody = withoutCorrelationTags(requestBody, knownTags);
+  if (p.tag !== "tell") rememberThreadTags(state, requestBody);
   const nudgeMode = input.nudgeMode ?? forcedActionNudgeMode();
-  const owed =
-    nudgeMode === "requests"
+  const owed = chainLimited
+    ? false
+    : nudgeMode === "requests"
       ? respond &&
         (p.tag === "tell" ||
-          (!isPureAcknowledgement(requestBody) && classifyIncomingTell(requestBody) === "request"))
+          (!isPureAcknowledgement(classifiedBody) &&
+            classifyIncomingTell(classifiedBody) === "request"))
       : respond || priority >= WAKE_PRIORITY;
 
   // Wake band. Ambient connects, movement and channel chatter wait for the
   // next reflective cycle instead of each purchasing a model turn; addressed
   // messages, endpoint requests and first-party information wake now. A
   // channel post interrupts a run only at the dispatch tier.
-  const wakesNow = respond || priority >= WAKE_PRIORITY || (information && !untrusted);
+  const wakesNow =
+    !chainLimited && (respond || priority >= WAKE_PRIORITY || (information && !untrusted));
   const wake: WakeBand = wakesNow ? "now" : acknowledgement || untrusted ? "context" : "next";
   const steerFloor = event?.type === "channel_message" ? CHANNEL_STEER_PRIORITY : WAKE_PRIORITY;
 
@@ -477,15 +718,17 @@ export function assessPerception(
     keep: true,
     reason: untrusted
       ? "untrusted"
-      : acknowledgement
-        ? "acknowledgement"
-        : information
-          ? "information"
-          : owed
-            ? "request"
-            : respond
-              ? "addressed"
-              : "ambient",
+      : chainLimited
+        ? "chain-limit"
+        : acknowledgement
+          ? "acknowledgement"
+          : information
+            ? "information"
+            : owed
+              ? "request"
+              : respond
+                ? "addressed"
+                : "ambient",
     wake,
     priority,
     shouldRespond: respond,
@@ -495,7 +738,11 @@ export function assessPerception(
     information,
     untrusted,
     requestBody,
-    marker: noReplyMarker(acknowledgement, information),
+    marker: chainLimited
+      ? " (long agent exchange; no reply owed)"
+      : noReplyMarker(acknowledgement, information),
+    ...(releaseThread ? { releaseThread } : {}),
+    ...(peerChain !== undefined ? { peerChain } : {}),
     ...(event ? { event } : {}),
   };
 }

@@ -254,7 +254,11 @@ it("uploads only new resident segments and stops local re-archival after forgett
       if (request.operation === "capture") captures++;
       if (request.operation === "capture_batch")
         captures += (request.input!.items as unknown[]).length;
-      return residentMemoryOperation(db, "Resident", request);
+      const reply = await residentMemoryOperation(db, "Resident", request);
+      // The atomic capture stores its new parts and one manifest, or nothing.
+      if (request.operation === "capture_checkpoint")
+        captures += (request.input!.items as unknown[]).length + 1;
+      return reply;
     },
   });
   const messages = [{ role: "user", content: "first original" }];
@@ -334,7 +338,8 @@ it("awaits resident archive acknowledgments before trimming and recovers origina
   let fail = true;
   const transport = {
     memoryService: async (request: MemoryOperationRequest) => {
-      if (fail && request.operation === "capture") throw new Error("storage unavailable");
+      if (fail && (request.operation === "capture" || request.operation === "capture_checkpoint"))
+        throw new Error("storage unavailable");
       return residentMemoryOperation(db, "Resident", request);
     },
   };

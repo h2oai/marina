@@ -33,7 +33,7 @@ import { resultForDisk } from "./result-file";
 import { computeAccuracy, computeJudgeScore } from "./scoring/accuracy";
 import { computePassAtK } from "./scoring/pass-at-k";
 import type { BenchmarkConfig, BenchmarkResult, DatasetItem, ResultItem } from "./types";
-import { formatUsd, summarizeUsage, totalCostUsd } from "./usage";
+import { formatCacheUsage, formatUsd, summarizeUsage, totalCostUsd } from "./usage";
 
 // --- Benchmark Registry ---
 // One registry (src/engine/benchmark-registry.ts); loaders in ./registry.ts.
@@ -154,9 +154,14 @@ function printSummary(result: BenchmarkResult): void {
     );
     if (usage.promptTokens !== undefined || usage.completionTokens !== undefined) {
       console.log(
-        `  Tokens: ${usage.promptTokens ?? "n/a"} in / ${usage.completionTokens ?? "n/a"} out`,
+        `  Tokens: ${usage.promptTokens ?? "n/a"} in / ${usage.completionTokens ?? "n/a"} out${usage.reasoningTokens !== undefined ? ` (${usage.reasoningTokens} reasoning)` : ""}`,
       );
     }
+    if (usage.outputCapHits !== undefined) {
+      console.log(`  Output cap hits: ${usage.outputCapHits} (of ${usage.items} items)`);
+    }
+    const cache = formatCacheUsage(usage);
+    if (cache) console.log(`  ${cache}`);
   }
 
   const breakdownEntries = Object.entries(result.scores.breakdown);

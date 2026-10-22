@@ -473,8 +473,9 @@ export type EngineEvent =
   | { type: "tick"; timestamp: number }
   | { type: "connect"; connectionId: string; protocol: ConnectionProtocol; timestamp: number }
   | { type: "disconnect"; connectionId: string; timestamp: number }
-  | { type: "entity_enter"; entity: EntityId; room: RoomId; timestamp: number }
-  | { type: "entity_leave"; entity: EntityId; room: RoomId; timestamp: number }
+  /** `name` is the entity's display name at the time, so a reader can name someone already gone. */
+  | { type: "entity_enter"; entity: EntityId; name?: string; room: RoomId; timestamp: number }
+  | { type: "entity_leave"; entity: EntityId; name?: string; room: RoomId; timestamp: number }
   | { type: "task_claimed"; entity: EntityId; taskId: number; timestamp: number }
   | { type: "task_submitted"; entity: EntityId; taskId: number; timestamp: number }
   | {
@@ -905,6 +906,11 @@ export type EngineEvent =
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
       costUsd?: number;
+      /** The output cap Marina applied (the cheap tier's default, when the
+       * caller set none — `src/net/model/tier-output-cap.ts`). */
+      outputCap?: number;
+      /** True when the reply ended on that cap (`finish_reason: length`). */
+      outputCapHit?: boolean;
       errorKind?:
         | "auth"
         | "quota"

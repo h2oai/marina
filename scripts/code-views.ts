@@ -8,7 +8,12 @@ export type ConversationView = "coding" | "world";
 export type TerminalView = ConversationView | "approvals" | "panel";
 export type TranscriptView = ConversationView | "all";
 /** Structured presentation hint: "diff" text is coloured locally and not clipped at 16 KB. */
-export type EntryFormat = "diff";
+/**
+ * `diff`: sanitised diff text the renderer colours from its structure.
+ * `styled`: text this terminal rendered itself (a live panel); its SGR is
+ * re-validated on print and everything else is still removed.
+ */
+export type EntryFormat = "diff" | "styled";
 
 export const TERMINAL_HISTORY_LIMITS = {
   entries: 400,

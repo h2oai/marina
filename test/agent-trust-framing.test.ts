@@ -428,7 +428,11 @@ describe("the continuity journal is not evidence; measurement turns are not jour
       db.createUser({ id: crypto.randomUUID(), name: owner });
       const memoryClient = {
         memoryService: async (request: MemoryOperationRequest) => {
-          if (request.operation === "capture" || request.operation === "capture_batch")
+          if (
+            request.operation === "capture" ||
+            request.operation === "capture_batch" ||
+            request.operation === "capture_checkpoint"
+          )
             captures.push(JSON.stringify(request.input));
           return residentMemoryOperation(db, owner, request);
         },

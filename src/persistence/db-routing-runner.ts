@@ -52,6 +52,22 @@ export class RoutingRunnerJournal {
     return this.db.query<{ value: string }, []>("SELECT value FROM settings WHERE key='id'").get()!
       .value;
   }
+  /** The resident last launched for `key` (adapter + source directory), if any. */
+  residentName(key: string): string | undefined {
+    return (
+      this.db
+        .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key=?")
+        .get(`resident:${key}`)?.value ?? undefined
+    );
+  }
+  /** Remember `name` as the resident for `key`, so a relaunch reuses its account. */
+  rememberResident(key: string, name: string) {
+    this.db
+      .query(
+        "INSERT INTO settings VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      )
+      .run(`resident:${key}`, name);
+  }
   save(session: RoutingSession, state: RuntimeState) {
     this.db
       .query(

@@ -386,6 +386,9 @@
 # MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash
 # MARINA_MODEL_TIER_STRONG=openrouter/anthropic/claude-opus-5.5
 
+# Default output cap for cheap-tier requests: a request on `marina/cheap` that sets no max_tokens (a /v1 client such as the benchmark harness, a `src/model` pipeline; agents always send their own cap and keep it) gets this many, and on an OpenRouter route also `reasoning.max_tokens` at 3/4 of it, so a runaway reasoning loop stops there with room left for the answer. A caller's own max_tokens / max_completion_tokens always wins, larger or smaller; explicit model ids and the strong tier are never capped. Default 16384: on the 2026-10-20 proof run deepseek-v4.1-flash answers ran p95 6.3k / p99 13.1k output tokens, and the 0.8 % above 16k (up to ~98k) scored 0.29 on average and were a third of the cost. A reply cut at the cap is marked on its trace (`outputCapHit`) and on `x-marina-output-cap: <n>; hit`; `admin models` shows the cap and the hits since start. `0` or `off` disables it.
+# MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS=16384
+
 # Model for agents spawned without one, and the fallback for unrecognized models. marina/default calls this instance's own /v1, which routes to whichever provider has a key. A default model set at runtime (dashboard or `admin`) wins. Set (here or at runtime), it is also the cheap tier unless MARINA_MODEL_TIER_CHEAP is set; unset, agents spawned without a model run on `marina/cheap` (before 2026-10-20: marina/default). The /v1 `marina` model itself is unchanged.
 # MARINA_DEFAULT_MODEL=marina/default
 
@@ -408,6 +411,9 @@
 # `0` stops re-posting an unanswered routed model_request as a reminder at 25% and 60% of the timeout.
 # MODEL_REQUEST_REMINDERS=1
 
+# Claim lease for a request routed to one member of a `marina:<name>` endpoint channel (milliseconds). Only the addressed member owes the request; if it shows no traced work on it (a turn, tool call or draft under the request's trace) for this long, the request is re-offered to another eligible member and the first holder drops it. A pinned (`role:`) request is never re-offered. `0`/`off` = never re-offer.
+# MARINA_REQUEST_CLAIM_LEASE_MS=120000
+
 # Output-token cap marina/default sends upstream per completion (also the compactor's output reservation). Extended thinking on this path is clamped to this value minus 1024. When set explicitly it also caps a full-profile agent on a registry model, which otherwise asks for the model's whole output maximum; an explicit cap never grows.
 # MARINA_DEFAULT_MAX_TOKENS=16384
 
@@ -428,9 +434,9 @@
 # Comma-separated agent names that seeders, autorespawn and room-agent spawning must not bring back. `agent disable <name>` does the same in-world and persists.
 # MARINA_DISABLED_AGENTS=
 
-# Experimental. `on`: every agent a local routing supervisor (`marina supervise`, `marina code` native agents) launches becomes its own world account, owned by the launching person: an agent config with runtime `supervised`, an owned agent principal, a 24-hour workload credential renewed while the run lives and revoked when it stops, and a world presence in the launcher's room. The native process holds no world credential: it gets MARINA_RELAY_SOCKET, a private Unix socket over which `marina connect -c` runs commands on the resident's own connection. Set it on the server (enables `POST /api/routing/residents`) and in the supervisor's environment. Supervised residents are never respawned by the server. `off` (default): routing behaves as before.
+# Default `on`: every agent a local routing supervisor (`marina supervise`, `marina code` native agents) launches becomes its own world account, owned by the launching person: an agent config with runtime `supervised`, an owned agent principal, a 24-hour workload credential renewed while the run lives and revoked when it stops, and a world presence in the launcher's room. The native process holds no world credential: it gets MARINA_RELAY_SOCKET, a private Unix socket over which `marina connect -c` runs commands on the resident's own connection. Set it on the server (enables `POST /api/routing/residents`) and in the supervisor's environment. Supervised residents are never respawned by the server. A supervisor whose server offers no supervision endpoint (residents off, or an older server) falls back to the earlier routing and says so. `off`: routing behaves as before (the supervisor passes its own credential through).
 # @restart
-# MARINA_SUPERVISED_RESIDENTS=off
+# MARINA_SUPERVISED_RESIDENTS=on
 
 # Renewable lease on a newly claimed task, in milliseconds. Workers renew with `task heartbeat <id>`; expired ordinary work reopens.
 # MARINA_TASK_LEASE_MS=900000
@@ -504,6 +510,9 @@
 
 # What a resident owes a reply to (the reply ledger and the forced-action nudge). `requests` (default): only an event that owes a reply — a request tell, a post addressed to the agent (vocative `Name, …` / `@Name` / `to:Name`) whose body is a request, or a request already in the reply ledger; addressed information still wakes the agent but is not tracked as owed or nudged. `all`: any addressed or high-priority event (the earlier default; two agents naming each other could answer each other indefinitely).
 # MARINA_FORCED_ACTION_NUDGE=requests
+
+# Long exchanges between a resident and another agent. Each resident counts the turns of its current exchange with each other agent (a person's tell resets every count; a 30-minute gap starts over; message envelope depth stays causal). `observe` (default, threshold 6) only records an exchange that passes the threshold (a decision mark and one log line); the agent is still woken and still owes its reply. `enforce` or `enforce:<n>` is an explicit opt-in: past n turns a tell from that agent is read on the next cycle, owes nothing and does not wake. `observe:<n>` changes the threshold; `off` disables counting.
+# MARINA_PEER_REPLY_CHAIN=observe
 
 # Absolute cap on an agent's conversation, in estimated tokens (system prompt and tool schemas excluded). Default 48000; `0`/`off` disables it (compaction then fires only near the model window); explicit values below 8000 are raised to 8000. Once the cap is reached after the agent's first run, the history is compacted to MARINA_AGENT_CONTEXT_TARGET_TOKENS (default a third of the cap) and kept; the originals are archived first. Bound Code Mode coders also apply it after the first assistant turn inside a long task; a fresh request is never compacted before work starts. The same default and explicit values apply to every agent. The near-window trigger still applies when it comes first.
 # MARINA_AGENT_CONTEXT_CAP_TOKENS=48000
