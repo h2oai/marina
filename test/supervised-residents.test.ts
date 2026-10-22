@@ -44,7 +44,11 @@ import {
   relaySpoolDirectory,
   spoolCommand,
 } from "../src/routing/resident-relay";
-import { ResidentService, residentLabeler } from "../src/routing/residents";
+import {
+  ResidentService,
+  residentLabeler,
+  supervisedResidentsEnabled,
+} from "../src/routing/residents";
 import { RoutingService } from "../src/routing/service";
 import { MarinaSupervisor, NAME_PROPOSAL_PROMPT } from "../src/routing/supervisor";
 import { formatResidentLabel } from "../src/sdk/resident-label";
@@ -57,7 +61,7 @@ import { MockConnection, makeTestRoom, stripAnsi, until } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
 const ON = { MARINA_SUPERVISED_RESIDENTS: "on" };
-const OFF = { MARINA_SUPERVISED_RESIDENTS: undefined };
+const OFF = { MARINA_SUPERVISED_RESIDENTS: "off" };
 
 let directory: string;
 let db: MarinaDB;
@@ -844,6 +848,17 @@ describe("supervisor", () => {
       await supervisor.stop();
       supervisor.close();
     }
+  });
+});
+
+describe("the switch", () => {
+  it("is on by default and off only when set off", () => {
+    expect(supervisedResidentsEnabled({})).toBe(true);
+    expect(supervisedResidentsEnabled({ MARINA_SUPERVISED_RESIDENTS: "" })).toBe(true);
+    for (const on of ["on", "true", "1", "yes", "ON"])
+      expect(supervisedResidentsEnabled({ MARINA_SUPERVISED_RESIDENTS: on })).toBe(true);
+    for (const off of ["off", "false", "0", "no", " Off "])
+      expect(supervisedResidentsEnabled({ MARINA_SUPERVISED_RESIDENTS: off })).toBe(false);
   });
 });
 

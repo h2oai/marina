@@ -26,14 +26,15 @@ const log = new Logger();
 export const RESIDENT_CREDENTIAL_TTL_MS = 24 * 60 * 60_000;
 
 /**
- * `MARINA_SUPERVISED_RESIDENTS=on|off` (default off). On, every agent a local
+ * `MARINA_SUPERVISED_RESIDENTS=on|off` (default on). On, every agent a local
  * routing supervisor launches is enrolled as its own world account, owned by
- * the launching person. Off, routing behaves exactly as before: no resident
- * endpoints, no accounts, the supervisor passes its own credential through.
+ * the launching person. Off (`off`, `false`, `0`, `no`), routing behaves as
+ * before: no resident endpoints, no accounts, the supervisor passes its own
+ * credential through.
  */
 export function supervisedResidentsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.MARINA_SUPERVISED_RESIDENTS?.trim().toLowerCase();
-  return raw === "on" || raw === "true" || raw === "1" || raw === "yes";
+  return !(raw === "off" || raw === "false" || raw === "0" || raw === "no");
 }
 
 /**
