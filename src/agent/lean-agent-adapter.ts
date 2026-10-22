@@ -1612,6 +1612,14 @@ export class LeanAgentAdapter implements AgentHandle {
    * ("Fast crew dispatch").
    */
   private cycleWaiter = new InterruptibleWaiter();
+  /**
+   * An attention (assignment/steer) arrived that no prompt has started on
+   * since. `wake()` is a no-op when no sleep is armed, so an attention that
+   * lands while a prompt runs (or before the loop's first sleep) would
+   * otherwise leave the loop sleeping a full idle tick; the next cycle delay
+   * is the fast tick while this is set. Cleared when a prompt starts.
+   */
+  private attentionPending = false;
 
   // ─── Section Dedup ─────────────────────────────────────────────────
   /**
@@ -3249,6 +3257,7 @@ export class LeanAgentAdapter implements AgentHandle {
         // restated on the next prompt.
         if (this.connectionUnavailable()) continue;
         this.lastPromptAt = Date.now();
+        this.attentionPending = false;
 
         // Hard-bound the prompt so a hung upstream can't wedge the loop.
         // When the timeout fires we call agent.abort() which propagates
@@ -3802,6 +3811,13 @@ export class LeanAgentAdapter implements AgentHandle {
         return rate.min;
       return this.outstandingRequests.size > 0 ? rate.normal : rate.idle;
     }
+
+    // A steered attention no prompt has taken yet: pick it up now.
+    if (this.attentionPending) return rate.min;
+    // A bound coder whose run stopped at a per-run cap (not a spend stop)
+    // continues its active task next cycle; waiting out a full tick there
+    // only adds latency, the calls happen anyway.
+    if (this.activeCodingTask && this.runYielded && !this.spendStopLogged) return rate.min;
 
     const hasActionablePerceptions = this.pendingPerceptions.some(
       (perception) => perception.shouldRespond || perception.addressed || perception.priority >= 80,
@@ -6124,6 +6140,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // handled now. Scope: only attention/assign delivery wakes; rate-limit
     // backoffs (LLM-error, loop-exception, streaming guard) intentionally
     // stay on the non-wakeable sleep().
+    this.attentionPending = true;
     this.cycleWaiter.wake();
   }
 
