@@ -196,6 +196,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Deploys keep up with frequent merges.** The EC2 deploy workflow no longer drops a qualified
+  build because main moved on during qualification; it deploys any build main still contains, and
+  the run for the newer revision follows.
 - **Two agents no longer trade "no reply needed" lines without end.** In a long `marina:answerer`
   crew run, two Answerers kept answering each other's closing lines ("[re:mapping] Terminal — no
   reply needed"). Per-item cost rose about 3×, and 14 % of requests drew in all four Answerers.

@@ -19,8 +19,9 @@ the AWS role secret it assumes), so a fork or clone never runs it. Where it is c
 starts after successful main-branch CI. It verifies
 the exact revision before checkout and uses that same SHA for the image tag and
 server checkout. Failed, cancelled, fork, and pull-request runs cannot deploy.
-Superseded revisions are skipped before building and again before production
-changes. Manual deployments and rollbacks also require successful main-branch CI
+A revision that is already superseded is skipped before building. A qualified build
+still deploys if main has moved on but contains it; deploys run one at a time, so the
+newer revision follows. A build that main no longer contains is never deployed. Manual deployments and rollbacks also require successful main-branch CI
 for their target; rollbacks additionally require the existing image in ECR.
 
 Deployment waits for container health, then checks the running HTTP service and
