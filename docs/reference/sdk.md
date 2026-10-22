@@ -162,6 +162,10 @@ type PerceptionHandler = (p: Perception) => void;
 export type CommandResult = Perception[] & {
     readonly completion: "confirmed" | "unconfirmed";
 };
+/** The server refused a login or reconnect (as opposed to the transport failing). */
+export declare class LoginRefusedError extends Error {
+    readonly name = "LoginRefusedError";
+}
 export declare class CommandError extends Error {
     readonly perceptions: Perception[];
     constructor(message: string, perceptions?: Perception[]);
@@ -802,7 +806,7 @@ export interface MarinaExtension {
 export type { CapabilityManifest, CommandCatalogEntry } from "./capabilities.js";
 export { renderCapabilityRoster } from "./capabilities.js";
 export type { ClientOptions, CommandOptions, CommandResult, ConnectionState, RoomView, SessionInfo, } from "./client.js";
-export { CommandError, MarinaAgent, MarinaClient } from "./client.js";
+export { CommandError, LoginRefusedError, MarinaAgent, MarinaClient } from "./client.js";
 export { codingDesk } from "./coding-desk.js";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms.js";
 export { commandFormPrefix, compileCommandForms, composeCommand, matchCommandForm, } from "./command-forms.js";

@@ -193,6 +193,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A supervised resident's relayed commands name the message their turn answers: the owed item a command settles, else the latest message that woke the turn, so replies carry their reply depth. A turn the owner started directly stays depth 0.
+- `marina connect` reports a refused login (for example a name already in use) as the server's refusal, not as "Is Marina running?". The SDK types it as `LoginRefusedError`.
+
 - **One crew member claims each endpoint request.** A `marina:<crew>` request is addressed to one
   member (`target`), but Marina's residents owed every `model_request` they perceived. With 4
   Answerers on `marina:answerer`, every Answerer worked every request. Under 4-way load the backlog
