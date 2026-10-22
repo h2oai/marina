@@ -5,10 +5,11 @@ import { dim, error as fmtError } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
+import { principalOf } from "../gate-context";
 import { getRank } from "../permissions";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import type { ShellRuntime } from "../shell-runtime";
-import { isLocalUngated } from "../trust-profile";
+import { isLocalUngated, isSovereign } from "../trust-profile";
 
 const HELP = `Execute shell commands.
 Gated capability: a held run executes once a person approves it (\`challenge\`); approvals from outside your own lineage build it (\`gate list\`), or an operator grants it.
@@ -32,8 +33,9 @@ export interface RunDeps {
 /**
  * The `shell.exec` gate for a raw `sh -c` string, checked imperatively and
  * recorded on a pass. It behaves as the gate does everywhere: passes under
- * the local-ungated profile, is part of the open-posture core (never passed
- * by `open`), and a refusal raises a challenge rather than a wall. Without a
+ * the local-ungated profile (for an agent only under `sovereign`), is part of
+ * the open-posture core (never passed by `open`), and a refusal raises a
+ * challenge rather than a wall. Without a
  * database (no gate ledger) the sovereign rank stands in, as before — shell
  * execution is core, so `open` does not lift it; the local profile does.
  */
@@ -43,7 +45,11 @@ export function shellExecRefusal(
   evidence: string,
 ): string | undefined {
   if (!db) {
-    return getRank(entity) >= 9 || isLocalUngated()
+    // Local lifts it for the loopback person only; an agent's host shell waits
+    // for a person (LOCAL_AGENT_HELD_GATES) unless `sovereign`.
+    return getRank(entity) >= 9 ||
+      isSovereign() ||
+      (isLocalUngated() && principalOf(entity.id) === "person")
       ? undefined
       : "Raw shell mode requires sovereign rank (9).";
   }

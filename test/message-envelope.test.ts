@@ -181,6 +181,68 @@ describe("causal threading", () => {
     expect(refs.sort()).toEqual(posts.map((p) => `channel_msg:${p.messageId}`).sort());
   });
 
+  it("threads a channel answer under its question on the feed canvas", async () => {
+    const { db } = world;
+    db.createChannel({ id: "ch:ops", type: "public", name: "ops", persistence: "permanent" });
+    db.addChannelMember("ch:ops", alice.entityId);
+    db.addChannelMember("ch:ops", bob.entityId);
+    const names = new Map([
+      [alice.entityId, "Alice"],
+      [bob.entityId, "Bob"],
+    ]);
+    const publisher = new FeedPublisher({ db, resolveEntity: (id) => names.get(id) });
+    await world.engine.processCommand(alice.entityId, "channel send ops what is 6x7?");
+    const [question] = ofType("channel_message");
+    publisher.handleEvent(question!);
+    await world.engine.processCommand(bob.entityId, "channel send ops 42", {
+      cause: { ref: `channel_msg:${question!.messageId}`, depth: 0 },
+    });
+    // An answer to a message that is not on the feed (a tell) is not threaded.
+    await world.engine.processCommand(bob.entityId, "channel send ops later", {
+      cause: { ref: "tell:99", depth: 2 },
+    });
+    const [, answer, unrelated] = ofType("channel_message");
+    publisher.handleEvent(answer!);
+    publisher.handleEvent(unrelated!);
+
+    const canvas = db.getCanvasByName("feed")!;
+    const nodes = db.getNodesByCanvas(canvas.id);
+    const byRef = (ref: string) =>
+      nodes.find((n) => (JSON.parse(n.data) as { ref?: string }).ref === ref)!;
+    const q = byRef(`channel_msg:${question!.messageId}`);
+    const a = byRef(`channel_msg:${answer!.messageId}`);
+    const u = byRef(`channel_msg:${unrelated!.messageId}`);
+    expect(a.parent_node_id).toBe(q.id);
+    expect(JSON.parse(a.data)).toMatchObject({ inReplyTo: "Alice", depth: 1, author: "Bob" });
+    expect(u.parent_node_id).toBeNull();
+    expect(JSON.parse(u.data)).toMatchObject({ depth: 3 });
+    expect(JSON.parse(u.data).inReplyTo).toBeUndefined();
+
+    // A fresh publisher (a restart) still finds the question on the canvas.
+    const restarted = new FeedPublisher({ db, resolveEntity: (id) => names.get(id) });
+    await world.engine.processCommand(alice.entityId, "channel send ops thanks", {
+      cause: { ref: `channel_msg:${answer!.messageId}`, depth: 1 },
+    });
+    const thanks = ofType("channel_message").at(-1)!;
+    restarted.handleEvent(thanks);
+    const t = db
+      .getNodesByCanvas(canvas.id)
+      .find(
+        (n) => (JSON.parse(n.data) as { ref?: string }).ref === `channel_msg:${thanks.messageId}`,
+      )!;
+    expect(t.parent_node_id).toBe(a.id);
+    expect(JSON.parse(t.data)).toMatchObject({ inReplyTo: "Bob", depth: 2 });
+  });
+
+  it("names the entity on enter and leave events", async () => {
+    const dave = world.login("Dave");
+    const enter = ofType("entity_enter").find((e) => e.entity === dave.entityId);
+    expect(enter?.name).toBe("Dave");
+    world.engine.removeConnection(dave.connection.id, "explicit");
+    const leave = ofType("entity_leave").find((e) => e.entity === dave.entityId);
+    expect(leave?.name).toBe("Dave");
+  });
+
   it("a nested frame inherits the enclosing execution's cause; outside none", async () => {
     const id = "e_scope";
     expect(getCurrentMessageCause(id)).toBeUndefined();

@@ -65,22 +65,27 @@ export function storeMemoryDependencyVersions(
     ]);
 }
 
+/**
+ * Marks every active record that (transitively) depends on a revised one.
+ * It walks from the revised record's dependents (idx_memory_revision_dependency_target)
+ * to each record by id; CROSS JOIN fixes that order — left to choose, the
+ * planner read every active record in the space on every revision.
+ */
+export const STALE_DEPENDENTS_SQL = `WITH RECURSIVE affected(id) AS (
+    SELECT d.record_id FROM memory_revision_dependencies d CROSS JOIN memory_records r ON r.id=d.record_id
+    WHERE d.depends_on_id=? AND d.record_version=r.version AND r.space_id=? AND r.status='active'
+    UNION
+    SELECT d.record_id FROM affected a CROSS JOIN memory_revision_dependencies d ON d.depends_on_id=a.id
+    CROSS JOIN memory_records r ON r.id=d.record_id WHERE d.record_version=r.version AND r.space_id=? AND r.status='active'
+  ) UPDATE memory_records SET stale=1,stale_reason=? WHERE id IN (SELECT id FROM affected) AND stale=0`;
+
 /** Derived metadata changes atomically with the correction; authored contents,
  * ownership and historical revisions remain intact. Only current edges propagate. */
 export function staleMemoryDependents(db: Database, space: string, id: string, version: number) {
-  return db.run(
-    `WITH RECURSIVE affected(id) AS (
-    SELECT d.record_id FROM memory_revision_dependencies d JOIN memory_records r ON r.id=d.record_id
-    WHERE d.depends_on_id=? AND d.record_version=r.version AND r.space_id=? AND r.status='active'
-    UNION
-    SELECT d.record_id FROM memory_revision_dependencies d JOIN memory_records r ON r.id=d.record_id
-    JOIN affected a ON d.depends_on_id=a.id WHERE d.record_version=r.version AND r.space_id=? AND r.status='active'
-  ) UPDATE memory_records SET stale=1,stale_reason=? WHERE id IN (SELECT id FROM affected) AND stale=0`,
-    [
-      id,
-      space,
-      space,
-      JSON.stringify({ kind: "premise_revised", record_id: id, observed_version: version }),
-    ],
-  ).changes;
+  return db.run(STALE_DEPENDENTS_SQL, [
+    id,
+    space,
+    space,
+    JSON.stringify({ kind: "premise_revised", record_id: id, observed_version: version }),
+  ]).changes;
 }

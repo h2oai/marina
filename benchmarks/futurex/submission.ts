@@ -15,8 +15,11 @@ import { createHash } from "node:crypto";
 
 export const SUBMISSION_EMAIL = "FutureX-ai@outlook.com";
 
-/** Marina files as its own agent under the H2O.ai organization label. */
-export const DEFAULT_IDENTITY = { org: "h2o.ai", agent: "Marina" } as const;
+/**
+ * No default identity ships: the org and agent segments are the operator's
+ * (`--org`/`--agent` or `MARINA_FILING_ORG`/`MARINA_FILING_AGENT`, resolved by
+ * `filingIdentity` in `../forecasting/identity`).
+ */
 
 export interface Identity {
   org: string;

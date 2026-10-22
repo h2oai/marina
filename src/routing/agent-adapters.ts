@@ -1,8 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import {
+  type Options as ClaudeQueryOptions,
   getSessionInfo,
   type HookCallback,
   query,
@@ -56,6 +57,11 @@ export interface AgentAdapter {
   executable: string;
   start: (options: AgentOptions) => Promise<ManagedAgent>;
   supportsResume?: boolean;
+  /**
+   * Its turns end with a final reply (`AgentOptions.reply`), so an unnamed
+   * supervised resident can propose its own name in one throwaway turn.
+   */
+  proposesName?: boolean;
 }
 function record(value: unknown): WireMessage {
   return value && typeof value === "object" ? (value as WireMessage) : {};
@@ -407,7 +413,7 @@ async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAge
         : {}),
       env: options.env,
       pathToClaudeCodeExecutable: options.executable,
-      permissionMode: "default",
+      ...claudeResidentPermissions(options.env),
       settingSources: ["user", "project", "local"],
       includePartialMessages: true,
       stderr: (text) => options.emit("stderr", { text }),
@@ -519,10 +525,54 @@ export const BUILTIN_AGENT_ADAPTERS: AgentAdapter[] = [
     executable: "claude",
     start: createClaudeAdapter({ query, getSessionInfo }),
     supportsResume: true,
+    proposesName: true,
   },
-  { id: "codex", label: "Codex", executable: "codex", start: codex, supportsResume: true },
-  { id: "pi", label: "pi", executable: "pi", start: pi, supportsResume: true },
+  {
+    id: "codex",
+    label: "Codex",
+    executable: "codex",
+    start: codex,
+    supportsResume: true,
+    proposesName: true,
+  },
+  { id: "pi", label: "pi", executable: "pi", start: pi, supportsResume: true, proposesName: true },
 ];
+
+/**
+ * Permissions for a Claude session. A supervised resident (one with a relay)
+ * gets what Codex's `workspace-write` sandbox gives: edits in its working
+ * directory are accepted, and shell commands run unprompted only inside
+ * Claude's own sandbox (writes limited to the workspace and the relay
+ * directory, no network, no unsandboxed fallback). Without the sandbox's
+ * host tools only edits are accepted; every command still asks. Everything
+ * else asks through `canUseTool` as before.
+ */
+export function claudeResidentPermissions(
+  env: NodeJS.ProcessEnv | undefined,
+  sandboxAvailable: () => boolean = claudeSandboxAvailable,
+): Pick<ClaudeQueryOptions, "permissionMode" | "sandbox"> {
+  const relay = relayDirectory(env);
+  if (!relay) return { permissionMode: "default" };
+  if (!sandboxAvailable()) return { permissionMode: "acceptEdits" };
+  return {
+    permissionMode: "acceptEdits",
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      autoAllowBashIfSandboxed: true,
+      allowUnsandboxedCommands: false,
+      filesystem: { allowWrite: [relay] },
+      network: { allowUnixSockets: [env?.[RELAY_SOCKET_ENV] ?? join(relay, "relay.sock")] },
+    },
+  };
+}
+
+/** Claude Code's command sandbox: built in on macOS, bubblewrap + socat on Linux. */
+function claudeSandboxAvailable(): boolean {
+  if (process.platform === "darwin") return true;
+  if (process.platform !== "linux") return false;
+  return Bun.which("bwrap") !== null && Bun.which("socat") !== null;
+}
 
 /** The relay directory a supervised resident's process was given, if any. */
 function relayDirectory(env: NodeJS.ProcessEnv | undefined): string | undefined {

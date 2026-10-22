@@ -57,7 +57,7 @@ Marina decides who it is for from how it is bound, and removes friction accordin
 
 | Profile | When (if `MARINA_PROFILE` is unset) | What it means |
 |---|---|---|
-| `local` | every listener binds loopback and `MARINA_AUTH` is off | **Ungated.** Every safety gate except live trading (`trading.live`) auto-passes, nothing else is held for approval, every loopback login is sovereign, arbitrary host commands run without a prompt (`code exec-mode auto`), rate limits, login caps and memory budgets are off, database durability defaults to `normal`. Audit stays on. |
+| `local` | every listener binds loopback and `MARINA_AUTH` is off | **Ungated for you.** Every safety gate except live trading (`trading.live`) auto-passes for the loopback operator, every loopback person login is sovereign, your arbitrary host commands run without a prompt (`code exec-mode auto`), rate limits, login caps and memory budgets are off, database durability defaults to `normal`. An **agent's** host shell (`shell.exec`) and arbitrary host commands (`code.exec.unrestricted`) are held for your approval. Audit stays on. |
 | `shared` | `MARINA_AUTH=better-auth` is on | Gates, ranks and limits enforced; sign-in identifies people. |
 | `public` | any non-loopback bind without sign-in | Everything enforced; passwordless names carry no authority. |
 
@@ -66,12 +66,16 @@ the gates on a personal instance anyway, set `MARINA_AUTONOMY=guarded` or `MARIN
 Forcing `MARINA_PROFILE=local` on a public bind is a fatal startup error unless you set
 `MARINA_ALLOW_INSECURE_PUBLIC=true` — enabling sign-in does not help, because `local` ungates every
 gate for every signed-in user. The boot log prints the resolved profile and
-why; in `local` it also prints the one real risk: a poisoned shared-pool note can lead an agent to
-run a host command without a prompt, and the exec audit is how you find out.
+why. The realistic risk on a local instance is a poisoned shared-pool note leading an agent to run a
+host command, so that is the one thing still held: an agent's `run raw` / `shell` and its
+non-allowlisted Code Mode commands raise a challenge (`challenge approve <token>`, or
+`code exec-approve <token>` in Code Mode) and run once you approve them. The agent is never
+blocked while it waits. Agents promoted on an older database may still hold shell grants:
+`gate audit` lists them and `gate reset agents all apply` revokes them.
 
 To lift every gate regardless of profile, for a sovereign, self-hosted Marina with no guests (a
 homelab or a private network you control), set `MARINA_AUTONOMY=sovereign`. Every gate (the core
-included), rank floor and hold is off for every principal; audit stays on, and the profile still
+included), rank floor and hold is off for every principal, agents' host commands included; audit stays on, and the profile still
 sets the performance defaults. On a non-loopback bind it also needs
 `MARINA_ALLOW_INSECURE_PUBLIC=true`, signed in or not. `MARINA_AUTONOMY=open` is not this switch:
 it never lifts the core.
@@ -157,7 +161,9 @@ smaller; Marina's agents and helpers send their own caps and keep them; explicit
 model ids and the strong tier are never capped; `0`/`off` turns it off. A reply
 cut at the cap is marked `x-marina-output-cap: <n>; hit` and `outputCapHit` on
 its trace, the benchmark harness counts those as `outputCapHits`, and `admin
-models` shows the cap and how often it hit since start.
+models` shows the cap and how often it hit since start. The same holds inside
+`marina/verify:<proposer>+<checker>`: a `marina/cheap` or `marina/strong` member
+resolves through the tiers, and a cheap one gets the cap on its calls.
 Escalation stays where it was: the Arbiter runs only on contested items, and
 `model:route` / earned routing can pick a stronger candidate per agent.
 

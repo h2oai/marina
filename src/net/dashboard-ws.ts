@@ -8,6 +8,7 @@ import type { Engine } from "../engine/engine";
 import { Logger } from "../engine/logger";
 import type { EngineEvent } from "../types";
 import { dashboardEventShape } from "./dashboard-event-filter";
+import { publicEntityProperties, seesEntityPrivate } from "./entity-visibility";
 import { memoryObserver } from "./memory/memory-visibility";
 
 /** Module logger: dashboard broadcast failures. */
@@ -231,9 +232,7 @@ export class DashboardBroadcaster {
   /** Pick each entity's private or public shape for one observer. Field order
    *  is fixed here so every principal's payload has the same wire layout. */
   private maskSnapshot(base: BaseSnapshot, observer: Observer): WorldSnapshot {
-    const { privilegedRead, entity } = observer;
-    const own = entity?.id;
-    const entities = base.entities.map((e) => (privilegedRead || own === e.id ? e.priv : e.pub));
+    const entities = base.entities.map((e) => (seesEntityPrivate(observer, e.id) ? e.priv : e.pub));
     const s = base.shared;
     return {
       timestamp: s.timestamp,
@@ -305,9 +304,7 @@ export class DashboardBroadcaster {
         name: e.name,
         kind: e.kind,
         room,
-        properties: privateView
-          ? e.properties
-          : { rank: e.properties.rank, role: e.properties.role },
+        properties: privateView ? e.properties : publicEntityProperties(e.properties),
         agentStatus: agentStatus(privateView),
         spawnedBy,
         ...(presence ? { presence } : {}),

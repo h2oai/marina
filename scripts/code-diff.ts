@@ -10,6 +10,7 @@ import {
   formatDiffStat,
   hunkCount,
 } from "../src/coding/unified-diff";
+import type { Theme } from "./term-theme";
 
 /**
  * Terminal diff presentation. Colour is added only here, on the client, from
@@ -27,15 +28,27 @@ export function diffColorEnabled(
 
 const SGR = { add: "32", del: "31", hunk: "36", file: "1" } as const;
 
-/** `+` green, `-` red, `@@` cyan, file headers bold. Plain text when disabled. */
-export function colorizeDiff(text: string, enabled: boolean): string {
+/**
+ * `+` green, `-` red, `@@` cyan, file headers bold. Plain text when disabled.
+ * With a theme the hues are the CLI palette's (success / error / accent) at
+ * the terminal's colour depth; without one, the 16 standard colours.
+ */
+export function colorizeDiff(text: string, enabled: boolean, theme?: Theme): string {
   if (!enabled) return text;
+  const sgr: Record<string, string> =
+    theme && theme.level > 0
+      ? {
+          add: theme.params("success"),
+          del: theme.params("error"),
+          hunk: theme.params("accent"),
+          file: "1",
+        }
+      : SGR;
   const lines = text.split("\n");
   const kinds = classifyDiffLines(lines);
   return lines
     .map((line, index) => {
-      const kind = kinds[index]!;
-      const code = kind in SGR ? SGR[kind as keyof typeof SGR] : undefined;
+      const code = sgr[kinds[index]!];
       return code && line ? `\x1b[${code}m${line}\x1b[0m` : line;
     })
     .join("\n");

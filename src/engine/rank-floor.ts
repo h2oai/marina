@@ -22,9 +22,9 @@
 import type { Entity, EntityRank } from "../types";
 import { getAutonomyPosture } from "./autonomy";
 import { raiseForCommand } from "./challenges";
-import { getCurrentCommand, isRankWaivedForRun } from "./gate-context";
+import { getCurrentCommand, isRankWaivedForRun, principalOf } from "./gate-context";
 import { getRank, rankName } from "./permissions";
-import { isLocalUngated } from "./trust-profile";
+import { isImplicitLocalUngated, isLocalUngated } from "./trust-profile";
 
 /**
  * Returns the refusal text (with the challenge note), or undefined to proceed.
@@ -38,7 +38,8 @@ export function rankFloorRefusal(
     /**
      * The floor guards a path INTO the open-posture core (setting ranks,
      * which grants gates; editing the shell allowlist): `open` does not lift
-     * it. The local profile still does, and a refusal still raises a challenge.
+     * it. The local profile still does for a person (an agent is held unless
+     * sovereign), and a refusal still raises a challenge.
      */
     core?: boolean;
     /** The command's gate, named in the challenge (the router's floor). */
@@ -46,7 +47,15 @@ export function rankFloorRefusal(
   } = {},
 ): string | undefined {
   if (getRank(entity as Entity) >= min) return undefined;
-  if (isLocalUngated()) return undefined;
+  // The implicit local profile lifts floors, except a floor guarding a path
+  // INTO the core for an AGENT: an agent promoting itself to sovereign rank
+  // (which grants shell.exec) or widening the shell allowlist is held like the
+  // agent's own host shell (LOCAL_AGENT_HELD_GATES). `sovereign` lifts it.
+  if (
+    isLocalUngated() &&
+    !(opts.core && isImplicitLocalUngated() && principalOf(entity.id) === "agent")
+  )
+    return undefined;
   if (!opts.core && getAutonomyPosture() === "open") return undefined;
   if (isRankWaivedForRun(entity.id, min)) return undefined;
   const command = getCurrentCommand(entity.id);

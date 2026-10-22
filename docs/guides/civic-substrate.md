@@ -128,9 +128,10 @@ and `witness queue|attest|reject` let an operator count the runs the `earned` po
   every gate (the core included), rank floor and hold is off for every principal, in any trust
   profile. Audit stays on. On a non-loopback bind it refuses to boot unless
   `MARINA_ALLOW_INSECURE_PUBLIC=true`, signed in or not, because every account that can log in
-  gets every capability. On your own machine the `local` profile already behaves this way, with one
-  exception: live (real-money) trading (`trading.live`) still asks a person per order there unless
-  an operator granted it — only `sovereign` lifts it.
+  gets every capability. On your own machine the `local` profile behaves this way for you, with two
+  exceptions: live (real-money) trading (`trading.live`) still asks a person per order unless an
+  operator granted it, and an agent's host shell and arbitrary host commands still wait for your
+  approval; only `sovereign` lifts both.
 
 ## Why this design
 

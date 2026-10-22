@@ -30,6 +30,7 @@ import {
   type InvestigationSnapshot,
   investigationTerminal,
 } from "../src/sdk/investigation-types";
+import { themeFor } from "./code-style";
 
 const HELP = `MARINA · prediction and research
 
@@ -53,8 +54,7 @@ No coding folder is needed. Reads never invoke models. Private case grants also
 work for agents and external clients. Costs can settle after cancellation; the
 display labels incomplete accounting rather than treating unknown cost as zero.`;
 
-const accent = (text: string) =>
-  process.env.NO_COLOR === undefined ? `\x1b[36m${text}\x1b[0m` : text;
+const accent = themeFor(process.stdout).fg("accent");
 const plain = (text: string) => text;
 
 /** Native presentation host; no engine, coding session or shell-command interpreter. */

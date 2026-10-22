@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFile } from "node:child_process";
+import { lstatSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { hostGitArgv, hostGitEnv } from "../coding/host-git";
 import type { RoutingEventInput } from "../sdk/routing-types";
@@ -86,13 +88,32 @@ async function untrackedDiff(cwd: string, path: string): Promise<string> {
   }
 }
 
+/**
+ * Whether an untracked path is part of the work. A command sandbox masks
+ * paths while a command runs by mounting over empty read-only placeholder
+ * files it creates in the workspace (dotfiles, editor and agent settings);
+ * a review request is sent from inside such a command, so its placeholders
+ * are present when the snapshot is taken. An empty file with no write
+ * permission carries no content, so it is left out.
+ */
+function isWorkFile(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    return !(stat.isFile() && stat.size === 0 && (stat.mode & 0o222) === 0);
+  } catch {
+    // allow-empty-catch: a path that vanished since `ls-files` is not part of the work
+    return false;
+  }
+}
+
 /** The worktree's changes against HEAD, bounded. */
 export async function captureReviewSnapshot(cwd: string): Promise<ReviewSnapshot> {
   const tracked = await git(cwd, ["diff", "HEAD", "--no-color", "--no-ext-diff"]);
   const changed = (await git(cwd, ["diff", "HEAD", "--name-only"])).split("\n").filter(Boolean);
   const untracked = (await git(cwd, ["ls-files", "--others", "--exclude-standard"]))
     .split("\n")
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((path) => isWorkFile(join(cwd, path)));
   let text = tracked;
   for (const path of untracked) {
     if (Buffer.byteLength(text) > REVIEW_SNAPSHOT_MAX_BYTES) break;

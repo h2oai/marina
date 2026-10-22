@@ -9,6 +9,11 @@ calls and writes the submission file. Nothing in Marina's core knows about Futur
 
 ## Commands
 
+**Your identity, not a default.** Marina ships no filing identity. The submission file and email are filed under the
+organization and agent name you give: `--org <your-org> --agent <your-agent>`, or
+`MARINA_FILING_ORG` / `MARINA_FILING_AGENT` once in the environment. Without both (or with a docs placeholder such as `your-org`), `run` and a forecasting
+`watch` refuse before they spend anything.
+
 ```bash
 bun run futurex fetch                 # the current batch, at its Hugging Face commit sha
 bun run futurex fetch --past          # the resolved-questions dataset (for backtests)
@@ -66,9 +71,10 @@ configuration record it.
   answer, the runs' best partial answer (or, for a choice, the first substantive option) is filed
   and flagged `fallback`.
 - The submission file is named `org-<org>-agent-<agent>-model-<model>.json` and holds
-  `[{"id", "prediction"}]`. Marina files as its own agent, `Marina`, under the organization
-  `h2o.ai` (`--org`, `--agent`); the model segment names the variant's model (`--model` overrides
-  it for a single variant).
+  `[{"id", "prediction"}]`. The org and agent segments are yours (`--org`, `--agent`, or
+  `MARINA_FILING_ORG` / `MARINA_FILING_AGENT`; there is no default); the model segment names the
+  variant's model (`--model` overrides it for a single variant). `schedule` writes a given
+  identity into the unit's command line; otherwise the unit's env file must set both variables.
 - **Nothing is sent.** `run` prints the file path and the email fields (recipient, subject,
   dataset commit, model, framework, organization). Submitting is an operator's act, or an approved
   connector's.

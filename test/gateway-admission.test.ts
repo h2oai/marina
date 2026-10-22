@@ -78,7 +78,7 @@ async function gatewayLogin(url: string, auth?: Record<string, unknown>): Promis
 
 describe("gateway admission hooks", () => {
   it("leave the handshake unchanged when no extension registers them", async () => {
-    using _state = scopeProcessState({ env: { GATEWAY_SECRET: undefined } });
+    using _state = scopeProcessState({ trustProfile: "local", env: { GATEWAY_SECRET: undefined } });
     const { engine, url } = host();
     expect(extensionGatewayAdmission(engine)).toBeUndefined();
     expect(extensionGatewayProof(engine)).toBeUndefined();
@@ -87,7 +87,7 @@ describe("gateway admission hooks", () => {
   });
 
   it("refuse a gateway peer without an admitted proof and admit one with it", async () => {
-    using _state = scopeProcessState({ env: { GATEWAY_SECRET: undefined } });
+    using _state = scopeProcessState({ trustProfile: "local", env: { GATEWAY_SECRET: undefined } });
     const { engine, url } = host();
     await admissionExtension(engine);
     expect(await gatewayLogin(url)).toContain("must present an entitlement");
@@ -108,6 +108,35 @@ describe("gateway admission hooks", () => {
     expect(
       await gatewayLogin(url, { secret: "fixture-secret", entitlement: { token: "forged" } }),
     ).toContain("no licence");
+  });
+
+  it("shared/public refuse inbound gateway peers until GATEWAY_SECRET is set", async () => {
+    for (const profile of ["shared", "public"] as const) {
+      using _state = scopeProcessState({
+        trustProfile: profile,
+        env: { GATEWAY_SECRET: undefined },
+      });
+      const { url } = host();
+      // With or without a gateway_auth frame, the peer is refused with the fix.
+      for (const auth of [undefined, { secret: "anything" }]) {
+        const result = await gatewayLogin(url, auth);
+        expect(result).toContain("requires GATEWAY_SECRET for inbound federation");
+        expect(result).toContain("Set GATEWAY_SECRET=");
+      }
+      // Ordinary logins are untouched.
+      const client = new MarinaClient(url, { autoReconnect: false });
+      try {
+        await client.connect("Visitor");
+      } finally {
+        client.disconnect();
+      }
+    }
+    using _secret = scopeProcessState({
+      trustProfile: "shared",
+      env: { GATEWAY_SECRET: "fixture-secret" },
+    });
+    const { url } = host();
+    expect(await gatewayLogin(url, { secret: "fixture-secret" })).toBe("connected");
   });
 
   it("only affects Gateway_ logins", async () => {

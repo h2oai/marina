@@ -34,7 +34,6 @@ import {
 } from "../benchmarks/futurex/schedule";
 import { parseTruth, scoreBatch, scoreItem } from "../benchmarks/futurex/score";
 import {
-  DEFAULT_IDENTITY,
   emailFields,
   segment,
   submissionBody,
@@ -237,11 +236,13 @@ describe("score: the published metric definitions", () => {
   });
 });
 
+/** A test operator's identity (no default identity ships). */
+const OPERATOR = { org: "acme.lab", agent: "LabBot" };
+
 describe("submission", () => {
-  it("names the file org-…-agent-…-model-… with Marina under h2o.ai by default", () => {
-    expect(DEFAULT_IDENTITY).toEqual({ org: "h2o.ai", agent: "Marina" });
-    expect(submissionFileName({ ...DEFAULT_IDENTITY, model: "deepseek-v4-pro" })).toBe(
-      "org-h2o.ai-agent-Marina-model-deepseek-v4-pro.json",
+  it("names the file org-…-agent-…-model-… under the operator's identity", () => {
+    expect(submissionFileName({ ...OPERATOR, model: "deepseek-v4-pro" })).toBe(
+      "org-acme.lab-agent-LabBot-model-deepseek-v4-pro.json",
     );
     // Dashes inside org/agent would make the name ambiguous; the model keeps them.
     expect(segment("my-agent")).toBe("my_agent");
@@ -254,14 +255,14 @@ describe("submission", () => {
       { id: "x", prediction: "A, C" },
     ]);
     const mail = emailFields(
-      { ...DEFAULT_IDENTITY, model: "m", framework: "Marina" },
+      { ...OPERATOR, model: "m", framework: "Marina" },
       "abc123",
       "/tmp/f.json",
       "2026-10-05",
     );
     expect(mail.to).toBe("FutureX-ai@outlook.com");
     expect(mail.body).toContain("Dataset commit: abc123");
-    expect(mail.body).toContain("Organization: h2o.ai");
+    expect(mail.body).toContain("Organization: acme.lab");
   });
 });
 
@@ -430,6 +431,12 @@ describe("watch schedule", () => {
     expect(futurexSystemdUnits({ ...base, answer: "early" }).service).toContain(
       "--answer early --daily",
     );
+    // No identity is embedded unless the operator gave one (the env file may carry it).
+    expect(service).not.toContain("--org");
+    expect(
+      futurexSystemdUnits({ ...base, identity: { organization: "Acme Lab", agent: "LabBot" } })
+        .service,
+    ).toContain('--org "Acme Lab" --agent LabBot');
   });
 });
 
@@ -533,8 +540,8 @@ describe("ledger", () => {
       const input = {
         batchSha: "sha1",
         variant,
-        identity: { ...DEFAULT_IDENTITY, model: "fake-model" },
-        fileName: "org-h2o.ai-agent-Marina-model-fake-model.json",
+        identity: { ...OPERATOR, model: "fake-model" },
+        fileName: "org-acme.lab-agent-LabBot-model-fake-model.json",
         fileSha256: "f".repeat(64),
         run,
         now: 1,

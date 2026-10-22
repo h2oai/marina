@@ -3571,8 +3571,14 @@ export interface RoutingSyncResult {
 export interface ResidentEnrolInput {
     /** The run's routing session; its `kind` (the adapter id) is the vendor. */
     sessionId: string;
-    /** Requested world name. Omitted: a fresh name that never contains the vendor. */
+    /** Requested world name. Omitted: the agent's proposal, else a fresh word-list name. */
     name?: string;
+    /**
+     * The agent's own proposal (used only without `name`). The server sanitizes
+     * and dedupes it and never takes a vendor or model word; an unusable proposal
+     * falls back to the word list instead of failing.
+     */
+    proposedName?: string;
     /** Room to arrive in. Omitted: the launching person's current room. */
     room?: string;
 }
@@ -3581,6 +3587,8 @@ export interface ResidentCredential {
     token: string;
     expiresAt: number;
 }
+/** Where a resident's name came from. */
+export type ResidentNameSource = "requested" | "proposed" | "generated";
 export interface ResidentEnrolment {
     name: string;
     vendor: string;
@@ -3590,6 +3598,8 @@ export interface ResidentEnrolment {
     room?: string;
     /** True when an existing resident account of the same owner was reused. */
     reused: boolean;
+    /** Where the name came from: the launch request, the agent's proposal, or the word list. */
+    nameSource?: ResidentNameSource;
     credential: ResidentCredential;
     /** The resident's stored attention policy (supervised residents' attention bridge). */
     attention?: ResidentAttentionPolicy;

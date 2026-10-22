@@ -25,9 +25,14 @@ export GATEWAY_SECRET="your-strong-secret-here"
 bun run start
 ```
 
-If `GATEWAY_SECRET` is not set, gateway auth messages are silently ignored for backward
-compatibility. If the receiver does have a secret, it rejects connections using a `Gateway_` prefix
-that cannot authenticate.
+If the receiver has a secret, it rejects connections using a `Gateway_` prefix that cannot
+authenticate. Without a secret, the receiver's trust profile decides:
+
+- **`shared` / `public`**: every inbound gateway connection is refused, with a message naming
+  `GATEWAY_SECRET`. The boot log says so, and `readiness` reports `federation-inbound` as off. Set
+  a long random value (for example `openssl rand -hex 32`), the same on every peer, and restart.
+- **`local`** (loopback bind, no sign-in): inbound peers are accepted without a secret, for
+  development federation on your own machine.
 
 ### 2. Add and verify a gateway
 

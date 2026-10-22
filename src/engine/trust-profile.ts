@@ -7,8 +7,12 @@
  * Friction (safety gates, the witness ladder, rank floors, rate limits,
  * admission budgets, exec approval prompts, full-fsync durability) is the
  * right default for a SHARED or PUBLIC instance. A LOCAL instance — one
- * operator on their own machine, loopback-only — runs completely ungated for
- * performance and usability, with the audit trail intact. The relaxation applies to
+ * operator on their own machine, loopback-only — runs ungated for
+ * performance and usability, with the audit trail intact. One exception: an
+ * AGENT's host shell (`shell.exec`) and arbitrary non-allowlisted host
+ * commands (`code.exec.unrestricted`) are held as a challenge for a person to
+ * approve (a poisoned note must not be enough to run host commands);
+ * `MARINA_AUTONOMY=sovereign` lifts that too (`isImplicitLocalUngated`). The relaxation applies to
  * permissions, never to records: the exec-decision audit, the cognitive
  * ledger, memory receipts, journaling, trusted/unverified labels and
  * untrusted-context framing stay on in every profile.
@@ -186,6 +190,16 @@ export function isLocalUngated(env: NodeJS.ProcessEnv = process.env): boolean {
   return isLocalProfile(env) && env.MARINA_AUTONOMY?.trim().toLowerCase() !== "guarded";
 }
 
+/** True when permissions are ungated by the IMPLICIT local profile (local, not
+ *  `guarded`) rather than by the explicit `MARINA_AUTONOMY=sovereign` switch.
+ *  Under it an AGENT's host shell (`shell.exec`) and arbitrary host commands
+ *  (`code.exec.unrestricted`) are still held for a person to approve
+ *  (`LOCAL_AGENT_HELD_GATES` in autonomy.ts); the loopback person is
+ *  unaffected. `sovereign` lifts that too. */
+export function isImplicitLocalUngated(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isLocalUngated(env) && !isSovereign(env);
+}
+
 /** `MARINA_OPEN_API=true` — the dev-only unauthenticated-API switch. Env-only by
  *  design and the single read every HTTP surface consults: only the exact string
  *  `"true"` enables it. */
@@ -206,7 +220,7 @@ export function describeTrustProfile(
       if (env.MARINA_AUTONOMY?.trim().toLowerCase() === "guarded") {
         return "LOCAL (gated) — MARINA_AUTONOMY=guarded: gates, witnesses and rank floors are enforced; local performance defaults (rate limits, budgets, durability) stay";
       }
-      return "LOCAL — ungated: gates, witnesses, rank floors, rate limits and budgets are off for this operator; audit stays on (set MARINA_AUTONOMY=guarded or MARINA_PROFILE=shared to re-enable gates)";
+      return "LOCAL — ungated: gates, witnesses, rank floors, rate limits and budgets are off for this operator; an agent's host shell and arbitrary host commands still wait for a person's approval; audit stays on (set MARINA_AUTONOMY=guarded or MARINA_PROFILE=shared to re-enable gates, sovereign to lift the agent hold too)";
     case "shared":
       return "SHARED — gates, ranks and limits enforced; sign-in identifies people";
     case "public":
