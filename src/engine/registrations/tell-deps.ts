@@ -27,5 +27,6 @@ export function engineTellDeps(engine: Engine): TellDeps {
       engine.sendToEntity(target, msg, tag, metadata);
     },
     db: engine.db,
+    isAgent: (id: EntityId) => engine.isAgentEntity(id),
   };
 }
