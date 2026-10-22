@@ -35,12 +35,10 @@ for those components from a source inventory alone.
 | Supply Chain | Builds `marina.tgz` and the source inventory. Main and `v*` tag builds sign SLSA build provenance and an SBOM statement bound to the package digest. PRs produce unsigned artifacts with no signing permissions. |
 | Desktop Release | Main/manual and `desktop-v*` builds sign the actual installers and attach the source inventory and verification bundles to build artifacts and draft releases. |
 | Trivy Image Scan | Produces an unsigned CycloneDX inventory of the built image alongside its vulnerability report. |
-| Deploy EC2 | Scans the exact immutable image selected for deployment (including rollback), then signs its SBOM statement before changing production. |
 
 The image inventory includes scanner-discovered installed libraries and OS packages,
-so use it for runtime analysis. The deployment workflow does **not** claim fresh build
-provenance for a rollback or infer source identity from `workflow_run`'s default-branch
-SHA. Its SBOM signature identifies the scanned image digest and the scanning workflow.
+so use it for runtime analysis. Deployed images are scanned and signed by the deployment
+pipeline that ships them, which lives outside this repository.
 
 Package signing runs in a separate job that downloads artifacts without executing
 repository code. Signing actions are pinned by commit. GitHub's OIDC identity signs
@@ -66,8 +64,7 @@ gh attestation verify marina.tgz --repo h2oai/marina \
 
 For desktop installers, substitute the filename and `desktop-release.yml`. For a
 deployment image, authenticate to its registry and use `oci://REGISTRY/IMAGE@sha256:DIGEST`,
-`deploy-ec2.yml`, and the CycloneDX predicate. The deployment signature's source commit
-identifies the scanning workflow, not necessarily the historical image source commit.
+the repository and workflow of the pipeline that deployed it, and the CycloneDX predicate.
 
 Pass `--bundle PATH` to use a downloaded verification bundle. A signature verifies
 artifact identity and workflow claims; it does not certify freedom from vulnerabilities,

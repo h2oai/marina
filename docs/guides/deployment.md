@@ -13,20 +13,13 @@ Everything below follows from this: pick a single durable volume, put the databa
 ## What you're deploying
 
 Marina needs no particular cloud: the setups below run anywhere Docker or Bun runs. The
-repository also carries the maintainers' own EC2 workflow (`.github/workflows/deploy-ec2.yml`).
-It is opt-in: it runs only in a repository that sets the `ECR_ACCOUNT_ID` Actions variable (plus
-the AWS role secret it assumes), so a fork or clone never runs it. Where it is configured, it
-starts after successful main-branch CI. It verifies
-the exact revision before checkout and uses that same SHA for the image tag and
-server checkout. Failed, cancelled, fork, and pull-request runs cannot deploy.
-A revision that is already superseded is skipped before building. A qualified build
-still deploys if main has moved on but contains it; deploys run one at a time, so the
-newer revision follows. A build that main no longer contains is never deployed. Manual deployments and rollbacks also require successful main-branch CI
-for their target; rollbacks additionally require the existing image in ECR.
+repository carries no production deployment workflow; the maintainers deploy their own instance
+from outside it. [Continuous deployment](#continuous-deployment-cicd) below describes the pattern
+to follow for yours.
 
-Deployment waits for container health, then checks the running HTTP service and
+`scripts/deploy.sh` waits for container health, then checks the running HTTP service and
 configured providers with `scripts/smoke-production.ts`. A failing smoke check
-makes the deployment workflow fail; it does not automatically roll back the
+makes the deployment fail; it does not automatically roll back the
 database or image. The full report stays at `/tmp/marina-production-smoke.json`
 inside the container. See [Operating a Marina](../operations.md) for the probe's
 scope and authentication settings.
@@ -385,9 +378,9 @@ Floors whose dependents already resolve at or above the patched version on their
 
 ## Continuous deployment (CI/CD)
 
-[`.github/workflows/deploy-ec2.yml`](../../.github/workflows/deploy-ec2.yml) and
-[`scripts/deploy.sh`](../../scripts/deploy.sh) are an example pipeline to adapt to your own
-infrastructure, not a requirement. The pattern they show:
+[`scripts/deploy.sh`](../../scripts/deploy.sh) is the host-side half of an example pipeline to
+adapt to your own infrastructure, not a requirement. Your CI runs it on the server (for example
+over SSH or a cloud run-command service) after checking out the revision it deploys. The pattern:
 
 - Build the image on each change to your release branch and tag it with the **commit SHA**
   (immutable), alongside any moving tag such as `latest`.
