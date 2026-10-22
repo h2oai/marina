@@ -1935,6 +1935,52 @@ describe("sendAttention instant pickup", () => {
     expect(elapsed).toBeLessThan(2500);
     expect(waiter.isArmed()).toBe(false);
   });
+
+  it("an attention that arrives with no sleep armed still makes the next cycle fast", async () => {
+    // wake() is a no-op when no sleep is armed (by design), so an assignment
+    // delivered while a prompt runs, or before the loop's first sleep, must
+    // still shorten the NEXT sleep — otherwise the bound coder waits out the
+    // full idle tick (≥ 60 s) before it reads its task.
+    const adapter = new LeanAgentAdapter(
+      { name: "attention-pending-test", loopCycleDelay: 200 },
+      "ws://127.0.0.1:3300",
+      null,
+    );
+    const internals = adapter as unknown as {
+      cycleWaiter: InterruptibleWaiter;
+      computeDynamicDelay(): number;
+      getTickRate(): { min: number; normal: number; idle: number };
+    };
+    const rate = internals.getTickRate();
+    expect(internals.computeDynamicDelay()).toBe(rate.idle);
+    expect(internals.cycleWaiter.isArmed()).toBe(false);
+    await adapter.sendAttention("New coding task assigned: plan a fix in session s1");
+    expect(internals.computeDynamicDelay()).toBe(rate.min);
+    expect(rate.min).toBeLessThan(rate.idle);
+  });
+
+  it("a bound coder that yielded at a per-run cap continues at the fast tick", () => {
+    const adapter = new LeanAgentAdapter(
+      { name: "cap-yield-test", loopCycleDelay: 200 },
+      "ws://127.0.0.1:3300",
+      null,
+    );
+    const internals = adapter as unknown as {
+      computeDynamicDelay(): number;
+      getTickRate(): { min: number; normal: number; idle: number };
+      runYielded: boolean;
+      spendStopLogged: boolean;
+    };
+    const rate = internals.getTickRate();
+    internals.runYielded = true;
+    // Not a bound coder: ordinary pacing is unchanged.
+    expect(internals.computeDynamicDelay()).toBe(rate.idle);
+    adapter.setActiveCodingTask("Task #1; plan a fix");
+    expect(internals.computeDynamicDelay()).toBe(rate.min);
+    // A spend stop keeps the normal path (the loop pauses before any call).
+    internals.spendStopLogged = true;
+    expect(internals.computeDynamicDelay()).not.toBe(rate.min);
+  });
 });
 
 describe("model resolution", () => {

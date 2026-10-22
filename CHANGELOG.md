@@ -193,6 +193,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An assigned coder no longer sleeps out an idle tick before reading its task.** A coding assignment (or any steered attention) that arrived while the agent was mid-prompt, or before its loop first slept, was missed by the loop's wake (a no-op with no sleep armed), and the next cycle waited the idle tick (60 s by default). The pending attention now makes the next cycle the fast tick, and a bound coder that yielded at a per-run cap continues at the fast tick instead of the normal one. The coding control journey's own memory reads honour a 429's `Retry-After` like every other client.
+
 - A supervised resident's relayed commands name the message their turn answers: the owed item a command settles, else the latest message that woke the turn, so replies carry their reply depth. A turn the owner started directly stays depth 0.
 - `marina connect` reports a refused login (for example a name already in use) as the server's refusal, not as "Is Marina running?". The SDK types it as `LoginRefusedError`.
 
