@@ -87,7 +87,24 @@ describe("loadFeedSnapshot — error state", () => {
   it("passes the limit through to /api/feed", async () => {
     const fn = mockFetch(() => jsonResponse([]));
     await loadFeedSnapshot(42);
-    expect(fn).toHaveBeenCalledWith("/api/feed?limit=42", { credentials: "same-origin" });
+    expect(fn).toHaveBeenCalledWith("/api/feed?limit=42", {
+      credentials: "same-origin",
+      headers: {},
+    });
+  });
+
+  it("sends the session's bearer token", async () => {
+    localStorage.setItem("marina_chat_token", "session-token");
+    try {
+      const fn = mockFetch(() => jsonResponse([]));
+      await loadFeedSnapshot(5);
+      expect(fn).toHaveBeenCalledWith("/api/feed?limit=5", {
+        credentials: "same-origin",
+        headers: { Authorization: "Bearer session-token" },
+      });
+    } finally {
+      localStorage.removeItem("marina_chat_token");
+    }
   });
 
   it("reset() clears the error and timestamp", () => {
