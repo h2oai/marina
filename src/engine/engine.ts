@@ -272,18 +272,7 @@ export class Engine {
     // The as-of fence is relayed to agents only (src/engine/evidence-fence.ts):
     // the same agent signals as a login (internal/MCP/agent connection, or an
     // account with an agent config or agent principal); a person keeps their tools.
-    this._connections = new ConnectionManager((id) => {
-      const entity = this.entities.get(id as EntityId);
-      if (!entity) return false;
-      const conn = this._connections.getConnectionForEntity(id as EntityId) as
-        | { internal?: boolean; protocol?: string; agent?: boolean }
-        | undefined;
-      if (conn?.internal || conn?.protocol === "mcp" || conn?.agent) return true;
-      return (
-        !!this.db &&
-        (!!this.db.getAgentConfig(entity.name) || !!this.db.getPrincipal("agent", entity.name))
-      );
-    });
+    this._connections = new ConnectionManager((id) => this.isAgentEntity(id as EntityId));
     this.sandbox = new RoomSandbox();
     this.db = this.config.db;
     this._eventLog = new EventLog(this.logger, this.db);
@@ -1529,6 +1518,24 @@ export class Engine {
   }
 
   /** Get connection for an entity (for quit command) */
+  /**
+   * Whether an agent drives this entity: an internal, MCP or self-declared
+   * agent connection, or an account with an agent config or agent principal.
+   * The same signals as an agent login; a person keeps `false`.
+   */
+  isAgentEntity(id: EntityId): boolean {
+    const entity = this.entities.get(id);
+    if (!entity) return false;
+    const conn = this._connections.getConnectionForEntity(id) as
+      | { internal?: boolean; protocol?: string; agent?: boolean }
+      | undefined;
+    if (conn?.internal || conn?.protocol === "mcp" || conn?.agent) return true;
+    return (
+      !!this.db &&
+      (!!this.db.getAgentConfig(entity.name) || !!this.db.getPrincipal("agent", entity.name))
+    );
+  }
+
   getConnectionForEntity(entityId: EntityId): Connection | undefined {
     return this._connections.getConnectionForEntity(entityId);
   }

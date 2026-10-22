@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import { sameResidentName } from "../engine/entity-name";
 import { hasCorrelationTag } from "../sdk/client";
 import type { Perception } from "../sdk/protocol";
 
@@ -239,6 +240,21 @@ export class OutstandingRequests {
   idsForModelRequest(modelRequestId: string): string[] {
     return this.entries()
       .filter((request) => request.modelRequestId === modelRequestId)
+      .map((request) => request.id);
+  }
+  /**
+   * The ledger ids of the conversational replies owed to `peer` (a tell or
+   * say asked by them; endpoint requests excluded), matched by normalised
+   * resident name.
+   */
+  idsForPeer(peer: string): string[] {
+    return this.entries()
+      .filter(
+        (request) =>
+          !request.modelRequestId &&
+          request.kind !== "channel" &&
+          sameResidentName(request.speaker ?? request.target, peer),
+      )
       .map((request) => request.id);
   }
   presentedIds(): Set<string> {

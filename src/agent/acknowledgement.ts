@@ -30,7 +30,55 @@ const ACK_LEXICON =
   /\b(thanks|thank you|thx|ty|acknowledged|ack|noted|got it|received|understood|roger|copy that|confirmed|confirming|agreed|aligned|appreciated?|cheers|sounds good|will do|you'?re welcome|welcome|standing by|all good|great|perfect|ok|okay)\b/i;
 
 const NO_REPLY =
-  /\bno (further |more )?(reply|response|action|follow-?up)s? (is )?(needed|required|necessary)\b|\bno need to (reply|respond)\b|\bnothing (further|else) (is )?needed\b/i;
+  /\bno (further |more )?(reply|response|action|follow-?up)s? (is |are )?(needed|required|necessary|due|owed|expected)\b|\bno need to (reply|respond)\b|\bnothing (further|else) (is )?needed\b/i;
+
+/**
+ * The sender says outright that it wants no reply: "no reply needed / due /
+ * owed", "do not reply", "don't respond", "no further replies", "nothing
+ * owed", "do not send further acks". Matched anywhere in the message.
+ */
+const DECLINES_REPLY = new RegExp(
+  [
+    NO_REPLY.source,
+    "\\b(?:do not|don'?t|dont|need not|no need to)\\s+(?:reply|respond|answer|ack(?:nowledge)?)\\b",
+    "\\b(?:do not|don'?t|dont)\\s+send\\s+(?:any\\s+)?(?:further|more|other)\\s+(?:acks?|acknowledg(?:e?ments?)|replies|messages|tells)\\b",
+    "\\bno (?:further |more )?(?:replies|acks)\\b",
+    "\\bnothing (?:further |more |else )?(?:is )?(?:owed|due)\\b",
+  ].join("|"),
+  "i",
+);
+
+/**
+ * True when `message` says the sender wants no reply and asks no question.
+ * Such a message never owes a reply, whatever else it carries (a status, a
+ * standing-state line, a `[re:…]` thread tag): forcing one made each side's
+ * "terminal, no reply needed" line owe the other side the next one
+ * (2026-10-21, the answerer crew's `[re:mapping]` loop). A question mark
+ * keeps it a request — "no reply needed unless X?" still asks.
+ */
+export function declinesReply(message: string): boolean {
+  const text = message.trim();
+  return !!text && !text.includes("?") && DECLINES_REPLY.test(text);
+}
+
+/** Every `[re:<id>]` correlation tag in a message, lower-cased ids. */
+export function correlationTagIds(message: string): string[] {
+  return [...message.matchAll(/\[re:([a-z0-9]{1,32})\]/gi)].map((m) => m[1]!.toLowerCase());
+}
+
+/**
+ * The message without its `[re:<id>]` tags — every tag, or only the ids in
+ * `only` (lower-cased). A tag a thread already carries is a reply marker, not
+ * a new ask: the classifiers read the message without it.
+ */
+export function withoutCorrelationTags(message: string, only?: ReadonlySet<string>): string {
+  return message
+    .replace(/\s*\[re:([a-z0-9]{1,32})\]\s*/gi, (whole, id: string) =>
+      !only || only.has(id.toLowerCase()) ? " " : whole,
+    )
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
 
 const REQUEST_PHRASE =
   /\b(please|pls|can you|could you|would you|will you|can someone|could someone|need you to|i need|let me know|lmk|make sure|be sure to|remember to|don'?t forget|waiting (on|for) you|your turn|when you can|asap)\b/i;
@@ -201,6 +249,8 @@ export function classifyIncomingTell(message: string): TellIntent {
   const text = message.trim();
   if (!text) return "request";
   if (text.includes("?")) return "request";
+  // "No reply needed" is the sender's own word that nothing is owed.
+  if (declinesReply(text)) return "information";
   if (/\[re:[a-z0-9]+\]/i.test(text) || /\[crew-task\]/i.test(text)) return "request";
   if (/model_request/i.test(text)) return "request";
   if (REQUEST_PHRASE.test(text) || ADDRESSED_ASK.test(text)) return "request";
@@ -416,6 +466,8 @@ export const STATUS_ECHO_NOT_SENT =
  * can be the answer to "confirm X?". Only REQUESTS are owed replies (an
  * INFORMATION tell is never tracked; see `classifyIncomingTell`), so the
  * exemption covers answers to asks, not replies to delivered results.
+ * Correlation tags are ignored: "[re:ab12cd] Closed, no reply due." to a peer
+ * nothing is owed is still only an acknowledgement.
  */
 export function outgoingAcknowledgementRefusal(
   toolName: string,
@@ -426,8 +478,10 @@ export function outgoingAcknowledgementRefusal(
   const out = outgoingMessage(toolName, args);
   if (!out) return undefined;
   if (owedTargets.has(out.target.toLowerCase())) return undefined;
-  if (isPureAcknowledgement(out.message)) return ACK_NOT_SENT;
-  if (isStatusEcho(out.message, knownNumbers)) return STATUS_ECHO_NOT_SENT;
+  // A `[re:…]` tag on a message nobody is owed resolves no wait: judge the text.
+  const message = withoutCorrelationTags(out.message);
+  if (isPureAcknowledgement(message)) return ACK_NOT_SENT;
+  if (isStatusEcho(message, knownNumbers)) return STATUS_ECHO_NOT_SENT;
   return undefined;
 }
 

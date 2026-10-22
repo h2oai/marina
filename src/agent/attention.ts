@@ -21,7 +21,11 @@
  *  3. the social score sets the priority (`SocialAwareness.scorePerception`);
  *     a tell is a REQUEST (100, reply owed), INFORMATION (60, read, owes
  *     nothing) or a pure acknowledgement (≤ 30, owes nothing); a room or
- *     channel post that only acknowledges is capped the same way;
+ *     channel post that only acknowledges is capped the same way. A message
+ *     that says it wants no reply is never a request, and a `[re:…]` tag
+ *     the thread already carries is read as a reply marker, not an ask;
+ *     an agent's tell deep in an agent-only reply chain (envelope `depth` ≥
+ *     {@link peerReplyDepthLimit}) owes nothing and does not wake;
  *  4. untrusted (gateway-relayed) content is clamped below the wake tier and
  *     never owes a reply;
  *  5. the attention mode and threshold decide keep/drop
@@ -34,7 +38,13 @@
 import { sameResidentName } from "../engine/entity-name";
 import { stripAnsi } from "../net/ansi";
 import type { Perception } from "../types";
-import { classifyIncomingTell, isPureAcknowledgement } from "./acknowledgement";
+import {
+  classifyIncomingTell,
+  correlationTagIds,
+  declinesReply,
+  isPureAcknowledgement,
+  withoutCorrelationTags,
+} from "./acknowledgement";
 import { modelEnvelopeOf } from "./outstanding-requests";
 import { isAddressedTo, isCrewDispatch, type SocialEvent, withoutVocative } from "./social";
 
@@ -75,6 +85,27 @@ export const UNSCORED_PRIORITY = 15;
 
 /** Recently seen perception hashes kept for de-duplication before the set resets. */
 export const DEDUPE_WINDOW = 200;
+
+/** Correlation-tag ids a resident remembers (sent or received) before the oldest is forgotten. */
+export const THREAD_TAG_WINDOW = 256;
+
+/** Default {@link peerReplyDepthLimit}. */
+export const DEFAULT_PEER_REPLY_DEPTH = 6;
+
+/**
+ * `MARINA_PEER_REPLY_DEPTH` (default 6, `0` = off): from this envelope depth
+ * on, a tell from another agent owes no reply and does not wake the resident;
+ * it is still read on the next cycle. The server counts depth only along a
+ * conversation between two agents (`deliverTell` in
+ * `src/engine/commands/tell.ts`): a person's message is always depth 0, so it
+ * resets the chain and is never held back by this bound.
+ */
+export function peerReplyDepthLimit(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.MARINA_PEER_REPLY_DEPTH?.trim();
+  if (!raw) return DEFAULT_PEER_REPLY_DEPTH;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_PEER_REPLY_DEPTH;
+}
 
 /** Default attention threshold and the range every threshold is held to. */
 export const DEFAULT_ATTENTION_THRESHOLD = 50;
@@ -209,7 +240,7 @@ export function acknowledgementReplyRefusal(
   }
   if (!target || !message) return undefined;
   if (!peersWhoAcknowledged.has(target.toLowerCase())) return undefined;
-  if (!isPureAcknowledgement(message)) return undefined;
+  if (!isPureAcknowledgement(withoutCorrelationTags(message))) return undefined;
   return `not sent: acknowledgement; ${target}'s last message was one (no reply owed).`;
 }
 
@@ -240,10 +271,39 @@ export interface AttentionState {
   peersWhoAcknowledged: Set<string>;
   /** When this resident last took an ambient channel post as one to answer (ms). */
   lastChannelResponseAt: number;
+  /**
+   * Correlation-tag ids (`[re:<id>]`, lower-cased) this resident has already
+   * sent or received, oldest first. A tag seen again is a thread marker — the
+   * reply to an ask, or a follow-up in it — not a new caller waiting.
+   */
+  threadTags: Set<string>;
 }
 
 export function createAttentionState(): AttentionState {
-  return { recentHashes: new Set(), peersWhoAcknowledged: new Set(), lastChannelResponseAt: 0 };
+  return {
+    recentHashes: new Set(),
+    peersWhoAcknowledged: new Set(),
+    lastChannelResponseAt: 0,
+    threadTags: new Set(),
+  };
+}
+
+/**
+ * Remember the correlation tags in a message this resident sent or received
+ * (bounded by {@link THREAD_TAG_WINDOW}, oldest forgotten first). The adapter
+ * calls it for outgoing tells; {@link assessPerception} does for incoming
+ * tells and the resident's own send receipts.
+ */
+export function rememberThreadTags(state: AttentionState, message: string): void {
+  for (const id of correlationTagIds(message)) {
+    state.threadTags.delete(id);
+    state.threadTags.add(id);
+  }
+  while (state.threadTags.size > THREAD_TAG_WINDOW) {
+    const oldest = state.threadTags.values().next().value;
+    if (oldest === undefined) break;
+    state.threadTags.delete(oldest);
+  }
 }
 
 /** The social model's scoring of an event: `SocialAwareness` satisfies it. */
@@ -274,6 +334,8 @@ export interface AttentionInput {
   selfId?: string;
   /** The endpoint request ids this resident still owes a reply to. */
   owedModelRequests?: ReadonlySet<string>;
+  /** Agent reply-chain bound; defaults to {@link peerReplyDepthLimit} (0 = off). */
+  peerReplyDepth?: number;
 }
 
 /**
@@ -293,6 +355,7 @@ export type AttentionReason =
   | "answered-elsewhere"
   | "below-threshold"
   | "untrusted"
+  | "depth-limit"
   | "acknowledgement"
   | "information"
   | "request"
@@ -308,6 +371,12 @@ export interface AttentionDecision {
    * its reply ledger.
    */
   release?: string;
+  /**
+   * A peer whose latest tell says it wants no reply (`declinesReply`): the
+   * conversational replies this resident still owes that peer are released
+   * (endpoint requests are not). The caller drops them from its ledger.
+   */
+  releasePeer?: string;
   wake: WakeBand;
   /** Buffer priority (meaningful only when kept). */
   priority: number;
@@ -410,6 +479,13 @@ export function assessPerception(
   state: AttentionState,
 ): AttentionDecision {
   const { perception: p, text, selfName } = input;
+  // The resident's own tell receipt names the tags it just sent: a reply that
+  // echoes one is an answer to this resident, not a new ask of it.
+  const delivery = p.data?.delivery as { kind?: unknown; message?: unknown } | undefined;
+  if (delivery?.kind === "tell" && typeof delivery.message === "string")
+    rememberThreadTags(state, delivery.message);
+  else if (/^You tell \S[^:]*: /.test(stripAnsi(text).replace(/^>\s*/, "").trimStart()))
+    rememberThreadTags(state, text);
   // 1. Self-echo — the resident's own memory-service acknowledgements and send receipts.
   if (!input.perceiveSelfEcho && isSelfEchoPerception(p, text)) return dropped("self-echo", 0);
   const elsewhere = endpointDispatchDrop(input);
@@ -441,15 +517,27 @@ export function assessPerception(
   // passes the attention filter, but owes nothing: forcing a reply to it made
   // the recipient answer every result with a status echo, which owed the
   // sender in turn.
+  //
+  // A `[re:<id>]` tag this resident has already sent or received marks a
+  // reply inside a thread, not a caller waiting: the message is classified
+  // without it. Echoing the tag is what the harness asks of a reply, so a
+  // tag-carrying reply that still counted as a request made each answer owe
+  // the next one (2026-10-21, the answerer crew's `[re:mapping]` loop).
   let acknowledgement = false;
   let information = false;
+  let depthLimited = false;
+  let releasePeer: string | undefined;
+  const knownTags = new Set(state.threadTags);
   if (p.tag === "tell" && typeof p.data.senderName === "string") {
-    const body =
+    const raw =
       typeof p.data.message === "string"
         ? p.data.message
         : text.replace(/^[\s\S]*?\btells you:\s*/, "");
+    const body = withoutCorrelationTags(raw, knownTags);
+    rememberThreadTags(state, raw);
     acknowledgement = isPureAcknowledgement(body);
     const sender = p.data.senderName.toLowerCase();
+    if (!p.data.untrusted && declinesReply(body)) releasePeer = p.data.senderName;
     if (acknowledgement) {
       state.peersWhoAcknowledged.add(sender);
       priority = Math.min(priority, ACKNOWLEDGEMENT_PRIORITY);
@@ -463,6 +551,20 @@ export function assessPerception(
       state.peersWhoAcknowledged.delete(sender);
       priority = REQUEST_TELL_PRIORITY;
       respond = true;
+    }
+    // Deep in an agent-only reply chain: read, never owed, no wake. The
+    // server stamps `senderKind` and counts depth only between agents, so a
+    // person's tell (depth 0) is never held back here.
+    const limit = input.peerReplyDepth ?? peerReplyDepthLimit();
+    if (
+      limit > 0 &&
+      p.data.senderKind === "agent" &&
+      typeof p.data.depth === "number" &&
+      p.data.depth >= limit
+    ) {
+      depthLimited = true;
+      priority = Math.min(priority, INFORMATION_TELL_PRIORITY);
+      respond = false;
     }
   } else if (
     p.kind === "message" &&
@@ -491,6 +593,7 @@ export function assessPerception(
   if (
     !acknowledgement &&
     !information &&
+    !depthLimited &&
     !shouldKeepPerception(config.mode, priority, respond, config.threshold)
   ) {
     return dropped("below-threshold", priority);
@@ -519,19 +622,24 @@ export function assessPerception(
   // request. An INFORMATION post that scored high (a crew update naming this
   // agent) stays a wake and a [!] line, but is neither owed nor nudged.
   const requestBody = typeof p.data?.message === "string" ? p.data.message : text;
+  const classifiedBody = withoutCorrelationTags(requestBody, knownTags);
+  if (p.tag !== "tell") rememberThreadTags(state, requestBody);
   const nudgeMode = input.nudgeMode ?? forcedActionNudgeMode();
-  const owed =
-    nudgeMode === "requests"
+  const owed = depthLimited
+    ? false
+    : nudgeMode === "requests"
       ? respond &&
         (p.tag === "tell" ||
-          (!isPureAcknowledgement(requestBody) && classifyIncomingTell(requestBody) === "request"))
+          (!isPureAcknowledgement(classifiedBody) &&
+            classifyIncomingTell(classifiedBody) === "request"))
       : respond || priority >= WAKE_PRIORITY;
 
   // Wake band. Ambient connects, movement and channel chatter wait for the
   // next reflective cycle instead of each purchasing a model turn; addressed
   // messages, endpoint requests and first-party information wake now. A
   // channel post interrupts a run only at the dispatch tier.
-  const wakesNow = respond || priority >= WAKE_PRIORITY || (information && !untrusted);
+  const wakesNow =
+    !depthLimited && (respond || priority >= WAKE_PRIORITY || (information && !untrusted));
   const wake: WakeBand = wakesNow ? "now" : acknowledgement || untrusted ? "context" : "next";
   const steerFloor = event?.type === "channel_message" ? CHANNEL_STEER_PRIORITY : WAKE_PRIORITY;
 
@@ -539,15 +647,17 @@ export function assessPerception(
     keep: true,
     reason: untrusted
       ? "untrusted"
-      : acknowledgement
-        ? "acknowledgement"
-        : information
-          ? "information"
-          : owed
-            ? "request"
-            : respond
-              ? "addressed"
-              : "ambient",
+      : depthLimited
+        ? "depth-limit"
+        : acknowledgement
+          ? "acknowledgement"
+          : information
+            ? "information"
+            : owed
+              ? "request"
+              : respond
+                ? "addressed"
+                : "ambient",
     wake,
     priority,
     shouldRespond: respond,
@@ -557,7 +667,10 @@ export function assessPerception(
     information,
     untrusted,
     requestBody,
-    marker: noReplyMarker(acknowledgement, information),
+    marker: depthLimited
+      ? " (deep agent reply chain; no reply owed)"
+      : noReplyMarker(acknowledgement, information),
+    ...(releasePeer ? { releasePeer } : {}),
     ...(event ? { event } : {}),
   };
 }

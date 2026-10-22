@@ -66,6 +66,32 @@ export function getDirectMessage(db: Database, id: number): DirectMessageRow | u
   );
 }
 
+/**
+ * The newest tell between `a` and `b`, in either direction, sent at or after
+ * `since` (ms). A new tell in the pair continues this one's conversation
+ * (`deliverTell` reads its depth). Uses `idx_direct_messages_dedupe`'s
+ * `(sender_id, target_id, …)` prefix once per direction.
+ */
+export function latestDirectMessageBetween(
+  db: Database,
+  a: string,
+  b: string,
+  since: number,
+): DirectMessageRow | undefined {
+  const newest = (from: string, to: string) =>
+    (db
+      .query(
+        `SELECT * FROM direct_messages WHERE sender_id = ? AND target_id = ? AND created_at >= ?
+           ORDER BY id DESC LIMIT 1`,
+      )
+      .get(from, to, since) as DirectMessageRow | null) ?? undefined;
+  const ab = newest(a, b);
+  const ba = newest(b, a);
+  if (!ab) return ba;
+  if (!ba) return ab;
+  return ab.id > ba.id ? ab : ba;
+}
+
 export function listDirectMessageInbox(
   db: Database,
   targetId: string,
