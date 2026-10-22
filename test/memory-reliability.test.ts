@@ -135,7 +135,10 @@ it("archives 160 messages byte-exactly despite lost batch and checkpoint acknowl
   ).toThrow("not found");
   await durable.archive(messages, "same originals");
   expect((await durable.checkpoint())!.version).toBe(1);
-  await reader.forget(residentSpace, { source_ids: [archive.source_ids[1]!] });
+  // The reconstruction above spends the whole request budget; retry like any client.
+  await retryMemoryOperation(() =>
+    reader.forget(residentSpace, { source_ids: [archive.source_ids[1]!] }),
+  );
   await expect(
     durable.journal({ role: "user", content: "local memory must not resurrect" }),
   ).rejects.toMatchObject({ code: "checkpoint_invalidated" });
@@ -353,7 +356,8 @@ it("reports unavailable storage and bounds opt-in retry without retrying denial 
       },
     ),
   ).toBe("ok");
-  expect(sleeps).toEqual([1000, 1000]);
+  // A named rate-limit wait is honoured exactly, plus a small margin for early timers.
+  expect(sleeps).toEqual([1005, 1005]);
   let timedOut = false;
   expect(
     await retryMemoryOperation(
@@ -393,7 +397,11 @@ it("awaits the actual resident adapter's completed-message journal before the ne
     calls = 0;
   const residentClient = {
     memoryService: async (request: MemoryOperationRequest) => {
-      if (fail && request.operation === "capture_batch") throw new Error("storage unavailable");
+      if (
+        fail &&
+        (request.operation === "capture_batch" || request.operation === "capture_checkpoint")
+      )
+        throw new Error("storage unavailable");
       return residentMemoryOperation(db, "Resident", request);
     },
   };
@@ -484,4 +492,90 @@ it("recovers a committed write through a non-JSON gateway failure using the same
     async () => new Response("denied", { status: 403 }),
   );
   await expect(denied.query(space)).rejects.toMatchObject({ status: 403 });
+});
+
+it("captures parts, manifest and checkpoint in one transaction that a stale version refuses whole", async () => {
+  const known = await client.capture(space, "existing part", undefined, "existing-part");
+  const input = (expected: number) => ({
+    expected_version: expected,
+    session_id: "journal:atomic",
+    items: [{ content: "new part", key: "new-part" }],
+    order: [known.id, 0],
+    manifest: {
+      key: "atomic-manifest",
+      content: { format: "json-utf8-parts-v1", kind: "journal" },
+    },
+    field: "journal",
+    entry: { message_count: 2 },
+    data: { lastIntent: "atomic" },
+    cursor: 0,
+    checkpoint_key: "atomic-checkpoint",
+  });
+  const sources = async () => (await client.sources(space)).sources.length;
+  const before = await sources();
+  // A stale expected version stores nothing at all.
+  await expect(
+    client.captureCheckpoint(space, "resident", input(3), "atomic-stale"),
+  ).rejects.toMatchObject({ code: "version_conflict" });
+  expect(await sources()).toBe(before);
+  const receipt = await client.captureCheckpoint(space, "resident", input(0), "atomic");
+  expect(receipt.version).toBe(1);
+  expect(receipt.source_ids[0]).toBe(known.id);
+  expect(await sources()).toBe(before + 2); // the new part and the manifest
+  const checkpoint = await client.checkpoint(space, "resident");
+  expect(checkpoint.data).toMatchObject({
+    lastIntent: "atomic",
+    journal: {
+      message_count: 2,
+      source_ids: receipt.source_ids,
+      manifest_source_id: receipt.manifest.id,
+    },
+  });
+  const manifest = JSON.parse((await client.sourceRange(space, receipt.manifest.id)).text);
+  expect(manifest.source_ids).toEqual(receipt.source_ids);
+  // A lost acknowledgement retried with the same key returns the same receipt and stores nothing new.
+  expect(await client.captureCheckpoint(space, "resident", input(0), "atomic")).toEqual(receipt);
+  expect(await sources()).toBe(before + 2);
+  // Malformed order entries are refused before anything is stored.
+  await expect(
+    client.captureCheckpoint(space, "resident", { ...input(1), order: [5] }, "atomic-bad"),
+  ).rejects.toMatchObject({ code: "invalid_order" });
+  expect(await sources()).toBe(before + 2);
+});
+
+it("waits out a named rate limit exactly without using up attempts, within a total cap", async () => {
+  const sleeps: number[] = [];
+  let calls = 0;
+  expect(
+    await retryMemoryOperation(
+      async () => {
+        calls++;
+        if (calls <= 8) throw new MemoryClientError(429, "rate_limited", "budget", 40);
+        return "ok";
+      },
+      { attempts: 2, sleep: async (ms) => void sleeps.push(ms) },
+    ),
+  ).toBe("ok");
+  expect(sleeps).toEqual(Array(8).fill(45));
+  // Unnamed transient failures still use attempts.
+  await expect(
+    retryMemoryOperation(
+      async () => {
+        throw new MemoryClientError(503, "unavailable", "down");
+      },
+      { attempts: 2, sleep: async () => {} },
+    ),
+  ).rejects.toMatchObject({ code: "unavailable" });
+  // Named waits stop at the total cap rather than looping forever.
+  let capped = 0;
+  await expect(
+    retryMemoryOperation(
+      async () => {
+        capped++;
+        throw new MemoryClientError(429, "rate_limited", "budget", 5000);
+      },
+      { sleep: async () => {} },
+    ),
+  ).rejects.toMatchObject({ code: "rate_limited" });
+  expect(capped).toBe(6); // 6 × 5005 ms would pass the 30 s cap
 });

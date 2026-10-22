@@ -255,6 +255,33 @@ export interface MemoryCheckpoint {
   data: Record<string, unknown>;
   updated_at: number;
 }
+/** Input of an atomic checkpoint capture (`capture_checkpoint`). */
+export interface MemoryCheckpointCapture {
+  expected_version: number;
+  session_id?: string;
+  /** New sources; `order` refers to them by index. At most 64, 1 MiB. */
+  items?: { content: unknown; key: string }[];
+  /** The manifest's sources in order: an existing source id or a new item's index. */
+  order: (string | number)[];
+  /** The server adds `source_ids` (resolved `order`) to this content. */
+  manifest: { key: string; content: Record<string, unknown> };
+  /** Checkpoint data field set to `entry` plus `source_ids` and `manifest_source_id`. */
+  field: string;
+  entry: Record<string, unknown>;
+  /** The rest of the checkpoint data. */
+  data: Record<string, unknown>;
+  /** Other sources the checkpoint keeps referring to. */
+  source_ids?: string[];
+  /** `"manifest"` = the manifest's sequence number, else an explicit cursor. */
+  cursor?: "manifest" | number;
+  checkpoint_key: string;
+}
+
+export interface MemoryCheckpointCaptureReceipt extends MemoryReceipt {
+  manifest: { id: string; seq: number };
+  source_ids: string[];
+}
+
 export interface MemoryReceipt {
   id: string;
   version?: number;

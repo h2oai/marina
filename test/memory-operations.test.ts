@@ -279,7 +279,7 @@ it("does not dispatch a cancelled queued resident journal when the earlier write
   let captures = 0;
   const durable = new DurableResidentMemory({
     memoryService: async (request) => {
-      if (request.operation === "capture_batch") {
+      if (request.operation === "capture_batch" || request.operation === "capture_checkpoint") {
         captures++;
         entered.resolve();
         await release.promise;
@@ -317,7 +317,7 @@ it("aborts a hanging journal through the actual resident agent without calling t
   };
   internals.platformMemory = new PlatformMemoryBackend({
     memoryService: async (request) => {
-      if (request.operation === "capture_batch") {
+      if (request.operation === "capture_batch" || request.operation === "capture_checkpoint") {
         entered.resolve();
         return new Promise(() => {});
       }

@@ -18,6 +18,18 @@ describe("RateLimiter", () => {
     });
   });
 
+  it("names the wait until the next token", () => {
+    expect(limiter.retryAfterMs("fresh")).toBe(0);
+    for (let i = 0; i < 5; i++) limiter.consume("user1");
+    expect(limiter.retryAfterMs("user1")).toBe(1000);
+    clock += 400;
+    expect(limiter.retryAfterMs("user1")).toBe(600);
+    expect(limiter.retryAfterMs("user1", 3)).toBe(1600); // two refills of 2 tokens
+    clock += 600;
+    expect(limiter.retryAfterMs("user1")).toBe(0);
+    expect(limiter.consume("user1")).toBe(true);
+  });
+
   it("should allow requests within capacity", () => {
     expect(limiter.consume("user1")).toBe(true);
     expect(limiter.consume("user1")).toBe(true);

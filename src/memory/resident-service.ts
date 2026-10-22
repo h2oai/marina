@@ -9,7 +9,16 @@ import {
   type MemoryOperationRequest,
   runMemoryOperation,
 } from "../sdk/memory-operations";
+import { retryMemoryOperation } from "../sdk/memory-retry";
 import { worldMemoryService } from "./world-service";
+
+/**
+ * In-process callers are paced, not failed, by the per-principal memory
+ * budget: a refusal that names its wait (`rate_limited`, the next token) is
+ * waited out and the request sent again — safe for any operation, since a
+ * refused request never reached its handler. Nothing else is retried here.
+ */
+const paced = <T>(run: () => Promise<T>) => retryMemoryOperation(run, { attempts: 1 });
 
 interface Binding {
   client: MarinaMemoryClient;
@@ -64,16 +73,20 @@ export async function residentMemoryOperation(
     ["usage", "capabilities", "me", "spaces", "create_space"].includes(request.operation) ||
     (request.operation.startsWith("assist_") && request.operation !== "assist_create")
   )
-    return { ok: true as const, result: await runMemoryOperation(binding.client, request) };
+    return {
+      ok: true as const,
+      result: await paced(() => runMemoryOperation(binding!.client, request)),
+    };
   const space =
     request.space_id ??
-    (await (binding.space ??= binding.client
-      .spaces()
+    (await (binding.space ??= paced(() => binding!.client.spaces())
       .then(
         async ({ spaces }) =>
           spaces.find((s) => s.owner_id === principal.principal_id && s.name === "resident")?.id ??
           (
-            await binding!.client.createSpace("resident", `resident:${principal.principal_id}`)
+            await paced(() =>
+              binding!.client.createSpace("resident", `resident:${principal.principal_id}`),
+            )
           ).id,
       )
       .catch((error) => {
@@ -84,7 +97,7 @@ export async function residentMemoryOperation(
   return {
     ok: true as const,
     space_id: space,
-    result: await runMemoryOperation(binding.client, request, space),
+    result: await paced(() => runMemoryOperation(binding!.client, request, space)),
   };
 }
 

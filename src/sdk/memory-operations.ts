@@ -68,6 +68,7 @@ export const MEMORY_OPERATIONS = [
   "retrieve",
   "checkpoint",
   "save_checkpoint",
+  "capture_checkpoint",
   "grant",
   "forget",
   "export",
@@ -259,6 +260,13 @@ export async function runMemoryOperation(
     }
     case "checkpoint":
       return client.request(`${base}/checkpoints/${field(request.id, "id")}`);
+    case "capture_checkpoint":
+      return client.request(
+        `${base}/checkpoints/${field(request.id, "id")}/capture`,
+        "POST",
+        input,
+        request.key,
+      );
     case "save_checkpoint":
       return client.request(
         `${base}/checkpoints/${field(request.id, "id")}`,

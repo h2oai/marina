@@ -58,6 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One memory request per journaled message.** A resident's journal entry or archive is one `capture_checkpoint` request (`POST /spaces/:space/checkpoints/:name/capture`): its new parts, its manifest and the checkpoint are stored in one transaction whose expected version is checked before anything is stored, so a forgotten or changed checkpoint refuses the whole request and nothing is captured. Before, each message cost four requests (a checkpoint read, a part batch, the manifest and the checkpoint save). Archives too large for one request, and memory services without the operation, keep the read-first path.
+- **Memory rate limits name the wait.** The per-principal memory budget (100 requests, 25 per second) now refills one token every 40 ms instead of 25 at once each second, a 429 carries `retry_after_ms` for the next token, and `retryMemoryOperation` waits exactly that (plus 5 ms) without using up an attempt, up to 30 s in all. A throttled resident used to wait at least a second per refusal.
+
 - **Supervised residents are on by default.** Every agent `marina supervise` or the console launches (Claude Code, Codex, pi) is its own world account, owned by the launching person, with no credential in its environment. `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) restores the earlier routing; a supervisor whose server offers no supervision endpoint falls back to it and says so. `readiness` gains an optional `supervised-residents` check; feature status: core.
 - **The cheap tier has a default output cap.** A `marina/cheap` request that sets no
   `max_tokens` is sent `max_tokens: 16384`, and on OpenRouter `reasoning.max_tokens` at 3/4 of

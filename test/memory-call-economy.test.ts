@@ -51,19 +51,59 @@ const receipts = () =>
   ).n;
 
 describe("resident continuity journal call economy", () => {
-  it("checkpoint-only saves reuse the remembered checkpoint; journal writes read fresh", async () => {
+  it("checkpoint-only saves and journal entries reuse the remembered checkpoint", async () => {
     await durable.save({ lastIntent: "one" });
     await durable.save({ lastIntent: "two" });
     await durable.save({ lastIntent: "three" });
     // Before: one checkpoint read per save.
     expect(count("checkpoint")).toBe(1);
     expect(count("save_checkpoint")).toBe(3);
+    // One request per journal entry: parts, manifest and checkpoint together.
     await durable.journal({ role: "user", content: "one" });
     await durable.journal({ role: "assistant", content: "two" });
-    expect(count("checkpoint")).toBe(3);
+    expect(count("checkpoint")).toBe(1);
+    expect(count("capture_checkpoint")).toBe(2);
+    expect(ops.filter((o) => o === "capture" || o === "capture_batch")).toEqual([]);
     const saved = await durable.checkpoint();
     expect((saved!.data.journal as { message_count: number }).message_count).toBe(1);
     expect(saved!.data.lastIntent).toBe("three");
+  });
+
+  it("captures nothing once a forget has invalidated the checkpoint", async () => {
+    await durable.journal({ role: "user", content: "kept" });
+    const sources = () =>
+      (
+        db.memoryRepository().raw.query("SELECT count(*) AS n FROM memory_sources").get() as {
+          n: number;
+        }
+      ).n;
+    const journal = (await durable.checkpoint())!.data.journal as { source_ids: string[] };
+    const forgotten = await residentMemoryOperation(db, "Resident", {
+      operation: "forget",
+      input: { source_ids: [journal.source_ids[0]!] },
+    });
+    expect(forgotten.ok).toBe(true);
+    const before = sources();
+    await expect(
+      durable.journal({ role: "user", content: "must not be captured" }),
+    ).rejects.toMatchObject({ code: "checkpoint_invalidated" });
+    expect(sources()).toBe(before);
+  });
+
+  it("a write made elsewhere rejects a journal entry whole and it retries from a fresh read", async () => {
+    await durable.journal({ role: "user", content: "first" });
+    const other = new DurableResidentMemory({
+      memoryService: async (request: MemoryOperationRequest) =>
+        residentMemoryOperation(db, "Resident", request),
+    });
+    await other.save({ lastIntent: "elsewhere" });
+    ops = [];
+    await durable.journal({ role: "user", content: "second" });
+    expect(count("capture_checkpoint")).toBe(2); // conflict, then the retry
+    expect(count("checkpoint")).toBe(1);
+    const saved = (await durable.checkpoint())!;
+    expect(saved.data.lastIntent).toBe("elsewhere");
+    expect((saved.data.journal as { message_count: number }).message_count).toBe(1);
   });
 
   it("skips a save that changes nothing but its timestamp", async () => {
@@ -93,6 +133,18 @@ describe("resident continuity journal call economy", () => {
     expect(count("save_checkpoint")).toBe(2); // conflict, then the retry
     expect(count("checkpoint")).toBe(1);
     expect((await durable.checkpoint())?.data.lastIntent).toBe("mine");
+  });
+});
+
+describe("in-process memory callers are paced, not failed, by the request budget", () => {
+  it("waits out named rate-limit refusals past the 100-request burst", async () => {
+    const started = performance.now();
+    for (let i = 0; i < 120; i++) {
+      const reply = await residentMemoryOperation(db, "Resident", { operation: "usage" });
+      expect(reply.ok).toBe(true);
+    }
+    // ~20 requests past the burst at one token per 40 ms: paced, well under the old 1 s waits.
+    expect(performance.now() - started).toBeLessThan(5000);
   });
 });
 

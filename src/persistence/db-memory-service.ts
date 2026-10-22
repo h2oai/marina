@@ -25,7 +25,7 @@ import { memoryAdoptRepository } from "./db-memory-adopt";
 import { memoryAssistanceRepository } from "./db-memory-assistance";
 import { exportMemoryBundle, importMemoryBundle } from "./db-memory-bundles";
 import { deleteMemoryCache, getMemoryCache, putMemoryCache } from "./db-memory-cache";
-import { captureMemoryBatch } from "./db-memory-capture";
+import { captureIntoCheckpoint, captureMemoryBatch } from "./db-memory-capture";
 import {
   memoryVocabulary,
   saveMemoryVocabulary,
@@ -1645,6 +1645,13 @@ export function memoryRepository(db: Database) {
     },
     captureBatch: (actor: MemoryActor, space: string, items: unknown, key: string) =>
       captureMemoryBatch(db, actor, space, items, key),
+    captureCheckpoint: (
+      actor: MemoryActor,
+      space: string,
+      name: string,
+      input: unknown,
+      key: string,
+    ) => captureIntoCheckpoint(db, actor, space, name, input, key),
     vocabulary: (actor: MemoryActor, space: string, version?: number) =>
       memoryVocabulary(db, actor, space, version),
     saveVocabulary: (
