@@ -74,7 +74,17 @@ describe("entity private view on the dashboard", () => {
       expect(text).not.toContain("INPUT_SENTINEL");
       expect(text).not.toContain(PROP);
     }
-    expect((await get("/api/entities/Alice", bob)).status).toBe(403);
+    const detail = await get("/api/entities/Alice", bob);
+    expect(detail.status).toBe(200);
+    const body = JSON.parse(detail.text) as Record<string, unknown>;
+    expect(body.private).toBe(false);
+    expect(body.inventory).toBeUndefined();
+    expect(body.coreMemory).toBeUndefined();
+    expect(body.notes).toBeUndefined();
+    for (const key of Object.keys(body.properties as object))
+      expect(["rank", "role"]).toContain(key);
+    // The memory routes stay private-only.
+    expect((await get("/api/memory/core/Alice", bob)).status).toBe(403);
   });
 
   it("the entity itself reads its own input and properties", async () => {
@@ -147,18 +157,25 @@ describe("a person sees the private view of agents it owns", () => {
     expect(text).toContain("CORE_SENTINEL");
   });
 
-  it("a sibling agent and an unrelated person do not", async () => {
-    for (const actor of [ranger, dave])
-      for (const path of ["/api/entities/Scout", "/api/memory/core/Scout"]) {
-        const { status, text } = await get(path, actor);
-        expect(status).toBe(403);
-        expect(text).not.toContain("INPUT_SENTINEL");
-        expect(text).not.toContain("CORE_SENTINEL");
-      }
+  it("a sibling agent and an unrelated person get only the public view", async () => {
+    for (const actor of [ranger, dave]) {
+      const detail = await get("/api/entities/Scout", actor);
+      expect(detail.status).toBe(200);
+      expect(detail.text).not.toContain("INPUT_SENTINEL");
+      expect(detail.text).not.toContain("CORE_SENTINEL");
+      expect(detail.text).not.toContain(PROP);
+      expect((JSON.parse(detail.text) as { private: boolean }).private).toBe(false);
+      const core = await get("/api/memory/core/Scout", actor);
+      expect(core.status).toBe(403);
+      expect(core.text).not.toContain("CORE_SENTINEL");
+    }
   });
 
   it("an agent never reads its owner's private view", async () => {
-    expect((await get("/api/entities/Carol", scout)).status).toBe(403);
+    const detail = await get("/api/entities/Carol", scout);
+    expect(detail.status).toBe(200);
+    expect((JSON.parse(detail.text) as { private: boolean }).private).toBe(false);
+    expect(detail.text).not.toContain(PROP);
   });
 
   it("the live snapshot gives the owner the private shape and no one else", () => {
