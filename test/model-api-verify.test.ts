@@ -18,6 +18,7 @@ import { disableOutcomeLearning, enableOutcomeLearning } from "../src/learning/s
 import { handleModelApi } from "../src/net/model/model-api";
 import { setEndpointConfig } from "../src/net/model/model-endpoint";
 import {
+  addUsage,
   checkerEffort,
   checkerEffortMode,
   checkerMessages,
@@ -672,5 +673,34 @@ describe("marina/verify with the caller's memory context", () => {
   it("adds nothing to the checker without context", async () => {
     await ask({});
     expect(checkerTail()).not.toContain("[memory]");
+  });
+});
+
+describe("addUsage", () => {
+  it("sums prompt-cache reads and writes across the formation's calls", () => {
+    const draft = {
+      prompt_tokens: 900,
+      completion_tokens: 50,
+      total_tokens: 950,
+      prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 900 },
+    };
+    const check = { prompt_tokens: 1300, completion_tokens: 20, cache_creation_input_tokens: 1300 };
+    const revise = {
+      prompt_tokens: 1000,
+      completion_tokens: 80,
+      prompt_tokens_details: { cached_tokens: 900 },
+    };
+    const sum = addUsage(addUsage(addUsage(undefined, draft), check), revise);
+    expect(sum).toEqual({
+      prompt_tokens: 3200,
+      completion_tokens: 150,
+      total_tokens: 950,
+      prompt_tokens_details: { cached_tokens: 900, cache_write_tokens: 2200 },
+    });
+  });
+
+  it("adds no cache details when no call reported any", () => {
+    const sum = addUsage(undefined, { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 });
+    expect(sum).toEqual({ prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 });
   });
 });

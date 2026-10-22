@@ -176,6 +176,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Benchmark costs show prompt-cache reads and writes.** The harness now records the cached and
+  cache-written prompt tokens an endpoint reports (`prompt_tokens_details`, or Anthropic's raw
+  counters) per item and per run, and prints `Prompt cache: N read (x%) / M written`. A
+  `marina/verify:` reply sums them over the draft, check and revision calls instead of dropping
+  them. Two arms run at once on the same items and key share Anthropic's prompt cache, so one of
+  them reads cheap; this made an Opus verify arm look 1.2x plain when it is about 2.3x.
+
 - **Investigation capture writes no longer re-read stored evidence.** The capture quota summed `bytes` over every stored content row, and because `bytes` follows the up-to-2 MiB payload in each row, every write walked all earlier payloads. A covering index on `investigation_content(attempt_id, bytes)` (migration 178) answers the sum directly: at 128 MiB stored the quota check drops from ~40 ms to ~0.03 ms per write.
 
 - **A post addressed to someone else no longer wakes a bystander.** A room post that names another agent by vocative (`Rowan, …`, `…, Kestrel?`, `@Rowan`) was still subject to the random "a question in the room" response heuristic, so an unaddressed agent sometimes answered other agents' questions. `SocialAwareness` now knows names from the room, recent speakers and connects, and a post addressed to one of them (and not to this agent) is not this agent's to answer.

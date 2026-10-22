@@ -33,7 +33,7 @@ import type {
   DatasetItem,
   ResultItem,
 } from "../benchmarks/types";
-import { formatUsd, summarizeUsage } from "../benchmarks/usage";
+import { formatCacheUsage, formatUsd, summarizeUsage } from "../benchmarks/usage";
 import { mcnemarExact, pairedBootstrap, wilsonInterval } from "../src/stats";
 
 describe("Wilson interval", () => {
@@ -239,6 +239,49 @@ describe("usage accounting", () => {
     expect(s.completionTokens).toBeUndefined();
     expect(formatUsd(undefined)).toBe("n/a");
     expect(summarizeUsage([{ ...base, id: "3" }]).costUsd).toBeUndefined();
+  });
+
+  it("records prompt-cache reads and writes when the endpoint reports them", () => {
+    expect(
+      usageFromResponse(
+        {
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 5,
+            prompt_tokens_details: { cached_tokens: 60, cache_write_tokens: 30 },
+          },
+        },
+        "0.001",
+      ),
+    ).toEqual({
+      promptTokens: 100,
+      completionTokens: 5,
+      cachedPromptTokens: 60,
+      cacheWriteTokens: 30,
+      costUsd: 0.001,
+    });
+    // Anthropic's raw counters, as Marina's bridge also forwards them.
+    const raw = usageFromResponse(
+      { usage: { prompt_tokens: 10, cache_read_input_tokens: 4, cache_creation_input_tokens: 6 } },
+      null,
+    );
+    expect(raw.cachedPromptTokens).toBe(4);
+    expect(raw.cacheWriteTokens).toBe(6);
+    expect("cachedPromptTokens" in usageFromResponse({ usage: { prompt_tokens: 1 } }, null)).toBe(
+      false,
+    );
+
+    const base = { question: "", expected: "", actual: "", correct: true, latencyMs: 1 };
+    const s = summarizeUsage([
+      { ...base, id: "1", usage: { calls: 1, promptTokens: 100, cachedPromptTokens: 60 } },
+      { ...base, id: "2", usage: { calls: 1, promptTokens: 100, cacheWriteTokens: 90 } },
+    ]);
+    expect(s.cachedPromptTokens).toBe(60);
+    expect(s.cacheWriteTokens).toBe(90);
+    expect(formatCacheUsage(s)).toBe("Prompt cache: 60 read (30%) / 90 written");
+    expect(formatCacheUsage(summarizeUsage([{ ...base, id: "3", usage: { calls: 1 } }]))).toBe(
+      undefined,
+    );
   });
 });
 

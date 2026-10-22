@@ -17,10 +17,14 @@ function addOptional(a: number | undefined, b: number | undefined): number | und
 
 /** Fold one call's usage into an item's running total. */
 export function addCallUsage(total: ItemUsage | undefined, call: CallUsage): ItemUsage {
+  const cached = addOptional(total?.cachedPromptTokens, call.cachedPromptTokens);
+  const written = addOptional(total?.cacheWriteTokens, call.cacheWriteTokens);
   return {
     calls: (total?.calls ?? 0) + 1,
     promptTokens: addOptional(total?.promptTokens, call.promptTokens),
     completionTokens: addOptional(total?.completionTokens, call.completionTokens),
+    ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
+    ...(written !== undefined ? { cacheWriteTokens: written } : {}),
     costUsd: addOptional(total?.costUsd, call.costUsd),
   };
 }
@@ -34,6 +38,8 @@ export function summarizeUsage(items: ResultItem[]): UsageSummary {
       summary.calls += u.calls;
       summary.promptTokens = addOptional(summary.promptTokens, u.promptTokens);
       summary.completionTokens = addOptional(summary.completionTokens, u.completionTokens);
+      summary.cachedPromptTokens = addOptional(summary.cachedPromptTokens, u.cachedPromptTokens);
+      summary.cacheWriteTokens = addOptional(summary.cacheWriteTokens, u.cacheWriteTokens);
     }
     if (item.usage?.costUsd !== undefined) {
       summary.pricedItems++;
@@ -43,7 +49,24 @@ export function summarizeUsage(items: ResultItem[]): UsageSummary {
       summary.judgeCostUsd = addOptional(summary.judgeCostUsd, item.judgeUsage.costUsd);
     }
   }
+  if (summary.cachedPromptTokens === undefined) delete summary.cachedPromptTokens;
+  if (summary.cacheWriteTokens === undefined) delete summary.cacheWriteTokens;
   return summary;
+}
+
+/**
+ * `Prompt cache: 410000 read (63%) / 12000 written`, or undefined when the
+ * endpoint reported neither. A high read share on a single-turn benchmark
+ * usually means another run warmed the cache (same items, same key, at once),
+ * so its dollars are not comparable to an arm that ran alone.
+ */
+export function formatCacheUsage(summary: UsageSummary | undefined): string | undefined {
+  if (!summary) return undefined;
+  const { cachedPromptTokens: read, cacheWriteTokens: written, promptTokens } = summary;
+  if (read === undefined && written === undefined) return undefined;
+  const share =
+    read !== undefined && promptTokens ? ` (${Math.round((100 * read) / promptTokens)}%)` : "";
+  return `Prompt cache: ${read ?? "n/a"} read${share} / ${written ?? "n/a"} written`;
 }
 
 /** `$0.0123`, or `n/a` when nothing was reported. */
