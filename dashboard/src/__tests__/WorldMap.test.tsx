@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { WorldMap } from "../components/WorldMap";
 import { useWorldState } from "../hooks/use-world-state";
@@ -48,6 +48,99 @@ describe("WorldMap", () => {
     const entity = screen.getByRole("button", { name: "Inspect Alice" });
     fireEvent.click(entity);
     expect(useWorldState.getState().selectedEntity).toBe("Alice");
+  });
+
+  it("labels a supervised resident with its vendor and rings it with its presence", () => {
+    useWorldState.setState({
+      entities: [
+        {
+          id: "e_1",
+          name: "Wren",
+          kind: "agent",
+          room: "zone/lobby",
+          vendor: "claude",
+          presence: "needs_you",
+        },
+        { id: "e_2", name: "Bob", kind: "npc", room: "zone/lobby" },
+      ],
+    });
+    renderWithProviders(<WorldMap worldData={SAMPLE_WORLD_DATA} />);
+    expect(screen.getAllByTestId("map-resident-label").map((n) => n.textContent)).toEqual([
+      "Wren [claude]",
+    ]);
+    expect(screen.getAllByTestId("map-presence-ring")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Inspect Wren [claude], needs you" })).toBeVisible();
+  });
+
+  it("floats a content-free thread mark with reply depth for each new message envelope", () => {
+    useWorldState.setState({
+      entities: [
+        { id: "e_1", name: "Wren", kind: "agent", room: "zone/lobby", vendor: "claude" },
+        { id: "e_3", name: "Swift", kind: "agent", room: "zone/lobby", vendor: "codex" },
+      ],
+      eventFeed: [],
+    });
+    renderWithProviders(<WorldMap worldData={SAMPLE_WORLD_DATA} />);
+    act(() =>
+      useWorldState.setState({
+        eventFeed: [
+          {
+            type: "tell_sent",
+            from: "Swift",
+            to: "Wren",
+            depth: 1,
+            messageRef: "tell:2",
+            timestamp: 20,
+          },
+          {
+            type: "tell_sent",
+            from: "Wren",
+            to: "Swift",
+            depth: 0,
+            messageRef: "tell:1",
+            timestamp: 10,
+          },
+        ],
+      }),
+    );
+    // Newest on top of the room's stack.
+    expect(screen.getAllByTestId("map-thread-mark").map((n) => n.textContent)).toEqual([
+      "Swift → Wren ↳1",
+      "Wren → Swift",
+    ]);
+  });
+
+  it("stacks a busy room's thread marks: three visible, the rest as +N, click opens the room", () => {
+    useWorldState.setState({
+      entities: [
+        { id: "e_1", name: "Wren", kind: "agent", room: "zone/lobby", vendor: "claude" },
+        { id: "e_3", name: "Swift", kind: "agent", room: "zone/lobby", vendor: "codex" },
+      ],
+      eventFeed: [],
+      selectedRoom: null,
+    });
+    renderWithProviders(<WorldMap worldData={SAMPLE_WORLD_DATA} />);
+    const feed = Array.from({ length: 6 }, (_, i) => ({
+      type: "tell_sent" as const,
+      from: i % 2 ? "Swift" : "Wren",
+      to: i % 2 ? "Wren" : "Swift",
+      depth: i,
+      messageRef: `tell:${i + 1}`,
+      timestamp: 10 + i,
+    })).reverse();
+    act(() => useWorldState.setState({ eventFeed: feed }));
+    expect(screen.getAllByTestId("map-thread-mark").map((n) => n.textContent)).toEqual([
+      "Swift → Wren ↳5",
+      "Wren → Swift ↳4",
+      "Swift → Wren ↳3",
+    ]);
+    const stacks = screen.getAllByTestId("map-thread-stack");
+    expect(stacks).toHaveLength(1);
+    expect(stacks[0]!.textContent).toContain("+3 more");
+    act(() => {
+      stacks[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(useWorldState.getState().selectedRoom).toBe("zone/lobby");
   });
 
   it("renders without crashing with no data", () => {

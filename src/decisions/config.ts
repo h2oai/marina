@@ -433,10 +433,6 @@ export function decisionGateContextEnabled(env: NodeJS.ProcessEnv = process.env)
   return env.MARINA_DECISION_GATE_CONTEXT?.trim().toLowerCase() !== "off";
 }
 
-export function decisionGateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.MARINA_DECISION_GATE?.trim().toLowerCase() === "on" && !!decisionConfigFromEnv(env);
-}
-
 /** The judge the research pipelines (forecast, arena) use unless told otherwise. */
 export const DEFAULT_JUDGE_MODEL = "typesafe/jev-1.13";
 

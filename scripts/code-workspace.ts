@@ -16,22 +16,21 @@ import { inputGuidance, terminalCompletionFor } from "./code-completion";
 import type { CodeEditor, CodeEditorOptions, CodeEditorState } from "./code-editor";
 import { CodePanelForm } from "./code-panel-form";
 import { terminalText } from "./code-presentation";
+import { themeFor } from "./code-style";
 import type { TerminalView } from "./code-views";
 import { WorkspaceDiffView } from "./code-workspace-diff";
 import { WorkspacePanes } from "./code-workspace-panes";
 
 const plain = (text: string) => text;
-const color = (code: number) => (text: string) =>
-  process.env.NO_COLOR !== undefined ? text : `\x1b[${code}m${text}\x1b[0m`;
-const accent = color(36);
-const dim = color(2);
+// The full workspace only runs on a terminal; the shared palette decides the hues.
+const palette = themeFor(process.stdout);
 const theme: EditorTheme = {
-  borderColor: accent,
+  borderColor: palette.fg("accent"),
   selectList: {
-    selectedPrefix: accent,
-    selectedText: color(1),
-    description: dim,
-    scrollInfo: dim,
+    selectedPrefix: palette.fg("accent"),
+    selectedText: palette.bold,
+    description: palette.fg("muted"),
+    scrollInfo: palette.fg("faint"),
     noMatch: plain,
   },
 };
@@ -90,8 +89,9 @@ export class WorkspaceCodeEditor implements CodeEditor {
     this.tui.setLayoutRoot(
       new VStack([
         {
-          component: line(() =>
-            accent(`MARINA  ·  ${this.state?.location ?? this.state?.target ?? "marina"}`),
+          component: line(
+            () =>
+              `${palette.bold(palette.gradient("MARINA"))}${palette.fg("faint")("  ·  ")}${palette.fg("muted")(this.state?.location ?? this.state?.target ?? "marina")}`,
           ),
           basis: 1,
           visible: ({ height }) => (height ?? 0) >= 12,

@@ -156,6 +156,37 @@ describe("challenges (engine)", () => {
     expect(stripAnsi(builder.lastText())).toContain("can't answer your own ask");
   });
 
+  it("a held credential form is never shown to approvers nor stored; approval still runs it", async () => {
+    const SECRET = "plainvalue0123456789xyz";
+    engine.commands.registerBuiltin({
+      name: "vault",
+      category: "Test",
+      help: "rank-5 test command that takes a credential",
+      minRank: 5,
+      sensitiveSubcommands: ["put"],
+      handler: (ctx, input) => {
+        ran.push(input.tokens.join(" "));
+        ctx.send(input.entity, "stored");
+      },
+    });
+    await send(builder, `key add prod openai ${SECRET}`);
+    await send(builder, `vault put prod ${SECRET}`);
+    const notices = text(root);
+    expect(notices).toContain("key add [redacted]");
+    expect(notices).toContain("vault put [redacted]");
+    expect(notices).not.toContain(SECRET);
+    const rows = db.listChallengeHolds({ pending: true });
+    expect(rows.length).toBe(2);
+    expect(JSON.stringify(rows)).not.toContain(SECRET);
+    for (const row of rows) expect(row.command ?? undefined).toBeUndefined();
+
+    // In this process the held input still re-runs on approval.
+    const vault = rows.find((r) => r.summary.startsWith("vault"))!;
+    await send(root, `challenge approve ${vault.token}`);
+    await until(() => ran.length > 0);
+    expect(ran).toEqual([`put prod ${SECRET}`]);
+  });
+
   it("a gate refusal inside a handler is a challenge; an owner's approval runs it, an operator's builds the gate", async () => {
     grant(db, alice.entity!, "agent.spawn");
     await send(builder, "breed");

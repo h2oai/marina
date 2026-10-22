@@ -18,6 +18,10 @@ import { useWorldState } from "./use-world-state";
  * newest-first in `useWorldState`. Invalidation is debounced so a burst
  * of 20 related events in the same frame becomes one refetch, not 20.
  *
+ * A dashboard socket (re)connect also invalidates: events sent while no
+ * socket was open (login swaps the anonymous socket for an authenticated
+ * one) never reach the feed, so the cached value is reread instead.
+ *
  * @example
  * ```tsx
  * const { data } = useRoomDetail(roomId);
@@ -34,11 +38,14 @@ export function useInvalidateOnEvent(
 ): void {
   const queryClient = useQueryClient();
   const feed = useWorldState((s) => s.eventFeed);
+  const generation = useWorldState((s) => s.connectionGeneration);
 
-  // Track the latest timestamp we've already observed so we don't
-  // re-process old events on every render (selectors, unrelated state
-  // changes, etc.).
-  const lastSeenRef = useRef<number>(Number.NEGATIVE_INFINITY);
+  // Track the newest event already observed so old events are not
+  // re-processed on every render (selectors, unrelated state changes, etc.).
+  // By identity, not timestamp: two events in the same millisecond are
+  // distinct, and a timestamp cut would skip the second.
+  const lastSeenRef = useRef<DashboardEvent | null>(null);
+  const generationRef = useRef(generation);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Stabilize the queryKey dependency. Callers typically pass an inline
@@ -51,30 +58,36 @@ export function useInvalidateOnEvent(
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: predicate is intentionally not tracked — callers pass inline arrows closed over roomId/taskId; wrap them in useCallback (see RoomDetail, EntityRoster). queryKey captured via keySig for the same reason.
   useEffect(() => {
-    if (feed.length === 0) return;
+    const reconnected = generation !== generationRef.current;
+    generationRef.current = generation;
     const fresh: DashboardEvent[] = [];
     for (const e of feed) {
-      if (e.timestamp <= lastSeenRef.current) break;
+      if (e === lastSeenRef.current) break;
       fresh.push(e);
     }
-    if (fresh.length === 0) return;
-    lastSeenRef.current = fresh[0]!.timestamp;
+    if (fresh.length > 0) lastSeenRef.current = fresh[0]!;
 
-    if (!fresh.some(predicate)) return;
+    if (!reconnected && !fresh.some(predicate)) return;
 
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
       queryClient.invalidateQueries({ queryKey: [...queryKey] });
     }, debounceMs);
+    // No cleanup here: the next feed change must not cancel a pending
+    // invalidation when its own events do not match (that dropped updates).
+  }, [feed, generation, queryClient, debounceMs, keySig]);
 
-    return () => {
+  // Cancel a pending invalidation only when the caller unmounts.
+  useEffect(
+    () => () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
-    };
-  }, [feed, queryClient, debounceMs, keySig]);
+    },
+    [],
+  );
 }
 
 /**

@@ -25,7 +25,8 @@ One pass (`bun run metaculus pass`):
 2. forecasts each new one with the chosen configuration (below), recalling lessons from earlier
    resolved outcomes;
 3. posts the forecast, then the reasoning comment: the forecast, the runs' reasons, sources,
-   the evidence cutoff, and the configuration that produced it;
+   the evidence cutoff, the configuration that produced it, and whose bot it is (your
+   organization and agent name);
 4. records it (append-only, one row per question, with its cost);
 5. checks recorded questions that have resolved, scores them and hands each outcome to the
    outcome-learning loop (`src/learning`), recorded once (`metaculus-outcome`). Lookups stay
@@ -44,6 +45,7 @@ from those records) and at the world's `MARINA_DAILY_SPEND_CAP_USD`.
 | `METACULUS_TOKEN` | The bot account's API token: create a Metaculus account for the bot, register it as a bot for the AI benchmark, then copy the token from the account settings. Every API call needs it, reads included. Env only; never logged. |
 | `OPENROUTER_API_KEY` (or a local provider) | The forecaster's models, as for `bun run forecast`. |
 | `DB_PATH` | The ledger (default `marina.db`). |
+| `MARINA_FILING_ORG`, `MARINA_FILING_AGENT` | Whose bot it is, named in every comment (or `--org` / `--agent`). No default ships: `pass` and `forecast` refuse without both, before any model call. |
 
 ## Dry run
 

@@ -7,6 +7,7 @@ import { useWorldState } from "../hooks/use-world-state";
 import { fetchApi } from "../lib/api";
 import { AgentPanel } from "./AgentPanel";
 import { EntityExpandedDetail } from "./EntityRoster";
+import { ResidentName } from "./ResidentName";
 
 export function EntityInspector({ name }: { name: string }) {
   const viewer = useChatState((s) => s.entityName);
@@ -18,7 +19,9 @@ export function EntityInspector({ name }: { name: string }) {
   });
   return (
     <div className="space-y-3 p-3 text-sm">
-      <h3 className="font-semibold text-primary">{name}</h3>
+      <h3 className="font-semibold text-primary">
+        <ResidentName name={name} />
+      </h3>
       {preview.isPending && <p role="status">Loading agent…</p>}
       {preview.isError && (
         <p role="alert">

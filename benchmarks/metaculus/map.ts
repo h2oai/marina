@@ -14,7 +14,8 @@
 
 import type { AnswerOption, AnswerSpec } from "../../src/forecast/answer-types";
 import type { TypedForecastAnswer, TypedForecastRequest } from "../../src/forecast/typed";
-import { ATTRIBUTION, reasoningText } from "../forecasting/shared";
+import type { FilingIdentity } from "../forecasting/identity";
+import { reasoningText } from "../forecasting/shared";
 import type { ForecastPayload, MetaculusQuestion } from "./api";
 import { type CdfQuestion, continuousCdf, quantileOf } from "./cdf";
 
@@ -189,6 +190,8 @@ export function commentFor(
   q: MetaculusQuestion,
   answer: TypedForecastAnswer,
   payload: ForecastPayload,
+  /** Whose forecast it is (the operator's filing identity). */
+  identity: FilingIdentity,
   /** The configuration that produced it (`describeConfig`), disclosed. */
   configuration?: string,
 ): string {
@@ -215,7 +218,7 @@ export function commentFor(
     sources ? `\nSources:\n${sources}` : "",
     `\nEvidence as of ${answer.cutoff.at.slice(0, 16).replace("T", " ")} UTC · ${answer.runs.length} independent runs${answer.critique?.applied ? ", revised by a critic" : ""}.`,
     configuration ? `Configuration: ${configuration}.` : "",
-    `\n${ATTRIBUTION.organization} ${ATTRIBUTION.agent} — an open-source forecasting system; no human in the loop.`,
+    `\n${identity.organization} ${identity.agent}, built on Marina (open-source forecasting); no human in the loop.`,
   ]
     .filter(Boolean)
     .join("\n");

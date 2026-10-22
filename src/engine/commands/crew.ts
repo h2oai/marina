@@ -20,6 +20,7 @@ import { normalizePatternName } from "../../world/templates/orchestration";
 import { tryLogAsync } from "../errors";
 import { Logger } from "../logger";
 import { canonicalSub, parseModifiers, splitOnTerminator, unknownSubcommand } from "../parse-input";
+import { rankFloorRefusal } from "../rank-floor";
 
 const VALID_FORMATIONS: ReadonlySet<CrewFormation> = new Set<CrewFormation>([
   "deliberation",
@@ -396,9 +397,16 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           ctx.send(input.entity, `Crew "${crewName}" not found.`);
           return;
         }
-        const callerRank = (caller.properties.rank as number | undefined) ?? 0;
-        if (crew.ownerId !== input.entity && callerRank < 4) {
-          ctx.send(input.entity, `Only the owner or rank 4+ can invite to crew "${crew.name}".`);
+        const inviteRefusal =
+          crew.ownerId === input.entity
+            ? undefined
+            : rankFloorRefusal(
+                caller,
+                4,
+                `Only the owner or rank 4+ can invite to crew "${crew.name}".`,
+              );
+        if (inviteRefusal) {
+          ctx.send(input.entity, inviteRefusal);
           return;
         }
         const invitee = deps.findAgentByName(agentName);
@@ -436,14 +444,18 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           ctx.send(input.entity, `Crew "${name}" not found.`);
           return;
         }
-        const callerRank = (caller.properties.rank as number | undefined) ?? 0;
         const isOwner = crew.ownerId === input.entity;
         const isMember = crew.members.some((m) => m.agentName === caller.name);
-        if (!isOwner && !isMember && callerRank < 4) {
-          ctx.send(
-            input.entity,
-            `Only the owner, a member, or rank 4+ can dispatch crew "${crew.name}".`,
-          );
+        const dispatchRefusal =
+          isOwner || isMember
+            ? undefined
+            : rankFloorRefusal(
+                caller,
+                4,
+                `Only the owner, a member, or rank 4+ can dispatch crew "${crew.name}".`,
+              );
+        if (dispatchRefusal) {
+          ctx.send(input.entity, dispatchRefusal);
           return;
         }
         const message = input.args.replace(/^dispatch\s+\S+\s*/i, "").trim();
@@ -576,10 +588,12 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           ctx.send(input.entity, `Crew "${name}" not found.`);
           return;
         }
-        const callerRank = (caller.properties.rank as number | undefined) ?? 0;
-        const isOwner = crew.ownerId === input.entity;
-        if (!isOwner && callerRank < 3) {
-          ctx.send(input.entity, "Only the owner or rank 3+ can change crew formation.");
+        const formationRefusal =
+          crew.ownerId === input.entity
+            ? undefined
+            : rankFloorRefusal(caller, 3, "Only the owner or rank 3+ can change crew formation.");
+        if (formationRefusal) {
+          ctx.send(input.entity, formationRefusal);
           return;
         }
         try {
@@ -604,10 +618,12 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           ctx.send(input.entity, `Crew "${name}" not found.`);
           return;
         }
-        const callerRank = (caller.properties.rank as number | undefined) ?? 0;
-        const isOwner = crew.ownerId === input.entity;
-        if (!isOwner && callerRank < 4) {
-          ctx.send(input.entity, "Only the owner or rank 4+ can persist a crew.");
+        const persistRefusal =
+          crew.ownerId === input.entity
+            ? undefined
+            : rankFloorRefusal(caller, 4, "Only the owner or rank 4+ can persist a crew.");
+        if (persistRefusal) {
+          ctx.send(input.entity, persistRefusal);
           return;
         }
         try {
@@ -784,10 +800,16 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           ctx.send(input.entity, `Crew "${name}" not found.`);
           return;
         }
-        const callerRank = (caller.properties.rank as number | undefined) ?? 0;
         const isOwner = crew.ownerId === input.entity;
-        if (!isOwner && callerRank < 5) {
-          ctx.send(input.entity, `Only the owner or rank 5+ can dissolve crew "${crew.name}".`);
+        const dissolveRefusal = isOwner
+          ? undefined
+          : rankFloorRefusal(
+              caller,
+              5,
+              `Only the owner or rank 5+ can dissolve crew "${crew.name}".`,
+            );
+        if (dissolveRefusal) {
+          ctx.send(input.entity, dissolveRefusal);
           return;
         }
         const reason =

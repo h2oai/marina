@@ -11,10 +11,6 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import type { ResearchBrief } from "../src/arena/research/briefs";
-import { readSwarmRetriever, swarmDossierLines } from "../src/arena/research/read-swarm-retriever";
-import type { ResearchReport, Retriever } from "../src/arena/research/retrieve";
-import { AUTHORITATIVE_TAG, stripAuthorityTag, verifyDossier } from "../src/arena/research/verify";
-import { webSearchRetriever } from "../src/arena/research/web-search";
 import { resetSearchHealthForTests } from "../src/engine/search-providers/health";
 import type {
   SearchOpts,
@@ -36,7 +32,11 @@ import {
 } from "../src/research/authority";
 import { claimTextKey } from "../src/research/evidence-index";
 import { evidenceLoopRetriever } from "../src/research/evidence-loop";
+import { readSwarmRetriever, swarmDossierLines } from "../src/research/read-swarm-retriever";
+import type { ResearchReport, Retriever } from "../src/research/retrieve";
 import { researchFeatures } from "../src/research/settings";
+import { AUTHORITATIVE_TAG, stripAuthorityTag, verifyDossier } from "../src/research/verify";
+import { webSearchRetriever } from "../src/research/web-search";
 
 afterEach(() => {
   resetSearchHealthForTests();

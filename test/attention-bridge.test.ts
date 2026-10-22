@@ -84,6 +84,7 @@ function say(from: string, message: string): Perception {
     data: {
       text: `${from} says: ${message}`,
       senderName: from,
+      message,
       messageRef: `say:${crypto.randomUUID()}`,
       depth: 0,
     },
@@ -521,5 +522,131 @@ describe("woken-turn outcomes (attention judges' truth)", () => {
     ).toBe(false);
     expect(isNativeToolEvent("native.tool_execution_start", {})).toBe(true);
     expect(isNativeToolEvent("output", { text: "x" })).toBe(false);
+  });
+});
+
+/** Two asks that arrive while the session is busy, delivered together when it goes idle. */
+async function bothInOneTurn(
+  bridge: AttentionBridge,
+  state: ReturnType<typeof fakeHost>["state"],
+  a: Perception,
+  b: Perception,
+) {
+  state.status = "running";
+  bridge.perceive(a);
+  bridge.perceive(b);
+  await bridge.flush();
+  state.status = "idle";
+  await bridge.idle();
+  await until(() => state.prompts.length === 1);
+}
+
+describe("several owed asks in one turn", () => {
+  it("the digest shows how to answer each owed item", async () => {
+    const { host, state } = fakeHost("next-turn");
+    const bridge = new AttentionBridge("Fern", host);
+    const a = tell("Wren", "what is 6 times 7?");
+    const b = tell("Swift", "can you rerun the lint job?");
+    await bothInOneTurn(bridge, state, a, b);
+    const prompt = state.prompts.join("\n");
+    expect(prompt).toContain(`→ re #${a.data.messageId}`);
+    expect(prompt).toContain("Answer each one on its own");
+  });
+
+  it("an item the agent answered itself is not answered again by the final reply", async () => {
+    const { host, state } = fakeHost("next-turn");
+    const bridge = new AttentionBridge("Fern", host);
+    const a = tell("Wren", "what is 6 times 7?");
+    const b = tell("Swift", "can you rerun the lint job?");
+    await bothInOneTurn(bridge, state, a, b);
+    bridge.noteSent(`re #${a.data.messageId} 42`);
+    await bridge.replied("Lint rerun: green.");
+    expect(state.commands).toEqual([
+      {
+        input: `re #${b.data.messageId} Lint rerun: green.`,
+        cause: b.data.messageRef as string,
+      },
+    ]);
+  });
+
+  it("one final reply never answers two separate asks: it asks once more, then marks the reply", async () => {
+    const { host, state } = fakeHost("next-turn");
+    const bridge = new AttentionBridge("Fern", host);
+    const a = tell("Wren", "what is 6 times 7?");
+    const b = tell("Swift", "can you rerun the lint job?");
+    await bothInOneTurn(bridge, state, a, b);
+    await bridge.replied("done");
+    // Nothing was sent as if it answered both; a follow-up lists what is still owed.
+    expect(state.commands).toHaveLength(0);
+    state.status = "idle";
+    await bridge.idle();
+    await until(() => state.prompts.length === 2);
+    expect(state.prompts[1]).toContain("Still owed");
+    expect(state.prompts[1]).toContain(`→ re #${a.data.messageId}`);
+    expect(state.prompts[1]).toContain(`→ re #${b.data.messageId}`);
+
+    // Answering one leaves the other for the final reply, unmarked.
+    bridge.noteSent(`re #${a.data.messageId} 42`);
+    await bridge.replied("Lint is green.");
+    expect(state.commands).toEqual([
+      { input: `re #${b.data.messageId} Lint is green.`, cause: b.data.messageRef as string },
+    ]);
+  });
+
+  it("after the follow-up, an answer still left for several goes to each, marked", async () => {
+    const { host, state } = fakeHost("next-turn");
+    const bridge = new AttentionBridge("Fern", host);
+    const a = tell("Wren", "what is 6 times 7?");
+    const b = tell("Swift", "can you rerun the lint job?");
+    await bothInOneTurn(bridge, state, a, b);
+    await bridge.replied("done");
+    state.status = "idle";
+    await bridge.idle();
+    await until(() => state.prompts.length === 2);
+    await bridge.replied("42, and lint is green");
+    expect(state.commands.map((c) => c.input)).toEqual([
+      `re #${a.data.messageId} (one reply to 2 asks) 42, and lint is green`,
+      `re #${b.data.messageId} (one reply to 2 asks) 42, and lint is green`,
+    ]);
+  });
+
+  it("several asks with one destination (the room) get one reply", async () => {
+    const { host, state } = fakeHost("next-turn");
+    const bridge = new AttentionBridge("Fern", host);
+    await bothInOneTurn(
+      bridge,
+      state,
+      say("Wren", "Fern, can you check the parser?"),
+      say("Swift", "Fern, can you also check the lexer?"),
+    );
+    await bridge.replied("Both look fine.");
+    expect(state.commands.map((c) => c.input)).toEqual(["say Both look fine."]);
+  });
+});
+
+describe("a relayed reply is the woken turn's work", () => {
+  it("a turn whose only output is the relayed answer counts as work", async () => {
+    const { host, state } = fakeHost();
+    const bridge = new AttentionBridge("Fern", host);
+    const ask = tell("Wren", "what is 17 times 23?");
+    bridge.perceive(ask);
+    await until(() => state.prompts.length === 1);
+    await bridge.replied("391");
+    expect(state.outcomes).toEqual([{ ref: String(ask.data.messageRef), worked: true }]);
+    // The idle notice after the reply settles nothing a second time.
+    state.status = "idle";
+    await bridge.idle();
+    expect(state.outcomes).toHaveLength(1);
+  });
+
+  it("a failed relay is not work", async () => {
+    const { host, state } = fakeHost();
+    host.command = async () => ({ ok: false, output: "No one named Wren is online" });
+    const bridge = new AttentionBridge("Fern", host);
+    const ask = tell("Wren", "what is 17 times 23?");
+    bridge.perceive(ask);
+    await until(() => state.prompts.length === 1);
+    await bridge.replied("391");
+    expect(state.outcomes).toEqual([{ ref: String(ask.data.messageRef), worked: false }]);
   });
 });

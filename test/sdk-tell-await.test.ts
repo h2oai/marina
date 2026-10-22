@@ -10,8 +10,9 @@
  * The integration block runs the same primitive against a live engine.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { preserveListenPortsForTests } from "../src/net/listen-ports";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import {
@@ -23,6 +24,14 @@ import {
 } from "../src/sdk/client";
 import { type Perception, roomId } from "../src/types";
 import { cleanupDb, makeTestRoom } from "./helpers";
+
+// Servers here bind ephemeral ports and record them process-wide; restore the
+// recorded ports so later files in the same process see the defaults.
+let listenPorts: Disposable | undefined;
+beforeAll(() => {
+  listenPorts = preserveListenPortsForTests();
+});
+afterAll(() => listenPorts?.[Symbol.dispose]());
 
 // ─── Stubbed transport ───────────────────────────────────────────────────────
 
@@ -263,8 +272,7 @@ describe("tellAndAwait helpers", () => {
 
 // ─── Live engine ─────────────────────────────────────────────────────────────
 
-const TEST_PORT = 13398;
-const TEST_URL = `ws://localhost:${TEST_PORT}`;
+let TEST_URL = "";
 
 describe("tellAndAwait — live engine", () => {
   let db: MarinaDB;
@@ -279,8 +287,9 @@ describe("tellAndAwait — live engine", () => {
       roomId("test/start"),
       makeTestRoom({ short: "Starting Room", long: "A room for tellAndAwait testing." }),
     );
-    wsServer = new WebSocketServer(engine, TEST_PORT);
+    wsServer = new WebSocketServer(engine, 0);
     wsServer.start();
+    TEST_URL = `ws://localhost:${wsServer.getPort()}`;
     engine.start();
   });
 

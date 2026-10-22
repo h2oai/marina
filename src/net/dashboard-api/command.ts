@@ -12,7 +12,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { Connection, EntityId, Perception } from "../../types";
 import { federationSigningAvailable, signFederationDocument } from "../federation-crypto";
 import { formatPerception } from "../formatter";
-import { clientIp, consumeHttpRate, maxUploadBytes } from "../http-utils";
+import { clientIp, consumeHttpRate, maxUploadBytes, UNKNOWN_CLIENT_IP } from "../http-utils";
 import {
   bearerToken,
   type CommandApiBody,
@@ -45,6 +45,7 @@ async function handleCommandIngress(
     typeof body.name === "string" && body.name.trim() ? body.name.trim() : undefined;
   const name = requestedName ?? `Api_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
   const connId = `api_${crypto.randomUUID().slice(0, 8)}`;
+  const ip = clientIp(req, peerIp);
   const perceptions: Perception[] = [];
 
   const conn: Connection = {
@@ -56,6 +57,10 @@ async function handleCommandIngress(
     // recognized exactly as a loopback WebSocket login is — e.g. a parent
     // world driving its child over `world run` — and a remote one is not.
     ...(peerIp ? { peerIp } : {}),
+    // Client address for the login-attempt throttle (per IP, as on the
+    // WebSocket listener); each request is a fresh connection, so keying on
+    // the connection id would never accumulate.
+    ...(ip !== UNKNOWN_CLIENT_IP ? { ip } : {}),
     send(perception: Perception) {
       perceptions.push(perception);
     },

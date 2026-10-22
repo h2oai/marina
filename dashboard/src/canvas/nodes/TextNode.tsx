@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Handle, type NodeProps, NodeResizer, Position } from "@xyflow/react";
+import { ResidentName } from "../../components/ResidentName";
 import { resolveAuthor, resolveTitle } from "../lib/node-fields";
 import { NodeMeta } from "./NodeMeta";
 
@@ -136,6 +137,8 @@ export function TextNode({ data, selected }: NodeProps) {
   // small "in reply to" indicator so threading reads visually without having
   // to follow edges.
   const parentNodeId = data.parent_node_id as string | undefined;
+  const inReplyTo = typeof data.inReplyTo === "string" ? data.inReplyTo : undefined;
+  const depth = typeof data.depth === "number" ? data.depth : 0;
   const preview = data.preview as AssetPreview | undefined;
 
   return (
@@ -150,17 +153,33 @@ export function TextNode({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Top} className="!bg-text-dim" />
       {parentNodeId && (
         <div
-          className="mb-1 text-[10px] text-violet-400/80 truncate"
-          title={`Reply to ${parentNodeId}`}
+          data-testid="text-node-reply"
+          className="mb-1 flex items-baseline gap-1 text-[10px] text-violet-400/80 truncate"
+          title={inReplyTo ? `Reply to ${inReplyTo}` : `Reply to ${parentNodeId}`}
         >
-          ↩ in reply to {parentNodeId.slice(0, 8)}…
+          <span>↩ in reply to</span>
+          {inReplyTo ? (
+            <ResidentName name={inReplyTo} showPresence={false} />
+          ) : (
+            <span>{parentNodeId.slice(0, 8)}…</span>
+          )}
+          {depth > 0 && (
+            <span>
+              <span aria-hidden="true">↳{depth}</span>
+              <span className="sr-only">reply depth {depth}</span>
+            </span>
+          )}
         </div>
       )}
       {/* Always show header with label + author when available */}
       {(label || author) && (
         <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
           {label && <span className="font-medium text-text truncate">{label}</span>}
-          {author && <span className="text-text-dim shrink-0">by {author}</span>}
+          {author && (
+            <span className="inline-flex min-w-0 shrink-0 items-baseline gap-1 text-text-dim">
+              by <ResidentName name={author} showPresence={false} />
+            </span>
+          )}
         </div>
       )}
       {selected && <NodeMeta filename={label} data={data} className="mb-1" />}

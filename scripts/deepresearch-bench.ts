@@ -50,11 +50,6 @@ import {
   loadRecords,
   type TaskRetriever,
 } from "../benchmarks/deepresearch/run";
-import {
-  type ReadSwarmBriefStats,
-  readSwarmRetriever,
-} from "../src/arena/research/read-swarm-retriever";
-import { searchBackendsFromEnv, webSearchRetriever } from "../src/arena/research/web-search";
 import { researchJudge } from "../src/decisions/config";
 import { harnessDecisionProvider } from "../src/decisions/engines";
 import type { DecisionProvider } from "../src/decisions/types";
@@ -70,7 +65,9 @@ import {
 import { modelComplete } from "../src/model/complete";
 import { MarinaDB } from "../src/persistence/database";
 import { researchFingerprint } from "../src/research/checkpoint";
+import { type ReadSwarmBriefStats, readSwarmRetriever } from "../src/research/read-swarm-retriever";
 import { researchRetriever } from "../src/research/retriever";
+import { searchBackendsFromEnv, webSearchRetriever } from "../src/research/web-search";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,

@@ -12,6 +12,7 @@ import { cn } from "../lib/utils";
 import { getDistrictColor } from "../lib/world-graph";
 import { EventLine } from "./EventLine";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
+import { ResidentName } from "./ResidentName";
 import { WhoLink } from "./WhoLink";
 
 /** Events whose arrival means a room inspector's cached payload is stale. */
@@ -20,6 +21,7 @@ const ROOM_MUTATION_TYPES = new Set(["entity_enter", "entity_leave", "connect", 
 /** Event types visible as "activity in this room" — content-bearing. */
 const ROOM_ACTIVITY_TYPES = new Set([
   "say",
+  "say_sent",
   "tell",
   "shout",
   "emote",
@@ -67,10 +69,16 @@ export function RoomDetail({
   // Snapshot bootstraps the room shape (exits, source, description);
   // the shared `useFilteredEvents` helper streams what's actually happening
   // inside it.
+  // Typed message envelopes (names, refs, depth — never words) count too: a
+  // say names its room, a tell counts where its sender is.
   const liveEventPredicate = useCallback(
-    (e: DashboardEvent) =>
-      !!selectedRoom && e.room === selectedRoom && ROOM_ACTIVITY_TYPES.has(e.type),
-    [selectedRoom],
+    (e: DashboardEvent) => {
+      if (!selectedRoom) return false;
+      if (e.type === "tell_sent")
+        return (e.room ?? entities.find((x) => x.name === e.from)?.room) === selectedRoom;
+      return e.room === selectedRoom && ROOM_ACTIVITY_TYPES.has(e.type);
+    },
+    [selectedRoom, entities],
   );
   const liveEvents = useFilteredEvents(liveEventPredicate, 12);
 
@@ -234,7 +242,7 @@ export function RoomDetail({
                               )}
                               onClick={() => selectEntity(e.name)}
                             >
-                              {e.name}
+                              <ResidentName name={e.name} />
                             </button>
                             <WhoLink name={e.name} size={10} />
                           </span>

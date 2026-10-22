@@ -7,7 +7,7 @@
 # there; include auth state, workspace roots and secrets in recovery backups. See docs/guides/deployment.md.
 
 # ── builder: install deps and build the dashboard SPA into dist/dashboard ───
-FROM docker.io/oven/bun:1.4.2 AS builder
+FROM docker.io/oven/bun:1.4.3 AS builder
 WORKDIR /app
 
 # One Bun workspace: the root lockfile covers dashboard, site, marina-desktop,
@@ -37,7 +37,7 @@ RUN bun run dashboard:build
 # (@typescript/typescript-linux-x64, a Go binary) ships its own Go stdlib and
 # Trivy flags its CVEs; biome is the same kind of build-only tool. Nothing at
 # runtime imports either (the server runs from source under bun).
-FROM docker.io/oven/bun:1.4.2 AS prod-deps
+FROM docker.io/oven/bun:1.4.3 AS prod-deps
 WORKDIR /app
 COPY package.json bun.lock ./
 COPY dashboard/package.json ./dashboard/
@@ -49,7 +49,7 @@ COPY src/sdk/package.json ./src/sdk/
 RUN bun install --frozen-lockfile --production --filter "marina"
 
 # ── runtime: lean image that runs the server from source ────────────────────
-FROM docker.io/oven/bun:1.4.2 AS runtime
+FROM docker.io/oven/bun:1.4.3 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
@@ -89,7 +89,9 @@ USER bun
 # WS_HOST=0.0.0.0 is the CONTAINER-INTERNAL bind — without it the server binds
 # loopback inside the network namespace and published ports go nowhere. Actual
 # exposure is decided by the publish spec (`-p` / compose `ports:`), which
-# defaults to host-loopback in docker-compose.yml. Telnet stays off (no
+# defaults to host-loopback in docker-compose.yml. Pass that publish address as
+# MARINA_PUBLISHED_HOST (compose does) so the boot checks treat a host-loopback
+# publish as loopback; a routable one needs sign-in. Telnet stays off (no
 # TELNET_PORT) — plaintext and unauthenticated.
 ENV DB_PATH=/app/data/marina.db \
     ASSETS_DIR=/app/data/assets \

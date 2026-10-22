@@ -12,6 +12,7 @@ import {
 import { envelopeFor, normalizeCause } from "../src/engine/message-envelope";
 import { DashboardBroadcaster, type DashboardWSData } from "../src/net/dashboard-ws";
 import { FeedPublisher } from "../src/net/feed-publisher";
+import { memoryObserver } from "../src/net/memory/memory-visibility";
 import { FORWARD_MIGRATIONS, SCHEMA_VERSION } from "../src/persistence/schema";
 import type { EngineEvent, EntityId, Perception } from "../src/types";
 import { createTestEngine } from "./engine-fixture";
@@ -180,6 +181,68 @@ describe("causal threading", () => {
     expect(refs.sort()).toEqual(posts.map((p) => `channel_msg:${p.messageId}`).sort());
   });
 
+  it("threads a channel answer under its question on the feed canvas", async () => {
+    const { db } = world;
+    db.createChannel({ id: "ch:ops", type: "public", name: "ops", persistence: "permanent" });
+    db.addChannelMember("ch:ops", alice.entityId);
+    db.addChannelMember("ch:ops", bob.entityId);
+    const names = new Map([
+      [alice.entityId, "Alice"],
+      [bob.entityId, "Bob"],
+    ]);
+    const publisher = new FeedPublisher({ db, resolveEntity: (id) => names.get(id) });
+    await world.engine.processCommand(alice.entityId, "channel send ops what is 6x7?");
+    const [question] = ofType("channel_message");
+    publisher.handleEvent(question!);
+    await world.engine.processCommand(bob.entityId, "channel send ops 42", {
+      cause: { ref: `channel_msg:${question!.messageId}`, depth: 0 },
+    });
+    // An answer to a message that is not on the feed (a tell) is not threaded.
+    await world.engine.processCommand(bob.entityId, "channel send ops later", {
+      cause: { ref: "tell:99", depth: 2 },
+    });
+    const [, answer, unrelated] = ofType("channel_message");
+    publisher.handleEvent(answer!);
+    publisher.handleEvent(unrelated!);
+
+    const canvas = db.getCanvasByName("feed")!;
+    const nodes = db.getNodesByCanvas(canvas.id);
+    const byRef = (ref: string) =>
+      nodes.find((n) => (JSON.parse(n.data) as { ref?: string }).ref === ref)!;
+    const q = byRef(`channel_msg:${question!.messageId}`);
+    const a = byRef(`channel_msg:${answer!.messageId}`);
+    const u = byRef(`channel_msg:${unrelated!.messageId}`);
+    expect(a.parent_node_id).toBe(q.id);
+    expect(JSON.parse(a.data)).toMatchObject({ inReplyTo: "Alice", depth: 1, author: "Bob" });
+    expect(u.parent_node_id).toBeNull();
+    expect(JSON.parse(u.data)).toMatchObject({ depth: 3 });
+    expect(JSON.parse(u.data).inReplyTo).toBeUndefined();
+
+    // A fresh publisher (a restart) still finds the question on the canvas.
+    const restarted = new FeedPublisher({ db, resolveEntity: (id) => names.get(id) });
+    await world.engine.processCommand(alice.entityId, "channel send ops thanks", {
+      cause: { ref: `channel_msg:${answer!.messageId}`, depth: 1 },
+    });
+    const thanks = ofType("channel_message").at(-1)!;
+    restarted.handleEvent(thanks);
+    const t = db
+      .getNodesByCanvas(canvas.id)
+      .find(
+        (n) => (JSON.parse(n.data) as { ref?: string }).ref === `channel_msg:${thanks.messageId}`,
+      )!;
+    expect(t.parent_node_id).toBe(a.id);
+    expect(JSON.parse(t.data)).toMatchObject({ inReplyTo: "Bob", depth: 2 });
+  });
+
+  it("names the entity on enter and leave events", async () => {
+    const dave = world.login("Dave");
+    const enter = ofType("entity_enter").find((e) => e.entity === dave.entityId);
+    expect(enter?.name).toBe("Dave");
+    world.engine.removeConnection(dave.connection.id, "explicit");
+    const leave = ofType("entity_leave").find((e) => e.entity === dave.entityId);
+    expect(leave?.name).toBe("Dave");
+  });
+
   it("a nested frame inherits the enclosing execution's cause; outside none", async () => {
     const id = "e_scope";
     expect(getCurrentMessageCause(id)).toBeUndefined();
@@ -242,6 +305,53 @@ describe("dashboard broadcast", () => {
       expect(all).not.toContain("ROOM_WORDS");
       expect(all).not.toContain("PRIVATE_WORDS");
     }
+  });
+});
+
+describe("tell_sent for owners", () => {
+  it("reaches the person who launched either party, and no one else outside it", async () => {
+    world.engine.db!.saveAgentConfig({
+      name: "Alice",
+      model: "frontier",
+      spawnedBy: "Carol",
+      runtime: "supervised",
+      vendor: "claude",
+    });
+    const dave = world.login("Dave");
+    await world.engine.processCommand(alice.entityId, "tell Bob OWNER_SEES_ENVELOPE");
+    const tell = ofType("tell_sent")[0]!;
+    expect(memoryObserver(world.engine, carol.entityId).event(tell)).toBe(true);
+    expect(memoryObserver(world.engine, bob.entityId).event(tell)).toBe(true);
+    expect(memoryObserver(world.engine, dave.entityId).event(tell)).toBe(false);
+    expect(JSON.stringify(tell)).not.toContain("OWNER_SEES_ENVELOPE");
+  });
+
+  it("carries a supervised resident's owner and vendor in the world snapshot", () => {
+    world.engine.db!.saveAgentConfig({
+      name: "Alice",
+      model: "frontier",
+      spawnedBy: "Carol",
+      runtime: "supervised",
+      vendor: "claude",
+    });
+    const broadcaster = new DashboardBroadcaster();
+    const sink: string[] = [];
+    broadcaster.addClient(
+      {
+        data: { connId: carol.entityId, isDashboard: true, principal: carol.entityId },
+        send: (message: string) => sink.push(message),
+      } as unknown as ServerWebSocket<DashboardWSData>,
+      world.engine,
+    );
+    const snapshot = sink
+      .map(
+        (m) => JSON.parse(m) as { type: string; data?: { entities?: Record<string, unknown>[] } },
+      )
+      .find((m) => m.type === "snapshot");
+    const entry = snapshot?.data?.entities?.find((e) => e.name === "Alice");
+    expect(entry).toMatchObject({ vendor: "claude", spawnedBy: "Carol" });
+    // An entity without a runtime or a supervised config carries no origin.
+    expect(snapshot?.data?.entities?.find((e) => e.name === "Bob")?.spawnedBy).toBeUndefined();
   });
 });
 

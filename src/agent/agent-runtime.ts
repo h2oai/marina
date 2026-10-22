@@ -265,7 +265,8 @@ export async function resolveRouteModel(
     ? await routeModelWithTable(config.goal, config.role, table)
     : await routeModelForGoal(config.goal, config.role, tiers!);
   // Measured benchmark evidence may prefer another of the SAME eligible
-  // candidates (MARINA_ROUTE_EVIDENCE; off by default, fails open).
+  // candidates (MARINA_ROUTE_EVIDENCE: observe by default, records and never
+  // changes a route; only `on` acts; fails open).
   const evidence = applyRouteEvidence(
     { route: routed.tier, model: routed.model },
     table

@@ -45,12 +45,14 @@ services:
 
       # The image binds 0.0.0.0 INSIDE the container (WS_HOST in the Dockerfile
       # — required for published ports to work). Marina's startup gate refuses a
-      # non-loopback bind with passwordless login unless acknowledged. This ack
-      # is safe HERE because the `ports:` publish spec above pins exposure to
-      # the host's 127.0.0.1 — the container-internal bind is not reachable from
-      # any network. If you widen `ports:` to the public internet, this flag is
-      # no longer a safe default: enable MARINA_AUTH=better-auth instead.
-      - MARINA_ALLOW_INSECURE_PUBLIC=true
+      # non-loopback bind with passwordless login. The publish address above is
+      # passed in here, so a loopback publish (the default) counts as loopback
+      # for that check and boots; widening MARINA_BIND_IP to a routable address
+      # trips the normal fatal refusal until you enable MARINA_AUTH=better-auth
+      # (or knowingly set MARINA_ALLOW_INSECURE_PUBLIC=true). Keep this line in
+      # step with the `ports:` host address. The trust profile still follows
+      # the real bind (`public` here; the local overlay declares `local`).
+      - MARINA_PUBLISHED_HOST=${MARINA_BIND_IP:-127.0.0.1}
 
       # Unified Canvas (heavy ReactFlow alternate UI) is retired from the standard
       # dashboard. Set true to expose it as a standalone surface at /?unified.

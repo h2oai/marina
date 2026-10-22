@@ -90,14 +90,14 @@ describe("Macros", () => {
     expect(conn1.lastText()).toContain("You have no macros");
   });
 
-  it("macro manager should create and run macros", () => {
+  it("macro manager should create macros that run through command dispatch", async () => {
     const mm = engine.macroManager!;
     const macro = mm.create("test", conn1.entity!, "say hi");
     expect(macro.name).toBe("test");
     expect(macro.command).toBe("say hi");
 
     conn1.clear();
-    mm.run(macro, conn1.entity!);
+    expect(await engine.dispatchCommand(conn1.entity!, "test")).not.toBe(false);
     const texts = conn1.allText();
     expect(texts.some((t) => stripAnsi(t).includes("You say: hi"))).toBe(true);
   });

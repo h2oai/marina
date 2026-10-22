@@ -39,6 +39,7 @@ import {
   runCommandScope,
   setCurrentCodingTarget,
   setCurrentCommand,
+  setPrincipalResolver,
   takeArmedGatePass,
 } from "../src/engine/gate-context";
 import { Logger } from "../src/engine/logger";
@@ -956,7 +957,15 @@ describe("inline floors go through the shared helpers", () => {
           trustProfile: "local",
           env: { MARINA_AUTONOMY: undefined },
         });
-        await runLine(cmd, "run raw echo local");
+        // An agent (no challenge host ⇒ fail closed) is held; the loopback person passes.
+        await runLine(cmd, "run raw echo agent");
+        expect(raws).toEqual(["echo hi"]);
+        setPrincipalResolver(() => "person");
+        try {
+          await runLine(cmd, "run raw echo local");
+        } finally {
+          setPrincipalResolver(undefined);
+        }
         expect(raws).toEqual(["echo hi", "echo local"]);
       }
     } finally {
@@ -984,6 +993,13 @@ describe("inline floors go through the shared helpers", () => {
           env: { MARINA_AUTONOMY: undefined },
         });
         await runLine(cmd as never, line);
+        expect(db.getConnectorByName("fsx")).toBeFalsy(); // an agent is held
+        setPrincipalResolver(() => "person");
+        try {
+          await runLine(cmd as never, line);
+        } finally {
+          setPrincipalResolver(undefined);
+        }
         expect(db.getConnectorByName("fsx")).toBeTruthy();
       }
     } finally {
@@ -1024,7 +1040,15 @@ describe("inline floors go through the shared helpers", () => {
         trustProfile: "local",
         env: { MARINA_AUTONOMY: undefined },
       });
+      // A path into the core holds an agent even locally; the person passes.
       run("rank Tgt 5");
+      expect(target.properties.rank).toBe(0);
+      setPrincipalResolver(() => "person");
+      try {
+        run("rank Tgt 5");
+      } finally {
+        setPrincipalResolver(undefined);
+      }
       expect(target.properties.rank).toBe(5);
     }
   });

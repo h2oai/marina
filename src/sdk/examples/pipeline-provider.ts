@@ -26,9 +26,9 @@
  */
 
 import { MarinaAgent, type Perception } from "../client";
+import { callMarina, extractChannelPayload, type Message } from "./_shared";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
-const MARINA_ENDPOINT = (process.env.MARINA_ENDPOINT ?? "http://localhost:3300").replace(/\/$/, "");
 const AGENT_NAME = process.env.AGENT_NAME ?? "PipelineProvider";
 const MODEL_CHANNEL = process.env.MODEL_CHANNEL ?? "model";
 const PARSE_MODEL = process.env.PIPELINE_PARSE ?? "marina:haiku";
@@ -36,39 +36,6 @@ const REASON_MODEL = process.env.PIPELINE_REASON ?? "marina:sonnet";
 const VERIFY_MODEL = process.env.PIPELINE_VERIFY ?? "marina:haiku";
 const TEMPERATURE = Number.parseFloat(process.env.PIPELINE_TEMPERATURE ?? "0");
 const TRACE = process.env.PIPELINE_TRACE === "true";
-
-// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI strip
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-const stripAnsi = (t: string) => t.replace(ANSI_RE, "");
-
-function extractChannelPayload(
-  text: string,
-): { channel: string; sender: string; content: string } | undefined {
-  const clean = stripAnsi(text);
-  const match = clean.match(/^\[([^\]]+)\]\s+([^:]+):\s+(.*)/s);
-  if (!match) return undefined;
-  return { channel: match[1]!, sender: match[2]!.trim(), content: match[3]!.trim() };
-}
-
-interface Message {
-  role: string;
-  content: string;
-}
-
-async function callMarina(
-  model: string,
-  messages: Message[],
-  temperature: number,
-): Promise<string> {
-  const resp = await fetch(`${MARINA_ENDPOINT}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, temperature }),
-  });
-  if (!resp.ok) throw new Error(`Marina ${resp.status}`);
-  const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content ?? "";
-}
 
 async function stageParse(question: string, systemMsg: string): Promise<string> {
   const prompt = `Analyze the request below and extract its structure. Be concise. Output 3-5 short lines covering:

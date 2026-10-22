@@ -4,12 +4,9 @@
 /** Read swarm: reader evidence, mechanical quote checks, aggregation and the read budget. */
 
 import { describe, expect, it } from "bun:test";
-import {
-  type ReadSwarmBriefStats,
-  readSwarmRetriever,
-} from "../src/arena/research/read-swarm-retriever";
-import { isDateStrict } from "../src/arena/research/retrieve";
-import { foldForQuote } from "../src/arena/research/verify";
+import { type ReadSwarmBriefStats, readSwarmRetriever } from "../src/research/read-swarm-retriever";
+import { isDateStrict } from "../src/research/retrieve";
+import { foldForQuote } from "../src/research/verify";
 import type { Candidate } from "../src/retrieval/first-move";
 import {
   aggregateCandidates,

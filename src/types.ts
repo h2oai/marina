@@ -80,6 +80,12 @@ export interface CommandDef {
    * behind both; the handler's own inline checks still apply.
    */
   readOnlyForm?: (input: CommandInput) => boolean;
+  /**
+   * Subcommands whose arguments carry credentials (`key add`, `connect auth`).
+   * The recorded `command` event keeps only `<verb> <subcommand> [redacted]`
+   * for these; `"*"` covers every form. See src/engine/command-redaction.ts.
+   */
+  sensitiveSubcommands?: readonly string[];
 }
 
 // ─── Room Context (injected into room modules) ──────────────────────────────
@@ -467,8 +473,9 @@ export type EngineEvent =
   | { type: "tick"; timestamp: number }
   | { type: "connect"; connectionId: string; protocol: ConnectionProtocol; timestamp: number }
   | { type: "disconnect"; connectionId: string; timestamp: number }
-  | { type: "entity_enter"; entity: EntityId; room: RoomId; timestamp: number }
-  | { type: "entity_leave"; entity: EntityId; room: RoomId; timestamp: number }
+  /** `name` is the entity's display name at the time, so a reader can name someone already gone. */
+  | { type: "entity_enter"; entity: EntityId; name?: string; room: RoomId; timestamp: number }
+  | { type: "entity_leave"; entity: EntityId; name?: string; room: RoomId; timestamp: number }
   | { type: "task_claimed"; entity: EntityId; taskId: number; timestamp: number }
   | { type: "task_submitted"; entity: EntityId; taskId: number; timestamp: number }
   | {

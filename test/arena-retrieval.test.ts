@@ -4,6 +4,7 @@
 import { describe, expect, it } from "bun:test";
 import { parseForecasterSpec } from "../src/arena/config";
 import { buildResearchBrief } from "../src/arena/research/briefs";
+import type { ArenaLock, ArenaRound } from "../src/arena/types";
 import {
   combineRetrievers,
   type ResearchReport,
@@ -13,9 +14,8 @@ import {
   tavilyRetriever,
   tavilySnippet,
   withProvidedText,
-} from "../src/arena/research/retrieve";
-import { MAX_PAGE_BYTES, readCapped, verifyDossier } from "../src/arena/research/verify";
-import type { ArenaLock, ArenaRound } from "../src/arena/types";
+} from "../src/research/retrieve";
+import { MAX_PAGE_BYTES, readCapped, verifyDossier } from "../src/research/verify";
 
 const round: ArenaRound = {
   round_id: "civiqs-2026-w40-approval",

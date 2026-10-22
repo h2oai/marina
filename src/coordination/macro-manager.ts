@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MacroRow, MarinaDB } from "../persistence/database";
-import type { EntityId } from "../types";
 
 export interface Macro {
   id: number;
@@ -25,10 +24,8 @@ function rowToMacro(row: MacroRow): Macro {
 }
 
 export class MacroManager {
-  constructor(
-    private db: MarinaDB,
-    private processCommand: (entityId: EntityId, raw: string) => void,
-  ) {}
+  /** Storage only: a macro runs through `engine.dispatchCommand` (src/engine/macro-expansion.ts). */
+  constructor(private db: MarinaDB) {}
 
   create(name: string, authorId: string, command: string): Macro {
     const id = this.db.createMacro(name, authorId, command);
@@ -61,9 +58,5 @@ export class MacroManager {
 
   list(authorId?: string): Macro[] {
     return this.db.listMacros(authorId).map(rowToMacro);
-  }
-
-  run(macro: Macro, entityId: EntityId): void {
-    this.processCommand(entityId, macro.command);
   }
 }

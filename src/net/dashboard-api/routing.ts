@@ -19,8 +19,27 @@ import { corsHeaders } from "../cors";
 import { authorizePrivileged, type DashboardRouteContext, json } from "./shared";
 
 const SUPERVISION_PREFIX = "marina-routing-";
-const SUPERVISION_REFUSED =
-  /^\/api\/routing\/sessions\/[^/]+\/(?:control|messages|channels\/[^/]+\/messages)$/;
+/**
+ * Exactly the routing calls a local supervisor makes with its supervision
+ * credential (src/routing/supervisor.ts, supervision-credential.ts): join a
+ * run session, publish its output, sync, enrol / renew / revoke its residents
+ * and report their attention, and renew / revoke the credential itself. Every
+ * other routing endpoint — reads, controls, sends, channel posts — answers
+ * only the person's own world session.
+ */
+const SUPERVISION_ALLOWED: readonly RegExp[] = [
+  /^\/api\/routing\/supervision(?:\/(?:renew|revoke))?$/,
+  /^\/api\/routing\/sessions$/,
+  /^\/api\/routing\/sessions\/[^/]+\/events$/,
+  /^\/api\/routing\/sync$/,
+  /^\/api\/routing\/residents$/,
+  /^\/api\/routing\/residents\/[^/]+\/(?:renew|revoke|attention)$/,
+];
+
+/** True when a supervision credential may call `method path`. */
+export function supervisionMayCall(method: string, pathname: string): boolean {
+  return method === "POST" && SUPERVISION_ALLOWED.some((pattern) => pattern.test(pathname));
+}
 
 /**
  * A supervision credential (`marina-routing-…`, supervised residents on) as the
@@ -212,6 +231,15 @@ export async function handleRoutingRoutes(
   // operator can log in as a world account; never invent an owner for a sentinel.
   if (isSentinelPrincipal(callerId))
     return reply({ error: "Log in to use participant streams", code: "account_required" }, 403);
+  if (ctx.supervision && !supervisionMayCall(method, url.pathname))
+    return reply(
+      {
+        error:
+          "A supervision credential runs only the supervisor's own routing calls; use your world session",
+        code: "supervision_scope",
+      },
+      403,
+    );
   try {
     const supervisionMatch = supervisedResidentsEnabled()
       ? url.pathname.match(/^\/api\/routing\/supervision(?:\/(renew|revoke))?$/)
@@ -220,17 +248,6 @@ export async function handleRoutingRoutes(
       await body(req);
       return supervisionRoutes(ctx, supervisionMatch[1] ?? "");
     }
-    // A supervision credential runs the supervisor's own routing traffic. It
-    // never speaks for the person: no controls, sends or channel posts (those
-    // come from the person's own session).
-    if (ctx.supervision && method === "POST" && SUPERVISION_REFUSED.test(url.pathname))
-      return reply(
-        {
-          error: "A supervision credential cannot send controls or messages",
-          code: "supervision_scope",
-        },
-        403,
-      );
     const router = new RoutingService(db, db.durableEntityKey(callerId));
     if (url.pathname === "/api/routing/overview" && method === "GET")
       return reply(

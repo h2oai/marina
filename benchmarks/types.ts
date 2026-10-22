@@ -18,7 +18,7 @@ export interface BenchmarkConfig {
   concurrency: number;
   limit?: number;
   seed?: number;
-  /** Fixed disjoint split of the items (benchmarks/partition.ts). */
+  /** Fixed disjoint split of the items (src/engine/benchmark-partition.ts). */
   partition?: "holdout" | "tune";
   /**
    * Who grades judge-scored items; absent for benchmarks no judge grades.

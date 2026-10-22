@@ -118,6 +118,7 @@ export function keyCommand(deps: {
     aliases: [],
     minRank: 8,
     gate: "key.manage",
+    sensitiveSubcommands: ["add"],
     help: `Manage LLM API keys.
 Requires rank 8 and the key.manage gate.
 Operator-grant capability: an operator grants it (\`gate grant\`) or approves a single held run; standing and approvals never earn it.

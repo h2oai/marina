@@ -6,7 +6,7 @@
  * dataset (which holds the resolutions), its mirrors, and the board's question,
  * answer and leaderboard pages. A forecast must come from evidence about the
  * world, never from the board itself. Applied to every retrieval engine through
- * `barredRetriever` (`src/arena/research/barred.ts`); `*` is one path segment.
+ * `barredRetriever` (`src/research/barred.ts`); `*` is one path segment.
  */
 
 import type { SourceExclusion } from "../../src/arena/research/briefs";

@@ -105,6 +105,20 @@ describe("reconcileEntities", () => {
     });
   });
 
+  it("detects presence, vendor and origin changes (supervised residents)", () => {
+    const prev = [ent("e_1", { presence: "idle", vendor: "claude", spawnedBy: "qop" })];
+    for (const over of [
+      { presence: "working" },
+      { vendor: "codex" },
+      { spawnedBy: "operator" },
+    ] satisfies Partial<SnapshotEntity>[]) {
+      const next = reconcileEntities(prev, [{ ...prev[0]!, ...over }]);
+      expect(next).not.toBe(prev);
+      expect(next[0]).toMatchObject(over);
+    }
+    expect(reconcileEntities(prev, [{ ...prev[0]! }])).toBe(prev);
+  });
+
   it("handles additions and removals", () => {
     const prev = [ent("a")];
     const added = reconcileEntities(prev, [ent("a"), ent("b")]);

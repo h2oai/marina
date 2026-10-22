@@ -26,7 +26,8 @@ export function configurationPreset(name: string): Record<string, string> {
   return {
     ...local,
     ...agentsOff,
-    MARINA_WORLD: "commons",
+    // The shared instance runs the core Workbench; demo worlds stay an explicit choice.
+    MARINA_WORLD: "default",
     MARINA_PROFILE: "shared",
     MARINA_AUTH: "better-auth",
     DB_PATH: "data/marina.db",

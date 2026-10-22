@@ -278,6 +278,14 @@ const ENV_VARS_OUTSIDE_SERVER_CATALOG = new Map<string, string>([
   ["MARINA_BENCH_RESULT_FILE", "internal: benchmark runner → harness child"],
   // Minted per boot by marina-desktop; never set by hand (still protected in keys.ts).
   ["MARINA_DESKTOP_API_TOKEN", "internal: desktop app capability token"],
+  // The interactive `marina connect` terminal (docs/guides/connecting.md → The interactive terminal).
+  ["MARINA_THEME", "cli: terminal colour theme"],
+  ["MARINA_PROMPT", "cli: prompt format"],
+  ["MARINA_STATUSLINE", "cli: status bar format"],
+  ["MARINA_STATUSLINE_RIGHT", "cli: status bar right-hand format"],
+  ["MARINA_PROMPT_RULE", "cli: label on the rule above the input"],
+  ["MARINA_HISTORY", "cli: history file path, or off"],
+  ["MARINA_ASCII", "cli: ASCII glyphs only"],
   // Set by a local supervisor for its resident agents (src/routing/resident-relay.ts).
   ["MARINA_RELAY_SOCKET", "internal: supervisor → resident command relay"],
   // docs/guides/testing.md → Script and load-test knobs.

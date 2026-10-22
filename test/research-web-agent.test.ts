@@ -14,7 +14,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { DecisionProvider } from "../src/decisions/types";
 import type { SearchProvider } from "../src/engine/search-providers/index";
-import type { ModelTurns, TurnFn } from "../src/research/model-turn";
+import type { ModelTurns, TurnFn } from "../src/model/turns";
 import type { PageRead } from "../src/research/page-reader";
 import { ProvenanceCache } from "../src/research/provenance-cache";
 import {

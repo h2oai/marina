@@ -34,10 +34,15 @@ describe("entityOrigin", () => {
     expect(entityOrigin({ kind: "agent", spawnedBy: "operator" })).toBe("joined");
   });
 
+  it("classifies a supervised resident by its vendor, runtime or not", () => {
+    expect(entityOrigin({ kind: "agent", vendor: "codex", spawnedBy: "qop" })).toBe("resident");
+    expect(entityOrigin({ kind: "human", vendor: "pi" })).toBe("resident");
+  });
+
   it("every origin has display metadata with a stable sort rank", () => {
-    const origins = ["manual", "crew", "system", "player", "joined"] as const;
+    const origins = ["manual", "resident", "crew", "system", "player", "joined"] as const;
     const ranks = origins.map((o) => ORIGIN_META[o].rank);
     expect(new Set(ranks).size).toBe(origins.length); // unique
-    expect([...ranks].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4]);
+    expect([...ranks].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
   });
 });

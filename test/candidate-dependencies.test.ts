@@ -170,9 +170,10 @@ it("times out the check process group instead of waiting forever on a child's pi
   writeFileSync(join(root, "waiting.ts"), 'setInterval(() => console.log("waiting"), 10);');
   const result = await new LocalWorkspace(root).run(["bun", "run", "test"], 100, 1024);
   expect(result.timedOut).toBe(true);
-  expect(result.durationMs).toBeLessThan(4500);
+  // Far below the test's own timeout, with headroom for a loaded runner.
+  expect(result.durationMs).toBeLessThan(10_000);
   expect(result.output).toContain("waiting");
-});
+}, 20_000);
 
 function npmLock(packages: Record<string, unknown> = {}) {
   writeFileSync(

@@ -33,6 +33,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { posix } from "node:path";
 import { parseDuration } from "../engine/commands/format-duration";
+import { escapeRegExp } from "../engine/regexp";
 import type { CandidatePreparation } from "./candidate-dependencies";
 import type { WorkspaceRunResult } from "./local-workspace";
 import {
@@ -686,16 +687,12 @@ function namedAlongside(language: ProjectLanguage, source: string, test: string)
     case "python":
       return [`test_${stem}.py`, `${stem}_test.py`, `tests_${stem}.py`].includes(base);
     case "javascript":
-      return new RegExp(`^${escapeRegex(stem)}\\.(test|spec)\\.[cm]?[jt]sx?$`).test(base);
+      return new RegExp(`^${escapeRegExp(stem)}\\.(test|spec)\\.[cm]?[jt]sx?$`).test(base);
     case "java":
       return [`${stem}Test`, `${stem}Tests`, `Test${stem}`].includes(stemOf(test));
     default:
       return false;
   }
-}
-
-function escapeRegex(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Dotted module names a Python source path may be imported as. */
@@ -713,13 +710,13 @@ function pythonModules(path: string): string[] {
 }
 
 function importsPython(content: string, module: string): boolean {
-  const m = escapeRegex(module);
+  const m = escapeRegExp(module);
   if (new RegExp(`^\\s*(from\\s+${m}(\\s|\\.)|import\\s+${m}(\\s|$|,|\\.))`, "m").test(content))
     return true;
   const dot = module.lastIndexOf(".");
   if (dot < 0) return false;
-  const parent = escapeRegex(module.slice(0, dot));
-  const leaf = escapeRegex(module.slice(dot + 1));
+  const parent = escapeRegExp(module.slice(0, dot));
+  const leaf = escapeRegExp(module.slice(dot + 1));
   return new RegExp(`^\\s*from\\s+${parent}\\s+import\\s+[^\\n]*\\b${leaf}\\b`, "m").test(content);
 }
 
@@ -739,7 +736,7 @@ function importsJava(content: string, source: string): boolean {
   const match = /(?:^|\/)src\/main\/(?:java|kotlin)\/(.+)\.(?:java|kt)$/.exec(source);
   if (!match) return false;
   const fqcn = match[1]!.replaceAll("/", ".");
-  return new RegExp(`^\\s*import\\s+${escapeRegex(fqcn)}\\s*;?\\s*$`, "m").test(content);
+  return new RegExp(`^\\s*import\\s+${escapeRegExp(fqcn)}\\s*;?\\s*$`, "m").test(content);
 }
 
 export interface RelevantTests {

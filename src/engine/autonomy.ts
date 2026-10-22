@@ -45,6 +45,10 @@
  *    (`code.exec.unrestricted`, which also keeps its independent
  *    exec-approver chain) and real-money orders (`trading.live`). Allowlisted workspace execution (`code.exec`) is
  *    NOT in the core: `open` passes it.
+ * 4. The implicit local profile (local, not `guarded`, not `sovereign`) lifts
+ *    every gate for the loopback PERSON, but an AGENT's `shell.exec` and
+ *    `code.exec.unrestricted` (`LOCAL_AGENT_HELD_GATES`) are held as a
+ *    challenge a person approves. Only `sovereign` lifts them for agents.
  */
 
 export type AutonomyPosture = "guarded" | "earned" | "open" | "sovereign";
@@ -64,6 +68,15 @@ export const OPEN_POSTURE_CORE: ReadonlySet<string> = new Set([
   "trading.live",
 ]);
 
+/** Gates the IMPLICIT local profile still holds for AGENTS (never for the
+ *  loopback person): host shell and arbitrary non-allowlisted host commands.
+ *  A held run raises a challenge and runs once a person approves it; only
+ *  `MARINA_AUTONOMY=sovereign` lifts it (`isImplicitLocalUngated`). */
+export const LOCAL_AGENT_HELD_GATES: ReadonlySet<string> = new Set([
+  "shell.exec",
+  "code.exec.unrestricted",
+]);
+
 export function getAutonomyPosture(env: NodeJS.ProcessEnv = process.env): AutonomyPosture {
   const raw = (env.MARINA_AUTONOMY ?? "").trim().toLowerCase();
   if (raw === "earned" || raw === "open" || raw === "sovereign") return raw;
@@ -77,7 +90,7 @@ export function getAutonomyPosture(env: NodeJS.ProcessEnv = process.env): Autono
 export function ungatedPostureNote(env: NodeJS.ProcessEnv = process.env): string {
   if (getAutonomyPosture(env) === "sovereign")
     return "SOVEREIGN — every gate, rank floor and hold is off (audit stays on); unset MARINA_AUTONOMY to enforce them";
-  return "gates off for this local operator (audit stays on); set MARINA_AUTONOMY=guarded to enforce them";
+  return "gates off for this local operator (audit stays on); an agent's host shell and arbitrary host commands still wait for a person's approval; set MARINA_AUTONOMY=guarded to enforce every gate, sovereign to lift that hold";
 }
 
 /** One-line posture description for the boot banner / readiness / prompts. */

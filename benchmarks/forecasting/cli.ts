@@ -10,7 +10,6 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { isolationOfSpec } from "../../src/arena/research/isolation";
 import {
   DEFAULT_HOLDOUT_FRACTION,
   fileSlotPromotion,
@@ -25,6 +24,7 @@ import {
 import { FORECAST_CONFIG_SLOT, FORECAST_FAMILY } from "../../src/forecast/defaults";
 import { forecastLessonsFor } from "../../src/learning/forecast-bridge";
 import type { MarinaDB } from "../../src/persistence/database";
+import { isolationOfSpec } from "../../src/research/isolation";
 import { stamped } from "../run-version";
 import { boardExclusion } from "./barred";
 import {

@@ -179,9 +179,44 @@ class Manifest(unittest.TestCase):
         from pathlib import Path
 
         data = tomllib.loads((Path(__file__).parent / "arena.toml").read_text())
-        self.assertEqual(data["agent"]["name"], "h2oai-marina")
+        # No identity ships: the name and display name are placeholders.
         self.assertEqual(data["agent"]["track"], "agentic")
-        self.assertEqual(data["agent"]["display_name"], "H2O.ai Marina")
+        self.assertTrue(m.is_placeholder(data["agent"]["name"]))
+        self.assertTrue(m.is_placeholder(data["agent"]["display_name"]))
+        self.assertNotIn("H2O", (Path(__file__).parent / "arena.toml").read_text())
+
+
+class Identity(unittest.TestCase):
+    def test_refuses_without_a_name(self):
+        with self.assertRaises(m.MissingIdentity) as cm:
+            m.agent_identity(env={}, manifest=None)
+        self.assertIn("PROPHET_AGENT_NAME", str(cm.exception))
+
+    def test_refuses_the_shipped_placeholders(self):
+        with self.assertRaises(m.MissingIdentity) as cm:
+            m.agent_identity(env={})  # the shipped arena.toml
+        self.assertIn("placeholder", str(cm.exception))
+        with self.assertRaises(m.MissingIdentity):
+            m.agent_identity(
+                env={"PROPHET_AGENT_NAME": "acme-bot", "PROPHET_AGENT_DISPLAY_NAME": "Your Org"},
+                manifest=None,
+            )
+
+    def test_takes_the_operator_identity(self):
+        got = m.agent_identity(env={"PROPHET_AGENT_NAME": "acme-bot"})
+        self.assertEqual(got["name"], "acme-bot")
+        # The display name defaults to the slug, never to a shipped one.
+        self.assertEqual(got["display_name"], "acme-bot")
+        self.assertNotIn("H2O", got["description"])
+        got = m.agent_identity(
+            env={"PROPHET_AGENT_NAME": "acme-bot", "PROPHET_AGENT_DISPLAY_NAME": "Acme Bot"},
+            manifest=None,
+        )
+        self.assertEqual(got["display_name"], "Acme Bot")
+
+    def test_rationale_names_no_organization(self):
+        text = m.rationale_from({"runs": [{"reason": "r", "model": "x"}]})
+        self.assertNotIn("H2O", text)
 
 
 class Server(unittest.TestCase):

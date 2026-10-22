@@ -48,11 +48,12 @@ import {
   verifyEntitlement,
 } from "../src/learned/entitlement";
 import { exportLearnedBundle } from "../src/learned/export";
-import { diffItems, renderDiff, sha256Hex } from "../src/learned/format";
+import { diffItems, renderDiff } from "../src/learned/format";
 import { importLearnedBundle } from "../src/learned/import";
 import { BenchmarkTextIndex, DEFAULT_BENCHMARK_CORPORA } from "../src/learned/scan";
 import { generateLearnedKeyPair, pinnedPublisherKeys } from "../src/learned/sign";
 import { MarinaDB } from "../src/persistence/database";
+import { sha256Hex } from "../src/security/hash";
 
 const REPO_ROOT = join(import.meta.dir, "..");
 

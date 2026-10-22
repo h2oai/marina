@@ -7,7 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The dashboard entity view and the live snapshot share one private-view rule (`src/net/entity-visibility.ts`): raw command input, the full property bag and core memory go only to the entity itself and privileged readers; others get the public properties and activity as type, time and command verb, never arguments. Regression tests hold it for the entity detail, the event list and the snapshot.
+
+- **Command input cannot drive another participant's terminal.**
+  - Every command is cleaned once, at the command phase. This covers every transport and internal
+    callers alike.
+  - Removed: escape sequences (window titles, OSC 52 clipboard writes, hyperlinks, cursor moves,
+    screen clears), other C0/C1 control bytes and bidi overrides. Kept: newline, tab and CRLF.
+  - Before this, a WebSocket participant's `say` reached telnet clients with raw escapes.
+  - Telnet output keeps only the server's own colour codes.
+- **Credentials stay out of the event log; operator-only reads and scopes are explicit.** A
+  command form that carries a credential (`key add`, `connect auth`, `adapter enable`; declared
+  with `CommandDef.sensitiveSubcommands`) is recorded as `<verb> <sub> [redacted]`, and key-shaped
+  strings are masked in every other recorded command; stored rows recorded in clear are removed
+  when the engine starts. `GET /api/events` no longer serves `command` events, matching the
+  dashboard WebSocket. `GET /api/keys`, `/api/principals`, `/api/federation/peers`,
+  `/api/operations/alerts` and `/api/models?refresh=1` need operator read capability; the
+  dashboard shows an "Operator only" state to other sessions. `/api/command` and `/api/ask` logins
+  count against the per-IP login-attempt limit. A supervision credential calls only the routing
+  endpoints the supervisor uses (an allowlist). The memory service API (`/v1/memory`) refuses a
+  client address that has spent its failed-credential budget, as `/mem` does.
+- **Held actions show credential forms redacted.** A challenge hold's summary — in approver
+  notices, the ops inbox, operator pushes, the stored hold and the challenge judge's input —
+  renders a declared credential form as `<verb> <sub> [redacted]` and masks key-shaped strings. Such
+  a held input is never stored: it re-runs on approval in the running process, and after a restart
+  the requester is asked to issue it again.
+- **Local stays ungated, but an agent's host shell asks.** Under the default `local` profile you,
+  the loopback operator, keep every gate open. An agent's host shell (`shell.exec`: `run raw`,
+  `shell`, stdio connectors) and arbitrary non-allowlisted host commands (`code.exec.unrestricted`,
+  Code Mode's arbitrary exec, which now defaults to `prompt` for an agent) are held as a challenge.
+  The agent gets an answer at once and the held run executes when a person approves it. An agent
+  also can no longer promote itself to sovereign rank or widen the shell allowlist on a local
+  instance without approval. `MARINA_AUTONOMY=sovereign` remains the one switch that lifts every
+  gate for everyone. Agents promoted on an older database may still hold shell grants:
+  `gate audit` lists them and `gate reset agents all apply` revokes them.
+- **Docker Compose no longer acknowledges an insecure public bind.** `docker-compose.yml` drops
+  `MARINA_ALLOW_INSECURE_PUBLIC=true` and passes its publish address in as the new
+  `MARINA_PUBLISHED_HOST` (default `127.0.0.1`). Inside a container, a wildcard bind published only
+  on host loopback passes the startup exposure checks; a routable `MARINA_BIND_IP` with
+  passwordless login is now refused at boot until you enable `MARINA_AUTH=better-auth` (or set the
+  acknowledgement yourself in `.env`). The trust profile still follows the real bind.
+- **Deploys check the configuration first.** `bun run src/main.ts --check-config` runs every boot
+  refusal and exits before opening the database or a port; `scripts/deploy.sh` runs it in the new
+  image before restarting, so a configuration the new code refuses leaves the running stack serving.
+- **Federation needs a secret outside the local profile.** On `shared` and `public` instances,
+  inbound gateway connections are refused unless `GATEWAY_SECRET` is set; the refusal, the boot log
+  and `readiness` (`federation-inbound`) say how to set it. The `local` profile is unchanged.
+
 ### Changed
+
+- **Threads you can follow on the canvas and Map.** A feed-canvas channel post that answers an earlier post is threaded under it (parent link from the message envelope's cause, `↩ in reply to <name> ↳<depth>`), and feed card authors carry a resident's `[vendor]` tag. Map thread marks stack per room (three newest plus `+N more`, 20 s each, readable halo) and open the room on click; room detail's "Activity here" lists the same content-free `say_sent` / `tell_sent` lines. `entity_enter` / `entity_leave` events carry the entity's name, so a departed entity is never shown by raw id.
+
+- A supervised resident's Claude session accepts edits in its working directory and runs shell commands without a prompt only inside Claude Code's command sandbox (workspace and relay directory writable, no network, no unsandboxed fallback), matching Codex's `workspace-write` sandbox. Without the sandbox's host tools only edits are accepted. Other Claude sessions are unchanged.
+
+- **Each owed ask gets its own answer.** A supervised resident's digest shows how to answer every
+  owed line (`→ re #<id>`, `→ say`, `→ channel send <c>`, `→ tell <name>`); what it answers itself
+  is settled, and the final-reply relay covers only what is left. When several destinations are
+  still owed, the resident is asked once more instead of one reply being sent to all of them; after
+  that, the reply goes to each marked `(one reply to N asks)`. A relayed answer now counts as the
+  woken turn's work for the attention judges. A resident's name later in a message addresses it in
+  a vocative position written as the name (`Done. Swift, run the tests`, `can you check this,
+  Swift?`), not as a mention.
+
+- **One rank-floor rule for every subcommand floor; honest feature status.** The write forms of
+  `bankroll` and `position`, `observe log`, `source connector`, `demo reset`, `code sandbox ops`,
+  the owner-or-rank overrides of `crew invite|dispatch|formation|persist|dissolve` and
+  `readiness providers` now check their floor through `rankFloorRefusal`: the local operator's
+  instance and the `open` posture pass, and elsewhere a refusal raises a challenge an owner or
+  operator can approve. The output-repair shot checks the spend caps before calling a model.
+  Closing a Code Mode session drops its exec-mode setting. The benchmark split, replicate-group
+  rule and reference scores moved under `src/engine/` (the `benchmarks/` paths re-export them), so
+  the published package carries every file `src/` imports. The `shared-team` preset now selects the
+  core `default` world. The feature status page adds crews and formations, desires and journeys,
+  novelty suggestions, resolvers/probes/watches, and lists `conduct` and `scenario` as
+  experimental; `scenario` help now says it posts boards and queues tasks for a resident to pick
+  up.
+
+- **Code cleanup and wider checks.** The compatibility re-exports `src/arena/model-backend.ts`,
+  `src/research/model-turn.ts`, `src/arena/research/{retrieve,verify,web-search,isolation,barred,read-swarm-retriever}.ts`,
+  `benchmarks/stats.ts` and `benchmarks/replicate-stats.ts` are removed; import `src/model`,
+  `src/research` and `src/stats`. Unused exports are deleted, `sha256Hex` and `escapeRegExp` each
+  have one shared home, and the SDK examples share their helpers. `bun run lint` also covers
+  `worlds/`, `marina-desktop/src/` and `extensions/`; `bun run typecheck` also checks `scripts/`
+  and `worlds/`. `check:coverage` counts source files no test loads at 0%. Dependencies:
+  pi-agent-core and pi-ai 1.3.0, better-auth 1.7.12, claude-agent-sdk 0.3.306, Playwright 1.64.1.
 
 - **Page reads honour robots.txt; keyless web sources can be turned off.** Before Marina reads a
   third-party page for an agent or a person (`web fetch`, `web swarm`, `scenario` URL reads, the
@@ -77,6 +162,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requester's lineage builds an earnable gate. Each world records the change once as a chronicle
   event (`civic-rule:contributors-earn-standing`).
 
+- **Competition adapters ship no filing identity.** The FutureX, ForecastBench and Metaculus
+  adapters no longer default to an organization or agent name: they refuse to produce or file a
+  submission (before spending anything) until you give one with `--org` / `--agent` or
+  `MARINA_FILING_ORG` / `MARINA_FILING_AGENT`, and they refuse the docs' placeholders such as
+  `your-org`. The Prophet Arena agent registers under `PROPHET_AGENT_NAME` (or the name you put in
+  `benchmarks/prophet/arena.toml`, which now ships placeholders) and refuses to load without one.
+  BrowseComp-Plus `summary.json` carries an `Attribution` only when you name one, and
+  `scripts/arena-wiki-backtest.ts` compares the entrant in `MARINA_ARENA_ENTRANT` (or
+  `--entrant`) instead of a built-in id. Operators who filed before must now set their identity.
+
 ### Fixed
 
 - **Benchmark costs show prompt-cache reads and writes.** The harness now records the cached and
@@ -86,6 +181,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them. Two arms run at once on the same items and key share Anthropic's prompt cache, so one of
   them reads cheap; this made an Opus verify arm look 1.2x plain when it is about 2.3x.
 
+- **A post addressed to someone else no longer wakes a bystander.** A room post that names another agent by vocative (`Rowan, …`, `…, Kestrel?`, `@Rowan`) was still subject to the random "a question in the room" response heuristic, so an unaddressed agent sometimes answered other agents' questions. `SocialAwareness` now knows names from the room, recent speakers and connects, and a post addressed to one of them (and not to this agent) is not this agent's to answer.
+
+- **Note writes, searches and revisions no longer slow down as history grows.** Measured on one account at 20,000 notes:
+  - Write-path dedup read every earlier note of the same type (37 ms per write); it now finds the text through a new index (migration 177) and writes stay at 1.5 ms.
+  - Note searches joined the note view to full-text search so that SQLite re-ran the text match for every note: `findSimilarNotes` took 19 s, `searchNotes` 1.3 s. Each search now starts from whichever side is smaller — the text hits, or the account's own notes — so they take 59 ms and 15 ms for a query that matches everything, and under 1 ms for a selective one.
+  - A revision or deletion read every active record in the memory space to find dependents (10.5 ms); it now walks dependents by index (2 ms).
+  - Choosing between the two search forms no longer costs anything measurable: the account's note count is kept per connection and recounted as the account grows, and a query whose sampled hit density marks it as broad scans the account's notes without counting every hit first. A broad recall at 20,000 notes is back to its earlier time (69.7 ms against 69.6 ms).
+- **A late answer settles a tell.** A tell whose deadline passed (status `expired`, for example while its recipient was blocked on a permission prompt) is now acknowledged and linked to its reply when the recipient answers it with `re #<id>`, `re` or `tell ack`. `tell status` reports it as `acknowledged after its deadline`. Expiry still never removes content.
+- **Supervised residents are told to run relay commands plainly**: one `connect -c "<command>"` per call, no `$(…)`, `$?`, pipes, loops or chains, which a command sandbox would stop to ask about.
+
+- A review snapshot from a sandboxed resident no longer lists the empty read-only placeholder files a command sandbox mounts over dotfiles and settings while the request runs.
+
+- **Supervised residents show as residents in the dashboard.** The world snapshot's vendor,
+  presence and owner now reach the client (the snapshot reconciler compared neither, so a
+  resident's later status never replaced its first), and every surface that names an entity
+  (Entities roster, hover card, inspector, room detail, entity card) shows `Wren [claude]` with its
+  presence; the roster groups residents under their own `resident` origin instead of "joined". The
+  Map labels residents, rings them with their presence, and floats a content-free
+  `from → to ↳depth` mark for each `say_sent` / `tell_sent`; the room pill reads those typed
+  envelopes too (it only knew the retired `say` events). Streams names the residents running in the
+  world instead of the "start marina supervise" hint when none of their sessions are the viewer's,
+  and a `tell_sent` envelope also reaches the person who launched either party.
+
+- **Backend test runs fail fast instead of hanging until the CI deadline.** Bun 1.4.3 is now the
+  minimum (`.bun-version`, `engines.bun`, `packageManager`, Docker images). Bun 1.4.2 could spin in
+  `spawnSync` after a garbage collection in large `--isolate` runs. The test wrapper stops a run
+  with no output for 240 s, or one where a process has not reaped an exited child for 60 s. It
+  prints the live process tree and the files still running. Benchmark result stamping reads git
+  with a timeout, without optional locks and without prompts.
 - **Documentation matches the code.** The README and site say approvals apply on shared and public
   instances; the privacy guide lists the keyless market and economic-data lookups and the markets
   feed; gate, operator-grant and built-in skill lists are current; seeded agents' autostart, the
@@ -167,6 +291,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     their own capped spend scope. It installs, enables and starts nothing.
 
 ### Added
+
+- **Supervised residents choose their own names.** An unnamed launch asks the agent once, in a throwaway turn with no credentials, what it wants to be called; the server takes the proposal only as given, never a vendor or model word, and dedupes it. A late or unusable proposal falls back to the word list. An unnamed relaunch of the same adapter in the same directory reuses the resident last launched there instead of creating a new account. The enrolment reply and `resident.enrolled` event carry `nameSource`.
+
+- **A themed interactive terminal for `marina connect`.**
+  - **Input area.** The prompt sits between rules at the bottom with a live status bar under it:
+    health, agents, tasks, approvals, alerts, spend and standing, read with the session's own
+    credential. Asynchronous messages never break a draft.
+  - **Output.** Results hang off `⎿`, other voices show `●`, tells `◆` and agents `✦`. Slow
+    commands show their elapsed time, long results collapse (`ctrl+o` expands), and messages
+    render Markdown.
+  - **Prompt formats.** The prompt and status bar take starship-style formats (`$segment`,
+    `[text](style)`, `( … )`), set with `/prompt` or `MARINA_PROMPT` / `MARINA_STATUSLINE`.
+  - **Panels.** Local `/status`, `/agents`, `/spend`, `/alerts`, `/readiness`, `/world`, `/me`,
+    `/prompt` and `/theme`.
+  - **Themes and colour.** `harbor`, `harbor-light` and `ansi` (`MARINA_THEME`). `NO_COLOR`,
+    `FORCE_COLOR` and `--color` are respected.
+  - **History and reconnect.** History persists in `~/.marina/history/connect`. A dropped
+    connection reconnects instead of exiting.
+  - **Unchanged.** Pipe and one-shot output to a non-terminal is plain text, as before.
+  - **Code Mode (`marina .`).** It shares the palette: entries carry a glyph and colour by label,
+    and the prompt, help, suggestions and diffs are themed.
+  - **Server text is data.** The terminal keeps only colour and emphasis codes from it.
 
 - **Test the right versions: results record their commit, and the transfer report refuses mixed
   code.** Benchmark results now name the Marina code that produced them:
@@ -818,6 +964,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses keys outside its directory. The routing supervisor runs git with the hardened host-git
   settings. `MODEL_API_KEYS` is parsed in one place. `hono` is updated to 4.13.11.
 
+- **The main listener validates the `Host` header.** On a loopback bind or under the `local`
+  trust profile, HTTP routes and WebSocket upgrades (`/ws`, `/dashboard-ws`, `/canvas-ws`) answer
+  only to loopback names and to names listed in the new `MARINA_ALLOWED_HOSTS`; any other `Host`
+  gets `421`. A browser request whose `Origin` matches its `Host` counts as same-origin only when
+  that `Host` is allowed. A public bind is unchanged unless the variable is set. A reverse proxy on
+  the same host as a loopback-bound Marina must list its public name in `MARINA_ALLOWED_HOSTS` (or
+  forward a loopback `Host`). The standalone memory service and the log viewer apply the same
+  rule, and the log viewer's feed refuses a foreign browser `Origin`. `/mcp` keeps
+  `MARINA_MCP_ALLOWED_HOSTS`; every listener shares one implementation.
+
 - **Boards enforce their access rules on every path** (GHSA-rgp4-gg8w-xwxm). Reading a post by
   number, reply, search, scores, vote, archive and `export` skipped a board's rank floors, and no
   path kept a group's board members-only. One rule now covers them all: group boards are
@@ -831,6 +987,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   browser on `/ws`, `/dashboard-ws`, `/canvas-ws` and `/api/command`. Loopback now means
   `localhost`, `::1` or an IPv4 literal in 127.0.0.0/8, through one shared check
   (`src/net/loopback.ts`) that replaces every local copy.
+- **Canvas HTTP writes follow the in-world ownership rule.** Deleting a canvas, deleting or
+  changing a node and removing a relationship over `/api/canvases` take the author or canvas
+  owner, an admin or the operator, as `canvas delete` and `canvas disconnect` do; a refusal is a
+  403 with the same explanation and raises the same challenge. Writes are attributed to the
+  signed-in caller, never a name in the request body. Canvas and asset reads are rate-limited
+  per client IP (per principal when signed in), uploads take a plain extension from the
+  filename, and one damaged stored row no longer fails a whole canvas or asset list.
 
 ## [0.8.0] — 2026-10-14
 

@@ -1,7 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { assessEvolutionQualification } from "../src/engine/evolution-qualification";
+import {
+  assessEvolutionQualification,
+  type EvolutionQualificationSession,
+} from "../src/engine/evolution-qualification";
 import { MarinaClient, type Perception } from "../src/sdk/client";
 
 const baseUrl = (process.argv[2] ?? process.env.MARINA_URL ?? "http://localhost:3300").replace(
@@ -131,11 +134,17 @@ try {
   let session: Record<string, unknown> | undefined;
   while (Date.now() < deadline) {
     session = await loadSession();
-    if (session && assessEvolutionQualification([session]).qualified) break;
+    if (
+      session &&
+      assessEvolutionQualification([session as unknown as EvolutionQualificationSession]).qualified
+    )
+      break;
     await Bun.sleep(2_000);
   }
   if (!session) throw new Error("trial session was not visible through the evolution API");
-  const report = assessEvolutionQualification([session]);
+  const report = assessEvolutionQualification([
+    session as unknown as EvolutionQualificationSession,
+  ]);
   const readiness = await fetch(`${baseUrl}/api/readiness`).then((response) => response.json());
   console.log(
     JSON.stringify(

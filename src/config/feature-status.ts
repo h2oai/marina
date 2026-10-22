@@ -125,6 +125,25 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/persistence",
   },
   { name: "Code Mode", status: "core", enable: "`code`", owner: "src/engine/commands/code" },
+  {
+    name: "Crews and formations (the runtime form of the orchestration patterns)",
+    status: "core",
+    enable: "`crew`; a crew serves `/v1` model requests and is the default benchmark target",
+    owner: "src/coordination/crew-manager.ts, src/engine/commands/crew.ts",
+  },
+  {
+    name: "Desires and journeys",
+    status: "core",
+    enable: "`desire`, `journey`; the dashboard first-run guide",
+    owner:
+      "src/engine/commands/desire.ts, src/engine/commands/journey.ts, src/engine/journey-state.ts",
+  },
+  {
+    name: "Novelty suggestions (advisory exploration)",
+    status: "core",
+    enable: "`novelty`; residents see suggestions in their continuation prompt",
+    owner: "src/engine/novelty.ts, src/engine/commands/novelty.ts",
+  },
   // ── siloed ──────────────────────────────────────────────────────────────
   {
     name: "Canvas",
@@ -188,6 +207,12 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     enable:
       "`skill`; 5 built-ins (`skill builtin`); residents get the best-fitting skill in their prompt (`MARINA_SKILLS_RESIDENT`, default on); note seeds with `MARINA_SEED_SKILLS=true` (showcase)",
     owner: "src/agent",
+  },
+  {
+    name: "Resolvers, probes and watches",
+    status: "siloed",
+    enable: "`probe`, `watch`; `position open` adds a resolving watch",
+    owner: "src/resolvers, src/engine/commands/probe.ts, src/engine/commands/watch.ts",
   },
   // ── experimental ────────────────────────────────────────────────────────
   {
@@ -404,6 +429,20 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     enable: "`image generate`, `video generate`, `audio` (needs a media-capable provider)",
     owner: "src/engine/commands/image.ts, src/persistence/db-media.ts",
   },
+  {
+    name: "Scores (`conduct`, `marina_conduct`)",
+    status: "experimental",
+    enable: "`conduct`; residents run a stored Score with `marina_conduct`; SDK `runScore`",
+    owner: "src/engine/commands/conduct.ts, src/sdk/conduct.ts",
+    commands: ["conduct"],
+  },
+  {
+    name: "Scenario boards",
+    status: "experimental",
+    enable: "`scenario` (posts boards and tasks; a resident must pick up the work)",
+    owner: "src/engine/commands/scenario.ts",
+    commands: ["scenario"],
+  },
   // ── demo ────────────────────────────────────────────────────────────────
   {
     name: "Built-in worlds other than `default` and `empty` (13)",
@@ -412,7 +451,7 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "worlds",
   },
   {
-    name: "Orchestration templates (16 pool-note patterns)",
+    name: "Orchestration templates (16 pool-note patterns; crews run them as formations)",
     status: "demo",
     enable: "`project <name> orchestrate <pattern>`",
     owner: "src/world/templates/orchestration.ts",

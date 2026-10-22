@@ -20,6 +20,7 @@ import { MARINA_ROOT } from "../../runtime-paths";
 import type { EntityId } from "../../types";
 import { isOperatorPrincipal, isSentinelPrincipal } from "../auth-middleware";
 import { corsHeaders, isTrustedBrowserOrigin } from "../cors";
+import type { HostPolicy } from "../host-allowlist";
 import {
   readJsonBody as readJsonObject,
   SMALL_JSON_BODY_BYTES,
@@ -85,6 +86,8 @@ export interface CommandApiBody {
 export interface DashboardApiOptions {
   /** True when the server binds loopback only — loopback browser origins are then trusted. */
   loopbackBind?: boolean;
+  /** The listener's Host policy; same-origin counts only for an allowed Host. */
+  hostPolicy?: HostPolicy | null;
 }
 
 /**
@@ -108,7 +111,10 @@ export async function readCommandBody(
     };
   }
   if (
-    !isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind: opts.loopbackBind })
+    !isTrustedBrowserOrigin(origin, req.headers.get("Host"), {
+      loopbackBind: opts.loopbackBind,
+      hostPolicy: opts.hostPolicy,
+    })
   ) {
     logger.warn(
       "dashboard-api",

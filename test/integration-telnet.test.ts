@@ -40,7 +40,7 @@ describe("Telnet Integration", () => {
   let engine: Engine;
   let telnetServer: TelnetServer;
   let db: MarinaDB;
-  const TELNET_PORT = 14000;
+  let TELNET_PORT = 0;
 
   beforeEach(() => {
     db = new MarinaDB(TEST_DB);
@@ -58,8 +58,9 @@ describe("Telnet Integration", () => {
       }),
     );
 
-    telnetServer = new TelnetServer(engine, TELNET_PORT);
+    telnetServer = new TelnetServer(engine, 0);
     telnetServer.start();
+    TELNET_PORT = telnetServer.getPort();
     engine.start();
   });
 
@@ -104,6 +105,27 @@ describe("Telnet Integration", () => {
     await until(() => buf.text.length > beforeWho, { timeoutMs: 2000 });
 
     expect(buf.text).toContain("TelnetCmd");
+
+    socket.end();
+    await Bun.sleep(50);
+  });
+
+  it("keeps the server's colour but never sends terminal controls to a telnet client", async () => {
+    const { socket, buf } = await connectTelnet(TELNET_PORT);
+    await until(() => buf.text.includes("Enter your name"), { timeoutMs: 2000 });
+    socket.write("TelnetSafe\n");
+    await until(() => buf.text.includes("Starting Room"), { timeoutMs: 2000 });
+    const entity = engine.entities.all().find((e) => e.name === "TelnetSafe")!;
+    // Text that reached the world some other way (stored content, an adapter).
+    engine.sendToEntity(
+      entity.id,
+      "\x1b[31mred\x1b[0m \x1b]0;pwned\x07 \x1b]52;c;aGk=\x07 \x1b[2Jdone",
+    );
+    await until(() => buf.text.includes("done"), { timeoutMs: 2000 });
+
+    expect(buf.text).toContain("\x1b[31mred\x1b[0m");
+    expect(buf.text).not.toContain("\x1b]");
+    expect(buf.text).not.toContain("\x1b[2J");
 
     socket.end();
     await Bun.sleep(50);

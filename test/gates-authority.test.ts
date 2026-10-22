@@ -9,13 +9,15 @@
  * - Inline rank floors go through `rankFloorRefusal`: refused + challenge
  *   under shared/guarded, passed under `open` and LOCAL, passed on an approved
  *   re-run — but never above the rank the approval covered.
+ * - Implicit LOCAL lifts everything for the loopback person; an agent's host
+ *   shell / arbitrary host commands are held for a person. `sovereign` lifts all.
  * - `gate grant|revoke|list` never escalates.
  * - The lineage growth limits are operator env knobs with the old defaults.
  */
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { OPEN_POSTURE_CORE } from "../src/engine/autonomy";
+import { LOCAL_AGENT_HELD_GATES, OPEN_POSTURE_CORE } from "../src/engine/autonomy";
 import { resetChallengesForTests } from "../src/engine/challenges";
 import { Engine } from "../src/engine/engine";
 import {
@@ -163,30 +165,95 @@ describe("gates are the authority", () => {
     expect(ran).toEqual(["tinker", "tinker"]);
   });
 
-  it("the yolo switch: local-ungated lifts every gate (core included) but live trading, and every rank floor", async () => {
-    // A self-hosted, no-guest Marina can drop gating (MARINA_PROFILE=local,
-    // autonomy not guarded): every gate passes for a rank-0 agent, no hold is
-    // raised — except real-money orders (`trading.live`, holdsUnderLocalProfile),
-    // which only MARINA_AUTONOMY=sovereign (the next test) or a grant lifts.
+  it("implicit local lifts every gate and floor for a person but live trading, and all but host commands for an agent", async () => {
+    // MARINA_PROFILE=local, autonomy unset: the loopback PERSON is ungated
+    // except for real-money orders (`trading.live`, holdsUnderLocalProfile);
+    // an AGENT's host shell and arbitrary host commands (LOCAL_AGENT_HELD_GATES)
+    // are held for a person — `sovereign` (next test) is the one switch that
+    // lifts those too.
     delete process.env.MARINA_AUTONOMY;
     setTrustProfile("local");
     const rookie = engine.entities.get(id(builder))!; // an agent, rank 0, no standing
+    const person = engine.entities.get(id(bob))!; // a person, rank 0, no standing
     for (const gateId of Object.keys(SAFETY_GATES)) {
       const held = SAFETY_GATES[gateId]!.holdsUnderLocalProfile === true;
-      expect(checkGateForExecution(db, String(rookie.id), gateId).ok, gateId).toBe(!held);
+      expect(checkGateForExecution(db, String(person.id), gateId).ok, gateId).toBe(!held);
+      expect(checkGateForExecution(db, String(rookie.id), gateId).ok, gateId).toBe(
+        !held && !LOCAL_AGENT_HELD_GATES.has(gateId),
+      );
     }
     expect(SAFETY_GATES["trading.live"]!.holdsUnderLocalProfile).toBe(true);
     for (const core of OPEN_POSTURE_CORE) {
       if (core === "trading.live") continue;
-      expect(checkGateForExecution(db, String(rookie.id), core).ok, core).toBe(true);
+      expect(checkGateForExecution(db, String(person.id), core).ok, core).toBe(true);
     }
-    for (const floor of [1, 2, 3, 4]) expect(rankFloorRefusal(rookie, floor)).toBeUndefined();
+    for (const floor of [1, 2, 3, 4]) {
+      expect(rankFloorRefusal(rookie, floor)).toBeUndefined();
+      expect(rankFloorRefusal(person, floor)).toBeUndefined();
+    }
+    // A floor guarding a path INTO the core (rank set, shell allowlist) holds the agent only.
+    expect(rankFloorRefusal(person, 9, undefined, { core: true })).toBeUndefined();
+    expect(rankFloorRefusal(rookie, 9, undefined, { core: true })).toContain("rank 9");
     await send(builder, "tinker");
     expect(ran).toEqual(["tinker"]);
     expect(text(builder)).not.toContain("challenge ch_");
     // `guarded` turns every check back on.
     process.env.MARINA_AUTONOMY = "guarded";
-    expect(checkGateForExecution(db, String(rookie.id), "shell.exec").ok).toBe(false);
+    expect(checkGateForExecution(db, String(person.id), "shell.exec").ok).toBe(false);
+  });
+
+  it("implicit local: an agent's host shell is held at once and runs when a person approves it", async () => {
+    delete process.env.MARINA_AUTONOMY;
+    setTrustProfile("local");
+    engine.commands.registerBuiltin({
+      name: "hostcmd",
+      category: "Test",
+      help: "stands in for a host-shell command",
+      minRank: 5,
+      gate: "shell.exec",
+      handler: (ctx, input) => {
+        ran.push(`hostcmd:${input.entity}`);
+        ctx.send(input.entity, "host ran");
+      },
+    });
+    // The person runs it with no prompt.
+    await send(bob, "hostcmd");
+    expect(ran).toEqual([`hostcmd:${id(bob)}`]);
+    expect(text(bob)).not.toContain("challenge ch_");
+
+    // The agent's run is held: the reply comes back now with a token.
+    const started = Date.now();
+    await send(builder, "hostcmd");
+    expect(Date.now() - started).toBeLessThan(2_000);
+    const reply = text(builder);
+    expect(reply).toContain("on this local Marina an agent may");
+    const token = tokenIn(reply);
+    expect(token).toBeDefined();
+    expect(ran).toHaveLength(1);
+
+    // An agent never answers a hold — not even its own.
+    builder.clear();
+    await send(builder, `challenge approve ${token}`);
+    expect(ran).toHaveLength(1);
+
+    // The loopback operator approves once: the held input re-runs.
+    await send(root, `challenge approve ${token} once`);
+    await until(() => ran.length === 2);
+    expect(ran[1]).toBe(`hostcmd:${id(builder)}`);
+    // Once builds nothing: the next run is held again.
+    expect(checkUnattendedGate(db, id(builder), "shell.exec").ok).toBe(false);
+  });
+
+  it("implicit local: an agent promoting itself to sovereign is held and writes no shell grant", async () => {
+    delete process.env.MARINA_AUTONOMY;
+    setTrustProfile("local");
+    await send(builder, "rank Builder 9");
+    const reply = text(builder);
+    expect(reply).toContain("Only sovereigns (rank 9) can set ranks.");
+    expect(tokenIn(reply)).toBeDefined();
+    expect(engine.entities.get(id(builder))!.properties.rank ?? 0).toBe(0);
+    expect(db.getCompetence(id(builder), "shell.exec")).toBeFalsy();
+    expect(checkUnattendedGate(db, id(builder), "shell.exec").ok).toBe(false);
   });
 
   it("the named switch: MARINA_AUTONOMY=sovereign lifts EVERY gate and floor in a shared profile", async () => {

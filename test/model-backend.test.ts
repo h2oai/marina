@@ -5,8 +5,8 @@
  * The shared in-process model backend (`src/model/`): every library call is
  * labelled by purpose in the spend ledger (coarse source + `purpose:<name>`
  * row), a loopback `marina/*` call is never counted twice, transient failures
- * get a bounded retry, every call is traced, and the old import paths still
- * resolve to the same functions. The provider is mocked; nothing is called.
+ * get a bounded retry, and every call is traced. The provider is mocked;
+ * nothing is called.
  */
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
@@ -19,11 +19,7 @@ import {
   primeOpenRouterCatalogForTests,
   resetOpenRouterPricesForTests,
 } from "../src/agent/provider-cost";
-import * as arenaBackend from "../src/arena/model-backend";
 import * as arenaForecaster from "../src/arena/model-forecaster";
-import * as arenaRetrieve from "../src/arena/research/retrieve";
-import * as arenaVerify from "../src/arena/research/verify";
-import * as arenaWebSearch from "../src/arena/research/web-search";
 import { tavilyProvider } from "../src/engine/search-providers/tavily";
 import {
   attachSpendLedger,
@@ -52,12 +48,8 @@ import { isLoopbackMarinaSpec } from "../src/model/access";
 import { failureKind, modelRetries, retryDelayMs } from "../src/model/retry";
 import { resetRouteHealthForTests, routeLimitOf } from "../src/net/model/route-health";
 import { MarinaDB } from "../src/persistence/database";
-import * as researchTurns from "../src/research/model-turn";
 import { ProvenanceCache } from "../src/research/provenance-cache";
-import * as newRetrieve from "../src/research/retrieve";
-import * as newVerify from "../src/research/verify";
 import { researchEnvironment } from "../src/research/web-agent";
-import * as newWebSearch from "../src/research/web-search";
 
 const SPEC = "anthropic/claude-opus-5-5";
 
@@ -481,27 +473,8 @@ describe("web-agent search spend", () => {
 });
 
 describe("re-export shims", () => {
-  it("the old arena and research paths resolve to the src/model and src/research functions", async () => {
-    const model = await import("../src/model");
-    expect(arenaBackend.modelComplete).toBe(model.modelComplete);
-    expect(arenaBackend.modelAccess).toBe(model.modelAccess);
-    expect(arenaBackend.callCost).toBe(model.callCost);
-    expect(researchTurns.modelTurns).toBe(model.modelTurns);
-    expect(researchTurns.messageText).toBe(model.messageText);
+  it("the arena forecaster re-exports the shared reply parser", () => {
     expect(arenaForecaster.parseReply).toBe(parseReply);
-    expect(arenaRetrieve.retrieverFromSpec).toBe(newRetrieve.retrieverFromSpec);
-    expect(arenaVerify.verifyDossier).toBe(newVerify.verifyDossier);
-    expect(arenaWebSearch.searchBackendsFromEnv).toBe(newWebSearch.searchBackendsFromEnv);
-    const barred = await import("../src/arena/research/barred");
-    const isolation = await import("../src/arena/research/isolation");
-    const swarm = await import("../src/arena/research/read-swarm-retriever");
-    expect(barred.barredRetriever).toBe((await import("../src/research/barred")).barredRetriever);
-    expect(isolation.strictDateFilter).toBe(
-      (await import("../src/research/isolation")).strictDateFilter,
-    );
-    expect(swarm.readSwarmRetriever).toBe(
-      (await import("../src/research/read-swarm-retriever")).readSwarmRetriever,
-    );
     expect(parseReply('noise {"a": 1} tail')).toEqual({ a: 1 });
   });
 });

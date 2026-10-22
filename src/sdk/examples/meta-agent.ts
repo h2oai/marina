@@ -32,8 +32,8 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
+import { callMarina } from "./_shared";
 
-const MARINA_ENDPOINT = (process.env.MARINA_ENDPOINT ?? "http://localhost:3300").replace(/\/$/, "");
 const META_MODEL = process.env.META_MODEL ?? "marina:gemini";
 const META_FALLBACK = process.env.META_MODEL_FALLBACK ?? "marina:sonnet";
 
@@ -66,21 +66,6 @@ interface BenchmarkResult {
     avgLatencyMs: number;
   };
   items: ResultItem[];
-}
-
-async function callMarina(
-  model: string,
-  messages: Array<{ role: string; content: string }>,
-  temperature = 0,
-): Promise<string> {
-  const resp = await fetch(`${MARINA_ENDPOINT}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, temperature }),
-  });
-  if (!resp.ok) throw new Error(`Marina ${resp.status}`);
-  const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content ?? "";
 }
 
 async function callWithFallback(

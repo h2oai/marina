@@ -4,8 +4,12 @@
 import { resolve } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import { Logger } from "../engine/logger";
+import { isLocalProfile } from "../engine/trust-profile";
 import { MARINA_ROOT } from "../runtime-paths";
 import type { EngineEvent, EntityId } from "../types";
+import { isTrustedBrowserOrigin } from "./cors";
+import { mainListenerHostPolicy, refuseDisallowedHost } from "./host-allowlist";
+import { isLoopbackHostname } from "./loopback";
 
 /**
  * Module logger: log-viewer broadcast failures.
@@ -59,8 +63,21 @@ export class LogServer {
       hostname: this.hostname,
       fetch: (req, server) => {
         const url = new URL(req.url);
+        // DNS-rebinding protection: same Host rule as the main listener.
+        const misdirected = refuseDisallowedHost(req, this.hostname, isLocalProfile());
+        if (misdirected) return misdirected;
 
         if (url.pathname === "/ws") {
+          // The log feed is unauthenticated: a browser page from another site
+          // may not open it (non-browser clients send no Origin and pass).
+          const loopbackBind = isLoopbackHostname(this.hostname);
+          const hostPolicy = mainListenerHostPolicy(this.hostname, loopbackBind, isLocalProfile());
+          const origin = req.headers.get("Origin");
+          if (
+            !isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind, hostPolicy })
+          ) {
+            return new Response("Forbidden origin", { status: 403 });
+          }
           const upgraded = server.upgrade(req, {
             data: { connId: crypto.randomUUID() },
           });

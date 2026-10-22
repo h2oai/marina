@@ -14,7 +14,6 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { retrieverFromSpec } from "../src/arena/research/retrieve";
 import {
   buildCorpus,
   closeCorpora,
@@ -34,6 +33,7 @@ import {
   search,
   splitEnginesAndProviders,
 } from "../src/engine/search-providers/index";
+import { retrieverFromSpec } from "../src/research/retrieve";
 import type { CommandInput, EntityId, KeyValueStore, RoomContext, RoomId } from "../src/types";
 import { searchRoom } from "../src/world/rooms/search-room";
 import { scopeProcessState } from "./process-state";

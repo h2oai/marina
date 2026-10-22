@@ -166,3 +166,24 @@ it("in a run: the first silent turn gets the forced-action nudge, the second is 
   expect(sent[0]).toContain('"repaired":"repaired:parse"');
   expect(i.outstandingRequests.size).toBe(0);
 });
+
+it("the repair shot checks the spend caps before any model call", async () => {
+  using _state = scopeProcessState({ env: { MARINA_OUTPUT_REPAIR: "on" } });
+  const { i, sent } = setup();
+  owe(i, "req-1");
+  let routed = 0;
+  const internals = i as unknown as {
+    checkSpendCaps(): string | null;
+    routeFor(...args: unknown[]): Promise<never>;
+  };
+  internals.checkSpendCaps = () => "daily spend cap reached";
+  internals.routeFor = async () => {
+    routed++;
+    throw new Error("no model call expected");
+  };
+  expect(await i.salvageOwedModelReply(prose("I worked it out; it is about five thousand."))).toBe(
+    false,
+  );
+  expect(routed).toBe(0);
+  expect(sent).toHaveLength(0);
+});

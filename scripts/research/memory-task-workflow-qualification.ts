@@ -49,7 +49,6 @@ try {
       if (!name)
         return (await runMemoryOperation(runtime.client, { ...request, space_id: space })) as T;
       const result = await residentMemoryOperation(runtime.db, name, request);
-      if (!result.ok) throw new Error(result.error.message);
       space = result.space_id ?? space;
       return result.result as T;
     };
@@ -71,7 +70,7 @@ try {
         type: "object" as const,
         properties: { code: { type: "string" as const } },
         required: ["code"],
-        additionalProperties: false,
+        additionalProperties: false as const,
       },
       evidence: "required" as const,
     };

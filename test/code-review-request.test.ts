@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { standingOf } from "../src/agent/standing";
@@ -310,6 +310,24 @@ describe("review snapshots", () => {
       expect(snapshot.text).toContain("+new");
       expect(snapshot.files).toEqual(["a.ts", "b.ts"]);
       expect(snapshot.truncated).toBe(false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+  it("leaves out empty read-only placeholders a command sandbox mounts over", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "marina-snap-"));
+    try {
+      gitInit(repo);
+      writeFileSync(join(repo, "a.ts"), "1\n");
+      git(repo, "add", ".");
+      git(repo, "commit", "-qm", "init");
+      writeFileSync(join(repo, "b.ts"), "new\n");
+      writeFileSync(join(repo, "empty.ts"), "");
+      writeFileSync(join(repo, ".bashrc"), "");
+      chmodSync(join(repo, ".bashrc"), 0o444);
+      const snapshot = await captureReviewSnapshot(repo);
+      expect(snapshot.files).toEqual(["b.ts", "empty.ts"]);
+      expect(snapshot.text).not.toContain(".bashrc");
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

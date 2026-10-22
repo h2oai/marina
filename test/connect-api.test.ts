@@ -8,6 +8,7 @@ import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_connect_api.db";
 describe("Connect API", () => {
@@ -101,6 +102,8 @@ describe("Connect API", () => {
   });
 
   it("manifest host derives from request Host header", async () => {
+    // A loopback bind answers only to loopback and listed Host names.
+    using _hosts = scopeProcessState({ env: { MARINA_ALLOWED_HOSTS: "marina.ai" } });
     const res = await fetch(`http://localhost:${wsPort}/api/connect`, {
       headers: { Host: "marina.ai:3300" },
     });

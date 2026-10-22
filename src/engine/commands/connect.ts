@@ -33,6 +33,7 @@ export function connectCommand(deps: {
     aliases: ["conn"],
     minRank: 5,
     gate: "connect.manage",
+    sensitiveSubcommands: ["auth"],
     help: "Manage external MCP connectors. Gated capability: a held run executes once a person approves it (`challenge`); approvals from outside your own lineage build it (`gate list`), or an operator grants it. Usage: connect add <name> <url> | connect add <name> stdio <cmd> [args] (shell.exec gate; spawns a local process) | connect remove <name> | connect list | connect tools <name> | connect call <name> <tool> [json] | connect auth <name> bearer <token> | connect auth <name> header <key> <value>",
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);

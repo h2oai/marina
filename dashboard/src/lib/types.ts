@@ -77,7 +77,10 @@ export interface NoteEntry {
 
 export interface ActivityEntry {
   type: string;
+  /** Raw command input — only in the entity's private view. */
   input?: string;
+  /** The command verb, when the viewer may not see the input. */
+  verb?: string;
   timestamp: number;
 }
 

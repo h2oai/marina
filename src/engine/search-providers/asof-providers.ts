@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The date-bounded provider set, registered by `initProviders*`. Each is free
+ * The date-bounded provider set, registered by `initProvidersSync`. Each is free
  * and keyless and declares `dateBound: "strict"` (see each file for HOW the
  * bound is enforced).
  */

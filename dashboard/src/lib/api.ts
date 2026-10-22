@@ -84,6 +84,19 @@ export async function downloadApi(path: string, fallbackFilename: string): Promi
   }
 }
 
+/** Shown where a session without operator read capability meets an operator-only list. */
+export const OPERATOR_ONLY_TEXT = "Operator only — sign in with an operator account to see this.";
+
+/** True for the 403 an operator-only route returns to an ordinary session. */
+export function isForbiddenApiError(err: unknown): boolean {
+  return err instanceof Error && err.message === "API error: 403";
+}
+
+/** React Query retry policy: a 403 is a permission answer, never retried. */
+export function retryUnlessForbidden(failureCount: number, err: unknown): boolean {
+  return !isForbiddenApiError(err) && failureCount < 3;
+}
+
 /**
  * Turn a thrown API error into a human-readable message. `fetchApi`/`postApi`
  * throw `Error("API error: <status>")`; a 401 means the dashboard has no valid
@@ -94,6 +107,7 @@ export function describeApiError(err: unknown): string {
   if (msg.includes("401")) {
     return "Not authorized — log in (chat panel) as an admin to manage this.";
   }
+  if (isForbiddenApiError(err)) return OPERATOR_ONLY_TEXT;
   return msg.startsWith("API error:") ? `Request failed (${msg.slice(11).trim()}).` : msg;
 }
 

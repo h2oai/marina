@@ -136,50 +136,6 @@ export const RECIPE_CARDS: readonly MethodCard[] = TYPED_FORMATIONS.flatMap((f) 
   recipeCard(`${f}+closed-book`)!,
 ]);
 
-/** Stages inside every recipe (never routing candidates). */
-export const COMPONENT_CARDS: readonly MethodCard[] = [
-  {
-    id: "component:web-research",
-    kind: "component",
-    summary: "planned queries through the operator's retriever, citations checked",
-    shapes: ANSWER_TYPES,
-    needs: { retriever: true },
-    cost: "medium",
-  },
-  {
-    id: "component:lookups",
-    kind: "component",
-    summary: "structured sources (markets, odds, official series) as dated observations",
-    shapes: ANSWER_TYPES,
-    needs: { lookups: true },
-    cost: "low",
-  },
-  {
-    id: "component:lessons",
-    kind: "component",
-    summary: "judged lessons from resolved questions visible at the cutoff",
-    shapes: ANSWER_TYPES,
-    needs: { lessons: true },
-    cost: "none",
-  },
-  {
-    id: "component:prior-shrink",
-    kind: "component",
-    summary: "pool toward the best prior; weight adopted only on a held-out gain",
-    shapes: ["choice", "multi", "number"],
-    needs: { history: 1 },
-    cost: "none",
-  },
-  {
-    id: "component:recalibration",
-    kind: "component",
-    summary: "per answer group calibration map; adopted only on a held-out gain",
-    shapes: ["choice", "multi", "number"],
-    needs: { history: 1 },
-    cost: "none",
-  },
-];
-
 /** What this installation provides, as card preconditions read it. */
 export interface CardContext {
   runs: number;

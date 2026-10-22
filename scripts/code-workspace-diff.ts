@@ -11,6 +11,7 @@ import {
 import { diffAnchors } from "../src/coding/unified-diff";
 import { colorizeDiff, diffColorEnabled } from "./code-diff";
 import { terminalText } from "./code-presentation";
+import { themeFor } from "./code-style";
 
 /**
  * Fullscreen diff reader for `marina --tui`: n/p jump between files, ]/[
@@ -49,7 +50,11 @@ export class WorkspaceDiffView {
   open(text: string) {
     this.plain = terminalText(text).split("\n");
     // Colour is added after sanitising, from the diff structure only.
-    this.lines = colorizeDiff(this.plain.join("\n"), diffColorEnabled({ isTTY: true })).split("\n");
+    this.lines = colorizeDiff(
+      this.plain.join("\n"),
+      diffColorEnabled({ isTTY: true }),
+      themeFor(process.stdout),
+    ).split("\n");
     this.anchors = diffAnchors(this.plain);
     this.active = true;
     this.cursor = 0;

@@ -4,7 +4,7 @@
 /**
  * A live-web research agent that writes citation-backed markdown answers.
  *
- * The loop is a plain tool loop over any one model (`model-turn.ts`):
+ * The loop is a plain tool loop over any one model (`src/model/turns.ts`):
  *   web_search   the configured search chain (`searchBackendsFromEnv`: Tavily /
  *                Exa / SearXNG / DuckDuckGo / OpenRouter's Exa plugin; a
  *                backend that keeps failing is skipped for the run)
@@ -45,6 +45,7 @@ import { getErrorMessage } from "../engine/errors";
 import { standaloneSearchHttp } from "../engine/search-providers/asof-http";
 import { recordSearchOutcome, searchBackendDown } from "../engine/search-providers/health";
 import type { SearchHttp, SearchProvider, SearchResult } from "../engine/search-providers/index";
+import { type ModelTurns, messageText } from "../model/turns";
 import type { FirstMoveModel } from "../retrieval/first-move";
 import { ReadSwarm, renderCandidateTable, type SwarmStats } from "../retrieval/read-swarm";
 import type { DecisionReceipt } from "../sdk/decision-receipt";
@@ -59,7 +60,6 @@ import {
   repairRequest,
 } from "./cited-answer";
 import { researchAdvice, researchDecisionProvider } from "./decision-advice";
-import { type ModelTurns, messageText } from "./model-turn";
 import { BARRED_REASON, type PageRead, readPage } from "./page-reader";
 import type { ProvenanceCache } from "./provenance-cache";
 import { excludedSource, searchBackendsFromEnv } from "./web-search";

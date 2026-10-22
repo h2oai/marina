@@ -134,6 +134,33 @@ describe("world messages the bridge relies on", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("a late answer settles a tell whose deadline passed while the recipient was busy", async () => {
+    const ann = person("Ann", false);
+    const fern = person("Fern", false);
+    await engine.processCommand(ann.entity.id, "tell Fern what is 6 times 7?");
+    const asked = db.listDirectMessageInbox(fern.entity.id)[0]!;
+    // Fern was blocked past the deadline: the sweep marks the tell unanswered.
+    db.memoryRepository().raw.run("UPDATE direct_messages SET deadline_at = ? WHERE id = ?", [
+      Date.now() - 1,
+      asked.id,
+    ]);
+    expect(db.getDirectMessage(asked.id)!.status).toBe("expired");
+    await engine.processCommand(fern.entity.id, `re #${asked.id} 42`);
+    const settled = db.getDirectMessage(asked.id)!;
+    expect(settled.status).toBe("acknowledged");
+    expect(settled.reply_message_id).toBe(db.listDirectMessageInbox(ann.entity.id)[0]!.id);
+    await engine.processCommand(ann.entity.id, `tell status ${asked.id}`);
+    expect(stripAnsi(ann.conn.lastText())).toContain(
+      `Message #${asked.id}: acknowledged after its deadline`,
+    );
+    // An on-time answer carries no lateness mark.
+    await engine.processCommand(ann.entity.id, "tell Fern and 2 plus 2?");
+    const second = db.listDirectMessageInbox(fern.entity.id)[0]!;
+    await engine.processCommand(fern.entity.id, `re #${second.id} 4`);
+    await engine.processCommand(ann.entity.id, `tell status ${second.id}`);
+    expect(stripAnsi(ann.conn.lastText())).toContain(`Message #${second.id}: acknowledged ·`);
+  });
+
   it("a command's cause is accepted only for a message delivered to the sender", async () => {
     const ann = person("Ann", false);
     const fern = person("Fern", false);
