@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create } from "zustand";
+import { authHeaders } from "../lib/api";
 import type { DashboardEvent, FeedEvent } from "../lib/types";
 
 /**
@@ -108,7 +109,11 @@ export const useFeedState = create<FeedState>((set) => ({
 export async function loadFeedSnapshot(limit = 200): Promise<void> {
   const store = useFeedState.getState();
   try {
-    const res = await fetch(`/api/feed?limit=${limit}`, { credentials: "same-origin" });
+    // The feed is an authenticated read like every other dashboard request.
+    const res = await fetch(`/api/feed?limit=${limit}`, {
+      credentials: "same-origin",
+      headers: authHeaders(),
+    });
     if (!res.ok) {
       store.setError(`HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`);
       return;

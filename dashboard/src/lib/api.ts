@@ -53,7 +53,8 @@ export async function logout(): Promise<void> {
   clearToken();
 }
 
-function authHeaders(): Record<string, string> {
+/** The session's bearer header for a dashboard API request (empty when signed out). */
+export function authHeaders(): Record<string, string> {
   const token = getToken();
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
