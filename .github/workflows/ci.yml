@@ -82,9 +82,8 @@ jobs:
       - name: Install media tools
         # ffmpeg/ffprobe and poppler (pdftotext, pdftoppm): the media, asset
         # library and asset memory tests skip their tool paths without them.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg poppler-utils
+        timeout-minutes: 10
+        run: scripts/ci-apt-install.sh ffmpeg poppler-utils
       - name: Check shard coverage
         # Every test file lands in exactly one shard (time-balanced from
         # test/timing.json, name-hash fallback for files without a timing).
@@ -128,7 +127,7 @@ jobs:
   desktop:
     name: Build and test desktop v2
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2.2.0
@@ -143,9 +142,8 @@ jobs:
       - name: Test native SDK boundaries
         run: cd marina-desktop && bun run test
       - name: Install native smoke dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1 librsvg2-2 xvfb imagemagick
+        timeout-minutes: 10
+        run: scripts/ci-apt-install.sh libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1 librsvg2-2 xvfb imagemagick
       - name: Build native app
         run: cd marina-desktop && bun run build:dev
       - name: Launch and drain the native app
