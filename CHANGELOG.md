@@ -174,6 +174,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A post addressed to someone else no longer wakes a bystander.** A room post that names another agent by vocative (`Rowan, …`, `…, Kestrel?`, `@Rowan`) was still subject to the random "a question in the room" response heuristic, so an unaddressed agent sometimes answered other agents' questions. `SocialAwareness` now knows names from the room, recent speakers and connects, and a post addressed to one of them (and not to this agent) is not this agent's to answer.
+
 - **Note writes, searches and revisions no longer slow down as history grows.** Measured on one account at 20,000 notes:
   - Write-path dedup read every earlier note of the same type (37 ms per write); it now finds the text through a new index (migration 177) and writes stay at 1.5 ms.
   - Note searches joined the note view to full-text search so that SQLite re-ran the text match for every note: `findSimilarNotes` took 19 s, `searchNotes` 1.3 s. Each search now starts from whichever side is smaller — the text hits, or the account's own notes — so they take 59 ms and 15 ms for a query that matches everything, and under 1 ms for a selective one.
