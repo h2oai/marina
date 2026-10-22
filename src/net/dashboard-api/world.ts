@@ -23,7 +23,12 @@ import { ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
 import { isSentinelPrincipal, refuseOpenApiWrite } from "../auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas/canvas-principal";
 import { authorizeCanvasSubscription } from "../canvas/canvas-ws";
-import { publicActivity, publicEntityProperties, seesEntityPrivate } from "../entity-visibility";
+import {
+  entityOwner,
+  publicActivity,
+  publicEntityProperties,
+  seesEntityPrivate,
+} from "../entity-visibility";
 import { isMediaOperator, mayReadMediaJob, resolveMediaScope } from "../media-scope";
 import type { memoryObserver } from "../memory/memory-visibility";
 import { authorizeOwnerOrPrivileged } from "../owner-authorization";
@@ -139,9 +144,12 @@ function getEntityDetail(
   if (!entity) return json({ error: "Entity not found" }, 404);
 
   // Raw command input, the full property bag and core memory are private to
-  // the entity and privileged readers (the route already refuses others; this
-  // keeps the shape right if that check ever widens).
-  const privateView = seesEntityPrivate(memory, entity.id);
+  // the entity, its owning person and privileged readers (the route already
+  // refuses others; this keeps the shape right if that check ever widens).
+  const privateView = seesEntityPrivate(memory, {
+    id: entity.id,
+    owner: entityOwner(entity.name),
+  });
   const result: Record<string, unknown> = {
     id: entity.id,
     name: entity.name,
