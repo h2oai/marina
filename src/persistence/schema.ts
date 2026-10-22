@@ -343,6 +343,15 @@ CREATE TABLE IF NOT EXISTS room_access (
     version: 177,
     sql: `CREATE INDEX IF NOT EXISTS idx_notes_content_prefix ON notes(substr(content, 1, 64));`,
   },
+  // The investigation capture quota sums `bytes` over an owner's stored
+  // content. `bytes` sits after the (up to 2 MiB) `value_json` in each row, so
+  // without a covering index every write walked every earlier payload's
+  // overflow pages; this index answers the sum without touching them
+  // (src/persistence/db-investigation-journal.ts).
+  {
+    version: 178,
+    sql: `CREATE INDEX IF NOT EXISTS idx_investigation_content_attempt_bytes ON investigation_content(attempt_id, bytes);`,
+  },
 ];
 
 /** Migration 172 body — self-contained so later edits elsewhere never change it. */
