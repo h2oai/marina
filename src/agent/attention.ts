@@ -14,6 +14,9 @@
  *
  * The rules, in order:
  *  1. the agent's own command echoes are dropped (`isSelfEchoPerception`);
+ *     an endpoint `model_request` addressed (`target`) to another member is
+ *     dropped, and so is a peer's `model_response` (one member claims each
+ *     request; see {@link endpointDispatchDrop});
  *  2. a repeat of recently seen text is dropped unless it is addressed;
  *  3. the social score sets the priority (`SocialAwareness.scorePerception`);
  *     a tell is a REQUEST (100, reply owed), INFORMATION (60, read, owes
@@ -28,9 +31,11 @@
  *  7. the owed-reply rule (`MARINA_FORCED_ACTION_NUDGE`) and the wake band.
  */
 
+import { sameResidentName } from "../engine/entity-name";
 import { stripAnsi } from "../net/ansi";
 import type { Perception } from "../types";
 import { classifyIncomingTell, isPureAcknowledgement } from "./acknowledgement";
+import { modelEnvelopeOf } from "./outstanding-requests";
 import { isAddressedTo, isCrewDispatch, type SocialEvent, withoutVocative } from "./social";
 
 /** Attention modes: `focused` drops what scores below the threshold; `balanced` and `open` keep everything. */
@@ -262,6 +267,13 @@ export interface AttentionInput {
   nudgeMode?: "all" | "requests";
   /** Clock for the channel-reply cooldown (ms); defaults to `Date.now()`. */
   now?: () => number;
+  /**
+   * The resident's own entity id. With it, an endpoint `model_request`
+   * addressed to another member is not this resident's to answer.
+   */
+  selfId?: string;
+  /** The endpoint request ids this resident still owes a reply to. */
+  owedModelRequests?: ReadonlySet<string>;
 }
 
 /**
@@ -277,6 +289,8 @@ export type WakeBand = "now" | "next" | "context" | "drop";
 export type AttentionReason =
   | "self-echo"
   | "duplicate"
+  | "addressed-elsewhere"
+  | "answered-elsewhere"
   | "below-threshold"
   | "untrusted"
   | "acknowledgement"
@@ -288,6 +302,12 @@ export type AttentionReason =
 export interface AttentionDecision {
   keep: boolean;
   reason: AttentionReason;
+  /**
+   * An endpoint request id this resident no longer owes: it was re-offered to
+   * another member, or another member answered it. The caller drops it from
+   * its reply ledger.
+   */
+  release?: string;
   wake: WakeBand;
   /** Buffer priority (meaningful only when kept). */
   priority: number;
@@ -309,7 +329,12 @@ export interface AttentionDecision {
 }
 
 function dropped(
-  reason: "self-echo" | "duplicate" | "below-threshold",
+  reason:
+    | "self-echo"
+    | "duplicate"
+    | "below-threshold"
+    | "addressed-elsewhere"
+    | "answered-elsewhere",
   priority: number,
 ): AttentionDecision {
   return {
@@ -340,6 +365,41 @@ function addressedForDedupe(input: AttentionInput, event: SocialEvent | undefine
 }
 
 /**
+ * Endpoint dispatch on a `model-<name>` channel. The model API addresses each
+ * `model_request` to ONE member (`target`, its entity id) and posts it on the
+ * channel, so every member perceives it. Only the addressee owes the reply:
+ * for the others it is dropped, not owed and no wake, the rule the SDK
+ * provider has always applied. A request without a `target` stays everyone's
+ * (unchanged). A re-offer of a request this resident held, now addressed to
+ * someone else (its claim lapsed, `request-claim.ts`), releases it. A peer's
+ * `model_response` for a request is the caller's, not this resident's: it is
+ * dropped too, and releases the request when this resident still owed it.
+ * Undefined: not an endpoint envelope, or this resident's to handle.
+ */
+function endpointDispatchDrop(input: AttentionInput): AttentionDecision | undefined {
+  const { perception: p, selfName } = input;
+  if (p.kind !== "message" || typeof p.data?.channel !== "string") return undefined;
+  const envelope = modelEnvelopeOf(p);
+  if (!envelope) return undefined;
+  const owed = input.owedModelRequests?.has(envelope.id) ?? false;
+  const release = owed ? { release: envelope.id } : {};
+  if (envelope.type === "model_request") {
+    const target = envelope.target;
+    if (!target || !input.selfId) return undefined;
+    if (target === input.selfId || sameResidentName(target, selfName)) return undefined;
+    return { ...dropped("addressed-elsewhere", 0), ...release };
+  }
+  if (envelope.type === "model_response" || envelope.type === "model_response_end") {
+    const sender = typeof p.data.senderName === "string" ? p.data.senderName : p.data.from;
+    // The channel names the sender by its entity name ("Answerer2"), the
+    // resident knows its config name ("Answerer-2"): compare them normalised.
+    if (typeof sender !== "string" || sameResidentName(sender, selfName)) return undefined;
+    return { ...dropped("answered-elsewhere", 0), ...release };
+  }
+  return undefined;
+}
+
+/**
  * Decide what to do with one perception. Updates `state` (de-duplication,
  * acknowledging peers, the channel cooldown) exactly as the lean adapter
  * always has, and returns the decision; it performs no other side effect.
@@ -352,6 +412,8 @@ export function assessPerception(
   const { perception: p, text, selfName } = input;
   // 1. Self-echo — the resident's own memory-service acknowledgements and send receipts.
   if (!input.perceiveSelfEcho && isSelfEchoPerception(p, text)) return dropped("self-echo", 0);
+  const elsewhere = endpointDispatchDrop(input);
+  if (elsewhere) return elsewhere;
 
   // 2. Dedupe — skip identical text seen recently; addressed requests never disappear for repeating.
   const event = input.events[input.events.length - 1];

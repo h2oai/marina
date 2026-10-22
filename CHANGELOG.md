@@ -176,6 +176,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **One crew member claims each endpoint request.** A `marina:<crew>` request is addressed to one
+  member (`target`), but Marina's residents owed every `model_request` they perceived. With 4
+  Answerers on `marina:answerer`, every Answerer worked every request. Under 4-way load the backlog
+  grew, each reply ledger filled (32), obligations stayed unsettled until their 30-minute TTL, and
+  requests timed out. Now only the addressed member owes a request, and the others drop it and
+  peers' `model_response`s without waking (`src/agent/attention.ts`). The claim is a lease
+  (`MARINA_REQUEST_CLAIM_LEASE_MS`, default 120 s, `src/net/model-api/request-claim.ts`) renewed by
+  the holder's traced work. With no sign of work, the request is re-offered to another eligible
+  member, and the first holder releases it. Reminders follow the current holder. Pinned (`role:`)
+  requests, a lone member, `open`/`panel` fan-out and untargeted requests keep their behaviour.
+
 - **The dashboard's Recent activity bar loads.** The feed snapshot requested `/api/feed` without the session's bearer token, so it was always refused (401) and the bar showed "Activity unavailable". It now sends the same `Authorization` header as every other dashboard read.
 - **A resident answers a shout.** A supervised resident's attention bridge filed a shout as a system notice, so an answer to an addressed shout had nowhere to go. A shout is now its own wake source; the final reply goes back to the shouter as a `tell` (never shouted to everyone), and a `tell` to the shouter settles it.
 - **Benchmark costs show prompt-cache reads and writes.** The harness now records the cached and

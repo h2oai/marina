@@ -157,6 +157,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_DEFAULT_OLLAMA_MODEL=qwen3:4b` | Ollama default: the first model in Ollama's /api/tags (read at boot), else qwen3:4b. |  |
 | `MODEL_REQUEST_TIMEOUT_MS=600000` | Upstream timeout for /v1 requests in milliseconds. Non-streaming client connections also close at Bun's 255-second idle limit. |  |
 | `MODEL_REQUEST_REMINDERS=1` | `0` stops re-posting an unanswered routed model_request as a reminder at 25% and 60% of the timeout. |  |
+| `MARINA_REQUEST_CLAIM_LEASE_MS=120000` | Claim lease for a request routed to one member of a `marina:<name>` endpoint channel (milliseconds). Only the addressed member owes the request; if it shows no traced work on it (a turn, tool call or draft under the request's trace) for this long, the request is re-offered to another eligible member and the first holder drops it. A pinned (`role:`) request is never re-offered. `0`/`off` = never re-offer. |  |
 | `MARINA_DEFAULT_MAX_TOKENS=16384` | Output-token cap marina/default sends upstream per completion (also the compactor's output reservation). Extended thinking on this path is clamped to this value minus 1024. When set explicitly it also caps a full-profile agent on a registry model, which otherwise asks for the model's whole output maximum; an explicit cap never grows. |  |
 
 ## Agent runtime
