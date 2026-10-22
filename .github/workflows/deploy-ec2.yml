@@ -310,11 +310,19 @@ jobs:
           ROLLBACK: ${{ needs.qualify.outputs.rollback }}
         run: |
           set -euo pipefail
+          # A qualified build still deploys when main has moved on, as long as
+          # main contains it: deploys run one at a time in order, so the run
+          # queued for the newer main follows. Skipping here instead would
+          # starve production whenever merges land faster than qualification.
           if [ "$ROLLBACK" != true ]; then
             latest=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
             if [ "$TARGET_SHA" != "$latest" ]; then
-              echo "Skipping superseded build $TARGET_SHA; main is now $latest"
-              exit 0
+              relation=$(gh api "repos/$GITHUB_REPOSITORY/compare/$TARGET_SHA...$latest" --jq '.status')
+              if [ "$relation" != ahead ]; then
+                echo "Skipping $TARGET_SHA: main ($latest) does not contain it ($relation)"
+                exit 0
+              fi
+              echo "Deploying $TARGET_SHA; main has moved on to $latest, whose deploy follows"
             fi
           fi
           echo "deploy=true" >> "$GITHUB_OUTPUT"

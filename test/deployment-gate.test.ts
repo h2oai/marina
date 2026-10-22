@@ -46,6 +46,7 @@ set -euo pipefail
 case "$2" in
   repos/*/actions/workflows/ci.yml/runs\\?*) jq "$4" "$FIXTURE_RUNS" ;;
   repos/*/git/ref/heads/main) echo "$FIXTURE_MAIN" ;;
+  repos/*/compare/*) echo "$FIXTURE_COMPARE" ;;
   *) exit 99 ;;
 esac
 `,
@@ -80,6 +81,7 @@ function gate(
       ROLLBACK: "false",
       FIXTURE_MAIN: sha,
       FIXTURE_RUNS: fixtures,
+      FIXTURE_COMPARE: "ahead",
       ...env,
     },
   });
@@ -163,12 +165,20 @@ describe("production deployment qualification", () => {
     expect(gate([successful], { ...env, ROLLBACK_SHA: "main; exit 0" }).code).not.toBe(0);
   });
 
-  it("skips superseded revisions both before building and before production changes", () => {
+  it("skips superseded revisions before building; a qualified build main contains still deploys", () => {
     expect(gate([successful], { FIXTURE_MAIN: later })).toEqual({ code: 0, output: "" });
+    // Main moved on during qualification: deploy in order, the newer run follows.
     expect(gate([successful], { FIXTURE_MAIN: later }, true)).toEqual({
       code: 0,
-      output: "",
+      output: "deploy=true\n",
     });
+    // Main no longer contains the build: never deploy it.
+    for (const relation of ["diverged", "behind"]) {
+      expect(gate([successful], { FIXTURE_MAIN: later, FIXTURE_COMPARE: relation }, true)).toEqual({
+        code: 0,
+        output: "",
+      });
+    }
     expect(gate([successful], {}, true)).toEqual({ code: 0, output: "deploy=true\n" });
     expect(gate([successful], { FIXTURE_MAIN: later, ROLLBACK: "true" }, true).output).toBe(
       "deploy=true\n",
