@@ -68,6 +68,13 @@ export interface ClientOptions {
 export interface CommandOptions {
   signal?: AbortSignal;
   codingTarget?: CodingCommandTarget;
+  /**
+   * Ref of a delivered message this command answers (`tell:12`,
+   * `channel_msg:4`, `say:<uuid>`). The server accepts only a ref it
+   * delivered to this client's entity; messages the command sends record it
+   * as their cause. Correlated commands only.
+   */
+  cause?: string;
 }
 
 type PerceptionHandler = (p: Perception) => void;
@@ -81,6 +88,11 @@ function commandResult(
 ): CommandResult {
   // Preserve the array's existing iteration/JSON shape for SDK consumers.
   return Object.defineProperty(perceptions, "completion", { value: completion }) as CommandResult;
+}
+
+/** The server refused a login or reconnect (as opposed to the transport failing). */
+export class LoginRefusedError extends Error {
+  override readonly name = "LoginRefusedError";
 }
 
 export class CommandError extends Error {
@@ -266,6 +278,15 @@ export class MarinaClient {
     };
   }
 
+  /**
+   * Replace the internal/workload credential sent with later login and
+   * reconnect messages (a renewed workload credential). The live connection
+   * is unchanged.
+   */
+  setInternalToken(token: string | undefined): void {
+    this.options.internalToken = token;
+  }
+
   /** Check if connected to the server. */
   isConnected(): boolean {
     return this.connected;
@@ -375,7 +396,7 @@ export class MarinaClient {
         if (p.kind === "error" || p.kind === "auth_error") {
           clearTimeout(timer);
           this.removeInternalHandler(handler);
-          reject(new Error((p.data?.text as string) ?? "Login failed"));
+          reject(new LoginRefusedError((p.data?.text as string) ?? "Login failed"));
         }
       };
       this.addInternalHandler(handler);
@@ -423,7 +444,7 @@ export class MarinaClient {
         if (p.kind === "error" || p.kind === "auth_error") {
           clearTimeout(timer);
           this.removeInternalHandler(handler);
-          reject(new Error((p.data?.text as string) ?? "Reconnection failed"));
+          reject(new LoginRefusedError((p.data?.text as string) ?? "Reconnection failed"));
         }
       };
       this.addInternalHandler(handler);
@@ -438,8 +459,11 @@ export class MarinaClient {
 
   /** Confirmed results on current servers; explicitly unconfirmed observations on legacy servers. */
   async command(cmd: string, options?: AbortSignal | CommandOptions): Promise<CommandResult> {
-    const { signal, codingTarget: requestedTarget } =
-      options instanceof AbortSignal ? { signal: options } : (options ?? {});
+    const {
+      signal,
+      codingTarget: requestedTarget,
+      cause,
+    } = options instanceof AbortSignal ? { signal: options } : (options ?? {});
     const codingTarget =
       requestedTarget !== undefined ? parseCodingCommandTarget(requestedTarget) : undefined;
     signal?.throwIfAborted();
@@ -498,6 +522,7 @@ export class MarinaClient {
           command: cmd,
           request_id: requestId,
           ...(codingTarget ? { coding_target: codingTarget } : {}),
+          ...(cause ? { cause } : {}),
           ...this.traceLinksField(),
         });
       } catch (error) {

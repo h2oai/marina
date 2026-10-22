@@ -5,7 +5,7 @@ import type { Database } from "bun:sqlite";
 import { DAY_MS } from "../engine/constants";
 import { Logger } from "../engine/logger";
 import { liveEntityIdSql } from "./db-entities";
-import { buildFtsQuery } from "./fts";
+import { buildFtsQuery, MATCHED_FROM, MATCHED_NOTES_CTE } from "./fts";
 
 /** Module logger. */
 const logger = new Logger();
@@ -114,11 +114,20 @@ export function addChannelMessage(
   senderId: string,
   senderName: string,
   content: string,
+  envelope?: { cause?: string; depth: number },
 ): number {
   const result = db.run(
-    `INSERT INTO channel_messages (channel_id, sender_id, sender_name, content, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
-    [channelId, senderId, senderName, content, Date.now()],
+    `INSERT INTO channel_messages (channel_id, sender_id, sender_name, content, created_at, cause, depth)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      channelId,
+      senderId,
+      senderName,
+      content,
+      Date.now(),
+      envelope?.cause ?? null,
+      envelope?.depth ?? 0,
+    ],
   );
   return Number(result.lastInsertRowid);
 }
@@ -643,11 +652,11 @@ export function globalSearch(
   try {
     const noteResults = db
       .query(
-        `SELECT n.id, n.content, p.name AS pool_name
-         FROM numeric_notes n
-         JOIN notes_fts fts ON n.content_id = fts.rowid
+        `${MATCHED_NOTES_CTE}
+         SELECT n.id, n.content, p.name AS pool_name
+         ${MATCHED_FROM}
          JOIN memory_pools p ON n.pool_id = p.id
-         WHERE notes_fts MATCH ? AND p.group_id IS NULL AND n.tier != 'process'
+         WHERE p.group_id IS NULL AND n.tier != 'process'
          ORDER BY fts.rank LIMIT 10`,
       )
       .all(ftsQuery) as { id: number; content: string; pool_name: string }[];
@@ -706,6 +715,10 @@ export interface ChannelMessageRow {
   sender_name: string;
   content: string;
   created_at: number;
+  /** Ref of the message this one answers (migration 171), or null. */
+  cause: string | null;
+  /** Causal depth: the cause's depth + 1, else 0. */
+  depth: number;
 }
 
 export interface ChannelMemberRow {

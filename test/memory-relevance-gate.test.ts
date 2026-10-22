@@ -133,7 +133,7 @@ describe("relevance gate policy (pure)", () => {
     expect(relevanceGateMode({ MARINA_MEMORY_RELEVANCE_GATE: "observe" })).toBe("observe");
     expect(relevanceGateMode({ MARINA_MEMORY_RELEVANCE_GATE: "ON" })).toBe("on");
     expect(relevanceGateMode({ MARINA_MEMORY_RELEVANCE_GATE: "bogus" })).toBe("off");
-    expect(relevanceGateModel({})).toBe("marina/default");
+    expect(relevanceGateModel({})).toBe("marina/cheap");
     expect(relevanceGateModel({ MARINA_MEMORY_RELEVANCE_GATE_MODEL: "none" })).toBeUndefined();
     expect(relevanceGateProvider({ MARINA_MEMORY_RELEVANCE_GATE_MODEL: "none" })).toBeUndefined();
   });
@@ -304,10 +304,10 @@ describe("gateRelevance backends", () => {
     const r = await gateRelevance("red kettle", items, { mode: "on", provider });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe("http://127.0.0.1:9/v1/chat/completions");
-    expect(calls[0]!.body.model).toBe("marina/default");
+    expect(calls[0]!.body.model).toBe("marina/cheap");
     expect(r.report).toMatchObject({
       outcome: "applied",
-      backend: "model:marina/classifier:marina/default",
+      backend: "model:marina/classifier:marina/cheap",
       keepAt: UNCALIBRATED_KEEP_AT,
       dropped: ["evidence:r2"],
     });

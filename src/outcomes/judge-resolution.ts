@@ -25,6 +25,7 @@
  * confirms it. Ranking and text answers are not judged.
  */
 
+import { roleModelFromEnv } from "../config/model-tiers";
 import { harnessDecisionProvider } from "../decisions/engines";
 import { choice, noul } from "../decisions/questions";
 import type { ChoiceAnswer, DecisionProvider, NoulAnswer } from "../decisions/types";
@@ -227,7 +228,7 @@ function extractorFrom(env: NodeJS.ProcessEnv): (system: string, user: string) =
   const spec =
     env.MARINA_OUTCOME_JUDGE_MODEL?.trim() ||
     env.MARINA_FORECAST_ANALYSTS?.split(",")[0]?.trim() ||
-    "marina/default";
+    roleModelFromEnv("outcome-judge", env);
   return modelComplete(spec, env, {
     maxTokens: 400,
     purpose: "outcomes",

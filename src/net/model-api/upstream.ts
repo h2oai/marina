@@ -14,6 +14,7 @@ import {
   openRouterIdCandidates,
   type TokenPrice,
 } from "../../agent/provider-cost";
+import { describeModelTiers, resolveTierAlias, type TierContext } from "../../config/model-tiers";
 import { noteRunKeyCall } from "../../engine/benchmark-run-keys";
 import { localOutputBudget } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
@@ -64,6 +65,13 @@ import {
   type UpstreamRefusal,
 } from "../model/route-health";
 import { withoutRejectedSampling } from "../model/sampling-params";
+import {
+  completionFinishReason,
+  describeTierOutputCapCounts,
+  isLengthFinish,
+  noteTierOutputCapReply,
+  OUTPUT_CAP_HEADER,
+} from "../model/tier-output-cap";
 import {
   normalizeTextualToolCalls,
   type StreamEvent,
@@ -219,6 +227,40 @@ function resolveProviderKey(engine: Engine, provider: string): string | undefine
 /** True when `provider` has a key (env or admin panel) — presence only, never the value. */
 export function hasProviderKey(engine: Engine, provider: string): boolean {
   return !!resolveProviderKey(engine, provider);
+}
+
+/** The tier context for this instance: the runtime default and env + Admin → Keys. */
+export function engineTierContext(engine: Engine): TierContext {
+  const runtimeDefault = engine.db?.getSetting("default_model");
+  return {
+    ...(runtimeDefault ? { runtimeDefault } : {}),
+    hasKey: (provider) =>
+      (isLocalProvider(provider) && localProviderConfigured(provider)) ||
+      hasProviderKey(engine, provider),
+  };
+}
+
+/**
+ * The model id a request should carry when it names a tier alias
+ * (`marina/cheap`, `cheap`, `marina/strong`, …): the tier's model right now,
+ * `marina/default` when the tier is the default route. `undefined` for any
+ * other id (served unchanged).
+ */
+export function tierRequestModel(engine: Engine, model: unknown): string | undefined {
+  return resolveTierAlias(model, engineTierContext(engine))?.model;
+}
+
+/** The `admin models` readout: every tier and model role, effective model and source. */
+export function describeEngineModels(engine: Engine): string[] {
+  const defaultRoute = describeDefaultUpstream(engine);
+  const lines = describeModelTiers({
+    ...engineTierContext(engine),
+    ...(defaultRoute ? { defaultRoute } : {}),
+  });
+  // The hit counts ride right under the cap line (`describeCheapOutputCap`).
+  const at = lines.findIndex((l) => l.startsWith("  cheap output cap"));
+  if (at >= 0) lines.splice(at + 1, 0, describeTierOutputCapCounts());
+  return lines;
 }
 
 /**
@@ -1185,6 +1227,9 @@ export async function proxyToUpstream(
     memoryReceipt?: MemoryReceipt;
     /** Protocol surface (passthru only) — stamped on every lifecycle event. */
     surface?: InjectionFormat;
+    /** The output cap Marina applied to this request (the cheap tier's default,
+     *  `tier-output-cap.ts`): a reply that ends on its length limit is a cap hit. */
+    outputCap?: number;
   },
   hints?: {
     /** The client request's signal: a NON-streaming upstream call is aborted
@@ -1461,6 +1506,7 @@ export async function proxyToUpstream(
       surface,
       startedAt,
       errorKind,
+      ...(traceOptions!.outputCap !== undefined ? { outputCap: traceOptions!.outputCap } : {}),
     });
     // A reply whose cap went to reasoning is a coded error, never an empty 200
     // (spend was already recorded on the upstream's reply above). Marina's own
@@ -1973,6 +2019,7 @@ async function traceProxyResponse(
     surface?: InjectionFormat;
     startedAt: number;
     errorKind?: ProxyTraceMetrics["errorKind"];
+    outputCap?: number;
   },
 ): Promise<Response> {
   const provider = trace.target?.split("/")[0] ?? "";
@@ -2000,13 +2047,19 @@ async function traceProxyResponse(
     ? encodeMemoryReceiptAttribute(trace.memoryReceipt)
     : undefined;
   let terminal = false;
+  const outputCap = trace.outputCap;
+  if (outputCap !== undefined && response.ok) headers.set(OUTPUT_CAP_HEADER, String(outputCap));
   const finish = (
     phase: "completed" | "failed",
     detail?: string,
     metrics: ProxyTraceMetrics = {},
+    finishReason?: unknown,
   ) => {
     if (terminal) return;
     terminal = true;
+    // Under a cap Marina applied, a reply that ended on its length limit is a hit.
+    const capHit = outputCap !== undefined && phase === "completed" && isLengthFinish(finishReason);
+    if (outputCap !== undefined && phase === "completed") noteTierOutputCapReply(capHit);
     // A benchmark run key's request: attribute the call to its run (cap, transport guard).
     noteRunKeyCall({
       ok: phase === "completed",
@@ -2043,6 +2096,8 @@ async function traceProxyResponse(
       ...(trace.surface ? { surface: trace.surface } : {}),
       durationMs: Date.now() - trace.startedAt,
       ...metrics,
+      ...(outputCap !== undefined ? { outputCap } : {}),
+      ...(capHit ? { outputCapHit: true } : {}),
       ...(detail ? { detail } : {}),
       timestamp: Date.now(),
     });
@@ -2061,7 +2116,10 @@ async function traceProxyResponse(
   if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
     const metrics = priceProxyMetrics(await extractProxyUsage(response), trace.target, price);
     setProxyMetricHeaders(headers, metrics);
-    finish("completed", undefined, metrics);
+    const finishReason = outputCap !== undefined ? await extractFinishReason(response) : undefined;
+    if (outputCap !== undefined && isLengthFinish(finishReason))
+      headers.set(OUTPUT_CAP_HEADER, `${outputCap}; hit`);
+    finish("completed", undefined, metrics, finishReason);
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -2078,11 +2136,16 @@ async function traceProxyResponse(
   const decoder = new TextDecoder();
   let sseTail = "";
   let streamedUsage: Record<string, unknown> | undefined;
+  let streamedFinish: unknown;
   const scanSse = (text: string): void => {
     sseTail += text;
     const lines = sseTail.split("\n");
     sseTail = lines.pop() ?? "";
     for (const line of lines) {
+      if (outputCap !== undefined && line.includes('"finish_reason"')) {
+        const reason = sseFinishReason(line);
+        if (reason) streamedFinish = reason;
+      }
       if (!line.includes('"usage"')) continue;
       const trimmed = line.trim();
       if (!trimmed.startsWith("data:")) continue;
@@ -2113,10 +2176,15 @@ async function traceProxyResponse(
         const { done, value } = await reader.read();
         if (done) {
           scanSse(decoder.decode());
-          finish("completed", undefined, {
-            ...(firstChunkAt > 0 ? { ttftMs: firstChunkAt - trace.startedAt } : {}),
-            ...streamMetrics(),
-          });
+          finish(
+            "completed",
+            undefined,
+            {
+              ...(firstChunkAt > 0 ? { ttftMs: firstChunkAt - trace.startedAt } : {}),
+              ...streamMetrics(),
+            },
+            streamedFinish,
+          );
           controller.close();
         } else {
           if (firstChunkAt === 0) firstChunkAt = Date.now();
@@ -2154,6 +2222,26 @@ async function extractProxyUsage(response: Response): Promise<ProxyTraceMetrics>
     return metricsFromUsage(usage);
   } catch {
     return {};
+  }
+}
+
+/** The first choice's finish reason of a buffered OpenAI-shaped reply, if any. */
+async function extractFinishReason(response: Response): Promise<unknown> {
+  try {
+    return completionFinishReason(await response.clone().json());
+  } catch {
+    return undefined;
+  }
+}
+
+/** The finish reason one SSE `data:` line carries, if any. */
+function sseFinishReason(line: string): unknown {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return undefined;
+  try {
+    return completionFinishReason(JSON.parse(trimmed.slice(5).trim()));
+  } catch {
+    return undefined;
   }
 }
 

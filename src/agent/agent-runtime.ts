@@ -9,6 +9,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { residentDefaultModel } from "../config/model-tiers";
 import {
   isRouteModel,
   routeModelForGoal,
@@ -16,6 +17,7 @@ import {
   routeTableFromEnv,
   routeTiersFromEnv,
 } from "../decisions/route";
+import { respawnsOnBoot } from "../engine/auto-respawn";
 import { applyRouteEvidence, routeEvidenceSettingsFromEnv } from "../engine/benchmark-evidence";
 import {
   MARINA_DEFAULT_MODEL,
@@ -263,7 +265,8 @@ export async function resolveRouteModel(
     ? await routeModelWithTable(config.goal, config.role, table)
     : await routeModelForGoal(config.goal, config.role, tiers!);
   // Measured benchmark evidence may prefer another of the SAME eligible
-  // candidates (MARINA_ROUTE_EVIDENCE; off by default, fails open).
+  // candidates (MARINA_ROUTE_EVIDENCE: observe by default, records and never
+  // changes a route; only `on` acts; fails open).
   const evidence = applyRouteEvidence(
     { route: routed.tier, model: routed.model },
     table
@@ -312,6 +315,7 @@ export function spawnConfigFromSaved(saved: AgentConfigRow): AgentConfig {
     spawnedBy: saved.spawned_by || undefined,
     supports: parseSupports(saved.supports),
     toolProfile: inferToolProfile(saved.role),
+    toolProfileInferred: true,
     crewResponder: inferCrewResponder(saved.role),
     // Persisted reasoning depth (migration 120); NULL stays undefined so
     // `resolveAgentThinkingLevel` applies the crew/env default at spawn.
@@ -580,7 +584,9 @@ export class AgentRuntime {
     // Skip operator-retired agents so a disable survives even if a stale config
     // row lingers in the DB (it normally won't — disable deletes it — but env
     // overlays and user-saved configs can both name a disabled agent).
-    const configs = db.getAllAgentConfigs().filter((c) => !isSeedDisabled(db, c.name));
+    const configs = db
+      .getAllAgentConfigs()
+      .filter((c) => respawnsOnBoot(c) && !isSeedDisabled(db, c.name));
 
     // Spawn in parallel with a 1.1s stagger between starts. Awaiting
     // spawn() sequentially blocks on each agent's discovery prompt (which
@@ -659,6 +665,13 @@ export class AgentRuntime {
       systemRespawn?: boolean;
     } = {},
   ): Promise<AgentHandle> {
+    // A supervised resident is run by its owner's local supervisor; the
+    // in-process runtime never drives (or takes over) that account.
+    if (this.db?.getAgentConfig(config.name)?.runtime === "supervised") {
+      throw new Error(
+        `"${config.name}" is a supervised resident; it runs from its owner's local supervisor.`,
+      );
+    }
     const principal = this.db?.getPrincipal("agent", config.name);
     if (principal && principal.status !== "active") {
       throw new Error(`Agent identity "${config.name}" is ${principal.status}.`);
@@ -712,7 +725,9 @@ export class AgentRuntime {
       // conversation exists (src/decisions/route.ts). The resolved id is what
       // gets persisted, so respawns never re-route mid-history. A `route`
       // world/process default (`marina -p --model route`) routes the same way.
-      const askedModel = config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL;
+      // No model named: the operator's explicit default when set, else the cheap
+      // tier (`marina/cheap`, a live alias — src/config/model-tiers.ts).
+      const askedModel = config.model ?? residentDefaultModel(this.db);
       const routedModel = isRouteModel(askedModel)
         ? await resolveRouteModel(config, this.db, this.onEvent)
         : undefined;
@@ -1265,6 +1280,7 @@ export class AgentRuntime {
       // An explicit launch profile (e.g. "minimal") wins; otherwise infer it
       // from the role exactly as boot does.
       toolProfile: launch?.toolProfile ?? inferToolProfile(role),
+      toolProfileInferred: launch?.toolProfile === undefined || launch.toolProfileInferred === true,
       crewResponder: launch?.crewResponder ?? inferCrewResponder(role),
       // A new model re-derives its modalities and context window.
       supports: modelChanged

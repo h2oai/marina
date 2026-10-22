@@ -16,11 +16,20 @@ export interface LookupFetch {
   text(url: string): Promise<HttpResult<string>>;
 }
 
-async function request(
+/** A body that could not be parsed, as opposed to a transport failure. */
+class BodyParseError extends Error {}
+
+/**
+ * Request `url` and read its body with `read`, all under one deadline: the
+ * timer covers the headers AND the body, so a server that answers and then
+ * stalls the body is still cut off.
+ */
+async function request<T>(
   url: string,
   label: string,
-  init: { method?: "GET" | "POST"; body?: unknown } = {},
-): Promise<HttpResult<Response>> {
+  init: { method?: "GET" | "POST"; body?: unknown },
+  read: (res: Response) => Promise<T>,
+): Promise<HttpResult<T>> {
   const urlErr = await validateFetchUrl(url);
   if (urlErr) return { ok: false, error: `${label} endpoint rejected` };
   const controller = new AbortController();
@@ -38,8 +47,10 @@ async function request(
       await res.text().catch(() => "");
       return { ok: false, error: `${label} HTTP ${res.status}` };
     }
-    return { ok: true, value: res };
+    return { ok: true, value: await read(res) };
   } catch (err) {
+    if (err instanceof BodyParseError)
+      return { ok: false, error: `${label} returned invalid JSON` };
     return {
       ok: false,
       error:
@@ -50,22 +61,23 @@ async function request(
   }
 }
 
+async function readJson<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new BodyParseError();
+  }
+}
+
 /** The default fetcher: real network, labelled errors without URLs. */
 export function lookupFetch(label: string): LookupFetch {
   return {
-    async json<T>(url: string, init?: { method?: "GET" | "POST"; body?: unknown }) {
-      const r = await request(url, label, init);
-      if (!r.ok) return r;
-      try {
-        return { ok: true, value: (await r.value.json()) as T };
-      } catch {
-        return { ok: false, error: `${label} returned invalid JSON` };
-      }
+    json<T>(url: string, init?: { method?: "GET" | "POST"; body?: unknown }) {
+      return request<T>(url, label, init ?? {}, readJson<T>);
     },
-    async text(url: string) {
-      const r = await request(url, label);
-      if (!r.ok) return r;
-      return { ok: true, value: await r.value.text() };
+    text(url: string) {
+      return request(url, label, {}, (res) => res.text());
     },
   };
 }

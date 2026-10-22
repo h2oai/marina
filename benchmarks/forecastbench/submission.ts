@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { ATTRIBUTION } from "../forecasting/shared";
+import type { FilingIdentity } from "../forecasting/identity";
 import { type FbQuestion, type FbQuestionSet, isMarket, resolutionDates } from "./dataset";
 import type { FbForecast } from "./map";
 
@@ -25,12 +25,19 @@ export interface SetIdentity {
   fileOrg: string;
 }
 
-export const DEFAULT_SET_IDENTITY: SetIdentity = {
-  organization: ATTRIBUTION.organization,
-  model: ATTRIBUTION.agent,
-  model_organization: ATTRIBUTION.organization,
-  fileOrg: ATTRIBUTION.organization.replace(/[^A-Za-z0-9-]+/g, "-"),
-};
+/**
+ * Set N's identity from the operator's filing identity (no default ships).
+ * Sets of one round must differ in `model`: set 1 is the agent name, set N
+ * `<agent> (N)`, unless `model` names it.
+ */
+export function setIdentityFor(filer: FilingIdentity, n: number, model?: string): SetIdentity {
+  return {
+    organization: filer.organization,
+    model: model ?? (n === 1 ? filer.agent : `${filer.agent} (${n})`),
+    model_organization: filer.organization,
+    fileOrg: filer.organization.replace(/[^A-Za-z0-9-]+/g, "-").replace(/^-+|-+$/g, ""),
+  };
+}
 
 export function setFileName(due: string, id: SetIdentity, n: number): string {
   if (!Number.isInteger(n) || n < 1 || n > MAX_SETS_PER_ROUND) {

@@ -135,7 +135,24 @@ Diffs are rendered by the terminal from the structured result, not from the serv
 per-file stat comes first (`3 files · +42 −7`, then one line per file), followed by the hunks:
 added lines green, removed lines red, `@@` hunk headers cyan and file headers bold. Colour is
 added only on an interactive terminal and never when `NO_COLOR` is set; redirected output stays
-plain. A diff entry is kept whole in local history up to the server's 64 KB limit. When the
+plain.
+
+Code Mode shares its palette with `marina connect`:
+
+- **Themes.** `MARINA_THEME=harbor` (the default), `harbor-light` or `ansi`, which uses your
+  terminal's own colours; see [the interactive terminal](connecting.md#the-interactive-terminal).
+- **Labels.** Each kind of entry (`error`, `approval requested`, `checks`, `worker`, `review`,
+  `diff` …) gets a glyph as well as a colour.
+- **Commands.** Help rows and `/world …` suggestions are drawn in the command colour.
+- **Colour comes from structure.** The colour comes from the entry's label and structure,
+  never from bytes in the text.
+- **Live status.** On a colour terminal, the line above the prompt carries the same live segments
+  as `marina connect`'s status bar (health, agents, tasks, approvals, held actions, spend,
+  standing). `MARINA_STATUSLINE` changes it.
+- **Live panels.** `/live [status|agents|spend|alerts|readiness|world|me]` draws the
+  dashboard's views of the world in the transcript; your draft is kept.
+
+A diff entry is kept whole in local history up to the server's 64 KB limit. When the
 server cuts a larger diff, the terminal says so, with the bytes shown versus the total, and
 suggests `code diff <path>` to read one file in full. In `marina --tui`, `/diff` also opens a
 diff view: `n`/`p` jump between files, `]`/`[` between hunks, arrows and PageUp/PageDown scroll,
@@ -561,7 +578,7 @@ rm -rf /tmp/marina-coding-agent-demo
   project's own `.env` is never read; see
   [where the CLI reads settings](configuration.md#where-the-marina-cli-reads-settings). A
   native agent (`/use claude`, `/use codex`, `/use pi`) needs no Marina key.
-- **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.2, and
+- **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.3, and
   retry.
 - **“Marina is already open in this folder”:** another terminal has this folder's session open
   (the message names its process). Close it, or use `--fresh` for a separate disposable session.
@@ -716,6 +733,39 @@ code review approve          # accept its submitted task (task creator only)
 code review reject           # return its task to open work
 code review <attempt-id>      # inspect an older attempt
 ```
+
+### Peer review (`code review request`)
+
+Any participant can ask another to review its changes, and only that reviewer gives the verdict:
+
+```text
+code review request <name|auto> [author:<name>] [-- claims]   # snapshot the changes, ask a reviewer
+code review <review_id>                                       # the snapshot, claims and verdicts
+code review verdict <review_id> approve|rework [-- findings]  # the reviewer only
+code review request <review_id> [-- what changed]             # the author's next round after rework
+code review approve|reject <review_id>                        # a person closes it
+```
+
+- **Snapshot.** Each round stores the author's changes as a `review_snapshot` artifact: the diff
+  of the requester's coding session, or, for a supervised resident, the worktree diff its local
+  supervisor captured (see [participant routing](participant-routing.md#supervised-residents-experimental)).
+  Over telnet the request is refused, like every host subprocess.
+- **Reviewer.** A named reviewer must be online. `auto` picks an online agent other than the author:
+  a different vendor first, then a different model, then anyone, and the request records which tier
+  it came from. The request reaches the reviewer as an ordinary `tell`, so it is owed until answered.
+- **Verdict.** `approve`, or `rework` with findings. Rework reopens the work: the author gets the
+  findings as a `tell` and requests the next round on the same review. The author can neither give a
+  verdict nor close the review.
+- **Closing.** A person closes the review: the author's owner, the person who asked for it, or an
+  operator. Merging against the reviewer's verdict, or without one, is recorded as an override. The
+  decision is recorded; the change itself is applied through its own path (git,
+  `code worktree merge`).
+- **Standing.** A review earns standing only when it covers a Code Mode attempt whose recorded
+  checks passed (the verified-code credit, once per attempt). A verdict with no passing checks behind
+  it earns nothing.
+- **Events.** `review_requested`, `review_verdict` and `review_closed` carry names, ids and outcomes
+  only; the diff, claims and findings stay in the review's artifacts, readable by its author,
+  reviewer, requester, the author's owner and operators.
 
 The dashboard renders the same task/evidence links and review actions. Ordinary `task info`,
 `task approve` and `task reject` still operate on the same task. A one-shot exit `0` means the

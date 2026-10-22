@@ -29,6 +29,7 @@ import { LESSONS_ACCOUNT } from "../learning/service";
 import { lessonFromRecord } from "../learning/store";
 import { publicKeyOfSigningKey } from "../net/federation-crypto";
 import type { MarinaDB } from "../persistence/database";
+import { sha256Hex } from "../security/hash";
 import { adoptionLog } from "../world/adoption";
 import { DIFF_FILE, jsonl, SPEC_FILE, verifyBundle, writeBundle } from "./bundle";
 import {
@@ -60,7 +61,6 @@ import {
   proprietaryLicense,
   type RoleItem,
   type Slice,
-  sha256Hex,
   sliceDigest,
   type Tier,
   wilsonLow,

@@ -9,8 +9,9 @@
  *   bun run eval:transfer --spec <spec.json> [--out <prefix>] [--split all|holdout|selection|after:<date>]
  *                         [--seed N] [--resamples N] [--alpha A] [--margin M] [--min-items N]
  *                         [--bootstrap items|two-stage] [--run [--run-dir <dir>]] [--json]
+ *                         [--allow-unversioned]
  *   bun run eval:transfer --adapters
- *   bun run eval:transfer --inventory [root…] [--out <prefix>] [--min-items N] [--max-copy-mb N]
+ *   bun run eval:transfer --inventory <root…> [--out <prefix>] [--min-items N] [--max-copy-mb N]
  *
  * Ingest-only by default: every suite reads result files that already exist.
  * `--run` lets a suite with a `run` command execute it (once per arm and
@@ -19,8 +20,15 @@
  * `<prefix>.json` (default `transfer-report`). Exit 0 when the verdict is
  * `transfers`, 2 for any other verdict, 1 on error.
  *
- * `--inventory` walks the roots (default: ~/.cache/marina-*, ~/.local/share/marina-*,
- * ~/Projects/GitHub/marina-internal) read-only and writes `<prefix>.md` / `<prefix>.json`
+ * Test the right versions: every source's Marina commit stamp is checked. By
+ * default both arms of a suite must come from one clean commit (warned when
+ * it is behind origin/main); mixed, unstamped or dirty sources make the suite
+ * `version-mismatch` / `version-unknown`, reported and not counted. A spec's
+ * `versions: {baseline, candidate}` declares a deliberate release-vs-release
+ * comparison. `--allow-unversioned` ingests unstamped files, labelled loudly.
+ *
+ * `--inventory` walks the roots you name (directories or DB files; at least one is
+ * required) read-only and writes `<prefix>.md` / `<prefix>.json`
  * (default `transfer-inventory`): every per-item result source an adapter can read, per
  * suite its variants, items and dates, and the baseline/candidate pairs with ready suite
  * entries.
@@ -29,9 +37,7 @@
  * "Transfer report". Library: benchmarks/transfer/.
  */
 
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { ADAPTERS } from "../benchmarks/transfer/adapters";
 import { renderMarkdown, type TransferOptions, transferVerdict } from "../benchmarks/transfer/core";
@@ -57,6 +63,7 @@ const { values, positionals } = parseArgs({
     bootstrap: { type: "string" },
     inventory: { type: "boolean", default: false },
     "max-copy-mb": { type: "string" },
+    "allow-unversioned": { type: "boolean", default: false },
   },
 });
 
@@ -93,9 +100,11 @@ function main(): number {
     allowRun: values.run,
     ...(values["run-dir"] ? { outDir: values["run-dir"] } : {}),
     ...(split ? { split } : {}),
+    allowUnversioned: values["allow-unversioned"],
   });
   const flags: TransferOptions = {};
-  const set = <K extends keyof TransferOptions>(k: K, v: number | undefined) => {
+  type NumericOption = Exclude<keyof TransferOptions, "bootstrap">;
+  const set = (k: NumericOption, v: number | undefined) => {
     if (v !== undefined) flags[k] = v;
   };
   set("seed", num("seed", values.seed));
@@ -110,35 +119,39 @@ function main(): number {
   }
   const result = transferVerdict(suites, { ...(spec.stats ?? {}), ...flags });
   const generatedAt = new Date().toISOString();
-  const header = { baseline: spec.baseline, candidate: spec.candidate, generatedAt };
+  const header = {
+    generatedAt,
+    baseline: spec.baseline,
+    candidate: spec.candidate,
+    ...(spec.versions ? { versions: spec.versions } : {}),
+    ...(values["allow-unversioned"] ? { allowUnversioned: true } : {}),
+  };
   const markdown = renderMarkdown(result, header);
-  const json = JSON.stringify({ generatedAt, ...header, ...result }, null, 2);
+  const json = JSON.stringify({ ...header, ...result }, null, 2);
   writeFileSync(`${out}.md`, markdown);
   writeFileSync(`${out}.json`, `${json}\n`);
   console.log(values.json ? json : markdown);
+  for (const s of result.suites) {
+    if (s.version && !s.version.counted)
+      console.error(`version guard: ${s.name} ${s.outcome} — ${s.version.reason}`);
+    for (const w of s.version?.warnings ?? []) console.error(`version warning: ${s.name}: ${w}`);
+  }
+  if (values["allow-unversioned"])
+    console.error("WARNING: --allow-unversioned: unstamped result files were counted");
   console.error(`report → ${out}.md, ${out}.json`);
   return result.verdict === "transfers" ? 0 : 2;
 }
 
-/** The default inventory roots: local Marina caches, data and the internal design notes. */
-function defaultRoots(): string[] {
-  const home = homedir();
-  const under = (dir: string) =>
-    existsSync(dir)
-      ? readdirSync(dir)
-          .filter((n) => n.startsWith("marina-"))
-          .map((n) => join(dir, n))
-      : [];
-  return [
-    ...under(join(home, ".cache")),
-    ...under(join(home, ".local", "share")),
-    join(home, "Projects", "GitHub", "marina-internal"),
-  ].filter((p) => existsSync(p));
-}
-
 function inventory(): number {
+  if (positionals.length === 0) {
+    console.error(
+      "usage: bun run eval:transfer --inventory <root…> [--out <prefix>] [--min-items N] [--max-copy-mb N]\n" +
+        "  name at least one directory or DB file to walk (for example ~/.cache/marina-<name>)",
+    );
+    return 1;
+  }
   const out = values.out ?? "transfer-inventory";
-  const roots = positionals.length ? positionals : defaultRoots();
+  const roots = positionals;
   const maxCopy = num("max-copy-mb", values["max-copy-mb"]);
   const inv = buildInventory({
     roots,

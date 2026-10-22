@@ -12,9 +12,12 @@
 # (bounded by the $25/day default spend cap, MARINA_DAILY_SPEND_CAP_USD).
 #
 # SAFE ONLY while docker-compose.yml publishes the ports on the host's
-# 127.0.0.1 (it does). `local` ungates every permission for anyone who can
-# reach the port, so never combine this overlay with a widened `ports:`, a
-# host reverse proxy, or a server deployment — use MARINA_AUTH=better-auth there.
+# 127.0.0.1 (it does). `local` ungates permissions for anyone who can reach
+# the port (an agent's host shell still waits for a person's approval), so never
+# combine this overlay with a widened `ports:`, a host reverse proxy, or a
+# server deployment — use MARINA_AUTH=better-auth there. Boot enforces it:
+# docker-compose.yml passes the publish address as MARINA_PUBLISHED_HOST, and a
+# non-loopback MARINA_BIND_IP makes `local` a fatal startup error.
 services:
   marina:
     environment:

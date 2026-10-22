@@ -5,6 +5,7 @@ import { resolveEvidence } from "../../decisions/evidence";
 import { recordTaskOpinion } from "../../outcomes/live";
 import type { EntityId } from "../../types";
 import { setChallengeHost } from "../challenges";
+import { redactCommandText } from "../command-redaction";
 import { arenaCommand } from "../commands/arena";
 import { boardCommand } from "../commands/board";
 import { challengeCommand } from "../commands/challenge";
@@ -233,6 +234,7 @@ export function registerCoordinationCommands(engine: Engine): void {
       isAgentAccount: (name) =>
         !!engine.db &&
         (!!engine.db.getAgentConfig(name) || !!engine.db.getPrincipal("agent", name)),
+      redactCommand: (raw) => redactCommandText(engine.commands, raw),
     },
     engine,
   );

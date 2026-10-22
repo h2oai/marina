@@ -12,7 +12,10 @@
  *                              providers or local model).
  *                              `marina:<crew>` asks a crew on a Marina server
  *                              (MARINA_FORECAST_MARINA_URL / _KEY) — e.g. a crew
- *                              in the verification formation.
+ *                              in the verification formation. With
+ *                              MARINA_FORECAST_RESIDENTS=on, `marina:<crew>` and
+ *                              `role:<r>` are residents asked in-process
+ *                              (`./resident-part.ts`).
  *   MARINA_FORECAST_RETRIEVER  one or more of openrouter-web:<model>[@exa|@native],
  *                              sonar:<model>, tavily:<basic|advanced>, search[:<backends>]
  *                              (every planned query through a backend chain, pages read and
@@ -47,7 +50,7 @@
  *                              MARINA_FORECAST_ARBITER_MODEL (default: the critic)
  *   MARINA_FORECAST_RETRIEVAL_FILTER  strict | none (default none): keep only report lines
  *                              whose cited pages are provably published by the cutoff
- *                              (src/arena/research/isolation.ts)
+ *                              (src/research/isolation.ts)
  *   MARINA_FORECAST_PRIOR, _PRIOR_WEIGHT, _CALIBRATION, _CALIBRATION_MARGIN,
  *   _CALIBRATION_SCORE, _HISTORY, _HISTORY_MIN   prior shrink and recalibration from
  *                              resolved history (`./adjust.ts`; all off by default)
@@ -73,6 +76,7 @@
 
 import { availableModels } from "../agent/available-models";
 import type { SourceExclusion } from "../arena/research/briefs";
+import { strongRoleOverride } from "../config/model-tiers";
 import { researchJudge } from "../decisions/config";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { modelComplete } from "../model/complete";
@@ -91,6 +95,7 @@ import type { LessonStore } from "./lessons";
 import { lookupsFromSpec } from "./lookups";
 import { quantModeFromEnv, quantWeightFromEnv } from "./quant";
 import type { ForecastDeps } from "./question";
+import { isResidentSpec, residentPart, residentsMode } from "./resident-part";
 import { DEFAULT_RETRIEVER, defaultRetrieverSpec } from "./retriever-default";
 import { triageModeFromEnv, triageModelFromEnv } from "./triage";
 import { triageCalendar, triageCalendarEnabled } from "./triage-calendar";
@@ -267,6 +272,9 @@ export function modelPart(
   spec: string,
   env: NodeJS.ProcessEnv = process.env,
 ): ModelPart & { usage?: { costUsd: number } } {
+  // ── Resident analysts hook (`./resident-part.ts`, MARINA_FORECAST_RESIDENTS=on) ──
+  if (residentsMode(env) === "on" && isResidentSpec(spec)) return residentPart(spec, { env });
+  // ── end resident analysts hook ──
   if (spec.startsWith("marina:")) return crewPart(spec, env);
   const made = modelComplete(spec, env, {
     purpose: "forecast",
@@ -429,7 +437,11 @@ export function typedForecastDeps(
   let verifier: ModelPart | undefined;
   let arbiter: ModelPart | undefined;
   try {
-    const aSpec = overrides.arbiterModel ?? env.MARINA_FORECAST_ARBITER_MODEL?.trim();
+    // The Arbiter grades and overrules: MARINA_FORECAST_ARBITER_MODEL, else
+    // `role:arbiter=` / MARINA_MODEL_TIER_STRONG, else the critic.
+    const aSpec =
+      overrides.arbiterModel ??
+      (env.MARINA_FORECAST_ARBITER_MODEL?.trim() || strongRoleOverride("arbiter", env));
     if (aSpec) {
       const a = modelPart(aSpec, env);
       arbiter = a;

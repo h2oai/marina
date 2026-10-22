@@ -42,6 +42,7 @@ Implementation: `parseDuration` in `src/engine/commands/format-duration.ts`.
 > look fountain           Examine an item in the space
 > north                   Move north (also: n, s, e, w, ne, nw, se, sw, u, d)
 > go east                 Move east (alternative syntax)
+> move north              Move in a direction (the long form of `north`)
 > map                     View exits and layout
 > goto forest/clearing    Jump directly to a space by ID
 > ls rooms                List all spaces in the environment
@@ -78,6 +79,10 @@ Implementation: `parseDuration` in `src/engine/commands/format-duration.ts`.
 ```
 > who                     List all online entities with locations
 > score                   Show your rank, location, session time
+> rank                    Your rank (`rank <entity>` shows theirs; `rank <entity> <level>` sets it, rank 9)
+> work                    Your prioritized work inbox: commitments, reviews, canvas intents, crews, tasks, blockers
+> ops inbox               Durable operations inbox (also: ops ack|resolve <id>, history, recover, assistance)
+> link                    Link a Telegram or Discord account (link status, link unlink <adapter>)
 > help                    List available commands by category
 > help note               Detailed help for a specific command
 > help all                List every command
@@ -123,7 +128,7 @@ curates them. See [Cross-world Inheritance](inheritance.md).
 Trace views are read-only and omit prompts, outputs, thinking text, and tool arguments. See
 [Execution Traces and Evaluations](observability.md) for retention and interpretation boundaries.
 
-## Journeys and Open-Ended Evolution
+## Journeys, Provenance, and Experimental Records
 
 ```text
 > desire <ordinary-language intention>       Create a journey without rewriting the desire
@@ -139,7 +144,7 @@ Trace views are read-only and omit prompts, outputs, thinking text, and tool arg
 > provenance show <id>                       Inspect and verify one event
 > provenance verify                          Verify the local cognitive hash chain
 
-> intellect create <name> | <purpose>        Declare portable intellect identity
+> intellect create <name> | <purpose>        Create an intellect (agent identity) record
 > intellect instance <id> | <principal> | <model> | <harness> | <environment>
 > intellect event <id> <kind> | <detail>
 > intellect show <id>                        Inspect instances, lineage, and lifecycle
@@ -177,12 +182,14 @@ Trace views are read-only and omit prompts, outputs, thinking text, and tool arg
 > mutation lineage <domain> <target-ref>
 ```
 
-These surfaces are additive. Claims do not imply truth or ownership; declared simulations do not
-invent outcomes; mutations do not bypass subsystem activation or safety boundaries. See
-[Journeys](journeys.md), [Cognitive Provenance](cognitive-provenance.md),
-[Intellect Lifecycle](intellect-lifecycle.md), [Associations](associations.md),
-[Reproduction and Meshes](reproduction-and-meshes.md), and
-[Economics, Simulation, and Recursive Evolution](economics-simulation-and-recursion.md).
+`intellect`, `association`, `reproduce`, `genome`, `marina-descend`, `economy`, `lab` and
+`mutation` are experimental (see [feature status](../reference/feature-status.md)). They write
+records: a claim does not imply truth or ownership, a declared simulation run records no outcome until
+someone records one, and a change record does not bypass the affected subsystem's activation or
+safety gates. See [Journeys](journeys.md), [Cognitive Provenance](cognitive-provenance.md),
+[Intellect Records](intellect-lifecycle.md), [Associations](associations.md),
+[Lineage Records, Child Worlds, and Meshes](reproduction-and-meshes.md), and
+[Economic, Simulation, and Change Records](economics-simulation-and-recursion.md).
 
 ## Knowledge & Cognition
 
@@ -201,7 +208,14 @@ The same lessons also reach the people and agents doing the work:
 - the forecaster;
 - `marina/verify` (the proposer and the checker);
 - `marina:<crew>` requests (as a `lessons` field);
-- failed `code verify` runs.
+- failed `code verify` runs;
+- residents, as a `[Lessons]` section for their focus every tenth cycle (at most 600 bytes).
+
+`lessons <topic> for:<forecast|research|code|tools|benchmark>` is the domain-filtered, budgeted
+recall (at most 4 lessons, 900 bytes): `for:forecast` returns exactly what a forecast recalls (the
+forecast and arena pools plus the cross-board share), the others their own pool plus the cross-board
+share. A resident's `[Lessons]` section uses it when its focus or recent tools show forecasting or
+research work (`MARINA_LESSONS_RESIDENT_DOMAIN=off` keeps the all-domain recall).
 
 `MARINA_LESSONS=observe` records which lessons recall WOULD use without injecting them; `off` disables it.
 
@@ -326,6 +340,27 @@ Every entity has a public profile page at `http://localhost:3300/who/<name>` sho
 
 See [Search](search.md) for the date-strict engines and the Search Room.
 
+```
+> web swarm [engines:<a,b>] [docs:N] <question>   Read swarm: readers read the best pages in full (MARINA_READ_SWARM_READER)
+> research ask -- <question>                       A cited answer: the web-research agent + a citation audit
+> research ask mode:authority retriever:search -- <question>
+                                                   One retriever pass in a research mode
+```
+
+`research ask [mode:agent|retrieve|evidence-loop|survey|authority] [retriever:<spec>] [measure:<m>] [budget:<usd>] -- <question>`
+answers now (`research <goal>` without `ask` still launches a research project). `agent` (default)
+runs the web-research agent (search, open pages, a URL after each fact; the citation audit checks
+every cited URL was read, with one repair pass). The other modes run one retriever pass with the
+operator's research settings: `retrieve` as configured, `evidence-loop` with evidence capture and a
+second reviewed round, `survey` with the operator's survey tables (`MARINA_RESEARCH_SURVEY_FILE`;
+refused without them; `measure:` picks the table), `authority` in research-authority mode.
+`retriever:` takes `default`, `search[:<backends>]`, `asof[:<providers>]`, `corpus:<name>`,
+`tavily:basic|advanced`, `exa:auto|neural|keyword`, `closed-book`, or an entry the operator already
+configured — never a new model. Rank 0; each call costs money: a per-run budget (default $1, at most
+$3), the daily spend cap, a small per-entity budget and one run per entity at a time. An agent's
+`research ask` and `web swarm` are gated like any paid execution, and their results are fenced as
+external content.
+
 Security: SSRF protection (blocks private IPs), 5s rate limit per entity, 10s timeout, 20KB response cap.
 
 ## Structured Data
@@ -337,10 +372,13 @@ Security: SSRF protection (blocks private IPs), 5s rate limit per entity, 10s ti
 > data odds titans ravens                 Every upcoming game naming those teams
 > data series UNRATE                      Official series (FRED, BLS): latest reading and recent history
 > data series CPIAUCSL asof:2026-06-30    FRED as published on that date (vintage data)
+> data polls approval Donald Trump        Published polls (VoteHub): fieldwork in the last four weeks, rolling means
+> data polls generic-ballot 2026 exclude:Rasmussen
+> data crowd fed rate cut october         Crowd probabilities (Manifold, play money; alias manifold)
 ```
 
 The same sources forecasts consult automatically (see [Forecasting](forecasting.md#lookups)).
-Read-only and rank 0; an agent's `data markets|odds|series` call is an outbound read (`egress`),
+Read-only and rank 0; an agent's `data markets|odds|series|polls|crowd` call is an outbound read (`egress`),
 like `web search`. Nothing returned is dated after now or after `asof:`. One query per entity
 every few seconds; keys (`ODDS_API_KEY`, `FRED_API_KEY`) are read from the environment only.
 
@@ -381,7 +419,14 @@ Each recipe auto-creates: memory pool, group (with channel + board), project wit
 > skill share 1 team-pool            Share a skill to a knowledge pool
 > skill compose 1 2 3                Compose a new skill from existing ones
 > skill import ./path/to/SKILL.md    Import a markdown skill package
+> skill builtin [name]               Skills shipped with the server (quantitative-estimates, intake-triage,
+                                     decompose-multihop, solve-math, answer-request, chronicling,
+                                     canvas-intents, consolidate-memory)
+> skill top <query> [bytes:<n>]      The one best skill: your own first, else a relevant built-in, clipped
 ```
+
+Residents are offered the `skill top` hit for their focus in their continuation prompt every tenth
+cycle (`[Skill]`, at most 700 bytes, labelled advice; `MARINA_SKILLS_RESIDENT=off` turns it off).
 
 ## Channels
 
@@ -526,6 +571,7 @@ are visible envelopes: usage reports overruns without silently terminating auton
 > pool shared-knowledge recall query Search the pool and update recall telemetry
 > pool shared-knowledge audit        Check notes for duplicates, length, stale commands, unsupported claims, and stale notes
 > pool guide recall how do I move    Search the built-in guide pool
+> share shared-knowledge Finding     Drop a note into a shared pool (share <pool> <content>)
 ```
 
 `pool <name> audit` reports five hygiene findings: duplicate notes, overlong
@@ -568,6 +614,8 @@ has its own read-only command so the most-read pool is easy to reach:
 > market forecast market:tech        TabH2O-backed probabilistic forecast
 > probe resolving venue:kalshi ticker:KXFED-26MAR   Invoke a resolver and persist a Sample (bare `probe` lists kinds)
 > bankroll show                      Trading risk gates — `set`/`kelly`/`cap`/`floor`/`reset` mutations need rank 5+
+> watch create resolving venue:kalshi ticker:KXFED-26MAR cadence:1h   Ask for a repeated observation (watch list|show|due|retire)
+> position size kalshi KXFED-26MAR yes 0.62 55   Kelly-size a position (price in cents; position open|list|close|pnl; paper by default)
 ```
 
 `market forecast` trains TabH2O on past resolved markets in the same category (8 features including question length, position count, consensus skew, confidence distribution), returns a calibrated YES/NO probability, and writes a provenance `inference` note. When the market resolves, a calibration outcome note is automatically linked to the forecast note via `related_to` — closing the loop so successors can `recall` both the prediction and the actual outcome. Requires `TABH2O_API_KEY` env var; gracefully degrades with a clear admin hint when unconfigured.
@@ -758,6 +806,8 @@ and silent turns. Recruitment remains explicit: recommendations never pull an ag
 | Command | Description |
 |---------|-------------|
 | `forecast <question>` | A probability or a number for any question, with cited and checked evidence from several models ([guide](forecasting.md)). Alias: `predict`. Rate-limited per entity (each call costs money). |
+| `forecast [formation:<name>] [retriever:<spec>] [type:<t>] … -- <question>` | Choose the formation (`ensemble`, `delphi`, `tournament`, `skeptic`, `verify`, `arbiter`) and a retriever a resident may pick (as for `research ask`) for this forecast; an unknown formation or a model-naming retriever the operator did not configure is refused before any budget is spent. |
+| `pattern run <pattern> [budget:<usd>] -- <task>` | `[experimental]` One free-text task under an orchestration pattern (`ensemble`, `debate`, `delphi`, `tournament`, `verification`, `deliberation`, `chorus`, `pipeline`) over the operator's models; a checker picks ONE whole answer. Rank 0; per-run budget (default $0.50, at most $2), the daily cap, one run per entity. `pattern list` names the patterns; crew-only ones point at `project <name> orchestrate`. Same protocols as `POST /v1/patterns/run`. |
 | `inquiry predict -- <question>` / `inquiry research -- <question>` | Start a saved private prediction or research report. Inspect with `inquiry list`, `show`, `why`, `sources`, `report` and `events`; manage attempts with `cancel`, `select`, `review`, `resolve`, `grant`, `revoke` and `delete`. See [private investigations](forecasting.md#saved-private-predictions-and-research). |
 
 ## Benchmarks
@@ -867,7 +917,7 @@ See [Behavior Surfaces](behavior-surfaces.md) for when to use roles, traits, ski
 
 ## Gate Ladder (Earning Capability Gates)
 
-Gated operations (agent spawn, code exec, child worlds, role edits, adapters, connectors, gateways) are earned, not conferred — and **approvals are the proof**. Run the gated action: if you don't hold the gate, the run is held as a challenge, the people who can approve it (your owner, operators) are asked, and you carry on. An approved run executes; an approval from outside your own lineage is one demonstration, and a few of them unlock the gate solo (`gate list` shows each gate's standing floor and count). Shell, world code, keys, destructive admin and unrestricted exec are **operator grant** only. For a gated command the gate is the single authority — its legacy rank floor is not checked on top. `MARINA_AUTONOMY` sets the posture: `guarded` (default: solo holders and approved runs pass), `earned` (earnable gates also run optimistically, an operator counting them afterwards), `open` (earnable gates auto-pass; the operator-grant core stays gated).
+Gated operations (agent spawn, code exec, child worlds, role edits, adapters, connectors, gateways) are earned, not conferred — and **approvals are the proof**. Run the gated action: if you don't hold the gate, the run is held as a challenge, the people who can approve it (your owner, operators) are asked, and you carry on. An approved run executes; an approval from outside your own lineage is one demonstration, and a few of them unlock the gate solo (`gate list` shows each gate's standing floor and count). Shell, world code, keys, destructive admin, unrestricted exec and live (real-money) trading are **operator grant** only. For a gated command the gate is the single authority — its legacy rank floor is not checked on top. `MARINA_AUTONOMY` sets the posture: `guarded` (default: solo holders and approved runs pass), `earned` (earnable gates also run optimistically, an operator counting them afterwards), `open` (earnable gates auto-pass; the operator-grant core stays gated).
 
 ```
 > gate list [entity]                 Every gate, its status and your next step (or someone else's)
@@ -879,7 +929,7 @@ Gated operations (agent spawn, code exec, child worlds, role edits, adapters, co
 > witness …                          Compatibility: request/grant point here; queue/attest/reject review earned-posture runs
 ```
 
-A grant never escalates: you grant only a gate you hold solo, the operator-grant core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`) is granted by sovereigns only, nobody grants themselves, and a non-sovereign never grants to an agent they spawned — the same one-party rule that keeps an owner's approvals from building its own agent's gate.
+A grant never escalates: you grant only a gate you hold solo, the operator-grant core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`, `trading.live`) is granted by sovereigns only, nobody grants themselves, and a non-sovereign never grants to an agent they spawned — the same one-party rule that keeps an owner's approvals from building its own agent's gate.
 
 ## API Keys (`key.manage` Gate)
 
@@ -936,6 +986,9 @@ and provenance. Promote a snapshot to the new default by restarting with
 
 ```
 > batch look ; who ; brief           Run multiple commands in sequence
+> schedule add digest daily:08:00 -- brief full   Run one of your own commands later or on a repeat (schedule list|show|pause|delete)
+> connect list                       External MCP connectors (rank 5 + `connect.manage` gate; add|remove|tools|call|auth)
+> scenario status                    Scenario simulation: extract seed material, personas, inject counterfactuals, report
 > calc 128 * 1024                    Exact arithmetic scratchpad (one binary expression)
 > quant fit 41 42 40 43 44 steps:2   Series forecast: mean, sd, quantiles (persistence/EWMA/trend/damped/auto)
 > quant buckets mean:3.4 sd:0.3 -- <3, 3-4, >=4   Probability of each numeric range; most likely bucket

@@ -57,6 +57,26 @@ export async function validateGatewayUrl(url: string): Promise<string | null> {
   return validateFetchUrl(httpUrl);
 }
 
+// ─── Inbound peers ───────────────────────────────────────────────────────────
+
+/** The remediation every surface names for refused inbound federation. */
+export const GATEWAY_SECRET_REMEDIATION =
+  "Set GATEWAY_SECRET=<long random string> in .env (the same value on every peer that " +
+  "connects here, e.g. `openssl rand -hex 32`) and restart.";
+
+/**
+ * Inbound federation on a shared/public instance requires `GATEWAY_SECRET`:
+ * without one, any host that can reach the WebSocket could present itself as a
+ * gateway peer. Returns the refusal text, or `null` when inbound gateway
+ * connections are accepted (a secret is set, or the `local` profile — one
+ * operator on their own machine — keeps its unauthenticated dev federation).
+ */
+export function gatewayIngressRefusal(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.GATEWAY_SECRET) return null;
+  if (isLocalProfile(env)) return null;
+  return `Gateway connections are refused: this instance requires GATEWAY_SECRET for inbound federation. ${GATEWAY_SECRET_REMEDIATION}`;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface GatewayStatus {

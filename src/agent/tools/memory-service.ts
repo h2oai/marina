@@ -48,7 +48,7 @@ export function createMemoryServiceTool(ctx: ToolContext): AgentTool<typeof memo
     name: "marina_memory_service",
     label: "Memory Service",
     description:
-      "Durable private/shared memory, evidence, checkpoints and helper assistance (assist_* ops: helpers hold a lease_token, read only the delegated scope, finish with citations or an explicit abstention). Start with retrieve {task} for citable evidence and check its diagnostics. Claims and proposals are assertions, not verified truth.",
+      "Durable private/shared records, evidence, checkpoints and helper assistance (assist_* ops: helpers hold a lease_token, read only the delegated scope, finish with citations or an explicit abstention). retrieve {task} returns citable evidence; check its diagnostics.",
     parameters: memoryServiceSchema,
     execute: async (_id, request, signal) => {
       const result = await ctx.client.memoryService(

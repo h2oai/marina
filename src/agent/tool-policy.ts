@@ -12,7 +12,7 @@
  *   rest`): nobody else can see or be affected by them.
  * - `communicate` — a message.
  * - `egress` — an outbound read (`web search|fetch|read|multisearch`,
- *   `data markets|odds|series`). It
+ *   `data markets|odds|series|polls|crowd`). It
  *   changes nothing in the world, and the URL guard (`src/net/url-guard.ts`)
  *   already fences WHERE it can go. It leaves the process with arguments the
  *   agent chose, so it is still gated. But reaching an external system is what
@@ -29,6 +29,9 @@
  * `delete` / `execute` is classified as a read here, so the list can only err
  * towards the gate.
  */
+
+import { ANALYSIS_TOOL_COMMANDS } from "./analysis-commands";
+
 export type ToolRisk = "read" | "self" | "communicate" | "egress" | "mutate" | "consequential";
 
 /** The risk classes the decision gate scores. */
@@ -88,6 +91,10 @@ export const READ_TOOL_NAMES: ReadonlySet<string> = new Set([
   "marina_brief",
   "marina_feed",
   "marina_novelty",
+  "marina_calc",
+  "marina_quant",
+  "marina_triage",
+  "marina_arbiter",
   "marina_code_read_file",
   "marina_code_list_files",
   "marina_code_search",
@@ -158,7 +165,14 @@ const SELF_LOOP_KEYS: ReadonlySet<string> = new Set([
 
 /** `web` subcommands that only read from outside (all go through the URL guard). */
 /** `data` subcommands that read a third-party source (src/engine/commands/data.ts). */
-const EGRESS_DATA_SUBCOMMANDS: ReadonlySet<string> = new Set(["markets", "odds", "series"]);
+const EGRESS_DATA_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "markets",
+  "odds",
+  "series",
+  "polls",
+  "crowd",
+  "manifold",
+]);
 
 const EGRESS_WEB_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "search",
@@ -177,7 +191,6 @@ const READ_VERBS: ReadonlySet<string> = new Set([
   "examine",
   "ex",
   "x",
-  "who",
   "inventory",
   "i",
   "inv",
@@ -186,6 +199,8 @@ const READ_VERBS: ReadonlySet<string> = new Set([
   "commands",
   "calc",
   "quant",
+  "triage",
+  "arbiter",
   "time",
   "date",
   "uptime",
@@ -216,6 +231,8 @@ const has = (set: readonly string[], word: string | undefined) => !!word && set.
 
 /** Read-only subcommands per command (by canonical name and alias). */
 const READ_SUBCOMMANDS: Record<string, (words: string[]) => boolean> = {
+  // `who watch <name> …` registers a change notice; bare `who` / `who watch` read.
+  who: ([sub, target]) => sub !== "watch" || target === undefined,
   // `pool list`, `pool <name> recall|status|list|audit …`
   pool: ([a, b]) =>
     a === "list" || (!!a && a !== "create" && has(["recall", "status", "list", "audit"], b)),
@@ -232,7 +249,7 @@ const READ_SUBCOMMANDS: Record<string, (words: string[]) => boolean> = {
   crew: ([a]) => has(["info", "invitations"], a),
   note: ([a]) => has(["list", "search", "graph", "types", "contradictions", "explain", "trace"], a),
   chronicle: ([a]) => !a || has(["about", "kinds", "show", "since"], a),
-  skill: ([a]) => has(["list", "search", "audit"], a),
+  skill: ([a]) => has(["list", "search", "audit", "top", "builtin"], a),
   trace: ([a]) =>
     !a ||
     /^\d+$/.test(a) ||
@@ -244,6 +261,7 @@ const READ_SUBCOMMANDS: Record<string, (words: string[]) => boolean> = {
     (a === "asset" && has(["list", "info"], b)) ||
     (a === "intent" && b === "list"),
   macro: ([a]) => a === "list",
+  pattern: ([a]) => !a || a === "list",
   brief: ([a]) => !a || has(["full", "social"], a),
   // Forms declared `effect: "read"` in evolve's usage.
   evolve: ([a]) => !a || has(["loop", "adoption", "sessions", "qualify", "status", "analyze"], a),
@@ -258,6 +276,7 @@ const SUBCOMMAND_ALIASES: Record<string, string> = {
   gates: "gate",
   cv: "canvas",
   coach: "evolve",
+  patterns: "pattern",
 };
 
 /** Durable memory-service verbs that only read (`memory retrieve <q>`, `memory show <id>` …). */
@@ -430,8 +449,15 @@ export function typedToolCommand(
       // `marina_goal show` reads the key, then `task list mine` (also a read).
       return key === "goal" ? "memory kv get goal" : `memory get ${key}`;
     }
-    default:
-      return undefined;
+    default: {
+      const build = ANALYSIS_TOOL_COMMANDS[toolName];
+      if (!build) return undefined;
+      try {
+        return build(args);
+      } catch {
+        return undefined; // an unbuildable call sends nothing
+      }
+    }
   }
 }
 
@@ -573,6 +599,9 @@ const PEER_MESSAGE_READS: Record<string, (words: string[]) => boolean> = {
   board: ([a]) => !a || has(["list", "read", "search", "history"], a),
   tell: ([a]) => a === "inbox",
   feed: () => true,
+  // `look log`: what others in the room said.
+  look: ([a]) => a === "log",
+  l: ([a]) => a === "log",
 };
 
 function commandResultTrust(raw: string): { trust?: ResultTrust; peerMessages: boolean } {
@@ -582,6 +611,11 @@ function commandResultTrust(raw: string): { trust?: ResultTrust; peerMessages: b
   const tail = words.slice(1, 3).map((w) => w.toLowerCase());
   const external = { trust: "external_tool" as const, peerMessages: false };
   if (classifyCommandRisk(raw) === "egress") return external;
+  // Model-run web research (`web swarm`, `research ask`) spends money, so it is
+  // gated as an execution, but its text is still web content.
+  if ((verb === "web" && tail[0] === "swarm") || (verb === "research" && tail[0] === "ask")) {
+    return external;
+  }
   if (verb === "probe" || verb === "run" || verb === "shell") return external;
   if ((verb === "connect" || verb === "conn") && has(["call", "tools"], tail[0])) return external;
   if (PEER_MESSAGE_READS[canonical]?.(tail)) return { trust: "world_event", peerMessages: true };

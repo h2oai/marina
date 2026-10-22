@@ -71,27 +71,28 @@ export function useEventFeedActivity(
         // server responses via the game WebSocket perception handler.
 
         // ── Create visual interaction arcs for all event types ────────
+        // Speech arrives as the typed, content-free say_sent / tell_sent
+        // events (names + message ref + causal envelope, never the words), so
+        // these arcs carry no body: a viewer reads a message only where it
+        // was delivered to them.
+        if (event.type === "say_sent" && event.from && event.room) {
+          // Say reaches everyone in the same room.
+          const roomEntities = entities.filter(
+            (e) => e.room === event.room && e.name !== event.from,
+          );
+          for (const target of roomEntities.slice(0, 3)) {
+            addInteraction(event.from, target.name, "say");
+          }
+          continue;
+        }
+        if (event.type === "tell_sent" && event.from && event.to) {
+          addInteraction(event.from, event.to, "tell", undefined, undefined, {
+            recipient: event.to,
+          });
+          continue;
+        }
         if (event.entity && event.room) {
-          if (event.type === "say") {
-            // Say reaches everyone in the same room. The arc carries the
-            // actual utterance so the map shows what was said, not just
-            // that something was said.
-            const { body } = parseMessage("say", event.input);
-            const roomEntities = entities.filter(
-              (e) => e.room === event.room && e.name !== event.entity,
-            );
-            for (const target of roomEntities.slice(0, 3)) {
-              addInteraction(event.entity, target.name, "say", undefined, undefined, { body });
-            }
-          } else if (event.type === "tell" && event.input) {
-            const { body, recipient } = parseMessage("tell", event.input);
-            if (recipient) {
-              addInteraction(event.entity, recipient, "tell", undefined, undefined, {
-                body,
-                recipient,
-              });
-            }
-          } else if (event.type === "shout") {
+          if (event.type === "shout") {
             const { body } = parseMessage("shout", event.input);
             const nearbyEntities = entities.filter(
               (e) => e.name !== event.entity && e.room !== event.room,
@@ -168,10 +169,13 @@ export function useLatestRoomMessages(
   const latestRef = useRef(latest);
 
   const recompute = useCallback(() => {
+    const { eventFeed, entities } = useWorldState.getState();
     const next = latestRoomMessages(
-      useWorldState.getState().eventFeed,
+      eventFeed,
       resolveRef.current,
       Date.now(),
+      undefined,
+      (name) => entities.find((e) => e.name === name)?.room,
     );
     if (sameRoomMessages(latestRef.current, next)) return;
     latestRef.current = next;

@@ -10,8 +10,9 @@
  * primitive and produces the same Sample shape. This is what makes
  * Marina an integration substrate: the resolver is the contract.
  *
- * Auth mirrors /mem: MEM_API_KEYS for keyed mode, MARINA_OPEN_API for
- * dev-mode open access. Per-agent rate limiting via the shared
+ * Auth is the /mem path (`authenticateMemCaller`): MEM_API_KEYS for keyed
+ * mode, MARINA_OPEN_API for dev-mode open access, the failed-auth throttle
+ * and a bounded body. Per-agent rate limiting via the shared
  * memRateLimiter (probes are read-mostly + bounded by upstream rate
  * limits anyway).
  *
@@ -25,7 +26,6 @@
 
 import type { RateLimiter } from "../../auth/rate-limiter";
 import { Logger } from "../../engine/logger";
-import { isOpenApiMode } from "../../engine/trust-profile";
 import type { MarinaDB } from "../../persistence/database";
 import { getResolver, listResolvers } from "../../resolvers/registry";
 import { findLatestSample, writeSample } from "../../resolvers/sample-writer";
@@ -33,6 +33,14 @@ import type { ResolverOutput, Sample } from "../../resolvers/types";
 import { getActiveWatch, retireWatchNote } from "../../resolvers/watch-spec";
 import type { EngineEvent } from "../../types";
 import { corsHeaders } from "../cors";
+import {
+  authFailuresExhausted,
+  clientIp,
+  type PeerAddressSource,
+  readJsonBody,
+  recordAuthFailure,
+} from "../http-utils";
+import { authenticateMemCaller } from "./mem-api";
 
 /** Module logger: probe HTTP route — resolver failures. */
 const logger = new Logger();
@@ -45,54 +53,10 @@ function errorRes(status: number, message: string): Response {
   return json({ error: message }, status);
 }
 
-// ─── Auth (mirrors mem-api, intentionally duplicated for clarity) ───────────
+// ─── Auth: the same path as /mem (authenticateMemCaller) ────────────────────
 
-function getEnvKeys(): Map<string, string> | null {
-  const raw = process.env.MEM_API_KEYS;
-  if (!raw) return null;
-  const keys = new Map<string, string>();
-  for (const pair of raw.split(",")) {
-    const [secret, agent] = pair.trim().split(":");
-    if (secret && agent) keys.set(secret.trim(), agent.trim());
-  }
-  return keys.size > 0 ? keys : null;
-}
-
-function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: Response } {
-  const envKeys = getEnvKeys();
-  const auth = req.headers.get("Authorization");
-  if (auth?.startsWith("Bearer ")) {
-    const token = auth.slice(7);
-    if (envKeys) {
-      const agent = envKeys.get(token);
-      if (agent) return { agent };
-    }
-    const dbKey = db.validateMemApiKey(token);
-    if (dbKey) return { agent: dbKey.agent_name };
-    return { error: errorRes(401, "Invalid API key") };
-  }
-  if (envKeys) {
-    return { error: errorRes(401, "Missing Authorization header. Use: Bearer <key>") };
-  }
-  if (!isOpenApiMode()) {
-    return {
-      error: errorRes(
-        401,
-        "Probe API requires authentication. Set MEM_API_KEYS or MARINA_OPEN_API=true.",
-      ),
-    };
-  }
-  const agentName = req.headers.get("X-Agent-Name");
-  if (!agentName) {
-    return {
-      error: errorRes(
-        400,
-        "X-Agent-Name header required (or set MEM_API_KEYS and use Bearer auth)",
-      ),
-    };
-  }
-  return { agent: agentName };
-}
+/** Probe request bodies are a kind, a few string args and a watch id. */
+const PROBE_MAX_BODY_BYTES = 64 * 1024;
 
 // ─── Routing ────────────────────────────────────────────────────────────────
 
@@ -103,6 +67,7 @@ export async function handleProbeApi(
   db: MarinaDB,
   emitEvent: (event: EngineEvent) => void,
   rateLimiter?: RateLimiter,
+  opts: { peer?: PeerAddressSource | string | null } = {},
 ): Promise<Response | undefined> {
   if (url.pathname !== "/api/probe") return undefined;
 
@@ -121,9 +86,17 @@ export async function handleProbeApi(
     return errorRes(405, "Method not allowed (POST or GET)");
   }
 
-  // Auth
-  const auth = authenticate(req, db);
-  if ("error" in auth) return auth.error;
+  // Auth. A caller that has spent its failed-credential budget is refused
+  // before its credential is compared.
+  const ip = clientIp(req, opts.peer);
+  if (authFailuresExhausted(ip)) {
+    return errorRes(429, "Too many failed authentication attempts. Please slow down.");
+  }
+  const auth = authenticateMemCaller(req, db, "Probe API");
+  if ("error" in auth) {
+    if (auth.credentialRejected) recordAuthFailure(ip);
+    return auth.error;
+  }
   const agent = auth.agent;
 
   // Rate limit (per-agent; probes hit upstream APIs so over-eager callers
@@ -133,12 +106,12 @@ export async function handleProbeApi(
   }
 
   // Parse body
-  let body: { kind?: unknown; args?: unknown; watch?: unknown };
-  try {
-    body = (await req.json()) as typeof body;
-  } catch {
-    return errorRes(400, "Invalid JSON body");
-  }
+  const read = await readJsonBody(req, {
+    maxBytes: PROBE_MAX_BODY_BYTES,
+    errorResponse: (status, _code, message) => errorRes(status, message),
+  });
+  if (!read.ok) return read.response;
+  const body = read.body as { kind?: unknown; args?: unknown; watch?: unknown };
 
   const kind = typeof body.kind === "string" ? body.kind : "";
   if (!kind) return errorRes(400, "kind is required (string)");

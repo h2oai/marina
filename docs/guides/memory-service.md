@@ -122,6 +122,7 @@ require `Idempotency-Key: KEY`. JSON bodies are limited to 2 MiB. Errors have
 | `POST /spaces/:space/execute_plan` | Executes a returned plan against its exact space generation and vocabulary version |
 | `POST /spaces/:space/retrieve` | Task-directed lexical/symbolic retrieval with original source windows, byte budgets and diagnostics; see [retrieval contracts](memory-interfaces.md#typescript-and-javascript) |
 | `GET/POST /spaces/:space/checkpoints/:name` | Get state; write `{expected_version, data, source_cursor?, source_ids?}` atomically. Use version 0 for first write. |
+| `POST /spaces/:space/checkpoints/:name/capture` | One transaction: capture up to 64 new `items` (1 MiB), a manifest listing `order` (existing source ids or item indexes), and the checkpoint with `data[field] = entry + {source_ids, manifest_source_id}`. The expected version is checked before anything is stored. |
 | `GET /spaces/:space/jobs/:id` | Durable embedding job state; worker lease secrets are excluded |
 | `POST /spaces/:space/reindex` | `{expected_generation, limit?, cursor?}`; page missing-vector jobs with `job_ids`, `examined`, next `generation`, and `next_cursor` |
 | `POST /spaces/:space/grants` | Owner grants `{principal_id, role:"reader"\|"writer"\|null}`; `null` revokes access |

@@ -27,6 +27,8 @@ import {
   upstreamRefusalStatus,
 } from "../../coordination/request-deadline";
 import type { Engine } from "../../engine/engine";
+import { sameResidentName } from "../../engine/entity-name";
+import { fenceEntity, parseEvidenceCutoff } from "../../engine/evidence-fence";
 import { compareTraceCohorts } from "../../engine/trace-dataset";
 import { projectTraces } from "../../engine/trace-projection";
 import { adviseTraceRouting, selectAdaptiveCandidate } from "../../engine/trace-routing-advice";
@@ -34,6 +36,7 @@ import type { EvalContext } from "../../learning/eval-context";
 import { formatLesson } from "../../learning/outcomes";
 import { lessonsHeaderValue, recallForWork } from "../../learning/service";
 import type { EngineEvent } from "../../types";
+import { claimLeaseMs, isWorkOnRequest, RequestClaim } from "./request-claim";
 import type { ResponseRecord, ResponsesSseEmitter } from "./responses-sse";
 import {
   type CompletionUsage,
@@ -141,7 +144,8 @@ export function scheduleRequestReminders(
   cm: ChannelManager,
   channelId: string,
   requestId: string,
-  target: string,
+  /** The member the reminder is addressed to; a function reads the request's current holder. */
+  target: string | (() => string),
   userContent: string,
   timeoutMs = REQUEST_TIMEOUT_MS,
   evalCtx?: EvalContext,
@@ -166,7 +170,7 @@ export function scheduleRequestReminders(
             id: requestId,
             reminder: true,
             ...evalEnvelope(evalCtx),
-            target,
+            target: typeof target === "function" ? target() : target,
             content:
               `REMINDER (${age}s elapsed, ${left}s to the deadline, request ${requestId} still unanswered): send your best ` +
               `current answer immediately — do not wait on further coordination. Run EXACTLY: ` +
@@ -325,6 +329,11 @@ export interface RouteResult {
   budgetForced?: BudgetForced;
   /** The lesson ids the request was served (`x-marina-lessons`), when any were recalled. */
   lessons?: string;
+  /**
+   * The resident whose reply answered (`x-marina-respondent`), so a caller
+   * filing the answer can name its producer. Absent for a forced draft.
+   */
+  respondent?: { id: string; name: string };
 }
 
 /** A responder's `repaired` label, when it is one Marina issues. */
@@ -344,7 +353,22 @@ export interface RouteOptions {
   deadlineMs?: number;
   /** The request's eval context (`x-marina-eval`): self-exclusion for measurement runs. */
   eval?: EvalContext;
+  /**
+   * The as-of fence (`x-marina-asof`, `src/engine/evidence-fence.ts`): the
+   * responder is fenced at this ISO cutoff while the request is open — its
+   * web, data, recall and lessons are bounded by it, every other outbound
+   * command is refused, and whoever it hands work to is fenced too.
+   */
+  evidenceCutoff?: string;
+  /**
+   * Route to this member (an online member of the endpoint channel) instead
+   * of load balancing — a `role:` assignee resolved by standing.
+   */
+  pinTarget?: string;
 }
+
+/** How long past its deadline a request's fence still holds (a late tool call). */
+const FENCE_GRACE_MS = 30_000;
 
 /**
  * Non-retryable upstream refusals of the lead's model before a routed request
@@ -472,9 +496,14 @@ export async function routeToChannel(
   // Load balancing — over the serving crew's outward face when one serves.
   const plan = servingCrewPlan(engine, channelName, onlineMembers);
   const strategy = opts?.strategy ?? "round-robin";
-  const route = selectRouteTarget(engine, plan.eligible, channel.id, strategy);
+  const pinned =
+    opts?.pinTarget && onlineMembers.includes(opts.pinTarget) ? opts.pinTarget : undefined;
+  const route = pinned
+    ? { target: pinned, reason: "pinned" }
+    : selectRouteTarget(engine, plan.eligible, channel.id, strategy);
   const target = route.target;
-  const protocol = plan.protocolFor(target);
+  const fenceMs = parseEvidenceCutoff(opts?.evidenceCutoff);
+  const asof = fenceMs !== undefined ? new Date(fenceMs).toISOString() : undefined;
   // Lessons from past outcomes for the lead to apply (MARINA_LESSONS; observe
   // and off inject nothing). Byte-budgeted: the perception is clamped.
   // Cross-board `meta` lessons ride a third of the budget.
@@ -482,7 +511,12 @@ export async function routeToChannel(
     engine.db,
     ["tools", "code", "forecast"],
     userContent.slice(0, 500),
-    { limit: 3, maxBytes: 600, ...(opts?.eval ? { eval: opts.eval } : {}) },
+    {
+      limit: 3,
+      maxBytes: 600,
+      ...(opts?.eval ? { eval: opts.eval } : {}),
+      ...(asof ? { asOf: asof } : {}),
+    },
   );
 
   // Multi-turn conversation
@@ -518,38 +552,88 @@ export async function routeToChannel(
     timestamp: Date.now(),
   });
 
-  // Build request payload
+  // Build request payload, addressed to one member. A re-offer is the same
+  // request addressed to the next holder (see the claim below).
   // `protocol` rides before `content`: the perception clamp cuts from the end.
-  const payload = JSON.stringify({
-    type: "model_request",
-    id: requestId,
-    ...evalEnvelope(opts?.eval),
-    ...(protocol ? { protocol } : {}),
-    ...(lessons.inject.length ? { lessons: lessons.inject.map(formatLesson) } : {}),
-    trace: requestTrace(requestId),
-    content: userContent,
-    target,
-    ...(opts?.context ? { context: opts.context } : {}),
-    ...(convId ? { conversation_id: convId } : {}),
-    ...(history && history.length > 0 ? { history } : {}),
-  });
+  const payloadFor = (to: string, reoffer = false) => {
+    const protocol = plan.protocolFor(to);
+    return JSON.stringify({
+      type: "model_request",
+      id: requestId,
+      ...(reoffer ? { reoffer: true } : {}),
+      ...evalEnvelope(opts?.eval),
+      ...(asof ? { asof } : {}),
+      ...(protocol ? { protocol } : {}),
+      ...(lessons.inject.length ? { lessons: lessons.inject.map(formatLesson) } : {}),
+      trace: requestTrace(requestId),
+      content: userContent,
+      target: to,
+      ...(opts?.context ? { context: opts.context } : {}),
+      ...(convId ? { conversation_id: convId } : {}),
+      ...(history && history.length > 0 ? { history } : {}),
+    });
+  };
 
   incrementPending(target);
   // Budget-terminal deadline: the route's timeout, or the client's own per-item
   // deadline when sooner. At the deadline the crew's best draft is the answer
   // (labelled `budgetForced`); only a crew with no draft at all times out.
   const deadlineMs = requestDeadlineMs(REQUEST_TIMEOUT_MS, opts?.deadlineMs);
+  const nameOf = (id: string) => engine.getOnlineAgents().find((e) => e.id === id)?.name;
+  const targetName = nameOf(target);
+  // The member serving the request now (the target until a re-offer moves it).
+  let holderName = targetName;
+  const drafts = new RequestDraftCollector(requestId, targetName);
+  // The fence binds the responder's whole turn: fenced before it hears the request.
+  const fenceHolder = (id: string) =>
+    fenceMs !== undefined
+      ? fenceEntity(id, `request:${requestId}`, fenceMs, startedAt + deadlineMs + FENCE_GRACE_MS)
+      : undefined;
+  const releaseFences = [fenceHolder(target)];
+  // One member holds the request at a time; with no sign of its work for the
+  // lease, the request is re-offered to another eligible member
+  // (`request-claim.ts`). A pinned request stays with its pin.
+  const leaseMs = pinned ? 0 : claimLeaseMs();
+  const claim = new RequestClaim({
+    holder: target,
+    leaseMs,
+    candidates: () => {
+      const online = new Set(engine.getOnlineAgents().map((e) => e.id as string));
+      const live = cm.getMembers(channel.id).filter((m) => online.has(m));
+      return servingCrewPlan(engine, channelName, live).eligible;
+    },
+    load: (member) => pendingRequests.get(member) ?? 0,
+    reoffer: (next, previous) => {
+      decrementPending(previous);
+      incrementPending(next);
+      const previousName = holderName ?? previous;
+      holderName = nameOf(next);
+      releaseFences.push(fenceHolder(next));
+      engine.logEvent({
+        type: "model_request_lifecycle",
+        phase: "routed",
+        requestId,
+        ...requestTrace(requestId),
+        model,
+        target: next,
+        routeStrategy: strategy,
+        candidateCount: onlineMembers.length,
+        routeReason: "reoffered:claim-lapsed",
+        detail: `${previousName} showed no work on the request for ${leaseMs}ms`,
+        timestamp: Date.now(),
+      });
+      cm.send(channel.id, "__model_api__", "model-api", payloadFor(next, true));
+    },
+  });
   const cancelReminders = scheduleRequestReminders(
     cm,
     channel.id,
     requestId,
-    target,
+    () => claim.holder,
     userContent,
     deadlineMs,
     opts?.eval,
   );
-  const targetName = engine.getOnlineAgents().find((e) => e.id === target)?.name;
-  const drafts = new RequestDraftCollector(requestId, targetName);
   // The member whose correlated reply fulfilled the request (usually `target`).
   let respondedBy = target;
   let detachEvents = () => {};
@@ -560,6 +644,7 @@ export async function routeToChannel(
       const settle = (outcome: () => void) => {
         if (settled) return;
         settled = true;
+        claim.stop();
         clearTimeout(timer);
         unsub();
         detachEvents();
@@ -594,7 +679,8 @@ export async function routeToChannel(
       let refusals = 0;
       const onEvent = (event: EngineEvent) => {
         drafts.onEvent(event);
-        if (event.type !== "agent_error" || event.name !== targetName) return;
+        if (holderName && isWorkOnRequest(event, holderName, requestId)) claim.renew();
+        if (event.type !== "agent_error" || !sameResidentName(event.name, holderName)) return;
         if (event.timestamp < startedAt) return;
         const status = upstreamRefusalStatus(event.error);
         if (status === undefined) return;
@@ -621,6 +707,7 @@ export async function routeToChannel(
         }
         if (parsed?.type === "model_draft" && parsed.id === requestId) {
           drafts.addExplicit(senderName, String(parsed.content ?? ""));
+          if (senderId === claim.holder) claim.renew();
           return;
         }
         if (parsed?.type === "model_response" && parsed.id === requestId) {
@@ -654,7 +741,8 @@ export async function routeToChannel(
       detachEvents = () => engine.removeEventListener(onEvent);
 
       // Send request to channel
-      cm.send(channel.id, "__model_api__", "model-api", payload);
+      cm.send(channel.id, "__model_api__", "model-api", payloadFor(target));
+      claim.start();
     });
     // Persist to conversation channel (use __model_conv__ to avoid triggering agents)
     if (convChannel) {
@@ -668,14 +756,16 @@ export async function routeToChannel(
       requestId,
       ...requestTrace(requestId),
       model,
-      target,
-      ...(respondedBy !== target ? { respondedBy } : {}),
+      target: claim.holder,
+      ...(respondedBy !== claim.holder ? { respondedBy } : {}),
       routeStrategy: strategy,
       candidateCount: onlineMembers.length,
       routeAdviceMode: route.adviceMode,
       routeReason:
         [
-          route.reason ?? (result.repaired || result.budgetForced ? "routed" : undefined),
+          route.reason ??
+            (result.repaired || result.budgetForced || claim.reoffers ? "routed" : undefined),
+          claim.reoffers ? `reoffered:${claim.reoffers}` : undefined,
           result.repaired,
           result.budgetForced ? `budget-forced:${result.budgetForced.reason}` : undefined,
         ]
@@ -690,7 +780,22 @@ export async function routeToChannel(
       durationMs: Date.now() - startedAt,
       timestamp: Date.now(),
     });
-    return lessons.recalled.length ? { ...result, lessons: lessonsHeaderValue(lessons) } : result;
+    // Who answered: the correlated replier, or the lead whose own draft was forced.
+    const respondentId = result.budgetForced
+      ? result.budgetForced.source?.startsWith("lead")
+        ? target
+        : undefined
+      : respondedBy;
+    const respondentName = respondentId
+      ? engine.entities.get(respondentId as never)?.name
+      : undefined;
+    const attributed =
+      respondentId && respondentName
+        ? { ...result, respondent: { id: respondentId, name: respondentName } }
+        : result;
+    return lessons.recalled.length
+      ? { ...attributed, lessons: lessonsHeaderValue(lessons) }
+      : attributed;
   } catch (error) {
     engine.logEvent({
       type: "model_request_lifecycle",
@@ -698,7 +803,7 @@ export async function routeToChannel(
       requestId,
       ...requestTrace(requestId),
       model,
-      target,
+      target: claim.holder,
       routeStrategy: strategy,
       candidateCount: onlineMembers.length,
       routeAdviceMode: route.adviceMode,
@@ -709,8 +814,10 @@ export async function routeToChannel(
     });
     throw error;
   } finally {
+    claim.stop();
+    for (const release of releaseFences) release?.();
     cancelReminders();
-    decrementPending(target);
+    decrementPending(claim.holder);
   }
 }
 
@@ -781,6 +888,10 @@ async function collectResponses(
   const runId = `req-${crypto.randomUUID().slice(0, 8)}`;
   const startedAt = Date.now();
   const targetByRequest = new Map<string, string>();
+  // The as-of fence binds every fanned-out responder until the fan-out settles.
+  const fenceMs = parseEvidenceCutoff(opts?.evidenceCutoff);
+  const asof = fenceMs !== undefined ? new Date(fenceMs).toISOString() : undefined;
+  const releaseFences: Array<() => void> = [];
   const fanoutTrace = (requestId: string) => ({
     runId,
     traceId: runId,
@@ -822,6 +933,7 @@ async function collectResponses(
         clearTimeout(overall);
         if (graceTimer) clearTimeout(graceTimer);
         unsub();
+        for (const release of releaseFences.splice(0)) release();
         for (const id of pending) finishTarget(id, "failed", unresolvedDetail);
         for (const t of targets) decrementPending(t);
       }
@@ -860,6 +972,15 @@ async function collectResponses(
         pending.add(requestId);
         targetByRequest.set(requestId, target);
         incrementPending(target);
+        if (fenceMs !== undefined)
+          releaseFences.push(
+            fenceEntity(
+              target,
+              `request:${requestId}`,
+              fenceMs,
+              Date.now() + REQUEST_TIMEOUT_MS + FENCE_GRACE_MS,
+            ),
+          );
         engine.logEvent({
           type: "model_request_lifecycle",
           phase: "received",
@@ -886,6 +1007,7 @@ async function collectResponses(
             type: "model_request",
             id: requestId,
             ...evalEnvelope(opts?.eval),
+            ...(asof ? { asof } : {}),
             trace: fanoutTrace(requestId),
             content: userContent,
             target,
@@ -1033,9 +1155,14 @@ export function routeToChannelStreaming(
 
   const plan = servingCrewPlan(engine, channelName, onlineMembers);
   const strategy = opts?.strategy ?? "round-robin";
-  const route = selectRouteTarget(engine, plan.eligible, channel.id, strategy);
+  const pinned =
+    opts?.pinTarget && onlineMembers.includes(opts.pinTarget) ? opts.pinTarget : undefined;
+  const route = pinned
+    ? { target: pinned, reason: "pinned" }
+    : selectRouteTarget(engine, plan.eligible, channel.id, strategy);
   const target = route.target;
-  const protocol = plan.protocolFor(target);
+  const fenceMs = parseEvidenceCutoff(opts?.evidenceCutoff);
+  const asof = fenceMs !== undefined ? new Date(fenceMs).toISOString() : undefined;
 
   const convId = opts?.conversationId ?? undefined;
   let convChannel: { id: string; name: string } | undefined;
@@ -1051,21 +1178,79 @@ export function routeToChannelStreaming(
   const encoder = new TextEncoder();
   const collectedContent: string[] = [];
 
-  const payload = JSON.stringify({
-    type: "model_request",
-    id: reqId,
-    ...evalEnvelope(opts?.eval),
-    ...(protocol ? { protocol } : {}),
-    trace: requestTrace(reqId),
-    content: userContent,
-    target,
-    stream: true,
-    ...(opts?.context ? { context: opts.context } : {}),
-    ...(convId ? { conversation_id: convId } : {}),
-    ...(history && history.length > 0 ? { history } : {}),
-  });
+  // Addressed to one member; a re-offer is the same request addressed to the
+  // next holder (see the claim below, as in `routeToChannel`).
+  const payloadFor = (to: string, reoffer = false) => {
+    const protocol = plan.protocolFor(to);
+    return JSON.stringify({
+      type: "model_request",
+      id: reqId,
+      ...(reoffer ? { reoffer: true } : {}),
+      ...evalEnvelope(opts?.eval),
+      ...(asof ? { asof } : {}),
+      ...(protocol ? { protocol } : {}),
+      trace: requestTrace(reqId),
+      content: userContent,
+      target: to,
+      stream: true,
+      ...(opts?.context ? { context: opts.context } : {}),
+      ...(convId ? { conversation_id: convId } : {}),
+      ...(history && history.length > 0 ? { history } : {}),
+    });
+  };
 
   incrementPending(target);
+  // The as-of fence binds the streaming responder too, until the stream settles.
+  const fenceHolder = (id: string) =>
+    fenceMs !== undefined
+      ? fenceEntity(
+          id,
+          `request:${reqId}`,
+          fenceMs,
+          startedAt + REQUEST_TIMEOUT_MS + FENCE_GRACE_MS,
+        )
+      : undefined;
+  const releaseFences = [fenceHolder(target)];
+  const nameOf = (id: string) => engine.getOnlineAgents().find((e) => e.id === id)?.name;
+  let holderName = nameOf(target);
+  // One member holds the request until its first frame; with no sign of its
+  // work for the lease, it is re-offered (`request-claim.ts`). A pinned
+  // request stays with its pin.
+  const leaseMs = pinned ? 0 : claimLeaseMs();
+  const claim = new RequestClaim({
+    holder: target,
+    leaseMs,
+    candidates: () => {
+      const online = new Set(engine.getOnlineAgents().map((e) => e.id as string));
+      const live = cm.getMembers(channel.id).filter((m) => online.has(m));
+      return servingCrewPlan(engine, channelName, live).eligible;
+    },
+    load: (member) => pendingRequests.get(member) ?? 0,
+    reoffer: (next, previous) => {
+      decrementPending(previous);
+      incrementPending(next);
+      const previousName = holderName ?? previous;
+      holderName = nameOf(next);
+      releaseFences.push(fenceHolder(next));
+      engine.logEvent({
+        type: "model_request_lifecycle",
+        phase: "routed",
+        requestId: reqId,
+        ...requestTrace(reqId),
+        model,
+        target: next,
+        routeStrategy: strategy,
+        candidateCount: onlineMembers.length,
+        routeReason: "reoffered:claim-lapsed",
+        detail: `${previousName} showed no work on the request for ${leaseMs}ms`,
+        timestamp: Date.now(),
+      });
+      cm.send(channel.id, "__model_api__", "model-api", payloadFor(next, true));
+    },
+  });
+  const onWork = (event: EngineEvent) => {
+    if (holderName && isWorkOnRequest(event, holderName, reqId)) claim.renew();
+  };
 
   engine.logEvent({
     type: "model_request_lifecycle",
@@ -1102,10 +1287,13 @@ export function routeToChannelStreaming(
   const cleanup = () => {
     if (settled) return;
     settled = true;
+    claim.stop();
+    engine.removeEventListener(onWork);
     if (timer) clearTimeout(timer);
+    for (const release of releaseFences) release?.();
     cancelReminders?.();
     unsub?.();
-    decrementPending(target);
+    decrementPending(claim.holder);
   };
   const finishTrace = (phase: "completed" | "failed", detail?: string) => {
     if (traceFinished) return;
@@ -1116,12 +1304,15 @@ export function routeToChannelStreaming(
       requestId: reqId,
       ...requestTrace(reqId),
       model,
-      target,
-      ...(streamOwner && streamOwner !== target ? { respondedBy: streamOwner } : {}),
+      target: claim.holder,
+      ...(streamOwner && streamOwner !== claim.holder ? { respondedBy: streamOwner } : {}),
       routeStrategy: strategy,
       candidateCount: onlineMembers.length,
       routeAdviceMode: route.adviceMode,
-      routeReason: route.reason,
+      routeReason:
+        [route.reason, claim.reoffers ? `reoffered:${claim.reoffers}` : undefined]
+          .filter(Boolean)
+          .join("+") || undefined,
       durationMs: Date.now() - startedAt,
       ...(detail ? { detail } : {}),
       timestamp: Date.now(),
@@ -1171,6 +1362,8 @@ export function routeToChannelStreaming(
           return;
         }
         streamOwner ??= senderId;
+        // The first frame settles who serves the stream: no more re-offers.
+        claim.stop();
 
         const text = parsed.content ?? "";
 
@@ -1217,7 +1410,7 @@ export function routeToChannelStreaming(
           return;
         }
 
-        // Phase 1 compat: single model_response → wrap as one chunk + end
+        // Compat: single model_response → wrap as one chunk + end
         if (parsed.type === "model_response" && parsed.id === reqId) {
           cleanup();
           finishTrace("completed");
@@ -1247,14 +1440,16 @@ export function routeToChannelStreaming(
           cm,
           channel.id,
           reqId,
-          target,
+          () => claim.holder,
           userContent,
           undefined,
           opts?.eval,
         );
+        engine.addEventListener(onWork);
         // A local listener can finish the stream inside send(). Install all
         // cleanup handles first so a completed request cannot leave reminders.
-        cm.send(channel.id, "__model_api__", "model-api", payload);
+        cm.send(channel.id, "__model_api__", "model-api", payloadFor(target));
+        if (!settled && !streamOwner) claim.start();
       } catch (error) {
         cleanup();
         finishTrace("failed", "Request dispatch failed");

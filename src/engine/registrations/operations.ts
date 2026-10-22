@@ -7,7 +7,7 @@ import { VerificationRunner } from "../../coding/verification-runner";
 import { scratchRoot } from "../../config/data-dir";
 import { probeConfiguredProviders } from "../../net/model/model-api";
 import { describeRouteHealth } from "../../net/model/route-health";
-import { hasProviderKey } from "../../net/model-api/upstream";
+import { describeEngineModels, hasProviderKey } from "../../net/model-api/upstream";
 import type { EntityId } from "../../types";
 import { engineAssistanceExpiryDeps } from "../assistance-expiry";
 import { isOperatorPrincipal } from "../challenges";
@@ -42,6 +42,7 @@ import { roomMacroOwner } from "../macro-expansion";
 import { describeVisual, lookReply } from "../media/vision";
 import { computeReadiness } from "../readiness";
 import { answerCodeViaLocalModel, parseExecApprovalTimeout } from "./model-helpers";
+import { engineTellDeps } from "./tell-deps";
 
 export function registerOperationCommands(engine: Engine): void {
   // Build command (only if db-backed)
@@ -63,6 +64,7 @@ export function registerOperationCommands(engine: Engine): void {
         unregisterCommand: (name) => engine.commands.unregisterOwned(`dynamic:${name}`, name),
         isBuiltinCommand: (name) => engine.commands.getDef(name) !== undefined,
         clearSandboxMetrics: (roomId) => engine.sandbox.clearMetrics(roomId),
+        startRoom: engine.config.startRoom,
       }),
     );
   }
@@ -231,6 +233,8 @@ export function registerOperationCommands(engine: Engine): void {
       execApprovalTimeoutMs: parseExecApprovalTimeout(
         process.env.MARINA_CODE_EXEC_APPROVAL_TIMEOUT_MS,
       ),
+      // Review requests reach the reviewer as an ordinary (owed) tell.
+      tellDeps: engineTellDeps(engine),
       db: engine.db,
     }),
   );
@@ -257,6 +261,7 @@ export function registerOperationCommands(engine: Engine): void {
         entityCount: () => engine.entities.size,
         getUptime: () => engine.getUptime(),
         reloadRoom: (id) => engine.reloadRoom(id),
+        describeModels: () => describeEngineModels(engine),
       }),
     );
   }
@@ -268,6 +273,11 @@ export function registerOperationCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       logEvent: (event) => engine.logEvent(event),
       db: engine.db,
+      isOnline: (name) => {
+        const entity = engine.entities.findAgentByName(name);
+        return !!entity && !!engine.getConnectionForEntity(entity.id);
+      },
+      findAgent: (name) => engine.entities.findAgentByName(name),
     }),
   );
 

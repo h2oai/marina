@@ -26,6 +26,9 @@ export interface RoomSandboxConfig {
   violationDecayTicks: number;
 }
 
+/** The refusal for a room whose handler failed or that the sandbox disabled. */
+export const ROOM_UNAVAILABLE = "This room is unavailable right now.";
+
 const DEFAULT_CONFIG: RoomSandboxConfig = {
   handlerTimeoutMs: 50,
   maxViolations: 10,
@@ -104,8 +107,28 @@ export class RoomSandbox {
     fn: () => T,
     onError?: (roomId: string, error: string) => void,
   ): T | undefined {
+    const outcome = this.invoke(roomId, handlerName, fn, onError);
+    return outcome.ok ? outcome.value : undefined;
+  }
+
+  /**
+   * Run a room handler and report how it ended: `ok` with its value, or not ok
+   * because the room is disabled or the handler threw (with the error). Over
+   * the time limit is reported as `slow` on an `ok` outcome. Callers that must
+   * fail closed (entry checks, room commands) decide from this, never from an
+   * `undefined` return.
+   */
+  private invoke<T>(
+    roomId: string,
+    handlerName: string,
+    fn: () => T,
+    onError?: (roomId: string, error: string) => void,
+  ):
+    | { ok: true; value: T; slow: boolean }
+    | { ok: false; reason: "disabled" }
+    | { ok: false; reason: "error"; error: unknown } {
     const m = this.getMetrics(roomId);
-    if (m.disabled) return undefined;
+    if (m.disabled) return { ok: false, reason: "disabled" };
 
     m.totalCalls++;
     const start = performance.now();
@@ -117,7 +140,7 @@ export class RoomSandbox {
       const msg = getErrorMessage(err);
       m.lastError = `${handlerName}: ${msg}`;
       this.recordViolation(roomId, m, `Error in ${handlerName}: ${msg}`, onError);
-      return undefined;
+      return { ok: false, reason: "error", error: err };
     }
 
     // An async handler returns a promise: hand it back so the caller (the
@@ -134,7 +157,8 @@ export class RoomSandbox {
     const elapsed = performance.now() - start;
     m.totalTimeMs += elapsed;
 
-    if (elapsed > this.config.handlerTimeoutMs) {
+    const slow = elapsed > this.config.handlerTimeoutMs;
+    if (slow) {
       this.recordViolation(
         roomId,
         m,
@@ -142,7 +166,7 @@ export class RoomSandbox {
         onError,
       );
     }
-    return result;
+    return { ok: true, value: result, slow };
   }
 
   private recordViolation(
@@ -200,17 +224,15 @@ export class RoomSandbox {
 
     if (module.canEnter) {
       const original = module.canEnter;
+      // Entry checks fail closed: a guard that throws, overruns its time limit,
+      // returns something other than `true` or a reason, or belongs to a
+      // disabled room refuses entry.
       wrapped.canEnter = (ctx: RoomContext, entity: EntityId) => {
-        let result: true | string = true;
-        this.execHandler(
-          roomId,
-          "canEnter",
-          () => {
-            result = original(ctx, entity);
-          },
-          onError,
-        );
-        return result;
+        const outcome = this.invoke(roomId, "canEnter", () => original(ctx, entity), onError);
+        if (!outcome.ok || outcome.slow) return ROOM_UNAVAILABLE;
+        const result: unknown = outcome.value;
+        if (result === true) return true;
+        return typeof result === "string" && result.length > 0 ? result : ROOM_UNAVAILABLE;
       };
     }
 
@@ -263,8 +285,19 @@ export class RoomSandbox {
         // Return the handler's value: an async room command's promise must reach
         // processCommand so the per-entity command chain awaits it (previously the
         // closure discarded it and async room commands were never awaited).
-        wrappedCommands[name] = (ctx, input) =>
-          this.execHandler(roomId, `command:${name}`, () => handler(ctx, input), onError);
+        // A throw (or a disabled room) is a failed command: rethrow so the
+        // command phase records failure, as it does for a rejected promise.
+        wrappedCommands[name] = (ctx, input) => {
+          const outcome = this.invoke(
+            roomId,
+            `command:${name}`,
+            () => handler(ctx, input),
+            onError,
+          );
+          if (outcome.ok) return outcome.value;
+          if (outcome.reason === "error") throw outcome.error;
+          throw new Error(ROOM_UNAVAILABLE);
+        };
       }
       wrapped.commands = wrappedCommands;
     }

@@ -4,6 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { rankFloorRefusal } from "../rank-floor";
 
 /**
  * Bankroll command — risk gates at the data layer.
@@ -37,12 +38,14 @@ export const BANKROLL_KEYS = {
 
 const HELP = `Bankroll & risk gates for trading. State stored in core memory; the 'position' command reads these before placing any order.
 
+Research and paper-trading tool, not financial advice. Live trading is off by default; if you enable it you are responsible for the venue's terms and the laws where you live (Kalshi is US-only).
+
 Usage:
   bankroll show                    — display current bankroll, kelly fraction, position cap, daily floor
   bankroll set <usd>               — set total trading bankroll (e.g., 'bankroll set 10000')
   bankroll kelly <fraction>        — set Kelly fraction 0-1 (default 0.5 = half-Kelly)
-  bankroll cap <usd>               — max single position size (defense against typos + concentration)
-  bankroll floor <usd>             — max daily loss in USD before trading halts
+  bankroll cap <usd>               — max stake of one order (a market order is costed at 99¢ a contract)
+  bankroll floor <usd>             — no new opens once today's realized loss (all entities, UTC day) reaches it
   bankroll reset                   — clear all bankroll keys
 
 Ranks: 'bankroll show' works at rank 2+; set/kelly/cap/floor/reset need rank 5+.
@@ -97,8 +100,13 @@ const WRITE_MIN_RANK = 5;
 
 function requireWriteRank(ctx: RoomContext, entity: Entity, eid: Entity["id"]): boolean {
   const rank = (entity.properties.rank as number) ?? 0;
-  if (rank < WRITE_MIN_RANK) {
-    ctx.send(eid, `This subcommand requires rank ${WRITE_MIN_RANK}+ (you are ${rank}).`);
+  const refusal = rankFloorRefusal(
+    entity,
+    WRITE_MIN_RANK,
+    `This subcommand requires rank ${WRITE_MIN_RANK}+ (you are ${rank}).`,
+  );
+  if (refusal) {
+    ctx.send(eid, refusal);
     return false;
   }
   return true;

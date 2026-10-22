@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { escapeRegExp } from "../engine/regexp";
 import type { Perception } from "../types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -47,29 +48,38 @@ export type SocialEventType =
 /** Openers that may precede a vocative ("Hey Name, …", "Thanks Name"). */
 const GREETING = "(?:hey|hi|hello|yo|ok|okay|thanks|thank\\s+you|dear|ping)";
 
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /**
  * Whether `message` is addressed TO `name` — a vocative, not a mention:
  * the name as the first token (`Name, …`, `Name: …`, `Name …`, `@Name …`), after
  * a greeting (`Hey Name, …`, `Thanks Name`), an `@Name` anywhere, or a
  * `to:Name` field. Case-insensitive; the name must end
  * at a word boundary (`Nudged` does not address `Nudged-Bot` or `Nudgedness`).
+ *
+ * Later in a message the name addresses only in a vocative position, written
+ * exactly as the name is (names are often ordinary words): opening a later
+ * sentence and followed by `,` or `:` (`Done. Swift, run the tests`), or
+ * closing a sentence after a comma (`can you check this, Swift?`).
  * A post that merely talks ABOUT the agent ("as Nudged said…") is not an
  * address and owes no reply.
  */
 export function isAddressedTo(message: string | undefined, name: string): boolean {
   if (!message || !name) return false;
-  const n = escapeRegExp(name.trim());
+  const trimmed = name.trim();
+  const n = escapeRegExp(trimmed);
   if (!n) return false;
   const end = "(?![\\w-])";
-  return (
+  if (
     new RegExp(`^\\s*(?:${GREETING}[,!]?\\s+)?@?${n}${end}`, "i").test(message) ||
     new RegExp(`(?:^|[\\s(\\[])@${n}${end}`, "i").test(message) ||
     new RegExp(`\\bto:\\s*@?${n}${end}`, "i").test(message)
-  );
+  )
+    return true;
+  // Vocative positions later in the message; the name's own case must match.
+  const vocatives = [
+    new RegExp(`(?:[.!?]\\s+|\\n\\s*)(?:${GREETING}[,!]?\\s+)?(${n})${end}\\s*[,:]`, "gi"),
+    new RegExp(`,\\s*(${n})${end}\\s*(?:[.!?]+(?:\\s|$)|$)`, "gi"),
+  ];
+  return vocatives.some((re) => [...message.matchAll(re)].some((m) => m[1] === trimmed));
 }
 
 /** `message` without a leading vocative to `name` (`Name, ` / `@Name: `), for classifying the body. */
@@ -93,6 +103,8 @@ const RECENT_SPEAKERS_SWEEP_EVERY = 64;
 export class SocialAwareness {
   private socialEvents: SocialEvent[] = [];
   private entitiesInRoom: Set<string> = new Set();
+  /** Names seen connecting and not yet seen leaving (connects say no room). */
+  private joined: Set<string> = new Set();
   /**
    * Speaker name → last-heard timestamp. Bounded by eviction in `noteSpeaker`:
    * entries older than the five-minute window are swept every
@@ -206,18 +218,19 @@ export class SocialAwareness {
           entityName?: string;
         };
 
+        const who = data.entityName || data.entity;
         if (data.type === "login" || data.type === "connect") {
-          events.push({
-            type: "player_joined",
-            speaker: data.entityName || data.entity,
-            timestamp,
-          });
+          events.push({ type: "player_joined", speaker: who, timestamp });
+          if (who) {
+            this.joined.delete(who);
+            this.joined.add(who);
+            // Bounded like the speaker map: the oldest connects fall out first.
+            if (this.joined.size > RECENT_SPEAKERS_MAX)
+              this.joined.delete(this.joined.values().next().value as string);
+          }
         } else if (data.type === "logout" || data.type === "disconnect") {
-          events.push({
-            type: "player_left",
-            speaker: data.entityName || data.entity,
-            timestamp,
-          });
+          events.push({ type: "player_left", speaker: who, timestamp });
+          if (who) this.joined.delete(who);
         }
         break;
       }
@@ -242,11 +255,29 @@ export class SocialAwareness {
     return Array.from(this.entitiesInRoom);
   }
 
+  /** Whether `message` is addressed to a known name other than `myName`. */
+  addressesSomeoneElse(message: string | undefined, myName: string): boolean {
+    if (!message) return false;
+    const me = myName.toLowerCase();
+    const names = new Set([
+      ...this.entitiesInRoom,
+      ...this.joined,
+      ...this.recentSpeakers.keys(),
+      ...this.relationships.keys(),
+    ]);
+    for (const name of names)
+      if (name && name.toLowerCase() !== me && isAddressedTo(message, name)) return true;
+    return false;
+  }
+
   shouldRespond(event: SocialEvent, myName: string): boolean {
     // Always respond to direct messages and to posts addressed to us by name
     // (a vocative — a mere mention of the name is not an address).
     if (event.type === "player_tells") return true;
     if (isAddressedTo(event.message, myName)) return true;
+    // A post addressed by name to someone else is theirs to answer: the
+    // question heuristics below must not wake a bystander for it.
+    if (this.addressesSomeoneElse(event.message, myName)) return false;
 
     // Relationship-aware response: more likely to respond to known collaborators
     const interactions = event.speaker ? (this.relationships.get(event.speaker) ?? 0) : 0;

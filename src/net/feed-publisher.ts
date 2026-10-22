@@ -51,6 +51,8 @@ export class FeedPublisher {
   private storage?: StorageProvider;
   private emitEvent?: (event: EngineEvent) => void;
   private insertsSinceTrim = 0;
+  /** Message ref → the feed node that shows it, for threading replies. */
+  private readonly feedNodesByRef = new Map<string, { id: string; author: string }>();
 
   constructor(deps: FeedPublisherDeps) {
     this.db = deps.db;
@@ -75,6 +77,7 @@ export class FeedPublisher {
     type: string;
     data: Record<string, unknown>;
     creatorName: string;
+    parentNodeId?: string;
   }): string {
     const nodeId = crypto.randomUUID();
     this.db.createNode({
@@ -83,6 +86,7 @@ export class FeedPublisher {
       type: params.type,
       data: params.data,
       creatorName: params.creatorName,
+      ...(params.parentNodeId ? { parentNodeId: params.parentNodeId } : {}),
     });
     if (++this.insertsSinceTrim >= FEED_TRIM_INTERVAL) {
       this.insertsSinceTrim = 0;
@@ -95,6 +99,44 @@ export class FeedPublisher {
       }
     }
     return nodeId;
+  }
+
+  /** Remember which feed node holds a message ref (bounded like the canvas itself). */
+  private rememberFeedNode(ref: string, nodeId: string, author: string): void {
+    this.feedNodesByRef.delete(ref);
+    this.feedNodesByRef.set(ref, { id: nodeId, author });
+    if (this.feedNodesByRef.size > FEED_CANVAS_MAX_NODES) {
+      const oldest = this.feedNodesByRef.keys().next().value;
+      if (oldest !== undefined) this.feedNodesByRef.delete(oldest);
+    }
+  }
+
+  /**
+   * The feed node that holds `ref`, if it is still on the canvas. Remembered
+   * refs are checked against the canvas (a trim may have removed the node);
+   * a ref from before this process started is looked up on the canvas once.
+   */
+  private feedNodeFor(canvasId: string, ref: string): { id: string; author: string } | undefined {
+    const known = this.feedNodesByRef.get(ref);
+    if (known) {
+      if (this.db.getNode(known.id)?.canvas_id === canvasId) return known;
+      this.feedNodesByRef.delete(ref);
+      return undefined;
+    }
+    for (const node of this.db.getNodesByCanvas(canvasId)) {
+      if (!node.data.includes(ref)) continue;
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(node.data) as Record<string, unknown>;
+      } catch {
+        continue; // a corrupt row cannot be the question
+      }
+      if (data.ref !== ref) continue;
+      const found = { id: node.id, author: String(data.author ?? node.creator_name) };
+      this.feedNodesByRef.set(ref, found);
+      return found;
+    }
+    return undefined;
   }
 
   /** Insert a feed_event row and broadcast the matching engine event. Returns the new row id. */
@@ -127,7 +169,7 @@ export class FeedPublisher {
   /**
    * Append a chronicle event entry. Pass 1 chronicles a small set of civic events:
    * task_approved, crew_created/completed/dissolved, market_consensus, rank_change.
-   * See docs/chronicle.md for what does (and does not) belong here.
+   * See docs/architecture/chronicle.md for what does (and does not) belong here.
    *
    * `refs` should include the originating feed_event id and the domain ref so
    * the Chronicler agent (pass 3) can reconstruct context without re-querying.
@@ -515,18 +557,28 @@ export class FeedPublisher {
     if (!canvas) return;
 
     const entityName = this.resolveEntity(event.entity) ?? event.entity;
+    const ref = `channel_msg:${event.messageId}`;
+    // A post that answers an earlier post on the feed threads under it: the
+    // envelope's cause names the question, and the canvas draws parent links.
+    const parent = event.cause?.startsWith("channel_msg:")
+      ? this.feedNodeFor(canvas.id, event.cause)
+      : undefined;
     const nodeId = this.createFeedCanvasNode({
       canvasId: canvas.id,
       type: "text",
       data: {
-        ref: `channel_msg:${event.messageId}`,
+        ref,
         channel: event.channelName,
         body: event.content,
         author: entityName,
         feedType: "channel_message",
+        ...(event.depth ? { depth: event.depth } : {}),
+        ...(parent ? { inReplyTo: parent.author } : {}),
       },
       creatorName: entityName,
+      ...(parent ? { parentNodeId: parent.id } : {}),
     });
+    this.rememberFeedNode(ref, nodeId, entityName);
 
     this.broadcastNodeAdded(canvas.id, nodeId);
     this.recordFeedEvent({

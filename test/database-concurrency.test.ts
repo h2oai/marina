@@ -288,9 +288,13 @@ describe("Database Concurrency", () => {
 
   it("should handle inserting 1000 notes in a transaction", () => {
     const noteIds: number[] = [];
-    for (let i = 0; i < 1000; i++) {
-      noteIds.push(db.createNote("BatchAgent", `batch note number ${i}`));
-    }
+    // One transaction, as the name says: 1000 separate durable commits cost
+    // 1000 fsyncs, which a loaded disk turns into a timeout.
+    db.transaction(() => {
+      for (let i = 0; i < 1000; i++) {
+        noteIds.push(db.createNote("BatchAgent", `batch note number ${i}`));
+      }
+    });
 
     // All 1000 should be present
     expect(noteIds.length).toBe(1000);

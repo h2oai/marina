@@ -49,11 +49,18 @@ export interface EntityDetail {
   room: string;
   rank: number;
   properties: Record<string, unknown>;
-  inventory: string[];
+  /** Present only in the private view (self, owning person, operator). */
+  inventory?: string[];
+  /** False when the viewer gets the public view (rank, role, presence, activity verbs). */
+  private?: boolean;
+  /** Presence status (working, idle, blocked, needs_you, resting, offline). */
+  presence?: string;
   coreMemory?: CoreMemoryEntry[];
   notes?: NoteEntry[];
   recentActivity?: ActivityEntry[];
   standing?: number;
+  /** Present for a supervised resident: the native adapter running it, and its owner. */
+  resident?: { vendor: string; owner: string };
 }
 
 export interface CoreMemoryEntry {
@@ -75,7 +82,10 @@ export interface NoteEntry {
 
 export interface ActivityEntry {
   type: string;
+  /** Raw command input — only in the entity's private view. */
   input?: string;
+  /** The command verb, when the viewer may not see the input. */
+  verb?: string;
   timestamp: number;
 }
 
@@ -292,6 +302,12 @@ export interface DashboardEvent {
     | "connector"
     | "command";
   action?: "create" | "update" | "delete";
+  // Message envelope (say_sent / tell_sent, content-free; `from` / `to` above
+  // carry the sender and recipient names): the message ref and its causal
+  // thread — the ref it answers and its depth (0 = starts a thread).
+  messageRef?: string;
+  cause?: string;
+  depth?: number;
   timestamp: number;
 }
 
@@ -785,6 +801,10 @@ export interface WorldSnapshot {
     room: string;
     properties?: Record<string, unknown>;
     agentStatus?: AgentStatusInfo;
+    /** Presence status: working, idle, blocked, needs_you, resting or offline. */
+    presence?: string;
+    /** A supervised resident's native adapter (`claude`, `codex`, `pi`). */
+    vendor?: string;
     /** AgentConfig.spawned_by for agent entities: "system" (world-seeded),
      *  "operator" (launched from the dashboard/CLI), or a spawning agent's
      *  name (crew sub-agent). Absent for humans / externally-connected agents.

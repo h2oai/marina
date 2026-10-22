@@ -26,6 +26,15 @@ export interface ChannelMessage {
   senderName: string;
   content: string;
   createdAt: number;
+  /** Causal envelope (`src/engine/message-envelope.ts`); absent = depth 0. */
+  cause?: string;
+  depth?: number;
+}
+
+/** The envelope a channel post records: refs and numbers only. */
+export interface ChannelEnvelope {
+  cause?: string;
+  depth: number;
 }
 
 function rowToChannel(row: ChannelRow): Channel {
@@ -152,11 +161,33 @@ export class ChannelManager {
     content: string,
     extraMeta?: Record<string, unknown>,
   ): EntityId[] {
-    const id = this.db.addChannelMessage(channelId, senderId, senderName, content);
-    return this.deliverStored(
-      { id, channelId, senderId, senderName, content, createdAt: Date.now() },
-      extraMeta,
-    );
+    return this.post(channelId, senderId, senderName, content, { extraMeta }).missed;
+  }
+
+  /**
+   * Store and deliver one post. Returns the stored message (its id is the
+   * feed ref `channel_msg:<id>`) and the readers it could not reach.
+   */
+  post(
+    channelId: string,
+    senderId: string,
+    senderName: string,
+    content: string,
+    opts: { extraMeta?: Record<string, unknown>; envelope?: ChannelEnvelope } = {},
+  ): { message: ChannelMessage; missed: EntityId[] } {
+    const { envelope } = opts;
+    const id = this.db.addChannelMessage(channelId, senderId, senderName, content, envelope);
+    const message: ChannelMessage = {
+      id,
+      channelId,
+      senderId,
+      senderName,
+      content,
+      createdAt: Date.now(),
+      ...(envelope?.cause ? { cause: envelope.cause } : {}),
+      ...(envelope ? { depth: envelope.depth } : {}),
+    };
+    return { message, missed: this.deliverStored(message, opts.extraMeta) };
   }
 
   /**
@@ -195,7 +226,8 @@ export class ChannelManager {
    */
   deliverTo(
     target: EntityId,
-    message: Pick<ChannelMessage, "channelId" | "senderName" | "content">,
+    message: Pick<ChannelMessage, "channelId" | "senderName" | "content"> &
+      Partial<Pick<ChannelMessage, "id" | "cause" | "depth">>,
     extraMeta?: Record<string, unknown>,
   ): boolean {
     const { channelId } = message;
@@ -208,17 +240,29 @@ export class ChannelManager {
   private deliverFormatted(
     target: EntityId,
     channelName: string,
-    message: Pick<ChannelMessage, "senderName" | "content">,
+    message: Pick<ChannelMessage, "senderName" | "content"> &
+      Partial<Pick<ChannelMessage, "id" | "cause" | "depth">>,
     extraMeta?: Record<string, unknown>,
   ): boolean {
     const { senderName, content } = message;
+    // The stored id and causal envelope ride along when known; a caller's
+    // extraMeta can never stand in for them.
+    const envelope =
+      message.id !== undefined
+        ? {
+            messageId: message.id,
+            messageRef: `channel_msg:${message.id}`,
+            ...(message.cause ? { cause: message.cause } : {}),
+            depth: message.depth ?? 0,
+          }
+        : {};
     const delivered = this.sendToEntity(
       target,
       fmtChannel(channelName, senderName, content),
       channelName,
       // extraMeta FIRST so the canonical channel/senderName/content below
       // always win — a caller cannot spoof the authoritative message fields.
-      { ...extraMeta, channel: channelName, senderName, content },
+      { ...extraMeta, channel: channelName, senderName, content, ...envelope },
     );
     return delivered !== false;
   }
@@ -234,6 +278,8 @@ export class ChannelManager {
         senderName: row.sender_name,
         content: row.content,
         createdAt: row.created_at,
+        ...(row.cause ? { cause: row.cause } : {}),
+        depth: row.depth ?? 0,
       }));
   }
 

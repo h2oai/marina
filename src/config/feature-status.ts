@@ -4,7 +4,7 @@
 /**
  * Feature status: an honest map of what Marina ships and what actually runs.
  * `docs/reference/feature-status.md` renders this table for readers;
- * `test/feature-status.test.ts` keeps the page, the command help text and this
+ * `test/docs-contract.test.ts` keeps the page, the command help text and this
  * list in step.
  *
  *   core          used broadly; on by default or by every world
@@ -125,6 +125,25 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/persistence",
   },
   { name: "Code Mode", status: "core", enable: "`code`", owner: "src/engine/commands/code" },
+  {
+    name: "Crews and formations (the runtime form of the orchestration patterns)",
+    status: "core",
+    enable: "`crew`; a crew serves `/v1` model requests and is the default benchmark target",
+    owner: "src/coordination/crew-manager.ts, src/engine/commands/crew.ts",
+  },
+  {
+    name: "Desires and journeys",
+    status: "core",
+    enable: "`desire`, `journey`; the dashboard first-run guide",
+    owner:
+      "src/engine/commands/desire.ts, src/engine/commands/journey.ts, src/engine/journey-state.ts",
+  },
+  {
+    name: "Novelty suggestions (advisory exploration)",
+    status: "core",
+    enable: "`novelty`; residents see suggestions in their continuation prompt",
+    owner: "src/engine/novelty.ts, src/engine/commands/novelty.ts",
+  },
   // ── siloed ──────────────────────────────────────────────────────────────
   {
     name: "Canvas",
@@ -163,6 +182,13 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/quant, src/forecast, src/research",
   },
   {
+    name: "Formation catalogue (Score templates, pure combiners)",
+    status: "siloed",
+    enable:
+      "Always on: typed forecast formations (`MARINA_FORECAST_FORMATION`), resident forecasts, `pattern run`, arena `formation:ensemble` and `formation:delphi`",
+    owner: "src/orchestration/formations",
+  },
+  {
     name: "Research evidence loop and survey",
     status: "siloed",
     enable: "`MARINA_RESEARCH_*`",
@@ -171,21 +197,29 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   {
     name: "Research web agent, cited answers, fact pass",
     status: "siloed",
-    enable: "Benchmark scripts only (`scripts/mind2web2.ts`, deepresearch)",
+    enable:
+      "In world: `research ask` (rank 0, spend-guarded) and the typed `marina_research` tool; benchmark scripts (`scripts/mind2web2.ts`, deepresearch)",
     owner: "src/research",
   },
   {
     name: "Skills",
-    status: "siloed",
-    enable: "`skill`; seeds with `MARINA_SEED_SKILLS=true` (showcase)",
+    status: "core",
+    enable:
+      "`skill`; 5 built-ins (`skill builtin`); residents get the best-fitting skill in their prompt (`MARINA_SKILLS_RESIDENT`, default on); note seeds with `MARINA_SEED_SKILLS=true` (showcase)",
     owner: "src/agent",
+  },
+  {
+    name: "Resolvers, probes and watches",
+    status: "siloed",
+    enable: "`probe`, `watch`; `position open` adds a resolving watch",
+    owner: "src/resolvers, src/engine/commands/probe.ts, src/engine/commands/watch.ts",
   },
   // ── experimental ────────────────────────────────────────────────────────
   {
     name: "Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch)",
     status: "experimental",
     enable:
-      "Experimental: for embedders (Flow, Nov 2026). `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint`",
+      "Experimental: for embedding hosts. `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint`",
     owner: "src/net/instance-lifecycle.ts",
   },
   {
@@ -213,6 +247,39 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/forecast",
   },
   {
+    name: "Supervised residents",
+    status: "core",
+    enable: "On by default; `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) turns it off",
+    owner: "src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts",
+  },
+  {
+    name: "Formations in a room",
+    status: "experimental",
+    enable:
+      "`build formation [room] <debate, chorus or verification>`, or `formation` on a room module",
+    owner: "src/coordination/room-formations.ts",
+  },
+  {
+    name: "Attention judges",
+    status: "experimental",
+    enable:
+      "`MARINA_ATTENTION_JUDGE=observe` (default; records opinions and results) or `on` (earned judges advise)",
+    owner: "src/agent/attention-judge.ts",
+  },
+  {
+    name: "Peer code review",
+    status: "experimental",
+    enable:
+      "`code review request <name>` or `auto`; supervised residents attach worktree snapshots",
+    owner: "src/engine/commands/code/review-request.ts, src/routing/review-snapshot.ts",
+  },
+  {
+    name: "Private rooms",
+    status: "experimental",
+    enable: "`build access <room> private` (owner or operator); `build invite <room> <name>`",
+    owner: "src/engine/room-access.ts, src/engine/commands/build.ts",
+  },
+  {
     name: "Research authority mode",
     status: "experimental",
     enable: "`MARINA_RESEARCH_AUTHORITY=on`",
@@ -223,6 +290,14 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     status: "experimental",
     enable: "`MARINA_FORECAST_ARBITER`, `MARINA_VERIFY_ARBITER`; `arbiter`",
     owner: "src/orchestration/arbiter.ts",
+  },
+  {
+    name: "Forecasts by residents (as-of fence)",
+    status: "experimental",
+    enable:
+      "`MARINA_FORECAST_RESIDENTS=on`; `forecast <q> crew:<c> pattern:<p>` (ensemble, delphi, tournament, skeptic)",
+    owner:
+      "src/forecast/resident-part.ts, src/forecast/resident-forecast.ts, src/engine/evidence-fence.ts",
   },
   {
     name: "Hybrid and vector retrieval",
@@ -238,10 +313,20 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/decisions/config.ts",
   },
   {
-    name: "Text patterns (`POST /v1/patterns/run`)",
+    name: "Text patterns (`pattern run`, `POST /v1/patterns/run`)",
     status: "experimental",
-    enable: "HTTP only; a `pattern run` command is planned",
-    owner: "src/orchestration/text-patterns.ts",
+    enable:
+      "`pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run`",
+    owner:
+      "src/orchestration/text-patterns.ts, src/orchestration/formations, src/engine/commands/pattern.ts",
+    commands: ["pattern"],
+  },
+  {
+    name: "Typed resident analysis tools (`marina_forecast`, `marina_research`, `marina_swarm`, `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`, `marina_arbiter`, `marina_pattern`)",
+    status: "experimental",
+    enable:
+      "Deferred in the `full` tool profile: loaded by name through `marina_tool_search` (`MARINA_DEFERRED_TOOLS=off` keeps them resident); each runs its world command",
+    owner: "src/agent/tools/analysis.ts, src/agent/analysis-commands.ts",
   },
   {
     name: "Investigations",
@@ -275,7 +360,8 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   {
     name: "Markets and positions",
     status: "experimental",
-    enable: "`market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true`",
+    enable:
+      "`market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true` and a person's approval per order (`trading.live`)",
     owner: "src/resolvers, src/net/clients",
     commands: ["market", "position"],
   },
@@ -294,10 +380,68 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     commands: ["learned"],
   },
   {
+    name: "Intellect records (identity across models and processes, lifecycle claims)",
+    status: "experimental",
+    enable: "`intellect`; claims are signed when `MARINA_FEDERATION_SIGNING_KEY` is set",
+    owner: "src/engine/commands/intellect.ts, src/persistence/db-intellects.ts",
+    commands: ["intellect"],
+  },
+  {
+    name: "Lineage records (derived intellects, world manifests, child worlds)",
+    status: "experimental",
+    enable:
+      "`reproduce`, `genome` (records only); `marina-descend` starts a child world as a local process and needs the `world.lineage` gate",
+    owner:
+      "src/engine/commands/reproduce.ts, src/engine/commands/genome.ts, src/engine/commands/marina-descend.ts, src/persistence/db-reproduction.ts, src/world/world-collective-manager.ts",
+    commands: ["reproduce", "genome", "marina-descend"],
+  },
+  {
+    name: "Change records (`mutation`)",
+    status: "experimental",
+    enable: "`mutation` (append-only records; recording a change does not apply it)",
+    owner: "src/engine/commands/mutation.ts, src/persistence/db-mutations.ts",
+    commands: ["mutation"],
+  },
+  {
+    name: "Associations (who takes part and how they relate)",
+    status: "experimental",
+    enable: "`association`",
+    owner: "src/engine/commands/association.ts, src/persistence/db-associations.ts",
+    commands: ["association"],
+  },
+  {
+    name: "Economic provenance records",
+    status: "experimental",
+    enable: "`economy` (claims and references only; moves no funds, stores no credentials)",
+    owner: "src/engine/commands/economy.ts, src/persistence/db-economics.ts",
+    commands: ["economy"],
+  },
+  {
+    name: "Simulation run records (`lab`)",
+    status: "experimental",
+    enable: "`lab` (declares and records runs; executes nothing)",
+    owner: "src/engine/commands/lab.ts, src/persistence/db-simulations.ts",
+    commands: ["lab"],
+  },
+  {
     name: "Media generation jobs",
     status: "experimental",
     enable: "`image generate`, `video generate`, `audio` (needs a media-capable provider)",
     owner: "src/engine/commands/image.ts, src/persistence/db-media.ts",
+  },
+  {
+    name: "Scores (`conduct`, `marina_conduct`)",
+    status: "experimental",
+    enable: "`conduct`; residents run a stored Score with `marina_conduct`; SDK `runScore`",
+    owner: "src/engine/commands/conduct.ts, src/sdk/conduct.ts",
+    commands: ["conduct"],
+  },
+  {
+    name: "Scenario boards",
+    status: "experimental",
+    enable: "`scenario` (posts boards and tasks; a resident must pick up the work)",
+    owner: "src/engine/commands/scenario.ts",
+    commands: ["scenario"],
   },
   // ── demo ────────────────────────────────────────────────────────────────
   {
@@ -307,7 +451,7 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "worlds",
   },
   {
-    name: "Orchestration templates (16 pool-note patterns)",
+    name: "Orchestration templates (16 pool-note patterns; crews run them as formations)",
     status: "demo",
     enable: "`project <name> orchestrate <pattern>`",
     owner: "src/world/templates/orchestration.ts",

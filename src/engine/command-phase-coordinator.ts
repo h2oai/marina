@@ -3,6 +3,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { MacroManager } from "../coordination/macro-manager";
+import { stripControlSequences } from "../net/ansi";
 import type { MarinaDB } from "../persistence/database";
 import { type CodingCommandTarget, parseCodingCommandTarget } from "../sdk/command-target";
 import { classifyPrimitive } from "../telemetry/primitive-usage";
@@ -10,20 +11,26 @@ import type { CommandContext, EngineEvent, Entity, EntityId, RoomContext, RoomId
 import type { EntityManager } from "../world/entity-manager";
 import type { RoomManager } from "../world/room-manager";
 
+import { commandInputForLog } from "./command-redaction";
 import { failCommandResponse } from "./command-response";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
 import { closestName } from "./did-you-mean";
 import { getErrorMessage, tryLog } from "./errors";
+import { commandFenceFor, fenceDecision, fenceRefusal } from "./evidence-fence";
 import {
   armGatePass,
   claimCommandPass,
+  type MessageCause,
   runCommandScope,
+  scopeEvidenceFence,
   setCurrentCodingTarget,
   setCurrentCommand,
+  setCurrentMessageCause,
 } from "./gate-context";
 import type { Logger } from "./logger";
 import { expandMacroBody, macroLimits, roomMacroOwner } from "./macro-expansion";
+import { normalizeCause } from "./message-envelope";
 import { rankName } from "./permissions";
 import { rankFloorRefusal } from "./rank-floor";
 import { checkGateForExecution, recordGateExecution } from "./safety-gates";
@@ -32,6 +39,12 @@ import { checkGateForExecution, recordGateExecution } from "./safety-gates";
 export interface CommandExecutionOptions {
   bypassModal?: boolean;
   codingTarget?: CodingCommandTarget;
+  /**
+   * The delivered message this input answers, when the ingress knows it
+   * (`src/engine/message-envelope.ts`). Messages the command sends record it
+   * as their `cause` at `depth + 1`.
+   */
+  cause?: MessageCause;
 }
 
 export interface CommandPhaseHost {
@@ -83,16 +96,27 @@ export class CommandPhaseCoordinator {
    * target are its own, and a nested or interleaved command can neither read
    * nor clear them.
    */
-  execute(entityId: EntityId, raw: string, opts?: CommandExecutionOptions): Promise<void> {
-    return runCommandScope(entityId, async () => {
-      // Copy at entry so a caller cannot retarget an invocation across an await.
-      const own =
-        opts?.codingTarget !== undefined
-          ? { ...opts, codingTarget: parseCodingCommandTarget(opts.codingTarget) }
-          : opts;
-      setCurrentCodingTarget(entityId, own?.codingTarget);
-      await this.executeInner(entityId, raw, own);
-    });
+  execute(entityId: EntityId, rawInput: string, opts?: CommandExecutionOptions): Promise<void> {
+    // Input is text, never terminal instructions: whatever a command stores or
+    // relays (say, tell, notes, posts) reaches other people's terminals. Every
+    // ingress and every internal caller passes here; newline and tab survive.
+    const raw = stripControlSequences(rawInput);
+    // The as-of fence (src/engine/evidence-fence.ts) is read once, at entry:
+    // the entity's own fences, the enclosing execution's and in-process frames.
+    return runCommandScope(
+      entityId,
+      async () => {
+        // Copy at entry so a caller cannot retarget an invocation across an await.
+        const own =
+          opts?.codingTarget !== undefined
+            ? { ...opts, codingTarget: parseCodingCommandTarget(opts.codingTarget) }
+            : opts;
+        setCurrentCodingTarget(entityId, own?.codingTarget);
+        if (own?.cause) setCurrentMessageCause(entityId, normalizeCause(own.cause));
+        await this.executeInner(entityId, raw, own);
+      },
+      commandFenceFor(entityId),
+    );
   }
 
   private async executeInner(
@@ -170,6 +194,21 @@ export class CommandPhaseCoordinator {
         `Unknown command: ${input.verb}.${near ? ` Did you mean "${near}"?` : ""} Type "help" for commands.`,
       );
       failCommandResponse(`Unknown command: ${input.verb}`);
+      recordUsage(false);
+      return;
+    }
+
+    // Under an evidence cutoff only the commands the fence policy names run
+    // (src/engine/evidence-fence.ts): room commands and unknown builtins are
+    // refused — fail closed.
+    const fence = scopeEvidenceFence();
+    if (
+      fence &&
+      fenceDecision(def?.name, input.tokens, resolved?.owner === "builtin") === "refuse"
+    ) {
+      const message = fenceRefusal(def?.name ?? input.verb, fence.cutoff);
+      failCommandResponse(message);
+      this.host.sendToEntity(entityId, message);
       recordUsage(false);
       return;
     }
@@ -287,7 +326,7 @@ export class CommandPhaseCoordinator {
     this.host.logEvent({
       type: "command",
       entity: entityId,
-      input: routedRaw,
+      input: commandInputForLog(routedRaw, input, def),
       timestamp: Date.now(),
     });
   }

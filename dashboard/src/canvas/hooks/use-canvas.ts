@@ -5,6 +5,7 @@ import type { Node, NodeChange } from "@xyflow/react";
 import { applyNodeChanges } from "@xyflow/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "../../lib/api";
+import { ensureOk, errorText, responseErrorMessage } from "../../lib/api-error";
 import { apiOrigin } from "../../lib/api-origin";
 import { defaultSize, tilePosition } from "../lib/layout";
 import { type CanvasData, type CanvasNodeData, normalizeNodeType } from "../lib/types";
@@ -139,9 +140,11 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ x, y }),
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      } catch {
-        onMutationErrorRef.current?.("Could not save the node position. The canvas was refreshed.");
+        await ensureOk(response, "Could not save the node position");
+      } catch (cause) {
+        onMutationErrorRef.current?.(
+          `${errorText(cause, "Could not save the node position.")} The canvas was refreshed.`,
+        );
       }
     },
     [canvasId],
@@ -157,9 +160,11 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ width: Math.round(width), height: Math.round(height) }),
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      } catch {
-        onMutationErrorRef.current?.("Could not save the node size. The canvas was refreshed.");
+        await ensureOk(response, "Could not save the node size");
+      } catch (cause) {
+        onMutationErrorRef.current?.(
+          `${errorText(cause, "Could not save the node size.")} The canvas was refreshed.`,
+        );
       }
     },
     [canvasId],
@@ -189,17 +194,16 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ data: clean }),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      } catch {
+        await ensureOk(res, "Could not save the node changes");
+      } catch (cause) {
         if (previousData) {
           setNodes((prev) =>
             prev.map((node) => (node.id === nodeId ? { ...node, data: previousData! } : node)),
           );
         }
-        onMutationErrorRef.current?.(
-          "Could not save the node changes. Your previous content was restored.",
-        );
-        throw new Error("Could not save changes. Please retry.");
+        const reason = errorText(cause, "Could not save the node changes.");
+        onMutationErrorRef.current?.(`${reason} Your previous content was restored.`);
+        throw new Error(reason);
       }
     },
     [canvasId],
@@ -216,13 +220,14 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
         return nds.filter((n) => !nodeIds.includes(n.id));
       });
       const failed: string[] = [];
+      let reason: string | undefined;
       for (const nodeId of nodeIds) {
         try {
           const res = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
             method: "DELETE",
           });
           if (!res.ok) {
-            if (import.meta.env.DEV) console.warn(`[canvas] node DELETE failed: ${res.status}`);
+            reason ??= await responseErrorMessage(res, "Could not delete the node");
             failed.push(nodeId);
           }
         } catch (err) {
@@ -235,7 +240,7 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
         const restore = (snapshot as Node[]).filter((n) => failed.includes(n.id));
         setNodes((nds) => [...nds, ...restore]);
         onMutationErrorRef.current?.(
-          `Could not delete ${failed.length} node${failed.length === 1 ? "" : "s"}. ${failed.length === 1 ? "It was" : "They were"} restored.`,
+          `Could not delete ${failed.length} node${failed.length === 1 ? "" : "s"}. ${failed.length === 1 ? "It was" : "They were"} restored.${reason ? ` ${reason}` : ""}`,
         );
       }
     },

@@ -10,13 +10,14 @@
  * (better for LLM tool selection) without duplicating logic.
  *
  * The implementations live in one module per concern behind a strict import
- * DAG rooted at `./shared` (`command`, `code`, `world`, `media`, `think`,
+ * DAG rooted at `./shared` (`command`, `code`, `world`, `media`, `analysis`, `think`,
  * `memory`, `memory-service`, `memory-assistance`, `evolution`,
  * `profiles`); no module under `tools/` imports this file. Every symbol
  * consumed elsewhere (lean-agent-adapter, ops-api, worlds, tests) is
  * re-exported here so importers never need to know about the layout.
  */
 
+export { createAnalysisTools } from "./analysis";
 export { COMMAND_ROSTER, createCommandTool, ECOLOGY_ROSTER } from "./command";
 export { createEvolutionTool } from "./evolution";
 export { createMemoryTool } from "./memory";
@@ -26,6 +27,7 @@ export {
   applyStrictToolSchemas,
   applyToolExecutionModes,
   applyToolReplayPolicy,
+  CODE_TOOL_ROLES,
   createAllTools,
   createProfileToolset,
   createScopedTools,
@@ -34,10 +36,12 @@ export {
   FULL_RESIDENT_TOOL_NAMES,
   isMutatingToolName,
   isStrictSafeSchema,
+  ON_DEMAND_TOOL_NAMES,
   PLAN_OUTPUT_TOOL_NAMES,
   type ProfileToolset,
   READ_ONLY_TOOL_NAMES,
   replayPolicyFor,
+  resolveToolProfile,
   TOOL_PROFILE_NAMES,
   TOOL_SEARCH_NAME,
   type ToolExecutionPolicy,

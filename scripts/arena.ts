@@ -51,6 +51,7 @@ import { closeSync, mkdtempSync, openSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { stamped } from "../benchmarks/run-version";
 import {
   arenaConfigFromEnv,
   arenaWindowHours,
@@ -244,7 +245,7 @@ async function main(): Promise<number> {
           throw new Error(`MARINA_ARENA_FORECASTER is ${spec}, not routed: no family routes`);
         const routes = parseRoutes(spec, process.env);
         const data = arenaData();
-        const evidence = await earned.loadRouteEvidence(db, data, config.entrant);
+        const evidence = await earned.loadRouteEvidence(db, data, config.entrant, db);
         const families = [
           ...new Set([
             ...(await data.rounds()).map((r) => r.tracker.toLowerCase()),
@@ -581,7 +582,7 @@ async function main(): Promise<number> {
       if (values.out) {
         await Bun.write(
           values.out,
-          `${JSON.stringify({ generatedAt: new Date().toISOString(), ...report, shapes }, null, 2)}\n`,
+          `${JSON.stringify(stamped({ generatedAt: new Date().toISOString(), ...report, shapes }), null, 2)}\n`,
         );
         console.error(`report → ${values.out}`);
       }

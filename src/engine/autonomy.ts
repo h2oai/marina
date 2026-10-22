@@ -43,8 +43,12 @@
  *    (`key.manage`), world erasure (`admin.destructive`), raw shell
  *    (`shell.exec`) and arbitrary non-allowlisted host commands
  *    (`code.exec.unrestricted`, which also keeps its independent
- *    exec-approver chain). Allowlisted workspace execution (`code.exec`) is
+ *    exec-approver chain) and real-money orders (`trading.live`). Allowlisted workspace execution (`code.exec`) is
  *    NOT in the core: `open` passes it.
+ * 4. The implicit local profile (local, not `guarded`, not `sovereign`) lifts
+ *    every gate for the loopback PERSON, but an AGENT's `shell.exec` and
+ *    `code.exec.unrestricted` (`LOCAL_AGENT_HELD_GATES`) are held as a
+ *    challenge a person approves. Only `sovereign` lifts them for agents.
  */
 
 export type AutonomyPosture = "guarded" | "earned" | "open" | "sovereign";
@@ -59,6 +63,18 @@ export const OPEN_POSTURE_CORE: ReadonlySet<string> = new Set([
   // Room and command code runs inside the engine (a static denylist, not a
   // process boundary), so authoring it stays gated even under `open`.
   "world.code",
+  // Real-money prediction-market orders: each asks a person unless an
+  // operator granted the gate (the local profile does not lift it either).
+  "trading.live",
+]);
+
+/** Gates the IMPLICIT local profile still holds for AGENTS (never for the
+ *  loopback person): host shell and arbitrary non-allowlisted host commands.
+ *  A held run raises a challenge and runs once a person approves it; only
+ *  `MARINA_AUTONOMY=sovereign` lifts it (`isImplicitLocalUngated`). */
+export const LOCAL_AGENT_HELD_GATES: ReadonlySet<string> = new Set([
+  "shell.exec",
+  "code.exec.unrestricted",
 ]);
 
 export function getAutonomyPosture(env: NodeJS.ProcessEnv = process.env): AutonomyPosture {
@@ -74,7 +90,7 @@ export function getAutonomyPosture(env: NodeJS.ProcessEnv = process.env): Autono
 export function ungatedPostureNote(env: NodeJS.ProcessEnv = process.env): string {
   if (getAutonomyPosture(env) === "sovereign")
     return "SOVEREIGN — every gate, rank floor and hold is off (audit stays on); unset MARINA_AUTONOMY to enforce them";
-  return "gates off for this local operator (audit stays on); set MARINA_AUTONOMY=guarded to enforce them";
+  return "gates off for this local operator (audit stays on); an agent's host shell and arbitrary host commands still wait for a person's approval; set MARINA_AUTONOMY=guarded to enforce every gate, sovereign to lift that hold";
 }
 
 /** One-line posture description for the boot banner / readiness / prompts. */
@@ -83,7 +99,7 @@ export function describeAutonomyPosture(posture: AutonomyPosture = getAutonomyPo
     case "sovereign":
       return "SOVEREIGN — every gate (core included), rank floor and hold is off for every principal; audit stays on";
     case "open":
-      return "OPEN — standing is descriptive; every gate auto-passes (incl. allowlisted code.exec) except the core (keys, world erasure, shell, unrestricted exec)";
+      return "OPEN — standing is descriptive; every gate auto-passes (incl. allowlisted code.exec) except the core (keys, world erasure, shell, unrestricted exec, world code, live trading)";
     case "earned":
       return "EARNED — supervised operations on earnable gates run freely; capability flips when an operator attests the recorded runs or approves held ones; the core stays operator-grant";
     default:

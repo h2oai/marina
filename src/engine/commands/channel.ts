@@ -4,6 +4,7 @@
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { channelSelf, header, separator } from "../../net/ansi";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { envelopeFields, messageEnvelope } from "../message-envelope";
 
 export function channelCommand(
   channels: ChannelManager,
@@ -71,7 +72,7 @@ export function channelCommand(
         }
 
         case "join": {
-          // ACL note (FEDERATION-TRUST hardening): channels are PUBLIC-BY-DESIGN.
+          // ACL note: channels are PUBLIC-BY-DESIGN.
           // The `channels` schema (id, type, name, owner_id, persistence,
           // retention_hours, created_at) has NO visibility / scope / private
           // column, so there is nothing to enforce on join — any logged-in
@@ -81,7 +82,7 @@ export function channelCommand(
           // `visibility` column on `channels` (e.g. public/unlisted/private),
           // (2) an owner-managed invite/grant ACL table, and (3) a join check
           // here that rejects non-invited entities for private channels. That is
-          // deliberately NOT implemented as a half-model — see the report.
+          // deliberately NOT implemented as a half-model.
           const name = tokens[1];
           if (!name) {
             ctx.send(input.entity, "Usage: channel join <name>");
@@ -147,17 +148,24 @@ export function channelCommand(
             return;
           }
           const message = tokens.slice(2).join(" ");
-          channels.send(ch.id, input.entity, entity.name, message);
+          const envelope = messageEnvelope(input.entity);
+          const { message: stored } = channels.post(ch.id, input.entity, entity.name, message, {
+            envelope,
+          });
           logEvent?.({
             type: "channel_message",
             entity: input.entity,
-            messageId: 0,
+            messageId: stored.id,
             channelName: name,
             content: message,
+            ...envelopeFields(envelope),
             timestamp: Date.now(),
           });
           ctx.send(input.entity, channelSelf(name, message), name, {
             delivery: { kind: "channel", target: name, message },
+            messageId: stored.id,
+            messageRef: `channel_msg:${stored.id}`,
+            ...envelopeFields(envelope),
           });
           return;
         }

@@ -19,9 +19,9 @@ bun run benchmarks/harness.ts --list
 bun run benchmarks/harness.ts --results
 ```
 
-## Phase A — Baseline Benchmarks
+## Baseline benchmarks
 
-Standard automated benchmarks proving Marina works as a competent LLM endpoint.
+Standard automated benchmarks for Marina as an LLM endpoint.
 
 | Benchmark | Questions | Type | Metric |
 |-----------|-----------|------|--------|
@@ -149,6 +149,7 @@ bun run eval:transfer --spec transfer.json --out reports/x # writes reports/x.md
 bun run eval:transfer --spec transfer.json --split all     # every item, not just the held-out half
 bun run eval:transfer --spec transfer.json --run           # also run suites that have a `run` command
 bun run eval:transfer --spec transfer.json --bootstrap two-stage # resample replicate runs, then items
+bun run eval:transfer --spec transfer.json --allow-unversioned # also count result files with no commit stamp
 bun run eval:transfer --adapters                           # list the suite adapters
 bun run eval:transfer --inventory [root…] --out inv        # find every per-item result on disk
 ```
@@ -197,6 +198,41 @@ split keeps items whose evidence cutoff is on or after a date (`{"kind": "time",
 the report labels it. Adapters drop what their own suite marks unsafe: FutureX rows flagged by the
 leak audit; arena rounds whose outcome was public before the lock are already gone.
 
+**Test the right versions.** A comparison changes one thing — the env overlay — so both arms must
+run the same code. Every result a benchmark writes records the code that produced it:
+`marina: {"commit", "dirty", "describe"}` from git at run time (`benchmarks/run-version.ts`) on
+harness results (short-answer, FRAMES, HLE, …), each BrowseComp-Plus query file in `evals/`, the
+BrowseComp-Plus result, FutureX `score.json`/`summary.json`, ForecastBench/Metaculus
+`selection.json`, and `arena evaluate --out` reports. Ledger runs carry it in `config_json.marina`
+(harness filings, FutureX and forecasting backtests; no migration), and in-world runs already name
+their code in `source`. (`arena shadow paired-score` reports score forecasts made earlier, so they
+are not stamped.) The transfer report reads each source's stamps and, per suite:
+
+| Status | When | Counted |
+|---|---|---|
+| `same-commit` | every source of both arms is at one clean commit | yes |
+| `version-comparison` | the spec declares `versions` and each arm is at its declared ref | yes |
+| `unversioned` | `--allow-unversioned`, some sources unstamped (the report carries a warning banner) | yes |
+| `version-mismatch` | sources on different commits (also across one arm's replicates), or an arm not at its declared ref | **no** |
+| `version-unknown` | a source with no stamp, run with uncommitted changes (`dirty`), or a declared tag that does not resolve | **no** |
+
+A suite that is not counted keeps its numbers in the report (with what the statistics alone said)
+but is neither an improvement nor a regression, and the verdict names it. When the shared commit is
+behind `origin/main` the report warns (local git only — fetch first; nothing goes to the network):
+the default is to test newest main. To test a prior release on purpose — release vs release, or a
+regression test — declare it in the spec (a suite may override it):
+
+```json
+{ "versions": { "baseline": "v0.7.0", "candidate": "v0.8.0" }, "baseline": {…}, "candidate": {…}, "suites": […] }
+```
+
+Each ref is a sha (a prefix of ≥ 7 hex works without git) or a tag resolved in the local repository
+(a stamp whose `describe` is the tag also matches). The report labels the run a version
+comparison. Results written before stamping are `version-unknown`; `--allow-unversioned` counts
+them, with a warning banner, when you know which code they came from. Dirty checkouts are never let
+in: commit, then run. The inventory shows each variant's commits and marks each pair `same commit`,
+`MIXED commits` or `commit unknown`.
+
 **Ingest first.** Suites read files that already exist; a suite with a `run` command executes it
 only under `--run` (argv, never a shell; `{out}`, `{arm}`, `{replicate}` substituted; the arm's
 `env` overlaid on the environment; outputs under `--run-dir`, default `transfer-runs/` next to
@@ -223,8 +259,8 @@ one suite can pair, say, a harness file against ledger runs of the same benchmar
 with its log to a temporary directory and the copy is read (`maxCopyMb` option, default 1 GB;
 above it the log is not read and the inventory says so).
 
-**Inventory.** `--inventory [root…]` (default roots: `~/.cache/marina-*`, `~/.local/share/marina-*`,
-`~/Projects/GitHub/marina-internal`; a root may be one DB file) walks the roots read-only,
+**Inventory.** `--inventory <root…>` (at least one root is required, for example
+`~/.cache/marina-<name>`; a root may be one DB file) walks the roots read-only,
 skipping source trees (`src/`, `node_modules/`, `checkout/`, … — a checkout's `benchmarks/` only
 for its `results/`), recognises every file and ledger an adapter reads, and writes
 `<out>.md` / `<out>.json` (default `transfer-inventory`): per suite its variants (adapter,
@@ -246,9 +282,9 @@ teach `benchmarks/transfer/inventory.ts` to recognise its files, and add a fixtu
 `test/eval-transfer.test.ts`. Keep benchmark knowledge in the adapter;
 `benchmarks/transfer/core.ts` (the statistics and the verdict) stays benchmark-free.
 
-## Phase B — Memory Delta Experiments
+## Memory comparisons
 
-The core thesis test: does Marina's memory system measurably improve outcomes?
+These benchmarks compare Marina's memory mode with plain passthrough on the same questions.
 
 | Benchmark | Questions | Type | Metric |
 |-----------|-----------|------|--------|
@@ -265,10 +301,10 @@ bun run benchmarks/harness.ts --benchmark retention --mode memory --compare pass
 bun run benchmarks/harness.ts --benchmark mt-bench --limit 10
 ```
 
-## Phase C — Memory Delta under the Reporting Standard (genbench)
+## Memory comparisons with the reporting standard (genbench)
 
-Phase B measures memory with the retention task and judge scores; `benchmarks/memory/genbench.ts`
-is the harness for making a *citable* memory-delta claim. It runs five arms under one protocol —
+The memory comparisons above use the retention task and judge scores;
+`benchmarks/memory/genbench.ts` runs a memory comparison under a fixed reporting protocol. It runs five arms under one protocol —
 `bare`, `cold`, `warm`, and the matched controls `fullcontext` and `bm25` — on a held-out
 seed/eval split, injects memory through the resident agent path, and reports Wilson 95% CIs,
 seed-level CIs, token-F1 alongside judge accuracy, tokens injected, latency, and cost.
@@ -409,7 +445,7 @@ images (`spot-diff` across two grids, `match-spec` among three near-misses),
 measurement (`line-length` within 4–6 %, `angle` ±4°) and detail only the small
 print carries (`small-print`). Multi-image tasks name one asset per image. The
 summary has per-mode, per-kind and per-family Wilson intervals and the paired
-comparison (exact McNemar and a paired bootstrap, `benchmarks/stats.ts`).
+comparison (exact McNemar and a paired bootstrap, `src/stats/`).
 `--describe-model` overrides the describe model (default: the agent's own model,
 which `visionModelCandidates` tries first). `--pilot N` runs N tasks spread across
 kinds first and stops when the projected cost passes `--budget`; `--concurrency`
@@ -435,6 +471,6 @@ JSON results are written to `benchmarks/results/` (gitignored) with the format:
 
 ## Requirements
 
-- Bun 1.4.2+
+- Bun 1.4.3+
 - Running Marina instance with provider agent
 - Python 3.10+ (for HumanEval only)

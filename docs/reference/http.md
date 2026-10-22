@@ -21,28 +21,28 @@ link for validation, HTTP statuses, streaming and deployment-specific availabili
 
 ### `url.pathname === "/api/assets/sign"`
 
-[Source](../../src/net/api/asset-api.ts#L115)
+[Source](../../src/net/api/asset-api.ts#L120)
 
 - Guard: `url.pathname === "/api/assets/sign" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/assets\/(.+)$/)`
 
-[Source](../../src/net/api/asset-api.ts#L149)
+[Source](../../src/net/api/asset-api.ts#L158)
 
 - Guard: `idMatch && method === "DELETE"`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L215)
+[Source](../../src/net/api/asset-api.ts#L224)
 
 - Guard: `url.pathname === "/api/assets" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L222)
+[Source](../../src/net/api/asset-api.ts#L231)
 
 - Guard: `url.pathname === "/api/assets" && method === "GET" && url.searchParams.get("view") === "library"`
 - Guard: `method === "GET"`
@@ -51,7 +51,7 @@ Fields read here: `["1", "true"].includes(url.searchParams.get("facets") ?? "")`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/api/asset-api.ts#L244)
+[Source](../../src/net/api/asset-api.ts#L249)
 
 - Guard: `url.pathname === "/api/assets" && method === "GET"`
 - Guard: `method === "GET"`
@@ -131,28 +131,28 @@ Fields read here: `aspectRatio`, `canvasId`, `duration`, `fps`, `height`, `metad
 
 ### `path === "/mem"`
 
-[Source](../../src/net/api/mem-api.ts#L430)
+[Source](../../src/net/api/mem-api.ts#L441)
 
 - Guard: `path === "/mem" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `path === "/mem/health"`
 
-[Source](../../src/net/api/mem-api.ts#L435)
+[Source](../../src/net/api/mem-api.ts#L446)
 
 - Guard: `path === "/mem/health" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `path === "/mem/keys"`
 
-[Source](../../src/net/api/mem-api.ts#L441)
+[Source](../../src/net/api/mem-api.ts#L452)
 
 - Guard: `path === "/mem/keys" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `path === "/mem/notes"`
 
-[Source](../../src/net/api/mem-api.ts#L467)
+[Source](../../src/net/api/mem-api.ts#L478)
 
 - Guard: `path === "/mem/notes" && method === "POST"`
 - Guard: `method === "POST"`
@@ -161,7 +161,7 @@ Fields read here: `links`.
 
 ### `path === "/mem/notes"`
 
-[Source](../../src/net/api/mem-api.ts#L504)
+[Source](../../src/net/api/mem-api.ts#L515)
 
 - Guard: `path === "/mem/notes" && method === "GET"`
 - Guard: `method === "GET"`
@@ -170,7 +170,7 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `path === "/mem/recall"`
 
-[Source](../../src/net/api/mem-api.ts#L524)
+[Source](../../src/net/api/mem-api.ts#L535)
 
 - Guard: `path === "/mem/recall" && method === "GET"`
 - Guard: `method === "GET"`
@@ -179,7 +179,7 @@ Fields read here: `url.searchParams.get("q")`, `url.searchParams.get("weightImpo
 
 ### `path === "/mem/context"`
 
-[Source](../../src/net/api/mem-api.ts#L573)
+[Source](../../src/net/api/mem-api.ts#L584)
 
 - Guard: `path === "/mem/context" && method === "GET"`
 - Guard: `method === "GET"`
@@ -188,7 +188,7 @@ Fields read here: `url.searchParams.get("budget")`, `url.searchParams.get("q")`,
 
 ### `path.match(/^\/mem\/notes\/(\d+)$/)`
 
-[Source](../../src/net/api/mem-api.ts#L610)
+[Source](../../src/net/api/mem-api.ts#L621)
 
 - Guard: `noteIdMatch`
 - Guard: `method === "GET"`
@@ -196,7 +196,7 @@ Fields read here: `url.searchParams.get("budget")`, `url.searchParams.get("q")`,
 
 ### `path.match(/^\/mem\/notes\/(\d+)\/link$/)`
 
-[Source](../../src/net/api/mem-api.ts#L632)
+[Source](../../src/net/api/mem-api.ts#L643)
 
 - Guard: `linkMatch && method === "POST"`
 - Guard: `method === "POST"`
@@ -205,7 +205,7 @@ Fields read here: `relationship`, `target`.
 
 ### `path.match(/^\/mem\/notes\/(\d+)\/trace$/)`
 
-[Source](../../src/net/api/mem-api.ts#L662)
+[Source](../../src/net/api/mem-api.ts#L673)
 
 - Guard: `traceMatch && method === "GET"`
 - Guard: `method === "GET"`
@@ -214,14 +214,14 @@ Fields read here: `Math.min(Number(url.searchParams.get("depth")) &#124;&#124; 2
 
 ### `path === "/mem/core"`
 
-[Source](../../src/net/api/mem-api.ts#L676)
+[Source](../../src/net/api/mem-api.ts#L687)
 
 - Guard: `path === "/mem/core" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `path.match(/^\/mem\/core\/([^/]+)$/)`
 
-[Source](../../src/net/api/mem-api.ts#L682)
+[Source](../../src/net/api/mem-api.ts#L693)
 
 - Guard: `coreKeyMatch`
 - Guard: `method === "GET"`
@@ -232,7 +232,7 @@ Fields read here: `value`.
 
 ### `path.match(/^\/mem\/core\/([^/]+)\/history$/)`
 
-[Source](../../src/net/api/mem-api.ts#L716)
+[Source](../../src/net/api/mem-api.ts#L727)
 
 - Guard: `coreHistMatch && method === "GET"`
 - Guard: `method === "GET"`
@@ -241,14 +241,14 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 1
 
 ### `path === "/mem/pools"`
 
-[Source](../../src/net/api/mem-api.ts#L728)
+[Source](../../src/net/api/mem-api.ts#L739)
 
 - Guard: `path === "/mem/pools" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `path === "/mem/pools"`
 
-[Source](../../src/net/api/mem-api.ts#L734)
+[Source](../../src/net/api/mem-api.ts#L745)
 
 - Guard: `path === "/mem/pools" && method === "POST"`
 - Guard: `method === "POST"`
@@ -257,7 +257,7 @@ Fields read here: `name`.
 
 ### `path.match(/^\/mem\/pools\/([^/]+)(\/.*)?$/)`
 
-[Source](../../src/net/api/mem-api.ts#L750)
+[Source](../../src/net/api/mem-api.ts#L761)
 
 - Guard: `poolMatch`
 - Guard: `method === "POST"`
@@ -267,7 +267,7 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 1
 
 ### `path === "/mem/stats"`
 
-[Source](../../src/net/api/mem-api.ts#L803)
+[Source](../../src/net/api/mem-api.ts#L814)
 
 - Guard: `path === "/mem/stats" && method === "GET"`
 - Guard: `method === "GET"`
@@ -293,14 +293,14 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 1
 
 ### `url.pathname.match( /^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)\/interaction$/, )`
 
-[Source](../../src/net/canvas/canvas-api.ts#L178)
+[Source](../../src/net/canvas/canvas-api.ts#L208)
 
 - Guard: `interactionMatch && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match( /^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)\/intent\/(claim&#124;complete&#124;fail)$/, )`
 
-[Source](../../src/net/canvas/canvas-api.ts#L204)
+[Source](../../src/net/canvas/canvas-api.ts#L234)
 
 - Guard: `intentActionMatch && method === "POST"`
 - Guard: `method === "POST"`
@@ -309,7 +309,7 @@ Fields read here: `data`, `reason`, `result`, `type`.
 
 ### `url.pathname.match(/^\/api\/canvases\/([^/]+)\/edges(?:\/([^/]+))?$/)`
 
-[Source](../../src/net/canvas/canvas-api.ts#L211)
+[Source](../../src/net/canvas/canvas-api.ts#L241)
 
 - Guard: `edgeMatch`
 - Guard: `method === "POST"`
@@ -319,7 +319,7 @@ Fields read here: `data`, `relationship`, `sourceId`, `targetId`.
 
 ### `url.pathname.match(/^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)$/)`
 
-[Source](../../src/net/canvas/canvas-api.ts#L370)
+[Source](../../src/net/canvas/canvas-api.ts#L406)
 
 - Guard: `nodeMatch`
 - Guard: `method === "GET"`
@@ -330,7 +330,7 @@ Fields read here: `data`, `height`, `revision`, `width`, `x`, `y`.
 
 ### `url.pathname.match(/^\/api\/canvases\/([^/]+)\/nodes$/)`
 
-[Source](../../src/net/canvas/canvas-api.ts#L496)
+[Source](../../src/net/canvas/canvas-api.ts#L542)
 
 - Guard: `nodesMatch && method === "POST"`
 - Guard: `method === "POST"`
@@ -339,7 +339,7 @@ Fields read here: `asset_id`, `data`, `height`, `parent_node_id`, `type`, `width
 
 ### `url.pathname.match(/^\/api\/canvases\/([^/]+)$/)`
 
-[Source](../../src/net/canvas/canvas-api.ts#L595)
+[Source](../../src/net/canvas/canvas-api.ts#L641)
 
 - Guard: `canvasMatch`
 - Guard: `method === "DELETE"`
@@ -347,7 +347,7 @@ Fields read here: `asset_id`, `data`, `height`, `parent_node_id`, `type`, `width
 
 ### `url.pathname === "/api/canvases"`
 
-[Source](../../src/net/canvas/canvas-api.ts#L630)
+[Source](../../src/net/canvas/canvas-api.ts#L684)
 
 - Guard: `url.pathname === "/api/canvases" && method === "POST"`
 - Guard: `method === "POST"`
@@ -356,7 +356,7 @@ Fields read here: `description`, `name`, `scope`, `scope_id`.
 
 ### `url.pathname === "/api/canvases"`
 
-[Source](../../src/net/canvas/canvas-api.ts#L677)
+[Source](../../src/net/canvas/canvas-api.ts#L731)
 
 - Guard: `url.pathname === "/api/canvases" && method === "GET"`
 - Guard: `method === "GET"`
@@ -367,45 +367,66 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `url.pathname === "/api/panel-resources"`
 
-[Source](../../src/net/dashboard-api.ts#L103)
+[Source](../../src/net/dashboard-api.ts#L119)
 
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/traces"`
 
-[Source](../../src/net/dashboard-api.ts#L106)
+[Source](../../src/net/dashboard-api.ts#L122)
 
-- Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
+- Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/") &#124;&#124; (method === "GET" && OPERATOR_READ_PATHS.has(url.pathname)) &#124;&#124; // A refresh calls every configured provider with the operator's keys; // the cached list stays readable by every session. (url.pathname === "/api/models" && url.searchParams.get("refresh") === "1")) && !memory.privilegedRead`
+- Guard: `method === "GET"`
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
+
+Fields read here: `url.searchParams.get("refresh")`.
 
 ### `url.pathname === "/api/logs"`
 
-[Source](../../src/net/dashboard-api.ts#L107)
+[Source](../../src/net/dashboard-api.ts#L123)
 
-- Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
+- Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/") &#124;&#124; (method === "GET" && OPERATOR_READ_PATHS.has(url.pathname)) &#124;&#124; // A refresh calls every configured provider with the operator's keys; // the cached list stays readable by every session. (url.pathname === "/api/models" && url.searchParams.get("refresh") === "1")) && !memory.privilegedRead`
+- Guard: `method === "GET"`
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
+
+Fields read here: `url.searchParams.get("refresh")`.
 
 ### `url.pathname.startsWith("/api/evidence/")`
 
-[Source](../../src/net/dashboard-api.ts#L108)
+[Source](../../src/net/dashboard-api.ts#L124)
 
-- Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
+- Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/") &#124;&#124; (method === "GET" && OPERATOR_READ_PATHS.has(url.pathname)) &#124;&#124; // A refresh calls every configured provider with the operator's keys; // the cached list stays readable by every session. (url.pathname === "/api/models" && url.searchParams.get("refresh") === "1")) && !memory.privilegedRead`
+- Guard: `method === "GET"`
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
+
+Fields read here: `url.searchParams.get("refresh")`.
+
+### `url.pathname === "/api/models"`
+
+[Source](../../src/net/dashboard-api.ts#L128)
+
+- Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/") &#124;&#124; (method === "GET" && OPERATOR_READ_PATHS.has(url.pathname)) &#124;&#124; // A refresh calls every configured provider with the operator's keys; // the cached list stays readable by every session. (url.pathname === "/api/models" && url.searchParams.get("refresh") === "1")) && !memory.privilegedRead`
+- Guard: `method === "GET"`
+- Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
+
+Fields read here: `url.searchParams.get("refresh")`.
 
 ### `url.pathname === "/api/extensions/widgets"`
 
-[Source](../../src/net/dashboard-api.ts#L113)
+[Source](../../src/net/dashboard-api.ts#L133)
 
 - Guard: `url.pathname === "/api/extensions/widgets" && method === "GET"`
 - Guard: `method === "GET"`
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
+- Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/") &#124;&#124; (method === "GET" && OPERATOR_READ_PATHS.has(url.pathname)) &#124;&#124; // A refresh calls every configured provider with the operator's keys; // the cached list stays readable by every session. (url.pathname === "/api/models" && url.searchParams.get("refresh") === "1")) && !memory.privilegedRead`
 
 ### `url.pathname.startsWith("/api/")`
 
-[Source](../../src/net/dashboard-api.ts#L142)
+[Source](../../src/net/dashboard-api.ts#L163)
 
 - Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
+- Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/") &#124;&#124; (method === "GET" && OPERATOR_READ_PATHS.has(url.pathname)) &#124;&#124; // A refresh calls every configured provider with the operator's keys; // the cached list stays readable by every session. (url.pathname === "/api/models" && url.searchParams.get("refresh") === "1")) && !memory.privilegedRead`
 - Guard: `url.pathname === "/api/extensions/widgets" && method === "GET"`
 
 ## src/net/dashboard-api/agents.ts
@@ -456,21 +477,21 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `url.pathname === "/api/setup-status"`
 
-[Source](../../src/net/dashboard-api/command.ts#L167)
+[Source](../../src/net/dashboard-api/command.ts#L172)
 
 - Guard: `url.pathname === "/api/setup-status" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/ui-config"`
 
-[Source](../../src/net/dashboard-api/command.ts#L183)
+[Source](../../src/net/dashboard-api/command.ts#L188)
 
 - Guard: `url.pathname === "/api/ui-config" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/command"`
 
-[Source](../../src/net/dashboard-api/command.ts#L195)
+[Source](../../src/net/dashboard-api/command.ts#L200)
 
 - Guard: `url.pathname === "/api/command" && method === "POST"`
 - Guard: `method === "POST"`
@@ -479,7 +500,7 @@ Fields read here: `command`, `error`.
 
 ### `url.pathname === "/api/ask"`
 
-[Source](../../src/net/dashboard-api/command.ts#L207)
+[Source](../../src/net/dashboard-api/command.ts#L212)
 
 - Guard: `url.pathname === "/api/ask" && method === "POST"`
 - Guard: `method === "POST"`
@@ -488,7 +509,7 @@ Fields read here: `error`, `query`.
 
 ### `url.pathname === "/api/federation/manifest"`
 
-[Source](../../src/net/dashboard-api/command.ts#L219)
+[Source](../../src/net/dashboard-api/command.ts#L224)
 
 - Guard: `url.pathname === "/api/federation/manifest" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -528,42 +549,42 @@ Fields read here: `error`, `query`.
 
 ### `url.pathname === "/api/keys"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L552)
+[Source](../../src/net/dashboard-api/keys.ts#L553)
 
 - Guard: `url.pathname === "/api/keys" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/keys"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L562)
+[Source](../../src/net/dashboard-api/keys.ts#L563)
 
 - Guard: `url.pathname === "/api/keys" && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/keys\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/keys.ts#L565)
+[Source](../../src/net/dashboard-api/keys.ts#L566)
 
 - Guard: `keyDeleteMatch && method === "DELETE" && db`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname.match(/^\/api\/keys\/([^/]+)\/test$/)`
 
-[Source](../../src/net/dashboard-api/keys.ts#L575)
+[Source](../../src/net/dashboard-api/keys.ts#L576)
 
 - Guard: `keyTestMatch && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/default-model"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L589)
+[Source](../../src/net/dashboard-api/keys.ts#L590)
 
 - Guard: `url.pathname === "/api/default-model" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/default-model"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L595)
+[Source](../../src/net/dashboard-api/keys.ts#L596)
 
 - Guard: `url.pathname === "/api/default-model" && method === "PUT" && db`
 - Guard: `method === "PUT"`
@@ -572,21 +593,21 @@ Fields read here: `error`, `model`.
 
 ### `url.pathname === "/api/default-model"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L611)
+[Source](../../src/net/dashboard-api/keys.ts#L612)
 
 - Guard: `url.pathname === "/api/default-model" && method === "DELETE" && db`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/model-endpoint"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L620)
+[Source](../../src/net/dashboard-api/keys.ts#L621)
 
 - Guard: `url.pathname === "/api/model-endpoint" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/model-endpoint"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L623)
+[Source](../../src/net/dashboard-api/keys.ts#L624)
 
 - Guard: `url.pathname === "/api/model-endpoint" && method === "PUT" && db`
 - Guard: `method === "PUT"`
@@ -595,7 +616,7 @@ Fields read here: `error`.
 
 ### `url.pathname === "/api/models"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L634)
+[Source](../../src/net/dashboard-api/keys.ts#L635)
 
 - Guard: `url.pathname === "/api/models" && method === "GET"`
 - Guard: `method === "GET"`
@@ -604,56 +625,56 @@ Fields read here: `url.searchParams.get("refresh")`.
 
 ### `url.pathname === "/api/adapters"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L641)
+[Source](../../src/net/dashboard-api/keys.ts#L642)
 
 - Guard: `url.pathname === "/api/adapters" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/adapters"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L644)
+[Source](../../src/net/dashboard-api/keys.ts#L645)
 
 - Guard: `url.pathname === "/api/adapters" && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/adapters\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/keys.ts#L650)
+[Source](../../src/net/dashboard-api/keys.ts#L651)
 
 - Guard: `adapterMatch && method === "PATCH" && db`
 - Guard: `method === "PATCH"`
 
 ### `url.pathname === "/api/roles"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L665)
+[Source](../../src/net/dashboard-api/keys.ts#L666)
 
 - Guard: `url.pathname === "/api/roles" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/traits"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L668)
+[Source](../../src/net/dashboard-api/keys.ts#L669)
 
 - Guard: `url.pathname === "/api/traits" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/mcp"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L673)
+[Source](../../src/net/dashboard-api/keys.ts#L674)
 
 - Guard: `url.pathname === "/api/mcp" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/env"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L682)
+[Source](../../src/net/dashboard-api/keys.ts#L683)
 
 - Guard: `url.pathname === "/api/env" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/env"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L685)
+[Source](../../src/net/dashboard-api/keys.ts#L686)
 
 - Guard: `url.pathname === "/api/env" && method === "PUT"`
 - Guard: `method === "PUT"`
@@ -662,21 +683,21 @@ Fields read here: `url.searchParams.get("refresh")`.
 
 ### `url.pathname === "/api/memory/overview"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L39)
+[Source](../../src/net/dashboard-api/memory.ts#L40)
 
 - Guard: `url.pathname === "/api/memory/overview" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/memory/hygiene"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L44)
+[Source](../../src/net/dashboard-api/memory.ts#L45)
 
 - Guard: `url.pathname === "/api/memory/hygiene" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/memory/hygiene/history"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L50)
+[Source](../../src/net/dashboard-api/memory.ts#L51)
 
 - Guard: `url.pathname === "/api/memory/hygiene/history" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -685,14 +706,14 @@ Fields read here: `Number.parseInt(url.searchParams.get("hours") ?? "", 10)`, `u
 
 ### `url.pathname === "/api/memory/hygiene/snapshot"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L56)
+[Source](../../src/net/dashboard-api/memory.ts#L57)
 
 - Guard: `url.pathname === "/api/memory/hygiene/snapshot" && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/memory/jobs"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L64)
+[Source](../../src/net/dashboard-api/memory.ts#L65)
 
 - Guard: `url.pathname === "/api/memory/jobs" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -701,7 +722,7 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `j
 
 ### `url.pathname.match(/^\/api\/memory\/jobs\/([^/]+)(\/cancel)?$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L81)
+[Source](../../src/net/dashboard-api/memory.ts#L82)
 
 - Guard: `memoryJobMatch && db`
 - Guard: `method === "GET"`
@@ -709,7 +730,7 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `j
 
 ### `url.pathname === "/api/memory/graph"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L97)
+[Source](../../src/net/dashboard-api/memory.ts#L98)
 
 - Guard: `url.pathname === "/api/memory/graph" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -718,7 +739,7 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `b
 
 ### `url.pathname === "/api/memory/quality"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L107)
+[Source](../../src/net/dashboard-api/memory.ts#L108)
 
 - Guard: `url.pathname === "/api/memory/quality" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -727,7 +748,7 @@ Fields read here: `url.searchParams.get("entity")`.
 
 ### `url.pathname === "/api/memory/contradictions"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L113)
+[Source](../../src/net/dashboard-api/memory.ts#L118)
 
 - Guard: `url.pathname === "/api/memory/contradictions" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -736,7 +757,7 @@ Fields read here: `url.searchParams.get("status")`.
 
 ### `url.pathname.match( /^\/api\/memory\/contradictions\/(\d+)\/resolve$/, )`
 
-[Source](../../src/net/dashboard-api/memory.ts#L131)
+[Source](../../src/net/dashboard-api/memory.ts#L136)
 
 - Guard: `contradictionResolveMatch && method === "POST" && db`
 - Guard: `method === "POST"`
@@ -745,7 +766,7 @@ Fields read here: `rationale`.
 
 ### `url.pathname === "/api/graph"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L174)
+[Source](../../src/net/dashboard-api/memory.ts#L179)
 
 - Guard: `url.pathname === "/api/graph" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -754,33 +775,33 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `u
 
 ### `url.pathname.match(/^\/api\/memory\/graph\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L202)
+[Source](../../src/net/dashboard-api/memory.ts#L207)
 
 - Guard: `graphMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/memory\/notes\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L241)
+[Source](../../src/net/dashboard-api/memory.ts#L246)
 
 - Guard: `memNotesMatch && db`
 
 ### `url.pathname.match(/^\/api\/notes\/(\d+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L250)
+[Source](../../src/net/dashboard-api/memory.ts#L255)
 
 - Guard: `noteDetailMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/memory\/core\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L298)
+[Source](../../src/net/dashboard-api/memory.ts#L303)
 
 - Guard: `memCoreMatch && db`
 
 ### `url.pathname === "/api/memory/pools"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L306)
+[Source](../../src/net/dashboard-api/memory.ts#L311)
 
 - Guard: `url.pathname === "/api/memory/pools" && db`
 
@@ -820,28 +841,35 @@ Fields read here: `error`, `setting`, `value`.
 
 ### `url.pathname === "/api/readiness"`
 
-[Source](../../src/net/dashboard-api/readiness.ts#L19)
+[Source](../../src/net/dashboard-api/readiness.ts#L20)
 
 - Guard: `url.pathname === "/api/readiness" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/operations/alerts"`
 
-[Source](../../src/net/dashboard-api/readiness.ts#L22)
+[Source](../../src/net/dashboard-api/readiness.ts#L23)
 
 - Guard: `url.pathname === "/api/operations/alerts" && method === "GET" && db`
 - Guard: `method === "GET"`
 
+### `url.pathname === "/api/challenges/mine"`
+
+[Source](../../src/net/dashboard-api/readiness.ts#L36)
+
+- Guard: `url.pathname === "/api/challenges/mine" && method === "GET"`
+- Guard: `method === "GET"`
+
 ### `url.pathname.match(/^\/api\/operations\/alerts\/(\d+)\/(ack&#124;resolve)$/)`
 
-[Source](../../src/net/dashboard-api/readiness.ts#L32)
+[Source](../../src/net/dashboard-api/readiness.ts#L51)
 
 - Guard: `opsAlertMatch && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/operations\/alerts\/(\d+)\/snooze$/)`
 
-[Source](../../src/net/dashboard-api/readiness.ts#L42)
+[Source](../../src/net/dashboard-api/readiness.ts#L61)
 
 - Guard: `opsAlertSnoozeMatch && method === "POST" && db`
 - Guard: `method === "POST"`
@@ -850,7 +878,7 @@ Fields read here: `durationMs`, `error`.
 
 ### `url.pathname === "/api/productivity"`
 
-[Source](../../src/net/dashboard-api/readiness.ts#L64)
+[Source](../../src/net/dashboard-api/readiness.ts#L83)
 
 - Guard: `url.pathname === "/api/productivity" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -861,53 +889,90 @@ Fields read here: `url.searchParams.get("entity")`.
 
 ### `url.pathname.startsWith("/api/routing/")`
 
-[Source](../../src/net/dashboard-api/routing.ts#L59)
+[Source](../../src/net/dashboard-api/routing.ts#L65)
 
 - Guard: `!url.pathname.startsWith("/api/routing/")`
 
+### `url.pathname.startsWith("/api/routing/")`
+
+[Source](../../src/net/dashboard-api/routing.ts#L226)
+
+- Guard: `!url.pathname.startsWith("/api/routing/")`
+
+### `url.pathname.match(/^\/api\/routing\/supervision(?:\/(renew&#124;revoke))?$/)`
+
+[Source](../../src/net/dashboard-api/routing.ts#L245)
+
+- Guard: `supervisionMatch && method === "POST"`
+- Guard: `method === "POST"`
+- Guard: `ctx.supervision && !supervisionMayCall(method, url.pathname)`
+
 ### `url.pathname === "/api/routing/overview"`
 
-[Source](../../src/net/dashboard-api/routing.ts#L69)
+[Source](../../src/net/dashboard-api/routing.ts#L252)
 
 - Guard: `url.pathname === "/api/routing/overview" && method === "GET"`
 - Guard: `method === "GET"`
+- Guard: `ctx.supervision && !supervisionMayCall(method, url.pathname)`
 
 Fields read here: `reply( router.overview( url.searchParams.get("after") ?? "", routingLimit(url.searchParams.get("limit")), url.searchParams.get("attention") === "true", ), )`, `router.overview( url.searchParams.get("after") ?? "", routingLimit(url.searchParams.get("limit")), url.searchParams.get("attention") === "true", )`, `routingLimit(url.searchParams.get("limit"))`, `url.searchParams.get("after")`, `url.searchParams.get("attention")`, `url.searchParams.get("limit")`.
 
 ### `url.pathname === "/api/routing/sync"`
 
-[Source](../../src/net/dashboard-api/routing.ts#L77)
+[Source](../../src/net/dashboard-api/routing.ts#L260)
 
 - Guard: `url.pathname === "/api/routing/sync" && method === "POST"`
 - Guard: `method === "POST"`
+- Guard: `ctx.supervision && !supervisionMayCall(method, url.pathname)`
 
 ### `url.pathname.match( /^\/api\/routing\/sessions\/([^/]+)\/channels(?:\/([^/]+)\/messages)?$/, )`
 
-[Source](../../src/net/dashboard-api/routing.ts#L79)
+[Source](../../src/net/dashboard-api/routing.ts#L262)
 
 - Guard: `channelMatch`
 - Guard: `method === "GET"`
 - Guard: `method === "POST"`
+- Guard: `ctx.supervision && !supervisionMayCall(method, url.pathname)`
 
 Fields read here: `Number(url.searchParams.get("after") ?? 0)`, `reply( router.channelEvents( sessionId, channelId, Number(url.searchParams.get("after") ?? 0), routingLimit(url.searchParams.get("limit")), ), )`, `router.channelEvents( sessionId, channelId, Number(url.searchParams.get("after") ?? 0), routingLimit(url.searchParams.get("limit")), )`, `routingLimit(url.searchParams.get("limit"))`, `url.searchParams.get("after")`, `url.searchParams.get("limit")`.
 
+### `url.pathname === "/api/routing/room-log"`
+
+[Source](../../src/net/dashboard-api/routing.ts#L308)
+
+- Guard: `url.pathname === "/api/routing/room-log" && method === "GET"`
+- Guard: `method === "GET"`
+- Guard: `ctx.supervision && !supervisionMayCall(method, url.pathname)`
+
+Fields read here: `Number(url.searchParams.get("since") ?? 0)`, `db.readRoomLog( room, Number.isFinite(since) && since > 0 ? since : 0, routingLimit(url.searchParams.get("limit")), )`, `reply({ room, entries: db.readRoomLog( room, Number.isFinite(since) && since > 0 ? since : 0, routingLimit(url.searchParams.get("limit")), ), })`, `routingLimit(url.searchParams.get("limit"))`, `url.searchParams.get("limit")`, `url.searchParams.get("room")`, `url.searchParams.get("since")`.
+
+### `url.pathname.match(/^\/api\/routing\/residents(?:\/([^/]+)\/(renew&#124;revoke&#124;attention))?$/)`
+
+[Source](../../src/net/dashboard-api/routing.ts#L332)
+
+- Guard: `residentMatch && !residentMatch[1] && method === "GET"`
+- Guard: `method === "GET"`
+- Guard: `ctx.supervision && !supervisionMayCall(method, url.pathname)`
+
 ### `url.pathname === "/api/routing/sessions"`
 
-[Source](../../src/net/dashboard-api/routing.ts#L123)
+[Source](../../src/net/dashboard-api/routing.ts#L397)
 
 - Guard: `url.pathname === "/api/routing/sessions"`
 - Guard: `method === "POST"`
 - Guard: `method === "GET"`
+- Guard: `ctx.supervision && !supervisionMayCall(method, url.pathname)`
 
 Fields read here: `reply( router.list( url.searchParams.get("after") ?? "", routingLimit(url.searchParams.get("limit")), ), )`, `router.list( url.searchParams.get("after") ?? "", routingLimit(url.searchParams.get("limit")), )`, `routingLimit(url.searchParams.get("limit"))`, `url.searchParams.get("after")`, `url.searchParams.get("limit")`.
 
 ### `url.pathname.match( /^\/api\/routing\/sessions\/([^/]+)(?:\/(events&#124;heartbeat&#124;leave&#124;inbox&#124;messages&#124;deliveries&#124;runtime&#124;control)(?:\/([^/]+)(?:\/(ack))?)?)?$/, )`
 
-[Source](../../src/net/dashboard-api/routing.ts#L133)
+[Source](../../src/net/dashboard-api/routing.ts#L407)
 
 - Guard: `match`
 - Guard: `method === "GET"`
 - Guard: `method === "POST"`
+- Guard: `ctx.supervision && !supervisionMayCall(method, url.pathname)`
 
 Fields read here: `Number(url.searchParams.get("after") ?? 0)`, `control`, `reply( router.events( id, Number(url.searchParams.get("after") ?? 0), routingLimit(url.searchParams.get("limit")), ), )`, `reply({ messages: router.deliveries(id, routingLimit(url.searchParams.get("limit"))), })`, `reply({ messages: router.inbox(id, routingLimit(url.searchParams.get("limit"))), })`, `router.deliveries(id, routingLimit(url.searchParams.get("limit")))`, `router.events( id, Number(url.searchParams.get("after") ?? 0), routingLimit(url.searchParams.get("limit")), )`, `router.inbox(id, routingLimit(url.searchParams.get("limit")))`, `routingLimit(url.searchParams.get("limit"))`, `url.searchParams.get("after")`, `url.searchParams.get("limit")`.
 
@@ -915,39 +980,39 @@ Fields read here: `Number(url.searchParams.get("after") ?? 0)`, `control`, `repl
 
 ### `url.pathname === "/api/logout"`
 
-[Source](../../src/net/dashboard-api/system.ts#L160)
+[Source](../../src/net/dashboard-api/system.ts#L165)
 
 - Guard: `url.pathname === "/api/logout" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/world"`
 
-[Source](../../src/net/dashboard-api/system.ts#L166)
+[Source](../../src/net/dashboard-api/system.ts#L171)
 
 - Guard: `url.pathname === "/api/world"`
 
 ### `url.pathname === "/api/entities"`
 
-[Source](../../src/net/dashboard-api/system.ts#L169)
+[Source](../../src/net/dashboard-api/system.ts#L174)
 
 - Guard: `url.pathname === "/api/entities"`
 
 ### `url.pathname === "/api/events"`
 
-[Source](../../src/net/dashboard-api/system.ts#L172)
+[Source](../../src/net/dashboard-api/system.ts#L177)
 
 - Guard: `url.pathname === "/api/events"`
 
 ### `url.pathname === "/api/traces"`
 
-[Source](../../src/net/dashboard-api/system.ts#L175)
+[Source](../../src/net/dashboard-api/system.ts#L180)
 
 - Guard: `url.pathname === "/api/traces" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/evidence/receipts"`
 
-[Source](../../src/net/dashboard-api/system.ts#L178)
+[Source](../../src/net/dashboard-api/system.ts#L183)
 
 - Guard: `url.pathname === "/api/evidence/receipts" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -956,7 +1021,7 @@ Fields read here: `Number(url.searchParams.get("limit"))`, `url.searchParams.get
 
 ### `url.pathname === "/api/evidence/checkpoint"`
 
-[Source](../../src/net/dashboard-api/system.ts#L188)
+[Source](../../src/net/dashboard-api/system.ts#L193)
 
 - Guard: `url.pathname === "/api/evidence/checkpoint" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -965,27 +1030,27 @@ Fields read here: `Response.json(exported, { headers: url.searchParams.get("down
 
 ### `url.pathname === "/api/logs"`
 
-[Source](../../src/net/dashboard-api/system.ts#L213)
+[Source](../../src/net/dashboard-api/system.ts#L218)
 
 - Guard: `url.pathname === "/api/logs" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/system"`
 
-[Source](../../src/net/dashboard-api/system.ts#L216)
+[Source](../../src/net/dashboard-api/system.ts#L221)
 
 - Guard: `url.pathname === "/api/system"`
 
 ### `url.pathname === "/api/principals"`
 
-[Source](../../src/net/dashboard-api/system.ts#L219)
+[Source](../../src/net/dashboard-api/system.ts#L224)
 
 - Guard: `url.pathname === "/api/principals" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/principals\/([^/]+)\/status$/)`
 
-[Source](../../src/net/dashboard-api/system.ts#L222)
+[Source](../../src/net/dashboard-api/system.ts#L227)
 
 - Guard: `principalStatusMatch && method === "POST" && db`
 - Guard: `method === "POST"`
@@ -994,21 +1059,21 @@ Fields read here: `error`, `status`.
 
 ### `url.pathname === "/api/collective/variants"`
 
-[Source](../../src/net/dashboard-api/system.ts#L237)
+[Source](../../src/net/dashboard-api/system.ts#L242)
 
 - Guard: `url.pathname === "/api/collective/variants" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/federation/peers"`
 
-[Source](../../src/net/dashboard-api/system.ts#L244)
+[Source](../../src/net/dashboard-api/system.ts#L249)
 
 - Guard: `url.pathname === "/api/federation/peers" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/federation/peers"`
 
-[Source](../../src/net/dashboard-api/system.ts#L247)
+[Source](../../src/net/dashboard-api/system.ts#L252)
 
 - Guard: `url.pathname === "/api/federation/peers" && method === "POST" && db`
 - Guard: `method === "POST"`
@@ -1017,7 +1082,7 @@ Fields read here: `baseUrl`, `capabilities`, `error`, `name`, `publicKey`, `sche
 
 ### `url.pathname.match(/^\/api\/federation\/peers\/([^/]+)\/trust$/)`
 
-[Source](../../src/net/dashboard-api/system.ts#L327)
+[Source](../../src/net/dashboard-api/system.ts#L332)
 
 - Guard: `federationTrustMatch && method === "POST" && db`
 - Guard: `method === "POST"`
@@ -1026,7 +1091,7 @@ Fields read here: `error`, `trust`.
 
 ### `url.pathname === "/api/collective/variants"`
 
-[Source](../../src/net/dashboard-api/system.ts#L339)
+[Source](../../src/net/dashboard-api/system.ts#L344)
 
 - Guard: `url.pathname === "/api/collective/variants" && method === "POST" && db`
 - Guard: `method === "POST"`
@@ -1035,7 +1100,7 @@ Fields read here: `error`, `hypothesis`, `name`, `parentVariantId`, `worldTempla
 
 ### `url.pathname.match( /^\/api\/collective\/variants\/([^/]+)\/(start&#124;stop&#124;promote)$/, )`
 
-[Source](../../src/net/dashboard-api/system.ts#L369)
+[Source](../../src/net/dashboard-api/system.ts#L374)
 
 - Guard: `collectiveActionMatch && method === "POST" && db`
 - Guard: `method === "POST"`
@@ -1044,7 +1109,7 @@ Fields read here: `error`, `evidenceRefs`, `rationale`.
 
 ### `url.pathname === "/api/security-status"`
 
-[Source](../../src/net/dashboard-api/system.ts#L398)
+[Source](../../src/net/dashboard-api/system.ts#L403)
 
 - Guard: `url.pathname === "/api/security-status" && method === "GET"`
 - Guard: `method === "GET"`
@@ -1053,20 +1118,20 @@ Fields read here: `error`, `evidenceRefs`, `rationale`.
 
 ### `url.pathname.match(/^\/api\/coordination\/tasks\/(\d+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L420)
+[Source](../../src/net/dashboard-api/world.ts#L446)
 
 - Guard: `taskDetailMatch && db`
 
 ### `url.pathname.match(/^\/api\/coding\/runs\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L426)
+[Source](../../src/net/dashboard-api/world.ts#L452)
 
 - Guard: `runMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/coding\/session\/([^/]+)\/artifacts$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L437)
+[Source](../../src/net/dashboard-api/world.ts#L463)
 
 - Guard: `codingArtifactsMatch && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -1075,14 +1140,14 @@ Fields read here: `clampLimit(url.searchParams.get("limit"), 100)`, `url.searchP
 
 ### `url.pathname.match(/^\/api\/coding\/session\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L445)
+[Source](../../src/net/dashboard-api/world.ts#L471)
 
 - Guard: `codingSessionDetailMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/coding/sessions"`
 
-[Source](../../src/net/dashboard-api/world.ts#L459)
+[Source](../../src/net/dashboard-api/world.ts#L485)
 
 - Guard: `url.pathname === "/api/coding/sessions" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -1091,50 +1156,50 @@ Fields read here: `clampLimit(url.searchParams.get("limit"), 10)`, `url.searchPa
 
 ### `url.pathname.match(/^\/api\/coordination\/boards\/(.+)\/posts$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L469)
+[Source](../../src/net/dashboard-api/world.ts#L495)
 
 - Guard: `boardPostsMatch && db`
 
 ### `url.pathname.match( /^\/api\/coordination\/channels\/(.+)\/messages$/, )`
 
-[Source](../../src/net/dashboard-api/world.ts#L474)
+[Source](../../src/net/dashboard-api/world.ts#L500)
 
 - Guard: `channelMessagesMatch && db`
 
 ### `url.pathname.match(/^\/api\/coordination\/boards\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L481)
+[Source](../../src/net/dashboard-api/world.ts#L507)
 
 - Guard: `boardDetailMatch && db`
 
 ### `url.pathname.match(/^\/api\/coordination\/groups\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L486)
+[Source](../../src/net/dashboard-api/world.ts#L512)
 
 - Guard: `groupDetailMatch && db`
 
 ### `url.pathname.match(/^\/api\/coordination\/channels\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L491)
+[Source](../../src/net/dashboard-api/world.ts#L517)
 
 - Guard: `channelDetailMatch && db`
 
 ### `url.pathname.match(/^\/api\/rooms\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L496)
+[Source](../../src/net/dashboard-api/world.ts#L522)
 
 - Guard: `roomMatch`
 
 ### `url.pathname.match(/^\/api\/entities\/([^/]+)\/canvas$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L506)
+[Source](../../src/net/dashboard-api/world.ts#L532)
 
 - Guard: `entityCanvasMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/feed"`
 
-[Source](../../src/net/dashboard-api/world.ts#L557)
+[Source](../../src/net/dashboard-api/world.ts#L583)
 
 - Guard: `url.pathname === "/api/feed" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -1143,7 +1208,7 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `N
 
 ### `url.pathname === "/api/media-jobs"`
 
-[Source](../../src/net/dashboard-api/world.ts#L583)
+[Source](../../src/net/dashboard-api/world.ts#L609)
 
 - Guard: `url.pathname === "/api/media-jobs" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -1152,41 +1217,41 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `u
 
 ### `url.pathname.match(/^\/api\/media-jobs\/([^/]+)\/retry$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L639)
+[Source](../../src/net/dashboard-api/world.ts#L665)
 
 - Guard: `mediaRetryMatch && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/entities\/([^/]+)\/brief$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L705)
+[Source](../../src/net/dashboard-api/world.ts#L731)
 
 - Guard: `briefMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/entities\/([^/]+)\/work$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L749)
+[Source](../../src/net/dashboard-api/world.ts#L775)
 
 - Guard: `workMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/entities\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L768)
+[Source](../../src/net/dashboard-api/world.ts#L794)
 
 - Guard: `entityMatch`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/coordination/boards"`
 
-[Source](../../src/net/dashboard-api/world.ts#L792)
+[Source](../../src/net/dashboard-api/world.ts#L817)
 
 - Guard: `url.pathname === "/api/coordination/boards" && db`
 
 ### `url.pathname === "/api/coordination/tasks"`
 
-[Source](../../src/net/dashboard-api/world.ts#L795)
+[Source](../../src/net/dashboard-api/world.ts#L820)
 
 - Guard: `url.pathname === "/api/coordination/tasks" && db`
 
@@ -1194,86 +1259,86 @@ Fields read here: `clampLimit(url.searchParams.get("limit"), 50)`, `url.searchPa
 
 ### `url.pathname === "/api/coordination/channels"`
 
-[Source](../../src/net/dashboard-api/world.ts#L805)
+[Source](../../src/net/dashboard-api/world.ts#L830)
 
 - Guard: `url.pathname === "/api/coordination/channels" && db`
 
 ### `url.pathname === "/api/coordination/groups"`
 
-[Source](../../src/net/dashboard-api/world.ts#L808)
+[Source](../../src/net/dashboard-api/world.ts#L833)
 
 - Guard: `url.pathname === "/api/coordination/groups" && db`
 
 ### `url.pathname === "/api/coordination/projects"`
 
-[Source](../../src/net/dashboard-api/world.ts#L811)
+[Source](../../src/net/dashboard-api/world.ts#L836)
 
 - Guard: `url.pathname === "/api/coordination/projects" && db`
 
 ### `url.pathname === "/api/connectors"`
 
-[Source](../../src/net/dashboard-api/world.ts#L814)
+[Source](../../src/net/dashboard-api/world.ts#L839)
 
 - Guard: `url.pathname === "/api/connectors" && db`
 
 ### `url.pathname === "/api/commands"`
 
-[Source](../../src/net/dashboard-api/world.ts#L817)
+[Source](../../src/net/dashboard-api/world.ts#L842)
 
 - Guard: `url.pathname === "/api/commands" && db`
 
 ### `url.pathname === "/api/room-templates"`
 
-[Source](../../src/net/dashboard-api/world.ts#L830)
+[Source](../../src/net/dashboard-api/world.ts#L855)
 
 - Guard: `url.pathname === "/api/room-templates" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/macros"`
 
-[Source](../../src/net/dashboard-api/world.ts#L833)
+[Source](../../src/net/dashboard-api/world.ts#L858)
 
 - Guard: `url.pathname === "/api/macros" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/experiments"`
 
-[Source](../../src/net/dashboard-api/world.ts#L840)
+[Source](../../src/net/dashboard-api/world.ts#L865)
 
 - Guard: `url.pathname === "/api/experiments" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/evolution-sessions"`
 
-[Source](../../src/net/dashboard-api/world.ts#L843)
+[Source](../../src/net/dashboard-api/world.ts#L868)
 
 - Guard: `url.pathname === "/api/evolution-sessions" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/markets"`
 
-[Source](../../src/net/dashboard-api/world.ts#L849)
+[Source](../../src/net/dashboard-api/world.ts#L874)
 
 - Guard: `url.pathname === "/api/markets" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/benchmarks"`
 
-[Source](../../src/net/dashboard-api/world.ts#L852)
+[Source](../../src/net/dashboard-api/world.ts#L877)
 
 - Guard: `url.pathname === "/api/benchmarks" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/recipes"`
 
-[Source](../../src/net/dashboard-api/world.ts#L869)
+[Source](../../src/net/dashboard-api/world.ts#L894)
 
 - Guard: `url.pathname === "/api/recipes" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/coordination\/projects\/([^/]+)\/orchestration$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L890)
+[Source](../../src/net/dashboard-api/world.ts#L915)
 
 - Guard: `orchMatch && method === "POST" && db`
 - Guard: `method === "POST"`
@@ -1284,19 +1349,19 @@ Fields read here: `orchestration`.
 
 ### `url.pathname === "/ws"`
 
-[Source](../../src/net/log-server.ts#L63)
+[Source](../../src/net/log-server.ts#L70)
 
 - Guard: `url.pathname === "/ws"`
 
 ### `url.pathname === "/"`
 
-[Source](../../src/net/log-server.ts#L71)
+[Source](../../src/net/log-server.ts#L88)
 
 - Guard: `url.pathname === "/" &#124;&#124; url.pathname === "/index.html"`
 
 ### `url.pathname === "/index.html"`
 
-[Source](../../src/net/log-server.ts#L71)
+[Source](../../src/net/log-server.ts#L88)
 
 - Guard: `url.pathname === "/" &#124;&#124; url.pathname === "/index.html"`
 
@@ -1304,13 +1369,13 @@ Fields read here: `orchestration`.
 
 ### `url.pathname === "/health"`
 
-[Source](../../src/net/mcp/mcp-server.ts#L229)
+[Source](../../src/net/mcp/mcp-server.ts#L176)
 
 - Guard: `url.pathname === "/health"`
 
 ### `url.pathname === "/mcp"`
 
-[Source](../../src/net/mcp/mcp-server.ts#L244)
+[Source](../../src/net/mcp/mcp-server.ts#L191)
 
 - Guard: `url.pathname === "/mcp"`
 
@@ -1318,110 +1383,110 @@ Fields read here: `orchestration`.
 
 ### `path === "/v1/memory/health"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L143)
+[Source](../../src/net/memory/memory-service-api.ts#L156)
 
 - Guard: `path === "/v1/memory/health" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `path.endsWith("/search")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L177)
+[Source](../../src/net/memory/memory-service-api.ts#L210)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/context")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L178)
+[Source](../../src/net/memory/memory-service-api.ts#L211)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/query")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L179)
+[Source](../../src/net/memory/memory-service-api.ts#L212)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/graph")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L180)
+[Source](../../src/net/memory/memory-service-api.ts#L213)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/source_search")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L181)
+[Source](../../src/net/memory/memory-service-api.ts#L214)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/plan")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L182)
+[Source](../../src/net/memory/memory-service-api.ts#L215)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/execute_plan")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L183)
+[Source](../../src/net/memory/memory-service-api.ts#L216)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/retrieve")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L184)
+[Source](../../src/net/memory/memory-service-api.ts#L217)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/workflow")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L185)
+[Source](../../src/net/memory/memory-service-api.ts#L218)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/federated_retrieve")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L186)
+[Source](../../src/net/memory/memory-service-api.ts#L219)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/retrieve_cached")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L187)
+[Source](../../src/net/memory/memory-service-api.ts#L220)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/review")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L188)
+[Source](../../src/net/memory/memory-service-api.ts#L221)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/cache/get")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L189)
+[Source](../../src/net/memory/memory-service-api.ts#L222)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/federated_search")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L190)
+[Source](../../src/net/memory/memory-service-api.ts#L223)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/federated_read")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L191)
+[Source](../../src/net/memory/memory-service-api.ts#L224)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/knowledge_graph")`
 
-[Source](../../src/net/memory/memory-service-api.ts#L192)
+[Source](../../src/net/memory/memory-service-api.ts#L225)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path === "/v1/memory/assistance"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L202)
+[Source](../../src/net/memory/memory-service-api.ts#L235)
 
 - Guard: `path === "/v1/memory/assistance" && req.method === "GET"`
 - Guard: `req.method === "GET"`
@@ -1430,7 +1495,7 @@ Fields read here: `Number(url.searchParams.get("limit"))`, `json( repo.assistanc
 
 ### `path.match( /^\/v1\/memory\/assistance\/([^/]+)(?:\/(claim&#124;heartbeat&#124;read&#124;finish&#124;cancel&#124;delegate&#124;adopt))?$/, )`
 
-[Source](../../src/net/memory/memory-service-api.ts#L214)
+[Source](../../src/net/memory/memory-service-api.ts#L247)
 
 - Guard: `assistance`
 - Guard: `req.method === "GET"`
@@ -1440,28 +1505,28 @@ Fields read here: `lease_token`.
 
 ### `path === "/v1/memory/usage"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L257)
+[Source](../../src/net/memory/memory-service-api.ts#L290)
 
 - Guard: `path === "/v1/memory/usage" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `path === "/v1/memory"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L258)
+[Source](../../src/net/memory/memory-service-api.ts#L291)
 
 - Guard: `path === "/v1/memory" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `path === "/v1/memory/me"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L259)
+[Source](../../src/net/memory/memory-service-api.ts#L292)
 
 - Guard: `path === "/v1/memory/me" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `path === "/v1/memory/spaces"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L265)
+[Source](../../src/net/memory/memory-service-api.ts#L298)
 
 - Guard: `path === "/v1/memory/spaces"`
 - Guard: `req.method === "GET"`
@@ -1471,62 +1536,62 @@ Fields read here: `name`.
 
 ### `path.match(/^\/v1\/memory\/spaces\/([^/]+)(?:\/(.*))?$/)`
 
-[Source](../../src/net/memory/memory-service-api.ts#L272)
+[Source](../../src/net/memory/memory-service-api.ts#L305)
 
 - Guard: `!match`
 
 ### `rest === "assistance"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L276)
+[Source](../../src/net/memory/memory-service-api.ts#L309)
 
 - Guard: `rest === "assistance" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "knowledge_graph"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L282)
+[Source](../../src/net/memory/memory-service-api.ts#L315)
 
 - Guard: `rest === "knowledge_graph" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "federation_mounts"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L284)
+[Source](../../src/net/memory/memory-service-api.ts#L317)
 
 - Guard: `rest === "federation_mounts" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `rest === "federated_search"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L288)
+[Source](../../src/net/memory/memory-service-api.ts#L321)
 
 - Guard: `rest === "federated_search" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "federated_read"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L297)
+[Source](../../src/net/memory/memory-service-api.ts#L330)
 
 - Guard: `rest === "federated_read" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "bundle"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L306)
+[Source](../../src/net/memory/memory-service-api.ts#L339)
 
 - Guard: `rest === "bundle" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `rest === "bundle"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L307)
+[Source](../../src/net/memory/memory-service-api.ts#L340)
 
 - Guard: `rest === "bundle" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "transfer"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L312)
+[Source](../../src/net/memory/memory-service-api.ts#L345)
 
 - Guard: `rest === "transfer" && req.method === "GET"`
 - Guard: `req.method === "GET"`
@@ -1535,14 +1600,14 @@ Fields read here: `json(repo.exportPage(actor, space, url.searchParams.get("curs
 
 ### `rest === "transfers"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L314)
+[Source](../../src/net/memory/memory-service-api.ts#L347)
 
 - Guard: `rest === "transfers" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "transfers"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L316)
+[Source](../../src/net/memory/memory-service-api.ts#L349)
 
 - Guard: `rest === "transfers" && req.method === "GET"`
 - Guard: `req.method === "GET"`
@@ -1551,7 +1616,7 @@ Fields read here: `Number(url.searchParams.get("limit"))`, `json( repo.transfers
 
 ### `rest.match(/^transfers\/([^/]+)(?:\/(pages&#124;commit&#124;abort))?$/)`
 
-[Source](../../src/net/memory/memory-service-api.ts#L332)
+[Source](../../src/net/memory/memory-service-api.ts#L365)
 
 - Guard: `transfer`
 - Guard: `req.method === "GET"`
@@ -1559,56 +1624,56 @@ Fields read here: `Number(url.searchParams.get("limit"))`, `json( repo.transfers
 
 ### `rest === "acknowledge"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L352)
+[Source](../../src/net/memory/memory-service-api.ts#L385)
 
 - Guard: `rest === "acknowledge" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "json_store"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L354)
+[Source](../../src/net/memory/memory-service-api.ts#L387)
 
 - Guard: `rest === "json_store" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "join"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L356)
+[Source](../../src/net/memory/memory-service-api.ts#L389)
 
 - Guard: `rest === "join" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "rules"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L358)
+[Source](../../src/net/memory/memory-service-api.ts#L391)
 
 - Guard: `rest === "rules" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "rules/run"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L360)
+[Source](../../src/net/memory/memory-service-api.ts#L393)
 
 - Guard: `rest === "rules/run" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "rules/materialize"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L362)
+[Source](../../src/net/memory/memory-service-api.ts#L395)
 
 - Guard: `rest === "rules/materialize" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "review"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L364)
+[Source](../../src/net/memory/memory-service-api.ts#L397)
 
 - Guard: `rest === "review" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "reaffirm"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L366)
+[Source](../../src/net/memory/memory-service-api.ts#L399)
 
 - Guard: `rest === "reaffirm" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1617,7 +1682,7 @@ Fields read here: `id`.
 
 ### `rest === "resolve"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L379)
+[Source](../../src/net/memory/memory-service-api.ts#L412)
 
 - Guard: `rest === "resolve" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1626,77 +1691,77 @@ Fields read here: `id`.
 
 ### `rest === "adopt"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L383)
+[Source](../../src/net/memory/memory-service-api.ts#L416)
 
 - Guard: `rest === "adopt" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "cache/delete"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L387)
+[Source](../../src/net/memory/memory-service-api.ts#L420)
 
 - Guard: `rest === "cache/delete" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "cache/get"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L389)
+[Source](../../src/net/memory/memory-service-api.ts#L422)
 
 - Guard: `rest === "cache/get" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "cache/put"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L393)
+[Source](../../src/net/memory/memory-service-api.ts#L426)
 
 - Guard: `rest === "cache/put" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "plan"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L397)
+[Source](../../src/net/memory/memory-service-api.ts#L430)
 
 - Guard: `rest === "plan" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "execute_plan"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L399)
+[Source](../../src/net/memory/memory-service-api.ts#L432)
 
 - Guard: `rest === "execute_plan" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "workflow"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L401)
+[Source](../../src/net/memory/memory-service-api.ts#L434)
 
 - Guard: `rest === "workflow" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "federated_retrieve"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L405)
+[Source](../../src/net/memory/memory-service-api.ts#L438)
 
 - Guard: `rest === "federated_retrieve" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "retrieve_cached"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L414)
+[Source](../../src/net/memory/memory-service-api.ts#L447)
 
 - Guard: `rest === "retrieve_cached" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "retrieve"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L418)
+[Source](../../src/net/memory/memory-service-api.ts#L451)
 
 - Guard: `rest === "retrieve" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "vocabulary"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L420)
+[Source](../../src/net/memory/memory-service-api.ts#L453)
 
 - Guard: `rest === "vocabulary"`
 - Guard: `req.method === "GET"`
@@ -1706,7 +1771,7 @@ Fields read here: `Number(url.searchParams.get("version"))`, `definition`, `expe
 
 ### `rest === "source_search"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L442)
+[Source](../../src/net/memory/memory-service-api.ts#L475)
 
 - Guard: `rest === "source_search" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1715,7 +1780,7 @@ Fields read here: `expansion`, `limit`, `match`, `query`, `session_id`.
 
 ### `rest.match(/^sources\/([^/]+)$/)`
 
-[Source](../../src/net/memory/memory-service-api.ts#L457)
+[Source](../../src/net/memory/memory-service-api.ts#L490)
 
 - Guard: `source && req.method === "GET"`
 - Guard: `req.method === "GET"`
@@ -1724,7 +1789,7 @@ Fields read here: `Number(url.searchParams.get("end"))`, `Number(url.searchParam
 
 ### `rest === "query"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L469)
+[Source](../../src/net/memory/memory-service-api.ts#L502)
 
 - Guard: `rest === "query" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1733,7 +1798,7 @@ Fields read here: `limit`, `name`, `object`, `valid_at`.
 
 ### `rest === "graph"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L490)
+[Source](../../src/net/memory/memory-service-api.ts#L523)
 
 - Guard: `rest === "graph" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1742,7 +1807,7 @@ Fields read here: `direction`, `limit`, `max_depth`, `predicates`, `subject`, `v
 
 ### `rest === "reindex"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L523)
+[Source](../../src/net/memory/memory-service-api.ts#L556)
 
 - Guard: `rest === "reindex" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1751,7 +1816,7 @@ Fields read here: `cursor`, `expected_generation`, `limit`.
 
 ### `rest === "grants"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L550)
+[Source](../../src/net/memory/memory-service-api.ts#L583)
 
 - Guard: `rest === "grants" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1760,7 +1825,7 @@ Fields read here: `principal_id`, `role`.
 
 ### `rest === "records"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L559)
+[Source](../../src/net/memory/memory-service-api.ts#L592)
 
 - Guard: `rest === "records" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1769,7 +1834,7 @@ Fields read here: `content`, `mode`.
 
 ### `rest.match(/^records\/([^/]+)$/)`
 
-[Source](../../src/net/memory/memory-service-api.ts#L575)
+[Source](../../src/net/memory/memory-service-api.ts#L608)
 
 - Guard: `record`
 - Guard: `req.method === "GET"`
@@ -1779,7 +1844,7 @@ Fields read here: `content`, `expected_version`, `url.searchParams.get("version"
 
 ### `rest === "search"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L607)
+[Source](../../src/net/memory/memory-service-api.ts#L640)
 
 - Guard: `(rest === "search" &#124;&#124; rest === "context") && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1788,7 +1853,7 @@ Fields read here: `budget_tokens`.
 
 ### `rest === "context"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L607)
+[Source](../../src/net/memory/memory-service-api.ts#L640)
 
 - Guard: `(rest === "search" &#124;&#124; rest === "context") && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1797,7 +1862,7 @@ Fields read here: `budget_tokens`.
 
 ### `rest === "search"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L611)
+[Source](../../src/net/memory/memory-service-api.ts#L644)
 
 - Guard: `(rest === "search" &#124;&#124; rest === "context") && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1806,7 +1871,7 @@ Fields read here: `budget_tokens`.
 
 ### `rest === "sources/batch"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L624)
+[Source](../../src/net/memory/memory-service-api.ts#L657)
 
 - Guard: `rest === "sources/batch" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1815,7 +1880,7 @@ Fields read here: `items`.
 
 ### `rest === "source_headers"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L628)
+[Source](../../src/net/memory/memory-service-api.ts#L661)
 
 - Guard: `rest === "source_headers" && req.method === "GET"`
 - Guard: `req.method === "GET"`
@@ -1824,7 +1889,7 @@ Fields read here: `Number(url.searchParams.get("after") ?? 0)`, `Number(url.sear
 
 ### `rest === "sources"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L639)
+[Source](../../src/net/memory/memory-service-api.ts#L672)
 
 - Guard: `rest === "sources"`
 - Guard: `req.method === "POST"`
@@ -1832,9 +1897,16 @@ Fields read here: `Number(url.searchParams.get("after") ?? 0)`, `Number(url.sear
 
 Fields read here: `Number(url.searchParams.get("after") ?? 0)`, `Number(url.searchParams.get("limit") ?? 100)`, `content`, `integer( Number(url.searchParams.get("after") ?? 0), "after", 0, Number.MAX_SAFE_INTEGER, )`, `integer(Number(url.searchParams.get("limit") ?? 100), "limit", 1, 1000)`, `session_id`, `url.searchParams.get("after")`, `url.searchParams.get("limit")`.
 
+### `rest.match(/^checkpoints\/([^/]+)\/capture$/)`
+
+[Source](../../src/net/memory/memory-service-api.ts#L698)
+
+- Guard: `captureCheckpoint && req.method === "POST"`
+- Guard: `req.method === "POST"`
+
 ### `rest.match(/^checkpoints\/([^/]+)$/)`
 
-[Source](../../src/net/memory/memory-service-api.ts#L665)
+[Source](../../src/net/memory/memory-service-api.ts#L703)
 
 - Guard: `checkpoint`
 - Guard: `req.method === "GET"`
@@ -1844,14 +1916,14 @@ Fields read here: `data`, `expected_version`, `source_cursor`, `source_ids`.
 
 ### `rest.match(/^jobs\/([^/]+)$/)`
 
-[Source](../../src/net/memory/memory-service-api.ts#L685)
+[Source](../../src/net/memory/memory-service-api.ts#L723)
 
 - Guard: `job && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `rest === "forget"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L688)
+[Source](../../src/net/memory/memory-service-api.ts#L726)
 
 - Guard: `rest === "forget" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1860,7 +1932,7 @@ Fields read here: `all`, `expected_generation`, `field`, `record_ids`, `source_i
 
 ### `rest === "export"`
 
-[Source](../../src/net/memory/memory-service-api.ts#L726)
+[Source](../../src/net/memory/memory-service-api.ts#L764)
 
 - Guard: `rest === "export" && req.method === "GET"`
 - Guard: `req.method === "GET"`
@@ -1871,19 +1943,11 @@ Fields read here: `all`, `expected_generation`, `field`, `record_ids`, `source_i
 
 [Source](../../src/net/model-api/ollama.ts#L612)
 
-## src/net/model-api/shared.ts
-
-### `rest === "*"`
-
-[Source](../../src/net/model-api/shared.ts#L143)
-
-- Guard: `rest === "*"`
-
 ## src/net/model-api/verify.ts
 
 ### `path.split(".")`
 
-[Source](../../src/net/model-api/verify.ts#L656)
+[Source](../../src/net/model-api/verify.ts#L666)
 
 ## src/net/model/model-api.ts
 
@@ -2060,13 +2124,19 @@ Fields read here: `model`, `name`.
 
 ### `url.pathname === "/mcp"`
 
-[Source](../../src/net/websocket-server.ts#L420)
+[Source](../../src/net/websocket-server.ts#L408)
+
+- Guard: `!(url.pathname === "/mcp" && self.mcpHandler) && !hostHeaderAllowed(hostHeader, hostPolicy)`
+
+### `url.pathname === "/mcp"`
+
+[Source](../../src/net/websocket-server.ts#L435)
 
 - Guard: `url.pathname === "/mcp" && self.mcpHandler`
 
 ### `url.pathname === "/dashboard-ws"`
 
-[Source](../../src/net/websocket-server.ts#L424)
+[Source](../../src/net/websocket-server.ts#L439)
 
 - Guard: `isWsUpgrade`
 
@@ -2074,7 +2144,7 @@ Fields read here: `server.upgrade(req, { data: { connId, isCanvas: true, canvasI
 
 ### `url.pathname === "/ws"`
 
-[Source](../../src/net/websocket-server.ts#L425)
+[Source](../../src/net/websocket-server.ts#L440)
 
 - Guard: `isWsUpgrade`
 
@@ -2082,7 +2152,7 @@ Fields read here: `server.upgrade(req, { data: { connId, isCanvas: true, canvasI
 
 ### `url.pathname === "/canvas-ws"`
 
-[Source](../../src/net/websocket-server.ts#L426)
+[Source](../../src/net/websocket-server.ts#L441)
 
 - Guard: `isWsUpgrade`
 
@@ -2090,21 +2160,21 @@ Fields read here: `server.upgrade(req, { data: { connId, isCanvas: true, canvasI
 
 ### `url.pathname === "/dashboard-ws"`
 
-[Source](../../src/net/websocket-server.ts#L462)
+[Source](../../src/net/websocket-server.ts#L477)
 
 - Guard: `isWsUpgrade`
 - Guard: `url.pathname === "/dashboard-ws"`
 
 ### `url.pathname === "/ws"`
 
-[Source](../../src/net/websocket-server.ts#L478)
+[Source](../../src/net/websocket-server.ts#L493)
 
 - Guard: `isWsUpgrade`
 - Guard: `url.pathname === "/ws"`
 
 ### `url.pathname === "/canvas-ws"`
 
-[Source](../../src/net/websocket-server.ts#L488)
+[Source](../../src/net/websocket-server.ts#L503)
 
 - Guard: `isWsUpgrade`
 - Guard: `url.pathname === "/canvas-ws"`
@@ -2113,152 +2183,152 @@ Fields read here: `server.upgrade(req, { data: { connId, isCanvas: true, canvasI
 
 ### `url.pathname.startsWith("/assets/")`
 
-[Source](../../src/net/websocket-server.ts#L520)
+[Source](../../src/net/websocket-server.ts#L535)
 
 - Guard: `url.pathname.startsWith("/assets/") && self.storage`
 
 ### `url.pathname.startsWith("/api/assets")`
 
-[Source](../../src/net/websocket-server.ts#L532)
+[Source](../../src/net/websocket-server.ts#L547)
 
 - Guard: `url.pathname.startsWith("/api/assets") && self.db && self.storage`
 
 ### `url.pathname.startsWith("/api/canvases")`
 
-[Source](../../src/net/websocket-server.ts#L545)
+[Source](../../src/net/websocket-server.ts#L560)
 
 - Guard: `url.pathname.startsWith("/api/canvases") && self.db`
 
 ### `url.pathname === "/mem"`
 
-[Source](../../src/net/websocket-server.ts#L567)
+[Source](../../src/net/websocket-server.ts#L582)
 
 - Guard: `(url.pathname === "/mem" &#124;&#124; url.pathname.startsWith("/mem/")) && self.db`
 
 ### `url.pathname.startsWith("/mem/")`
 
-[Source](../../src/net/websocket-server.ts#L567)
+[Source](../../src/net/websocket-server.ts#L582)
 
 - Guard: `(url.pathname === "/mem" &#124;&#124; url.pathname.startsWith("/mem/")) && self.db`
 
 ### `url.pathname === "/api/probe"`
 
-[Source](../../src/net/websocket-server.ts#L578)
+[Source](../../src/net/websocket-server.ts#L593)
 
 - Guard: `url.pathname === "/api/probe" && self.db`
 
 ### `url.pathname.startsWith("/api/entity/")`
 
-[Source](../../src/net/websocket-server.ts#L592)
+[Source](../../src/net/websocket-server.ts#L608)
 
 - Guard: `url.pathname.startsWith("/api/entity/") && self.db`
 
 ### `url.pathname.startsWith("/v1/memory")`
 
-[Source](../../src/net/websocket-server.ts#L603)
+[Source](../../src/net/websocket-server.ts#L619)
 
 - Guard: `url.pathname.startsWith("/v1/memory") && self.memoryService`
 
 ### `url.pathname.startsWith("/v1/")`
 
-[Source](../../src/net/websocket-server.ts#L611)
+[Source](../../src/net/websocket-server.ts#L627)
 
 - Guard: `req.method === "POST" && (url.pathname.startsWith("/v1/") &#124;&#124; isModelApiPath(url.pathname))`
 - Guard: `req.method === "POST"`
 
 ### `url.pathname.startsWith("/v1/")`
 
-[Source](../../src/net/websocket-server.ts#L615)
+[Source](../../src/net/websocket-server.ts#L631)
 
 - Guard: `url.pathname.startsWith("/v1/")`
 
 ### `url.pathname.startsWith("/api/auth")`
 
-[Source](../../src/net/websocket-server.ts#L641)
+[Source](../../src/net/websocket-server.ts#L657)
 
 - Guard: `url.pathname.startsWith("/api/auth")`
 
 ### `url.pathname.startsWith("/api/orchestration/")`
 
-[Source](../../src/net/websocket-server.ts#L655)
+[Source](../../src/net/websocket-server.ts#L671)
 
 - Guard: `url.pathname.startsWith("/api/orchestration/")`
 - Guard: `req.method === "OPTIONS"`
 
 ### `url.pathname.startsWith("/api/")`
 
-[Source](../../src/net/websocket-server.ts#L675)
+[Source](../../src/net/websocket-server.ts#L691)
 
 - Guard: `url.pathname.startsWith("/api/")`
 
 ### `url.pathname === "/health"`
 
-[Source](../../src/net/websocket-server.ts#L686)
+[Source](../../src/net/websocket-server.ts#L703)
 
 - Guard: `url.pathname === "/health"`
 
 ### `url.pathname === "/dashboard"`
 
-[Source](../../src/net/websocket-server.ts#L695)
+[Source](../../src/net/websocket-server.ts#L712)
 
 - Guard: `url.pathname === "/dashboard" &#124;&#124; url.pathname.startsWith("/dashboard/")`
 
 ### `url.pathname.startsWith("/dashboard/")`
 
-[Source](../../src/net/websocket-server.ts#L695)
+[Source](../../src/net/websocket-server.ts#L712)
 
 - Guard: `url.pathname === "/dashboard" &#124;&#124; url.pathname.startsWith("/dashboard/")`
 
 ### `url.pathname === "/dashboard"`
 
-[Source](../../src/net/websocket-server.ts#L697)
+[Source](../../src/net/websocket-server.ts#L714)
 
 - Guard: `url.pathname === "/dashboard" &#124;&#124; url.pathname.startsWith("/dashboard/")`
 
 ### `url.pathname === "/canvas"`
 
-[Source](../../src/net/websocket-server.ts#L719)
+[Source](../../src/net/websocket-server.ts#L736)
 
 - Guard: `url.pathname === "/canvas" &#124;&#124; url.pathname.startsWith("/canvas/")`
 
 ### `url.pathname.startsWith("/canvas/")`
 
-[Source](../../src/net/websocket-server.ts#L719)
+[Source](../../src/net/websocket-server.ts#L736)
 
 - Guard: `url.pathname === "/canvas" &#124;&#124; url.pathname.startsWith("/canvas/")`
 
 ### `url.pathname === "/who"`
 
-[Source](../../src/net/websocket-server.ts#L726)
+[Source](../../src/net/websocket-server.ts#L743)
 
 - Guard: `url.pathname === "/who" &#124;&#124; url.pathname.startsWith("/who/")`
 
 ### `url.pathname.startsWith("/who/")`
 
-[Source](../../src/net/websocket-server.ts#L726)
+[Source](../../src/net/websocket-server.ts#L743)
 
 - Guard: `url.pathname === "/who" &#124;&#124; url.pathname.startsWith("/who/")`
 
 ### `url.pathname === "/terminal"`
 
-[Source](../../src/net/websocket-server.ts#L730)
+[Source](../../src/net/websocket-server.ts#L747)
 
 - Guard: `url.pathname === "/terminal"`
 
 ### `url.pathname === "/"`
 
-[Source](../../src/net/websocket-server.ts#L735)
+[Source](../../src/net/websocket-server.ts#L752)
 
 - Guard: `url.pathname === "/"`
 
 ### `url.pathname === "/chat"`
 
-[Source](../../src/net/websocket-server.ts#L739)
+[Source](../../src/net/websocket-server.ts#L756)
 
 - Guard: `url.pathname === "/chat"`
 
 ### `url.pathname === "/ask"`
 
-[Source](../../src/net/websocket-server.ts#L743)
+[Source](../../src/net/websocket-server.ts#L760)
 
 - Guard: `url.pathname === "/ask"`

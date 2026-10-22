@@ -101,8 +101,9 @@ describe("deferred tool schemas (full profile)", () => {
   it("catalogs every deferred tool as `name — one line` in the loader description", () => {
     const { resident, deferred } = createProfileToolset(stubCtx([]), memory, "full");
     const loader = resident.find((t) => t.name === TOOL_SEARCH_NAME)!;
-    // `marina_code` is resident, so its typed twins share one summary line.
-    expect(resident.some((t) => t.name === "marina_code")).toBe(true);
+    // `marina_code` is on demand (listed itself), so its typed twins share one summary line.
+    expect(resident.some((t) => t.name === "marina_code")).toBe(false);
+    expect(deferred.some((t) => t.name === "marina_code")).toBe(true);
     const twins = deferred.filter((t) => t.name.startsWith("marina_code_"));
     expect(twins.length).toBeGreaterThan(10);
     expect(loader.description).toContain(`marina_code_<action> — `);

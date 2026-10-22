@@ -288,7 +288,7 @@ describe("accumulation → reflector", () => {
     expect(tells[0]!.text).toContain("No memory-reflector is running");
     expect(tells[0]!.text).toContain(helperSpawnCommand("reflector"));
     expect(helperSpawnCommand("reflector")).toBe(
-      "agent spawn Reflector model marina/default role memory-reflector budget 40",
+      "agent spawn Reflector model marina/cheap role memory-reflector budget 40",
     );
     expect(await openJobs()).toEqual([]);
     expect(receipts()).toEqual([]);
@@ -664,7 +664,7 @@ describe("memory helper role seeding (versioned, edit-preserving)", () => {
       ...memoryHelperRoleDefinition("reflector"),
       description: MEMORY_HELPER_INSTRUCTIONS.reflector, // stale (unmarked)
       guidelines: ["Only reflect on Tuesdays."],
-      createdBy: "Jeff",
+      createdBy: "Alice",
     });
     // (b) System saved last, but an operator edit is in the history trail.
     const v1Librarian = {
@@ -673,8 +673,8 @@ describe("memory helper role seeding (versioned, edit-preserving)", () => {
       guidelines: [MEMORY_HELPER_INSTRUCTIONS.librarian, ...MEMORY_HELPER_PROTOCOL_GUIDELINES],
     };
     db.saveRole(v1Librarian);
-    db.saveRole({ ...v1Librarian, guidelines: ["Shelve by colour."], createdBy: "Jeff" });
-    db.saveRole(v1Librarian); // system restores its own text — trail still shows Jeff
+    db.saveRole({ ...v1Librarian, guidelines: ["Shelve by colour."], createdBy: "Alice" });
+    db.saveRole(v1Librarian); // system restores its own text — trail still shows Alice
     expect(isOperatorEditedRole(db, "memory-reflector")).toBe(true);
     expect(isOperatorEditedRole(db, "memory-librarian")).toBe(true);
     expect(isOperatorEditedRole(db, "memory-evaluator")).toBe(false);
@@ -686,7 +686,7 @@ describe("memory helper role seeding (versioned, edit-preserving)", () => {
     expect(JSON.parse(db.getRole("memory-reflector")!.guidelines)).toEqual([
       "Only reflect on Tuesdays.",
     ]);
-    expect(db.getRole("memory-reflector")!.created_by).toBe("Jeff");
+    expect(db.getRole("memory-reflector")!.created_by).toBe("Alice");
     expect(JSON.parse(db.getRole("memory-librarian")!.guidelines)).not.toContain(
       MEMORY_HELPER_CURATOR_DUTIES.librarian,
     );

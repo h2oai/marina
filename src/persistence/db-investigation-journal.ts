@@ -31,6 +31,15 @@ export function appendInvestigationEvent(
   })();
 }
 
+/**
+ * Bytes an owner (and one attempt) already store. Answered from the covering
+ * index on (attempt_id, bytes) (migration 178), never by reading payloads.
+ */
+export const CONTENT_QUOTA_USED_SQL = `SELECT coalesce(sum(p.bytes),0) AS owner,
+      coalesce(sum(CASE WHEN p.attempt_id = ? THEN p.bytes ELSE 0 END),0) AS attempt
+      FROM investigation_content p JOIN investigation_attempts a ON a.id=p.attempt_id
+      JOIN investigations c ON c.id=a.case_id WHERE c.owner_key=(SELECT owner_key FROM investigations WHERE id=?)`;
+
 export function storeInvestigationContent(
   db: Database,
   id: string,
@@ -52,12 +61,10 @@ export function storeInvestigationContent(
     const row = attemptRow(db, id);
     if (row.state !== "running" || row.generation !== generation)
       throw new InvestigationError("inactive_attempt", "Attempt is no longer running", 409);
-    const used = db
-      .query(`SELECT coalesce(sum(p.bytes),0) AS owner,
-      coalesce(sum(CASE WHEN p.attempt_id = ? THEN p.bytes ELSE 0 END),0) AS attempt
-      FROM investigation_content p JOIN investigation_attempts a ON a.id=p.attempt_id
-      JOIN investigations c ON c.id=a.case_id WHERE c.owner_key=(SELECT owner_key FROM investigations WHERE id=?)`)
-      .get(id, row.case_id) as { owner: number; attempt: number };
+    const used = db.query(CONTENT_QUOTA_USED_SQL).get(id, row.case_id) as {
+      owner: number;
+      attempt: number;
+    };
     if (used.owner + bytes > CONTENT_OWNER_BYTES || used.attempt + bytes > CONTENT_ATTEMPT_BYTES) {
       throw new InvestigationError(
         "content_quota",

@@ -6,7 +6,9 @@ import StarterKit from "@tiptap/starter-kit";
 import { Handle, type NodeProps, NodeResizer, Position } from "@xyflow/react";
 import { useCallback, useState } from "react";
 import { authFetch } from "../../lib/api";
+import { ensureOk, errorText } from "../../lib/api-error";
 import { apiOrigin } from "../../lib/api-origin";
+import { useCanvasMutationError } from "../mutation-error-context";
 import { NodeMeta } from "./NodeMeta";
 
 const API_BASE = apiOrigin();
@@ -16,6 +18,7 @@ export function DocumentNode({ data, id, selected }: NodeProps) {
   const filename = (data.filename as string) ?? "Document";
   const canvasId = data.canvas_id as string | undefined;
   const [editing, setEditing] = useState(false);
+  const reportError = useCanvasMutationError();
 
   const editor = useEditor({
     extensions: [StarterKit],
@@ -32,16 +35,19 @@ export function DocumentNode({ data, id, selected }: NodeProps) {
     if (!editor || !canvasId) return;
     const html = editor.getHTML();
     try {
-      await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${id}`, {
+      const res = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data: { content: html, filename } }),
       });
-    } catch {
-      // Silent fail
+      await ensureOk(res, "Could not save the document");
+    } catch (cause) {
+      // Put back what the server still holds, then say why.
+      editor.commands.setContent(content || "<p>Empty document</p>");
+      reportError(`${errorText(cause, "Could not save the document.")} Your edit was undone.`);
     }
     setEditing(false);
-  }, [editor, canvasId, id, filename]);
+  }, [editor, canvasId, id, filename, content, reportError]);
 
   return (
     <div className="rounded-lg overflow-hidden bg-bg-card border border-blue-800/50 shadow-lg shadow-blue-900/20 flex flex-col h-full">

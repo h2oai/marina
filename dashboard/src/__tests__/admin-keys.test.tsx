@@ -56,6 +56,17 @@ describe("AdminPanel · Keys tab", () => {
     expect(screen.queryByText(EMPTY_KEYS)).not.toBeInTheDocument();
   });
 
+  it("shows an operator-only state when the list is refused to an ordinary session", async () => {
+    fetchApi.mockImplementation((path: string) =>
+      path === "/api/keys" ? Promise.reject(new Error("API error: 403")) : Promise.resolve([]),
+    );
+
+    renderWithProviders(<AdminPanel />);
+
+    await waitFor(() => expect(screen.getByText(/Operator only/i)).toBeInTheDocument());
+    expect(screen.queryByText(EMPTY_KEYS)).not.toBeInTheDocument();
+  });
+
   it("shows the empty state only when the list genuinely loads empty", async () => {
     renderWithProviders(<AdminPanel />);
     await waitFor(() => expect(screen.getByText(EMPTY_KEYS)).toBeInTheDocument());

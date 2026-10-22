@@ -40,6 +40,7 @@ import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
 import { inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters } from "./code-native";
+import { styleStartupLine, themeFor } from "./code-style";
 import { formatCodePerception, terminalText } from "./code-terminal";
 
 const REPO_ROOT = resolve(import.meta.dir, "..");
@@ -474,7 +475,8 @@ async function waitForReady(
  * real errors still use it.
  */
 function say(line: string): void {
-  process.stderr.write(`${line}\n`);
+  const stream = process.stderr;
+  process.stderr.write(`${styleStartupLine(line, themeFor(stream.isTTY ? stream : undefined))}\n`);
 }
 
 /** Where a folder's running server announces itself (persistent sessions only). */

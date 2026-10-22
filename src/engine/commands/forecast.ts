@@ -4,9 +4,14 @@
 import { RateLimiter } from "../../auth/rate-limiter";
 import type { AnswerSpec } from "../../forecast/answer-types";
 import type { ForecastAnswer } from "../../forecast/question";
+import { residentsMode } from "../../forecast/resident-mode";
 import type { ForecastScale } from "../../forecast/service";
 import type { TypedForecastAnswer } from "../../forecast/typed";
 import { bold, dim, header, separator } from "../../net/ansi";
+import {
+  TYPED_FORMATION_NAMES,
+  type TypedFormationName,
+} from "../../orchestration/formations/catalogue";
 import type { MarinaDB } from "../../persistence/database";
 import type { ForecastAnswerRow } from "../../persistence/db-markets";
 import type { MarinaStores } from "../../persistence/interfaces";
@@ -23,9 +28,15 @@ const USAGE = [
   "Usage: forecast <question> [resolves:<venue>/<ticker>]   e.g. forecast Will the Fed cut rates in October 2026?",
   "       forecast <question> type:choice|multi|number|ranking|text [options:A,B,C] [size:N] [ends:<ISO time>]",
   "                                         a typed answer: plan → research rounds → several runs → critique",
+  "       forecast [formation:<name>] [retriever:<spec>] … -- <question>",
+  "                                         choose the formation (or verify / arbiter) and a retriever the operator allows",
   "       forecast list                     your saved forecasts and, once resolved, their scores",
   "       forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves",
   "       forecast competence [family]      what Marina's resolved record says each method is good at",
+  "       forecast routes [family]          paired evidence per family and method, and which routes are earned",
+  "       forecast <question> crew:<crew>|role:<role> [pattern:ensemble|delphi|tournament|skeptic] [residents:N] [asof:<date>] [measure:yes]",
+  "                                         residents answer with their own tools, as a task run as a Score",
+  "                                         (MARINA_FORECAST_RESIDENTS=on; a past asof: or measure:yes fences their tools)",
 ].join("\n");
 /** Each forecast spends real money (web research + several models): a small per-entity budget. */
 const limiter = new RateLimiter({ maxTokens: 5, refillRate: 1, refillInterval: 12 * 60_000 });
@@ -61,9 +72,24 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
           "forecast <question> type:<choice|multi|number|ranking|text> [options:<id,id,…>] [size:<n>] [ends:<iso>]",
         effect: "execute",
       },
+      {
+        syntax: "forecast [formation:<name>] [retriever:<spec>] [type:<t>] … -- <question>",
+        effect: "execute",
+      },
       { syntax: "forecast list", effect: "read" },
       { syntax: "forecast track <id> <venue>/<ticker>", effect: "write" },
       { syntax: "forecast competence [<family prefix>]", effect: "read" },
+      { syntax: "forecast routes [<family prefix>]", effect: "read" },
+      {
+        syntax:
+          "forecast <question> crew:<crew> [pattern:<ensemble|delphi|tournament|skeptic>] [residents:<n>] [asof:<iso>] [measure:yes]",
+        effect: "execute",
+      },
+      {
+        syntax:
+          "forecast <question> role:<role> [pattern:<ensemble|delphi|tournament|skeptic>] [residents:<n>] [asof:<iso>] [measure:yes]",
+        effect: "execute",
+      },
     ],
     name: "forecast",
     aliases: ["predict"],
@@ -91,6 +117,19 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
           ctx.send(input.entity, `Competence map unavailable: ${getErrorMessage(err)}`),
         );
       }
+      if (sub === "routes" && rest.length <= 1) {
+        // Read-only: earned routing across forecast and arena evidence (src/forecast/route-view.ts).
+        if (!deps.lessonsDb) return ctx.send(input.entity, "The route view needs persistence.");
+        const db = deps.lessonsDb;
+        return (async () => {
+          const { loadRouteView, renderRouteView } = await import("../../forecast/route-view");
+          const family = rest[0]?.replace(/^family:/, "");
+          const view = await loadRouteView(db, family ? { family } : {});
+          ctx.send(input.entity, renderRouteView(view.rows, view.notes));
+        })().catch((err) =>
+          ctx.send(input.entity, `Route view unavailable: ${getErrorMessage(err)}`),
+        );
+      }
       if (sub === "track") {
         const id = Number(rest[0]);
         const sampleId = rest[1];
@@ -106,54 +145,154 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
             : `No open forecast #${id} of yours to track.`,
         );
       }
-      const parsed = parseModifiers(args.split(/\s+/), {
-        resolves: { type: "string" },
-        type: { type: "string" },
-        options: { type: "string" },
-        size: { type: "string" },
-        ends: { type: "string" },
-      });
+      const parsed = parseModifiers(args.split(/\s+/), forecastModifierSpec());
       const sampleId = parsed.values.resolves as string | undefined;
       if (sampleId !== undefined && !parseSampleId(sampleId)) {
         return ctx.send(input.entity, "resolves: takes a <venue>/<ticker> Sample id.");
       }
       const typed = typedSpec(parsed.values);
       if (typed && "error" in typed) return ctx.send(input.entity, typed.error);
-      const modified = sampleId !== undefined || typed !== undefined;
+      const chosen =
+        typeof parsed.values.formation === "string" || typeof parsed.values.retriever === "string";
+      // Resident forecasts (src/forecast/resident-forecast.ts): their modifiers
+      // parse only under MARINA_FORECAST_RESIDENTS=on (`forecastModifierSpec`).
+      const residentAsked = ["crew", "role", "pattern", "residents", "asof", "measure"].some(
+        (k) => parsed.values[k] !== undefined,
+      );
+      const modified =
+        sampleId !== undefined ||
+        typed !== undefined ||
+        chosen ||
+        residentAsked ||
+        /(^|\s)--(\s|$)/.test(args);
       const question = modified ? parsed.rest.join(" ").trim() : args;
       if (!question) return ctx.send(input.entity, USAGE);
-      const capped = dailyCapRefusal();
-      if (capped) {
-        ctx.send(input.entity, `Not forecasting: ${capped}.`);
-        return;
-      }
-      if (!limiter.consume(input.entity)) {
-        return ctx.send(
-          input.entity,
-          "Forecast budget used up for now — try again in a few minutes.",
-        );
-      }
-      ctx.send(
-        input.entity,
-        dim("Researching, checking sources, asking several models… (~20–60 s)"),
-      );
-      if (typed) {
-        return (async () => {
-          // The same builder as POST /v1/forecast: operator formation and
-          // routing, the prior / recalibration stage, and the lesson pool.
-          const { typedForecastFor } = await import("../../forecast/surface");
-          const made = await typedForecastFor(
-            { question, answer: typed.spec, ...(typed.endTime ? { endTime: typed.endTime } : {}) },
-            deps.lessonsDb ? { db: deps.lessonsDb } : {},
+      const residentReq = residentAsked ? residentRequest(parsed.values) : undefined;
+      if (residentReq && "error" in residentReq) return ctx.send(input.entity, residentReq.error);
+      const run = (env?: NodeJS.ProcessEnv): Promise<void> | void => {
+        const surfaceOpts = {
+          ...(deps.lessonsDb ? { db: deps.lessonsDb } : {}),
+          ...(env ? { env } : {}),
+        };
+        const capped = dailyCapRefusal();
+        if (capped) {
+          ctx.send(input.entity, `Not forecasting: ${capped}.`);
+          return;
+        }
+        if (!limiter.consume(input.entity)) {
+          return ctx.send(
+            input.entity,
+            "Forecast budget used up for now — try again in a few minutes.",
           );
-          if ("error" in made) return ctx.send(input.entity, made.error);
-          const a = made.answer;
-          const saved = name && deps.db ? saveTypedAnswer(deps.db, name, a, sampleId) : undefined;
+        }
+        if (residentReq) {
           ctx.send(
             input.entity,
-            renderTyped(a) +
+            dim(`Asking residents (${residentReq.assignee}, ${residentReq.pattern}) as a task…`),
+          );
+          return (async () => {
+            const { forecastAsTask } = await import("../../forecast/resident-forecast");
+            const made = await forecastAsTask(
+              {
+                request: {
+                  forecast: {
+                    question,
+                    answer: typed?.spec ?? { type: "choice", options: YES_NO, probabilities: true },
+                    ...(typed?.endTime ? { endTime: typed.endTime } : {}),
+                    ...(residentReq.asOf ? { asOf: residentReq.asOf } : {}),
+                  },
+                  pattern: residentReq.pattern,
+                  assignee: residentReq.assignee,
+                  ...(residentReq.k ? { k: residentReq.k } : {}),
+                  measure: residentReq.measure,
+                },
+                filer: { id: input.entity, name: name ?? input.entity },
+                ...(sampleId ? { sampleId } : {}),
+              },
+              { ...(deps.lessonsDb ? { db: deps.lessonsDb } : {}), ...(env ? { env } : {}) },
+            );
+            if ("error" in made) return ctx.send(input.entity, made.error);
+            const r = made.answer.residents;
+            ctx.send(
+              input.entity,
+              `${renderTyped(made.answer)}\n${dim(
+                `residents (${r.pattern}${r.fence ? `, fenced at ${r.fence}` : ""}): ${
+                  r.producers.join(", ") || "none answered"
+                } · ${r.budget.attempted}/${r.budget.calls} calls${
+                  made.taskId !== undefined ? ` · task #${made.taskId}` : ""
+                }${made.answerId !== undefined ? ` · saved as forecast #${made.answerId}` : ""}${
+                  made.residentAnswerIds.length
+                    ? ` · ${made.residentAnswerIds.length} resident answer(s) filed`
+                    : ""
+                }`,
+              )}`,
+            );
+          })().catch((err) => ctx.send(input.entity, `Forecast failed: ${getErrorMessage(err)}`));
+        }
+        ctx.send(
+          input.entity,
+          dim("Researching, checking sources, asking several models… (~20–60 s)"),
+        );
+        if (typed) {
+          return (async () => {
+            // The same builder as POST /v1/forecast: operator formation and
+            // routing, the prior / recalibration stage, and the lesson pool.
+            const { typedForecastFor } = await import("../../forecast/surface");
+            const made = await typedForecastFor(
+              {
+                question,
+                answer: typed.spec,
+                ...(typed.endTime ? { endTime: typed.endTime } : {}),
+              },
+              surfaceOpts,
+            );
+            if ("error" in made) return ctx.send(input.entity, made.error);
+            const a = made.answer;
+            const saved = name && deps.db ? saveTypedAnswer(deps.db, name, a, sampleId) : undefined;
+            await startShadow(deps.lessonsDb, saved, a);
+            ctx.send(
+              input.entity,
+              renderTyped(a) +
+                scaleNote(made.scale) +
+                (saved === undefined ? "" : `\n${dim(`saved as forecast #${saved}`)}`),
+            );
+          })().catch((err) =>
+            ctx.send(
+              input.entity,
+              `Forecast failed: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
+        }
+        return (async () => {
+          const surface = await import("../../forecast/surface");
+          let made: { answer: ForecastAnswer; scale: ForecastScale } | { error: string };
+          if (surface.plainUsesLegacy(env)) {
+            const [{ forecastQuestion }, { forecastDeps }] = await Promise.all([
+              import("../../forecast/question"),
+              import("../../forecast/service"),
+            ]);
+            const wired = forecastDeps(env);
+            if ("error" in wired) made = wired;
+            else {
+              const answer = await forecastQuestion({ question }, wired.deps);
+              answer.costUsd = wired.costUsd();
+              made = { answer, scale: wired.scale };
+            }
+          } else {
+            // The full pipeline (lessons, formations, routing) for a plain question too.
+            made = await surface.plainForecastFor({ question }, surfaceOpts);
+          }
+          if ("error" in made) return ctx.send(input.entity, made.error);
+          const a = made.answer;
+          const saved = name && deps.db ? saveAnswer(deps.db, name, a, sampleId) : undefined;
+          await startShadow(deps.lessonsDb, saved, a);
+          ctx.send(
+            input.entity,
+            render(a) +
               scaleNote(made.scale) +
-              (saved === undefined ? "" : `\n${dim(`saved as forecast #${saved}`)}`),
+              (saved === undefined
+                ? ""
+                : `\n${dim(`saved as forecast #${saved}${sampleId ? ` · scored when ${sampleId} resolves` : " · forecast track <id> <venue>/<ticker> to score it"}`)}`),
           );
         })().catch((err) =>
           ctx.send(
@@ -161,51 +300,116 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
             `Forecast failed: ${err instanceof Error ? err.message : String(err)}`,
           ),
         );
-      }
-      return (async () => {
-        const surface = await import("../../forecast/surface");
-        let made: { answer: ForecastAnswer; scale: ForecastScale } | { error: string };
-        if (surface.plainUsesLegacy()) {
-          const [{ forecastQuestion }, { forecastDeps }] = await Promise.all([
-            import("../../forecast/question"),
-            import("../../forecast/service"),
-          ]);
-          const wired = forecastDeps();
-          if ("error" in wired) made = wired;
-          else {
-            const answer = await forecastQuestion({ question }, wired.deps);
-            answer.costUsd = wired.costUsd();
-            made = { answer, scale: wired.scale };
-          }
-        } else {
-          // The full pipeline (lessons, formations, routing) for a plain question too.
-          made = await surface.plainForecastFor(
-            { question },
-            deps.lessonsDb ? { db: deps.lessonsDb } : {},
-          );
-        }
-        if ("error" in made) return ctx.send(input.entity, made.error);
-        const a = made.answer;
-        const saved = name && deps.db ? saveAnswer(deps.db, name, a, sampleId) : undefined;
-        ctx.send(
-          input.entity,
-          render(a) +
-            scaleNote(made.scale) +
-            (saved === undefined
-              ? ""
-              : `\n${dim(`saved as forecast #${saved}${sampleId ? ` · scored when ${sampleId} resolves` : " · forecast track <id> <venue>/<ticker> to score it"}`)}`),
-        );
-      })().catch((err) =>
-        ctx.send(
-          input.entity,
-          `Forecast failed: ${err instanceof Error ? err.message : String(err)}`,
-        ),
+      };
+      if (!chosen) return run();
+      // A caller-chosen formation / retriever is validated before any budget is spent.
+      return forecastSurfaceEnv(parsed.values).then((picked) =>
+        "error" in picked ? ctx.send(input.entity, picked.error) : run(picked.env),
       );
     },
   };
 }
 
+/**
+ * The env a caller-chosen `formation:` / `retriever:` runs under: the
+ * formation through `formationEnv` (an unknown name is an error, never the
+ * default), the retriever through `residentRetrieverSpec` (only entries that
+ * name no model, or one the operator configured). Empty when neither is set.
+ */
+export async function forecastSurfaceEnv(
+  values: Record<string, unknown>,
+  base: NodeJS.ProcessEnv = process.env,
+): Promise<{ env?: NodeJS.ProcessEnv } | { error: string }> {
+  const formation = typeof values.formation === "string" ? values.formation : undefined;
+  const retriever = typeof values.retriever === "string" ? values.retriever : undefined;
+  if (formation === undefined && retriever === undefined) return {};
+  let env = base;
+  if (formation !== undefined) {
+    const { formationEnv } = await import("../../forecast/surface");
+    const formed = formationEnv(formation, env);
+    if ("error" in formed) return { error: `formation: ${formed.error}` };
+    env = formed.env;
+  }
+  if (retriever !== undefined) {
+    const { residentRetrieverSpec } = await import("../../research/ask");
+    const picked = residentRetrieverSpec(retriever, base);
+    if ("error" in picked) return picked;
+    env = { ...env, MARINA_FORECAST_RETRIEVER: picked.spec };
+  }
+  return { env };
+}
+
 const TYPED = ["choice", "multi", "number", "ranking", "text"] as const;
+const YES_NO = [{ id: "yes" }, { id: "no" }];
+const RESIDENT_MODIFIERS = {
+  crew: { type: "string" },
+  role: { type: "string" },
+  pattern: { type: "string" },
+  residents: { type: "string" },
+  asof: { type: "string" },
+  measure: { type: "string" },
+} as const;
+
+/**
+ * The `forecast` modifiers. Resident forecasts add theirs only when they are
+ * on (MARINA_FORECAST_RESIDENTS): off, every input parses exactly as before.
+ */
+export function forecastModifierSpec(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    resolves: { type: "string" },
+    type: { type: "string" },
+    options: { type: "string" },
+    size: { type: "string" },
+    ends: { type: "string" },
+    formation: { type: "string" },
+    retriever: { type: "string" },
+    ...(residentsMode(env) === "on" ? RESIDENT_MODIFIERS : {}),
+  } as const;
+}
+
+/**
+ * `crew:` / `role:` / `pattern:` / `residents:` / `asof:` / `measure:` → a
+ * resident forecast (`src/forecast/resident-forecast.ts`).
+ */
+export function residentRequest(values: Record<string, unknown>):
+  | {
+      assignee: string;
+      pattern: TypedFormationName;
+      k?: number;
+      asOf?: string;
+      measure: boolean;
+    }
+  | { error: string } {
+  const str = (k: string) => (typeof values[k] === "string" ? (values[k] as string).trim() : "");
+  if (str("crew") && str("role")) return { error: "Name a crew: or a role:, not both." };
+  const slug = /^[A-Za-z0-9_.-]{1,64}$/;
+  for (const k of ["crew", "role"])
+    if (str(k) && !slug.test(str(k)))
+      return { error: `${k}: takes a name (letters, digits, - _ .).` };
+  const pattern = (str("pattern") || "ensemble").toLowerCase() as TypedFormationName;
+  if (!TYPED_FORMATION_NAMES.includes(pattern))
+    return {
+      error: `pattern: takes ${TYPED_FORMATION_NAMES.join(", ")} for a resident forecast.`,
+    };
+  const k = str("residents") ? Number(str("residents")) : undefined;
+  if (k !== undefined && !(Number.isInteger(k) && k >= 1 && k <= 7))
+    return { error: "residents: takes a whole number 1–7." };
+  let asOf: string | undefined;
+  if (str("asof")) {
+    const raw = str("asof");
+    const t = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00Z` : raw);
+    if (!Number.isFinite(t)) return { error: "asof: takes an ISO time or YYYY-MM-DD." };
+    asOf = new Date(t).toISOString();
+  }
+  const measure = ["yes", "on", "true", "1"].includes(str("measure").toLowerCase());
+  return {
+    assignee: str("crew") ? `marina:${str("crew")}` : `role:${str("role") || "forecaster"}`,
+    pattern,
+    ...(k !== undefined ? { k } : {}),
+    ...(asOf ? { asOf } : {}),
+    measure,
+  };
+}
 
 /** `type:` / `options:` / `size:` / `ends:` → a typed answer spec (undefined without `type:`). */
 export function typedSpec(
@@ -256,6 +460,21 @@ export interface AnswerFiling {
   source: string;
   externalId?: string;
   evalMode?: "live" | "measure";
+}
+
+/**
+ * A filed live answer's shadow challenger (`src/forecast/shadow.ts`; only when
+ * `MARINA_FORECAST_SHADOW` planned one). Runs in the background; the reply and
+ * the filed answer are never touched.
+ */
+export async function startShadow(
+  db: MarinaDB | undefined,
+  answerId: number | undefined,
+  answer: unknown,
+): Promise<void> {
+  if (!db || answerId === undefined || !process.env.MARINA_FORECAST_SHADOW?.trim()) return;
+  const { startForecastShadow } = await import("../../forecast/shadow");
+  startForecastShadow(db, answerId, answer);
 }
 
 /** Persist a typed answer (best-effort, like `saveAnswer`). */

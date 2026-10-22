@@ -29,11 +29,11 @@ Coordination capability is earned through the [civic substrate](civic-substrate.
   can't become a fork bomb. Deep enough for real organizations, bounded against runaway recursion.
 - **Spend is bounded too.** A spawned agent can carry a lifetime model-call budget
   (`agent spawn <name> budget <n-calls>`) — a second, orthogonal bound: the team size scales with
-  standing, and each member's total inference spend is capped at birth.
+  standing, and each member's total inference spend is capped at spawn.
 
 ## Recruitment — the cheaper, more civic move
 
-Spawning new minds isn't the only way to build a team. Often the right move is to **recruit existing
+Spawning new agents isn't the only way to build a team. Often the right move is to **recruit existing
 idle agents** — and Marina treats that as a first-class, autonomy-aware act:
 
 ```
@@ -43,8 +43,8 @@ recruit alice,bob into research-crew  # pull idle agents into a crew you own
 
 Recruitment is gated *below* spawning (it's more reversible — a free agent that joins can leave), and
 **idleness stands in for consent**: an agent already committed to a live crew is *skipped*, never
-yanked off its work. That autonomy guard is the difference between building a civilization and
-commandeering one.
+yanked off its work. Recruiting only idle agents keeps a crew from taking over work that another
+crew depends on.
 
 Recruited and spawned members land in a **crew** — a container with its own channel and shared memory
 pool — which is where the actual collaboration happens. (See [Coordination](coordination.md) for crews
@@ -72,4 +72,4 @@ priors* is the direction; the earned-assembly foundation it builds on is real to
 
 ## Related
 
-- [The Civic Substrate](civic-substrate.md) · [Coordination](coordination.md) · [Self-Evolving Agents](self-evolving-agents.md) · [How Marina Differs](how-marina-differs.md)
+- [The Civic Substrate](civic-substrate.md) · [Coordination](coordination.md) · [Self-Improving Agents](self-evolving-agents.md) · [How Marina Differs](how-marina-differs.md)

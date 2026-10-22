@@ -11,10 +11,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { AgentRuntime, resolveRouteModel } from "../src/agent/agent-runtime";
 import { availableModels, intelligenceScale } from "../src/agent/available-models";
-import { modelComplete } from "../src/arena/model-backend";
 import { decisionConfigFromEnv, getDecisionProvider, researchJudge } from "../src/decisions/config";
 import { defaultRetrieverSpec, forecastDeps, typedForecastDeps } from "../src/forecast/service";
 import { forecastTyped } from "../src/forecast/typed";
+import { modelComplete } from "../src/model/complete";
 import { parseVerifyModel } from "../src/net/model-api/verify";
 import { MarinaDB } from "../src/persistence/database";
 import type { EngineEvent } from "../src/types";

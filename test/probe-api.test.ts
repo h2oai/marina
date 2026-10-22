@@ -3,6 +3,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { handleProbeApi } from "../src/net/api/probe-api";
+import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
 import {
   createResolvingResolver,
@@ -178,6 +179,65 @@ describe("/api/probe", () => {
 
     // forever retirement → spec stays active
     expect(listActiveWatches(db).map((w) => w.noteId)).toContain(noteId);
+  });
+
+  it("normalizes X-Agent-Name like a login name in open mode", async () => {
+    const req = makeRequest(
+      { kind: "echoing", args: { payload: "n" } },
+      { "X-Agent-Name": "memory:svc" },
+    );
+    const resp = await handleProbeApi(new URL(req.url), "POST", req, db, emit);
+    expect(resp?.status).toBe(200);
+    const body = (await resp!.json()) as { noteId: number };
+    expect(db.getNote(body.noteId)?.entity_name).toBe("memorysvc");
+
+    const blank = makeRequest(
+      { kind: "echoing", args: { payload: "n" } },
+      { "X-Agent-Name": "::" },
+    );
+    const blankResp = await handleProbeApi(new URL(blank.url), "POST", blank, db, emit);
+    expect(blankResp?.status).toBe(400);
+  });
+
+  it("refuses a request body over the size cap", async () => {
+    const req = makeRequest(
+      { kind: "echoing", args: { payload: "x".repeat(200_000) } },
+      { "X-Agent-Name": "alice" },
+    );
+    const resp = await handleProbeApi(new URL(req.url), "POST", req, db, emit);
+    expect(resp?.status).toBe(413);
+  });
+
+  it("throttles repeated failed credentials before comparing them", async () => {
+    resetHttpRateLimitersForTests();
+    process.env.MEM_API_KEYS = "secret123:bob";
+    try {
+      const statuses: number[] = [];
+      for (let i = 0; i < 25; i++) {
+        const req = makeRequest(
+          { kind: "echoing", args: { payload: "x" } },
+          { Authorization: "Bearer wrong" },
+        );
+        const resp = await handleProbeApi(new URL(req.url), "POST", req, db, emit, undefined, {
+          peer: "203.0.113.9",
+        });
+        statuses.push(resp!.status);
+      }
+      expect(statuses.slice(0, 20).every((s) => s === 401)).toBe(true);
+      expect(statuses.at(-1)).toBe(429);
+      // Even the right key is refused while the budget is spent.
+      const ok = makeRequest(
+        { kind: "echoing", args: { payload: "x" } },
+        { Authorization: "Bearer secret123" },
+      );
+      const okResp = await handleProbeApi(new URL(ok.url), "POST", ok, db, emit, undefined, {
+        peer: "203.0.113.9",
+      });
+      expect(okResp?.status).toBe(429);
+    } finally {
+      delete process.env.MEM_API_KEYS;
+      resetHttpRateLimitersForTests();
+    }
   });
 
   it("requires a Bearer token when MEM_API_KEYS is set", async () => {

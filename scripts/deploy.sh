@@ -30,8 +30,8 @@ free_gb() { df -BG --output=avail / | tail -1 | tr -dc '0-9'; }
 
 # Reclaim every image not used by a running container, plus build cache. The
 # `-a` is load-bearing: a bare `docker image prune -f` only removes dangling
-# (<none>) layers and leaves the tagged sha-<...> ECR images behind, which is
-# how this host accumulated 185 images / 200GB+ and ran / to 100%.
+# (<none>) layers and leaves the tagged sha-<...> ECR images behind; old
+# images then accumulate across deploys and can fill the disk.
 reclaim() {
   echo "[deploy] reclaiming unused images and build cache"
   docker image prune -af || true
@@ -60,6 +60,16 @@ aws ecr get-login-password --region "$AWS_REGION" \
 
 echo "[deploy] pulling image"
 $DC pull
+
+# --- configuration preflight ------------------------------------------------
+# Run the new image's boot checks against this host's configuration (.env and
+# compose environment) without a database or ports. A configuration the new
+# code refuses stops here and the running stack keeps serving.
+echo "[deploy] checking this configuration against the new image"
+if ! $DC run --rm --no-deps -T marina bun run src/main.ts --check-config; then
+  echo "[deploy] ERROR: the new image refuses this host's configuration (see the FATAL message above); the running stack was left unchanged" >&2
+  exit 1
+fi
 
 echo "[deploy] (re)starting stack"
 $DC up -d --wait --wait-timeout 180 --remove-orphans

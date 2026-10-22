@@ -1,7 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { dirname, join } from "node:path";
 import {
+  type Options as ClaudeQueryOptions,
   getSessionInfo,
   type HookCallback,
   query,
@@ -10,6 +12,7 @@ import {
 import { getErrorMessage } from "../engine/errors";
 import type { RuntimeRequest, RuntimeState } from "../sdk/routing-runtime-types";
 import { AgentTransport, type WireMessage } from "./agent-transport";
+import { RELAY_SOCKET_ENV } from "./resident-relay";
 
 export interface AgentOptions {
   cwd: string;
@@ -24,11 +27,29 @@ export interface AgentOptions {
     request: Omit<RuntimeRequest, "id">,
     signal?: AbortSignal,
   ) => Promise<{ allow: boolean; answer?: string }>;
+  /** The final assistant text of each completed turn (the attention bridge's reply relay). */
+  reply?: (text: string) => void;
 }
+/**
+ * How input reaches a native session while it works:
+ * - `mid-turn`: appended to the turn in flight (Codex `turn/steer`, pi `steer`);
+ * - `next-turn`: queued and read when the current turn ends (Claude streaming input);
+ * - `none`: only between turns.
+ */
+export type SteerKind = "mid-turn" | "next-turn" | "none";
 export interface ManagedAgent {
   prompt(text: string, id: string): Promise<void>;
   interrupt(): Promise<void>;
   stop(): void | Promise<void>;
+  readonly capabilities?: { steer: SteerKind };
+  /**
+   * Deliver input to the turn in flight (`urgent`), or queue it as a follow-up
+   * read after the turn (`urgent: false`, where the harness has one). Resolves
+   * `steered` when the harness accepted it into the running turn, `queued`
+   * when it will be read next; rejects when nothing accepted it (the caller
+   * keeps the input for the next prompt).
+   */
+  steer?(text: string, id: string, urgent: boolean): Promise<"steered" | "queued">;
 }
 export interface AgentAdapter {
   id: string;
@@ -36,6 +57,11 @@ export interface AgentAdapter {
   executable: string;
   start: (options: AgentOptions) => Promise<ManagedAgent>;
   supportsResume?: boolean;
+  /**
+   * Its turns end with a final reply (`AgentOptions.reply`), so an unnamed
+   * supervised resident can propose its own name in one throwaway turn.
+   */
+  proposesName?: boolean;
 }
 function record(value: unknown): WireMessage {
   return value && typeof value === "object" ? (value as WireMessage) : {};
@@ -44,6 +70,9 @@ function record(value: unknown): WireMessage {
 async function codex(options: AgentOptions): Promise<ManagedAgent> {
   let threadId = "";
   let turnId = "";
+  // The turn's last agent message, its final reply.
+  let messageItem = "";
+  let messageText = "";
   let stopping = false;
   const transport = new AgentTransport({
     command: options.executable,
@@ -100,16 +129,36 @@ async function codex(options: AgentOptions): Promise<ManagedAgent> {
         });
         return;
       }
+      if (method === "item/agentMessage/delta") {
+        const itemId = String(params.itemId ?? "");
+        if (itemId !== messageItem) {
+          messageItem = itemId;
+          messageText = "";
+        }
+        messageText += String(params.delta ?? "");
+      }
+      if (method === "item/completed") {
+        const item = record(params.item);
+        if (item.type === "agentMessage" && typeof item.text === "string") {
+          messageItem = String(item.id ?? messageItem);
+          messageText = item.text;
+        }
+      }
       if (method === "item/agentMessage/delta" || method === "item/commandExecution/outputDelta")
         options.emit("output", { text: params.delta, method, itemId: params.itemId });
       else if (!method.endsWith("/delta"))
         options.emit(`native.${method || "notification"}`, params);
       if (method === "turn/started") {
         turnId = String(record(params.turn).id);
+        messageItem = "";
+        messageText = "";
         options.state({ status: "running" });
       }
       if (method === "turn/completed") {
         turnId = "";
+        const final = messageText.trim();
+        messageText = "";
+        if (final) options.reply?.(final);
         options.state({ status: "idle" });
       }
     },
@@ -143,6 +192,16 @@ async function codex(options: AgentOptions): Promise<ManagedAgent> {
         approvalPolicy: "on-request",
         approvalsReviewer: "user",
         sandbox: "workspace-write",
+        // A supervised resident's relay: its sandbox refuses sockets, so the
+        // CLI spools through the relay directory — granted as a writable root
+        // (that directory only; network access stays off).
+        ...(relayDirectory(options.env)
+          ? {
+              config: {
+                "sandbox_workspace_write.writable_roots": [relayDirectory(options.env)],
+              },
+            }
+          : {}),
       },
     });
     threadId = String(record(record(response.result).thread).id ?? "");
@@ -169,6 +228,22 @@ async function codex(options: AgentOptions): Promise<ManagedAgent> {
         },
       });
       turnId = String(record(record(response.result).turn).id ?? "");
+    },
+    capabilities: { steer: "mid-turn" },
+    async steer(text) {
+      // `expectedTurnId` makes the append conditional on the turn still being
+      // the one we saw; a finished or replaced turn rejects and the caller
+      // keeps the input for the next prompt.
+      if (!turnId) throw new Error("Codex has no turn in flight to steer");
+      await transport.request({
+        method: "turn/steer",
+        params: {
+          threadId,
+          expectedTurnId: turnId,
+          input: [{ type: "text", text, text_elements: [] }],
+        },
+      });
+      return "steered";
     },
     async interrupt() {
       if (turnId)
@@ -206,7 +281,19 @@ async function pi(options: AgentOptions): Promise<ManagedAgent> {
         options.emit("output", { text: assistant.delta });
       else if (type !== "message_update") options.emit(`native.${type}`, message);
       if (type === "agent_start") options.state({ status: "running" });
-      if (type === "agent_settled") options.state({ status: "idle" });
+      if (type === "agent_settled") {
+        // The settled run's final reply, read from pi itself (never the stream).
+        if (options.reply)
+          void transport
+            .request({ type: "get_last_assistant_text" })
+            .then((response) => {
+              const text = record(response.data).text;
+              if (typeof text === "string" && text.trim()) options.reply?.(text.trim());
+            })
+            .catch((error) => options.emit("adapter.error", { text: getErrorMessage(error) }))
+            .finally(() => options.state({ status: "idle" }));
+        else options.state({ status: "idle" });
+      }
       if (
         type === "extension_ui_request" &&
         ["confirm", "select", "input", "editor"].includes(String(message.method))
@@ -246,6 +333,12 @@ async function pi(options: AgentOptions): Promise<ManagedAgent> {
   return {
     async prompt(message) {
       await transport.request({ type: "prompt", message, streamingBehavior: "followUp" });
+    },
+    capabilities: { steer: "mid-turn" },
+    async steer(message, _id, urgent) {
+      // `steer` reaches the run in flight; `follow_up` waits for it to end.
+      await transport.request({ type: urgent ? "steer" : "follow_up", message });
+      return urgent ? "steered" : "queued";
     },
     async interrupt() {
       await transport.request({ type: "abort" });
@@ -320,7 +413,7 @@ async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAge
         : {}),
       env: options.env,
       pathToClaudeCodeExecutable: options.executable,
-      permissionMode: "default",
+      ...claudeResidentPermissions(options.env),
       settingSources: ["user", "project", "local"],
       includePartialMessages: true,
       stderr: (text) => options.emit("stderr", { text }),
@@ -372,7 +465,11 @@ async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAge
         if (event.type === "stream_event" && delta.type === "text_delta")
           options.emit("output", { text: delta.text });
         else if (message.type !== "stream_event") options.emit(`native.${message.type}`, message);
-        if (message.type === "result") options.state({ status: "idle" });
+        if (message.type === "result") {
+          const final = typeof event.result === "string" ? event.result.trim() : "";
+          if (final) options.reply?.(final);
+          options.state({ status: "idle" });
+        }
       }
       if (mismatch) return;
       options.state({
@@ -388,18 +485,25 @@ async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAge
     }
   })();
   options.state({ status: "idle" });
+  const prompt = async (text: string, id: string) => {
+    if (mismatch) throw new Error(mismatch);
+    if (stopped) throw new Error("Claude session stopped");
+    pending.push({
+      type: "user",
+      message: { role: "user", content: text },
+      parent_tool_use_id: null,
+      session_id: "",
+      uuid: id as `${string}-${string}-${string}-${string}-${string}`,
+    });
+    wake?.();
+  };
   return {
-    async prompt(text, id) {
-      if (mismatch) throw new Error(mismatch);
-      if (stopped) throw new Error("Claude session stopped");
-      pending.push({
-        type: "user",
-        message: { role: "user", content: text },
-        parent_tool_use_id: null,
-        session_id: "",
-        uuid: id as `${string}-${string}-${string}-${string}-${string}`,
-      });
-      wake?.();
+    prompt,
+    // Streaming input is read when the current turn ends: honestly `next-turn`.
+    capabilities: { steer: "next-turn" },
+    async steer(text, id) {
+      await prompt(text, id);
+      return "queued";
     },
     async interrupt() {
       await stream.interrupt();
@@ -421,7 +525,57 @@ export const BUILTIN_AGENT_ADAPTERS: AgentAdapter[] = [
     executable: "claude",
     start: createClaudeAdapter({ query, getSessionInfo }),
     supportsResume: true,
+    proposesName: true,
   },
-  { id: "codex", label: "Codex", executable: "codex", start: codex, supportsResume: true },
-  { id: "pi", label: "pi", executable: "pi", start: pi, supportsResume: true },
+  {
+    id: "codex",
+    label: "Codex",
+    executable: "codex",
+    start: codex,
+    supportsResume: true,
+    proposesName: true,
+  },
+  { id: "pi", label: "pi", executable: "pi", start: pi, supportsResume: true, proposesName: true },
 ];
+
+/**
+ * Permissions for a Claude session. A supervised resident (one with a relay)
+ * gets what Codex's `workspace-write` sandbox gives: edits in its working
+ * directory are accepted, and shell commands run unprompted only inside
+ * Claude's own sandbox (writes limited to the workspace and the relay
+ * directory, no network, no unsandboxed fallback). Without the sandbox's
+ * host tools only edits are accepted; every command still asks. Everything
+ * else asks through `canUseTool` as before.
+ */
+export function claudeResidentPermissions(
+  env: NodeJS.ProcessEnv | undefined,
+  sandboxAvailable: () => boolean = claudeSandboxAvailable,
+): Pick<ClaudeQueryOptions, "permissionMode" | "sandbox"> {
+  const relay = relayDirectory(env);
+  if (!relay) return { permissionMode: "default" };
+  if (!sandboxAvailable()) return { permissionMode: "acceptEdits" };
+  return {
+    permissionMode: "acceptEdits",
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      autoAllowBashIfSandboxed: true,
+      allowUnsandboxedCommands: false,
+      filesystem: { allowWrite: [relay] },
+      network: { allowUnixSockets: [env?.[RELAY_SOCKET_ENV] ?? join(relay, "relay.sock")] },
+    },
+  };
+}
+
+/** Claude Code's command sandbox: built in on macOS, bubblewrap + socat on Linux. */
+function claudeSandboxAvailable(): boolean {
+  if (process.platform === "darwin") return true;
+  if (process.platform !== "linux") return false;
+  return Bun.which("bwrap") !== null && Bun.which("socat") !== null;
+}
+
+/** The relay directory a supervised resident's process was given, if any. */
+function relayDirectory(env: NodeJS.ProcessEnv | undefined): string | undefined {
+  const socket = env?.[RELAY_SOCKET_ENV];
+  return socket ? dirname(socket) : undefined;
+}

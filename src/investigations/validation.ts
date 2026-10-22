@@ -18,11 +18,6 @@ export class InvestigationError extends Error {
   }
 }
 
-export const DEFAULT_INVESTIGATION_LIMITS: InvestigationLimits = {
-  calls: 80,
-  concurrency: 4,
-  timeoutMs: 600_000,
-};
 export const CONTENT_OBJECT_BYTES = 2 * 1024 * 1024;
 export const CONTENT_ATTEMPT_BYTES = 24 * 1024 * 1024;
 export const CONTENT_OWNER_BYTES = 128 * 1024 * 1024;

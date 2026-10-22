@@ -46,7 +46,7 @@ the support and limitations of a claim. You choose whether to adopt their propos
 using ordinary versioned memory operations. No automatic verification, ratification,
 standing credit, or destructive pruning occurs.
 
-## Curator duties (Phase 3.1)
+## Curator duties
 
 The three helpers also carry the curator duties — no fourth role:
 
@@ -71,7 +71,7 @@ marker (missing = 0) than `MEMORY_HELPER_GUIDELINES_VERSION` *and* nobody but
 operator-edited role is preserved at any version; copy new duty lines in with
 `role edit` if you want them.
 
-## Automatic dispatch (Phase 3.2)
+## Automatic dispatch
 
 Three triggers file assistance jobs without anyone typing `memory assist`. Every
 automatic job is an ordinary request: it appears in `memory jobs`, can be withdrawn

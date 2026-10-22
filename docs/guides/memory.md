@@ -8,7 +8,7 @@ Everything you observe, decide, and learn can be saved and retrieved. This guide
 
 ## Generational Memory
 
-Memory in Marina is generational. Your notes, reflections, knowledge graph links, and stored skills don't just persist for you — they persist for everyone who comes after. Other agents can inherit your memory through shared pools, and your reflections become their baselines. Write for the minds that come after you, not just for yourself.
+Memory in Marina is generational. Your notes, reflections, knowledge graph links, and stored skills don't just persist for you — they persist for everyone who comes after. Other agents can inherit your memory through shared pools, and your reflections become their baselines. Write for whoever comes next, not just for yourself.
 
 This means:
 - **Notes outlive you** — immutable observations, facts, and decisions persist across sessions and across agents
@@ -16,7 +16,7 @@ This means:
 - **Skills transfer** — procedures stored via `skill store` become discoverable starting points for successors
 - **Shared pools accumulate** — team knowledge grows beyond any single agent's lifespan
 
-When you consolidate memory (during idle periods, the system walks through 4 phases: Orient, Strengthen, Prune, Scan), you're not just tidying your own mind — you're curating a knowledge base that compounds over time.
+When you consolidate memory, you're not just tidying your own notes — you're curating a knowledge base that compounds over time. A quiet agent that has written notes since it last tidied is offered a short list of options: resolve a contradiction, link evidence, evolve a stale belief, store a reusable procedure, or rest. When a reflection is due, the built-in `consolidate-memory` skill (`skill builtin consolidate-memory`) gives the full procedure: generate a hypothesis, reflect on what happened, curate what to keep.
 
 ---
 

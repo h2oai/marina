@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { RESEARCH_USER_AGENT, robotsCheck } from "../net/robots";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
 import {
@@ -116,6 +117,8 @@ export class ConnectorRuntime {
   /** Register an HTTP MCP server. */
   async addHttpServer(name: string, url: string, headers?: Record<string, string>): Promise<void> {
     if (!this.available) throw new Error("Connector runtime not available.");
+    const urlError = await validateFetchUrl(url);
+    if (urlError) throw new Error(`Blocked URL: ${urlError}`);
     await this.runtime.registerDefinition({
       name,
       command: { kind: "http", url: new URL(url), headers },
@@ -203,8 +206,13 @@ export class ConnectorRuntime {
   httpGet(
     url: string,
     entityId?: string,
+    opts?: { headers?: Record<string, string> },
   ): Promise<{ status: number; body: string } | { error: string }> {
-    return this.httpRequest(url, { method: "GET" }, entityId);
+    return this.httpRequest(
+      url,
+      { method: "GET", ...(opts?.headers ? { headers: opts.headers } : {}) },
+      entityId,
+    );
   }
 
   /** HTTP POST with rate limiting. */
@@ -243,7 +251,6 @@ export class ConnectorRuntime {
     const timeout = setTimeout(() => controller.abort(), CONNECTOR_HTTP_TIMEOUT_MS);
     try {
       const response = await guardedFetch(url, { ...init, signal: controller.signal });
-      clearTimeout(timeout);
       const body = await response.text();
       return {
         status: response.status,
@@ -275,4 +282,26 @@ function parseHeaders(authData: string | null): Record<string, string> | undefin
   } catch {
     return undefined;
   }
+}
+
+/** A page read refused by the site's robots.txt (no request for the page was made). */
+export interface RobotsRefusal {
+  error: string;
+  refused: "robots";
+}
+
+/**
+ * Read one third-party PAGE for an agent or a person (`web fetch`, the read
+ * swarm, `scenario` fetch): robots.txt for `MarinaResearch` first
+ * (`src/net/robots.ts`), then the runtime's rate-limited, SSRF-guarded GET
+ * with the identifying research user agent. API calls use `httpGet` directly.
+ */
+export async function readPageVia(
+  http: Pick<ConnectorRuntime, "httpGet">,
+  url: string,
+  entityId?: string,
+): Promise<{ status: number; body: string } | { error: string } | RobotsRefusal> {
+  const robots = await robotsCheck(url);
+  if (!robots.allowed) return { error: robots.reason, refused: "robots" };
+  return http.httpGet(url, entityId, { headers: { "User-Agent": RESEARCH_USER_AGENT } });
 }

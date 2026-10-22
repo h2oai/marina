@@ -32,28 +32,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MarinaAgent } from "../client";
+import { callMarina } from "./_shared";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
-const MARINA_ENDPOINT = (process.env.MARINA_ENDPOINT ?? "http://localhost:3300").replace(/\/$/, "");
 const AGENT_NAME = process.env.AGENT_NAME ?? "Preflight";
 const PREFLIGHT_MODEL = process.env.PREFLIGHT_MODEL ?? "marina:gemini";
 const PREFLIGHT_SAMPLE = Number.parseInt(process.env.PREFLIGHT_SAMPLE ?? "5", 10);
 const SEED = Number.parseInt(process.env.SEED ?? "42", 10);
-
-async function callMarina(
-  model: string,
-  messages: Array<{ role: string; content: string }>,
-  temperature = 0,
-): Promise<string> {
-  const resp = await fetch(`${MARINA_ENDPOINT}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, temperature }),
-  });
-  if (!resp.ok) throw new Error(`Marina ${resp.status}`);
-  const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content ?? "";
-}
 
 function loadSampleItems(benchmark: string, n: number): unknown[] {
   const path = join(

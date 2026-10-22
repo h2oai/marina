@@ -5,6 +5,7 @@ import type { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
 import type { SessionManager } from "../auth/session-manager";
 import { disconnects } from "../net/ansi";
+import { isLoopbackIp } from "../net/loopback";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, Entity, EntityId, EntityRank, RoomContext, RoomId } from "../types";
 import type { EntityManager } from "../world/entity-manager";
@@ -35,7 +36,13 @@ export interface AuthHost {
   readonly loginRateLimiter?: Pick<RateLimiter, "consume">;
   readonly connections: Pick<
     ConnectionManager,
-    "get" | "bindEntity" | "unbindEntity" | "isEntityConnected" | "boundExternalCount" | "remove"
+    | "get"
+    | "bindEntity"
+    | "unbindEntity"
+    | "isEntityConnected"
+    | "boundExternalCount"
+    | "remove"
+    | "getConnectionForEntity"
   >;
   readonly entities: Pick<EntityManager, "get" | "findAgentByName" | "remove">;
   readonly briefs: Pick<BriefManager, "subscribe" | "unsubscribe">;
@@ -68,6 +75,31 @@ export class AuthCoordinator {
    * close so a token-bearing reconnect can reclaim the same EntityId. */
   private entityEvictionTimers = new Map<EntityId, ReturnType<typeof setTimeout>>();
   private static readonly RECONNECT_GRACE_MS = 60_000;
+
+  /**
+   * The refusal for a second connection to a connected account. One account
+   * has one live connection; a second never evicts the first (a leaked token
+   * must not kick its owner, and two controllers would race on one session),
+   * so the refusal names where the first is and what to do.
+   */
+  private nameInUse(entityId: EntityId): string {
+    const holder = this.host.connections.getConnectionForEntity(entityId);
+    const via = holder?.internal
+      ? "an internal agent connection"
+      : holder?.protocol === "mcp"
+        ? "an MCP connection"
+        : holder?.protocol
+          ? `a ${holder.protocol} connection`
+          : "another connection";
+    const since = holder?.connectedAt
+      ? ` since ${new Date(holder.connectedAt).toISOString().slice(11, 16)} UTC`
+      : "";
+    return (
+      `That name is already in use: it is connected on ${via}${since}. ` +
+      "One account has one live connection, and a second never replaces the first. " +
+      "Use that session, or close it and connect again."
+    );
+  }
 
   /** Cancel a pending grace-period eviction for an entity (it's being rebound). */
   private cancelEviction(entityId: EntityId): void {
@@ -137,7 +169,13 @@ export class AuthCoordinator {
    * grace-window reconnect rebinds the same id without re-emitting enter).
    */
   private emitEntityLeave(entityId: EntityId, room: RoomId): void {
-    this.host.logEvent({ type: "entity_leave", entity: entityId, room, timestamp: Date.now() });
+    this.host.logEvent({
+      type: "entity_leave",
+      entity: entityId,
+      name: this.host.entities.get(entityId)?.name,
+      room,
+      timestamp: Date.now(),
+    });
   }
 
   private static readonly ERR_LOGIN_RATE_LIMITED =
@@ -161,7 +199,16 @@ export class AuthCoordinator {
     const isInternal = legacy || workloadMatches;
     if (isInternal) {
       const conn = this.host.connections.get(connId);
-      if (conn) conn.internal = true;
+      // A supervised resident's credential leaves this process: its local
+      // supervisor may run on another host. The credential still proves the
+      // account, but only a loopback peer becomes an in-process-trusted
+      // connection (the host-execution trust anchor).
+      const remoteResident =
+        !legacy &&
+        !!workload &&
+        this.host.db?.getAgentConfig(workload.display_name)?.runtime === "supervised" &&
+        !isLoopbackIp(conn?.peerIp);
+      if (conn && !remoteResident) conn.internal = true;
     }
     return isInternal;
   }
@@ -263,7 +310,7 @@ export class AuthCoordinator {
     // the same name would race on entity state. Mirrors the same logic `reconnect()` uses.
     const existing = this.host.entities.findAgentByName(cleanName);
     if (existing && this.host.connections.isEntityConnected(existing.id)) {
-      return { error: "That name is already in use." };
+      return { error: this.nameInUse(existing.id) };
     }
     if (existing) {
       // Re-attach still consumes a cap slot — this branch is what every user
@@ -405,13 +452,27 @@ export class AuthCoordinator {
     token: string,
     internalToken?: string,
   ): { entityId: EntityId; name: string; token: string } | { error: string } {
-    if (
-      internalToken?.startsWith("marina-agent-") &&
-      !this.host.db?.verifyWorkloadCredential(internalToken)
-    ) {
+    const workloadPrincipal = internalToken?.startsWith("marina-agent-")
+      ? this.host.db?.verifyWorkloadCredential(internalToken)
+      : undefined;
+    if (internalToken?.startsWith("marina-agent-") && !workloadPrincipal) {
       return { error: "Workload credential is expired, revoked, or disabled." };
     }
-    const internal = this.resolveInternal(connId, internalToken);
+    // A workload credential speaks only for its own account: presented with
+    // another account's session token it must not make that reconnect
+    // internal (full stored rank, no login limits). Credentials now leave the
+    // process (supervised residents), so the subject is checked here too.
+    const sessionName = workloadPrincipal
+      ? this.host.sessionManager?.validate(token)?.name
+      : undefined;
+    if (
+      workloadPrincipal &&
+      sessionName !== undefined &&
+      workloadPrincipal.display_name.toLowerCase() !== sessionName.toLowerCase()
+    ) {
+      return { error: "Workload credential subject does not match the requested identity." };
+    }
+    const internal = this.resolveInternal(connId, internalToken, sessionName);
 
     if (!this.checkLoginRate(connId, internal)) {
       return { error: AuthCoordinator.ERR_LOGIN_RATE_LIMITED };
@@ -446,7 +507,7 @@ export class AuthCoordinator {
     let entity: Entity | undefined;
     if (existing) {
       if (this.host.connections.isEntityConnected(existing.id)) {
-        return { error: "That name is already in use." };
+        return { error: this.nameInUse(existing.id) };
       }
       // The cap applies to every unbound→bound transition — a grace-window
       // reconnect that finds the instance full is rejected (hard cap; the

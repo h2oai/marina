@@ -74,15 +74,18 @@ test("a user can create, connect, remove nodes, and delete a canvas through the 
   await page.getByRole("button", { name: "Connect" }).click();
   await page.getByLabel("Relationship").selectOption("supports");
   await page.getByRole("button", { name: "Create relationship" }).click();
-  await expect(page.getByText("supports", { exact: true })).toBeVisible();
+  // Scope to the edge's own label: the relationship dialog's "supports" option can still be in
+  // the page for a moment after the click, and a page-wide text match would find both.
+  const edgeLabel = page.locator(".react-flow__edge-text", { hasText: /^supports$/ });
+  await expect(edgeLabel).toHaveCount(1);
 
   await page.reload();
   await expect(page.locator(CANVAS_NODE)).toHaveCount(2);
-  await expect(page.getByText("supports", { exact: true })).toBeVisible();
+  await expect(edgeLabel).toHaveCount(1);
   await page.locator(CANVAS_NODE).first().click();
   await page.getByRole("button", { name: "Delete (1)", exact: true }).click();
   await expect(page.locator(CANVAS_NODE)).toHaveCount(1);
-  await expect(page.getByText("supports", { exact: true })).toHaveCount(0);
+  await expect(edgeLabel).toHaveCount(0);
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toContain('Delete canvas "Browser workflow"');
     await dialog.accept();

@@ -6,15 +6,16 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { terminalText } from "../scripts/code-terminal";
+import { termCaps } from "../scripts/term-caps";
+import { createTheme } from "../scripts/term-theme";
+import { git as gitIn } from "./git-helpers";
 import { until } from "./helpers";
 
 let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "marina-diff-pty-"));
-  const git = (...args: string[]) => {
-    const result = Bun.spawnSync(["git", ...args], { cwd: root, stderr: "pipe" });
-    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
-  };
+  // Hermetic, bounded git (test/git-helpers.ts): no host config, no prompts, a timeout.
+  const git = (...args: string[]) => gitIn(root, ...args);
   git("init", "-q");
   git("config", "user.email", "pty@example.invalid");
   git("config", "user.name", "PTY");
@@ -78,11 +79,14 @@ test.skipIf(process.platform === "win32")(
       expect(screen).toContain("2 files · +4 −3");
       expect(screen).toContain("alpha.txt");
       expect(screen).toContain("file 1/2");
-      // Colour reaches the terminal only for the diff structure.
-      expect(output).toContain("\x1b[32m+line two changed");
-      expect(output).toContain("\x1b[31m-line 2");
-      expect(output).toMatch(new RegExp(`${String.fromCharCode(27)}\\[36m@@ -1,\\d+ \\+1,\\d+ @@`));
-      expect(output).toContain("\x1b[1mdiff --git a/alpha.txt b/alpha.txt");
+      // Colour reaches the terminal only for the diff structure, in the CLI
+      // palette at the child's colour depth (TERM=xterm-256color → 256 colours).
+      const theme = createTheme(termCaps({ isTTY: true }, { TERM: "xterm-256color" }));
+      const esc = String.fromCharCode(27);
+      expect(output).toContain(`${esc}[${theme.params("success")}m+line two changed`);
+      expect(output).toContain(`${esc}[${theme.params("error")}m-line 2`);
+      expect(output).toContain(`${esc}[${theme.params("accent")}m@@ -1,`);
+      expect(output).toContain(`${esc}[1mdiff --git a/alpha.txt b/alpha.txt`);
       output = "";
       tty.write("]");
       await until(() => terminalText(output).includes("hunk 2/3"));

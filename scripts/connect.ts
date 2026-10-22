@@ -17,15 +17,23 @@
  *
  * Environment:
  *   MARINA_URL — WebSocket server URL (default: ws://localhost:3300)
+ *   MARINA_RELAY_SOCKET — a supervised resident's command relay (`connect-relay.ts`)
  */
 
 import { createInterface } from "node:readline";
 import { sanitizeEntityName } from "../src/engine/entity-name";
 import { formatPerception } from "../src/net/formatter";
 import type { CommandCatalogEntry } from "../src/sdk/capabilities";
-import { MarinaAgent } from "../src/sdk/client";
+import { MarinaAgent, type Perception } from "../src/sdk/client";
 import { runCliCommand } from "./connect-command";
+import { isTransportFailure } from "./connect-errors";
+import { runRelayCli } from "./connect-relay";
+import { runInteractive } from "./connect-repl";
 import { cachedParticipantToken, saveParticipantToken } from "./session-cache";
+import { colorChoiceFromArgs, termCaps } from "./term-caps";
+import { renderPerception } from "./term-render";
+import { sanitizeServerText } from "./term-sanitize";
+import { createTheme } from "./term-theme";
 
 const args = process.argv.slice(2);
 
@@ -64,21 +72,39 @@ Flags:
                    mode. Default 20; 0 exits as soon as the command is acked.
   --port <n>       server port on localhost (default: WS_PORT or 3300)
   --url <ws-url>   full server URL (a trailing /ws is accepted)
+  --color <when>   auto (default), always or never; --no-color = never
   -h, --help       show this help
 
+Interactive terminal:
+  /help lists local panels (/status /agents /spend /alerts /readiness /world
+  /me /prompt /theme); the prompt and status bar take starship-style formats
+  (/prompt). Output to a pipe or file stays plain text.
+
 Environment:
-  MARINA_URL       WebSocket server URL (default: ws://localhost:3300)`);
+  MARINA_URL       WebSocket server URL (default: ws://localhost:3300)
+  NO_COLOR / FORCE_COLOR
+                   disable / force colour (no-color.org)
+  MARINA_THEME     harbor (dark), harbor-light, ansi (your terminal's colours)
+  MARINA_PROMPT / MARINA_STATUSLINE
+                   prompt and status bar formats (see /prompt)
+  MARINA_HISTORY   history file, or off
+  MARINA_RELAY_SOCKET
+                   set by a supervisor for its resident agents: commands run
+                   over that relay as the resident, and <name> is optional`);
   process.exit(0);
 }
 
 const consumed = new Set<number>();
-for (const flag of ["--port", "--url"]) {
+for (const flag of ["--port", "--url", "--color"]) {
   const i = args.indexOf(flag);
   if (i >= 0) {
     consumed.add(i);
     consumed.add(i + 1);
   }
 }
+for (const [i, arg] of args.entries())
+  if (arg === "--no-color" || arg.startsWith("--color=")) consumed.add(i);
+const colorChoice = colorChoiceFromArgs(args);
 const dashC = args.indexOf("-c");
 let oneShot: string | undefined;
 if (dashC !== -1) {
@@ -100,6 +126,10 @@ if (waitIdx !== -1) {
 }
 const requestedName: string | undefined = args.filter((_, i) => !consumed.has(i))[0];
 
+// Inside a supervised resident's process: commands go over its relay, as it.
+const relaySocket = process.env.MARINA_RELAY_SOCKET;
+if (relaySocket) process.exit(await runRelayCli(relaySocket, oneShot));
+
 if (!requestedName) {
   console.error('Usage: marina connect <name> [-c "command"] [--wait <sec>]');
   process.exit(1);
@@ -107,7 +137,7 @@ if (!requestedName) {
 
 // The engine normalizes login names (alphanumerics + underscore, 20 chars max)
 // with the same helper, so the name the server will actually use is knowable
-// here — no round trip needed. "Jeff Smith" logs in as "JeffSmith".
+// here — no round trip needed. "Ada Lovelace" logs in as "AdaLovelace".
 const name = sanitizeEntityName(requestedName);
 if (!name) {
   console.error(`"${requestedName}" contains no usable characters (letters, digits, underscore).`);
@@ -151,20 +181,42 @@ const agent = new MarinaAgent(URL, {
 // arrive seconds after the ack) aren't silently dropped.
 const scripted = !!oneShot || !process.stdin.isTTY;
 
+// The full screen (input area, status bar, panels) needs a terminal on both
+// ends. A terminal on stdout alone still gets styled output; a pipe or file
+// gets plain text with every control byte removed.
+const caps = termCaps(process.stdout, process.env, colorChoice);
+const rich = interactive && !!process.stdout.isTTY;
+const styled = !!process.stdout.isTTY;
+const theme = createTheme(caps);
+const plainTheme = createTheme({ ...caps, color: 0 });
+
 // Single printer for ALL output. Perceptions arrive here exactly once;
 // `agent.command()`'s returned perceptions are the same objects, so printing
-// those too would duplicate every line (the pre-fix behavior).
+// those too would duplicate every line (the pre-fix behavior). The rich
+// screen installs its own printer; the login burst waits for it here.
 let printEnabled = !scripted;
 let lastOutputAt = Date.now();
-agent.onPerception((p) => {
+const early: Perception[] = [];
+const printer = (p: Perception) => {
   if (p.data?.capabilities) return;
+  if (rich) {
+    early.push(p);
+    return;
+  }
   if (!printEnabled) return;
-  const text = formatPerception(p, "plaintext");
+  const text = styled
+    ? renderPerception(
+        p,
+        { theme, width: process.stdout.columns || 80 },
+        { own: !!p.command_request_id },
+      ).join("\n")
+    : sanitizeServerText(formatPerception(p, "plaintext"), plainTheme);
   if (text) {
     process.stdout.write(`${text}\n`);
     lastOutputAt = Date.now();
   }
-});
+};
+agent.onPerception(printer);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -189,13 +241,8 @@ async function lingerForQuiet(quietMs: number, maxMs: number): Promise<void> {
 // under the raw requested spelling so existing sessions keep their identity.
 const cachedToken = loadCachedToken(name) ?? loadCachedToken(requestedName);
 
-/** True for a transport failure (server down / unreachable), false for a login refusal. */
-function isTransportFailure(message: string): boolean {
-  return /WebSocket connection|ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|timed out/i.test(
-    message,
-  );
-}
-
+let connectedName = name;
+let connectedId = "";
 try {
   let session: Awaited<ReturnType<typeof agent.connect>>;
   if (cachedToken) {
@@ -210,13 +257,15 @@ try {
     session = await agent.connect(name);
   }
   if (session.token) saveSessionToken(name, session.token);
+  connectedName = session.name || name;
+  connectedId = session.entityId;
   if (name !== requestedName) {
     console.error(`Logged in as "${name}" (requested "${requestedName}")`);
   }
-  console.error(`Connected as ${session.name || name} (${session.entityId})`);
+  if (!rich) console.error(`Connected as ${session.name || name} (${session.entityId})`);
 } catch (err) {
   const message = (err as Error).message;
-  if (isTransportFailure(message)) {
+  if (isTransportFailure(err)) {
     console.error(
       `Failed to connect to ${URL}. Is Marina running? Start it with \`bun run start\`.` +
         (message ? ` (${message})` : ""),
@@ -272,49 +321,36 @@ try {
 } catch {
   /* Older servers retain plain command input. */
 }
-const rl = createInterface({
-  completer: (line: string, done: (error: Error | null, result: [string[], string]) => void) => {
-    void agent
-      .capabilities()
-      .then((manifest) => {
-        capabilities = manifest.commands;
-      })
-      .catch(() => {
-        /* Retain last authenticated snapshot while disconnected. */
-      })
-      .finally(() => {
-        const words = line.trimStart();
-        const matches = capabilities
-          .flatMap((entry) => [
-            entry.name,
-            ...entry.aliases,
-            ...(entry.forms ?? []).map((form) => form.syntax.split(/ [<[]/)[0]!),
-          ])
-          .filter((candidate) => candidate.startsWith(words));
-        done(null, [[...new Set(matches)], words]);
-      });
-  },
-  input: process.stdin,
-  output: process.stderr,
-  prompt: "> ",
-});
 
-rl.prompt();
-
-rl.on("line", async (line) => {
-  const trimmed = line.trim();
-  if (!trimmed) {
-    rl.prompt();
-    return;
-  }
-  // Output prints via the single onPerception printer (printing the returned
-  // perceptions here as well would duplicate every line). A refusal is just
-  // output at the prompt — never a crash.
-  await runCliCommand(agent, trimmed);
+if (rich) {
+  await runInteractive({
+    agent,
+    session: { name: connectedName, entityId: connectedId },
+    url: URL,
+    caps,
+    capabilities,
+    reconnect: async () => {
+      const token = agent.getSession()?.token ?? loadCachedToken(connectedName);
+      if (!token) throw new Error("no session token");
+      const restored = await agent.reconnect(token);
+      if (restored.token) saveSessionToken(connectedName, restored.token);
+    },
+    handoff: () => {
+      agent.offPerception(printer);
+      return early.splice(0);
+    },
+  });
+} else {
+  // stdin is a terminal but stdout is redirected: a bare prompt on stderr.
+  const rl = createInterface({ input: process.stdin, output: process.stderr, prompt: "> " });
   rl.prompt();
-});
-
-rl.on("close", () => {
-  agent.disconnect();
-  process.exit(0);
-});
+  rl.on("line", async (line) => {
+    const trimmed = line.trim();
+    if (trimmed) await runCliCommand(agent, trimmed);
+    rl.prompt();
+  });
+  rl.on("close", () => {
+    agent.disconnect();
+    process.exit(0);
+  });
+}

@@ -27,6 +27,7 @@ import {
 import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
 import { mcnemarExact, wilsonInterval } from "../stats";
 import { judgeLabel } from "./benchmark-judge";
+import { asMarinaVersion } from "./run-version";
 
 export const TARGET_KINDS: readonly BenchmarkTargetKind[] = ["model", "crew", "population"];
 
@@ -336,6 +337,12 @@ export interface HarnessResultFile {
   timestamp?: number;
   duration_ms?: number;
   metadata?: { usage?: { costUsd?: number } };
+  /**
+   * The Marina code that produced the run (`{ commit, dirty, describe }`,
+   * `src/engine/run-version.ts`). Kept in `config_json.marina`; not part of
+   * `config_hash` or the stable content hash.
+   */
+  marina?: unknown;
   items?: {
     id?: string;
     correct?: boolean;
@@ -473,10 +480,13 @@ export function canonicalJson(value: unknown): string {
 /** Wall-clock fields of a result document: when it was filed, not what it measured. */
 const VOLATILE_RESULT_FIELDS = ["timestamp", "duration_ms"] as const;
 
+/** Filing metadata that names who produced a run, not what it measured. */
+const PROVENANCE_RESULT_FIELDS = ["marina"] as const;
+
 /**
  * The content hash of a result document over its STABLE fields only — the
  * config, metadata and every item outcome, in canonical key order, without the
- * wall-clock `timestamp` / `duration_ms` — so re-filing the same run (a resumed
+ * wall-clock `timestamp` / `duration_ms` and the `marina` code stamp — so re-filing the same run (a resumed
  * harness, a repeated `file` step) is a no-op instead of a second replicate.
  * Items that carry no per-item measurement (no latency, no trace id) cannot
  * tell two genuine replicates apart, so their timestamp stays in the hash.
@@ -502,6 +512,7 @@ export function stableResultHash(raw: string): string {
     if (k === "timestamp" && !measured) continue;
     delete o[k];
   }
+  for (const k of PROVENANCE_RESULT_FIELDS) delete o[k];
   return createHash("sha256")
     .update(`stable:v1\n${canonicalJson(o)}`)
     .digest("hex");
@@ -558,12 +569,15 @@ export function ledgerFromHarnessResult(
   const finished = typeof file.timestamp === "number" ? file.timestamp : opts.now;
   const duration = typeof file.duration_ms === "number" ? Math.round(file.duration_ms) : null;
   const configJson = JSON.stringify(safeConfig);
+  // The code stamp rides in config_json (no migration) but stays out of the
+  // config hash: the same configuration on another commit is the same config.
+  const marina = asMarinaVersion(file.marina);
   return {
     run: {
       id: opts.id,
       benchmark,
       config_hash: createHash("sha256").update(configJson).digest("hex").slice(0, 12),
-      config_json: configJson,
+      config_json: marina ? JSON.stringify({ ...safeConfig, marina }) : configJson,
       agent_id: null,
       started_at: duration !== null ? finished - duration : finished,
       completed_at: finished,

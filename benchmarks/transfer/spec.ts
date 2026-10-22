@@ -14,13 +14,25 @@
  * so the items a capability was tuned on (pass that slot) never count as
  * evidence for it. A `time` split keeps items whose evidence cutoff `at` is
  * on or after a date instead. `"all"` opts out and the report says so.
+ *
+ * Versions (`versions.ts`): every source's Marina commit stamp is read and
+ * checked. By default both arms must come from one clean commit; a spec (or
+ * suite) `versions: { baseline, candidate }` declares a deliberate version
+ * comparison instead; `allowUnversioned` lets unstamped files in, labelled.
  */
 
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { itemSplit } from "../../src/engine/benchmark-promotion";
-import { adapterFor, loadRuns, type Source } from "./adapters";
+import { adapterFor, loadRuns, type Source, sourceVersions } from "./adapters";
 import type { ItemScore, SuiteData, TransferOptions } from "./core";
+import {
+  checkVersions,
+  type DeclaredVersions,
+  type GitInfo,
+  localGit,
+  type SourceVersions,
+} from "./versions";
 
 export interface ArmConfig {
   label: string;
@@ -53,6 +65,8 @@ export interface SuiteSpec {
   options?: Record<string, string>;
   split?: SplitSpec;
   run?: RunSpec;
+  /** A version comparison for this suite only (overrides the spec's). */
+  versions?: DeclaredVersions;
 }
 
 export interface TransferSpec {
@@ -62,6 +76,12 @@ export interface TransferSpec {
   /** Default split for suites that set none. */
   split?: SplitSpec;
   stats?: TransferOptions;
+  /**
+   * Opt in to a deliberate version comparison (release vs release, a
+   * regression test): each arm must have run at its declared sha or tag.
+   * Omitted: both arms must share one commit (a capability comparison).
+   */
+  versions?: DeclaredVersions;
 }
 
 export type ArmName = "baseline" | "candidate";
@@ -93,6 +113,10 @@ export interface LoadOptions {
   /** Overrides every suite's split. */
   split?: SplitSpec;
   env?: Record<string, string | undefined>;
+  /** Ingest sources without a commit stamp (labelled in the report). Default false. */
+  allowUnversioned?: boolean;
+  /** Local git for resolving declared refs and the behind-main warning (default: this checkout). */
+  git?: GitInfo;
 }
 
 const isObj = (x: unknown): x is Record<string, unknown> =>
@@ -110,6 +134,18 @@ function checkSplit(split: unknown, where: string): void {
   throw new Error(`${where}: "all", {kind:"hash",…} or {kind:"time",after}`);
 }
 
+function checkDeclared(v: unknown, where: string): void {
+  if (v === undefined) return;
+  if (
+    !isObj(v) ||
+    typeof v.baseline !== "string" ||
+    !v.baseline.trim() ||
+    typeof v.candidate !== "string" ||
+    !v.candidate.trim()
+  )
+    throw new Error(`${where} must be {"baseline": "<sha|tag>", "candidate": "<sha|tag>"}`);
+}
+
 /** Validate a parsed spec (throws with the first problem). */
 export function parseSpec(raw: unknown): TransferSpec {
   if (!isObj(raw)) throw new Error("spec must be a JSON object");
@@ -124,6 +160,7 @@ export function parseSpec(raw: unknown): TransferSpec {
   if (!Array.isArray(raw.suites) || raw.suites.length === 0)
     throw new Error("spec.suites must be a non-empty array");
   checkSplit(raw.split, "spec.split");
+  checkDeclared(raw.versions, "spec.versions");
   const names = new Set<string>();
   for (const s of raw.suites) {
     if (!isObj(s) || typeof s.name !== "string" || typeof s.adapter !== "string")
@@ -132,6 +169,7 @@ export function parseSpec(raw: unknown): TransferSpec {
     names.add(s.name);
     adapterFor(s.adapter);
     checkSplit(s.split, `suite ${s.name} split`);
+    checkDeclared(s.versions, `suite ${s.name} versions`);
     const listed = Array.isArray(s.baseline) || Array.isArray(s.candidate);
     if (!listed && !isObj(s.run)) throw new Error(`suite ${s.name}: give sources or a run`);
   }
@@ -242,10 +280,27 @@ function runSources(
 
 /** Load (or, if allowed, run then load) every suite of a spec. */
 export function loadSuites(spec: TransferSpec, opts: LoadOptions): SuiteData[] {
+  let git: GitInfo | undefined = opts.git;
+  // Local git only when a stamp needs it (resolving a ref, the behind-main check).
+  const lazyGit: GitInfo = {
+    get mainRef() {
+      git ??= localGit();
+      return git.mainRef;
+    },
+    resolve: (ref) => {
+      git ??= localGit();
+      return git.resolve(ref);
+    },
+    behind: (commit) => {
+      git ??= localGit();
+      return git.behind(commit);
+    },
+  };
   return spec.suites.map((suite) => {
     const group = suite.group ?? suite.name;
     const split = opts.split ?? suite.split ?? spec.split ?? { kind: "hash" };
     const removed = new Map<string, Set<string>>();
+    const versions: Record<ArmName, SourceVersions[]> = { baseline: [], candidate: [] };
     const arm = (name: ArmName) => {
       const listed = suite[name];
       const sources = listed?.length ? listed : runSources(spec, suite, name, opts);
@@ -256,11 +311,18 @@ export function loadSuites(spec: TransferSpec, opts: LoadOptions): SuiteData[] {
           throw new Error(
             `suite ${suite.name}: adapter ${adapter.name} has no item times for a time split`,
           );
-        return loadRuns(adapter, source).map((run) => applySplit(run, split, group, removed));
+        const runs = loadRuns(adapter, source).map((run) => applySplit(run, split, group, removed));
+        versions[name].push({
+          path: source.path,
+          ...(source.arm ? { arm: source.arm } : {}),
+          ...sourceVersions(adapter, source),
+        });
+        return runs;
       });
     };
     const baseline = arm("baseline");
     const candidate = arm("candidate");
+    const declared = suite.versions ?? spec.versions;
     return {
       name: suite.name,
       group,
@@ -268,6 +330,11 @@ export function loadSuites(spec: TransferSpec, opts: LoadOptions): SuiteData[] {
       candidate,
       split: splitLabel(split, group),
       removed: Object.fromEntries([...removed].map(([k, ids]) => [k, ids.size])),
+      version: checkVersions(versions, {
+        ...(declared ? { declared } : {}),
+        ...(opts.allowUnversioned ? { allowUnversioned: true } : {}),
+        git: lazyGit,
+      }),
     };
   });
 }

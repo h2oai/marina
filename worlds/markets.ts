@@ -438,7 +438,7 @@ function marketRoom(opts: {
       },
     },
 
-    onEnter(ctx: RoomContext, entityId: EntityId) {
+    onEnter(ctx: RoomContext, _entityId: EntityId) {
       const hasOracle = ctx.entities.some((e) => e.name === "Oracle");
       if (!hasOracle) {
         if (ctx.spawnRoomAgent) {
@@ -811,7 +811,7 @@ const TRADING_FLOOR: RoomModule = {
     "help-terminal":
       "An interactive terminal. It reads: \"Enter any market room and use 'predict yes|no <confidence> <reasoning>' to take a position. Use 'consensus' to see the current weighted view. Use 'positions' to see all positions. Visit Kalshi (east) or Polymarket (west) for live external data. Research evidence goes into pools — 'pool <market> add <finding>'.\"",
   },
-  onEnter(ctx: RoomContext, entityId: EntityId) {
+  onEnter(ctx: RoomContext, _entityId: EntityId) {
     const hasHost = ctx.entities.some((e) => e.name === "Meridian");
     if (!hasHost) {
       if (ctx.spawnRoomAgent) {

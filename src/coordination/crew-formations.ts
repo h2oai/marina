@@ -12,9 +12,8 @@
  *    Runtime briefs replaced the concatenated project pool-note templates
  *    after the sweep showed process-heavy prose displacing the crew's actual
  *    work; every brief leads with the protocol-priority preamble.
- * 2. FORMATION MEDIATORS — deterministic, event-driven nudges (the
- *    long-promised Phase 4): on dispatch / stage-complete / artifact-deposit
- *    the mediator injects one structural next-step line. No timers, no LLM
+ * 2. FORMATION MEDIATORS — deterministic, event-driven nudges: on dispatch /
+ *    stage-complete / artifact-deposit the mediator injects one structural next-step line. No timers, no LLM
  *    calls — pure functions over events the crew manager already emits.
  * 3. ENGINE BACKSTOP — pending model_request reminders (model-api) guarantee
  *    a serving crew can never silently drop a request regardless of
@@ -37,8 +36,17 @@
  * serving crew's formation reaches each request through its `protocol` line
  * instead (`requestProtocolLine`): verification, deliberation, tournament and
  * delphi consult named specialists by bounded awaited tells.
+ *
+ * Every formation but `freeform` is an entry in the formation catalogue
+ * (`src/orchestration/formations/catalogue.ts`, `crewFormationEntry`): the
+ * catalogue holds its one-line description, its Score templates (where it
+ * also runs as one task — typed forecasts, free-text patterns, arena rounds)
+ * and the protocol phrases its brief must keep; `test/formation-catalogue.test.ts`
+ * fails when a brief drifts from its entry. Crew-only formations stay crew
+ * protocols here.
  */
 
+import { type FormationEntry, formationEntry } from "../orchestration/formations/catalogue";
 import type { CrewFormation } from "../types";
 import { normalizePatternName } from "../world/templates/orchestration";
 
@@ -127,6 +135,15 @@ export const CREW_BRIEFS: Record<CrewFormation, string> = {
     "re-run, post the result. Done = full check passes; lead delivers. Checker can't run: " +
     "verify by hand, deliver with the limitation stated.",
 };
+
+/**
+ * The catalogue entry a crew formation runs (undefined for `freeform`, which
+ * has no fixed shape): its brief above is the crew-runtime form of that entry.
+ */
+export function crewFormationEntry(formation: CrewFormation): FormationEntry | undefined {
+  const entry = formationEntry(normalizePatternName(formation));
+  return entry?.crew ? entry : undefined;
+}
 
 /**
  * Formations whose protocol routes contributions somewhere other than the crew
@@ -416,7 +433,7 @@ export function requestProtocolLine(
   return protocol.render({ consultants: list, timeoutMs, count: consultants.length });
 }
 
-// ─── Formation mediators (Phase 4 — deterministic event-driven nudges) ──────
+// ─── Formation mediators (deterministic event-driven nudges) ────────────────
 
 /** Minimal crew view a mediator sees — no manager internals. */
 export interface MediatorCrewView {

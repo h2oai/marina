@@ -34,11 +34,18 @@ Two distinct "defaults" exist:
 
 - `MARINA_DEFAULT_MODEL` (env, default `marina/default` — the self-referential
   loopback: this instance's own `/v1`, which routes to whichever upstream
-  provider actually has a key) — what new agents spawn with and the
-  last-resort fallback. No vendor is hardcoded; set a concrete
+  provider actually has a key) — when set, what new agents spawn with; always
+  the last-resort fallback. No vendor is hardcoded; set a concrete
   `provider/model-id` to pin one.
 - DB `default_model` (Admin model picker) — overrides the env var and is what the
   proxy honors for `marina` / `default` requests.
+
+Agents spawned without a model, room agents and seeded crews run on the
+**cheap tier** (`marina/cheap`) unless one of the two defaults above is set;
+judges run on the **strong tier** (`marina/strong`, which is `marina/default`
+unless `MARINA_MODEL_TIER_STRONG` is set). Both are model ids on `/v1` too. See
+[Choose models](guides/configuration.md#choose-models-cheap-by-default);
+`admin models` shows the effective choice.
 
 ## 2. Quick start (local)
 

@@ -22,9 +22,6 @@ import { attachDbSpendLedger } from "../../src/engine/spend-ledger";
 import type { TypedForecastAnswer } from "../../src/forecast/typed";
 import type { MarinaDB } from "../../src/persistence/database";
 
-/** The attribution every adapter files under. */
-export const ATTRIBUTION = { organization: "H2O.ai", agent: "Marina" } as const;
-
 /**
  * Count this process's upstream spend in the world's `spend_daily` ledger, so
  * the daily cap holds across runs (a timer starts a fresh process each time).

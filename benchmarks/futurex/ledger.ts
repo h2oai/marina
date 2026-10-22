@@ -20,6 +20,7 @@ import {
   ledgerFromHarnessResult,
 } from "../../src/engine/benchmark-ledger";
 import type { MarinaStores } from "../../src/persistence/interfaces";
+import { type MarinaVersion, runVersion } from "../run-version";
 import type { BatchRun, Variant } from "./run";
 import type { BatchScore } from "./score";
 import type { Identity } from "./submission";
@@ -78,11 +79,18 @@ export function recordScoredRun(
     /** More run facts for the config and target (isolation, lessons, replicate number). */
     extra?: Record<string, unknown>;
     now?: number;
+    /**
+     * The Marina code that produced the answers (default: this process's,
+     * `runVersion()`); null when unknown, e.g. a rescore of saved answers.
+     */
+    marina?: MarinaVersion | null;
   },
 ): { id: string; created: boolean; benchmark: string; invalidReason?: string } {
   const { run, score } = input;
   const byId = new Map(run.results.map((r) => [r.id, r]));
+  const marina = input.marina === undefined ? runVersion() : (input.marina ?? undefined);
   const file: HarnessResultFile = {
+    ...(marina ? { marina } : {}),
     config: {
       dataset: input.benchmark,
       name: input.benchmark,

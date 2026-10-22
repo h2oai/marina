@@ -45,9 +45,62 @@ describe("connect CLI command runner", () => {
     await expect(runCliCommand(broken, "look")).rejects.toThrow("bug");
   });
 
-  test("every command call site in connect.ts goes through the runner", () => {
-    const source = readFileSync(join(import.meta.dir, "../scripts/connect.ts"), "utf8");
-    expect(source).not.toMatch(/await agent\.command\(/);
+  test("onResult receives the request's own perceptions, on success and on refusal", async () => {
+    const ok = [{ kind: "message", data: { text: "done" } }] as unknown as Perception[];
+    let seen: Perception[] = [];
+    expect(
+      await runCliCommand({ command: async () => ok }, "look", undefined, {
+        onResult: (p) => {
+          seen = p;
+        },
+      }),
+    ).toBe(true);
+    expect(seen).toBe(ok);
+    await runCliCommand(
+      {
+        command: async () => {
+          throw new CommandError("Unknown command: frobnicate", [refusal]);
+        },
+      },
+      "frobnicate",
+      () => {},
+      {
+        onResult: (p) => {
+          seen = p;
+        },
+      },
+    );
+    expect(seen).toEqual([refusal]);
+  });
+
+  test("a stopped wait passes the signal through and is not reported as a failure", async () => {
+    const stop = new AbortController();
+    const lines: string[] = [];
+    let received: AbortSignal | undefined;
+    const agent = {
+      command: async (_input: string, options?: { signal?: AbortSignal }) => {
+        received = options?.signal;
+        stop.abort();
+        throw new CommandError(
+          "Stopped waiting for command completion; execution outcome is unknown.",
+        );
+      },
+    };
+    expect(
+      await runCliCommand(agent, "ask why", (l) => lines.push(l), { signal: stop.signal }),
+    ).toBe(false);
+    expect(received).toBe(stop.signal);
+    // The REPL says "stopped waiting" in its own words.
+    expect(lines).toEqual([]);
+  });
+
+  test("every command call site in connect.ts and the REPL goes through the runner", () => {
+    const read = (file: string) => readFileSync(join(import.meta.dir, "../scripts", file), "utf8");
+    const source = read("connect.ts");
+    const repl = read("connect-repl.ts");
+    for (const text of [source, repl]) expect(text).not.toMatch(/await agent\.command\(/);
+    // one-shot, pipe, redirected-stdout prompt; the interactive screen.
     expect(source.match(/runCliCommand\(agent,/g)?.length).toBe(3);
+    expect(repl.match(/runCliCommand\(agent,/g)?.length).toBe(1);
   });
 });

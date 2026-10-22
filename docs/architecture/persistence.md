@@ -5,6 +5,37 @@
 ## Migrations
 - Migrations: append to `FORWARD_MIGRATIONS` in `src/persistence/schema.ts` (re-exported as `MIGRATIONS` by `database.ts`), never modify existing migrations. `MARINA_DB_DURABILITY=full` (fsync per commit) is the world default; migrations 96–109 are append-only like all others.
 
+## Known-at times for the as-of fence (migration 172)
+
+The as-of fence (`src/memory/as-of.ts`) dates a canonical version, a captured source and an
+assistance proposal by the service event that recorded it (`memory.created` / `memory.revised`,
+`source.captured`, `assistance.completed`). Migration 172 persists that time on the row —
+`memory_record_versions.known_at`, `memory_sources.known_at`,
+`memory_assistance_jobs.completed_known_at` — through AFTER INSERT triggers on
+`memory_service_events` (same transaction, every write path). It is additive and idempotent:
+nullable columns added only when missing (`ALTER TABLE … ADD COLUMN` is a schema-only change in
+SQLite, no table rewrite), `IF NOT EXISTS` triggers, and a one-row cursor
+`memory_known_at_backfill(cursor, upto)` where `upto` is the event log's last seq at migration time.
+Rows older than that are filled by the `memory-known-at-backfill` tick job
+(`src/persistence/db-memory-known-at.ts`; every 10 ticks, phase 5): ≤ 8 windows of 5,000 event
+seqs per pass, each its own short transaction over the INTEGER PRIMARY KEY — never at boot,
+never a whole-log scan. Retention keeps a dating event while it is inside the pending range
+(`KNOWN_AT_RETENTION_WHERE`), so nothing the backfill still needs is pruned; fenced reads fall
+back to the event log only until the backfill is done. Bundle-imported rows carry no event and
+stay undated (fail closed).
+## Message envelope
+
+Migration 171 adds `cause TEXT` and `depth INTEGER NOT NULL DEFAULT 0` to `direct_messages`
+and `channel_messages`. `cause` is the ref of the message a post answers (`tell:<id>`,
+`channel_msg:<id>`, `say:<uuid>`, `shout:<uuid>`) and `depth` is the cause's depth + 1, or 0
+when the cause is unknown. `src/engine/message-envelope.ts` holds the rule: an explicit reply
+(`re`) names the tell it answers; otherwise the command execution's cause applies
+(`CommandExecutionOptions.cause`, kept on the `runCommandScope` frame in `gate-context.ts` and
+inherited by macro and `batch` expansions); otherwise the message starts a thread at depth 0.
+Delivered perceptions carry `messageRef`, `cause` and `depth`, and tells also carry a
+server-stamped `senderKind` (`agent` / `person`). The `say_sent` / `tell_sent` events carry names,
+the ref and the envelope, never the words.
+
 ## Private investigations
 
 Migration 170 appends the prediction/research service tables after the media-memory migration
@@ -26,7 +57,7 @@ case policy; existing backups are outside live-case erasure. The [user guide](..
 documents the available interfaces and capture/accounting limits.
 
 ## Row retention
-- **Row retention** (`src/engine/retention.ts`, hourly tick phase 2100, `runRetentionPass`): declarative `RETENTION_POLICIES` per table class — telemetry 7–30 d (`primitive_usage`, `feed_events`, `memory_service_events`, `coding_events`, `coding_service_probes`, `event_log` by row count), ledger 30–90 d (`direct_messages` acknowledged/expired, `cognitive_events`, `productivity_sessions`, `core_memory_history`, `media_jobs`, `memory_assistance_actions`, `memory_index_jobs` settled states only), continuity-journal receipts in `memory_requests` 7 d (`CONTINUITY_RECEIPT_WHERE`: `archive:` / `archive-batch:` / `manifest:` / `checkpoint:` keys and uuid-keyed `resident` checkpoint saves, whose per-process keys are never resent; every other receipt is kept), staged model-API request images 7 d (`assets` and `canvas_nodes` rows with `origin = request` only; their blobs and their derivatives' blobs removed first by `pruneRequestImageBlobs`; uploaded, generated, tool and derived assets are people's files and never age out — `asset_tags` / `asset_links` cascade with their asset), audit 365 d (`witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events`), `shell_log` 90 d; `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events` — and the lineage/replay logs `intellect_events`, `mesh_events`, `mesh_membership_events`, `journey_events`, `simulation_events`, `arena_submissions`, `arena_shadow`, and the benchmark ledger `benchmark_runs` / `benchmark_items` / `benchmark_promotions` / `benchmark_defaults` / `benchmark_run_validity` — are `append-only` and are never pruned (an override cannot re-enable it). `MARINA_RETENTION_OVERRIDES="table=30d,table2=0"` (0 = never). Batched deletes ≤ 5,000 rows via `db.deleteBatch` (uses `RETURNING rowid` — bun:sqlite `.changes` counts trigger writes). Missing tables/columns are skipped, not errors. Migration 116 adds the `direct_messages(deadline_at) WHERE status='delivered'` partial index plus `notes(supersedes_id)` and `note_sources(url)`.
+- **Row retention** (`src/engine/retention.ts`, hourly tick phase 2100, `runRetentionPass`): declarative `RETENTION_POLICIES` per table class — telemetry 7–30 d (`primitive_usage`, `feed_events`, `memory_service_events`, `coding_events`, `coding_service_probes`, `event_log` by row count), `memory_service_events` keeps the dating events the migration-171 backfill has not copied yet (`KNOWN_AT_RETENTION_WHERE`), ledger 30–90 d (`direct_messages` acknowledged/expired, `cognitive_events`, `productivity_sessions`, `core_memory_history`, `media_jobs`, `memory_assistance_actions`, `memory_index_jobs` settled states only), continuity-journal receipts in `memory_requests` 7 d (`CONTINUITY_RECEIPT_WHERE`: `archive:` / `archive-batch:` / `manifest:` / `checkpoint:` keys and uuid-keyed `resident` checkpoint saves, whose per-process keys are never resent; every other receipt is kept), staged model-API request images 7 d (`assets` and `canvas_nodes` rows with `origin = request` only; their blobs and their derivatives' blobs removed first by `pruneRequestImageBlobs`; uploaded, generated, tool and derived assets are people's files and never age out — `asset_tags` / `asset_links` cascade with their asset), audit 365 d (`witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events`), `shell_log` 90 d; `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events` — and the lineage/replay logs `intellect_events`, `mesh_events`, `mesh_membership_events`, `journey_events`, `simulation_events`, `arena_submissions`, `arena_shadow`, and the benchmark ledger `benchmark_runs` / `benchmark_items` / `benchmark_promotions` / `benchmark_defaults` / `benchmark_run_validity` — are `append-only` and are never pruned (an override cannot re-enable it). `MARINA_RETENTION_OVERRIDES="table=30d,table2=0"` (0 = never). Batched deletes ≤ 5,000 rows via `db.deleteBatch` (uses `RETURNING rowid` — bun:sqlite `.changes` counts trigger writes). Missing tables/columns are skipped, not errors. Migration 116 adds the `direct_messages(deadline_at) WHERE status='delivered'` partial index plus `notes(supersedes_id)` and `note_sources(url)`.
 
 ## Benchmark ledger (migration 146)
 - **Runs:** every benchmark run is a ledger row. `benchmark_runs` gains:
@@ -179,11 +210,11 @@ Each module has a matching interface in `src/persistence/interfaces/` — explic
 
 Adding a delegate: put the query in the module, add the one-line delegate to `MarinaDB`, add the method to the matching interface and its `*_STORE_METHODS` tuple — the `ExactKeys` check and the drift test fail until all three agree. Row types are declared in their module and re-exported from `database.ts` so importers keep one path.
 
-## Command phase: per-entity chains and a wall-clock budget (2026-09-22)
+## Command phase: per-entity chains and a wall-clock budget
 
-`processCommand` is async; the round-robin used to fire it un-awaited, so one entity's queued commands could interleave past their first `await`. `CommandCoordinator` (`src/engine/command-coordinator.ts`) keeps a per-entity promise tail (`chains`): an idle entity's command starts synchronously, a busy entity's is chained after its previous one, so a single entity runs strictly FIFO while different entities still interleave. A rejection that escapes `processCommand` before the handler's own try (modal routing, parse, context build) is routed to the tick error path (`recordTickError`) instead of becoming an unhandled rejection. The command phase stops dispatching after `COMMAND_PHASE_BUDGET_MS` (150 ms, `MARINA_COMMAND_PHASE_BUDGET_MS`) and carries the per-entity remainder to the next tick in order; `MAX_COMMANDS_PER_TICK` still bounds the count. `drainCommands()` / `queuedCommandCount` are test seams. The macro fan-out stays un-awaited (its tests expect synchronous completion).
+`processCommand` is async, and firing it un-awaited would let one entity's queued commands interleave past their first `await`. `CommandCoordinator` (`src/engine/command-coordinator.ts`) keeps a per-entity promise tail (`chains`): an idle entity's command starts synchronously, a busy entity's is chained after its previous one, so a single entity runs strictly FIFO while different entities still interleave. A rejection that escapes `processCommand` before the handler's own try (modal routing, parse, context build) is routed to the tick error path (`recordTickError`) instead of becoming an unhandled rejection. The command phase stops dispatching after `COMMAND_PHASE_BUDGET_MS` (150 ms, `MARINA_COMMAND_PHASE_BUDGET_MS`) and carries the per-entity remainder to the next tick in order; `MAX_COMMANDS_PER_TICK` still bounds the count. `drainCommands()` / `queuedCommandCount` are test seams. The macro fan-out stays un-awaited (its tests expect synchronous completion).
 
-`RoomSandbox.wrapModule` returns a room command handler's value (previously the closure discarded it), so an async room command's promise reaches the chain; an async rejection is recorded as a room violation via `execHandler`, never as an unhandled rejection.
+`RoomSandbox.wrapModule` returns a room command handler's value, so an async room command's promise reaches the chain; an async rejection is recorded as a room violation via `execHandler`, never as an unhandled rejection.
 
 ## Migration 118 and the contradiction-case twin exclusion
 

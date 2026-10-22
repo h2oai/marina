@@ -11,13 +11,13 @@ import {
   isolationOfSpec,
   strictDateFilter,
   urlPublishedDay,
-} from "../src/arena/research/isolation";
+} from "../src/research/isolation";
 import {
   exaRetriever,
   isDateStrictSpec,
   type ResearchReport,
   retrieverFromSpec,
-} from "../src/arena/research/retrieve";
+} from "../src/research/retrieve";
 
 const brief = (until?: string): ResearchBrief =>
   ({

@@ -11,12 +11,17 @@ import {
 import { formatUsd, operatorStatusOf } from "../../agent/lean-agent-adapter";
 import { isSeedDisabled, listDisabledSeedAgents, setSeedDisabled } from "../../agent/seed-registry";
 import { getStanding } from "../../agent/standing";
+import { residentDefaultModel } from "../../config/model-tiers";
 import { bold, dim, header, separator } from "../../net/ansi";
 import { providerSetupHint } from "../../net/model/provider-setup";
-import type { MarinaDB } from "../../persistence/database";
+import type { AgentConfigRow, MarinaDB } from "../../persistence/database";
+import type { AttentionRelay } from "../../persistence/db-agents";
 import { isGrantedCompetence } from "../../persistence/db-competence";
+import { RoutingError } from "../../routing/errors";
+import { residentLabeler, supervisedResidentsEnabled } from "../../routing/residents";
+import { RoutingService } from "../../routing/service";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
-import { MARINA_DEFAULT_MODEL, MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
+import { MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
 import { sanitizeEntityName } from "../entity-name";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
@@ -101,17 +106,23 @@ export function agentCommand(deps: {
   getEntity: (id: EntityId) => Entity | undefined;
   logEvent: (event: EngineEvent) => void;
   db?: MarinaDB;
+  /** Whether the named account has a live connection (supervised residents' status). */
+  isOnline?: (name: string) => boolean;
+  /** The live entity of an agent account (supervised residents' attention). */
+  findAgent?: (name: string) => { id: EntityId } | undefined;
 }): CommandDef {
   return {
     category: "Agents",
     usage: [
       { syntax: "agent attention <name> <message>", effect: "write" },
       { syntax: "agent attention <name> <msg>", effect: "write" },
+      { syntax: "agent attention <a,b|all> <message>", effect: "write" },
       { syntax: "agent attention-feedback <name> noise", effect: "write" },
       { syntax: "agent attention-feedback <name> useful", effect: "write" },
       { syntax: "agent attention-mode <name> balanced", effect: "write" },
       { syntax: "agent attention-mode <name> focused", effect: "write" },
       { syntax: "agent attention-mode <name> open", effect: "write" },
+      { syntax: "agent attention-mode <name> relay:all|explicit", effect: "write" },
       { syntax: "agent config <name> ..", effect: "write" },
       { syntax: "agent config <name> key <value>", effect: "write" },
       { syntax: "agent config <name> model <value>", effect: "write" },
@@ -157,6 +168,7 @@ Usage:
   agent enable <name>                         — clear a disable; the agent returns on next restart/room entry
   agent attention <name> <message>           — send attention to agent
   agent attention-mode <name> focused|balanced|open
+  agent attention-mode <name> relay:all|explicit — supervised residents: relay a woken turn's final reply, or not
   agent restart <name>                       — restart in place, preserving config/focus
   agent failover <name> <provider/model>     — restart on a fallback provider/model
   agent focus <name> <description>           — set agent focus
@@ -191,7 +203,7 @@ Usage:
             ctx.send(input.entity, floor);
             return;
           }
-          return handleStop(ctx, input.entity, tokens[1], deps, {
+          return handleStop(ctx, input.entity, entity, tokens[1], deps, {
             keepChildren: tokens
               .slice(2)
               .some((t) => ["--keep-children", "keep-children"].includes(t.toLowerCase())),
@@ -259,6 +271,32 @@ Usage:
           }
           const name = tokens[1];
           const mode = tokens[2] as "focused" | "balanced" | "open" | undefined;
+          const resident = supervisedResident(deps.db, name);
+          if (resident && deps.db) {
+            const { values, rest, errors } = parseModifiers(tokens.slice(2), {
+              relay: { type: "string" },
+            });
+            const nextMode = rest[0] as "focused" | "balanced" | "open" | undefined;
+            const relay = values.relay as AttentionRelay | undefined;
+            if (
+              errors.length > 0 ||
+              (relay !== undefined && relay !== "all" && relay !== "explicit") ||
+              rest.length > 1 ||
+              (nextMode !== undefined && !["focused", "balanced", "open"].includes(nextMode)) ||
+              (!nextMode && !relay)
+            ) {
+              ctx.send(
+                input.entity,
+                "Usage: agent attention-mode <name> [focused|balanced|open] [relay:all|explicit]",
+              );
+              return;
+            }
+            setResidentAttention(ctx, input.entity, entity, resident, deps.db, {
+              ...(nextMode ? { mode: nextMode } : {}),
+              ...(relay ? { relay } : {}),
+            });
+            return;
+          }
           if (!name || !mode || !["focused", "balanced", "open"].includes(mode)) {
             ctx.send(input.entity, "Usage: agent attention-mode <name> focused|balanced|open");
             return;
@@ -285,6 +323,17 @@ Usage:
           const feedback = tokens[2] as "useful" | "noise" | undefined;
           if (!name || !feedback || !["useful", "noise"].includes(feedback)) {
             ctx.send(input.entity, "Usage: agent attention-feedback <name> useful|noise");
+            return;
+          }
+          const resident = supervisedResident(deps.db, name);
+          if (resident && deps.db) {
+            if (resident.spawned_by !== entity.name) {
+              ctx.send(input.entity, `Only ${resident.name}'s owner can tune its attention.`);
+              return;
+            }
+            const saved = deps.db.recordAttentionFeedback(resident.name, feedback);
+            const threshold = saved?.attention_threshold ?? resident.attention_threshold;
+            setResidentAttention(ctx, input.entity, entity, resident, deps.db, { threshold });
             return;
           }
           try {
@@ -329,10 +378,20 @@ Usage:
           const name = tokens[1];
           const message = tokens.slice(2).join(" ");
           if (!name || !message) {
-            ctx.send(input.entity, "Usage: agent attention <name> <message>");
+            ctx.send(input.entity, "Usage: agent attention <name|a,b|all> <message>");
             return;
           }
-          return handleAttention(ctx, input.entity, name, message, deps);
+          const names = attentionTargets(name, entity, ctx, deps);
+          if (!names.length) {
+            ctx.send(
+              input.entity,
+              "No agents to send attention to (you own none, and none are here).",
+            );
+            return;
+          }
+          for (const target of names)
+            await handleAttention(ctx, input.entity, target, message, deps);
+          return;
         }
 
         case "focus": {
@@ -387,11 +446,16 @@ Usage:
 function handleList(
   ctx: RoomContext,
   eid: EntityId,
-  deps: { agentRuntime: AgentRuntime; db?: MarinaDB },
+  deps: { agentRuntime: AgentRuntime; db?: MarinaDB; isOnline?: (name: string) => boolean },
 ): void {
   const agents = deps.agentRuntime.list();
   const disabled = listDisabledSeedAgents(deps.db);
-  if (agents.length === 0 && disabled.length === 0) {
+  // Supervised residents run from their owners' local supervisors, not here.
+  const label = supervisedResidentsEnabled() ? residentLabeler(deps.db) : undefined;
+  const residents = label
+    ? (deps.db?.getAllAgentConfigs().filter((c) => c.runtime === "supervised") ?? [])
+    : [];
+  if (agents.length === 0 && disabled.length === 0 && residents.length === 0) {
     ctx.send(eid, "No agents running.");
     return;
   }
@@ -408,6 +472,13 @@ function handleList(
       `${bold(a.name)} ${dim(`[${ops?.paused?.kind === "provider-auth" ? "blocked: provider auth" : (a.healthState ?? a.state)}]`)} ${a.model} ${a.role ? `role:${a.role}` : ""} ${dim(`${upMin}m · ${a.toolCalls} calls · ${cost}`)}${ops?.paused && ops.paused.kind !== "provider-auth" ? ` ${dim(`paused: ${ops.paused.kind}`)}` : ""}`,
     );
     if (a.focus) lines.push(`  ${dim(`focus: ${a.focus}`)}`);
+  }
+  if (label && residents.length > 0) {
+    lines.push(separator(), bold("Supervised residents"));
+    for (const r of residents)
+      lines.push(
+        `${bold(label(r.name))} ${dim(`[${deps.isOnline?.(r.name) ? "online" : "offline"}]`)} ${dim(`owner:${r.spawned_by}`)}`,
+      );
   }
   lines.push(separator(), dim(`${agents.length} agent(s) running`));
   if (disabled.length > 0) {
@@ -473,6 +544,11 @@ function handleStatus(
       : []),
     `${bold("Tokens:")} ${(ops?.totalInputTokens ?? s.totalInputTokens ?? 0).toLocaleString()} in · ${(ops?.totalOutputTokens ?? s.totalOutputTokens ?? 0).toLocaleString()} out`,
     `${bold("Cost:")} ${formatUsd(ops?.totalCostUsd ?? s.totalCostUsd ?? 0)} total · ${formatUsd(ops?.costLastHourUsd ?? 0)} last hour${capText ? dim(` (caps: ${capText})`) : ""}`,
+    ...(ops?.promptCache && (ops.promptCache.coldTurns > 0 || ops.promptCache.keepAlives > 0)
+      ? [
+          `${bold("Prompt cache:")} ${ops.promptCache.coldTurns} cold turn(s) · ${ops.promptCache.coldCompactions} compacted first (~${ops.promptCache.coldWriteTokensAvoided.toLocaleString()} tokens / ${Math.round(ops.promptCache.coldWriteBytesAvoided / 1024).toLocaleString()} KB of cache writes avoided)${ops.promptCache.keepAlives > 0 ? ` · ${ops.promptCache.keepAlives} keep-alive(s), ${formatUsd(ops.promptCache.keepAliveCostUsd)}` : ""}`,
+        ]
+      : []),
     `${bold("Errors:")} ${s.errors}${ops?.consecutiveErrors ? ` · ${ops.consecutiveErrors} consecutive` : ""}`,
     `${bold("Last error:")} ${ops?.lastError ? `${ops.lastError.text} ${dim(`(${formatAgo(ops.lastError.at)})`)}` : dim("none")}`,
     ...(ops?.paused
@@ -657,7 +733,7 @@ async function handleSpawn(
 
   ctx.send(
     eid,
-    `Spawning ${bold(name)} (${opts.model || deps.db?.getDefaultModel() || MARINA_DEFAULT_MODEL}${opts.role ? `, ${opts.role}` : ""}${opts.thinkingLevel ? `, thinking ${opts.thinkingLevel}` : ""})...`,
+    `Spawning ${bold(name)} (${opts.model || residentDefaultModel(deps.db)}${opts.role ? `, ${opts.role}` : ""}${opts.thinkingLevel ? `, thinking ${opts.thinkingLevel}` : ""})...`,
   );
 
   try {
@@ -696,15 +772,22 @@ async function handleSpawn(
 async function handleStop(
   ctx: RoomContext,
   eid: EntityId,
+  caller: Entity,
   name: string | undefined,
   deps: {
     agentRuntime: AgentRuntime;
     logEvent: (event: EngineEvent) => void;
+    db?: MarinaDB;
   },
   opts: { keepChildren?: boolean } = {},
 ): Promise<void> {
   if (!name) {
     ctx.send(eid, "Usage: agent stop <name> [--keep-children]");
+    return;
+  }
+  const supervised = deps.db?.getAgentConfig(name);
+  if (deps.db && supervised?.runtime === "supervised") {
+    stopSupervisedResident(ctx, eid, caller, supervised, deps.db);
     return;
   }
 
@@ -756,6 +839,141 @@ async function handleStop(
   } catch (error) {
     ctx.send(eid, `Failed to stop agent: ${error instanceof Error ? error.message : error}`);
   }
+}
+
+/**
+ * `agent stop` on a supervised resident: the server runs no process for it, so
+ * the stop is a runtime control to the owner's local supervisor through the
+ * routing control path — the owner only, under the owner's `code.exec` gate.
+ * The supervisor stops the native process and revokes the resident's credential.
+ */
+function stopSupervisedResident(
+  ctx: RoomContext,
+  eid: EntityId,
+  caller: Entity,
+  config: AgentConfigRow,
+  db: MarinaDB,
+): void {
+  if (config.spawned_by !== caller.name) {
+    ctx.send(eid, `Only ${config.name}'s owner can stop it.`);
+    return;
+  }
+  const gate = checkGateForExecution(db, eid, "code.exec");
+  if (!gate.ok) {
+    ctx.send(eid, gate.reason ?? "Stopping a supervised resident needs the code.exec capability.");
+    return;
+  }
+  recordGateExecution(db, eid, "code.exec", gate, `agent stop ${config.name}`);
+  const session = config.run_session;
+  if (!session) {
+    ctx.send(eid, `${bold(config.name)} is not running: no supervised run holds it.`);
+    return;
+  }
+  try {
+    new RoutingService(db, db.durableEntityKey(eid)).control(session, {
+      targetId: session,
+      clientMessageId: `agent-stop:${crypto.randomUUID()}`,
+      control: { action: "stop" },
+    });
+  } catch (error) {
+    ctx.send(
+      eid,
+      error instanceof RoutingError && error.code === "session_left"
+        ? `${bold(config.name)}'s supervisor is offline; stop it from its terminal.`
+        : `Stop was not sent: ${error instanceof Error ? error.message : error}`,
+    );
+    return;
+  }
+  ctx.send(
+    eid,
+    `Stop sent to ${bold(config.name)}'s supervisor. It stops the native process and revokes the resident's credential.`,
+  );
+}
+
+/** The supervised resident named `name`, when supervised residents are on. */
+/**
+ * `agent attention` targets: one name, a comma list, or `all` — every agent
+ * the caller owns that is in the world, else every other agent present.
+ */
+function attentionTargets(
+  spec: string,
+  caller: Entity,
+  ctx: RoomContext,
+  deps: {
+    agentRuntime: AgentRuntime;
+    db?: MarinaDB;
+    findAgent?: (name: string) => { id: EntityId } | undefined;
+  },
+): string[] {
+  if (spec.toLowerCase() !== "all") return [...new Set(spec.split(",").filter(Boolean))];
+  const owned = (deps.db?.getAgentConfigsBySpawnedBy(caller.name) ?? [])
+    .map((config) => config.name)
+    .filter((name) => deps.agentRuntime.get(name) || deps.findAgent?.(name));
+  if (owned.length) return owned;
+  return ctx.entities
+    .filter((e) => e.id !== caller.id && e.kind === "agent" && deps.agentRuntime.get(e.name))
+    .map((e) => e.name);
+}
+
+function supervisedResident(
+  db: MarinaDB | undefined,
+  name: string | undefined,
+): AgentConfigRow | undefined {
+  if (!db || !name || !supervisedResidentsEnabled()) return undefined;
+  const config = db.getAgentConfig(name);
+  return config?.runtime === "supervised" ? config : undefined;
+}
+
+/**
+ * Change a supervised resident's attention (mode, threshold, final-reply
+ * relay): stored on its agent config, then sent to its supervisor as an
+ * `attention` runtime control so the running bridge applies it at once. The
+ * owner only. With no run holding the resident, the stored setting applies
+ * at its next launch.
+ */
+function setResidentAttention(
+  ctx: RoomContext,
+  eid: EntityId,
+  caller: Entity,
+  config: AgentConfigRow,
+  db: MarinaDB,
+  change: { mode?: "focused" | "balanced" | "open"; threshold?: number; relay?: AttentionRelay },
+): void {
+  if (config.spawned_by !== caller.name) {
+    ctx.send(eid, `Only ${config.name}'s owner can change its attention.`);
+    return;
+  }
+  if (change.mode) db.updateAttentionPolicy(config.name, change.mode);
+  if (change.relay) db.setAttentionRelay(config.name, change.relay);
+  const saved = db.getAgentConfig(config.name) ?? config;
+  const policy = {
+    mode: saved.attention_mode,
+    threshold: change.threshold ?? saved.attention_threshold,
+    relay: saved.attention_relay ?? "all",
+  };
+  const summary = `mode ${policy.mode} · threshold ${policy.threshold} · relay ${policy.relay}`;
+  const session = config.run_session;
+  if (!session) {
+    ctx.send(
+      eid,
+      `Agent ${bold(config.name)} attention saved (${summary}); applies at its next launch.`,
+    );
+    return;
+  }
+  try {
+    new RoutingService(db, db.durableEntityKey(eid)).control(session, {
+      targetId: session,
+      clientMessageId: `agent-attention:${crypto.randomUUID()}`,
+      control: { action: "attention", ...policy },
+    });
+  } catch (error) {
+    ctx.send(
+      eid,
+      `Agent ${bold(config.name)} attention saved (${summary}); its supervisor did not take it: ${error instanceof Error ? error.message : error}`,
+    );
+    return;
+  }
+  ctx.send(eid, `Agent ${bold(config.name)} attention set: ${summary}.`);
 }
 
 /**
@@ -825,8 +1043,35 @@ async function handleAttention(
   eid: EntityId,
   name: string,
   message: string,
-  deps: { agentRuntime: AgentRuntime },
+  deps: {
+    agentRuntime: AgentRuntime;
+    db?: MarinaDB;
+    getEntity: (id: EntityId) => Entity | undefined;
+    findAgent?: (name: string) => { id: EntityId } | undefined;
+  },
 ): Promise<void> {
+  const resident = supervisedResident(deps.db, name);
+  if (resident) {
+    // A supervised resident's supervisor wakes it (src/routing/attention-bridge.ts):
+    // the owner's attention is a priority perception, steered in when it can be.
+    const caller = deps.getEntity(eid);
+    if (!caller || resident.spawned_by !== caller.name) {
+      ctx.send(eid, `Only ${resident.name}'s owner sends it attention; use tell instead.`);
+      return;
+    }
+    const target = deps.findAgent?.(resident.name);
+    if (!target) {
+      ctx.send(eid, `${bold(resident.name)} is not in the world right now.`);
+      return;
+    }
+    ctx.send(target.id, `${caller.name} asks for your attention: ${message}`, "attention", {
+      attention: true,
+      senderName: caller.name,
+      message,
+    });
+    ctx.send(eid, `Attention sent to ${bold(resident.name)}.`);
+    return;
+  }
   const agent = deps.agentRuntime.get(name);
   if (!agent) {
     ctx.send(eid, `Agent "${name}" is not running.`);

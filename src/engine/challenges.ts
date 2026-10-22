@@ -84,7 +84,7 @@
 import { independentParties } from "../agent/standing";
 import { EARNED_JUDGE_MIN_LOWER, EARNED_JUDGE_MIN_N, earnedJudge } from "../decisions/earned-judge";
 import { harnessDecisionProvider } from "../decisions/engines";
-import { gateToolCall, maskSensitiveText } from "../decisions/gate";
+import { gateToolCall, maskSecretShapes, maskSensitiveText } from "../decisions/gate";
 import { noteWorkFor } from "../learning/work";
 import type { MarinaDB } from "../persistence/database";
 import type { ChallengeHoldRow } from "../persistence/db-decisions";
@@ -100,6 +100,7 @@ import {
   getCurrentCommand,
   grantCommandPass,
   setGateRefusalHook,
+  setPrincipalResolver,
 } from "./gate-context";
 import { Logger } from "./logger";
 import { notifyOperator } from "./ops-notify";
@@ -158,6 +159,12 @@ export interface ChallengeHost {
   connectionOf(entityId: string): Pick<Connection, "internal" | "protocol" | "agent"> | undefined;
   /** An agent account: it has an agent config or an agent principal. */
   isAgentAccount(name: string): boolean;
+  /**
+   * The held input as approvers may see it: a declared credential form
+   * (`CommandDef.sensitiveSubcommands`) becomes `<verb> <sub> [redacted]`,
+   * key-shaped strings are masked (`redactCommandText`).
+   */
+  redactCommand?(raw: string): string;
 }
 
 export type SettleError = "not_found" | "self" | "agent" | "not_authorized" | "absent";
@@ -253,6 +260,14 @@ export function setChallengeHost(next: ChallengeHost | undefined, owner?: object
     }, CHALLENGE_SWEEP_INTERVAL_MS);
     (sweepTimer as { unref?: () => void }).unref?.();
   }
+  setPrincipalResolver(
+    next
+      ? (id) => {
+          const entity = next.getEntity(id);
+          return entity ? principalKind(entity) : "agent";
+        }
+      : undefined,
+  );
   setGateRefusalHook(
     next
       ? (entityId, gateId, reason) => {
@@ -278,6 +293,26 @@ export function principalKind(entity: Entity): PrincipalKind {
   return host.isAgentAccount(entity.name) ? "agent" : "person";
 }
 
+/**
+ * Why a participant counts as an agent, and how a person acts instead — for
+ * refusals that hinge on principal kind. Empty for a person.
+ */
+export function agentPrincipalReason(entity: Entity): string {
+  if (principalKind(entity) === "person") return "";
+  const conn = host?.connectionOf(entity.id);
+  const why = conn?.internal
+    ? "it is on an internal agent connection"
+    : conn?.protocol === "mcp"
+      ? "it is connected over MCP"
+      : conn?.agent
+        ? "its client declared itself an agent (a one-shot or piped `marina connect`, or an SDK client)"
+        : "the account is an agent's (an agent config or agent principal)";
+  const how = host?.isAgentAccount(entity.name)
+    ? "Its owner or an operator decides."
+    : "A person acts from an interactive `marina connect` on a terminal or from the dashboard.";
+  return `${entity.name} counts as an agent here because ${why}. ${how}`;
+}
+
 /** An operator: a person at sovereign rank. A rank-9 agent is not one. */
 function isOperator(entity: Entity | undefined): boolean {
   return !!entity && getRank(entity) >= ADMIN_RANK && principalKind(entity) === "person";
@@ -288,7 +323,7 @@ function isOperator(entity: Entity | undefined): boolean {
  * spawned by an agent is answered for by the person who started the chain).
  * Undefined when the chain ends in `system`, nobody, or a loop.
  */
-function personOwner(requester: { name: string }): string | undefined {
+export function personOwner(requester: { name: string }): string | undefined {
   if (!host) return undefined;
   const seen = new Set<string>([norm(requester.name)]);
   let name = host.creatorOf(requester);
@@ -303,10 +338,21 @@ function personOwner(requester: { name: string }): string | undefined {
 
 // ─── Durable state (migration 166) ───────────────────────────────────────────
 
-/** The held input as stored: only when masking would not change it. */
+/** The held input as approvers see it (summaries, notices, inbox items). */
+function shownCommand(command: string): string {
+  return host?.redactCommand ? host.redactCommand(command) : maskSecretShapes(command);
+}
+
+/**
+ * The held input as stored: only when neither masking nor the credential-form
+ * redaction would change it. A held `key add` therefore never reaches the
+ * database; it still re-runs on approval in this process, and after a restart
+ * the requester is asked to issue it again.
+ */
 function storableCommand(command: string | undefined): string | undefined {
   if (!command) return undefined;
-  return maskSensitiveText(command, Number.MAX_SAFE_INTEGER) === command ? command : undefined;
+  if (maskSensitiveText(command, Number.MAX_SAFE_INTEGER) !== command) return undefined;
+  return shownCommand(command) === command ? command : undefined;
 }
 
 function persistHold(challenge: Challenge): void {
@@ -485,7 +531,7 @@ function ensureRestored(): void {
       closeHold(
         challenge,
         "expired",
-        `Challenge ${challenge.token} did not survive a restart (${challenge.kind === "tool" ? "the held call can only be replayed by the process that made it" : "its input carried a secret-shaped value, which is never stored"}) — ${challenge.summary} did not run. Issue it again if it is still needed.`,
+        `Challenge ${challenge.token} did not survive a restart (${challenge.kind === "tool" ? "the held call can only be replayed by the process that made it" : "its input carried a credential or secret-shaped value, which is never stored"}) — ${challenge.summary} did not run. Issue it again if it is still needed.`,
       );
       continue;
     }
@@ -823,8 +869,8 @@ function inLineage(requester: { name: string }, name: string): boolean {
  * the gate is earnable (operator-grant gates are never built by approvals) and
  * the approver is a person outside the requester's own lineage. The owner of
  * an agent — whoever is up its spawn chain — may approve the run (it runs),
- * but that approval never builds the agent's gate: a person and the agents it
- * spawned are one party, the same rule `gate grant` applies.
+ * but that approval never builds the agent's gate: for gates a person and the
+ * agents it spawned are one party, the same rule `gate grant` applies.
  */
 export function approvalDemonstrates(
   approver: Entity,
@@ -834,8 +880,12 @@ export function approvalDemonstrates(
   if (!gateId || !SAFETY_GATES[gateId] || isOperatorGrantGate(gateId)) return false;
   if (principalKind(approver) !== "person") return false;
   if (norm(approver.name) === norm(requester.name)) return false;
-  // The same one-party rule verified-work standing uses (agent configs, then
-  // agent principals' owners); the live spawn chain when no store is wired.
+  // The gate's one-party rule (agent configs, then agent principals' owners);
+  // the live spawn chain when no store is wired. Standing is looser since
+  // 2026-10-20 (each account its own party, `standingVerifierRefusal`); gates
+  // deliberately are not: a person's own agents may raise each other's
+  // standing to a gate's floor, but only an approval from outside the lineage
+  // makes the gate solo.
   const db = host?.db;
   if (db && typeof db.spawnLineage === "function") {
     return independentParties(db, approver.name, requester.name);
@@ -1063,7 +1113,7 @@ export function raiseForCommand(input: {
 }): string {
   const codingTarget = getCurrentCodingTarget(input.requesterId);
   const summary =
-    input.command.trim().slice(0, 240) +
+    shownCommand(input.command.trim()).slice(0, 240) +
     (codingTarget
       ? ` [session ${codingTarget.sessionId}${codingTarget.runId ? `, run ${codingTarget.runId}` : ""}]`
       : "");
@@ -1119,7 +1169,12 @@ export function raiseForTool(input: {
       requesterId: input.requesterId,
       toolName: input.toolName,
       ...(input.command ? { command: input.command } : {}),
-      summary: input.summary.slice(0, 240),
+      // A world-command call is shown as that command, redacted like a held
+      // command; the caller's summary otherwise.
+      summary: (input.command && shownCommand(input.command) !== input.command
+        ? `${input.toolName} ${shownCommand(input.command)}`
+        : input.summary
+      ).slice(0, 240),
       reason: input.reason,
     },
     { rerun: input.rerun, ...(input.judge ? { judgeInput: input.judge } : {}) },
@@ -1343,7 +1398,7 @@ function maybeJudge(entry: Pending): void {
       : challenge.command
         ? {
             tool: "marina_command",
-            args: { command: challenge.command },
+            args: { command: shownCommand(challenge.command) },
             description:
               challenge.kind === "tool"
                 ? undefined

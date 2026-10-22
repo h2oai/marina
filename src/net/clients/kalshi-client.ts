@@ -310,7 +310,6 @@ async function jsonRequest<T>(
       ...(bodyStr !== undefined ? { body: bodyStr } : {}),
       signal: controller.signal,
     });
-    clearTimeout(timer);
 
     if (!res.ok) {
       // allow-empty-catch: the error body is optional detail; the status is reported regardless
@@ -323,11 +322,13 @@ async function jsonRequest<T>(
     const json = (await res.json()) as T;
     return { ok: true, paper: false, response: json };
   } catch (err) {
-    clearTimeout(timer);
     if ((err as Error).name === "AbortError") {
       return { ok: false, error: `Kalshi request timed out after ${timeoutMs}ms.` };
     }
     return { ok: false, error: `Kalshi request failed: ${(err as Error).message}` };
+  } finally {
+    // The deadline covers the whole exchange, body included.
+    clearTimeout(timer);
   }
 }
 

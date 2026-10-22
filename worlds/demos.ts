@@ -24,7 +24,6 @@
  *   MARINA_WORLD=demos bun run start
  */
 
-import * as safetyGates from "../src/engine/safety-gates";
 import type { MarinaDB } from "../src/persistence/database";
 import type { Entity, RoomId, RoomModule } from "../src/types";
 import { rankLabel } from "../src/world/seed-guide";
@@ -152,9 +151,11 @@ const GUIDE_NOTES: GuideNote[] = [
   },
   {
     content:
-      `The Maker agent is pre-registered at ${rankLabel(MAKER_RANK)} with the world.code gate, ` +
-      "which building rooms and compiling room code need. Anyone else earns capability: " +
-      "`standing` shows the path to every gate.",
+      `The Maker agent is pre-registered at ${rankLabel(MAKER_RANK)}, the rank \`build\` needs. ` +
+      "Compiling and reloading room code also takes the world.code gate, which is never " +
+      "seeded for an agent: the Maker's `build code` and `build reload` are held for an " +
+      "operator, who answers with `challenge approve <token>` (or grants the gate " +
+      "explicitly with `gate grant Maker world.code`). `standing` shows the path to every gate.",
     importance: 6,
     type: "fact",
   },
@@ -174,8 +175,9 @@ const GUIDE_NOTES: GuideNote[] = [
 function seed(db: MarinaDB): void {
   seedTraitsAndRoles(db);
 
-  // Pre-register the Maker agent with what the demo exercises: `build` (its
-  // command floor) plus the world.code gate for `build code`/`reload`. Name is
+  // Pre-register the Maker agent at `build`'s command floor. Gate grants are
+  // never seeded for agents: `build code`/`reload` need world.code, so those
+  // runs are held for an operator to approve (or grant explicitly). Name is
   // the durable identity; the id is generated fresh on first seed to avoid
   // collisions if this world is loaded into a database that already has other
   // users. A database seeded at the old rank 3 is raised to the floor.
@@ -186,7 +188,6 @@ function seed(db: MarinaDB): void {
   } else if (maker.rank < MAKER_RANK) {
     db.updateUserRank(maker.id, MAKER_RANK);
   }
-  if (maker) safetyGates.grant(db, maker.id, "world.code");
 
   // Create demos channel for federation demo
   try {

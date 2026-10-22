@@ -270,13 +270,15 @@ describe("demos Maker can do the building it demonstrates", () => {
   let fixture: ReturnType<typeof createTestEngine>;
   afterEach(() => fixture.dispose());
 
-  it("holds build's command floor and the world.code gate", () => {
+  it("holds build's command floor and no seeded gate grant", () => {
     fixture = createTestEngine();
     const { db, engine } = fixture;
     demosWorld.seed?.(db);
     const build = engine.commands.allBuiltins().find((def) => def.name === "build")!;
     const maker = db.getUserByName("Maker")!;
     expect(maker.rank).toBeGreaterThanOrEqual(build.minRank ?? 0);
-    expect(isGrantedCompetence(db.getCompetence(maker.id, "world.code"))).toBe(true);
+    // Gate grants are never seeded for agents: world.code runs are held for an operator.
+    expect(isGrantedCompetence(db.getCompetence(maker.id, "world.code"))).toBe(false);
+    expect(db.listCompetenceForEntity(maker.id).filter(isGrantedCompetence)).toEqual([]);
   });
 });

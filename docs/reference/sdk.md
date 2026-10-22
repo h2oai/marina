@@ -53,7 +53,20 @@ export interface RosterOptions {
     maxLineChars?: number;
     /** List only the core work commands (and this room's) — nothing past them. */
     coreOnly?: boolean;
+    /** Command names to leave out because the surrounding prompt already teaches them. */
+    omit?: ReadonlySet<string>;
+    /**
+     * Lead with the `This room:` line (default true). A cached system prompt
+     * passes false: room commands change with the room, so they belong in the
+     * per-turn context (`renderRoomCommands`), not in a static prefix.
+     */
+    includeRoom?: boolean;
 }
+/**
+ * The caller's room commands as one `This room: a, b` line (names only — a
+ * room handler carries no summary), byte-bounded; "" when the room has none.
+ */
+export declare function renderRoomCommands(entries: readonly CommandCatalogEntry[], options?: RosterOptions, maxBytes?: number): string;
 /** First line of a summary, clamped at a word boundary. */
 export declare function clampSummary(text: string, max: number): string;
 /**
@@ -136,12 +149,23 @@ export interface ClientOptions {
 export interface CommandOptions {
     signal?: AbortSignal;
     codingTarget?: CodingCommandTarget;
+    /**
+     * Ref of a delivered message this command answers (`tell:12`,
+     * `channel_msg:4`, `say:<uuid>`). The server accepts only a ref it
+     * delivered to this client's entity; messages the command sends record it
+     * as their cause. Correlated commands only.
+     */
+    cause?: string;
 }
 type PerceptionHandler = (p: Perception) => void;
 /** Legacy results are observations, without guaranteed attribution or completion. */
 export type CommandResult = Perception[] & {
     readonly completion: "confirmed" | "unconfirmed";
 };
+/** The server refused a login or reconnect (as opposed to the transport failing). */
+export declare class LoginRefusedError extends Error {
+    readonly name = "LoginRefusedError";
+}
 export declare class CommandError extends Error {
     readonly perceptions: Perception[];
     constructor(message: string, perceptions?: Perception[]);
@@ -240,6 +264,12 @@ export declare class MarinaClient {
     }[] | undefined): void;
     private traceLinksField;
     constructor(url: string, options?: ClientOptions);
+    /**
+     * Replace the internal/workload credential sent with later login and
+     * reconnect messages (a renewed workload credential). The live connection
+     * is unchanged.
+     */
+    setInternalToken(token: string | undefined): void;
     /** Check if connected to the server. */
     isConnected(): boolean;
     /** True once automatic reconnection exhausted `maxReconnectAttempts`. */
@@ -776,7 +806,7 @@ export interface MarinaExtension {
 export type { CapabilityManifest, CommandCatalogEntry } from "./capabilities.js";
 export { renderCapabilityRoster } from "./capabilities.js";
 export type { ClientOptions, CommandOptions, CommandResult, ConnectionState, RoomView, SessionInfo, } from "./client.js";
-export { CommandError, MarinaAgent, MarinaClient } from "./client.js";
+export { CommandError, LoginRefusedError, MarinaAgent, MarinaClient } from "./client.js";
 export { codingDesk } from "./coding-desk.js";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms.js";
 export { commandFormPrefix, compileCommandForms, composeCommand, matchCommandForm, } from "./command-forms.js";
@@ -1355,7 +1385,7 @@ export declare class MarinaMemoryAssistance {
 ```typescript
 import type { MemoryGraphAction, MemoryGraphInputs, MemoryGraphResults } from "./memory-knowledge-graph.js";
 import type { MemoryTransferFilter, MemoryTransferHeader, MemoryTransferList, MemoryTransferPage, MemoryTransferStatus } from "./memory-transfer.js";
-import type { ForgetMemoryInput, MemoryAdoptInput, MemoryAdoptResult, MemoryBundle, MemoryCachedRetrievalInput, MemoryCachedRetrievalResult, MemoryCacheInput, MemoryCacheResult, MemoryCacheWrite, MemoryCheckpoint, MemoryFederatedRead, MemoryFederatedResult, MemoryFederatedRetrievalResult, MemoryFederatedSearch, MemoryGraphQuery, MemoryGraphResult, MemoryJobStatus, MemoryPlan, MemoryPlanResult, MemoryPlanStep, MemoryQuery, MemoryQueryResult, MemoryReceipt, MemoryRecord, MemoryRecordInput, MemoryResolveInput, MemoryResolveResult, MemoryRetrievalInput, MemoryRetrievalResult, MemoryReviewResult, MemorySearchInput, MemorySearchResult, MemorySource, MemorySourceRange, MemorySourceSearch, MemorySourceSearchResult, MemorySpace, MemoryStorageUsage, MemoryVocabulary, MemoryVocabularyDefinition } from "./memory-types.js";
+import type { ForgetMemoryInput, MemoryAdoptInput, MemoryAdoptResult, MemoryBundle, MemoryCachedRetrievalInput, MemoryCachedRetrievalResult, MemoryCacheInput, MemoryCacheResult, MemoryCacheWrite, MemoryCheckpoint, MemoryCheckpointCapture, MemoryCheckpointCaptureReceipt, MemoryFederatedRead, MemoryFederatedResult, MemoryFederatedRetrievalResult, MemoryFederatedSearch, MemoryGraphQuery, MemoryGraphResult, MemoryJobStatus, MemoryPlan, MemoryPlanResult, MemoryPlanStep, MemoryQuery, MemoryQueryResult, MemoryReceipt, MemoryRecord, MemoryRecordInput, MemoryResolveInput, MemoryResolveResult, MemoryRetrievalInput, MemoryRetrievalResult, MemoryReviewResult, MemorySearchInput, MemorySearchResult, MemorySource, MemorySourceRange, MemorySourceSearch, MemorySourceSearchResult, MemorySpace, MemoryStorageUsage, MemoryVocabulary, MemoryVocabularyDefinition } from "./memory-types.js";
 import { MarinaMemoryWorkflows } from "./memory-workflows.js";
 export declare class MemoryClientError extends Error {
     status: number;
@@ -1515,6 +1545,8 @@ export declare class MarinaMemoryClient {
     }): Promise<MemorySourceRange>;
     checkpoint(space: string, name: string): Promise<MemoryCheckpoint>;
     saveCheckpoint(space: string, name: string, expected_version: number, data: Record<string, unknown>, source_cursor?: number, key?: string, source_ids?: string[]): Promise<MemoryReceipt>;
+    /** Capture sources, their manifest and the checkpoint naming them in one transaction. */
+    captureCheckpoint(space: string, name: string, input: MemoryCheckpointCapture, key?: string): Promise<MemoryCheckpointCaptureReceipt>;
     grant(space: string, principal_id: string, role: "reader" | "writer" | null, key?: string): Promise<MemoryReceipt>;
     forget(space: string, input: ForgetMemoryInput, key?: string): Promise<MemoryReceipt>;
     export(space: string): Promise<Record<string, unknown>>;
@@ -1657,6 +1689,13 @@ export interface UnifiedContextOptions {
      * records themselves pass false).
      */
     derivedSources?: boolean;
+    /**
+     * The as-of fence (epoch ms; `src/engine/evidence-fence.ts`): serve only
+     * what was known by then. Note tiers keep notes created at or before it and
+     * never revised since; the durable tiers and derived source excerpts carry
+     * no per-item as-of, so they are withheld and reported degraded `fenced`.
+     */
+    asOf?: number;
 }
 ```
 
@@ -1793,7 +1832,7 @@ export interface MemoryGraphResults {
 
 ```typescript
 import { type MarinaMemoryClient } from "./memory-client.js";
-export declare const MEMORY_OPERATIONS: readonly ["workflow", "federated_retrieve", "retrieve_cached", "assist_create", "assist_jobs", "assist_get", "assist_claim", "assist_heartbeat", "assist_read", "assist_finish", "assist_cancel", "assist_delegate", "adopt", "capabilities", "usage", "federation_mounts", "federated_search", "federated_read", "export_bundle", "import_bundle", "knowledge_graph", "export_page", "transfer_begin", "transfer_status", "transfers", "transfer_page", "transfer_commit", "transfer_abort", "acknowledge", "review", "reaffirm", "resolve", "cache_delete", "cache_get", "cache_put", "me", "spaces", "create_space", "space", "remember", "get", "revise", "query", "join", "json_store", "save_rule", "run_rule", "materialize_rule", "graph", "search", "context", "capture", "capture_batch", "sources", "source_headers", "source_search", "source_range", "vocabulary", "save_vocabulary", "plan", "execute_plan", "retrieve", "checkpoint", "save_checkpoint", "grant", "forget", "export", "job", "reindex"];
+export declare const MEMORY_OPERATIONS: readonly ["workflow", "federated_retrieve", "retrieve_cached", "assist_create", "assist_jobs", "assist_get", "assist_claim", "assist_heartbeat", "assist_read", "assist_finish", "assist_cancel", "assist_delegate", "adopt", "capabilities", "usage", "federation_mounts", "federated_search", "federated_read", "export_bundle", "import_bundle", "knowledge_graph", "export_page", "transfer_begin", "transfer_status", "transfers", "transfer_page", "transfer_commit", "transfer_abort", "acknowledge", "review", "reaffirm", "resolve", "cache_delete", "cache_get", "cache_put", "me", "spaces", "create_space", "space", "remember", "get", "revise", "query", "join", "json_store", "save_rule", "run_rule", "materialize_rule", "graph", "search", "context", "capture", "capture_batch", "sources", "source_headers", "source_search", "source_range", "vocabulary", "save_vocabulary", "plan", "execute_plan", "retrieve", "checkpoint", "save_checkpoint", "capture_checkpoint", "grant", "forget", "export", "job", "reindex"];
 export interface MemoryOperationRequest {
     operation: (typeof MEMORY_OPERATIONS)[number];
     request_id?: string;
@@ -1911,7 +1950,12 @@ export declare function compareMemoryRecipes(observation: MemoryRetrievalObserva
 [Source](../../src/sdk/memory-retry.ts)
 
 ```typescript
-/** Opt-in retry of the SAME request/key. Never reinterpret conflicts or denial. */
+/**
+ * Opt-in retry of the SAME request/key. Never reinterpret conflicts or denial.
+ * A rate limit that names its wait (the next token) is waited out exactly and
+ * does not use up an attempt — it is not a failure — up to a total of
+ * `RATE_LIMIT_WAIT_CAP_MS`; other transient errors back off exponentially.
+ */
 export declare function retryMemoryOperation<T>(operation: () => Promise<T>, options?: {
     attempts?: number;
     sleep?: (ms: number) => Promise<void>;
@@ -2381,6 +2425,40 @@ export interface MemoryCheckpoint {
     source_cursor: number;
     data: Record<string, unknown>;
     updated_at: number;
+}
+/** Input of an atomic checkpoint capture (`capture_checkpoint`). */
+export interface MemoryCheckpointCapture {
+    expected_version: number;
+    session_id?: string;
+    /** New sources; `order` refers to them by index. At most 64, 1 MiB. */
+    items?: {
+        content: unknown;
+        key: string;
+    }[];
+    /** The manifest's sources in order: an existing source id or a new item's index. */
+    order: (string | number)[];
+    /** The server adds `source_ids` (resolved `order`) to this content. */
+    manifest: {
+        key: string;
+        content: Record<string, unknown>;
+    };
+    /** Checkpoint data field set to `entry` plus `source_ids` and `manifest_source_id`. */
+    field: string;
+    entry: Record<string, unknown>;
+    /** The rest of the checkpoint data. */
+    data: Record<string, unknown>;
+    /** Other sources the checkpoint keeps referring to. */
+    source_ids?: string[];
+    /** `"manifest"` = the manifest's sequence number, else an explicit cursor. */
+    cursor?: "manifest" | number;
+    checkpoint_key: string;
+}
+export interface MemoryCheckpointCaptureReceipt extends MemoryReceipt {
+    manifest: {
+        id: string;
+        seq: number;
+    };
+    source_ids: string[];
 }
 export interface MemoryReceipt {
     id: string;
@@ -3355,7 +3433,7 @@ export type EntityRank = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 [Source](../../src/sdk/routing-client.ts)
 
 ```typescript
-import type { RoutingSyncInput, RoutingSyncResult, RuntimeControl, RuntimeState } from "./routing-runtime-types.js";
+import type { ResidentAttentionReport, ResidentCredential, ResidentEnrolInput, ResidentEnrolment, RoutingSyncInput, RoutingSyncResult, RuntimeControl, RuntimeState } from "./routing-runtime-types.js";
 import type { RoutingChannelPage, RoutingChannelReceipt, RoutingEvent, RoutingEventInput, RoutingEventPage, RoutingJoin, RoutingMessage, RoutingOverview, RoutingSend, RoutingSession, RoutingSessionPage } from "./routing-types.js";
 export type * from "./routing-runtime-types.js";
 export type * from "./routing-types.js";
@@ -3363,6 +3441,12 @@ export declare class RoutingApiError extends Error {
     readonly status: number;
     readonly code: string;
     constructor(status: number, code: string, message: string);
+}
+/** A routing-only supervision credential (supervised residents). */
+export interface SupervisionCredentialGrant {
+    credentialId: string;
+    token: string;
+    expiresAt: number;
 }
 export interface RoutingClientOptions {
     url: string;
@@ -3406,6 +3490,34 @@ export declare class MarinaRoutingClient {
         state: RuntimeState | null;
     }>;
     control(sourceId: string, targetId: string, clientMessageId: string, control: RuntimeControl, signal?: AbortSignal): Promise<RoutingMessage>;
+    /** Enrol a run's agent as its own world account (servers with supervised residents on). */
+    enrolResident(input: ResidentEnrolInput, signal?: AbortSignal): Promise<ResidentEnrolment>;
+    /** A fresh credential for a live owned run; the previous one stops working. */
+    renewResident(name: string, sessionId: string, signal?: AbortSignal): Promise<{
+        name: string;
+        credential: ResidentCredential;
+    }>;
+    /**
+     * Exchange this client's world session for a supervision credential: the
+     * routing API only, never replaced by a later login of the same person.
+     */
+    issueSupervision(signal?: AbortSignal): Promise<SupervisionCredentialGrant>;
+    /** Replace the presented supervision credential with a fresh one. */
+    renewSupervision(signal?: AbortSignal): Promise<SupervisionCredentialGrant>;
+    /** Revoke the presented supervision credential. */
+    revokeSupervision(signal?: AbortSignal): Promise<{
+        revoked: boolean;
+    }>;
+    /** End this run's hold on the resident: credentials and session tokens are revoked. */
+    revokeResident(name: string, sessionId: string, signal?: AbortSignal): Promise<{
+        name: string;
+        revoked: number;
+    }>;
+    /** Report the run's attention-bridge decisions and the resident's presence. */
+    reportResidentAttention(name: string, report: ResidentAttentionReport, signal?: AbortSignal): Promise<{
+        name: string;
+        recorded: number;
+    }>;
     private path;
     /** Resumable polling subscription. Persist nextCursor after processing each page.
      * Errors surface to the consumer; retry with its last saved cursor. No hidden ack/retries.
@@ -3449,6 +3561,8 @@ export interface RuntimeState {
     }[];
     root?: string;
     activeCount?: number;
+    /** World account of a supervised resident run (`MARINA_SUPERVISED_RESIDENTS=on`). */
+    resident?: string;
     updatedAt: number;
 }
 export type RuntimeControl = {
@@ -3459,6 +3573,10 @@ export type RuntimeControl = {
     workspace?: "worktree" | "shared";
     model?: string;
     prompt?: string;
+    /** Supervised residents only: the world name to run as (else one is chosen). */
+    name?: string;
+    /** Supervised residents only: the room to arrive in (else the launcher's room). */
+    room?: string;
 } | {
     action: "prompt";
     text: string;
@@ -3469,6 +3587,13 @@ export type RuntimeControl = {
     requestId: string;
     allow: boolean;
     answer?: string;
+}
+/** Supervised residents: the attention policy the run's bridge applies (`agent attention-mode`). */
+ | {
+    action: "attention";
+    mode?: "focused" | "balanced" | "open";
+    threshold?: number;
+    relay?: "all" | "explicit";
 };
 export interface RoutingSyncInput {
     publications?: {
@@ -3486,6 +3611,76 @@ export interface RoutingSyncResult {
         sessionId: string;
         messages: import("./routing-types.js").RoutingMessage[];
     }[];
+}
+/** `POST /api/routing/residents` input: enrol the agent of one owned run session. */
+export interface ResidentEnrolInput {
+    /** The run's routing session; its `kind` (the adapter id) is the vendor. */
+    sessionId: string;
+    /** Requested world name. Omitted: the agent's proposal, else a fresh word-list name. */
+    name?: string;
+    /**
+     * The agent's own proposal (used only without `name`). The server sanitizes
+     * and dedupes it and never takes a vendor or model word; an unusable proposal
+     * falls back to the word list instead of failing.
+     */
+    proposedName?: string;
+    /** Room to arrive in. Omitted: the launching person's current room. */
+    room?: string;
+}
+/** A resident's world credential, returned once and never stored by the server. */
+export interface ResidentCredential {
+    token: string;
+    expiresAt: number;
+}
+/** Where a resident's name came from. */
+export type ResidentNameSource = "requested" | "proposed" | "generated";
+export interface ResidentEnrolment {
+    name: string;
+    vendor: string;
+    /** The person who owns the resident (the enrolling account's world name). */
+    owner?: string;
+    /** Room the resident should arrive in, when one is known. */
+    room?: string;
+    /** True when an existing resident account of the same owner was reused. */
+    reused: boolean;
+    /** Where the name came from: the launch request, the agent's proposal, or the word list. */
+    nameSource?: ResidentNameSource;
+    credential: ResidentCredential;
+    /** The resident's stored attention policy (supervised residents' attention bridge). */
+    attention?: ResidentAttentionPolicy;
+}
+/** How a supervised resident's attention bridge decides and relays. */
+export interface ResidentAttentionPolicy {
+    mode: "focused" | "balanced" | "open";
+    threshold: number;
+    relay: "all" | "explicit";
+}
+/** `POST /api/routing/residents/:name/attention`: bridge decisions and presence. */
+export interface ResidentAttentionReport {
+    sessionId: string;
+    /** Wake decisions (refs and reasons only, never content), at most 100. */
+    wakes?: {
+        ref?: string;
+        source: string;
+        decision: "now" | "next" | "context" | "drop";
+        reason: string;
+        hop: number;
+        steered: boolean;
+        at: number;
+    }[];
+    /**
+     * What woken turns did, at most 100: whether the agent ran a tool or a world
+     * command of its own after the wake (the attention judges' truth). Refs only.
+     */
+    outcomes?: {
+        ref: string;
+        worked: boolean;
+    }[];
+    /** The resident's current presence, when it changed. */
+    status?: {
+        status: RuntimeState["status"];
+        steer: "mid-turn" | "next-turn" | "none";
+    };
 }
 ```
 

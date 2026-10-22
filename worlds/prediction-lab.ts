@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { crewModelFromEnv } from "../src/config/model-tiers";
 import type { MarinaDB } from "../src/persistence/database";
 import type { WorldDefinition } from "../src/world/world-definition";
 import marketsWorld from "./markets";
@@ -66,7 +67,7 @@ function seed(db: MarinaDB): void {
       },
     ],
   });
-  const model = process.env.MARINA_CREW_MODEL ?? "marina/default";
+  const model = crewModelFromEnv();
   seedSystemAgent(db, {
     name: "Forecast-Researcher",
     model,

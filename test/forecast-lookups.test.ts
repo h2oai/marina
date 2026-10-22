@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import type { Retriever } from "../src/arena/research/retrieve";
 import type { LookupFetch } from "../src/forecast/lookup-http";
 import { bestMatches, tokens } from "../src/forecast/lookup-match";
 import {
@@ -19,6 +18,7 @@ import {
 import { forecastTyped, type ModelPart } from "../src/forecast/typed";
 import type { KalshiCandle, KalshiEvent } from "../src/net/clients/kalshi-client";
 import type { PolymarketEvent, PolymarketPricePoint } from "../src/net/clients/polymarket-client";
+import type { Retriever } from "../src/research/retrieve";
 
 const NOW = new Date("2026-10-05T00:00:00Z");
 const PAST = new Date("2026-09-01T12:00:00Z");

@@ -37,6 +37,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
     usage: [
       { syntax: "standing", effect: "read" },
       { syntax: "standing show <name>", effect: "read" },
+      { syntax: "standing <name>", effect: "read" },
       { syntax: "standing top [N]", effect: "read" },
     ],
     name: "standing",
@@ -47,14 +48,16 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       "Civic standing — earned by verified work (60-day half-life).\n" +
       "Usage:\n" +
       "  standing                — your current standing + ledger\n" +
-      "  standing show <name>    — another entity's standing (online or not)\n" +
+      "  standing show <name>    — another entity's standing (online or not; `standing <name>` too)\n" +
       "  standing top [N]        — leaderboard\n" +
-      "Standing is earned only when someone independent of you (not your account, not your spawn " +
-      "lineage) verifies the work: " +
+      "Standing is earned when someone other than you verifies the work — every account is its " +
+      "own party, so a person approving its own agent's work, or a sibling agent reviewing " +
+      "checks that passed, credits the worker; verifying your own work never does, and an " +
+      "agent's verdict inside its own spawn lineage needs passing checks: " +
       `a task they approve (up to ${TASK_STANDING_MAX}), ` +
       `an approved Code Mode attempt whose checks passed (${STANDING_AMOUNTS.code_verified}), ` +
-      `a forecast resolved by an independent source (up to ${STANDING_AMOUNTS.forecast_resolved} by skill, once a day), ` +
-      `an experiment an independent party replicated (${STANDING_AMOUNTS.experiment_complete}), ` +
+      `a forecast resolved by an external or other source (up to ${STANDING_AMOUNTS.forecast_resolved} by skill, once a day), ` +
+      `an experiment another party replicated (${STANDING_AMOUNTS.experiment_complete}), ` +
       `a proposal its requester adopts (${STANDING_AMOUNTS.assistance_adopted}), ` +
       `and an onboarding quest (${STANDING_AMOUNTS.quest_complete}). ` +
       "Being chronicled, pool notes, recalls, crew completions and helping acts no longer earn; " +
@@ -63,7 +66,8 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       "Decay floors at 0; rank 0–4 is derived from thresholds (5/15/40/100). " +
       "Above rank 4, capability is earned per-operation via the Capability gates shown in " +
       "your standing view — keep building standing, then perform each gated action under " +
-      "supervision until it unlocks.",
+      "supervision until it unlocks (only approvals from an independent person, outside " +
+      "your own lineage, count toward that).",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("standing"));
@@ -92,16 +96,21 @@ export function standingCommand(deps: StandingDeps): CommandDef {
         return;
       }
 
-      // standing | standing show <name>
+      // standing | standing show <name> | standing <name>
       // Standing belongs to the durable world account, so `show` works for
       // entities that are offline (evicted) as long as the account exists.
-      const targetName = sub === "show" ? tokens[1] : undefined;
+      // A bare name is the same as `show <name>`, never the caller's own.
+      const targetName = sub === "show" ? tokens[1] : tokens[0];
+      if (sub === "show" && !targetName) {
+        ctx.send(input.entity, "Usage: standing show <name>");
+        return;
+      }
       const liveTarget = targetName
         ? deps.findAgentByName(targetName)
         : deps.getEntity(input.entity);
       const account = targetName && !liveTarget ? db.getUserByName(targetName) : undefined;
       if (!liveTarget && !account) {
-        ctx.send(input.entity, `Unknown entity: ${targetName ?? input.entity}`);
+        ctx.send(input.entity, `No one named ${targetName ?? input.entity} has standing here.`);
         return;
       }
       const target = liveTarget

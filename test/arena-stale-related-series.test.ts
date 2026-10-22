@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { buildResearchBrief, monthlyTargetPeriod } from "../src/arena/research/briefs";
 import { staleFor, withDataLookups } from "../src/arena/research/data-evidence";
-import type { ResearchReport } from "../src/arena/research/retrieve";
 import type { ArenaLock, ArenaRound } from "../src/arena/types";
 import type { ForecastLookup } from "../src/forecast/lookup-types";
+import type { ResearchReport } from "../src/research/retrieve";
 
 const monthly = (months: string[]) =>
   months.map((m, i) => ({ date: `${m}-01`, value: 3 + i / 10 }));

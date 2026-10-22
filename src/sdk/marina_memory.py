@@ -223,6 +223,10 @@ class MarinaMemory:
                             {"data": data, "expected_version": expected_version, "source_cursor": source_cursor,
                              "source_ids": source_ids or []}, key)
 
+    def capture_checkpoint(self, capture, name="work", key=None):
+        """Capture new sources, their manifest and the checkpoint naming them in one transaction."""
+        return self.request(self._path("/checkpoints/" + quote(name, safe="") + "/capture"), "POST", capture, key)
+
     def forget(self, key=None, **selection):
         return self.request(self._path("/forget"), "POST", selection, key)
 

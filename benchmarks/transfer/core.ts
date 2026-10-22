@@ -23,6 +23,11 @@
  * p < alpha with more wins than losses. It REGRESSES when either one says so
  * (interval high < 0, or p < alpha with more losses than wins) — the bar to
  * claim a gain is deliberately higher than the bar to flag a loss.
+ *
+ * Versions: a suite whose `version` check (`versions.ts`) says its sources
+ * ran on mixed, unknown or dirty code is `version-mismatch` /
+ * `version-unknown` — its numbers are reported but it never counts toward
+ * the verdict, neither as an improvement nor as a regression.
  */
 
 import {
@@ -30,6 +35,7 @@ import {
   bootstrapMean as sharedBootstrapMean,
   twoStageBootstrap as sharedTwoStageBootstrap,
 } from "../../src/stats";
+import type { VersionCheck } from "./versions";
 
 /** One item's score in one run. Higher is better (adapters negate a loss). */
 export interface ItemScore {
@@ -52,6 +58,8 @@ export interface SuiteData {
   split: string;
   /** Items removed before pairing, by reason. */
   removed?: Record<string, number>;
+  /** Which code each arm ran on, and whether the suite may count (set by `loadSuites`). */
+  version?: VersionCheck;
 }
 
 export interface TransferOptions {
@@ -90,7 +98,21 @@ export interface Bootstrap {
   resamples: number;
 }
 
-export type SuiteOutcome = "improves" | "regresses" | "no-difference" | "insufficient";
+export type SuiteOutcome =
+  | "improves"
+  | "regresses"
+  | "no-difference"
+  | "insufficient"
+  /** The arms ran on different code (or not the declared versions): not counted. */
+  | "version-mismatch"
+  /** A source's code is unknown (unstamped, dirty): not counted. */
+  | "version-unknown";
+
+/** Outcomes the version guard gives: reported, never counted. */
+export const VERSION_OUTCOMES: ReadonlySet<SuiteOutcome> = new Set([
+  "version-mismatch",
+  "version-unknown",
+]);
 
 export interface SuiteResult {
   name: string;
@@ -107,6 +129,10 @@ export interface SuiteResult {
   sign: SignTest;
   outcome: SuiteOutcome;
   reason: string;
+  /** The version check, when the suite was loaded from sources. */
+  version?: VersionCheck;
+  /** What the statistics alone said, when the version guard overrode the outcome. */
+  statisticalOutcome?: SuiteOutcome;
 }
 
 export type Verdict = "transfers" | "does-not-transfer" | "regresses" | "insufficient";
@@ -116,6 +142,8 @@ export interface TransferResult {
   reason: string;
   improvedGroups: string[];
   regressedSuites: string[];
+  /** Suites the version guard kept out of the verdict. */
+  versionExcluded: string[];
   suites: SuiteResult[];
   options: Required<TransferOptions>;
 }
@@ -262,7 +290,15 @@ export function analyzeSuite(suite: SuiteData, options: TransferOptions = {}): S
         ? `sign test p=${fmtP(sign.p)} ≥ ${o.alpha}`
         : `interval [${fmt(delta.low)}, ${fmt(delta.high)}] includes ${fmt(o.margin)}`;
   }
+  let statisticalOutcome: SuiteOutcome | undefined;
+  if (suite.version && !suite.version.counted) {
+    statisticalOutcome = outcome;
+    outcome = suite.version.status === "version-mismatch" ? "version-mismatch" : "version-unknown";
+    reason = `not counted: ${suite.version.reason} (the numbers alone say ${statisticalOutcome}: ${reason})`;
+  }
   return {
+    ...(suite.version ? { version: suite.version } : {}),
+    ...(statisticalOutcome ? { statisticalOutcome } : {}),
     name: suite.name,
     group: suite.group,
     split: suite.split,
@@ -291,8 +327,11 @@ export function transferVerdict(
     ...new Set(results.filter((r) => r.outcome === "improves").map((r) => r.group)),
   ].sort();
   const regressedSuites = results.filter((r) => r.outcome === "regresses").map((r) => r.name);
+  const versionExcluded = results.filter((r) => VERSION_OUTCOMES.has(r.outcome)).map((r) => r.name);
   const judgedGroups = new Set(
-    results.filter((r) => r.outcome !== "insufficient").map((r) => r.group),
+    results
+      .filter((r) => r.outcome !== "insufficient" && !VERSION_OUTCOMES.has(r.outcome))
+      .map((r) => r.group),
   );
   let verdict: Verdict;
   let reason: string;
@@ -309,7 +348,17 @@ export function transferVerdict(
     verdict = "does-not-transfer";
     reason = `significant improvement on ${improvedGroups.length} independent group(s)${improvedGroups.length ? ` (${improvedGroups.join(", ")})` : ""}; ${o.minGroups} needed`;
   }
-  return { verdict, reason, improvedGroups, regressedSuites, suites: results, options: o };
+  if (versionExcluded.length)
+    reason += `; ${versionExcluded.length} suite(s) not counted by the version guard (${versionExcluded.join(", ")})`;
+  return {
+    verdict,
+    reason,
+    improvedGroups,
+    regressedSuites,
+    versionExcluded,
+    suites: results,
+    options: o,
+  };
 }
 
 const fmt = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(4)}`;
@@ -319,7 +368,16 @@ export interface ReportHeader {
   baseline: { label: string; env?: Record<string, string> };
   candidate: { label: string; env?: Record<string, string> };
   generatedAt?: string;
+  /** The spec's declared version comparison, if any. */
+  versions?: { baseline: string; candidate: string };
+  /** `--allow-unversioned` was given. */
+  allowUnversioned?: boolean;
 }
+
+const commitCell = (s: SuiteResult) =>
+  s.version
+    ? `${s.version.commits.baseline.join(", ") || "—"} / ${s.version.commits.candidate.join(", ") || "—"}`
+    : "—";
 
 /** Markdown rendering of a transfer result: ids-free aggregates only. */
 export function renderMarkdown(result: TransferResult, header: ReportHeader): string {
@@ -340,13 +398,29 @@ export function renderMarkdown(result: TransferResult, header: ReportHeader): st
     `- Rule: improves on ≥ ${o.minGroups} independent groups (bootstrap ${Math.round(o.level * 100)} % interval low > ${o.margin} AND sign test p < ${o.alpha}), no suite regressing (interval high < 0 OR sign test p < ${o.alpha} against).`,
     `- Bootstrap: ${o.bootstrap === "two-stage" ? "two-stage (replicate runs, then items)" : "items"}, ${o.resamples} resamples, seed ${o.seed}; suites need ≥ ${o.minItems} paired items.`,
     ...(header.generatedAt ? [`- Generated ${header.generatedAt}`] : []),
+    header.versions
+      ? `- **Version comparison** (declared): baseline at \`${header.versions.baseline}\`, candidate at \`${header.versions.candidate}\` — each arm must have run at its declared commit.`
+      : "- Versions: strict — every source of both arms must come from one clean commit; mixed, unknown or dirty code is reported and not counted.",
+    ...(header.allowUnversioned
+      ? [
+          "",
+          "> **WARNING: --allow-unversioned.** Result files without a Marina commit stamp were counted. The code they measured is unknown; suites marked `unversioned` below may compare different code.",
+        ]
+      : []),
+    ...(result.versionExcluded.length
+      ? [`- **Not counted (version guard): ${result.versionExcluded.join(", ")}.**`]
+      : []),
     "",
-    "| Suite | Group | Split | n | Baseline | Candidate | Δ mean [interval] | Sign W/L/T, p | Outcome |",
-    "|---|---|---|---:|---:|---:|---|---|---|",
+    "| Suite | Group | Split | n | Baseline | Candidate | Δ mean [interval] | Sign W/L/T, p | Commits (baseline / candidate) | Outcome |",
+    "|---|---|---|---:|---:|---:|---|---|---|---|",
   ];
   for (const s of result.suites) {
+    const status =
+      s.version && s.version.status !== "same-commit" && !VERSION_OUTCOMES.has(s.outcome)
+        ? ` (${s.version.status})`
+        : "";
     lines.push(
-      `| ${s.name} | ${s.group} | ${s.split} | ${s.paired} | ${s.baselineMean.toFixed(4)} | ${s.candidateMean.toFixed(4)} | ${fmt(s.delta.mean)} [${fmt(s.delta.low)}, ${fmt(s.delta.high)}] | ${s.sign.wins}/${s.sign.losses}/${s.sign.ties}, ${fmtP(s.sign.p)} | **${s.outcome}** |`,
+      `| ${s.name} | ${s.group} | ${s.split} | ${s.paired} | ${s.baselineMean.toFixed(4)} | ${s.candidateMean.toFixed(4)} | ${fmt(s.delta.mean)} [${fmt(s.delta.low)}, ${fmt(s.delta.high)}] | ${s.sign.wins}/${s.sign.losses}/${s.sign.ties}, ${fmtP(s.sign.p)} | ${commitCell(s)} | **${s.outcome}**${status} |`,
     );
   }
   lines.push("", "## Notes", "");
@@ -357,6 +431,9 @@ export function renderMarkdown(result: TransferResult, header: ReportHeader): st
     lines.push(
       `- **${s.name}**: ${s.reason}. Replicates ${s.replicates.baseline} vs ${s.replicates.candidate}; ${s.unpaired} unpaired id(s) left out${removed ? `; removed: ${removed}` : ""}.`,
     );
+    if (s.version?.counted && s.version.status !== "same-commit")
+      lines.push(`  - Versions (${s.version.status}): ${s.version.reason}.`);
+    for (const w of s.version?.warnings ?? []) lines.push(`  - Version warning: ${w}.`);
   }
   return `${lines.join("\n")}\n`;
 }

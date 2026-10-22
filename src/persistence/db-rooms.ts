@@ -111,7 +111,58 @@ export function clearDynamicRooms(db: Database): void {
   db.run("DELETE FROM room_sources");
 }
 
+// ─── Room access (private rooms are an explicit opt-in) ─────────────────────
+
+export function getRoomAccess(db: Database, room: string): RoomAccess | undefined {
+  const row = db.query("SELECT * FROM room_access WHERE room = ?").get(room) as {
+    room: string;
+    owner: string;
+    mode: "public" | "private";
+    invites: string;
+    updated_at: number;
+  } | null;
+  if (!row) return undefined;
+  let invites: string[] = [];
+  try {
+    const parsed = JSON.parse(row.invites) as unknown;
+    if (Array.isArray(parsed)) invites = parsed.filter((n): n is string => typeof n === "string");
+  } catch {
+    // allow-empty-catch: a malformed invite list reads as no invites (fails closed)
+  }
+  return { room: row.room, owner: row.owner, mode: row.mode, invites, updatedAt: row.updated_at };
+}
+
+/** Upsert a room's access row; `invites` replaces the stored list when given. */
+export function setRoomAccess(
+  db: Database,
+  opts: { room: string; owner: string; mode: "public" | "private"; invites?: string[] },
+): RoomAccess {
+  const current = getRoomAccess(db, opts.room);
+  const invites = opts.invites ?? current?.invites ?? [];
+  db.run(
+    `INSERT INTO room_access (room, owner, mode, invites, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(room) DO UPDATE SET owner = excluded.owner, mode = excluded.mode,
+         invites = excluded.invites, updated_at = excluded.updated_at`,
+    [opts.room, opts.owner, opts.mode, JSON.stringify(invites), Date.now()],
+  );
+  return getRoomAccess(db, opts.room) as RoomAccess;
+}
+
+export function deleteRoomAccess(db: Database, room: string): void {
+  db.run("DELETE FROM room_access WHERE room = ?", [room]);
+}
+
 // ─── Row types ────────────────────────────────────────────────────────────
+
+export interface RoomAccess {
+  room: string;
+  /** Account name of the room's owner. */
+  owner: string;
+  mode: "public" | "private";
+  /** Account names invited in. */
+  invites: string[];
+  updatedAt: number;
+}
 
 export interface RoomSourceRow {
   room_id: string;
@@ -130,4 +181,63 @@ export interface RoomTemplateRow {
   author_name: string;
   description: string;
   created_at: number;
+}
+
+// ─── Room log (migration 175) ──────────────────────────────────────────────
+
+/** Most recent entries kept per room; older ones are pruned on write. */
+export const ROOM_LOG_KEEP = 200;
+
+export type RoomLogKind = "say" | "emote" | "arrive" | "leave";
+
+export interface RoomLogInput {
+  room: string;
+  entity: string;
+  kind: RoomLogKind;
+  content: string;
+  cause?: string;
+  depth?: number;
+  at: number;
+}
+
+export interface RoomLogRow {
+  id: number;
+  room: string;
+  entity: string;
+  kind: RoomLogKind;
+  content: string;
+  cause: string | null;
+  depth: number;
+  at: number;
+}
+
+export function appendRoomLog(db: Database, entry: RoomLogInput): number {
+  const { id } = db
+    .query(
+      `INSERT INTO room_log (room, entity, kind, content, cause, depth, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    )
+    .get(
+      entry.room,
+      entry.entity,
+      entry.kind,
+      entry.content,
+      entry.cause ?? null,
+      Math.max(0, Math.floor(entry.depth ?? 0)),
+      entry.at,
+    ) as { id: number };
+  db.run(
+    `DELETE FROM room_log WHERE room = ? AND id <= (
+       SELECT id FROM room_log WHERE room = ? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
+    [entry.room, entry.room, ROOM_LOG_KEEP],
+  );
+  return id;
+}
+
+/** Oldest-first entries of a room since `since` (ms epoch), newest `limit` of them. */
+export function readRoomLog(db: Database, room: string, since = 0, limit = 50): RoomLogRow[] {
+  const rows = db
+    .query("SELECT * FROM room_log WHERE room = ? AND at >= ? ORDER BY id DESC LIMIT ?")
+    .all(room, since, Math.max(1, Math.min(ROOM_LOG_KEEP, limit))) as RoomLogRow[];
+  return rows.reverse();
 }

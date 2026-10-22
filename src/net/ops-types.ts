@@ -131,7 +131,7 @@ export type OpsPrompt = {
   deferredTools: boolean;
   /** Byte length of `getLeanSystemPrompt(null)`. */
   systemPromptBytes: number;
-  /** `LEAN_SYSTEM_PROMPT_BYTE_CAP`. */
+  /** `LEAN_SYSTEM_PROMPT_BYTE_CAP` — the tighter (`lean`) tier cap; `full` allows `FULL_SYSTEM_PROMPT_BYTE_CAP`. */
   systemPromptCapBytes: number;
   /** Serialized resident tool-schema bytes per profile (what every request carries). */
   residentSchemaBytesByProfile: Record<OpsToolProfile, number>;

@@ -187,6 +187,26 @@ export function listRoutingEvents(
   };
 }
 
+/**
+ * The events of one session with this kind whose producer ids start with
+ * `prefix` (`<prefix>:<part>`), in sequence order, at most `limit`. Used to
+ * reassemble a multi-part payload a participant published under one id.
+ */
+export function listRoutingEventParts(
+  db: Database,
+  sessionId: string,
+  kind: string,
+  prefix: string,
+  limit: number,
+): RoutingEvent[] {
+  return db
+    .query(`SELECT ${EVENT_COLUMNS} FROM routing_events
+    WHERE session_id = ? AND kind = ? AND substr(event_id, 1, ?) = ?
+    ORDER BY sequence LIMIT ?`)
+    .all(sessionId, kind, prefix.length + 1, `${prefix}:`, limit)
+    .map((row) => payload<RoutingEvent>(row));
+}
+
 export function sendRoutingMessage(
   db: Database,
   sourceId: string,

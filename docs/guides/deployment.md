@@ -59,7 +59,7 @@ Put a single durable volume at `/app/data` and your entire world persists across
 
 ## Prerequisites
 
-- **Bun ≥ 1.4.2** if running outside Docker. Install via the official installer (`curl -fsSL https://bun.sh/install | bash`) — some distro-packaged Bun 1.3.x builds have a broken `Date.now()`; `scripts/build.sh` checks for this.
+- **Bun ≥ 1.4.3** if running outside Docker. Install via the official installer (`curl -fsSL https://bun.sh/install | bash`) — some distro-packaged Bun 1.3.x builds have a broken `Date.now()`; `scripts/build.sh` checks for this.
 - **Docker** (with the Compose plugin) for the containerized path below.
 - At least one **LLM provider key** (e.g. `ANTHROPIC_API_KEY`) if you want agents to think. Without any key, rooms fall back to static entities and the world still runs.
 
@@ -90,7 +90,14 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 
 The overlay is safe only because `docker-compose.yml` publishes the ports on the host's
 `127.0.0.1`. Never use it with widened `ports:`, a reverse proxy in front of the host, or the
-EC2/server deploy (`scripts/deploy.sh` does not use it).
+EC2/server deploy (`scripts/deploy.sh` does not use it). Boot enforces this: `docker-compose.yml`
+passes the publish address into the container as `MARINA_PUBLISHED_HOST`, and with a non-loopback
+`MARINA_BIND_IP` the `local` profile is a fatal startup error.
+
+Under the local profile you, the operator, are ungated. An agent's host shell (`run raw`, `shell`)
+and arbitrary non-allowlisted host commands wait for your approval
+(`challenge approve <token>`, or `code exec-approve` in Code Mode); `MARINA_AUTONOMY=sovereign`
+lifts that hold as well.
 
 ### Publishing beyond loopback (`MARINA_BIND_IP`)
 
@@ -104,10 +111,22 @@ every health check fails. Set the host interface to publish on:
 MARINA_BIND_IP=0.0.0.0
 ```
 
-Before widening the bind, enable sign-in (`MARINA_AUTH=better-auth`) or set `MODEL_API_KEYS`, and
+Before widening the bind, enable sign-in (`MARINA_AUTH=better-auth`), set `MODEL_API_KEYS`, and
 keep the host firewall / security group scoped to the proxy or load balancer. Publishing on
 `0.0.0.0` makes the port reachable from anything that can route to the host; the network boundary is
 then your security group, not Docker.
+
+Compose passes the same address into the container as `MARINA_PUBLISHED_HOST`. Marina binds
+`0.0.0.0` inside the container either way, and its startup check treats that bind as loopback only
+when the published host is loopback (and Marina is running in a container). A routable
+`MARINA_BIND_IP` with passwordless login is therefore refused at boot until you enable
+`MARINA_AUTH=better-auth`. If you knowingly run a passwordless instance on a private network, set
+`MARINA_ALLOW_INSECURE_PUBLIC=true` in `.env`; Compose no longer sets it for you.
+
+`scripts/deploy.sh` runs `bun run src/main.ts --check-config` in the new image before it restarts
+the stack: every boot refusal runs against this host's configuration, and a refused configuration
+stops the deploy with the running stack unchanged. Run the same command yourself to check a `.env`
+change.
 
 ### Without Compose
 
@@ -117,12 +136,12 @@ docker run -d --name marina \
   -p 127.0.0.1:3300:3300 \
   -v marina-data:/app/data \
   --env-file .env \
-  -e MARINA_ALLOW_INSECURE_PUBLIC=true \
+  -e MARINA_PUBLISHED_HOST=127.0.0.1 \
   marina
-# The 127.0.0.1: publish prefix keeps the instance host-local (that's why the
-# acknowledgment flag is safe here — the container-internal bind is 0.0.0.0 so
-# the mapping works at all). Widening to -p 3300:3300 exposes passwordless
-# login to the network: enable MARINA_AUTH=better-auth first.
+# The 127.0.0.1: publish prefix keeps the instance host-local; MARINA_PUBLISHED_HOST
+# tells Marina so (the container-internal bind is 0.0.0.0 so the mapping works at
+# all). Keep the two in step. Widening to -p 3300:3300 exposes passwordless login
+# to the network: enable MARINA_AUTH=better-auth first.
 ```
 
 ## Configuration essentials
@@ -153,6 +172,7 @@ Marina's HTTP API requires authentication **by default** — but it's easy to we
 - [ ] **Set `GATEWAY_SECRET`** if (and only if) you use [federation](federation.md). Otherwise leave it unset.
 - [ ] **Terminate TLS at a reverse proxy** (next section). Marina speaks plain HTTP/WS; never expose `3300` directly to the internet.
 - [ ] Rate limits are built in (WS 5/s, MCP 5/s, Model API 2/s per IP, Memory API 10/s per agent, dashboard REST 60/10 s per principal, canvas + asset writes 30/10 s per principal, public `/api/entity/*` 30/10 s per IP, MCP sessions 10/min per IP, pre-auth `/api/setup-status` 20/min per IP, model-API reads 120/min per IP, public asset reads 300/min per IP, and 20 failed `/v1` / `/mem` credentials per IP per minute before that address is refused) but a proxy-level limit is still wise. Per-IP limits key on the TCP peer; set `MARINA_TRUST_PROXY=true` behind your reverse proxy so they key on `X-Forwarded-For` instead.
+- [ ] **Public hostname on a loopback bind** (a reverse proxy on the same host forwarding to `127.0.0.1:3300`): set `MARINA_ALLOWED_HOSTS=marina.example.com` — a loopback bind answers only to loopback `Host` names and the names listed there (DNS-rebinding guard), so without it every proxied request gets `421`. On a non-loopback bind, setting it turns the same check on. See [security](../architecture/security.md).
 - [ ] **MCP behind a public hostname**: set `MARINA_MCP_ALLOWED_HOSTS=mcp.example.com` (DNS-rebinding guard; unset, a public bind accepts only loopback names, the bind address, the machine hostname and the `BETTER_AUTH_URL`/`ALLOWED_ORIGINS` hosts) — the transport already requires a `MODEL_API_KEYS` bearer on any non-loopback bind. See [mcp.md](../mcp.md#transport-security).
 - [ ] **Request bodies** are capped at 8 MiB (`MARINA_MAX_REQUEST_BODY_BYTES`); asset uploads at 50 MiB (`MARINA_MAX_UPLOAD_BYTES`). Uploaded assets are MIME-allowlisted and served with `nosniff` + a no-script CSP; every HTML page gets `X-Frame-Options: SAMEORIGIN` and the dashboard Content-Security-Policy below.
 
@@ -179,6 +199,11 @@ marina.example.com {
     reverse_proxy localhost:3300
 }
 ```
+
+Caddy forwards the client's `Host` (`marina.example.com`). When Marina binds loopback (the default
+outside Docker), list that name: `MARINA_ALLOWED_HOSTS=marina.example.com`; otherwise Marina
+answers `421 Misdirected Request`. Alternatively have the proxy send a loopback Host
+(`header_up Host {upstream_hostport}` in Caddy, `proxy_set_header Host localhost;` in nginx).
 
 Caddy proxies WebSockets transparently. The equivalent nginx `location /` needs `proxy_set_header Upgrade $http_upgrade;` and `proxy_set_header Connection "upgrade";`. Behind an AWS ALB, enable the WebSocket-compatible defaults and a generous idle timeout (the WS server caps idle at ~255s; set the ALB idle timeout to 300s+).
 

@@ -10,7 +10,6 @@ import {
   freezeLookupLine,
   withDataLookups,
 } from "../src/arena/research/data-evidence";
-import { type ResearchReport, withProvidedText } from "../src/arena/research/retrieve";
 import {
   ALL_SIGNALS_LOOKUPS,
   ARENA_SIGNAL_MAP,
@@ -18,7 +17,6 @@ import {
   arenaSignalEntry,
   arenaSignalSet,
 } from "../src/arena/research/signal-map";
-import { verifyDossier } from "../src/arena/research/verify";
 import type { LookupFetch } from "../src/forecast/lookup-http";
 import {
   pollAvailable,
@@ -28,6 +26,8 @@ import {
 } from "../src/forecast/lookup-polls";
 import { fredLookup } from "../src/forecast/lookup-series";
 import type { ForecastLookup, LookupContext } from "../src/forecast/lookup-types";
+import { type ResearchReport, withProvidedText } from "../src/research/retrieve";
+import { verifyDossier } from "../src/research/verify";
 
 const ALL = { MARINA_ARENA_RESEARCH_SIGNALS: "all" };
 const brief = (roundId: string, untilAt?: string): ResearchBrief => ({

@@ -1,7 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { parsePartition } from "../../../benchmarks/partition";
 import { encodeRoleBundle, exportRoleBundle } from "../../agent/role-bundle";
 import { getStanding } from "../../agent/standing";
 import { experimentalHelp } from "../../config/feature-status";
@@ -9,6 +8,7 @@ import { bold, category, dim, header, separator, status, stripAnsi } from "../..
 import type { EvolutionSessionRow, MarinaDB } from "../../persistence/database";
 import { isGrantedCompetence } from "../../persistence/db-competence";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { parsePartition } from "../benchmark-partition";
 import { BENCHMARK_RUN_MIN_RANK, MAX_REPLICAS_PER_RUN } from "../constants";
 import { sanitizeEntityName } from "../entity-name";
 import { tryLog } from "../errors";

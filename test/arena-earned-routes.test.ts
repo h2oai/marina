@@ -261,7 +261,7 @@ describe("earned routes in the routed forecaster and the evidence reader", () =>
         shadow(12, "civiqs-r1", "baseline#0123456789abcdef"),
       ],
     };
-    const ev = await loadRouteEvidence(store, data, "h2oai-marina");
+    const ev = await loadRouteEvidence(store, data, "acme-marina");
     expect(ev.map((e) => [e.roundId, e.source, e.spec]).sort()).toEqual(
       [
         ["aaii-r1", "filed", DELPHI],

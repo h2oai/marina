@@ -11,7 +11,7 @@ What Marina ships, and what actually runs. Every major feature has one status:
 | deprecated | Kept for compatibility; do not build on it. |
 
 The table mirrors `FEATURE_STATUS` in [`src/config/feature-status.ts`](../../src/config/feature-status.ts);
-`test/feature-status.test.ts` fails when the two disagree. A world command that exists only for an
+`test/docs-contract.test.ts` fails when the two disagree. A world command that exists only for an
 experimental feature starts its help text with `[experimental]`, and `marina worlds` marks demo worlds
 `[demo]` (`"status"` in `--json`).
 
@@ -35,44 +35,72 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Outcomes and lessons | core | `MARINA_LESSONS` | src/outcomes, src/learning |
 | Memory assistance (evaluator/reflector jobs) | core | Workers with the evaluator/reflector roles | src/persistence |
 | Code Mode | core | `code` | src/engine/commands/code |
+| Crews and formations (the runtime form of the orchestration patterns) | core | `crew`; a crew serves `/v1` model requests and is the default benchmark target | src/coordination/crew-manager.ts, src/engine/commands/crew.ts |
+| Desires and journeys | core | `desire`, `journey`; the dashboard first-run guide | src/engine/commands/desire.ts, src/engine/commands/journey.ts, src/engine/journey-state.ts |
+| Novelty suggestions (advisory exploration) | core | `novelty`; residents see suggestions in their continuation prompt | src/engine/novelty.ts, src/engine/commands/novelty.ts |
 | Canvas | siloed | `canvas`; the feed publisher writes the `feed` canvas | src/engine/commands/canvas.ts, src/net/feed-publisher.ts |
 | Forecast pipeline | siloed | `forecast`, `POST /v1/forecast`, forecasting scripts | src/forecast |
 | Social Simulation Arena (routed forecaster, shadow challengers) | siloed | `arena`, `scripts/arena.ts`, `MARINA_ARENA_*` | src/arena |
 | Benchmarks | siloed | `benchmark` (rank 4), `bun run benchmark` | benchmarks |
 | TabH2O | siloed | `TABH2O_API_KEY`; arena challenger, `market forecast` | src/arena, src/net/clients |
 | Quant helpers, data lookups, read swarm | siloed | `quant`, `data`, `web swarm` | src/quant, src/forecast, src/research |
+| Formation catalogue (Score templates, pure combiners) | siloed | Always on: typed forecast formations (`MARINA_FORECAST_FORMATION`), resident forecasts, `pattern run`, arena `formation:ensemble` and `formation:delphi` | src/orchestration/formations |
 | Research evidence loop and survey | siloed | `MARINA_RESEARCH_*` | src/research |
-| Research web agent, cited answers, fact pass | siloed | Benchmark scripts only (`scripts/mind2web2.ts`, deepresearch) | src/research |
-| Skills | siloed | `skill`; seeds with `MARINA_SEED_SKILLS=true` (showcase) | src/agent |
-| Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch) | experimental | Experimental: for embedders (Flow, Nov 2026). `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint` | src/net/instance-lifecycle.ts |
+| Research web agent, cited answers, fact pass | siloed | In world: `research ask` (rank 0, spend-guarded) and the typed `marina_research` tool; benchmark scripts (`scripts/mind2web2.ts`, deepresearch) | src/research |
+| Skills | core | `skill`; 5 built-ins (`skill builtin`); residents get the best-fitting skill in their prompt (`MARINA_SKILLS_RESIDENT`, default on); note seeds with `MARINA_SEED_SKILLS=true` (showcase) | src/agent |
+| Supervised residents | core | On by default; `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) turns it off | src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts |
+| Resolvers, probes and watches | siloed | `probe`, `watch`; `position open` adds a resolving watch | src/resolvers, src/engine/commands/probe.ts, src/engine/commands/watch.ts |
+| Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch) | experimental | Experimental: for embedding hosts. `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint` | src/net/instance-lifecycle.ts |
 | Shared spend ledger | experimental | `MARINA_SPEND_LEDGER=<path>` | src/engine/shared-spend-ledger.ts |
 | Adaptive load-balance routing | experimental | Request header `X-Load-Balance: adaptive` | src/net/model-api |
 | Benchmark route evidence for `model:route` | experimental | `MARINA_ROUTE_EVIDENCE=on` (default `observe` records only) | src/engine/benchmark-evidence.ts |
 | Earned forecast routing | experimental | `MARINA_FORECAST_HISTORY` with enough resolved outcomes | src/forecast |
+| Formations in a room | experimental | `build formation [room] <debate, chorus or verification>`, or `formation` on a room module | src/coordination/room-formations.ts |
+| Attention judges | experimental | `MARINA_ATTENTION_JUDGE=observe` (default; records opinions and results) or `on` (earned judges advise) | src/agent/attention-judge.ts |
+| Peer code review | experimental | `code review request <name>` or `auto`; supervised residents attach worktree snapshots | src/engine/commands/code/review-request.ts, src/routing/review-snapshot.ts |
+| Private rooms | experimental | `build access <room> private` (owner or operator); `build invite <room> <name>` | src/engine/room-access.ts, src/engine/commands/build.ts |
 | Research authority mode | experimental | `MARINA_RESEARCH_AUTHORITY=on` | src/research |
 | The Arbiter | experimental | `MARINA_FORECAST_ARBITER`, `MARINA_VERIFY_ARBITER`; `arbiter` | src/orchestration/arbiter.ts |
+| Forecasts by residents (as-of fence) | experimental | `MARINA_FORECAST_RESIDENTS=on`; `forecast <q> crew:<c> pattern:<p>` (ensemble, delphi, tournament, skeptic) | src/forecast/resident-part.ts, src/forecast/resident-forecast.ts, src/engine/evidence-fence.ts |
 | Hybrid and vector retrieval | experimental | `MARINA_MEMORY_EMBEDDINGS`, `MARINA_CORPUS_EMBEDDINGS` | src/memory, src/research |
 | H2O-Lightning decision preset | experimental | `MARINA_LIGHTNING_MODEL=<OpenRouter id>` then `MARINA_DECISIONS=lightning` (no default id; off) | src/decisions/config.ts |
-| Text patterns (`POST /v1/patterns/run`) | experimental | HTTP only; a `pattern run` command is planned | src/orchestration/text-patterns.ts |
+| Text patterns (`pattern run`, `POST /v1/patterns/run`) | experimental | `pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run` | src/orchestration/text-patterns.ts, src/orchestration/formations, src/engine/commands/pattern.ts |
+| Typed resident analysis tools (`marina_forecast`, `marina_research`, `marina_swarm`, `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`, `marina_arbiter`, `marina_pattern`) | experimental | Deferred in the `full` tool profile: loaded by name through `marina_tool_search` (`MARINA_DEFERRED_TOOLS=off` keeps them resident); each runs its world command | src/agent/tools/analysis.ts, src/agent/analysis-commands.ts |
 | Investigations | experimental | `inquiry`, `marina inquiry`, `/api/investigations` | src/investigations |
 | Schedules | experimental | `schedule add …` | src/schedules |
 | Evolution (coach, native protocols, `marina_evolve`, child worlds) | experimental | `evolve`; protocols and the `marina_evolve` tool need `MARINA_EVOLUTION_PROTOCOLS=true` | src/engine/commands/evolve.ts, src/agent/tools/evolution.ts |
 | Experiments | experimental | `experiment` | src/engine/commands/experiment.ts |
-| Markets and positions | experimental | `market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true` | src/resolvers, src/net/clients |
+| Markets and positions | experimental | `market`, `position` (paper); live trading needs `MARINA_TRADING_ENABLED=true` and a person's approval per order (`trading.live`) | src/resolvers, src/net/clients |
 | Federation (gateways, meshes) | experimental | `gateway`, `mesh`; `GATEWAY_SECRET` | src/engine/gateway-runtime.ts |
 | Learned bundles | experimental | `learned`, `bun run learned` | src/learned |
+| Intellect records (identity across models and processes, lifecycle claims) | experimental | `intellect`; claims are signed when `MARINA_FEDERATION_SIGNING_KEY` is set | src/engine/commands/intellect.ts, src/persistence/db-intellects.ts |
+| Lineage records (derived intellects, world manifests, child worlds) | experimental | `reproduce`, `genome` (records only); `marina-descend` starts a child world as a local process and needs the `world.lineage` gate | src/engine/commands/reproduce.ts, src/engine/commands/genome.ts, src/engine/commands/marina-descend.ts, src/persistence/db-reproduction.ts, src/world/world-collective-manager.ts |
+| Change records (`mutation`) | experimental | `mutation` (append-only records; recording a change does not apply it) | src/engine/commands/mutation.ts, src/persistence/db-mutations.ts |
+| Associations (who takes part and how they relate) | experimental | `association` | src/engine/commands/association.ts, src/persistence/db-associations.ts |
+| Economic provenance records | experimental | `economy` (claims and references only; moves no funds, stores no credentials) | src/engine/commands/economy.ts, src/persistence/db-economics.ts |
+| Simulation run records (`lab`) | experimental | `lab` (declares and records runs; executes nothing) | src/engine/commands/lab.ts, src/persistence/db-simulations.ts |
 | Media generation jobs | experimental | `image generate`, `video generate`, `audio` (needs a media-capable provider) | src/engine/commands/image.ts, src/persistence/db-media.ts |
+| Scores (`conduct`, `marina_conduct`) | experimental | `conduct`; residents run a stored Score with `marina_conduct`; SDK `runScore` | src/engine/commands/conduct.ts, src/sdk/conduct.ts |
+| Scenario boards | experimental | `scenario` (posts boards and tasks; a resident must pick up the work) | src/engine/commands/scenario.ts |
 | Built-in worlds other than `default` and `empty` (13) | demo | `MARINA_WORLD=<slug>`; `marina worlds` shows each status | worlds |
-| Orchestration templates (16 pool-note patterns) | demo | `project <name> orchestrate <pattern>` | src/world/templates/orchestration.ts |
+| Orchestration templates (16 pool-note patterns; crews run them as formations) | demo | `project <name> orchestrate <pattern>` | src/world/templates/orchestration.ts |
 | `MARINA_HOST` | deprecated | Alias of `WS_HOST` (`WS_HOST` wins) | src/net |
 | `NSED` pattern name | deprecated | Accepted as Deliberation, never advertised | src/world/templates/orchestration.ts |
 
 ## Notes
 
-- **Embedding lifecycle.** Experimental: for embedders (Flow, Nov 2026). `MARINA_DATA_DIR`, the
+- **Record-keeping research features.** `intellect`, `reproduce`, `genome`, `mutation`,
+  `association`, `economy` and `lab` write append-only, attributable records (signed with Ed25519
+  when `MARINA_FEDERATION_SIGNING_KEY` is set) and are exported with the world. They describe
+  identities, lineage, changes, relationships, economic claims and simulation runs; apart from
+  `marina-descend start`, which runs a child world as a separate local process, none of them
+  executes, trains, pays or changes anything else. No production deployment uses them yet. Guides:
+  [intellect records](../guides/intellect-lifecycle.md), [lineage records and meshes](../guides/reproduction-and-meshes.md),
+  [associations](../guides/associations.md), [economic, simulation and change records](../guides/economics-simulation-and-recursion.md).
+- **Embedding lifecycle.** Experimental: for embedding hosts. `MARINA_DATA_DIR`, the
   `endpoint.json` file, `MARINA_IDLE_SHUTDOWN` and `MARINA_PARENT_PID` let a host find, adopt and stop
   a Marina it did not start. No host uses them yet (the desktop app embeds Marina in-process); they are
-  kept for the Flow integration. The shared spend ledger (`MARINA_SPEND_LEDGER`) is the matching
+  kept for embedding hosts. The shared spend ledger (`MARINA_SPEND_LEDGER`) is the matching
   per-host cap for one process per world.
 - **`marina_evolve`.** The typed evolution tool is deliberately not in `createAllTools`: the agent
   adapter attaches it only while a native evolution protocol is active
@@ -81,8 +109,20 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
   Marina ships no model id, so the preset stays off until `MARINA_LIGHTNING_MODEL` names one.
   `decision settings` (and `admin decisions`) print one line: not configured, configured without an
   OpenRouter key, available, or active. Nothing is probed, so the line never costs a call.
-- **Text patterns.** `POST /v1/patterns/run` is reachable over HTTP only; a `pattern run` world
-  command is planned.
+- **Text patterns.** `pattern run <pattern> [budget:<usd>] -- <task>` runs the same protocols as
+  `POST /v1/patterns/run` in world (rank 0; per-run budget, default $0.50, at most $2; the daily cap;
+  one run per entity), over the operator's models only. Residents reach it as the typed
+  `marina_pattern` tool. Experimental until a world uses it.
+- **Formation catalogue.** One entry per formation (`src/orchestration/formations/catalogue.ts`):
+  its one-line description, the Score templates it runs as (typed forecasts with model or resident
+  members, free-text `pattern run`, the arena's ensemble and delphi) and pure combiners per answer
+  type. The other ten arena formations still run their own code (byte-identical, held by
+  `test/formation-equivalence-arena.test.ts`); crew-only formations stay crew briefs that name their
+  entry.
+- **Typed analysis tools.** Residents load `marina_forecast`, `marina_research`, `marina_swarm`,
+  `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`,
+  `marina_arbiter` and `marina_pattern` through `marina_tool_search`. Each builds one world command,
+  so rank, gates, rate limits and spend caps apply as typed. Experimental until residents use them.
 - **Adaptive load balancing** runs only when a request sends `X-Load-Balance: adaptive`; otherwise
   routing is round-robin (or `least-busy` on request).
 - **Experimental is not unsafe.** Experimental commands go through the same rank, gates, challenges

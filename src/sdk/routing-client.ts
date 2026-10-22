@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  ResidentAttentionReport,
+  ResidentCredential,
+  ResidentEnrolInput,
+  ResidentEnrolment,
   RoutingSyncInput,
   RoutingSyncResult,
   RuntimeControl,
@@ -32,6 +36,12 @@ export class RoutingApiError extends Error {
   ) {
     super(message);
   }
+}
+/** A routing-only supervision credential (supervised residents). */
+export interface SupervisionCredentialGrant {
+  credentialId: string;
+  token: string;
+  expiresAt: number;
 }
 export interface RoutingClientOptions {
   url: string;
@@ -206,6 +216,49 @@ export class MarinaRoutingClient {
     return this.request<RoutingMessage>(
       `${this.path(sourceId)}/control`,
       { targetId, clientMessageId, control },
+      signal,
+    );
+  }
+  /** Enrol a run's agent as its own world account (servers with supervised residents on). */
+  enrolResident(input: ResidentEnrolInput, signal?: AbortSignal) {
+    return this.request<ResidentEnrolment>("/residents", input, signal);
+  }
+  /** A fresh credential for a live owned run; the previous one stops working. */
+  renewResident(name: string, sessionId: string, signal?: AbortSignal) {
+    return this.request<{ name: string; credential: ResidentCredential }>(
+      `/residents/${encodeURIComponent(name)}/renew`,
+      { sessionId },
+      signal,
+    );
+  }
+  /**
+   * Exchange this client's world session for a supervision credential: the
+   * routing API only, never replaced by a later login of the same person.
+   */
+  issueSupervision(signal?: AbortSignal) {
+    return this.request<SupervisionCredentialGrant>("/supervision", {}, signal);
+  }
+  /** Replace the presented supervision credential with a fresh one. */
+  renewSupervision(signal?: AbortSignal) {
+    return this.request<SupervisionCredentialGrant>("/supervision/renew", {}, signal);
+  }
+  /** Revoke the presented supervision credential. */
+  revokeSupervision(signal?: AbortSignal) {
+    return this.request<{ revoked: boolean }>("/supervision/revoke", {}, signal);
+  }
+  /** End this run's hold on the resident: credentials and session tokens are revoked. */
+  revokeResident(name: string, sessionId: string, signal?: AbortSignal) {
+    return this.request<{ name: string; revoked: number }>(
+      `/residents/${encodeURIComponent(name)}/revoke`,
+      { sessionId },
+      signal,
+    );
+  }
+  /** Report the run's attention-bridge decisions and the resident's presence. */
+  reportResidentAttention(name: string, report: ResidentAttentionReport, signal?: AbortSignal) {
+    return this.request<{ name: string; recorded: number }>(
+      `/residents/${encodeURIComponent(name)}/attention`,
+      report,
       signal,
     );
   }

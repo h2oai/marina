@@ -16,6 +16,9 @@ export function createDirectMessage(
     targetName: string;
     content: string;
     deadlineAt?: number;
+    /** Causal envelope (`src/engine/message-envelope.ts`). */
+    cause?: string;
+    depth?: number;
   },
 ): DirectMessageRow {
   const now = Date.now();
@@ -35,8 +38,8 @@ export function createDirectMessage(
   const result = db.run(
     `INSERT INTO direct_messages
        (correlation_id, dedupe_key, sender_id, sender_name, target_id, target_name, content,
-        status, created_at, delivered_at, deadline_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'delivered', ?, ?, ?)`,
+        status, created_at, delivered_at, deadline_at, cause, depth)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'delivered', ?, ?, ?, ?, ?)`,
     [
       message.correlationId,
       message.dedupeKey,
@@ -48,6 +51,8 @@ export function createDirectMessage(
       now,
       now,
       message.deadlineAt ?? now + 5 * 60_000,
+      message.cause ?? null,
+      message.depth ?? 0,
     ],
   );
   return getDirectMessage(db, Number(result.lastInsertRowid))!;
@@ -72,6 +77,13 @@ export function listDirectMessageInbox(
     .all(targetId, limit) as DirectMessageRow[];
 }
 
+/**
+ * The recipient answered or acknowledged a tell. A tell past its deadline
+ * (`expired` = unanswered in time) is still settled by a late answer: the
+ * reply happened, so the receipt says so, and `acknowledged_at` after
+ * `deadline_at` keeps the lateness visible. Expiry never removes content,
+ * so nothing is restored here.
+ */
 export function acknowledgeDirectMessage(
   db: Database,
   id: number,
@@ -81,7 +93,7 @@ export function acknowledgeDirectMessage(
   const result = db.run(
     `UPDATE direct_messages SET status = 'acknowledged', acknowledged_at = ?,
        reply_message_id = COALESCE(?, reply_message_id)
-       WHERE id = ? AND target_id = ? AND status = 'delivered'`,
+       WHERE id = ? AND target_id = ? AND status IN ('delivered', 'expired')`,
     [Date.now(), replyMessageId ?? null, id, targetId],
   );
   return result.changes > 0;
@@ -113,4 +125,8 @@ export interface DirectMessageRow {
   deadline_at: number | null;
   acknowledged_at: number | null;
   reply_message_id: number | null;
+  /** Ref of the message this one answers (migration 171), or null. */
+  cause: string | null;
+  /** Causal depth: the cause's depth + 1, else 0. */
+  depth: number;
 }

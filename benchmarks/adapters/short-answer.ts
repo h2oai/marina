@@ -1,13 +1,15 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { excludedSource } from "../../src/arena/research/web-search";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { standaloneSearchHttp } from "../../src/engine/search-providers/asof-http";
 import {
   initProvidersSync,
   type SearchResult,
   search,
 } from "../../src/engine/search-providers/index";
+import { excludedSource } from "../../src/research/web-search";
 import { queryWithUsage, replyLabels } from "../modes/passthrough";
 import { judgeResponseWithUsage } from "../scoring/judge";
 import type { BenchmarkConfig, DatasetItem, ItemUsage, Message, ResultItem } from "../types";
@@ -79,13 +81,51 @@ export function groundingBarred(dataset: string): (r: SearchResult) => boolean {
   };
 }
 
+/**
+ * `MARINA_GROUND_CACHE=<file.json>`: grounding evidence keyed by dataset and
+ * question. A hit is served from the file; a miss searches and, when it found
+ * evidence, writes through (whole file, atomic rename). Two arms reading one
+ * warmed cache see byte-identical evidence, so a paired comparison measures
+ * the arms and not two draws of a live search engine.
+ */
+export function groundCacheKey(dataset: string, question: string): string {
+  return createHash("sha256").update(`${dataset}\n${question}`).digest("hex").slice(0, 32);
+}
+
+let groundCache: { path: string; entries: Record<string, string[]> } | undefined;
+
+function groundCacheFor(path: string): Record<string, string[]> {
+  if (groundCache?.path !== path) {
+    const entries = existsSync(path)
+      ? (JSON.parse(readFileSync(path, "utf8")) as Record<string, string[]>)
+      : {};
+    groundCache = { path, entries };
+  }
+  return groundCache.entries;
+}
+
+function groundCacheStore(path: string, key: string, evidence: string[]): void {
+  const entries = groundCacheFor(path);
+  entries[key] = evidence;
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(entries), { mode: 0o600 });
+  renameSync(tmp, path);
+}
+
 /** Live search evidence for one question, with the dataset's own sources removed. */
-async function groundEvidence(
+export async function groundEvidence(
   question: string,
   dataset: string,
   stats: GroundingStats,
+  cachePath: string | undefined = process.env.MARINA_GROUND_CACHE?.trim() || undefined,
 ): Promise<string[]> {
   stats.items++;
+  const key = cachePath ? groundCacheKey(dataset, question) : "";
+  const cached = cachePath ? groundCacheFor(cachePath)[key] : undefined;
+  if (cached) {
+    if (cached.length > 0) stats.withEvidence++;
+    return cached;
+  }
   const barred = groundingBarred(dataset);
   try {
     initProvidersSync();
@@ -102,7 +142,10 @@ async function groundEvidence(
     const evidence = kept
       .slice(0, 5)
       .map((r) => (r.title ? `${r.title}: ${r.snippet}` : r.snippet));
-    if (evidence.length > 0) stats.withEvidence++;
+    if (evidence.length > 0) {
+      stats.withEvidence++;
+      if (cachePath) groundCacheStore(cachePath, key, evidence);
+    }
     return evidence;
   } catch {
     stats.failures++;

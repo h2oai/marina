@@ -20,6 +20,8 @@ export interface CodeEditorState {
   answer: boolean;
   multiline: boolean;
   panel?: TerminalPanelState;
+  /** Live world segments (the status bar), already rendered; shown only when styled. */
+  statusLine?: string;
 }
 
 export interface CodeEditorOptions {

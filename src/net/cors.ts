@@ -7,6 +7,7 @@
 // Access-Control-Allow-Origin header.  When unset, NO ACAO header is emitted —
 // same-origin requests work fine, cross-origin requests are blocked.
 
+import { type HostPolicy, hostHeaderAllowed } from "./host-allowlist";
 import { isLoopbackHostname } from "./loopback";
 
 export function getAllowedOrigins(env: NodeJS.ProcessEnv = process.env): Set<string> | null {
@@ -65,6 +66,13 @@ export interface BrowserOriginOptions {
   loopbackBind?: boolean;
   /** Override the `ALLOWED_ORIGINS` set (tests); `undefined` reads the env. */
   allowedOrigins?: Set<string> | null;
+  /**
+   * The listener's `Host` policy (`mainListenerHostPolicy`). The same-origin
+   * branch counts only when the request's `Host` passes it. `undefined` uses a
+   * loopback-names-only policy on a loopback bind and none otherwise; `null`
+   * means the listener does not validate `Host`.
+   */
+  hostPolicy?: HostPolicy | null;
 }
 
 /**
@@ -73,7 +81,8 @@ export interface BrowserOriginOptions {
  *
  *   - no `Origin` header → allowed (non-browser client; the request carries no
  *     ambient browser credentials to abuse)
- *   - `Origin` host equals the request `Host` header → same-origin, allowed
+ *   - `Origin` host equals the request `Host` header AND that `Host` passes the
+ *     listener's Host policy → same-origin, allowed
  *   - `Origin` listed in `ALLOWED_ORIGINS` → allowed
  *   - `Origin` is loopback (`http(s)://localhost|127.x|[::1][:port]`) AND
  *     `loopbackBind` → allowed
@@ -98,8 +107,14 @@ export function isTrustedBrowserOrigin(
 
   // Same-origin: compare host[:port] (URL.host omits a default port, as does a
   // browser's Host header for default ports).
+  // A Host header is whatever name the browser used, so it only vouches for
+  // the origin when the listener answers to that name.
+  const hostPolicy =
+    opts.hostPolicy !== undefined ? opts.hostPolicy : opts.loopbackBind ? { allowed: [] } : null;
   const host = (hostHeader ?? "").trim().toLowerCase();
-  if (host && parsed.host.toLowerCase() === host) return true;
+  if (host && parsed.host.toLowerCase() === host && hostHeaderAllowed(host, hostPolicy)) {
+    return true;
+  }
 
   const allowed = opts.allowedOrigins === undefined ? getAllowedOrigins() : opts.allowedOrigins;
   if (allowed?.has(parsed.origin) || allowed?.has(trimmed)) return true;

@@ -104,4 +104,19 @@ describe("RoomNode", () => {
     show(room({ latestMessage: { kind: "say", sender: "Ada", body: "old", timestamp: 0 } }));
     expect(screen.queryByTestId("room-message-pill")).toBeNull();
   });
+
+  it("badges a supervised resident with its vendor and shows its presence", () => {
+    show(
+      room({
+        entities: [
+          { name: "Wren", kind: "agent", state: "needs_you", vendor: "claude" },
+          { name: "Ash", kind: "agent", state: "resting" },
+        ],
+      }),
+    );
+    expect(screen.getByText("[claude]")).toBeInTheDocument();
+    expect(screen.getByText("needs you")).toBeInTheDocument();
+    expect(screen.getByText("resting")).toBeInTheDocument();
+    expect(screen.getAllByText(/^\[/)).toHaveLength(1);
+  });
 });

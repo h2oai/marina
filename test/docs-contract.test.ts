@@ -5,17 +5,20 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { renderEnvironmentReference } from "../scripts/generate-environment-reference";
 import { rewriteGuideLinks } from "../site/scripts/guide-links";
+import { BUILTIN_SKILLS } from "../src/agent/builtin-skills";
 import { ENVIRONMENT_REFERENCE_PATH, environmentCatalog } from "../src/config/environment";
 import {
   EXPERIMENTAL_HELP_PREFIX,
   experimentalHelp,
   FEATURE_STATUS,
 } from "../src/config/feature-status";
+import { OPEN_POSTURE_CORE } from "../src/engine/autonomy";
 import { Engine } from "../src/engine/engine";
 import { SAFETY_GATES } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
 import { MIGRATIONS } from "../src/persistence/schema";
 import { roomId } from "../src/types";
+import { ORCHESTRATION_PATTERNS } from "../src/world/templates/orchestration";
 import { cleanupDb, makeTestRoom } from "./helpers";
 
 const readDoc = async (path: string) => Bun.file(path).text();
@@ -159,6 +162,75 @@ const mentions = (haystack: string, token: string): boolean =>
     haystack,
   );
 
+/** Number words the docs use for counts, so "Fifteen gates" is checked like "15 gates". */
+const NUMBER_WORDS = [
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+  "twenty",
+];
+const COUNT = `(\\d+|${NUMBER_WORDS.join("|")})`;
+const countValue = (word: string): number =>
+  /^\d+$/.test(word) ? Number(word) : NUMBER_WORDS.indexOf(word.toLowerCase());
+
+/** Prose a reader relies on for counts: every public doc and the agent skill files. */
+async function countedDocs(): Promise<Array<{ path: string; text: string }>> {
+  const paths = ["README.md", "SKILL.md", "CLAUDE.md", "site/src/pages/index.astro"];
+  for (const pattern of ["docs/**/*.md", "skills/**/*.md"]) {
+    for await (const file of new Bun.Glob(pattern).scan(".")) paths.push(file);
+  }
+  return Promise.all(
+    paths.map(async (path) => ({
+      path,
+      // Markdown emphasis and code spans must not hide a count from the check.
+      text: (await readDoc(path)).replace(/[*`]/g, "").replace(/\s+/g, " "),
+    })),
+  );
+}
+
+/** Every "<N> <thing>" a doc states, as `path: phrase` where N differs from `expected`. */
+function wrongCounts(
+  docs: Array<{ path: string; text: string }>,
+  phrase: string,
+  expected: number,
+): string[] {
+  const re = new RegExp(`\\b${COUNT} ${phrase}`, "gi");
+  return docs.flatMap(({ path, text }) =>
+    [...text.matchAll(re)]
+      .filter((m) => countValue(m[1] ?? "") !== expected)
+      .map((m) => `${path}: ${m[0]}`),
+  );
+}
+
+/**
+ * Whether the command guide documents `name` as a command, not merely uses the
+ * word: a backticked form that starts with it (`` `move` ``, `` `move north` ``)
+ * or a line that starts with it, as in the guide's example blocks (`> move north`).
+ */
+const documentsCommand = (guide: string, name: string): boolean => {
+  const n = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return (
+    new RegExp(`\`${n}[\` ]`).test(guide) || new RegExp(`^[ \t]*(> ?)?${n}( |$)`, "m").test(guide)
+  );
+};
+
 /**
  * Builtins whose prose home is the in-code `help` category map rather than
  * `docs/guides/commands.md`. Each is a local utility or an inspection verb that
@@ -206,6 +278,16 @@ const ENV_VARS_OUTSIDE_SERVER_CATALOG = new Map<string, string>([
   ["MARINA_BENCH_RESULT_FILE", "internal: benchmark runner → harness child"],
   // Minted per boot by marina-desktop; never set by hand (still protected in keys.ts).
   ["MARINA_DESKTOP_API_TOKEN", "internal: desktop app capability token"],
+  // The interactive `marina connect` terminal (docs/guides/connecting.md → The interactive terminal).
+  ["MARINA_THEME", "cli: terminal colour theme"],
+  ["MARINA_PROMPT", "cli: prompt format"],
+  ["MARINA_STATUSLINE", "cli: status bar format"],
+  ["MARINA_STATUSLINE_RIGHT", "cli: status bar right-hand format"],
+  ["MARINA_PROMPT_RULE", "cli: label on the rule above the input"],
+  ["MARINA_HISTORY", "cli: history file path, or off"],
+  ["MARINA_ASCII", "cli: ASCII glyphs only"],
+  // Set by a local supervisor for its resident agents (src/routing/resident-relay.ts).
+  ["MARINA_RELAY_SOCKET", "internal: supervisor → resident command relay"],
   // docs/guides/testing.md → Script and load-test knobs.
   ["MARINA_CHURN_CLIENTS", "script: soak:churn:local"],
   ["MARINA_CHURN_CYCLES", "script: soak:churn:local"],
@@ -294,6 +376,34 @@ describe("documentation contract — structure", () => {
     expect(ids.filter((id) => !mentions(doc, id))).toEqual([]);
   });
 
+  it("states registry counts that match the registries", async () => {
+    const docs = await countedDocs();
+    const wired = new Set(
+      engine.commands
+        .allBuiltins()
+        .map((cmd) => cmd.gate)
+        .filter((gate): gate is string => !!gate),
+    );
+    const cases: Array<[string, number]> = [
+      ["(?:per-operation )?safety gates", Object.keys(SAFETY_GATES).length],
+      ["sensitive operations", Object.keys(SAFETY_GATES).length],
+      ["operator[- ]grant (?:core )?gates", OPEN_POSTURE_CORE.size],
+      ["are operator[- ]grant only", OPEN_POSTURE_CORE.size],
+      ["built-?in skills", BUILTIN_SKILLS.length],
+      ["gates wire", wired.size],
+      // `custom` is the blank slate, not a pattern with template notes.
+      ["orchestration patterns?", ORCHESTRATION_PATTERNS.filter((p) => p !== "custom").length],
+    ];
+    expect(cases.flatMap(([phrase, n]) => wrongCounts(docs, phrase, n))).toEqual([]);
+    // The check must see the counts it guards, or a rewording silently disables it.
+    const stated = (phrase: string) =>
+      docs.some(({ text }) => new RegExp(`\\b${COUNT} ${phrase}`, "i").test(text));
+    expect(stated("safety gates")).toBe(true);
+    expect(stated("operator[- ]grant (?:core )?gates")).toBe(true);
+    expect(stated("gates wire")).toBe(true);
+    expect(stated("orchestration patterns?")).toBe(true);
+  });
+
   it("keeps docs/reference/feature-status.md in step with FEATURE_STATUS", async () => {
     const page = await readDoc("docs/reference/feature-status.md");
     const rows = FEATURE_STATUS.map(
@@ -362,7 +472,7 @@ describe("documentation contract — structure", () => {
     const names = engine.commands.allBuiltins().map((cmd) => cmd.name);
 
     const undocumented = names.filter(
-      (name) => !mentions(guide, name) && !COMMANDS_DOCUMENTED_ONLY_IN_HELP.has(name),
+      (name) => !documentsCommand(guide, name) && !COMMANDS_DOCUMENTED_ONLY_IN_HELP.has(name),
     );
     expect(undocumented).toEqual([]);
 

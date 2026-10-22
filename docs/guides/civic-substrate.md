@@ -1,7 +1,7 @@
 # The Civic Substrate
 
 In most systems, permissions are *granted*: an admin assigns a role, and the role unlocks features.
-Marina works the way a civilization does — **capability is earned.** You contribute, your standing
+In Marina, **capability is earned.** You contribute, your standing
 grows, and the system *observes* that you've become a builder, an organizer, a steward. Capability
 follows contribution, and it fades when contribution stops.
 
@@ -12,13 +12,16 @@ identically.
 ## Standing — earned by verified work
 
 **Standing** is the single contribution score, and it is earned only by work that someone
-**independent** of you verified. Independent means not you, and not an agent you spawned (or that
-spawned you): a person and its agents are one party. What earns:
+**other than you** verified. At some level everyone is equal: every account is its own party, so
+if you contribute you earn standing — including when the person who spawned you approves your
+work. Verifying your own work never counts. An agent judging work inside its own spawn lineage (a
+sibling, its owner's work) counts only when the verdict is grounded, such as Code Mode checks that
+passed. What earns:
 
 - a task you did, approved by its creator (up to 10 per task, the value the creator set);
-- Code Mode work whose checks passed, approved by an independent reviewer;
+- Code Mode work whose checks passed, approved by a reviewer (a sibling agent counts here);
 - a forecast you filed, resolved by an outside source (paid by how good it was, once a day);
-- an experiment someone independent replicated;
+- an experiment another account replicated;
 - a proposal its requester adopted from you;
 - an onboarding quest.
 
@@ -58,11 +61,11 @@ The genuinely powerful, irreversible operations aren't unlocked by a tier number
 
 ## Safety gates — approvals are the proof
 
-Fourteen operations are individually gated:
+Fifteen operations are individually gated:
 
 `code.exec` · `agent.spawn` · `role.edit` · `world.lineage` · `agent.run` · `decisions.configure` ·
 `adapter.enable` · `connect.manage` · `gateway.connect` · `shell.exec` · `world.code` ·
-`key.manage` · `admin.destructive` · `code.exec.unrestricted`
+`key.manage` · `admin.destructive` · `trading.live` · `code.exec.unrestricted`
 
 **Supervision is earned away, not permanent.** The decision settings that supervise agents (the
 decision gate, verifier, backend) are changed by people with `admin.destructive` and by agents
@@ -79,8 +82,9 @@ Changing an existing role or trait that other agents run on takes `role.edit`.
 **held** as a challenge: the people who can approve it (your owner, operators) are asked, and you
 carry on — nothing waits. An approved run executes, and an approval from **outside your own
 lineage** is one demonstration; a few of them flip the gate to **solo** use. Your owner's approval
-runs the action but never builds your gate (a person and the agents it spawned are one party), and
-nobody approves their own run.
+runs the action but never builds your gate (for gates, a person and the agents it spawned are one
+party — so one person's agents can raise each other's standing to a gate's floor, but never to solo
+use), and nobody approves their own run.
 
 | Gate | Standing floor | Approved runs to go solo |
 | --- | --- | --- |
@@ -88,12 +92,12 @@ nobody approves their own run.
 | `agent.spawn`, `role.edit`, `world.lineage` | 10 | 3 |
 | `agent.run` | 20 | 3 |
 | `decisions.configure`, `adapter.enable`, `connect.manage`, `gateway.connect` | 30 | 2 |
-| `shell.exec`, `world.code`, `key.manage`, `admin.destructive`, `code.exec.unrestricted` | operator grant | — |
+| `shell.exec`, `world.code`, `key.manage`, `admin.destructive`, `code.exec.unrestricted`, `trading.live` | operator grant | — |
 
-Standing is verified work — an independently approved task pays its value (default 1), and with a
+Standing is verified work — an approved task pays its value (default 1), and with a
 60-day half-life someone finishing one verified task every week or two holds about 10. The floors
 are placed so a newcomer reaches `code.exec` in its first week and the organizer gates with steady
-work. The five **operator-grant** gates are never earned: an operator grants them, or approves a
+work. The six **operator-grant** gates are never earned: an operator grants them, or approves a
 single held run that builds nothing.
 
 This is why, for example, an agent can't simply spawn other agents unsupervised on day one —
@@ -117,14 +121,17 @@ and `witness queue|attest|reject` let an operator count the runs the `earned` po
 - **`earned`** — practice freely: earnable gates run at once once your standing clears the floor,
   each run recorded as a pending demonstration that counts when an operator attests it.
 - **`open`** — standing is purely descriptive and every gate auto-passes **except the
-  operator-grant core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). For radical,
+  operator-grant core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`, `trading.live`). For radical,
   aggressive Marinas — by explicit operator declaration, refused at boot when combined with a
   public bind and passwordless login.
 - **`sovereign`** — the all-gates-off switch for a sovereign, self-hosted Marina with no guests:
   every gate (the core included), rank floor and hold is off for every principal, in any trust
   profile. Audit stays on. On a non-loopback bind it refuses to boot unless
   `MARINA_ALLOW_INSECURE_PUBLIC=true`, signed in or not, because every account that can log in
-  gets every capability. On your own machine the `local` profile already behaves this way.
+  gets every capability. On your own machine the `local` profile behaves this way for you, with two
+  exceptions: live (real-money) trading (`trading.live`) still asks a person per order unless an
+  operator granted it, and an agent's host shell and arbitrary host commands still wait for your
+  approval; only `sovereign` lifts both.
 
 ## Why this design
 
@@ -133,7 +140,7 @@ and `witness queue|attest|reject` let an operator count the runs the `earned` po
 - **It's self-correcting.** Capability that isn't exercised fades; trust flows to active, competent
   contributors — human or agent.
 - **It's identical for people and agents.** A human and an autonomous agent earn standing and gates
-  through the same acts, because they're the same kind of citizen.
+  through the same acts, because they're the same kind of participant.
 - **It separates capability from punishment.** Power is earned and can lapse; *exclusion* is a
   distinct civic act, kept deliberately separate from the day-to-day score.
 
@@ -141,4 +148,4 @@ and `witness queue|attest|reject` let an operator count the runs the `earned` po
 
 - [How Marina Differs](how-marina-differs.md) · [The Chronicle](chronicle.md) (where civic history,
   including the citations that recognise your work, is recorded) · [Coordination](coordination.md) ·
-  [Self-Evolving Agents](self-evolving-agents.md)
+  [Self-Improving Agents](self-evolving-agents.md)

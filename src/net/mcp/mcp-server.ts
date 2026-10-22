@@ -1,7 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { hostname } from "node:os";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { Server } from "bun";
@@ -17,12 +16,18 @@ import { contextCacheStats } from "../../memory/context-cache";
 import type { Connection, Perception } from "../../types";
 import { handleConnectRoutes, healthResponse, registerConnectEndpoint } from "../api/connect-api";
 import { isTrustedBrowserOrigin } from "../cors";
+import {
+  allowedHostList,
+  parseHostList,
+  resolveBindHostname,
+  transportAuthRequired,
+} from "../host-allowlist";
 import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "../http-utils";
 import { instanceActivity } from "../instance-lifecycle";
 import { recordListenPort } from "../listen-ports";
 import { isLoopbackHostname } from "../loopback";
+import { modelApiKeySecrets } from "../model-api/api-keys";
 import { RequestDrain } from "../request-drain";
-import { resolveWsBindHostname } from "../websocket-server";
 import { mcpAdmission } from "./mcp-admission";
 import type { McpSession } from "./mcp-types";
 import { createWorldMcpServer } from "./mcp-world-tools";
@@ -35,31 +40,12 @@ let mcpIdCounter = 0;
 
 // ─── Transport hardening ──────────────────────────────────────────────────────
 
-/** Secrets accepted from `MODEL_API_KEYS` (`secret` or `secret:entity` entries). */
-function modelApiKeySecrets(): string[] {
-  const raw = process.env.MODEL_API_KEYS;
-  if (!raw) return [];
-  return raw
-    .split(",")
-    .map((k) => k.trim())
-    .filter(Boolean)
-    .map((k) => {
-      const colon = k.indexOf(":");
-      return colon > 0 ? k.slice(0, colon) : k;
-    });
-}
-
 /**
- * Whether `/mcp` requires a bearer at the transport layer. The `local` posture
- * (loopback-only bind, no keys, no external auth) stays unauthenticated so a
- * plain `{"url": "http://localhost:3301/mcp"}` client config keeps working;
- * anything stronger — API keys configured, sign-in enabled, or a non-loopback
- * bind — turns the requirement on.
+ * Whether `/mcp` requires a bearer at the transport layer: API keys configured,
+ * sign-in enabled, or a non-loopback bind (see `transportAuthRequired`).
  */
 export function mcpTransportAuthRequired(loopbackBind: boolean): boolean {
-  return (
-    modelApiKeySecrets().length > 0 || process.env.MARINA_AUTH === "better-auth" || !loopbackBind
-  );
+  return transportAuthRequired(loopbackBind);
 }
 
 /**
@@ -116,52 +102,13 @@ export function mcpAllowedHosts(
   loopbackBind: boolean,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  const extra = (env.MARINA_MCP_ALLOWED_HOSTS ?? "")
-    .split(",")
-    .map((h) => h.trim().toLowerCase())
-    .filter(Boolean);
-  const hosts = new Set<string>();
-  const add = (host: string) => {
-    hosts.add(host);
-    // A bare hostname also matches on the live port; the SDK compares exactly.
-    if (!/:\d+$/.test(host) && !/^\[.*\]$/.test(host)) hosts.add(`${host}:${port}`);
-    if (/^\[.*\]$/.test(host)) hosts.add(`${host}:${port}`);
-  };
-  if (loopbackBind) {
-    for (const h of ["localhost", "127.0.0.1", "[::1]"]) add(h);
-    add(bindHost.toLowerCase());
-  } else if (extra.length === 0) {
-    for (const h of derivedPublicHosts(bindHost, env)) add(h);
-  }
-  for (const h of extra) add(h);
-  return [...hosts];
-}
-
-/** Hostnames a non-loopback bind accepts when MARINA_MCP_ALLOWED_HOSTS is unset. */
-function derivedPublicHosts(bindHost: string, env: NodeJS.ProcessEnv): string[] {
-  const out = ["localhost", "127.0.0.1", "[::1]"];
-  const bind = bindHost.trim().toLowerCase();
-  if (bind && bind !== "0.0.0.0" && bind !== "::" && bind !== "[::]") {
-    out.push(bind.includes(":") && !bind.startsWith("[") ? `[${bind}]` : bind);
-  }
-  try {
-    const name = hostname().trim().toLowerCase();
-    if (name) out.push(name);
-  } catch {
-    // allow-empty-catch: no hostname is simply one fewer allowed name.
-  }
-  const urls = [env.BETTER_AUTH_URL, ...(env.ALLOWED_ORIGINS ?? "").split(",")];
-  for (const raw of urls) {
-    const value = raw?.trim();
-    if (!value) continue;
-    try {
-      const url = new URL(value);
-      if (url.hostname) out.push(url.hostname.toLowerCase());
-    } catch {
-      // allow-empty-catch: a malformed origin contributes no host.
-    }
-  }
-  return out;
+  return allowedHostList(
+    bindHost,
+    port,
+    loopbackBind,
+    parseHostList(env.MARINA_MCP_ALLOWED_HOSTS),
+    env,
+  );
 }
 
 // ─── McpServerAdapter ─────────────────────────────────────────────────────────
@@ -194,7 +141,7 @@ export class McpServerAdapter {
   ) {}
 
   private warnedNoAllowedHosts = false;
-  private readonly bindHostname = resolveWsBindHostname();
+  private readonly bindHostname = resolveBindHostname();
   private readonly loopbackBind = isLoopbackHostname(this.bindHostname);
 
   /** Serve `/mcp` on its own listener (MCP_PORT). */
@@ -328,8 +275,15 @@ export class McpServerAdapter {
 
     // Browser-origin gate: a page on another site must not drive a
     // loopback MCP endpoint (non-browser clients send no Origin and pass).
+    // Same-origin counts only for a Host this transport answers to.
+    const allowedHosts = mcpAllowedHosts(bindHostname, server.port ?? this.port, loopbackBind);
     const origin = req.headers.get("Origin");
-    if (!isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind })) {
+    if (
+      !isTrustedBrowserOrigin(origin, req.headers.get("Host"), {
+        loopbackBind,
+        hostPolicy: { allowed: allowedHosts },
+      })
+    ) {
       return new Response("Forbidden origin", {
         status: 403,
         headers: securityHeaders("api"),
@@ -365,8 +319,7 @@ export class McpServerAdapter {
     }
 
     // DNS-rebinding protection: validate the Host header against the
-    // bind + `MARINA_MCP_ALLOWED_HOSTS`.
-    const allowedHosts = mcpAllowedHosts(bindHostname, server.port ?? this.port, loopbackBind);
+    // bind + `MARINA_MCP_ALLOWED_HOSTS` (`allowedHosts` above).
     if (
       !loopbackBind &&
       !process.env.MARINA_MCP_ALLOWED_HOSTS?.trim() &&

@@ -4,6 +4,8 @@
 import { tell } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { failCommandResponse } from "../command-response";
+import { envelopeFields, type MessageCause, messageEnvelope } from "../message-envelope";
 import { parseModifiers } from "../parse-input";
 
 export interface TellDeps {
@@ -17,6 +19,12 @@ export interface TellDeps {
     metadata?: Record<string, unknown>,
   ) => void;
   db?: MarinaDB;
+  /**
+   * Whether an entity is driven by an agent (internal resident, MCP or a
+   * client that declared itself an agent, or an account with an agent config
+   * or principal). Without it no tell is treated as agent-to-agent.
+   */
+  isAgent?: (id: EntityId) => boolean;
 }
 
 const TELL_USAGE = "Usage: tell <entity> [ttl:30s] <message>   (also --ttl=30s)";
@@ -25,6 +33,11 @@ const TELL_USAGE = "Usage: tell <entity> [ttl:30s] <message>   (also --ttl=30s)"
  * Deliver a private message from `sender` to the named target. Shared by `tell`
  * and `re`. On success it records the sender's name on the recipient as
  * `last_tell_from`, so the recipient can reply with `re <message>`.
+ *
+ * The message records its causal envelope (`src/engine/message-envelope.ts`):
+ * `cause` names the message it answers — `re` passes the tell it replies to,
+ * otherwise the current command execution's cause applies — and emits one
+ * content-free `tell_sent` event.
  */
 export function deliverTell(
   deps: TellDeps,
@@ -34,17 +47,25 @@ export function deliverTell(
   targetName: string,
   message: string,
   deadlineMs?: number,
+  cause?: MessageCause,
 ): number | undefined {
   const target = deps.findEntityGlobal(targetName);
   if (!target) {
-    ctx.send(senderId, `No one named "${targetName}" is online.`);
+    // A refusal fails the command's result, so a correlated client (the
+    // resident command relay, MCP, the SDK) reports it rather than success.
+    const refusal = `No one named "${targetName}" is online.`;
+    ctx.send(senderId, refusal);
+    failCommandResponse(refusal);
     return undefined;
   }
   if (target.id === senderId) {
     ctx.send(senderId, "Talking to yourself again?");
+    failCommandResponse("A tell needs another recipient.");
     return undefined;
   }
 
+  const envelope = messageEnvelope(senderId, cause);
+  const senderIsAgent = deps.isAgent?.(senderId) ?? false;
   const correlationId = crypto.randomUUID();
   const receipt = deps.db?.createDirectMessage({
     correlationId,
@@ -55,6 +76,7 @@ export function deliverTell(
     targetName: target.name,
     content: message,
     ...(deadlineMs ? { deadlineAt: Date.now() + deadlineMs } : {}),
+    ...envelopeFields(envelope),
   });
   if (receipt && receipt.correlation_id !== correlationId) {
     ctx.send(
@@ -64,6 +86,8 @@ export function deliverTell(
     return receipt.id;
   }
 
+  // A world without a database has no stored id; the ref is still unique.
+  const messageRef = receipt ? `tell:${receipt.id}` : `tell:${correlationId}`;
   deps.sendGlobal(target.id, tell(sender.name, message, "from"), senderId, "tell", {
     senderName: sender.name,
     to: target.name,
@@ -71,6 +95,10 @@ export function deliverTell(
     messageId: receipt?.id,
     correlationId: receipt?.correlation_id,
     deadlineAt: receipt?.deadline_at,
+    messageRef,
+    // Server-stamped (never peer text): attention follows agent-only exchanges.
+    ...(deps.isAgent ? { senderKind: senderIsAgent ? "agent" : "person" } : {}),
+    ...envelopeFields(envelope),
   });
   // Record who just messaged the recipient so they can `re`ply without retyping
   // the name. Reply chains naturally: replying makes you their last sender too.
@@ -84,8 +112,21 @@ export function deliverTell(
     senderId,
     `${tell(target.name, message, "to")}${receipt ? ` [delivered #${receipt.id}]` : ""}`,
     "tell",
-    { delivery: { kind: "tell", target: target.name, message } },
+    {
+      delivery: { kind: "tell", target: target.name, message },
+      messageRef,
+      ...envelopeFields(envelope),
+    },
   );
+  ctx.logEvent?.({
+    type: "tell_sent",
+    entity: senderId,
+    from: sender.name,
+    to: target.name,
+    messageRef,
+    ...envelopeFields(envelope),
+    timestamp: Date.now(),
+  });
   return receipt?.id;
 }
 
@@ -158,7 +199,7 @@ export function tellCommand(deps: TellDeps): CommandDef {
         }
         ctx.send(
           input.entity,
-          `Message #${id}: ${row.status} · ${row.sender_name} → ${row.target_name}${row.deadline_at ? ` · deadline ${new Date(row.deadline_at).toISOString()}` : ""}`,
+          `Message #${id}: ${row.status}${lateAnswer(row) ? " after its deadline" : ""} · ${row.sender_name} → ${row.target_name}${row.deadline_at ? ` · deadline ${new Date(row.deadline_at).toISOString()}` : ""}`,
         );
         return;
       }
@@ -190,16 +231,67 @@ export function tellCommand(deps: TellDeps): CommandDef {
   };
 }
 
+/** Answered, but only after the deadline had passed. */
+function lateAnswer(row: {
+  status: string;
+  deadline_at: number | null;
+  acknowledged_at: number | null;
+}) {
+  return (
+    row.status === "acknowledged" &&
+    row.deadline_at !== null &&
+    row.acknowledged_at !== null &&
+    row.acknowledged_at > row.deadline_at
+  );
+}
+
 export function replyCommand(deps: TellDeps): CommandDef {
   return {
     category: "Communication",
-    usage: [{ syntax: "re <message>", effect: "write" }],
+    usage: [
+      { syntax: "re <message>", effect: "write" },
+      { syntax: "re #<id> <message>", effect: "write" },
+    ],
     name: "re",
     aliases: ["reply"],
-    help: "Reply to the last person who sent you a tell. Usage: re <message>",
+    help: "Reply to the last person who sent you a tell, or to one tell by id. Usage: re <message> | re #<id> <message>",
     handler: (ctx: RoomContext, input) => {
       const sender = deps.getEntity(input.entity);
       if (!sender) return;
+
+      // `re #<id> <message>`: answer (and acknowledge) one stored tell
+      // addressed to you, whoever sent you something since.
+      const pinned = /^#(\d+)$/.exec(input.tokens[0] ?? "");
+      if (pinned) {
+        const id = Number(pinned[1]);
+        const row = deps.db?.getDirectMessage(id);
+        if (
+          !row ||
+          (row.target_id !== input.entity &&
+            row.target_name.toLowerCase() !== sender.name.toLowerCase())
+        ) {
+          ctx.send(input.entity, `No tell #${id} addressed to you.`);
+          failCommandResponse(`No tell #${id} addressed to you.`);
+          return;
+        }
+        const message = input.tokens.slice(1).join(" ");
+        if (!message) {
+          ctx.send(input.entity, `Reply what? Usage: re #${id} <message>`);
+          return;
+        }
+        const replyId = deliverTell(
+          deps,
+          ctx,
+          input.entity,
+          sender,
+          row.sender_name,
+          message,
+          undefined,
+          { ref: `tell:${row.id}`, depth: row.depth ?? 0 },
+        );
+        if (replyId !== undefined) deps.db?.acknowledgeDirectMessage(id, input.entity, replyId);
+        return;
+      }
 
       const lastFrom = sender.properties.last_tell_from;
       if (!lastFrom) {
@@ -213,7 +305,26 @@ export function replyCommand(deps: TellDeps): CommandDef {
 
       const message = input.tokens.join(" ");
       const priorId = Number(sender.properties.last_tell_id);
-      const replyId = deliverTell(deps, ctx, input.entity, sender, lastFrom, message);
+      // The reply's cause is the tell it answers (the explicit reply path of
+      // src/engine/message-envelope.ts) — only a stored tell addressed to us.
+      const prior =
+        Number.isInteger(priorId) && deps.db ? deps.db.getDirectMessage(priorId) : undefined;
+      const cause =
+        prior &&
+        (prior.target_id === input.entity ||
+          prior.target_name.toLowerCase() === sender.name.toLowerCase())
+          ? { ref: `tell:${prior.id}`, depth: prior.depth ?? 0 }
+          : undefined;
+      const replyId = deliverTell(
+        deps,
+        ctx,
+        input.entity,
+        sender,
+        lastFrom,
+        message,
+        undefined,
+        cause,
+      );
       if (deps.db && Number.isInteger(priorId)) {
         deps.db.acknowledgeDirectMessage(priorId, input.entity, replyId);
       }

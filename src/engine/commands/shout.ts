@@ -3,10 +3,16 @@
 
 import { shout, shoutSelf } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { envelopeFields, messageEnvelope, mintMessageRef } from "../message-envelope";
 
 export function shoutCommand(deps: {
   getEntity: (id: EntityId) => Entity | undefined;
-  broadcastAll: (senderId: EntityId, message: string, tag?: string) => void;
+  broadcastAll: (
+    senderId: EntityId,
+    message: string,
+    tag?: string,
+    metadata?: Record<string, unknown>,
+  ) => void;
 }): CommandDef {
   return {
     category: "Communication",
@@ -23,8 +29,18 @@ export function shoutCommand(deps: {
         return;
       }
 
-      ctx.send(input.entity, shoutSelf(input.args), "shout");
-      deps.broadcastAll(input.entity, shout(entity.name, input.args), "shout");
+      const meta = {
+        senderName: entity.name,
+        messageRef: mintMessageRef("shout"),
+        ...envelopeFields(messageEnvelope(input.entity)),
+      };
+      ctx.send(input.entity, shoutSelf(input.args), "shout", meta);
+      // Listeners also get the words as `message`, as for `say`: attention reads
+      // a vocative or `@name` from it.
+      deps.broadcastAll(input.entity, shout(entity.name, input.args), "shout", {
+        ...meta,
+        message: input.args,
+      });
     },
   };
 }

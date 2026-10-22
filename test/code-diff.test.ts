@@ -20,6 +20,8 @@ import { approvalDiff, NativeTerminal } from "../scripts/code-native";
 import { codePerceptionFormat } from "../scripts/code-presentation";
 import { CodeTerminal, formatCodePerception, terminalText } from "../scripts/code-terminal";
 import { TERMINAL_HISTORY_LIMITS, TerminalViews } from "../scripts/code-views";
+import { termCaps } from "../scripts/term-caps";
+import { createTheme } from "../scripts/term-theme";
 import { LocalWorkspace } from "../src/coding/local-workspace";
 import { diffAnchors, diffStat, firstHunk, formatDiffStat } from "../src/coding/unified-diff";
 import { MarinaDB } from "../src/persistence/database";
@@ -208,7 +210,15 @@ describe("rendering structured diff perceptions", () => {
   });
 
   it("colours diff entries in an interactive terminal only after sanitising", async () => {
-    using _env = scopeProcessState({ env: { TERM: "xterm-256color", NO_COLOR: undefined } });
+    using _env = scopeProcessState({
+      env: {
+        TERM: "xterm-256color",
+        NO_COLOR: undefined,
+        COLORTERM: undefined,
+        FORCE_COLOR: undefined,
+        TERM_PROGRAM: undefined,
+      },
+    });
     const input = Object.assign(new PassThrough(), { isTTY: true });
     const output = Object.assign(new PassThrough(), { isTTY: true, columns: 100 });
     let transcript = "";
@@ -227,10 +237,12 @@ describe("rendering structured diff perceptions", () => {
       terminal.write(`${TWO_FILES}${ESC}[31mraw`, "coding", false, "diff");
       terminal.write(`+not a diff ${ESC}[32mraw`, "coding");
       await until(() => transcript.includes("not a diff"));
-      expect(transcript).toContain(`${ESC}[32m+new line${ESC}[0m`);
+      // The CLI palette at 256 colours; server bytes never survive.
+      const add = createTheme(termCaps(output)).params("success");
+      expect(transcript).toContain(`${ESC}[${add}m+new line${ESC}[0m`);
       expect(transcript).not.toContain(`${ESC}[31mraw`);
       expect(transcript).not.toContain(`${ESC}[32mraw`);
-      expect(transcript).not.toContain(`${ESC}[32m+not a diff`);
+      expect(transcript).not.toContain(`${ESC}[${add}m+not a diff`);
     } finally {
       terminal.close();
       input.destroy();

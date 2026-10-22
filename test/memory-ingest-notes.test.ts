@@ -124,10 +124,13 @@ describe("ingest notes: pure guards", () => {
     expect(ingestNotesWanted(false, "x".repeat(5000), { MARINA_MEMORY_INGEST_NOTES: "on" })).toBe(
       false,
     );
-    expect(ingestNotesModel({})).toBe("marina/default");
+    expect(ingestNotesModel({})).toBe("marina/cheap");
+    expect(ingestNotesModel({ MARINA_AGENT_MODELS: "role:helper=openai/gpt-6.1-sol" })).toBe(
+      "openai/gpt-6.1-sol",
+    );
     expect(ingestNotesModel({ MARINA_MEMORY_INGEST_NOTES_MODEL: "none" })).toBeUndefined();
     expect(ingestNoteWriter({ MARINA_MEMORY_INGEST_NOTES_MODEL: "none" })).toBeNull();
-    expect(ingestNoteWriter({})?.id).toBe("model:marina/default");
+    expect(ingestNoteWriter({})?.id).toBe("model:marina/cheap");
   });
 
   it("the chat writer posts one completion and reads its text", async () => {

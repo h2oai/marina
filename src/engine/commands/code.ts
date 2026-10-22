@@ -63,6 +63,7 @@ import {
 } from "./code/files";
 import { formatHelp, handleProfile } from "./code/profiles";
 import { projectLifecycle } from "./code/project";
+import { isReviewRequestForm, reviewRequestCommand } from "./code/review-request";
 import { handleRunner } from "./code/runner";
 import { sandboxLifecycle } from "./code/sandbox";
 import { serviceLifecycle } from "./code/service";
@@ -315,7 +316,10 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   },
   blocked: (c) => blockCodingRun(c.ctx, c.eid, c.entity, c.deps, c.args),
   assume: (c) => assumeCodingRun(c.ctx, c.eid, c.entity, c.deps, c.args),
-  review: (c) => reviewCodingRun(c.ctx, c.eid, c.entity, c.deps, c.args),
+  review: (c) =>
+    isReviewRequestForm(c.args)
+      ? reviewRequestCommand(c.ctx, c.eid, c.entity, c.deps, c.args, c.rawAfterSub)
+      : reviewCodingRun(c.ctx, c.eid, c.entity, c.deps, c.args),
   task: (c) => {
     sessionTask(c.ctx, c.eid, c.entity, c.deps, c.rawAfterSub);
   },
@@ -605,6 +609,13 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       { syntax: "code review approve", effect: "write" },
       { syntax: "code review reject", effect: "write" },
       { syntax: "code review accept-unverified <attempt> <reason>", effect: "write" },
+      {
+        syntax: "code review request <name|auto|review_id> [author:<name>] [-- claims]",
+        effect: "write",
+      },
+      { syntax: "code review verdict <review_id> approve|rework [-- findings]", effect: "write" },
+      { syntax: "code review <review_id>", effect: "read" },
+      { syntax: "code review approve|reject <review_id>", effect: "write" },
       { syntax: "code roles", effect: "read" },
       { syntax: "code run <check|cmd...>", effect: "execute" },
       {

@@ -8,6 +8,7 @@
 
 import type { CommandInput } from "../types";
 import { DURATION_UNITS_HINT, parseDuration } from "./commands/format-duration";
+import { escapeRegExp } from "./regexp";
 
 /**
  * Get remaining text after skipping N tokens, joined by spaces.
@@ -45,10 +46,6 @@ export const REGEX_CACHE_MAX = 1000;
 const modifierPatterns = new Map<string, RegExp>();
 const flagPatterns = new Map<string, RegExp>();
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function cachedPattern(
   cache: Map<string, RegExp>,
   key: string,
@@ -59,7 +56,7 @@ function cachedPattern(
     if (cache.size >= REGEX_CACHE_MAX) cache.clear();
     // No `g`/`y` flag: the instance carries no `lastIndex` state, so sharing it
     // across calls is safe.
-    pattern = new RegExp(build(escapeRegex(key)), "i");
+    pattern = new RegExp(build(escapeRegExp(key)), "i");
     cache.set(key, pattern);
   }
   return pattern;

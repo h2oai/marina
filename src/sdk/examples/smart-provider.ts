@@ -40,6 +40,7 @@
  */
 
 import { MarinaAgent, type Perception } from "../client";
+import { extractChannelPayload, type Message, perceptionsToText } from "./_shared";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
 const AGENT_NAME = process.env.AGENT_NAME ?? "SmartProvider";
@@ -69,27 +70,6 @@ const REFLECTION_PROVIDER_URL = (
   process.env.REFLECTION_PROVIDER_URL ?? "http://localhost:3300/v1"
 ).replace(/\/$/, "");
 const REFLECTION_PROVIDER_MODEL = process.env.REFLECTION_PROVIDER_MODEL ?? "marina:haiku";
-
-// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI strip
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-const stripAnsi = (t: string) => t.replace(ANSI_RE, "");
-
-function extractChannelPayload(
-  text: string,
-): { channel: string; sender: string; content: string } | undefined {
-  const clean = stripAnsi(text);
-  const match = clean.match(/^\[([^\]]+)\]\s+([^:]+):\s+(.*)/s);
-  if (!match) return undefined;
-  return { channel: match[1]!, sender: match[2]!.trim(), content: match[3]!.trim() };
-}
-
-function perceptionsToText(ps: Perception[]): string {
-  return ps
-    .map((p) => (typeof p.data?.text === "string" ? (p.data.text as string) : ""))
-    .map(stripAnsi)
-    .filter((t) => t.length > 0)
-    .join("\n");
-}
 
 function isEmptyRecall(text: string): boolean {
   const t = text.trim();
@@ -226,11 +206,6 @@ async function learnFrom(agent: MarinaAgent, question: string, answer: string): 
   } catch (e) {
     if (TRACE) console.error("[smart-provider] learn failed:", e);
   }
-}
-
-interface Message {
-  role: string;
-  content: string;
 }
 
 async function callProvider(messages: Message[]): Promise<string> {

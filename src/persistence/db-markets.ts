@@ -272,13 +272,17 @@ export function listForecastAnswers(
     .all(entityName, limit) as ForecastAnswerRow[];
 }
 
-/** Open answers no market is linked to, never a measurement run, oldest first (judged resolution). */
+/**
+ * Open answers no market is linked to, never a measurement run, oldest first
+ * (judged resolution). Shadow challengers are left out: they settle with their
+ * live answer (`src/forecast/shadow.ts`), never on a judge's call of their own.
+ */
 export function openUnlinkedForecasts(db: Database, limit: number): ForecastAnswerRow[] {
   return db
     .query(
       `SELECT * FROM forecast_answers
        WHERE sample_id IS NULL AND resolved_at IS NULL AND (eval_mode IS NULL OR eval_mode = 'live')
-         AND (source IS NULL OR source != 'investigation')
+         AND (source IS NULL OR source NOT IN ('investigation', 'shadow'))
        ORDER BY created_at, id LIMIT ?`,
     )
     .all(Math.max(0, limit)) as ForecastAnswerRow[];

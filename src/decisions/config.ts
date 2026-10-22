@@ -55,6 +55,7 @@
  */
 
 import { availableModels } from "../agent/available-models";
+import { roleModelFromEnv } from "../config/model-tiers";
 import { positiveNumberFromEnv } from "../engine/constants";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { localHttpBase } from "../net/listen-ports";
@@ -132,8 +133,6 @@ const PRESETS: Record<
   },
 };
 
-/** The self-proxy model when no MARINA_DECISION_MODEL is set: Marina's default upstream. */
-export const SELF_CLASSIFIER_MODEL = "marina/default";
 /** A classifier through the self-proxy may take several calls (auto method). */
 const SELF_CLASSIFIER_TIMEOUT_MS = 15_000;
 
@@ -201,13 +200,18 @@ export function selfDecisionBaseUrl(env: NodeJS.ProcessEnv = process.env): strin
   return `${localHttpBase(env)}/v1`;
 }
 
-/** A chat classifier on Marina's own `/v1`, when the world routes any model at all. */
+/**
+ * A chat classifier on Marina's own `/v1`, when the world routes any model at all.
+ * Its model is the `decisions` role: MARINA_DECISION_MODEL, else
+ * `role:decisions=`, else MARINA_MODEL_TIER_STRONG, else `marina/default` —
+ * never the cheap tier (src/config/model-tiers.ts).
+ */
 function selfConfig(env: NodeJS.ProcessEnv): DecisionConfig | undefined {
   if (availableModels(env).length === 0) return undefined;
   const tuning = classifierTuning(env);
   return {
     kind: "marina-self",
-    model: env.MARINA_DECISION_MODEL?.trim() || SELF_CLASSIFIER_MODEL,
+    model: env.MARINA_DECISION_MODEL?.trim() || roleModelFromEnv("decisions", env),
     baseUrl: selfDecisionBaseUrl(env),
     timeoutMs:
       positiveNumberFromEnv("MARINA_DECISION_TIMEOUT_MS", env) ?? SELF_CLASSIFIER_TIMEOUT_MS,
@@ -427,10 +431,6 @@ export function lightningReadiness(env: NodeJS.ProcessEnv = process.env): Lightn
 /** Send the agent's intent + trust labels with gate calls (default on; `off` sends the call only). */
 export function decisionGateContextEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.MARINA_DECISION_GATE_CONTEXT?.trim().toLowerCase() !== "off";
-}
-
-export function decisionGateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.MARINA_DECISION_GATE?.trim().toLowerCase() === "on" && !!decisionConfigFromEnv(env);
 }
 
 /** The judge the research pipelines (forecast, arena) use unless told otherwise. */

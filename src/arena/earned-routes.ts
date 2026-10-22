@@ -17,6 +17,14 @@
  *   challenger every runnable forecaster spec with shadow records in the family
  *              (`arena_shadow`, the last record before each lock) — the
  *              operator decides which ones run (`MARINA_ARENA_SHADOW_CHALLENGERS`)
+ *   outcomes   the shared outcome rows too (`MARINA_ARENA_ROUTE_OUTCOMES`, default
+ *              on): a mechanical forecast outcome tagged `family:<tracker>`,
+ *              `method:<runnable spec>` and `arena:<round>` whose filed answer
+ *              is a number (mean, sd) — scored by the same `scoreShadow`
+ *              (identical skill scale, last record before the lock). Our own
+ *              arena filer's rows (`marina:arena/<entrant>`, written by
+ *              `settle.ts`) are the `filed` evidence already, and a (round,
+ *              spec) the arena tables hold is never counted twice
  *   evidence   per-round skill vs the arena's persistence (CRPS / energy /
  *              rank-biased overlap — `scoreShadow`), only for rounds resolved by
  *              now and whose outcome was not public before their lock
@@ -30,6 +38,8 @@
  */
 
 import { earnedPick, type PairedChallenger } from "../forecast/routing";
+import { outcomeRefs } from "../forecast/routing-refs";
+import type { MarinaDB } from "../persistence/database";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
 import { parseForecasterSpec } from "./config";
 import type { ArenaData } from "./data";
@@ -51,13 +61,28 @@ export function arenaRouteMinN(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isFinite(n) && n >= 5 ? n : DEFAULT_ARENA_ROUTE_MIN_N;
 }
 
+/**
+ * `MARINA_ARENA_ROUTE_OUTCOMES=on|off` (default on): whether route evidence
+ * also reads the shared outcome rows (`family:` / `method:` / `arena:` tags).
+ */
+export function arenaRouteOutcomesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env.MARINA_ARENA_ROUTE_OUTCOMES?.trim().toLowerCase();
+  return !(v === "off" || v === "false" || v === "0");
+}
+
+/** The outcome-path reader route evidence can use (the world database). */
+export type RouteOutcomeReader = Pick<MarinaDB, "listOutcomes" | "getForecastAnswer">;
+
 /** One forecaster's score on one resolved round. */
 export interface RouteEvidence {
   roundId: string;
   /** The round's tracker (the arena family). */
   family: string;
-  /** `filed` = our scored filing; `shadow` = a shadow record. */
-  source: "filed" | "shadow";
+  /**
+   * `filed` = our scored filing; `shadow` = a shadow record; `outcome` = a
+   * scored answer another producer filed on the shared outcome path.
+   */
+  source: "filed" | "shadow" | "outcome";
   /** The runnable forecaster spec (a filing: the spec its note names). */
   spec: string;
   /** Skill vs the arena's persistence (higher is better). */
@@ -99,6 +124,47 @@ function runnable(spec: string): boolean {
   }
 }
 
+/**
+ * Pure: one family's per-round skill per forecaster spec, visible at `now` —
+ * the default's (its scored filings by method kind, else records of its exact
+ * spec) and every runnable challenger's. What `chooseArenaRoute` decides on
+ * and the read-only route view (`forecast routes`) reports.
+ */
+export function arenaRouteScores(input: {
+  family: string;
+  defaultSpec: string;
+  evidence: RouteEvidence[];
+  now: number;
+}): {
+  visible: RouteEvidence[];
+  incumbent: Map<string, number>;
+  scores: Map<string, Map<string, number>>;
+} {
+  const { family, defaultSpec } = input;
+  const visible = input.evidence.filter(
+    (e) => e.family === family && e.visibleAt <= input.now && Number.isFinite(e.skill),
+  );
+  const kind = specKind(defaultSpec);
+  // Incumbent: the scored filing of the default's kind, else a shadow of its exact spec.
+  const incumbent = new Map<string, number>();
+  for (const e of visible) {
+    if (e.source === "filed" && specKind(e.spec) === kind) incumbent.set(e.roundId, e.skill);
+  }
+  for (const e of visible) {
+    if (e.source !== "filed" && e.spec === defaultSpec && !incumbent.has(e.roundId))
+      incumbent.set(e.roundId, e.skill);
+  }
+  const scores = new Map<string, Map<string, number>>([[defaultSpec, incumbent]]);
+  for (const e of visible) {
+    if (e.spec === defaultSpec || (e.source === "filed" && specKind(e.spec) === kind)) continue;
+    if (!runnable(e.spec)) continue;
+    const by = scores.get(e.spec) ?? new Map<string, number>();
+    by.set(e.roundId, e.skill);
+    scores.set(e.spec, by);
+  }
+  return { visible, incumbent, scores };
+}
+
 /** Pure: the route for one family given the evidence visible at `now`. */
 export function chooseArenaRoute(input: {
   family: string;
@@ -122,27 +188,7 @@ export function chooseArenaRoute(input: {
       reason: "pinned route: not replaced by evidence",
     };
   }
-  const visible = input.evidence.filter(
-    (e) => e.family === family && e.visibleAt <= input.now && Number.isFinite(e.skill),
-  );
-  const kind = specKind(defaultSpec);
-  // Incumbent: the scored filing of the default's kind, else a shadow of its exact spec.
-  const incumbent = new Map<string, number>();
-  for (const e of visible) {
-    if (e.source === "filed" && specKind(e.spec) === kind) incumbent.set(e.roundId, e.skill);
-  }
-  for (const e of visible) {
-    if (e.source === "shadow" && e.spec === defaultSpec && !incumbent.has(e.roundId))
-      incumbent.set(e.roundId, e.skill);
-  }
-  const scores = new Map<string, Map<string, number>>([[defaultSpec, incumbent]]);
-  for (const e of visible) {
-    if (e.spec === defaultSpec || (e.source === "filed" && specKind(e.spec) === kind)) continue;
-    if (!runnable(e.spec)) continue;
-    const by = scores.get(e.spec) ?? new Map<string, number>();
-    by.set(e.roundId, e.skill);
-    scores.set(e.spec, by);
-  }
+  const { visible, incumbent, scores } = arenaRouteScores(input);
   const candidates = [...scores.keys()].filter((s) => s !== defaultSpec).sort();
   const pick = earnedPick({ defaultId: defaultSpec, candidates, scores, minN: input.minN });
   const newest = visible.reduce((t, e) => Math.max(t, e.visibleAt), 0);
@@ -177,10 +223,14 @@ export async function loadRouteEvidence(
   store: Pick<ArenaStore, "listArenaSubmissions" | "listArenaShadow">,
   data: ArenaData,
   entrant: string,
+  /** The shared outcome rows (none, or `MARINA_ARENA_ROUTE_OUTCOMES=off`: arena tables only). */
+  outcomes?: RouteOutcomeReader,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<RouteEvidence[]> {
   const [resolved, rounds] = await Promise.all([data.resolutions(), data.rounds()]);
   const byId = new Map(rounds.map((r) => [r.round_id, r]));
   const FILED = "\u0000filed\u0000";
+  const OUTCOME = "\u0000outcome\u0000";
   const rows: Array<{
     round_id: string;
     forecaster: string;
@@ -207,6 +257,15 @@ export async function loadRouteEvidence(
     if (!runnable(spec)) continue;
     rows.push({ ...row, forecaster: spec });
   }
+  if (outcomes && arenaRouteOutcomesEnabled(env)) {
+    const held = new Set(
+      rows.map(
+        (r) =>
+          `${r.forecaster.startsWith(FILED) ? r.forecaster.slice(FILED.length) : r.forecaster}\u0000${r.round_id}`,
+      ),
+    );
+    rows.push(...outcomeRouteRows(outcomes, entrant, held, OUTCOME));
+  }
   const out: RouteEvidence[] = [];
   for (const s of await scoreShadow(data, rows)) {
     const round = byId.get(s.roundId) ?? (await data.round(s.roundId));
@@ -217,13 +276,64 @@ export async function loadRouteEvidence(
       typeof resolution?.resolved_at === "string" ? resolution.resolved_at : round.release_at,
     );
     const filed = s.forecaster.startsWith(FILED);
+    const fromOutcome = s.forecaster.startsWith(OUTCOME);
     out.push({
       roundId: s.roundId,
       family: s.tracker,
-      source: filed ? "filed" : "shadow",
-      spec: filed ? s.forecaster.slice(FILED.length) : s.forecaster,
+      source: filed ? "filed" : fromOutcome ? "outcome" : "shadow",
+      spec: filed
+        ? s.forecaster.slice(FILED.length)
+        : fromOutcome
+          ? s.forecaster.slice(OUTCOME.length)
+          : s.forecaster,
       skill: s.skill,
       visibleAt: Number.isFinite(at) ? at : Number.POSITIVE_INFINITY,
+    });
+  }
+  return out;
+}
+
+/**
+ * Scoreable rows from the shared outcome path: mechanical forecast outcomes
+ * tagged with a family, a runnable method spec and an arena round, whose filed
+ * answer is a number with an sd. Our own arena filer's rows and every
+ * (spec, round) the arena tables already hold (`held`) are left out, so nothing
+ * is counted twice. The record's family is the round's own tracker, as for
+ * every arena record (`scoreShadow`).
+ */
+function outcomeRouteRows(
+  db: RouteOutcomeReader,
+  entrant: string,
+  held: Set<string>,
+  marker: string,
+): Array<{
+  round_id: string;
+  forecaster: string;
+  forecast: string;
+  cost_usd: number;
+  created_at: number;
+}> {
+  const own = `marina:arena/${entrant}`;
+  const out: ReturnType<typeof outcomeRouteRows> = [];
+  for (const o of db.listOutcomes({ kind: "forecast", basis: "mechanical", limit: 10_000 })) {
+    if (o.owner === own || !o.subject.startsWith("forecast:")) continue;
+    const refs = outcomeRefs(o.refs_json);
+    const family = refs.find((r) => r.startsWith("family:"))?.slice(7);
+    const spec = refs.find((r) => r.startsWith("method:"))?.slice(7);
+    const roundId = refs.find((r) => r.startsWith("arena:"))?.slice(6);
+    if (!family || !spec || !roundId || !runnable(spec)) continue;
+    const key = `${spec}\u0000${roundId}`;
+    if (held.has(key)) continue;
+    const answer = db.getForecastAnswer(Number(o.subject.slice("forecast:".length)));
+    if (answer?.kind !== "number" || answer.mean === null || !(answer.sd !== null && answer.sd > 0))
+      continue;
+    held.add(key);
+    out.push({
+      round_id: roundId,
+      forecaster: `${marker}${spec}`,
+      forecast: JSON.stringify({ topline: { mean: answer.mean, sd: answer.sd } }),
+      cost_usd: 0,
+      created_at: answer.created_at,
     });
   }
   return out;

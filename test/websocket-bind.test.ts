@@ -3,14 +3,23 @@
 
 // Split from websocket.test.ts (bind-hostname describe). Assertions unchanged.
 
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { preserveListenPortsForTests } from "../src/net/listen-ports";
 import { isLoopbackHostname } from "../src/net/loopback";
 import { resolveWsBindHostname, WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, makeTestRoom } from "./helpers";
 import { tmpDbPath } from "./websocket-helpers";
+
+// Servers here bind ephemeral ports and record them process-wide; restore the
+// recorded ports so later files in the same process see the defaults.
+let listenPorts: Disposable | undefined;
+beforeAll(() => {
+  listenPorts = preserveListenPortsForTests();
+});
+afterAll(() => listenPorts?.[Symbol.dispose]());
 
 describe("WebSocket bind hostname (secure-by-default loopback)", () => {
   it("resolveWsBindHostname defaults to loopback (127.0.0.1) when unset", () => {
@@ -57,7 +66,7 @@ describe("WebSocket bind hostname (secure-by-default loopback)", () => {
     const db = new MarinaDB(dbPath);
     const engine = new Engine({ startRoom: roomId("test/lobby"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/lobby"), makeTestRoom({ short: "L", long: "L" }));
-    const server = new WebSocketServer(engine, 15398);
+    const server = new WebSocketServer(engine, 0);
     try {
       server.start();
       expect(server.getBoundHostname()).toBe("127.0.0.1");
@@ -81,7 +90,7 @@ describe("WebSocket bind hostname (secure-by-default loopback)", () => {
     const db = new MarinaDB(dbPath);
     const engine = new Engine({ startRoom: roomId("test/lobby"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/lobby"), makeTestRoom({ short: "L", long: "L" }));
-    const server = new WebSocketServer(engine, 15399);
+    const server = new WebSocketServer(engine, 0);
     try {
       server.start();
       expect(server.getBoundHostname()).toBe("127.0.0.1");

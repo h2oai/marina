@@ -7,8 +7,7 @@ This page catalogs the available adapters. The local ledger records attempts; ea
 
 ## The discipline
 
-Every entry follows the same rules, and they are the reason a placement here is worth more than a
-self-reported number:
+Every adapter follows the same rules:
 
 - **Submission needs operator authorization.** File-based adapters prepare artifacts for review.
   Explicit upload commands and configured bots such as Metaculus can post externally; review the
@@ -33,11 +32,10 @@ self-reported number:
 | [Metaculus](metaculus.md) | Forecasting tournaments (FutureEval, MiniBench) | `bun run metaculus pass` | Bot posts forecast + reasoning | Wired |
 | [ForecastBench](forecastbench.md) | Forecasting (500 Q/round) | `bun run forecastbench run` | Operator uploads set file | Wired |
 | [SWE-bench / Pro](swebench.md) | Coding (real repo repair) | `bun run repro swebench-verified` | Model patches via GitHub PR | Runs, manual submit |
-| HLE-Verified | Reasoning (gated) | `bun run repro hle-verified` | No open leaderboard | Internal validation |
 
-Two tracks share one core: **forecasting** (Arena, FutureX, Metaculus, ForecastBench) all ride the
-same typed forecaster, so each placement compounds confidence in one engine. **Agentic**
-(BrowseComp-Plus, τ²-bench, SWE-bench) validate the agent, coordination, and coding cores.
+The adapters fall into two groups. The **forecasting** adapters (Arena, FutureX, Metaculus,
+ForecastBench) use the same typed forecaster. The **agentic** adapters (BrowseComp-Plus, τ²-bench,
+SWE-bench) run the agent, coordination and coding cores.
 
 ## Current status
 

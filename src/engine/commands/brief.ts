@@ -200,7 +200,7 @@ function sendBootstrap(ctx: RoomContext, eid: EntityId, _entity: Entity, deps: B
 
   // Arrival digest — recent canonical history so newcomers have shared social
   // context. Narrative + digest only (engine event entries are noisy templated
-  // titles and don't give the arrival a sense of the polity's interpretation).
+  // titles and don't give the arrival the world's own account of what happened).
   if (deps.db) {
     const recent = [
       ...deps.db.queryChronicle({ kind: "digest", limit: 2 }),

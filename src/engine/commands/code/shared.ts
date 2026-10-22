@@ -21,6 +21,7 @@ import type {
 import { failCommandResponse } from "../../command-response";
 import { sanitizeEntityName } from "../../entity-name";
 import type { VisualDescription, VisualSource } from "../../media/vision";
+import type { TellDeps } from "../tell";
 
 export const ACTIVE_SESSION_KEY = "coding_session_id";
 export const ACTIVE_MODAL_KEY = "active_modal";
@@ -430,6 +431,8 @@ export interface CodeDeps {
   authRequired?: boolean;
   /** Interactive-approval timeout override (MARINA_CODE_EXEC_APPROVAL_TIMEOUT_MS). */
   execApprovalTimeoutMs?: number;
+  /** Delivers review requests and rework notices as ordinary `tell`s. */
+  tellDeps?: TellDeps;
   /**
    * Per-invocation: true when the ACTING caller is telnet-origin, so the resolved
    * workspace must refuse ALL host-process spawning (chokepoint backstop behind

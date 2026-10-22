@@ -28,9 +28,9 @@
  * separately signed document, shipped beside a bundle or on its own.
  */
 
-import { createHash } from "node:crypto";
 import type { RoleBundle } from "../agent/role-bundle";
 import { canonicalFederationJson } from "../net/federation-crypto";
+import { sha256Hex } from "../security/hash";
 import { wilsonBounds, Z95 } from "../stats";
 
 export const LEARNED_SCHEMA = "marina.learned.v1";
@@ -317,10 +317,6 @@ export interface Revocations {
   publisher_key_id: string;
   issued_at: string;
   entries: RevocationEntry[];
-}
-
-export function sha256Hex(data: string | Uint8Array): string {
-  return createHash("sha256").update(data).digest("hex");
 }
 
 /** Digest of a manifest as signed (the identity a child names as its parent). */

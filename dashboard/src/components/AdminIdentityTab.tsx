@@ -6,7 +6,7 @@
 import { Shield } from "lucide-react";
 import { useState } from "react";
 import { usePrincipals } from "../hooks/use-api";
-import { describeApiError, postApi } from "../lib/api";
+import { describeApiError, isForbiddenApiError, OPERATOR_ONLY_TEXT, postApi } from "../lib/api";
 import { PanelSkeleton } from "./OperatorFeedback";
 
 export function IdentityTab() {
@@ -48,7 +48,11 @@ export function IdentityTab() {
         </div>
       )}
       {query.isLoading && <PanelSkeleton />}
-      {query.isError && <div className="text-danger">Identity registry unavailable.</div>}
+      {query.isError && (
+        <div className={isForbiddenApiError(query.error) ? "text-text-dim" : "text-danger"}>
+          {isForbiddenApiError(query.error) ? OPERATOR_ONLY_TEXT : "Identity registry unavailable."}
+        </div>
+      )}
       {(query.data ?? []).map((principal) => (
         <article key={principal.principal_id} className="rounded border border-border bg-bg/50 p-2">
           <div className="flex items-start justify-between gap-2">

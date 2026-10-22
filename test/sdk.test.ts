@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
-import { MarinaAgent, MarinaClient } from "../src/sdk/client";
+import { CommandError, MarinaAgent, MarinaClient } from "../src/sdk/client";
 import { roomId } from "../src/types";
 import { cleanupDb, makeTestRoom, until } from "./helpers";
 
@@ -275,9 +275,10 @@ describe("MarinaClient SDK", () => {
       target: "ReceiptPeer",
       message: "answer [re:abcdef]",
     });
-    expect((await client.command("tell MissingPeer answer")).some((p) => p.data.delivery)).toBe(
-      false,
-    );
+    // A refused tell fails the command (no receipt), so callers never read it as sent.
+    const refused = await client.command("tell MissingPeer answer").catch((error) => error);
+    expect(refused).toBeInstanceOf(CommandError);
+    expect((refused as CommandError).perceptions.some((p) => p.data.delivery)).toBe(false);
     peer.disconnect();
     client.disconnect();
   });

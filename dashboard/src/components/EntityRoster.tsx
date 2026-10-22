@@ -37,6 +37,7 @@ import { PinToCanvas } from "./CanvasReference";
 import { EntitySymmetryBar } from "./EntitySymmetryBar";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { AgentOpsBadges, opsRowsByName } from "./ops/AgentOpsBadges";
+import { ResidentName } from "./ResidentName";
 import { WhoLink } from "./WhoLink";
 
 export function EntityRoster({
@@ -141,9 +142,9 @@ export function EntityRoster({
                     type="button"
                     aria-expanded={isSelected}
                     onClick={() => selectEntity(isSelected ? null : e.name)}
-                    className="flex-1 truncate text-left text-text-bright"
+                    className="flex min-w-0 flex-1 text-left text-text-bright"
                   >
-                    {e.name}
+                    <ResidentName name={e.name} vendor={e.vendor} presence={e.presence} />
                   </button>
                   <span
                     className="shrink-0 rounded px-1 text-[8px] uppercase leading-tight tracking-wide"
@@ -860,7 +861,7 @@ export function EntityExpandedDetail({
                 // biome-ignore lint/suspicious/noArrayIndexKey: activity slice is rendered in fixed order
                 <div key={i} className="flex gap-1 text-[10px] leading-tight">
                   <span className="text-text-dim">{formatTime(a.timestamp)}</span>
-                  <span className="text-text">{a.input ?? a.type}</span>
+                  <span className="text-text">{a.input ?? a.verb ?? a.type}</span>
                 </div>
               ))}
             </div>

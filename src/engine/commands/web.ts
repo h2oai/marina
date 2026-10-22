@@ -3,8 +3,9 @@
 
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
-import type { ConnectorRuntime } from "../connector-runtime";
+import { type ConnectorRuntime, readPageVia } from "../connector-runtime";
 import { getErrorMessage } from "../errors";
+import { currentEvidenceCutoff, fenceRefusal } from "../evidence-fence";
 import { extractReadableText } from "../html-text";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 import { DATE_BOUND_PROVIDER_NAMES } from "../search-providers/asof-providers";
@@ -158,8 +159,12 @@ Usage:
         case "fetch":
         case "read":
           return handleFetch(ctx, input.entity, tokens.slice(1), deps.connectorRuntime);
-        case "swarm":
+        case "swarm": {
+          // Not bounded by a date: refused under the as-of fence (defense in depth).
+          const fenced = currentEvidenceCutoff();
+          if (fenced) return ctx.send(input.entity, fenceRefusal("web swarm", Date.parse(fenced)));
           return handleSwarm(ctx, input.entity, tokens.slice(1), deps.connectorRuntime);
+        }
         case "multisearch":
           return handleMultiSearch(
             ctx,
@@ -188,7 +193,11 @@ async function handleSearch(
     ctx.send(eid, `${parsed.error}. Usage: web search [engines:<a,b>] [limit:N] <query>`);
     return;
   }
-  const { query, engines, providers, maxResults, before } = parsed;
+  const { query, engines, providers, maxResults } = parsed;
+  // The as-of fence (src/engine/evidence-fence.ts): a fenced search is always
+  // bounded, at the earlier of the caller's bound and the cutoff, so only
+  // date-strict providers answer and every result is re-checked against it.
+  const before = earlierBound(parsed.before, currentEvidenceCutoff());
   if (!query) {
     ctx.send(eid, "Usage: web search [engines:<a,b>] [limit:N] [before:<date>] <query>");
     return;
@@ -246,10 +255,13 @@ async function handleMultiSearch(
     return;
   }
 
-  // Execute all queries in parallel
+  // Execute all queries in parallel (bounded by the as-of fence when one is set).
+  const before = currentEvidenceCutoff();
   const allResults = await Promise.all(
     queries.map((q) =>
-      providerSearch(q, { maxResults: 5 }, runtime, eid).catch(() => [] as SearchResult[]),
+      providerSearch(q, { maxResults: 5, ...(before ? { before } : {}) }, runtime, eid).catch(
+        () => [] as SearchResult[],
+      ),
     ),
   );
 
@@ -309,7 +321,13 @@ async function handleFetch(
     return;
   }
 
+  const fenced = currentEvidenceCutoff();
   const corpusRef = parseCorpusUrl(url);
+  if (corpusRef && fenced) {
+    // A local corpus has no publication dates to bound: refused under the fence.
+    ctx.send(eid, fenceRefusal("web fetch corpus://", Date.parse(fenced)));
+    return;
+  }
   if (corpusRef) {
     let doc: ReturnType<typeof getCorpusDocument>;
     try {
@@ -336,12 +354,14 @@ async function handleFetch(
   }
 
   const normalized = url.startsWith("http") ? url : `https://${url}`;
-  if (typeof mods.values.asof === "string") {
-    const asOf = parseBound(mods.values.asof);
-    if (!asOf) {
+  if (typeof mods.values.asof === "string" || fenced) {
+    const asked = typeof mods.values.asof === "string" ? parseBound(mods.values.asof) : undefined;
+    if (typeof mods.values.asof === "string" && !asked) {
       ctx.send(eid, `asof:${mods.values.asof} is not a date (YYYY-MM-DD or ISO).`);
       return;
     }
+    // Under the as-of fence a live fetch becomes the archived page at the cutoff.
+    const asOf = earlierBound(asked, fenced)!;
     const page = await waybackFetch(runtime, normalized, asOf, eid);
     if (!page) {
       ctx.send(eid, `No archived capture of ${normalized} at or before ${asOf}.`);
@@ -364,8 +384,13 @@ async function handleFetch(
     );
     return;
   }
-  const result = await runtime.httpGet(normalized, eid);
+  const result = await readPageVia(runtime, normalized, eid);
 
+  if ("refused" in result) {
+    // robots.txt disallows this page for MarinaResearch: a clear answer, not a failure.
+    ctx.send(eid, `Not read: ${result.error}.`);
+    return;
+  }
   if ("error" in result) {
     ctx.send(eid, `Fetch failed: ${result.error}`);
     return;
@@ -397,6 +422,13 @@ async function handleFetch(
 }
 
 // ─── Formatting ─────────────────────────────────────────────────────────────
+
+/** The earlier of two ISO bounds (either may be absent). */
+function earlierBound(a: string | undefined, b: string | undefined): string | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(a) <= Date.parse(b) ? a : b;
+}
 
 function formatSearchResults(query: string, results: SearchResult[]): string {
   const lines: string[] = [header(`Search: ${query}`), separator()];

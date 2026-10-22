@@ -70,6 +70,11 @@ export function maskSensitiveText(value: string, maxChars: number): string {
   return masked.length > maxChars ? `${masked.slice(0, maxChars)}…` : masked;
 }
 
+/** Mask key-shaped strings only (no length cap, emails kept). */
+export function maskSecretShapes(value: string): string {
+  return value.replace(SECRET, "<secret>");
+}
+
 export function redactToolCall(
   toolName: string,
   args: Record<string, unknown>,

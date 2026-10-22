@@ -226,6 +226,9 @@ export function deleteRole(db: Database, name: string): void {
 
 // ─── Agent Configs ─────────────────────────────────────────────────────
 
+/** Who runs an agent account (migration 173). */
+export type AgentRuntimeKind = "internal" | "supervised";
+
 export function saveAgentConfig(
   db: Database,
   opts: {
@@ -243,6 +246,13 @@ export function saveAgentConfig(
      * a `model`/`role` reconfigure never clears an earlier `thinking` choice.
      */
     thinkingLevel?: AgentThinkingLevel;
+    /**
+     * Who runs the account (migration 173). `undefined` keeps the stored value
+     * (a new row is `internal`), so reconfiguring never changes the runtime.
+     */
+    runtime?: AgentRuntimeKind;
+    /** Native adapter id for a supervised resident. `undefined` keeps the stored value. */
+    vendor?: string;
   },
 ): void {
   const supports = opts.supports ?? { text: true };
@@ -252,11 +262,13 @@ export function saveAgentConfig(
     ...(supports.video ? { video: true } : {}),
   });
   db.run(
-    `INSERT INTO agent_configs (name, model, role, goal, key_name, room, supports, spawned_by, thinking_level, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO agent_configs (name, model, role, goal, key_name, room, supports, spawned_by, thinking_level, runtime, vendor, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(name) DO UPDATE SET model=excluded.model, role=excluded.role, goal=excluded.goal,
        key_name=excluded.key_name, room=excluded.room, supports=excluded.supports, spawned_by=excluded.spawned_by,
-       thinking_level=COALESCE(excluded.thinking_level, agent_configs.thinking_level)`,
+       thinking_level=COALESCE(excluded.thinking_level, agent_configs.thinking_level),
+       runtime=COALESCE(?, agent_configs.runtime),
+       vendor=COALESCE(excluded.vendor, agent_configs.vendor)`,
     [
       opts.name,
       opts.model,
@@ -267,7 +279,10 @@ export function saveAgentConfig(
       supportsJson,
       opts.spawnedBy,
       opts.thinkingLevel ?? null,
+      opts.runtime ?? "internal",
+      opts.vendor ?? null,
       Date.now(),
+      opts.runtime ?? null,
     ],
   );
 }
@@ -289,6 +304,19 @@ export function getAgentConfigsBySpawnedBy(db: Database, spawnedBy: string): Age
   return db
     .query("SELECT * FROM agent_configs WHERE spawned_by = ? ORDER BY name")
     .all(spawnedBy) as AgentConfigRow[];
+}
+
+/**
+ * Bind (or clear, with `null`) the routing session that runs a supervised
+ * resident. Only `supervised` rows are touched; returns whether one was.
+ */
+export function setAgentRunSession(db: Database, name: string, sessionId: string | null): boolean {
+  return (
+    db.run("UPDATE agent_configs SET run_session = ? WHERE name = ? AND runtime = 'supervised'", [
+      sessionId,
+      name,
+    ]).changes > 0
+  );
 }
 
 /**
@@ -401,6 +429,67 @@ export function recordAttentionFeedback(
     [delta, name],
   );
   return getAgentConfig(db, name);
+}
+
+/** The final-reply relay of a supervised resident (migration 174); `all` clears it. */
+export function setAttentionRelay(db: Database, name: string, relay: AttentionRelay): boolean {
+  return (
+    db.run("UPDATE agent_configs SET attention_relay = ? WHERE name = ?", [
+      relay === "all" ? null : relay,
+      name,
+    ]).changes > 0
+  );
+}
+
+/** One attention-bridge decision (migration 174): refs and reasons, never content. */
+export interface AttentionWakeInput {
+  entity: string;
+  perceptionRef?: string;
+  source: string;
+  decision: string;
+  reason: string;
+  hop: number;
+  steered: boolean;
+  at: number;
+}
+
+export interface AttentionWakeRow {
+  id: number;
+  entity: string;
+  perception_ref: string | null;
+  source: string;
+  decision: string;
+  reason: string;
+  hop: number;
+  steered: number;
+  at: number;
+}
+
+export function recordAttentionWakes(db: Database, wakes: readonly AttentionWakeInput[]): number {
+  const insert = db.prepare(
+    `INSERT INTO attention_wakes (entity, perception_ref, source, decision, reason, hop, steered, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  db.transaction(() => {
+    for (const wake of wakes)
+      insert.run(
+        wake.entity,
+        wake.perceptionRef ?? null,
+        wake.source,
+        wake.decision,
+        wake.reason,
+        wake.hop,
+        wake.steered ? 1 : 0,
+        wake.at,
+      );
+  })();
+  return wakes.length;
+}
+
+export function listAttentionWakes(db: Database, entity: string, limit = 50): AttentionWakeRow[] {
+  return db
+    .query("SELECT * FROM attention_wakes WHERE entity = ? ORDER BY id DESC LIMIT ?")
+    .all(entity, Math.max(1, Math.min(500, limit))) as AttentionWakeRow[];
 }
 
 export function recordAutomaticAttentionOutcome(
@@ -660,6 +749,12 @@ export interface AgentConfigRow {
   spawned_by: string;
   /** Persisted reasoning depth (migration 120); NULL = never set. */
   thinking_level: string | null;
+  /** Who runs the account (migration 173): the in-process runtime or a local supervisor. */
+  runtime: AgentRuntimeKind;
+  /** Native adapter id of a supervised resident (migration 173); NULL for internal rows. */
+  vendor: string | null;
+  /** Routing session of the resident's current supervised run (migration 173). */
+  run_session: string | null;
   created_at: number;
   attention_mode: "focused" | "balanced" | "open";
   attention_threshold: number;
@@ -667,7 +762,12 @@ export interface AgentConfigRow {
   attention_noise: number;
   attention_auto_success: number;
   attention_auto_failure: number;
+  /** Final-reply relay of a supervised resident (migration 174); NULL = `all`. */
+  attention_relay: AttentionRelay | null;
 }
+
+/** Whether a woken supervised turn's final reply is relayed (`all`) or not (`explicit`). */
+export type AttentionRelay = "all" | "explicit";
 
 export interface ApiKeyRow {
   name: string;

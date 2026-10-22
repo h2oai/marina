@@ -15,12 +15,12 @@ import { answerOutcome, itemId } from "../benchmarks/mind2web2/ledger";
 import { ARMS, M2W2_DENY, M2W2_EXCLUDE } from "../benchmarks/mind2web2/run";
 import { metrics, pairedDifference, scoredAnswers } from "../benchmarks/mind2web2/score";
 import { parseCsv, splitTasks, taskFromScript, tasksFromCsv } from "../benchmarks/mind2web2/tasks";
-import { excludedSource } from "../src/arena/research/web-search";
 import type { SearchProvider } from "../src/engine/search-providers/index";
 import { guardedFetch } from "../src/net/url-guard";
 import { BARRED_REASON, deniedByPattern } from "../src/research/page-reader";
 import { ProvenanceCache } from "../src/research/provenance-cache";
 import { researchEnvironment, withLessons } from "../src/research/web-agent";
+import { excludedSource } from "../src/research/web-search";
 
 const dirs: string[] = [];
 function tempDir(): string {

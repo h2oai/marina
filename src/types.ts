@@ -24,6 +24,12 @@ export interface RoomModule {
   // toward the 200ms tick budget (which guards the synchronous portion).
   onTick?: (ctx: RoomContext) => void | Promise<void>;
   canEnter?: (ctx: RoomContext, entity: EntityId) => true | string;
+  /**
+   * The room's turn rule (`debate`, `chorus`, `verification`): after each `say`
+   * the formation mediator posts one structural line naming the next actor
+   * (src/coordination/room-formations.ts). Unset = no turn rule.
+   */
+  formation?: string;
 }
 
 // ─── Commands ────────────────────────────────────────────────────────────────
@@ -74,6 +80,12 @@ export interface CommandDef {
    * behind both; the handler's own inline checks still apply.
    */
   readOnlyForm?: (input: CommandInput) => boolean;
+  /**
+   * Subcommands whose arguments carry credentials (`key add`, `connect auth`).
+   * The recorded `command` event keeps only `<verb> <subcommand> [redacted]`
+   * for these; `"*"` covers every form. See src/engine/command-redaction.ts.
+   */
+  sensitiveSubcommands?: readonly string[];
 }
 
 // ─── Room Context (injected into room modules) ──────────────────────────────
@@ -91,7 +103,12 @@ export interface RoomContext {
   broadcast(message: string, tag?: string): void;
 
   /** Broadcast to all except one entity */
-  broadcastExcept(exclude: EntityId, message: string, tag?: string): void;
+  broadcastExcept(
+    exclude: EntityId,
+    message: string,
+    tag?: string,
+    metadata?: Record<string, unknown>,
+  ): void;
 
   /** Get an entity by ID (if in this room) */
   getEntity(id: EntityId): Entity | undefined;
@@ -456,8 +473,9 @@ export type EngineEvent =
   | { type: "tick"; timestamp: number }
   | { type: "connect"; connectionId: string; protocol: ConnectionProtocol; timestamp: number }
   | { type: "disconnect"; connectionId: string; timestamp: number }
-  | { type: "entity_enter"; entity: EntityId; room: RoomId; timestamp: number }
-  | { type: "entity_leave"; entity: EntityId; room: RoomId; timestamp: number }
+  /** `name` is the entity's display name at the time, so a reader can name someone already gone. */
+  | { type: "entity_enter"; entity: EntityId; name?: string; room: RoomId; timestamp: number }
+  | { type: "entity_leave"; entity: EntityId; name?: string; room: RoomId; timestamp: number }
   | { type: "task_claimed"; entity: EntityId; taskId: number; timestamp: number }
   | { type: "task_submitted"; entity: EntityId; taskId: number; timestamp: number }
   | {
@@ -529,9 +547,112 @@ export type EngineEvent =
   | {
       type: "channel_message";
       entity: EntityId;
+      /** The stored `channel_messages.id` (feed ref `channel_msg:<id>`). */
       messageId: number;
       channelName: string;
       content: string;
+      /** Causal envelope (`src/engine/message-envelope.ts`). */
+      cause?: string;
+      depth?: number;
+      timestamp: number;
+    }
+  /**
+   * Room speech was delivered. Content-free by design: names, refs and the
+   * causal envelope only (`src/engine/message-envelope.ts`); the words stay in
+   * the perceptions of those present.
+   */
+  | {
+      type: "say_sent";
+      entity: EntityId;
+      /** Sender name. */
+      from: string;
+      room: RoomId;
+      messageRef: string;
+      cause?: string;
+      depth: number;
+      timestamp: number;
+    }
+  /**
+   * A supervised resident's attention bridge kept a world perception
+   * (src/routing/attention-bridge.ts): `now` woke or steered it, `next` and
+   * `context` wait for its next digest. Names and reasons only.
+   */
+  | {
+      type: "attention_wake";
+      name: string;
+      source: string;
+      decision: "now" | "next" | "context";
+      steered: boolean;
+      timestamp: number;
+    }
+  /** A supervised resident's presence changed (idle, running, waiting for its owner…). */
+  | {
+      type: "agent_status";
+      name: string;
+      status: "starting" | "idle" | "running" | "waiting" | "stopped" | "failed" | "disconnected";
+      /** How world messages reach it while it works. */
+      steer: "mid-turn" | "next-turn" | "none";
+      timestamp: number;
+    }
+  /**
+   * A room formation's mediator posted its structural line
+   * (src/coordination/room-formations.ts). Names only: who is now owed.
+   */
+  | {
+      type: "room_formation_turn";
+      room: RoomId;
+      formation: string;
+      phase: "open" | "turn" | "close" | "closed";
+      next: string[];
+      timestamp: number;
+    }
+  /** A direct message (`tell` / `re`) was delivered. Content-free, like `say_sent`. */
+  | {
+      type: "tell_sent";
+      entity: EntityId;
+      /** Sender name. */
+      from: string;
+      /** Recipient name. */
+      to: string;
+      messageRef: string;
+      cause?: string;
+      depth: number;
+      timestamp: number;
+    }
+  /**
+   * Code review lifecycle (`code review request|verdict|approve|reject`).
+   * Content-free: names, ids and outcomes only; the diff, claims and findings
+   * stay in the review's artifacts.
+   */
+  | {
+      type: "review_requested";
+      entity: EntityId;
+      reviewId: string;
+      author: string;
+      reviewer: string;
+      round: number;
+      /** How the reviewer was chosen: named, or `auto`'s tier. */
+      basis: string;
+      timestamp: number;
+    }
+  | {
+      type: "review_verdict";
+      entity: EntityId;
+      reviewId: string;
+      author: string;
+      reviewer: string;
+      verdict: "approve" | "rework";
+      round: number;
+      timestamp: number;
+    }
+  | {
+      type: "review_closed";
+      entity: EntityId;
+      reviewId: string;
+      author: string;
+      outcome: "merged" | "rejected";
+      /** The closing person decided against (or without) the reviewer's verdict. */
+      override: boolean;
       timestamp: number;
     }
   | {
@@ -785,6 +906,11 @@ export type EngineEvent =
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
       costUsd?: number;
+      /** The output cap Marina applied (the cheap tier's default, when the
+       * caller set none — `src/net/model/tier-output-cap.ts`). */
+      outputCap?: number;
+      /** True when the reply ended on that cap (`finish_reason: length`). */
+      outputCapHit?: boolean;
       errorKind?:
         | "auth"
         | "quota"
@@ -1006,7 +1132,15 @@ export type EngineEvent =
   // event surface small while letting every list graduate to realtime.
   | {
       type: "coordination_change";
-      resource: "project" | "group" | "channel" | "pool" | "board" | "connector" | "command";
+      resource:
+        | "project"
+        | "group"
+        | "channel"
+        | "pool"
+        | "board"
+        | "connector"
+        | "command"
+        | "room";
       action: "create" | "update" | "delete";
       entity: EntityId;
       name?: string;

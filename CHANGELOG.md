@@ -7,45 +7,513 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The dashboard entity view and the live snapshot share one private-view rule (`src/net/entity-visibility.ts`): raw command input, the full property bag and core memory go only to the entity itself and privileged readers; others get the public properties and activity as type, time and command verb, never arguments. Regression tests hold it for the entity detail, the event list and the snapshot.
+
+- **Command input cannot drive another participant's terminal.**
+  - Every command is cleaned once, at the command phase. This covers every transport and internal
+    callers alike.
+  - Removed: escape sequences (window titles, OSC 52 clipboard writes, hyperlinks, cursor moves,
+    screen clears), other C0/C1 control bytes and bidi overrides. Kept: newline, tab and CRLF.
+  - Before this, a WebSocket participant's `say` reached telnet clients with raw escapes.
+  - Telnet output keeps only the server's own colour codes.
+- **Credentials stay out of the event log; operator-only reads and scopes are explicit.** A
+  command form that carries a credential (`key add`, `connect auth`, `adapter enable`; declared
+  with `CommandDef.sensitiveSubcommands`) is recorded as `<verb> <sub> [redacted]`, and key-shaped
+  strings are masked in every other recorded command; stored rows recorded in clear are removed
+  when the engine starts. `GET /api/events` no longer serves `command` events, matching the
+  dashboard WebSocket. `GET /api/keys`, `/api/principals`, `/api/federation/peers`,
+  `/api/operations/alerts` and `/api/models?refresh=1` need operator read capability; the
+  dashboard shows an "Operator only" state to other sessions. `/api/command` and `/api/ask` logins
+  count against the per-IP login-attempt limit. A supervision credential calls only the routing
+  endpoints the supervisor uses (an allowlist). The memory service API (`/v1/memory`) refuses a
+  client address that has spent its failed-credential budget, as `/mem` does.
+- **Held actions show credential forms redacted.** A challenge hold's summary — in approver
+  notices, the ops inbox, operator pushes, the stored hold and the challenge judge's input —
+  renders a declared credential form as `<verb> <sub> [redacted]` and masks key-shaped strings. Such
+  a held input is never stored: it re-runs on approval in the running process, and after a restart
+  the requester is asked to issue it again.
+- **Local stays ungated, but an agent's host shell asks.** Under the default `local` profile you,
+  the loopback operator, keep every gate open. An agent's host shell (`shell.exec`: `run raw`,
+  `shell`, stdio connectors) and arbitrary non-allowlisted host commands (`code.exec.unrestricted`,
+  Code Mode's arbitrary exec, which now defaults to `prompt` for an agent) are held as a challenge.
+  The agent gets an answer at once and the held run executes when a person approves it. An agent
+  also can no longer promote itself to sovereign rank or widen the shell allowlist on a local
+  instance without approval. `MARINA_AUTONOMY=sovereign` remains the one switch that lifts every
+  gate for everyone. Agents promoted on an older database may still hold shell grants:
+  `gate audit` lists them and `gate reset agents all apply` revokes them.
+- **Docker Compose no longer acknowledges an insecure public bind.** `docker-compose.yml` drops
+  `MARINA_ALLOW_INSECURE_PUBLIC=true` and passes its publish address in as the new
+  `MARINA_PUBLISHED_HOST` (default `127.0.0.1`). Inside a container, a wildcard bind published only
+  on host loopback passes the startup exposure checks; a routable `MARINA_BIND_IP` with
+  passwordless login is now refused at boot until you enable `MARINA_AUTH=better-auth` (or set the
+  acknowledgement yourself in `.env`). The trust profile still follows the real bind.
+- **Deploys check the configuration first.** `bun run src/main.ts --check-config` runs every boot
+  refusal and exits before opening the database or a port; `scripts/deploy.sh` runs it in the new
+  image before restarting, so a configuration the new code refuses leaves the running stack serving.
+- **Federation needs a secret outside the local profile.** On `shared` and `public` instances,
+  inbound gateway connections are refused unless `GATEWAY_SECRET` is set; the refusal, the boot log
+  and `readiness` (`federation-inbound`) say how to set it. The `local` profile is unchanged.
+
+### Changed
+
+- **One memory request per journaled message.** A resident's journal entry or archive is one `capture_checkpoint` request (`POST /spaces/:space/checkpoints/:name/capture`): its new parts, its manifest and the checkpoint are stored in one transaction whose expected version is checked before anything is stored, so a forgotten or changed checkpoint refuses the whole request and nothing is captured. Before, each message cost four requests (a checkpoint read, a part batch, the manifest and the checkpoint save). Archives too large for one request, and memory services without the operation, keep the read-first path.
+- **Memory rate limits name the wait.** The per-principal memory budget (100 requests, 25 per second) now refills one token every 40 ms instead of 25 at once each second, a 429 carries `retry_after_ms` for the next token, and `retryMemoryOperation` waits exactly that (plus 5 ms) without using up an attempt, up to 30 s in all. A throttled resident used to wait at least a second per refusal.
+
+- **Supervised residents are on by default.** Every agent `marina supervise` or the console launches (Claude Code, Codex, pi) is its own world account, owned by the launching person, with no credential in its environment. `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) restores the earlier routing; a supervisor whose server offers no supervision endpoint falls back to it and says so. `readiness` gains an optional `supervised-residents` check; feature status: core.
+- **The cheap tier has a default output cap.** A `marina/cheap` request that sets no
+  `max_tokens` is sent `max_tokens: 16384`, and on OpenRouter `reasoning.max_tokens` at 3/4 of
+  that (`MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS`; `0`/`off` disables it). On the 2026-10-20
+  proof run, deepseek-v4.1-flash answers ran p95 6.3k and p99 13.1k output tokens; the 0.8 %
+  above 16k ran up to about 98k, averaged score 0.29 and were a third of the cheap arms' model
+  cost. A caller's own limit always wins, larger or smaller; agents, compaction and memory
+  helpers already send their own caps and are unchanged; explicit model ids and the strong tier
+  are never capped. `src/model` calls on `marina/cheap` keep their automatic cap and its grown
+  retry under the tier's. A reply cut at the cap is marked on its trace (`outputCap`,
+  `outputCapHit`) and on `x-marina-output-cap: <n>; hit`; the benchmark harness records
+  `outputCapHits` and reasoning tokens per item, and `admin models` shows the cap and its hits
+  since start. Inside `marina/verify:<proposer>+<checker>`, a `marina/cheap` or `marina/strong`
+  proposer, checker or reviser now resolves through the tiers like a top-level request (it was
+  refused as unreachable), and a cheap member gets the cap on its calls; ensemble drafts under
+  the cap record their hits too.
+
+- **A person sees its own agents' private view on the dashboard.** On shared and public servers, the entity detail, the live snapshot and the name-scoped memory routes now give the person who owns an agent (the first person up its spawn chain) that agent's raw command activity, full properties and core memory, as the agent itself and operators already had. An agent never gains another agent's private view this way, another person never does, and supervision credentials still reach only the routing API. Individual notes keep the memory system's own access rules.
+
+- **Threads you can follow on the canvas and Map.** A feed-canvas channel post that answers an earlier post is threaded under it (parent link from the message envelope's cause, `↩ in reply to <name> ↳<depth>`), and feed card authors carry a resident's `[vendor]` tag. Map thread marks stack per room (three newest plus `+N more`, 20 s each, readable halo) and open the room on click; room detail's "Activity here" lists the same content-free `say_sent` / `tell_sent` lines. `entity_enter` / `entity_leave` events carry the entity's name, so a departed entity is never shown by raw id.
+
+- A supervised resident's Claude session accepts edits in its working directory and runs shell commands without a prompt only inside Claude Code's command sandbox (workspace and relay directory writable, no network, no unsandboxed fallback), matching Codex's `workspace-write` sandbox. Without the sandbox's host tools only edits are accepted. Other Claude sessions are unchanged.
+
+- **Each owed ask gets its own answer.** A supervised resident's digest shows how to answer every
+  owed line (`→ re #<id>`, `→ say`, `→ channel send <c>`, `→ tell <name>`); what it answers itself
+  is settled, and the final-reply relay covers only what is left. When several destinations are
+  still owed, the resident is asked once more instead of one reply being sent to all of them; after
+  that, the reply goes to each marked `(one reply to N asks)`. A relayed answer now counts as the
+  woken turn's work for the attention judges. A resident's name later in a message addresses it in
+  a vocative position written as the name (`Done. Swift, run the tests`, `can you check this,
+  Swift?`), not as a mention.
+
+- **One rank-floor rule for every subcommand floor; honest feature status.** The write forms of
+  `bankroll` and `position`, `observe log`, `source connector`, `demo reset`, `code sandbox ops`,
+  the owner-or-rank overrides of `crew invite|dispatch|formation|persist|dissolve` and
+  `readiness providers` now check their floor through `rankFloorRefusal`: the local operator's
+  instance and the `open` posture pass, and elsewhere a refusal raises a challenge an owner or
+  operator can approve. The output-repair shot checks the spend caps before calling a model.
+  Closing a Code Mode session drops its exec-mode setting. The benchmark split, replicate-group
+  rule and reference scores moved under `src/engine/` (the `benchmarks/` paths re-export them), so
+  the published package carries every file `src/` imports. The `shared-team` preset now selects the
+  core `default` world. The feature status page adds crews and formations, desires and journeys,
+  novelty suggestions, resolvers/probes/watches, and lists `conduct` and `scenario` as
+  experimental; `scenario` help now says it posts boards and queues tasks for a resident to pick
+  up.
+
+- **Code cleanup and wider checks.** The compatibility re-exports `src/arena/model-backend.ts`,
+  `src/research/model-turn.ts`, `src/arena/research/{retrieve,verify,web-search,isolation,barred,read-swarm-retriever}.ts`,
+  `benchmarks/stats.ts` and `benchmarks/replicate-stats.ts` are removed; import `src/model`,
+  `src/research` and `src/stats`. Unused exports are deleted, `sha256Hex` and `escapeRegExp` each
+  have one shared home, and the SDK examples share their helpers. `bun run lint` also covers
+  `worlds/`, `marina-desktop/src/` and `extensions/`; `bun run typecheck` also checks `scripts/`
+  and `worlds/`. `check:coverage` counts source files no test loads at 0%. Dependencies:
+  pi-agent-core and pi-ai 1.3.0, better-auth 1.7.12, claude-agent-sdk 0.3.306, Playwright 1.64.1.
+
+- **Page reads honour robots.txt; keyless web sources can be turned off.** Before Marina reads a
+  third-party page for an agent or a person (`web fetch`, `web swarm`, `scenario` URL reads, the
+  research page reader and citation check, the live Civiqs read), it checks the site's robots.txt
+  for its `MarinaResearch` user agent (`src/net/robots.ts`: its own group, else `*`; longest
+  Allow/Disallow match, `*` and `$` patterns) and sends that user agent with the read. A disallowed
+  page is not requested and the read answers "blocked by robots.txt" instead of failing. robots.txt
+  goes through the SSRF guard and is cached per origin for 24 h; a 4xx means no rules; a 5xx, 429
+  or timeout fails open and is retried after 10 min. API calls are not page reads.
+  `MARINA_ROBOTS_TXT=ignore` turns the check off and `MARINA_ROBOTS_TXT_IGNORE_ORIGINS` exempts
+  sites the operator owns. The keyless DuckDuckGo search fallback (`MARINA_SEARCH_DUCKDUCKGO=off`)
+  and Yahoo Finance series history (`MARINA_FORECAST_YAHOO=off`) stay on by default and can now
+  be turned off: search falls through to the keyed backends and says so, a Yahoo series has no
+  prior. `readiness` (check `search`) reports all three. New guide:
+  [Data, privacy and terms](docs/guides/data-privacy-and-terms.md).
+
+- **Plainer names for research features.** `intellect`, `reproduce`, `genome`, `marina-descend`,
+  `mutation`, `association`, `economy` and `lab` are now listed as experimental in the feature
+  status page and their help is labelled `[experimental]`; their guides describe what each records
+  in plain terms. Commands, names and protocol ids are unchanged. Docs, agent skill files and
+  comments drop metaphors such as "civilization" and "autonomous from birth".
+
+- **Live (real-money) prediction-market orders ask a person.** A new operator-grant safety gate,
+  `trading.live`, guards every `position open`, `position confirm` and `position close` that would
+  reach a live venue (`MARINA_TRADING_ENABLED=true` plus credentials). Without an operator grant the
+  order is held as a challenge — nothing is sent and the command returns at once — and a person's
+  `challenge approve <token> once` places that one order (a `confirm` is one hold for the whole
+  proposal); `always` is an operator grant. Agents never approve. The gate is in the open-posture
+  core, never in `RANK_GATES`, and, unlike the other gates, is not lifted by the `local` profile:
+  only `gate grant <name> trading.live` or `MARINA_AUTONOMY=sovereign` passes live orders without a
+  per-order approval. Paper trading is unchanged. There are now 15 safety gates. `position`,
+  `bankroll`, the markets guide and `MARINA_TRADING_ENABLED` carry a plain not-financial-advice
+  note.
+
+- **A new front door.** The README, landing page and docs overview are rewritten to be shorter
+  and plainer, with the forecasting, research, orchestration and coding commands every participant
+  gets up front. The docs sidebar and guides index are regrouped by what a reader wants to do, and
+  the site uses the H2O black-and-gold theme with the Marina mermaid.
+
+- **Cheap by default, strong where it grades: model tiers.** Work that names no model now runs on
+  one of two tiers (`src/config/model-tiers.ts`). The cheap tier (`MARINA_MODEL_TIER_CHEAP`) runs
+  agents spawned without a model, room agents, boot-seeded crews (the Workbench, answerer and
+  orchestration crews, the Chronicler) and memory helpers. Unset, it is the operator's explicit
+  default model when one is set, else the cheapest adequate tool-capable model for the keys present
+  (`openrouter/deepseek/deepseek-v4.1-flash` with an OpenRouter key). The strong tier
+  (`MARINA_MODEL_TIER_STRONG`) runs the benchmark judge, the outcome extractor, the lesson writer
+  and judge, the decision classifier and the Arbiter. Unset, it is `marina/default` exactly as
+  before, so judging does not get cheaper silently. `marina/cheap` and `marina/strong` are live `/v1`
+  model ids, resolved per request. One entry moves a single role:
+  `MARINA_AGENT_MODELS=role:<role>=<model>`. `admin models` shows the effective model for each tier
+  and role and where it came from, and the boot log prints both tiers.
+  **On upgrade**, with no model variable set, residents, room agents, seeded crews and memory
+  helpers move from `marina/default` to the cheap tier. The Workbench moves from each provider's
+  flagship (Opus, GPT-6.1 Sol, Gemini Pro) to the cheap tier. `MARINA_DEFAULT_OPENROUTER_MODEL`
+  and the other per-provider defaults now shape only `marina/default` and the strong tier.
+  Unchanged: judges, decisions and the Arbiter; the `/v1` `marina` model; agents saved with an
+  explicit model; and anything covered by an explicit `MARINA_DEFAULT_MODEL`, runtime default,
+  `MARINA_CREW_MODEL`, `MARINA_WORKBENCH_MODEL` or role variable. `MARINA_CREW_MODEL` now also
+  reaches the answerer and orchestration crews and the Chronicler in every world.
+
+- **Contributors earn standing: every account is its own party.** Work another account verified
+  now credits the worker, including a person approving its own agent's task, adopting its
+  agent's proposal or replicating its agent's experiment, and a sibling agent reviewing a Code
+  Mode attempt whose checks passed. Verifying your own work (same name or same durable account)
+  still earns nothing, and an agent's verdict inside its own spawn lineage still needs grounding.
+  Caps are unchanged. Safety gates are unchanged: only a person's approval from outside the
+  requester's lineage builds an earnable gate. Each world records the change once as a chronicle
+  event (`civic-rule:contributors-earn-standing`).
+
+- **Competition adapters ship no filing identity.** The FutureX, ForecastBench and Metaculus
+  adapters no longer default to an organization or agent name: they refuse to produce or file a
+  submission (before spending anything) until you give one with `--org` / `--agent` or
+  `MARINA_FILING_ORG` / `MARINA_FILING_AGENT`, and they refuse the docs' placeholders such as
+  `your-org`. The Prophet Arena agent registers under `PROPHET_AGENT_NAME` (or the name you put in
+  `benchmarks/prophet/arena.toml`, which now ships placeholders) and refuses to load without one.
+  BrowseComp-Plus `summary.json` carries an `Attribution` only when you name one, and
+  `scripts/arena-wiki-backtest.ts` compares the entrant in `MARINA_ARENA_ENTRANT` (or
+  `--entrant`) instead of a built-in id. Operators who filed before must now set their identity.
+
 ### Fixed
 
-- **Operational rot that kept built features inert** (2026-10-20 usage audit of the live world).
-  - **Dead memory-assistance jobs expire.** The live world held 334 pending and 15 running
-    evaluator jobs, all past their deadline, after the Evaluator agent left; the state column never
-    moved. An hourly pass (`src/engine/assistance-expiry.ts`) sets a new terminal state `expired`
-    when the deadline passed, or when the worker's world account has no running agent or live
-    connection (15 min grace, never during a live lease). It writes one
-    `assistance.expired.<reason>` memory event per job and deletes nothing.
+- **Two agents no longer trade "no reply needed" lines without end.** In a long `marina:answerer`
+  crew run, two Answerers kept answering each other's closing lines ("[re:mapping] Terminal — no
+  reply needed"). Per-item cost rose about 3×, and 14 % of requests drew in all four Answerers.
+  - Cause: any `[re:…]` correlation tag made a tell a request, and the harness asks every reply to
+    echo the asker's tag, so each closing line owed the next. "Do not reply" also read as an
+    imperative ("do …"), so it was a request too.
+  - A tag the resident has already sent or received is now a thread marker, not a new ask; the
+    message is classified without it. A fresh tagged ask still owes one reply.
+  - A message that says it wants no reply ("no reply needed / due / owed", "do not reply", "nothing
+    owed") and asks no question is never a request, and it releases the reply owed on that same
+    thread only. "Do not reply until …", "don't answer yet" and a decline next to a task stay
+    requests.
+  - An outgoing acknowledgement or status echo is judged without its tags, so "[re:x] Closed, no
+    reply due." is not sent to a peer that is owed nothing.
+  - **Long agent exchanges are observed, not capped.** Each resident counts the turns of its
+    exchange with another agent (a person's tell resets it; tells carry a server-stamped
+    `senderKind`). `MARINA_PEER_REPLY_CHAIN=observe` (default, threshold 6) only records it;
+    `enforce[:n]` opts in to stop owing and waking past n turns; `off` disables counting. Message
+    envelope depth stays causal.
+  - Applies to every resident and crew; it lives in the shared attention, classifier and reply
+    ledger. Tests: `test/peer-reply-loop.test.ts`, with simulated members running the real
+    attention, ledger and `tell` code.
+
+- **An assigned coder no longer sleeps out an idle tick before reading its task.** A coding assignment (or any steered attention) that arrived while the agent was mid-prompt, or before its loop first slept, was missed by the loop's wake (a no-op with no sleep armed), and the next cycle waited the idle tick (60 s by default). The pending attention now makes the next cycle the fast tick, and a bound coder that yielded at a per-run cap continues at the fast tick instead of the normal one. The coding control journey's own memory reads honour a 429's `Retry-After` like every other client.
+
+- A supervised resident's relayed commands name the message their turn answers: the owed item a command settles, else the latest message that woke the turn, so replies carry their reply depth. A turn the owner started directly stays depth 0.
+- `marina connect` reports a refused login (for example a name already in use) as the server's refusal, not as "Is Marina running?". The SDK types it as `LoginRefusedError`.
+- The dashboard entity card shows another account's entity in its public view (rank, role, presence, vendor, activity as type, time and command verb) instead of an empty 403; raw activity, full properties, inventory, core memory and notes stay with the entity, its owning person and operators, and the memory routes stay private-only.
+- The Map opens framed on the world's rooms, and its labels and thread marks keep at least an 11 px on-screen size at any zoom; reset view returns to the fitted frame.
+
+- **One crew member claims each endpoint request.** A `marina:<crew>` request is addressed to one
+  member (`target`), but Marina's residents owed every `model_request` they perceived. With 4
+  Answerers on `marina:answerer`, every Answerer worked every request. Under 4-way load the backlog
+  grew, each reply ledger filled (32), obligations stayed unsettled until their 30-minute TTL, and
+  requests timed out. Now only the addressed member owes a request, and the others drop it and
+  peers' `model_response`s without waking (`src/agent/attention.ts`). The claim is a lease
+  (`MARINA_REQUEST_CLAIM_LEASE_MS`, default 120 s, `src/net/model-api/request-claim.ts`) renewed by
+  the holder's traced work. With no sign of work, the request is re-offered to another eligible
+  member, and the first holder releases it. Reminders follow the current holder. Pinned (`role:`)
+  requests, a lone member, `open`/`panel` fan-out and untargeted requests keep their behaviour.
+
+- **The dashboard's Recent activity bar loads.** The feed snapshot requested `/api/feed` without the session's bearer token, so it was always refused (401) and the bar showed "Activity unavailable". It now sends the same `Authorization` header as every other dashboard read.
+- **A resident answers a shout.** A supervised resident's attention bridge filed a shout as a system notice, so an answer to an addressed shout had nowhere to go. A shout is now its own wake source; the final reply goes back to the shouter as a `tell` (never shouted to everyone), and a `tell` to the shouter settles it.
+- **Benchmark costs show prompt-cache reads and writes.** The harness now records the cached and
+  cache-written prompt tokens an endpoint reports (`prompt_tokens_details`, or Anthropic's raw
+  counters) per item and per run, and prints `Prompt cache: N read (x%) / M written`. A
+  `marina/verify:` reply sums them over the draft, check and revision calls instead of dropping
+  them. Two arms run at once on the same items and key share Anthropic's prompt cache, so one of
+  them reads cheap; this made an Opus verify arm look 1.2x plain when it is about 2.3x.
+
+- **Investigation capture writes no longer re-read stored evidence.** The capture quota summed `bytes` over every stored content row, and because `bytes` follows the up-to-2 MiB payload in each row, every write walked all earlier payloads. A covering index on `investigation_content(attempt_id, bytes)` (migration 178) answers the sum directly: at 128 MiB stored the quota check drops from ~40 ms to ~0.03 ms per write.
+
+- **A post addressed to someone else no longer wakes a bystander.** A room post that names another agent by vocative (`Rowan, …`, `…, Kestrel?`, `@Rowan`) was still subject to the random "a question in the room" response heuristic, so an unaddressed agent sometimes answered other agents' questions. `SocialAwareness` now knows names from the room, recent speakers and connects, and a post addressed to one of them (and not to this agent) is not this agent's to answer.
+
+- **Note writes, searches and revisions no longer slow down as history grows.** Measured on one account at 20,000 notes:
+  - Write-path dedup read every earlier note of the same type (37 ms per write); it now finds the text through a new index (migration 177) and writes stay at 1.5 ms.
+  - Note searches joined the note view to full-text search so that SQLite re-ran the text match for every note: `findSimilarNotes` took 19 s, `searchNotes` 1.3 s. Each search now starts from whichever side is smaller — the text hits, or the account's own notes — so they take 59 ms and 15 ms for a query that matches everything, and under 1 ms for a selective one.
+  - A revision or deletion read every active record in the memory space to find dependents (10.5 ms); it now walks dependents by index (2 ms).
+  - Choosing between the two search forms no longer costs anything measurable: the account's note count is kept per connection and recounted as the account grows, and a query whose sampled hit density marks it as broad scans the account's notes without counting every hit first. A broad recall at 20,000 notes is back to its earlier time (69.7 ms against 69.6 ms).
+- **A late answer settles a tell.** A tell whose deadline passed (status `expired`, for example while its recipient was blocked on a permission prompt) is now acknowledged and linked to its reply when the recipient answers it with `re #<id>`, `re` or `tell ack`. `tell status` reports it as `acknowledged after its deadline`. Expiry still never removes content.
+- **Supervised residents are told to run relay commands plainly**: one `connect -c "<command>"` per call, no `$(…)`, `$?`, pipes, loops or chains, which a command sandbox would stop to ask about.
+
+- A review snapshot from a sandboxed resident no longer lists the empty read-only placeholder files a command sandbox mounts over dotfiles and settings while the request runs.
+
+- **Supervised residents show as residents in the dashboard.** The world snapshot's vendor,
+  presence and owner now reach the client (the snapshot reconciler compared neither, so a
+  resident's later status never replaced its first), and every surface that names an entity
+  (Entities roster, hover card, inspector, room detail, entity card) shows `Wren [claude]` with its
+  presence; the roster groups residents under their own `resident` origin instead of "joined". The
+  Map labels residents, rings them with their presence, and floats a content-free
+  `from → to ↳depth` mark for each `say_sent` / `tell_sent`; the room pill reads those typed
+  envelopes too (it only knew the retired `say` events). Streams names the residents running in the
+  world instead of the "start marina supervise" hint when none of their sessions are the viewer's,
+  and a `tell_sent` envelope also reaches the person who launched either party.
+
+- **Backend test runs fail fast instead of hanging until the CI deadline.** Bun 1.4.3 is now the
+  minimum (`.bun-version`, `engines.bun`, `packageManager`, Docker images). Bun 1.4.2 could spin in
+  `spawnSync` after a garbage collection in large `--isolate` runs. The test wrapper stops a run
+  with no output for 240 s, or one where a process has not reaped an exited child for 60 s. It
+  prints the live process tree and the files still running. Benchmark result stamping reads git
+  with a timeout, without optional locks and without prompts.
+- **Documentation matches the code.** The README and site say approvals apply on shared and public
+  instances; the privacy guide lists the keyless market and economic-data lookups and the markets
+  feed; gate, operator-grant and built-in skill lists are current; seeded agents' autostart, the
+  Docker ports and the MCP tool list (now a pointer to the generated reference) are corrected. The
+  docs contract checks stated registry counts and requires commands to be documented as commands.
+
+- **Room entry checks apply to every movement command and fail closed.** `move` and `goto` (to a
+  room or to an entity) share one entry check: private rooms, then the room's `canEnter` guard,
+  which everyone obeys. A guard that throws, overruns its time limit, or belongs to a room the
+  sandbox disabled refuses entry. A room command that throws is recorded as a failed command (no
+  quest progress, failed usage, no `command` event), as a rejected async one already was. Room
+  and command source validation refuses static imports and re-exports; only `import type` is
+  allowed. The demos world no longer seeds a gate grant for its Maker agent (its compile steps are
+  held for an operator), and its Workshop and Bridge demos report completion only after checking
+  the outcome.
+
+- **Paired benchmark arms compare like with like.** The BrowseComp transfer adapter scores an incomplete
+  run's missing items 0 instead of dropping them, so an arm that times out more is no longer
+  flattered. `MARINA_GROUND_CACHE=<file.json>` lets short-answer arms run with `--ground search`
+  share one grounding-evidence cache, so paired arms read byte-identical evidence.
+
+- **Supervised residents: logging in again no longer cuts the supervisor off.** With
+  `MARINA_SUPERVISED_RESIDENTS=on`, the supervisor exchanges the person's world session for its own
+  routing-only supervision credential (`POST /api/routing/supervision`, at most 24 hours, renewed at
+  80 %, revoked on stop). A later `marina connect <same name>` replaces only the world session; the
+  supervisor keeps running and can still renew and revoke its residents. The credential is accepted
+  only under `/api/routing/`, is never a world session or an approver, and cannot send controls,
+  messages or channel posts. Off, nothing changes.
+
+- **`position` cap counts a market order at its worst case.** A market order (no limit price) was
+  costed at an estimated 50¢ a contract for the bankroll-cap check, so its exposure could reach
+  about twice the cap. The cap now costs it at 99¢ in paper and live alike (the paper fill is still
+  recorded at the estimate); add a limit price to size against it. The markets guide now describes
+  the daily-loss floor as it is enforced — world-wide realized losses since UTC midnight against the
+  opener's own floor, refusing new opens — instead of calling it advisory.
+
+- **Messages carry a causal envelope, and the canvas sees speech.** `say`, `tell` and `re` emit
+  content-free `say_sent` / `tell_sent` events (names, a message ref, `cause`, `depth`; never the
+  words), so the canvas draws say and tell arcs again. Every say, tell, re, shout and channel post
+  records `cause` (the message it answers: `re` names the tell it replies to) and `depth`, stored on
+  direct and channel messages (migration 171) and carried on their perceptions. `channel_message`
+  events carry the stored message id instead of `0`, so each post has its own feed ref.
+
+- **Yes/no forecasts lost their group class tag.** `group:binary:no|yes` failed the routing-ref
+  character check (`|`), so every yes/no outcome reached card routing and the competence map
+  without its coarsest class. Card evidence also no longer counts an answer twice when both its
+  outcome and its history record are on file.
+
+- **Built features that stayed inert now run, expire or report.**
+  - **Dead memory-assistance jobs expire.** An hourly pass (`src/engine/assistance-expiry.ts`)
+    sets a new terminal state `expired` when a job's deadline has passed, or when the worker's
+    world account has no running agent or live connection (15 min grace, never during a live
+    lease). It writes one `assistance.expired.<reason>` memory event per job and deletes nothing.
     `ops assistance [expire|restore <job>]` reports, runs the pass or reopens a job, and
     `ops recover` includes the pass. The memory overview counts `expired24h`.
-  - **Unanswered challenges reach the operator.** All 21 live holds expired unanswered. Expiries
-    now keep one rolling `challenge:unanswered` ops-inbox item open until an operator resolves it.
+  - **Unanswered challenges reach the operator.** Expiries keep one rolling
+    `challenge:unanswered` ops-inbox item open until an operator resolves it.
     `challenge summary [days]` reports outcomes by class and requester.
     `MARINA_OPS_NOTIFY` (default off; webhook URL or `cmd:<program>`) pushes content-free notices
     when a hold opens and when holds go unanswered. The dashboard attention drawer's desktop
     notification also fires for held actions.
-  - **Retired standing kinds no longer count.** 97 of 106 live ledger rows were `chronicled` or
-    `pool_note`, which can no longer be earned. They stay as history (shown separately by
-    `standing`) but count toward no standing, rank or decision by default
-    (`MARINA_STANDING_RETIRED=exclude`; `decay` restores the old fade-out). Every live kind is
-    covered by a test.
+  - **Retired standing kinds no longer count.** Rows of kinds that can no longer be earned (such as
+    `chronicled` and `pool_note`) stay as history (shown separately by `standing`) but count toward
+    no standing, rank or decision by default (`MARINA_STANDING_RETIRED=exclude`; `decay` restores
+    the old fade-out). Every live kind is covered by a test.
   - **Agents are no longer made sovereign at login.** Under the `local` profile a loopback MCP,
-    declared-agent or agent-account login was still promoted to rank 9 with every safety gate at the
-    999 grant sentinel. That is how all 13 gates × 10 live accounts were pre-seeded, so gates never
-    bit. Only a loopback person is now. Existing databases are not reset on boot: `gate audit` lists
-    grant rows by holder, and `gate reset <entity|agents> [gate|all]` is a dry run until `apply`
-    (operator only). It revokes sentinel rows only and chronicles each holder.
+    declared-agent or agent-account login was promoted to rank 9 with every safety gate at the
+    999 grant sentinel. Now only a loopback person is. Existing databases are not reset on boot:
+    `gate audit` lists grant rows by holder, and `gate reset <entity|agents> [gate|all]` is a dry
+    run until `apply` (operator only). It revokes sentinel rows only and chronicles each holder.
   - **Fewer `memory` round trips and receipts.** `DurableResidentMemory` checkpoint-only saves
     reuse the remembered checkpoint instead of re-reading it (the CAS still guards it; archive and
-    journal writes still read fresh). Saves that only change `timestamp` are skipped. Preference reads back off from every 50 to every 400 cycles while
-    unchanged. The retention pass prunes continuity-journal receipts in `memory_requests` after
-    7 days (94 % of the live world's 629k rows); every other receipt is kept.
+    journal writes still read fresh). Saves that only change `timestamp` are skipped. Preference
+    reads back off from every 50 to every 400 cycles while unchanged. The retention pass prunes
+    continuity-journal receipts in `memory_requests` after 7 days; every other receipt is kept.
   - **FutureX can answer late on an opt-in schedule.** `watch --answer late` answers each open row
     once, within `--final-lead-hours` of its own cutoff. `bun run futurex schedule` prints (or
     writes with `--out`) a systemd user service and hourly timer that answer late by default, with
     their own capped spend scope. It installs, enables and starts nothing.
 
 ### Added
+
+- **More of the themed terminal.**
+  - **Code Mode.** On a colour terminal, the line above the prompt shows live world segments.
+    `/live [status|agents|spend|alerts|readiness|world|me]` draws the dashboard's views there.
+  - **`marina connect`.**
+    - `esc` stops waiting for a running command. It says the command keeps running on the server,
+      and labels its late output with the command it came from.
+    - `$approvals` and the new `$held` segment count held actions for every session.
+  - **`marina --help`, `marina status` and `marina init`.** These are styled on a terminal; their
+    text is unchanged.
+- **`GET /api/challenges/mine`.** Any session can read its own held actions: what waits on its
+  answer, and what it asked for. Masked summaries only, as in-world `challenge list` shows them.
+
+- **Supervised residents choose their own names.** An unnamed launch asks the agent once, in a throwaway turn with no credentials, what it wants to be called; the server takes the proposal only as given, never a vendor or model word, and dedupes it. A late or unusable proposal falls back to the word list. An unnamed relaunch of the same adapter in the same directory reuses the resident last launched there instead of creating a new account. The enrolment reply and `resident.enrolled` event carry `nameSource`.
+
+- **A themed interactive terminal for `marina connect`.**
+  - **Input area.** The prompt sits between rules at the bottom with a live status bar under it:
+    health, agents, tasks, approvals, alerts, spend and standing, read with the session's own
+    credential. Asynchronous messages never break a draft.
+  - **Output.** Results hang off `⎿`, other voices show `●`, tells `◆` and agents `✦`. Slow
+    commands show their elapsed time, long results collapse (`ctrl+o` expands), and messages
+    render Markdown.
+  - **Prompt formats.** The prompt and status bar take starship-style formats (`$segment`,
+    `[text](style)`, `( … )`), set with `/prompt` or `MARINA_PROMPT` / `MARINA_STATUSLINE`.
+  - **Panels.** Local `/status`, `/agents`, `/spend`, `/alerts`, `/readiness`, `/world`, `/me`,
+    `/prompt` and `/theme`.
+  - **Themes and colour.** `harbor`, `harbor-light` and `ansi` (`MARINA_THEME`). `NO_COLOR`,
+    `FORCE_COLOR` and `--color` are respected.
+  - **History and reconnect.** History persists in `~/.marina/history/connect`. A dropped
+    connection reconnects instead of exiting.
+  - **Unchanged.** Pipe and one-shot output to a non-terminal is plain text, as before.
+  - **Code Mode (`marina .`).** It shares the palette: entries carry a glyph and colour by label,
+    and the prompt, help, suggestions and diffs are themed.
+  - **Server text is data.** The terminal keeps only colour and emphasis codes from it.
+
+- **Test the right versions: results record their commit, and the transfer report refuses mixed
+  code.** Benchmark results now name the Marina code that produced them:
+  `marina: {commit, dirty, describe}` read from git at run time, on harness results (short-answer,
+  FRAMES and the rest), BrowseComp-Plus query files and results, FutureX `score.json`,
+  ForecastBench/Metaculus `selection.json` and `arena evaluate --out` reports. Filed and backtest
+  ledger runs keep it in `config_json.marina` (no migration; it stays out of the config and
+  content hashes, so re-filing is still a no-op). `eval:transfer` shows each arm's commits per
+  suite, and the inventory shows each variant's commits. By default every source of both arms of
+  a suite must come from one clean commit. Mixed commits make the suite `version-mismatch`;
+  unstamped or dirty sources make it `version-unknown`. Either is reported but never counted
+  toward the two-group verdict, as an improvement or as a regression. A commit behind
+  `origin/main` is a warning (local git only). To compare releases on purpose, a spec declares
+  `versions: {baseline, candidate}` (sha or tag) and each arm must match its own. To count
+  results written before stamping, pass `--allow-unversioned`; the report then carries a warning
+  banner. **On upgrade**, existing result files have no stamp, so a spec over them reports
+  `version-unknown` until they are rerun or `--allow-unversioned` is given.
+- **Private rooms, opt-in.** Every room stays public unless its owner (whoever built it, or an
+  operator) runs `build access <room> private`; entering then needs an invite (`build invite
+  <room> <name>`, `build uninvite`). A person's agents share its invite. `move`/exits, `goto` (to a
+  room or to someone inside) and a supervised resident's launch room are refused uninvited;
+  operators may enter. Whoever is inside when a room turns private stays, and `build access
+  <room>` lists them. The start room stays public; `say` already reaches only those present, and
+  tells, channels and groups are unaffected. Migration 176 (`room_access`, exported with the world).
+
+- **Formations in a room.** A room can run a turn rule — `debate`, `chorus` or `verification` —
+  set with `build formation [room] <formation>|off` or `formation` on a room module (templates
+  carry it; the in-world setting survives a restart). After each `say`, one `[formation-mediator]`
+  line in the room names the next actor with `@name`, so attention wakes them and owes the answer;
+  a round ends on its own closing move. Lines appear in `look log`; each emits a content-free
+  `room_formation_turn` event. Rooms without a formation are unchanged.
+- **World awareness.** `look log [since:<duration>]` reads your room's recent history (speech, emotes,
+  arrivals, departures; bounded per room, migration 175). `who` and `look` show every agent's status
+  (working, idle, blocked, needs you, resting, offline), and `who watch <name> [idle|blocked|any]
+  [once]` sends one notice per change. `@name`, `@a,b` and `@all` expand to `agent attention` before
+  dispatch (`agent attention` now takes a comma list or `all`); `@@` escapes to `say`. Supervised
+  residents' digests fold arrivals, departures and server notices.
+
+- **Peer code review with authority.** `code review request <name|auto> [-- claims]` snapshots the
+  author's changes (a coding-session diff, or the worktree diff a supervised resident's supervisor
+  captures) and asks a reviewer through an ordinary `tell`; `auto` prefers a different vendor,
+  then a different model. Only the reviewer answers with `code review verdict <id> approve|rework
+  [-- findings]`; rework reopens the work for the next round. The author can neither give a verdict
+  nor close the review: a person closes it with `code review approve|reject <id>`, and a decision
+  against the reviewer's verdict is recorded as an override. Standing follows the verified-code
+  rule. Events `review_requested`, `review_verdict` and `review_closed` are content-free.
+
+- **Earned loops get more evidence.**
+  - **Forecast shadow challengers** (`src/forecast/shadow.ts`, `MARINA_FORECAST_SHADOW=off|<fraction>`,
+    default off; `_MAX_PER_DAY` 10, `_CAP_USD` $2 per UTC day). On a sampled share of filed live
+    forecasts, one challenger card from the answer's routing `explore` order runs in the background
+    on the same request, deps and cutoff. It is filed `eval_mode = live` under `marina:shadow`,
+    tagged `shadow`, `method:`, `card:`, `model:`, `family:` and `q:`/`pair:`, and settles with the
+    live answer through `resolveForecast`, so it teaches lessons; it never writes history, so prior
+    shrink and recalibration get no correlated second record per question. These are the paired
+    questions card routing (min 30) was missing. Live FutureX `earned` runs get shadows too: started
+    when a row's standing answer is adopted, superseded on revision, settled by `futurex learn`. The live answer never
+    changes; a past cutoff gets backtest isolation; no standing is earned.
+  - **Arena routing reads the shared outcome rows** (`src/arena/earned-routes.ts`,
+    `MARINA_ARENA_ROUTE_OUTCOMES`, default on). Outcomes tagged `family:`, `method:` and `arena:<round>`
+    count as paired evidence on the arena's own skill scale. Our own settled filings and anything the
+    arena tables already hold are never counted twice, so existing routes are unchanged.
+  - **`forecast routes [family]`** (read-only): per family and card or route, the paired n, win rate,
+    gain and whether the route is earned, across forecast and arena evidence.
+  - **Prophet write-back** (`benchmarks/prophet/writeback.ts`). The agent journals each
+    `/v1/forecast` answer; `file` files them under `marina:prophet` (source `prophet-arena`, `live`
+    or `measure`), and `resolve` scores resolved events through `resolveFiled`, so Prophet answers
+    record outcomes that teach lessons and write history.
+- **Residents can use the forecast, quant, data, research and decision tools.**
+  - **Typed analysis tools.** Ten deferred agent tools, named in TOOL ROUTING and loaded through
+    `marina_tool_search`: `marina_forecast` (typed answers, optional `formation` and `retriever`),
+    `marina_research` (`research ask`), `marina_swarm` (`web swarm`), `marina_quant`, `marina_calc`,
+    `marina_data` (markets, odds, series, polls, crowd), `marina_decision_check`, `marina_triage`,
+    `marina_arbiter` and `marina_pattern`. Each builds one world command
+    (`src/agent/analysis-commands.ts`, shared with the tool policy), so rank, gates, rate limits,
+    spend caps and audit apply as typed. `crew` / `minimal` profiles are unchanged.
+  - **`research ask`.** `research ask [mode:agent|retrieve|evidence-loop|survey|authority]
+    [retriever:<spec>] -- <question>` runs the web-research agent with its citation audit, or one
+    retriever pass in a research mode (`src/research/ask.ts`). Rank 0, per-run budget (default $1,
+    at most $3), the daily cap, one run per entity. A resident may pick only retriever entries that
+    name no model, or one the operator configured.
+  - **`forecast formation:` / `retriever:`.** A caller-chosen formation (`formationEnv`) and a
+    resident-allowed retriever, validated before any budget is spent.
+  - **`pattern run`.** `pattern run <pattern> [budget:<usd>] -- <task>` (rank 0, `[experimental]`)
+    runs `runTextPattern` in world over the operator's models: per-run budget (default $0.50, at
+    most $2), the daily cap, one run per entity. `POST /v1/patterns/run` stays.
+  - **`data polls` / `data crowd`.** VoteHub polls (approval, generic ballot) and Manifold crowd
+    probabilities, with `asof:`; both are `egress` reads like the other lookups.
+  - **Skills in the prompt.** The three remaining seed skills (`decompose-multihop`, `solve-math`,
+    `answer-request`) ship built in. `skill top <query> [bytes:<n>]` returns the one best skill (the
+    agent's own first, else a built-in the skill search judges relevant). Residents get it as a
+    `[Skill]` section every tenth cycle, at most 700 bytes (`MARINA_SKILLS_RESIDENT=on|observe|off`,
+    default on).
+  - **Domain-filtered lessons.** `lessons <topic> for:<work>` (at most 4 lessons, 900 bytes;
+    `for:forecast` is exactly what a forecast recalls via `forecastLessonsFor`). A resident's
+    `[Lessons]` section uses it when its focus or recent tools show forecasting or research work
+    (`MARINA_LESSONS_RESIDENT_DOMAIN=off` keeps the lexical all-domain recall).
+
+- **Forecasts answered by residents, bounded by an as-of fence** (opt-in,
+  `MARINA_FORECAST_RESIDENTS=on`; off, every path is byte-identical).
+  - **The as-of fence** (`src/engine/evidence-fence.ts`). An evidence cutoff now binds a resident's
+    whole turn, not one call. It rides the per-execution command scope (`runCommandScope`), is set
+    for the responder of a `model_request` routed with a cutoff (`x-marina-asof` over HTTP; the
+    envelope's `asof`), and is relayed to every agent a fenced resident reaches. While it holds,
+    `web search` uses only date-strict providers at the cutoff, `web fetch` returns the archived
+    page, `data` reads as of the cutoff, `recall`/`context`/`lessons` serve only what was known by
+    then, and every other outbound or knowledge-reading command — a nested `forecast` included,
+    and any command or room command the policy table does not name — is refused with a message
+    naming the cutoff. `currentEvidenceCutoff()` is the one read for tools.
+  - **`ResidentPart`** (`src/forecast/resident-part.ts`): a forecast part answered by a resident —
+    `marina:<crew>` through `routeToChannel`, `role:<r>` by standing — in-process inside the
+    server, over HTTP with the fence and deadline headers outside it. Each call passes the
+    forecast's remaining deadline and trace, runs under the forecast's call budget and spend
+    scope, and records who answered; `/v1` replies now name the answering resident
+    (`x-marina-respondent`).
+  - **A forecast as a task, run as a Score** (`src/forecast/resident-forecast.ts`):
+    `forecast <q> crew:<c>|role:<r> pattern:ensemble|delphi [residents:N] [asof:] [measure:yes]`
+    and the same fields on `POST /v1/forecast` create a world task and run the formation through
+    the Score executor — research first, K resident steps (Delphi: a summary and K revisions),
+    then the pipeline's own pure-code combination. Each resident's run is filed as its own answer
+    tagged `q:`, `method:`, `model:` and `resident:`, so resolution credits the residents whose
+    runs scored. Bounds: `MARINA_FORECAST_RESIDENT_CALLS`, `_TIMEOUT_S`, `_BUDGET_USD`.
 
 - **An honest feature surface** ([docs/reference/feature-status.md](docs/reference/feature-status.md)).
   Every major feature now has one status: core, siloed, experimental, demo or deprecated. The page
@@ -60,7 +528,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `BUILTIN_WORLD_STATUS` lists `default` and `empty` as core.
   - The following are now labelled experimental in code and in the environment reference:
     - the embedding lifecycle (`MARINA_DATA_DIR` endpoint file, `MARINA_IDLE_SHUTDOWN`,
-      `MARINA_PARENT_PID`, `marina endpoint`), labelled "for embedders (Flow, Nov 2026)" and kept;
+      `MARINA_PARENT_PID`, `marina endpoint`), labelled "for embedding hosts" and kept;
     - the shared spend ledger (`MARINA_SPEND_LEDGER`);
     - adaptive load balancing (`X-Load-Balance: adaptive`);
     - `POST /v1/patterns/run`, kept for a planned `pattern run` command;
@@ -77,11 +545,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - This replaces a comment-only mention in `src/decisions/config.ts`.
 
 - **The Arbiter: adjudication only where answers disagree** (`src/orchestration/arbiter.ts`, all
-  surfaces default `off`). The trigger was always-on same-model verification: it overruled correct
-  answers too easily. On BrowseComp-Plus the `marina/verify:` arm lost accuracy and its gold recall
-  fell from 85 % to 66 %. An offline replay of stored runs found that, on the 82 items where four
-  unverified runs had a majority, the verify arm overruled a correct majority 15 times and fixed a
-  wrong one 0 times.
+  surfaces default `off`). Always-on same-model verification overruled correct answers too easily;
+  the Arbiter is consulted only where answers disagree.
   - Contested items are found from free signals: run agreement by answer type, verifier or critic
     dissent, and judge spread. Only contested items reach the Arbiter, under a cap
     (`MARINA_ARBITER_CAP`).
@@ -202,10 +667,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (with a model) direction, GDELT volume, and scheduled/ended events from as-of article sentences
   that one cheap model call classifies and a mechanical check verifies. Records past the cutoff
   are dropped; the specialist applies them only through bounded, testable multipliers with
-  transient-share widening, and keeps every record in the forecast detail. Over 67 walk-forward
-  weeks only the events channel gained (+0.010 to +0.014 mean skill, not yet significant), so the
-  other channels' multipliers default to neutral. `scripts/arena-wiki-extract.ts` replays the
-  extractors over reconstructed weeks (cached; Wikimedia `Retry-After` honoured).
+  transient-share widening, and keeps every record in the forecast detail. Only the events
+  channel's multipliers are active by default; the other channels' multipliers default to
+  neutral. `scripts/arena-wiki-extract.ts` replays the extractors over reconstructed weeks
+  (cached; Wikimedia `Retry-After` honoured).
 - **Per-item Wikipedia backtest output**: `scripts/arena-wiki-backtest.ts --out <file>` writes
   `{id, score, at, variant, group: "arena-wikipedia", exclude?}` JSONL with diagnostics (loss,
   persistence loss, hits, unseen entrants, ranking) for the transfer report's `items` adapter;
@@ -245,9 +710,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by projected weekly sum with a discount on the transient share), read from the arena's daily top
   lists and, for missing days, the Wikimedia REST API (rate-limited, cached, guarded, never after
   the lock day − 2). Optional event models pool mechanically verified scheduled events into it,
-  capped by `MARINA_ARENA_WIKI_EVENTS_MAX_INSERT`. Walk-forward over 67 reconstructed weeks: mean
-  skill 0.106 against the recency nowcast's 0.041 (`scripts/arena-wiki-backtest.ts`). Runs as a
-  route (`wikipedia=wiki-specialist`) or a shadow challenger.
+  capped by `MARINA_ARENA_WIKI_EVENTS_MAX_INSERT`. `scripts/arena-wiki-backtest.ts` replays it
+  walk-forward over reconstructed weeks. Runs as a route (`wikipedia=wiki-specialist`) or a
+  shadow challenger.
 
 - **Installable SDK**: `bun run pack:sdk` builds `@marina/agent-sdk` as a tarball you install with
   `bun add`, `npm install` or `pnpm add`. The docs import it by package name (#498).
@@ -291,6 +756,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with paired statistics; opt-in (#475).
 
 ### Changed
+
+- **Resident context budget: two prompt tiers, a deduplicated prompt and on-demand tools.**
+  The fixed prefix every resident sends on every turn is smaller, and small-window models get a
+  budget of their own.
+  - **Two tiers**, picked from the agent model's context window. `lean` (≤ 32k tokens) caps the
+    system prompt frame at 5,800 B (was 6,300 B for everyone) and gives the agent the `minimal`
+    tool profile unless its profile was set explicitly. `full` (larger, cached models) caps it at
+    9,000 B. Both render the same text, and the tests check both caps in every trust profile ×
+    autonomy posture.
+  - **Each command is introduced once.** The `# COMMANDS` roster skips commands that TOOL ROUTING
+    or MEMORY already name, TOOL ROUTING no longer repeats the analysis-tool list that
+    `marina_tool_search` carries, and the memory tools' descriptions defer to MEMORY. AUTHORITY
+    AND TRUST and HOW TO BE are unchanged. The worst-case frame fell from 6,279 B to 5,213 B.
+  - **`marina_code` and `think` load on demand.** `marina_code` (~4 KB) is resident while a coding
+    task is bound, for the `coding-agent` role and for an explicitly chosen profile; otherwise
+    each profile's `marina_tool_search` lists it. `think` (no calls among 3,368 recorded resident
+    tool calls) is listed the same way. `memory` and `marina_memory_service` were not merged — they
+    have different backends and callers — but `memory` now sends its enums as one `enum` keyword
+    (1,860 → 1,415 B). `MARINA_DEFERRED_TOOLS=off` keeps everything resident as before.
+  - **Long procedures moved to built-in skills.** The chronicling trait (1,879 → 727 B), the
+    `canvas-watcher` trait that every `general` agent carries (832 → 464 B) and the
+    `[Reflection Due]` procedure keep one line per rule and point at `skill builtin chronicling`,
+    `canvas-intents` and `consolidate-memory`.
+  - Resident tool schemas: `full` 13,983 → 8,763 B, `crew` 11,216 → 6,512 B, `minimal`
+    5,174 → 4,373 B. A crew-profile Opus resident sends about 5.8 KB (~1.5k tokens) less per
+    turn. A 16k local model's prefix falls from about 17.5 KB to 9.6 KB.
+- **Cache-aware idle handling for residents** (`src/agent/prompt-cache.ts`). A prompt sent more
+  than the provider's cache lifetime (5 min) after the agent's last request is cold: the whole
+  request is written to the cache again. For residents that pause between turns, those rewrites
+  can be a large share of spend.
+  - **Default change: compaction before a cold turn.** When the cache has expired and the history
+    holds at least the cap's target + 8000 estimated tokens (24 000 by default), it is compacted to
+    the target before the prompt, through the same archived compaction as the 48k cap.
+    `MARINA_AGENT_COLD_COMPACT=off` restores the old behaviour; `…_MIN_TOKENS` tunes the threshold.
+  - **Default change: one-hour cache lifetime for the static prefix** (tool schemas and system
+    prompt) on direct Anthropic requests; the conversation keeps 5 minutes.
+    `MARINA_PROMPT_CACHE_STATIC_TTL=off` restores it.
+  - **The system prompt no longer changes when an agent moves.** The roster's `This room:` line
+    put room-specific command names in the system prompt, so every room change rewrote the cached
+    static prefix. The line now rides in the per-turn context, shown when the room's commands
+    change (`getRoomCommandsLine`). The system prompt is byte-identical across rooms, and both tier
+    caps still hold (`test/prompt-budget.test.ts`).
+  - **Keep-alive pings, off by default** (`MARINA_AGENT_CACHE_KEEPALIVE=on`): a `max_tokens: 1`
+    replay of the last request shortly before the cache expires, bounded per idle gap, per window
+    and per agent per day, and turned off for an agent at the first reply that did not read the
+    cache. They trade extra calls for fewer cold rewrites.
+  - Cache lifetimes are configurable per provider family (`MARINA_PROMPT_CACHE_TTL`); local servers
+    and providers with no known cache never count as cold.
+  - `agent status` shows cold turns, compactions before them, the cache writes they avoided, and
+    keep-alives.
+  - **Compaction is incremental.** Earlier summaries are kept verbatim instead of being
+    re-summarized, and every summary carries a `Pointers:` line (URLs, typed ids, `#` handles, file
+    paths) that is handed on when an old summary is dropped.
+- **Default change: `[Focus Review Due]` counts prompts, not minutes.** The 5-minute wall-clock
+  horizon fired on most prompts, because idle gaps are longer than that. A focus is now reviewed
+  after 10 prompts under it (`MARINA_FOCUS_REVIEW_CYCLES`, or the agent config's
+  `focusReviewCycles`, which replaces `focusTimeout`); idle time never counts.
+- **Default change: fenced memory is reconstructed as of the cutoff** (`src/memory/as-of.ts`).
+  Under an evidence cutoff, a note edited after creation was dropped, and the durable evidence and
+  proposal tiers were withheld entirely. Now a revised note is served at the newest canonical
+  version known by the cutoff, with that version's own text (labelled `as-of vK` — the version served, never the count past the cutoff, never trusted).
+  Durable records, captured sources and assistance proposals are served by their own known-at
+  time, taken from the service events the write path records. An item with no such event (bundle
+  imports, events dropped before migration 172) is still withheld. Tests prove no post-cutoff text
+  reaches any fenced surface.
+  - **Fenced search is ranked on the as-of text.** `recall`, `recall … all|evidence`, the
+    continuation context and `context` used to select and order notes and records by their
+    CURRENT text and scores, then serve the as-of text. Which notes appeared, and their order,
+    could reveal a post-cutoff edit. Under a cutoff, notes are now picked from every handle
+    known by the cutoff whose any version matches, reduced to the as-of version, dropped unless
+    that text matches, and ordered by its term coverage, then by creation time (`fencedNoteRecall`,
+    `rankAsOf`). Durable records and sources are re-scored the same way. Query vocabulary, term
+    distinctiveness and link expansion, all current state, are skipped under a cutoff.
+  - **Known-at times survive event retention (migration 172).** The dating events were pruned
+    after 30 days, so older revisions could no longer be dated. The time is now stored on the row:
+    `memory_record_versions.known_at`, `memory_sources.known_at` and
+    `memory_assistance_jobs.completed_known_at`. Each is set by a trigger on the event, in the same
+    transaction. The migration is additive and idempotent: three nullable columns, three triggers,
+    and a one-row cursor. Existing rows are filled from the surviving events by the
+    `memory-known-at-backfill` tick job, in seq-range batches of short transactions (5,000 event
+    seqs each, 8 per pass every 10 ticks). Boot never waits. Until the backfill passes a dating
+    event, retention keeps it. Fenced reads use the stored time and fall back to the event log
+    only while the backfill is still running. This was chosen over exempting the events from
+    retention: on a large database, the as-of lookup becomes a primary-key read instead of a scan
+    of the unindexed event log, and the log stays bounded.
+
+- **One formation catalogue** (`src/orchestration/formations/`). Formations were implemented once
+  per surface: crew briefs, project templates, arena protocols, typed forecast formations and text
+  patterns shared names but not code. Each formation is now one catalogue entry: a one-line
+  description, a declarative Score template, and pure combiners per answer type. Assignees are
+  abstract slots resolved at run time to `model:`, `role:`, `marina:` or the in-process pipeline,
+  and the Score executor is the one runtime. Default behaviour is unchanged everywhere: forecasts,
+  `pattern run`, the arena and crews.
+  - **Typed forecasts.** `delphi`, `tournament` and `skeptic` run their formation stages as the
+    template's Score: Delphi revisions in parallel, tournament matches one at a time in bracket
+    order, and the skeptic's trust call. The combiners `combineDelphi`, `championAnswer` and
+    `combineSkeptic` are pure. `ensemble` is the pipeline's own round one and combine.
+  - **Resident forecasts.** These run every typed formation: `forecast <q> crew:|role:
+    pattern:tournament|skeptic` now works alongside `ensemble` and `delphi`. A slot's assignee may
+    be `model:<id>` (a bare model through `src/model`) in place of a resident, with the same
+    template and the same combiner. The ensemble and delphi Scores are byte-identical to before.
+  - **Free-text patterns.** All eight run from the catalogue's text templates. `CREW_ONLY_PATTERNS`
+    is derived from the catalogue.
+  - **Arena.** `ensemble` and `delphi` run from the catalogue's numeric templates. The shared clamps
+    (`median`, `agreement`, `settle`, `delphiSummary`) moved to `combine-numeric.ts` and are
+    re-exported. The other ten arena formations keep their own code as a documented follow-up.
+  - **One description.** `PATTERN_FIT` reads each formation's summary from the catalogue. Crew
+    briefs and project templates name their entry (`crewFormationEntry`, `ORCHESTRATION_TEMPLATES`).
+    `test/formation-catalogue.test.ts` fails when a brief or template loses its entry's protocol
+    phrases.
+  - **Equivalence evidence.** The pre-catalogue implementations are frozen in
+    `test/fixtures/formations-legacy/`. Given the same model replies, the catalogue reproduces them
+    exactly, answers and every prompt in order:
+    - `formation-equivalence-typed`: 4 formations × 7 answer types × 36 reply mixes;
+    - `formation-equivalence-text`: 8 patterns × 480 scenarios with budgets, aborts and outages;
+    - `formation-equivalence-arena`: all 12 arena formations × 160 runs on stored rounds.
+
+- **Live FutureX uses the earned default.** `bun run futurex run`, `watch --run earned` and
+  `schedule` default to the `earned` variant: each row goes through `typedForecastFor` on board
+  `futurex` (env, then `forecast-config:futurex`, then the family slot, then the built-in; card
+  routing; lessons as a live run). A named variant (`--variant cheap`) is the fixed override for
+  controlled experiments; backtests stay fixed (`cheap` by default) and refuse `earned`.
+- **`rescore-selection --file` promotes through the one path.** `benchmarks/futurex/rescore-selection.ts
+  --file --variant <v>` records ledger runs per selection mode and files the challenger through
+  `fileSlotPromotion` on `forecast-config:futurex`, seeding an empty slot with the incumbent first.
+  Its own bootstrap verdict is now advisory.
 
 - **One shared model backend for library pipelines** (`src/model/`). Forecast, arena, research,
   lessons, outcome extraction, the web swarm and benchmark checkers call models through one core
@@ -376,10 +967,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`project budget` durations** go through the shared duration parser, which now accepts the
   same decimals and `ms` (#499).
 - **Arena poll-level start**: scalar rounds of Economist/YouGov, Morning Consult and AAII start
-  from the average of persistence and the arena's EWMA with sd half its own recent RMS error
-  (walk-forward mean per-round skill 0.11 / 0.15 over pre-lock history, 0.15 / 0.30 / 0.43 on
-  resolved rounds, vs 0.00 for the persistence start); the rule and its evidence are recorded in
-  the filing detail. `MARINA_ARENA_POLL_LEVEL=off` restores the old start.
+  from the average of persistence and the arena's EWMA with sd half its own recent RMS error; the
+  rule and its evidence are recorded in the filing detail. `MARINA_ARENA_POLL_LEVEL=off` restores
+  the old start.
 
 - **Arena**: a first filing for a round outside the filing window is refused unless `--early` is
   passed; `arena-filing-watch` alerts on a filing that was never refreshed (#466).
@@ -389,7 +979,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to [0.35, 3], cut at min(now, lock), and applied after the measured-error floor. It replaces
   the per-key held-out calibrator, which needed 8 records per key and never fired.
   `MARINA_ARENA_SPREAD_CALIBRATION=on|observe|off` (default on; `MARINA_ARENA_CALIBRATION` is
-  read as a fallback). Walk-forward on Season 0: mean per-round skill 0.129 → 0.180.
+  read as a fallback).
 
 ### Fixed
 
@@ -439,6 +1029,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Outbound requests and network helpers.** A cross-origin redirect followed by the URL guard
+  drops provider signing and token headers (`KALSHI-ACCESS-*`, Polymarket `POLY_*`, `*-token`,
+  `*-secret`, `*-signature`) as well as `Authorization`, cookies and API keys. IPv6 link-local
+  and unique-local ranges are matched by prefix (all of `fe80::/10`), so a host name such as
+  `fdroid.org` is no longer mistaken for an address. Under the `local` profile, peer URLs still
+  refuse link-local and cloud-metadata addresses in IPv4-mapped and tunnelled IPv6 forms, plus
+  `192.0.0.192`, `fd00:ec2::254` and metadata host names. `connect add` checks a connector URL's
+  resolved addresses before dialling it. The Kalshi, Polymarket, TabH2O, forecast-lookup,
+  connector and room HTTP clients keep their deadline until the response body is read.
+  `/api/probe` shares the `/mem` authentication path (constant-time key match, failed-auth
+  throttle, sanitized `X-Agent-Name`) and caps request bodies at 64 KiB. Local asset storage
+  refuses keys outside its directory. The routing supervisor runs git with the hardened host-git
+  settings. `MODEL_API_KEYS` is parsed in one place. `hono` is updated to 4.13.11.
+
+- **The main listener validates the `Host` header.** On a loopback bind or under the `local`
+  trust profile, HTTP routes and WebSocket upgrades (`/ws`, `/dashboard-ws`, `/canvas-ws`) answer
+  only to loopback names and to names listed in the new `MARINA_ALLOWED_HOSTS`; any other `Host`
+  gets `421`. A browser request whose `Origin` matches its `Host` counts as same-origin only when
+  that `Host` is allowed. A public bind is unchanged unless the variable is set. A reverse proxy on
+  the same host as a loopback-bound Marina must list its public name in `MARINA_ALLOWED_HOSTS` (or
+  forward a loopback `Host`). The standalone memory service and the log viewer apply the same
+  rule, and the log viewer's feed refuses a foreign browser `Origin`. `/mcp` keeps
+  `MARINA_MCP_ALLOWED_HOSTS`; every listener shares one implementation.
+
 - **Boards enforce their access rules on every path** (GHSA-rgp4-gg8w-xwxm). Reading a post by
   number, reply, search, scores, vote, archive and `export` skipped a board's rank floors, and no
   path kept a group's board members-only. One rule now covers them all: group boards are
@@ -452,6 +1066,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   browser on `/ws`, `/dashboard-ws`, `/canvas-ws` and `/api/command`. Loopback now means
   `localhost`, `::1` or an IPv4 literal in 127.0.0.0/8, through one shared check
   (`src/net/loopback.ts`) that replaces every local copy.
+- **Canvas HTTP writes follow the in-world ownership rule.** Deleting a canvas, deleting or
+  changing a node and removing a relationship over `/api/canvases` take the author or canvas
+  owner, an admin or the operator, as `canvas delete` and `canvas disconnect` do; a refusal is a
+  403 with the same explanation and raises the same challenge. Writes are attributed to the
+  signed-in caller, never a name in the request body. Canvas and asset reads are rate-limited
+  per client IP (per principal when signed in), uploads take a plain extension from the
+  filename, and one damaged stored row no longer fails a whole canvas or asset list.
 
 ## [0.8.0] — 2026-10-14
 
@@ -651,7 +1272,7 @@ demonstrations and standing rows are kept):
   `split:` line says whether a difference came from better answers or from answering more often
   (also in `evolve adoption` offers and `world adopt` requests). The gates still judge the overall
   score — a role that does not answer is worse.
-- Bringing a winner home (Phase 4): `evolve adoption <role>` in a child offers a role only with an
+- Bringing a winner home: `evolve adoption <role>` in a child offers a role only with an
   accepted run whose trial EARNED its win (the same `earnedWin` test as replication);
   `world adopt <child> <role> [into:<existing>]` records a pending request with that evidence,
   `world adopt approve` by someone other than the requester applies it (replacing an existing role

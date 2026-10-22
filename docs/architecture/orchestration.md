@@ -1,6 +1,6 @@
 # Orchestration Patterns, Crew Pools, and the Crew Runtime Layer
 
-**When to read this:** you are adding or changing an orchestration pattern template, crew pool access, crew formation briefs, or the formation mediators. `CLAUDE.md` → "Orchestration Patterns" states the invariants (convention-based, members-only crew pools, one mediator line per event); this page has the full pattern list and mechanics.
+**When to read this:** you are adding or changing an orchestration pattern template, a formation in the catalogue (`src/orchestration/formations/`), crew pool access, crew formation briefs, or the formation mediators. `CLAUDE.md` → "Orchestration Patterns" states the invariants (convention-based, members-only crew pools, one mediator line per event); this page has the full pattern list and mechanics.
 
 ## Patterns
 - All patterns are convention-based pool notes discovered via `recall`, not engine constraints
@@ -11,9 +11,9 @@
 - Every command a template note quotes must exist with that syntax — `test/orchestration-patterns.test.ts` runs the knowledge-hygiene auditor over every template
 
 ## Crew pools and the crew runtime layer
-- **Crew pools are members-only** (2026-09-16): every persisted crew's `crew:<name>` pool has a group object of the same id (`memory_pools.group_id`; the existing group-pool ACL in `src/memory/access.ts` and the `gatherRetrievalContext` guard are the fence). Roster = owner ∪ current members, re-synced on create/persist, add/remove, dispatch, deposit, dissolve (final sync) and `loadFromDb` (idempotent backfill of pre-existing ungrouped pools); dissolving keeps the pool and notes (generational memory) scoped to the final roster; a successor crew reusing the name inherits and re-syncs. `crew info <dissolved>` no longer prints pool notes to non-members. Tests: `test/crew-pool-group.test.ts`.
+- **Crew pools are members-only**: every persisted crew's `crew:<name>` pool has a group object of the same id (`memory_pools.group_id`; the existing group-pool ACL in `src/memory/access.ts` and the `gatherRetrievalContext` guard are the fence). Roster = owner ∪ current members, re-synced on create/persist, add/remove, dispatch, deposit, dissolve (final sync) and `loadFromDb` (idempotent backfill of pre-existing ungrouped pools); dissolving keeps the pool and notes (generational memory) scoped to the final roster; a successor crew reusing the name inherits and re-syncs. `crew info <dissolved>` no longer prints pool notes to non-members. Tests: `test/crew-pool-group.test.ts`.
 - **Crew runtime layer** (`src/coordination/crew-formations.ts`): `CREW_BRIEFS` — compact purpose-built runtime brief per formation, posted with a protocol-priority preamble on activation/formation change (replaces concatenated pool-note prose, because process-heavy briefs displace the crew's actual replies). `FORMATION_MEDIATORS` — deterministic event-driven nudges: crew-manager calls `onDispatch`/`onStageCompleted`/`onArtifact`, posting at most one `[formation-mediator]` line per event (pipeline handoffs, mapreduce fan-out/merge, foundry merge-gate, debate sealed-positions, deliberation one-round, blackboard no-fork). The other formations — swarm, chorus, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding — run on their brief alone. Briefs and dispatches name the real lead (`crewLeadName`: the `lead`-role member, else the first member), crew and channel in place of the `<lead>` / `<name>` / `<crew-channel>` placeholders, and a `Lead:` line says the requester is not part of the protocol. Every `[crew-task]` dispatch for delphi, tournament, verification, auction, ledger and sharding restates that formation's starting move for the task at hand (`dispatchStartMove`), so the essential protocol command sits where members act; the pool-note templates stay advisory reference, and `benchmarks/formation-adherence.ts` reports their markers as a diagnostic outside the headline brief score. Engine-side liveness is separate: pending `model_request` reminders in `src/net/model/model-api.ts` re-post unanswered requests at 25%/60%/85% of the deadline (`MODEL_REQUEST_REMINDERS=0` disables).
-- **Request deadlines: every budget ends in an answer** (2026-10-04, `src/coordination/request-deadline.ts`, shared mechanism `src/agent/budget-terminal.ts`). A routed `marina:<crew>` request has a deadline: `MODEL_REQUEST_TIMEOUT_MS`, or the client's own per-item deadline in `x-marina-deadline-ms` when that is sooner. The client's deadline is reduced by a margin of 10 % (at most 15 s) so the reply arrives first.
+- **Request deadlines: every budget ends in an answer** (`src/coordination/request-deadline.ts`, shared mechanism `src/agent/budget-terminal.ts`). A routed `marina:<crew>` request has a deadline: `MODEL_REQUEST_TIMEOUT_MS`, or the client's own per-item deadline in `x-marina-deadline-ms` when that is sooner. The client's deadline is reduced by a margin of 10 % (at most 15 s) so the reply arrives first.
   - **At the deadline** the request returns the crew's best draft so far instead of a 504, in this order:
     1. the lead's latest explicit draft (`{"type":"model_draft","id":…,"content":…}` on the request channel);
     2. the most-agreed explicit member draft;
@@ -27,6 +27,7 @@
 **Serving crews and request protocols.** A `marina:<crew>` model request is routed to the `model-<crew>` channel and never passes through a `[crew-task]` dispatch, so two rules in `src/net/model-api/routing.ts` (`servingCrewPlan`) carry the crew's formation to each request:
 
 - **Outward face.** When a non-dissolved crew named `<crew>` serves the channel, requests go only to its `lead`/`answerer` members that are online. A specialist that joined the endpoint channel on its own no longer takes requests meant for the lead. With no outward member online, every online member stays eligible.
+- **One claimant per request** (`src/net/model-api/request-claim.ts`; the receiving rule is `endpointDispatchDrop` in `src/agent/attention.ts`). Each `model_request` is addressed (`target`) to one eligible member, and only that member owes it. The other members drop it as `addressed-elsewhere`, and drop a peer's `model_response` as `answered-elsewhere`, so neither wakes them. Before this rule every Answerer of the 4-Answerer showcase crew treated every request as owed. Under 4-way load that made 4× the work, filled each reply ledger (32), and left obligations unsettled until their 30-minute TTL. The claim is a lease (`MARINA_REQUEST_CLAIM_LEASE_MS`, default 120 s) that the holder's traced work renews. When it lapses, the request is re-offered to another eligible member (untried first, fewest in flight), and the old holder releases it from its ledger. Reminders follow the current holder. Pinned requests and a lone member are never re-offered. Deliberate fan-out stays explicit: `open`/`panel` endpoint modes post one request per member, each addressed to that member, and consults are awaited `tell`s.
 - **Protocol line.** For `verification`, `deliberation`, `tournament` and `delphi`, the `model_request` payload carries a `protocol` field, placed before `content` so the perception clamp never cuts it (`requestProtocolLine` in `crew-formations.ts`). It names up to `CONSULTS_PER_REQUEST` (2) online specialists, chosen by configured role (`CONSULT_ROLE_ASPECTS`: skeptic, mathematician, scholar, historian) in the formation's order, preferring a model vendor different from the responder's and from each other (`pickConsultants`). Each consult is an awaited `marina_tell` bounded by `CONSULT_TIMEOUT_MS` (30 s, lower when the request deadline is short); a timeout means proceed, so a silent specialist never holds the reply. Specialists need not be crew members. The Answerer's goal puts a present `protocol` ahead of its answer-directly default. Consults inside a traced turn carry the request's trace links, so benchmark attribution credits the consulted specialists.
 
 See also: `docs/guides/coordination.md`, `docs/guides/emergent-organization.md`.
@@ -53,7 +54,67 @@ late results from being attached to a newer attempt. Migration 126 adds lookup i
 unique active-attempt constraints per session and durable worker. Submission and task approval
 are distinct. See [the coding guide](../guides/coding.md) for the complete operator flow.
 
-## Budget terminal: every budget ends in an answer (2026-10-04)
+## The formation catalogue: one formation, one template
+
+A formation used to be implemented once per surface: pool-note templates, crew briefs, the arena's
+numeric protocols, the typed forecast formations and the free-text patterns. They shared names,
+not code. `src/orchestration/formations/` is now the one catalogue, with the Score executor as the
+one runtime.
+
+- **Entries** (`catalogue.ts`, `FORMATIONS`). There is one entry per formation: the 16 orchestration
+  patterns plus `ensemble` and `skeptic`. Each entry has:
+  - `summary`: the one-line description (`PATTERN_FIT.why` reads it);
+  - `crew`: whether the crew brief and the project template of that name exist;
+  - `markers`: protocol phrases that brief and template must both keep;
+  - `crewOnly`: why the formation needs a crew over time (`CREW_ONLY_PATTERNS` is derived from it);
+  - its Score templates: `typed`, `text` and `numeric`.
+- **Templates** (`template.ts`). A template declares its steps, which step fans out K times
+  (`k`, `chain`, or a knockout `bracket` scheduled match-by-match or round-by-round), which step reads
+  which, and an abstract slot per step: `forecaster`, `referee`, `skeptic`, `member`, `peer`,
+  `checker` or `pipeline`. `formationScore` resolves the slots to assignees (`model:<id>`, `role:<r>`,
+  `marina:<crew>`, or the in-process pipeline) and returns an ordinary Score. A surface whose members
+  can drop out runs the template's `entrants` step first, then the rest over the entrants that
+  answered (`afterEntrants`).
+- **Combiners** (`combine-typed.ts`, `combine-numeric.ts`). Combiners are pure code for each answer
+  type: Delphi medians, the tournament champion and the skeptic's shrink toward the prior (typed);
+  the median move, settle clamps and anonymous Delphi summary (numeric); the checker's pick for free
+  text.
+- **Running** (`run.ts`). `runFormationScore` admits every ready step at once, so the access graph is
+  the schedule. `seeded` supplies steps that are already done. `StageGates` checks a surface's budget
+  once per stage.
+
+Where each surface stands:
+
+| Surface | Runs from the catalogue | Notes |
+|---|---|---|
+| Typed forecasts (`src/forecast/formations.ts`, `skeptic.ts`) | ensemble, delphi, tournament, skeptic | Round one is the typed pipeline (the template's `research` + `f1…fK`). The rest runs as the template's Score, each member step going to that run's own part. |
+| Resident forecasts (`src/forecast/resident-forecast.ts`) | all four | Each forecaster slot is `role:`, `marina:` or `model:` (`assigneePart`). The referee and the skeptic are the pipeline's critic. The ensemble and delphi Scores are byte-identical to the pre-catalogue ones. |
+| Free-text patterns (`text-patterns.ts`: `pattern run`, `/v1/patterns/run`) | all eight | Members are the operator's models. Crew-only patterns are refused, and the catalogue gives the reason. |
+| Arena (`src/arena/formations.ts`) | ensemble, delphi | The other ten arena formations run their own protocols on the shared clamps. Moving them is a follow-up, held byte-identical meanwhile. |
+| Crews (`crew-formations.ts`, project templates) | none (crew protocols) | `crewFormationEntry` names each brief's entry, and `ORCHESTRATION_TEMPLATES` maps every template by name. |
+
+Equivalence is enforced, not assumed. The pre-catalogue implementations are frozen in
+`test/fixtures/formations-legacy/`. Given the same model replies, the catalogue reproduces them
+exactly, compared as JSON with key order and as the ordered list of every prompt:
+
+- `test/formation-equivalence-typed.test.ts`: 4 formations × 7 answer types, with failures and junk
+  replies.
+- `test/formation-equivalence-text.test.ts`: 8 patterns × member counts × budgets × aborts.
+- `test/formation-equivalence-arena.test.ts`: all 12 arena formations on the stored rounds
+  (`test/fixtures/formations/arena-rounds.json`), with out-of-order replies.
+
+`test/formation-catalogue.test.ts` fails when a brief, a template, `PATTERN_FIT`, `TEXT_PATTERNS`,
+`CREW_ONLY_PATTERNS`, the typed list or the arena list drifts from the catalogue. Never edit a frozen
+fixture to make a test pass.
+
+Follow-ups:
+
+- Move the remaining arena formations (deliberation, debate, chorus, pipeline, mapreduce, blackboard,
+  symbiosis, research, tournament, verification) and the profile rounds (`formation-profile.ts`).
+- Let the arena crew forecaster (`src/arena/crew.ts`) reuse the skeptic entry.
+- Allow a resident referee or skeptic slot.
+
+## Budget terminal: every budget ends in an answer
 
 `src/agent/budget-terminal.ts` is the one mechanism for loops with a turn, step or time budget.
 - Steer from 75 % (`budgetSteerAt`, also the lean agent's run-cap warning). At the cap, block tools and ask for the answer from what the loop has.
@@ -65,13 +126,12 @@ are distinct. See [the coding guide](../guides/coding.md) for the complete opera
   - The submission verifier is not asked. Its opinion is `none`, like an outage, never a pass.
   - If nothing changed, the attempt ends `Blocked: BudgetForced: …` (`kind:impossible`) with the same label.
 
-## The Arbiter: adjudication only where answers disagree (2026-10-20)
+## The Arbiter: adjudication only where answers disagree
 
-Always-on verification asks a reviewer, often the same model, to check every answer. That reviewer
-overrules correct answers too easily. On BrowseComp-Plus the `marina/verify:` arm (October 2026,
-when its checker still reviewed every turn) revised 976 of 1,093 reviewed turns, made about a third
-fewer searches, and gold recall fell from 85 % to 66 %. The Arbiter (`src/orchestration/arbiter.ts`)
-is one general replacement for that pattern, shared by every surface:
+Always-on verification asks a reviewer, often the same model, to check every answer, and such a
+reviewer can overrule correct answers too easily. The Arbiter (`src/orchestration/arbiter.ts`) is
+one general replacement for that pattern, shared by every surface: it adjudicates only where
+answers already disagree.
 
 - **Disagreement detection is free.** `detectDisagreement` reads signals the pipeline already has:
   - agreement among independent runs, by answer type: choice and text by folded text, numbers

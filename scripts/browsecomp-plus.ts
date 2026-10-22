@@ -56,7 +56,9 @@
  * run format), `evals/…_eval.json`, `summary.json` (the leaderboard fields)
  * and `result.json` (ledger-shaped: ids and outcomes only). Keep `--out`
  * outside the repository — run files hold query and answer text. NOTHING IS
- * SUBMITTED: submission is a manual, operator-approved step.
+ * SUBMITTED: submission is a manual, operator-approved step. `summary.json` carries an
+ * `Attribution` only when the operator names one (`--org`/`--agent` or MARINA_FILING_ORG /
+ * MARINA_FILING_AGENT); no default identity ships.
  */
 
 import { createHash } from "node:crypto";
@@ -80,6 +82,7 @@ import {
   writeFiled,
 } from "../benchmarks/browsecomp-plus/run";
 import { CallSpendGuard, parseMaxUsd } from "../benchmarks/call-spend-guard";
+import { filingIdentity } from "../benchmarks/forecasting/identity";
 import { fileToLedger } from "../benchmarks/ledger-file";
 import {
   defaultReplicateGroup,
@@ -89,6 +92,7 @@ import {
   replicateFromResult,
   validGroupKey,
 } from "../benchmarks/replicates";
+import { stamped } from "../benchmarks/run-version";
 import type { BenchmarkResult } from "../benchmarks/types";
 import { CORPUS_LEAD_CHARS, corpusDir } from "../src/engine/search-providers/corpus";
 import { comparePooled, seedFromIds, wilsonInterval } from "../src/stats";
@@ -140,10 +144,25 @@ const { positionals, values } = parseArgs({
     label: { type: "string" },
     llm: { type: "string" },
     link: { type: "string", default: "https://github.com/h2oai/marina" },
+    org: { type: "string" },
+    agent: { type: "string" },
     "max-usd": { type: "string" },
     resume: { type: "boolean", default: false },
   },
 });
+
+/** The operator's attribution for `summary.json`, when one is given (never a default). */
+const attribution = (() => {
+  const org = values.org ?? process.env.MARINA_FILING_ORG;
+  const agent = values.agent ?? process.env.MARINA_FILING_AGENT;
+  if (!org?.trim() && !agent?.trim()) return undefined;
+  const id = filingIdentity({
+    adapter: "browsecomp-plus",
+    ...(org !== undefined ? { org } : {}),
+    ...(agent !== undefined ? { agent } : {}),
+  });
+  return `${id.organization} ${id.agent}`;
+})();
 
 /** Marina harness options from the flags (none set = the official harness). */
 function harnessFlags(): {
@@ -369,7 +388,7 @@ async function run(): Promise<number> {
       llm: values.llm ?? values.model,
       link: values.link!,
       extra: {
-        Attribution: "H2O.ai Marina",
+        ...(attribution ? { Attribution: attribution } : {}),
         Marina: {
           model: values.model,
           formation: formationLabel(formation),
@@ -407,11 +426,17 @@ async function run(): Promise<number> {
     });
     // Fully resumed (nothing re-run): the same run as before, with the same
     // timestamp and duration, so filing it again is the same document.
-    if (prior && arm.resumed.length === arm.items.length && arm.items.length > 0) {
+    const fullyResumed = !!prior && arm.resumed.length === arm.items.length && arm.items.length > 0;
+    if (fullyResumed) {
       result.timestamp = prior.timestamp;
       result.duration_ms = prior.duration_ms;
     }
-    writeFileSync(resultPath, JSON.stringify(result, null, 1));
+    // The code that ran (a fully resumed arm keeps the stamp of the run that
+    // answered it; per-query stamps in evals/ show a resume across commits).
+    writeFileSync(
+      resultPath,
+      JSON.stringify(fullyResumed ? stamped(result, prior.marina) : stamped(result), null, 1),
+    );
     const n = arm.items.length;
     const k = arm.items.filter((i) => i.eval.correct).length;
     const ci = wilsonInterval(k, n);

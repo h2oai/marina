@@ -9,6 +9,9 @@
  */
 
 import { forecastRetrieverSpec } from "../forecast/retriever-default";
+import { yahooFinanceEnabled } from "../forecast/series-history";
+import { robotsMode } from "../net/robots";
+import { duckDuckGoEnabled } from "./search-providers/duckduckgo";
 import type { SearchBackendHealth } from "./search-providers/health";
 import { isQuotaOrAuthError, SEARCH_BACKOFF_MS } from "./search-providers/health";
 import { OPENROUTER_WEB_ENGINES } from "./search-providers/openrouter-web-engines";
@@ -30,9 +33,10 @@ export function describeSearchReadiness(
   if (env.SEARXNG_URL?.trim()) configured.push("searxng");
   const deepseek = Boolean(env.DEEPSEEK_API_KEY?.trim());
   const openrouter = Boolean(env.OPENROUTER_API_KEY?.trim());
+  const ddg = duckDuckGoEnabled(env);
   const chain = [
     ...configured,
-    "duckduckgo",
+    ...(ddg ? ["duckduckgo"] : []),
     // Paid fallbacks after the free engine (DeepSeek's key may be set for chat alone).
     ...(deepseek ? ["deepseek (Search API)"] : []),
     ...(openrouter ? ["openrouter (Exa plugin, research)"] : []),
@@ -49,13 +53,16 @@ export function describeSearchReadiness(
   );
   const working = health.filter((h) => h.consecutiveFailures === 0 && h.lastOkAt !== undefined);
   const parts = [
-    `web search chain: ${chain.join(" → ")}`,
+    `web search chain: ${chain.length ? chain.join(" → ") : "none"}`,
+    ...(ddg ? [] : ["duckduckgo turned off (MARINA_SEARCH_DUCKDUCKGO=off)"]),
     `forecast retrieval: ${forecastRetrieverSpec(env)}`,
     ...(openrouter
       ? [`openrouter-web engines: ${OPENROUTER_WEB_ENGINES.join(", ")} (@<engine>[:<mode>])`]
       : []),
     ...(working.length ? [`answering: ${working.map((h) => h.name).join(", ")}`] : []),
     ...failingText,
+    `page reads: ${robotsMode(env) === "respect" ? "robots.txt respected (MarinaResearch)" : "robots.txt ignored (MARINA_ROBOTS_TXT=ignore)"}`,
+    `yahoo finance series: ${yahooFinanceEnabled(env) ? "on" : "off (MARINA_FORECAST_YAHOO=off)"}`,
   ];
   const keyedFailing = failing.some((h) => h.name !== "duckduckgo");
   if (failing.length > 0) {
@@ -65,6 +72,14 @@ export function describeSearchReadiness(
       remediation: keyedFailing
         ? "A search backend is failing (often an exhausted plan: Tavily answers HTTP 432). Queries fall through to the next backend; top up or replace the key, or set MARINA_RESEARCH_SEARCH_BACKENDS to reorder the chain."
         : "Keyless search is failing (rate limit or outage). Configure TAVILY_API_KEY, EXA_API_KEY, SEARXNG_URL or DEEPSEEK_API_KEY for a keyed backend.",
+    };
+  }
+  if (configured.length === 0 && !openrouter && !deepseek && !ddg) {
+    return {
+      status: "degraded",
+      detail: `${parts.join("; ")} (no web search backend)`,
+      remediation:
+        "No web search backend: keyless DuckDuckGo is turned off (MARINA_SEARCH_DUCKDUCKGO=off) and no keyed backend is configured. Set TAVILY_API_KEY, EXA_API_KEY, SEARXNG_URL or DEEPSEEK_API_KEY, or turn DuckDuckGo back on. Academic engines still answer.",
     };
   }
   if (configured.length === 0 && !openrouter && !deepseek) {

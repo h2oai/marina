@@ -15,10 +15,13 @@ import {
   recordGateExecution,
 } from "../../engine/safety-gates";
 import type { MarinaDB } from "../../persistence/database";
+import type { SupervisionCredential } from "../../persistence/db-principals";
 import { MARINA_ROOT } from "../../runtime-paths";
 import type { EntityId } from "../../types";
 import { isOperatorPrincipal, isSentinelPrincipal } from "../auth-middleware";
 import { corsHeaders, isTrustedBrowserOrigin } from "../cors";
+import { entityOwner, isOwningPerson } from "../entity-visibility";
+import type { HostPolicy } from "../host-allowlist";
 import {
   readJsonBody as readJsonObject,
   SMALL_JSON_BODY_BYTES,
@@ -84,6 +87,8 @@ export interface CommandApiBody {
 export interface DashboardApiOptions {
   /** True when the server binds loopback only — loopback browser origins are then trusted. */
   loopbackBind?: boolean;
+  /** The listener's Host policy; same-origin counts only for an allowed Host. */
+  hostPolicy?: HostPolicy | null;
 }
 
 /**
@@ -107,7 +112,10 @@ export async function readCommandBody(
     };
   }
   if (
-    !isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind: opts.loopbackBind })
+    !isTrustedBrowserOrigin(origin, req.headers.get("Host"), {
+      loopbackBind: opts.loopbackBind,
+      hostPolicy: opts.hostPolicy,
+    })
   ) {
     logger.warn(
       "dashboard-api",
@@ -206,7 +214,8 @@ export function authorizePrivileged(
 /**
  * Read-authorization for name-scoped memory / entity-detail routes. A caller
  * may read another entity's private memory (core memory, notes, note graph)
- * only when it *is* that entity, or holds an operator capability. Without this,
+ * only when it *is* that entity, is the PERSON who owns it (first person up
+ * its spawn chain; an agent never qualifies), or holds an operator capability. Without this,
  * any valid session token — including the ephemeral one minted by the pre-auth
  * ingress endpoints — could read every entity's private memory.
  *
@@ -224,6 +233,7 @@ export function authorizeEntityRead(
   if (isSentinelPrincipal(callerId)) return null;
   const caller = engine.entities.get(callerId);
   if (caller && caller.name.toLowerCase() === requestedName.toLowerCase()) return null; // own memory
+  if (isOwningPerson(caller, entityOwner(requestedName))) return null; // a person's own agent
   // Operator gate — unattended check so a supervised-only holder isn't treated
   // as an operator for cross-entity private-memory reads. No rank shortcut: a
   // sovereign operator holds admin.destructive by grant; a rank-9 resident
@@ -233,7 +243,7 @@ export function authorizeEntityRead(
     {
       error: "Not authorized to read another entity's private memory.",
       reason:
-        "Reading another entity's private memory needs the admin.destructive gate held unsupervised (operators hold it by grant).",
+        "Reading another entity's private memory needs to be that entity, the person who owns it, or the admin.destructive gate held unsupervised (operators hold it by grant).",
     },
     403,
   );
@@ -283,4 +293,6 @@ export interface DashboardRouteContext {
   peerIp: string | undefined;
   callerId: EntityId;
   memory: MemoryObserver;
+  /** Set when the caller presented a supervision credential (routing API only). */
+  supervision?: SupervisionCredential;
 }

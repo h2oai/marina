@@ -10,13 +10,8 @@
  * is ever published (in the arena registration).
  */
 
-import {
-  createHash,
-  createPrivateKey,
-  createPublicKey,
-  generateKeyPairSync,
-  sign,
-} from "node:crypto";
+import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
+import { sha256Hex } from "../security/hash";
 
 export const PROTOCOL_VERSION = "ssa-signed-forecast-v1";
 export const FORECAST_PATH = "/api/v1/forecasts";
@@ -56,10 +51,6 @@ export function canonicalJson(value: unknown): string {
 function asciiJson(s: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: escaping every non-ASCII code unit
   return s.replace(/[^\x00-\x7f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
-}
-
-export function sha256Hex(data: Uint8Array | string): string {
-  return createHash("sha256").update(data).digest("hex");
 }
 
 /** The exact bytes the entrant signs (`ssa.signed_forecasts.signing_bytes`). */

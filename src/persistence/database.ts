@@ -87,6 +87,7 @@ import type { StoreArguments } from "./interfaces/investigations-store";
 export type {
   AdapterRow,
   AgentConfigRow,
+  AgentRuntimeKind,
   ApiKeyRow,
   EditHistoryRow,
   RoleLoopSections,
@@ -121,6 +122,7 @@ export type { TaskClaimRow, TaskRow } from "./db-tasks";
 import type {
   AdapterRow,
   AgentConfigRow,
+  AgentRuntimeKind,
   ApiKeyRow,
   EditHistoryRow,
   RoleLoopSections,
@@ -293,7 +295,7 @@ export type { GatewayRow } from "./db-gateways";
 export type { MacroRow } from "./db-macros";
 export type { CompactionOpts, CompactionStats } from "./db-maintenance";
 export type { MarketPositionRow, MarketRow } from "./db-markets";
-export type { RoomSourceRow, RoomTemplateRow } from "./db-rooms";
+export type { RoomLogRow, RoomSourceRow, RoomTemplateRow } from "./db-rooms";
 export type { ShellLogRow } from "./db-shell";
 export type {
   PrimitiveUsageSummary,
@@ -1034,8 +1036,16 @@ export class MarinaDB implements MarinaStores {
     senderId: string,
     senderName: string,
     content: string,
+    envelope?: { cause?: string; depth: number },
   ): number {
-    return channelsDb.addChannelMessage(this.db, channelId, senderId, senderName, content);
+    return channelsDb.addChannelMessage(
+      this.db,
+      channelId,
+      senderId,
+      senderName,
+      content,
+      envelope,
+    );
   }
   getChannelHistory(channelId: string, limit = 20): ChannelMessageRow[] {
     return channelsDb.getChannelHistory(this.db, channelId, limit);
@@ -1497,6 +1507,9 @@ export class MarinaDB implements MarinaStores {
     targetName: string;
     content: string;
     deadlineAt?: number;
+    /** Causal envelope (`src/engine/message-envelope.ts`). */
+    cause?: string;
+    depth?: number;
   }): DirectMessageRow {
     return directMessagesDb.createDirectMessage(this.db, message);
   }
@@ -1661,6 +1674,9 @@ export class MarinaDB implements MarinaStores {
 
   getUserByName(name: string): UserRow | undefined {
     return usersDb.getUserByName(this.db, name);
+  }
+  getUserNamesIgnoringCase(name: string): string[] {
+    return usersDb.getUserNamesIgnoringCase(this.db, name);
   }
 
   /** All user rows, name-ordered. For maintenance/admin tooling. */
@@ -2468,7 +2484,7 @@ export class MarinaDB implements MarinaStores {
   }
 
   // ─── Chronicle (delegated to db-chronicle.ts) ──────────────────────────
-  // The canonical, append-only record of the Marina. See docs/chronicle.md.
+  // The canonical, append-only record of the Marina. See docs/architecture/chronicle.md.
 
   appendChronicle(entry: chronicleDb.InsertChronicle): number {
     return chronicleDb.appendChronicle(this.db, entry);
@@ -3682,6 +3698,31 @@ export class MarinaDB implements MarinaStores {
     roomsDb.clearDynamicRooms(this.db);
   }
 
+  appendRoomLog(entry: roomsDb.RoomLogInput): number {
+    return roomsDb.appendRoomLog(this.db, entry);
+  }
+
+  readRoomLog(room: string, since?: number, limit?: number): roomsDb.RoomLogRow[] {
+    return roomsDb.readRoomLog(this.db, room, since, limit);
+  }
+
+  getRoomAccess(room: string): roomsDb.RoomAccess | undefined {
+    return roomsDb.getRoomAccess(this.db, room);
+  }
+
+  setRoomAccess(opts: {
+    room: string;
+    owner: string;
+    mode: "public" | "private";
+    invites?: string[];
+  }): roomsDb.RoomAccess {
+    return roomsDb.setRoomAccess(this.db, opts);
+  }
+
+  deleteRoomAccess(room: string): void {
+    roomsDb.deleteRoomAccess(this.db, room);
+  }
+
   clearDynamicCommands(): void {
     commandsDb.clearDynamicCommands(this.db);
   }
@@ -4065,6 +4106,9 @@ export class MarinaDB implements MarinaStores {
     supports?: AgentSupports;
     /** Reasoning depth (migration 120). `undefined` keeps the stored value. */
     thinkingLevel?: AgentThinkingLevel;
+    /** Who runs the account (migration 173). `undefined` keeps the stored value. */
+    runtime?: AgentRuntimeKind;
+    vendor?: string;
   }): void {
     // Config row and agent principal commit together; the parent lookup reads
     // the writer so it sees the same snapshot.
@@ -4123,6 +4167,22 @@ export class MarinaDB implements MarinaStores {
 
   revokeWorkloadCredential(credentialId: string): boolean {
     return principalsDb.revokeWorkloadCredential(this.db, credentialId);
+  }
+
+  revokeWorkloadCredentialsFor(principalId: string): number {
+    return principalsDb.revokeWorkloadCredentialsFor(this.db, principalId);
+  }
+  issueSupervisionCredential(
+    principalId: string,
+    ttlMs?: number,
+  ): principalsDb.IssuedWorkloadCredential {
+    return principalsDb.issueSupervisionCredential(this.db, principalId, ttlMs);
+  }
+  verifySupervisionCredential(token: string): principalsDb.SupervisionCredential | undefined {
+    return principalsDb.verifySupervisionCredential(this.reader, token);
+  }
+  revokeSupervisionCredential(credentialId: string): boolean {
+    return principalsDb.revokeSupervisionCredential(this.db, credentialId);
   }
 
   createWorldVariant(
@@ -4207,6 +4267,9 @@ export class MarinaDB implements MarinaStores {
   getAgentConfigsBySpawnedBy(spawnedBy: string): AgentConfigRow[] {
     return agentsDb.getAgentConfigsBySpawnedBy(this.db, spawnedBy);
   }
+  setAgentRunSession(name: string, sessionId: string | null): boolean {
+    return agentsDb.setAgentRunSession(this.db, name, sessionId);
+  }
   spawnLineage(name: string): string[] {
     return agentsDb.spawnLineage(this.db, name);
   }
@@ -4232,6 +4295,15 @@ export class MarinaDB implements MarinaStores {
     outcome: "success" | "failure",
   ): AgentConfigRow | undefined {
     return agentsDb.recordAutomaticAttentionOutcome(this.db, name, outcome);
+  }
+  setAttentionRelay(name: string, relay: agentsDb.AttentionRelay): boolean {
+    return agentsDb.setAttentionRelay(this.db, name, relay);
+  }
+  recordAttentionWakes(wakes: readonly agentsDb.AttentionWakeInput[]): number {
+    return agentsDb.recordAttentionWakes(this.db, wakes);
+  }
+  listAttentionWakes(entity: string, limit?: number): agentsDb.AttentionWakeRow[] {
+    return agentsDb.listAttentionWakes(this.db, entity, limit);
   }
 
   // ─── Settings (delegated to db-agents.ts) ──────────────────────────────
@@ -4415,6 +4487,14 @@ export class MarinaDB implements MarinaStores {
   }
   listRoutingEvents(sessionId: string, after: number, limit: number): RoutingEventPage {
     return routingDb.listRoutingEvents(this.db, sessionId, after, limit);
+  }
+  listRoutingEventParts(
+    sessionId: string,
+    kind: string,
+    prefix: string,
+    limit: number,
+  ): RoutingEvent[] {
+    return routingDb.listRoutingEventParts(this.db, sessionId, kind, prefix, limit);
   }
   sendRoutingMessage(sourceId: string, input: RoutingSend): RoutingMessage {
     return routingDb.sendRoutingMessage(this.db, sourceId, input);

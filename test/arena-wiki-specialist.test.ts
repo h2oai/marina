@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { parseForecasterSpec } from "../src/arena/config";
 import { parseShadowChallengers, specKind } from "../src/arena/earned-routes";
 import { forecastSettings } from "../src/arena/forecast-config";
-import type { ResearchReport } from "../src/arena/research/retrieve";
 import { type WikiApi, wikiEventsRanking } from "../src/arena/research/wiki-events";
 import type { ArenaRound } from "../src/arena/types";
 import {
@@ -23,6 +22,7 @@ import {
   parseTop,
   topUrl,
 } from "../src/arena/wikimedia";
+import type { ResearchReport } from "../src/research/retrieve";
 
 const DAY_MS = 86_400_000;
 const iso = (t: number) => new Date(t).toISOString().slice(0, 10);

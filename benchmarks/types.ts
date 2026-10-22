@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { BenchmarkAdapterKind, BenchmarkScoringKind } from "../src/engine/benchmark-registry";
+import type { MarinaVersion } from "../src/engine/run-version";
 
 export interface BenchmarkConfig {
   name: string;
@@ -17,7 +18,7 @@ export interface BenchmarkConfig {
   concurrency: number;
   limit?: number;
   seed?: number;
-  /** Fixed disjoint split of the items (benchmarks/partition.ts). */
+  /** Fixed disjoint split of the items (src/engine/benchmark-partition.ts). */
   partition?: "holdout" | "tune";
   /**
    * Who grades judge-scored items; absent for benchmarks no judge grades.
@@ -35,6 +36,8 @@ export interface BenchmarkConfig {
 
 export interface BenchmarkResult {
   config: BenchmarkConfig;
+  /** The Marina code that produced the run (`benchmarks/run-version.ts`). Absent on older results. */
+  marina?: MarinaVersion;
   timestamp: number;
   duration_ms: number;
   scores: {
@@ -104,12 +107,27 @@ export interface ResultItem {
 export interface CallUsage {
   promptTokens?: number;
   completionTokens?: number;
+  /** Hidden reasoning tokens within `completionTokens` (`completion_tokens_details`). */
+  reasoningTokens?: number;
+  /**
+   * Prompt tokens served from the provider's prompt cache (OpenAI
+   * `prompt_tokens_details.cached_tokens`, Anthropic `cache_read_input_tokens`),
+   * and tokens written to it. Both are part of `promptTokens`. A run whose
+   * prompts were cached by another run (two arms on the same items and key at
+   * once) reads cheap here: compare arms with this in view.
+   */
+  cachedPromptTokens?: number;
+  cacheWriteTokens?: number;
   costUsd?: number;
+  /** A Marina target cut this reply at the cap it applied (`x-marina-output-cap: <n>; hit`). */
+  outputCapHit?: boolean;
 }
 
 /** Usage summed over an item's calls; `calls` counts every call made. */
-export interface ItemUsage extends CallUsage {
+export interface ItemUsage extends Omit<CallUsage, "outputCapHit"> {
   calls: number;
+  /** Calls cut at a Marina-applied output cap (absent when none was). */
+  outputCapHits?: number;
 }
 
 /** Usage summed over a run. `pricedItems` counts items whose cost was reported. */
@@ -121,6 +139,12 @@ export interface UsageSummary {
   judgeCostUsd?: number;
   promptTokens?: number;
   completionTokens?: number;
+  reasoningTokens?: number;
+  /** Calls cut at a Marina-applied output cap (absent when none was). */
+  outputCapHits?: number;
+  /** Answer and judge prompt tokens read from / written to the prompt cache (see `CallUsage`). */
+  cachedPromptTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 export interface DatasetItem {

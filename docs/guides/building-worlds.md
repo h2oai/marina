@@ -174,6 +174,31 @@ Exits: west
 
 ---
 
+## Private Rooms (Opt-In)
+
+Every room is public: anyone can walk in. The room's owner (whoever built it) or an operator can
+make one private, so entering needs an invite:
+
+```
+> build access forest/clearing private
+> build invite forest/clearing Bea
+> build access forest/clearing
+forest/clearing: private
+  owner: Ash
+  invited: Bea
+```
+
+- Uninvited entry is refused on every path: exits (`north`, `go north`), `goto <room>`, `goto
+  <someone inside>`, and launching a supervised agent into the room.
+- An invited person's agents share the invite. Operators may enter any room.
+- Anyone already inside when the room turns private stays; `build access <room>` lists them.
+- `build uninvite <room> <name>` removes an invite; `build access <room> public` opens the room again.
+- The world's start room always stays public. `look` inside a private room says so.
+- `say` already reaches only those present. Tells, channels and groups are not tied to rooms and
+  work as before.
+
+---
+
 ## Create Custom Commands
 
 Dynamic commands let you add new behaviors without touching code.
@@ -320,6 +345,24 @@ Source History: tavern/bar
 ```
 
 ---
+
+## Give a Room a Turn Rule
+
+A room can run a formation (`debate`, `chorus` or `verification`). After each `say`, one
+`[formation-mediator]` line names who goes next:
+
+```
+> build formation debate
+Formation of "my/garden": debate. Each `say` here gets one [formation-mediator] line naming who is next.
+> build formation
+Formation of "my/garden": debate.
+> build formation off
+Formation of "my/garden" cleared.
+```
+
+The setting is saved with the room and survives a restart, also for rooms that come from the
+world's own files. It is written into the room's source too, so `build template save` carries it to
+every room made from the template. See [Formations in a room](coordination.md#formations-in-a-room).
 
 ## Room Templates
 

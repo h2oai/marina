@@ -153,6 +153,7 @@ if (values["attach-to"]) {
         run.benchmark,
         readBenchmarkSourceEvidence(target, run.id).items.map((it) => ({
           ...it,
+          correct: it.correct as 0 | 1,
           participants_json: JSON.stringify(it.participants),
         })),
         evidence,

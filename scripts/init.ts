@@ -20,6 +20,8 @@ import {
 import { IS_COMPILED } from "../src/runtime-paths";
 import { BUILTIN_WORLDS } from "../src/world/builtin-worlds";
 import { userMarinaDir } from "./cli-env";
+import { themeFor } from "./code-style";
+import { initStyles } from "./term-help";
 
 const ROOT = `${import.meta.dirname}/..`;
 const WORLDS_DIR = `${ROOT}/worlds`;
@@ -275,9 +277,11 @@ export async function runInit(args: string[] = []): Promise<void> {
     process.exit(0);
   };
   process.on("SIGINT", cleanup);
+  const theme = themeFor(process.stdout.isTTY ? process.stdout : undefined);
+  const ui = { ...initStyles(theme), styled: theme.level > 0 };
 
   async function ask(prompt: string, fallback = ""): Promise<string> {
-    const answer = (await rl.question(prompt)).trim();
+    const answer = (await rl.question(ui.ask(prompt))).trim();
     return answer || fallback;
   }
 
@@ -299,10 +303,14 @@ export async function runInit(args: string[] = []): Promise<void> {
     ...existing,
   };
 
-  console.log(`
+  console.log(
+    ui.styled
+      ? ui.banner("setup")
+      : `
 ╔══════════════════════════════╗
 ║       Marina Setup         ║
-╚══════════════════════════════╝`);
+╚══════════════════════════════╝`,
+  );
 
   if (fs.existsSync(ENV_PATH)) {
     const existing = fs.readFileSync(ENV_PATH, "utf-8");
@@ -326,10 +334,12 @@ export async function runInit(args: string[] = []): Promise<void> {
 
   // 2. World selection — derived from worlds/*.ts so the menu never goes stale.
   const worlds = worldMenu();
-  console.log("\nChoose a world:");
+  console.log(`\n${ui.section("Choose a world:")}`);
   const pad = Math.max(...worlds.map(([slug]) => slug.length)) + 2;
   for (let i = 0; i < worlds.length; i++) {
-    console.log(`  ${String(i + 1).padStart(2)}. ${worlds[i]![0].padEnd(pad)}— ${worlds[i]![1]}`);
+    console.log(
+      ui.choice(`${String(i + 1).padStart(2)}.`, worlds[i]![0].padEnd(pad), `— ${worlds[i]![1]}`),
+    );
   }
   const worldInput = await ask(`\nWorld [${cfg.MARINA_WORLD ?? "1"}]: `, cfg.MARINA_WORLD ?? "1");
   const worldIdx = Number.parseInt(worldInput, 10);
@@ -351,7 +361,7 @@ export async function runInit(args: string[] = []): Promise<void> {
   );
 
   // 4. LLM provider
-  console.log("\n── Optional: Connect an LLM Provider ──\n");
+  console.log(`\n${ui.section("── Optional: Connect an LLM Provider ──")}\n`);
   for (let i = 0; i < PROVIDERS.length; i++) {
     const labels = [
       "Together AI hosted models",
@@ -362,10 +372,10 @@ export async function runInit(args: string[] = []): Promise<void> {
       "gpt-oss-120b (fast)",
       "Multi-provider routing",
     ];
-    console.log(`  ${i + 1}. ${PROVIDERS[i]!.name.padEnd(14)}— ${labels[i]}`);
+    console.log(ui.choice(`${i + 1}.`, PROVIDERS[i]!.name.padEnd(14), `— ${labels[i]}`));
   }
   const skipProvider = String(PROVIDERS.length + 1);
-  console.log(`  ${skipProvider}. ${"skip".padEnd(14)}— No LLM, explore only`);
+  console.log(ui.choice(`${skipProvider}.`, "skip".padEnd(14), "— No LLM, explore only"));
 
   let chosenProvider: (typeof PROVIDERS)[number] | null = null;
   const provInput = await ask(`\nProvider [${skipProvider}]: `, skipProvider);
@@ -379,7 +389,7 @@ export async function runInit(args: string[] = []): Promise<void> {
   let providerOk = false;
   if (chosenProvider) {
     while (!providerOk) {
-      console.log("\n(Input will not be displayed)");
+      console.log(ui.muted("\n(Input will not be displayed)"));
       const key = await askHidden("Paste your API key: ");
       if (!key) {
         console.log("Skipped.");
@@ -389,14 +399,14 @@ export async function runInit(args: string[] = []): Promise<void> {
       process.stdout.write("Testing... ");
       const err = await testKey(chosenProvider, key);
       if (err) {
-        console.log(`✗ Failed: ${err}`);
+        console.log(ui.fail(`✗ Failed: ${err}`));
         const retry = await ask("Retry? (Y/n): ", "y");
         if (retry.toLowerCase() === "n") {
           chosenProvider = null;
           break;
         }
       } else {
-        console.log("✓ Connected.");
+        console.log(ui.ok("✓ Connected."));
         cfg[chosenProvider.env] = key;
         providerOk = true;
       }

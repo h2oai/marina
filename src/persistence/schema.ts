@@ -221,7 +221,173 @@ CREATE TABLE investigation_events (
 );
 `,
   },
+  // Migration 171 — the causal message envelope (`src/engine/message-envelope.ts`):
+  // `cause` is the ref of the message a direct or channel message answers,
+  // `depth` its causal depth (cause depth + 1, else 0). Refs and numbers only.
+  {
+    version: 171,
+    sql: `
+ALTER TABLE direct_messages ADD COLUMN cause TEXT;
+ALTER TABLE direct_messages ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE channel_messages ADD COLUMN cause TEXT;
+ALTER TABLE channel_messages ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+`,
+  },
+  // Migration 172 — known-at times on the rows the as-of fence dates
+  // (src/memory/as-of.ts). The `memory.created` / `memory.revised`,
+  // `source.captured` and `assistance.completed` service events were the ONLY
+  // record of when a version, source or proposal became known, and the event
+  // log is pruned at 30 days. Additive and idempotent (columns added only when
+  // missing, `IF NOT EXISTS` everywhere): `known_at` on versions and sources,
+  // `completed_known_at` on assistance jobs, each kept by an AFTER INSERT
+  // trigger on the event itself (same transaction, any write path), plus a
+  // one-row backfill cursor. Existing rows are filled from the surviving
+  // events by the bounded `memory-known-at-backfill` tick job, in short
+  // seq-range batches — never at boot, never one long transaction. Until the
+  // cursor passes an event, retention keeps it (`KNOWN_AT_RETENTION_WHERE`).
+  {
+    version: 172,
+    sql: `
+CREATE TABLE IF NOT EXISTS memory_known_at_backfill (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  cursor INTEGER NOT NULL,
+  upto INTEGER NOT NULL
+);
+`,
+    apply: installMemoryKnownAt,
+  },
+  // Migration 173 — supervised residents. `runtime` says who runs an agent
+  // account: `internal` (the in-process agent runtime, every existing row) or
+  // `supervised` (a native agent launched by a person's local routing
+  // supervisor, never respawned by the server). `vendor` is the native
+  // adapter id (`claude`, `codex`, `pi`), display only; NULL for internal rows.
+  // `run_session` is the routing session of the resident's current supervised
+  // run (renewal and `agent stop` address it); NULL when no run holds it.
+  {
+    version: 173,
+    sql: `
+ALTER TABLE agent_configs ADD COLUMN runtime TEXT NOT NULL DEFAULT 'internal';
+ALTER TABLE agent_configs ADD COLUMN vendor TEXT;
+ALTER TABLE agent_configs ADD COLUMN run_session TEXT;
+`,
+  },
+  // Migration 174 — the attention bridge (src/routing/attention-bridge.ts).
+  // `attention_wakes` audits what a supervised resident's supervisor decided
+  // for each world perception: refs, sources and reasons only, never message
+  // content. Append-only; pruned after 30 days (src/engine/retention.ts).
+  // `entity` is the resident's account name. `agent_configs.attention_relay`
+  // is the final-reply relay (`agent attention-mode <name> relay:all|explicit`):
+  // NULL or `all` relays a woken turn's final reply to whoever woke it,
+  // `explicit` sends only what the agent sends itself.
+  {
+    version: 174,
+    sql: `
+CREATE TABLE IF NOT EXISTS attention_wakes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity TEXT NOT NULL,
+  perception_ref TEXT,
+  source TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  hop INTEGER NOT NULL DEFAULT 0,
+  steered INTEGER NOT NULL DEFAULT 0,
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attention_wakes_entity_at ON attention_wakes(entity, at);
+CREATE INDEX IF NOT EXISTS idx_attention_wakes_at ON attention_wakes(at);
+ALTER TABLE agent_configs ADD COLUMN attention_relay TEXT;
+`,
+  },
+  // `room_log` is each room's bounded recent history for `look log`: `say`,
+  // `emote`, arrivals and departures as those present saw them, with the
+  // message envelope's `cause`/`depth`. At most 200 rows per room (pruned on
+  // write, src/persistence/db-rooms.ts) and 7 days (src/engine/retention.ts).
+  {
+    version: 175,
+    sql: `
+CREATE TABLE IF NOT EXISTS room_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  room TEXT NOT NULL,
+  entity TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  content TEXT NOT NULL,
+  cause TEXT,
+  depth INTEGER NOT NULL DEFAULT 0,
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_room_log_room_id ON room_log(room, id);
+CREATE INDEX IF NOT EXISTS idx_room_log_at ON room_log(at);
+`,
+  },
+  // `room_access` holds the rooms an owner made private (`build access <room>
+  // private`): owner and invite list by account name. A room with no row, or
+  // mode `public`, is open to everyone — the default for every room.
+  {
+    version: 176,
+    sql: `
+CREATE TABLE IF NOT EXISTS room_access (
+  room TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('public', 'private')),
+  invites TEXT NOT NULL DEFAULT '[]',
+  updated_at INTEGER NOT NULL
+);
+`,
+  },
+  // Write-path dedup looks a note up by its exact text. Canonical text lives
+  // in the record's version rows (numeric handles have empty bodies), so the
+  // entity-keyed idx_notes_dedup cannot find it; this text-prefix index lets
+  // `createNote` find the few rows with that text instead of reading the
+  // entity's whole history on every write (src/persistence/db-notes.ts).
+  {
+    version: 177,
+    sql: `CREATE INDEX IF NOT EXISTS idx_notes_content_prefix ON notes(substr(content, 1, 64));`,
+  },
+  // The investigation capture quota sums `bytes` over an owner's stored
+  // content. `bytes` sits after the (up to 2 MiB) `value_json` in each row, so
+  // without a covering index every write walked every earlier payload's
+  // overflow pages; this index answers the sum without touching them
+  // (src/persistence/db-investigation-journal.ts).
+  {
+    version: 178,
+    sql: `CREATE INDEX IF NOT EXISTS idx_investigation_content_attempt_bytes ON investigation_content(attempt_id, bytes);`,
+  },
 ];
+
+/** Migration 172 body — self-contained so later edits elsewhere never change it. */
+function installMemoryKnownAt(db: Database): void {
+  const addColumn = (table: string, column: string) => {
+    const columns = db.query(`PRAGMA table_info("${table}")`).all() as { name: string }[];
+    if (!columns.some((c) => c.name === column))
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} INTEGER`);
+  };
+  addColumn("memory_record_versions", "known_at");
+  addColumn("memory_sources", "known_at");
+  addColumn("memory_assistance_jobs", "completed_known_at");
+  db.exec(`
+CREATE TRIGGER IF NOT EXISTS memory_known_at_version AFTER INSERT ON memory_service_events
+WHEN new.operation IN ('memory.created','memory.revised') AND new.reference_id IS NOT NULL BEGIN
+  UPDATE memory_record_versions SET known_at = max(coalesce(known_at, 0), new.created_at)
+   WHERE record_id = new.reference_id AND version = new.version;
+END;
+CREATE TRIGGER IF NOT EXISTS memory_known_at_source AFTER INSERT ON memory_service_events
+WHEN new.operation = 'source.captured' AND new.reference_id IS NOT NULL BEGIN
+  UPDATE memory_sources SET known_at = max(coalesce(known_at, 0), new.created_at)
+   WHERE id = new.reference_id;
+END;
+CREATE TRIGGER IF NOT EXISTS memory_known_at_proposal AFTER INSERT ON memory_service_events
+WHEN new.operation = 'assistance.completed' AND new.reference_id IS NOT NULL BEGIN
+  UPDATE memory_assistance_jobs SET completed_known_at = max(coalesce(completed_known_at, 0), new.created_at)
+   WHERE id = new.reference_id;
+END;
+`);
+  // Everything at or below today's last event is the backfill's; later events
+  // are dated by the triggers above. An empty log has nothing to backfill.
+  db.run(
+    `INSERT OR IGNORE INTO memory_known_at_backfill (id, cursor, upto)
+     SELECT 1, 0, coalesce(max(seq), 0) FROM memory_service_events`,
+  );
+}
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */
 function hashMemApiKeySecrets(db: Database): void {

@@ -7,7 +7,7 @@
  * Provider resolution order:
  *   1. Tavily (if TAVILY_API_KEY set) — AI-native, highest quality
  *   2. SearXNG (if SEARXNG_URL set) — self-hosted meta-search, 150+ engines
- *   3. DuckDuckGo (always available) — free, no key needed
+ *   3. DuckDuckGo (on unless MARINA_SEARCH_DUCKDUCKGO=off) — free, no key needed
  *   4. DeepSeek Search (if DEEPSEEK_API_KEY set) — paid fallback when DuckDuckGo fails
  * A provider that fails (a key out of credit, an outage) throws; its engines
  * fall through to the next provider in this order, and the failure lands in
@@ -90,6 +90,8 @@ export interface SearchProvider {
   domainFilter?: boolean;
   /** One line for `sources` listings: what it searches and how the bound is enforced. */
   describe?: string;
+  /** Why the operator turned this provider off (it is then never called), else undefined. */
+  disabled?: () => string | undefined;
   search(
     query: string,
     opts: SearchOpts,
@@ -141,7 +143,7 @@ function providerForEngine(
   tried: ReadonlySet<SearchProvider> = new Set(),
 ): SearchProvider | undefined {
   const candidates = providers.filter(
-    (p) => !p.boundOnly && p.engines.includes(engine) && !tried.has(p),
+    (p) => !p.boundOnly && p.engines.includes(engine) && !tried.has(p) && !p.disabled?.(),
   );
   return candidates.find((p) => !searchBackendDown(p.name)) ?? candidates[0];
 }
@@ -264,6 +266,7 @@ async function boundedSearch(
   const chosen = providers.filter(
     (p) =>
       p.dateBound === "strict" &&
+      !p.disabled?.() &&
       (named ? named.includes(p.name) : p.engines.some((e) => engines.includes(e))),
   );
   const maxResults = opts.maxResults ?? 10;
@@ -325,7 +328,7 @@ export async function search(
     ensureCorpusProviders(named);
     const batches = await Promise.all(
       providers
-        .filter((p) => named.includes(p.name))
+        .filter((p) => named.includes(p.name) && !p.disabled?.())
         .map((p, i) =>
           p
             .search(query, { engines, maxResults }, runtime, i === 0 ? entityId : undefined)
@@ -357,6 +360,16 @@ export async function search(
     }
   }
 
+  // Nothing found while a provider that serves these engines is turned off: say so.
+  if (results.length === 0 && opts.failures) {
+    for (const p of providers) {
+      const off = p.disabled?.();
+      if (off && !p.boundOnly && p.engines.some((e) => engines.includes(e))) {
+        opts.failures.push(`${p.name}: ${off}`);
+      }
+    }
+  }
+
   return results.slice(0, maxResults);
 }
 
@@ -365,49 +378,9 @@ export async function search(
 let initialized = false;
 
 /**
- * Initialize providers based on available environment variables.
- * Call once at startup. Safe to call multiple times (idempotent).
- */
-export function initProviders(): void {
-  if (initialized) return;
-  initialized = true;
-
-  // Tier 1: key-gated providers (highest quality)
-  if (process.env.TAVILY_API_KEY) {
-    // Lazy import to avoid loading when not configured
-    import("./tavily").then((m) => registerProvider(m.tavilyProvider(process.env.TAVILY_API_KEY!)));
-  }
-  if (process.env.SEARXNG_URL) {
-    import("./searxng").then((m) => registerProvider(m.searxngProvider(process.env.SEARXNG_URL!)));
-  }
-
-  // Tier 2: always-available free providers, then DeepSeek's paid search as
-  // their fallback (DEEPSEEK_API_KEY is often set for chat models alone, so it
-  // never outranks the free engine). Chained so the order holds.
-  import("./duckduckgo")
-    .then((m) => registerProvider(m.duckDuckGoProvider()))
-    .then(() => (process.env.DEEPSEEK_API_KEY?.trim() ? import("./deepseek") : undefined))
-    .then((m) => {
-      if (m) registerProvider(m.deepSeekSearchProvider(process.env.DEEPSEEK_API_KEY!.trim()));
-    });
-
-  // Academic: always available, free, no keys
-  import("./academic").then((m) => registerProvider(m.academicProvider()));
-
-  // Date-bounded providers: always available, free, no keys; bounded searches only.
-  import("./asof-providers").then((m) => {
-    for (const p of m.dateBoundProviders()) registerProvider(p);
-  });
-
-  // Local corpora (offline BM25), named searches only.
-  import("./corpus").then((m) => {
-    for (const p of m.corpusProviders()) registerProvider(p);
-  });
-}
-
-/**
- * Synchronous initialization for providers that don't need async setup.
- * Prefer this over initProviders() when you need providers available immediately.
+ * Register the providers the environment configures (key-gated first, then the
+ * free engines, academic, date-bounded and local corpora). Call once at
+ * startup; idempotent.
  */
 export function initProvidersSync(): void {
   if (initialized) return;

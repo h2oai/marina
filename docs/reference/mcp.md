@@ -1060,6 +1060,7 @@ Portable memory service: retrieve with input {task} finds and reads citable evid
         "retrieve",
         "checkpoint",
         "save_checkpoint",
+        "capture_checkpoint",
         "grant",
         "forget",
         "export",
@@ -1517,7 +1518,7 @@ Retire a watch spec — future probes skip it. Use when a watch is duplicate, st
 
 ## who
 
-List all connected entities
+List all connected entities with each agent's status (working, idle, blocked, needs you, resting, offline)
 
 ```json
 {

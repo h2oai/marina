@@ -327,12 +327,25 @@ AGENT_NAME=Scholar MODEL_CHANNEL=model-scholar bun run src/sdk/examples/provider
 ```
 
 Multiple agents in the same channel means requests are load-balanced across them. The balancer
-addresses each request to one member (`target` in the `model_request`), but every member perceives
-it, and the first correlated reply (`model_response` with the request `id`, or `[<id>] <text>`)
-from any current member of the channel fulfils it. A streamed reply belongs to the first member
-that sends a correlated frame. Channel membership is the authorization boundary: keep agents that
-should not answer off the `model-<name>` channel. When a member other than the target answers, the
-completed lifecycle event records it as `respondedBy`.
+addresses each request to one member (`target` in the `model_request`, its entity id), and that
+member claims it: Marina's own residents owe a `model_request` only when it is addressed to them
+(a request without a `target` is everyone's), and the SDK example provider does the same. The other
+members drop it, and drop a peer's `model_response` too, so one request costs one member's work.
+
+The claim is a lease (`MARINA_REQUEST_CLAIM_LEASE_MS`, default 120 s). The holder's traced work on
+the request renews it: a turn, tool call or text under the request's trace, or a `model_draft`.
+With no sign of work for the lease, the request is re-offered: the same `model_request` id, marked
+`reoffer: true` and addressed to another eligible member (one that has not held it, fewest in flight
+first). The first holder sees the re-offer addressed elsewhere and drops the request. A lone member
+keeps its request, and a pinned (`role:`) request is never re-offered. Each re-offer is a `routed`
+lifecycle event with `routeReason: reoffered:claim-lapsed`; the completed event adds `reoffered:<n>`.
+
+The first correlated reply (`model_response` with the request `id`, or `[<id>] <text>`) from any
+current member of the channel fulfils the request, so a slow first holder that answers after a
+re-offer still counts. A streamed reply belongs to the first member that sends a correlated frame,
+and the stream is not re-offered after that frame. Channel membership is the authorization boundary:
+keep agents that should not answer off the `model-<name>` channel. When a member other than the
+current holder answers, the completed lifecycle event records it as `respondedBy`.
 
 Choose the within-channel strategy with `X-Load-Balance`. The header is honored on the routes that
 select a single agent: `POST /v1/chat/completions` (in the default `agents` endpoint mode),
@@ -463,7 +476,7 @@ curl -si http://localhost:3300/v1/chat/completions -H "Authorization: Bearer sec
 The receipt's `requestId` equals the response's `x-request-id`; `trace show <id>` renders a
 **Memory** section (entity, budget, used bytes, one line per tier with ids), and the native
 `GET /api/traces` format exposes it as the span attribute `memoryReceipt`. Receipts are on in every
-trust profile — YOLO applies to permissions, never to records.
+trust profile — the local profile relaxes permissions, never records.
 
 ### Response cache
 
@@ -553,9 +566,10 @@ picks one), `debate` (the first two members argue and rebut, the checker judges)
 picks in a bracket), `verification` (the first member drafts, the checker reviews, one revision),
 `deliberation` (proposals, revision after seeing anonymous peers, a pick), `chorus` (proposals,
 each critiques one peer, revision, a pick) and `pipeline` (each member refines the previous
-handoff; the last output wins). The legacy name `nsed` runs `deliberation`. These are text
-protocols that share names with the numeric arena and forecast formations; they are not those
-formations. A checker always picks ONE whole answer; answers are never merged.
+handoff; the last output wins). The legacy name `nsed` runs `deliberation`. Each is its
+formation's entry in the formation catalogue (`src/orchestration/formations/`). The arena and
+forecast formations of the same name use the same entry with numeric and typed combiners. A checker
+always picks ONE whole answer; answers are never merged.
 
 Crew-only patterns (`foundry`, `swarm`, `mapreduce`, `blackboard`, `symbiosis`, `research`,
 `auction`, `ledger`, `sharding`, `custom`) need a persistent crew and are refused with `400

@@ -15,7 +15,9 @@
  * teaches like any other outcome when its board is named (its source or an
  * `eval:<board>` ref; leakage rule 2 keeps the lesson out of that board's own
  * measurements) and is skipped otherwise; it never writes history, which tunes
- * the very forecasts the board measures (`skipped: measurement`). Private context
+ * the very forecasts the board measures (`skipped: measurement`). A shadow
+ * challenger (`src/forecast/shadow.ts`) teaches but never writes history: its
+ * question is already recorded by its live answer (`skipped: shadow challenger`). Private context
  * (the question) is read back from the subject row, never stored on the
  * outcome. A delivery that keeps failing ends `failed`, with its reason.
  */
@@ -24,6 +26,7 @@ import { Logger } from "../engine/logger";
 import { noteResolvedForecast, noteResolvedRecord } from "../forecast/adjust";
 import { typedFormation } from "../forecast/formations";
 import { type ForecastHistory, historyFromEnv, resolvedRecord } from "../forecast/history";
+import { SHADOW_OWNER } from "../forecast/routing-refs";
 import type { TypedForecastAnswer } from "../forecast/typed";
 import { EVAL_REF_PREFIX, sourceNamesBoard } from "../learning/eval-context";
 import { lessonsMode } from "../learning/modes";
@@ -319,6 +322,14 @@ export async function deliverOutcomes(
     }
     if (o.eval_mode === "measure") {
       db.setOutcomeDelivery(o.id, "history", "skipped", "measurement");
+      t.skipped++;
+      continue;
+    }
+    // A shadow challenger answered a question the live answer already records:
+    // a second history record would be a correlated extra for prior shrink and
+    // recalibration. Its paired evidence lives on its outcome row; it still teaches.
+    if (o.owner === SHADOW_OWNER) {
+      db.setOutcomeDelivery(o.id, "history", "skipped", "shadow challenger");
       t.skipped++;
       continue;
     }

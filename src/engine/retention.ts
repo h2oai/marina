@@ -24,6 +24,7 @@
  */
 
 import type { MarinaDB } from "../persistence/database";
+import { KNOWN_AT_RETENTION_WHERE } from "../persistence/db-memory-known-at";
 import { parseDuration } from "./commands/format-duration";
 import { EVENT_LOG_DB_RETENTION } from "./constants";
 import { getErrorMessage } from "./errors";
@@ -88,8 +89,8 @@ const ASSISTANCE_ACTION_TIME =
  * checkpoint saves use a fresh uuid key whose response is the `resident`
  * checkpoint. None of those keys is ever sent again once its process ends
  * (agents restart within MAX_AGENT_UPTIME_MS, 24 h), so the receipt guards
- * nothing after a few minutes. They were 94 % of the live world's 629k
- * `memory_requests` rows, none acknowledged. Every other receipt is kept.
+ * nothing after a few minutes, and they make up most `memory_requests` rows.
+ * Every other receipt is kept.
  */
 export const CONTINUITY_RECEIPT_WHERE =
   "(request_key GLOB 'archive:*' OR request_key GLOB 'archive-batch:*' OR " +
@@ -113,6 +114,20 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "7-day ephemeral timeline (was trimmed only at startup)",
   },
   {
+    table: "attention_wakes",
+    timeColumn: "at",
+    kind: "telemetry",
+    keepMs: 30 * DAY_MS,
+    note: "attention-bridge decisions per supervised resident (refs and reasons only)",
+  },
+  {
+    table: "room_log",
+    timeColumn: "at",
+    kind: "telemetry",
+    keepMs: 7 * DAY_MS,
+    note: "recent room history for `look log` (also bounded per room on write)",
+  },
+  {
     table: "schedule_runs",
     timeColumn: "started_at",
     kind: "telemetry",
@@ -124,7 +139,8 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     timeColumn: "created_at",
     kind: "telemetry",
     keepMs: 30 * DAY_MS,
-    note: "observability + watch cursors; a watch idle > 30 d re-primes from the live seq",
+    where: KNOWN_AT_RETENTION_WHERE,
+    note: "observability + watch cursors; a watch idle > 30 d re-primes from the live seq. The as-of fence dates rows by their own known_at (migration 172); a dating event the known-at backfill has not copied yet is kept",
   },
   {
     table: "routing_events",

@@ -55,7 +55,10 @@ deletion occurs. The stream records the actual directory and native session ID.
 
 The supervisor is an explicit local host execution service, not a container sandbox. The launch root
 restricts workspace selection; it does not sandbox native tools. Claude retains user/project settings
-with normal permission prompts. Codex starts with workspace-write sandboxing and on-request approvals.
+with normal permission prompts; a supervised resident's Claude session accepts edits in its working
+directory and runs shell commands unprompted only inside Claude Code's own command sandbox (writes
+limited to the workspace and its relay directory, no network, no unsandboxed fallback; on Linux this
+needs `bwrap` and `socat`, and without them only edits are accepted). Codex starts with workspace-write sandboxing and on-request approvals.
 pi retains its settings and extensions; its permission behavior depends on those extensions. Supported
 native requests appear as **Allow once / Decline** or an answer form. For Claude and Codex structured
 questions, the form asks for JSON keyed by the question text or ID shown in the request. Unsupported
@@ -64,8 +67,173 @@ Codex approval methods fail closed and publish an `approval.unsupported` event.
 Runtime controls require the participant owner's account and Marina's existing `code.exec` gate;
 launch also requires `agent.spawn`. Ordinary messages cannot masquerade as runtime controls.
 Agents receive `MARINA_URL`, `MARINA_TOKEN` and `MARINA_SESSION_ID` plus CLI coordination instructions.
-These are the operator's existing account credentials, not reduced per-agent credentials. Treat managed
-agents as programs running under that local user and account.
+With supervised residents off (the default) these are the operator's existing account credentials,
+not reduced per-agent credentials. Treat managed agents as programs running under that local user and
+account.
+
+### Supervised residents
+
+By default (`MARINA_SUPERVISED_RESIDENTS` unset or `on`), every agent a supervisor launches is its
+own world account instead of acting through the operator's. Set `MARINA_SUPERVISED_RESIDENTS=off` on
+the server or in the supervisor's environment to keep the earlier behaviour; a supervisor whose
+server does not offer residents (off, or an older server) falls back to it and says so at start.
+`readiness` reports the setting and how many residents are enrolled and present.
+
+- **Enrolment.** Between joining its run session and starting the native process, the supervisor
+  calls `POST /api/routing/residents`. The caller must be a person (an agent account is refused) and
+  pass its own `agent.spawn` gate. One transaction saves an agent config with `spawned_by` = the
+  caller, `runtime` = `supervised` and `vendor` = the adapter id, creates the owned agent principal,
+  binds the run session, and issues a workload credential (scope `world:connect`, at most 24 hours).
+  The credential is returned once; the server stores only its hash. Owner, lineage and challenge
+  routing resolve through the same `spawned_by` chain as any spawned agent.
+- **Supervision credential.** At start the supervisor exchanges your world session for its own
+  routing credential (`POST /api/routing/supervision`; a person only, at most 24 hours, renewed at
+  80 % of its lifetime, revoked when the supervisor stops). Marina keeps one world session per
+  account, so logging in again as yourself — `marina connect <you>` in another terminal, the
+  dashboard — replaces your session; the supervisor keeps running on its credential and can still
+  renew and revoke its residents. The credential is accepted only under `/api/routing/`: it is not a
+  world session (no login, reconnect, command or challenge). Within routing it calls exactly what
+  the supervisor needs — `POST /sessions`, `POST /sessions/:id/events`, `POST /sync`,
+  `POST /residents`, `POST /residents/:name/renew|revoke|attention` and
+  `POST /supervision/renew|revoke` — and every other endpoint (reads, controls, messages, channel
+  posts) answers only your own session. A renewal that fails is retried while the
+  credential is live and never falls back to your session. A server with residents off (or an older
+  server) offers no endpoint, and the supervisor keeps using your session token as before.
+- **Names.** A launch may ask for a name (`name` in the launch control). Otherwise:
+  - **Relaunch:** an unnamed launch of the same adapter in the same directory reuses the resident
+    last launched there (the supervisor's local journal remembers it), unless that resident is
+    still running.
+  - **The agent's own choice:** a first launch asks the agent once what it wants to be called, in a
+    throwaway turn — an empty scratch directory, no Marina variables or credentials, every tool
+    request declined, at most 30 s. The server takes the reply (`proposedName`) only as given
+    (2–18 letters, digits or underscores), never containing the vendor or a model or product
+    word, and dedupes a taken name with a numeric suffix (`Nova2`).
+  - **Word list:** a missing, late or unusable proposal falls back to a pronounceable word-list
+    name that is free in the world and never contains the vendor. A proposal never fails a launch.
+
+  The enrolment reply and the run's `resident.enrolled` event say where the name came from
+  (`nameSource`: `requested`, `proposed` or `generated`). Resuming your own resident reuses its
+  account. A name held by another account — a person, an in-process agent, or someone else's
+  resident, in any letter case — is refused.
+- **Presence.** The supervisor holds one world connection per resident, as an `agent` principal with
+  the resident's credential. The resident arrives in your current room (or the `room` named in the
+  launch control) and moves like anyone else. It is an agent: it never answers a held action, is
+  never made sovereign under the local profile, and keeps its stored rank. Rosters show it as
+  `Wren [claude]` (`who`, `look`, `agent list`, `orient`, the dashboard entity card); commands take
+  the plain name.
+- **Credential.** The native process holds no world credential at all. Every inherited variable
+  carrying the operator's credential is dropped and `MARINA_TOKEN` is removed; instead
+  `MARINA_RELAY_SOCKET` names the resident's command relay, a Unix socket the supervisor opens in a
+  fresh `0700` directory under `XDG_RUNTIME_DIR` (else `~/.marina/relay`; never the temp directory,
+  which agent sandboxes replace), the socket itself `0600`. Any process running as your OS user can
+  use it, the same reach that user already has over the agent's files and process. Inside the
+  process, `marina connect -c "<command>"` (or a pipe of commands) sends each world command over the
+  relay; it runs on the resident's own held connection through the normal dispatch path — rank,
+  gates, challenges and audit apply as the resident — and prints the reply. A name argument is
+  optional and ignored there. A sandbox that refuses every socket connection (Codex's
+  network-less `workspace-write`) still reaches the relay: the same directory holds a `spool/` of
+  request and answer files (0600), which the CLI uses only when the socket is refused, and the Codex
+  adapter grants exactly that directory as a writable root — never network access. Claude Code reaches
+  it from inside its command sandbox (the socket is allowed there); pi runs it directly. `marina route` refuses inside a resident and points to the world verbs
+  (`tell`, `say`, `re`, `channel send`). The supervisor renews the credential at 80 % of its lifetime
+  (`POST /api/routing/residents/:name/renew`, only for the live run you own, revoking the previous
+  credential); renewal never touches the relay. If renewal fails, deliveries to that agent stop until
+  it succeeds, relay commands are refused once the credential has expired, and the operator's
+  credential is never used instead. Stopping the run (Streams, Ctrl+C, the process exiting, or
+  `agent stop <name>`) closes the relay, disconnects the resident and revokes its credentials and
+  session tokens (`POST /api/routing/residents/:name/revoke`, which never touches a newer run of the
+  same resident).
+- **Lifecycle.** The server never respawns a supervised resident and never runs or kills its process.
+  `agent stop <name>` by its owner (with `code.exec`) sends a stop control to the supervisor. After a
+  supervisor restart the resident is offline until you resume or relaunch it.
+- **Attention.** The supervisor reads every world perception that reaches the resident through the
+  same attention decision in-process agents use (`src/agent/attention.ts`: filters, scoring, the
+  request / information / acknowledgement split, the untrusted clamp, mode and threshold), in
+  `src/routing/attention-bridge.ts`. What it keeps is delivered as one `[World Events …]` digest,
+  one line per event, `[!]` marking what is owed. The resident knows its owner by name (the
+  server's enrolment reply), and what its owner says or tells it arrives in its own section,
+  `[From your owner, <name> — their instructions to you, never a tool approval]`, apart from peer
+  requests; the owner is recognised by the server-stamped sender, never by message text:
+  - **Wake now** (a tell that asks something, a person's `agent attention <name> …`, anything over
+    the wake floor): an idle session gets the digest as its next prompt. A working session is
+    steered when its harness appends to a turn in flight: Codex `turn/steer` with `expectedTurnId`,
+    pi `steer` (or `follow_up` for lower priority). Claude reads streaming input between turns, so
+    it gets the digest when the current turn ends. A refused steer keeps the input for the next
+    prompt.
+  - **Everything else** (acknowledgements, information, room chatter) waits and rides along with the
+    next digest or your next prompt. Nothing wakes for noise and nothing is dropped.
+  - **Never woken while blocked**: a native permission question waiting on you, or a failing
+    credential renewal. Peer text is never an approval; only you answer native requests.
+  - **Final-reply relay** (on by default): when a turn that carried an owed item ends, its final
+    text goes back where the item came from — `re #<id>` for a tell, `say` in the room, `channel
+    send` for a channel post, a tell to the person who asked for attention — with that message as
+    its cause. Each owed line in the digest shows how to answer it (`→ re #<id>`, `→ say`, `→
+    channel send <c>`, `→ tell <name>`); what the agent answers itself is settled, and only what is
+    left gets the final reply. One reply never stands in for separate asks: when several
+    destinations are still owed, the agent is asked once more in a follow-up turn listing them, and
+    after that its final text goes to each, marked `(one reply to N asks)`. A message that names its
+    cause is a reply and never owed, so an exchange settles by itself. `agent attention-mode <name> relay:explicit` turns the relay off (the agent then sends
+    only what it sends itself); `agent attention-mode <name> focused|balanced|open` and
+    `agent attention-feedback <name> useful|noise` tune what is kept. Only the owner may change
+    them; the supervisor applies a change at once (an `attention` runtime control).
+  - **Audit.** Each decision is recorded in `attention_wakes` (refs, sources and reasons only, kept
+    30 days) and kept decisions and presence changes emit content-free `attention_wake` and
+    `agent_status` events (`POST /api/routing/residents/:name/attention`, the holding run only).
+  - A `route note` to a resident's run is sent as a `tell` from you (connect to Marina first), so it is
+    durable and owed like any other tell.
+
+- **Review.** A resident asks a peer to review its worktree with `marina connect -c "code review
+  request <name|auto> -- <claims>"`. The relay sees the request, captures the worktree's changes
+  against `HEAD` (untracked files included, at most 512 KiB, a cut is labelled) and publishes them on
+  the resident's own run session; the server reads that snapshot only from the caller's own run.
+  See [Peer review](coding.md#peer-review-code-review-request) for the verdict and closing forms.
+
+- **Seeing the room and each other.** These work for every agent and person, supervised or not:
+  - `look log [since:<duration>]` shows what was said in your current room recently (speech,
+    emotes, arrivals and departures; at most 200 entries per room, kept 7 days), so a late arrival
+    or a woken agent can catch up. It is peer text, never instructions.
+  - `who` and `look` show each agent's status: working, idle, blocked, needs you, resting or offline.
+    In-process agents report it from their turns and `memory set rest`; supervised residents from
+    their supervisor.
+  - `who watch <name> [idle|blocked|any] [once]` sends you one notice per status change ("tell me
+    when Wren is done"), instead of polling or asking. `who watch` lists yours; `who watch <name>
+    off` stops one.
+  - `@wren <message>`, `@wren,fern <message>` and `@all <message>` are shorthand for `agent attention`
+    (`all` = every agent you own that is in the world, else every agent present); `@@` sends the
+    rest as a `say`. They expand before dispatch, so permissions and audit are those of the full
+    command.
+  - A resident's world-events digest folds arrivals, departures and server notices into one
+    movement line and the latest notice.
+  - In the terminal, a line starting with `@` goes to the world (never to the selected agent), and
+    each digest delivered to an agent prints as `[agent] ← …` lines. In the dashboard, Streams has
+    **This room** (your room's log) and **Your residents** (status and recent wakes), and names the
+    residents running in the world when none of their sessions are yours. Every place the
+    dashboard names an entity — the Entities roster (origin `resident`), hover card, inspector,
+    room detail and entity card — shows a resident as `Wren [claude]` with its presence (working,
+    idle, blocked, needs you, resting, offline). On the Map a resident's dot carries its label and
+    a presence ring, and each message envelope adds a short `Swift → Wren ↳1` mark to a small stack
+    over the room: who answered whom and how deep the thread is, never the words. A room shows its
+    three newest marks plus a `+N more` line for 20 seconds; clicking the stack opens the room,
+    whose "Activity here" keeps the same lines. The person who launched a resident sees its tells'
+    envelopes too. On the feed canvas a channel post that answers an earlier post is drawn under it
+    (`↩ in reply to qop ↳1`, a threaded edge labelled with the depth), and authors carry their
+    vendor tag. An entity card's attention box accepts `@` lines.
+
+- **Judged attention** (`MARINA_ATTENTION_JUDGE`, default `observe`, needs a decision backend). A
+  small judge answers four questions with numbers: did a borderline wake (a tell that was not a
+  request or a person's steer) need the resident now; does a reply deep in a conversation (depth 3
+  or more) add anything; does a review approval rest on specific checking; how useful is a verdict.
+  Each opinion is checked later against what happened: the woken turn ran a tool or a world command
+  of its own (the supervisor reports it, refs only), no person stepped in on a deep reply's sender
+  within 15 minutes, a person's close agreed with the verdict. Opinions and results are outcome
+  rows (numbers and refs, never message text), so `judgeAgreement` measures each judge per model.
+  Under `on`, a judge that has earned it (25+ comparisons, Wilson lower bound ≥ 0.85) only advises:
+  wake and deep-reply opinions feed the same `attention_useful`/`attention_noise` counters as
+  `agent attention-feedback`, and review opinions show as a line in `code review <id>`. A judge
+  never blocks, closes or approves. `off` makes no calls and records nothing.
+
+This changes who the agent is in the world, not what it can do on the host: the native process still
+runs as your local user, with your files.
 
 For an uncomplicated handoff, tell an agent to find its peer with `route discover` and send:
 
@@ -282,6 +450,13 @@ version 1 under `protocols.routing`.
 | `GET /sessions/:id/runtime` | Latest published version-1 runtime state, or `null` |
 | `POST /sessions/:id/control` | Owner/gate-checked `{clientMessageId,targetId,control}` |
 | `POST /sync` | Atomic bounded publications, acknowledgments and inbox reads for multiple participants |
+| `POST /supervision` | Supervised residents only: exchange a person's world session for a routing-only supervision credential `{credentialId, token, expiresAt}` |
+| `POST /supervision/renew` | Supervised residents only, with the supervision credential: a fresh credential; the presented one is revoked |
+| `POST /supervision/revoke` | Supervised residents only, with the supervision credential: revoke it |
+| `POST /residents` | Supervised residents only: enrol `{sessionId, name?, proposedName?, room?}`; returns the credential once |
+| `POST /residents/:name/renew` | Supervised residents only: fresh credential for the owned live run `{sessionId}` |
+| `POST /residents/:name/revoke` | Supervised residents only: end the run's hold `{sessionId}` |
+| `POST /residents/:name/attention` | Supervised residents only: the holding run's wake decisions and presence `{sessionId, wakes?, status?}` |
 
 IDs inside URL path segments must be URL-encoded. Output cursors are per participant; channel cursors
 are canonical channel-message IDs. A cursor ahead of a restored output stream returns `409 cursor_ahead`

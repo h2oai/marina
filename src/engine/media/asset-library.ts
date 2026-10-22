@@ -29,7 +29,6 @@
  * the dashboard rereads under the viewer's own credential.
  */
 
-import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,6 +39,7 @@ import {
   type AssetRow,
   assetTypeOf,
 } from "../../persistence/db-assets";
+import { sha256Hex } from "../../security/hash";
 import type { StorageProvider } from "../../storage/provider";
 import type { EngineEvent, EntityId } from "../../types";
 import { getErrorMessage, logRejection } from "../errors";
@@ -78,10 +78,6 @@ export const MAX_CAPTION_CHARS = 2000;
 export const MAX_ALT_CHARS = 1000;
 
 // ─── Small helpers ───────────────────────────────────────────────────────────
-
-export function sha256Hex(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
 
 /**
  * A tag as stored: lower-case, no leading `#`, letters/digits and `-_.:`

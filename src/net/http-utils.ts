@@ -216,6 +216,19 @@ export async function readJsonValue(
 }
 
 /**
+ * Parse a stored JSON column for a response. A row whose text does not parse
+ * yields `fallback`, so one damaged row never fails a whole list.
+ */
+export function safeJsonParse<T>(text: string | null | undefined, fallback: T): T {
+  if (text == null || text === "") return fallback;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * The JSON-object body reader for every HTTP route. A malformed payload never
  * propagates as an unhandled rejection into `Bun.serve`; the per-route byte
  * ceiling is enforced here (the server-wide `maxRequestBodySize` must admit
@@ -476,7 +489,7 @@ export const HTTP_RATE_LIMITS = {
   dashboard: { maxTokens: 60, refillRate: 60, refillInterval: 10_000 },
   /** Canvas + asset mutations, per principal: 30 / 10 s. */
   mutation: { maxTokens: 30, refillRate: 30, refillInterval: 10_000 },
-  /** Public unauthenticated reads (`/api/entity/*`), per IP: 30 / 10 s. */
+  /** Public unauthenticated reads (`/api/entity/*`, canvas and asset GETs), per IP: 30 / 10 s. */
   publicRead: { maxTokens: 30, refillRate: 30, refillInterval: 10_000 },
   /** MCP session creation + login/auth tool calls, per IP: 10 / min. */
   mcpSession: { maxTokens: 10, refillRate: 10, refillInterval: 60_000 },

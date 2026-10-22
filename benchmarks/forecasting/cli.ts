@@ -10,7 +10,6 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { isolationOfSpec } from "../../src/arena/research/isolation";
 import {
   DEFAULT_HOLDOUT_FRACTION,
   fileSlotPromotion,
@@ -25,6 +24,8 @@ import {
 import { FORECAST_CONFIG_SLOT, FORECAST_FAMILY } from "../../src/forecast/defaults";
 import { forecastLessonsFor } from "../../src/learning/forecast-bridge";
 import type { MarinaDB } from "../../src/persistence/database";
+import { isolationOfSpec } from "../../src/research/isolation";
+import { stamped } from "../run-version";
 import { boardExclusion } from "./barred";
 import {
   type CatalogueModel,
@@ -371,7 +372,7 @@ export async function runSelection(opts: {
   // The decision is a promotion row on the board's slot; selection.json stays the journal.
   saved.promotion = fileSelectionPromotion(opts.db, saved, { slot });
   mkdirSync(dirname(opts.out), { recursive: true });
-  writeFileSync(opts.out, JSON.stringify(saved, null, 2));
+  writeFileSync(opts.out, JSON.stringify(stamped(saved), null, 2));
   return saved;
 }
 

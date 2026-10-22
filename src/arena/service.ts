@@ -444,12 +444,14 @@ export async function forecasterFor(
             learner: (round, lock, filed, outcome) => {
               const summary = crew.roundSummary(lock, filed, outcome);
               if (summary)
-                void import("../learning/service").then(({ noteOutcome }) =>
-                  noteOutcome(
-                    notes,
-                    crew.crewLessonOutcome(round, round.round_id, summary, round.release_at),
-                  ),
-                );
+                void import("../learning/service")
+                  .then(({ noteOutcome }) =>
+                    noteOutcome(
+                      notes,
+                      crew.crewLessonOutcome(round, round.round_id, summary, round.release_at),
+                    ),
+                  )
+                  .catch(logRejection(logger, "arena", "backtest lesson outcome failed"));
             },
           }
         : {}),
@@ -829,7 +831,12 @@ export async function arenaDepsWithForecaster(
       ...(notes ? { notes } : {}),
       routeEvidence: async () => {
         const { loadRouteEvidence } = await import("./earned-routes");
-        return loadRouteEvidence(store, deps.data, deps.config.entrant);
+        // The shared outcome rows too, when the store is a Marina database.
+        const outcomes =
+          "listOutcomes" in store && "getForecastAnswer" in store
+            ? (store as unknown as import("./earned-routes").RouteOutcomeReader)
+            : undefined;
+        return loadRouteEvidence(store, deps.data, deps.config.entrant, outcomes, env);
       },
       previous: (roundId) => {
         const row = store.acceptedArenaSubmission(deps.config.entrant, roundId);

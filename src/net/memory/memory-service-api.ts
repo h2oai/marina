@@ -21,6 +21,12 @@ import { memoryWorkflow } from "../../memory/workflows";
 import { memoryStorageFailure } from "../../persistence/db-memory-failures";
 import type { MemoryActor } from "../../persistence/db-principals";
 import { withMemoryAbort } from "../../sdk/memory-abort";
+import {
+  authFailuresExhausted,
+  clientIp,
+  type PeerAddressSource,
+  recordAuthFailure,
+} from "../http-utils";
 
 const limiters = new WeakMap<MemoryService, RateLimiter>();
 const headers = {
@@ -126,9 +132,16 @@ function searchInput(body: Record<string, unknown>): MemorySearchInput {
   };
 }
 
+/**
+ * `peer` is the listener's socket-peer source (`server` or an address): with it,
+ * each client address has a failed-credential budget, spent only by a
+ * rejected credential and checked before any credential is compared (the
+ * same rule as `/mem`). In-process callers pass none and are not counted.
+ */
 export async function handleMemoryServiceApi(
   req: Request,
   service: MemoryService,
+  peer?: PeerAddressSource | string,
 ): Promise<Response> {
   try {
     if (req.signal.aborted)
@@ -147,8 +160,16 @@ export async function handleMemoryServiceApi(
         healthy ? 200 : 503,
       );
     }
+    const ip = peer === undefined ? undefined : clientIp(req, peer);
+    if (ip !== undefined && authFailuresExhausted(ip))
+      throw new MemoryError(
+        429,
+        "rate_limited",
+        "Too many failed authentication attempts. Please slow down.",
+      );
     const token = req.headers.get("Authorization")?.match(/^Bearer (.+)$/)?.[1];
     const actor = token ? service.db.verifyMemoryCredential(token) : undefined;
+    if (token && !actor && ip !== undefined) recordAuthFailure(ip);
     if (!actor)
       throw new MemoryError(
         401,
@@ -157,20 +178,32 @@ export async function handleMemoryServiceApi(
       );
     let limiter = limiters.get(service);
     if (!limiter) {
-      limiter = new RateLimiter({ maxTokens: 100, refillRate: 25 });
+      // 100-request burst, refilled smoothly at 25/s (one token every 40 ms):
+      // a throttled caller waits for the next token, not for a whole second.
+      limiter = new RateLimiter({ maxTokens: 100, refillRate: 1, refillInterval: 40 });
       limiters.set(service, limiter);
     }
     limiter.cleanup();
-    if (!limiter.consume(actor.principalId))
+    if (!limiter.consume(actor.principalId)) {
+      const wait = Math.max(1, limiter.retryAfterMs(actor.principalId));
       return new Response(
         JSON.stringify({
-          error: { code: "rate_limited", message: "Memory request budget exhausted" },
+          error: {
+            code: "rate_limited",
+            message: "Memory request budget exhausted",
+            retry_after_ms: wait,
+          },
         }),
         {
           status: 429,
-          headers: { ...headers, "Content-Type": "application/json", "Retry-After": "1" },
+          headers: {
+            ...headers,
+            "Content-Type": "application/json",
+            "Retry-After": String(Math.ceil(wait / 1000)),
+          },
         },
       );
+    }
     const key = req.headers.get("Idempotency-Key") ?? "";
     if (
       ["POST", "PATCH", "DELETE"].includes(req.method) &&
@@ -661,6 +694,11 @@ export async function handleMemoryServiceApi(
         const sources = repo.sources(actor, space, after, limit);
         return json({ sources, next_cursor: sources.at(-1)?.seq ?? after });
       }
+    }
+    const captureCheckpoint = rest.match(/^checkpoints\/([^/]+)\/capture$/);
+    if (captureCheckpoint && req.method === "POST") {
+      const name = textValue(decodeURIComponent(captureCheckpoint[1]!), "name", 256);
+      return json(repo.captureCheckpoint(actor, space, name, await readBody(req), key), 201);
     }
     const checkpoint = rest.match(/^checkpoints\/([^/]+)$/);
     if (checkpoint) {

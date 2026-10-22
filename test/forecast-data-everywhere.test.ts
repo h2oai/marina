@@ -10,14 +10,14 @@ import {
   briefCutoff,
   withDataLookups,
 } from "../src/arena/research/data-evidence";
-import { type ResearchReport, withProvidedText } from "../src/arena/research/retrieve";
-import { verifyDossier } from "../src/arena/research/verify";
 import { dataCommand } from "../src/engine/commands/data";
 import { dataOdds, dataSeries, dataSources } from "../src/forecast/data-query";
 import type { LookupFetch } from "../src/forecast/lookup-http";
 import { fredAsOfDay, fredLookup, fredToday } from "../src/forecast/lookup-series";
 import type { ForecastLookup, LookupContext } from "../src/forecast/lookup-types";
 import { effectiveCutoff, lookupsFromSpec, runLookups } from "../src/forecast/lookups";
+import { type ResearchReport, withProvidedText } from "../src/research/retrieve";
+import { verifyDossier } from "../src/research/verify";
 import type { CommandInput, EntityId, KeyValueStore, RoomContext, RoomId } from "../src/types";
 import { searchToolCommands } from "../src/world/rooms/search-room";
 

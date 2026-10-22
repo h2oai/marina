@@ -35,7 +35,8 @@ export interface RoomNodeData {
   district: string;
   exits: Record<string, string>;
   throughput: number;
-  entities: { name: string; kind: string; state: string }[];
+  /** `vendor` badges a supervised resident (`claude`, `codex`, `pi`). */
+  entities: { name: string; kind: string; state: string; vendor?: string }[];
   /** Callback when an entity is clicked inside the room. Includes screen position. */
   onEntityClick?: (name: string, screenX?: number, screenY?: number) => void;
   /** Callback when the room's action node is clicked (for intent/inspect). */
@@ -79,7 +80,15 @@ const STATE_COLORS: Record<string, string> = {
   idle: "#444444",
   error: "#ef4444",
   online: "#f0f0f0",
+  // Presence statuses (`who`, src/engine/presence.ts).
+  needs_you: "#f97316",
+  blocked: "#ef4444",
+  resting: "#8b5cf6",
+  offline: "#333333",
 };
+
+/** How a presence status reads under a sprite. */
+const STATE_LABELS: Record<string, string> = { needs_you: "needs you" };
 
 /** Map exit direction to angle on the ring ellipse (0=right, π/2=bottom). */
 const EXIT_ANGLES: Record<string, number> = {
@@ -419,7 +428,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
   const entitySprites = entities.map((ent, i) => {
     const ec = KIND_COLORS[ent.kind] ?? KIND_COLORS.agent!;
     const stateColor = STATE_COLORS[ent.state] ?? ec;
-    const isIdle = ent.state === "idle";
+    const isIdle = ent.state === "idle" || ent.state === "offline";
 
     // Orbit speed: slow enough to click — state still affects speed
     const orbitDur = isIdle
@@ -897,8 +906,21 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
                       fill={stateColor}
                       opacity={0.75}
                     >
-                      {ent.state}
+                      {STATE_LABELS[ent.state] ?? ent.state}
                     </text>
+                    {ent.vendor && (
+                      <text
+                        className="uc-map-label"
+                        y={36}
+                        textAnchor="middle"
+                        fontFamily="'VT323'"
+                        fontSize={11}
+                        fill={ec}
+                        opacity={0.7}
+                      >
+                        [{ent.vendor}]
+                      </text>
+                    )}
                     {onEntityClick && (
                       <SvgAction
                         x={-sprW}
@@ -1114,6 +1136,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
 const ROOM_MSG_KIND_COLOR: Record<RoomMessage["kind"], string> = {
   say: "#06b6d4", // cyan — matches INTERACTION_COLORS.say
   emote: "#ec4899", // fuchsia — matches INTERACTION_COLORS.emote
+  tell: "#8b5cf6", // violet — matches INTERACTION_COLORS.tell
 };
 
 /**
@@ -1182,8 +1205,20 @@ const RoomMessagePill = memo(function RoomMessagePill({
         <span style={{ color, fontWeight: 700, marginRight: 6 }}>
           {message.sender}
           {message.kind === "emote" ? " *" : ""}
+          {message.recipient ? ` → ${message.recipient}` : ""}
         </span>
-        <span style={{ opacity: 0.92 }}>{bodyClipped}</span>
+        {!!message.depth && (
+          <span
+            data-testid="room-message-depth"
+            title={`Reply, ${message.depth} ${message.depth === 1 ? "hop" : "hops"} into the thread`}
+            style={{ color, marginRight: 6 }}
+          >
+            ↳{message.depth}
+          </span>
+        )}
+        <span style={{ opacity: 0.92 }}>
+          {bodyClipped || (message.kind === "tell" ? "told" : "spoke")}
+        </span>
       </div>
     </motion.div>
   );

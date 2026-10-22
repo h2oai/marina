@@ -5,9 +5,11 @@
  * Modal focus handling: on activation remember the focused element and move
  * focus into `ref`; Tab / Shift+Tab cycle within it; on deactivation focus
  * returns to where it was (if that element is still in the document).
+ * A layout effect, so the return happens in the commit that removes the
+ * dialog; a passive cleanup runs later and leaves focus on <body> meanwhile.
  */
 
-import { type RefObject, useEffect } from "react";
+import { type RefObject, useLayoutEffect } from "react";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), audio[controls], video[controls], [tabindex]:not([tabindex="-1"])';
@@ -19,7 +21,7 @@ export function focusableWithin(root: HTMLElement): HTMLElement[] {
 }
 
 export function useFocusTrap(ref: RefObject<HTMLElement | null>, active: boolean): void {
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active) return;
     const root = ref.current;
     if (!root) return;

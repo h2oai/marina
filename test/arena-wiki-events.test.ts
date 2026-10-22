@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { parseForecasterSpec } from "../src/arena/config";
 import { parseShadowChallengers } from "../src/arena/earned-routes";
 import { forecastRanking, rankingScores } from "../src/arena/forecast";
-import type { ResearchReport } from "../src/arena/research/retrieve";
 import {
   ENDED_FACTOR,
   endedNear,
@@ -13,6 +12,7 @@ import {
 } from "../src/arena/research/wiki-events";
 import { arenaMethod } from "../src/arena/settle";
 import type { ArenaLock, ArenaRound } from "../src/arena/types";
+import type { ResearchReport } from "../src/research/retrieve";
 
 const round: ArenaRound = {
   round_id: "wiki-top10-2099-10-25",

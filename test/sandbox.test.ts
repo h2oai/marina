@@ -6,6 +6,7 @@ import {
   compileRoomModule,
   DEFAULT_ROOM_SOURCE,
   SandboxError,
+  validateCommandSource,
   validateRoomSource,
 } from "../src/engine/sandbox";
 
@@ -44,6 +45,38 @@ describe("Sandbox - validateRoomSource", () => {
     const result = validateRoomSource(source);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes("import"))).toBe(true);
+  });
+
+  it("rejects a static import of a module", () => {
+    for (const line of [
+      'import { execFileSync } from "node:child_process";',
+      'import cp from "node:child_process";',
+      'import * as fs from "node:fs";',
+      'import "node:child_process";',
+      'import type from "node:fs";',
+    ]) {
+      const result = validateRoomSource(`${line}\nexport default { short: "T", long: "T" };`);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("Static import"))).toBe(true);
+    }
+  });
+
+  it("rejects a re-export from another module", () => {
+    for (const line of [
+      'export * from "node:fs";',
+      'export { spawn } from "node:child_process";',
+    ]) {
+      const result = validateCommandSource(`${line}\nexport default { name: "x" };`);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("Re-exporting"))).toBe(true);
+    }
+  });
+
+  it("allows a type-only import", () => {
+    const source = `import type { RoomModule, RoomId } from "../../src/types";
+const room: RoomModule = { short: "T", long: "T", exits: { north: "a/b" as RoomId } };
+export default room;`;
+    expect(validateRoomSource(source)).toEqual({ valid: true, errors: [] });
   });
 
   it("rejects source with eval()", () => {

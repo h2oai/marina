@@ -27,6 +27,7 @@ import {
   BUILTIN_AGENT_ADAPTERS,
   CLAUDE_RESUME_MISMATCH,
   type ClaudeSdk,
+  claudeResidentPermissions,
   createClaudeAdapter,
 } from "../src/routing/agent-adapters";
 import { prepareAgentWorkspace, restoreAgentWorkspace } from "../src/routing/agent-workspace";
@@ -242,6 +243,47 @@ describe("claude adapter resume", () => {
   });
 });
 
+describe("claude resident permissions", () => {
+  const relaySocket = join(scratch, "relay", "relay.sock");
+  const resident = { MARINA_RELAY_SOCKET: relaySocket };
+
+  it("leaves a non-resident session asking for everything", () => {
+    expect(claudeResidentPermissions({}, () => true)).toEqual({ permissionMode: "default" });
+  });
+
+  it("gives a resident sandboxed commands and accepted edits, never an unsandboxed fallback", () => {
+    expect(claudeResidentPermissions(resident, () => true)).toEqual({
+      permissionMode: "acceptEdits",
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        autoAllowBashIfSandboxed: true,
+        allowUnsandboxedCommands: false,
+        filesystem: { allowWrite: [join(scratch, "relay")] },
+        network: { allowUnixSockets: [relaySocket] },
+      },
+    });
+  });
+
+  it("accepts only edits for a resident when the sandbox is unavailable", () => {
+    expect(claudeResidentPermissions(resident, () => false)).toEqual({
+      permissionMode: "acceptEdits",
+    });
+  });
+
+  it("passes the resident permissions to the query", async () => {
+    const fake = fakeClaudeSdk({ initSessionId: "fresh-session" });
+    const h = harness("claude", []);
+    h.options.env = { ...h.options.env, ...resident };
+    const agent = await createClaudeAdapter(fake.sdk)(h.options);
+    try {
+      expect(fake.calls.queries[0]?.permissionMode).toBe("acceptEdits");
+    } finally {
+      await agent.stop();
+    }
+  });
+});
+
 describe("codex adapter", () => {
   it("resumes only the recorded inactive thread with the existing permission policy and no replay", async () => {
     const executable = fakeAgent(
@@ -280,6 +322,43 @@ describe("codex adapter", () => {
     }
     h.options.env = { ...process.env, FAKE_ACTIVE: "1" };
     await expect(adapter("codex").start(h.options)).rejects.toThrow("already active");
+  });
+
+  it("grants a resident's relay directory, and only it, as a writable root", async () => {
+    const executable = fakeAgent(
+      "fake-codex-relay",
+      `function onLine(m) {
+      if (m.method === "initialize") return out({ id: m.id, result: {} });
+      if (m.method === "initialized") return;
+      if (m.method === "thread/start") {
+        out({ method: "echo", params: { msg: m } });
+        return out({ id: m.id, result: { thread: { id: "thread-r" } } });
+      }
+    }`,
+    );
+    const h = harness(executable, []);
+    h.options.env = {
+      ...process.env,
+      MARINA_RELAY_SOCKET: "/run/user/1/marina-relay-x/relay.sock",
+    };
+    const agent = await adapter("codex").start(h.options);
+    try {
+      const [start] = echoes(h.events) as { params: Record<string, unknown> }[];
+      expect(start?.params.sandbox).toBe("workspace-write");
+      expect(start?.params.config).toEqual({
+        "sandbox_workspace_write.writable_roots": ["/run/user/1/marina-relay-x"],
+      });
+    } finally {
+      await agent.stop();
+    }
+    const plain = harness(executable, []);
+    const other = await adapter("codex").start(plain.options);
+    try {
+      const [start] = echoes(plain.events) as { params: Record<string, unknown> }[];
+      expect(start?.params.config).toBeUndefined();
+    } finally {
+      await other.stop();
+    }
   });
   const codexBin = fakeAgent(
     "fake-codex",

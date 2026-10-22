@@ -5,7 +5,7 @@
 ## World templates
 - World definitions live in `worlds/` — each is a TypeScript file exporting a `WorldDefinition`
 - `MARINA_WORLD` env var selects which world to load (default: `default`)
-- Available worlds: `default` (intent-first Workbench), `showcase` (full 25-room launchpad — projects, templates, markets, benchmarks, craft, specialist crews), `commons` (coordination-ready), `research` (research lab), `personal` (self-evolving agent), `evolve` (8 capability benchmarks), `craft` (spec-driven dev — interview/spec/verify/ship), `markets` (live Kalshi/Polymarket feed rooms and binary yes/no market rooms — confidence positions, Brier scoring), `prediction-lab` (the `markets` world plus a Calibration Sprint overlay), `demos` (interactive demonstrations — lobby, workshop, bridge), four focused single-outcome worlds built on `worlds/focused-example.ts` (`deep-research`, `red-team`, `due-diligence`, `data-investigation`), `empty` (minimal)
+- Available worlds: `default` (intent-first Workbench), `showcase` (full 25-room launchpad — projects, templates, markets, benchmarks, craft, specialist crews), `commons` (coordination-ready), `research` (research lab), `personal` (self-improving agent), `evolve` (8 capability benchmarks), `craft` (spec-driven dev — interview/spec/verify/ship), `markets` (live Kalshi/Polymarket feed rooms and binary yes/no market rooms — confidence positions, Brier scoring), `prediction-lab` (the `markets` world plus a Calibration Sprint overlay), `demos` (interactive demonstrations — lobby, workshop, bridge), four focused single-outcome worlds built on `worlds/focused-example.ts` (`deep-research`, `red-team`, `due-diligence`, `data-investigation`), `empty` (minimal)
 - Forecasting is not a world feature: `forecast`, `arena`, `decision`, `market`, `position`, `probe`, `watch` and `web` are global builtins registered for every world. Arena work stays in whatever world holds its database (`DB_PATH`) — see `docs/guides/arena.md`
 - `WorldDefinition.seed?(db)` runs once on first boot, seeds DB with templates/projects/tasks (must be idempotent)
 - Seeded tasks are created by `system`, which never logs in, and only a task's creator approves its submissions. A world with an independent seeded resident hands its open seeded tasks to that reviewer (`assignSeededTaskReviewer`, idempotent; that resident never claims them). Otherwise an operator (a person at rank 9) who has not claimed the task is made its reviewer of record on their first `task approve|reject` (`TaskManager.adoptSystemTask`).
@@ -55,8 +55,8 @@ they are explained. All are optional — unset means the world's own default.
 
 | Variable | Read by | Effect | Default |
 |---|---|---|---|
-| `MARINA_CREW_MODEL` | `default`, `showcase`, `prediction-lab`, focused worlds | Shared model for every seeded crew. Per-crew overrides below win over it. | `marina/default` |
-| `MARINA_WORKBENCH_MODEL` | `default` | Model for the Workbench agent; wins over `MARINA_CREW_MODEL`. | falls back to `MARINA_CREW_MODEL`, then `openai/gpt-6.1-sol` when `OPENAI_API_KEY` is set, `anthropic/claude-opus-5-5` when `ANTHROPIC_API_KEY` is set, `openrouter/google/gemini-3.1-pro-preview` when `OPENROUTER_API_KEY` is set, `huggingface/zai-org/GLM-5.3-Flash` when `HUGGINGFACE_API_KEY`/`HF_TOKEN` is set, else `marina/default` |
+| `MARINA_CREW_MODEL` | every world that seeds a crew (`seedAnswererCrew`, `seedOrchestrationCrews`, the Chronicler, `default`, `showcase`, `prediction-lab`, focused worlds) | Shared model for every seeded crew. Per-crew overrides below win over it. | `role:crew=` in `MARINA_AGENT_MODELS`, else the cheap tier `marina/cheap` |
+| `MARINA_WORKBENCH_MODEL` | `default` | Model for the Workbench agent; wins over `MARINA_CREW_MODEL`. | falls back to `MARINA_CREW_MODEL`, then the crew role (`marina/cheap`). Before 2026-10-20 it picked each provider's flagship. |
 | `MARINA_ANSWERER_MODEL` | `showcase` | Model for the answerer crew. | `MARINA_CREW_MODEL` |
 | `MARINA_ANSWERER_COUNT` | `showcase` | Size of the answerer crew. | `4` |
 | `MARINA_MATH_MODEL` | `showcase` | Model for the mathematician specialist. | `MARINA_CREW_MODEL` |
@@ -65,9 +65,11 @@ they are explained. All are optional — unset means the world's own default.
 | `MARINA_AGENT_MODELS` | every world (`seedSystemAgent`) | Per-agent map, `Name=model,Name=model` (names case-insensitive, model passed through as-is). Puts a different model on any boot-seeded agent — Translator and every specialist included. Wins over every variable above. A model of `route` (or `model:route`) asks the spawn-time router to pick (`MARINA_ROUTES` / tiers, plus `MARINA_ROUTE_EVIDENCE`) at the agent's first spawn; the resolved id is persisted and kept on later boots while the seed still says `route` — changing the entry's value applies as usual. | unset |
 
 Precedence for a seeded agent's model is: its `MARINA_AGENT_MODELS` entry, then
-its own specific override, then `MARINA_CREW_MODEL`, then the world's built-in
-default (often `marina/default`, which routes through the local model API to
-whatever upstream is configured). The world's `seed()` runs on every boot and
+its own specific override, then `MARINA_CREW_MODEL`, then `role:crew=` in
+`MARINA_AGENT_MODELS`, then the cheap model tier (`marina/cheap`, a live alias
+the local model API resolves per request — `MARINA_MODEL_TIER_CHEAP`, see
+[Choose models](../guides/configuration.md#choose-models-cheap-by-default)).
+Room agents spawned on entry use the `room` role, also `marina/cheap`. The world's `seed()` runs on every boot and
 `seedSystemAgent` refreshes the model of each agent the seed still owns, so a
 change takes effect on the next boot — on an existing database too. An agent a
 user customized (`spawned_by` not `system`) or retired is never touched. A

@@ -115,6 +115,21 @@ export function memoryObserver(engine: Engine, principal?: string) {
         case "rank_change":
         case "coordination_change":
           return true;
+        // Room speech is public to the room and the event names no words;
+        // a direct message's envelope goes to its two parties only.
+        case "say_sent":
+          return true;
+        // The person who launched either party sees it too, so an owner watches
+        // its own agents' threads (names and refs only, like the parties).
+        case "tell_sent": {
+          if (own) return true;
+          if (!entity) return false;
+          const viewer = entity.name.toLowerCase();
+          if (viewer === event.to.toLowerCase()) return true;
+          return [event.from, event.to].some(
+            (party) => engine.db?.getAgentConfig(party)?.spawned_by?.toLowerCase() === viewer,
+          );
+        }
         // Asset ids can name a private asset, so the hint goes to the writer
         // and the owner only (operators passed above); others reread on poll.
         case "asset_created":

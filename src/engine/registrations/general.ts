@@ -6,6 +6,7 @@ import { formatUntrustedContext } from "../../agent/prompts/support-prompts";
 import { arenaRoundLockAt } from "../../arena/service";
 import { worldMemoryService } from "../../memory/world-service";
 import { registerBuiltinResolvers } from "../../resolvers";
+import { residentLabeler } from "../../routing/residents";
 import { registerDeadlineSource } from "../../schedules/deadlines";
 import type { EntityId, RoomId } from "../../types";
 import { collectiveManager } from "../../world/world-collective-manager";
@@ -38,6 +39,7 @@ import { meshCommand } from "../commands/mesh";
 import { moveCommand } from "../commands/move";
 import { mutationCommand } from "../commands/mutation";
 import { noteCommand } from "../commands/note";
+import { patternCommand } from "../commands/pattern";
 import { probeCommand } from "../commands/probe";
 import { quantCommand } from "../commands/quant";
 import { questCommand } from "../commands/quest";
@@ -56,7 +58,9 @@ import { watchCommand } from "../commands/watch";
 import { whoCommand } from "../commands/who";
 import { worldCommand } from "../commands/world";
 import type { Engine } from "../engine";
+import { entryRefusal, privateRoom } from "../room-access";
 import { answerViaLocalModel } from "./model-helpers";
+import { engineTellDeps } from "./tell-deps";
 
 export function registerGeneralCommands(engine: Engine): void {
   if (engine.db) {
@@ -89,6 +93,19 @@ export function registerGeneralCommands(engine: Engine): void {
       engine.boardManager
         ? (roomId) => engine.boardManager!.getBoardsForScope("room", roomId)
         : undefined,
+      residentLabeler(engine.db),
+      {
+        ...(engine.db
+          ? {
+              readRoomLog: (roomId: string, since: number, limit: number) =>
+                engine.db!.readRoomLog(roomId, since, limit),
+            }
+          : {}),
+        statusOf: (name: string) => engine.presence.statusOf(name),
+        ...(engine.db
+          ? { privateOwnerOf: (roomId: string) => privateRoom(engine.db!, roomId)?.owner }
+          : {}),
+      },
     ),
   );
 
@@ -100,6 +117,7 @@ export function registerGeneralCommands(engine: Engine): void {
       moveEntity: (entityId, to) => engine.entities.move(entityId, to),
       buildContext: (room) => engine.buildContext(room),
       sendLook: (entityId) => engine.sendLook(entityId),
+      entryRefusal: (entity, room) => entryRefusal(engine, entity, room),
     }),
   );
 
@@ -123,6 +141,7 @@ export function registerGeneralCommands(engine: Engine): void {
       moveEntity: (entityId, to) => engine.entities.move(entityId, to),
       buildContext: (room) => engine.buildContext(room),
       sendLook: (entityId) => engine.sendLook(entityId),
+      entryRefusal: (entity, room) => entryRefusal(engine, entity, room),
       getAllEntities: () => engine.entities.all(),
       getEntityRoom: (entityId) => engine.getEntityRoom(entityId),
     }),
@@ -133,38 +152,19 @@ export function registerGeneralCommands(engine: Engine): void {
   engine.commands.registerBuiltin(
     shoutCommand({
       getEntity: (id) => engine.entities.get(id),
-      broadcastAll: (senderId, msg, tag?) => {
+      broadcastAll: (senderId, msg, tag?, metadata?) => {
         const sender = engine.entities.get(senderId);
         const senderName = sender?.name;
         for (const entity of engine.entities.all()) {
           if (entity.kind === "agent" && entity.id !== senderId) {
             if (senderName && isIgnoring(entity, senderName)) continue;
-            engine.sendToEntity(entity.id, msg, tag);
+            engine.sendToEntity(entity.id, msg, tag, metadata);
           }
         }
       },
     }),
   );
-  const tellDeps = {
-    getEntity: (id: EntityId) => engine.entities.get(id),
-    findEntityGlobal: (name: string) => {
-      const e = engine.findEntityGlobal(name);
-      return e ? { id: e.id, name: e.name } : undefined;
-    },
-    sendGlobal: (
-      target: EntityId,
-      msg: string,
-      senderId: EntityId,
-      tag?: string,
-      metadata?: Record<string, unknown>,
-    ) => {
-      const targetEntity = engine.entities.get(target);
-      const sender = engine.entities.get(senderId);
-      if (targetEntity && sender && isIgnoring(targetEntity, sender.name)) return;
-      engine.sendToEntity(target, msg, tag, metadata);
-    },
-    db: engine.db,
-  };
+  const tellDeps = engineTellDeps(engine);
   engine.commands.registerBuiltin(tellCommand(tellDeps));
   engine.commands.registerBuiltin(replyCommand(tellDeps));
   engine.commands.registerBuiltin(
@@ -174,6 +174,8 @@ export function registerGeneralCommands(engine: Engine): void {
       (entityName) => engine.db?.getLastActivityAt(entityName) ?? null,
       engine.crewManager ? () => engine.crewManager!.list() : undefined,
       (entityName) => !!engine.agentRuntime?.get(entityName),
+      residentLabeler(engine.db),
+      engine.presence,
     ),
   );
   engine.commands.registerBuiltin(
@@ -208,6 +210,7 @@ export function registerGeneralCommands(engine: Engine): void {
   engine.commands.registerBuiltin(
     triageCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
+  engine.commands.registerBuiltin(patternCommand());
   engine.commands.registerBuiltin(timeCommand());
   engine.commands.registerBuiltin(uptimeCommand(() => engine.getUptime()));
   engine.commands.registerBuiltin(
@@ -315,7 +318,7 @@ export function registerGeneralCommands(engine: Engine): void {
   // Chronicle — the canonical, append-only record of the Marina.
   // Read at rank 0; write commands gated to entities with role=chronicler.
   // Citation flows `chronicled` standing via the name → id resolver.
-  // See docs/chronicle.md.
+  // See docs/architecture/chronicle.md.
   if (engine.db) {
     engine.commands.registerBuiltin(
       associationCommand({

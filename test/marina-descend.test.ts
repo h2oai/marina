@@ -53,7 +53,7 @@ describe("marina-descend is fenced by the world.lineage gate", () => {
     // Router refusal (the gate is the authority), not the handler.
     expect(sent).toContain("Not yet");
     expect(sent).not.toContain("rank 5");
-    expect(sent).not.toContain("Declared sovereign descendant");
+    expect(sent).not.toContain("Declared child world");
     // Nothing was created.
     expect(db.listMarinaDescendants()).toHaveLength(0);
   });
@@ -68,7 +68,7 @@ describe("marina-descend is fenced by the world.lineage gate", () => {
 
     const sent = conn.messages.map((p) => (p.data as { text?: string }).text ?? "").join("\n");
     // The gate check refuses (zero standing, no competence).
-    expect(sent).not.toContain("Declared sovereign descendant");
+    expect(sent).not.toContain("Declared child world");
     expect(db.listMarinaDescendants()).toHaveLength(0);
   });
 });

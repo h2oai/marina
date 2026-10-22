@@ -6,6 +6,8 @@ import { isAbsolute } from "node:path";
 import { diffStat, formatDiffStat } from "../src/coding/unified-diff";
 import { getErrorMessage } from "../src/engine/errors";
 import { type AgentAdapter, BUILTIN_AGENT_ADAPTERS } from "../src/routing/agent-adapters";
+import { supervisedResidentsEnabled } from "../src/routing/residents";
+import { openSupervision, type SupervisionHold } from "../src/routing/supervision-credential";
 import { MarinaSupervisor } from "../src/routing/supervisor";
 import {
   MarinaRoutingClient,
@@ -15,7 +17,7 @@ import {
 import type { RoutingEventInput, RoutingSession } from "../src/sdk/routing-types";
 import { nativeEditDiff, readCurrentFile } from "./code-diff";
 import type { CodingHarness } from "./code-harness";
-import { participantInstructions } from "./supervise";
+import { residentSupervisorOptions } from "./supervise";
 
 export interface TerminalAgent {
   session: RoutingSession;
@@ -67,6 +69,7 @@ export class NativeTerminal {
   readonly agents = new Map<string, TerminalAgent>();
   private client: MarinaRoutingClient;
   private supervisor?: MarinaSupervisor;
+  private supervision?: SupervisionHold;
   private owner?: RoutingSession;
   private deliveries = new Map<string, string | null>();
   private listeners = new Set<() => void>();
@@ -82,8 +85,16 @@ export class NativeTerminal {
   }
   async start() {
     mkdirSync(this.options.directory, { recursive: true, mode: 0o700 });
+    // Residents on: the supervisor holds its own routing credential, so a
+    // later login as this person does not cut it off. The console's own
+    // controls keep the person's session.
+    if (!this.options.client && supervisedResidentsEnabled())
+      this.supervision = await openSupervision({
+        url: this.options.url,
+        sessionToken: this.options.token,
+      });
     this.supervisor = new MarinaSupervisor({
-      client: this.client,
+      client: this.supervision?.client ?? this.client,
       root: this.options.root,
       stateDirectory: this.options.directory,
       binding: `terminal:${this.options.root}`,
@@ -95,7 +106,8 @@ export class NativeTerminal {
         MARINA_TOKEN: this.options.token,
       },
       secrets: [this.options.token],
-      instructions: participantInstructions(),
+      // Residents only when the server granted a supervision credential.
+      ...residentSupervisorOptions(this.options.url, this.supervision?.held === true),
       onEvent: (session, event) => this.event(session, event),
     });
     try {
@@ -103,6 +115,7 @@ export class NativeTerminal {
       this.loop = this.pump();
     } catch (error) {
       this.supervisor.close();
+      await this.supervision?.close();
       throw error;
     }
   }
@@ -156,6 +169,15 @@ export class NativeTerminal {
           `[${session.label}] ${state.status}${state.error ? ` · ${state.error}` : ""}`,
         );
       }
+    } else if (
+      event.kind === "input" &&
+      payload.source === "attention" &&
+      typeof payload.text === "string"
+    ) {
+      // A world-events digest the attention bridge delivered: one line each.
+      this.flush();
+      for (const line of digestLines(payload.text))
+        this.options.write(`[${session.label}] ← ${line}`);
     } else if (event.kind === "output" && typeof payload.text === "string") {
       this.output.set(session.id, (this.output.get(session.id) ?? "") + payload.text);
       if ((this.output.get(session.id)?.length ?? 0) > 8000) this.flush();
@@ -346,7 +368,23 @@ export class NativeTerminal {
       );
     } finally {
       this.supervisor?.close();
+      await this.supervision?.close();
       this.flush();
     }
   }
+}
+
+/** The event lines of an attention digest, without its framing or footer (at most 12). */
+export function digestLines(text: string): string[] {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line &&
+        !/^\[World Events|^\[!\] marks|^No reply is owed|^\[untrusted data|^\[end untrusted data/.test(
+          line,
+        ),
+    );
+  return lines.length > 12 ? [...lines.slice(0, 11), `… ${lines.length - 11} more`] : lines;
 }

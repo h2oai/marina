@@ -7,7 +7,11 @@ import { withMemoryAbort } from "../sdk/memory-abort";
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import { retryMemoryOperation } from "../sdk/memory-retry";
-import type { MemoryCheckpoint, MemoryReceipt } from "../sdk/memory-types";
+import type {
+  MemoryCheckpoint,
+  MemoryCheckpointCaptureReceipt,
+  MemoryReceipt,
+} from "../sdk/memory-types";
 import { type OutstandingRequest, updateRequestLedger } from "./outstanding-requests";
 
 /**
@@ -288,21 +292,8 @@ export class DurableResidentMemory {
       signal,
     );
   }
-  private async persist(
-    original: string,
-    messageCount: number,
-    summary: string,
-    kind: "archive" | "journal",
-    signal?: AbortSignal,
-    completedRequests: readonly string[] = [],
-  ): Promise<void> {
-    const hash = digest(original);
-    // Always a fresh read before archiving: nothing may be captured once a
-    // forget has invalidated the checkpoint (the remembered copy cannot know).
-    const previous = await this.writableCheckpoint(signal, { fresh: true });
-    const prior = previous?.data[kind] as Archive | undefined;
-    if (kind === "archive" && prior?.sha256 === hash) return;
-    const operation = kind === "journal" ? crypto.randomUUID() : hash;
+  /** Chunk a serialized transcript into content-addressed parts. */
+  private chunk(original: string): { ordered: string[]; missing: Map<string, string> } {
     const messages = JSON.parse(original) as unknown[];
     const segments = [
       "[",
@@ -329,6 +320,157 @@ export class DurableResidentMemory {
         "archive_capacity",
         "Archive exceeds 2000 parts; original context retained",
       );
+    return { ordered, missing };
+  }
+  /** Request bytes of new parts that fit one atomic checkpoint capture. */
+  private static readonly ATOMIC_BYTES = 768 * 1024;
+  /** False once the memory service has no atomic checkpoint capture (older server). */
+  private atomicCapture = true;
+  /**
+   * One request per journal entry or archive: the new parts, the manifest
+   * and the checkpoint are stored in one transaction. The remembered
+   * checkpoint is enough here — the server checks its version before it
+   * stores anything, so a checkpoint that a forget removed (or anyone
+   * changed) rejects the whole request and nothing is captured; the conflict
+   * re-reads once (`freshOnConflict`) and an invalidated checkpoint then
+   * refuses as before. Parts that do not fit one request take the
+   * read-first path.
+   */
+  private async persist(
+    original: string,
+    messageCount: number,
+    summary: string,
+    kind: "archive" | "journal",
+    signal?: AbortSignal,
+    completedRequests: readonly string[] = [],
+  ): Promise<void> {
+    const { ordered, missing } = this.chunk(original);
+    const entries = [...missing];
+    const bytes = entries.reduce(
+      (total, [, text]) => total + Buffer.byteLength(JSON.stringify(text)) + 512,
+      0,
+    );
+    if (!this.atomicCapture || entries.length > 64 || bytes > DurableResidentMemory.ATOMIC_BYTES)
+      return this.persistReadFirst(
+        original,
+        messageCount,
+        summary,
+        kind,
+        signal,
+        completedRequests,
+      );
+    const hash = digest(original);
+    const previous = await this.writableCheckpoint(signal);
+    const prior = previous?.data[kind] as Archive | undefined;
+    if (kind === "archive" && prior?.sha256 === hash) return;
+    const operation = kind === "journal" ? crypto.randomUUID() : hash;
+    const version = previous?.version ?? 0;
+    const index = new Map(entries.map(([id], i) => [id, i]));
+    const { [kind]: _replaced, ...rest } = {
+      lastIntent: "Resume the preserved conversation",
+      ...previous?.data,
+      ...(completedRequests.length
+        ? {
+            outstandingRequests: updateRequestLedger(
+              previous?.data.outstandingRequests,
+              [],
+              completedRequests,
+            ),
+          }
+        : {}),
+      timestamp: Date.now(),
+    } as Record<string, unknown>;
+    const entry = {
+      format: "json-utf8-parts-v1",
+      sha256: hash,
+      session_id: this.session,
+      message_count: messageCount,
+      ...(kind === "archive" ? { summary: summary.slice(0, 16000) } : {}),
+    };
+    let result: MemoryCheckpointCaptureReceipt;
+    try {
+      result = await this.call<MemoryCheckpointCaptureReceipt>(
+        {
+          operation: "capture_checkpoint",
+          id: "resident",
+          key: `capture:${this.sessionKey}:${operation}:${version}`,
+          input: {
+            expected_version: version,
+            session_id: this.session,
+            items: entries.map(([id, content]) => ({
+              content,
+              key: `archive:${this.sessionKey}:${id}`,
+            })),
+            order: ordered.map((id) => this.parts.get(id)?.id ?? index.get(id)!),
+            manifest: {
+              key: `manifest:${this.sessionKey}:${operation}:${version}`,
+              content: {
+                format: "json-utf8-parts-v1",
+                sha256: hash,
+                kind,
+                previous_manifest_source_id: prior?.manifest_source_id ?? null,
+              },
+            },
+            field: kind,
+            entry,
+            data: rest,
+            source_ids: references(rest),
+            cursor: kind === "archive" ? "manifest" : (previous?.source_cursor ?? 0),
+            checkpoint_key: `checkpoint:${this.sessionKey}:${operation}:${version}`,
+          },
+        },
+        signal,
+      );
+    } catch (error) {
+      // An older memory service has no atomic capture: fall back for good.
+      if (
+        error instanceof MemoryClientError &&
+        (error.status === 404 || error.code === "invalid_operation") &&
+        error.code !== "checkpoint_not_found"
+      ) {
+        this.atomicCapture = false;
+        return this.persistReadFirst(
+          original,
+          messageCount,
+          summary,
+          kind,
+          signal,
+          completedRequests,
+        );
+      }
+      throw error;
+    }
+    for (const [i, id] of ordered.entries()) this.parts.set(id, { id: result.source_ids[i]! });
+    this.hadCheckpoint = true;
+    this.known = {
+      name: "resident",
+      version: result.version!,
+      source_cursor: kind === "archive" ? result.manifest.seq : (previous?.source_cursor ?? 0),
+      data: structuredClone({
+        ...rest,
+        [kind]: { ...entry, source_ids: result.source_ids, manifest_source_id: result.manifest.id },
+      }),
+      updated_at: Date.now(),
+    };
+    while (this.parts.size > 4096) this.parts.delete(this.parts.keys().next().value!);
+  }
+  /** Read-first path: a fresh read, part batches, the manifest, then the checkpoint. */
+  private async persistReadFirst(
+    original: string,
+    messageCount: number,
+    summary: string,
+    kind: "archive" | "journal",
+    signal?: AbortSignal,
+    completedRequests: readonly string[] = [],
+  ): Promise<void> {
+    const hash = digest(original);
+    // Always a fresh read before archiving: nothing may be captured once a
+    // forget has invalidated the checkpoint (the remembered copy cannot know).
+    const previous = await this.writableCheckpoint(signal, { fresh: true });
+    const prior = previous?.data[kind] as Archive | undefined;
+    if (kind === "archive" && prior?.sha256 === hash) return;
+    const operation = kind === "journal" ? crypto.randomUUID() : hash;
+    const { ordered, missing } = this.chunk(original);
     const entries = [...missing];
     for (let offset = 0; offset < entries.length; ) {
       const batch: [string, string][] = [];

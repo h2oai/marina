@@ -30,12 +30,12 @@ import {
 } from "../src/arena/move-weight";
 import { MAX_CELLS_PER_CALL, type ProposalJudgeConfig } from "../src/arena/proposal-judge";
 import { researchForecastRound } from "../src/arena/research/forecaster";
-import type { Retriever } from "../src/arena/research/retrieve";
 import { researchFallbackModeFromEnv } from "../src/arena/research-fallback";
 import { profileEnergy } from "../src/arena/score-shapes";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "../src/arena/types";
 import type { DecisionProvider } from "../src/decisions/types";
 import type { ArenaSubmissionRow } from "../src/persistence/db-arena";
+import type { Retriever } from "../src/research/retrieve";
 import { mulberry32 } from "../src/stats";
 import { scopeProcessState } from "./process-state";
 

@@ -4,11 +4,14 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DATA_DIR_PATHS, dataDir } from "../config/data-dir";
+import { tryLog } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import { childSpendEnv } from "../engine/spend-ledger";
 import type { MarinaDB } from "../persistence/database";
 import { keySecretIsAutomatic } from "../persistence/key-secret-file";
 import { MARINA_ROOT } from "../runtime-paths";
 
+const logger = new Logger();
 const SAFE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,47}$/;
 
 const PROJECT_ROOT = MARINA_ROOT;
@@ -163,14 +166,17 @@ export class WorldCollectiveManager {
     this.db.updateWorldVariant(id, { status: "starting", pid: child.pid, lastError: null });
     void child.exited.then((exitCode) => {
       this.processes.delete(id);
-      const current = this.db.getWorldVariant(id);
-      if (current?.status === "running" || current?.status === "starting") {
-        this.db.updateWorldVariant(id, {
-          status: exitCode === 0 ? "stopped" : "failed",
-          pid: null,
-          lastError: exitCode === 0 ? null : why(`Child exited with code ${exitCode}.`),
-        });
-      }
+      // The database may already be closed when a child exits during shutdown.
+      tryLog(logger, "world", "recording child world exit failed", () => {
+        const current = this.db.getWorldVariant(id);
+        if (current?.status === "running" || current?.status === "starting") {
+          this.db.updateWorldVariant(id, {
+            status: exitCode === 0 ? "stopped" : "failed",
+            pid: null,
+            lastError: exitCode === 0 ? null : why(`Child exited with code ${exitCode}.`),
+          });
+        }
+      });
     });
     const ready = await this.waitForReady(variant.ws_port, child);
     if (!ready) {

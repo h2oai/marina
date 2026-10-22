@@ -54,8 +54,14 @@ import { chooseCutoff, type TypedForecastDeps, type TypedForecastRequest } from 
 export interface CardEvidence {
   family: string;
   method: string;
-  /** What pairs two methods: the `q:` id when the asker gave one, else the outcome subject. */
+  /**
+   * What pairs two methods: the `q:` id when the asker gave one, else what a
+   * shadow challenger pairs with (`pair:`, its live answer's subject), else
+   * the outcome subject.
+   */
   question: string;
+  /** The outcome's own subject (`forecast:<id>`): its history record is the same answer. */
+  subject?: string;
   /** Higher is better: the outcome's quality, else its negated loss. */
   score: number;
   /** When the outcome was known (ms). */
@@ -110,13 +116,17 @@ export function evidenceFromOutcomes(rows: readonly OutcomeRow[]): CardEvidence[
     const refs = outcomeRefs(o.refs_json);
     const method = refs.find((r) => r.startsWith("method:"))?.slice(7);
     if (!method) continue;
-    const question = refs.find((r) => r.startsWith("q:")) ?? o.subject;
+    const question =
+      refs.find((r) => r.startsWith("q:")) ??
+      refs.find((r) => r.startsWith("pair:"))?.slice(5) ??
+      o.subject;
     for (const r of refs) {
       if (!r.startsWith("family:")) continue;
       out.push({
         family: r.slice(7),
         method,
         question,
+        subject: o.subject,
         score,
         resolvedAt: o.resolved_at,
         measure: o.eval_mode === "measure",
@@ -140,8 +150,8 @@ function historyInClass(r: ResolvedRecord, cls: string): boolean {
   return false;
 }
 
-/** method → question → mean score, for one class. */
-function classScores(
+/** method → question → mean score, for one class (also the read-only route view's input). */
+export function classScores(
   cls: string,
   evidence: readonly CardEvidence[],
   history: readonly ResolvedRecord[],
@@ -161,6 +171,8 @@ function classScores(
     if (e.family !== cls || (e.measure && !board)) continue;
     add(e.method, e.question, e.score);
     fromOutcomes.add(e.question);
+    // The same answer's history record (keyed by its subject) is not a second record.
+    if (e.subject) fromOutcomes.add(e.subject);
   }
   for (const r of history) {
     if (!historyInClass(r, cls) || !r.formation || r.score === undefined) continue;

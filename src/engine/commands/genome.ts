@@ -1,15 +1,18 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
 import { notFound } from "./command-messages";
 
-const HELP = `Content-addressed Marina genomes.
+const HELP =
+  experimentalHelp(`World manifests ("genomes"): a JSON description of a world template, its components
+and compatibility tags, stored under its SHA-256 hash. Identical manifests get the same address.
 Usage:
   genome create <world-template> | <components csv> | <compatibility csv> [| notes]
   genome show <sha256:hash>
-  genome list`;
+  genome list`);
 export function genomeCommand(deps: {
   db: MarinaDB;
   getEntity: (id: string) => Entity | undefined;

@@ -10,7 +10,6 @@
  */
 
 import { beforeEach, describe, expect, it } from "bun:test";
-import type { Retriever } from "../src/arena/research/retrieve";
 import { recordFromAnswer } from "../src/forecast/adjust";
 import type { AnswerSpec } from "../src/forecast/answer-types";
 import {
@@ -28,6 +27,7 @@ import {
   type TypedForecastAnswer,
   type TypedForecastOptions,
 } from "../src/forecast/typed";
+import type { Retriever } from "../src/research/retrieve";
 
 const spec: AnswerSpec = {
   type: "choice",

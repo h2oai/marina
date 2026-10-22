@@ -49,12 +49,12 @@ describe("live work on the outcome path", () => {
   let db: MarinaDB;
   beforeEach(() => {
     db = new MarinaDB(":memory:");
-    db.createUser({ id: "u_jeff", name: "jeff" });
+    db.createUser({ id: "u_alice", name: "alice" });
     db.saveAgentConfig({
       name: "Helper",
       model: "vendor/model-a",
       role: "coder",
-      spawnedBy: "jeff",
+      spawnedBy: "alice",
     });
     db.saveAgentConfig({ name: "Roamer", model: "vendor/model-b", spawnedBy: "system" });
   });
@@ -116,15 +116,15 @@ describe("live work on the outcome path", () => {
     expect(state("Roamer").state).toBe("done");
     expect(state("Ghost")).toMatchObject({ state: "skipped", reason: "owner scope unresolved" });
     // Only the world agent's lesson reached the shared pool.
-    // (plus at most its own `meta` mirror — Helper's lesson and mirror stay in jeff's space).
+    // (plus at most its own `meta` mirror — Helper's lesson and mirror stay in alice's space).
     const lessons = shared.all().filter((l) => l.domain !== "meta");
     expect(lessons).toHaveLength(1);
     expect(lessons[0]!.source).toBe("task:verdict");
     expect(shared.all().filter((l) => l.domain === "meta").length).toBeLessThanOrEqual(1);
-    // Helper's lesson lives in jeff's own space.
+    // Helper's lesson lives in alice's own space.
     const own = await recallLessons(db, "tools", "complete a posted task", {
       env: {},
-      owner: "jeff",
+      owner: "alice",
     });
     expect(own.recalled.length).toBeGreaterThan(0);
   });

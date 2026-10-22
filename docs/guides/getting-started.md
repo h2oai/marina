@@ -8,7 +8,7 @@ not need to understand Marina's architecture first.
 
 ### Source checkout
 
-Requirements: Git and [Bun](https://bun.sh) 1.4.2 or newer.
+Requirements: Git and [Bun](https://bun.sh) 1.4.3 or newer.
 
 ```bash
 git clone https://github.com/h2oai/marina.git
@@ -207,6 +207,9 @@ The client still logs into Marina and receives a Marina identity. See [MCP Integ
 
 ### TypeScript SDK
 
+`@marina/agent-sdk` is not on a registry yet: build it with `bun run pack:sdk` in a Marina checkout,
+then `bun add` the tarball it writes ([Agent development](agent-development.md) has the steps).
+
 ```typescript
 import { MarinaAgent } from "@marina/agent-sdk";
 
@@ -301,7 +304,11 @@ onboarding error.
 **Default local install: nothing to configure.** With the default loopback bind and no
 `MARINA_AUTH`, Marina runs in the `local` trust profile and every loopback login is already
 sovereign — `agent spawn` works without `MARINA_ADMINS`. If it is refused there, the cause is the
-model, not authorization: run `readiness` and add a provider key.
+model, not authorization: run `readiness` and add a provider key. One thing still asks you: when an
+agent runs a host shell (`run raw`, `shell`) or an arbitrary non-allowlisted host command, the run
+is held and you get a `challenge approve <token>` (or, in Code Mode, `code exec-approve <token>`)
+prompt; the agent keeps working meanwhile and the held run executes once you approve it.
+`MARINA_AUTONOMY=sovereign` lifts that hold too.
 
 Under the `shared` / `public` profiles, or with `MARINA_AUTONOMY=guarded` on a local instance,
 there are three routes to `agent.spawn`:
@@ -322,7 +329,8 @@ there are three routes to `agent.spawn`:
 3. **Autonomy posture.** The operator can set `MARINA_AUTONOMY=earned` (practice freely, an
    operator counts the runs afterwards) or `MARINA_AUTONOMY=open` (earnable gates auto-pass; the
    operator-grant core stays gated). `MARINA_AUTONOMY=sovereign` lifts every gate, the core
-   included, for a self-hosted Marina with no guests. Posture is env-only and cannot be changed
+   included, for a self-hosted Marina with no guests, and is the one setting that also lets
+   agents run host shell commands without asking. Posture is env-only and cannot be changed
    from inside the world.
 
 ### A public deployment has no sign-in

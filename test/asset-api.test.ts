@@ -18,6 +18,7 @@ import { assetMimeForFile, mimeFromExtension } from "../src/storage/asset-mime";
 import { LocalStorageProvider } from "../src/storage/local-provider";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_asset_api.db";
 const ASSET_DIR = `/tmp/marina-asset-api-test-${process.pid}`;
@@ -307,5 +308,122 @@ describe("asset API — writes, sentinel, limits", () => {
       engine,
     );
     expect(del.status).toBe(200);
+  });
+});
+
+describe("asset API — reads and stored rows", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  let storage: LocalStorageProvider;
+  const DIR = `${ASSET_DIR}-reads`;
+  const DB = `${TEST_DB}.reads`;
+
+  beforeEach(async () => {
+    delete process.env.MARINA_OPEN_API;
+    resetHttpRateLimitersForTests();
+    db = new MarinaDB(DB);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom());
+    storage = new LocalStorageProvider(DIR);
+    await storage.init();
+  });
+
+  afterEach(() => {
+    db.close();
+    cleanupDb(DB);
+    rmSync(DIR, { recursive: true, force: true });
+    resetHttpRateLimitersForTests();
+  });
+
+  const get = (path: string, peerIp: string, headers: Record<string, string> = {}) => {
+    const url = new URL(`http://localhost:3300${path}`);
+    return handleAssetApi(
+      url,
+      "GET",
+      new Request(url.toString(), { headers }),
+      db,
+      storage,
+      engine,
+      peerIp,
+    );
+  };
+
+  async function uploadAs(name: string, filename: string): Promise<{ id: string; key: string }> {
+    const conn = new MockConnection(`asset-read-${name}`);
+    engine.addConnection(conn);
+    const login = engine.login(conn.id, name);
+    if ("error" in login) throw new Error(login.error);
+    const url = new URL(
+      `http://localhost:3300/api/assets?filename=${encodeURIComponent(filename)}`,
+    );
+    const resp = await handleAssetApi(
+      url,
+      "POST",
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${login.token}`, "Content-Type": "image/png" },
+        body: new Blob([PNG_MAGIC.slice()]),
+      }),
+      db,
+      storage,
+      engine,
+    );
+    const body = (await resp.json()) as { id: string; storage_key: string };
+    return { id: body.id, key: body.storage_key };
+  }
+
+  it("limits anonymous asset detail and list reads per client IP", async () => {
+    const { id } = await uploadAs("Reader", "a.png");
+    for (const path of [`/api/assets/${id}`, "/api/assets"]) {
+      resetHttpRateLimitersForTests();
+      let limited = false;
+      for (let i = 0; i < 31; i++) {
+        if ((await get(path, "203.0.113.40")).status === 429) {
+          limited = true;
+          break;
+        }
+      }
+      expect(limited).toBe(true);
+      expect((await get(path, "203.0.113.41")).status).toBe(200);
+    }
+  });
+
+  it("keys the anonymous library-view budget on the resolved client IP", async () => {
+    // Behind a trusted proxy every client shares the proxy's socket address;
+    // each forwarded client gets its own budget.
+    using _state = scopeProcessState({ env: { MARINA_TRUST_PROXY: "true" } });
+    const proxy = "10.0.0.5";
+    let limited = false;
+    for (let i = 0; i < 31; i++) {
+      const resp = await get("/api/assets?view=library", proxy, {
+        "X-Forwarded-For": "198.51.100.1",
+      });
+      if (resp.status === 429) {
+        limited = true;
+        break;
+      }
+    }
+    expect(limited).toBe(true);
+    const other = await get("/api/assets?view=library", proxy, {
+      "X-Forwarded-For": "198.51.100.2",
+    });
+    expect(other.status).toBe(200);
+  });
+
+  it("stores an upload under a plain extension taken from the filename", async () => {
+    const { key } = await uploadAs("Ext", "evil.p/../../ng");
+    expect(key).toMatch(/^[0-9a-f-]+$/);
+    const ok = await uploadAs("Ext2", "photo.PNG");
+    expect(ok.key).toMatch(/^[0-9a-f-]+\.PNG$/);
+  });
+
+  it("lists assets when one row's stored metadata is damaged", async () => {
+    const { id } = await uploadAs("Lister", "b.png");
+    const raw = (db as unknown as { db: { run(sql: string): unknown } }).db;
+    raw.run(`UPDATE assets SET metadata = '{broken' WHERE id = '${id}'`);
+    const resp = await get("/api/assets", "203.0.113.60");
+    expect(resp.status).toBe(200);
+    const list = (await resp.json()) as Array<{ id: string; metadata: unknown }>;
+    expect(list.find((a) => a.id === id)?.metadata).toEqual({});
   });
 });

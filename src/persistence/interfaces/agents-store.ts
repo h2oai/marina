@@ -5,7 +5,11 @@ import type { AgentSupports, AgentThinkingLevel } from "../../agent/agent-types"
 import type {
   AdapterRow,
   AgentConfigRow,
+  AgentRuntimeKind,
   ApiKeyRow,
+  AttentionRelay,
+  AttentionWakeInput,
+  AttentionWakeRow,
   EditHistoryRow,
   RoleLoopSections,
   RoleRow,
@@ -52,10 +56,15 @@ export interface AgentsStore {
     spawnedBy: string;
     supports?: AgentSupports /** Reasoning depth (migration 120). `undefined` keeps the stored value. */;
     thinkingLevel?: AgentThinkingLevel;
+    /** Who runs the account (migration 173). `undefined` keeps the stored value. */
+    runtime?: AgentRuntimeKind;
+    vendor?: string;
   }): void;
   getAgentConfig(name: string): AgentConfigRow | undefined;
   getAllAgentConfigs(): AgentConfigRow[];
   getAgentConfigsBySpawnedBy(spawnedBy: string): AgentConfigRow[];
+  /** Bind or clear the routing session of a supervised resident's run (migration 173). */
+  setAgentRunSession(name: string, sessionId: string | null): boolean;
   /** `name` and its spawn ancestors, lower-cased, nearest first (`db-agents.ts:spawnLineage`). */
   spawnLineage(name: string): string[];
   /** Every agent `name` owns down its spawn lineage, lower-cased (`db-agents.ts:spawnDescendants`). */
@@ -71,6 +80,11 @@ export interface AgentsStore {
     name: string,
     outcome: "success" | "failure",
   ): AgentConfigRow | undefined;
+  /** Final-reply relay of a supervised resident (migration 174). */
+  setAttentionRelay(name: string, relay: AttentionRelay): boolean;
+  /** Append attention-bridge decisions (migration 174): refs and reasons only. */
+  recordAttentionWakes(wakes: readonly AttentionWakeInput[]): number;
+  listAttentionWakes(entity: string, limit?: number): AttentionWakeRow[];
   saveApiKey(opts: {
     name: string;
     provider: string;
@@ -109,12 +123,16 @@ export const AGENTS_STORE_METHODS = [
   "getAgentConfig",
   "getAllAgentConfigs",
   "getAgentConfigsBySpawnedBy",
+  "setAgentRunSession",
   "spawnLineage",
   "spawnDescendants",
   "deleteAgentConfig",
   "updateAttentionPolicy",
   "recordAttentionFeedback",
   "recordAutomaticAttentionOutcome",
+  "setAttentionRelay",
+  "recordAttentionWakes",
+  "listAttentionWakes",
   "saveApiKey",
   "getApiKey",
   "getApiKeysByProvider",

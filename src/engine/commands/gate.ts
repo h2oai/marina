@@ -16,7 +16,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId } from "../../types";
 import { OPEN_POSTURE_CORE } from "../autonomy";
-import { isOperatorPrincipal, principalKind } from "../challenges";
+import { agentPrincipalReason, isOperatorPrincipal, principalKind } from "../challenges";
 import { sanitizeEntityName } from "../entity-name";
 import { getErrorMessage } from "../errors";
 import { applyGateReset, auditGateGrants, planGateReset } from "../gate-audit";
@@ -168,7 +168,10 @@ export function gateCommand(deps: {
       const person = principalKind(actor) === "person";
 
       if (sub === "revoke") {
-        if (!sovereign) return reply("Revoking a gate takes an operator (a person at rank 9).");
+        if (!sovereign)
+          return reply(
+            `Revoking a gate takes an operator (a person at rank 9).${person ? "" : ` ${agentPrincipalReason(actor)}`}`,
+          );
         revoke(deps.db, String(target.id), gateId);
         audit(deps.db, "revoke", actor.name, target.name, gateId);
         return reply(`Revoked ${gateId} from ${target.name}.`);
@@ -181,7 +184,7 @@ export function gateCommand(deps: {
       }
       if (!person) {
         return reply(
-          `Agents don't grant gates — a person does. ${target.name} earns ${gateId} through people's approvals of its held runs.`,
+          `Agents don't grant gates — a person does. ${target.name} earns ${gateId} through people's approvals of its held runs. ${agentPrincipalReason(actor)}`,
         );
       }
       if (OPEN_POSTURE_CORE.has(gateId) && !sovereign) {

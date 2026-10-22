@@ -91,7 +91,7 @@ export interface AgentConfig {
    * Name of the entity that spawned this agent. Persisted to
    * agent_configs.spawned_by so lineage is attributable — an agent that
    * assembles a team is recorded as the parent. Defaults to "system" for
-   * world-seeded / operator-spawned agents. Walking this chain (Phase 2)
+   * world-seeded / operator-spawned agents. Walking this chain
    * bounds spawn depth and sizes the standing-scaled spawn budget.
    */
   spawnedBy?: string;
@@ -105,7 +105,12 @@ export interface AgentConfig {
    */
   budgetCalls?: number;
   loopCycleDelay?: number;
-  focusTimeout?: number;
+  /**
+   * Prompts (cycles that called the model) a focus runs before `[Focus Review
+   * Due]` asks for a review. Default `MARINA_FOCUS_REVIEW_CYCLES`, else 10.
+   * Idle time never counts — a long gap between prompts is not progress.
+   */
+  focusReviewCycles?: number;
   perceptionBufferCap?: number;
   attentionMode?: "focused" | "balanced" | "open";
   attentionThreshold?: number;
@@ -168,9 +173,17 @@ export interface AgentConfig {
    *   - "minimal" 3 tools (command+think+memory), ~1.5KB. Haiku-tier
    *               specialists. Functionally complete via `marina_command`
    *               which runs any world command as an escape hatch.
-   * Unset = "full" (backward compatible).
+   * Unset = "full" (backward compatible). A model in the `lean` prompt tier
+   * (context window ≤ 32k tokens) runs `minimal` unless the profile was set
+   * explicitly (`resolveToolProfile`).
    */
   toolProfile?: "full" | "crew" | "minimal" | "plan";
+  /**
+   * True when `toolProfile` was inferred from the role at spawn rather than
+   * chosen: an inferred profile yields to the lean tier's `minimal`, and
+   * `marina_code` stays on demand (an explicit profile keeps it resident).
+   */
+  toolProfileInferred?: boolean;
   /**
    * Crew-responder mode — when true, the agent runs as a thin specialist
    * that only wakes on perceptions, not on its own cognitive cycle:

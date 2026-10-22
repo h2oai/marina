@@ -67,6 +67,23 @@ export class RateLimiter {
     return false;
   }
 
+  /** Milliseconds until `cost` tokens are available for a key (0 = now). */
+  retryAfterMs(key: string, cost = 1): number {
+    if (RateLimiter.bypass && !this.config.ignoreBypass) return 0;
+    const bucket = this.buckets.get(key);
+    if (!bucket) return 0;
+    const now = (this.config.now ?? Date.now)();
+    const elapsed = now - bucket.lastRefill;
+    const refills = Math.floor(elapsed / this.config.refillInterval);
+    const tokens = Math.min(
+      this.config.maxTokens,
+      bucket.tokens + refills * this.config.refillRate,
+    );
+    if (tokens >= cost) return 0;
+    const needed = Math.ceil((cost - tokens) / this.config.refillRate);
+    return Math.max(0, (refills + needed) * this.config.refillInterval - elapsed);
+  }
+
   /** Reset a key's bucket to full capacity. */
   reset(key: string): void {
     this.buckets.delete(key);

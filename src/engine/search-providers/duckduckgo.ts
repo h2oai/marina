@@ -9,17 +9,28 @@
  *
  * Falls back to the instant answers API if HTML parsing fails.
  *
- * Free, no API key needed.
+ * Free, no API key needed. On by default; `MARINA_SEARCH_DUCKDUCKGO=off` turns
+ * it off (searches fall through to the other configured backends).
  */
 
 import type { ConnectorRuntime } from "../connector-runtime";
 import { decodeEntities } from "../html-text";
 import type { SearchOpts, SearchProvider, SearchResult } from "./index";
 
+/** The label a disabled DuckDuckGo carries wherever it is left out. */
+export const DUCKDUCKGO_DISABLED = "turned off: MARINA_SEARCH_DUCKDUCKGO=off";
+
+/** `MARINA_SEARCH_DUCKDUCKGO`: on unless off/false/0/no. Read per call. */
+export function duckDuckGoEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env.MARINA_SEARCH_DUCKDUCKGO?.trim().toLowerCase();
+  return !(v === "off" || v === "false" || v === "0" || v === "no");
+}
+
 export function duckDuckGoProvider(): SearchProvider {
   return {
     name: "duckduckgo",
     engines: ["web", "news"],
+    disabled: () => (duckDuckGoEnabled() ? undefined : DUCKDUCKGO_DISABLED),
 
     async search(
       query: string,

@@ -14,6 +14,8 @@ export function gotoCommand(deps: {
   sendLook: (entity: EntityId) => void;
   getAllEntities: () => Entity[];
   getEntityRoom: (entity: EntityId) => LoadedRoom | undefined;
+  /** Why the entity may not enter a room (private rooms, canEnter), or null. */
+  entryRefusal: (entity: Entity, room: RoomId) => string | null;
 }): CommandDef {
   return {
     category: "Navigation",
@@ -41,6 +43,11 @@ export function gotoCommand(deps: {
           ctx.send(input.entity, "You are already there.");
           return;
         }
+        const refusal = deps.entryRefusal(entity, targetRoomId);
+        if (refusal) {
+          ctx.send(input.entity, refusal);
+          return;
+        }
         teleport(ctx, input.entity, entity.name, currentRoom, targetRoomId, deps);
         return;
       }
@@ -60,6 +67,11 @@ export function gotoCommand(deps: {
       if (found) {
         if (found.room === currentRoomId) {
           ctx.send(input.entity, "You are already there.");
+          return;
+        }
+        const refusal = deps.entryRefusal(entity, found.room);
+        if (refusal) {
+          ctx.send(input.entity, refusal);
           return;
         }
         ctx.send(input.entity, dim(`Teleporting to ${found.name}...`));

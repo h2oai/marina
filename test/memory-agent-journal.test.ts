@@ -36,7 +36,7 @@ for (const mode of ["continue", "storage-failure", "yield"] as const)
         memoryService: async (request: MemoryOperationRequest) => {
           if (
             failResult &&
-            request.operation === "capture_batch" &&
+            (request.operation === "capture_batch" || request.operation === "capture_checkpoint") &&
             JSON.stringify(request.input).includes("tool-origin-evidence")
           )
             throw new Error("result storage failed");

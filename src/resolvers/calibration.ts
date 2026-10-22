@@ -294,7 +294,7 @@ export const inworldMarketResolverFinder: CalibrationFinder = {
 };
 
 /**
- * Conductor learning loop (Phase 5 automatic closure). When a question a Score
+ * Conductor learning loop (automatic closure). When a question a Score
  * was tracking against resolves, score the Score's prediction (Brier) and write
  * its shape→outcome prior so successor conductors recall what worked — no
  * gradients, just generational memory. Producer: `conduct track <name>

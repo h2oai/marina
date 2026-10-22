@@ -7,14 +7,23 @@ import { loadSkillFile } from "../src/agent/skill-import";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { seedTraitsAndRoles } from "../worlds/seed";
+import { seedChroniclerRole, seedTraitsAndRoles } from "../worlds/seed";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 
 const TEST_DB = "test_builtin_skills_cmd.db";
 
 describe("built-in skill library", () => {
   it("ships the quantitative-estimates skill exactly as its seed file", () => {
-    expect(BUILTIN_SKILLS.map((s) => s.name)).toEqual(["quantitative-estimates", "intake-triage"]);
+    expect(BUILTIN_SKILLS.map((s) => s.name)).toEqual([
+      "quantitative-estimates",
+      "intake-triage",
+      "decompose-multihop",
+      "solve-math",
+      "answer-request",
+      "chronicling",
+      "canvas-intents",
+      "consolidate-memory",
+    ]);
     expect(builtinSkill(" Quantitative-Estimates ")).toEqual(
       loadSkillFile("seeds/skills/quantitative-estimates.md"),
     );
@@ -28,6 +37,69 @@ describe("built-in skill library", () => {
     expect(searchBuiltinSkills("buckets")).toHaveLength(1);
     expect(searchBuiltinSkills("poetry")).toEqual([]);
     expect(searchBuiltinSkills("a b")).toEqual([]);
+  });
+});
+
+describe("progressive disclosure: long trait and reflection prose lives in built-in skills", () => {
+  const traitPrompt = (name: string) => {
+    const db = new MarinaDB(":memory:");
+    try {
+      seedTraitsAndRoles(db);
+      seedChroniclerRole(db);
+      return db.getTrait(name)?.prompt ?? "";
+    } finally {
+      db.close();
+    }
+  };
+
+  it("the chronicling trait keeps every rule in one line each and points at its skill", () => {
+    const trait = traitPrompt("chronicling");
+    expect(Buffer.byteLength(trait)).toBeLessThan(800); // was 1,879 B
+    for (const rule of [
+      "append-only",
+      "`chronicle pending`",
+      "citing every source id",
+      "`chronicle correct`",
+      "at most ONE named participant per cycle",
+      "never the same agent twice",
+      "sparse fact-only entry",
+      "Never embellish, speculate, praise or critique",
+      "`skill builtin chronicling`",
+    ])
+      expect(trait).toContain(rule);
+    const skill = builtinSkill("chronicling")!;
+    for (const detail of [
+      "chronicle digest day",
+      "recap chronicle week",
+      "note:<their reply note id>",
+      "memory set last_interview:<name>",
+      "memory get last_interview:<name>",
+    ])
+      expect(skill.body).toContain(detail);
+  });
+
+  it("the canvas-watcher trait (in every `general` agent) points at canvas-intents", () => {
+    const trait = traitPrompt("canvas-watcher");
+    expect(Buffer.byteLength(trait)).toBeLessThan(500); // was 832 B
+    for (const rule of [
+      "`canvas intent list`",
+      "`canvas intent claim <node_id>`",
+      "`canvas intent complete <node_id> <result>`",
+      "`canvas intent fail <node_id> <reason>`",
+      "Skip intents outside your expertise",
+      "5 minutes",
+      "`skill builtin canvas-intents`",
+    ])
+      expect(trait).toContain(rule);
+    const skill = builtinSkill("canvas-intents")!;
+    expect(skill.body).toContain("--type document");
+    expect(skill.body).toContain("complete-rich <node_id> <a2ui_json>");
+  });
+
+  it("the reflection procedure is the consolidate-memory skill", () => {
+    const skill = builtinSkill("consolidate-memory")!;
+    for (const step of ["**Generate.**", "**Reflect.**", "**Curate.**", "note link", "skill store"])
+      expect(skill.body).toContain(step);
   });
 });
 

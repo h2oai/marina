@@ -6,12 +6,14 @@ import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { RateLimiter } from "../src/auth/rate-limiter";
 import { cosine, type EmbeddingProvider } from "../src/memory/embeddings";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { MemoryService } from "../src/memory/service";
 import { worldMemoryService } from "../src/memory/world-service";
 import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
+import { until } from "./helpers";
 
 let directory: string;
 
@@ -686,7 +688,7 @@ it("keeps search rank, record versions and generation on one snapshot during a c
   }
 });
 
-it("recovers resident space initialization after a transient rate limit without changing identity", async () => {
+it("paces an in-process caller through a transient rate limit without changing identity", async () => {
   const name = "RetryResident";
   db.createUser({ id: crypto.randomUUID(), name });
   const credential = db.issueMemoryCredential(db.getUserByName(name)!.id);
@@ -704,10 +706,16 @@ it("recovers resident space initialization after a transient rate limit without 
       );
       expect(response.status).toBe(200);
     }
-    await expect(
-      residentMemoryOperation(db, name, { operation: "capabilities" }),
-    ).rejects.toMatchObject({ status: 429 });
+    // The refusal names its wait; the in-process caller waits it out instead of failing.
+    const refused = spyOn(RateLimiter.prototype, "consume");
+    const pending = residentMemoryOperation(db, name, { operation: "capabilities" });
+    try {
+      await until(() => refused.mock.results.some((r) => r.value === false));
+    } finally {
+      refused.mockRestore();
+    }
     time.mockReturnValue(now + 1100);
+    expect((await pending).ok).toBe(true);
     const result = await residentMemoryOperation(db, name, { operation: "me" });
     expect(result.ok).toBe(true);
     expect((result.result as { principal_id: string }).principal_id).toBe(credential.principalId);

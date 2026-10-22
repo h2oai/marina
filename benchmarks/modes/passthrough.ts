@@ -58,6 +58,8 @@ export function defaultTimeoutMs(): number {
 
 /** Header a Marina `/v1` passthru sets with the upstream dollar cost of the call. */
 const MARINA_COST_HEADER = "x-marina-cost-usd";
+/** `<cap>` when Marina applied an output cap (the cheap tier's), `<cap>; hit` when the reply ended on it. */
+const MARINA_OUTPUT_CAP_HEADER = "x-marina-output-cap";
 
 /**
  * Usage of one completion as the endpoint reported it. Nothing is estimated:
@@ -67,15 +69,31 @@ const MARINA_COST_HEADER = "x-marina-cost-usd";
 export function usageFromResponse(
   body: { usage?: Record<string, unknown> } | undefined,
   costHeader: string | null,
+  capHeader: string | null = null,
 ): CallUsage {
   const usage = body?.usage ?? {};
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
   const headerCost = costHeader !== null ? Number.parseFloat(costHeader) : Number.NaN;
   const costUsd = Number.isFinite(headerCost) ? headerCost : num(usage.cost);
+  const details =
+    usage.prompt_tokens_details && typeof usage.prompt_tokens_details === "object"
+      ? (usage.prompt_tokens_details as Record<string, unknown>)
+      : {};
+  const cached = num(details.cached_tokens) ?? num(usage.cache_read_input_tokens);
+  const written =
+    num(details.cache_write_tokens) ??
+    num(details.cache_creation_tokens) ??
+    num(usage.cache_creation_input_tokens);
+  const completionDetails = usage.completion_tokens_details as Record<string, unknown> | undefined;
+  const reasoningTokens = num(completionDetails?.reasoning_tokens);
   return {
     promptTokens: num(usage.prompt_tokens),
     completionTokens: num(usage.completion_tokens),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
+    ...(written !== undefined ? { cacheWriteTokens: written } : {}),
     costUsd,
+    ...(capHeader !== null && /;\s*hit\b/.test(capHeader) ? { outputCapHit: true } : {}),
   };
 }
 
@@ -244,7 +262,11 @@ export async function queryWithUsage(
       deadUntil.delete(endpoint);
       return {
         content: content ?? "",
-        usage: usageFromResponse(data, resp.headers.get(MARINA_COST_HEADER)),
+        usage: usageFromResponse(
+          data,
+          resp.headers.get(MARINA_COST_HEADER),
+          resp.headers.get(MARINA_OUTPUT_CAP_HEADER),
+        ),
         ...(requestId ? { requestId } : {}),
         ...(repaired ? { repaired } : {}),
         ...(verification ? { verification } : {}),

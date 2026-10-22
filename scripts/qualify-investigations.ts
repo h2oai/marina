@@ -4,7 +4,7 @@
 
 /** Offline service qualification. Never dispatches a real provider or opens a world database.
  * Run: bun --no-env-file scripts/qualify-investigations.ts /tmp/investigation-qualification
- * Keep measured reports in marina-internal; this file is the reproducible harness. */
+ * Keep measured reports outside this repository; this file is the reproducible harness. */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { cpus, platform, release, totalmem } from "node:os";
@@ -135,10 +135,13 @@ async function scale(actors: number) {
       rssGrowthBytes: Math.max(0, process.memoryUsage().rss - rssBefore),
       databaseGrowthBytes: bytes(path) - baselineBytes,
     };
-    assert(measured.projectionP95Ms < thresholds.projectionP95Ms);
-    assert(completeMs < thresholds.completeMs);
-    assert(measured.rssGrowthBytes < thresholds.rssGrowthBytes);
-    assert(measured.databaseGrowthBytes < thresholds.databaseGrowthBytes);
+    for (const [name, value, limit] of [
+      ["projection p95 ms", measured.projectionP95Ms, thresholds.projectionP95Ms],
+      ["complete ms", completeMs, thresholds.completeMs],
+      ["RSS growth bytes", measured.rssGrowthBytes, thresholds.rssGrowthBytes],
+      ["database growth bytes", measured.databaseGrowthBytes, thresholds.databaseGrowthBytes],
+    ] as const)
+      assert(value < limit, `${actors} actors: ${name} ${Math.round(value)} ≥ ${limit}`);
     return measured;
   } finally {
     service.close();
@@ -194,12 +197,16 @@ function bounds() {
     assert(db.readInvestigationEvents(owner.key, attempt.id, cursor + 1).reset);
     raw.run("DELETE FROM investigation_events WHERE attempt_id=? AND sequence<100", [attempt.id]);
     assert(db.readInvestigationEvents(owner.key, attempt.id, 1).reset);
-    assert(percentile(times, 0.95) < thresholds.projectionP95Ms);
+    const pageP95 = percentile(times, 0.95);
+    assert(
+      pageP95 < thresholds.projectionP95Ms,
+      `event page read p95 ${pageP95.toFixed(1)} ms ≥ ${thresholds.projectionP95Ms} ms over ${times.length} pages`,
+    );
     const history = {
       events,
       pages,
       writeAndReadMs: performance.now() - started,
-      pageP95Ms: percentile(times, 0.95),
+      pageP95Ms: pageP95,
     };
 
     // Exercise actual JSON byte lengths and physical writes, including UTF-8; no quota counters mocked.
@@ -233,7 +240,11 @@ function bounds() {
       n: number;
     };
     assert.equal(storedBytes.n, stored);
-    assert(percentile(writeTimes, 0.95) < thresholds.captureWriteP95Ms);
+    const writeP95 = percentile(writeTimes, 0.95);
+    assert(
+      writeP95 < thresholds.captureWriteP95Ms,
+      `capture write p95 ${writeP95.toFixed(1)} ms ≥ ${thresholds.captureWriteP95Ms} ms over ${writeTimes.length} writes`,
+    );
     for (const item of db.listInvestigations(owner.key)) db.eraseInvestigation(owner.key, item.id);
     assert.deepEqual(raw.query("SELECT count(*) AS n FROM investigation_content").get(), { n: 0 });
     assert.deepEqual(raw.query("SELECT count(*) AS n FROM investigation_events").get(), { n: 0 });

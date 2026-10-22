@@ -143,7 +143,7 @@ Only allowlisted scalar result metadata appears in the public summary. Detailed
 reports, transcripts, attempts, workspace and logs are encrypted to that public key
 before artifact upload; the holder of the private key can decrypt them with
 `gpg --decrypt live-evidence.tar.gz.gpg > live-evidence.tar.gz`. Archive the evidence
-in the private release record before its 14-day artifact retention expires. No raw
+with your qualification records, outside this repository, before its 14-day artifact retention expires. No raw
 qualification artifact is uploaded. Preserve earlier failures when a later revision
 passes. Repeated fresh tasks and multiple supported providers are required before a
 release reliability claim; these smoke fixtures are not leaderboard measurements.

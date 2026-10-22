@@ -28,7 +28,7 @@ bun run init --check --directory /path/to/instance
 ```
 
 `minimal` starts the empty world without background agents or auxiliary listeners.
-`workbench` selects the default world. `shared-team` selects Commons with sign-in and
+`workbench` selects the default world. `shared-team` selects the same default world with sign-in and
 persistent auth storage, generating a private auth secret when absent. All presets bind
 loopback initially. Configure your public URL, TLS proxy, verified admins and deliberate
 bind policy before exposing a shared instance. Capability presets and trust profiles are
@@ -40,6 +40,10 @@ Files are written atomically with mode 0600. Run `marina start` from that instan
 when using the installed CLI. Process environment overrides remain effective at startup.
 Use `readiness` for actual capability configuration and `readiness providers` for live
 connectivity checks (the latter may spend provider tokens).
+
+What Marina stores, what it sends where, and the switches for each web source (robots.txt,
+the keyless DuckDuckGo and Yahoo Finance fallbacks) are in
+[Data, privacy and terms](data-privacy-and-terms.md).
 
 ---
 
@@ -54,8 +58,9 @@ bun run start
 This starts the dashboard and default Workbench on loopback under the `local` trust profile. The
 model API accepts a key Marina generates into `<DB_PATH>.local-api-key` and prints at boot; the
 Memory API (`/mem`) stays closed until `MEM_API_KEYS` is set. Agents need one provider key (or a
-local model) to think, and the seeded Workbench agents start at boot only with
-`AGENT_AUTORESPAWN=true`. Telnet is off by default because it is plaintext and unauthenticated; enable it with
+local model) to think. With `AGENT_AUTORESPAWN` unset, the seeded Workbench agents start at boot on
+a `local` install that has a provider; set `AGENT_AUTORESPAWN=false` to keep them stopped, or `true`
+to start them on a shared or public instance. Telnet is off by default because it is plaintext and unauthenticated; enable it with
 `TELNET_PORT=4000` only on a trusted network.
 
 ---
@@ -68,7 +73,7 @@ Marina decides who it is for from how it is bound, and removes friction accordin
 
 | Profile | When (if `MARINA_PROFILE` is unset) | What it means |
 |---|---|---|
-| `local` | every listener binds loopback and `MARINA_AUTH` is off | **Ungated.** All safety gates auto-pass, nothing is held for approval, every loopback login is sovereign, arbitrary host commands run without a prompt (`code exec-mode auto`), rate limits, login caps and memory budgets are off, database durability defaults to `normal`. Audit stays on. |
+| `local` | every listener binds loopback and `MARINA_AUTH` is off | **Ungated for you.** Every safety gate except live trading (`trading.live`) auto-passes for the loopback operator, every loopback person login is sovereign, your arbitrary host commands run without a prompt (`code exec-mode auto`), rate limits, login caps and memory budgets are off, database durability defaults to `normal`. An **agent's** host shell (`shell.exec`) and arbitrary host commands (`code.exec.unrestricted`) are held for your approval. Audit stays on. |
 | `shared` | `MARINA_AUTH=better-auth` is on | Gates, ranks and limits enforced; sign-in identifies people. |
 | `public` | any non-loopback bind without sign-in | Everything enforced; passwordless names carry no authority. |
 
@@ -77,12 +82,16 @@ the gates on a personal instance anyway, set `MARINA_AUTONOMY=guarded` or `MARIN
 Forcing `MARINA_PROFILE=local` on a public bind is a fatal startup error unless you set
 `MARINA_ALLOW_INSECURE_PUBLIC=true` — enabling sign-in does not help, because `local` ungates every
 gate for every signed-in user. The boot log prints the resolved profile and
-why; in `local` it also prints the one real risk: a poisoned shared-pool note can lead an agent to
-run a host command without a prompt, and the exec audit is how you find out.
+why. The realistic risk on a local instance is a poisoned shared-pool note leading an agent to run a
+host command, so that is the one thing still held: an agent's `run raw` / `shell` and its
+non-allowlisted Code Mode commands raise a challenge (`challenge approve <token>`, or
+`code exec-approve <token>` in Code Mode) and run once you approve them. The agent is never
+blocked while it waits. Agents promoted on an older database may still hold shell grants:
+`gate audit` lists them and `gate reset agents all apply` revokes them.
 
 To lift every gate regardless of profile, for a sovereign, self-hosted Marina with no guests (a
 homelab or a private network you control), set `MARINA_AUTONOMY=sovereign`. Every gate (the core
-included), rank floor and hold is off for every principal; audit stays on, and the profile still
+included), rank floor and hold is off for every principal, agents' host commands included; audit stays on, and the profile still
 sets the performance defaults. On a non-loopback bind it also needs
 `MARINA_ALLOW_INSECURE_PUBLIC=true`, signed in or not. `MARINA_AUTONOMY=open` is not this switch:
 it never lifts the core.
@@ -106,16 +115,17 @@ MARINA_ADMINS=Alice,Bob bun run start
 ### Choose a world
 
 ```bash
-MARINA_WORLD=commons bun run start
+MARINA_WORLD=showcase bun run start
 ```
 
-Available worlds:
+Available worlds (`default` and `empty` are core; the others are demo worlds, marked `[demo]` by
+`marina worlds` — see [feature status](../reference/feature-status.md)):
 
 | World | What You Get |
 |-------|-------------|
 | `default` | Four-room reactive Workbench with Host/Builder/Critic/Chronicler, Demo Pulse tasks, and progressive complexity. |
 | `showcase` | Full 5x5 grid, specialist crews, benchmarks, markets, and broad capability demos. |
-| `commons` | Pre-seeded projects and templates. Good for team coordination. |
+| `commons` | Pre-seeded projects and room templates on a themed grid. |
 | `research` | Lab, observatory, archive spaces. Good for structured experimentation. |
 | `personal` | Privacy-focused workspaces. Good for a solo agent evolving itself. |
 | `craft` | Workshop + review spaces. Good for spec-driven development. |
@@ -129,11 +139,76 @@ Available worlds:
 | `demos` | Lobby, workshop, bridge. Good for interactive demonstrations. |
 | `empty` | One empty space. Good for building everything from scratch. |
 
+### Choose models (cheap by default)
+
+Work that names no model runs on one of two **model tiers**
+(`src/config/model-tiers.ts`):
+
+| Tier | Runs | Unset |
+|------|------|-------|
+| `cheap` — `MARINA_MODEL_TIER_CHEAP` | residents spawned without a model, room agents, boot-seeded crews (the Workbench, answerer and orchestration crews, the Chronicler), memory helpers | `MARINA_DEFAULT_MODEL` or a runtime default when one is set; else the cheapest adequate tool-capable model for your keys (`openrouter/deepseek/deepseek-v4.1-flash` with an OpenRouter key; `anthropic/claude-haiku-5-5`, `openai/gpt-6-luna`, … otherwise); else `marina/default` |
+| `strong` — `MARINA_MODEL_TIER_STRONG` | what grades or overrules: the benchmark judge, outcome extractor, lesson writer and judge, decision classifier, the Arbiter | `marina/default`, exactly as before — judging never turns cheap by accident |
+
+One line moves a tier; one entry moves a single role:
+
+```bash
+MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash   # every resident and crew
+MARINA_MODEL_TIER_STRONG=openrouter/anthropic/claude-opus-5.5     # every judge and the Arbiter
+MARINA_AGENT_MODELS=role:crew=anthropic/claude-sonnet-5-5,Host=openai/gpt-6.1-sol
+```
+
+Roles are `resident`, `room`, `crew`, `helper`, `judge`, `outcome-judge`,
+`lessons-judge`, `decisions` and `arbiter`. Older specific variables still win
+over the tier (`MARINA_CREW_MODEL`, `MARINA_WORKBENCH_MODEL`,
+`MARINA_BENCHMARK_JUDGE_MODEL`, `MARINA_DECISION_MODEL`, …), and so do a
+model named on `agent spawn`, `agent config <name> model …`, and a per-agent
+`MARINA_AGENT_MODELS` entry. `marina/cheap` and `marina/strong` are also model
+ids on `/v1`, resolved per request, so an agent saved on `marina/cheap` follows
+a later tier change after a restart. The `/v1` `marina` model is unchanged.
+
+`admin models` (readable by everyone) prints the effective model for each tier
+and role and where it came from; the boot log prints the two tier lines.
+
+A `marina/cheap` request that sets no `max_tokens` gets the cheap tier's output
+cap, `MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS` (default 16384; on OpenRouter
+also a reasoning budget of 3/4 of it), so a reasoning loop cannot run to the
+provider's own limit. A caller's own `max_tokens` always wins, larger or
+smaller; Marina's agents and helpers send their own caps and keep them; explicit
+model ids and the strong tier are never capped; `0`/`off` turns it off. A reply
+cut at the cap is marked `x-marina-output-cap: <n>; hit` and `outputCapHit` on
+its trace, the benchmark harness counts those as `outputCapHits`, and `admin
+models` shows the cap and how often it hit since start. The same holds inside
+`marina/verify:<proposer>+<checker>`: a `marina/cheap` or `marina/strong` member
+resolves through the tiers, and a cheap one gets the cap on its calls.
+Escalation stays where it was: the Arbiter runs only on contested items, and
+`model:route` / earned routing can pick a stronger candidate per agent.
+
+**Upgrading:** with no model variable set, residents, room agents, seeded crews
+and memory helpers move from `marina/default` (and the Workbench from each
+provider's flagship) to the cheap tier. Judges, decisions and the Arbiter do
+not change. An operator who set `MARINA_DEFAULT_MODEL`, a runtime default,
+`MARINA_CREW_MODEL` or `MARINA_WORKBENCH_MODEL` sees no change for what those
+cover. Agents saved with an explicit model keep it.
+
 ### Change ports
 
 ```bash
 WS_PORT=8080 TELNET_PORT=4001 MCP_PORT=8081 bun run start
 ```
+
+### Host names the server answers to
+
+On a loopback bind (the default) and under the `local` profile, the HTTP and WebSocket listener
+answers only to loopback `Host` names (`localhost`, `127.0.0.1`, `[::1]`) and the `BETTER_AUTH_URL` host, and returns `421` for
+anything else, so a web page on a DNS name that points at 127.0.0.1 cannot reach your instance.
+If you reach it by another name — a reverse proxy on the same host, a LAN name — list it:
+
+```bash
+MARINA_ALLOWED_HOSTS=marina.example.com,marina.lan:3300 bun run start
+```
+
+A bare name matches on any port, `name:port` only on that port. On a non-loopback bind `Host` is
+not checked unless you set this variable. `/mcp` on its own port uses `MARINA_MCP_ALLOWED_HOSTS`.
 
 ### Secure the model API
 
@@ -231,12 +306,12 @@ MCP_PORT=8081
 LOG_PORT=8082
 DB_PATH=/data/marina.db
 ASSETS_DIR=/data/assets
-MARINA_WORLD=commons
+MARINA_WORLD=default
 MARINA_ADMINS=Alice,Bob
 MODEL_API_KEYS=sk-prod-key-1,sk-prod-key-2
 LOG_FORMAT=json
 LOG_LEVEL=info
-DISCORD_TOKEN=xoxb-...
+DISCORD_TOKEN=your-discord-bot-token
 TELEGRAM_TOKEN=123:ABC...
 ```
 
@@ -246,7 +321,7 @@ TELEGRAM_TOKEN=123:ABC...
 
 ```bash
 docker build -t marina .
-docker run -p 3300:3300 -p 4000:4000 -p 3301:3301 \
+docker run -p 3300:3300 -p 3301:3301 \
   -e MARINA_WORLD=default \
   marina
 ```

@@ -27,6 +27,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { CodingCommandTarget } from "../sdk/command-target";
 
+/** A delivered message an execution answers: its ref and its causal depth. */
+export interface MessageCause {
+  ref: string;
+  depth: number;
+}
+
 export interface GatePass {
   codingTarget?: CodingCommandTarget;
   /** Gate ids the approver authorized for this one run. */
@@ -64,8 +70,21 @@ interface CommandScope {
   pass?: GatePass;
   /** The request-local coding destination of this one execution. */
   codingTarget?: CodingCommandTarget;
+  /**
+   * The delivered message this execution answers (`src/engine/message-envelope.ts`).
+   * Unlike the pass, a nested frame of the same entity inherits it.
+   */
+  messageCause?: MessageCause;
   /** False once the execution returned: detached work it spawned sees nothing. */
   open: boolean;
+  /**
+   * The as-of fence of this execution (epoch ms; `src/engine/evidence-fence.ts`):
+   * the tightest of the caller's and its enclosing frames'. Unlike the pass it
+   * outlives the execution, so detached work it spawned stays fenced.
+   */
+  evidenceCutoff?: number;
+  /** When the fence that set `evidenceCutoff` lapses (epoch ms), for relays. */
+  evidenceFenceUntil?: number;
   parent?: CommandScope;
 }
 
@@ -83,8 +102,24 @@ function scopeFor(entityId: string): CommandScope | undefined {
  * Run one command execution in its own frame. The frame starts with no
  * current command and no armed pass, and closes when `fn` settles.
  */
-export function runCommandScope<T>(entityId: string, fn: () => Promise<T>): Promise<T> {
-  const scope: CommandScope = { entityId, open: true, parent: scopes.getStore() };
+export function runCommandScope<T>(
+  entityId: string,
+  fn: () => Promise<T>,
+  fence?: { cutoff: number; until?: number },
+): Promise<T> {
+  const parent = scopes.getStore();
+  const scope: CommandScope = { entityId, open: true, parent };
+  // A nested execution never loosens the fence of the one that started it.
+  const cutoffs = [fence?.cutoff, parent?.evidenceCutoff].filter(
+    (c): c is number => c !== undefined && Number.isFinite(c),
+  );
+  if (cutoffs.length) {
+    scope.evidenceCutoff = Math.min(...cutoffs);
+    const untils = [fence?.until, parent?.evidenceFenceUntil].filter(
+      (u): u is number => u !== undefined && Number.isFinite(u),
+    );
+    if (untils.length) scope.evidenceFenceUntil = Math.max(...untils);
+  }
   return scopes.run(scope, async () => {
     try {
       return await fn();
@@ -93,8 +128,28 @@ export function runCommandScope<T>(entityId: string, fn: () => Promise<T>): Prom
       scope.raw = undefined;
       scope.pass = undefined;
       scope.codingTarget = undefined;
+      scope.messageCause = undefined;
     }
   });
+}
+
+/**
+ * The as-of fence of the innermost execution frame (epoch ms), if any, and
+ * when it lapses. Read by `currentEvidenceCutoff()` in
+ * `src/engine/evidence-fence.ts`; a closed frame still answers.
+ */
+export function scopeEvidenceFence(): { cutoff: number; until?: number } | undefined {
+  const scope = scopes.getStore();
+  if (scope?.evidenceCutoff === undefined) return undefined;
+  return {
+    cutoff: scope.evidenceCutoff,
+    ...(scope.evidenceFenceUntil !== undefined ? { until: scope.evidenceFenceUntil } : {}),
+  };
+}
+
+/** The entity whose execution frame is innermost, if any. */
+export function scopeEntity(): string | undefined {
+  return scopes.getStore()?.entityId;
 }
 
 /**
@@ -116,6 +171,27 @@ export function getCurrentCodingTarget(entityId: string): CodingCommandTarget | 
   const scope = scopeFor(entityId);
   if (scope) return scope.open ? scope.codingTarget : undefined;
   return currentCodingTarget.get(entityId);
+}
+
+/**
+ * The message the execution running now answers. Only a frame sets it (no
+ * module-level fallback): outside a command execution there is no cause.
+ */
+export function setCurrentMessageCause(entityId: string, cause?: MessageCause): void {
+  const scope = scopeFor(entityId);
+  if (scope?.open) scope.messageCause = cause;
+}
+
+/**
+ * The innermost cause among this entity's open frames: a macro or `batch`
+ * expansion answers the same message its enclosing command answered.
+ */
+export function getCurrentMessageCause(entityId: string): MessageCause | undefined {
+  for (let scope = scopes.getStore(); scope; scope = scope.parent) {
+    if (scope.entityId !== entityId || !scope.open) continue;
+    if (scope.messageCause) return scope.messageCause;
+  }
+  return undefined;
 }
 
 export function setCurrentCommand(entityId: string, raw: string | undefined): void {
@@ -203,8 +279,33 @@ export function onGateRefused(entityId: string, gateId: string, reason: string):
   }
 }
 
+/** Person or agent, as the challenge layer decides (`principalKind`). */
+export type GatePrincipal = "person" | "agent";
+let principalResolver: ((entityId: string) => GatePrincipal) | undefined;
+
+/** Installed by the challenge host (src/engine/challenges.ts); kept here so
+ *  safety-gates.ts and rank-floor.ts read it without an import cycle. */
+export function setPrincipalResolver(
+  resolver: ((entityId: string) => GatePrincipal) | undefined,
+): void {
+  principalResolver = resolver;
+}
+
+/** Person or agent for a gate decision. No resolver wired, or a resolver that
+ *  throws, ⇒ "agent": the held side, fail closed. */
+export function principalOf(entityId: string): GatePrincipal {
+  if (!principalResolver) return "agent";
+  try {
+    return principalResolver(entityId);
+  } catch {
+    // A failed lookup must hold the action, never pass it.
+    return "agent";
+  }
+}
+
 /** Test seam. */
 export function resetGateContextForTests(): void {
+  principalResolver = undefined;
   currentCommand.clear();
   currentCodingTarget.clear();
   commandPasses.clear();

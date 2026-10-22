@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Standing is earned by verified work: a credit needs someone INDEPENDENT of
- * the worker (not the same account, not in its spawn lineage) to verify it.
+ * Standing is earned by verified work: a credit needs another account to
+ * verify it (every account is its own party since 2026-10-20; an agent's
+ * verdict inside its own lineage needs grounding — contributor-standing.test.ts).
  * Self-dealt tasks pay nothing, a task's value is capped, resolved forecasts
  * and approved Code Mode work earn once, credits land on the durable account
  * whether or not the worker is online, every readout shows the same decayed
@@ -88,16 +89,18 @@ describe("standing is earned by verified work", () => {
       expect(independentParties(db, "Kid", "Alice")).toBe(false);
     });
 
-    it("recordVerified pays an independent verifier's verdict and refuses the worker's own party", () => {
-      db.saveAgentConfig({ name: "Kid", model: "m", spawnedBy: "Alice" });
+    it("recordVerified pays another account's verdict and refuses self-verification", () => {
+      // Contributors earn standing (2026-10-20): every account is its own party,
+      // so only the worker's own account is refused here (contributor-standing.test.ts
+      // covers the owner and sibling cases).
       const own = recordVerified(db, {
         kind: "code_verified",
         ref: "code:1",
-        worker: { name: "Kid" },
-        verifier: "Alice",
+        worker: { name: "Alice" },
+        verifier: "alice",
       });
       expect(own.credited).toBe(false);
-      expect(own.reason).toContain("one party");
+      expect(own.reason).toContain("same account");
       const paid = recordVerified(db, {
         kind: "code_verified",
         ref: "code:1",
@@ -121,15 +124,17 @@ describe("standing is earned by verified work", () => {
       expect(ledgerFor(db, "u_alice")).toHaveLength(0);
     });
 
-    it("a claimant in the approver's spawn lineage is paid nothing", () => {
+    it("a claimant in the approver's spawn lineage is paid when the approver is a person", () => {
+      // Contributors earn standing (2026-10-20): the owner approving its own
+      // agent's task credits the agent.
       db.saveAgentConfig({ name: "Kid", model: "m", spawnedBy: "Alice" });
       const kid = join("u_kid", "Kid");
       run(alice, "task create Chore | for my agent standing:5");
       run(kid, "task claim 1");
       run(kid, "task submit 1 done");
-      expect(run(alice, "task info 1")).toContain("same party as the creator");
-      expect(run(alice, "task approve 1 Kid")).toContain("No standing paid");
-      expect(standingOf(db, "Kid")).toBe(0);
+      expect(run(alice, "task info 1")).not.toContain("approval pays no standing");
+      expect(run(alice, "task approve 1 Kid")).toContain("Kid earned 5 standing");
+      expect(standingOf(db, "Kid")).toBeCloseTo(5, 3);
     });
 
     it("independent approval pays the task's value in every validation mode", () => {

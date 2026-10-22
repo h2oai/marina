@@ -13,6 +13,9 @@ import {
   questionBounds,
   researchForecastRound,
 } from "../src/arena/research/forecaster";
+import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
+import type { DecisionProvider } from "../src/decisions/types";
+import { MarinaDB } from "../src/persistence/database";
 import {
   combineRetrievers,
   inlineFootnotes,
@@ -20,11 +23,8 @@ import {
   type Retriever,
   retrieverFromSpec,
   sonarRetriever,
-} from "../src/arena/research/retrieve";
-import { figuresIn, verifyDossier } from "../src/arena/research/verify";
-import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
-import type { DecisionProvider } from "../src/decisions/types";
-import { MarinaDB } from "../src/persistence/database";
+} from "../src/research/retrieve";
+import { figuresIn, verifyDossier } from "../src/research/verify";
 import { cleanupDb } from "./helpers";
 import { scopeProcessState } from "./process-state";
 

@@ -84,7 +84,7 @@ const CONTEXTS: LabelCandidate["context"][] = [
   { role: "coordinator", goal: "Coordinate the team's open tasks", sources: ["untrusted_relay"] },
 ];
 
-function examples(def: { name: string; help?: string; usage?: string[] }): string[] {
+function examples(def: { name: string; help?: string; usage?: ReadonlyArray<unknown> }): string[] {
   const lines: string[] = [];
   const help = def.help ?? "";
   const ex = help.split(/Examples?:/i)[1];
@@ -95,6 +95,8 @@ function examples(def: { name: string; help?: string; usage?: string[] }): strin
     }
   }
   for (const u of def.usage ?? []) {
+    // Structured usage forms are skipped, as before; only plain string lines are read.
+    if (typeof u !== "string") continue;
     // Only concrete usage lines (no placeholders or alternatives).
     if (!/[<[|]/.test(u) && u.startsWith(def.name)) lines.push(u.trim());
   }

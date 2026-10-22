@@ -16,7 +16,13 @@
  * test/asset-library.test.ts opts into `sync` (inline, awaited). An explicit
  * value wins only under `MARINA_TEST_KEEP_ENV=1`.
  */
+import { bunVersionRefusal } from "../src/version";
 import { scrubTestEnvironment } from "./hermetic-env";
+
+// The suite runs on the Bun CI pins; an older runtime fails tests for reasons
+// that are not in Marina, so refuse up front with the version named.
+const bunRefusal = bunVersionRefusal();
+if (bunRefusal) throw new Error(bunRefusal);
 
 scrubTestEnvironment();
 process.env.MARINA_ASSET_DERIVATIVES ??= "off";
@@ -24,3 +30,7 @@ process.env.MARINA_ASSET_DERIVATIVES ??= "off";
 // test opts in (test/asset-memory.test.ts): the indexer runs in the asset tick
 // job and would otherwise write records into every test world with assets.
 process.env.MARINA_MEDIA_MEMORY ??= "off";
+// robots.txt checks on page reads (src/net/robots.ts) fetch the site's
+// robots.txt before a page; tests stub page fetches and never reach the
+// network, so the check is off unless a test opts in (test/robots.test.ts).
+process.env.MARINA_ROBOTS_TXT ??= "ignore";

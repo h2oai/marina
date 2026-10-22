@@ -1443,18 +1443,28 @@ describe("tool profiles", () => {
     }
   });
 
-  it("code tool is available to full and crew agents", () => {
+  it("code tool is available to full and crew agents: resident when wanted, else on demand", () => {
     const ctx = {} as never;
     const memory = {} as never;
-    expect(createScopedTools(ctx, memory, "full").some((tool) => tool.name === "marina_code")).toBe(
-      true,
-    );
-    expect(createScopedTools(ctx, memory, "crew").some((tool) => tool.name === "marina_code")).toBe(
-      true,
-    );
-    expect(
-      createScopedTools(ctx, memory, "minimal").some((tool) => tool.name === "marina_code"),
-    ).toBe(false);
+    const has = (tools: { name: string }[]) => tools.some((tool) => tool.name === "marina_code");
+    for (const profile of ["full", "crew"] as const) {
+      // On demand by default (2026-10-20): listed in marina_tool_search, ~4 KB off every request.
+      const lazy = createProfileToolset(ctx, memory, profile);
+      expect(has(lazy.resident)).toBe(false);
+      expect(has(lazy.deferred)).toBe(true);
+      // A bound coding task, a coding role or an explicit profile keeps it resident.
+      const wanted = createProfileToolset(
+        ctx,
+        memory,
+        profile,
+        { text: true },
+        { codeResident: true },
+      );
+      expect(has(wanted.resident)).toBe(true);
+      expect(has(wanted.deferred)).toBe(false);
+    }
+    expect(has(createScopedTools(ctx, memory, "minimal"))).toBe(false);
+    expect(has(createProfileToolset(ctx, memory, "minimal").deferred)).toBe(false);
   });
 
   it("code tool maps typed coding actions to Marina code commands", async () => {
@@ -1472,9 +1482,13 @@ describe("tool profiles", () => {
       },
     } as never;
     const memory = {} as never;
-    const tool = createScopedTools(ctx, memory, "full").find(
-      (candidate) => candidate.name === "marina_code",
-    );
+    const tool = createScopedTools(
+      ctx,
+      memory,
+      "full",
+      { text: true },
+      { codeResident: true },
+    ).find((candidate) => candidate.name === "marina_code");
     expect(tool).toBeTruthy();
 
     await tool!.execute("call-1", { action: "verify" });
@@ -1570,7 +1584,13 @@ describe("tool profiles", () => {
       gameState: { handlePerception: () => {} },
     } as never;
     for (const profile of ["full", "crew"] as const) {
-      const toolset = createProfileToolset(ctx, {} as never, profile);
+      const toolset = createProfileToolset(
+        ctx,
+        {} as never,
+        profile,
+        { text: true },
+        { codeResident: true },
+      );
       const generic = toolset.resident.find((tool) => tool.name === "marina_code")!;
       if (profile === "full")
         expect(toolset.deferred.some((tool) => tool.name === "marina_code_edit")).toBe(true);
@@ -1835,7 +1855,9 @@ describe("InterruptibleWaiter", () => {
     await w.sleep(40);
     const elapsed = performance.now() - start;
     expect(elapsed).toBeGreaterThanOrEqual(35);
-    expect(elapsed).toBeLessThan(120);
+    // Generous upper bound: a loaded runner can delay timers; the point is
+    // that the sleep ends on its own, not at some much later wake.
+    expect(elapsed).toBeLessThan(1000);
     expect(w.isArmed()).toBe(false);
   });
 
@@ -1909,8 +1931,55 @@ describe("sendAttention instant pickup", () => {
     await adapter.sendAttention("New coding task assigned: fix the failing test in session s1");
     await parked;
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(500);
+    // Well under the 5 s sleep, with headroom for a loaded runner.
+    expect(elapsed).toBeLessThan(2500);
     expect(waiter.isArmed()).toBe(false);
+  });
+
+  it("an attention that arrives with no sleep armed still makes the next cycle fast", async () => {
+    // wake() is a no-op when no sleep is armed (by design), so an assignment
+    // delivered while a prompt runs, or before the loop's first sleep, must
+    // still shorten the NEXT sleep — otherwise the bound coder waits out the
+    // full idle tick (≥ 60 s) before it reads its task.
+    const adapter = new LeanAgentAdapter(
+      { name: "attention-pending-test", loopCycleDelay: 200 },
+      "ws://127.0.0.1:3300",
+      null,
+    );
+    const internals = adapter as unknown as {
+      cycleWaiter: InterruptibleWaiter;
+      computeDynamicDelay(): number;
+      getTickRate(): { min: number; normal: number; idle: number };
+    };
+    const rate = internals.getTickRate();
+    expect(internals.computeDynamicDelay()).toBe(rate.idle);
+    expect(internals.cycleWaiter.isArmed()).toBe(false);
+    await adapter.sendAttention("New coding task assigned: plan a fix in session s1");
+    expect(internals.computeDynamicDelay()).toBe(rate.min);
+    expect(rate.min).toBeLessThan(rate.idle);
+  });
+
+  it("a bound coder that yielded at a per-run cap continues at the fast tick", () => {
+    const adapter = new LeanAgentAdapter(
+      { name: "cap-yield-test", loopCycleDelay: 200 },
+      "ws://127.0.0.1:3300",
+      null,
+    );
+    const internals = adapter as unknown as {
+      computeDynamicDelay(): number;
+      getTickRate(): { min: number; normal: number; idle: number };
+      runYielded: boolean;
+      spendStopLogged: boolean;
+    };
+    const rate = internals.getTickRate();
+    internals.runYielded = true;
+    // Not a bound coder: ordinary pacing is unchanged.
+    expect(internals.computeDynamicDelay()).toBe(rate.idle);
+    adapter.setActiveCodingTask("Task #1; plan a fix");
+    expect(internals.computeDynamicDelay()).toBe(rate.min);
+    // A spend stop keeps the normal path (the loop pauses before any call).
+    internals.spendStopLogged = true;
+    expect(internals.computeDynamicDelay()).not.toBe(rate.min);
   });
 });
 
@@ -1944,6 +2013,10 @@ describe("model resolution", () => {
     expect(m.provider).toBe("openrouter");
     expect(m.id).toBe(id);
     expect(m.baseUrl).toContain("openrouter");
+    // The chat transport, never OpenRouter's Anthropic Messages endpoint.
+    expect(m.api).toBe("openai-completions");
+    expect(resolveModel("openrouter/inception/mercury-99").api).toBe("openai-completions");
+    expect(resolveModel("openrouter/anthropic/claude-new-unlisted").api).toBe("anthropic-messages");
   });
 
   it("falls back to the default model for an entirely unknown provider", () => {

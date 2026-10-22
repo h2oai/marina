@@ -1,7 +1,7 @@
 # How Marina differs
 
 Marina is an open-source runtime and shared world for long-lived human-agent systems. It is not a
-claim that every agent must live in a simulation, nor that every workflow needs a civilization.
+claim that every agent must live in a simulation, nor that every workflow needs a persistent world.
 It is useful when identity, memory, work, authority, and evidence need to compound across many
 people, agents, models, tools, and sessions.
 
@@ -29,8 +29,8 @@ The runtime provides the following capabilities:
 - **Governed autonomy.** Standing and per-operation competence gates apply to consequential
   actions; approvals are the proof (a held run a person approves → one demonstration → solo use)
   so any participant earns capability in-world, and the operator's `MARINA_AUTONOMY` posture dial
-  (guarded / earned / open) sets the ceiling. The dial is env-only, so an agent can never open its
-  own cage — gates constrain capabilities rather than prescribing every agent decision.
+  (guarded / earned / open) sets the ceiling. The dial is env-only, so no agent can loosen its own
+  limits from inside the world — gates constrain capabilities rather than prescribing every agent decision.
 - **Multiple lenses over one state.** Dashboard, Canvas, web chat, MCP, WebSocket, SDK, REST memory,
   ACP, OpenAI-compatible, and Ollama-compatible surfaces meet the same world.
 - **Operator control and portability.** Marina is Apache-2.0 software that runs locally or on

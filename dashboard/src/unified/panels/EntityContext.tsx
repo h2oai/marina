@@ -8,6 +8,7 @@
  */
 
 import { memo, useMemo, useState } from "react";
+import { ResidentName } from "../../components/ResidentName";
 import { useEntityDetail } from "../../hooks/use-api";
 import { useChatState } from "../../hooks/use-chat-state";
 import { useWorldState } from "../../hooks/use-world-state";
@@ -24,6 +25,16 @@ import {
 // ── Note Styling Helpers (Fix 6) ────────────────────────────────────────────
 
 /** Importance badge background color. */
+/** The world command an attention-box line becomes, or undefined for the attention endpoint. */
+export function attentionCommand(
+  entity: Pick<EntityDetail, "name" | "resident">,
+  text: string,
+): string | undefined {
+  if (text.startsWith("@")) return text;
+  if (entity.resident) return `agent attention ${entity.name} ${text}`;
+  return undefined;
+}
+
 function importanceBgColor(importance: number): string {
   if (importance >= 7) return "rgba(239, 68, 68, 0.15)";
   if (importance >= 4) return "rgba(245, 158, 11, 0.15)";
@@ -179,18 +190,51 @@ const EntityContextInner = memo(function EntityContextInner({
 }) {
   const isAgent = entity.kind === "agent";
   const isNpc = entity.kind === "npc";
+  // The server sends the public view to viewers who are not this entity, its
+  // owner or an operator; owner-scoped sections are not fetched for it.
+  const publicView = entity.private === false;
   const isRunning =
     !!agentStatus && agentStatus.state !== "stopped" && agentStatus.state !== "error";
   const loggedIn = useChatState((s) => s.loggedIn);
   const [attention, setAttention] = useState("");
   const [sendingAttention, setSendingAttention] = useState(false);
+  const [attentionError, setAttentionError] = useState<string | null>(null);
+  // `@…` lines and supervised residents go through the world command (the
+  // server expands the shorthand, src/engine/parse-mentions.ts); in-process
+  // agents keep the attention endpoint.
+  const sendAttention = async () => {
+    const text = attention.trim();
+    if (!text || sendingAttention) return;
+    setSendingAttention(true);
+    try {
+      const command = attentionCommand(entity, text);
+      if (command) {
+        if (!useChatState.getState().sendCommand(command, false)) {
+          setAttentionError("Log in to the chat to send this.");
+          return;
+        }
+      } else {
+        await postApi(`/api/agents/${encodeURIComponent(entity.name)}/attention`, {
+          message: text,
+        });
+      }
+      setAttention("");
+    } finally {
+      setSendingAttention(false);
+    }
+  };
 
   return (
     <>
       {/* Name banner with kind-specific color */}
       <div className="uc-context-name" style={{ color: entityNameColor(entity.kind) }}>
-        {entity.name}
+        <ResidentName name={entity.name} vendor={entity.resident?.vendor || undefined} />
       </div>
+      {entity.resident?.owner && (
+        <div style={{ padding: "0 14px 6px", color: "#888", fontSize: "12px" }}>
+          supervised resident · owned by {entity.resident.owner}
+        </div>
+      )}
 
       {/* Navigation: visit this entity's canvas. Available for everyone, any
           kind — any entity has a workspace you can drop in on. */}
@@ -256,65 +300,55 @@ const EntityContextInner = memo(function EntityContextInner({
         </div>
       )}
 
-      {/* Attention input for running agents */}
-      {isAgent && isRunning && (
-        <div style={{ display: "flex", gap: "4px", padding: "0 14px 8px" }}>
-          <input
-            type="text"
-            placeholder="Send attention..."
-            value={attention}
-            onChange={(e) => setAttention(e.target.value)}
-            onKeyDown={async (e) => {
-              if (e.key === "Enter" && attention.trim()) {
-                setSendingAttention(true);
-                try {
-                  await postApi(`/api/agents/${encodeURIComponent(entity.name)}/attention`, {
-                    message: attention.trim(),
-                  });
-                  setAttention("");
-                } finally {
-                  setSendingAttention(false);
-                }
-              }
-            }}
-            style={{
-              flex: 1,
-              background: "rgba(17,17,24,0.6)",
-              border: "1px solid var(--color-border)",
-              color: "#ddd",
-              fontFamily: "'VT323', monospace",
-              fontSize: "clamp(14px, 0.95vw, 18px)",
-              padding: "3px 8px",
-              outline: "none",
-            }}
-          />
-          <button
-            type="button"
-            disabled={sendingAttention || !attention.trim()}
-            onClick={async () => {
-              if (!attention.trim()) return;
-              setSendingAttention(true);
-              try {
-                await postApi(`/api/agents/${encodeURIComponent(entity.name)}/attention`, {
-                  message: attention.trim(),
-                });
-                setAttention("");
-              } finally {
-                setSendingAttention(false);
-              }
-            }}
-            style={{
-              background: "none",
-              border: "1px solid var(--color-border)",
-              color: attention.trim() ? "var(--color-primary)" : "#555",
-              cursor: attention.trim() ? "pointer" : "default",
-              fontFamily: "'VT323', monospace",
-              fontSize: "clamp(14px, 0.95vw, 18px)",
-              padding: "3px 8px",
-            }}
-          >
-            Send
-          </button>
+      {/* Attention input for running agents and supervised residents */}
+      {isAgent && (isRunning || !!entity.resident) && (
+        <div style={{ padding: "0 14px 8px" }}>
+          <div style={{ display: "flex", gap: "4px" }}>
+            <input
+              type="text"
+              aria-label={`Send attention to ${entity.name}`}
+              placeholder="Send attention… (@name, @a,b, @all)"
+              value={attention}
+              onChange={(e) => {
+                setAttention(e.target.value);
+                setAttentionError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void sendAttention();
+              }}
+              style={{
+                flex: 1,
+                background: "rgba(17,17,24,0.6)",
+                border: "1px solid var(--color-border)",
+                color: "#ddd",
+                fontFamily: "'VT323', monospace",
+                fontSize: "clamp(14px, 0.95vw, 18px)",
+                padding: "3px 8px",
+                outline: "none",
+              }}
+            />
+            <button
+              type="button"
+              disabled={sendingAttention || !attention.trim()}
+              onClick={() => void sendAttention()}
+              style={{
+                background: "none",
+                border: "1px solid var(--color-border)",
+                color: attention.trim() ? "var(--color-primary)" : "#555",
+                cursor: attention.trim() ? "pointer" : "default",
+                fontFamily: "'VT323', monospace",
+                fontSize: "clamp(14px, 0.95vw, 18px)",
+                padding: "3px 8px",
+              }}
+            >
+              Send
+            </button>
+          </div>
+          {attentionError && (
+            <div role="alert" style={{ color: "#ef4444", fontSize: "12px", paddingTop: "4px" }}>
+              {attentionError}
+            </div>
+          )}
         </div>
       )}
 
@@ -390,8 +424,17 @@ const EntityContextInner = memo(function EntityContextInner({
       </CascadeSection>
 
       {/* Compass — brief orientation for the entity */}
-      <CompassSection entityName={entity.name} />
-      <MediaSection entityName={entity.name} sendCommand={sendCommand} />
+      {publicView ? (
+        <p className="entity-public-note" style={{ padding: "6px 14px", opacity: 0.7 }}>
+          Public view: memory, notes and raw activity are visible to this entity, its owner and
+          operators.
+        </p>
+      ) : (
+        <>
+          <CompassSection entityName={entity.name} />
+          <MediaSection entityName={entity.name} sendCommand={sendCommand} />
+        </>
+      )}
 
       {/* Core Memory */}
       {entity.coreMemory && entity.coreMemory.length > 0 && (
@@ -476,12 +519,12 @@ const EntityContextInner = memo(function EntityContextInner({
       )}
 
       {/* Knowledge Graph */}
-      <KnowledgeGraphSection entityName={entity.name} />
+      {!publicView && <KnowledgeGraphSection entityName={entity.name} />}
 
       {/* Inventory */}
-      {entity.inventory.length > 0 && (
+      {(entity.inventory?.length ?? 0) > 0 && (
         <CascadeSection title="Inventory" defaultOpen={false}>
-          {entity.inventory.map((item) => (
+          {entity.inventory?.map((item) => (
             <div
               key={item}
               style={{

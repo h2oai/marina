@@ -1,7 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { observeAttentionJudgeEvent } from "../agent/attention-judge";
 import { scratchRoot } from "../config/data-dir";
+import { roleModelFromEnv } from "../config/model-tiers";
 import { localHttpBase } from "../net/listen-ports";
 import { MARINA_ROOT } from "../runtime-paths";
 import { AuthCoordinator, type LoginIdentity, type LoginResult } from "./auth-coordinator";
@@ -26,6 +28,11 @@ import { ChannelManager } from "../coordination/channel-manager";
 import { CrewManager } from "../coordination/crew-manager";
 import { GroupManager } from "../coordination/group-manager";
 import { MacroManager } from "../coordination/macro-manager";
+import {
+  type RoomRound,
+  roomFormationOf,
+  roomFormationTurn,
+} from "../coordination/room-formations";
 import { TaskManager } from "../coordination/task-manager";
 import { extensionGatewayProof } from "../extensions/loader";
 import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
@@ -40,13 +47,14 @@ import { memoryAccess } from "../memory/access";
 import { residentMemoryAPI } from "../memory/resident-service";
 import { attachModelTraceSink } from "../model/trace";
 import type { AdapterManager } from "../net/adapters/adapter-manager";
-import { connects } from "../net/ansi";
+import { connects, stripAnsi } from "../net/ansi";
 import { attachRouteHealthStore, coreMemoryRouteStore } from "../net/model/route-health";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import { fileResidentForecast } from "../outcomes/filing";
 import { observeOutcomeEvent } from "../outcomes/live";
 import type { MarinaDB } from "../persistence/database";
+import type { RoomLogKind } from "../persistence/db-rooms";
 import { writeSample } from "../resolvers/sample-writer";
 import type { StorageProvider } from "../storage/provider";
 import type { OtlpExporterStatus } from "../telemetry/otlp-exporter";
@@ -72,6 +80,7 @@ import { BenchmarkRunner } from "./benchmark-runner";
 import { BriefManager } from "./brief-manager";
 import { CanvasReadGrants } from "./canvas-access";
 import { recordEngineCognition } from "./cognitive-provenance";
+import { purgeSensitiveCommandEvents } from "./command-redaction";
 import { registerBuiltinCommands } from "./command-registry";
 import { CommandRouter } from "./command-router";
 import { stopCodeStreamsFor } from "./commands/code/stream";
@@ -89,7 +98,9 @@ import { assetDerivativesPending, drainAssetDerivatives } from "./media/asset-li
 import { MediaManager, mediaGenerationAvailable } from "./media/manager";
 import { audioAvailable } from "./media/providers/audio-registry";
 import { engineSharedWriteHook } from "./memory-dispatch";
+import { envelopeFields, messageEnvelope, mintMessageRef } from "./message-envelope";
 import { getRank, rankName } from "./permissions";
+import { PresenceTracker } from "./presence";
 import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
@@ -97,6 +108,19 @@ import { ShellRuntime } from "./shell-runtime";
 import { attachWorldSpendLedger } from "./spend-ledger";
 import { registerTickJobs } from "./tick-jobs";
 import { type TickJobStatus, TickScheduler } from "./tick-scheduler";
+
+/** Room broadcasts recorded in the room log, by perception tag. */
+const ROOM_LOG_KINDS: Record<string, RoomLogKind> = {
+  say: "say",
+  emote: "emote",
+  arrive: "arrive",
+  connect: "arrive",
+  leave: "leave",
+  disconnect: "leave",
+};
+
+/** The speaker name a room formation's structural lines carry. */
+const FORMATION_MEDIATOR = "formation-mediator";
 
 /** Identical tick-failure messages are logged at most once per this interval. */
 const TICK_ERROR_LOG_INTERVAL_MS = 30_000;
@@ -159,6 +183,8 @@ export class Engine {
   readonly taskManager?: TaskManager;
   readonly macroManager?: MacroManager;
   readonly crewManager?: CrewManager;
+  /** Each room formation's round in progress (src/coordination/room-formations.ts). */
+  private readonly roomRounds = new Map<RoomId, RoomRound>();
 
   readonly world?: WorldDefinition;
   readonly sandbox: RoomSandbox;
@@ -205,6 +231,13 @@ export class Engine {
   /** @internal — test seam for the command-phase budget. */
   commandPhaseBudgetMs = COMMAND_PHASE_BUDGET_MS;
   /** @internal */ readonly _eventLog: EventLog;
+  /** Presence status per agent, derived from engine events (src/engine/presence.ts). */
+  readonly presence = new PresenceTracker({
+    nameOf: (id) => this.entities.get(id)?.name,
+    notify: (watcher, text, data) => {
+      this.sendToEntity(watcher, text, "watch", data);
+    },
+  });
   /** @internal — backward-compatible accessor for the raw event array */
   get eventLog(): EngineEvent[] {
     return this._eventLog.getAll();
@@ -236,7 +269,10 @@ export class Engine {
     this.entities = new EntityManager();
     this.rooms = new RoomManager();
     this.commands = new CommandRouter();
-    this._connections = new ConnectionManager();
+    // The as-of fence is relayed to agents only (src/engine/evidence-fence.ts):
+    // the same agent signals as a login (internal/MCP/agent connection, or an
+    // account with an agent config or agent principal); a person keeps their tools.
+    this._connections = new ConnectionManager((id) => this.isAgentEntity(id as EntityId));
     this.sandbox = new RoomSandbox();
     this.db = this.config.db;
     this._eventLog = new EventLog(this.logger, this.db);
@@ -299,9 +335,7 @@ export class Engine {
         (event) => this.logEvent(event),
       );
       this.taskManager = new TaskManager(this.db);
-      this.macroManager = new MacroManager(this.db, (entityId, raw) =>
-        this.processCommand(entityId, raw),
-      );
+      this.macroManager = new MacroManager(this.db);
       this.crewManager = new CrewManager({
         channels: this.channelManager,
         db: this.db,
@@ -473,12 +507,18 @@ export class Engine {
     this.registerBuiltinCommands();
     this.tickScheduler = new TickScheduler(this.logger);
     this.registerTickJobs();
-    // Lessons from work (MARINA_LESSONS_FROM_WORK, default off — a cheap no-op
-    // then): agent tool results, gate holds and task verdicts become signals.
+    // Lessons from work (MARINA_LESSONS_FROM_WORK; unset: on with a model
+    // provider, else observe; `off` is a cheap no-op): agent tool results,
+    // gate holds and task verdicts become signals.
     this.addEventListener((event) => observeWorkEvent(this.db, event));
     // The outcome path (src/outcomes/): a creator's verdict on a task
     // submission is a resolved result — recorded once, learned from.
     this.addEventListener((event) => observeOutcomeEvent(this.db, event));
+    // Attention judges (MARINA_ATTENTION_JUDGE, default observe; a no-op when
+    // off): deep replies and review verdicts, each checked against its outcome.
+    this.addEventListener((event) => observeAttentionJudgeEvent(this.db, event));
+    // Presence (`who`, `look`, `who watch`): derived from agent events.
+    this.addEventListener((event) => this.presence.observe(event));
   }
 
   // ─── Room Registration ──────────────────────────────────────────────────
@@ -527,7 +567,13 @@ export class Engine {
 
   /** World lifecycle uses the same leave event for disconnects and explicit despawns. */
   private emitEntityLeave(entityId: EntityId, room: RoomId): void {
-    this.logEvent({ type: "entity_leave", entity: entityId, room, timestamp: Date.now() });
+    this.logEvent({
+      type: "entity_leave",
+      entity: entityId,
+      name: this.entities.get(entityId)?.name,
+      room,
+      timestamp: Date.now(),
+    });
   }
 
   /** Bind a connection to a new entity (login) */
@@ -558,6 +604,7 @@ export class Engine {
     this.logEvent({
       type: "entity_enter",
       entity: entity.id,
+      name: entity.name,
       room: entity.room,
       timestamp: Date.now(),
     });
@@ -746,6 +793,17 @@ export class Engine {
   start(): void {
     if (this.running) return;
     this.running = true;
+    // Command events recorded with a credential-carrying form in clear (before
+    // inputs were redacted at the source) are removed once per start.
+    const db = this.db;
+    if (db) {
+      tryLog(this.logger, "engine", "Sensitive command event cleanup failed", () => {
+        const removed = purgeSensitiveCommandEvents(db, this.commands.allBuiltins());
+        if (removed > 0) {
+          this.logger.info("engine", `Removed ${removed} stored command events with credentials`);
+        }
+      });
+    }
     this.flywheel?.reconcile?.().catch((error) => {
       this.logger.warn("flywheel", "Workspace reconciliation failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -998,6 +1056,57 @@ export class Engine {
     }));
   }
 
+  /**
+   * A room with a formation answers each `say` with at most one structural
+   * line, addressed to the next actor so attention owes and wakes it
+   * (src/coordination/room-formations.ts). Rooms without one are untouched.
+   */
+  private onRoomSay(room: RoomId, speaker: string): void {
+    const loaded = this.rooms.get(room);
+    const formation = loaded ? roomFormationOf(loaded) : undefined;
+    if (!formation) {
+      this.roomRounds.delete(room);
+      return;
+    }
+    if (speaker === FORMATION_MEDIATOR) return;
+    const present = this.entities
+      .inRoom(room)
+      .filter((entity) => entity.kind === "agent")
+      .map((entity) => entity.name);
+    const turn = roomFormationTurn(formation, this.roomRounds.get(room), speaker, present);
+    if (turn.round) this.roomRounds.set(room, turn.round);
+    else this.roomRounds.delete(room);
+    if (!turn.line || turn.phase === "quiet") return;
+    const line = `[formation-mediator] ${turn.line}`;
+    const db = this.db;
+    if (db)
+      tryLog(this.logger, "db", "Room log append failed", () =>
+        db.appendRoomLog({
+          room,
+          entity: FORMATION_MEDIATOR,
+          kind: "say",
+          content: line,
+          at: Date.now(),
+        }),
+      );
+    const messageRef = mintMessageRef("say");
+    for (const entity of this.entities.inRoom(room))
+      this.sendToEntity(entity.id, line, "say", {
+        senderName: FORMATION_MEDIATOR,
+        message: line,
+        messageRef,
+        formation,
+      });
+    this._eventLog.log({
+      type: "room_formation_turn",
+      room,
+      formation,
+      phase: turn.phase,
+      next: turn.next,
+      timestamp: Date.now(),
+    });
+  }
+
   broadcastToRoom(room: RoomId, message: string, tag?: string): void {
     const entities = this.entities.inRoom(room);
     for (const entity of entities) {
@@ -1005,14 +1114,45 @@ export class Engine {
     }
   }
 
-  broadcastToRoomExcept(room: RoomId, exclude: EntityId, message: string, tag?: string): void {
+  /** One `look log` row per room broadcast of speech or movement (src/persistence/db-rooms.ts). */
+  private appendRoomLog(
+    room: RoomId,
+    entity: string | undefined,
+    message: string,
+    tag: string | undefined,
+    metadata: Record<string, unknown> | undefined,
+  ): void {
+    const kind = tag ? ROOM_LOG_KINDS[tag] : undefined;
+    if (!kind || !entity || !this.db) return;
+    const db = this.db;
+    tryLog(this.logger, "db", "Room log append failed", () => {
+      db.appendRoomLog({
+        room,
+        entity,
+        kind,
+        content: stripAnsi(message).slice(0, 2000),
+        ...(typeof metadata?.cause === "string" ? { cause: metadata.cause } : {}),
+        ...(typeof metadata?.depth === "number" ? { depth: metadata.depth } : {}),
+        at: Date.now(),
+      });
+    });
+  }
+
+  broadcastToRoomExcept(
+    room: RoomId,
+    exclude: EntityId,
+    message: string,
+    tag?: string,
+    metadata?: Record<string, unknown>,
+  ): void {
     const sender = this.entities.get(exclude);
     const senderName = sender?.name;
+    this.appendRoomLog(room, senderName, message, tag, metadata);
     const entities = this.entities.inRoom(room);
     for (const entity of entities) {
       if (entity.id !== exclude) {
         if (senderName && isIgnoring(entity, senderName)) continue;
-        this.sendToEntity(entity.id, message, tag);
+        this.sendToEntity(entity.id, message, tag, metadata);
       }
     }
   }
@@ -1024,8 +1164,8 @@ export class Engine {
     return this.rooms.buildContext(roomId, {
       send: (target, msg, tag?, metadata?) => this.sendToEntity(target, msg, tag, metadata),
       broadcast: (room, msg, tag?) => this.broadcastToRoom(room, msg, tag),
-      broadcastExcept: (room, exclude, msg, tag?) =>
-        this.broadcastToRoomExcept(room, exclude, msg, tag),
+      broadcastExcept: (room, exclude, msg, tag?, metadata?) =>
+        this.broadcastToRoomExcept(room, exclude, msg, tag, metadata),
       entitiesInRoom: (room) => this.entities.inRoom(room),
       findEntity: (name, room) => this.entities.findByName(name, room),
       spawnNpc: (room, opts) => this.spawnNpc(room, opts),
@@ -1072,7 +1212,7 @@ export class Engine {
               try {
                 const handle = await this.agentRuntime.spawn({
                   ...config,
-                  model: config.model ?? "marina/default",
+                  model: config.model ?? roleModelFromEnv("room"),
                   room: roomId as string,
                 });
                 const s = handle.getStatus();
@@ -1272,13 +1412,15 @@ export class Engine {
       send(channelName, senderId, senderName, content) {
         const ch = cm.getChannelByName(channelName);
         if (ch) {
-          cm.send(ch.id, senderId, senderName, content);
+          const envelope = messageEnvelope(senderId);
+          const { message } = cm.post(ch.id, senderId, senderName, content, { envelope });
           logEvent?.({
             type: "channel_message",
             entity: senderId as EntityId,
-            messageId: 0,
+            messageId: message.id,
             channelName,
             content,
+            ...envelopeFields(envelope),
             timestamp: Date.now(),
           });
         }
@@ -1321,14 +1463,13 @@ export class Engine {
     const urlError = await validateFetchUrl(url);
     if (urlError) return { error: urlError };
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ROOM_FETCH_TIMEOUT_MS);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), ROOM_FETCH_TIMEOUT_MS);
       const response = await guardedFetch(url, {
         method: "GET",
         signal: controller.signal,
       });
-      clearTimeout(timeout);
       const body = await response.text();
       // Limit response size to 10KB
       return {
@@ -1337,6 +1478,9 @@ export class Engine {
       };
     } catch (err) {
       return { error: `Fetch failed: ${getErrorMessage(err)}` };
+    } finally {
+      // The deadline covers the whole exchange, body included.
+      clearTimeout(timeout);
     }
   }
 
@@ -1374,6 +1518,24 @@ export class Engine {
   }
 
   /** Get connection for an entity (for quit command) */
+  /**
+   * Whether an agent drives this entity: an internal, MCP or self-declared
+   * agent connection, or an account with an agent config or agent principal.
+   * The same signals as an agent login; a person keeps `false`.
+   */
+  isAgentEntity(id: EntityId): boolean {
+    const entity = this.entities.get(id);
+    if (!entity) return false;
+    const conn = this._connections.getConnectionForEntity(id) as
+      | { internal?: boolean; protocol?: string; agent?: boolean }
+      | undefined;
+    if (conn?.internal || conn?.protocol === "mcp" || conn?.agent) return true;
+    return (
+      !!this.db &&
+      (!!this.db.getAgentConfig(entity.name) || !!this.db.getPrincipal("agent", entity.name))
+    );
+  }
+
   getConnectionForEntity(entityId: EntityId): Connection | undefined {
     return this._connections.getConnectionForEntity(entityId);
   }
@@ -1420,6 +1582,7 @@ export class Engine {
 
   /** @internal */ logEvent(event: EngineEvent): void {
     this._eventLog.log(event);
+    if (event.type === "say_sent") this.onRoomSay(event.room, event.from);
     // Crews react to agent stops — depart the crew when the agent goes away.
     if (event.type === "agent_stop" && this.crewManager) {
       this.crewManager.onAgentStopped(event.name);

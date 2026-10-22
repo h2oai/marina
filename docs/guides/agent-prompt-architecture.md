@@ -33,11 +33,47 @@ Every request an internal agent makes carries a fixed prefix — the system prom
 `# COMMANDS` roster, one copy) and the serialized tool schemas — plus the dynamic continuation
 prompt. The budget is enforced in code, not by convention:
 
-- The system prompt stays under `LEAN_SYSTEM_PROMPT_BYTE_CAP` (6.5 KB) including the roster.
-- The `full` tool profile is *resident core + deferred rest*: the crew core set (~9 tools) ships on
-  every request together with one `marina_tool_search` whose description catalogs the remaining
-  tools as `name — one line`; loading a tool by name makes it callable for the rest of the session.
+- The system prompt frame (everything but the role prose, roster included) has two budget tiers,
+  chosen from the agent model's context window (`promptTierForContextWindow`):
+
+  | Tier | Models | Frame cap | Tools |
+  |---|---|---|---|
+  | `lean` | context window ≤ 32k tokens (small local models) | `LEAN_SYSTEM_PROMPT_BYTE_CAP` 5,800 B | `minimal`, unless the profile was set explicitly |
+  | `full` | larger windows, cached cloud models | `FULL_SYSTEM_PROMPT_BYTE_CAP` 9,000 B | the configured or role-inferred profile |
+
+  Both tiers render the same text today (worst case ≈ 5.2 KB in any trust profile × posture); the
+  `full` cap is headroom for deliberate additions, and a role's loop override is measured against
+  its agent's tier. `test/prompt-budget.test.ts` checks both caps in every trust profile × autonomy
+  posture with the live roster.
+- Each command is introduced once. The `# COMMANDS` roster skips every command that TOOL ROUTING
+  or MEMORY already names (`taughtCommandNames`), TOOL ROUTING points at `marina_tool_search`
+  instead of repeating its catalog, and the memory tools' descriptions defer to MEMORY for the
+  verbs.
+- The `full` tool profile is *resident core + deferred rest*: the crew core set ships on every
+  request together with one `marina_tool_search` whose description catalogs the remaining tools as
+  `name — one line`; loading a tool by name makes it callable for the rest of the session.
   `MARINA_DEFERRED_TOOLS=off` restores the all-resident profile. `marina_command` is always resident.
+- `marina_code` (~4 KB) and `think` are **on demand** in every acting profile
+  (`ON_DEMAND_TOOL_NAMES`): each profile's `marina_tool_search` lists them. `marina_code` is
+  resident while a coding task is bound (the Code Mode driver's `setActiveCodingTask` loads it), for
+  a coding role (`CODE_TOOL_ROLES`) and for an explicitly chosen profile.
+- Long trait and reflection procedures are built-in skills (`skill builtin chronicling`,
+  `canvas-intents`, `consolidate-memory`); the trait or `[Reflection Due]` section keeps one line
+  per rule and a pointer.
+- The typed **analysis tools** are deferred and listed by `marina_tool_search`: `marina_forecast`
+  (`forecast`, typed answers, optional `formation` and `retriever`), `marina_research`
+  (`research ask`: the web-research agent with a citation audit, or a research mode —
+  `evidence-loop`, `survey`, `authority` — with a retriever), `marina_swarm` (`web swarm`),
+  `marina_quant` / `marina_calc`, `marina_data` (markets, odds, series, polls, crowd),
+  `marina_decision_check`, `marina_triage`, `marina_arbiter` and `marina_pattern` (`pattern run`).
+  Each builds ONE world command (`src/agent/analysis-commands.ts`, shared with the tool policy) and
+  runs it like `marina_command`, so the command's rank, gates, rate limits, spend caps and audit
+  apply unchanged. The `crew` and `minimal` profiles reach the same commands through `marina_command`.
+- The continuation prompt offers two budgeted, labelled hints about the agent's focus: `[Lessons]`
+  (every tenth cycle, ≤ 600 bytes; filtered to forecasting or research work when the focus or recent
+  tools show it — `lessons … for:<work>`, `MARINA_LESSONS_RESIDENT_DOMAIN`) and `[Skill]` (every tenth
+  cycle at offset 3, ≤ 700 bytes; the agent's own best skill, else a relevant built-in — `skill top`,
+  `MARINA_SKILLS_RESIDENT`).
 - `marina_memory_service` is the one resident memory-service tool (≤ 2 KB, `assist_*` operations
   included); the typed `marina_memory_assistance` variant is deferred.
 - The compactor (`src/agent/context-manager.ts`) counts tool schemas in the fixed prefix, anchors

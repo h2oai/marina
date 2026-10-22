@@ -210,6 +210,26 @@ describe("role-owned loop sections", () => {
     expect(p).toContain("Preserve autonomy: choose methods");
     expect(p).not.toContain("Be expansive.");
   });
+
+  it("measures an override against its tier: the full tier has room the lean tier lacks", () => {
+    process.env.MARINA_AUTONOMY = "open";
+    const medium = role({ how_to_be: "Be generous with context. ".repeat(100) }); // ~2.6 KB
+    const frame = (tier: "lean" | "full") =>
+      Buffer.byteLength(
+        getLeanSystemPrompt(medium, undefined, undefined, tier).replace(
+          /# YOUR ROLE[\s\S]*?(?=\n# TOOL ROUTING)/,
+          "",
+        ),
+      );
+    expect(frame("full")).toBeGreaterThan(LEAN_SYSTEM_PROMPT_BYTE_CAP);
+    expect(getLeanSystemPrompt(medium, undefined, undefined, "full")).toContain(
+      "Be generous with context.",
+    );
+    // Over the lean cap: refused whole on a small-window model, defaults kept.
+    const lean = getLeanSystemPrompt(medium, undefined, undefined, "lean");
+    expect(lean).not.toContain("Be generous with context.");
+    expect(lean).toContain("Preserve autonomy: choose methods");
+  });
 });
 
 describe("support prompts", () => {

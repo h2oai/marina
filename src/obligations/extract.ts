@@ -26,7 +26,7 @@ const CONTEXT_MAX_CHARS = 1200;
 const TOOL_DESC_MAX_CHARS = 120;
 const MAX_TOOLS_LISTED = 60;
 
-function clamp(s: string, n: number): string {
+function clip(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n)} […]`;
 }
 
@@ -66,15 +66,15 @@ export function extractionInput(input: {
   const writes = input.tools.filter((t) => t.write).slice(0, MAX_TOOLS_LISTED);
   const toolLines = writes.map(
     (t) =>
-      `- ${t.name}${t.description ? `: ${clamp(t.description.replace(/\s+/g, " "), TOOL_DESC_MAX_CHARS)}` : ""}`,
+      `- ${t.name}${t.description ? `: ${clip(t.description.replace(/\s+/g, " "), TOOL_DESC_MAX_CHARS)}` : ""}`,
   );
   const openLines = input.open.map(
     (o) => `- ${o.id}: ${o.what}${o.target ? ` (target: ${o.target})` : ""}`,
   );
   const reqs = input.requests.map((r) =>
     [
-      r.before ? `ASSISTANT BEFORE REQUEST ${r.turn}:\n${clamp(r.before, CONTEXT_MAX_CHARS)}` : "",
-      `NEW REQUEST ${r.turn}:\n${clamp(r.text, REQUEST_MAX_CHARS)}`,
+      r.before ? `ASSISTANT BEFORE REQUEST ${r.turn}:\n${clip(r.before, CONTEXT_MAX_CHARS)}` : "",
+      `NEW REQUEST ${r.turn}:\n${clip(r.text, REQUEST_MAX_CHARS)}`,
     ]
       .filter(Boolean)
       .join("\n"),
@@ -144,7 +144,7 @@ function renderCall(call: ToolCallRecord): string {
   } catch {
     args = String(call.args);
   }
-  return `${call.name}(${clamp(args ?? "", 600)})`;
+  return `${call.name}(${clip(args ?? "", 600)})`;
 }
 
 function renderObligation(o: Obligation): string {
@@ -238,14 +238,14 @@ export interface FinalCheckInput {
 function checkState(input: FinalCheckInput): string {
   return [
     `OPEN REQUESTS:\n${input.open.map(renderObligation).join("\n")}`,
-    input.lastRequest ? `LATEST REQUEST:\n${clamp(input.lastRequest, CONTEXT_MAX_CHARS)}` : "",
+    input.lastRequest ? `LATEST REQUEST:\n${clip(input.lastRequest, CONTEXT_MAX_CHARS)}` : "",
     `RECENT ACTIONS:\n${
       input.recentCalls
         .slice(-8)
         .map((c) => `${c.ok ? "ok" : "failed"} ${renderCall(c)}`)
         .join("\n") || "(none)"
     }`,
-    `DRAFTED REPLY:\n${clamp(input.draft, REQUEST_MAX_CHARS)}`,
+    `DRAFTED REPLY:\n${clip(input.draft, REQUEST_MAX_CHARS)}`,
   ]
     .filter(Boolean)
     .join("\n\n");

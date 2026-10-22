@@ -86,12 +86,16 @@ export const EXPORT_TABLES = [
   "routing_events",
   "routing_messages",
   "routing_channel_receipts",
+  // Attention-bridge decisions (migration 174): refs and reasons, no content.
+  "attention_wakes",
   "tasks",
   "task_claims",
   "task_votes",
   "macros",
   "room_sources",
   "room_templates",
+  // Private-room owners and invites (migration 176): world configuration, no content.
+  "room_access",
   "notes",
   // Historical snapshots may still carry uncommitted-to-canonical retirement intents.
   "legacy_memory_outbox",
@@ -256,6 +260,11 @@ export function isExcludedFromExport(table: string): boolean {
   if (table === "memory_assistance_jobs" || table === "memory_assistance_actions") return true;
   if (table === "memory_storage_items" || table === "memory_storage_usage") return true;
   if (table === "memory_source_text") return true; // Rebuilt from canonical sources on import.
+  // Deployment-local backfill cursor (migration 172): the importing database has its own, and the
+  // imported events date their rows through the known-at triggers.
+  if (table === "memory_known_at_backfill") return true;
+  // Recent room history (migration 175): bounded, short-lived and local to this world's rooms.
+  if (table === "room_log") return true;
   return (
     table === "sessions" ||
     table === "principal_credentials" ||

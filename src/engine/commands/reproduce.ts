@@ -1,16 +1,20 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import { header, separator } from "../../net/ansi";
 import type { ComponentDisposition, MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
 
-const HELP = `Create independently identified intellect descendants.
+const HELP =
+  experimentalHelp(`Record a new intellect derived from one or more parent intellects. This is a
+lineage record: it lists which components were inherited, changed, added or left out. Nothing is
+trained, copied or started.
 Usage:
   reproduce intellect <parent-ids csv> | <name> | <purpose> | <components JSON> [| contributors csv] [| evidence refs csv]
   reproduce show <reproduction-id>
   reproduce list
-Component: {"kind":"model|memory|personality|architecture|...","ref":"...","disposition":"inherited|mutated|introduced|excluded","sourceRef":"..."}`;
+Component: {"kind":"model|memory|personality|architecture|...","ref":"...","disposition":"inherited|mutated|introduced|excluded","sourceRef":"..."}`);
 
 export function reproduceCommand(deps: {
   db: MarinaDB;

@@ -603,7 +603,7 @@ export class MemoryService {
           );
         return { ...record, ...rank };
       });
-      // Reputation-weighted re-rank (Phase 3.6) applies to SHARED spaces only —
+      // Reputation-weighted re-rank applies to SHARED spaces only —
       // records the actor does not own get a bounded writer-standing term,
       // inspectable via `ranking`. An owner's own space is never weighted by
       // their own standing.

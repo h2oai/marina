@@ -71,7 +71,7 @@ The result is kept (a trial started over `world run` outlives the bridge's conne
 runs, which an evaluator other than the proposer cites with `evolve evaluate`.
 
 **Held out by default.** Every benchmark's items are split once, by a hash of the item id, into a
-`holdout` fifth and a `tune` rest (`benchmarks/partition.ts`) — disjoint and stable, unlike reseeding.
+`holdout` fifth and a `tune` rest (`src/engine/benchmark-partition.ts`) — disjoint and stable, unlike reseeding.
 A trial judges on 100 items of ARC-Challenge's holdout split (227 items) when that dataset is cached,
 else on smoke with a warning; iterate on `benchmark run <name> --partition tune`, never on holdout.
 The trial reports a 95% interval on the difference (Agresti–Caffo — honest at small n and at 0% /

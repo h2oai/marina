@@ -101,6 +101,12 @@ export const MAX_CODING_ASSUMPTIONS = 32;
 const MAX_ASSUMPTION_CHARS = 1000;
 
 /** Append an assumption to the active attempt (bounded; never alters claims or authority). */
+/** One clock read for both ends, so the recorded cap is exactly the budget. */
+function budgetWindow(budgetMs: number): { startedAt: number; deadlineAt: number } {
+  const startedAt = Date.now();
+  return { startedAt, deadlineAt: startedAt + budgetMs };
+}
+
 export function recordCodingAssumption(
   db: MarinaDB,
   runId: string,
@@ -247,9 +253,7 @@ export function beginCodingRun(
       executionTarget: input.session.execution_target,
       verificationRequirement: input.verificationRequirement,
       ownerMode: input.ownerMode,
-      ...(input.budgetMs && input.budgetMs > 0
-        ? { startedAt: Date.now(), deadlineAt: Date.now() + input.budgetMs }
-        : {}),
+      ...(input.budgetMs && input.budgetMs > 0 ? budgetWindow(input.budgetMs) : {}),
     };
     const run = db.createCodingArtifact({
       sessionId: input.session.id,

@@ -22,7 +22,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import type { Retriever } from "../../src/arena/research/retrieve";
 import { getErrorMessage } from "../../src/engine/errors";
 import type { SpendGuard } from "../../src/engine/spend-guard";
 import { modelComplete } from "../../src/model/complete";
@@ -33,6 +32,7 @@ import {
 } from "../../src/research/checkpoint";
 import { type FactPassAudit, factCheckReport } from "../../src/research/fact-pass";
 import { type ResearchReportResult, writeResearchReport } from "../../src/research/report";
+import type { Retriever } from "../../src/research/retrieve";
 import type { BenchTask } from "./dataset";
 
 export interface RunConfig {

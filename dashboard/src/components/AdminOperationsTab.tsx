@@ -20,7 +20,7 @@ import {
   useProductivity,
   useReadiness,
 } from "../hooks/use-api";
-import { describeApiError, postApi } from "../lib/api";
+import { describeApiError, isForbiddenApiError, OPERATOR_ONLY_TEXT, postApi } from "../lib/api";
 import { isOptionalGap } from "./ops/HealthBadge";
 
 export function OperationsTab() {
@@ -94,6 +94,9 @@ export function OperationsTab() {
         </button>
       </div>
       {error && <div className="text-red-400">{error}</div>}
+      {isForbiddenApiError(alertsQuery.error) && (
+        <div className="text-text-dim">Alerts: {OPERATOR_ONLY_TEXT}</div>
+      )}
       {productivity && (
         <div className="space-y-1">
           <div className="grid grid-cols-4 gap-1">

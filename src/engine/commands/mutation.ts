@@ -1,19 +1,23 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { experimentalHelp } from "../../config/feature-status";
 import type { MarinaDB, MutationDisposition } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
 import { notFound } from "./command-messages";
 
 const DISPOSITIONS = ["proposed", "adopted", "rejected", "branched", "observed"] as const;
-const HELP = `Recursive, signature-capable mutation lineage across cognition and civilization.
+const HELP =
+  experimentalHelp(`Append-only change records: a proposed, adopted, rejected, branched or observed change
+to a named target, with its patch, evidence and parent changes (signed when a signing key is set).
+Recording a change does not apply it; \`mutation genome\` derives a new world manifest.
 Usage:
   mutation record <domain> <target-ref> | <disposition> | <summary> | <patch JSON> [| parent mutation ids csv] [| evidence refs csv] [| descendant-ref]
   mutation genome <parent-genome-hash> | <summary> | <patch JSON> [| evidence refs csv]
   mutation show <id>
   mutation lineage <domain> <target-ref>
   mutation list [domain]
-Domains are open: cognition, association, institution, charter, federation, reproduction, genome, protocol, or future forms.`;
+Domains are free text, for example: role, association, charter, federation, reproduction, genome, protocol.`);
 export function mutationCommand(deps: {
   db: MarinaDB;
   getEntity: (id: string) => Entity | undefined;
@@ -117,7 +121,7 @@ export function mutationCommand(deps: {
         });
         ctx.send(
           input.entity,
-          `Derived genome ${child.hash} through mutation ${row.id}. It can produce a sovereign Marina descendant.`,
+          `Derived genome ${child.hash} through mutation ${row.id}. \`marina-descend create\` can start a child world from it.`,
         );
         return;
       }
@@ -161,7 +165,7 @@ export function mutationCommand(deps: {
           input.entity,
           rows.length
             ? rows.map((r) => `${r.id} · ${r.domain}:${r.target_ref} · ${r.disposition}`).join("\n")
-            : "No civilization mutations recorded.",
+            : "No change records.",
         );
         return;
       }

@@ -12,6 +12,7 @@
 
 import { getSeedModel, isSeedDisabled, setSeedModel } from "../src/agent/seed-registry";
 import { discoverSkillFiles, formatSkillContent, loadSkillFile } from "../src/agent/skill-import";
+import { crewModelFromEnv, isRoleKey, roleOverrideProblems } from "../src/config/model-tiers";
 import { isRouteModel } from "../src/decisions/route";
 import type { Engine } from "../src/engine/engine";
 import type { MarinaDB } from "../src/persistence/database";
@@ -166,7 +167,8 @@ const seededAgentNames = new Set<string>();
 
 /**
  * Parse `MARINA_AGENT_MODELS` — `Name=model,Name=model` — into a map keyed by
- * lower-cased agent name. The model string passes through untouched (split at
+ * lower-cased agent name. `role:<role>=<model>` entries (a model role, see
+ * `src/config/model-tiers.ts`) are kept under their `role:` key. The model string passes through untouched (split at
  * the first `=`). Entries without a name or a model are returned in `invalid`.
  */
 export function parseAgentModelMap(raw: string | undefined): {
@@ -213,8 +215,11 @@ export function agentModelMapProblems(
   const { models, invalid } = parseAgentModelMap(env.MARINA_AGENT_MODELS);
   const problems = invalid.map((e) => `malformed entry "${e}" (want Name=model)`);
   for (const [key, { name }] of models) {
+    // `role:<role>=<model>` moves a model role off its tier (model-tiers.ts).
+    if (isRoleKey(key)) continue;
     if (!seededAgentNames.has(key)) problems.push(`"${name}" matches no seeded agent`);
   }
+  problems.push(...roleOverrideProblems(env));
   return problems;
 }
 
@@ -726,17 +731,14 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     name: "canvas-watcher",
     category: "awareness",
     prompt:
-      "Monitor canvas intents — work requests set by humans on canvas nodes. " +
-      "When your brief compass shows 'N pending intents', run 'canvas intent list' to see them. " +
-      "Each intent shows a node ID, canvas name, type, and a prompt describing the work. " +
-      "To claim: 'canvas intent claim <node_id>' (use first 8 chars of ID). " +
-      "To deliver: 'canvas intent complete <node_id> <your result text>'. " +
-      "If you cannot complete the work: 'canvas intent fail <node_id> <reason>'. " +
-      "For structured results use --type: 'canvas intent complete <id> --type document <text>'. " +
-      "For rich interactive results: 'canvas intent complete-rich <id> <a2ui_json>'. " +
-      "Prioritize: pending intents that match your current focus or role. " +
-      "Skip intents outside your expertise — let other agents handle them. " +
-      "Claimed intents timeout after 5 minutes if not completed, returning to pending.",
+      // Delivery syntax (typed and rich results) lives in the built-in
+      // `canvas-intents` skill; this trait is in every `general` agent's prompt.
+      "Monitor canvas intents — work requests people set on canvas nodes. When your brief " +
+      "shows pending intents, run `canvas intent list`, claim one that matches your focus or " +
+      "role (`canvas intent claim <node_id>`), then deliver it (`canvas intent complete " +
+      "<node_id> <result>`) or release it (`canvas intent fail <node_id> <reason>`). Skip " +
+      "intents outside your expertise. A claim returns to pending after 5 minutes. Typed and " +
+      "rich results: `skill builtin canvas-intents`.",
     capabilities: {
       strengths: ["intent-monitoring", "task-fulfillment", "responsiveness"],
       preferences: ["role-aligned-work", "timely-delivery"],
@@ -1497,8 +1499,7 @@ export function seedWatchingRole(db: MarinaDB): void {
  * Chronicler's loop: every cycle, `chronicle pending` → write narratives for
  * the noteworthy events, leave the rest alone.
  *
- * Pass 2 of the chronicle design — see docs/chronicle.md. Interview budget,
- * standing flow on citation, and the arrival digest are still ahead.
+ * See docs/architecture/chronicle.md.
  */
 export function seedChroniclerRole(db: MarinaDB): void {
   const SYSTEM = "system";
@@ -1508,30 +1509,17 @@ export function seedChroniclerRole(db: MarinaDB): void {
       name: "chronicling",
       category: "methodology",
       prompt:
+        // The long procedure (digest/correct syntax, interview etiquette) is the
+        // built-in `chronicling` skill; the trait keeps every rule, one line each.
         "You keep the chronicle — the canonical, append-only record of what has happened " +
-        "in this Marina. Your loop runs on what actually occurred, not on what should have. " +
-        "Every cycle, run `chronicle pending` to see engine events from the last hour that " +
-        "have no narrative yet. For the noteworthy ones, write `chronicle record <title> | " +
-        "<body> refs feed:N,task:N,...` — cite every source id you drew from. Never " +
-        "embellish, never speculate, never praise or critique. If you lack context to narrate " +
-        "honestly, leave it for a future cycle or write a sparse entry that states only the " +
-        "facts. At day boundaries, `chronicle digest day <title> | <body> refs ...` summarizes " +
-        "the period — use `recap chronicle day` to see what to summarize. Do the same at week " +
-        "boundaries. When subsequent events change the interpretation of a prior narrative, " +
-        "`chronicle correct <id> <title> | <body> refs ...` — the original entry stays " +
-        "untouched, the chain of revision is visible. " +
-        "INTERVIEWS — your other source of context. When a pending event has named " +
-        "participants and you lack detail, ask ONE of them: `tell <name> Briefly — what " +
-        "happened with <event description>?`. Their reply arrives as a perception on a " +
-        "subsequent cycle; integrate it into a `chronicle record` narrative and cite the " +
-        "interview by adding `note:<their reply note id>` to refs, OR by quoting them in the " +
-        "body. Discipline: at most ONE interview per cycle (you are not a journalist on " +
-        "deadline), and don't ask the same agent twice within ~5 cycles (`memory set " +
-        "last_interview:<name> <timestamp>` to track, `memory get last_interview:<name>` to check). " +
-        "If an event has no clear participant or the participants are offline, skip the " +
-        "interview and write a sparse fact-only entry from the engine ref alone. " +
-        "You are not a praise-singer and you are not a critic. You are a recorder. " +
-        "Restraint is the discipline; accurate citation is the deliverable.",
+        "in this Marina; your loop runs on what actually occurred. Every cycle run " +
+        "`chronicle pending`, then `chronicle record <title> | <body> refs feed:N,...` for " +
+        "the noteworthy events, citing every source id you drew from. Digest day and week " +
+        "boundaries; revise only by supersession (`chronicle correct`), never by editing. " +
+        "Lacking detail, interview at most ONE named participant per cycle via `tell`, never " +
+        "the same agent twice within ~5 cycles; otherwise write a sparse fact-only entry or " +
+        "wait. Never embellish, speculate, praise or critique: restraint is the discipline, " +
+        "accurate citation the deliverable. Full procedure: `skill builtin chronicling`.",
       capabilities: {
         strengths: [
           "factual-record-keeping",
@@ -1602,7 +1590,7 @@ export function seedChroniclerRole(db: MarinaDB): void {
 export function seedChroniclerAgent(db: MarinaDB): void {
   seedSystemAgent(db, {
     name: "Chronicler",
-    model: "marina/default",
+    model: crewModelFromEnv(),
     role: "chronicler",
     goal:
       "You are the Chronicler. Keep the canonical record of this Marina. Every cycle: " +
@@ -1731,14 +1719,15 @@ export function seedAnswererCrew(
   } = {},
 ): void {
   const SYSTEM = "system";
-  // `marina/default` thinks with whatever model the world is configured for
-  // (it sizes to the providers present); experimenters override via opts to
-  // sweep heterogeneous model choices per role. The crew serves
-  // marina:answerer by joining the model-answerer channel, independent of
-  // what model each agent uses to think.
-  const answererModel = opts.answererModel ?? "marina/default";
-  const mathModel = opts.mathModel ?? "marina/default";
-  const reflectorModel = opts.reflectorModel ?? "marina/default";
+  // The crew's model tier (`marina/cheap` unless the operator chose one —
+  // src/config/model-tiers.ts) thinks with whatever the world has;
+  // experimenters override via opts to sweep heterogeneous model choices per
+  // role. The crew serves marina:answerer by joining the model-answerer
+  // channel, independent of what model each agent uses to think.
+  const crew = crewModelFromEnv();
+  const answererModel = opts.answererModel ?? crew;
+  const mathModel = opts.mathModel ?? crew;
+  const reflectorModel = opts.reflectorModel ?? crew;
   const answererCount = Math.max(1, opts.answererCount ?? 1);
 
   // ── Channels (the crew's coordination surfaces) ──────────────────────────
@@ -2190,8 +2179,8 @@ export function registerAnswererCrew(engine: Engine): void {
  * Skeptic, Verifier) via the `crew-bench` coordination channel + shared
  * topic pools. The same question routed through different
  * orchestrations should produce different trade-offs — latency, accuracy,
- * cost — that the harness measures. Agents default to `marina/default`
- * so the seed bakes in no vendor opinion; callers pass `opts.models` to
+ * cost — that the harness measures. Agents default to the crew tier
+ * (`marina/cheap`) so the seed bakes in no vendor opinion; callers pass `opts.models` to
  * sweep specific model choices per agent.
  */
 export function seedOrchestrationCrews(
@@ -2201,7 +2190,7 @@ export function seedOrchestrationCrews(
     /**
      * Per-agent model overrides, keyed by agent name (Historian, Scholar,
      * Skeptic, Verifier, Councilor, Debater, Decomposer). Any agent not
-     * listed here defaults to `marina/default` (self-referential, no
+     * listed here defaults to the crew tier (`marina/cheap`, no
      * vendor baked in). Use this to sweep heterogeneous combinations.
      */
     models?: Record<string, string>;
@@ -2209,9 +2198,10 @@ export function seedOrchestrationCrews(
 ): void {
   const SYSTEM = "system";
   const seedAgentConfigs = opts.seedAgentConfigs ?? true;
-  // Default specialist model: the world's own default (no vendor baked in).
+  // Default specialist model: the crew tier (no vendor baked in).
   // Overrideable per-agent via opts.models for sweeping heterogeneous combinations.
-  const m = (name: string): string => opts.models?.[name] ?? "marina/default";
+  const crew = crewModelFromEnv();
+  const m = (name: string): string => opts.models?.[name] ?? crew;
 
   // ── Specialist channels + role prompts (shared across orchestrations) ───
   seedChannel(db, "model-council");
@@ -2481,7 +2471,7 @@ export function seedOrchestrationCrews(
     });
   }
 
-  // ── Agent configs. Models default to `marina/default` — callers pick. ──
+  // ── Agent configs. Models default to the crew tier — callers pick. ──
   // System-owned crew configs are refreshed from the seed on every boot so
   // tuning goals or swapping crew models (via opts.models / MARINA_CREW_MODEL)
   // propagates to snapshots without a manual DB edit. User-spawned and

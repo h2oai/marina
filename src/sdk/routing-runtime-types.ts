@@ -24,6 +24,8 @@ export interface RuntimeState {
   adapters?: { id: string; label: string }[];
   root?: string;
   activeCount?: number;
+  /** World account of a supervised resident run (`MARINA_SUPERVISED_RESIDENTS=on`). */
+  resident?: string;
   updatedAt: number;
 }
 export type RuntimeControl =
@@ -35,10 +37,21 @@ export type RuntimeControl =
       workspace?: "worktree" | "shared";
       model?: string;
       prompt?: string;
+      /** Supervised residents only: the world name to run as (else one is chosen). */
+      name?: string;
+      /** Supervised residents only: the room to arrive in (else the launcher's room). */
+      room?: string;
     }
   | { action: "prompt"; text: string }
   | { action: "interrupt" | "stop" | "resume" | "detach" }
-  | { action: "respond"; requestId: string; allow: boolean; answer?: string };
+  | { action: "respond"; requestId: string; allow: boolean; answer?: string }
+  /** Supervised residents: the attention policy the run's bridge applies (`agent attention-mode`). */
+  | {
+      action: "attention";
+      mode?: "focused" | "balanced" | "open";
+      threshold?: number;
+      relay?: "all" | "explicit";
+    };
 export interface RoutingSyncInput {
   publications?: { sessionId: string; events: import("./routing-types").RoutingEventInput[] }[];
   acknowledgments?: { sessionId: string; messageId: string }[];
@@ -46,4 +59,69 @@ export interface RoutingSyncInput {
 }
 export interface RoutingSyncResult {
   inboxes: { sessionId: string; messages: import("./routing-types").RoutingMessage[] }[];
+}
+
+/** `POST /api/routing/residents` input: enrol the agent of one owned run session. */
+export interface ResidentEnrolInput {
+  /** The run's routing session; its `kind` (the adapter id) is the vendor. */
+  sessionId: string;
+  /** Requested world name. Omitted: the agent's proposal, else a fresh word-list name. */
+  name?: string;
+  /**
+   * The agent's own proposal (used only without `name`). The server sanitizes
+   * and dedupes it and never takes a vendor or model word; an unusable proposal
+   * falls back to the word list instead of failing.
+   */
+  proposedName?: string;
+  /** Room to arrive in. Omitted: the launching person's current room. */
+  room?: string;
+}
+/** A resident's world credential, returned once and never stored by the server. */
+export interface ResidentCredential {
+  token: string;
+  expiresAt: number;
+}
+/** Where a resident's name came from. */
+export type ResidentNameSource = "requested" | "proposed" | "generated";
+export interface ResidentEnrolment {
+  name: string;
+  vendor: string;
+  /** The person who owns the resident (the enrolling account's world name). */
+  owner?: string;
+  /** Room the resident should arrive in, when one is known. */
+  room?: string;
+  /** True when an existing resident account of the same owner was reused. */
+  reused: boolean;
+  /** Where the name came from: the launch request, the agent's proposal, or the word list. */
+  nameSource?: ResidentNameSource;
+  credential: ResidentCredential;
+  /** The resident's stored attention policy (supervised residents' attention bridge). */
+  attention?: ResidentAttentionPolicy;
+}
+/** How a supervised resident's attention bridge decides and relays. */
+export interface ResidentAttentionPolicy {
+  mode: "focused" | "balanced" | "open";
+  threshold: number;
+  relay: "all" | "explicit";
+}
+/** `POST /api/routing/residents/:name/attention`: bridge decisions and presence. */
+export interface ResidentAttentionReport {
+  sessionId: string;
+  /** Wake decisions (refs and reasons only, never content), at most 100. */
+  wakes?: {
+    ref?: string;
+    source: string;
+    decision: "now" | "next" | "context" | "drop";
+    reason: string;
+    hop: number;
+    steered: boolean;
+    at: number;
+  }[];
+  /**
+   * What woken turns did, at most 100: whether the agent ran a tool or a world
+   * command of its own after the wake (the attention judges' truth). Refs only.
+   */
+  outcomes?: { ref: string; worked: boolean }[];
+  /** The resident's current presence, when it changed. */
+  status?: { status: RuntimeState["status"]; steer: "mid-turn" | "next-turn" | "none" };
 }

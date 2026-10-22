@@ -46,6 +46,7 @@ export interface ChannelsStore {
     senderId: string,
     senderName: string,
     content: string,
+    envelope?: { cause?: string; depth: number },
   ): number;
   getChannelHistory(channelId: string, limit?: number): ChannelMessageRow[];
   countChannelMessages(channelId: string): number;
