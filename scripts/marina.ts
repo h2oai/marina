@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S bun --no-env-file
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -32,6 +32,8 @@
  * The package root is resolved from this file's location (import.meta.dir),
  * never process.cwd(), so the bin works when installed as a dependency. The
  * folder a coding session targets is the caller's cwd (or the given dir).
+ * Settings come from the shell and Marina's own files, never the project's
+ * `.env` (scripts/cli-env.ts).
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -39,6 +41,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { AGENT_THINKING_LEVELS, parseAgentThinkingLevel } from "../src/agent/agent-types";
 import { bunVersionRefusal, MARINA_VERSION } from "../src/version";
+import { applyCliEnvironment } from "./cli-env";
 import { ATTACH_USAGE } from "./code-attach";
 import { themeFor } from "./code-style";
 import { styleStatusReport, styleUsage } from "./term-help";
@@ -697,6 +700,9 @@ if (import.meta.main) {
   const dispatch = parseDispatch(
     process.argv[2] === "__marina_server" ? ["start"] : process.argv.slice(2),
   );
+  // A server's working directory is its instance; every other command reads
+  // only the user and checkout settings (a folder session adds its own later).
+  applyCliEnvironment(dispatch.kind === "start" ? { instanceDir: process.cwd() } : {});
   switch (dispatch.kind) {
     case "help":
       console.log(styleUsage(USAGE, themeFor(process.stdout.isTTY ? process.stdout : undefined)));

@@ -2,11 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { runningFolderServer, serverInfoPath } from "../scripts/code";
-import { setupCli } from "../scripts/setup-cli";
+import { removeEphemeralDatabase, runningFolderServer, serverInfoPath } from "../scripts/code";
+import { linkDir, pathHint, setupCli } from "../scripts/setup-cli";
 
 const pkg = (await Bun.file(join(import.meta.dir, "..", "package.json")).json()) as {
   version: string;
@@ -24,11 +32,31 @@ describe("marina from any folder", () => {
     const first = setupCli({ env });
     expect(first).toMatchObject({ status: "linked", onPath: true });
     expect(setupCli({ env }).status).toBe("already-linked");
-    expect(setupCli({ env: { BUN_INSTALL: scratch, PATH: "/usr/bin" } }).onPath).toBe(false);
+    expect(
+      setupCli({ env: { BUN_INSTALL: scratch, HOME: scratch, PATH: "/usr/bin" } }).onPath,
+    ).toBe(false);
     rmSync(first.link);
     writeFileSync(first.link, "#!/bin/sh\necho other\n");
     expect(setupCli({ env }).status).toBe("occupied");
     expect(setupCli({ env, force: true }).status).toBe("linked");
+  });
+
+  it("links into a folder already on PATH, preferring Bun's, so no PATH edit is needed", () => {
+    const bun = join(scratch, "bin");
+    const local = join(scratch, ".local", "bin");
+    const env = { BUN_INSTALL: scratch, HOME: scratch };
+    expect(linkDir({ ...env, PATH: `${local}${delimiter}${bun}` })).toBe(bun);
+    expect(linkDir({ ...env, PATH: `/usr/bin${delimiter}${local}` })).toBe(local);
+    expect(linkDir({ ...env, PATH: "/usr/bin" })).toBe(bun);
+    const r = setupCli({ env: { ...env, PATH: local } });
+    expect(r).toMatchObject({ link: join(local, "marina"), status: "linked", onPath: true });
+  });
+
+  it("tells each shell how to add the bin folder to PATH in its own syntax", () => {
+    expect(pathHint("/b", { SHELL: "/usr/bin/fish" })).toContain("fish_add_path /b");
+    expect(pathHint("/b", { SHELL: "/bin/zsh" })).toContain('~/.zshrc:\n  export PATH="/b:$PATH"');
+    expect(pathHint("/b", { SHELL: "/bin/bash" })).toContain("~/.bashrc");
+    expect(pathHint("/b", {})).toContain('your shell profile:\n  export PATH="/b:$PATH"');
   });
 
   it("runs through a link from any working directory", () => {
@@ -42,6 +70,23 @@ describe("marina from any folder", () => {
     });
     expect(r.exitCode).toBe(0);
     expect(r.stdout.toString()).toContain(pkg.version);
+  });
+});
+
+describe("a --fresh database", () => {
+  it("is removed with every file beside it, and nothing else", () => {
+    const dir = mkdtempSync(join(tmpdir(), "marina-fresh-"));
+    try {
+      const db = join(dir, "marina-code-1-2.db");
+      for (const suffix of ["", "-wal", "-shm", ".instance-lock", ".key-secret"])
+        writeFileSync(`${db}${suffix}`, "");
+      mkdirSync(`${db}.runner`);
+      writeFileSync(join(dir, "marina-code-1-23.db"), "");
+      removeEphemeralDatabase(db);
+      expect(readdirSync(dir)).toEqual(["marina-code-1-23.db"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
