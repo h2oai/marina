@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`ip-address` 10.7.4.** The address parser pulled in through the MCP SDK's rate limiter is
+  upgraded within its range to the release that bounds IPv6 zone-identifier parsing.
 - The dashboard entity view and the live snapshot share one private-view rule (`src/net/entity-visibility.ts`): raw command input, the full property bag and core memory go only to the entity itself and privileged readers; others get the public properties and activity as type, time and command verb, never arguments. Regression tests hold it for the entity detail, the event list and the snapshot.
 
 - **Command input cannot drive another participant's terminal.**
