@@ -19,6 +19,7 @@ import {
 } from "../src/net/model/hosted-providers";
 import { IS_COMPILED } from "../src/runtime-paths";
 import { BUILTIN_WORLDS } from "../src/world/builtin-worlds";
+import { userMarinaDir } from "./cli-env";
 
 const ROOT = `${import.meta.dirname}/..`;
 const WORLDS_DIR = `${ROOT}/worlds`;
@@ -218,8 +219,18 @@ export async function runInit(args: string[] = []): Promise<void> {
       print: { type: "boolean" },
     },
   });
-  const directory = resolve(values.directory ?? process.cwd());
+  // Default target: the checkout's own `.env` when run inside it, else the
+  // user's `~/.marina/.env`, which every folder reads (scripts/cli-env.ts).
+  // `--directory` names one instance instead.
+  const userWide =
+    values.directory === undefined && (IS_COMPILED || resolve(process.cwd()) !== resolve(ROOT));
+  const directory = resolve(values.directory ?? (userWide ? userMarinaDir() : process.cwd()));
+  if (userWide) fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const ENV_PATH = join(directory, ".env");
+  const serverDirectory = userWide ? process.cwd() : directory;
+  const savedNotice = userWide
+    ? `Wrote ${ENV_PATH}; every folder uses it. Run marina in a project, or marina start.`
+    : `Wrote ${ENV_PATH}. Run marina start from ${directory}.`;
   const existing = fs.existsSync(ENV_PATH)
     ? parseEnvironment(fs.readFileSync(ENV_PATH, "utf8"))
     : {};
@@ -252,7 +263,7 @@ export async function runInit(args: string[] = []): Promise<void> {
       );
     } else {
       saveChanges(cfg);
-      console.log(`Wrote ${ENV_PATH}. Run marina start from ${directory}.`);
+      console.log(savedNotice);
       console.log(spendCapNotice(cfg));
     }
     return;
@@ -430,7 +441,7 @@ export async function runInit(args: string[] = []): Promise<void> {
           ? [process.execPath, "start"]
           : [process.execPath, "run", `${ROOT}/src/main.ts`],
         {
-          cwd: directory,
+          cwd: serverDirectory,
           stdio: ["inherit", "inherit", "inherit"],
         },
       );

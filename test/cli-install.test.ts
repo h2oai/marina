@@ -2,10 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { runningFolderServer, serverInfoPath } from "../scripts/code";
+import { removeEphemeralDatabase, runningFolderServer, serverInfoPath } from "../scripts/code";
 import { linkDir, pathHint, setupCli } from "../scripts/setup-cli";
 
 const pkg = (await Bun.file(join(import.meta.dir, "..", "package.json")).json()) as {
@@ -62,6 +70,23 @@ describe("marina from any folder", () => {
     });
     expect(r.exitCode).toBe(0);
     expect(r.stdout.toString()).toContain(pkg.version);
+  });
+});
+
+describe("a --fresh database", () => {
+  it("is removed with every file beside it, and nothing else", () => {
+    const dir = mkdtempSync(join(tmpdir(), "marina-fresh-"));
+    try {
+      const db = join(dir, "marina-code-1-2.db");
+      for (const suffix of ["", "-wal", "-shm", ".instance-lock", ".key-secret"])
+        writeFileSync(`${db}${suffix}`, "");
+      mkdirSync(`${db}.runner`);
+      writeFileSync(join(dir, "marina-code-1-23.db"), "");
+      removeEphemeralDatabase(db);
+      expect(readdirSync(dir)).toEqual(["marina-code-1-23.db"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -251,7 +251,8 @@ Compat profiles (`src/net/adapters/compat-profiles.ts`) are self-contained — t
 - `src/engine/entity-name.ts` — `sanitizeEntityName` (single source for login name normalization; Code Mode identity comparisons normalize with it)
 - `src/net/acp-server.ts` — Agent Client Protocol (ACP) stdio JSON-RPC server for editor clients (Zed, JetBrains, VS Code, Neovim); launched via `bun run scripts/acp.ts <name>`
 - `src/engine/gateway-runtime.ts` — federation: structured JSON relay with protocol versioning
-- `scripts/connect.ts` — CLI binary (`marina` command): REPL, one-shot (-c), pipe modes. One-shot lingers until output has been quiet for 2.5 s but only starts counting once the command produced SOME output (capped by `--wait`), so slow commands such as `readiness providers` or a model-backed `ask` are not cut off by their initial silence
+- `scripts/marina.ts` — the `marina` bin (dispatcher; shebang `bun --no-env-file`). Settings come from `scripts/cli-env.ts`: shell > instance `.env` (`~/.marina/projects/<slug>/` for a folder session, cwd for `start`) > `~/.marina/.env` > checkout `.env`; the project's `.env` is never read, and an explicit `bun --env-file` replaces them all. `scripts/setup-cli.ts` links the bin into the first of `~/.bun/bin`/`~/.local/bin` already on PATH.
+- `scripts/connect.ts` — `marina connect`: REPL, one-shot (-c), pipe modes. One-shot lingers until output has been quiet for 2.5 s but only starts counting once the command produced SOME output (capped by `--wait`), so slow commands such as `readiness providers` or a model-backed `ask` are not cut off by their initial silence
 - `test/helpers.ts` — shared test utilities
 
 ## Environment Variables
