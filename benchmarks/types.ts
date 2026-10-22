@@ -109,6 +109,15 @@ export interface CallUsage {
   completionTokens?: number;
   /** Hidden reasoning tokens within `completionTokens` (`completion_tokens_details`). */
   reasoningTokens?: number;
+  /**
+   * Prompt tokens served from the provider's prompt cache (OpenAI
+   * `prompt_tokens_details.cached_tokens`, Anthropic `cache_read_input_tokens`),
+   * and tokens written to it. Both are part of `promptTokens`. A run whose
+   * prompts were cached by another run (two arms on the same items and key at
+   * once) reads cheap here: compare arms with this in view.
+   */
+  cachedPromptTokens?: number;
+  cacheWriteTokens?: number;
   costUsd?: number;
   /** A Marina target cut this reply at the cap it applied (`x-marina-output-cap: <n>; hit`). */
   outputCapHit?: boolean;
@@ -133,6 +142,9 @@ export interface UsageSummary {
   reasoningTokens?: number;
   /** Calls cut at a Marina-applied output cap (absent when none was). */
   outputCapHits?: number;
+  /** Answer and judge prompt tokens read from / written to the prompt cache (see `CallUsage`). */
+  cachedPromptTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 export interface DatasetItem {

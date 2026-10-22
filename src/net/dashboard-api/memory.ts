@@ -11,6 +11,7 @@
 import { getErrorMessage } from "../../engine/errors";
 import type { MarinaDB } from "../../persistence/database";
 import { OPEN_API_ENTITY_ID } from "../auth-middleware";
+import { entityOwner, isOwningPerson } from "../entity-visibility";
 import {
   buildMemoryGraph,
   buildMemoryOverview,
@@ -106,7 +107,11 @@ export async function handleMemoryObservabilityRoutes(
 
   if (url.pathname === "/api/memory/quality" && method === "GET" && db) {
     const entity = url.searchParams.get("entity") ?? memory.entity?.name;
-    if (!memory.privilegedRead && entity !== memory.entity?.name)
+    if (
+      !memory.privilegedRead &&
+      entity !== memory.entity?.name &&
+      !(entity && isOwningPerson(memory.entity, entityOwner(entity)))
+    )
       return json({ error: "Not authorized" }, 403);
     return json(db.getMemoryQualitySummary(entity));
   }

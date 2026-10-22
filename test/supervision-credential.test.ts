@@ -141,7 +141,13 @@ describe("supervision credential", () => {
     const conn = new MockConnection("c-replay");
     engine.addConnection(conn);
     expect("error" in engine.reconnect(conn.id, token)).toBe(true);
-    for (const path of ["/api/ops/overview", "/api/entities", "/api/challenges"]) {
+    for (const path of [
+      "/api/ops/overview",
+      "/api/entities",
+      "/api/challenges",
+      "/api/entities/Owner",
+      "/api/memory/core/Owner",
+    ]) {
       const res = await call(token, path, "GET");
       expect(res.status).toBe(401);
       expect(res.body.code).toBe("unauthorized");

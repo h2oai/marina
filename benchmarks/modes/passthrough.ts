@@ -75,12 +75,23 @@ export function usageFromResponse(
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
   const headerCost = costHeader !== null ? Number.parseFloat(costHeader) : Number.NaN;
   const costUsd = Number.isFinite(headerCost) ? headerCost : num(usage.cost);
-  const details = usage.completion_tokens_details as Record<string, unknown> | undefined;
-  const reasoningTokens = num(details?.reasoning_tokens);
+  const details =
+    usage.prompt_tokens_details && typeof usage.prompt_tokens_details === "object"
+      ? (usage.prompt_tokens_details as Record<string, unknown>)
+      : {};
+  const cached = num(details.cached_tokens) ?? num(usage.cache_read_input_tokens);
+  const written =
+    num(details.cache_write_tokens) ??
+    num(details.cache_creation_tokens) ??
+    num(usage.cache_creation_input_tokens);
+  const completionDetails = usage.completion_tokens_details as Record<string, unknown> | undefined;
+  const reasoningTokens = num(completionDetails?.reasoning_tokens);
   return {
     promptTokens: num(usage.prompt_tokens),
     completionTokens: num(usage.completion_tokens),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
+    ...(written !== undefined ? { cacheWriteTokens: written } : {}),
     costUsd,
     ...(capHeader !== null && /;\s*hit\b/.test(capHeader) ? { outputCapHit: true } : {}),
   };

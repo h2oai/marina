@@ -886,15 +886,53 @@ export function verifyPin(engine: Engine): string {
   return ec.mode === "passthru" ? ec.passthruModel.trim() : "";
 }
 
-export type Usage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+export type Usage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  /** Prompt-cache reads and writes (part of `prompt_tokens`), summed over the formation's calls. */
+  prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+};
 
+function cacheCounts(u: unknown): { read?: number; write?: number } {
+  const rec = u && typeof u === "object" ? (u as Record<string, unknown>) : {};
+  const d =
+    rec.prompt_tokens_details && typeof rec.prompt_tokens_details === "object"
+      ? (rec.prompt_tokens_details as Record<string, unknown>)
+      : {};
+  const n = (...vs: unknown[]) => vs.find((v): v is number => typeof v === "number");
+  return {
+    read: n(d.cached_tokens, rec.cache_read_input_tokens),
+    write: n(d.cache_write_tokens, d.cache_creation_tokens, rec.cache_creation_input_tokens),
+  };
+}
+
+/**
+ * Sum two calls' usage. Cache reads and writes are kept (as
+ * `prompt_tokens_details`) so a client can see how much of a formation's
+ * prompt was served from cache; they are omitted when no call reported them.
+ */
 export function addUsage(a: Usage | undefined, b: unknown): Usage | undefined {
   const u = b as Usage | undefined;
   if (!u) return a;
+  const x = cacheCounts(a);
+  const y = cacheCounts(u);
+  const read =
+    x.read === undefined && y.read === undefined ? undefined : (x.read ?? 0) + (y.read ?? 0);
+  const write =
+    x.write === undefined && y.write === undefined ? undefined : (x.write ?? 0) + (y.write ?? 0);
   return {
     prompt_tokens: (a?.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0),
     completion_tokens: (a?.completion_tokens ?? 0) + (u.completion_tokens ?? 0),
     total_tokens: (a?.total_tokens ?? 0) + (u.total_tokens ?? 0),
+    ...(read !== undefined || write !== undefined
+      ? {
+          prompt_tokens_details: {
+            ...(read !== undefined ? { cached_tokens: read } : {}),
+            ...(write !== undefined ? { cache_write_tokens: write } : {}),
+          },
+        }
+      : {}),
   };
 }
 
