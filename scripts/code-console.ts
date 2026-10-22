@@ -27,6 +27,16 @@ import {
 } from "./code-terminal";
 import { type EntryFormat, perceptionView, type TranscriptView } from "./code-views";
 import { workflowCommand } from "./code-workflow";
+import { findPanel, PANELS } from "./term-panels";
+import { loadCliConfig, renderFormat, type SegmentContext } from "./term-prompt";
+import { sanitizeServerText } from "./term-sanitize";
+import { httpBase, WorldStatus } from "./term-status";
+import type { Theme } from "./term-theme";
+
+/** World panels `/live` serves; prompt and theme stay with `marina connect`. */
+const LIVE_PANELS = PANELS.map((panel) => panel.name).filter(
+  (name) => !["prompt", "theme"].includes(name),
+);
 
 export interface CodeConsoleOptions {
   agent: MarinaAgent;
@@ -153,24 +163,91 @@ export class CodeConsole {
     const selected = this.selected ? this.native?.agents.get(this.selected) : undefined;
     this.terminal?.setStatus(this.safeText(selected ? selected.state.status : this.activity()));
   }
-  private safeText(text: string) {
+  /** Live world state for the status line and `/live` panels (same data as the dashboard). */
+  private liveStatus?: WorldStatus;
+  private liveFormat = loadCliConfig().status;
+
+  private startLiveStatus() {
+    const session = this.options.agent.getSession();
+    if (!session) return;
+    this.liveStatus = new WorldStatus(
+      httpBase(this.options.url),
+      () => this.options.agent.getSession()?.token,
+      session.name,
+    );
+    this.liveStatus.onChange(() => this.terminal?.refreshStatus());
+    this.liveStatus.start();
+  }
+
+  private liveContext(theme: Theme): SegmentContext {
+    const status = this.liveStatus;
+    return {
+      theme,
+      name: this.options.agent.getSession()?.name ?? "",
+      connected:
+        typeof this.options.agent.isConnected === "function"
+          ? this.options.agent.isConnected()
+          : true,
+      snapshot: status?.snapshot ?? { at: {} },
+      room: status?.room(),
+      here: status?.roomPopulation(),
+      queued: 0,
+      cwd: this.options.root,
+    };
+  }
+
+  private liveStatusLine(): string {
+    if (!this.liveStatus) return "";
+    const out = (this.options.terminalStreams?.output ?? process.stderr) as {
+      isTTY?: boolean;
+      columns?: number;
+    };
+    const theme = themeFor(out.isTTY ? out : undefined);
+    return theme.level ? renderFormat(this.liveFormat, this.liveContext(theme)) : "";
+  }
+
+  /** `/live [panel]`: a dashboard view of the live world, drawn in the terminal. */
+  private async live(argument: string) {
+    const name = argument.trim() || "status";
+    const panel = findPanel(name);
+    if (!panel || ["prompt", "theme"].includes(panel.name)) {
+      this.write(
+        `No live panel "${name}". Panels: ${LIVE_PANELS.join(", ")}. Formats and themes: marina connect → /prompt, /theme.`,
+      );
+      return;
+    }
+    if (!this.liveStatus) this.startLiveStatus();
+    await this.liveStatus?.refresh(true, panel.needs ?? ["health", "system", "world", "profile"]);
+    const out = (this.options.terminalStreams?.output ?? process.stderr) as {
+      isTTY?: boolean;
+      columns?: number;
+    };
+    const theme = themeFor(out.isTTY ? out : undefined);
+    this.write(panel.render(this.liveContext(theme)).join("\n"), "all", false, "styled");
+  }
+
+  private redact(text: string) {
     const token = this.options.agent.getSession()?.token;
     if (token)
       text = text
         .replaceAll(token, "[redacted]")
         .replaceAll(encodeURIComponent(token), "[redacted]");
-    return terminalText(text);
+    return text;
+  }
+  private safeText(text: string) {
+    return terminalText(this.redact(text));
   }
   write(text: string, view: TranscriptView = "all", urgent = false, format?: EntryFormat) {
     this.updatePrompt();
-    text = this.safeText(text);
+    // A locally rendered panel keeps its vetted colour (re-checked on print).
+    text = format === "styled" ? this.redact(text) : this.safeText(text);
     if (this.terminal) this.terminal.write(text, view, urgent, format);
     else {
       const out = this.options.plainOutput ?? process.stdout;
       const stream = out as { isTTY?: boolean; columns?: number };
       const theme = themeFor(stream.isTTY ? stream : undefined);
       out.write(
-        `${format === "diff" ? colorizeDiff(text, diffColorEnabled(stream), theme) : styleCodeEntry(text, theme)}\n`,
+        `${format === "diff" ? colorizeDiff(text, diffColorEnabled(stream), theme) : format === "styled" ? sanitizeServerText(text, theme) : styleCodeEntry(text, theme)}\n`,
       );
     }
   }
@@ -409,6 +486,7 @@ export class CodeConsole {
         panelInput: (input) => this.panels?.input(input),
         viewChanged: (view) => this.panels?.setActive(view === "panel"),
         location: `${this.options.connected ? "Server" : "Local"} workspace · ${this.options.root}`,
+        statusLine: () => this.liveStatusLine(),
         line: (text) => {
           if (!interactive) return;
           void this.submit(text);
@@ -421,6 +499,7 @@ export class CodeConsole {
         },
       });
     }
+    if (interactive && this.terminal) this.startLiveStatus();
     if (interactive) this.write("Type a task in plain words, or /help.");
     if (this.options.connected) {
       this.terminal?.setTarget(`marina:${this.sessionId}`);
@@ -593,6 +672,10 @@ export class CodeConsole {
               this.options.connected ? [] : installedCodingAdapters().map((a) => a.id),
             ),
       );
+      return;
+    }
+    if (verb === "/live") {
+      await this.live(argument);
       return;
     }
     if (verb === "/stop") {
@@ -873,6 +956,7 @@ export class CodeConsole {
   async close(code: number) {
     if (this.closing) return;
     this.closing = true;
+    this.liveStatus?.stop();
     this.panels?.dispose();
     this.terminal?.close();
     try {

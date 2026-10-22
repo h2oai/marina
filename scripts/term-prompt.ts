@@ -217,13 +217,27 @@ export const SEGMENTS: Record<string, { describe: string; render: SegmentFn }> =
     },
   },
   approvals: {
-    describe: "held actions waiting for a person (hidden when none)",
+    describe: "held actions waiting on your answer (hidden when none)",
     render: (c) => {
-      const n = c.snapshot.alerts?.filter((a) => a.attention === "approval").length ?? 0;
+      // Your own answerable holds; an operator's alert queue when that is all there is.
+      const n =
+        c.snapshot.challenges?.answerable.length ??
+        c.snapshot.alerts?.filter((a) => a.attention === "approval").length ??
+        0;
       if (!n) return undefined;
       const g = glyphsFor(c.theme);
-      const text = `${g.approval} ${n} approval${n === 1 ? "" : "s"}`;
+      const text = `${g.approval} ${n} to approve`;
       return seg(text, c.theme.bold(c.theme.fg("warning")(text)));
+    },
+  },
+  held: {
+    describe: "your own actions held for someone's approval (hidden when none)",
+    render: (c) => {
+      const n = c.snapshot.challenges?.raised.length ?? 0;
+      if (!n) return undefined;
+      const icon = c.theme.unicode ? "⧗" : "~";
+      const text = `${icon} ${n} held`;
+      return seg(text, c.theme.fg("warning")(text));
     },
   },
   alerts: {
@@ -469,7 +483,7 @@ export interface CliFormats {
 export const DEFAULT_FORMATS: CliFormats = {
   prompt: "$character ",
   status:
-    "$health( · $agents)( · $tasks)( · $approvals)( · $alerts)( · $spend)( · $standing)( · $took)",
+    "$health( · $agents)( · $tasks)( · $approvals)( · $held)( · $alerts)( · $spend)( · $standing)( · $took)",
   statusRight: "$connection $name",
   rule: "($room)( · $here)",
 };

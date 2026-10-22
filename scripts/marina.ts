@@ -40,6 +40,8 @@ import { join } from "node:path";
 import { AGENT_THINKING_LEVELS, parseAgentThinkingLevel } from "../src/agent/agent-types";
 import { bunVersionRefusal, MARINA_VERSION } from "../src/version";
 import { ATTACH_USAGE } from "./code-attach";
+import { themeFor } from "./code-style";
+import { styleStatusReport, styleUsage } from "./term-help";
 
 /** Verification a one-shot `-p` task must pass before it can submit. */
 export const PRINT_VERIFICATION_MODES = ["checks", "candidate", "delivery"] as const;
@@ -377,7 +379,7 @@ Usage:
   marina supervise [...]       manage local coding agents from the dashboard
   marina predict <question>    prediction workspace (or --plain / --json)
   marina research <question>   deep research with captured evidence
-  marina inquiry [...]        saved answers, collaboration and standalone TUI
+  marina inquiry [...]         saved answers, collaboration and standalone TUI
   marina route [...]           join, publish, and exchange participant messages
   marina start                 run the full server in the foreground
   marina worlds [--json]       list the worlds built into this binary
@@ -662,7 +664,13 @@ async function runStatus(flagUrl?: string): Promise<number> {
   } catch (err) {
     readiness = { error: err instanceof Error ? err.message : String(err) };
   }
-  console.log(formatStatus(wsUrl, health, readiness));
+  const out = process.stdout;
+  console.log(
+    styleStatusReport(
+      formatStatus(wsUrl, health, readiness),
+      themeFor(out.isTTY ? out : undefined),
+    ),
+  );
   return 0;
 }
 
@@ -691,7 +699,7 @@ if (import.meta.main) {
   );
   switch (dispatch.kind) {
     case "help":
-      console.log(USAGE);
+      console.log(styleUsage(USAGE, themeFor(process.stdout.isTTY ? process.stdout : undefined)));
       break;
     case "version":
       console.log(readPackageVersion());

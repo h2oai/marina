@@ -144,7 +144,14 @@ Code Mode shares its palette with `marina connect`:
   `diff` …) gets a glyph as well as a colour.
 - **Commands.** Help rows and `/world …` suggestions are drawn in the command colour.
 - **Colour comes from structure.** The colour comes from the entry's label and structure,
-  never from bytes in the text. A diff entry is kept whole in local history up to the server's 64 KB limit. When the
+  never from bytes in the text.
+- **Live status.** On a colour terminal, the line above the prompt carries the same live segments
+  as `marina connect`'s status bar (health, agents, tasks, approvals, held actions, spend,
+  standing). `MARINA_STATUSLINE` changes it.
+- **Live panels.** `/live [status|agents|spend|alerts|readiness|world|me]` draws the
+  dashboard's views of the world in the transcript; your draft is kept.
+
+A diff entry is kept whole in local history up to the server's 64 KB limit. When the
 server cuts a larger diff, the terminal says so, with the bytes shown versus the total, and
 suggests `code diff <path>` to read one file in full. In `marina --tui`, `/diff` also opens a
 diff view: `n`/`p` jump between files, `]`/`[` between hunks, arrows and PageUp/PageDown scroll,

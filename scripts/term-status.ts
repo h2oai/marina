@@ -73,14 +73,35 @@ export interface WorldSnapshot {
     profile: string;
     checks: { label: string; status: string; detail: string; remediation?: string }[];
   };
+  /** Held actions: waiting on your answer, and the ones you asked for. */
+  challenges?: { answerable: HeldAction[]; raised: HeldAction[] };
   /** When each part was last read successfully. */
   at: Partial<Record<Part, number>>;
+  /** Parts this session may not read (the server answered 401/403). */
+  denied?: Partial<Record<Part, true>>;
+}
+
+export interface HeldAction {
+  token: string;
+  kind: string;
+  requester: string;
+  summary: string;
+  reason: string;
+  expiresAt: number;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: untyped JSON read from REST; every field is coerced below.
 type Json = Record<string, any>;
 
-export type Part = "health" | "system" | "world" | "profile" | "ops" | "alerts" | "readiness";
+export type Part =
+  | "health"
+  | "system"
+  | "world"
+  | "profile"
+  | "ops"
+  | "alerts"
+  | "readiness"
+  | "challenges";
 
 const EVERY: Record<Part, number> = {
   health: 5_000,
@@ -90,7 +111,11 @@ const EVERY: Record<Part, number> = {
   ops: 15_000,
   alerts: 15_000,
   readiness: 60_000,
+  challenges: 10_000,
 };
+
+/** A part the server refused is asked again only this often (access can change). */
+const DENIED_EVERY = 300_000;
 
 /** ws://host:port → http://host:port (wss → https). */
 export function httpBase(wsUrl: string): string {
@@ -98,6 +123,12 @@ export function httpBase(wsUrl: string): string {
 }
 
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
+
+class HttpStatusError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+  }
+}
 
 export class WorldStatus {
   snapshot: WorldSnapshot = { at: {} };
@@ -133,7 +164,9 @@ export class WorldStatus {
       (part) =>
         (!only || only.includes(part)) &&
         !this.inflight.has(part) &&
-        (force || now - (this.snapshot.at[part] ?? 0) >= EVERY[part]),
+        (force ||
+          now - (this.snapshot.at[part] ?? 0) >=
+            (this.snapshot.denied?.[part] ? DENIED_EVERY : EVERY[part])),
     );
     if (!due.length) return;
     const results = await Promise.all(due.map((part) => this.read(part)));
@@ -146,7 +179,7 @@ export class WorldStatus {
       headers: token ? { authorization: `Bearer ${token}` } : {},
       signal: AbortSignal.timeout(4_000),
     });
-    if (!response.ok) throw new Error(String(response.status));
+    if (!response.ok) throw new HttpStatusError(response.status);
     return response.json();
   }
 
@@ -229,6 +262,20 @@ export class WorldStatus {
             }));
           break;
         }
+        case "challenges": {
+          const c = (await this.get("/api/challenges/mine")) as Json;
+          const held = (rows: unknown): HeldAction[] =>
+            (Array.isArray(rows) ? rows : []).map((row: Json) => ({
+              token: String(row.token ?? ""),
+              kind: String(row.kind ?? ""),
+              requester: String(row.requester ?? ""),
+              summary: String(row.summary ?? ""),
+              reason: String(row.reason ?? ""),
+              expiresAt: Number(row.expiresAt ?? 0),
+            }));
+          s.challenges = { answerable: held(c.answerable), raised: held(c.raised) };
+          break;
+        }
         case "readiness": {
           const r = (await this.get("/api/readiness")) as Json;
           s.readiness = {
@@ -239,8 +286,17 @@ export class WorldStatus {
         }
       }
       s.at[part] = Date.now();
+      if (s.denied?.[part]) delete s.denied[part];
       return true;
-    } catch {
+    } catch (err) {
+      if (err instanceof HttpStatusError && (err.status === 401 || err.status === 403)) {
+        const first = !this.snapshot.denied?.[part];
+        this.snapshot.denied = { ...this.snapshot.denied, [part]: true };
+        // Back off, and drop what an earlier session could see.
+        this.snapshot.at[part] = Date.now();
+        if (part === "alerts") this.snapshot.alerts = undefined;
+        return first;
+      }
       return false;
     } finally {
       this.inflight.delete(part);

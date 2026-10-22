@@ -169,16 +169,36 @@ jobs:
   participation-browser:
     name: Participation browser journeys
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
+      - name: Install Chromium's system libraries
+        # Chromium's own libraries from `playwright install --with-deps` on
+        # ubuntu-24.04 (headless: no X server or extra fonts), through the cached,
+        # bounded apt action, so a crawling mirror fails fast instead of timing out.
+        timeout-minutes: 9
+        uses: ./.github/actions/apt-install
+        with:
+          attempt-seconds: "240"
+          packages: >-
+            libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2
+            libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 libnspr4 libnss3
+            libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3
+            libxkbcommon0 libxrandr2 fonts-liberation
       - name: Install Chromium
         working-directory: dashboard
-        run: bunx playwright install --with-deps chromium
+        # The browser itself comes from the Playwright CDN: each try is bounded.
+        run: |
+          for attempt in 1 2 3; do
+            timeout 180 bunx playwright install chromium && exit 0
+            echo "::warning::playwright browser download failed or timed out (attempt $attempt of 3)"
+            sleep $((attempt * 10))
+          done
+          exit 1
       - name: Run participation journeys
         run: bun run test:browser
       - name: Run API explorer journeys
@@ -195,7 +215,7 @@ jobs:
   accessibility:
     name: Dashboard accessibility
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       MARINA_BROWSER_ARTIFACTS: /tmp/marina-accessibility-results
     steps:
@@ -204,9 +224,29 @@ jobs:
         with:
           bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
+      - name: Install Chromium's system libraries
+        # Chromium's own libraries from `playwright install --with-deps` on
+        # ubuntu-24.04 (headless: no X server or extra fonts), through the cached,
+        # bounded apt action, so a crawling mirror fails fast instead of timing out.
+        timeout-minutes: 9
+        uses: ./.github/actions/apt-install
+        with:
+          attempt-seconds: "240"
+          packages: >-
+            libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2
+            libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 libnspr4 libnss3
+            libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3
+            libxkbcommon0 libxrandr2 fonts-liberation
       - name: Install Chromium
         working-directory: dashboard
-        run: bunx playwright install --with-deps chromium
+        # The browser itself comes from the Playwright CDN: each try is bounded.
+        run: |
+          for attempt in 1 2 3; do
+            timeout 180 bunx playwright install chromium && exit 0
+            echo "::warning::playwright browser download failed or timed out (attempt $attempt of 3)"
+            sleep $((attempt * 10))
+          done
+          exit 1
       - name: Check accessibility contracts and browser journeys
         run: bun run test:a11y
       - name: Preserve accessibility evidence

@@ -39,6 +39,20 @@ function server(overrides: Record<string, () => Response> = {}) {
         trustProfile: { profile: "local" },
         checks: [{ label: "x", status: "ok", detail: "" }],
       }),
+    "/api/challenges/mine": () =>
+      json({
+        answerable: [
+          {
+            token: "t1",
+            kind: "gate",
+            requester: "Ada",
+            summary: "spawn",
+            reason: "r",
+            expiresAt: 1,
+          },
+        ],
+        raised: [],
+      }),
     ...overrides,
   };
   const fetcher = async (url: string, init?: RequestInit) => {
@@ -90,6 +104,35 @@ describe("live world status for the CLI", () => {
     const first = calls.length;
     await status.refresh(false);
     expect(calls.length).toBe(first);
+  });
+
+  test("reads the caller's own held actions", async () => {
+    const { fetcher } = server();
+    const status = new WorldStatus("http://x", () => "t", "Jeff", fetcher);
+    await status.refresh(true, ["challenges"]);
+    expect(status.snapshot.challenges?.answerable[0]).toMatchObject({
+      token: "t1",
+      requester: "Ada",
+    });
+    expect(status.snapshot.challenges?.raised).toEqual([]);
+  });
+
+  test("a refused part is marked denied, its old data dropped, and asked again rarely", async () => {
+    let allowed = true;
+    const { calls, fetcher } = server({
+      "/api/operations/alerts": () =>
+        allowed ? json([{ status: "open", severity: "warning", title: "A" }]) : json({}, 403),
+    });
+    const status = new WorldStatus("http://x", () => "t", "Jeff", fetcher);
+    await status.refresh(true, ["alerts"]);
+    expect(status.snapshot.alerts).toHaveLength(1);
+    allowed = false;
+    await status.refresh(true, ["alerts"]);
+    expect(status.snapshot.denied?.alerts).toBe(true);
+    expect(status.snapshot.alerts).toBeUndefined();
+    const before = calls.filter((c) => c.path === "/api/operations/alerts").length;
+    await status.refresh(false);
+    expect(calls.filter((c) => c.path === "/api/operations/alerts").length).toBe(before);
   });
 
   test("listeners hear about a successful read", async () => {

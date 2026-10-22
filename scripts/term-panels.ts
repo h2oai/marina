@@ -203,7 +203,7 @@ export const PANELS: Panel[] = [
           ],
           ["last hour", t.fg("muted")(money(s.lastHourUsd))],
         ]),
-        "",
+        ...(s.scopes.length ? [""] : []),
         ...columns(
           [...s.scopes]
             .sort((a, b) => b.spentUsd - a.spentUsd)
@@ -219,40 +219,69 @@ export const PANELS: Panel[] = [
   },
   {
     name: "alerts",
-    aliases: ["inbox", "approvals"],
-    describe: "open alerts and held actions that wait for a person",
-    needs: ["alerts"],
+    aliases: ["inbox", "approvals", "held"],
+    describe: "held actions (yours to answer, and your own) and open alerts",
+    needs: ["challenges", "alerts"],
     render: (c) => {
       const t = c.theme;
       const g = glyphsFor(t);
-      const rows = c.snapshot.alerts;
-      if (!rows) return card(t, "Attention", waiting(c, "alerts"));
-      const order = { critical: 0, warning: 1, info: 2 } as Record<string, number>;
+      const now = Date.now();
+      const left = (at: number) => `${Math.max(0, Math.round((at - now) / 60_000))} min left`;
       const body: string[] = [];
-      for (const a of [...rows].sort(
-        (x, y) => (order[x.severity] ?? 3) - (order[y.severity] ?? 3),
-      )) {
-        const approval = a.attention === "approval";
-        const tone: Token = approval
-          ? "warning"
-          : a.severity === "critical"
-            ? "error"
-            : a.severity === "warning"
-              ? "warning"
-              : "info";
-        const glyph = approval ? g.approval : a.severity === "critical" ? g.error : g.warn;
-        body.push(
-          `${t.fg(tone)(glyph)} ${t.bold(clean(t, a.title))}${t.fg("faint")(a.occurrences > 1 ? `  ×${a.occurrences}` : "")}`,
-        );
-        if (a.detail) body.push(`  ${t.fg("muted")(clean(t, a.detail))}`);
-        if (a.remedy) body.push(`  ${t.fg("faint")("try")} ${t.fg("code")(clean(t, a.remedy))}`);
+      const holds = c.snapshot.challenges;
+      if (holds?.answerable.length) {
+        body.push(t.bold(t.fg("warning")(`${g.approval} Waiting on your answer`)));
+        for (const h of holds.answerable) {
+          body.push(
+            `  ${t.fg("highlight")(clean(t, h.token))} ${t.identity(h.requester)(clean(t, h.requester))} ${t.fg("faint")("→")} ${clean(t, h.summary)}`,
+          );
+          body.push(`    ${t.fg("muted")(`${clean(t, h.reason)} · ${left(h.expiresAt)}`)}`);
+          body.push(
+            `    ${t.fg("code")(`challenge approve ${clean(t, h.token)}`)} ${t.fg("faint")("or")} ${t.fg("code")("deny")}`,
+          );
+        }
       }
-      return card(
-        t,
-        "Attention",
-        body.length ? body : [t.fg("success")(`${g.ok} nothing waiting`)],
-        `${rows.length} open`,
-      );
+      if (holds?.raised.length) {
+        if (body.length) body.push("");
+        body.push(t.bold(t.fg("accent")(`${t.unicode ? "⧗" : "~"} You asked`)));
+        for (const h of holds.raised) {
+          body.push(`  ${t.fg("highlight")(clean(t, h.token))} ${clean(t, h.summary)}`);
+          body.push(`    ${t.fg("muted")(`${clean(t, h.reason)} · ${left(h.expiresAt)}`)}`);
+        }
+      }
+      const rows = c.snapshot.alerts;
+      const order = { critical: 0, warning: 1, info: 2 } as Record<string, number>;
+      if (rows?.length) {
+        if (body.length) body.push("");
+        body.push(t.bold(t.fg("accent")("Operational alerts")));
+        for (const a of [...rows].sort(
+          (x, y) => (order[x.severity] ?? 3) - (order[y.severity] ?? 3),
+        )) {
+          const approval = a.attention === "approval";
+          const tone: Token = approval
+            ? "warning"
+            : a.severity === "critical"
+              ? "error"
+              : a.severity === "warning"
+                ? "warning"
+                : "info";
+          const glyph = approval ? g.approval : a.severity === "critical" ? g.error : g.warn;
+          body.push(
+            `${t.fg(tone)(glyph)} ${t.bold(clean(t, a.title))}${t.fg("faint")(a.occurrences > 1 ? `  ×${a.occurrences}` : "")}`,
+          );
+          if (a.detail) body.push(`  ${t.fg("muted")(clean(t, a.detail))}`);
+          if (a.remedy) body.push(`  ${t.fg("faint")("try")} ${t.fg("code")(clean(t, a.remedy))}`);
+        }
+      }
+      if (!holds && !rows) return card(t, "Attention", waiting(c, "held actions and alerts"));
+      if (!body.length) body.push(t.fg("success")(`${g.ok} nothing waiting`));
+      if (c.snapshot.denied?.alerts)
+        body.push("", t.fg("faint")("Operational alerts are shown to operators only."));
+      const counts = [
+        holds ? `${holds.answerable.length} to answer · ${holds.raised.length} held` : "",
+        rows ? `${rows.length} alerts` : "",
+      ].filter(Boolean);
+      return card(t, "Attention", body, counts.join(" · "));
     },
   },
   {

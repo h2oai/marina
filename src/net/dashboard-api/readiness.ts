@@ -5,6 +5,7 @@
 // rollup. Two route groups because `/api/productivity` sits after the memory
 // observability block in the dispatch order and that precedence is preserved.
 
+import { type Challenge, listAnswerable, listRaisedBy } from "../../engine/challenges";
 import { syncOperationalAlerts } from "../../engine/commands/ops";
 import { computeReadiness } from "../../engine/readiness";
 import { authorizePrivileged, type DashboardRouteContext, json, readSmallJsonBody } from "./shared";
@@ -28,6 +29,24 @@ export async function handleReadinessRoutes(
         readiness: () => computeReadiness(engine),
       });
     return json(db.listOperationalAlerts(undefined, 100));
+  }
+  // The caller's own held actions, as the in-world `challenge list` shows
+  // them: what waits on the caller's answer and what the caller asked for.
+  // Masked summaries only (never the held input); any session may read its own.
+  if (url.pathname === "/api/challenges/mine" && method === "GET") {
+    const me = engine.entities.get(callerId);
+    const view = (c: Challenge) => ({
+      token: c.token,
+      kind: c.kind,
+      requester: c.requesterName,
+      summary: c.summary,
+      reason: c.reason,
+      expiresAt: c.expiresAt,
+    });
+    return json({
+      answerable: me ? listAnswerable(me).map(view) : [],
+      raised: me ? listRaisedBy(me.id).map(view) : [],
+    });
   }
   const opsAlertMatch = url.pathname.match(/^\/api\/operations\/alerts\/(\d+)\/(ack|resolve)$/);
   if (opsAlertMatch && method === "POST" && db) {
