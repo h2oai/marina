@@ -118,7 +118,7 @@ import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
 import type { Perception } from "../types";
 import { isHumanOnboardingNote } from "../world/seed-guide";
 import { suggestPatterns } from "../world/templates/orchestration";
-import { numericTokens, outgoingAcknowledgementRefusal } from "./acknowledgement";
+import { numericTokens, outgoingAcknowledgementRefusal, outgoingMessage } from "./acknowledgement";
 import { ActionHistory } from "./action-history";
 import {
   type AgentConfig,
@@ -139,6 +139,7 @@ import {
   DEFAULT_ATTENTION_THRESHOLD,
   forcedActionNudgeMode,
   isAddressedOrCrewMessage,
+  rememberThreadTags,
   shouldKeepPerception,
 } from "./attention";
 import {
@@ -2225,6 +2226,10 @@ export class LeanAgentAdapter implements AgentHandle {
             this.knownNumbers,
           );
         if (ackRefusal) return { block: true, reason: ackRefusal };
+        // Tags this agent sends mark its threads: a peer's reply that echoes
+        // one answers this agent, it is not a new ask (`rememberThreadTags`).
+        const outgoing = outgoingMessage(context.toolCall.name, args);
+        if (outgoing?.kind === "tell") rememberThreadTags(this.attentionState, outgoing.message);
         this.rememberNumbers(JSON.stringify(args));
         this.hookRegistry.runBeforeToolCall(context.toolCall.name, args);
         return undefined;
@@ -2414,7 +2419,32 @@ export class LeanAgentAdapter implements AgentHandle {
    * flight, so the record is not written back after it is removed.
    */
   private releaseModelRequest(modelRequestId: string, reason: string): void {
-    const ids = this.outstandingRequests.idsForModelRequest(modelRequestId);
+    this.releaseRequests(
+      this.outstandingRequests.idsForModelRequest(modelRequestId),
+      `released endpoint request ${modelRequestId}`,
+      { requestId: modelRequestId, reason },
+    );
+  }
+
+  /**
+   * Stop owing `peer` the conversational replies still in the ledger: the
+   * peer's latest tell says it wants no reply (`declinesReply`). Endpoint
+   * requests are untouched.
+   */
+  private releasePeerReplies(peer: string): void {
+    this.releaseRequests(
+      this.outstandingRequests.idsForPeer(peer),
+      `released replies owed to ${peer}`,
+      { peer, reason: "no-reply-requested" },
+    );
+  }
+
+  /** Drop ledger entries, their buffered perceptions and their durable records. */
+  private releaseRequests(
+    ids: readonly string[],
+    message: string,
+    fields: Record<string, unknown>,
+  ): void {
     if (ids.length === 0) return;
     const released = new Set(ids);
     this.outstandingRequests.complete(ids);
@@ -2426,11 +2456,7 @@ export class LeanAgentAdapter implements AgentHandle {
       (e) => !e.requestId || !released.has(e.requestId),
     );
     this.currentPromptActionable = this.outstandingRequests.presentedIds().size > 0;
-    this.log.info(LEAN_AGENT_LOG_CATEGORY, `released endpoint request ${modelRequestId}`, {
-      agent: this.name,
-      requestId: modelRequestId,
-      reason,
-    });
+    this.log.info(LEAN_AGENT_LOG_CATEGORY, message, { agent: this.name, ...fields });
     void (async () => {
       await this.flushOutstandingRequests();
       await this.platformMemory.completeOutstandingRequests(ids);
@@ -2530,6 +2556,7 @@ export class LeanAgentAdapter implements AgentHandle {
               this.attentionState,
             );
             if (decision.release) this.releaseModelRequest(decision.release, decision.reason);
+            if (decision.releasePeer) this.releasePeerReplies(decision.releasePeer);
             if (!decision.keep) {
               if (decision.reason === "self-echo") this.selfEchoesDropped++;
               else if (decision.reason === "below-threshold") this.droppedPerceptions++;

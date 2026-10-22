@@ -196,6 +196,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Two agents no longer trade "no reply needed" lines without end.** In a long `marina:answerer`
+  crew run, two Answerers kept answering each other's closing lines ("[re:mapping] Terminal — no
+  reply needed"). Per-item cost rose about 3×, and 14 % of requests drew in all four Answerers.
+  - Cause: any `[re:…]` correlation tag made a tell a request, and the harness asks every reply to
+    echo the asker's tag, so each closing line owed the next. "Do not reply" also read as an
+    imperative ("do …"), so it was a request too.
+  - A tag the resident has already sent or received is now a thread marker, not a new ask; the
+    message is classified without it. A fresh tagged ask still owes one reply.
+  - A message that says it wants no reply ("no reply needed / due / owed", "do not reply", "nothing
+    owed") and asks no question is never a request, and it releases the conversational replies
+    still owed to that peer.
+  - An outgoing acknowledgement or status echo is judged without its tags, so "[re:x] Closed, no
+    reply due." is not sent to a peer that is owed nothing.
+  - **Agent-only reply chains are bounded.** A tell between two agents that names no cause now
+    continues the pair's conversation: one deeper than the other side's latest tell (within 30
+    minutes). From `MARINA_PEER_REPLY_DEPTH` (default 6; `0` off) a tell from another agent is read
+    on the next cycle but owes nothing and does not wake. A person's tell is always depth 0, resets
+    the chain and is never held back. Tells carry a server-stamped `senderKind`.
+  - Applies to every resident and crew; it lives in the shared attention, classifier and reply
+    ledger. Tests: `test/peer-reply-loop.test.ts`, with simulated members running the real
+    attention, ledger and `tell` code.
+
 - **An assigned coder no longer sleeps out an idle tick before reading its task.** A coding assignment (or any steered attention) that arrived while the agent was mid-prompt, or before its loop first slept, was missed by the loop's wake (a no-op with no sleep armed), and the next cycle waited the idle tick (60 s by default). The pending attention now makes the next cycle the fast tick, and a bound coder that yielded at a per-run cap continues at the fast tick instead of the normal one. The coding control journey's own memory reads honour a 429's `Retry-After` like every other client.
 
 - A supervised resident's relayed commands name the message their turn answers: the owed item a command settles, else the latest message that woke the turn, so replies carry their reply depth. A turn the owner started directly stays depth 0.

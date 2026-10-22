@@ -162,6 +162,9 @@ describe("outgoingAcknowledgementRefusal", () => {
     ["marina_channel", { action: "send", channel: "crew-1", message: "Understood, thanks." }],
     ["marina_command", { command: "tell Peer Got it." }],
     ["marina_command", { command: "channel send crew-1 Noted." }],
+    // A thread tag resolves no wait when nothing is owed (2026-10-21 loop).
+    ["marina_tell", { target: "Peer", message: "Thanks [re:ab12cd]" }],
+    ["marina_command", { command: "tell Peer [re:mapping] cannot — no reply due." }],
   ])("%s %j is not sent", (tool, args) => {
     expect(outgoingAcknowledgementRefusal(tool, args)).toBe(ACK_NOT_SENT);
   });
@@ -172,7 +175,6 @@ describe("outgoingAcknowledgementRefusal", () => {
     "Can you re-run C4?",
     "Acknowledged. What value did you get?",
     "Verify the draft against calc.",
-    "Thanks [re:ab12cd]",
     "estimate: 3 primes | direct enumeration",
     '{"type":"model_response","id":"req-1","content":"ok"}',
   ])("an information-carrying message goes through: %s", (message) => {
@@ -186,6 +188,13 @@ describe("outgoingAcknowledgementRefusal", () => {
 
   it("an acknowledgement that answers a reply still owed to the target is sent", () => {
     const owed = new Set(["peer", "crew-1"]);
+    expect(
+      outgoingAcknowledgementRefusal(
+        "marina_tell",
+        { target: "Peer", message: "Thanks [re:ab12cd]" },
+        owed,
+      ),
+    ).toBe(undefined);
     expect(
       outgoingAcknowledgementRefusal(
         "marina_tell",
