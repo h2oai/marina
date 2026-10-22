@@ -205,6 +205,7 @@
           "retrieve",
           "checkpoint",
           "save_checkpoint",
+          "capture_checkpoint",
           "grant",
           "forget",
           "export",
