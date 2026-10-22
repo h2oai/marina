@@ -130,6 +130,7 @@ import {
   resolveAgentThinkingLevel,
 } from "./agent-types";
 import {
+  type AttentionDecision,
   type AttentionState,
   acknowledgementReplyRefusal,
   assessPerception,
@@ -139,6 +140,7 @@ import {
   DEFAULT_ATTENTION_THRESHOLD,
   forcedActionNudgeMode,
   isAddressedOrCrewMessage,
+  peerChainPolicy,
   rememberThreadTags,
   shouldKeepPerception,
 } from "./attention";
@@ -2427,16 +2429,29 @@ export class LeanAgentAdapter implements AgentHandle {
   }
 
   /**
-   * Stop owing `peer` the conversational replies still in the ledger: the
-   * peer's latest tell says it wants no reply (`declinesReply`). Endpoint
-   * requests are untouched.
+   * Stop owing the reply on the thread a peer's "no reply needed" closed: the
+   * request carrying the same `[re:…]` tag, or the one its cause names. Other
+   * open asks from that peer and endpoint requests stay owed.
    */
-  private releasePeerReplies(peer: string): void {
+  private releaseThreadReplies(thread: NonNullable<AttentionDecision["releaseThread"]>): void {
     this.releaseRequests(
-      this.outstandingRequests.idsForPeer(peer),
-      `released replies owed to ${peer}`,
-      { peer, reason: "no-reply-requested" },
+      this.outstandingRequests.idsForThread(thread.peer, thread.tags, thread.cause),
+      `released the reply owed to ${thread.peer} on a closed thread`,
+      { peer: thread.peer, reason: "no-reply-requested" },
     );
+  }
+
+  /** Log once each time an exchange with another agent passes the chain threshold. */
+  private observePeerChain(peer: string, turns: number): void {
+    const key = peer.toLowerCase();
+    const policy = peerChainPolicy();
+    if (turns !== policy.threshold + 1) return;
+    this.log.info(LEAN_AGENT_LOG_CATEGORY, "long exchange with another agent", {
+      agent: this.name,
+      peer: key,
+      turns,
+      mode: policy.mode,
+    });
   }
 
   /** Drop ledger entries, their buffered perceptions and their durable records. */
@@ -2556,7 +2571,9 @@ export class LeanAgentAdapter implements AgentHandle {
               this.attentionState,
             );
             if (decision.release) this.releaseModelRequest(decision.release, decision.reason);
-            if (decision.releasePeer) this.releasePeerReplies(decision.releasePeer);
+            if (decision.releaseThread) this.releaseThreadReplies(decision.releaseThread);
+            if (decision.peerChain !== undefined && typeof p.data?.senderName === "string")
+              this.observePeerChain(p.data.senderName, decision.peerChain);
             if (!decision.keep) {
               if (decision.reason === "self-echo") this.selfEchoesDropped++;
               else if (decision.reason === "below-threshold") this.droppedPerceptions++;

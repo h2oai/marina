@@ -5,13 +5,7 @@ import { tell } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { failCommandResponse } from "../command-response";
-import { getCurrentMessageCause } from "../gate-context";
-import {
-  envelopeFields,
-  envelopeFor,
-  type MessageCause,
-  type MessageEnvelope,
-} from "../message-envelope";
+import { envelopeFields, type MessageCause, messageEnvelope } from "../message-envelope";
 import { parseModifiers } from "../parse-input";
 
 export interface TellDeps {
@@ -31,31 +25,6 @@ export interface TellDeps {
    * or principal). Without it no tell is treated as agent-to-agent.
    */
   isAgent?: (id: EntityId) => boolean;
-}
-
-/** How far back a tell between two agents still continues their conversation. */
-export const PEER_THREAD_WINDOW_MS = 30 * 60_000;
-
-/**
- * The envelope of a tell between two agents that names no cause: it continues
- * the pair's conversation. Answering the other side's latest tell (within
- * {@link PEER_THREAD_WINDOW_MS}) is one level deeper; a second tell in a row
- * keeps the sender's own depth; nothing recent starts a thread at depth 0.
- * The cause stays unset — nobody named the message being answered — but the
- * depth lets attention bound agent-only reply chains (`peerReplyDepthLimit`
- * in `src/agent/attention.ts`). A person on either side resets the chain:
- * their tells always start at depth 0.
- */
-function conversationEnvelope(
-  db: MarinaDB,
-  senderId: EntityId,
-  targetId: EntityId,
-  now = Date.now(),
-): MessageEnvelope {
-  const prior = db.latestDirectMessageBetween(senderId, targetId, now - PEER_THREAD_WINDOW_MS);
-  if (!prior) return { depth: 0 };
-  const depth = Math.max(0, prior.depth ?? 0);
-  return { depth: prior.sender_id === targetId ? depth + 1 : depth };
 }
 
 const TELL_USAGE = "Usage: tell <entity> [ttl:30s] <message>   (also --ttl=30s)";
@@ -95,14 +64,8 @@ export function deliverTell(
     return undefined;
   }
 
-  // A named cause (an explicit reply, or the command execution's) wins; a
-  // tell between two agents that names none continues their conversation.
-  const named = cause ?? getCurrentMessageCause(senderId);
+  const envelope = messageEnvelope(senderId, cause);
   const senderIsAgent = deps.isAgent?.(senderId) ?? false;
-  const envelope =
-    named || !deps.db || !senderIsAgent || !deps.isAgent?.(target.id)
-      ? envelopeFor(named)
-      : conversationEnvelope(deps.db, senderId, target.id);
   const correlationId = crypto.randomUUID();
   const receipt = deps.db?.createDirectMessage({
     correlationId,
@@ -133,7 +96,7 @@ export function deliverTell(
     correlationId: receipt?.correlation_id,
     deadlineAt: receipt?.deadline_at,
     messageRef,
-    // Server-stamped (never peer text): attention bounds agent-only chains.
+    // Server-stamped (never peer text): attention follows agent-only exchanges.
     ...(deps.isAgent ? { senderKind: senderIsAgent ? "agent" : "person" } : {}),
     ...envelopeFields(envelope),
   });

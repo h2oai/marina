@@ -16,11 +16,6 @@
  *  3. Otherwise there is none: the message starts a thread at depth 0. A
  *     remote client's turn is opaque to the server, so its messages are depth
  *     0 unless it uses an explicit reply form.
- *  4. Except a `tell` between two agents: with no named cause it continues
- *     the pair's conversation (`deliverTell`, `src/engine/commands/tell.ts`)
- *     — one deeper than the other side's latest tell, the cause left unset —
- *     so attention can bound agent-only reply chains. A person's tell is
- *     always depth 0 and resets the chain.
  *
  * The envelope holds refs and numbers only, never message content.
  *

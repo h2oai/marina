@@ -54,12 +54,23 @@ const DECLINES_REPLY = new RegExp(
  * standing-state line, a `[re:…]` thread tag): forcing one made each side's
  * "terminal, no reply needed" line owe the other side the next one
  * (2026-10-21, the answerer crew's `[re:mapping]` loop). A question mark
- * keeps it a request — "no reply needed unless X?" still asks.
+ * keeps it a request — "no reply needed unless X?" still asks — and so does
+ * a deferred or conditional decline ("do not reply until …", "don't answer
+ * yet") or a task beside it ("no reply needed — fix the parser").
  */
 export function declinesReply(message: string): boolean {
   const text = message.trim();
-  return !!text && !text.includes("?") && DECLINES_REPLY.test(text);
+  if (!text || text.includes("?") || !DECLINES_REPLY.test(text)) return false;
+  // "Do not reply until the tests pass", "don't answer yet — check first":
+  // a deferred or conditional reply is still owed, later.
+  if (DEFERRED_REPLY.test(text)) return false;
+  // "No reply needed — fix the parser": a task beside the phrase is still a request.
+  const rest = text.replace(new RegExp(DECLINES_REPLY.source, "gi"), " ");
+  return !opensWithImperative(rest);
 }
+
+/** Words that make a "do not reply" conditional or deferred rather than final. */
+const DEFERRED_REPLY = /\b(?:until|till|yet|first|before|unless|after|once|when|then)\b/i;
 
 /** Every `[re:<id>]` correlation tag in a message, lower-cased ids. */
 export function correlationTagIds(message: string): string[] {
