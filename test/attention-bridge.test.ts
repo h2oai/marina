@@ -590,6 +590,33 @@ async function bothInOneTurn(
   await until(() => state.prompts.length === 1);
 }
 
+describe("relayed commands name the message their turn answers", () => {
+  it("a command that answers an owed item carries that item's ref", async () => {
+    const { host, state } = fakeHost("next-turn");
+    const bridge = new AttentionBridge("Fern", host);
+    const a = tell("Wren", "what is 6 times 7?");
+    const b = tell("Swift", "can you rerun the lint job?");
+    await bothInOneTurn(bridge, state, a, b);
+    expect(bridge.causeFor(`re #${a.data.messageId} 42`)).toBe(a.data.messageRef as string);
+    expect(bridge.causeFor("tell Swift rerunning now")).toBe(b.data.messageRef as string);
+  });
+
+  it("any other command in a woken turn carries the latest waking message", async () => {
+    const { host, state } = fakeHost("next-turn");
+    const bridge = new AttentionBridge("Fern", host);
+    const a = tell("Wren", "what is 6 times 7?");
+    const b = tell("Swift", "can you rerun the lint job?");
+    await bothInOneTurn(bridge, state, a, b);
+    expect(bridge.causeFor("look")).toBe(b.data.messageRef as string);
+  });
+
+  it("a turn nothing woke has no cause", () => {
+    const { host } = fakeHost("next-turn");
+    const bridge = new AttentionBridge("Fern", host);
+    expect(bridge.causeFor("say hello")).toBeUndefined();
+  });
+});
+
 describe("several owed asks in one turn", () => {
   it("the digest shows how to answer each owed item", async () => {
     const { host, state } = fakeHost("next-turn");

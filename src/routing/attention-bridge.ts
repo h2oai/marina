@@ -337,6 +337,20 @@ export class AttentionBridge {
     }
   }
 
+  /**
+   * The message a relayed command answers, as its `cause`: the owed item it
+   * settles, else the latest message that woke the current turn. A turn the
+   * owner started directly (nothing woke it) has none, so its commands stay
+   * fresh (depth 0).
+   */
+  causeFor(command: string): string | undefined {
+    const before = new Set(this.turn.filter((item) => item.answered));
+    this.noteSent(command);
+    const answered = this.turn.find((item) => item.answered && !before.has(item) && item.ref);
+    if (answered) return answered.ref;
+    return this.turn.filter((item) => item.wake === "now" && item.ref).at(-1)?.ref;
+  }
+
   /** Report what a turn did for each item that woke it. */
   private settle(items: readonly Item[], worked: boolean): void {
     if (this.host.outcome)

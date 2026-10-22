@@ -507,8 +507,9 @@ export class MarinaSupervisor {
         ? withSnapshotModifier(command, await this.publishReviewSnapshot(run))
         : command;
       resident.bridge?.noteWork();
-      resident.bridge?.noteSent(command);
-      return connection.command(relayed);
+      // Settles what it answers, and names the message this turn is about.
+      const cause = resident.bridge?.causeFor(command);
+      return connection.command(relayed, cause ? { cause } : undefined);
     });
     this.state(run, { resident: resident.name });
     this.emit(run.session.id, "resident.enrolled", {

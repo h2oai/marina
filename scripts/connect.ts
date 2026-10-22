@@ -26,6 +26,7 @@ import { formatPerception } from "../src/net/formatter";
 import type { CommandCatalogEntry } from "../src/sdk/capabilities";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
 import { runCliCommand } from "./connect-command";
+import { isTransportFailure } from "./connect-errors";
 import { runRelayCli } from "./connect-relay";
 import { runInteractive } from "./connect-repl";
 import { cachedParticipantToken, saveParticipantToken } from "./session-cache";
@@ -240,13 +241,6 @@ async function lingerForQuiet(quietMs: number, maxMs: number): Promise<void> {
 // under the raw requested spelling so existing sessions keep their identity.
 const cachedToken = loadCachedToken(name) ?? loadCachedToken(requestedName);
 
-/** True for a transport failure (server down / unreachable), false for a login refusal. */
-function isTransportFailure(message: string): boolean {
-  return /WebSocket connection|ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|timed out/i.test(
-    message,
-  );
-}
-
 let connectedName = name;
 let connectedId = "";
 try {
@@ -271,7 +265,7 @@ try {
   if (!rich) console.error(`Connected as ${session.name || name} (${session.entityId})`);
 } catch (err) {
   const message = (err as Error).message;
-  if (isTransportFailure(message)) {
+  if (isTransportFailure(err)) {
     console.error(
       `Failed to connect to ${URL}. Is Marina running? Start it with \`bun run start\`.` +
         (message ? ` (${message})` : ""),
