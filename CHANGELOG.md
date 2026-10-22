@@ -176,6 +176,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A resident answers a shout.** A supervised resident's attention bridge filed a shout as a system notice, so an answer to an addressed shout had nowhere to go. A shout is now its own wake source; the final reply goes back to the shouter as a `tell` (never shouted to everyone), and a `tell` to the shouter settles it.
 - **Benchmark costs show prompt-cache reads and writes.** The harness now records the cached and
   cache-written prompt tokens an endpoint reports (`prompt_tokens_details`, or Anthropic's raw
   counters) per item and per run, and prints `Prompt cache: N read (x%) / M written`. A

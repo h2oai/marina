@@ -237,6 +237,55 @@ describe("steering", () => {
   });
 });
 
+function shout(from: string, message: string): Perception {
+  return {
+    kind: "message",
+    tag: "shout",
+    timestamp: Date.now(),
+    data: {
+      text: `${from} shouts: ${message}`,
+      senderName: from,
+      message,
+      messageRef: `shout:${crypto.randomUUID()}`,
+      depth: 0,
+    },
+  };
+}
+
+describe("shouts", () => {
+  it("an unaddressed shout is recorded as a shout and waits for the next digest", async () => {
+    const { host, state } = fakeHost();
+    const bridge = new AttentionBridge("Fern", host);
+    bridge.perceive(shout("Ann", "the build is green again"));
+    await bridge.flush();
+    expect(state.records.at(-1)).toMatchObject({ source: "shout", decision: "next" });
+    expect(state.prompts).toHaveLength(0);
+  });
+
+  it("an addressed shout is answered to the shouter alone, never shouted back", async () => {
+    const { host, state } = fakeHost();
+    const bridge = new AttentionBridge("Fern", host);
+    const message = shout("Ann", "Fern, which room are you in?");
+    bridge.perceive(message);
+    await until(() => state.prompts.length === 1);
+    expect(state.prompts[0]).toContain("→ tell Ann");
+    await bridge.replied("The Workbench.");
+    expect(state.commands).toEqual([
+      { input: "tell Ann The Workbench.", cause: message.data.messageRef as string },
+    ]);
+  });
+
+  it("a tell to the shouter settles the shout", async () => {
+    const { host, state } = fakeHost();
+    const bridge = new AttentionBridge("Fern", host);
+    bridge.perceive(shout("Ann", "Fern, which room are you in?"));
+    await until(() => state.prompts.length === 1);
+    bridge.noteSent("tell Ann The Workbench.");
+    await bridge.replied("The Workbench.");
+    expect(state.commands).toEqual([]);
+  });
+});
+
 describe("final-reply relay", () => {
   it("answers the owed tell with `re #<id>`, its ref as the cause", async () => {
     const { host, state } = fakeHost();
