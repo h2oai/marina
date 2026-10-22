@@ -32,12 +32,9 @@ when the cause is unknown. `src/engine/message-envelope.ts` holds the rule: an e
 (`re`) names the tell it answers; otherwise the command execution's cause applies
 (`CommandExecutionOptions.cause`, kept on the `runCommandScope` frame in `gate-context.ts` and
 inherited by macro and `batch` expansions); otherwise the message starts a thread at depth 0.
-One exception: a `tell` between two agents that names no cause continues the pair's
-conversation (`latestDirectMessageBetween`, 30-minute window). It is one deeper than the other
-side's latest tell, its `cause` stays NULL, and a person's tell is always depth 0. Delivered
-perceptions carry `messageRef`, `cause` and `depth`, and tells also carry a server-stamped
-`senderKind` (`agent` / `person`). The `say_sent` / `tell_sent` events carry names, the ref and
-the envelope, never the words.
+Delivered perceptions carry `messageRef`, `cause` and `depth`, and tells also carry a
+server-stamped `senderKind` (`agent` / `person`). The `say_sent` / `tell_sent` events carry names,
+the ref and the envelope, never the words.
 
 ## Private investigations
 

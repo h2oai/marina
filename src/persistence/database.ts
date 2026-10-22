@@ -1518,10 +1518,6 @@ export class MarinaDB implements MarinaStores {
     return directMessagesDb.getDirectMessage(this.db, id);
   }
 
-  latestDirectMessageBetween(a: string, b: string, since: number): DirectMessageRow | undefined {
-    return directMessagesDb.latestDirectMessageBetween(this.db, a, b, since);
-  }
-
   listDirectMessageInbox(targetId: string, limit = 20): DirectMessageRow[] {
     return directMessagesDb.listDirectMessageInbox(this.db, targetId, limit);
   }

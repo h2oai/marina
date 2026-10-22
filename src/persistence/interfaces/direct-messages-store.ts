@@ -21,7 +21,6 @@ export interface DirectMessagesStore {
     depth?: number;
   }): DirectMessageRow;
   getDirectMessage(id: number): DirectMessageRow | undefined;
-  latestDirectMessageBetween(a: string, b: string, since: number): DirectMessageRow | undefined;
   listDirectMessageInbox(targetId: string, limit?: number): DirectMessageRow[];
   acknowledgeDirectMessage(id: number, targetId: string, replyMessageId?: number): boolean;
   expireDirectMessages(now?: number): number;
@@ -43,7 +42,6 @@ export interface DirectMessagesStore {
 export const DIRECT_MESSAGES_STORE_METHODS = [
   "createDirectMessage",
   "getDirectMessage",
-  "latestDirectMessageBetween",
   "listDirectMessageInbox",
   "acknowledgeDirectMessage",
   "expireDirectMessages",
