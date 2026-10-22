@@ -83,11 +83,13 @@ jobs:
         # ffmpeg/ffprobe and poppler (pdftotext, pdftoppm): the media, asset
         # library and asset memory tests skip their tool paths without them.
         # Cached and bounded: a crawling Ubuntu mirror used to eat the whole
-        # job timeout and drop PRs from the merge queue.
+        # job timeout and drop PRs from the merge queue. Optional: on a
+        # failed install those tests skip their tool paths (with a warning).
         timeout-minutes: 10
         uses: ./.github/actions/apt-install
         with:
           packages: ffmpeg poppler-utils
+          optional: "true"
       - name: Check shard coverage
         # Every test file lands in exactly one shard (time-balanced from
         # test/timing.json, name-hash fallback for files without a timing).
