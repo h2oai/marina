@@ -143,9 +143,9 @@ function getEntityDetail(
   const entity = engine.findEntityGlobal(name);
   if (!entity) return json({ error: "Entity not found" }, 404);
 
-  // Raw command input, the full property bag and core memory are private to
-  // the entity, its owning person and privileged readers (the route already
-  // refuses others; this keeps the shape right if that check ever widens).
+  // Raw command input, the full property bag, inventory, core memory and
+  // notes are private to the entity, its owning person and privileged readers;
+  // everyone else gets the public view.
   const privateView = seesEntityPrivate(memory, {
     id: entity.id,
     owner: entityOwner(entity.name),
@@ -157,12 +157,15 @@ function getEntityDetail(
     room: entity.room,
     rank: (entity.properties.rank as number) ?? 0,
     properties: privateView ? entity.properties : publicEntityProperties(entity.properties),
-    inventory: entity.inventory,
+    ...(privateView ? { inventory: entity.inventory } : {}),
+    private: privateView,
   };
+  const presence = engine.presence.statusOf(entity.name)?.status;
+  if (presence) result.presence = presence;
 
   if (db) {
     if (privateView) result.coreMemory = db.listCoreMemory(entity.name);
-    result.notes = db.getNotesByEntity(entity.name, 10).filter(memory.read);
+    if (privateView) result.notes = db.getNotesByEntity(entity.name, 10).filter(memory.read);
     const activity = db.getEventsByEntity(entity.id, 20);
     result.recentActivity = privateView
       ? activity
@@ -797,10 +800,9 @@ export async function handleEntityRoutes(
         deleteEntity(engine, entityName)
       );
     }
-    // Entity detail bundles the entity's private core memory + notes, so it is
-    // scoped like the dedicated memory routes below.
-    const denied = authorizeEntityRead(engine, db, callerId, entityName);
-    if (denied) return denied;
+    // Any dashboard viewer gets the public view; the private parts (raw
+    // activity, full properties, core memory, notes) follow seesEntityPrivate
+    // inside the builder. The memory routes stay private-only.
     return getEntityDetail(engine, db, entityName, memory);
   }
 

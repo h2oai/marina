@@ -34,7 +34,44 @@ const DEFAULT_VIEWBOX = { x: 50, y: 10, w: 900, h: 730 };
 const THREAD_MARKS_VISIBLE = 3;
 const THREAD_MARKS_KEPT = 30;
 const THREAD_MARK_TTL_MS = 20_000;
-const THREAD_MARK_LINE = 8;
+/**
+ * The view that frames every room: their bounds plus room for orbits and
+ * labels, never smaller than `MIN_FIT` (a one-room world is not blown up),
+ * at the default view's aspect ratio. No rooms → the default view.
+ */
+const FIT_PADDING = 110;
+const MIN_FIT = { w: 420, h: 340 };
+export function fitViewBox(positions: readonly { x: number; y: number }[]): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+} {
+  if (positions.length === 0) return DEFAULT_VIEWBOX;
+  const xs = positions.map((p) => p.x);
+  const ys = positions.map((p) => p.y);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const aspect = DEFAULT_VIEWBOX.w / DEFAULT_VIEWBOX.h;
+  let w = Math.max(MIN_FIT.w, Math.max(...xs) - Math.min(...xs) + 2 * FIT_PADDING);
+  let h = Math.max(MIN_FIT.h, Math.max(...ys) - Math.min(...ys) + 2 * FIT_PADDING);
+  if (w / h > aspect) h = w / aspect;
+  else w = h * aspect;
+  return { x: cx - w / 2, y: cy - h / 2, w, h };
+}
+
+/** Smallest on-screen text, in CSS pixels, for map labels and marks. */
+const MIN_LABEL_PX = 11;
+
+/**
+ * A font size in viewBox units that renders at least `minPx` CSS pixels at the
+ * current zoom (`unitsPerPx` = viewBox units per screen pixel), never smaller
+ * than its design size.
+ */
+export function legibleFontSize(base: number, unitsPerPx: number, minPx = MIN_LABEL_PX): number {
+  if (!Number.isFinite(unitsPerPx) || unitsPerPx <= 0) return base;
+  return Math.max(base, minPx * unitsPerPx);
+}
 
 function avg(nums: number[]): number {
   return nums.reduce((a, b) => a + b, 0) / nums.length;
@@ -43,6 +80,8 @@ function avg(nums: number[]): number {
 // ── Memoized Room Node ────────────────────────────────────────────────
 interface RoomNodeProps {
   svgPrefix: string;
+  /** viewBox units per screen pixel (labels keep a legible minimum size). */
+  unitsPerPx: number;
   room: RoomPosition;
   pop: number;
   isSelected: boolean;
@@ -57,6 +96,7 @@ interface RoomNodeProps {
 
 const RoomNode = React.memo(function RoomNode({
   svgPrefix,
+  unitsPerPx,
   room,
   pop,
   isSelected,
@@ -71,6 +111,7 @@ const RoomNode = React.memo(function RoomNode({
   const color = getDistrictColor(room.district);
   const baseRadius = isHub ? 14 : 8;
   const radius = baseRadius + Math.min(pop * 2.5, 10);
+  const labelSize = legibleFontSize(isHub ? 9 : 7.5, unitsPerPx, isHub ? 12 : MIN_LABEL_PX);
 
   return (
     <g data-room-id={room.id} className="cursor-pointer">
@@ -211,10 +252,10 @@ const RoomNode = React.memo(function RoomNode({
       {/* Room label */}
       <text
         x={room.x}
-        y={room.y + radius + 12}
+        y={room.y + radius + 4 + labelSize}
         textAnchor="middle"
         fill={isSelected ? color : "var(--color-text-dim)"}
-        fontSize={isHub ? 9 : 7.5}
+        fontSize={labelSize}
         fontFamily="Share Tech Mono, monospace"
         fontWeight={isHub ? 700 : 400}
       >
@@ -237,6 +278,7 @@ const RoomNode = React.memo(function RoomNode({
 // ── Memoized Entity Dots ──────────────────────────────────────────────
 interface EntityDotsProps {
   svgPrefix: string;
+  unitsPerPx: number;
   roomId: string;
   entities: { id: string; name: string; kind: string; vendor?: string; presence?: string }[];
   pos: RoomPosition;
@@ -246,12 +288,14 @@ interface EntityDotsProps {
 
 const EntityDots = React.memo(function EntityDots({
   svgPrefix,
+  unitsPerPx,
   entities,
   pos,
   isHub,
   onSelectEntity,
 }: EntityDotsProps) {
   const baseRadius = (isHub ? 14 : 8) + Math.min(entities.length * 2.5, 10);
+  const labelSize = legibleFontSize(5.5, unitsPerPx);
 
   return (
     <>
@@ -290,13 +334,13 @@ const EntityDots = React.memo(function EntityDots({
               <text
                 data-testid="map-resident-label"
                 // Outward along the dot's orbit angle, so neighbours never overlap.
-                x={pos.x + Math.cos(angle) * (orbitR + 8)}
-                y={pos.y + Math.sin(angle) * (orbitR + 8) + 2}
+                x={pos.x + Math.cos(angle) * (orbitR + 3 + labelSize)}
+                y={pos.y + Math.sin(angle) * (orbitR + 3 + labelSize) + labelSize / 3}
                 textAnchor={
                   Math.cos(angle) > 0.3 ? "start" : Math.cos(angle) < -0.3 ? "end" : "middle"
                 }
                 fill="var(--color-text-dim)"
-                fontSize={5.5}
+                fontSize={labelSize}
                 fontFamily="Share Tech Mono, monospace"
                 style={{ pointerEvents: "none" }}
               >
@@ -375,7 +419,29 @@ export function WorldMap({
   const worldName = wsWorldName || worldData?.worldName || "";
 
   const [viewBox, setViewBox] = useState(DEFAULT_VIEWBOX);
+  // Until the viewer pans or zooms, the view follows the rooms' fitted frame.
+  const userMovedRef = useRef(false);
+  const moveView = useCallback((update: (vb: typeof DEFAULT_VIEWBOX) => typeof DEFAULT_VIEWBOX) => {
+    userMovedRef.current = true;
+    setViewBox(update);
+  }, []);
   const svgRef = useRef<SVGSVGElement>(null);
+  // Screen width of the map, so labels can keep a legible minimum size.
+  const [svgSize, setSvgSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setSvgSize({ w: entry.contentRect.width, h: entry.contentRect.height });
+    });
+    observer.observe(svg);
+    return () => observer.disconnect();
+  }, []);
+  // The viewBox is fitted whole ("meet"), so the tighter dimension sets the scale.
+  const unitsPerPx =
+    svgSize.w > 0 && svgSize.h > 0 ? Math.max(viewBox.w / svgSize.w, viewBox.h / svgSize.h) : 1;
+  const unitsPerPxRef = useRef(unitsPerPx);
+  unitsPerPxRef.current = unitsPerPx;
   const trailsRef = useRef<SVGGElement>(null);
   const threadsRef = useRef<SVGGElement>(null);
   const lastThreadAtRef = useRef(0);
@@ -406,6 +472,14 @@ export function WorldMap({
     const pm = new Map(positions.map((p) => [p.id, p]));
     return { allPositions: positions, allEdges: edges, posMap: pm };
   }, [wsRooms, worldData, startRoom]);
+  const homeView = useMemo(() => fitViewBox(allPositions), [allPositions]);
+  useEffect(() => {
+    if (!userMovedRef.current) setViewBox(homeView);
+  }, [homeView]);
+  const resetView = useCallback(() => {
+    userMovedRef.current = false;
+    setViewBox(homeView);
+  }, [homeView]);
 
   // ── District zones ────────────────────────────────────────────────
   const districtZones = useMemo(() => {
@@ -616,9 +690,10 @@ export function WorldMap({
       lines.forEach((line, i) => {
         const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
         text.setAttribute("x", String(pos.x));
-        text.setAttribute("y", String(pos.y - 30 - i * THREAD_MARK_LINE));
+        const markSize = legibleFontSize(6.5, unitsPerPxRef.current);
+        text.setAttribute("y", String(pos.y - 30 - i * markSize * 1.3));
         text.setAttribute("text-anchor", "middle");
-        text.setAttribute("font-size", "6.5");
+        text.setAttribute("font-size", String(markSize));
         text.setAttribute("font-family", "Share Tech Mono, monospace");
         text.setAttribute("fill", line.color);
         // A halo in the page colour keeps marks readable over rooms and arcs.
@@ -823,27 +898,30 @@ export function WorldMap({
   // Plain wheel/trackpad PANS (the predictable, map-standard behavior); zoom is
   // only on ⌘/Ctrl+wheel. Previously every wheel tick zoomed, which on trackpads
   // fired rapidly and felt like the map lurched in and out at random.
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    if (e.ctrlKey || e.metaKey) {
-      const scale = e.deltaY > 0 ? 1.08 : 0.92;
-      setViewBox((vb) => {
-        const cx = vb.x + vb.w / 2;
-        const cy = vb.y + vb.h / 2;
-        const nw = Math.max(200, Math.min(2000, vb.w * scale));
-        const nh = Math.max(150, Math.min(1500, vb.h * scale));
-        return { x: cx - nw / 2, y: cy - nh / 2, w: nw, h: nh };
-      });
-      return;
-    }
-    const rect = svgRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setViewBox((vb) => ({
-      ...vb,
-      x: vb.x + (e.deltaX / rect.width) * vb.w,
-      y: vb.y + (e.deltaY / rect.height) * vb.h,
-    }));
-  }, []);
+  const handleWheel = useCallback(
+    (e: React.WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        const scale = e.deltaY > 0 ? 1.08 : 0.92;
+        moveView((vb) => {
+          const cx = vb.x + vb.w / 2;
+          const cy = vb.y + vb.h / 2;
+          const nw = Math.max(200, Math.min(2000, vb.w * scale));
+          const nh = Math.max(150, Math.min(1500, vb.h * scale));
+          return { x: cx - nw / 2, y: cy - nh / 2, w: nw, h: nh };
+        });
+        return;
+      }
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      moveView((vb) => ({
+        ...vb,
+        x: vb.x + (e.deltaX / rect.width) * vb.w,
+        y: vb.y + (e.deltaY / rect.height) * vb.h,
+      }));
+    },
+    [moveView],
+  );
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button === 0) dragRef.current = { x: e.clientX, y: e.clientY };
@@ -856,38 +934,47 @@ export function WorldMap({
       const dx = ((e.clientX - dragRef.current.x) / rect.width) * viewBox.w;
       const dy = ((e.clientY - dragRef.current.y) / rect.height) * viewBox.h;
       dragRef.current = { x: e.clientX, y: e.clientY };
-      setViewBox((vb) => ({ ...vb, x: vb.x - dx, y: vb.y - dy }));
+      moveView((vb) => ({ ...vb, x: vb.x - dx, y: vb.y - dy }));
     },
-    [viewBox.w, viewBox.h],
+    [viewBox.w, viewBox.h, moveView],
   );
 
   const handleMouseUp = useCallback(() => {
     dragRef.current = null;
   }, []);
 
-  const zoomBy = useCallback((scale: number) => {
-    setViewBox((vb) => {
-      const cx = vb.x + vb.w / 2;
-      const cy = vb.y + vb.h / 2;
-      const nw = Math.max(200, Math.min(2000, vb.w * scale));
-      const nh = Math.max(150, Math.min(1500, vb.h * scale));
-      return { x: cx - nw / 2, y: cy - nh / 2, w: nw, h: nh };
-    });
-  }, []);
+  const zoomBy = useCallback(
+    (scale: number) => {
+      moveView((vb) => {
+        const cx = vb.x + vb.w / 2;
+        const cy = vb.y + vb.h / 2;
+        const nw = Math.max(200, Math.min(2000, vb.w * scale));
+        const nh = Math.max(150, Math.min(1500, vb.h * scale));
+        return { x: cx - nw / 2, y: cy - nh / 2, w: nw, h: nh };
+      });
+    },
+    [moveView],
+  );
 
-  const panViewTo = useCallback((px: number, py: number) => {
-    setViewBox((vb) => ({
-      ...vb,
-      x: px - vb.w / 2,
-      y: py - vb.h / 2,
-    }));
-  }, []);
+  const panViewTo = useCallback(
+    (px: number, py: number) => {
+      moveView((vb) => ({
+        ...vb,
+        x: px - vb.w / 2,
+        y: py - vb.h / 2,
+      }));
+    },
+    [moveView],
+  );
 
   /** Pan by a fraction of the current view — a discrete, predictable step that
    *  scales with zoom, used by the compass buttons. */
-  const panBy = useCallback((fx: number, fy: number) => {
-    setViewBox((vb) => ({ ...vb, x: vb.x + vb.w * fx, y: vb.y + vb.h * fy }));
-  }, []);
+  const panBy = useCallback(
+    (fx: number, fy: number) => {
+      moveView((vb) => ({ ...vb, x: vb.x + vb.w * fx, y: vb.y + vb.h * fy }));
+    },
+    [moveView],
+  );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -898,7 +985,7 @@ export function WorldMap({
           if (e.shiftKey) {
             zoomBy(0.9);
           } else {
-            setViewBox((vb) => ({ ...vb, y: vb.y - PAN }));
+            moveView((vb) => ({ ...vb, y: vb.y - PAN }));
           }
           break;
         case "ArrowDown":
@@ -906,16 +993,16 @@ export function WorldMap({
           if (e.shiftKey) {
             zoomBy(1.1);
           } else {
-            setViewBox((vb) => ({ ...vb, y: vb.y + PAN }));
+            moveView((vb) => ({ ...vb, y: vb.y + PAN }));
           }
           break;
         case "ArrowLeft":
           e.preventDefault();
-          setViewBox((vb) => ({ ...vb, x: vb.x - PAN }));
+          moveView((vb) => ({ ...vb, x: vb.x - PAN }));
           break;
         case "ArrowRight":
           e.preventDefault();
-          setViewBox((vb) => ({ ...vb, x: vb.x + PAN }));
+          moveView((vb) => ({ ...vb, x: vb.x + PAN }));
           break;
         case "+":
         case "=":
@@ -928,7 +1015,7 @@ export function WorldMap({
           break;
         case "0":
           e.preventDefault();
-          setViewBox(DEFAULT_VIEWBOX);
+          resetView();
           break;
         case "Tab": {
           e.preventDefault();
@@ -960,7 +1047,16 @@ export function WorldMap({
           break;
       }
     },
-    [zoomBy, panViewTo, allPositions, highlightedRoom, selectRoom, selectedRoom],
+    [
+      zoomBy,
+      panViewTo,
+      allPositions,
+      highlightedRoom,
+      selectRoom,
+      selectedRoom,
+      resetView,
+      moveView,
+    ],
   );
 
   const isHub = (id: string) => id === startRoom;
@@ -982,7 +1078,7 @@ export function WorldMap({
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            setViewBox(DEFAULT_VIEWBOX);
+            resetView();
             setHighlightedRoom(null);
           }}
           className="text-text-dim transition-colors hover:text-primary"
@@ -1308,6 +1404,7 @@ export function WorldMap({
               return (
                 <RoomNode
                   svgPrefix={svgPrefix}
+                  unitsPerPx={unitsPerPx}
                   key={room.id}
                   room={room}
                   pop={pop}
@@ -1381,6 +1478,7 @@ export function WorldMap({
                 return (
                   <EntityDots
                     svgPrefix={svgPrefix}
+                    unitsPerPx={unitsPerPx}
                     key={roomId}
                     roomId={roomId}
                     entities={ents}
@@ -1483,7 +1581,7 @@ export function WorldMap({
             onZoomIn={() => zoomBy(0.85)}
             onZoomOut={() => zoomBy(1.15)}
             onRecenter={() => {
-              setViewBox(DEFAULT_VIEWBOX);
+              resetView();
               setHighlightedRoom(null);
             }}
           />

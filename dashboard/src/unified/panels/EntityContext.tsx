@@ -190,6 +190,9 @@ const EntityContextInner = memo(function EntityContextInner({
 }) {
   const isAgent = entity.kind === "agent";
   const isNpc = entity.kind === "npc";
+  // The server sends the public view to viewers who are not this entity, its
+  // owner or an operator; owner-scoped sections are not fetched for it.
+  const publicView = entity.private === false;
   const isRunning =
     !!agentStatus && agentStatus.state !== "stopped" && agentStatus.state !== "error";
   const loggedIn = useChatState((s) => s.loggedIn);
@@ -421,8 +424,17 @@ const EntityContextInner = memo(function EntityContextInner({
       </CascadeSection>
 
       {/* Compass — brief orientation for the entity */}
-      <CompassSection entityName={entity.name} />
-      <MediaSection entityName={entity.name} sendCommand={sendCommand} />
+      {publicView ? (
+        <p className="entity-public-note" style={{ padding: "6px 14px", opacity: 0.7 }}>
+          Public view: memory, notes and raw activity are visible to this entity, its owner and
+          operators.
+        </p>
+      ) : (
+        <>
+          <CompassSection entityName={entity.name} />
+          <MediaSection entityName={entity.name} sendCommand={sendCommand} />
+        </>
+      )}
 
       {/* Core Memory */}
       {entity.coreMemory && entity.coreMemory.length > 0 && (
@@ -507,12 +519,12 @@ const EntityContextInner = memo(function EntityContextInner({
       )}
 
       {/* Knowledge Graph */}
-      <KnowledgeGraphSection entityName={entity.name} />
+      {!publicView && <KnowledgeGraphSection entityName={entity.name} />}
 
       {/* Inventory */}
-      {entity.inventory.length > 0 && (
+      {(entity.inventory?.length ?? 0) > 0 && (
         <CascadeSection title="Inventory" defaultOpen={false}>
-          {entity.inventory.map((item) => (
+          {entity.inventory?.map((item) => (
             <div
               key={item}
               style={{

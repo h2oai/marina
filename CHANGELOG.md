@@ -195,6 +195,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A supervised resident's relayed commands name the message their turn answers: the owed item a command settles, else the latest message that woke the turn, so replies carry their reply depth. A turn the owner started directly stays depth 0.
 - `marina connect` reports a refused login (for example a name already in use) as the server's refusal, not as "Is Marina running?". The SDK types it as `LoginRefusedError`.
+- The dashboard entity card shows another account's entity in its public view (rank, role, presence, vendor, activity as type, time and command verb) instead of an empty 403; raw activity, full properties, inventory, core memory and notes stay with the entity, its owning person and operators, and the memory routes stay private-only.
+- The Map opens framed on the world's rooms, and its labels and thread marks keep at least an 11 px on-screen size at any zoom; reset view returns to the fitted frame.
 
 - **One crew member claims each endpoint request.** A `marina:<crew>` request is addressed to one
   member (`target`), but Marina's residents owed every `model_request` they perceived. With 4

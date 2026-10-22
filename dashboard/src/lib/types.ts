@@ -49,7 +49,12 @@ export interface EntityDetail {
   room: string;
   rank: number;
   properties: Record<string, unknown>;
-  inventory: string[];
+  /** Present only in the private view (self, owning person, operator). */
+  inventory?: string[];
+  /** False when the viewer gets the public view (rank, role, presence, activity verbs). */
+  private?: boolean;
+  /** Presence status (working, idle, blocked, needs_you, resting, offline). */
+  presence?: string;
   coreMemory?: CoreMemoryEntry[];
   notes?: NoteEntry[];
   recentActivity?: ActivityEntry[];
