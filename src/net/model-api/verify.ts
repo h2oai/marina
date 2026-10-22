@@ -29,7 +29,7 @@
 // this review; a revision is one call by the picked draft's proposer.
 
 import { availableModels } from "../../agent/available-models";
-import { strongRoleOverride } from "../../config/model-tiers";
+import { strongRoleOverride, type TierOutputCap, tierOutputCapFor } from "../../config/model-tiers";
 import { type DefaultSlotReader, resolveDefault } from "../../engine/default-resolution";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage, logRejection } from "../../engine/errors";
@@ -51,6 +51,7 @@ import type { RepairLabel } from "../../repair/output-repair";
 import { repairToolCallMessage } from "../../repair/tool-call-repair";
 import type { EntityId } from "../../types";
 import { getEndpointConfig } from "../model/model-endpoint";
+import { withTierOutputCap } from "../model/tier-output-cap";
 import { anthropicAutoCacheEnabled } from "./anthropic-bridge";
 import { joinNotes, lessonQuery, passthruEntityId } from "./passthru";
 import {
@@ -228,6 +229,7 @@ async function adjudicateDraft(
   issues: string,
   signal: AbortSignal | undefined,
   entityId: EntityId | undefined,
+  checkerCap?: TierOutputCap,
 ): Promise<{ result: ArbiterResult; costUsd: number; usage?: unknown }> {
   const policy = arbiterPolicyFromEnv();
   arbiterQuota ??= new ArbiterQuota(policy.cap);
@@ -255,6 +257,9 @@ async function adjudicateDraft(
         signal,
         "verify:arbiter",
         entityId,
+        undefined,
+        undefined,
+        override ? undefined : checkerCap,
       );
       costUsd += r.costUsd ?? 0;
       usage = r.body?.usage;
@@ -818,12 +823,20 @@ async function callUpstream(
   entityId?: EntityId,
   trailingNote?: string,
   noteScope?: string,
+  cap?: TierOutputCap,
 ): Promise<CallResult> {
+  // A cheap-tier member's cap, only where the call sets no limit of its own.
+  const capped = cap ? withTierOutputCap(body, cap, model.split("/")[0] ?? "") : undefined;
   const resp = await proxyToUpstream(
     engine,
-    { ...body, model, stream: false },
+    { ...(capped ?? body), model, stream: false },
     undefined,
-    { routeKind: "passthru", routeReason: reason, ...(entityId ? { entityId } : {}) },
+    {
+      routeKind: "passthru",
+      routeReason: reason,
+      ...(entityId ? { entityId } : {}),
+      ...(capped && cap ? { outputCap: cap.maxTokens } : {}),
+    },
     {
       clientSignal: signal,
       providerFallback: false,
@@ -885,16 +898,42 @@ export function addUsage(a: Usage | undefined, b: unknown): Usage | undefined {
   };
 }
 
+/** A verify member (proposer, checker) after the model tiers. */
+export interface TieredVerifyModel {
+  id: string;
+  /** The cheap tier's output cap, when the member was named `marina/cheap`. */
+  cap?: TierOutputCap;
+}
+
+/**
+ * A proposer or checker id through the model tiers, exactly like a top-level
+ * request: `marina/cheap` / `marina/strong` (and their bare and colon forms)
+ * become the tier's model now, and a cheap member carries the tier's output
+ * cap. Any other id is returned untouched.
+ */
+export function tieredVerifyModel(engine: Engine, id: string): TieredVerifyModel {
+  const resolved = tierRequestModel(engine, id);
+  if (!resolved) return { id };
+  const cap = tierOutputCapFor(id);
+  return { id: resolved, ...(cap ? { cap } : {}) };
+}
+
+/** Whether a verify member (a tier alias resolved first) names a reachable upstream. */
+function reachableMember(engine: Engine, id: string): boolean {
+  return !!explicitUpstreamModel(engine, tierRequestModel(engine, id) ?? id);
+}
+
 /** The proposer a `marina/verify:` id names (the same resolution the formation uses), if any. */
 export function verifyProposer(engine: Engine, model: string): string | undefined {
   const pin = verifyPin(engine);
-  return parseVerifyModel(
+  const proposer = parseVerifyModel(
     model,
     process.env,
     pin || undefined,
     pin ? undefined : engine.db,
-    (id) => !!explicitUpstreamModel(engine, id),
+    (id) => reachableMember(engine, id),
   )?.proposer;
+  return proposer === undefined ? undefined : tieredVerifyModel(engine, proposer).id;
 }
 
 /** What the passthru instrument stack adds around a verified request (`stack.ts`). */
@@ -923,6 +962,10 @@ export interface VerifyExtras {
   draft?: (input: VerifyDraftInput) => Promise<{ response: Response; proposer?: string }>;
   /** The model id reported back (default: the `marina/verify:` id). */
   displayModel?: string;
+  /** The cheap tier's cap for a proposer the caller reached through `marina/cheap`
+   *  before verify (the `verify` stack member); a `marina/cheap` member in the id
+   *  carries its own. */
+  proposerCap?: TierOutputCap;
 }
 
 /** What a draft source (`VerifyExtras.draft`) is given. */
@@ -939,6 +982,8 @@ export interface VerifyDraftInput {
   signal?: AbortSignal;
   /** The caller's sticky-note scope for the proposers' calls. */
   noteScope?: string;
+  /** The cheap tier's output cap for the proposer's drafts (a `marina/cheap` proposer). */
+  outputCap?: TierOutputCap;
 }
 
 /** An upstream (or draft source's) reply as one inner call's result. */
@@ -977,18 +1022,26 @@ export async function maybeVerifyChat(
   // every other id must be the pin (same policy as plain passthru).
   const pin = verifyPin(engine);
   // Under a pin every id must be the pin, so an earned checker slot is not consulted.
-  const spec = parseVerifyModel(
+  const named = parseVerifyModel(
     model,
     process.env,
     pin || undefined,
     pin ? undefined : engine.db,
-    (id) => !!explicitUpstreamModel(engine, id),
+    (id) => reachableMember(engine, id),
   );
-  if (!spec)
+  if (!named)
     return errorJson(
       400,
       `Malformed verify model id "${model}" (marina/verify:<proposer>[+<checker>])`,
     );
+  // `marina/cheap` / `marina/strong` members follow the model tiers like a
+  // top-level request; a cheap member gets the tier's output cap on every call
+  // it makes (only when the caller set no limit), with the hit traced.
+  const proposerTier = tieredVerifyModel(engine, named.proposer);
+  const checkerTier = tieredVerifyModel(engine, named.checker);
+  const spec = { proposer: proposerTier.id, checker: checkerTier.id };
+  const proposerCap = proposerTier.cap ?? extras.proposerCap;
+  const checkerCap = checkerTier.cap;
   if (pin) {
     const other = [spec.proposer, spec.checker].find((id) => id !== pin);
     if (other) {
@@ -1053,6 +1106,7 @@ export async function maybeVerifyChat(
     const source = await extras.draft({
       proposer: spec.proposer,
       checker: spec.checker,
+      ...(proposerCap ? { outputCap: proposerCap } : {}),
       ...(proposerNote ? { note: proposerNote } : {}),
       ...(checkerNotes ? { checkerNotes } : {}),
       ...(entityId ? { entityId } : {}),
@@ -1073,6 +1127,7 @@ export async function maybeVerifyChat(
       entityId,
       proposerNote,
       noteScope,
+      proposerCap,
     );
   }
   if (!first.ok || !first.body) {
@@ -1121,6 +1176,9 @@ export async function maybeVerifyChat(
         signal,
         "verify:checker",
         entityId,
+        undefined,
+        undefined,
+        checkerCap,
       );
       cost += review.costUsd ?? 0;
       usage = addUsage(usage, review.body?.usage);
@@ -1150,6 +1208,7 @@ export async function maybeVerifyChat(
           verdict.issues,
           signal,
           entityId,
+          checkerCap,
         );
         cost += judged.costUsd;
         usage = addUsage(usage, judged.usage);
@@ -1183,6 +1242,7 @@ export async function maybeVerifyChat(
       entityId,
       joinNotes(proposerNote, revisionNote(draft, verdict.issues, verdict.conflict)),
       noteScope,
+      proposer === spec.proposer ? proposerCap : undefined,
     ).catch(
       logRejection(log, "model-api", "verify: revision failed; keeping the draft", {
         level: "debug",
@@ -1232,6 +1292,9 @@ export async function maybeVerifyChat(
           signal,
           "verify:repair",
           entityId,
+          undefined,
+          undefined,
+          repairModel === spec.proposer ? proposerCap : undefined,
         );
         cost += r.costUsd ?? 0;
         usage = addUsage(usage, r.body?.usage);

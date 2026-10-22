@@ -429,3 +429,177 @@ describe("benchmark usage", () => {
     expect(summary).toMatchObject({ outputCapHits: 1, reasoningTokens: 16_000 });
   });
 });
+
+// ── marina/verify and the ensemble (OpenRouter and Anthropic mocked) ─────────
+
+describe("tier members inside marina/verify and the ensemble", () => {
+  let processState: DisposableStack | undefined;
+  let saved: Map<string, string | undefined>;
+  let originalFetch: typeof fetch;
+  let dir: string;
+  let db: MarinaDB;
+  let engine: Engine;
+  let calls: { url: string; body: Record<string, unknown> }[];
+  let proposerFinish: string;
+
+  const isChecker = (body: Record<string, unknown>) =>
+    JSON.stringify(body.messages ?? body.system ?? "").includes(
+      "You review an assistant's DRAFT",
+    ) || JSON.stringify(body.system ?? "").includes("You review an assistant's DRAFT");
+
+  beforeEach(() => {
+    using pending = scopeProcessState();
+    saved = new Map(
+      [...ENV, "MARINA_VERIFY_CHECKER_MODEL", "MARINA_VERIFY_ROUNDS", "MARINA_ENSEMBLE_SIZE"].map(
+        (k) => [k, process.env[k]],
+      ),
+    );
+    for (const k of saved.keys()) delete process.env[k];
+    process.env.MARINA_OPEN_API = "true";
+    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    process.env.ANTHROPIC_API_KEY = "test-anthropic-key";
+    process.env.MARINA_MODEL_TIER_CHEAP = `openrouter/${CHEAP}`;
+    process.env.MARINA_MODEL_TIER_STRONG = "openrouter/anthropic/claude-opus-5.5";
+    resetTrustProfileForTests();
+    resetTierOutputCapCountsForTests();
+    calls = [];
+    proposerFinish = "stop";
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      calls.push({ url, body });
+      const checker = isChecker(body);
+      const text = checker ? '{"verdict":"approve","issues":""}' : "Ray Charles";
+      if (url.includes("api.anthropic.com")) {
+        return Response.json({
+          id: "msg_1",
+          type: "message",
+          role: "assistant",
+          model: body.model,
+          content: [{ type: "text", text }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 20, output_tokens: 8 },
+        });
+      }
+      if (!url.includes("openrouter.ai")) throw new Error(`unexpected ${url}`);
+      const finish = checker ? "stop" : proposerFinish;
+      return Response.json({
+        id: "c1",
+        object: "chat.completion",
+        model: body.model,
+        choices: [
+          { index: 0, message: { role: "assistant", content: text }, finish_reason: finish },
+        ],
+        usage: { prompt_tokens: 20, completion_tokens: finish === "length" ? 16_384 : 8 },
+      });
+    }) as typeof fetch;
+    dir = mkdtempSync(join(tmpdir(), "cheap-cap-verify-"));
+    db = new MarinaDB(join(dir, "w.db"));
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+    engine.addConnection(new MockConnection("c1"));
+    engine.spawnEntity("c1", "Agent1");
+    processState = pending.move();
+  });
+
+  afterEach(async () => {
+    using _state = processState;
+    processState = undefined;
+    await engine.shutdown();
+    globalThis.fetch = originalFetch;
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+    resetTierOutputCapCountsForTests();
+  });
+
+  async function chat(model: string, headers: Record<string, string> = {}): Promise<Response> {
+    const url = new URL("http://localhost:3300/v1/chat/completions");
+    const req = new Request(url.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ model, messages: [{ role: "user", content: "Who sang it?" }] }),
+    });
+    const resp = await handleModelApi(url, "POST", req, engine);
+    if (!resp) throw new Error("no handler");
+    return resp;
+  }
+
+  type Lifecycle = Extract<EngineEvent, { type: "model_request_lifecycle" }>;
+  const completedFor = (reason: string): Lifecycle[] =>
+    engine
+      .getEventLog()
+      .filter(
+        (e): e is Lifecycle =>
+          e.type === "model_request_lifecycle" &&
+          e.phase === "completed" &&
+          e.routeReason === reason,
+      );
+
+  it("a marina/cheap proposer gets the tier model and its cap; an explicit checker is untouched", async () => {
+    proposerFinish = "length";
+    const resp = await chat("marina/verify:marina/cheap+anthropic/claude-opus-5-5");
+    expect(resp.status).toBe(200);
+    const proposer = calls.find((c) => c.url.includes("openrouter.ai"));
+    expect(proposer?.body).toMatchObject({
+      model: CHEAP,
+      max_tokens: 16_384,
+      reasoning: { max_tokens: REASONING_BUDGET },
+    });
+    expect(completedFor("verify:proposer").at(-1)).toMatchObject({
+      outputCap: 16_384,
+      outputCapHit: true,
+    });
+    // The checker, named explicitly, goes to Anthropic with no tier cap.
+    const checker = calls.find((c) => c.url.includes("api.anthropic.com"));
+    expect(checker?.body.model).toBe("claude-opus-5-5");
+    expect(checker?.body.max_tokens).not.toBe(16_384);
+    expect(checker?.body).not.toHaveProperty("reasoning");
+    expect(completedFor("verify:checker").at(-1)).not.toHaveProperty("outputCap");
+    expect(tierOutputCapCounts()).toEqual({ capped: 1, hits: 1 });
+  });
+
+  it("marina/strong inside verify resolves to the strong tier with no cap", async () => {
+    const resp = await chat("marina/verify:marina/strong");
+    expect(resp.status).toBe(200);
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const c of calls) {
+      expect(c.body.model).toBe("anthropic/claude-opus-5.5");
+      expect(c.body).not.toHaveProperty("max_tokens");
+      expect(c.body).not.toHaveProperty("reasoning");
+    }
+    expect(tierOutputCapCounts()).toEqual({ capped: 0, hits: 0 });
+  });
+
+  it("an explicit proposer id in a verify spec is untouched", async () => {
+    await chat(`marina/verify:openrouter/${CHEAP}+anthropic/claude-opus-5-5`);
+    const proposer = calls.find((c) => c.url.includes("openrouter.ai"));
+    expect(proposer?.body.model).toBe(CHEAP);
+    expect(proposer?.body).not.toHaveProperty("max_tokens");
+    expect(tierOutputCapCounts()).toEqual({ capped: 0, hits: 0 });
+  });
+
+  it("the ensemble's cheap drafts record a hit", async () => {
+    process.env.MARINA_ENSEMBLE_SIZE = "2";
+    proposerFinish = "length";
+    const resp = await chat("marina/cheap", { "x-marina-stack": "ensemble" });
+    expect(resp.status).toBe(200);
+    const drafts = calls.filter((c) => c.url.includes("openrouter.ai") && !isChecker(c.body));
+    expect(drafts.length).toBeGreaterThanOrEqual(2);
+    for (const d of drafts) expect(d.body).toMatchObject({ model: CHEAP, max_tokens: 16_384 });
+    const hits = engine
+      .getEventLog()
+      .filter(
+        (e) =>
+          e.type === "model_request_lifecycle" &&
+          e.phase === "completed" &&
+          e.routeReason?.startsWith("ensemble:proposer") &&
+          e.outputCapHit === true,
+      );
+    expect(hits).toHaveLength(drafts.length);
+  });
+});
