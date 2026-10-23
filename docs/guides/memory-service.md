@@ -229,7 +229,9 @@ The world server (`bun run start`) constructs the same providers from the enviro
 `ollama` requires `MARINA_MEMORY_EMBEDDING_MODEL`, `MARINA_MEMORY_EMBEDDING_REVISION` and
 optionally `MARINA_MEMORY_EMBEDDING_URL`, and `openai` (any OpenAI-compatible `/v1/embeddings`:
 the operator's existing provider or a local server) requires the URL, model and revision, with
-`MARINA_MEMORY_EMBEDDING_API_KEY` and an optional `MARINA_MEMORY_EMBEDDING_DIMENSIONS`. Unset or `none` keeps both memory silos lexical, and an
+`MARINA_MEMORY_EMBEDDING_API_KEY` and an optional `MARINA_MEMORY_EMBEDDING_DIMENSIONS`. Asymmetric embedders take
+`MARINA_MEMORY_EMBEDDING_QUERY_PREFIX` / `_DOCUMENT_PREFIX` (ollama, openai) and, for openai, `_INPUT_TYPE=<query>,<document>`
+(e.g. `query,passage`); changing the document side re-embeds records. Unset or `none` keeps both memory silos lexical, and an
 explicit `mode:"hybrid"` then fails with `503 retrieval_incomplete` (`semantic_not_configured`)
 rather than quietly returning lexical results. An invalid value fails on first memory use instead
 of degrading silently; a `local` configuration without the installed extension reports

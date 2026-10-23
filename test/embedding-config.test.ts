@@ -207,6 +207,107 @@ describe("openai-compatible embeddings", () => {
   });
 });
 
+describe("asymmetric embeddings (query vs document)", () => {
+  const recordingFetch = (calls: { input: string[]; input_type?: string }[]) =>
+    (async (_url: string | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      calls.push(body);
+      return new Response(
+        JSON.stringify({
+          data: body.input.map((_: string, index: number) => ({ index, embedding: [1, index] })),
+        }),
+      );
+    }) as typeof fetch;
+
+  it("prefixes each side and sends input_type; the document side alone keys the id", async () => {
+    const calls: { input: string[]; input_type?: string }[] = [];
+    const config = parseEmbeddingEnv({
+      [EMBEDDING_ENV.kind]: "openai",
+      [EMBEDDING_ENV.url]: "http://127.0.0.1:9/v1",
+      [EMBEDDING_ENV.model]: "nvidia/nemotron-3.5-embed-1b",
+      [EMBEDDING_ENV.revision]: "r",
+      [EMBEDDING_ENV.queryPrefix]: "Instruct: find it\\nQuery: ",
+      [EMBEDDING_ENV.documentPrefix]: "passage: ",
+      [EMBEDDING_ENV.inputType]: "query, passage",
+    });
+    expect(config).toMatchObject({
+      queryPrefix: "Instruct: find it\nQuery: ",
+      documentPrefix: "passage: ",
+      inputType: { query: "query", document: "passage" },
+    });
+    const provider = openAIEmbeddings({
+      ...(config as Extract<typeof config, { kind: "openai" }>),
+      baseUrl: "http://127.0.0.1:9/v1",
+      fetch: recordingFetch(calls),
+    });
+    await provider.embed("who?", undefined, "query");
+    await provider.embedBatch!(["doc a", "doc b"]);
+    expect(calls).toEqual([
+      expect.objectContaining({ input: ["Instruct: find it\nQuery: who?"], input_type: "query" }),
+      expect.objectContaining({
+        input: ["passage: doc a", "passage: doc b"],
+        input_type: "passage",
+      }),
+    ]);
+    expect(provider.id).toBe(embeddingProviderId(config)!);
+    expect(provider.id).toMatch(/^openai:nvidia\/nemotron-3\.5-embed-1b@r:doc-[0-9a-f]{12}-v1$/);
+    // A query prefix alone leaves stored vectors (and so the id) unchanged.
+    const queryOnly = parseEmbeddingEnv({
+      [EMBEDDING_ENV.kind]: "openai",
+      [EMBEDDING_ENV.url]: "http://x/v1",
+      [EMBEDDING_ENV.model]: "m",
+      [EMBEDDING_ENV.revision]: "r",
+      [EMBEDDING_ENV.queryPrefix]: "query: ",
+    });
+    expect(embeddingProviderId(queryOnly)).toBe("openai:m@r:raw-v1");
+  });
+
+  it("stays byte-identical with no configuration, and keeps the prefix past the input cap", async () => {
+    const calls: { input: string[]; input_type?: string }[] = [];
+    const plain = openAIEmbeddings({
+      baseUrl: "http://127.0.0.1:9/v1",
+      model: "m",
+      revision: "r",
+      fetch: recordingFetch(calls),
+    });
+    await plain.embed("q", undefined, "query");
+    expect(calls[0]).toEqual({ model: "m", input: ["q"] } as never);
+    const capped = openAIEmbeddings({
+      baseUrl: "http://127.0.0.1:9/v1",
+      model: "m",
+      revision: "r",
+      documentPrefix: "passage: ",
+      maxInputTokens: 2,
+      fetch: recordingFetch(calls),
+    });
+    await capped.embed("x".repeat(100));
+    expect(calls[1]!.input[0]).toBe(`passage: ${"x".repeat(6)}`);
+  });
+
+  it("refuses input_type for ollama and a malformed pair", () => {
+    const ollama = {
+      [EMBEDDING_ENV.kind]: "ollama",
+      [EMBEDDING_ENV.model]: "m",
+      [EMBEDDING_ENV.revision]: "r",
+    };
+    expect(() => parseEmbeddingEnv({ ...ollama, [EMBEDDING_ENV.inputType]: "q,d" })).toThrow(
+      /only to MARINA_MEMORY_EMBEDDINGS=openai/,
+    );
+    expect(
+      parseEmbeddingEnv({ ...ollama, [EMBEDDING_ENV.documentPrefix]: "search_document: " }),
+    ).toMatchObject({ documentPrefix: "search_document: " });
+    expect(() =>
+      parseEmbeddingEnv({
+        [EMBEDDING_ENV.kind]: "openai",
+        [EMBEDDING_ENV.url]: "http://x/v1",
+        [EMBEDDING_ENV.model]: "m",
+        [EMBEDDING_ENV.revision]: "r",
+        [EMBEDDING_ENV.inputType]: "query",
+      }),
+    ).toThrow(/<query value>,<document value>/);
+  });
+});
+
 describe("embedding provider ids", () => {
   it("derives the ollama id identically to the provider", () => {
     const config = {

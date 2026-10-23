@@ -192,6 +192,7 @@ export async function embedCorpus(
         provider,
         rows.map((r) => embeddingText(r.title, r.text, maxChars)),
         opts.signal,
+        "document",
       );
       if (dims === undefined) dims = vectors[0]!.length;
       const info = {
@@ -371,7 +372,7 @@ export async function queryVector(
   const key = `${provider.id}\u0000${text}`;
   const hit = queryVectors.get(key);
   if (hit) return hit;
-  const v = await provider.embed(text, signal);
+  const v = await provider.embed(text, signal, "query");
   queryVectors.set(key, v);
   while (queryVectors.size > QUERY_VECTORS_KEPT)
     queryVectors.delete(queryVectors.keys().next().value!);

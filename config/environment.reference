@@ -751,6 +751,11 @@
 # Per-input cap for remote corpus embeddings, in estimated tokens (UTF-8 bytes / 3): longer inputs are cut to their head before they are embedded (default 8192; 0 = no cap), as MARINA_MEMORY_EMBEDDING_MAX_TOKENS.
 # MARINA_CORPUS_EMBEDDING_MAX_TOKENS=8192
 
+# Asymmetric corpus embedders, as the MARINA_MEMORY_EMBEDDING_ variables of the same names: QUERY_PREFIX for searches (applied after a corpus's own `--query-prefix`), DOCUMENT_PREFIX for `corpus embed`, and for openai INPUT_TYPE "<query value>,<document value>". The document side is part of the provider id, so a corpus embedded without it keeps its vectors and is reported as a different model.
+# MARINA_CORPUS_EMBEDDING_QUERY_PREFIX=
+# MARINA_CORPUS_EMBEDDING_DOCUMENT_PREFIX=
+# MARINA_CORPUS_EMBEDDING_INPUT_TYPE=
+
 # Hybrid corpus search: weight of the dense ranking in the reciprocal-rank fusion (the BM25 ranking weighs 1). Each ranking contributes its top 1,000.
 # MARINA_CORPUS_HYBRID_WEIGHT=2
 
@@ -1231,6 +1236,12 @@
 # @restart
 # MARINA_MEMORY_EMBEDDING_API_KEY=
 # MARINA_MEMORY_EMBEDDING_DIMENSIONS=
+
+# Asymmetric memory embedders (ollama, openai): text prepended to searches (QUERY_PREFIX) and to stored records (DOCUMENT_PREFIX), and for openai the server's `input_type` as "<query value>,<document value>" (NVIDIA Nemotron `query,passage`, Cohere `search_query,search_document`, Voyage `query,document`). A literal \n in a prefix is a newline (instruct prefixes). Unset = both sides embedded the same way, as before. The document side is part of the provider id, so changing it re-embeds records instead of mixing vectors; the query prefix never does.
+# @restart
+# MARINA_MEMORY_EMBEDDING_QUERY_PREFIX=
+# MARINA_MEMORY_EMBEDDING_DOCUMENT_PREFIX=
+# MARINA_MEMORY_EMBEDDING_INPUT_TYPE=
 
 # Per-input cap for remote memory embeddings (ollama, openai), in estimated tokens (UTF-8 bytes / 3, rounded up): a longer record is cut to its head before it is embedded, and its index job is labelled `input_truncated`; a provider that still rejects an input as too long gets it once more at half the length. Default 8192; set it below the model's own context (e.g. 32768 for a 40,960-token embedder); 0 = no cap. The local MiniLM extension chunks its input itself.
 # @restart

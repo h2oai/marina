@@ -6,12 +6,25 @@ import { MemoryError } from "./service-types";
 
 const logger = new Logger();
 
+/**
+ * Which side of a retrieval a text is on. Asymmetric embedders (E5, BGE,
+ * Qwen3-Embedding, Nemotron) are trained with a different prefix or
+ * `input_type` for searches and for the documents searched; a provider with
+ * no such configuration embeds both the same way.
+ */
+export type EmbeddingRole = "query" | "document";
+
 export interface EmbeddingProvider {
   /** Include the immutable model revision and preprocessing version. */
   id: string;
-  embed(text: string, signal?: AbortSignal): Promise<number[]>;
+  /** `role` defaults to `document` (what stored vectors are made from). */
+  embed(text: string, signal?: AbortSignal, role?: EmbeddingRole): Promise<number[]>;
   /** Several texts in one request, in order (bulk indexing). Absent ⇒ callers loop over `embed`. */
-  embedBatch?(texts: readonly string[], signal?: AbortSignal): Promise<number[][]>;
+  embedBatch?(
+    texts: readonly string[],
+    signal?: AbortSignal,
+    role?: EmbeddingRole,
+  ): Promise<number[][]>;
   /**
    * The most (estimated) tokens one input may carry; longer inputs are cut to
    * it before they are sent (`truncateEmbeddingInput`). Absent ⇒ no limit
@@ -79,14 +92,46 @@ export async function embedMany(
   provider: EmbeddingProvider,
   texts: readonly string[],
   signal?: AbortSignal,
+  role?: EmbeddingRole,
 ): Promise<number[][]> {
-  if (provider.embedBatch) return provider.embedBatch(texts, signal);
+  if (provider.embedBatch) return provider.embedBatch(texts, signal, role);
   const out: number[][] = [];
-  for (const text of texts) out.push(await provider.embed(text, signal));
+  for (const text of texts) out.push(await provider.embed(text, signal, role));
   return out;
 }
 
-export interface OpenAIEmbeddingOptions {
+/**
+ * Per-role input preparation for an asymmetric embedder. Prefixes are
+ * prepended verbatim (`"query: "`, an instruct line); `inputType` sends the
+ * server's `input_type` field (NVIDIA `query`/`passage`, Cohere
+ * `search_query`/`search_document`, Voyage `query`/`document`).
+ */
+export interface EmbeddingPreprocessing {
+  queryPrefix?: string;
+  documentPrefix?: string;
+  inputType?: { query: string; document: string };
+}
+
+/**
+ * The preprocessing part of a provider id. Only the document side changes the
+ * vectors that are stored, so only it changes the id: no document prefix and
+ * no input type ⇒ `raw-v1`, exactly the id before roles existed, and a new
+ * query prefix never invalidates an index.
+ */
+export function embeddingPreprocessingTag(p: EmbeddingPreprocessing = {}): string {
+  if (!p.documentPrefix && !p.inputType) return "raw-v1";
+  const hash = new Bun.CryptoHasher("sha256")
+    .update(JSON.stringify([p.documentPrefix ?? "", p.inputType?.document ?? ""]))
+    .digest("hex")
+    .slice(0, 12);
+  return `doc-${hash}-v1`;
+}
+
+function rolePrefix(p: EmbeddingPreprocessing, role: EmbeddingRole): string {
+  return (role === "query" ? p.queryPrefix : p.documentPrefix) ?? "";
+}
+
+export interface OpenAIEmbeddingOptions extends EmbeddingPreprocessing {
   /** Base URL up to and including `/v1` (e.g. https://openrouter.ai/api/v1, http://127.0.0.1:8080/v1). */
   baseUrl: string;
   model: string;
@@ -118,8 +163,14 @@ export function openAIEmbeddings(opts: OpenAIEmbeddingOptions): EmbeddingProvide
     throw new Error("An embedding model and immutable revision are required");
   const doFetch = opts.fetch ?? fetch;
   const maxInputTokens = opts.maxInputTokens ?? DEFAULT_EMBEDDING_MAX_INPUT_TOKENS;
-  const embedBatch = async (texts: readonly string[], signal?: AbortSignal) => {
+  const embedBatch = async (
+    texts: readonly string[],
+    signal?: AbortSignal,
+    role: EmbeddingRole = "document",
+  ) => {
     if (texts.length === 0) return [];
+    // The cap applies to the content; the prefix is added after the cut so it is never lost.
+    const prefix = rolePrefix(opts, role);
     const inputs = texts.map((text) => truncateEmbeddingInput(text, maxInputTokens));
     const cut = inputs.filter((input) => input.truncated).length;
     if (cut > 0)
@@ -130,14 +181,16 @@ export function openAIEmbeddings(opts: OpenAIEmbeddingOptions): EmbeddingProvide
       });
     try {
       return await request(
-        inputs.map((input) => input.text),
+        inputs.map((input) => prefix + input.text),
         signal,
+        role,
       );
     } catch (error) {
       if (!(error instanceof TooLong)) throw error;
       // The estimate was short for this tokenizer: once more at half the length, labelled.
       const halved = inputs.map(
         (input) =>
+          prefix +
           truncateEmbeddingInput(input.text, Math.floor(estimateEmbeddingTokens(input.text) / 2))
             .text,
       );
@@ -145,10 +198,14 @@ export function openAIEmbeddings(opts: OpenAIEmbeddingOptions): EmbeddingProvide
         inputs: halved.length,
         maxInputTokens,
       });
-      return request(halved, signal);
+      return request(halved, signal, role);
     }
   };
-  const request = async (texts: readonly string[], signal?: AbortSignal) => {
+  const request = async (
+    texts: readonly string[],
+    signal: AbortSignal | undefined,
+    role: EmbeddingRole,
+  ) => {
     const refused = opts.refuse?.();
     if (refused) throw new MemoryError(429, "embedding_unavailable", refused);
     const response = await doFetch(new URL("embeddings", base), {
@@ -161,6 +218,7 @@ export function openAIEmbeddings(opts: OpenAIEmbeddingOptions): EmbeddingProvide
         model: opts.model,
         input: texts,
         ...(opts.dimensions ? { dimensions: opts.dimensions } : {}),
+        ...(opts.inputType ? { input_type: opts.inputType[role] } : {}),
       }),
       signal: AbortSignal.any([
         AbortSignal.timeout(opts.timeoutMs ?? 60_000),
@@ -199,9 +257,9 @@ export function openAIEmbeddings(opts: OpenAIEmbeddingOptions): EmbeddingProvide
     return vectors as number[][];
   };
   return {
-    id: `openai:${opts.model}@${opts.revision}${opts.dimensions ? `:d${opts.dimensions}` : ""}:raw-v1`,
-    async embed(text, signal) {
-      const [vector] = await embedBatch([text], signal);
+    id: `openai:${opts.model}@${opts.revision}${opts.dimensions ? `:d${opts.dimensions}` : ""}:${embeddingPreprocessingTag(opts)}`,
+    async embed(text, signal, role) {
+      const [vector] = await embedBatch([text], signal, role);
       return vector!;
     },
     embedBatch,
@@ -233,6 +291,7 @@ export function ollamaEmbeddings(
   model: string,
   revision: string,
   maxInputTokens = DEFAULT_EMBEDDING_MAX_INPUT_TOKENS,
+  preprocessing: Omit<EmbeddingPreprocessing, "inputType"> = {},
 ): EmbeddingProvider {
   const base = new URL(baseUrl);
   if (!["http:", "https:"].includes(base.protocol) || base.username || base.password)
@@ -240,15 +299,16 @@ export function ollamaEmbeddings(
   if (!model || !revision)
     throw new Error("An embedding model and immutable revision are required");
   return {
-    id: `ollama:${model}@${revision}:raw-v1`,
+    id: `ollama:${model}@${revision}:${embeddingPreprocessingTag(preprocessing)}`,
     ...(maxInputTokens > 0 ? { maxInputTokens } : {}),
-    async embed(text, signal) {
+    async embed(text, signal, role = "document") {
       const response = await fetch(new URL("/api/embed", base), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model,
-          input: truncateEmbeddingInput(text, maxInputTokens).text,
+          input:
+            rolePrefix(preprocessing, role) + truncateEmbeddingInput(text, maxInputTokens).text,
           truncate: false,
         }),
         signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]),
