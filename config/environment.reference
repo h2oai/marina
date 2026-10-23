@@ -739,10 +739,10 @@
 # MARINA_RESEARCH_MAX_PAGES=14
 # MARINA_RESEARCH_PASSAGE_CHARS=
 
-# Optional cross-encoder reranker for research retrieval (the read swarm's opening pool and the pages a research brief reads, `web swarm` included): one call scores every document against the question, in place of the decision-backend judge or the reader model's listwise rerank. Unset (default) changes nothing — retrieval stays lexical with the model rerank Marina already runs. URL is the full endpoint and MODEL its model; FORMAT `rerank` (default: Cohere / Jina / vLLM `/rerank` / DeepInfra / OpenRouter shape — `{model, query, documents}` → `results[].relevance_score`) or `nvidia` (NVIDIA's hosted `/reranking`, e.g. Nemotron Rerank — `{model, query: {text}, passages}` → `rankings[].logit`). Any failure keeps the incoming order. Refused at the daily spend cap; a reported `usage.cost` is recorded as `search`.
+# Optional cross-encoder reranker for research retrieval (the read swarm's opening pool and the pages a research brief reads, `web swarm` included): one call scores every document against the question, in place of the decision-backend judge or the reader model's listwise rerank. Unset (default) changes nothing — retrieval stays lexical with the model rerank Marina already runs. MODEL turns it on, and switching rerankers is changing MODEL (per call: `web swarm rerank:<model>|off`). URL is the full endpoint, default OpenRouter's https://openrouter.ai/api/v1/rerank (Cohere, Voyage, Qwen and Nemotron rerankers behind one key — subject to the account's allowed providers); FORMAT `rerank` (default: Cohere / Jina / vLLM `/rerank` / DeepInfra / OpenRouter shape — `{model, query, documents}` → `results[].relevance_score`) or `nvidia` (NVIDIA's hosted `/reranking`, e.g. Nemotron Rerank — `{model, query: {text}, passages}` → `rankings[].logit`). API_KEY, else the endpoint vendor's own key (OPENROUTER_API_KEY, COHERE_API_KEY, VOYAGE_API_KEY, JINA_API_KEY, TOGETHER_API_KEY, DEEPINFRA_API_KEY or NVIDIA_API_KEY for that vendor's host only). Any failure keeps the incoming order. Refused at the daily spend cap; a reported `usage.cost` is recorded as `search`.
 # @protected
-# MARINA_RERANK_URL=
 # MARINA_RERANK_MODEL=
+# MARINA_RERANK_URL=https://openrouter.ai/api/v1/rerank
 # MARINA_RERANK_FORMAT=rerank
 # MARINA_RERANK_API_KEY=
 

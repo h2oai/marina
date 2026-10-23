@@ -135,7 +135,9 @@ Usage:
   web swarm [engines:<a,b>] [docs:N] <q>    — split the question into clues, search each, and
                                               have reader models read the best pages in full:
                                               a candidate table with verified quotes (off unless
-                                              the operator sets MARINA_READ_SWARM_READER)`,
+                                              the operator sets MARINA_READ_SWARM_READER);
+                                              rerank:<model> tries another cross-encoder on the
+                                              operator's rerank endpoint, rerank:off skips it`,
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

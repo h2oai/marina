@@ -9246,7 +9246,9 @@ Usage:
   web swarm [engines:<a,b>] [docs:N] <q>    — split the question into clues, search each, and
                                               have reader models read the best pages in full:
                                               a candidate table with verified quotes (off unless
-                                              the operator sets MARINA_READ_SWARM_READER)
+                                              the operator sets MARINA_READ_SWARM_READER);
+                                              rerank:<model> tries another cross-encoder on the
+                                              operator's rerank endpoint, rerank:off skips it
 
 Category: Information. Minimum rank: 0.
 Aliases: none.
@@ -9316,15 +9318,18 @@ Effect: read.
 
 - `field-0` (`query`): text, required.
 
-### `web swarm [engines:<a,b>] [docs:N] <question>`
+### `web swarm [engines:<a,b>] [docs:N] [rerank:<model>|off] <question>`
 
 Effect: execute.
 
 - `field-0` (`engines`): text, optional group `option-0`.
 - `field-1` (`docs`): number, optional group `option-1`.
-- `field-2` (`question`): text, required.
+- `field-2` (`rerank`): text, optional group `option-2`.
+- `field-3` (`|off`): choice, optional group `option-2`.
+- `field-4` (`question`): text, required.
 - Group `option-0`: `engines:a,b`.
 - Group `option-1`: `docs:N`.
+- Group `option-2`: `rerank:model|off`.
 
 ### `web swarm engines:corpus:<name> <question>`
 
