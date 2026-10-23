@@ -257,7 +257,7 @@ The live qualification knobs (`MARINA_FLYWHEEL_LIVE_*`) are in
 [Release qualification](release-qualification.md#script-knobs). Start with `code doctor`, then
 `code sandbox status`. Configuration alone never changes a coding
 session from local to Flywheel, and a Flywheel failure never retries a sandbox command on the host.
-See [Coding](coding.md) and [Flywheel integration](../integrations/flywheel.md).
+See [Coding](coding.md), [Flywheel integration](../integrations/flywheel.md) and [OpenShell sandboxes](../integrations/openshell.md) (experimental).
 
 ### Drop-in Compatibility (Passthru)
 

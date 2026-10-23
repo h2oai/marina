@@ -223,6 +223,13 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/net/instance-lifecycle.ts",
   },
   {
+    name: "OpenShell sandbox provider",
+    status: "experimental",
+    enable:
+      "`MARINA_OPENSHELL_URL` + mTLS bundle against an operator-run gateway; `code sandbox use openshell`",
+    owner: "src/integrations/openshell",
+  },
+  {
     name: "Shared spend ledger",
     status: "experimental",
     enable: "`MARINA_SPEND_LEDGER=<path>`",

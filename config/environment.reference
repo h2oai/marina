@@ -653,6 +653,17 @@
 # MARINA_CODE_DELIVERY_MAX_FILE_BYTES=1073741824
 # MARINA_CODE_DELIVERY_MAX_TOTAL_BYTES=4294967296
 
+# ── OpenShell sandboxes (experimental) ─────────────────────────────────────
+
+# NVIDIA OpenShell as a sandbox provider (`code sandbox use openshell`), against a gateway the operator already runs — Marina never installs one (its installer adds a system service). URL is the gateway (https, mutual TLS); CA / CERT / KEY are file paths to the gateway's client bundle; WORKSPACE is the OpenShell workspace (default `default`); IMAGE the sandbox image (default: the gateway's). OpenShell enforces network policy per program inside each sandbox; a request it holds becomes a Marina challenge, and a person's approval approves that rule in OpenShell. Set OPENSHELL_TELEMETRY_ENABLED=false on the gateway. Unset URL: OpenShell is off.
+# @restart
+# MARINA_OPENSHELL_URL=
+# MARINA_OPENSHELL_CA=
+# MARINA_OPENSHELL_CERT=
+# MARINA_OPENSHELL_KEY=
+# MARINA_OPENSHELL_WORKSPACE=default
+# MARINA_OPENSHELL_IMAGE=
+
 # ── Flywheel sandboxes ───────────────────────────────────────────────────────
 
 # Flywheel isolated execution: the operator token (kept server-side; Marina mints short-lived per-entity capabilities), RPC endpoint and guest image. Unset token disables Flywheel.
