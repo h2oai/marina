@@ -451,7 +451,7 @@ export class MemoryService {
           estimatedTokens: input.estimatedTokens,
           maxInputTokens: embeddings.maxInputTokens,
         });
-      const vector = await embeddings.embed(input.text);
+      const vector = await embeddings.embed(input.text, undefined, "document");
       if (!validEmbedding(vector))
         throw new MemoryError(502, "invalid_embedding", "Invalid embedding");
       return this.repository.finishJob(
@@ -522,7 +522,10 @@ export class MemoryService {
       else {
         try {
           const provider = this.embeddings;
-          queryVector = await withMemoryAbort(() => provider.embed(input.query, signal), signal);
+          queryVector = await withMemoryAbort(
+            () => provider.embed(input.query, signal, "query"),
+            signal,
+          );
           if (!validEmbedding(queryVector)) throw new Error("Invalid vector");
         } catch {
           signal?.throwIfAborted();

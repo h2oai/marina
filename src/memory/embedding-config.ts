@@ -11,7 +11,9 @@
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import {
   DEFAULT_EMBEDDING_MAX_INPUT_TOKENS,
+  type EmbeddingPreprocessing,
   type EmbeddingProvider,
+  embeddingPreprocessingTag,
   embedMany,
   ollamaEmbeddings,
   openAIEmbeddings,
@@ -25,8 +27,14 @@ export type EmbeddingKind = (typeof EMBEDDING_KINDS)[number];
 export type EmbeddingConfig =
   | { kind: "none" }
   | { kind: "local"; cacheDirectory: string; localOnly: boolean }
-  | { kind: "ollama"; url: string; model: string; revision: string; maxInputTokens?: number }
-  | {
+  | ({
+      kind: "ollama";
+      url: string;
+      model: string;
+      revision: string;
+      maxInputTokens?: number;
+    } & Omit<EmbeddingPreprocessing, "inputType">)
+  | ({
       kind: "openai";
       url: string;
       model: string;
@@ -35,7 +43,7 @@ export type EmbeddingConfig =
       dimensions?: number;
       /** Per-input cap in estimated tokens (default `DEFAULT_EMBEDDING_MAX_INPUT_TOKENS`). */
       maxInputTokens?: number;
-    };
+    } & EmbeddingPreprocessing);
 
 /** Must equal the id the extension constructs; verified when the provider loads. */
 export const LOCAL_EMBEDDING_PROVIDER_ID =
@@ -52,6 +60,9 @@ export interface EmbeddingEnvNames {
   apiKey: string;
   dimensions: string;
   maxTokens: string;
+  queryPrefix: string;
+  documentPrefix: string;
+  inputType: string;
 }
 
 /** Durable memory (`MemoryService`). */
@@ -65,6 +76,9 @@ export const EMBEDDING_ENV = {
   apiKey: "MARINA_MEMORY_EMBEDDING_API_KEY",
   dimensions: "MARINA_MEMORY_EMBEDDING_DIMENSIONS",
   maxTokens: "MARINA_MEMORY_EMBEDDING_MAX_TOKENS",
+  queryPrefix: "MARINA_MEMORY_EMBEDDING_QUERY_PREFIX",
+  documentPrefix: "MARINA_MEMORY_EMBEDDING_DOCUMENT_PREFIX",
+  inputType: "MARINA_MEMORY_EMBEDDING_INPUT_TYPE",
 } as const satisfies EmbeddingEnvNames;
 
 /** Local corpora (`src/engine/search-providers/corpus.ts`): query embeddings for hybrid search. */
@@ -78,6 +92,9 @@ export const CORPUS_EMBEDDING_ENV = {
   apiKey: "MARINA_CORPUS_EMBEDDING_API_KEY",
   dimensions: "MARINA_CORPUS_EMBEDDING_DIMENSIONS",
   maxTokens: "MARINA_CORPUS_EMBEDDING_MAX_TOKENS",
+  queryPrefix: "MARINA_CORPUS_EMBEDDING_QUERY_PREFIX",
+  documentPrefix: "MARINA_CORPUS_EMBEDDING_DOCUMENT_PREFIX",
+  inputType: "MARINA_CORPUS_EMBEDDING_INPUT_TYPE",
 } as const satisfies EmbeddingEnvNames;
 
 const DEFAULT_MODEL_CACHE = "data/memory-models";
@@ -88,6 +105,39 @@ const read = (env: Env, key: string) => {
   const value = env[key]?.trim();
   return value ? value : undefined;
 };
+
+/** A prefix as written, with a literal `\n` read as a newline (instruct prefixes span lines). */
+const readPrefix = (env: Env, key: string) => {
+  const value = env[key];
+  return value ? value.replaceAll("\\n", "\n") : undefined;
+};
+
+/** Query/document prefixes and `input_type` (`<query>,<document>`, e.g. `query,passage`). */
+function parsePreprocessing(
+  env: Env,
+  names: EmbeddingEnvNames,
+  kind: "ollama" | "openai",
+): EmbeddingPreprocessing {
+  const queryPrefix = readPrefix(env, names.queryPrefix);
+  const documentPrefix = readPrefix(env, names.documentPrefix);
+  const rawInputType = read(env, names.inputType);
+  let inputType: EmbeddingPreprocessing["inputType"];
+  if (rawInputType !== undefined) {
+    if (kind !== "openai")
+      throw new Error(`${names.inputType} applies only to ${names.kind}=openai`);
+    const parts = rawInputType.split(",").map((part) => part.trim());
+    if (parts.length !== 2 || !parts[0] || !parts[1])
+      throw new Error(
+        `${names.inputType} must be "<query value>,<document value>" (e.g. query,passage)`,
+      );
+    inputType = { query: parts[0], document: parts[1] };
+  }
+  return {
+    ...(queryPrefix ? { queryPrefix } : {}),
+    ...(documentPrefix ? { documentPrefix } : {}),
+    ...(inputType ? { inputType } : {}),
+  };
+}
 
 /** Parse (never construct) the configuration. Throws on invalid values so a
  *  typo in `MARINA_MEMORY_EMBEDDINGS` is loud rather than silently lexical. */
@@ -127,6 +177,7 @@ export function parseEmbeddingEnv(
       model,
       revision,
       ...max,
+      ...parsePreprocessing(env, names, "ollama"),
     };
   // openai: any OpenAI-compatible /v1/embeddings the operator names — no default vendor.
   const url = read(env, names.url);
@@ -147,6 +198,7 @@ export function parseEmbeddingEnv(
     ...(apiKey ? { apiKey } : {}),
     ...(dimensions ? { dimensions } : {}),
     ...max,
+    ...parsePreprocessing(env, names, "openai"),
   };
 }
 
@@ -170,6 +222,7 @@ export async function embeddingProviderFromConfig(
       config.model,
       config.revision,
       config.maxInputTokens ?? DEFAULT_EMBEDDING_MAX_INPUT_TOKENS,
+      preprocessingOf(config),
     );
   if (config.kind === "openai")
     return openAIEmbeddings({
@@ -179,6 +232,7 @@ export async function embeddingProviderFromConfig(
       ...(config.apiKey ? { apiKey: config.apiKey } : {}),
       ...(config.dimensions ? { dimensions: config.dimensions } : {}),
       ...(config.maxInputTokens === undefined ? {} : { maxInputTokens: config.maxInputTokens }),
+      ...preprocessingOf(config),
       // A paid embedding is a retrieval call: the daily cap refuses it, and the
       // cost the provider reports joins the ledger as `search`.
       refuse: () => dailyCapRefusal(),
@@ -229,11 +283,11 @@ export function lazyEmbeddingProvider(
   return {
     id,
     ...(maxInputTokens ? { maxInputTokens } : {}),
-    async embed(text, signal) {
-      return (await loaded()).embed(text, signal);
+    async embed(text, signal, role) {
+      return (await loaded()).embed(text, signal, role);
     },
-    async embedBatch(texts, signal) {
-      return embedMany(await loaded(), texts, signal);
+    async embedBatch(texts, signal, role) {
+      return embedMany(await loaded(), texts, signal, role);
     },
   };
 }
@@ -249,7 +303,17 @@ export function embeddingMaxInputTokens(config: EmbeddingConfig): number | undef
 export function embeddingProviderId(config: EmbeddingConfig): string | undefined {
   if (config.kind === "none") return undefined;
   if (config.kind === "local") return LOCAL_EMBEDDING_PROVIDER_ID;
+  const tag = embeddingPreprocessingTag(preprocessingOf(config));
   if (config.kind === "openai")
-    return `openai:${config.model}@${config.revision}${config.dimensions ? `:d${config.dimensions}` : ""}:raw-v1`;
-  return `ollama:${config.model}@${config.revision}:raw-v1`;
+    return `openai:${config.model}@${config.revision}${config.dimensions ? `:d${config.dimensions}` : ""}:${tag}`;
+  return `ollama:${config.model}@${config.revision}:${tag}`;
+}
+
+function preprocessingOf(config: EmbeddingConfig): EmbeddingPreprocessing {
+  if (config.kind !== "openai" && config.kind !== "ollama") return {};
+  return {
+    ...(config.queryPrefix ? { queryPrefix: config.queryPrefix } : {}),
+    ...(config.documentPrefix ? { documentPrefix: config.documentPrefix } : {}),
+    ...(config.kind === "openai" && config.inputType ? { inputType: config.inputType } : {}),
+  };
 }
