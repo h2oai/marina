@@ -111,6 +111,16 @@ if (values.embeddings !== "none") {
               ...(config.dimensions
                 ? { [EMBEDDING_ENV.dimensions]: String(config.dimensions) }
                 : {}),
+              // Asymmetric models: the memory service must embed each side as the provider did.
+              ...(config.queryPrefix ? { [EMBEDDING_ENV.queryPrefix]: config.queryPrefix } : {}),
+              ...(config.documentPrefix
+                ? { [EMBEDDING_ENV.documentPrefix]: config.documentPrefix }
+                : {}),
+              ...(config.inputType
+                ? {
+                    [EMBEDDING_ENV.inputType]: `${config.inputType.query},${config.inputType.document}`,
+                  }
+                : {}),
             }
           : config.kind === "none"
             ? {}
