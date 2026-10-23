@@ -154,7 +154,7 @@ const room: RoomModule = {
     launch: (ctx: RoomContext, input: { entity: EntityId }) => {
       const state = ctx.store.get<BridgeState>("bridge");
       if (state && STEPS_ORDERED.indexOf(state.step) >= 1) {
-        ctx.send(input.entity, "Peer instance already launched. " + statusBlock(state));
+        ctx.send(input.entity, `Peer instance already launched. ${statusBlock(state)}`);
         return;
       }
 
@@ -183,7 +183,7 @@ const room: RoomModule = {
         return;
       }
       if (STEPS_ORDERED.indexOf(state.step) >= 2) {
-        ctx.send(input.entity, "Already connected. " + statusBlock(state));
+        ctx.send(input.entity, `Already connected. ${statusBlock(state)}`);
         return;
       }
 
@@ -204,11 +204,11 @@ const room: RoomModule = {
     link: async (ctx: RoomContext, input: { entity: EntityId }) => {
       const state = ctx.store.get<BridgeState>("bridge");
       if (!state || STEPS_ORDERED.indexOf(state.step) < 2) {
-        ctx.send(input.entity, "Connect to the peer first. " + statusBlock(state));
+        ctx.send(input.entity, `Connect to the peer first. ${statusBlock(state)}`);
         return;
       }
       if (STEPS_ORDERED.indexOf(state.step) >= 3) {
-        ctx.send(input.entity, "Already bridged. " + statusBlock(state));
+        ctx.send(input.entity, `Already bridged. ${statusBlock(state)}`);
         return;
       }
 
@@ -231,11 +231,11 @@ const room: RoomModule = {
     ping: (ctx: RoomContext, input: { entity: EntityId }) => {
       const state = ctx.store.get<BridgeState>("bridge");
       if (!state || STEPS_ORDERED.indexOf(state.step) < 3) {
-        ctx.send(input.entity, "Bridge a channel first. " + statusBlock(state));
+        ctx.send(input.entity, `Bridge a channel first. ${statusBlock(state)}`);
         return;
       }
       if (state.step === "messaged") {
-        ctx.send(input.entity, "Already received. " + statusBlock(state));
+        ctx.send(input.entity, `Already received. ${statusBlock(state)}`);
         return;
       }
 
@@ -269,10 +269,11 @@ const room: RoomModule = {
       );
 
       ctx.logEvent?.({
-        type: "custom",
-        detail: "federation_complete",
-        message: `A message relayed from ${PEER_NAME} arrived in the bridged channel.`,
-      } as any);
+        type: "feed_event",
+        kind: "federation_complete",
+        summary: `A message relayed from ${PEER_NAME} arrived in the bridged channel.`,
+        timestamp: Date.now(),
+      });
     },
 
     status: (ctx: RoomContext, input: { entity: EntityId }) => {
@@ -314,7 +315,7 @@ const room: RoomModule = {
     }
 
     const ent = ctx.getEntity(entity);
-    if (!ent || ent.kind !== "agent") return;
+    if (ent?.kind !== "agent") return;
 
     ent.properties.quest_entered_bridge = true;
 

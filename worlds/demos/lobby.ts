@@ -93,7 +93,7 @@ const room: RoomModule = {
     }
 
     const ent = ctx.getEntity(entity);
-    if (!ent || ent.kind !== "agent") return;
+    if (ent?.kind !== "agent") return;
 
     ctx.send(
       entity,

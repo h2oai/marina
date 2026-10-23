@@ -30,11 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: oven-sh/setup-bun@v2.2.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
@@ -68,7 +68,7 @@ jobs:
           if [ -f "$RUNNER_TEMP/live-coding.log" ]; then mv "$RUNNER_TEMP/live-coding.log" "$RUNNER_TEMP/live-coding/runner.log"; fi
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/live-evidence.tar.gz" live-coding
           gpg --homedir "$RUNNER_TEMP/evidence-keys" --batch --yes --trust-model always --recipient "$(cat "$RUNNER_TEMP/evidence-recipient")" --output "$RUNNER_TEMP/live-evidence.tar.gz.gpg" --encrypt "$RUNNER_TEMP/live-evidence.tar.gz"
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always() && steps.config.outcome == 'success'
         with:
           name: encrypted-live-evidence-${{ github.sha }}-${{ github.run_attempt }}
