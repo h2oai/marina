@@ -15,7 +15,11 @@
 import { modelComplete } from "../../model/complete";
 import { dim, header, separator } from "../../net/ansi";
 import { ReadSwarm, renderCandidateTable } from "../../retrieval/read-swarm";
-import { crossEncoderFromEnv } from "../../retrieval/rerank-client";
+import {
+  type CrossEncoder,
+  crossEncoderFor,
+  crossEncoderFromEnv,
+} from "../../retrieval/rerank-client";
 import type { EntityId, RoomContext } from "../../types";
 import { type ConnectorRuntime, readPageVia } from "../connector-runtime";
 import { getErrorMessage } from "../errors";
@@ -27,9 +31,10 @@ import { search as providerSearch } from "../search-providers/index";
 const SWARM_SPEC: ModifierSpec = {
   engines: { type: "string", aliases: ["engine"] },
   docs: { type: "int", aliases: ["max"] },
+  rerank: { type: "string" },
 };
 
-export const WEB_SWARM_USAGE = "web swarm [engines:<a,b>] [docs:N] <question>";
+export const WEB_SWARM_USAGE = "web swarm [engines:<a,b>] [docs:N] [rerank:<model>] <question>";
 
 /** Characters of a fetched page kept for reading (pages are read in chunks). */
 const PAGE_CHARS = 200_000;
@@ -86,7 +91,14 @@ export async function handleSwarm(
   try {
     const model = { name: readerSpec, complete: reader.complete };
     const pages = new Map<string, string>();
-    const crossEncoder = crossEncoderFromEnv();
+    // rerank:<model> tries another cross-encoder on the operator's endpoint; rerank:off the model's own ranking.
+    const rerank = typeof mods.values.rerank === "string" ? mods.values.rerank.trim() : undefined;
+    const crossEncoder: CrossEncoder | undefined =
+      rerank === "off"
+        ? undefined
+        : rerank
+          ? crossEncoderFor(rerank, env)
+          : crossEncoderFromEnv(env);
     const swarm = new ReadSwarm(question, {
       search: async (q, depth) =>
         (

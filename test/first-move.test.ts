@@ -16,6 +16,7 @@ import {
 } from "../src/retrieval/first-move";
 import {
   type CrossEncoder,
+  crossEncoderFor,
   crossEncoderFromEnv,
   parseScores,
   rerankEndpoint,
@@ -225,7 +226,7 @@ describe("cross-encoder reranking", () => {
     expect(parseScores({ data: [{ index: 0, score: 2 }] }, "rerank", 1)).toEqual([2]);
     expect(crossEncoderFromEnv({})).toBeUndefined();
     expect(() => crossEncoderFromEnv({ MARINA_RERANK_URL: "http://x/rerank" })).toThrow(
-      "must be set together",
+      "MARINA_RERANK_MODEL is not",
     );
     expect(() =>
       crossEncoderFromEnv({
@@ -237,5 +238,45 @@ describe("cross-encoder reranking", () => {
     expect(
       crossEncoderFromEnv({ MARINA_RERANK_URL: "http://x/rerank", MARINA_RERANK_MODEL: "m" })?.name,
     ).toBe("rerank:m");
+  });
+});
+
+describe("switching rerankers", () => {
+  it("defaults to OpenRouter with its own key, sends a vendor key only to that vendor, and takes any model per call", async () => {
+    const seen: { url: string; auth?: string; model: string }[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      seen.push({
+        url: String(url),
+        auth: (init?.headers as Record<string, string> | undefined)?.Authorization,
+        model: JSON.parse(String(init?.body)).model,
+      });
+      return new Response(JSON.stringify({ results: [{ index: 0, relevance_score: 1 }] }));
+    }) as typeof fetch;
+    try {
+      const env = { MARINA_RERANK_MODEL: "cohere/rerank-4-pro", OPENROUTER_API_KEY: "or" };
+      await crossEncoderFromEnv(env)!.score("q", ["d"]);
+      await crossEncoderFor("voyageai/rerank-2.5", env).score("q", ["d"]);
+      // A self-hosted endpoint never receives a vendor's key.
+      await crossEncoderFor("m", { ...env, MARINA_RERANK_URL: "http://127.0.0.1:9/rerank" }).score(
+        "q",
+        ["d"],
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(seen).toEqual([
+      {
+        url: "https://openrouter.ai/api/v1/rerank",
+        auth: "Bearer or",
+        model: "cohere/rerank-4-pro",
+      },
+      {
+        url: "https://openrouter.ai/api/v1/rerank",
+        auth: "Bearer or",
+        model: "voyageai/rerank-2.5",
+      },
+      { url: "http://127.0.0.1:9/rerank", auth: undefined, model: "m" },
+    ]);
   });
 });

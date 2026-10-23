@@ -110,23 +110,57 @@ export function parseScores(
   return scores as number[];
 }
 
+/** OpenRouter's rerank endpoint: one key reaches Cohere, Voyage, Qwen, Nemotron rerankers. */
+export const OPENROUTER_RERANK_URL = "https://openrouter.ai/api/v1/rerank";
+
+/** A vendor's own key, only ever sent to that vendor's host. */
+function vendorRerankKey(url: string, env: NodeJS.ProcessEnv): string | undefined {
+  const host = new URL(url).hostname;
+  const byHost: Record<string, string> = {
+    "openrouter.ai": "OPENROUTER_API_KEY",
+    "api.cohere.com": "COHERE_API_KEY",
+    "api.cohere.ai": "COHERE_API_KEY",
+    "api.voyageai.com": "VOYAGE_API_KEY",
+    "api.jina.ai": "JINA_API_KEY",
+    "api.together.xyz": "TOGETHER_API_KEY",
+    "api.deepinfra.com": "DEEPINFRA_API_KEY",
+    "ai.api.nvidia.com": "NVIDIA_API_KEY",
+  };
+  const name = byHost[host];
+  return name ? env[name]?.trim() || undefined : undefined;
+}
+
 /**
- * The operator's cross-encoder (`MARINA_RERANK_URL` + `MARINA_RERANK_MODEL`),
- * or undefined when unset. `MARINA_RERANK_FORMAT=rerank|nvidia`; the key is
- * `MARINA_RERANK_API_KEY`. A malformed configuration throws, so a typo is loud
- * rather than a silent fallback.
+ * A cross-encoder for `model` on the operator's rerank endpoint — the way a
+ * caller switches models per run (`web swarm rerank:<model>`) without a
+ * restart. The endpoint and key are always operator configuration.
+ */
+export function crossEncoderFor(model: string, env: NodeJS.ProcessEnv = process.env): CrossEncoder {
+  if (!model.trim()) throw new Error("A rerank model is required");
+  const url = env.MARINA_RERANK_URL?.trim() || OPENROUTER_RERANK_URL;
+  const format = (env.MARINA_RERANK_FORMAT?.trim().toLowerCase() || "rerank") as RerankFormat;
+  if (format !== "rerank" && format !== "nvidia")
+    throw new Error(`MARINA_RERANK_FORMAT must be rerank or nvidia (got "${format}")`);
+  const apiKey = env.MARINA_RERANK_API_KEY?.trim() || vendorRerankKey(url, env);
+  return rerankEndpoint({ url, model: model.trim(), format, ...(apiKey ? { apiKey } : {}) });
+}
+
+/**
+ * The operator's default cross-encoder: `MARINA_RERANK_MODEL` (switching
+ * models is changing this one variable), on `MARINA_RERANK_URL` — default
+ * OpenRouter's rerank endpoint — or undefined when no model is set. The key is
+ * `MARINA_RERANK_API_KEY`, else the endpoint vendor's own key (OpenRouter,
+ * Cohere, Voyage, Jina, Together, DeepInfra, NVIDIA), never sent elsewhere.
+ * A malformed configuration throws, so a typo is loud.
  */
 export function crossEncoderFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): CrossEncoder | undefined {
-  const url = env.MARINA_RERANK_URL?.trim();
   const model = env.MARINA_RERANK_MODEL?.trim();
-  if (!url && !model) return undefined;
-  if (!url || !model)
-    throw new Error("MARINA_RERANK_URL and MARINA_RERANK_MODEL must be set together");
-  const format = (env.MARINA_RERANK_FORMAT?.trim().toLowerCase() || "rerank") as RerankFormat;
-  if (format !== "rerank" && format !== "nvidia")
-    throw new Error(`MARINA_RERANK_FORMAT must be rerank or nvidia (got "${format}")`);
-  const apiKey = env.MARINA_RERANK_API_KEY?.trim();
-  return rerankEndpoint({ url, model, format, ...(apiKey ? { apiKey } : {}) });
+  if (!model) {
+    if (env.MARINA_RERANK_URL?.trim())
+      throw new Error("MARINA_RERANK_URL is set but MARINA_RERANK_MODEL is not");
+    return undefined;
+  }
+  return crossEncoderFor(model, env);
 }
