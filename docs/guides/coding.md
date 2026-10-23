@@ -1393,6 +1393,7 @@ This is shipped functionality; “optional” means Marina and local Code Mode d
 ```text
 code sandbox start
 code sandbox use       # active session now runs finite commands in Flywheel
+                       # (several providers: code sandbox providers, then use <id>)
 code project init demo # /workspace/projects/demo becomes the durable guest cwd
 # or: code project clone https://github.com/example/project.git
 code run bun test

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { unlinkSync } from "node:fs";
+import type { SandboxProvider } from "../src/coding/sandbox-provider";
 import { grant, listGates } from "../src/engine/safety-gates";
 import type { MarinaDB } from "../src/persistence/database";
 import type { Connection, EntityId, Perception, RoomModule } from "../src/types";
@@ -114,3 +115,18 @@ export class MockConnection implements Connection {
     this.messages = [];
   }
 }
+
+/** Identity of a fake Flywheel-shaped sandbox provider (spread into a test double). */
+export const FAKE_SANDBOX_IDENTITY = {
+  id: "flywheel",
+  label: "Flywheel",
+  capabilities: {
+    exec: true,
+    files: true,
+    publish: true,
+    hibernate: true,
+    networkPolicy: false,
+    credentialInjection: false,
+    mounts: "volume",
+  },
+} as const satisfies Pick<SandboxProvider, "id" | "label" | "capabilities">;

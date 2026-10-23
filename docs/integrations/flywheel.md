@@ -126,7 +126,10 @@ The same manager is available through Code Mode:
 - `code sandbox credentials` — list secret-free logical bindings
 - `code sandbox start [image]`
 - `code sandbox hibernate|resume`
-- `code sandbox use` — explicitly select Flywheel for the active coding session
+- `code sandbox providers` — list configured sandbox providers and their capabilities
+- `code sandbox use [provider]` — explicitly select Flywheel (or another configured provider)
+  for the active coding session; with several providers configured, name one, or add
+  `provider:<id>` to any `code sandbox` subcommand
 - `code sandbox local` — explicitly return that session to host-safe local execution
 - `code sandbox stop confirm`
 - `code sandbox ops inventory|metrics|reconcile` — steward fleet visibility

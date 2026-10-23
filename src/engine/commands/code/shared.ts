@@ -4,11 +4,15 @@
 import type { AgentHandle } from "../../../agent/agent-types";
 import type { CodePromptAnswerer, CodingAgentRuntime } from "../../../coding/code-session-driver";
 import type { WorkspaceRuntime } from "../../../coding/local-workspace";
+import {
+  LOCAL_TARGET,
+  type SandboxProvider,
+  type SandboxProviders,
+} from "../../../coding/sandbox-provider";
 import type { VerificationRunner } from "../../../coding/verification-runner";
 import type { WorkspaceRegistry } from "../../../coding/workspace-registry";
 import type { ChannelManager } from "../../../coordination/channel-manager";
 import type { CrewManager } from "../../../coordination/crew-manager";
-import type { FlywheelToolBackend } from "../../../integrations/flywheel-manager";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type {
   Connection,
@@ -398,7 +402,8 @@ export interface CodeDeps {
   answerPrompt?: CodePromptAnswerer;
   channelManager?: ChannelManager;
   crewManager?: CrewManager;
-  flywheel?: FlywheelToolBackend;
+  /** Configured isolated-execution providers (Flywheel, …); absent ⇒ local only. */
+  sandboxes?: SandboxProviders;
   db?: MarinaDB;
   findAgentByName?: (name: string) => Entity | undefined;
   listAgents?: () => { name: string }[];
@@ -460,6 +465,36 @@ export function enforceWriteLock(
     `${session.writer} holds the write lock for this session — request a handoff (code handoff <notes> to:${entity.name}) or have the owner reassign (code writer ${entity.name}).`,
   );
   return false;
+}
+
+/**
+ * The sandbox provider a `code` call acts on: the one named, else the
+ * session's non-local target, else the only configured provider. A string is
+ * the refusal to show; nothing is ever run on the host in its place.
+ */
+export function resolveSandboxProvider(
+  deps: Pick<CodeDeps, "sandboxes">,
+  opts: { requested?: string; target?: string } = {},
+): SandboxProvider | string {
+  const providers = deps.sandboxes;
+  if (!providers || providers.size === 0) return "No sandbox provider is configured.";
+  const named = opts.requested ?? (opts.target !== LOCAL_TARGET ? opts.target : undefined);
+  if (named) {
+    return (
+      providers.get(named) ??
+      `Sandbox provider "${named}" is not configured (configured: ${providers
+        .list()
+        .map((p) => p.id)
+        .join(", ")}).`
+    );
+  }
+  return (
+    providers.only() ??
+    `Several sandbox providers are configured; name one with provider:<id> (${providers
+      .list()
+      .map((p) => p.id)
+      .join(", ")}).`
+  );
 }
 
 export function resolveSession(

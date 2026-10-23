@@ -1,36 +1,48 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  type FlywheelExecutionResult,
-  FlywheelExecutionTimeoutError,
-  type FlywheelToolBackend,
-} from "../integrations/flywheel-manager";
 import { assertCredentialFreeCommand, redactSensitiveText } from "../security/secret-redaction";
 import type { EntityId } from "../types";
 import type { WorkspaceRunResult, WorkspaceRuntime } from "./local-workspace";
+import {
+  LOCAL_TARGET,
+  type SandboxExecutionResult,
+  SandboxExecutionTimeoutError,
+  type SandboxProvider,
+  SandboxProviders,
+  type SandboxTarget,
+} from "./sandbox-provider";
 
-const MAX_FLYWHEEL_OUTPUT_BYTES = 64 * 1024;
+const MAX_SANDBOX_OUTPUT_BYTES = 64 * 1024;
 const EXIT_SENTINEL = "__MARINA_EXIT_7f31c9__=";
 const EXIT_WRAPPER = `"$@"; marina_status=$?; printf '\n${EXIT_SENTINEL}%s\n' "$marina_status"; exit "$marina_status"`;
 
-export type WorkspaceExecutionTarget = "local" | "flywheel";
+/** `local` or a registered sandbox provider id. */
+export type WorkspaceExecutionTarget = SandboxTarget;
 
 export interface WorkspaceExecutionEvidence {
   result: WorkspaceRunResult;
   target: WorkspaceExecutionTarget;
-  flywheelEvents?: FlywheelExecutionResult["events"];
+  /** The provider's structured events (kept as evidence). */
+  flywheelEvents?: SandboxExecutionResult["events"];
 }
 
 /**
  * Policy seam between Code Mode and execution providers. Selection is always
- * explicit; a selected Flywheel target never falls back to LocalWorkspace.
+ * explicit; a selected provider never falls back to LocalWorkspace.
  */
 export class WorkspaceGateway {
+  private readonly providers: SandboxProviders;
+
   constructor(
     private readonly local: WorkspaceRuntime | undefined,
-    private readonly flywheel?: FlywheelToolBackend,
-  ) {}
+    providers?: SandboxProviders | SandboxProvider,
+  ) {
+    this.providers =
+      providers instanceof SandboxProviders
+        ? providers
+        : new SandboxProviders(providers ? [providers] : []);
+  }
 
   async run(
     entityId: EntityId,
@@ -39,31 +51,34 @@ export class WorkspaceGateway {
     timeoutMs = 120_000,
     cwd?: string,
   ): Promise<WorkspaceExecutionEvidence> {
-    if (target === "local") {
+    if (target === LOCAL_TARGET) {
       if (!this.local) throw new Error("Local workspace execution is unavailable.");
       return { result: await this.local.run(command, timeoutMs), target };
     }
-    if (!this.flywheel?.execDetailed) {
+    const provider = this.providers.get(target);
+    if (!provider?.execDetailed) {
       throw new Error(
-        "Flywheel execution is unavailable; the command was not run locally. Use `code sandbox local` to change the session target explicitly.",
+        `${provider?.label ?? `Sandbox provider "${target}"`} execution is unavailable; the command was not run locally. Use \`code sandbox local\` to change the session target explicitly.`,
       );
     }
-    const workspace = this.flywheel.status(entityId);
+    const workspace = provider.status(entityId);
     if (!workspace) {
       throw new Error(
-        "This entity has no Flywheel sandbox; use `code sandbox start` first. The command was not run locally.",
+        `This entity has no ${provider.label} sandbox; use \`code sandbox start\` first. The command was not run locally.`,
       );
     }
     if (workspace.state !== "running") {
-      throw new Error(`Flywheel sandbox is ${workspace.state}; the command was not run locally.`);
+      throw new Error(
+        `${provider.label} sandbox is ${workspace.state}; the command was not run locally.`,
+      );
     }
     if (command.length === 0) throw new Error("Cannot execute an empty command.");
     assertCredentialFreeCommand(command);
 
     const startedAt = performance.now();
-    let executed: FlywheelExecutionResult;
+    let executed: SandboxExecutionResult;
     try {
-      executed = await this.flywheel.execDetailed(
+      executed = await provider.execDetailed(
         entityId,
         "/bin/sh",
         ["-c", EXIT_WRAPPER, "marina-code", ...command],
@@ -71,7 +86,7 @@ export class WorkspaceGateway {
         { timeoutMs },
       );
     } catch (error) {
-      if (error instanceof FlywheelExecutionTimeoutError) {
+      if (error instanceof SandboxExecutionTimeoutError) {
         return {
           target,
           result: {
@@ -86,8 +101,8 @@ export class WorkspaceGateway {
       }
       throw error;
     }
-    const parsed = parseExitSentinel(executed.output);
-    const bounded = boundOutput(redactSensitiveText(parsed.output), MAX_FLYWHEEL_OUTPUT_BYTES);
+    const parsed = parseExitSentinel(executed.output, provider.label);
+    const bounded = boundOutput(redactSensitiveText(parsed.output), MAX_SANDBOX_OUTPUT_BYTES);
     return {
       target,
       flywheelEvents: executed.events,
@@ -103,14 +118,14 @@ export class WorkspaceGateway {
   }
 }
 
-function parseExitSentinel(output: string): { output: string; exitCode: number } {
+function parseExitSentinel(output: string, label: string): { output: string; exitCode: number } {
   const pattern = new RegExp(`(?:^|\\n)${EXIT_SENTINEL}(\\d+)(?:\\n|$)`, "g");
   let match: RegExpExecArray | null = null;
   let candidate: RegExpExecArray | null;
   while ((candidate = pattern.exec(output)) !== null) match = candidate;
   if (!match) {
     throw new Error(
-      "Flywheel execution ended without a terminal status; outcome is unknown and was not retried locally.",
+      `${label} execution ended without a terminal status; outcome is unknown and was not retried locally.`,
     );
   }
   return {
@@ -129,7 +144,7 @@ function boundOutput(output: string, maxBytes: number): { output: string; trunca
   };
 }
 
-export function summarizeFlywheelEvents(events: FlywheelExecutionResult["events"]): string[] {
+export function summarizeFlywheelEvents(events: SandboxExecutionResult["events"]): string[] {
   return events.map((event) => {
     const body = event.body as { case?: unknown } | undefined;
     if (typeof body?.case === "string") return body.case;

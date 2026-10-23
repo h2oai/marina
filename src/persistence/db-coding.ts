@@ -83,7 +83,7 @@ export function updateCodingSession(
     writer: string | null;
     agent: string | null;
     driver: string | null;
-    executionTarget: "local" | "flywheel";
+    executionTarget: string; // "local" or a sandbox provider id
     worktreePath: string | null;
     worktreeBranch: string | null;
   }>,
@@ -332,7 +332,8 @@ export interface CodingSessionRow {
   /** Dispatch strategy: "single" (default) | "crew" | future multi-agent. */
   driver: string | null;
   /** Explicit execution provider. Existing sessions default to trusted local mode. */
-  execution_target: "local" | "flywheel";
+  /** "local" or a sandbox provider id. */
+  execution_target: string;
   /**
    * Marina-managed git worktree bound to this session (opt-in). NULL means the
    * session works directly in workspace_root (default, byte-identical to legacy).

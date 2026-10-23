@@ -11,7 +11,6 @@ import { WS_IDLE_TIMEOUT_SECONDS } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
 import { logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
-import type { FlywheelToolBackend } from "../../integrations/flywheel-manager";
 import { contextCacheStats } from "../../memory/context-cache";
 import type { Connection, Perception } from "../../types";
 import { handleConnectRoutes, healthResponse, registerConnectEndpoint } from "../api/connect-api";
@@ -131,13 +130,6 @@ export class McpServerAdapter {
     private engine: Engine,
     private port: number,
     private rateLimiter: RateLimiter = new RateLimiter(),
-    /**
-     * Kept for signature compatibility only. The `flywheel` tool now routes
-     * through the engine's `code sandbox` / `code run` / `code service`
-     * commands (so `minRank`, LAYER 0 and the `code.exec` gate apply) and
-     * therefore uses `engine.flywheel`, never a side channel.
-     */
-    _flywheel: FlywheelToolBackend | undefined = engine.flywheel,
   ) {}
 
   private warnedNoAllowedHosts = false;

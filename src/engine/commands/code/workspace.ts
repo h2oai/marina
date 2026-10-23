@@ -530,7 +530,10 @@ export async function doctor(
           };
         })()
       : null;
-  const flywheel = deps.flywheel?.status(eid);
+  const sandboxes = (deps.sandboxes?.list() ?? []).map((provider) => ({
+    provider,
+    workspace: provider.status(eid),
+  }));
   const nextSteps = [
     session ? "code status" : "code start <title>",
     verify.length > 0 ? "code verify" : "code run git diff --check",
@@ -575,7 +578,12 @@ export async function doctor(
     `Candidate checks: ${candidateReason}`,
     "Dependencies: verification probes the environment for the detected project type and reports not_run when it is not ready. dependencies:auto installs locked dependencies only where isolated (a candidate's captured Bun lockfile without lifecycle scripts, or a container runner with sync:mount and network:on).",
     `Local policy: host-safe allowlist`,
-    `Flywheel: ${deps.flywheel ? (flywheel ? `${flywheel.state} (${flywheel.image})` : "configured; no workspace") : "not configured; local Code Mode available"}`,
+    ...(sandboxes.length
+      ? sandboxes.map(
+          ({ provider, workspace }) =>
+            `${provider.label}: ${workspace ? `${workspace.state} (${workspace.image})` : "configured; no workspace"}`,
+        )
+      : ["Sandbox: not configured; local Code Mode available"]),
     `Next: ${nextSteps.join(" | ")}`,
     dim("Configure roots with MARINA_CODE_ROOTS and MARINA_CODE_DEFAULT_ROOT."),
     dim("Use: code workspace discover | code workspace use <path> | code start <title>"),
@@ -658,15 +666,21 @@ export async function doctor(
         status: "info",
         detail: "host-safe allowlist",
       },
-      {
-        label: "Flywheel",
-        status: !deps.flywheel ? "info" : flywheel?.state === "running" ? "ok" : "warn",
-        detail: !deps.flywheel
-          ? "not configured; local Code Mode available"
-          : flywheel
-            ? `${flywheel.state} (${flywheel.image})`
-            : "configured; no workspace",
-      },
+      ...(sandboxes.length
+        ? sandboxes.map(({ provider, workspace }) => ({
+            label: provider.label,
+            status: workspace?.state === "running" ? ("ok" as const) : ("warn" as const),
+            detail: workspace
+              ? `${workspace.state} (${workspace.image})`
+              : "configured; no workspace",
+          }))
+        : [
+            {
+              label: "Sandbox",
+              status: "info" as const,
+              detail: "not configured; local Code Mode available",
+            },
+          ]),
     ],
     commands: nextSteps.length > 0 ? nextSteps : ["code start <title>"],
     event: "doctor_ran",

@@ -15,12 +15,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent, AgentHandle, AgentStatus } from "../src/agent/agent-types";
 import { HostExecForbiddenError, LocalWorkspace } from "../src/coding/local-workspace";
+import { type SandboxProvider, SandboxProviders } from "../src/coding/sandbox-provider";
 import { WorkspaceRegistry } from "../src/coding/workspace-registry";
 import { codeCommand, isLoopbackConnection } from "../src/engine/commands/code";
 import { sessionExecModeForTests } from "../src/engine/commands/code/exec";
 import { Engine } from "../src/engine/engine";
 import { grant } from "../src/engine/safety-gates";
-import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
 import { MarinaDB } from "../src/persistence/database";
 import {
   type CommandInput,
@@ -31,7 +31,13 @@ import {
   roomId,
 } from "../src/types";
 import { git, gitInit } from "./git-helpers";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import {
+  cleanupDb,
+  FAKE_SANDBOX_IDENTITY,
+  MockConnection,
+  makeTestRoom,
+  stripAnsi,
+} from "./helpers";
 
 const TEST_DB = "test_code_command.db";
 
@@ -985,7 +991,7 @@ describe("code command", () => {
     }
   });
 
-  it("keeps local Code Mode available when Flywheel is unconfigured", async () => {
+  it("keeps local Code Mode available when no sandbox provider is configured", async () => {
     const entity = engine.entities.get(conn.entity!)!;
     const sent: string[] = [];
     const command = codeCommand({ db, getEntity: () => entity, workspace: new LocalWorkspace() });
@@ -993,7 +999,7 @@ describe("code command", () => {
     await command.handler(testRoomContext(sent), inputFor(entity, "code sandbox status"));
 
     const output = stripAnsi(sent.join("\n"));
-    expect(output).toContain("Flywheel is not configured");
+    expect(output).toContain("No sandbox provider is configured");
     expect(output).toContain("Local Code Mode remains available and unchanged");
   });
 
@@ -1001,7 +1007,8 @@ describe("code command", () => {
     const entity = engine.entities.get(conn.entity!)!;
     const calls: string[] = [];
     let state: "running" | "hibernated" | undefined;
-    const flywheel: FlywheelToolBackend = {
+    const flywheel: SandboxProvider = {
+      ...FAKE_SANDBOX_IDENTITY,
       async create() {
         calls.push("create");
         state = "running";
@@ -1050,7 +1057,7 @@ describe("code command", () => {
     const sent: string[] = [];
     const command = codeCommand({
       db,
-      flywheel,
+      sandboxes: new SandboxProviders([flywheel]),
       getEntity: () => entity,
       workspace: new LocalWorkspace(),
     });
@@ -1069,7 +1076,8 @@ describe("code command", () => {
   it("keeps fleet operations behind the rank-5 floor and reclamation dry-run by default", async () => {
     const entity = engine.entities.get(conn.entity!)!;
     let applied = false;
-    const flywheel: FlywheelToolBackend = {
+    const flywheel: SandboxProvider = {
+      ...FAKE_SANDBOX_IDENTITY,
       async create() {
         throw new Error("not used");
       },
@@ -1111,7 +1119,11 @@ describe("code command", () => {
       },
     };
     const sent: string[] = [];
-    const command = codeCommand({ db, flywheel, getEntity: () => entity });
+    const command = codeCommand({
+      db,
+      sandboxes: new SandboxProviders([flywheel]),
+      getEntity: () => entity,
+    });
     const ctx = testRoomContext(sent);
 
     await command.handler(ctx, inputFor(entity, "code sandbox ops inventory"));
@@ -1127,7 +1139,8 @@ describe("code command", () => {
   it("routes a session explicitly through Flywheel and stores provider evidence", async () => {
     const entity = engine.entities.get(conn.entity!)!;
     const executions: Array<{ command: string; args?: string[] }> = [];
-    const flywheel: FlywheelToolBackend = {
+    const flywheel: SandboxProvider = {
+      ...FAKE_SANDBOX_IDENTITY,
       async create() {
         throw new Error("already created");
       },
@@ -1164,7 +1177,7 @@ describe("code command", () => {
     const sent: string[] = [];
     const command = codeCommand({
       db,
-      flywheel,
+      sandboxes: new SandboxProviders([flywheel]),
       getEntity: () => entity,
       workspace: new LocalWorkspace(),
     });
@@ -1190,10 +1203,73 @@ describe("code command", () => {
     });
   });
 
+  it("lists several providers, refuses an ambiguous `use`, and runs on the one named", async () => {
+    const entity = engine.entities.get(conn.entity!)!;
+    const ran: string[] = [];
+    const fake = (id: string, label: string): SandboxProvider => ({
+      ...FAKE_SANDBOX_IDENTITY,
+      id,
+      label,
+      async create() {
+        throw new Error("already created");
+      },
+      async exec() {
+        throw new Error("use detailed execution");
+      },
+      async execDetailed() {
+        ran.push(id);
+        return { output: `${id} output\n__MARINA_EXIT_7f31c9__=0\n`, events: [] };
+      },
+      async publish() {
+        return "";
+      },
+      async hibernate() {},
+      async resume() {},
+      async stop() {},
+      status() {
+        return {
+          sessionId: `${id}-session`,
+          sandboxId: `${id}-sandbox`,
+          image: "code:latest",
+          keepAlive: true,
+          state: "running",
+        };
+      },
+    });
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      sandboxes: new SandboxProviders([
+        fake("flywheel", "Flywheel"),
+        fake("openshell", "OpenShell"),
+      ]),
+      getEntity: () => entity,
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent);
+
+    await command.handler(ctx, inputFor(entity, "code start Two Providers"));
+    await command.handler(ctx, inputFor(entity, "code sandbox providers"));
+    const listing = stripAnsi(sent.at(-1) ?? "");
+    expect(listing).toContain("flywheel  Flywheel");
+    expect(listing).toContain("openshell  OpenShell");
+    await command.handler(ctx, inputFor(entity, "code sandbox use"));
+    expect(sent.at(-1)).toContain("name one with provider:<id>");
+    await command.handler(ctx, inputFor(entity, "code sandbox use openshell"));
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("Execution target set to OpenShell");
+    await command.handler(ctx, inputFor(entity, "code run echo hello"));
+
+    const session = db.getCodingSession(entity.properties.coding_session_id as string)!;
+    expect(session.execution_target).toBe("openshell");
+    expect(ran).toEqual(["openshell"]);
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("openshell output");
+  });
+
   it("materializes a sandbox project and routes session commands through its durable cwd", async () => {
     const entity = engine.entities.get(conn.entity!)!;
     const executions: Array<{ args: string[]; cwd?: string }> = [];
-    const flywheel: FlywheelToolBackend = {
+    const flywheel: SandboxProvider = {
+      ...FAKE_SANDBOX_IDENTITY,
       async create() {
         throw new Error("not used");
       },
@@ -1236,7 +1312,7 @@ describe("code command", () => {
     const sent: string[] = [];
     const command = codeCommand({
       db,
-      flywheel,
+      sandboxes: new SandboxProviders([flywheel]),
       getEntity: () => entity,
       workspace: new LocalWorkspace(),
     });
@@ -1258,7 +1334,8 @@ describe("code command", () => {
   it("refreshes project dirtiness before destructive sandbox stop", async () => {
     const entity = engine.entities.get(conn.entity!)!;
     let stopped = false;
-    const flywheel: FlywheelToolBackend = {
+    const flywheel: SandboxProvider = {
+      ...FAKE_SANDBOX_IDENTITY,
       async create() {
         throw new Error("not used");
       },
@@ -1311,7 +1388,11 @@ describe("code command", () => {
       guestCwd: project.guest_path,
     });
     const sent: string[] = [];
-    const command = codeCommand({ db, flywheel, getEntity: () => entity });
+    const command = codeCommand({
+      db,
+      sandboxes: new SandboxProviders([flywheel]),
+      getEntity: () => entity,
+    });
     const ctx = testRoomContext(sent);
 
     await command.handler(ctx, inputFor(entity, "code sandbox stop confirm"));
@@ -1324,7 +1405,8 @@ describe("code command", () => {
 
   it("starts and probes a managed Flywheel service with durable evidence", async () => {
     const entity = engine.entities.get(conn.entity!)!;
-    const flywheel: FlywheelToolBackend = {
+    const flywheel: SandboxProvider = {
+      ...FAKE_SANDBOX_IDENTITY,
       async create() {
         throw new Error("not used");
       },
@@ -1370,7 +1452,11 @@ describe("code command", () => {
     });
     db.updateFlywheelBinding(entity.id, { guestCwd: "/workspace/projects/demo" });
     const sent: string[] = [];
-    const command = codeCommand({ db, flywheel, getEntity: () => entity });
+    const command = codeCommand({
+      db,
+      sandboxes: new SandboxProviders([flywheel]),
+      getEntity: () => entity,
+    });
     const ctx = testRoomContext(sent);
 
     await command.handler(ctx, inputFor(entity, "code start Service Probe"));

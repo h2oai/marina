@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import {
-  FlywheelExecutionTimeoutError,
-  FlywheelManager,
-} from "../src/integrations/flywheel-manager";
+import { SandboxExecutionTimeoutError } from "../src/coding/sandbox-provider";
+import { FlywheelManager } from "../src/integrations/flywheel-manager";
 import { MarinaDB } from "../src/persistence/database";
 import { entityId } from "../src/types";
 import { cleanupDb } from "./helpers";
@@ -325,7 +323,7 @@ describe("FlywheelManager", () => {
     const error = await manager
       .execDetailed(alice, "sleep", ["60"], undefined, { timeoutMs: 5 })
       .catch((caught) => caught);
-    expect(error).toBeInstanceOf(FlywheelExecutionTimeoutError);
+    expect(error).toBeInstanceOf(SandboxExecutionTimeoutError);
     expect(error.timeoutMs).toBe(5);
     expect(aborted).toBe(true);
   });

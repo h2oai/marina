@@ -26,6 +26,7 @@ import {
   isTestCommand,
   workspaceTouchedPaths,
 } from "../../../coding/project-detection";
+import { LOCAL_TARGET, sandboxTargetLabel } from "../../../coding/sandbox-provider";
 import {
   aggregateVerification,
   classifyStep,
@@ -98,7 +99,7 @@ export async function runWorkspaceCommand(
     return;
   }
   if (args[0]?.toLowerCase() === "allowlist") {
-    await showRunAllowlist(ctx, eid, session, workspaceForSession(deps, session));
+    await showRunAllowlist(ctx, eid, deps, session, workspaceForSession(deps, session));
     return;
   }
   if (args[0]?.toLowerCase() === "app") {
@@ -201,17 +202,18 @@ async function resolveTestShorthand(
 async function showRunAllowlist(
   ctx: RoomContext,
   eid: EntityId,
+  deps: CodeDeps,
   session: CodingSessionRow,
   workspace: WorkspaceRuntime,
 ): Promise<void> {
-  if (session.execution_target === "flywheel") {
+  if (session.execution_target !== LOCAL_TARGET) {
     sendCode(
       ctx,
       eid,
       [
         header("Code Run Policy"),
         separator(),
-        "Execution target: Flywheel sandbox",
+        `Execution target: ${sandboxTargetLabel(deps.sandboxes, session.execution_target)} sandbox`,
         "Policy: guest-open finite commands under code.exec governance",
         dim("Commands are passed as argument arrays through a fixed audited wrapper."),
         dim("There is no host fallback. Use code service start for managed background processes."),
@@ -282,7 +284,7 @@ async function runApp(
   requestedScript?: string,
 ): Promise<void> {
   const script = requestedScript?.trim();
-  const sandboxTarget = session.execution_target === "flywheel";
+  const sandboxTarget = session.execution_target !== LOCAL_TARGET;
   const message = [
     sandboxTarget
       ? "Use the managed service lifecycle for long-running sandbox applications."
@@ -938,15 +940,12 @@ async function executeWorkspaceCommand(
         result: await workspace.runAllowlisted!(command, background.beforeSpawn, timeoutMs),
         flywheelEvents: undefined,
       }
-    : await new WorkspaceGateway(workspace, deps.flywheel).run(
+    : await new WorkspaceGateway(workspace, deps.sandboxes).run(
         entity.id,
         session.execution_target,
         command,
         timeoutMs ?? 120_000,
-        session.execution_target === "flywheel"
-          ? (deps.db.listFlywheelBindings().find((row) => row.entity_id === entity.id)?.guest_cwd ??
-              undefined)
-          : undefined,
+        sandboxGuestCwd(deps, session, entity.id),
       );
   const { result } = execution;
   const commandText = result.command.join(" ");
@@ -974,8 +973,8 @@ async function executeWorkspaceCommand(
         : {}),
       flywheelEventKinds,
       cwd:
-        session.execution_target === "flywheel"
-          ? deps.db.listFlywheelBindings().find((row) => row.entity_id === entity.id)?.guest_cwd
+        session.execution_target !== LOCAL_TARGET
+          ? sandboxGuestCwd(deps, session, entity.id)
           : workspace.displayRoot(),
     },
     createdBy: entity.name,
@@ -1354,4 +1353,20 @@ function formatVerificationSummary(
 function lessonOwner(db: MarinaDB, actor: string): { owner?: string } {
   const scope = workScopeFor(db, actor);
   return scope?.kind === "owner" ? { owner: scope.owner } : {};
+}
+
+/**
+ * The guest directory a sandboxed session's commands run in: the active
+ * project's, which Marina records on the entity's sandbox binding
+ * (undefined: the provider's default).
+ */
+function sandboxGuestCwd(
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+  entityId: EntityId,
+): string | undefined {
+  if (session.execution_target === LOCAL_TARGET) return undefined;
+  return (
+    deps.db.listFlywheelBindings().find((row) => row.entity_id === entityId)?.guest_cwd ?? undefined
+  );
 }

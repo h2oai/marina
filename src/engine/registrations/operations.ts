@@ -208,7 +208,7 @@ export function registerOperationCommands(engine: Engine): void {
       answerPrompt: answerCodeViaLocalModel,
       channelManager: engine.channelManager,
       crewManager: engine.crewManager,
-      flywheel: engine.flywheel,
+      sandboxes: engine.sandboxes,
       findAgentByName: (name) => engine.entities.findAgentByName(name),
       listAgents: () => engine.agentRuntime.list(),
       getEntity: (id) => engine.entities.get(id as EntityId),

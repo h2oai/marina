@@ -23,6 +23,7 @@ import { recordFromEvent as recordStandingEvent } from "../agent/standing";
 import { setDefaultUpstreamDescriber } from "../agent/vision-input";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { SessionManager } from "../auth/session-manager";
+import { type SandboxProvider, SandboxProviders } from "../coding/sandbox-provider";
 import { BoardManager } from "../coordination/board-manager";
 import { ChannelManager } from "../coordination/channel-manager";
 import { CrewManager } from "../coordination/crew-manager";
@@ -35,7 +36,7 @@ import {
 } from "../coordination/room-formations";
 import { TaskManager } from "../coordination/task-manager";
 import { extensionGatewayProof } from "../extensions/loader";
-import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
+import { FlywheelManager } from "../integrations/flywheel-manager";
 import { closeInvestigationService } from "../investigations/service";
 import {
   flushWorkLessons,
@@ -149,7 +150,8 @@ export interface EngineConfig {
   storage?: StorageProvider; // optional asset storage
   world?: WorldDefinition; // optional world definition
   logger?: Logger; // optional structured logger
-  flywheel?: FlywheelToolBackend; // optional isolated execution provider
+  /** Isolated execution providers; unset ⇒ Flywheel from the environment when configured. */
+  sandboxes?: SandboxProvider[];
 }
 
 const DEFAULT_TICK_INTERVAL = 1000;
@@ -194,7 +196,8 @@ export class Engine {
   adapterManager?: AdapterManager;
   readonly shellRuntime: ShellRuntime;
   readonly storage?: StorageProvider;
-  readonly flywheel?: FlywheelToolBackend;
+  /** Configured isolated-execution providers (empty: local Code Mode only). */
+  readonly sandboxes: SandboxProviders;
   readonly benchmarkRunner?: BenchmarkRunner;
   readonly mediaManager?: MediaManager;
   /** Expiring read grants on single private canvas nodes (`canvas-access.ts`). */
@@ -297,7 +300,9 @@ export class Engine {
     this.rateLimiter = this.config.rateLimiter;
     this.loginRateLimiter = this.config.loginRateLimiter;
     this.storage = this.config.storage;
-    this.flywheel = this.config.flywheel ?? FlywheelManager.fromEnv(this.db);
+    this.sandboxes = new SandboxProviders(
+      this.config.sandboxes ?? [FlywheelManager.fromEnv(this.db)],
+    );
 
     // Wire DB into EntityManager for write-through persistence
     if (this.db) {
@@ -804,11 +809,14 @@ export class Engine {
         }
       });
     }
-    this.flywheel?.reconcile?.().catch((error) => {
-      this.logger.warn("flywheel", "Workspace reconciliation failed", {
-        error: error instanceof Error ? error.message : String(error),
+    for (const provider of this.sandboxes.list()) {
+      provider.reconcile?.().catch((error) => {
+        this.logger.warn("flywheel", "Workspace reconciliation failed", {
+          provider: provider.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
-    });
+    }
     this.logger.info(
       "engine",
       `Marina engine started (tick: ${this.config.tickInterval}ms, rooms: ${this.rooms.size})`,
@@ -877,8 +885,8 @@ export class Engine {
         get agentRuntime() {
           return engine.agentRuntime;
         },
-        get flywheel() {
-          return engine.flywheel;
+        get sandboxes() {
+          return engine.sandboxes;
         },
         get mediaManager() {
           return engine.mediaManager;

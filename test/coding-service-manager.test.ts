@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, test } from "bun:test";
+import type { SandboxProvider } from "../src/coding/sandbox-provider";
 import { CodingServiceManager } from "../src/coding/service-manager";
-import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
 import { MarinaDB } from "../src/persistence/database";
 import { entityId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, FAKE_SANDBOX_IDENTITY } from "./helpers";
 
 const DB_PATH = "test_coding_services.db";
 const OWNER = entityId("entity-service");
@@ -154,8 +154,9 @@ function backend(state: {
   alive: boolean;
   starts: number;
   identityMatches?: boolean;
-}): FlywheelToolBackend {
+}): SandboxProvider {
   return {
+    ...FAKE_SANDBOX_IDENTITY,
     async create() {
       throw new Error("not used");
     },

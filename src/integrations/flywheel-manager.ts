@@ -1,9 +1,20 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type SandboxBinaryResult,
+  type SandboxCapabilities,
+  type SandboxExecutionResult,
+  SandboxExecutionTimeoutError,
+  type SandboxInventoryItem,
+  type SandboxProvider,
+  type SandboxReclaimCandidate,
+  type SandboxWorkspace,
+  type SandboxWriteResult,
+} from "../coding/sandbox-provider";
 import { logRejection } from "../engine/errors";
 import { Logger } from "../engine/logger";
-import type { FlywheelBindingRow, FlywheelBindingState, MarinaDB } from "../persistence/database";
+import type { FlywheelBindingRow, MarinaDB } from "../persistence/database";
 import type { EntityId } from "../types";
 import { FlywheelClient, type FlywheelEvent, type FlywheelFetch } from "./flywheel";
 
@@ -18,19 +29,6 @@ const AGENT_SCOPES = [
   "publish",
 ];
 
-export interface FlywheelWorkspace {
-  sessionId: string;
-  sandboxId: string;
-  image: string;
-  keepAlive: boolean;
-  state: FlywheelBindingState;
-  publishedUrl?: string;
-  lastError?: string;
-  lastActivityAt?: number;
-  lifecycleExpiresAt?: number;
-  hibernatedReason?: string;
-}
-
 export interface FlywheelResourcePolicy {
   maxSandboxes: number;
   maxRunningSandboxes: number;
@@ -39,83 +37,24 @@ export interface FlywheelResourcePolicy {
   telemetryRetentionMs: number;
 }
 
-export interface FlywheelInventoryItem extends FlywheelWorkspace {
-  entityId: EntityId;
-  activeServices: boolean;
-}
-
-export interface FlywheelReclaimCandidate {
-  entityId: EntityId;
-  sandboxId: string;
-  reason: string;
-  action: "hibernate" | "review";
-}
-
-export interface FlywheelExecutionResult {
-  output: string;
-  events: FlywheelEvent[];
-}
-
-export interface FlywheelBinaryResult {
-  data: Uint8Array;
-  events: FlywheelEvent[];
-  byteLength: number;
-  sha256: string;
-}
-
-export interface FlywheelWriteResult {
-  byteLength: number;
-  sha256: string;
-}
-
-export class FlywheelExecutionTimeoutError extends Error {
-  constructor(readonly timeoutMs: number) {
-    super(`Flywheel command exceeded ${timeoutMs}ms; remote cancellation was requested.`);
-    this.name = "FlywheelExecutionTimeoutError";
-  }
-}
-
-export interface FlywheelToolBackend {
-  create(entityId: EntityId, image?: string, keepAlive?: boolean): Promise<FlywheelWorkspace>;
-  exec(entityId: EntityId, command: string, args?: string[], cwd?: string): Promise<string>;
-  execDetailed?(
-    entityId: EntityId,
-    command: string,
-    args?: string[],
-    cwd?: string,
-    options?: { timeoutMs?: number },
-  ): Promise<FlywheelExecutionResult>;
-  readFile?(
-    entityId: EntityId,
-    guestPath: string,
-    options?: { maxBytes?: number; timeoutMs?: number },
-  ): Promise<FlywheelBinaryResult>;
-  writeFile?(
-    entityId: EntityId,
-    guestPath: string,
-    data: Uint8Array,
-    options?: { maxBytes?: number; timeoutMs?: number },
-  ): Promise<FlywheelWriteResult>;
-  publish(entityId: EntityId, port: number): Promise<string>;
-  publishDetailed?(entityId: EntityId, port: number): Promise<{ url: string; subdomain: string }>;
-  unpublish?(entityId: EntityId, subdomain: string): Promise<void>;
-  hibernate(entityId: EntityId): Promise<void>;
-  resume(entityId: EntityId): Promise<void>;
-  stop(entityId: EntityId): Promise<void>;
-  status(entityId: EntityId): FlywheelWorkspace | undefined;
-  reconcile?(): Promise<void>;
-  maintenance?(): Promise<void>;
-  inventory?(): FlywheelInventoryItem[];
-  reclaim?(apply?: boolean): Promise<FlywheelReclaimCandidate[]>;
-  operationSummary?(): ReturnType<MarinaDB["getFlywheelOperationSummary"]>;
-}
-
-interface EntityWorkspace extends FlywheelWorkspace {
+interface EntityWorkspace extends SandboxWorkspace {
   client: FlywheelClient;
   capabilityExpiresAt: number;
 }
 
-export class FlywheelManager implements FlywheelToolBackend {
+export class FlywheelManager implements SandboxProvider {
+  readonly id = "flywheel";
+  readonly label = "Flywheel";
+  readonly capabilities: SandboxCapabilities = {
+    exec: true,
+    files: true,
+    publish: true,
+    hibernate: true,
+    // Flywheel's direct-sandbox network and credential APIs are not exposed (see `code sandbox network`).
+    networkPolicy: false,
+    credentialInjection: false,
+    mounts: "volume",
+  };
   private readonly operator: FlywheelClient;
   private readonly workspaces = new Map<EntityId, EntityWorkspace>();
   private readonly creating = new Set<EntityId>();
@@ -272,7 +211,7 @@ export class FlywheelManager implements FlywheelToolBackend {
         undefined,
         timedOut ? "timeout" : sanitizedError(error),
       );
-      if (timedOut) throw new FlywheelExecutionTimeoutError(timeoutMs);
+      if (timedOut) throw new SandboxExecutionTimeoutError(timeoutMs, "Flywheel");
       throw error;
     } finally {
       clearTimeout(timer);
@@ -289,7 +228,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     entityId: EntityId,
     guestPath: string,
     options?: { maxBytes?: number; timeoutMs?: number },
-  ): Promise<FlywheelBinaryResult> {
+  ): Promise<SandboxBinaryResult> {
     const startedAt = Date.now();
     if (!guestPath.startsWith("/") || guestPath.includes("\0")) {
       throw new Error("Guest transfer paths must be absolute and contain no NUL bytes.");
@@ -346,7 +285,7 @@ export class FlywheelManager implements FlywheelToolBackend {
         total,
         timedOut ? "timeout" : sanitizedError(error),
       );
-      if (timedOut) throw new FlywheelExecutionTimeoutError(timeoutMs);
+      if (timedOut) throw new SandboxExecutionTimeoutError(timeoutMs, "Flywheel");
       throw error;
     } finally {
       clearTimeout(timer);
@@ -365,7 +304,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     guestPath: string,
     data: Uint8Array,
     options?: { maxBytes?: number; timeoutMs?: number },
-  ): Promise<FlywheelWriteResult> {
+  ): Promise<SandboxWriteResult> {
     const startedAt = Date.now();
     if (!guestPath.startsWith("/") || guestPath.includes("\0")) {
       throw new Error("Guest transfer paths must be absolute and contain no NUL bytes.");
@@ -450,7 +389,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     args: string[],
     cwd: string,
     timeoutMs: number,
-  ): Promise<FlywheelExecutionResult> {
+  ): Promise<SandboxExecutionResult> {
     const result = await this.execDetailed(entityId, command, args, cwd, { timeoutMs });
     const processes = result.events.map(processEvent).filter((event) => event !== undefined);
     if (processes.some(isFailedTerminal)) {
@@ -552,7 +491,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     }
   }
 
-  status(entityId: EntityId): FlywheelWorkspace | undefined {
+  status(entityId: EntityId): SandboxWorkspace | undefined {
     const workspace = this.workspaces.get(this.key(entityId));
     return workspace ? publicWorkspace(workspace) : undefined;
   }
@@ -627,7 +566,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     }
   }
 
-  inventory(): FlywheelInventoryItem[] {
+  inventory(): SandboxInventoryItem[] {
     if (!this.db) return [];
     return this.db.listFlywheelBindings().map((binding) => {
       const workspace = this.workspaces.get(this.key(binding.entity_id as EntityId));
@@ -643,9 +582,9 @@ export class FlywheelManager implements FlywheelToolBackend {
     });
   }
 
-  async reclaim(apply = false): Promise<FlywheelReclaimCandidate[]> {
+  async reclaim(apply = false): Promise<SandboxReclaimCandidate[]> {
     const now = Date.now();
-    const candidates = this.inventory().flatMap((item): FlywheelReclaimCandidate[] => {
+    const candidates = this.inventory().flatMap((item): SandboxReclaimCandidate[] => {
       if (item.state === "unavailable") {
         return [
           {
@@ -782,7 +721,7 @@ export class FlywheelManager implements FlywheelToolBackend {
   }
 }
 
-function publicWorkspace(workspace: EntityWorkspace): FlywheelWorkspace {
+function publicWorkspace(workspace: EntityWorkspace): SandboxWorkspace {
   return {
     sessionId: workspace.sessionId,
     sandboxId: workspace.sandboxId,
