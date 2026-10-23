@@ -1386,6 +1386,11 @@ output as `[marina egress] blocked <host>:<port>: …`, and `code run` asks a pe
 challenge: approving it allows that destination for the session and re-runs the command (nothing
 waits meanwhile). Nothing extra runs alongside Marina.
 
+With `MARINA_CODE_CONTAINER_MODEL_API=on` as well, code in those containers can use Marina's models
+through `http://marina.model/v1` (`OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` are set for you). The
+container never holds a key: Marina's proxy adds a short-lived, spend-capped key for each command
+and only `/v1/` requests get through.
+
 The container runtime uses your own container setup: the images you have already pulled, your
 `containers.conf`/`storage.conf` (or Docker context), and your registry logins, taken from the
 server's environment at startup. The command inside the container gets none of that environment.

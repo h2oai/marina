@@ -101,12 +101,12 @@ export function runKeyRefusal(
   if (state.tripped === "transport")
     return {
       code: "run_transport_failed",
-      message: `this benchmark run stopped after ${TRANSPORT_TRIP} consecutive upstream network failures`,
+      message: `this run stopped after ${TRANSPORT_TRIP} consecutive upstream network failures`,
     };
   if (state.tripped === "budget" || (state.capUsd !== undefined && state.spentUsd >= state.capUsd))
     return {
       code: "run_budget_exhausted",
-      message: `this benchmark run spent its cap ($${state.spentUsd.toFixed(2)} of $${(state.capUsd ?? 0).toFixed(2)})`,
+      message: `this run spent its cap ($${state.spentUsd.toFixed(2)} of $${(state.capUsd ?? 0).toFixed(2)})`,
     };
   return undefined;
 }

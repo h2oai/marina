@@ -45,7 +45,15 @@
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { distinctDenials, EgressProxy, type EgressRule, formatEgressDenials } from "./egress-proxy";
+import { mintRunKey, revokeRunKey } from "../engine/benchmark-run-keys";
+import { localWsPort } from "../net/listen-ports";
+import {
+  distinctDenials,
+  EgressProxy,
+  type EgressRule,
+  formatEgressDenials,
+  MARINA_MODEL_HOST,
+} from "./egress-proxy";
 import type { WorkspaceDescriptor, WorkspaceRunResult } from "./local-workspace";
 import { LocalWorkspace, runCapture, runWorkspaceCommand } from "./local-workspace";
 import type { WorkspaceFileGrant } from "./workspace-file-grants";
@@ -67,6 +75,14 @@ export interface ContainerRunnerConfig {
    * through Marina's in-process proxy. Present ⇒ it governs instead of `network`.
    */
   egress?: EgressRule[];
+  /**
+   * Offer Marina's own model API at `http://marina.model/v1` (operator-only;
+   * needs `egress`). Each command gets a run key bound to the session's
+   * owner that the proxy adds itself — the container holds no credential.
+   */
+  modelApi?: boolean;
+  /** Upstream spend cap per command for `modelApi`, USD (0 = none; default 1). */
+  modelCapUsd?: number;
   cpus?: number;
   memoryMb?: number;
   /** Per-command timeout inside the container; default 600 s, max 1800 s. */
@@ -85,6 +101,8 @@ export interface ResolvedContainerRunner {
   network: boolean;
   /** Per-destination allowlist; non-empty ⇒ proxy mode (podman). */
   egress?: EgressRule[];
+  /** Marina's model API through the proxy, with this per-command cap (0 = none). */
+  modelApi?: { capUsd: number };
   cpus: number;
   memoryMb: number;
   timeoutMs: number;
@@ -188,6 +206,13 @@ export function resolveContainerRunner(
     throw new Error(
       "A per-destination egress allowlist needs podman (its pasta network keeps the container on loopback with one forwarded port). Docker runners keep network on or off.",
     );
+  if (config.modelApi && !egress)
+    throw new Error(
+      "Marina's model API for containers rides the egress proxy: set MARINA_CODE_CONTAINER_EGRESS too.",
+    );
+  const modelCapUsd = config.modelCapUsd ?? 1;
+  if (!Number.isFinite(modelCapUsd) || modelCapUsd < 0)
+    throw new Error("The container model spend cap must be a non-negative number of USD.");
   if ((storageRoot || runRoot) && runtime !== "podman")
     throw new Error(
       "MARINA_CODE_CONTAINER_STORAGE / _RUNROOT apply to podman; set Docker's data-root in the daemon configuration.",
@@ -199,6 +224,7 @@ export function resolveContainerRunner(
     workdir,
     network: config.network === true,
     ...(egress ? { egress } : {}),
+    ...(config.modelApi && egress ? { modelApi: { capUsd: modelCapUsd } } : {}),
     cpus,
     memoryMb,
     timeoutMs,
@@ -356,6 +382,18 @@ export function containerRunArgv(
           `${name}=http://127.0.0.1:${opts.egressPort}`,
         ])
       : []),
+    // Node's fetch follows HTTP(S)_PROXY only when asked to.
+    ...(runner.egress ? ["-e", "NODE_USE_ENV_PROXY=1"] : []),
+    // Marina's model API: OpenAI- and Anthropic-style clients reach it by name;
+    // the key is a placeholder — the proxy presents the real (run) key.
+    ...(runner.modelApi
+      ? [
+          `OPENAI_BASE_URL=http://${MARINA_MODEL_HOST}/v1`,
+          "OPENAI_API_KEY=marina",
+          `ANTHROPIC_BASE_URL=http://${MARINA_MODEL_HOST}`,
+          "ANTHROPIC_API_KEY=marina",
+        ].flatMap((value) => ["-e", value])
+      : []),
     "-w",
     runner.workdir,
   ];
@@ -463,6 +501,8 @@ export class ContainerWorkspace extends LocalWorkspace {
     runner: ResolvedContainerRunner,
     runtimeEnv: Record<string, string> = OPERATOR_RUNTIME_ENV,
     fileGrants: readonly WorkspaceFileGrant[] = [],
+    /** Whose model calls a run makes (`modelApi`): the session's owner. */
+    readonly modelIdentity?: { entityName: string; sessionId: string },
   ) {
     super(root, fileGrants);
     if (runner.sync === "patch" && fileGrants.length)
@@ -528,7 +568,24 @@ export class ContainerWorkspace extends LocalWorkspace {
     const stdin = diff.length > 0 ? diff : undefined;
     const name = `marina-run-${crypto.randomUUID().slice(0, 12)}`;
     // The proxy lives exactly as long as this run, so its denials are this run's.
-    const proxy = this.runner.egress ? await EgressProxy.start(this.runner.egress) : undefined;
+    // Model access: a run key for this command only, bound to the session's owner,
+    // presented by the proxy and revoked when the command ends.
+    const runKey =
+      this.runner.egress && this.runner.modelApi && this.modelIdentity
+        ? mintRunKey(
+            {
+              runId: `code:${this.modelIdentity.sessionId}`,
+              entityName: this.modelIdentity.entityName,
+              ...(this.runner.modelApi.capUsd > 0 ? { capUsd: this.runner.modelApi.capUsd } : {}),
+            },
+            timeout + 60_000,
+          )
+        : undefined;
+    const proxy = this.runner.egress
+      ? await EgressProxy.start(this.runner.egress, {
+          ...(runKey ? { marinaModel: { port: localWsPort(), token: runKey } } : {}),
+        })
+      : undefined;
     let result: Awaited<ReturnType<typeof runWorkspaceCommand>>;
     try {
       const argv = containerRunArgv(this.runner, this.root, normalized, name, {
@@ -549,6 +606,7 @@ export class ContainerWorkspace extends LocalWorkspace {
       );
     } finally {
       await proxy?.close();
+      if (runKey) revokeRunKey(runKey);
     }
     const denied = proxy ? formatEgressDenials(proxy.denials) : "";
     if (proxy && denied)

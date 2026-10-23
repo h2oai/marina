@@ -96,6 +96,12 @@ export function envRunnerConfig(
     ...(env.MARINA_CODE_CONTAINER_EGRESS?.trim()
       ? { egress: parseEgressRules(env.MARINA_CODE_CONTAINER_EGRESS) }
       : {}),
+    ...(/^(1|true|on|yes)$/i.test(env.MARINA_CODE_CONTAINER_MODEL_API?.trim() ?? "")
+      ? { modelApi: true }
+      : {}),
+    ...(env.MARINA_CODE_CONTAINER_MODEL_CAP_USD?.trim()
+      ? { modelCapUsd: Number(env.MARINA_CODE_CONTAINER_MODEL_CAP_USD.trim()) }
+      : {}),
   };
 }
 
@@ -166,6 +172,8 @@ export function effectiveRunner(
     const {
       init: _ignored,
       egress: _operatorOnly,
+      modelApi: _operatorModel,
+      modelCapUsd: _operatorCap,
       gated,
       ...rest
     } = setting.config as ContainerRunnerConfig & {
@@ -183,8 +191,12 @@ export function effectiveRunner(
       config.init = defaults.init;
       if (defaults.shell) config.shell = defaults.shell;
     }
-    // So does its egress allowlist.
+    // So do its egress allowlist and model access.
     if (operatorImage && defaults.egress) config.egress = defaults.egress;
+    if (operatorImage && defaults.modelApi) {
+      config.modelApi = true;
+      if (defaults.modelCapUsd !== undefined) config.modelCapUsd = defaults.modelCapUsd;
+    }
     return { kind: "container", config };
   }
   if (setting?.kind === "local" && !policy.required) return { kind: "host" };
@@ -283,6 +295,7 @@ export function applySessionRunner(
       resolveContainerRunner(config, env),
       undefined,
       ws.fileGrants,
+      { entityName: session.created_by, sessionId: session.id },
     );
   } catch (error) {
     return new UnavailableContainerWorkspace(ws.root, error, ws.fileGrants);
@@ -539,8 +552,12 @@ function retireRunners(db: MarinaDB, sessionId: string): number {
 }
 
 /** `on`, `off`, or the egress allowlist that governs instead. */
-function networkLabel(config: Pick<ContainerRunnerConfig, "network" | "egress">): string {
+function networkLabel(
+  config: Pick<ContainerRunnerConfig, "network" | "egress"> & {
+    modelApi?: boolean | { capUsd: number };
+  },
+): string {
   if (config.egress?.length)
-    return `allowlist (${config.egress.map(formatEgressRule).join(", ")}) via Marina's proxy`;
+    return `allowlist (${config.egress.map(formatEgressRule).join(", ")}) via Marina's proxy${config.modelApi ? ", plus Marina's model API at http://marina.model/v1" : ""}`;
   return config.network ? "on" : "off";
 }
