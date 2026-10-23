@@ -48,6 +48,7 @@ import type { SearchHttp, SearchProvider, SearchResult } from "../engine/search-
 import { type ModelTurns, messageText } from "../model/turns";
 import type { FirstMoveModel } from "../retrieval/first-move";
 import { ReadSwarm, renderCandidateTable, type SwarmStats } from "../retrieval/read-swarm";
+import type { CrossEncoder } from "../retrieval/rerank-client";
 import type { DecisionReceipt } from "../sdk/decision-receipt";
 import type { BrowserReader } from "./browser-reader";
 import {
@@ -121,6 +122,8 @@ export interface SwarmConfig {
   reader: FirstMoveModel;
   /** Pointwise decision-backend reranker (e.g. the configured engine); else the reader reranks. */
   judge?: DecisionProvider;
+  /** Operator cross-encoder; replaces `judge` and the reader's rerank when set. */
+  crossEncoder?: CrossEncoder;
   /** Documents read per swarm call (default 12). */
   maxDocs?: number;
   /** Errors that stop the run instead of failing open (a spend stop). */
@@ -293,6 +296,7 @@ async function runSwarm(
     },
     reader: cfg.reader,
     decomposer: cfg.reader,
+    ...(cfg.crossEncoder ? { crossEncoder: cfg.crossEncoder } : {}),
     ...(cfg.judge ? { judge: cfg.judge } : { reranker: cfg.reader }),
     depth: 10,
     openDocs: maxDocs,

@@ -25,8 +25,9 @@ import type { DecisionProvider } from "../decisions/types";
 import { logRejection } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { getCorpusDocument, parseCorpusUrl } from "../engine/search-providers/corpus";
-import { type Candidate, type FirstMoveModel, judgeRerank } from "../retrieval/first-move";
+import { type Candidate, type FirstMoveModel, rerankPool } from "../retrieval/first-move";
 import { type DocReading, ReadSwarm } from "../retrieval/read-swarm";
+import type { CrossEncoder } from "../retrieval/rerank-client";
 import { authorityClue, matchesAuthority } from "./authority";
 import { isDateStrict, type ResearchReport, type Retriever, type Source } from "./retrieve";
 import { defaultPageText, fetchAllowed, MIN_QUOTE_CHARS, type PageText } from "./verify";
@@ -54,6 +55,8 @@ export interface ReadSwarmRetrieverOptions {
    * ordering only: a failed judgement keeps the retriever's order.
    */
   judge?: DecisionProvider;
+  /** Operator cross-encoder (`MARINA_RERANK_*`); orders the found pages in place of `judge`. */
+  crossEncoder?: CrossEncoder;
   /** Called once per brief with what the swarm did (counts only, no text). */
   onStats?: (stats: ReadSwarmBriefStats) => void;
 }
@@ -71,7 +74,7 @@ export interface ReadSwarmBriefStats {
   /** Clues asking for an authority publisher's field (absent when none). */
   authorityClues?: number;
   /** How the reading order was decided. */
-  order: "judged" | "retriever";
+  order: "cross-encoded" | "judged" | "retriever";
   judgeError?: string;
 }
 
@@ -178,15 +181,18 @@ export function readSwarmRetriever(inner: Retriever, opts: ReadSwarmRetrieverOpt
     }));
     let order: ReadSwarmBriefStats["order"] = "retriever";
     let judgeError: string | undefined;
-    if (opts.judge && pages.length > 1) {
-      // The judge sees each page's title and the opening of the text the engine returned.
+    if ((opts.crossEncoder || opts.judge) && pages.length > 1) {
+      // The ranker sees each page's title and the opening of the text the engine returned.
       const shown = pages.map((p) => ({ ...p, text: (texts.get(p.id) ?? "").slice(0, 600) }));
-      const judged = await judgeRerank(question, shown, opts.judge);
-      if (judged.ok) {
+      const ranked = await rerankPool(question, shown, {
+        ...(opts.crossEncoder ? { crossEncoder: opts.crossEncoder } : {}),
+        ...(opts.judge ? { judge: opts.judge } : {}),
+      });
+      if (ranked.order === "cross-encoded" || ranked.order === "judged") {
         const byId = new Map(pages.map((p) => [p.id, p]));
-        pages = judged.ranked.map((c) => byId.get(c.id)).filter((p): p is Candidate => !!p);
-        order = "judged";
-      } else judgeError = judged.error;
+        pages = ranked.ranked.map((c) => byId.get(c.id)).filter((p): p is Candidate => !!p);
+        order = ranked.order;
+      } else judgeError = ranked.error;
     }
     // The authority publishers' pages are read first (stable otherwise).
     if (authority.length)
@@ -233,7 +239,7 @@ export function readSwarmRetriever(inner: Retriever, opts: ReadSwarmRetrieverOpt
       sources,
       readSwarm: [...(base.readSwarm ?? []), stats],
       costUsd: base.costUsd + cost,
-      retriever: `${base.retriever}+read-swarm${order === "judged" ? "+judged" : ""}`,
+      retriever: `${base.retriever}+read-swarm${order === "retriever" ? "" : `+${order}`}`,
       ...(st.readerFailures > 0 && st.readerFailures >= st.readerCalls
         ? { warnings: [...(base.warnings ?? []), "read swarm: every reader call failed"] }
         : {}),

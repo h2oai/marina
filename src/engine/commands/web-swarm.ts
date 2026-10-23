@@ -15,6 +15,7 @@
 import { modelComplete } from "../../model/complete";
 import { dim, header, separator } from "../../net/ansi";
 import { ReadSwarm, renderCandidateTable } from "../../retrieval/read-swarm";
+import { crossEncoderFromEnv } from "../../retrieval/rerank-client";
 import type { EntityId, RoomContext } from "../../types";
 import { type ConnectorRuntime, readPageVia } from "../connector-runtime";
 import { getErrorMessage } from "../errors";
@@ -85,6 +86,7 @@ export async function handleSwarm(
   try {
     const model = { name: readerSpec, complete: reader.complete };
     const pages = new Map<string, string>();
+    const crossEncoder = crossEncoderFromEnv();
     const swarm = new ReadSwarm(question, {
       search: async (q, depth) =>
         (
@@ -124,6 +126,7 @@ export async function handleSwarm(
       reader: model,
       decomposer: model,
       reranker: model,
+      ...(crossEncoder ? { crossEncoder } : {}),
       depth: 10,
       openDocs: maxDocs,
       maxDocs,

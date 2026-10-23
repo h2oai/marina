@@ -16,11 +16,14 @@
  * General: any research loop can open with it, over any search (BM25, hybrid,
  * the web chain). One model can do everything (decompose, rerank — and answer),
  * so it needs nothing beyond the single LLM an operator already runs; a
- * decision backend (`judge`) can replace the listwise reranker.
+ * decision backend (`judge`) or an operator's cross-encoder (`crossEncoder`,
+ * one scoring call instead of a model reading the whole pool) can replace the
+ * listwise reranker.
  */
 
 import type { DecisionProvider } from "../decisions/types";
 import { reciprocalRankFusion } from "./fusion";
+import type { CrossEncoder } from "./rerank-client";
 
 export interface Candidate {
   id: string;
@@ -48,6 +51,12 @@ export interface FirstMoveOptions {
    * fused order.
    */
   judge?: DecisionProvider;
+  /**
+   * Optional cross-encoder (`src/retrieval/rerank-client.ts`): scores every
+   * candidate against the question in one call. Replaces `judge` and
+   * `reranker` when set; fails open to the fused order.
+   */
+  crossEncoder?: CrossEncoder;
   /** Results per clue (default 100). */
   depth?: number;
   /** Fused candidates shown to the reranker (default 30). */
@@ -62,9 +71,12 @@ export interface FirstMove {
   clues: string[];
   candidates: Candidate[];
   /** How the order was decided. */
-  order: "reranked" | "judged" | "fused";
+  order: RerankOrder;
   error?: string;
 }
+
+/** How a candidate pool was ordered. */
+export type RerankOrder = "cross-encoded" | "reranked" | "judged" | "fused";
 
 const MAX_CLUES = 12;
 
@@ -230,6 +242,68 @@ export async function judgeRerank(
   };
 }
 
+/**
+ * Cross-encoder relevance: one scoring call for the pool, candidates sorted by
+ * score with ties in their incoming order. Any failure ⇒ the incoming order
+ * stands (`ok: false`).
+ */
+export async function crossEncoderRerank(
+  question: string,
+  candidates: Candidate[],
+  encoder: CrossEncoder,
+  chars = 2_000,
+  signal?: AbortSignal,
+): Promise<{ ranked: Candidate[]; ok: boolean; error?: string }> {
+  if (candidates.length <= 1) return { ranked: candidates, ok: true };
+  try {
+    const scores = await encoder.score(
+      question,
+      candidates.map((c) => judgeText(c, chars)),
+      signal,
+    );
+    const order = candidates.map((c, i) => ({ c, i, score: scores[i]! }));
+    order.sort((a, b) => b.score - a.score || a.i - b.i);
+    return { ranked: order.map((o) => o.c), ok: true };
+  } catch (err) {
+    return {
+      ranked: candidates,
+      ok: false,
+      error: (err instanceof Error ? err.message : String(err)).slice(0, 160),
+    };
+  }
+}
+
+/**
+ * Order a pool with the configured reranker — a cross-encoder, else a
+ * decision backend, else a listwise model — and say which ran. Every one
+ * fails open to the incoming order.
+ */
+export async function rerankPool(
+  question: string,
+  pool: Candidate[],
+  opts: Pick<FirstMoveOptions, "crossEncoder" | "judge" | "reranker" | "rerankChars">,
+): Promise<{ ranked: Candidate[]; order: RerankOrder; error?: string }> {
+  const r = opts.crossEncoder
+    ? await crossEncoderRerank(question, pool, opts.crossEncoder)
+    : opts.judge
+      ? await judgeRerank(question, pool, opts.judge, opts.rerankChars ?? 600)
+      : opts.reranker
+        ? await llmRerank(question, pool, opts.reranker, opts.rerankChars ?? 500)
+        : { ranked: pool, ok: true };
+  const used: RerankOrder = opts.crossEncoder
+    ? "cross-encoded"
+    : opts.judge
+      ? "judged"
+      : opts.reranker
+        ? "reranked"
+        : "fused";
+  return {
+    ranked: r.ranked,
+    order: r.ok ? used : "fused",
+    ...("error" in r && r.error ? { error: r.error } : {}),
+  };
+}
+
 /** Decompose → search each clue → fuse → rerank → top k (see the module comment). */
 export async function firstMove(question: string, opts: FirstMoveOptions): Promise<FirstMove> {
   const depth = opts.depth ?? 100;
@@ -240,16 +314,14 @@ export async function firstMove(question: string, opts: FirstMoveOptions): Promi
   // allow-empty-catch: one failed query must not sink the fused ranking of the others
   const rankings = await Promise.all(queries.map((q) => opts.search(q, depth).catch(() => [])));
   const fused = fuseRankings(rankings);
-  if (!opts.reranker && !opts.judge)
+  if (!opts.reranker && !opts.judge && !opts.crossEncoder)
     return { clues, candidates: fused.slice(0, k), order: "fused" };
   const pool = fused.slice(0, opts.rerankPool ?? 30);
-  const r = opts.judge
-    ? await judgeRerank(question, pool, opts.judge, opts.rerankChars ?? 600)
-    : await llmRerank(question, pool, opts.reranker!, opts.rerankChars ?? 500);
+  const r = await rerankPool(question, pool, opts);
   return {
     clues,
     candidates: [...r.ranked, ...fused.slice(pool.length)].slice(0, k),
-    order: r.ok ? (opts.judge ? "judged" : "reranked") : "fused",
+    order: r.order,
     ...(r.error ? { error: r.error } : {}),
   };
 }
