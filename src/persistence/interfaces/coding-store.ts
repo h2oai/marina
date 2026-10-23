@@ -30,7 +30,7 @@ export interface CodingStore {
       writer: string | null;
       agent: string | null;
       driver: string | null;
-      executionTarget: "local" | "flywheel";
+      executionTarget: string; // "local" or a sandbox provider id
       worktreePath: string | null;
       worktreeBranch: string | null;
     }>,

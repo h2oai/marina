@@ -1369,13 +1369,13 @@ Fields read here: `orchestration`.
 
 ### `url.pathname === "/health"`
 
-[Source](../../src/net/mcp/mcp-server.ts#L176)
+[Source](../../src/net/mcp/mcp-server.ts#L168)
 
 - Guard: `url.pathname === "/health"`
 
 ### `url.pathname === "/mcp"`
 
-[Source](../../src/net/mcp/mcp-server.ts#L191)
+[Source](../../src/net/mcp/mcp-server.ts#L183)
 
 - Guard: `url.pathname === "/mcp"`
 

@@ -2213,8 +2213,9 @@ Usage:
   code sandbox network status Show network profile and verified-enforcement state
   code sandbox credentials    List logical credential bindings (never secret material)
   code sandbox ops inventory  Steward fleet inventory and recoverable reclamation
-  code sandbox start [image]  Create this entity's durable Flywheel workspace
-  code sandbox use|local      Select Flywheel or local execution for this session
+  code sandbox providers      List configured sandbox providers and what each can do
+  code sandbox start [image]  Create this entity's durable sandbox workspace
+  code sandbox use [provider]|local  Select a sandbox provider or local execution for this session
   code sandbox hibernate|resume Preserve or resume its writable guest disk
   code sandbox stop confirm   Destructively remove its guest workspace
   code project init <name>    Bootstrap a durable guest Git project
@@ -3075,10 +3076,17 @@ Effect: delete.
 Effect: delete.
 
 
-### `code sandbox use`
+### `code sandbox providers`
+
+Effect: read.
+
+
+### `code sandbox use [provider]`
 
 Effect: write.
 
+- `field-0` (`provider`): text, optional group `option-0`.
+- Group `option-0`: `provider`.
 
 ### `code search <query> [path:<relative-path>]`
 

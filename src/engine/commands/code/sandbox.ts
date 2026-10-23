@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CodingProjectManager } from "../../../coding/project-manager";
-import type { FlywheelToolBackend } from "../../../integrations/flywheel-manager";
+import {
+  describeCapabilities,
+  LOCAL_TARGET,
+  type SandboxProvider,
+} from "../../../coding/sandbox-provider";
 import { dim, header, success } from "../../../net/ansi";
 import type { MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
@@ -10,6 +14,7 @@ import { rankFloorRefusal } from "../../rank-floor";
 import {
   type CodeDeps,
   getActiveSessionId,
+  resolveSandboxProvider,
   resolveSession,
   sendCode,
   updateCodeContext,
@@ -21,7 +26,7 @@ interface SandboxCall {
   eid: EntityId;
   entity: Entity;
   deps: CodeDeps & { db: MarinaDB };
-  flywheel: FlywheelToolBackend;
+  provider: SandboxProvider;
   action: string;
   args: string[];
 }
@@ -31,30 +36,52 @@ export async function sandboxLifecycle(
   eid: EntityId,
   entity: Entity,
   deps: CodeDeps & { db: MarinaDB },
-  args: string[],
+  rawArgs: string[],
 ): Promise<void> {
+  // `provider:<id>` picks among several configured providers; it is not a positional argument.
+  const requested = rawArgs
+    .find((arg) => /^provider[:=]/i.test(arg))
+    ?.replace(/^provider[:=]/i, "");
+  const args = rawArgs.filter((arg) => !/^provider[:=]/i.test(arg));
   const action = args[0]?.toLowerCase() ?? "status";
-  const flywheel = deps.flywheel;
-  if (!flywheel) {
+  if (action === "providers") {
+    sandboxProviders(ctx, eid, deps);
+    return;
+  }
+  if (!deps.sandboxes?.size) {
     sendCode(
       ctx,
       eid,
       [
-        "Flywheel is not configured.",
+        "No sandbox provider is configured.",
         "Local Code Mode remains available and unchanged.",
         dim("Set FLYWHEEL_TOKEN on the Marina server to enable isolated workspaces."),
       ].join("\n"),
       {
         event: "sandbox_unconfigured",
         status: "unconfigured",
-        title: "Flywheel Sandbox",
+        title: "Sandbox",
         type: "readiness",
       },
     );
     return;
   }
+  // `use <id>` names the provider positionally too.
+  const useTarget = action === "use" && args[1] ? args[1].toLowerCase() : undefined;
+  const sessionId = getActiveSessionId(entity);
+  const resolved = resolveSandboxProvider(deps, {
+    requested: requested?.toLowerCase() ?? useTarget,
+    target: sessionId
+      ? (deps.db.getCodingSession(sessionId)?.execution_target ?? undefined)
+      : undefined,
+  });
+  if (typeof resolved === "string") {
+    ctx.send(eid, resolved);
+    return;
+  }
+  const provider = resolved;
 
-  const call: SandboxCall = { ctx, eid, entity, deps, flywheel, action, args };
+  const call: SandboxCall = { ctx, eid, entity, deps, provider, action, args };
 
   if (action === "ops") {
     await sandboxOps(call);
@@ -100,12 +127,32 @@ export async function sandboxLifecycle(
 
   ctx.send(
     eid,
-    "Usage: code sandbox status|start [image]|use|local|network|credentials|ops|hibernate|resume|stop [discard] confirm",
+    "Usage: code sandbox providers|status|start [image]|use [provider]|local|network|credentials|ops|hibernate|resume|stop [discard] confirm  (provider:<id> picks among several)",
+  );
+}
+
+function sandboxProviders(
+  ctx: RoomContext,
+  eid: EntityId,
+  deps: CodeDeps & { db: MarinaDB },
+): void {
+  const providers = deps.sandboxes?.list() ?? [];
+  ctx.send(
+    eid,
+    providers.length
+      ? [
+          header("Sandbox Providers"),
+          ...providers.map((p) => `${p.id}  ${p.label}  ${describeCapabilities(p.capabilities)}`),
+          dim(
+            "Select one for the session: code sandbox use <provider>; back to the host: code sandbox local",
+          ),
+        ].join("\n")
+      : "No sandbox provider is configured. Local Code Mode remains available and unchanged.",
   );
 }
 
 async function sandboxOps(call: SandboxCall): Promise<void> {
-  const { ctx, eid, entity, deps, flywheel, args } = call;
+  const { ctx, eid, entity, deps, provider, args } = call;
   const refusal = rankFloorRefusal(
     entity,
     5,
@@ -117,7 +164,7 @@ async function sandboxOps(call: SandboxCall): Promise<void> {
   }
   const operation = args[1]?.toLowerCase() ?? "inventory";
   if (operation === "inventory") {
-    const inventory = flywheel.inventory?.() ?? [];
+    const inventory = provider.inventory?.() ?? [];
     ctx.send(
       eid,
       inventory.length
@@ -127,12 +174,12 @@ async function sandboxOps(call: SandboxCall): Promise<void> {
                 `${item.entityId}  ${item.state}  ${item.sandboxId}  services=${item.activeServices ? "active" : "none"}  published=${item.publishedUrl ? "yes" : "no"}  last=${item.lastActivityAt ? new Date(item.lastActivityAt).toISOString() : "unknown"}`,
             )
             .join("\n")
-        : "No Flywheel sandbox allocations.",
+        : `No ${provider.label} sandbox allocations.`,
     );
     return;
   }
   if (operation === "metrics") {
-    const summary = flywheel.operationSummary?.() ?? [];
+    const summary = provider.operationSummary?.() ?? [];
     ctx.send(
       eid,
       summary.length
@@ -142,20 +189,20 @@ async function sandboxOps(call: SandboxCall): Promise<void> {
                 `${row.operation}  ${row.outcome}  count=${row.count}  avg=${row.avg_duration_ms}ms  bytes=${row.byte_count}`,
             )
             .join("\n")
-        : "No Flywheel operation telemetry in the current window.",
+        : `No ${provider.label} operation telemetry in the current window.`,
     );
     return;
   }
   if (operation === "reconcile") {
-    if (!flywheel.reconcile) throw new Error("Flywheel reconciliation is unavailable.");
-    await flywheel.reconcile();
-    ctx.send(eid, success("Flywheel fleet reconciliation completed."));
+    if (!provider.reconcile) throw new Error(`${provider.label} reconciliation is unavailable.`);
+    await provider.reconcile();
+    ctx.send(eid, success(`${provider.label} fleet reconciliation completed.`));
     return;
   }
   if (operation === "reclaim") {
-    if (!flywheel.reclaim) throw new Error("Flywheel reclamation is unavailable.");
+    if (!provider.reclaim) throw new Error(`${provider.label} reclamation is unavailable.`);
     const apply = args[2]?.toLowerCase() === "confirm";
-    const candidates = await flywheel.reclaim(apply);
+    const candidates = await provider.reclaim(apply);
     const detail = candidates.length
       ? candidates
           .map(
@@ -178,7 +225,7 @@ async function sandboxOps(call: SandboxCall): Promise<void> {
     if (args[3]?.toLowerCase() !== "confirm") {
       throw new Error("Operator hibernation requires literal confirm.");
     }
-    await flywheel.hibernate(target);
+    await provider.hibernate(target);
     ctx.send(eid, success(`Hibernated sandbox for ${target}; guest disk is preserved.`));
     return;
   }
@@ -188,11 +235,12 @@ async function sandboxOps(call: SandboxCall): Promise<void> {
     if (args[3]?.toLowerCase() !== "confirm") {
       throw new Error("Operator publication revocation requires literal confirm.");
     }
-    if (!flywheel.unpublish) throw new Error("Flywheel publication revocation is unavailable.");
+    if (!provider.unpublish)
+      throw new Error(`${provider.label} publication revocation is unavailable.`);
     let revoked = 0;
     for (const service of deps.db.listCodingServices(target)) {
       if (!service.published_subdomain) continue;
-      await flywheel.unpublish(target, service.published_subdomain);
+      await provider.unpublish(target, service.published_subdomain);
       deps.db.updateCodingService(service.id, {
         publishedSubdomain: null,
         publishedUrl: null,
@@ -219,13 +267,16 @@ async function sandboxOps(call: SandboxCall): Promise<void> {
         `${unexported.length} project(s) have unexported work; export first or use discard confirm.`,
       );
     }
-    const sandboxId = flywheel.status(target)?.sandboxId;
-    await flywheel.stop(target);
+    const sandboxId = provider.status(target)?.sandboxId;
+    await provider.stop(target);
     if (sandboxId) {
       deps.db.stopCodingServicesForSandbox(target, sandboxId, "Sandbox destroyed by operator.");
       deps.db.deleteCodingProjectsForSandbox(target, sandboxId);
     }
-    ctx.send(eid, success(`Stopped sandbox for ${target}; its Flywheel allocation was removed.`));
+    ctx.send(
+      eid,
+      success(`Stopped sandbox for ${target}; its ${provider.label} allocation was removed.`),
+    );
     return;
   }
   throw new Error(
@@ -234,8 +285,8 @@ async function sandboxOps(call: SandboxCall): Promise<void> {
 }
 
 function sandboxStatus(call: SandboxCall): void {
-  const { ctx, eid, entity, deps, flywheel } = call;
-  const workspace = flywheel.status(eid);
+  const { ctx, eid, entity, deps, provider } = call;
+  const workspace = provider.status(eid);
   const binding = deps.db.listFlywheelBindings().find((row) => row.entity_id === eid);
   const activeProject = binding?.active_project_id
     ? deps.db.getCodingProject(binding.active_project_id)
@@ -247,7 +298,7 @@ function sandboxStatus(call: SandboxCall): void {
     eid,
     workspace
       ? [
-          header("Flywheel Sandbox"),
+          header(`${provider.label} Sandbox`),
           `State: ${workspace.state}`,
           `Image: ${workspace.image}`,
           `Persistence: ${workspace.keepAlive ? "durable guest disk" : "ephemeral"}`,
@@ -270,14 +321,14 @@ function sandboxStatus(call: SandboxCall): void {
           .filter(Boolean)
           .join("\n")
       : [
-          "Flywheel is configured; this entity has no sandbox.",
+          `${provider.label} is configured; this entity has no sandbox.`,
           "Use: code sandbox start [image]",
           dim("Local Code Mode remains the active execution target."),
         ].join("\n"),
     {
       event: "sandbox_status",
       status: workspace?.state ?? "absent",
-      title: "Flywheel Sandbox",
+      title: `${provider.label} Sandbox`,
       type: "readiness",
     },
   );
@@ -285,9 +336,10 @@ function sandboxStatus(call: SandboxCall): void {
 }
 
 function sandboxNetwork(call: SandboxCall): void {
-  const { ctx, eid, deps, args } = call;
+  const { ctx, eid, deps, provider, args } = call;
   const binding = deps.db.listFlywheelBindings().find((row) => row.entity_id === eid);
-  if (!binding) throw new Error("Start a Flywheel sandbox before inspecting its network policy.");
+  if (!binding)
+    throw new Error(`Start a ${provider.label} sandbox before inspecting its network policy.`);
   if (!args[1] || args[1].toLowerCase() === "status") {
     ctx.send(
       eid,
@@ -296,21 +348,21 @@ function sandboxNetwork(call: SandboxCall): void {
         `Profile: ${binding.network_profile}`,
         `Enforcement: ${binding.network_profile_enforced ? "verified" : "provider-owned; not Marina-enforced"}`,
         dim(
-          "Marina will not claim a restrictive profile until Flywheel exposes direct-sandbox enforcement.",
+          `Marina will not claim a restrictive profile until ${provider.label} exposes direct-sandbox enforcement.`,
         ),
       ].join("\n"),
     );
     return;
   }
   throw new Error(
-    "Network profile changes are unavailable: Flywheel's public direct-sandbox policy API is not exposed. No policy was changed.",
+    `Network profile changes are unavailable: ${provider.label}'s public direct-sandbox policy API is not exposed. No policy was changed.`,
   );
 }
 
 function sandboxCredentials(call: SandboxCall): void {
-  const { ctx, eid, deps, flywheel, action, args } = call;
-  const workspace = flywheel.status(eid);
-  if (!workspace) throw new Error("Start a Flywheel sandbox before managing credentials.");
+  const { ctx, eid, deps, provider, action, args } = call;
+  const workspace = provider.status(eid);
+  if (!workspace) throw new Error(`Start a ${provider.label} sandbox before managing credentials.`);
   const bindings = deps.db
     .listFlywheelCredentialBindings(eid)
     .filter((binding) => binding.sandbox_id === workspace.sandboxId);
@@ -329,23 +381,23 @@ function sandboxCredentials(call: SandboxCall): void {
     return;
   }
   throw new Error(
-    "Credential binding is unavailable: Flywheel's public direct-sandbox credential broker is not exposed. No secret was stored or injected.",
+    `Credential binding is unavailable: ${provider.label}'s public direct-sandbox credential broker is not exposed. No secret was stored or injected.`,
   );
 }
 
 function sandboxSelectTarget(call: SandboxCall): void {
-  const { ctx, eid, entity, deps, flywheel, action } = call;
+  const { ctx, eid, entity, deps, provider, action } = call;
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
-  const target = action === "use" ? "flywheel" : "local";
-  if (target === "flywheel") {
-    const workspace = flywheel.status(eid);
+  const target = action === "use" ? provider.id : LOCAL_TARGET;
+  if (target !== LOCAL_TARGET) {
+    const workspace = provider.status(eid);
     if (!workspace) {
-      ctx.send(eid, "Use `code sandbox start` before selecting Flywheel execution.");
+      ctx.send(eid, `Use \`code sandbox start\` before selecting ${provider.label} execution.`);
       return;
     }
     if (workspace.state !== "running") {
-      ctx.send(eid, `Flywheel sandbox is ${workspace.state}; resume it before selection.`);
+      ctx.send(eid, `${provider.label} sandbox is ${workspace.state}; resume it before selection.`);
       return;
     }
   }
@@ -361,8 +413,8 @@ function sandboxSelectTarget(call: SandboxCall): void {
     ctx,
     eid,
     success(
-      target === "flywheel"
-        ? "Execution target set to Flywheel for this coding session."
+      target !== LOCAL_TARGET
+        ? `Execution target set to ${provider.label} for this coding session.`
         : "Execution target set to local host-safe mode for this coding session.",
     ),
     {
@@ -377,64 +429,64 @@ function sandboxSelectTarget(call: SandboxCall): void {
 }
 
 async function sandboxStart(call: SandboxCall): Promise<void> {
-  const { ctx, eid, flywheel, args } = call;
-  const workspace = await flywheel.create(eid, args[1], true);
-  sendCode(ctx, eid, success(`Flywheel sandbox ready: ${workspace.sandboxId}`), {
+  const { ctx, eid, provider, args } = call;
+  const workspace = await provider.create(eid, args[1], true);
+  sendCode(ctx, eid, success(`${provider.label} sandbox ready: ${workspace.sandboxId}`), {
     event: "sandbox_started",
     status: workspace.state,
-    title: "Flywheel Sandbox",
+    title: `${provider.label} Sandbox`,
     type: "lifecycle",
   });
   return;
 }
 
 async function sandboxHibernate(call: SandboxCall): Promise<void> {
-  const { ctx, eid, deps, flywheel } = call;
-  const sandboxId = flywheel.status(eid)?.sandboxId;
+  const { ctx, eid, deps, provider } = call;
+  const sandboxId = provider.status(eid)?.sandboxId;
   for (const service of deps.db.listCodingServices(eid)) {
     if (!service.published_subdomain) continue;
-    if (!flywheel.unpublish) {
+    if (!provider.unpublish) {
       throw new Error("Revoke published services before hibernating this sandbox.");
     }
-    await flywheel.unpublish(eid, service.published_subdomain);
+    await provider.unpublish(eid, service.published_subdomain);
     deps.db.updateCodingService(service.id, {
       publishedSubdomain: null,
       publishedUrl: null,
       publicationExpiresAt: null,
     });
   }
-  await flywheel.hibernate(eid);
+  await provider.hibernate(eid);
   if (sandboxId) {
     deps.db.stopCodingServicesForSandbox(eid, sandboxId, "Sandbox hibernated; restart required.");
   }
-  sendCode(ctx, eid, success("Flywheel sandbox hibernated; writable disk preserved."), {
+  sendCode(ctx, eid, success(`${provider.label} sandbox hibernated; writable disk preserved.`), {
     event: "sandbox_hibernated",
     status: "hibernated",
-    title: "Flywheel Sandbox",
+    title: `${provider.label} Sandbox`,
     type: "lifecycle",
   });
   return;
 }
 
 async function sandboxResume(call: SandboxCall): Promise<void> {
-  const { ctx, eid, flywheel } = call;
-  await flywheel.resume(eid);
-  sendCode(ctx, eid, success("Flywheel sandbox resumed by cold boot."), {
+  const { ctx, eid, provider } = call;
+  await provider.resume(eid);
+  sendCode(ctx, eid, success(`${provider.label} sandbox resumed by cold boot.`), {
     event: "sandbox_resumed",
     status: "running",
-    title: "Flywheel Sandbox",
+    title: `${provider.label} Sandbox`,
     type: "lifecycle",
   });
   return;
 }
 
 async function sandboxStop(call: SandboxCall): Promise<void> {
-  const { ctx, eid, deps, flywheel, args } = call;
+  const { ctx, eid, deps, provider, args } = call;
   const discardConfirmed =
     args[1]?.toLowerCase() === "discard" && args[2]?.toLowerCase() === "confirm";
-  const activeProject = new CodingProjectManager(deps.db, deps.workspace, flywheel).active(eid);
+  const activeProject = new CodingProjectManager(deps.db, deps.workspace, provider).active(eid);
   if (activeProject && !discardConfirmed) {
-    await new CodingProjectManager(deps.db, deps.workspace, flywheel).status(eid, activeProject);
+    await new CodingProjectManager(deps.db, deps.workspace, provider).status(eid, activeProject);
   }
   const hasUnexportedProjects = deps.db
     .listCodingProjects(eid)
@@ -454,16 +506,16 @@ async function sandboxStop(call: SandboxCall): Promise<void> {
     );
     return;
   }
-  const sandboxId = flywheel.status(eid)?.sandboxId;
-  await flywheel.stop(eid);
+  const sandboxId = provider.status(eid)?.sandboxId;
+  await provider.stop(eid);
   if (sandboxId) {
     deps.db.stopCodingServicesForSandbox(eid, sandboxId, "Sandbox destroyed.");
     deps.db.deleteCodingProjectsForSandbox(eid, sandboxId);
   }
-  sendCode(ctx, eid, success("Flywheel sandbox stopped and durable binding removed."), {
+  sendCode(ctx, eid, success(`${provider.label} sandbox stopped and durable binding removed.`), {
     event: "sandbox_stopped",
     status: "absent",
-    title: "Flywheel Sandbox",
+    title: `${provider.label} Sandbox`,
     type: "lifecycle",
   });
   return;

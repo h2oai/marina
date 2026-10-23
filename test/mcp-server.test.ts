@@ -3,9 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { RateLimiter } from "../src/auth/rate-limiter";
+import type { SandboxProvider } from "../src/coding/sandbox-provider";
 import { Engine } from "../src/engine/engine";
 import { setTrustProfile } from "../src/engine/trust-profile";
-import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
 import { buildUnifiedContext, type UnifiedContextResult } from "../src/memory/unified-context";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import {
@@ -20,7 +20,7 @@ import {
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, makeTestRoom, until } from "./helpers";
+import { cleanupDb, FAKE_SANDBOX_IDENTITY, makeTestRoom, until } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -181,13 +181,14 @@ describe("MCP Server", () => {
   let port: number;
   let url: string;
   let flywheelCalls: string[];
-  let flywheel: FlywheelToolBackend;
+  let flywheel: SandboxProvider;
 
   beforeEach(() => {
     dbPath = nextDbPath();
     db = new MarinaDB(dbPath);
     flywheelCalls = [];
     flywheel = {
+      ...FAKE_SANDBOX_IDENTITY,
       async create(entity) {
         flywheelCalls.push(`create:${entity}`);
         return {
@@ -216,7 +217,7 @@ describe("MCP Server", () => {
       startRoom: roomId("test/start"),
       tickInterval: 60_000,
       db,
-      flywheel,
+      sandboxes: [flywheel],
     });
 
     engine.registerRoom(
@@ -236,7 +237,7 @@ describe("MCP Server", () => {
       }),
     );
 
-    adapter = new McpServerAdapter(engine, 0, undefined, flywheel);
+    adapter = new McpServerAdapter(engine, 0);
     adapter.start();
     port = adapter.getPort();
     url = `http://localhost:${port}`;

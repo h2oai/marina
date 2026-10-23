@@ -1,11 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
 import { validateFetchUrl } from "../net/url-guard";
 import type { CodingProjectRow, MarinaDB } from "../persistence/database";
 import type { EntityId } from "../types";
 import type { WorkspaceRuntime } from "./local-workspace";
+import type { SandboxProvider } from "./sandbox-provider";
 import { WorkspaceGateway } from "./workspace-gateway";
 
 const PROJECT_ROOT = "/workspace/projects";
@@ -42,9 +42,9 @@ export class CodingProjectManager {
   constructor(
     private readonly db: MarinaDB,
     local: WorkspaceRuntime | undefined,
-    private readonly flywheel: FlywheelToolBackend,
+    private readonly provider: SandboxProvider,
   ) {
-    this.gateway = new WorkspaceGateway(local, flywheel);
+    this.gateway = new WorkspaceGateway(local, provider);
   }
 
   async init(entityId: EntityId, name: string): Promise<CodingProjectRow> {
@@ -176,7 +176,8 @@ export class CodingProjectManager {
   }> {
     if (!project) throw new Error("No active project. Use `code project init|clone` first.");
     this.requireOwnedCurrentSandbox(entityId, project);
-    if (!this.flywheel.readFile) throw new Error("Flywheel bounded binary reads are unavailable.");
+    if (!this.provider.readFile)
+      throw new Error(`${this.provider.label} bounded binary reads are unavailable.`);
     const archivePath = `/workspace/.marina/${project.id}-${crypto.randomUUID()}.tar.gz`;
     await this.run(entityId, ["mkdir", "-p", "/workspace/.marina"]);
     await this.run(
@@ -185,7 +186,7 @@ export class CodingProjectManager {
       "/",
     );
     try {
-      const transferred = await this.flywheel.readFile(entityId, archivePath, {
+      const transferred = await this.provider.readFile(entityId, archivePath, {
         maxBytes: MAX_PROJECT_ARCHIVE_BYTES,
         timeoutMs: 60_000,
       });
@@ -213,7 +214,7 @@ export class CodingProjectManager {
     data: Uint8Array,
   ): Promise<CodingProjectRow> {
     const workspace = this.requireWorkspace(entityId);
-    if (!this.flywheel.writeFile)
+    if (!this.provider.writeFile)
       throw new Error("Flywheel bounded binary writes are unavailable.");
     if (data.length < 2 || data[0] !== 0x1f || data[1] !== 0x8b) {
       throw new Error("Project import requires a gzip-compressed tar archive.");
@@ -227,7 +228,7 @@ export class CodingProjectManager {
     const archivePath = `/workspace/.marina/import-${nonce}.tar.gz`;
     const stagingPath = `${PROJECT_ROOT}/.import-${nonce}`;
     await this.run(entityId, ["mkdir", "-p", "/workspace/.marina", PROJECT_ROOT]);
-    const uploaded = await this.flywheel.writeFile(entityId, archivePath, data, {
+    const uploaded = await this.provider.writeFile(entityId, archivePath, data, {
       maxBytes: MAX_PROJECT_ARCHIVE_BYTES,
       timeoutMs: 60_000,
     });
@@ -342,7 +343,7 @@ export class CodingProjectManager {
     const changes = lines.filter((line) => !line.startsWith("## "));
     const revisionResult = await this.gateway.run(
       entityId,
-      "flywheel",
+      this.provider.id,
       ["git", "rev-parse", "HEAD"],
       120_000,
       cwd,
@@ -358,7 +359,7 @@ export class CodingProjectManager {
   }
 
   private async run(entityId: EntityId, command: string[], cwd?: string, allowTruncated = false) {
-    const execution = await this.gateway.run(entityId, "flywheel", command, 120_000, cwd);
+    const execution = await this.gateway.run(entityId, this.provider.id, command, 120_000, cwd);
     if (execution.result.exitCode !== 0) {
       throw new Error(
         execution.result.output || `${command[0]} exited ${execution.result.exitCode}`,

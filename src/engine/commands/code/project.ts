@@ -5,7 +5,7 @@ import { CodingProjectManager, PROJECT_ARCHIVE_FORMAT } from "../../../coding/pr
 import { header, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
-import { type CodeDeps, resolveSession, sendCode } from "./shared";
+import { type CodeDeps, resolveSandboxProvider, resolveSession, sendCode } from "./shared";
 import { workspaceForSession } from "./workspace";
 
 /** Everything a `projectLifecycle` step needs, resolved once per invocation. */
@@ -26,17 +26,18 @@ export async function projectLifecycle(
   deps: CodeDeps & { db: MarinaDB },
   args: string[],
 ): Promise<void> {
-  if (!deps.flywheel) {
-    ctx.send(eid, "Flywheel is not configured; sandbox projects are unavailable.");
+  if (!deps.sandboxes?.size) {
+    ctx.send(eid, "No sandbox provider is configured; sandbox projects are unavailable.");
     return;
   }
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
-  const manager = new CodingProjectManager(
-    deps.db,
-    workspaceForSession(deps, session),
-    deps.flywheel,
-  );
+  const provider = resolveSandboxProvider(deps, { target: session.execution_target });
+  if (typeof provider === "string") {
+    ctx.send(eid, provider);
+    return;
+  }
+  const manager = new CodingProjectManager(deps.db, workspaceForSession(deps, session), provider);
   const action = args[0]?.toLowerCase() ?? "status";
 
   const call: ProjectCall = { ctx, eid, entity, deps, args, session, manager };

@@ -7,11 +7,11 @@ import {
   CodingProjectManager,
   validateProjectArchiveManifest,
 } from "../src/coding/project-manager";
-import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
+import type { SandboxProvider } from "../src/coding/sandbox-provider";
 import { __setDnsResolverForTest } from "../src/net/url-guard";
 import { MarinaDB } from "../src/persistence/database";
 import { entityId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, FAKE_SANDBOX_IDENTITY } from "./helpers";
 
 const DB_PATH = "test_coding_projects.db";
 const OWNER = entityId("entity-1");
@@ -239,8 +239,9 @@ function backend(
   getStatus: () => string = () => "## main\n",
   getDiff: () => string = () => "",
   archive: Uint8Array = Uint8Array.from([0x1f, 0x8b]),
-): FlywheelToolBackend {
+): SandboxProvider {
   return {
+    ...FAKE_SANDBOX_IDENTITY,
     async create() {
       throw new Error("not used");
     },

@@ -1,9 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
 import type { CodingServiceRow, MarinaDB } from "../persistence/database";
 import type { EntityId } from "../types";
+import type { SandboxProvider } from "./sandbox-provider";
 import { WorkspaceGateway } from "./workspace-gateway";
 
 const SERVICE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -21,9 +21,9 @@ export class CodingServiceManager {
 
   constructor(
     private readonly db: MarinaDB,
-    private readonly flywheel: FlywheelToolBackend,
+    private readonly provider: SandboxProvider,
   ) {
-    this.gateway = new WorkspaceGateway(undefined, flywheel);
+    this.gateway = new WorkspaceGateway(undefined, provider);
   }
 
   async start(input: {
@@ -49,7 +49,7 @@ export class CodingServiceManager {
     const logPath = `${SERVICE_STATE_ROOT}/${id}.log`;
     const execution = await this.gateway.run(
       input.entityId,
-      "flywheel",
+      this.provider.id,
       [
         "/bin/sh",
         "-c",
@@ -96,7 +96,7 @@ export class CodingServiceManager {
     }
     const result = await this.gateway.run(
       entityId,
-      "flywheel",
+      this.provider.id,
       [
         "/bin/sh",
         "-c",
@@ -132,7 +132,7 @@ export class CodingServiceManager {
     const boundedLines = Math.max(1, Math.min(500, Math.trunc(lines)));
     const result = await this.gateway.run(
       entityId,
-      "flywheel",
+      this.provider.id,
       ["tail", "-n", String(boundedLines), "--", service.log_path],
       15_000,
       service.guest_cwd,
@@ -158,7 +158,7 @@ export class CodingServiceManager {
     try {
       const execution = await this.gateway.run(
         entityId,
-        "flywheel",
+        this.provider.id,
         [
           "curl",
           "--silent",
@@ -221,14 +221,14 @@ export class CodingServiceManager {
         "Capture path must be an absolute HTTP path without spaces, fragments, or credentials.",
       );
     }
-    if (!this.flywheel.readFile) {
+    if (!this.provider.readFile) {
       throw new Error("Configured Flywheel does not support bounded binary reads.");
     }
     const guestPath = `${SERVICE_STATE_ROOT}/${service.id}.png`;
     const startedAt = performance.now();
     const execution = await this.gateway.run(
       entityId,
-      "flywheel",
+      this.provider.id,
       [
         "/bin/sh",
         "-c",
@@ -242,7 +242,7 @@ export class CodingServiceManager {
     );
     if (execution.result.exitCode !== 0) throw new Error(execution.result.output);
     try {
-      const transferred = await this.flywheel.readFile(entityId, guestPath, {
+      const transferred = await this.provider.readFile(entityId, guestPath, {
         maxBytes: 4 * 1024 * 1024,
         timeoutMs: 30_000,
       });
@@ -268,7 +268,7 @@ export class CodingServiceManager {
     } finally {
       await this.gateway.run(
         entityId,
-        "flywheel",
+        this.provider.id,
         ["rm", "-f", "--", guestPath],
         10_000,
         service.guest_cwd,
@@ -285,7 +285,7 @@ export class CodingServiceManager {
     ) {
       const stopped = await this.gateway.run(
         entityId,
-        "flywheel",
+        this.provider.id,
         [
           "/bin/sh",
           "-c",
@@ -322,7 +322,7 @@ export class CodingServiceManager {
     this.requireOwnedSandbox(entityId, service);
     const execution = await this.gateway.run(
       entityId,
-      "flywheel",
+      this.provider.id,
       [
         "/bin/sh",
         "-c",

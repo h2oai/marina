@@ -107,7 +107,8 @@ export type WorkspaceCapability =
   | "capture";
 
 export interface WorkspaceDescriptor {
-  target: "local" | "flywheel";
+  /** "local" or a sandbox provider id. */
+  target: string;
   persistence: "host" | "durable-sandbox";
   capabilities: WorkspaceCapability[];
   /** Explicit operator-owned task roots; guest paths only when shared by the runner. */

@@ -4,10 +4,10 @@
 import type { AgentRuntime } from "../agent/agent-runtime";
 import { recomputeAll as recomputeStanding } from "../agent/standing";
 import { runArenaAutopilot, runArenaFilingWatch, runArenaShadow } from "../arena/service";
+import type { SandboxProviders } from "../coding/sandbox-provider";
 import type { BoardManager } from "../coordination/board-manager";
 import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
-import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
 import { flushWorkLessons } from "../learning/work";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model/model-api";
@@ -76,7 +76,7 @@ export interface TickJobHost {
   readonly boardManager?: BoardManager;
   readonly taskManager?: TaskManager;
   readonly agentRuntime: AgentRuntime;
-  readonly flywheel?: FlywheelToolBackend;
+  readonly sandboxes?: SandboxProviders;
   readonly mediaManager?: Pick<MediaManager, "pollRunningVideoJobs">;
   /** `() => computeReadiness(engine)` — the alert sync needs the live report. */
   readonly readiness: () => ReturnType<typeof import("./readiness").computeReadiness>;
@@ -138,11 +138,14 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     phase: 0,
     failureMessage: "Channel prune failed",
     run: () => {
-      host.flywheel?.maintenance?.().catch((error: unknown) => {
-        host.logger.warn("flywheel", "Workspace maintenance failed", {
-          error: error instanceof Error ? error.message : String(error),
+      for (const provider of host.sandboxes?.list() ?? []) {
+        provider.maintenance?.().catch((error: unknown) => {
+          host.logger.warn("flywheel", "Workspace maintenance failed", {
+            provider: provider.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
-      });
+      }
       host.channelManager?.pruneExpiredMessages();
     },
   });

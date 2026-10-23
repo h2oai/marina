@@ -1,8 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SandboxProvider } from "../../../coding/sandbox-provider";
 import { CodingServiceManager } from "../../../coding/service-manager";
-import type { FlywheelToolBackend } from "../../../integrations/flywheel-manager";
 import { dim, header, success } from "../../../net/ansi";
 import type {
   CodingArtifactRow,
@@ -15,6 +15,7 @@ import {
   type CodeDeps,
   DEFAULT_PUBLICATION_TTL_MS,
   parseJsonObject,
+  resolveSandboxProvider,
   resolveSession,
   sendCode,
 } from "./shared";
@@ -25,7 +26,7 @@ interface ServiceCall {
   eid: EntityId;
   entity: Entity;
   deps: CodeDeps & { db: MarinaDB };
-  flywheel: FlywheelToolBackend;
+  provider: SandboxProvider;
   args: string[];
   session: CodingSessionRow;
   manager: CodingServiceManager;
@@ -38,13 +39,18 @@ export async function serviceLifecycle(
   deps: CodeDeps & { db: MarinaDB },
   args: string[],
 ): Promise<void> {
-  if (!deps.flywheel) {
-    ctx.send(eid, "Flywheel is not configured; managed VM services are unavailable.");
+  if (!deps.sandboxes?.size) {
+    ctx.send(eid, "No sandbox provider is configured; managed VM services are unavailable.");
     return;
   }
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
-  const manager = new CodingServiceManager(deps.db, deps.flywheel);
+  const provider = resolveSandboxProvider(deps, { target: session.execution_target });
+  if (typeof provider === "string") {
+    ctx.send(eid, provider);
+    return;
+  }
+  const manager = new CodingServiceManager(deps.db, provider);
   const action = args[0]?.toLowerCase() ?? "list";
 
   const call: ServiceCall = {
@@ -52,7 +58,7 @@ export async function serviceLifecycle(
     eid,
     entity,
     deps,
-    flywheel: deps.flywheel,
+    provider,
     args,
     session,
     manager,
@@ -380,10 +386,10 @@ async function serviceCapture(call: ServiceCall, initial: CodingServiceRow): Pro
 }
 
 async function serviceStop(call: ServiceCall, initial: CodingServiceRow): Promise<void> {
-  const { ctx, eid, entity, deps, flywheel, session, manager } = call;
+  const { ctx, eid, entity, deps, provider, session, manager } = call;
   let service = initial;
-  if (service.published_subdomain && flywheel.unpublish) {
-    await flywheel.unpublish(eid, service.published_subdomain);
+  if (service.published_subdomain && provider.unpublish) {
+    await provider.unpublish(eid, service.published_subdomain);
     deps.db.updateCodingService(service.id, {
       publishedSubdomain: null,
       publishedUrl: null,
@@ -406,12 +412,12 @@ async function serviceRestart(call: ServiceCall, initial: CodingServiceRow): Pro
 }
 
 async function servicePublish(call: ServiceCall, initial: CodingServiceRow): Promise<void> {
-  const { ctx, eid, entity, deps, flywheel, session, manager } = call;
+  const { ctx, eid, entity, deps, provider, session, manager } = call;
   let service = initial;
   service = await manager.refresh(eid, service);
   if (service.status !== "running") throw new Error("Start the service before publishing it.");
   if (!service.port) throw new Error("Service has no declared port; restart it with --port N.");
-  if (!flywheel.publishDetailed) {
+  if (!provider.publishDetailed) {
     throw new Error("Configured Flywheel does not support detailed publish metadata.");
   }
   const approval = consumeNetworkApproval(
@@ -425,7 +431,7 @@ async function servicePublish(call: ServiceCall, initial: CodingServiceRow): Pro
       `Publishing requires explicit network approval. Request and approve: code approval request network publish:${service.id}`,
     );
   }
-  const published = await flywheel.publishDetailed(eid, service.port);
+  const published = await provider.publishDetailed(eid, service.port);
   const configuredTtl = Number(process.env.MARINA_FLYWHEEL_PUBLICATION_TTL_MS);
   const ttlMs =
     Number.isSafeInteger(configuredTtl) && configuredTtl >= 60_000
@@ -452,11 +458,11 @@ async function servicePublish(call: ServiceCall, initial: CodingServiceRow): Pro
 }
 
 async function serviceRevoke(call: ServiceCall, initial: CodingServiceRow): Promise<void> {
-  const { ctx, eid, entity, deps, flywheel, session } = call;
+  const { ctx, eid, entity, deps, provider, session } = call;
   const service = initial;
   if (!service.published_subdomain) throw new Error("Service is not published.");
-  if (!flywheel.unpublish) throw new Error("Configured Flywheel does not support revoke.");
-  await flywheel.unpublish(eid, service.published_subdomain);
+  if (!provider.unpublish) throw new Error(`${provider.label} does not support revoke.`);
+  await provider.unpublish(eid, service.published_subdomain);
   deps.db.updateCodingService(service.id, {
     publishedSubdomain: null,
     publishedUrl: null,
