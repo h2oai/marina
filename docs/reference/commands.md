@@ -9318,18 +9318,17 @@ Effect: read.
 
 - `field-0` (`query`): text, required.
 
-### `web swarm [engines:<a,b>] [docs:N] [rerank:<model>|off] <question>`
+### `web swarm [engines:<a,b>] [docs:N] [rerank:<model>] <question>`
 
 Effect: execute.
 
 - `field-0` (`engines`): text, optional group `option-0`.
 - `field-1` (`docs`): number, optional group `option-1`.
 - `field-2` (`rerank`): text, optional group `option-2`.
-- `field-3` (`|off`): choice, optional group `option-2`.
-- `field-4` (`question`): text, required.
+- `field-3` (`question`): text, required.
 - Group `option-0`: `engines:a,b`.
 - Group `option-1`: `docs:N`.
-- Group `option-2`: `rerank:model|off`.
+- Group `option-2`: `rerank:model`.
 
 ### `web swarm engines:corpus:<name> <question>`
 

@@ -34,7 +34,7 @@ const SWARM_SPEC: ModifierSpec = {
   rerank: { type: "string" },
 };
 
-export const WEB_SWARM_USAGE = "web swarm [engines:<a,b>] [docs:N] [rerank:<model>|off] <question>";
+export const WEB_SWARM_USAGE = "web swarm [engines:<a,b>] [docs:N] [rerank:<model>] <question>";
 
 /** Characters of a fetched page kept for reading (pages are read in chunks). */
 const PAGE_CHARS = 200_000;
