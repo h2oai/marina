@@ -627,6 +627,9 @@
 # MARINA_CODE_CONTAINER_SHELL=sh
 # MARINA_CODE_CONTAINER_NETWORK=off
 
+# Per-destination network for the operator container runner (podman only): a comma- or space-separated allowlist of host, host:port, *.domain or *.domain:port (a bare host means ports 80 and 443; *.domain matches subdomains, not the domain itself), e.g. "registry.npmjs.org,*.pypi.org,pypi.org,github.com". When set it governs instead of MARINA_CODE_CONTAINER_NETWORK: each command's container has only loopback plus one forwarded port (pasta --splice-only), where a proxy inside the Marina process admits listed destinations that resolve to public addresses (the SSRF guard; the connection is pinned to the checked address) and refuses the rest with a readable 403 noted in the command's output. No sidecar and no extra program. HTTPS is filtered by host and port (the proxy does not decrypt). Operator-only: never settable in-world; a Docker runtime with a list is refused rather than left unenforced.
+# MARINA_CODE_CONTAINER_EGRESS=
+
 # Whether local Code Mode sessions must run their commands in a container. Unset: required exactly when MARINA_CODE_CONTAINER_IMAGE is set. `true`: required even without an image (sessions then pick one with `code workspace runner container image:<ref>`, which needs the code.exec.unrestricted gate; until then commands fail, never run on the host). `false`: the operator image is only a default and a session may choose `code workspace runner local`. Env-only; nothing in-world changes it.
 # MARINA_CODE_CONTAINER_REQUIRED=
 

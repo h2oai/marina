@@ -359,6 +359,26 @@ async function checkAndResolve(
   return { addresses };
 }
 
+/**
+ * Resolve `hostname` once and validate every address, for a caller that opens
+ * its own TCP connection (the code-runner egress proxy). Returns the one
+ * address to connect to — the connection is pinned to what was checked, so a
+ * rebinding second resolve cannot swap in a private address — or the refusal.
+ * Unlike `validateFetchUrl`, a resolution failure is always a refusal: there is
+ * no address to pin.
+ */
+export async function resolveGuardedHost(
+  hostname: string,
+  port: number,
+): Promise<{ address: string } | { error: string }> {
+  const literal = hostname.includes(":") ? `[${hostname}]` : hostname;
+  const result = await checkAndResolve(`https://${literal}:${port}/`);
+  if ("error" in result) return result;
+  if (isIpLiteral(hostname.toLowerCase())) return { address: hostname };
+  const address = result.addresses[0];
+  return address ? { address } : { error: `Blocked host ${hostname} — DNS resolution failed` };
+}
+
 type FetchInitWithTls = RequestInit & { tls?: { serverName?: string } };
 
 /**

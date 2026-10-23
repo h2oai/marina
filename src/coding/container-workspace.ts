@@ -14,7 +14,10 @@
  *   `exec_decision` artifact), and the telnet host-exec chokepoint. All of that
  *   is inherited from LocalWorkspace; only the spawn step differs.
  * - Never a silent host fallback: a missing runtime or image is an error.
- * - No network unless the runner opts in; all capabilities dropped,
+ * - No network unless the runner opts in. An operator egress allowlist
+ *   (`egress`, podman only) gives per-destination network instead: the
+ *   container has loopback and one forwarded port, where an in-process proxy
+ *   (egress-proxy.ts) admits only listed public destinations. All capabilities dropped,
  *   no-new-privileges, CPU / memory / pid limits, a timeout that also removes
  *   the container, `--rm` so no container outlives its command.
  * - `mount` sync: the worktree is the only host path mounted (read-write, at
@@ -42,6 +45,7 @@
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { EgressProxy, type EgressRule, formatEgressDenials } from "./egress-proxy";
 import type { WorkspaceDescriptor, WorkspaceRunResult } from "./local-workspace";
 import { LocalWorkspace, runCapture, runWorkspaceCommand } from "./local-workspace";
 import type { WorkspaceFileGrant } from "./workspace-file-grants";
@@ -58,6 +62,11 @@ export interface ContainerRunnerConfig {
   workdir?: string;
   /** Opt-in network access. Default off (`--network none`). */
   network?: boolean;
+  /**
+   * Per-destination network (operator-only, podman): only these destinations,
+   * through Marina's in-process proxy. Present ⇒ it governs instead of `network`.
+   */
+  egress?: EgressRule[];
   cpus?: number;
   memoryMb?: number;
   /** Per-command timeout inside the container; default 600 s, max 1800 s. */
@@ -74,6 +83,8 @@ export interface ResolvedContainerRunner {
   sync: ContainerSync;
   workdir: string;
   network: boolean;
+  /** Per-destination allowlist; non-empty ⇒ proxy mode (podman). */
+  egress?: EgressRule[];
   cpus: number;
   memoryMb: number;
   timeoutMs: number;
@@ -172,6 +183,11 @@ export function resolveContainerRunner(
     "MARINA_CODE_CONTAINER_STORAGE",
   );
   const runRoot = storagePath(env.MARINA_CODE_CONTAINER_RUNROOT, "MARINA_CODE_CONTAINER_RUNROOT");
+  const egress = config.egress?.length ? config.egress : undefined;
+  if (egress && runtime !== "podman")
+    throw new Error(
+      "A per-destination egress allowlist needs podman (its pasta network keeps the container on loopback with one forwarded port). Docker runners keep network on or off.",
+    );
   if ((storageRoot || runRoot) && runtime !== "podman")
     throw new Error(
       "MARINA_CODE_CONTAINER_STORAGE / _RUNROOT apply to podman; set Docker's data-root in the daemon configuration.",
@@ -182,6 +198,7 @@ export function resolveContainerRunner(
     sync,
     workdir,
     network: config.network === true,
+    ...(egress ? { egress } : {}),
     cpus,
     memoryMb,
     timeoutMs,
@@ -287,8 +304,12 @@ export function containerRunArgv(
     /** Root-relative git metadata paths bound read-only over the worktree mount (default `.git`). */
     readOnlyPaths?: string[];
     fileGrants?: readonly WorkspaceFileGrant[];
+    /** The run's egress proxy port (required when the runner has an allowlist). */
+    egressPort?: number;
   } = {},
 ): string[] {
+  if (runner.egress && !opts.egressPort)
+    throw new Error("An egress allowlist runs only through its proxy; no proxy port was given.");
   const ids = {
     uid: opts.uid ?? process.getuid?.() ?? 1000,
     gid: opts.gid ?? process.getgid?.() ?? 1000,
@@ -304,7 +325,14 @@ export function containerRunArgv(
     "--name",
     name,
     "--network",
-    runner.network ? (runner.runtime === "podman" ? "pasta" : "bridge") : "none",
+    runner.egress
+      ? // Loopback plus the one forwarded proxy port; no route, no DNS.
+        `pasta:--splice-only,-T,${opts.egressPort}`
+      : runner.network
+        ? runner.runtime === "podman"
+          ? "pasta"
+          : "bridge"
+        : "none",
     "--cap-drop=ALL",
     "--security-opt",
     "no-new-privileges",
@@ -322,6 +350,12 @@ export function containerRunArgv(
     "TERM=dumb",
     "-e",
     "HOME=/tmp",
+    ...(runner.egress
+      ? ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"].flatMap((name) => [
+          "-e",
+          `${name}=http://127.0.0.1:${opts.egressPort}`,
+        ])
+      : []),
     "-w",
     runner.workdir,
   ];
@@ -479,7 +513,9 @@ export class ContainerWorkspace extends LocalWorkspace {
    * image, so its image must already hold the environment.
    */
   override installsPermitted(): boolean {
-    return this.runner.sync === "mount" && this.runner.network;
+    return (
+      this.runner.sync === "mount" && (this.runner.network || this.runner.egress !== undefined)
+    );
   }
 
   protected override async spawnNormalized(
@@ -491,21 +527,32 @@ export class ContainerWorkspace extends LocalWorkspace {
     const diff = this.runner.sync === "patch" ? await this.pendingDiff() : "";
     const stdin = diff.length > 0 ? diff : undefined;
     const name = `marina-run-${crypto.randomUUID().slice(0, 12)}`;
-    const argv = containerRunArgv(this.runner, this.root, normalized, name, {
-      applyPatch: stdin !== undefined,
-      fileGrants: this.fileGrants,
-      ...(this.runner.sync === "mount" ? { readOnlyPaths: gitMetadataPaths(this.root) } : {}),
-    });
-    const result = await runWorkspaceCommand(
-      argv,
-      this.root,
-      timeout,
-      maxBytes,
-      this.hostExecForbidden,
-      // Only the runtime CLI sees these; the container gets its explicit `-e` values.
-      this.runtimeEnv,
-      stdin,
-    );
+    // The proxy lives exactly as long as this run, so its denials are this run's.
+    const proxy = this.runner.egress ? await EgressProxy.start(this.runner.egress) : undefined;
+    let result: Awaited<ReturnType<typeof runWorkspaceCommand>>;
+    try {
+      const argv = containerRunArgv(this.runner, this.root, normalized, name, {
+        applyPatch: stdin !== undefined,
+        fileGrants: this.fileGrants,
+        ...(this.runner.sync === "mount" ? { readOnlyPaths: gitMetadataPaths(this.root) } : {}),
+        ...(proxy ? { egressPort: proxy.port } : {}),
+      });
+      result = await runWorkspaceCommand(
+        argv,
+        this.root,
+        timeout,
+        maxBytes,
+        this.hostExecForbidden,
+        // Only the runtime CLI sees these; the container gets its explicit `-e` values.
+        this.runtimeEnv,
+        stdin,
+      );
+    } finally {
+      await proxy?.close();
+    }
+    const denied = proxy ? formatEgressDenials(proxy.denials) : "";
+    if (denied)
+      result = { ...result, output: result.output ? `${result.output}\n${denied}` : denied };
     if (result.timedOut) {
       // The front-end was killed; make sure the container is gone too.
       await runCapture(
