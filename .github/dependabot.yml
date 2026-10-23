@@ -1,0 +1,10 @@
+# Keeps the commit-pinned actions current; each bump is a reviewed PR.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/*"]
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

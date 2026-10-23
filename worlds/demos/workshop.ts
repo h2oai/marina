@@ -267,7 +267,7 @@ const room: RoomModule = {
     }
 
     const ent = ctx.getEntity(entity);
-    if (!ent || ent.kind !== "agent") return;
+    if (ent?.kind !== "agent") return;
 
     ent.properties.quest_entered_workshop = true;
 
@@ -333,10 +333,11 @@ const room: RoomModule = {
       }
 
       ctx.logEvent?.({
-        type: "custom",
-        detail: "self_bootstrap_complete",
-        message: `The Maker agent built room ${TARGET_ROOM} from scratch.`,
-      } as any);
+        type: "feed_event",
+        kind: "self_bootstrap_complete",
+        summary: `The Maker agent built room ${TARGET_ROOM} from scratch.`,
+        timestamp: Date.now(),
+      });
     }
 
     // Timeout

@@ -155,6 +155,10 @@ export interface ApiProxyParams {
 
 // ─── Electrobun RPC Schema ──────────────────────────────────────────────────
 
+/** A request or message that carries no value (Electrobun's schema spells it `void`). */
+// biome-ignore lint/suspicious/noConfusingVoidType: Electrobun RPC schema convention
+type RpcVoid = void;
+
 export interface DashboardRPCSchema extends ElectrobunRPCSchema {
   /** Bun-side: handles incoming requests from webview, listens for webview messages */
   bun: {
@@ -194,9 +198,9 @@ export interface DashboardRPCSchema extends ElectrobunRPCSchema {
       /** Create a game connection (virtual WebSocket) for the web chat */
       gameConnect: { params: undefined; response: { connId: string } };
       /** Send a raw JSON message on the game connection (login/auth/command) */
-      gameSend: { params: string; response: void };
+      gameSend: { params: string; response: RpcVoid };
       /** Disconnect the game connection */
-      gameDisconnect: { params: undefined; response: void };
+      gameDisconnect: { params: undefined; response: RpcVoid };
 
       // ── Clickable desktop setup and agent lifecycle ──
       getKeys: { params: undefined; response: unknown[] };
@@ -231,7 +235,7 @@ export interface DashboardRPCSchema extends ElectrobunRPCSchema {
       /** Send the assembled body to the embedded server; its answer verbatim. */
       proxyUploadFinish: { params: string; response: ProxyResult };
       /** Drop an open upload or download. */
-      proxyTransferAbort: { params: string; response: void };
+      proxyTransferAbort: { params: string; response: RpcVoid };
       /** Read `GET /assets/<key>` bytes; large bodies continue in chunks. */
       proxyDownloadBegin: { params: DownloadBeginParams; response: DownloadBeginResult };
       proxyDownloadChunk: {
@@ -251,7 +255,7 @@ export interface DashboardRPCSchema extends ElectrobunRPCSchema {
     };
     messages: {
       /** Webview signals it's ready to receive data */
-      ready: void;
+      ready: RpcVoid;
     };
   };
 

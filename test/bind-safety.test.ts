@@ -91,7 +91,9 @@ describe("docker-compose.yml exposure contract", () => {
   });
 
   it("passes the host publish address in, defaulting to loopback like `ports:`", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose interpolation, literal
     expect(active).toContain("MARINA_PUBLISHED_HOST=${MARINA_BIND_IP:-127.0.0.1}");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose interpolation, literal
     expect(active).toContain('"${MARINA_BIND_IP:-127.0.0.1}:3300:3300"');
   });
 });

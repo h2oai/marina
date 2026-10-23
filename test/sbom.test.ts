@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { checkSbom, lockedComponents, SYFT_VERSION } from "../scripts/generate-sbom";
 
 const lock = `{
@@ -100,4 +100,21 @@ test("pull-request builds cannot sign; signing consumes the built artifact witho
     "utf8",
   );
   expect(setup).toContain(`syft-version: v${SYFT_VERSION}`);
+});
+
+test("every third-party action is pinned by commit", () => {
+  const root = new URL("../.github/", import.meta.url);
+  const files = [
+    ...readdirSync(new URL("workflows/", root)).map((f) => `workflows/${f}`),
+    ...readdirSync(new URL("actions/", root)).map((d) => `actions/${d}/action.yml`),
+  ];
+  const unpinned = files.flatMap((file) =>
+    readFileSync(new URL(file, root), "utf8")
+      .split("\n")
+      .map((line) => line.match(/uses:\s*([^\s#]+)/)?.[1])
+      .filter((ref): ref is string => !!ref && !ref.startsWith("./"))
+      .filter((ref) => !/@[a-f0-9]{40}$/.test(ref))
+      .map((ref) => `${file}: ${ref}`),
+  );
+  expect(unpinned).toEqual([]);
 });

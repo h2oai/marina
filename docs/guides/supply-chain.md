@@ -41,7 +41,7 @@ so use it for runtime analysis. Deployed images are scanned and signed by the de
 pipeline that ships them, which lives outside this repository.
 
 Package signing runs in a separate job that downloads artifacts without executing
-repository code. Signing actions are pinned by commit. GitHub's OIDC identity signs
+repository code. Every third-party action is pinned by commit (Dependabot proposes updates). GitHub's OIDC identity signs
 the statements; no long-lived signing secret is stored in this repository. Bundle
 artifacts are retained for 90 days; archive them with releases that need longer retention.
 Desktop draft releases also retain their uploaded bundles.
