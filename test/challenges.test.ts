@@ -4,6 +4,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { blindPanelCases, liveGateCases } from "../src/decisions/challenge-labels";
 import { judgeRecords, raiseForTool, resetChallengesForTests } from "../src/engine/challenges";
+import { raiseEgressChallenge } from "../src/engine/commands/code/exec";
+import { sessionEgressGrants } from "../src/engine/commands/code/runner";
 import { Engine } from "../src/engine/engine";
 import { resetGateContextForTests } from "../src/engine/gate-context";
 import { checkGateForExecution, grant, recordGateExecution } from "../src/engine/safety-gates";
@@ -311,6 +313,53 @@ describe("challenges (engine)", () => {
     await send(alice, `challenge approve ${held.token}`);
     await until(() => text(builder).includes("destroyed"));
     expect(calls).toBe(1);
+  });
+
+  it("a refused container destination is a challenge; approval allows it for the session and re-runs", async () => {
+    const session = db.createCodingSession({
+      id: "cs_egress",
+      title: "egress",
+      workspaceRoot: "/tmp",
+      createdBy: "Builder",
+    });
+    const requester = engine.entities.get(builder.entity as EntityId)!;
+    requester.properties.coding_session_id = session.id;
+    const message = raiseEgressChallenge(requester, { db }, session, {
+      command: ["pip", "install", "x"],
+      exitCode: 1,
+      output: "",
+      truncated: false,
+      timedOut: false,
+      durationMs: 1,
+      egressDenials: [
+        { host: "files.example", port: 443, approvable: true },
+        { host: "metadata.internal", port: 80, approvable: false },
+      ],
+    });
+    const token = tokenIn(message)!;
+    expect(message).toContain(
+      "Container egress to files.example:443 is not in the runner's allowlist",
+    );
+    expect(message).not.toContain("metadata.internal");
+    expect(sessionEgressGrants(db, session.id)).toEqual([]);
+
+    await send(root, `challenge approve ${token}`);
+    await until(() => text(builder).includes("files.example:443 allowed for session cs_egress"));
+    expect(sessionEgressGrants(db, session.id)).toEqual([
+      { host: "files.example", wildcard: false, port: 443 },
+    ]);
+    // Nothing approvable ⇒ nothing asked.
+    expect(
+      raiseEgressChallenge(requester, { db }, session, {
+        command: ["true"],
+        exitCode: 0,
+        output: "",
+        truncated: false,
+        timedOut: false,
+        durationMs: 1,
+        egressDenials: [{ host: "metadata.internal", port: 80, approvable: false }],
+      }),
+    ).toBe("");
   });
 });
 

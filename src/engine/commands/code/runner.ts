@@ -23,7 +23,7 @@ import {
   resolveContainerRunner,
   UnavailableContainerWorkspace,
 } from "../../../coding/container-workspace";
-import { formatEgressRule, parseEgressRules } from "../../../coding/egress-proxy";
+import { type EgressRule, formatEgressRule, parseEgressRules } from "../../../coding/egress-proxy";
 import type { WorkspaceRuntime } from "../../../coding/local-workspace";
 import { LocalWorkspace } from "../../../coding/local-workspace";
 import { dim, header, separator } from "../../../net/ansi";
@@ -34,6 +34,8 @@ import { checkGateForExecution, recordGateExecution } from "../../safety-gates";
 import { type CodeDeps, parseJsonObject, resolveSession, sendCode } from "./shared";
 
 export const RUNNER_ARTIFACT_KIND = "workspace_runner";
+/** A destination a person allowed for one session (written only by an approved egress challenge). */
+export const EGRESS_GRANT_ARTIFACT_KIND = "egress_grant";
 
 const USAGE = [
   "code workspace runner                       show where commands run",
@@ -202,6 +204,64 @@ export function effectiveRunner(
  * image, or a policy with no image) yields a workspace whose every command
  * fails with that reason — never host execution.
  */
+/**
+ * Destinations people approved for this session. They extend an operator
+ * allowlist only — never create network where the operator gave none.
+ */
+export function sessionEgressGrants(
+  db: Pick<MarinaDB, "listCodingArtifacts">,
+  sessionId: string,
+): EgressRule[] {
+  const rules: EgressRule[] = [];
+  for (const row of db.listCodingArtifacts(sessionId, 200)) {
+    if (row.kind !== EGRESS_GRANT_ARTIFACT_KIND || row.status !== "active") continue;
+    const rule = parseJsonObject(row.metadata_json).rule;
+    if (typeof rule !== "string") continue;
+    try {
+      rules.push(...parseEgressRules(rule));
+    } catch {
+      // allow-empty-catch: a malformed stored grant allows nothing
+    }
+  }
+  return rules;
+}
+
+/** Record a person's approval of `host:port` for the session (an `egress_grant` artifact). */
+export function grantSessionEgress(
+  db: Pick<MarinaDB, "createCodingArtifact" | "createCodingEvent">,
+  sessionId: string,
+  destination: { host: string; port: number },
+  approval: { requester: string; token: string },
+): void {
+  const rule = `${destination.host}:${destination.port}`;
+  // Validates the shape before anything is stored.
+  parseEgressRules(rule);
+  db.createCodingArtifact({
+    sessionId,
+    kind: EGRESS_GRANT_ARTIFACT_KIND,
+    title: `Egress allowed: ${rule}`,
+    status: "active",
+    contentText: rule,
+    metadata: { rule, challenge: approval.token },
+    createdBy: approval.requester,
+  });
+  db.createCodingEvent({
+    sessionId,
+    actor: approval.requester,
+    kind: "egress_granted",
+    payload: { rule, challenge: approval.token },
+  });
+}
+
+/** The runner with approved destinations added — only onto an operator allowlist. */
+export function withEgressGrants(
+  config: ContainerRunnerConfig,
+  grants: readonly EgressRule[],
+): ContainerRunnerConfig {
+  if (!config.egress?.length || grants.length === 0) return config;
+  return { ...config, egress: [...config.egress, ...grants] };
+}
+
 export function applySessionRunner(
   ws: WorkspaceRuntime,
   db: Pick<MarinaDB, "listCodingArtifacts"> | undefined,
@@ -213,10 +273,14 @@ export function applySessionRunner(
   if (runner.kind === "host") return ws;
   if (runner.kind === "unavailable")
     return new UnavailableContainerWorkspace(ws.root, new Error(runner.reason), ws.fileGrants);
+  const config = withEgressGrants(
+    runner.config,
+    db && runner.config.egress?.length ? sessionEgressGrants(db, session.id) : [],
+  );
   try {
     return new ContainerWorkspace(
       ws.root,
-      resolveContainerRunner(runner.config, env),
+      resolveContainerRunner(config, env),
       undefined,
       ws.fileGrants,
     );

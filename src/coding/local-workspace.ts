@@ -88,6 +88,13 @@ export interface WorkspaceRunResult {
   truncated: boolean;
   timedOut: boolean;
   durationMs: number;
+  /**
+   * Destinations a container run's egress proxy refused (one per host:port).
+   * `approvable`: refused only because the allowlist does not name it — a
+   * person may allow it for the session; an address the SSRF guard refused
+   * never is.
+   */
+  egressDenials?: { host: string; port: number; approvable: boolean }[];
 }
 
 export interface CodeRunPolicy {

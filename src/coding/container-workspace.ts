@@ -45,7 +45,7 @@
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { EgressProxy, type EgressRule, formatEgressDenials } from "./egress-proxy";
+import { distinctDenials, EgressProxy, type EgressRule, formatEgressDenials } from "./egress-proxy";
 import type { WorkspaceDescriptor, WorkspaceRunResult } from "./local-workspace";
 import { LocalWorkspace, runCapture, runWorkspaceCommand } from "./local-workspace";
 import type { WorkspaceFileGrant } from "./workspace-file-grants";
@@ -551,8 +551,12 @@ export class ContainerWorkspace extends LocalWorkspace {
       await proxy?.close();
     }
     const denied = proxy ? formatEgressDenials(proxy.denials) : "";
-    if (denied)
-      result = { ...result, output: result.output ? `${result.output}\n${denied}` : denied };
+    if (proxy && denied)
+      result = {
+        ...result,
+        output: result.output ? `${result.output}\n${denied}` : denied,
+        egressDenials: distinctDenials(proxy.denials),
+      };
     if (result.timedOut) {
       // The front-end was killed; make sure the container is gone too.
       await runCapture(

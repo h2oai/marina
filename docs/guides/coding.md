@@ -1382,7 +1382,9 @@ Instead of all-or-nothing network, podman runners can allow only named destinati
 `MARINA_CODE_CONTAINER_EGRESS="registry.npmjs.org,pypi.org,*.pythonhosted.org"`. Each command's
 container then reaches nothing but a proxy inside the Marina process, which admits the listed
 hosts (on public addresses only) and refuses everything else; a refusal shows up in the command
-output as `[marina egress] blocked <host>:<port>: …`. Nothing extra runs alongside Marina.
+output as `[marina egress] blocked <host>:<port>: …`, and `code run` asks a person through a
+challenge: approving it allows that destination for the session and re-runs the command (nothing
+waits meanwhile). Nothing extra runs alongside Marina.
 
 The container runtime uses your own container setup: the images you have already pulled, your
 `containers.conf`/`storage.conf` (or Docker context), and your registry logins, taken from the

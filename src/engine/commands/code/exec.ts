@@ -63,6 +63,7 @@ import { isLoopbackIp } from "../../../net/loopback";
 import { recordVerification } from "../../../outcomes/live";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Connection, Entity, EntityId, RoomContext } from "../../../types";
+import { raiseForTool, redispatchHeldCommand } from "../../challenges";
 import { principalOf } from "../../gate-context";
 import { getRank } from "../../permissions";
 import { isImplicitLocalUngated, isLocalUngated } from "../../trust-profile";
@@ -72,10 +73,12 @@ import {
   resolveRecipeCommands,
   showArtifact,
 } from "./artifacts";
+import { grantSessionEgress } from "./runner";
 import {
   type CodeDeps,
   canAdoptCodingSession,
   entityNameForm,
+  getActiveSessionId,
   getCodeProfile,
   parseJsonObject,
   resolveSession,
@@ -124,8 +127,9 @@ export async function runWorkspaceCommand(
           : []),
       ].join("\n")
     : formatRunOutput(artifact.id, result);
+  const held = raiseEgressChallenge(entity, deps, session, result);
 
-  sendCode(ctx, eid, text, {
+  sendCode(ctx, eid, held ? `${text}\n${held}` : text, {
     artifactId: artifact.id,
     artifactKind: artifact.kind,
     command: result.command,
@@ -1369,4 +1373,43 @@ function sandboxGuestCwd(
   return (
     deps.db.listFlywheelBindings().find((row) => row.entity_id === entityId)?.guest_cwd ?? undefined
   );
+}
+
+/**
+ * A container run refused destinations its allowlist does not name: ask a
+ * person (the requester's owner or an operator) through a challenge. Approval
+ * allows those destinations for this session and re-runs the command; it
+ * returns at once, so nothing waits. An address the SSRF guard refused is
+ * never offered. Returns the hold text for the run's output ("" when none).
+ */
+export function raiseEgressChallenge(
+  entity: Entity,
+  deps: { db: MarinaDB },
+  session: CodingSessionRow,
+  result: WorkspaceRunResult,
+): string {
+  const asked = (result.egressDenials ?? []).filter((d) => d.approvable).slice(0, 5);
+  if (asked.length === 0) return "";
+  const names = asked.map((d) => `${d.host}:${d.port}`).join(", ");
+  const rerun = `code run --argv ${JSON.stringify(result.command)}`;
+  const held = raiseForTool({
+    requesterId: entity.id,
+    toolName: "egress",
+    summary: `allow ${names} for code session ${session.id}, then re-run: ${result.command.join(" ")}`,
+    reason: `Container egress to ${names} is not in the runner's allowlist.`,
+    rerun: async () => {
+      // The approval is the authority: the grant is recorded first, then the
+      // command re-runs in the requester's own slot (gates apply as typed).
+      for (const destination of asked)
+        grantSessionEgress(deps.db, session.id, destination, {
+          requester: entity.name,
+          token: held.token ?? "",
+        });
+      if (getActiveSessionId(entity) !== session.id)
+        return `${names} allowed for session ${session.id}; it is no longer your active session, so nothing was re-run.`;
+      redispatchHeldCommand(entity.id, rerun);
+      return `${names} allowed for session ${session.id}; re-running \`${result.command.join(" ")}\`.`;
+    },
+  });
+  return held.token ? held.message : "";
 }

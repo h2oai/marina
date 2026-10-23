@@ -63,6 +63,8 @@ export interface EgressDenial {
   host: string;
   port: number;
   reason: string;
+  /** Refused only for not being listed (a person may allow it); false: the address guard refused it. */
+  approvable: boolean;
 }
 
 /** The parsed head of a proxy request. */
@@ -164,8 +166,15 @@ export class EgressProxy {
     socket.on("error", () => {});
   }
 
-  private deny(client: Socket, host: string, port: number, reason: string): void {
-    if (this.denials.length < MAX_DENIALS_KEPT) this.denials.push({ host, port, reason });
+  private deny(
+    client: Socket,
+    host: string,
+    port: number,
+    reason: string,
+    approvable: boolean,
+  ): void {
+    if (this.denials.length < MAX_DENIALS_KEPT)
+      this.denials.push({ host, port, reason, approvable });
     const body = `marina egress: ${host}:${port} blocked — ${reason}\n`;
     client.end(
       `HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
@@ -209,12 +218,12 @@ export class EgressProxy {
   ): Promise<void> {
     const { host, port } = request;
     if (!egressAllowed(rules, host, port)) {
-      this.deny(client, host, port, "not in this runner's egress allowlist");
+      this.deny(client, host, port, "not in this runner's egress allowlist", true);
       return;
     }
     const checked = await resolve(host, port);
     if ("error" in checked) {
-      this.deny(client, host, port, checked.error);
+      this.deny(client, host, port, checked.error, false);
       return;
     }
     const upstream = tcpConnect({ host: checked.address, port });
@@ -247,7 +256,25 @@ export function formatEgressDenials(denials: readonly EgressDenial[]): string {
   }
   if (lines.length)
     lines.push(
-      "[marina egress] Allowed destinations are the operator's MARINA_CODE_CONTAINER_EGRESS list.",
+      "[marina egress] Allowed destinations are the operator's MARINA_CODE_CONTAINER_EGRESS list plus any a person approved for this session.",
     );
   return lines.join("\n");
+}
+
+/** One entry per refused host:port, for the run result. */
+export function distinctDenials(
+  denials: readonly EgressDenial[],
+): { host: string; port: number; approvable: boolean }[] {
+  const byKey = new Map<string, { host: string; port: number; approvable: boolean }>();
+  for (const d of denials) {
+    const key = `${d.host}:${d.port}`;
+    const seen = byKey.get(key);
+    // A destination the guard refused even once is never approvable.
+    byKey.set(key, {
+      host: d.host,
+      port: d.port,
+      approvable: (seen?.approvable ?? true) && d.approvable,
+    });
+  }
+  return [...byKey.values()];
 }
