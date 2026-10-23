@@ -74,7 +74,20 @@ interface ProxyRequest {
   port: number;
   /** For a plain-HTTP request: the head rewritten to origin form, `Connection: close`. */
   head?: string;
+  /** Plain HTTP: the request line's parts and the headers kept (no proxy/connection ones). */
+  method?: string;
+  path?: string;
+  version?: string;
+  headers?: string[];
 }
+
+/**
+ * The reserved host a container uses for Marina's own model API
+ * (`http://marina.model/v1`). It exists only inside this proxy: requests to it
+ * go to Marina's loopback `/v1` with a run key the proxy adds, so the
+ * container never holds a provider key — or even Marina's key.
+ */
+export const MARINA_MODEL_HOST = "marina.model";
 
 const MAX_HEAD_BYTES = 16 * 1024;
 const IDLE_TIMEOUT_MS = 5 * 60_000;
@@ -116,12 +129,38 @@ export function parseProxyRequest(head: string): ProxyRequest | undefined {
     host: url.hostname.replace(/^\[|\]$/g, "").toLowerCase(),
     port: url.port ? Number(url.port) : 80,
     head: rewritten,
+    method,
+    path: `${url.pathname}${url.search}`,
+    version,
+    headers: kept,
   };
+}
+
+/**
+ * The head of a `marina.model` request as Marina's `/v1` receives it: origin
+ * form, Host set to the loopback listener, the caller's Authorization dropped
+ * and the run key's put in its place.
+ */
+export function marinaModelHead(request: ProxyRequest, port: number, token: string): string {
+  const headers = (request.headers ?? []).filter(
+    (line) => !/^(authorization|x-api-key|host)\s*:/i.test(line),
+  );
+  return [
+    `${request.method} ${request.path} ${request.version}`,
+    `Host: 127.0.0.1:${port}`,
+    `Authorization: Bearer ${token}`,
+    ...headers,
+    "Connection: close",
+    "",
+    "",
+  ].join("\r\n");
 }
 
 export interface EgressProxyOptions {
   /** Address check and pinning (default: the SSRF guard). Tests stub it. */
   resolve?: (host: string, port: number) => Promise<{ address: string } | { error: string }>;
+  /** Marina's own `/v1` (loopback port) and the run key to present there, when offered. */
+  marinaModel?: { port: number; token: string };
 }
 
 /** One run's proxy: start it, hand its port to the container, close it after. */
@@ -140,7 +179,9 @@ export class EgressProxy {
   ): Promise<EgressProxy> {
     const resolve = opts.resolve ?? resolveGuardedHost;
     let proxy: EgressProxy | undefined;
-    const server = createServer((client) => proxy?.handle(client, rules, resolve));
+    const server = createServer((client) =>
+      proxy?.handle(client, rules, resolve, opts.marinaModel),
+    );
     server.maxConnections = MAX_CONNECTIONS;
     await new Promise<void>((done, fail) => {
       server.once("error", fail);
@@ -185,6 +226,7 @@ export class EgressProxy {
     client: Socket,
     rules: readonly EgressRule[],
     resolve: NonNullable<EgressProxyOptions["resolve"]>,
+    marinaModel: EgressProxyOptions["marinaModel"],
   ): void {
     this.track(client);
     let buffered = Buffer.alloc(0);
@@ -204,9 +246,54 @@ export class EgressProxy {
         client.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         return;
       }
-      void this.forward(client, request, rest, rules, resolve);
+      if (request.host === MARINA_MODEL_HOST) this.toMarina(client, request, rest, marinaModel);
+      else void this.forward(client, request, rest, rules, resolve);
     };
     client.on("data", onData);
+  }
+
+  /** `http://marina.model/v1/…` → Marina's loopback `/v1` with the run key; nothing else there. */
+  private toMarina(
+    client: Socket,
+    request: ProxyRequest,
+    rest: Buffer,
+    marinaModel: EgressProxyOptions["marinaModel"],
+  ): void {
+    const host = MARINA_MODEL_HOST;
+    if (!marinaModel) {
+      this.deny(
+        client,
+        host,
+        request.port,
+        "Marina's model API is not offered to this runner",
+        false,
+      );
+      return;
+    }
+    if (request.connect || !request.path?.startsWith("/v1/")) {
+      this.deny(
+        client,
+        host,
+        request.port,
+        "only plain-HTTP /v1/ requests reach Marina's model API",
+        false,
+      );
+      return;
+    }
+    const upstream = tcpConnect({ host: "127.0.0.1", port: marinaModel.port });
+    this.track(upstream);
+    upstream.once("error", () => {
+      if (!client.destroyed) client.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+    });
+    upstream.once("connect", () => {
+      upstream.write(marinaModelHead(request, marinaModel.port, marinaModel.token), "latin1");
+      if (rest.length) upstream.write(rest);
+      client.pipe(upstream);
+      upstream.pipe(client);
+      client.resume();
+    });
+    client.once("close", () => upstream.destroy());
+    upstream.once("close", () => client.destroy());
   }
 
   private async forward(
