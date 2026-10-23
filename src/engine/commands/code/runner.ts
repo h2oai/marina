@@ -23,6 +23,7 @@ import {
   resolveContainerRunner,
   UnavailableContainerWorkspace,
 } from "../../../coding/container-workspace";
+import { formatEgressRule, parseEgressRules } from "../../../coding/egress-proxy";
 import type { WorkspaceRuntime } from "../../../coding/local-workspace";
 import { LocalWorkspace } from "../../../coding/local-workspace";
 import { dim, header, separator } from "../../../net/ansi";
@@ -90,6 +91,9 @@ export function envRunnerConfig(
       : {}),
     ...(shell ? { shell: shell as ContainerRunnerConfig["shell"] } : {}),
     network: /^(1|true|on|yes)$/i.test(env.MARINA_CODE_CONTAINER_NETWORK?.trim() ?? ""),
+    ...(env.MARINA_CODE_CONTAINER_EGRESS?.trim()
+      ? { egress: parseEgressRules(env.MARINA_CODE_CONTAINER_EGRESS) }
+      : {}),
   };
 }
 
@@ -143,7 +147,8 @@ export type EffectiveRunner =
  * - required: a `local` pin is ignored; under an operator image, the image,
  *   runtime, sync, workdir, shell, network and init are the operator's and the
  *   session keeps only its resource limits;
- * - `init` is never taken from a session setting (operator-only);
+ * - `init` and the `egress` allowlist are never taken from a session setting
+ *   (operator-only);
  * - session network access survives only when the setting records that the
  *   override gate passed when it was configured.
  */
@@ -158,6 +163,7 @@ export function effectiveRunner(
       return { kind: "container", config: { ...defaults, ...sessionLimits(setting.config) } };
     const {
       init: _ignored,
+      egress: _operatorOnly,
       gated,
       ...rest
     } = setting.config as ContainerRunnerConfig & {
@@ -175,6 +181,8 @@ export function effectiveRunner(
       config.init = defaults.init;
       if (defaults.shell) config.shell = defaults.shell;
     }
+    // So does its egress allowlist.
+    if (operatorImage && defaults.egress) config.egress = defaults.egress;
     return { kind: "container", config };
   }
   if (setting?.kind === "local" && !policy.required) return { kind: "host" };
@@ -246,7 +254,7 @@ export function handleRunner(
         `Commands run in container image ${config.image}${fromEnv ? dim(policy.required ? " (operator policy, MARINA_CODE_CONTAINER_IMAGE)" : " (operator default, MARINA_CODE_CONTAINER_IMAGE)") : ""}`,
       );
       lines.push(
-        `Sync: ${config.sync ?? "mount"} · workdir ${config.workdir ?? "/work"} · network ${config.network ? "on" : "off"}`,
+        `Sync: ${config.sync ?? "mount"} · workdir ${config.workdir ?? "/work"} · network ${networkLabel(config)}`,
       );
       if (config.init) lines.push(`Init: ${config.init}`);
       try {
@@ -441,7 +449,7 @@ export function handleRunner(
     [
       `Commands now run in ${resolved.image} via ${resolved.runtime} (${resolved.sync} sync).`,
       dim(
-        `Network ${resolved.network ? "on" : "off"}; ${resolved.cpus} CPU, ${resolved.memoryMb} MB, ${Math.round(resolved.timeoutMs / 1000)} s per command. Same allowlist and approvals as host runs; no host fallback.`,
+        `Network ${networkLabel(resolved)}; ${resolved.cpus} CPU, ${resolved.memoryMb} MB, ${Math.round(resolved.timeoutMs / 1000)} s per command. Same allowlist and approvals as host runs; no host fallback.`,
       ),
     ].join("\n"),
     {
@@ -464,4 +472,11 @@ function retireRunners(db: MarinaDB, sessionId: string): number {
     }
   }
   return retired;
+}
+
+/** `on`, `off`, or the egress allowlist that governs instead. */
+function networkLabel(config: Pick<ContainerRunnerConfig, "network" | "egress">): string {
+  if (config.egress?.length)
+    return `allowlist (${config.egress.map(formatEgressRule).join(", ")}) via Marina's proxy`;
+  return config.network ? "on" : "off";
 }
