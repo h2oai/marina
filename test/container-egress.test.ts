@@ -5,13 +5,18 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { createServer, type Server, connect as tcpConnect } from "node:net";
 import { containerRunArgv, resolveContainerRunner } from "../src/coding/container-workspace";
 import {
+  distinctDenials,
   EgressProxy,
   egressAllowed,
   formatEgressDenials,
   parseEgressRules,
   parseProxyRequest,
 } from "../src/coding/egress-proxy";
-import { effectiveRunner, envRunnerConfig } from "../src/engine/commands/code/runner";
+import {
+  effectiveRunner,
+  envRunnerConfig,
+  withEgressGrants,
+} from "../src/engine/commands/code/runner";
 
 const IMAGE = "docker.io/library/alpine:latest";
 const fakeWhich = (present: string[]) => (binary: string) =>
@@ -137,7 +142,7 @@ describe("EgressProxy", () => {
       [
         "[marina egress] blocked evil.example:443: not in this runner's egress allowlist",
         "[marina egress] blocked allowed.example:443: Blocked host allowed.example — resolves to private/internal IP: 10.0.0.5",
-        "[marina egress] Allowed destinations are the operator's MARINA_CODE_CONTAINER_EGRESS list.",
+        "[marina egress] Allowed destinations are the operator's MARINA_CODE_CONTAINER_EGRESS list plus any a person approved for this session.",
       ].join("\n"),
     );
   });
@@ -206,5 +211,33 @@ describe("container egress policy", () => {
       env,
     );
     expect(own.kind === "container" && own.config.egress).toBeUndefined();
+  });
+});
+
+describe("approved egress", () => {
+  it("adds approved destinations only onto an operator allowlist", () => {
+    const grants = parseEgressRules("files.example:443");
+    const listed = { image: IMAGE, egress: parseEgressRules("registry.npmjs.org") };
+    expect(withEgressGrants(listed, grants).egress?.map((r) => r.host)).toEqual([
+      "registry.npmjs.org",
+      "files.example",
+    ]);
+    // No operator list: a grant creates no network.
+    expect(withEgressGrants({ image: IMAGE }, grants)).toEqual({ image: IMAGE });
+    expect(withEgressGrants({ image: IMAGE, network: false }, grants).egress).toBeUndefined();
+  });
+
+  it("marks a destination approvable only if the address guard never refused it", () => {
+    expect(
+      distinctDenials([
+        { host: "a.example", port: 443, reason: "unlisted", approvable: true },
+        { host: "a.example", port: 443, reason: "unlisted", approvable: true },
+        { host: "b.example", port: 443, reason: "unlisted", approvable: true },
+        { host: "b.example", port: 443, reason: "private", approvable: false },
+      ]),
+    ).toEqual([
+      { host: "a.example", port: 443, approvable: true },
+      { host: "b.example", port: 443, approvable: false },
+    ]);
   });
 });
