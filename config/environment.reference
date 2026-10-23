@@ -724,6 +724,13 @@
 # MARINA_RESEARCH_MAX_PAGES=14
 # MARINA_RESEARCH_PASSAGE_CHARS=
 
+# Optional cross-encoder reranker for research retrieval (the read swarm's opening pool and the pages a research brief reads, `web swarm` included): one call scores every document against the question, in place of the decision-backend judge or the reader model's listwise rerank. Unset (default) changes nothing — retrieval stays lexical with the model rerank Marina already runs. URL is the full endpoint and MODEL its model; FORMAT `rerank` (default: Cohere / Jina / vLLM `/rerank` / DeepInfra / OpenRouter shape — `{model, query, documents}` → `results[].relevance_score`) or `nvidia` (NVIDIA's hosted `/reranking`, e.g. Nemotron Rerank — `{model, query: {text}, passages}` → `rankings[].logit`). Any failure keeps the incoming order. Refused at the daily spend cap; a reported `usage.cost` is recorded as `search`.
+# @protected
+# MARINA_RERANK_URL=
+# MARINA_RERANK_MODEL=
+# MARINA_RERANK_FORMAT=rerank
+# MARINA_RERANK_API_KEY=
+
 # Page reads honour robots.txt. Before Marina reads a third-party page for an agent or a person (`web fetch`, the `web swarm` read swarm, `scenario` URL reads, the research page reader and citation check, the live Civiqs read), it checks the site's robots.txt for its research user agent, product token `MarinaResearch` (`Mozilla/5.0 (compatible; MarinaResearch/1.1; …)`, also sent with the read): the group naming it, else `*`; the longest matching Allow/Disallow wins (Allow on a tie; `*` and a trailing `$` supported). A disallowed page is not requested and the read answers "blocked by robots.txt" — a result, never an error. robots.txt is fetched through the SSRF guard and cached per origin for 24 h; a 4xx means the site publishes no rules (allowed); a 5xx, 429, timeout or network error is treated as allowed (fail-open) and retried after 10 min. API calls (search providers, model APIs, market venues, data APIs) are not page reads and are not checked. `ignore` skips the check everywhere. IGNORE_ORIGINS lists origins (`https://host[:port]`) or bare hosts the operator owns or may read regardless, which skip the check.
 # MARINA_ROBOTS_TXT=respect
 # MARINA_ROBOTS_TXT_IGNORE_ORIGINS=https://docs.example.com,intranet.example.com

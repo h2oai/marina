@@ -109,6 +109,11 @@ backend's recent failures.
   backtests.
 - **Status:** each research round records a funnel (hits, pages read, failed reads, passages, and
   each backend's calls and failures), so a thin dossier says why it is thin.
+- **Optional cross-encoder:** with `MARINA_RERANK_URL` and `MARINA_RERANK_MODEL` set, the read
+  swarm (and `web swarm`) orders the pages it found with one scoring call to that endpoint instead
+  of asking a model to rank them. `MARINA_RERANK_FORMAT=rerank` (default) speaks the common
+  `/rerank` shape (Cohere, Jina, vLLM, DeepInfra, OpenRouter); `nvidia` speaks NVIDIA's hosted
+  `/reranking` (Nemotron Rerank). Unset, nothing changes; a failed call keeps the found order.
 
 ## Date-strict research for forecasts
 

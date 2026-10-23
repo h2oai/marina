@@ -4,6 +4,7 @@
 /** Shared research features for arena, general forecasts and research reports. */
 import { modelComplete } from "../model/complete";
 import { modelTurns } from "../model/turns";
+import { crossEncoderFromEnv } from "../retrieval/rerank-client";
 import { researchDecisionProvider } from "./decision-advice";
 import { evidenceLoopRetriever } from "./evidence-loop";
 import { readSwarmRetriever } from "./read-swarm-retriever";
@@ -34,9 +35,11 @@ export function researchRetriever(
       purpose: "research",
       trace: { caller: "research.reader" },
     });
+    const crossEncoder = crossEncoderFromEnv(env);
     base = readSwarmRetriever(base, {
       reader: { name: settings.reader, complete: reader.complete },
       spent: () => reader.usage.costUsd,
+      ...(crossEncoder ? { crossEncoder } : {}),
     });
   }
   if (!settings.capture) return calendar(base);

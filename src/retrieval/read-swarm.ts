@@ -53,9 +53,10 @@ import {
   type FirstMoveModel,
   fuseRankings,
   jsonObject,
-  judgeRerank,
-  llmRerank,
+  type RerankOrder,
+  rerankPool,
 } from "./first-move";
+import type { CrossEncoder } from "./rerank-client";
 
 export interface SwarmDocument {
   id: string;
@@ -84,6 +85,8 @@ export interface ReadSwarmOptions {
   reranker?: FirstMoveModel;
   /** Pointwise decision-backend reranker; replaces `reranker` when set. */
   judge?: DecisionProvider;
+  /** Operator cross-encoder; replaces `judge` and `reranker` when set. */
+  crossEncoder?: CrossEncoder;
   /** Results per clue in the opening retrieval (default 50). */
   depth?: number;
   /** Fused candidates the reranker orders (default 30). */
@@ -162,7 +165,7 @@ export interface SwarmOpening {
   surfaced: Candidate[];
   /** Documents read in the opening, in reading order. */
   read: string[];
-  order: "reranked" | "judged" | "fused";
+  order: RerankOrder;
   error?: string;
 }
 
@@ -402,13 +405,15 @@ export class ReadSwarm {
     let ordered = fused;
     let order: SwarmOpening["order"] = "fused";
     let error: string | undefined;
-    if (this.opts.judge || this.opts.reranker) {
+    if (this.opts.crossEncoder || this.opts.judge || this.opts.reranker) {
       const pool = fused.slice(0, this.cfg.rerankPool);
-      const r = this.opts.judge
-        ? await judgeRerank(this.question, pool, this.opts.judge)
-        : await llmRerank(this.question, pool, this.opts.reranker!);
+      const r = await rerankPool(this.question, pool, {
+        ...(this.opts.crossEncoder ? { crossEncoder: this.opts.crossEncoder } : {}),
+        ...(this.opts.judge ? { judge: this.opts.judge } : {}),
+        ...(this.opts.reranker ? { reranker: this.opts.reranker } : {}),
+      });
       ordered = [...r.ranked, ...fused.slice(pool.length)];
-      if (r.ok) order = this.opts.judge ? "judged" : "reranked";
+      order = r.order;
       if (r.error) error = r.error;
     }
     // Each clue's best documents first, so no clue goes unread; then the overall order.

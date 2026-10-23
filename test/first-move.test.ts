@@ -12,7 +12,14 @@ import {
   fuseRankings,
   judgeRerank,
   llmRerank,
+  rerankPool,
 } from "../src/retrieval/first-move";
+import {
+  type CrossEncoder,
+  crossEncoderFromEnv,
+  parseScores,
+  rerankEndpoint,
+} from "../src/retrieval/rerank-client";
 
 const c = (id: string): Candidate => ({ id, text: `text of ${id}` });
 const model = (reply: string | Error) => ({
@@ -110,5 +117,125 @@ describe("first move with a decision judge", () => {
     });
     expect(move.order).toBe("judged");
     expect(move.candidates.map((x) => x.id)).toEqual(["z", "a"]);
+  });
+});
+
+describe("cross-encoder reranking", () => {
+  const encoder = (scores: number[] | Error): CrossEncoder & { calls: string[][] } => {
+    const calls: string[][] = [];
+    return {
+      name: "rerank:test",
+      calls,
+      async score(_q, docs) {
+        calls.push([...docs]);
+        if (scores instanceof Error) throw scores;
+        return scores;
+      },
+    };
+  };
+
+  it("orders by score in one call, ties keeping their order, and takes precedence", async () => {
+    const enc = encoder([0.1, 0.9, 0.5, 0.9]);
+    const judge = {
+      kind: "x",
+      ask: async () => {
+        throw new Error("judge must not run");
+      },
+    } as unknown as DecisionProvider;
+    const r = await rerankPool("Q", [c("a"), c("b"), c("c"), c("d")], {
+      crossEncoder: enc,
+      judge,
+      reranker: model("never"),
+    });
+    expect(r.order).toBe("cross-encoded");
+    expect(r.ranked.map((x) => x.id)).toEqual(["b", "d", "c", "a"]);
+    expect(enc.calls).toHaveLength(1);
+    expect(enc.calls[0]![0]).toBe("text of a");
+  });
+
+  it("fails open to the incoming order, and firstMove reports it", async () => {
+    const r = await rerankPool("Q", [c("a"), c("b")], { crossEncoder: encoder(new Error("503")) });
+    expect(r).toMatchObject({ order: "fused", error: "503" });
+    expect(r.ranked.map((x) => x.id)).toEqual(["a", "b"]);
+    const moved = await firstMove("Q", {
+      search: async () => [c("x"), c("y")],
+      crossEncoder: encoder([0, 1]),
+      k: 2,
+    });
+    expect(moved.order).toBe("cross-encoded");
+    expect(moved.candidates.map((x) => x.id)).toEqual(["y", "x"]);
+  });
+
+  it("speaks the /rerank and NVIDIA shapes, refuses at the cap, records cost", async () => {
+    const sent: unknown[] = [];
+    const costs: number[] = [];
+    let refuse: string | undefined;
+    const reply = (body: unknown) =>
+      (async (_url: string | URL, init?: RequestInit) => {
+        sent.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify(body));
+      }) as typeof fetch;
+    const cohere = rerankEndpoint({
+      url: "http://127.0.0.1:9/v1/rerank",
+      model: "m",
+      refuse: () => refuse,
+      onCost: (usd) => costs.push(usd),
+      fetch: reply({
+        results: [
+          { index: 1, relevance_score: 0.8 },
+          { index: 0, relevance_score: 0.2 },
+        ],
+        usage: { cost: 0.0001 },
+      }),
+    });
+    expect(await cohere.score("q", ["d0", "d1"])).toEqual([0.2, 0.8]);
+    expect(sent[0]).toEqual({ model: "m", query: "q", documents: ["d0", "d1"] });
+    expect(costs).toEqual([0.0001]);
+    const nvidia = rerankEndpoint({
+      url: "http://127.0.0.1:9/reranking",
+      model: "nvidia/nemotron-3.5-rerank-8b",
+      format: "nvidia",
+      refuse: () => undefined,
+      onCost: () => {},
+      fetch: reply({
+        rankings: [
+          { index: 0, logit: -1.5 },
+          { index: 1, logit: 3 },
+        ],
+      }),
+    });
+    expect(await nvidia.score("q", ["d0", "d1"])).toEqual([-1.5, 3]);
+    expect(sent[1]).toEqual({
+      model: "nvidia/nemotron-3.5-rerank-8b",
+      query: { text: "q" },
+      passages: [{ text: "d0" }, { text: "d1" }],
+    });
+    refuse = "daily spend cap reached";
+    await expect(cohere.score("q", ["d0"])).rejects.toThrow("daily spend cap");
+    expect(sent).toHaveLength(2);
+  });
+
+  it("rejects replies that skip or invent documents, and misconfiguration", () => {
+    expect(() => parseScores({ results: [{ index: 0, relevance_score: 1 }] }, "rerank", 2)).toThrow(
+      "unscored",
+    );
+    expect(() => parseScores({ results: [{ index: 5, score: 1 }] }, "rerank", 2)).toThrow(
+      "invalid",
+    );
+    expect(parseScores({ data: [{ index: 0, score: 2 }] }, "rerank", 1)).toEqual([2]);
+    expect(crossEncoderFromEnv({})).toBeUndefined();
+    expect(() => crossEncoderFromEnv({ MARINA_RERANK_URL: "http://x/rerank" })).toThrow(
+      "must be set together",
+    );
+    expect(() =>
+      crossEncoderFromEnv({
+        MARINA_RERANK_URL: "http://x/rerank",
+        MARINA_RERANK_MODEL: "m",
+        MARINA_RERANK_FORMAT: "cohere",
+      }),
+    ).toThrow("rerank or nvidia");
+    expect(
+      crossEncoderFromEnv({ MARINA_RERANK_URL: "http://x/rerank", MARINA_RERANK_MODEL: "m" })?.name,
+    ).toBe("rerank:m");
   });
 });
