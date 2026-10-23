@@ -37,6 +37,7 @@ import {
 import { TaskManager } from "../coordination/task-manager";
 import { extensionGatewayProof } from "../extensions/loader";
 import { FlywheelManager } from "../integrations/flywheel-manager";
+import { OpenShellProvider } from "../integrations/openshell/provider";
 import { closeInvestigationService } from "../investigations/service";
 import {
   flushWorkLessons,
@@ -301,7 +302,7 @@ export class Engine {
     this.loginRateLimiter = this.config.loginRateLimiter;
     this.storage = this.config.storage;
     this.sandboxes = new SandboxProviders(
-      this.config.sandboxes ?? [FlywheelManager.fromEnv(this.db)],
+      this.config.sandboxes ?? [FlywheelManager.fromEnv(this.db), OpenShellProvider.fromEnv()],
     );
 
     // Wire DB into EntityManager for write-through persistence

@@ -51,6 +51,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Supervised residents | core | On by default; `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) turns it off | src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts |
 | Resolvers, probes and watches | siloed | `probe`, `watch`; `position open` adds a resolving watch | src/resolvers, src/engine/commands/probe.ts, src/engine/commands/watch.ts |
 | Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch) | experimental | Experimental: for embedding hosts. `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint` | src/net/instance-lifecycle.ts |
+| OpenShell sandbox provider | experimental | `MARINA_OPENSHELL_URL` + mTLS bundle against an operator-run gateway; `code sandbox use openshell` | src/integrations/openshell |
 | Shared spend ledger | experimental | `MARINA_SPEND_LEDGER=<path>` | src/engine/shared-spend-ledger.ts |
 | Adaptive load-balance routing | experimental | Request header `X-Load-Balance: adaptive` | src/net/model-api |
 | Benchmark route evidence for `model:route` | experimental | `MARINA_ROUTE_EVIDENCE=on` (default `observe` records only) | src/engine/benchmark-evidence.ts |
