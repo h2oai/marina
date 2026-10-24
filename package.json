@@ -198,7 +198,7 @@
     "discord.js": "^14.27.0",
     "grammy": "^1.46.0",
     "mathjs": "^15.2.0",
-    "mcporter": "^0.14.3",
+    "mcporter": "^0.16.0",
     "zod": "4.6.7"
   },
   "overrides": {
