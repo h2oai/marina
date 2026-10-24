@@ -548,6 +548,8 @@ async function dispatchCodingCrew(
       members: resolved.map((m) =>
         m.role ? { agentName: m.agentName, role: m.role } : { agentName: m.agentName },
       ),
+      // A session's working crew, not a `marina:<name>` endpoint.
+      serves: false,
     });
     crewManager.dispatch(crew.id, goal, { id: entity.id, name: entity.name });
     // The first dispatch lazily provisions the crew channel; mirror the crew

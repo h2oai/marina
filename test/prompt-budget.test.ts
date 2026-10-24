@@ -113,6 +113,8 @@ describe("system prompt byte budget", () => {
   it("stays under the cap with the command roster included", () => {
     const p = getLeanSystemPrompt(null);
     expect(bytes(p)).toBeLessThanOrEqual(LEAN_SYSTEM_PROMPT_BYTE_CAP);
+    // Crews are named where agents learn how to coordinate.
+    expect(p).toContain("Coordinate: `task`, `project`, `canvas`, `crew`.");
     // Two tiers (2026-10-20): lean ratcheted below the old 6,300 B; full has headroom.
     expect(LEAN_SYSTEM_PROMPT_BYTE_CAP).toBeLessThanOrEqual(5800);
     expect(FULL_SYSTEM_PROMPT_BYTE_CAP).toBeGreaterThan(LEAN_SYSTEM_PROMPT_BYTE_CAP);

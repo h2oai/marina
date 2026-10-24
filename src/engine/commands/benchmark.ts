@@ -250,8 +250,9 @@ export function benchmarkCommand(deps: {
   /** The agents behind a `marina:<name>` target (role, prompt version), recorded with the run. */
   describeTarget?: (model: string) => BenchmarkSubject[];
   /**
-   * Crews serving a live `marina:<name>` endpoint, with their formation. A
-   * `benchmark run` without a target measures the one serving crew.
+   * Crews that serve a `marina:<name>` endpoint (online or not), with their
+   * formation. A `benchmark run` without a target measures the one whose
+   * endpoint is live.
    */
   servingCrews?: () => ServingCrew[];
 }): CommandDef {
@@ -344,7 +345,7 @@ export function benchmarkCommand(deps: {
           if (orchs.length === 0) {
             ctx.send(
               input.entity,
-              "No live orchestrations. Spawn agents that join model-* channels.",
+              "No live orchestrations. A crew serves marina:<name> once an agent member is online (`crew create`, then `crew join`); or spawn agents that join model-* channels.",
             );
             return;
           }
