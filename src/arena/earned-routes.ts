@@ -15,7 +15,9 @@
  *              model upgrade does not reset the record), else a shadow record
  *              of the default's exact spec
  *   challenger every runnable forecaster spec with shadow records in the family
- *              (`arena_shadow`, the last record before each lock) — the
+ *              (`arena_shadow`, the last record before each lock), its
+ *              settings variants (`<spec>#<fingerprint>`) pooled into the spec
+ *              and never across specs (`challengerPoolKey`) — the
  *              operator decides which ones run (`MARINA_ARENA_SHADOW_CHALLENGERS`)
  *   outcomes   the shared outcome rows too (`MARINA_ARENA_ROUTE_OUTCOMES`, default
  *              on): a mechanical forecast outcome tagged `family:<tracker>`,
@@ -85,6 +87,13 @@ export interface RouteEvidence {
   source: "filed" | "shadow" | "outcome";
   /** The runnable forecaster spec (a filing: the spec its note names). */
   spec: string;
+  /**
+   * A shadow record's settings variant (`<spec>#<fingerprint>`), when it named
+   * one: the same runnable spec run under other settings (`challengerPoolKey`).
+   */
+  variant?: string;
+  /** When the counted record was made (epoch ms), when known. */
+  recordedAt?: number;
   /** Skill vs the arena's persistence (higher is better). */
   skill: number;
   /** When the outcome became public (epoch ms). */
@@ -125,10 +134,74 @@ function runnable(spec: string): boolean {
 }
 
 /**
+ * The pool a recorded forecaster's evidence counts under: its runnable spec.
+ *
+ * A shadow record is named `<spec>#<fingerprint>` — the spec run under one set
+ * of operator settings (`forecastSettings`: research flags, horizon policy,
+ * judge, …). Those variants are pooled into their spec, because the spec is
+ * what routing can choose and run: a route names `nowcast`, never a
+ * fingerprint, and the settings it then runs with are the operator's
+ * environment, not part of the route.
+ *
+ * Nothing else pools. Specs of one method KIND (`specKind`) stay apart as
+ * challengers: `model:<a>` vs `model:<b>`, `formation:delphi:<panel A>` vs
+ * `formation:delphi:<panel B>`, `tabh2o:regression` vs `tabh2o:forecast`,
+ * `research:<analysts>` differ in what runs, and each is its own runnable
+ * route. Only the incumbent follows its kind (`arenaRouteScores`), because the
+ * default is ONE route filed round after round across model upgrades, not a
+ * choice among concurrent configurations.
+ */
+export function challengerPoolKey(forecaster: string): string {
+  const hash = forecaster.indexOf("#");
+  return hash < 0 ? forecaster : forecaster.slice(0, hash);
+}
+
+/**
+ * One record per (spec, round) among the pooled records: of a spec's settings
+ * variants scored on the same round, the one recorded last before the lock
+ * counts (first in order on a tie) — the rule a filing follows, and what
+ * the evidence read before variants were kept apart. Filed and outcome rows
+ * pass through unchanged.
+ */
+function onePerSpecRound(visible: readonly RouteEvidence[]): RouteEvidence[] {
+  const chosen = new Map<string, RouteEvidence>();
+  for (const e of visible) {
+    if (e.source === "filed") continue;
+    const key = `${e.spec}\u0000${e.roundId}`;
+    const prior = chosen.get(key);
+    if (!prior || (e.recordedAt ?? -Infinity) > (prior.recordedAt ?? -Infinity)) chosen.set(key, e);
+  }
+  return visible.filter(
+    (e) => e.source === "filed" || chosen.get(`${e.spec}\u0000${e.roundId}`) === e,
+  );
+}
+
+/**
+ * Settings variants on record per spec in one family (visible at `now`): how
+ * many fingerprints pooled into each runnable spec's evidence. Read-only.
+ */
+export function pooledVariants(input: {
+  family: string;
+  evidence: readonly RouteEvidence[];
+  now: number;
+}): Map<string, number> {
+  const by = new Map<string, Set<string>>();
+  for (const e of input.evidence) {
+    if (e.family !== input.family || e.visibleAt > input.now || !e.variant) continue;
+    const set = by.get(e.spec) ?? new Set<string>();
+    set.add(e.variant);
+    by.set(e.spec, set);
+  }
+  return new Map([...by].map(([spec, set]) => [spec, set.size]));
+}
+
+/**
  * Pure: one family's per-round skill per forecaster spec, visible at `now` —
  * the default's (its scored filings by method kind, else records of its exact
- * spec) and every runnable challenger's. What `chooseArenaRoute` decides on
- * and the read-only route view (`forecast routes`) reports.
+ * spec) and every runnable challenger's, each spec's settings variants pooled
+ * (`challengerPoolKey`, one record per round: `onePerSpecRound`). What
+ * `chooseArenaRoute` decides on and the read-only route view (`forecast
+ * routes`) reports. Promotion stays per runnable spec.
  */
 export function arenaRouteScores(input: {
   family: string;
@@ -141,8 +214,10 @@ export function arenaRouteScores(input: {
   scores: Map<string, Map<string, number>>;
 } {
   const { family, defaultSpec } = input;
-  const visible = input.evidence.filter(
-    (e) => e.family === family && e.visibleAt <= input.now && Number.isFinite(e.skill),
+  const visible = onePerSpecRound(
+    input.evidence.filter(
+      (e) => e.family === family && e.visibleAt <= input.now && Number.isFinite(e.skill),
+    ),
   );
   const kind = specKind(defaultSpec);
   // Incumbent: the scored filing of the default's kind, else a shadow of its exact spec.
@@ -207,15 +282,10 @@ export function chooseArenaRoute(input: {
   };
 }
 
-/** Strip a shadow variant's settings fingerprint (`<spec>#<fp>`). */
-function shadowSpec(forecaster: string): string {
-  const hash = forecaster.indexOf("#");
-  return hash < 0 ? forecaster : forecaster.slice(0, hash);
-}
-
 /**
  * Every scored round on record: our newest accepted filing per resolved round
- * and every runnable shadow forecaster's last pre-lock record, with the time
+ * and every runnable shadow forecaster's last pre-lock record (per settings
+ * variant, tagged with its pooled spec and `variant`), with the time
  * each outcome became public. Rounds whose outcome was public before their
  * lock are left out, as in every arena evaluation.
  */
@@ -252,16 +322,17 @@ export async function loadRouteEvidence(
       created_at: row.created_at,
     });
   }
+  // Each settings variant is scored on its own last pre-lock record; the
+  // variants of one spec are pooled afterwards (`challengerPoolKey`).
   for (const row of store.listArenaShadow({ limit: 2_000 })) {
-    const spec = shadowSpec(row.forecaster);
-    if (!runnable(spec)) continue;
-    rows.push({ ...row, forecaster: spec });
+    if (!runnable(challengerPoolKey(row.forecaster))) continue;
+    rows.push(row);
   }
   if (outcomes && arenaRouteOutcomesEnabled(env)) {
     const held = new Set(
       rows.map(
         (r) =>
-          `${r.forecaster.startsWith(FILED) ? r.forecaster.slice(FILED.length) : r.forecaster}\u0000${r.round_id}`,
+          `${r.forecaster.startsWith(FILED) ? r.forecaster.slice(FILED.length) : challengerPoolKey(r.forecaster)}\u0000${r.round_id}`,
       ),
     );
     rows.push(...outcomeRouteRows(outcomes, entrant, held, OUTCOME));
@@ -285,7 +356,9 @@ export async function loadRouteEvidence(
         ? s.forecaster.slice(FILED.length)
         : fromOutcome
           ? s.forecaster.slice(OUTCOME.length)
-          : s.forecaster,
+          : challengerPoolKey(s.forecaster),
+      ...(!filed && !fromOutcome && s.forecaster.includes("#") ? { variant: s.forecaster } : {}),
+      ...(s.recordedAt !== undefined ? { recordedAt: s.recordedAt } : {}),
       skill: s.skill,
       visibleAt: Number.isFinite(at) ? at : Number.POSITIVE_INFINITY,
     });

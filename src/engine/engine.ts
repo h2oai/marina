@@ -30,6 +30,7 @@ import { CrewManager } from "../coordination/crew-manager";
 import { GroupManager } from "../coordination/group-manager";
 import { MacroManager } from "../coordination/macro-manager";
 import {
+  aspectCheck,
   type RoomRound,
   roomFormationOf,
   roomFormationTurn,
@@ -55,6 +56,7 @@ import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import { fileResidentForecast } from "../outcomes/filing";
 import { noteTaskApproach, observeOutcomeEvent } from "../outcomes/live";
+import { recordRoomFormationRound } from "../outcomes/orchestration";
 import type { MarinaDB } from "../persistence/database";
 import type { RoomLogKind } from "../persistence/db-rooms";
 import { writeSample } from "../resolvers/sample-writer";
@@ -188,6 +190,12 @@ export class Engine {
   readonly crewManager?: CrewManager;
   /** Each room formation's round in progress (src/coordination/room-formations.ts). */
   private readonly roomRounds = new Map<RoomId, RoomRound>();
+  /**
+   * The verification verdict (`aspectCheck`, a label) of the say being
+   * broadcast, read once by `onRoomSay` for the same message ref; the words
+   * themselves are never kept or put on the content-free `say_sent` event.
+   */
+  private lastSayCheck: { ref: string; check: "pass" | "fail" } | undefined;
 
   readonly world?: WorldDefinition;
   readonly sandbox: RoomSandbox;
@@ -1084,8 +1092,12 @@ export class Engine {
    * A room with a formation answers each `say` with at most one structural
    * line, addressed to the next actor so attention owes and wakes it
    * (src/coordination/room-formations.ts). Rooms without one are untouched.
+   * A round that closes with a mechanical result is one outcome
+   * (`recordRoomFormationRound`, labels only).
    */
-  private onRoomSay(room: RoomId, speaker: string): void {
+  private onRoomSay(room: RoomId, speaker: string, saidRef: string): void {
+    const said = this.lastSayCheck?.ref === saidRef ? this.lastSayCheck.check : undefined;
+    this.lastSayCheck = undefined;
     const loaded = this.rooms.get(room);
     const formation = loaded ? roomFormationOf(loaded) : undefined;
     if (!formation) {
@@ -1097,9 +1109,15 @@ export class Engine {
       .inRoom(room)
       .filter((entity) => entity.kind === "agent")
       .map((entity) => entity.name);
-    const turn = roomFormationTurn(formation, this.roomRounds.get(room), speaker, present);
+    const turn = roomFormationTurn(formation, this.roomRounds.get(room), speaker, present, said);
     if (turn.round) this.roomRounds.set(room, turn.round);
     else this.roomRounds.delete(room);
+    const result = turn.result;
+    const outcomeDb = this.db;
+    if (result && outcomeDb)
+      tryLog(this.logger, "db", "Room formation outcome failed", () =>
+        recordRoomFormationRound(outcomeDb, { room, ref: saidRef, result }),
+      );
     if (!turn.line || turn.phase === "quiet") return;
     const line = `[formation-mediator] ${turn.line}`;
     const db = this.db;
@@ -1172,6 +1190,12 @@ export class Engine {
     const sender = this.entities.get(exclude);
     const senderName = sender?.name;
     this.appendRoomLog(room, senderName, message, tag, metadata);
+    if (tag === "say" && typeof metadata?.messageRef === "string") {
+      const check = aspectCheck(
+        typeof metadata.message === "string" ? metadata.message : undefined,
+      );
+      this.lastSayCheck = check ? { ref: metadata.messageRef, check } : undefined;
+    }
     const entities = this.entities.inRoom(room);
     for (const entity of entities) {
       if (entity.id !== exclude) {
@@ -1606,7 +1630,7 @@ export class Engine {
 
   /** @internal */ logEvent(event: EngineEvent): void {
     this._eventLog.log(event);
-    if (event.type === "say_sent") this.onRoomSay(event.room, event.from);
+    if (event.type === "say_sent") this.onRoomSay(event.room, event.from, event.messageRef);
     // Crews react to agent stops — depart the crew when the agent goes away.
     if (event.type === "agent_stop" && this.crewManager) {
       this.crewManager.onAgentStopped(event.name);

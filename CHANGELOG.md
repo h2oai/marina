@@ -384,6 +384,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Orchestration runs land on the outcome path.** A person's `project <name> outcome` verdict,
+  a `pattern run` (or `POST /v1/patterns/run`) whose own review approved or sent back the draft,
+  and a room `verification` round closed with its checkers' `pass|fail` lines each record one
+  outcome tagged `method:orchestration:<pattern>`, `method:pattern:<name>` or
+  `method:room-formation:<formation>` (labels only; nothing without a verdict; no model needed).
+  `benchmark eligible [board]` lists, read-only, the configurations whose holdout evidence would
+  pass the promotion rule now. Arena shadow settings variants (`<spec>#<fingerprint>`) pool into
+  their runnable spec explicitly, and `forecast routes` / `arena shadow score` show the count.
 - **One seam for many sandboxes.** Code Mode runs work in whichever sandbox you already have:
   every provider implements `SandboxProvider` and declares what it can do. `code sandbox providers`
   lists them; `code sandbox use <id>` (or `provider:<id>` on any `code sandbox` command) picks one.

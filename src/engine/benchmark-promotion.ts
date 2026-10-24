@@ -45,6 +45,7 @@ import {
   loadReplicateGroup,
   mismatchedReplicates,
   promotionMinReplicates,
+  replicateGroupOf,
   restrictToConfiguration,
 } from "./benchmark-replicates";
 import { isFamilySlot } from "./default-resolution";
@@ -608,6 +609,112 @@ export function lookupChallenge(
     pooledRuns: challengerGroup.runs,
     ...(invalidIncumbent ? { invalidIncumbent } : {}),
   };
+}
+
+// ─── Eligibility report (read-only) ─────────────────────────────────────────
+
+/** One configuration a slot could be contested with, and whether it would earn it. */
+export interface EligibleConfiguration {
+  slot: string;
+  benchmark: string;
+  /** The run that represents the configuration (the newest of its replicate group). */
+  runId: string;
+  group: string;
+  /** The run it contests (the incumbent, or the best earlier valid one). */
+  incumbentRunId?: string;
+  eligible: boolean;
+  /** Why not (empty when eligible). Holdout-based reasons are summarised, never itemised. */
+  reasons: string[];
+  /** For an eligible configuration: the rule's evaluation, as `benchmark promote` would file it. */
+  evaluation?: ChallengeEvaluation;
+  /** Other configurations this report read the slot's holdout for. */
+  peers: number;
+  /** The bar with every peer counted as tried (`promotionMargin(triedBefore + peers)`). */
+  chargedMargin?: number;
+}
+
+/**
+ * Which configurations of the benchmark ledger would earn a promoted slot
+ * now — READ-ONLY: nothing is filed, no attempt is recorded, and the slot's
+ * history is untouched. Promotion stays `benchmark promote` behind `role.edit`.
+ *
+ * Every candidate is judged by the one rule, `lookupChallenge(…, "holdout")`
+ * — same benchmark, judge and items, the replicate minimum before the holdout
+ * is read, the paired interval above 0 and the fishing margin. Because this
+ * report reads the holdout for every candidate of a slot without filing an
+ * attempt, it charges those reads too: a configuration is listed as eligible
+ * only when it ALSO clears `promotionMargin(triedBefore + peers)`, the bar it
+ * would face had every other candidate the report read been filed first. So
+ * a listed configuration passes when filed now, whatever order others are
+ * filed in, and reading the report repeatedly never lowers the bar. Holdout
+ * numbers are shown only for eligible configurations.
+ *
+ * One candidate per replicate group (its newest run: `lookupChallenge` pools
+ * the group). The incumbent's own group, family slots (never set from one
+ * board) and empty slots (a first seed is not a contest) are left out.
+ * Self-attestation depends on who files, so it is not checked here.
+ */
+export function eligiblePromotions(
+  db: PromotionStore,
+  opts: { board?: string; minReplicates?: number; limit?: number } = {},
+): EligibleConfiguration[] {
+  const out: EligibleConfiguration[] = [];
+  for (const def of db.listBenchmarkDefaults()) {
+    if (isFamilySlot(def.slot) || !def.incumbent_run_id) continue;
+    const incumbent = db.getBenchmarkRun(def.incumbent_run_id);
+    if (!incumbent) continue;
+    if (opts.board && incumbent.benchmark !== opts.board) continue;
+    const incumbentGroup = replicateGroupOf(incumbent);
+    const byGroup = new Map<string, BenchmarkRunRow>();
+    for (const run of db.queryBenchmarkRuns({
+      benchmark: incumbent.benchmark,
+      status: "completed",
+      limit: opts.limit ?? 500,
+    })) {
+      const group = replicateGroupOf(run);
+      if (group === incumbentGroup || run.id === incumbent.id) continue;
+      // Newest first (`queryBenchmarkRuns` order): the first run of a group represents it.
+      if (!byGroup.has(group)) byGroup.set(group, run);
+    }
+    const candidates = [...byGroup].sort(([a], [b]) => a.localeCompare(b));
+    const peers = Math.max(0, candidates.length - 1);
+    for (const [group, run] of candidates) {
+      const row: EligibleConfiguration = {
+        slot: def.slot,
+        benchmark: incumbent.benchmark,
+        runId: run.id,
+        group,
+        eligible: false,
+        reasons: [],
+        peers,
+      };
+      const found = lookupChallenge(db, def.slot, run.id, "holdout", {
+        ...(opts.minReplicates !== undefined ? { minReplicates: opts.minReplicates } : {}),
+      });
+      if (found.kind === "error") {
+        row.reasons.push(found.message);
+      } else if (found.kind === "seed") {
+        row.reasons.push("the slot has no valid incumbent to contest");
+      } else {
+        const e = found.evaluation;
+        row.incumbentRunId = found.incumbent.id;
+        const charged = promotionMargin(e.triedBefore + peers);
+        row.chargedMargin = charged;
+        if (!e.ok) {
+          row.reasons.push("does not pass the promotion rule on the holdout");
+        } else if (e.stats.delta < charged) {
+          row.reasons.push(
+            `passes alone, but not past the bar with the ${peers} other candidate(s) this report read counted as tried`,
+          );
+        } else {
+          row.eligible = true;
+          row.evaluation = e;
+        }
+      }
+      out.push(row);
+    }
+  }
+  return out;
 }
 
 // ─── Filing a promotion (the one write path) ────────────────────────────────

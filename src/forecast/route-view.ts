@@ -20,7 +20,7 @@
  * Nothing here changes a route or writes a row. Backs `forecast routes`.
  */
 
-import { arenaRouteScores, type RouteEvidence } from "../arena/earned-routes";
+import { arenaRouteScores, pooledVariants, type RouteEvidence } from "../arena/earned-routes";
 import { getErrorMessage } from "../engine/errors";
 import { bold, dim, header, separator } from "../net/ansi";
 import type { MarinaDB } from "../persistence/database";
@@ -37,6 +37,8 @@ export interface RouteViewRow {
   /** Questions / rounds the default has a score on. */
   defaultN: number;
   method: string;
+  /** Arena: settings variants pooled into this spec's evidence, when more than one. */
+  variants?: number;
   /** Questions / rounds both answered. */
   n: number;
   /** Share of the paired items the challenger scored higher on (ties count half). */
@@ -81,6 +83,8 @@ export function pairedRows(input: {
   minN: number;
   /** The candidates routing considers (absent: every method on record). */
   candidates?: readonly string[];
+  /** Settings variants pooled per method (arena), shown when more than one. */
+  variants?: ReadonlyMap<string, number>;
 }): RouteViewRow[] {
   const { scores, defaultId } = input;
   const onRecord = [...scores.keys()].filter((m) => m !== defaultId).sort();
@@ -97,12 +101,14 @@ export function pairedRows(input: {
     for (const c of list) {
       // A listed candidate with no evidence at all is still shown (paired 0).
       const wr = winRate(scores.get(c.id), incumbent);
+      const variants = input.variants?.get(c.id) ?? 0;
       rows.push({
         evidence: input.evidence,
         family: input.family,
         default: defaultId,
         defaultN: incumbent.size,
         method: c.id,
+        ...(variants > 1 ? { variants } : {}),
         n: c.n,
         ...(wr !== undefined ? { winRate: wr } : {}),
         ...(c.gain !== undefined ? { gain: c.gain } : {}),
@@ -166,6 +172,7 @@ export function arenaRouteRows(input: {
       defaultId: defaultSpec,
       scores,
       minN: input.minN,
+      variants: pooledVariants({ family, evidence: input.evidence, now: input.now }),
     });
   });
 }
@@ -191,7 +198,7 @@ export function renderRouteView(
     const gain =
       r.gain === undefined ? "" : ` gain ${r.gain}${r.ci ? ` [${r.ci.join(", ")}]` : ""}`;
     out.push(
-      `  ${r.earned ? bold("EARNED") : r.verdict.padEnd(14)} ${r.method} · paired ${r.n} · wins ${pct(r.winRate)}${gain}${r.candidate ? "" : dim(" · not a routing candidate")}`,
+      `  ${r.earned ? bold("EARNED") : r.verdict.padEnd(14)} ${r.method}${r.variants ? dim(` (${r.variants} settings variants pooled)`) : ""} · paired ${r.n} · wins ${pct(r.winRate)}${gain}${r.candidate ? "" : dim(" · not a routing candidate")}`,
     );
   }
   for (const n of notes) out.push(dim(n));

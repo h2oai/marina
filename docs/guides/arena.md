@@ -678,6 +678,13 @@ general forecaster's promotion rule (`earnedPick` in `src/forecast/routing.ts`):
 - a paired mean gain whose 95 % lower bound is above 0;
 - a gain past `promotionMargin(tried)`, which grows with every challenger considered.
 
+A shadow record is named `<spec>#<fingerprint>` (the spec under one set of operator settings).
+Those settings variants are pooled into their runnable spec (`challengerPoolKey`): the spec is
+what a route names and runs, so each round counts once for it, from its variant recorded last
+before the lock. Nothing pools across specs: two models, two formation panels or two `tabh2o`
+modes of one method kind stay separate challengers, and only the default follows its kind across
+model upgrades. `forecast routes` and `arena shadow score` show how many variants a spec pooled.
+
 Short of that, the default answers. `MARINA_ARENA_ROUTING=observe` records the pick without acting
 on it, and `off` skips it. `<family>=!<spec>` pins a family, so evidence never replaces it; `skip`
 is always pinned. Every decision is kept in the filing's detail as `routing`.
