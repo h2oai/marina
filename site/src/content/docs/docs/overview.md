@@ -65,7 +65,12 @@ and the same permissions and spend limits apply.
 - **Orchestrate a crew.** Sixteen patterns, such as deliberation, debate, Delphi, tournament and
   map-reduce: `crew create panel ana,ben,cy formation:delphi -- <goal>`.
   See [Coordination](../guides/coordination/).
-- **Code.** `marina .` starts a coding agent in any project folder. See [Coding](../guides/coding/).
+- **Code.** `marina .` starts a coding agent in any project folder. Checks run on your machine, in a
+  container image with only the network you allow, or in a sandbox you already run (Flywheel,
+  NVIDIA OpenShell). See [Coding](../guides/coding/).
+- **Learn what works.** Every task and check records how it was done, and
+  `competence best <kind of work>` says which ways of working have succeeded here — advice anyone
+  can take or leave. See [Commands](../guides/commands/).
 
 ## Ways in
 
