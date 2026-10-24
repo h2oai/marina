@@ -362,6 +362,38 @@ export async function forecasterFor(
       },
     };
   }
+  if (spec === "lead") {
+    // The nowcast, except that a series with registered leading indicators
+    // (lead-forecast.ts: NY Fed SCE inflation expectations) moves by what
+    // they did since its last release, where that move has been earned on
+    // the series' own walk-forward record. Free; shadow challenger only.
+    const [{ nowcastForecaster }, { leadForecast }] = await Promise.all([
+      import("./research/civiqs-nowcast"),
+      import("./lead-forecast"),
+    ]);
+    const env = opts.env ?? process.env;
+    const nowcast = nowcastForecaster(
+      arenaData(env),
+      forecastRound,
+      await liveCiviqs(opts.env, opts.strictFreshness),
+    );
+    const fredApiKey = env.FRED_API_KEY?.trim() || undefined;
+    return {
+      forecaster: async (round, lock) => {
+        const f = await nowcast(round, lock);
+        if (!f.topline) return f;
+        const lead = await leadForecast(round, lock, f.topline, { fredApiKey });
+        if (!lead) return f;
+        if ("error" in lead) return { ...f, note: `${f.note}; lead indicators: ${lead.error}` };
+        const n = lead.evidence.nowcast;
+        return {
+          ...f,
+          topline: lead.topline,
+          note: `${f.note}; lead (${lead.evidence.indicators.join(", ")}): ${n.applied ? `moved ${n.move.toFixed(3)}` : "not applied"}, ${n.reason}`,
+        };
+      },
+    };
+  }
   if (spec.startsWith("tabh2o")) return tabh2oForecasterFor(spec, opts);
   if (spec.startsWith(`${WIKI_EVENTS}:`)) {
     return wikiEventsForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness);

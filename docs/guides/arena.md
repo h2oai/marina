@@ -204,6 +204,7 @@ checked again after forecasting so slow retrieval cannot silently consume the fi
 | `nowcast` (default) | the baseline, with Civiqs rounds moved to the freshest daily reading |
 | `discovered` | each family's best promoted [discovered signal](#signal-discovery), the nowcast elsewhere |
 | `spike-decay` | the nowcast, with Trends event-week spikes pulled back (a shadow challenger) |
+| `lead` | the nowcast, with NY Fed SCE inflation expectations moved by leading official indicators where earned (a shadow challenger) |
 | `tabh2o[:forecast][@nowcast]` | TabH2O over the start forecast (experimental) |
 | `model:<m>` | one model over the baseline |
 | `crew:<m>[,<m>,<m>]` | statistician, analyst and skeptic over the baseline |
@@ -283,6 +284,21 @@ when the nowcast's reading is fresher than the round's own history. Scope them w
 its observation date, target horizon, selected daily or weekly anchor, snapshot reference, and
 projection decision. Model prompts distinguish the raw reading from the projected start so they do
 not apply the trend twice.
+
+### Leading indicators (`lead`)
+
+`lead` (`src/arena/lead-forecast.ts`, over `src/quant/lead-nowcast.ts`) is a free shadow
+challenger. For a monthly series with registered leading indicators, today NY Fed SCE 1-year and
+3-year inflation expectations, it moves the start mean by `β · Δ`. Δ is how much each indicator
+changed since the target's last release: UMich 1-year expectations (`MICH`), and the change in
+CPI year-over-year inflation (`CPIAUCSL`). The indicators are read from FRED as of the round's
+lock (ALFRED vintages with `FRED_API_KEY`; keyless only for an open round). Each past month of
+the lock's history is a case whose features use only observations published by that month's
+cutoff. β is a ridge fit through the origin, shrunk toward 0 with 8 pseudo-cases. It is applied
+only when its walk-forward error over those cases beats persistence by 5%; otherwise the start
+stands. The spread is the start's. The forecast note records the indicators, the move, and why
+it was or was not applied. It answers a family only once [earned routes](#per-family-routing-routed) say so,
+for example with `MARINA_ARENA_SHADOW_CHALLENGERS=ny_fed_sce=lead`.
 
 ### Spread calibration and move weight
 
