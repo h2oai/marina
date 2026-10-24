@@ -292,3 +292,24 @@ export function renderMethodRanking(rankings: readonly MethodRanking[], family: 
   }
   return lines.join("\n");
 }
+
+/**
+ * One line of advice for someone about to do this kind of work: the ways of
+ * working that clearly lead in the record (a separated interval), or
+ * undefined — no hint is better than one backed by thin evidence. Advice,
+ * never a rule; the full picture is `competence best <family>`.
+ */
+export function approachAdvice(
+  db: Pick<MarinaDB, "listOutcomes">,
+  family: string,
+): string | undefined {
+  const leads = rankMethods(competenceMap(db, { family }), family).filter(
+    (r) => r.verdict === "lead",
+  );
+  if (leads.length === 0) return undefined;
+  const parts = leads.map((r) => {
+    const c = r.ranked[0]!;
+    return `${c.method} (n ${c.live + c.measure}, ${r.metric} ${fmt(c.mean)})`;
+  });
+  return `What has worked here for ${family}: ${parts.join("; ")}. Your call — \`competence best ${family}\` has the detail.`;
+}

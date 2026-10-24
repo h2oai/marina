@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resolveEvidence } from "../../decisions/evidence";
+import { approachAdvice } from "../../forecast/competence";
 import { recordTaskOpinion } from "../../outcomes/live";
 import type { EntityId } from "../../types";
 import { setChallengeHost } from "../challenges";
@@ -315,6 +316,7 @@ export function registerCoordinationCommands(engine: Engine): void {
               });
           }),
         (work) => engine.trackBackground(work),
+        () => (engine.db ? approachAdvice(engine.db, "work:task") : undefined),
       ),
     );
   }
