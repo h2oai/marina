@@ -1689,7 +1689,9 @@ export async function composeForecastRound(
               key: prior.key,
               forecastAt: prior.forecastAt,
               evidence: previous.dossier.evidence.index,
-              complete: !previous.fallback && !previous.rounds?.some((r) => r.status !== "ok"),
+              // A profile step that left cells out still completed (`ok; N cell(s) left out`).
+              complete:
+                !previous.fallback && !previous.rounds?.some((r) => !r.status.startsWith("ok")),
             },
           }
         : {}),
