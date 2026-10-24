@@ -200,14 +200,49 @@ export function listOutcomes(db: Database, opts: OutcomeFilter = {}): OutcomeRow
     .all(...args, limit) as OutcomeRow[];
 }
 
-/** Outcomes still pending for `consumer`, oldest first. */
-export function pendingOutcomes(db: Database, consumer: string, limit: number): OutcomeRow[] {
+/**
+ * The reason prefix of a pending delivery held to be learned together with
+ * others of its kind (`src/outcomes/deliver.ts`): still `pending`, no attempt spent.
+ */
+export const AGGREGATING_REASON = "aggregating";
+
+/**
+ * Outcomes still pending for `consumer`, oldest first. `aggregating`: only
+ * those held for aggregation (true) or only the others (false); omitted, all.
+ */
+export function pendingOutcomes(
+  db: Database,
+  consumer: string,
+  limit: number,
+  opts: { aggregating?: boolean } = {},
+): OutcomeRow[] {
+  const held = `substr(coalesce(d.reason, ''), 1, ${AGGREGATING_REASON.length}) = '${AGGREGATING_REASON}'`;
+  const filter =
+    opts.aggregating === undefined ? "" : opts.aggregating ? ` AND ${held}` : ` AND NOT ${held}`;
   return db
     .query(
       `SELECT o.* FROM outcome_deliveries d JOIN outcomes o ON o.id = d.outcome_id
-       WHERE d.consumer = ? AND d.state = 'pending' ORDER BY d.outcome_id LIMIT ?`,
+       WHERE d.consumer = ? AND d.state = 'pending'${filter} ORDER BY d.outcome_id LIMIT ?`,
     )
     .all(consumer, Math.max(0, limit)) as OutcomeRow[];
+}
+
+/**
+ * Keep a pending delivery waiting with `reason` (aggregation, no model
+ * provider) WITHOUT counting an attempt: waiting is not failing.
+ */
+export function waitOutcomeDelivery(
+  db: Database,
+  outcomeId: number,
+  consumer: string,
+  reason: string,
+  now = Date.now(),
+): void {
+  db.run(
+    `UPDATE outcome_deliveries SET reason = ?, updated_at = ?
+     WHERE outcome_id = ? AND consumer = ? AND state = 'pending'`,
+    [reason, now, outcomeId, consumer],
+  );
 }
 
 /** Settle or retry one delivery; every call counts as one attempt. */

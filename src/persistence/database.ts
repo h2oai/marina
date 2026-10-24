@@ -4011,8 +4011,16 @@ export class MarinaDB implements MarinaStores {
     return outcomesDb.listOutcomes(this.db, opts);
   }
 
-  pendingOutcomes(consumer: string, limit: number): outcomesDb.OutcomeRow[] {
-    return outcomesDb.pendingOutcomes(this.db, consumer, limit);
+  pendingOutcomes(
+    consumer: string,
+    limit: number,
+    opts?: { aggregating?: boolean },
+  ): outcomesDb.OutcomeRow[] {
+    return outcomesDb.pendingOutcomes(this.db, consumer, limit, opts);
+  }
+
+  waitOutcomeDelivery(outcomeId: number, consumer: string, reason: string, now?: number): void {
+    outcomesDb.waitOutcomeDelivery(this.db, outcomeId, consumer, reason, now);
   }
 
   setOutcomeDelivery(

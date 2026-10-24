@@ -67,6 +67,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Judged lessons: no rule, no lesson; single rounds teach in aggregate; one set of bars.** A
+  candidate whose writer gives no rule (asked twice) is deferred, never judged or stored. Forecasts,
+  arena rounds and research asks wait (durably, no attempt spent) until five of one source shape and
+  family are waiting, then teach ONE lesson from their statistics, scoped to that family and served
+  only to work of it; the judge's `general` question is asked within that declared scope. The
+  judge sees the rule as the lesson; `leak_free` is enforced only for measurement outcomes (the
+  mechanical item check still gates everything); failing only `consistent` stores the lesson
+  contested with a resolve case; calibrated and uncalibrated judges clear the same bars. Recall
+  serves only judged lessons that have a rule: never-judged (`unverified`) records stay stored but
+  are no longer served. With no model provider configured, deliveries wait with that reason and
+  nothing is written.
 - **Arena spread calibration is learned per series**, not per tracker: one tracker's series can be
   miscalibrated in opposite directions.
 - **Arena challengers cover the coming week**, cheap specs first, within a time budget

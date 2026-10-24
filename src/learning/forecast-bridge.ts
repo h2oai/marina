@@ -42,6 +42,7 @@ function toForecastLesson(l: Lesson, observed: boolean): ForecastLesson {
     ...(l.category ? { category: l.category } : {}),
     ...(l.score !== undefined ? { score: l.score } : {}),
     ...(l.source ? { origin: l.source } : {}),
+    ...(l.scopeFamily ? { family: l.scopeFamily } : {}),
     ...(observed ? { observed: true } : {}),
   };
 }
@@ -56,6 +57,7 @@ export function forecastLessonsFor(
         asOf,
         limit: recallOpts?.limit ?? 6,
         maxBytes: recallOpts?.maxBytes ?? 1_500,
+        ...(recallOpts?.families?.length ? { families: recallOpts.families } : {}),
         ...(opts.env ? { env: opts.env } : {}),
         ...(opts.sink ? { sink: opts.sink } : {}),
         ...(opts.eval ? { eval: opts.eval } : {}),

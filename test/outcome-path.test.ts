@@ -8,12 +8,22 @@ import { join } from "node:path";
 import type { DecisionProvider } from "../src/decisions/types";
 import { jsonlHistory } from "../src/forecast/history";
 import { memoryLessonSink } from "../src/learning/outcomes";
-import { disableOutcomeLearning, enableOutcomeLearning } from "../src/learning/service";
-import { deliverOutcomes, MAX_DELIVERY_ATTEMPTS } from "../src/outcomes/deliver";
+import {
+  disableOutcomeLearning,
+  enableOutcomeLearning,
+  recallLessons,
+} from "../src/learning/service";
+import {
+  AGGREGATE_MIN_OUTCOMES,
+  deliverOutcomes,
+  MAX_DELIVERY_ATTEMPTS,
+} from "../src/outcomes/deliver";
 import { fileAnswer, resolveFiled } from "../src/outcomes/filing";
 import { resolveForecast } from "../src/outcomes/forecast";
+import { observeOutcomeEvent } from "../src/outcomes/live";
 import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
+import type { EntityId } from "../src/types";
 import { scopeProcessState } from "./process-state";
 
 const judge = (fail = false): DecisionProvider =>
@@ -94,70 +104,226 @@ describe("one outcome path", () => {
     expect(db.listOutcomes()).toHaveLength(0);
   });
 
-  it("lessons wait until learning is armed, then are judged with the subject's private context", async () => {
-    const id = file(db);
-    resolveForecast(db, id, { outcome: "no" }, 1_900_000_000_000);
-    await settleDelivery(db);
+  /** A writer that always gives a rule, recording what it was shown. */
+  const ruleWriter = (seen: string[] = []) => ({
+    name: "test/writer",
+    async complete(system: string, user: string) {
+      seen.push(`${system}\n${user}`);
+      return '{"category":"calibration","rule":"Discount strong priors on policy questions."}';
+    },
+  });
+  const resolveMany = (n: number, over: Record<string, unknown> = {}) => {
+    const ids = Array.from({ length: n }, () => file(db, over));
+    for (const id of ids) resolveForecast(db, id, { outcome: "no" }, 1_900_000_000_000);
+    return ids;
+  };
+  const lessonDelivery = (id: number) => {
     const o = db.getOutcomeBySubject(`forecast:${id}`)!;
-    const lessons = () => db.outcomeDeliveries(o.id).find((d) => d.consumer === "lessons")!;
-    expect(lessons().state).toBe("pending");
+    return db.outcomeDeliveries(o.id).find((d) => d.consumer === "lessons")!;
+  };
+
+  it("forecasts wait (no attempt spent) and teach ONE aggregate lesson once AGGREGATE_MIN_OUTCOMES wait", async () => {
+    const first = resolveMany(AGGREGATE_MIN_OUTCOMES - 1);
+    await settleDelivery(db);
+    // Not armed yet: each waits for its group.
+    await deliverOutcomes(db, { env: env() });
+    for (const id of first)
+      expect(lessonDelivery(id)).toMatchObject({ state: "pending", attempts: 0 });
+    expect(lessonDelivery(first[0]!).reason).toStartWith("aggregating: ");
 
     const sink = memoryLessonSink();
     const seen: string[] = [];
-    enableOutcomeLearning(db, {
-      sink,
-      writer: {
-        name: "test/writer",
-        async complete(system: string, user: string) {
-          seen.push(`${system}\n${user}`);
-          return '{"category":"calibration","rule":"Discount strong priors."}';
-        },
-      },
-      judge: judge(),
-      env: env(),
+    enableOutcomeLearning(db, { sink, writer: ruleWriter(seen), judge: judge(), env: env() });
+    // One short of the group: nothing is written, nothing is asked.
+    await deliverOutcomes(db, { env: env() });
+    expect(sink.all()).toHaveLength(0);
+    expect(seen).toHaveLength(0);
+    for (const id of first) expect(lessonDelivery(id).state).toBe("pending");
+
+    // The group is complete: the next pass (here the background one) learns it.
+    const [last] = resolveMany(1);
+    await settleDelivery(db);
+    await deliverOutcomes(db, { env: env() });
+    for (const id of [...first, last!]) {
+      expect(lessonDelivery(id).state).toBe("done");
+      expect(lessonDelivery(id).reason).toBe(`aggregate of ${AGGREGATE_MIN_OUTCOMES}: trusted`);
+    }
+    const lessons = sink.all().filter((l) => l.domain !== "meta");
+    expect(lessons).toHaveLength(1);
+    expect(lessons[0]).toMatchObject({
+      domain: "forecast",
+      source: "forecast:probability",
+      rule: "Discount strong priors on policy questions.",
+      provenance: { learner: "outcome-aggregate", aggregate: String(AGGREGATE_MIN_OUTCOMES) },
     });
-    const report = await deliverOutcomes(db, { env: env() });
-    expect(report.lessons).toMatchObject({ done: 1 });
-    expect(lessons().state).toBe("done");
-    expect(seen.join("\n")).toContain("Will the Fed cut in October?");
+    // The aggregate prompt, cross-outcome statistics, and the questions only as private context.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain("a batch of outcomes of the same kind");
+    expect(seen[0]).toContain(`0 of ${AGGREGATE_MIN_OUTCOMES} succeeded`);
+    expect(seen[0]).toContain("Context (do not quote)");
+    expect(seen[0]).toContain("Will the Fed cut in October?");
+  });
+
+  it("a group waiting for aggregation survives a restart", async () => {
+    const path = join(dir, "outcomes.db");
+    let disk = new MarinaDB(path);
+    const fileOn = (d: MarinaDB) => {
+      const id = file(d);
+      resolveForecast(d, id, { outcome: "yes" }, 1_900_000_000_000);
+      return id;
+    };
+    try {
+      const before = [fileOn(disk), fileOn(disk), fileOn(disk)];
+      await settleDelivery(disk);
+      enableOutcomeLearning(disk, {
+        sink: memoryLessonSink(),
+        writer: ruleWriter(),
+        judge: judge(),
+        env: env(),
+      });
+      await deliverOutcomes(disk, { env: env() });
+      await settleDelivery(disk);
+      disableOutcomeLearning(disk);
+      disk.close();
+
+      // A new process: the waiting deliveries are still there, held for the group.
+      disk = new MarinaDB(path);
+      expect(disk.pendingOutcomes("lessons", 10, { aggregating: true })).toHaveLength(3);
+      const sink = memoryLessonSink();
+      enableOutcomeLearning(disk, { sink, writer: ruleWriter(), judge: judge(), env: env() });
+      fileOn(disk);
+      fileOn(disk);
+      await settleDelivery(disk);
+      await deliverOutcomes(disk, { env: env() });
+      expect(sink.all().filter((l) => l.domain !== "meta")).toHaveLength(1);
+      for (const id of before) {
+        const o = disk.getOutcomeBySubject(`forecast:${id}`)!;
+        expect(disk.outcomeDeliveries(o.id).find((d) => d.consumer === "lessons")?.state).toBe(
+          "done",
+        );
+      }
+    } finally {
+      await settleDelivery(disk);
+      disableOutcomeLearning(disk);
+      disk.close();
+    }
   });
 
   it("the hourly budget defers lessons and drops none", async () => {
-    const ids = [file(db), file(db), file(db)];
-    for (const id of ids) resolveForecast(db, id, { outcome: "yes" }, 1);
+    resolveMany(AGGREGATE_MIN_OUTCOMES);
+    resolveMany(AGGREGATE_MIN_OUTCOMES, { source: "board" });
     await settleDelivery(db);
-    // Armed with a budget of one: one lesson now, two wait for the next window.
+    // Armed with a budget of one: one group's lesson now, the other waits for the next window.
     const limited = env({ MARINA_LESSONS_MAX_PER_HOUR: "1" });
     enableOutcomeLearning(db, {
       sink: memoryLessonSink(),
-      writer: null,
+      writer: ruleWriter(),
       judge: judge(),
       env: limited,
     });
     const report = await deliverOutcomes(db, { env: limited });
-    expect(report.lessons).toEqual({ done: 1, skipped: 0, failed: 0, waiting: 2 });
-    expect(db.pendingOutcomes("lessons", 10)).toHaveLength(2);
+    expect(report.lessons).toMatchObject({ done: AGGREGATE_MIN_OUTCOMES, failed: 0 });
+    expect(db.pendingOutcomes("lessons", 20)).toHaveLength(AGGREGATE_MIN_OUTCOMES);
   });
 
-  it("no verdict keeps a lesson pending and counts the attempt; repeated failures end failed", async () => {
-    const id = file(db);
-    resolveForecast(db, id, { outcome: "yes" }, 1);
+  it("no verdict keeps a group pending and counts the attempt; repeated failures end failed", async () => {
+    const ids = resolveMany(AGGREGATE_MIN_OUTCOMES);
     await settleDelivery(db);
     enableOutcomeLearning(db, {
       sink: memoryLessonSink(),
-      writer: null,
+      writer: ruleWriter(),
       judge: judge(true),
       env: env(),
     });
-    const o = db.getOutcomeBySubject(`forecast:${id}`)!;
-    const lessons = () => db.outcomeDeliveries(o.id).find((d) => d.consumer === "lessons")!;
     for (let i = 0; i < MAX_DELIVERY_ATTEMPTS - 1; i++) {
       await deliverOutcomes(db, { env: env() });
-      expect(lessons().state).toBe("pending");
+      expect(lessonDelivery(ids[0]!).state).toBe("pending");
+      expect(lessonDelivery(ids[0]!).reason).toStartWith("aggregating: ");
     }
     await deliverOutcomes(db, { env: env() });
-    expect(lessons()).toMatchObject({ state: "failed", attempts: MAX_DELIVERY_ATTEMPTS });
-    expect(lessons().reason).toContain("no verdict");
+    for (const id of ids)
+      expect(lessonDelivery(id)).toMatchObject({
+        state: "failed",
+        attempts: MAX_DELIVERY_ATTEMPTS,
+      });
+    expect(lessonDelivery(ids[0]!).reason).toContain("no verdict");
+  });
+
+  it("groups by family: a lesson is learned per family, scoped to it, and judged within it", async () => {
+    const sink = memoryLessonSink();
+    const seen: string[] = [];
+    const j = judge();
+    const asked: unknown[] = [];
+    const recording = {
+      ...j,
+      async ask(request: { state: unknown; questions: Record<string, unknown> }) {
+        asked.push(request.state);
+        return (j as unknown as { ask: (r: unknown) => Promise<unknown> }).ask(request);
+      },
+    } as unknown as DecisionProvider;
+    const byFamily = (family: string, n: number) =>
+      Array.from({ length: n }, () => {
+        const id = file(db);
+        resolveForecast(db, id, { outcome: "no" }, 1_900_000_000_000, {
+          refs: [`family:${family}`],
+        });
+        return id;
+      });
+    byFamily("civiqs", AGGREGATE_MIN_OUTCOMES - 1);
+    byFamily("yougov", AGGREGATE_MIN_OUTCOMES - 1);
+    await settleDelivery(db);
+    enableOutcomeLearning(db, { sink, writer: ruleWriter(seen), judge: recording, env: env() });
+    // Eight waiting, but no family has five: nothing is learned.
+    await deliverOutcomes(db, { env: env() });
+    expect(sink.all()).toHaveLength(0);
+    byFamily("civiqs", 1);
+    await settleDelivery(db);
+    await deliverOutcomes(db, { env: env() });
+    const learned = sink.all().filter((l) => l.domain !== "meta");
+    expect(learned).toHaveLength(1);
+    expect(learned[0]!.scopeFamily).toBe("civiqs");
+    expect(learned[0]!.refs).toContain("family:civiqs");
+    // The judge's `general` question is asked within the declared scope.
+    expect(asked[0]).toMatchObject({
+      applies_to: { source: "forecast:probability", family: "civiqs" },
+    });
+    expect(db.pendingOutcomes("lessons", 20, { aggregating: true })).toHaveLength(
+      AGGREGATE_MIN_OUTCOMES - 1,
+    );
+  });
+
+  it("with no model provider, nothing throws, fails or is written: deliveries wait with the reason", async () => {
+    // Writer and judge from the environment, which names no provider at all.
+    const bare = { MARINA_LESSONS: "on" } as NodeJS.ProcessEnv;
+    const sink = memoryLessonSink();
+    enableOutcomeLearning(db, { sink, env: bare });
+    db.saveAgentConfig({ name: "Roamer", model: "vendor/model-b", spawnedBy: "system" });
+    const ids = resolveMany(AGGREGATE_MIN_OUTCOMES);
+    observeOutcomeEvent(db, {
+      type: "task_approved",
+      entity: "e_creator" as EntityId,
+      taskId: 1,
+      claimantName: "Roamer",
+      timestamp: 1_000,
+    });
+    await settleDelivery(db);
+    for (let i = 0; i < MAX_DELIVERY_ATTEMPTS + 2; i++) {
+      const report = await deliverOutcomes(db, { env: bare });
+      expect(report.lessons?.failed ?? 0).toBe(0);
+      expect(report.lessons?.done ?? 0).toBe(0);
+    }
+    for (const id of ids)
+      expect(lessonDelivery(id)).toMatchObject({ state: "pending", attempts: 0 });
+    expect(lessonDelivery(ids[0]!).reason).toContain("no model provider configured");
+    const task = db.listOutcomes({ kind: "task" })[0]!;
+    expect(db.outcomeDeliveries(task.id).find((d) => d.consumer === "lessons")).toMatchObject({
+      state: "pending",
+      attempts: 0,
+      reason: "waiting: no model provider configured",
+    });
+    expect(sink.all()).toHaveLength(0);
+    const recalled = await recallLessons(db, "forecast", "Fed cut", { env: bare });
+    expect(recalled.recalled).toEqual([]);
   });
 
   it("a measurement run of a named board teaches (as that board) but never tunes", async () => {

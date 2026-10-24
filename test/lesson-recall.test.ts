@@ -36,6 +36,7 @@ const lesson = (id: string, domain: Lesson["domain"], text: string, over: Partia
     id,
     domain,
     text,
+    rule: text,
     kind: "failure",
     trust: "trusted",
     resolvedAt: "2026-09-01T00:00:00.000Z",
@@ -81,7 +82,7 @@ describe("recallAcross", () => {
     expect(ids).toContain("t1");
     expect(ids).toContain("c1");
     expect(ids).not.toContain("r1");
-    expect(ids.indexOf("u1")).toBe(ids.length - 1); // unverified after trusted
+    expect(ids).not.toContain("u1"); // never judged: stored, never served
     expect(got.inject).toEqual(got.recalled);
     const tight = await recallAcross(undefined, ["tools", "code"], "cancel order", {
       sink,

@@ -163,7 +163,7 @@ async function judgedLessons(lessons: LessonStore | undefined, round: ArenaRound
     const got = await lessons.recall(
       `${round.tracker ?? ""} ${round.question}`.slice(0, 400),
       round.lock_at,
-      { limit: 4, maxBytes: 800 },
+      { limit: 4, maxBytes: 800, ...(round.tracker ? { families: [round.tracker] } : {}) },
     );
     // Observe mode returns lessons for the record only: never shown to a role.
     return got.filter((l) => !l.observed);
