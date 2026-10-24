@@ -160,6 +160,10 @@ export interface ResearchAskAnswer {
   check: string;
   retriever?: string;
   budgetForced?: boolean;
+  /** Agent mode: the citation audit's counts (cited, read, never opened, failed). */
+  audit?: { cited: number; read: number; unread: number; failed: number };
+  /** The model that led the research (agent mode). */
+  lead?: string;
 }
 
 export interface ResearchAskDeps {
@@ -242,6 +246,13 @@ async function runAgentDefault(
       costUsd: spent,
       check: `citations: ${a.read.length} read, ${a.unread.length} never opened, ${a.failed.length} failed of ${a.cited} cited${result.repaired ? " · repaired once" : ""}`,
       ...(result.budgetForced ? { budgetForced: true } : {}),
+      audit: {
+        cited: a.cited,
+        read: a.read.length,
+        unread: a.unread.length,
+        failed: a.failed.length,
+      },
+      lead,
     };
   } finally {
     rmSync(dir, { recursive: true, force: true });

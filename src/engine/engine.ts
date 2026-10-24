@@ -54,7 +54,7 @@ import { attachRouteHealthStore, coreMemoryRouteStore } from "../net/model/route
 import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import { fileResidentForecast } from "../outcomes/filing";
-import { observeOutcomeEvent } from "../outcomes/live";
+import { noteTaskApproach, observeOutcomeEvent } from "../outcomes/live";
 import type { MarinaDB } from "../persistence/database";
 import type { RoomLogKind } from "../persistence/db-rooms";
 import { writeSample } from "../resolvers/sample-writer";
@@ -520,6 +520,21 @@ export class Engine {
     // The outcome path (src/outcomes/): a creator's verdict on a task
     // submission is a resolved result — recorded once, learned from.
     this.addEventListener((event) => observeOutcomeEvent(this.db, event));
+    // How a task is being worked, taken while its crew is live (a one-off
+    // crew is gone by the time the creator's verdict arrives).
+    this.addEventListener((event) => {
+      if (event.type !== "task_claimed" || !this.db) return;
+      const claimant = this.entities.get(event.entity)?.name;
+      if (!claimant) return;
+      const db = this.db;
+      tryLog(this.logger, "outcomes", "Task approach not recorded", () =>
+        noteTaskApproach(db, {
+          taskId: event.taskId,
+          claimant,
+          formations: this.crewManager?.forAgent(claimant).map((c) => c.formation) ?? [],
+        }),
+      );
+    });
     // Attention judges (MARINA_ATTENTION_JUDGE, default observe; a no-op when
     // off): deep replies and review verdicts, each checked against its outcome.
     this.addEventListener((event) => observeAttentionJudgeEvent(this.db, event));

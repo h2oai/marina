@@ -34,7 +34,7 @@ import { type ScopeReader, workScopeFor } from "../learning/work";
 
 const SAFE = /^[A-Za-z0-9:._/+@-]{1,120}$/;
 
-export type WorkKind = "task" | "code" | "request";
+export type WorkKind = "task" | "code" | "request" | "research";
 
 /** A row's evidence scope from its refs: `shared`, `owner:<name>`, `unscoped`, or undefined (untagged). */
 export function scopeOf(refs: readonly string[]): string | undefined {

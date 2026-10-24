@@ -36,11 +36,47 @@ export function workRefsFor(
   });
 }
 
+/** Where the way a task is being worked is kept between claim and verdict (core memory, labels only). */
+export const TASK_APPROACH_OWNER = "work:approach";
+
 /**
- * How a task was worked: `crew:<formation>` for each crew the claimant
- * belongs to (the formation is how that crew coordinates), else `solo`.
+ * Record, at claim time, how a task is being worked: `crew:<formation>` for
+ * each live crew the claimant is in, else `solo`. Taken at claim because a
+ * one-off crew is never persisted and dissolves when it completes — long
+ * before the creator's verdict.
  */
-export function taskApproach(db: Pick<MarinaDB, "getCrewsForAgent">, claimant: string): string[] {
+export function noteTaskApproach(
+  db: Pick<MarinaDB, "setCoreMemory">,
+  input: { taskId: number; claimant: string; formations: readonly string[] },
+): void {
+  const formations = [...new Set(input.formations.filter(Boolean))];
+  db.setCoreMemory(
+    TASK_APPROACH_OWNER,
+    `task:${input.taskId}:${input.claimant}`,
+    JSON.stringify(formations.length ? formations.map((f) => `crew:${f}`) : ["solo"]),
+  );
+}
+
+/**
+ * How a task was worked: what was recorded when it was claimed
+ * (`noteTaskApproach`), else `crew:<formation>` for each persisted crew the
+ * claimant belongs to, else `solo`.
+ */
+export function taskApproach(
+  db: Pick<MarinaDB, "getCrewsForAgent"> & Partial<Pick<MarinaDB, "getCoreMemory">>,
+  claimant: string,
+  taskId?: number,
+): string[] {
+  if (taskId !== undefined && db.getCoreMemory) {
+    try {
+      const noted = db.getCoreMemory(TASK_APPROACH_OWNER, `task:${taskId}:${claimant}`)?.value;
+      const parsed = noted ? (JSON.parse(noted) as unknown) : undefined;
+      if (Array.isArray(parsed) && parsed.length && parsed.every((x) => typeof x === "string"))
+        return parsed as string[];
+    } catch {
+      // allow-empty-catch: an unreadable note falls back to the crews on record
+    }
+  }
   let crews: { formation: string }[] = [];
   try {
     crews = db.getCrewsForAgent(claimant);
@@ -93,7 +129,7 @@ export function recordTaskVerdict(
     participants: [participantOf(db, input.claimant)],
     refs: [
       `task:${input.taskId}`,
-      ...workRefsFor(db, "task", input.claimant, taskApproach(db, input.claimant)),
+      ...workRefsFor(db, "task", input.claimant, taskApproach(db, input.claimant, input.taskId)),
     ],
     resolvedAt: input.at,
   });
@@ -140,7 +176,10 @@ export function recordTaskOpinion(
     basis: "judged",
     judge: input.judge,
     participants: [participantOf(db, input.claimant)],
-    refs: [`task:${input.taskId}`, ...workRefsFor(db, "task", input.claimant)],
+    refs: [
+      `task:${input.taskId}`,
+      ...workRefsFor(db, "task", input.claimant, taskApproach(db, input.claimant, input.taskId)),
+    ],
     resolvedAt: at,
   });
 }
@@ -206,5 +245,48 @@ export function recordVerification(
       ...workRefsFor(db, "code", input.actor, input.approach ?? []),
     ],
     resolvedAt: input.at ?? Date.now(),
+  });
+}
+
+/**
+ * A research ask as one outcome, scored on its citation audit: the share of
+ * the sources the answer cites that the agent actually opened and read. That
+ * measures grounding, not correctness — the metric says so — and it is
+ * mechanical (no judge). Only agent-mode asks carry an audit; an ask that
+ * cites nothing is no evidence. A budget-forced answer never counts as a
+ * success. Tagged `research:<mode>` (and the retriever when one was named).
+ */
+export function recordResearchAsk(
+  db: MarinaDB,
+  input: {
+    actor: string;
+    mode: string;
+    audit?: { cited: number; read: number; unread: number; failed: number };
+    retriever?: string;
+    budgetForced?: boolean;
+    at?: number;
+  },
+): void {
+  const a = input.audit;
+  if (!a || a.cited <= 0) return;
+  const at = input.at ?? Date.now();
+  const grounded = Math.min(1, a.read / a.cited);
+  recordResolved(db, {
+    subject: `research:${input.actor}:${at}`,
+    kind: "task",
+    source: "research:ask",
+    domain: "research",
+    owner: input.actor,
+    succeeded: grounded >= 0.8 && !input.budgetForced,
+    quality: grounded,
+    metric: "citation-grounding",
+    detail: `${a.read} of ${a.cited} cited sources read (${a.unread} never opened, ${a.failed} failed)${input.budgetForced ? "; budget-forced answer" : ""}`,
+    basis: "mechanical",
+    participants: [participantOf(db, input.actor)],
+    refs: workRefsFor(db, "research", input.actor, [
+      `research:${input.mode}`,
+      ...(input.retriever ? [`retriever:${input.retriever}`] : []),
+    ]),
+    resolvedAt: at,
   });
 }

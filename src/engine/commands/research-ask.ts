@@ -50,7 +50,12 @@ export function renderResearchAnswer(a: ResearchAskAnswer): string {
 }
 
 /** The `research ask` handler, with its own budget state per registration. */
-export function researchAskHandler(deps: ResearchAskDeps = {}) {
+export function researchAskHandler(
+  deps: ResearchAskDeps & {
+    /** Called with each finished answer (e.g. to record it on the outcome path); never fails the ask. */
+    onAnswer?: (answer: ResearchAskAnswer, entity: EntityId) => void;
+  } = {},
+) {
   const limiter = new RateLimiter({ maxTokens: 4, refillRate: 1, refillInterval: 10 * 60_000 });
   const running = new Set<string>();
   return (ctx: RoomContext, input: CommandInput): Promise<void> | void => {
@@ -124,6 +129,13 @@ export function researchAskHandler(deps: ResearchAskDeps = {}) {
           eid,
           "error" in got ? `Could not research: ${got.error}` : renderResearchAnswer(got),
         );
+        if (!("error" in got)) {
+          try {
+            deps.onAnswer?.(got, eid);
+          } catch {
+            // allow-empty-catch: recording an answer never fails the ask
+          }
+        }
       } finally {
         running.delete(eid);
       }
