@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { routeEvidenceSettingsFromEnv } from "../src/engine/benchmark-evidence";
 import { competenceCommand } from "../src/engine/commands/competence";
 import {
+  approachAdvice,
   competenceFrom,
   competenceMap,
   methodDimension,
@@ -231,6 +232,18 @@ describe("how work was done is part of its record", () => {
     expect(methodDimension("model:x")).toBe("model");
     expect(methodDimension("nowcast")).toBe("method");
     expect(renderMethodRanking([], "work:code")).toContain("no method has a record here");
+  });
+
+  it("offers one line of advice only when a way of working clearly leads", () => {
+    expect(approachAdvice(db, "work:task")).toBeUndefined();
+    for (let i = 0; i < 8; i++) {
+      recordTaskVerdict(db, { taskId: 100 + i, claimant: "Member", approved: true, at: 10 + i });
+      recordTaskVerdict(db, { taskId: 200 + i, claimant: "Solo", approved: i < 2, at: 30 + i });
+    }
+    const advice = approachAdvice(db, "work:task")!;
+    expect(advice).toContain("crew:debate (n 8");
+    expect(advice).toContain("Your call");
+    expect(advice).not.toContain("\n");
   });
 
   it("never ranks a method on fewer than five outcomes, and reads a loss as lower-is-better", () => {

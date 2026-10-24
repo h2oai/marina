@@ -88,6 +88,8 @@ export function taskCommand(
   recordObservation?: (row: JudgeObservationInput) => void,
   /** Observe-only verification must settle before persistence closes. */
   trackBackground?: (work: Promise<void>) => void,
+  /** What the record says about doing tasks (`approachAdvice`), offered on claim; never required. */
+  adviseApproach?: () => string | undefined,
 ): CommandDef {
   return {
     category: "Coordination",
@@ -449,7 +451,16 @@ export function taskCommand(
             );
             return;
           }
-          ctx.send(input.entity, `Claimed task #${id}.`);
+          let advice: string | undefined;
+          try {
+            advice = adviseApproach?.();
+          } catch {
+            // allow-empty-catch: advice is optional; a claim never fails for it
+          }
+          ctx.send(
+            input.entity,
+            advice ? `Claimed task #${id}.\n${advice}` : `Claimed task #${id}.`,
+          );
           logEvent?.({
             type: "task_claimed",
             entity: input.entity,
