@@ -370,3 +370,44 @@ export function parseShadowChallengers(
   }
   return out;
 }
+
+/** A challenger run whose cost is a model panel (`formation:`, `crew:`, or with `+research`). */
+export function costlyChallenger(spec: string): boolean {
+  return /^(formation|crew):/.test(spec) || spec.includes("+research");
+}
+
+export interface ChallengerWork {
+  roundId: string;
+  spec: string;
+}
+
+/**
+ * The challenger forecasts worth recording now, cheapest first, then by lock.
+ * A round further than `nearHours` from its lock is recorded once (so earned
+ * routing has a record even if a later run is missed); within `nearHours` it
+ * is recorded again (the record that counts is the last before lock, as with
+ * a filing — `recordShadow` itself skips one made in the last few hours).
+ * `recorded(spec, roundId)` is the time of the spec's latest record, if any.
+ */
+export function planChallengerWork(input: {
+  rounds: ReadonlyArray<{ round_id: string; tracker: string; lock_at: string }>;
+  listed: Map<string, string[]>;
+  recorded: (spec: string, roundId: string) => number | undefined;
+  now: number;
+  nearHours?: number;
+}): ChallengerWork[] {
+  const near = (input.nearHours ?? 24) * 3_600_000;
+  const work: (ChallengerWork & { lock: number; costly: boolean })[] = [];
+  for (const round of input.rounds) {
+    const lock = Date.parse(round.lock_at);
+    if (!Number.isFinite(lock) || lock <= input.now) continue;
+    for (const spec of input.listed.get(round.tracker.toLowerCase()) ?? []) {
+      const last = input.recorded(spec, round.round_id);
+      const nearLock = lock - input.now <= near;
+      if (last !== undefined && !(nearLock && lock - last > near)) continue;
+      work.push({ roundId: round.round_id, spec, lock, costly: costlyChallenger(spec) });
+    }
+  }
+  work.sort((a, b) => Number(a.costly) - Number(b.costly) || a.lock - b.lock);
+  return work.map(({ roundId, spec }) => ({ roundId, spec }));
+}

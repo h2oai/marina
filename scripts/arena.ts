@@ -107,6 +107,8 @@ const { positionals, values } = parseArgs({
     proposer: { type: "string" },
     n: { type: "string" },
     signal: { type: "string", multiple: true },
+    hours: { type: "string" },
+    "budget-minutes": { type: "string" },
   },
 });
 const [cmd = "status", arg] = positionals;
@@ -721,30 +723,68 @@ async function main(): Promise<number> {
         }
         if (action === "challengers") {
           const target = positionals[2];
-          if (!target) throw new Error("usage: bun run arena shadow challengers <round_id|due>");
-          const { parseShadowChallengers } = await import("../src/arena/earned-routes");
+          if (!target)
+            throw new Error(
+              "usage: bun run arena shadow challengers <round_id|due> [--hours N] [--budget-minutes N]",
+            );
+          const { parseShadowChallengers, planChallengerWork } = await import(
+            "../src/arena/earned-routes"
+          );
           const listed = parseShadowChallengers(process.env);
           if (listed.size === 0) {
             console.log("No MARINA_ARENA_SHADOW_CHALLENGERS listed: nothing runs.");
             return 0;
           }
           const data = arenaData();
-          const hours = arenaWindowHours();
+          // `--hours` reaches rounds further out than the filing window: each is recorded
+          // once early, then again within 24 h of its lock (see planChallengerWork).
+          const hours = values.hours ? Number(values.hours) : arenaWindowHours();
+          if (!Number.isFinite(hours) || hours <= 0) throw new Error("--hours must be positive");
+          const budgetMinutes = values["budget-minutes"] ? Number(values["budget-minutes"]) : 0;
+          if (!Number.isFinite(budgetMinutes) || budgetMinutes < 0)
+            throw new Error("--budget-minutes must be a non-negative number (0 = none)");
           const rounds =
             target === "due"
               ? (await data.openRounds()).filter(
                   (r) => Date.parse(r.lock_at) <= Date.now() + hours * 3_600_000,
                 )
               : [await data.round(target)];
-          let failed = 0;
-          for (const round of rounds) {
-            if (!round) throw new Error(`unknown round ${target}`);
-            for (const spec of listed.get(round.tracker.toLowerCase()) ?? []) {
-              const [r] = await recordShadow(db, data, spec, [round.round_id]);
-              if (r && !r.recorded) failed++;
-              console.log(`${round.round_id} ${spec}: ${r?.recorded ? "recorded" : r?.error}`);
+          if (rounds.some((r) => !r)) throw new Error(`unknown round ${target}`);
+          const { forecastSettings } = await import("../src/arena/forecast-config");
+          const latest = new Map<string, Map<string, number>>();
+          const recorded = (spec: string, roundId: string) => {
+            if (!latest.has(spec)) {
+              const variant = `${spec}#${forecastSettings(spec, process.env).fingerprint.slice(0, 16)}`;
+              const byRound = new Map<string, number>();
+              for (const r of db.listArenaShadow({ forecaster: variant, limit: 2_000 }))
+                byRound.set(r.round_id, Math.max(byRound.get(r.round_id) ?? 0, r.created_at));
+              latest.set(spec, byRound);
             }
+            return latest.get(spec)!.get(roundId);
+          };
+          const work = planChallengerWork({
+            rounds: rounds as NonNullable<(typeof rounds)[number]>[],
+            listed,
+            recorded,
+            now: Date.now(),
+          });
+          const started = Date.now();
+          let failed = 0;
+          let done = 0;
+          for (const item of work) {
+            if (budgetMinutes > 0 && Date.now() - started > budgetMinutes * 60_000) {
+              console.log(
+                `budget of ${budgetMinutes} min spent: ${work.length - done} challenger run(s) left for the next pass`,
+              );
+              break;
+            }
+            const [r] = await recordShadow(db, data, item.spec, [item.roundId]);
+            done++;
+            if (r && !r.recorded) failed++;
+            console.log(`${item.roundId} ${item.spec}: ${r?.recorded ? "recorded" : r?.error}`);
           }
+          if (work.length === 0)
+            console.log("Every listed challenger is recorded for these rounds.");
           return failed ? 1 : 0;
         }
         if (action === "list") {

@@ -272,3 +272,47 @@ describe("earned routes in the routed forecaster and the evidence reader", () =>
     expect(ev.every((e) => Number.isFinite(e.skill))).toBe(true);
   });
 });
+
+describe("challenger planning", () => {
+  const H = 3_600_000;
+  const now = Date.parse("2026-10-24T12:00:00Z");
+  const at = (h: number) => new Date(now + h * H).toISOString();
+  const rounds = [
+    { round_id: "trends-far", tracker: "google_trends", lock_at: at(100) },
+    { round_id: "sce-near", tracker: "ny_fed_sce", lock_at: at(10) },
+    { round_id: "sce-far", tracker: "ny_fed_sce", lock_at: at(150) },
+    { round_id: "gone", tracker: "ny_fed_sce", lock_at: at(-1) },
+  ];
+  const listed = new Map([
+    ["google_trends", ["nowcast"]],
+    ["ny_fed_sce", ["formation:delphi:a,b", "nowcast", "tabh2o@nowcast+research@search:x"]],
+  ]);
+
+  it("runs cheap specs first, then by lock, and never a locked round", async () => {
+    const { planChallengerWork, costlyChallenger } = await import("../src/arena/earned-routes");
+    expect(costlyChallenger("formation:delphi:a")).toBe(true);
+    expect(costlyChallenger("tabh2o@nowcast+research@search:x")).toBe(true);
+    expect(costlyChallenger("nowcast")).toBe(false);
+    const work = planChallengerWork({ rounds, listed, recorded: () => undefined, now });
+    expect(work.map((w) => `${w.roundId} ${w.spec}`)).toEqual([
+      "sce-near nowcast",
+      "trends-far nowcast",
+      "sce-far nowcast",
+      "sce-near formation:delphi:a,b",
+      "sce-near tabh2o@nowcast+research@search:x",
+      "sce-far formation:delphi:a,b",
+      "sce-far tabh2o@nowcast+research@search:x",
+    ]);
+  });
+
+  it("records a far round once, and again only once it is within 24 h of lock", async () => {
+    const { planChallengerWork } = await import("../src/arena/earned-routes");
+    const only = new Map([["ny_fed_sce", ["nowcast"]]]);
+    const plan = (recorded: (spec: string, id: string) => number | undefined) =>
+      planChallengerWork({ rounds, listed: only, recorded, now }).map((w) => w.roundId);
+    // Recorded 2 days ago: the far round waits; the near one is refreshed.
+    expect(plan(() => now - 48 * H)).toEqual(["sce-near"]);
+    // Recorded after entering the last 24 h: nothing to do.
+    expect(plan(() => now - 1 * H)).toEqual([]);
+  });
+});
