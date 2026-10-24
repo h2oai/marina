@@ -737,15 +737,17 @@ async function formationForecasterFor(
                     ...(env.MARINA_ARENA_EVIDENCE_REFRESH === "on" && previous
                       ? {
                           refresh: {
-                            key: (await import("../research/evidence")).evidenceHash({
-                              round,
-                              shown,
-                              topline: given.topline,
-                              profile: given.profile,
-                              origins: given.origins,
-                              lessons: lessons.injected,
-                              config: forecastSettings(spec, env),
-                            }),
+                            key: (await import("../research/evidence")).evidenceHash(
+                              (await import("../research/refresh")).withoutReadTimes({
+                                round,
+                                shown,
+                                topline: given.topline,
+                                profile: given.profile,
+                                origins: given.origins,
+                                lessons: lessons.injected,
+                                config: forecastSettings(spec, env),
+                              }),
+                            ),
                             previous: previous(round.round_id),
                           },
                         }

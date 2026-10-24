@@ -59,3 +59,21 @@ export function decideEvidenceRefresh(input: {
     ? { run: true, reason: "evidence or vintage changed" }
     : { run: false, reason: "same claims and inputs; reuse complete forecast" };
 }
+
+/** Keys that record when something was read, not what was read. */
+const READ_TIME_KEYS = new Set(["fetchedAt", "checkedAt", "capturedAt"]);
+
+/**
+ * `value` without read timestamps, at any depth: an evidence key must change
+ * when the inputs change, not every time the same inputs are fetched again.
+ */
+export function withoutReadTimes(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutReadTimes);
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([k]) => !READ_TIME_KEYS.has(k))
+        .map(([k, v]) => [k, withoutReadTimes(v)]),
+    );
+  return value;
+}
