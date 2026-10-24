@@ -666,7 +666,12 @@ is always pinned. Every decision is kept in the filing's detail as `routing`.
 
 Challengers are listed per family in `MARINA_ARENA_SHADOW_CHALLENGERS`
 (`civiqs=nowcast|<spec>;aaii=<spec>`) and run only with `bun run arena shadow challengers
-<round_id|due>`; they file only once earned routing promotes them.
+<round_id|due>`; they file only once earned routing promotes them. Earned routing needs eight
+paired resolved rounds, so give challengers room: `--hours 168` reaches every round locking in the
+next week, recording each once early and again within 24 h of its lock (the last record before
+lock is the one compared); cheap specs run before model panels (`formation:`, `crew:`, `+research`);
+`--budget-minutes N` stops starting new runs after N minutes and leaves the rest for the next pass.
+Run them outside any lock the filing job holds, so a long pass never delays a filing.
 
 ## Measuring forecasters
 
