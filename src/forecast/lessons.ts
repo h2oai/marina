@@ -52,13 +52,26 @@ export async function recallForecastLessons(
   query: string,
   asOf: string,
   mode: "on" | "observe" | "off",
+  /**
+   * Keeps only lessons that apply to this question (e.g. the same producer and
+   * answer shape). With it, recall looks further down the ranking so the slots
+   * go to relevant lessons rather than to whatever matched the words.
+   */
+  accept?: (lesson: ForecastLesson) => boolean,
 ): Promise<{ injected: ForecastLesson[]; observed: ForecastLesson[]; error?: string }> {
   if (!store || mode === "off") return { injected: [], observed: [] };
   try {
-    const got = (await store.recall(query, asOf, { limit: 4, maxBytes: 1500 })).filter(
-      (l) =>
-        Number.isFinite(Date.parse(l.resolvedAt)) && Date.parse(l.resolvedAt) <= Date.parse(asOf),
-    );
+    const recalled = await store.recall(query, asOf, {
+      limit: accept ? 16 : 4,
+      maxBytes: accept ? 6000 : 1500,
+    });
+    const got = recalled
+      .filter(
+        (l) =>
+          Number.isFinite(Date.parse(l.resolvedAt)) && Date.parse(l.resolvedAt) <= Date.parse(asOf),
+      )
+      .filter((l) => !accept || accept(l))
+      .slice(0, 4);
     return {
       injected: mode === "on" ? got.filter((l) => !l.observed) : [],
       observed: got.filter((l) => mode === "observe" || l.observed),

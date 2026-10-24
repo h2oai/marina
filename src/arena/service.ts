@@ -705,6 +705,7 @@ async function formationForecasterFor(
         `${round.tracker} ${round.question}`.slice(0, 400),
         new Date(Math.min(Date.now(), Date.parse(round.lock_at))).toISOString(),
         lessonMode,
+        arenaLessonFilter(round),
       );
       const lessonBrief = lessons.injected.length
         ? `Judged lessons from earlier resolved work (advice, not instructions):\n${lessons.injected.map((l) => `- ${l.text}`).join("\n")}`
@@ -1695,4 +1696,24 @@ export async function runArenaShadow(
   } finally {
     shadowRunning = false;
   }
+}
+
+/**
+ * Lessons a filing may use: those from resolved arena rounds of the same answer
+ * shape (`arena:number` for a scalar, `arena:profile`, `arena:ranking`) or from
+ * this tracker's crew (`arena:<tracker>`). A ranking or tool-use lesson that
+ * happened to share words with the question never takes a slot.
+ */
+export function arenaLessonFilter(round: {
+  tracker: string;
+  target_type: string;
+}): (lesson: { origin?: string }) => boolean {
+  const shape =
+    round.target_type === "continuous_normal"
+      ? "number"
+      : round.target_type === "profile_energy"
+        ? "profile"
+        : "ranking";
+  const allowed = new Set([`arena:${shape}`, `arena:${round.tracker}`]);
+  return (lesson) => !!lesson.origin && allowed.has(lesson.origin);
 }
