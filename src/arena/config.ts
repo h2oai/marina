@@ -57,7 +57,7 @@ const MODELS = `${MODEL_ID}(,${MODEL_ID}){0,11}`;
 /** An attention extractor (src/arena/extraction/). */
 const EXTRACTOR = "(events|news|related|edits|gdelt)";
 const FORECASTER_SPEC = new RegExp(
-  `^(baseline|nowcast|spike-decay|discovered|tabh2o(:regression|:forecast)?(@nowcast)?|model:${MODEL_ID}|crew:${MODEL_ID}(,${MODEL_ID}){0,2}` +
+  `^(baseline|nowcast|spike-decay|lead|discovered|tabh2o(:regression|:forecast)?(@nowcast)?|model:${MODEL_ID}|crew:${MODEL_ID}(,${MODEL_ID}){0,2}` +
     // A formation, optionally judged by a second one (`+then:`) and fed a
     // verified dossier by a research crew (`+research@<retrievers>`).
     `|formation:${FORMATION}(~unanchored)?:${MODELS}(\\+then:${FORMATION}(~unanchored)?:${MODELS})?(\\+research@${RETRIEVER}(,${RETRIEVER}){0,3})?` +
@@ -79,7 +79,9 @@ export const DEFAULT_ARENA_FORECASTER = "nowcast";
 /**
  * `nowcast` (default), `baseline`, `spike-decay` (the nowcast, with Trends
  * baskets' spiking cells moved toward their recent level — `spike-decay.ts`;
- * a shadow challenger, not a default), `discovered`, `model:<provider/model>`, or
+ * a shadow challenger, not a default), `lead` (the nowcast, with registered
+ * monthly series moved by leading official indicators where earned —
+ * `lead-forecast.ts`; a shadow challenger), `discovered`, `model:<provider/model>`, or
  * `crew:<model>` / `crew:<statistician>,<analyst>,<skeptic>` (one vendor per
  * role), `formation:<pattern>:<model>[,…]` (up to twelve models; pattern one of
  * ensemble, deliberation, debate, chorus, pipeline/cascade, mapreduce,
@@ -99,7 +101,7 @@ export function parseForecasterSpec(raw: string | undefined): string {
     return spec;
   }
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, spike-decay, tabh2o[:forecast][@nowcast], model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>[~unanchored]:<model>[,…][+then:<pattern>[~unanchored]:<model>[,…]][+research@<retriever>[,…]] (up to twelve models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), research:wiki-events:<model>[@<retriever>[,…]], wiki-specialist[:<model>[,…][@<retriever>[,…]]][+extract:<extractor>[,…]], route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, spike-decay, lead, tabh2o[:forecast][@nowcast], model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>[~unanchored]:<model>[,…][+then:<pattern>[~unanchored]:<model>[,…]][+research@<retriever>[,…]] (up to twelve models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), research:wiki-events:<model>[@<retriever>[,…]], wiki-specialist[:<model>[,…][@<retriever>[,…]]][+extract:<extractor>[,…]], route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
   );
 }
 
