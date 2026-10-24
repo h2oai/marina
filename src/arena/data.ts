@@ -164,6 +164,7 @@ export class ArenaData {
       status: string;
       target_type: string;
       tracker?: string;
+      series?: string;
       lock_at?: string;
       cells?: string[];
       scoreable?: boolean;

@@ -23,11 +23,17 @@
  *              skill 1 − loss(s) / persistence loss, loss = CRPS for a scalar
  *              and the arena's energy score for a profile (exact: the point
  *              set is linear in s)
- *   pooling    log-space: (family, method) toward its family, w = n/(n+k);
- *              family toward the global multiplier, w = n/(n+k); the global
+ *   pooling    log-space: (series, method) toward its series, w = n/(n+k);
+ *              series toward its family, w = n/(n+k); family toward the
+ *              global multiplier, w = n/(n+k); the global
  *              multiplier is the geometric mean of the families' ŝ (each
  *              family once) shrunk toward 1 by F/(F+k); k = `SPREAD_POOL_K`.
- *              Then clamped to [`MIN_SPREAD_SCALE`, `MAX_SPREAD_SCALE`]
+ *              Then clamped to [`MIN_SPREAD_SCALE`, `MAX_SPREAD_SCALE`].
+ *              The series level exists because one tracker's series can be
+ *              miscalibrated in opposite directions (Civiqs net approval too
+ *              wide, angry-share too narrow): a tracker-wide multiplier fixed
+ *              one by breaking the other. A record without a series counts
+ *              only from the family level up.
  *
  * It runs LAST, after the measured-error floor: the floor is one estimate of
  * how wide a filing should be, the resolved rounds are the measurement, and on
@@ -103,6 +109,8 @@ export function spreadFamily(round: Pick<ArenaRound, "tracker" | "target_type">)
 export interface SpreadRecord {
   roundId: string;
   family: string;
+  /** The round's series (`civiqs_net_approval`), when known. */
+  series?: string;
   method: string;
   /** When its outcome was public (ms): visible to a lock at or after it. */
   knownAt: number;
@@ -193,6 +201,8 @@ export interface SpreadLevel {
 export interface SpreadPool {
   global: SpreadLevel;
   family: SpreadLevel;
+  /** Present when a series was named: the series' level between family and method. */
+  series?: SpreadLevel;
   method: SpreadLevel;
   /** `method.s` clamped to [MIN_SPREAD_SCALE, MAX_SPREAD_SCALE]. */
   scale: number;
@@ -230,29 +240,34 @@ function globalLevel(records: SpreadRecord[], k: number): SpreadLevel {
 }
 
 /**
- * Partial pooling in log space, w = n / (n + k) at each level: the
- * (family, method)'s ŝ toward its family's pooled multiplier, the family's
- * toward the global one, the global one (`globalLevel`) toward 1. `records`
- * must already be the visible ones.
+ * Partial pooling in log space, w = n / (n + k) at each level: the method's ŝ
+ * toward its series' pooled multiplier (its family's, when no series is
+ * named), the series' toward its family's, the family's toward the global one,
+ * the global one (`globalLevel`) toward 1. `records` must already be the
+ * visible ones.
  */
 export function pooledSpreadScale(
   records: SpreadRecord[],
   family: string,
   method: string,
   k = SPREAD_POOL_K,
+  series?: string,
 ): SpreadPool {
   const global = globalLevel(records, k);
   const fam = records.filter((r) => r.family === family);
   const familyLevel = level(fam, global.s, k);
+  const ser = series ? fam.filter((r) => r.series === series) : undefined;
+  const seriesLevel = ser ? level(ser, familyLevel.s, k) : undefined;
   const methodLevel = level(
-    fam.filter((r) => r.method === method),
-    familyLevel.s,
+    (ser ?? fam).filter((r) => r.method === method),
+    (seriesLevel ?? familyLevel).s,
     k,
   );
   const round = (l: SpreadLevel): SpreadLevel => ({ ...l, s: r3(l.s) });
   return {
     global: round(global),
     family: round(familyLevel),
+    ...(seriesLevel ? { series: round(seriesLevel) } : {}),
     method: round(methodLevel),
     scale: r3(Math.min(MAX_SPREAD_SCALE, Math.max(MIN_SPREAD_SCALE, methodLevel.s))),
   };
@@ -271,6 +286,8 @@ export function visibleSpreadRecords(
 export interface SiteRoundLike {
   round_id: string;
   tracker?: string;
+  /** The round's series (`civiqs_net_approval`). */
+  series?: string;
   target_type: string;
   status: string;
   lock_at?: string;
@@ -291,7 +308,7 @@ export interface SiteRoundLike {
 }
 
 interface FiledDetail {
-  round?: { tracker?: string; target_type?: string; cells?: string[] };
+  round?: { tracker?: string; series?: string; target_type?: string; cells?: string[] };
   lock?: unknown;
   forecast?: {
     note?: string;
@@ -360,7 +377,7 @@ export function spreadCalibrationHistory(input: {
   resolutions?: Record<string, ArenaResolution>;
   entrant: string;
   /** round id → round definition, for rounds known to neither the ledger detail nor the site. */
-  rounds?: Record<string, Pick<ArenaRound, "tracker" | "target_type" | "cells">>;
+  rounds?: Record<string, Pick<ArenaRound, "tracker" | "target_type" | "cells" | "series">>;
 }): SpreadRecord[] {
   const newest = new Map<string, ArenaSubmissionRow>();
   for (const row of input.rows) {
@@ -416,6 +433,8 @@ function recordOf(
     methodOf(detail.forecast?.note ?? body.notes) +
     (detail.forecast?.pollLevel ? POLL_LEVEL_METHOD : "");
   const family = spreadFamily({ tracker, target_type: targetType as ArenaRound["target_type"] });
+  const series = detail.round?.series ?? s?.series ?? def?.series;
+  const tag = series ? { series } : {};
 
   if (targetType === "continuous_normal") {
     const t = body.topline;
@@ -428,7 +447,7 @@ function recordOf(
     const loss = scalarSpreadLoss({ mean: t.mean, sd: t.sd / undo }, res.value);
     const pers = s?.persistence_crps ?? s?.scores?.persistence?.crps;
     const norm = finite(pers) && pers > 0 ? pers : loss(1);
-    return norm > 0 ? { roundId: id, family, method, knownAt, loss, norm } : undefined;
+    return norm > 0 ? { roundId: id, family, ...tag, method, knownAt, loss, norm } : undefined;
   }
   if (targetType !== "profile_energy" || !body.profile || !s?.resolution) return undefined;
   const res = s.resolution;
@@ -449,7 +468,7 @@ function recordOf(
   const loss = profileSpreadLoss(cells);
   const pers = s.scores?.persistence?.energy;
   const norm = finite(pers) && pers > 0 ? pers : loss(1);
-  return norm > 0 ? { roundId: id, family, method, knownAt, loss, norm } : undefined;
+  return norm > 0 ? { roundId: id, family, ...tag, method, knownAt, loss, norm } : undefined;
 }
 
 export interface SpreadCalibrationRecord {
@@ -460,6 +479,8 @@ export interface SpreadCalibrationRecord {
   scale: number;
   global: SpreadLevel;
   family: SpreadLevel;
+  /** The series' level, when the round names a series. */
+  series?: SpreadLevel;
   method: SpreadLevel;
   /** Outcomes published at or before this instant were evidence. */
   cutoff: string;
@@ -496,7 +517,7 @@ export function applySpreadCalibration(
   const cutoff = Number.isFinite(lock) ? Math.min(opts.now, lock) : opts.now;
   try {
     const visible = visibleSpreadRecords(history, cutoff, round.round_id);
-    const pool = pooledSpreadScale(visible, family, method);
+    const pool = pooledSpreadScale(visible, family, method, SPREAD_POOL_K, round.series);
     const record: SpreadCalibrationRecord = {
       key,
       mode,
@@ -504,12 +525,13 @@ export function applySpreadCalibration(
       scale: pool.scale,
       global: pool.global,
       family: pool.family,
+      ...(pool.series ? { series: pool.series } : {}),
       method: pool.method,
       cutoff: new Date(cutoff).toISOString(),
       ...(f.topline ? { fromSd: f.topline.sd } : {}),
       ...(f.profile ? { cells: Object.keys(f.profile).length } : {}),
       reason: visible.length
-        ? `sd ×${pool.scale} from ${visible.length} resolved round(s) (family n=${pool.family.n}, method n=${pool.method.n})`
+        ? `sd ×${pool.scale} from ${visible.length} resolved round(s) (family n=${pool.family.n}${pool.series ? `, series n=${pool.series.n}` : ""}, method n=${pool.method.n})`
         : "no resolved rounds yet: identity",
     };
     // A poll-level start already sizes its sd from the rule's own backtested
