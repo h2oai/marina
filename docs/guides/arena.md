@@ -289,7 +289,7 @@ not apply the trend twice.
 Every filing passes through the same steps, in order: forecaster → move weight → error floor →
 spread calibration.
 
-**Spread calibration per (family, method)** (`src/arena/calibration.ts`). Every filed sd — a
+**Spread calibration per (series, method)** (`src/arena/calibration.ts`). Every filed sd — a
 scalar topline and each profile cell — is multiplied by a scale learned from resolved rounds. The
 key is `arena:<family>|<method>` (`:profile` is added to the family for profile rounds; the method
 is at pattern level, e.g. `formation:delphi+research`, `nowcast`). Evidence is one record per
@@ -299,11 +299,13 @@ loss on the round, from the arena's public `site/data.json` (scalars fall back t
 min(now, the round's lock), and never for the round itself.
 
 Each level's scale is the multiplier on a 0.30–3.00 grid with the best mean per-round skill. Levels
-pool in log space with w = n / (n + 4): the (family, method) toward its family, the family toward
-the cross-family scale, and that — the geometric mean of the families' scales, each family counted
+pool in log space with w = n / (n + 4): the method toward the round's series (e.g.
+`civiqs_net_approval`), the series toward its family, the family toward the cross-family scale, and that — the geometric mean of the families' scales, each family counted
 once — toward 1 by F / (F + 4). The result is clamped to [0.35, 3]. With no resolved rounds it is
-the identity. The decision and its evidence are kept under `spreadCalibration` in the filing's
-detail. A scalar filing whose anchor was older than the release at its lock is not used as
+the identity. The series level exists because one tracker's series can be miscalibrated in opposite
+directions — Civiqs net approval filed too wide while angry-share filed too narrow — so a single
+tracker-wide scale fixed one by breaking the other. The decision and its evidence (each level's n,
+ŝ and w) are kept under `spreadCalibration` in the filing's detail. A scalar filing whose anchor was older than the release at its lock is not used as
 evidence, and a poll-level start keeps its own sd until 4 poll-level filings have resolved (its
 records are keyed `…+poll-level`). `MARINA_ARENA_SPREAD_CALIBRATION=observe` records without
 applying; `off` skips it (the retired `MARINA_ARENA_CALIBRATION` is read when it is unset).

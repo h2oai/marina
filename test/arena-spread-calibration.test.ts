@@ -84,6 +84,42 @@ describe("spread fit and pooling", () => {
     expect(bestSpreadScale([])).toBeUndefined();
   });
 
+  it("gives each series of one tracker its own level, so opposite miscalibrations do not cancel", () => {
+    // One tracker, two series: approval misses are a fraction of its sd (too wide),
+    // angry-share misses are several sds (too narrow).
+    const tag = (rs: SpreadRecord[], series: string) =>
+      rs.map((r, i) => ({ ...r, roundId: `${series}-${i}`, series }));
+    const approval = tag(records(8, 0.4, "civiqs", "formation:delphi"), "civiqs_net_approval");
+    const angry = tag(records(8, 2.5, "civiqs", "formation:delphi"), "civiqs_angry_share");
+    const all = [...approval, ...angry];
+    const tracker = pooledSpreadScale(all, "civiqs", "formation:delphi");
+    const forApproval = pooledSpreadScale(
+      all,
+      "civiqs",
+      "formation:delphi",
+      SPREAD_POOL_K,
+      "civiqs_net_approval",
+    );
+    const forAngry = pooledSpreadScale(
+      all,
+      "civiqs",
+      "formation:delphi",
+      SPREAD_POOL_K,
+      "civiqs_angry_share",
+    );
+    expect(forApproval.scale).toBeLessThan(tracker.scale);
+    expect(forAngry.scale).toBeGreaterThan(tracker.scale);
+    expect(forApproval.scale).toBeLessThan(1);
+    expect(forAngry.scale).toBeGreaterThan(1);
+    expect(forApproval.series).toMatchObject({ n: 8 });
+    // No series named: exactly the tracker-level pooling, unchanged.
+    expect(tracker.series).toBeUndefined();
+    // A series with no history of its own sits at its tracker's multiplier.
+    const fresh = pooledSpreadScale(all, "civiqs", "formation:delphi", SPREAD_POOL_K, "civiqs_new");
+    expect(fresh.series).toMatchObject({ n: 0 });
+    expect(fresh.scale).toBeCloseTo(tracker.family.s, 3);
+  });
+
   it("pools (family, method) → family → global in log space with w = n / (n + k)", () => {
     const civ = records(12, 0.4, "civiqs", "nowcast");
     const civOther = records(2, 3, "civiqs", "formation:delphi");
