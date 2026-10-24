@@ -20,14 +20,35 @@ import { recordResolved } from "./record";
 import { canScope, type WorkKind, workRefs } from "./work-refs";
 
 /** `family:` / `method:` / `scope:` refs for `actor`'s work of `kind` (see `./work-refs.ts`). */
-export function workRefsFor(db: MarinaDB, kind: WorkKind, actor: string): string[] {
+export function workRefsFor(
+  db: MarinaDB,
+  kind: WorkKind,
+  actor: string,
+  approach: readonly string[] = [],
+): string[] {
   const p = participantOf(db, actor);
   return workRefs(canScope(db) ? db : undefined, {
     kind,
     actor,
     ...(p.model ? { model: p.model } : {}),
     ...(p.role ? { role: p.role } : {}),
+    approach,
   });
+}
+
+/**
+ * How a task was worked: `crew:<formation>` for each crew the claimant
+ * belongs to (the formation is how that crew coordinates), else `solo`.
+ */
+export function taskApproach(db: Pick<MarinaDB, "getCrewsForAgent">, claimant: string): string[] {
+  let crews: { formation: string }[] = [];
+  try {
+    crews = db.getCrewsForAgent(claimant);
+  } catch {
+    // allow-empty-catch: no crew store (older test doubles) reads as solo work
+  }
+  const formations = [...new Set(crews.map((c) => c.formation).filter(Boolean))];
+  return formations.length ? formations.map((f) => `crew:${f}`) : ["solo"];
 }
 
 /** Who did the work, and on what (an agent's model and role; a person's name only). */
@@ -70,7 +91,10 @@ export function recordTaskVerdict(
         : "submission rejected by the task's creator"),
     basis: "mechanical",
     participants: [participantOf(db, input.claimant)],
-    refs: [`task:${input.taskId}`, ...workRefsFor(db, "task", input.claimant)],
+    refs: [
+      `task:${input.taskId}`,
+      ...workRefsFor(db, "task", input.claimant, taskApproach(db, input.claimant)),
+    ],
     resolvedAt: input.at,
   });
 }
@@ -159,6 +183,8 @@ export function recordVerification(
     detail: string;
     sessionId?: string;
     at?: number;
+    /** How the checks ran: `driver:<harness>`, `runner:<kind>`, `verify:<mode>`. */
+    approach?: readonly string[];
   },
 ): void {
   recordResolved(db, {
@@ -177,7 +203,7 @@ export function recordVerification(
     refs: [
       `artifact:${input.artifactId}`,
       ...(input.sessionId ? [`coding:${input.sessionId}`] : []),
-      ...workRefsFor(db, "code", input.actor),
+      ...workRefsFor(db, "code", input.actor, input.approach ?? []),
     ],
     resolvedAt: input.at ?? Date.now(),
   });

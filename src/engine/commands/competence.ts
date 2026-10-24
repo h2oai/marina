@@ -1,7 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { competenceMap, renderCompetence } from "../../forecast/competence";
+import {
+  competenceMap,
+  rankMethods,
+  renderCompetence,
+  renderMethodRanking,
+} from "../../forecast/competence";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
@@ -11,6 +16,7 @@ const USAGE = [
   "Usage: competence [<family prefix>]        what Marina's resolved record says each method is good at",
   "       competence mine [<family prefix>]   the same, adding your own (and your agents') work",
   "       competence judged [<family prefix>] also show judged grades, labelled (judged)",
+  "       competence best <family> [mine]      which ways of working have done best at that kind of work",
   "Families: work:task, work:code, work:request (+ :role:<role>), forecast classes, arena trackers, benchmark names.",
 ].join("\n");
 
@@ -30,6 +36,7 @@ export function competenceCommand(deps: {
       { syntax: "competence [<family prefix>]", effect: "read" },
       { syntax: "competence mine [<family prefix>]", effect: "read" },
       { syntax: "competence judged [<family prefix>]", effect: "read" },
+      { syntax: "competence best <family> [mine]", effect: "read" },
     ],
     name: "competence",
     aliases: [],
@@ -39,7 +46,21 @@ export function competenceCommand(deps: {
       if (!deps.db) return ctx.send(input.entity, requiresPersistence("the competence map"));
       const tokens = input.args.trim().split(/\s+/).filter(Boolean);
       const first = tokens[0]?.toLowerCase();
-      if (first === "help" || tokens.length > 2) return ctx.send(input.entity, USAGE);
+      if (first === "help" || (tokens.length > 2 && first !== "best"))
+        return ctx.send(input.entity, USAGE);
+      if (first === "best") {
+        const family = tokens[1]?.replace(/^family:/, "");
+        if (!family || tokens.length > 3 || (tokens[2] && tokens[2].toLowerCase() !== "mine"))
+          return ctx.send(input.entity, USAGE);
+        const viewer =
+          tokens[2]?.toLowerCase() === "mine" ? deps.getEntity?.(input.entity)?.name : undefined;
+        try {
+          const cells = competenceMap(deps.db, { family, ...(viewer ? { viewer } : {}) });
+          return ctx.send(input.entity, renderMethodRanking(rankMethods(cells, family), family));
+        } catch (err) {
+          return ctx.send(input.entity, `Competence map unavailable: ${getErrorMessage(err)}`);
+        }
+      }
       const mine = first === "mine";
       const judged = first === "judged";
       const prefix = (mine || judged ? tokens[1] : tokens[0])?.replace(/^family:/, "");
