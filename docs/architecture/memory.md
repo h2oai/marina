@@ -302,9 +302,15 @@ learning instead of losing it.
 - **Work on the competence map.** Task verdicts, judged task grades, Code Mode checks and reported
   requests carry `family:work:<task|code|request>` (plus `:role:<role>`) and `method:model:<model>`,
   the same tags forecasts, arena rounds and benchmark runs use, plus how the work was done: a task
-  `method:crew:<formation>` (each crew the claimant belongs to) or `method:solo`; a Code Mode check
+  `method:crew:<formation>` (each crew the claimant was in when it claimed the task — recorded at
+  claim in core memory owner `work:approach`, because a one-off crew is never persisted and
+  dissolves before the verdict) or `method:solo`; a Code Mode check
   `method:driver:<harness>`, `method:runner:<local|container|provider>` and
-  `method:verify:<candidate|live>`. A row counts in the map once per method it names (the model
+  `method:verify:<candidate|live>`. A research ask in agent mode is `family:work:research`,
+  `method:research:<mode>`, scored mechanically on its citation audit (`citation-grounding`: the
+  share of cited sources the agent read — grounding, not correctness; a budget-forced answer never
+  succeeds). A crew's own `crew complete` is never an outcome: crew work is judged through the tasks
+  it does. A row counts in the map once per method it names (the model
   stays first for readers that take one). `competence [prefix]` shows the shared map;
   `competence mine` adds the caller's own work; `competence judged` adds judged grades, labelled;
   `competence best <family>` ranks ways of working per dimension (models with models, formations

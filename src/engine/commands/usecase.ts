@@ -6,6 +6,7 @@ import { getStanding } from "../../agent/standing";
 import type { GroupManager } from "../../coordination/group-manager";
 import type { TaskManager } from "../../coordination/task-manager";
 import { bold, dim, header, separator } from "../../net/ansi";
+import { recordResearchAsk } from "../../outcomes/live";
 import type { MarinaDB } from "../../persistence/database";
 import { isGrantedCompetence } from "../../persistence/db-competence";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
@@ -1501,7 +1502,21 @@ const UNIVERSAL_INTENTS = ["research", "debate", "solve", "explore", "plan", "mo
 /** Direct, memorable front doors over the same durable use-case substrate. */
 export function universalIntentCommands(deps: UseCaseCommandDeps): CommandDef[] {
   const usecase = usecaseCommand(deps);
-  const ask = researchAskHandler();
+  // Each finished ask lands on the outcome path, scored on its citation audit,
+  // so `competence best work:research` learns which research modes ground well.
+  const ask = researchAskHandler({
+    onAnswer: (answer, entity) => {
+      const actor = deps.getEntity(entity)?.name;
+      if (!deps.db || !actor) return;
+      recordResearchAsk(deps.db, {
+        actor,
+        mode: answer.mode,
+        ...(answer.audit ? { audit: answer.audit } : {}),
+        ...(answer.retriever ? { retriever: answer.retriever } : {}),
+        ...(answer.budgetForced ? { budgetForced: true } : {}),
+      });
+    },
+  });
   return UNIVERSAL_INTENTS.map((intent) => ({
     name: intent,
     usage: [

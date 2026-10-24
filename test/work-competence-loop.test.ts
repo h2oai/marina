@@ -16,6 +16,8 @@ import {
 import { outcomeRefs } from "../src/forecast/routing-refs";
 import { liveEvidence } from "../src/outcomes/evidence";
 import {
+  noteTaskApproach,
+  recordResearchAsk,
   recordTaskOpinion,
   recordTaskVerdict,
   recordVerification,
@@ -193,6 +195,57 @@ describe("how work was done is part of its record", () => {
     expect(refs).toContain("method:crew:debate");
     // The model stays first, so readers that take one method keep reading the model.
     expect(refs.find((r) => r.startsWith("method:"))).toBe("method:model:vendor/a");
+  });
+
+  it("keeps a one-off crew's formation from claim to verdict, after the crew is gone", () => {
+    // A one-off crew is never persisted: only the claim-time note knows it.
+    noteTaskApproach(db, { taskId: 7, claimant: "Solo", formations: ["delphi", "delphi"] });
+    expect(taskApproach(db, "Solo", 7)).toEqual(["crew:delphi"]);
+    recordTaskVerdict(db, { taskId: 7, claimant: "Solo", approved: true, at: 5 });
+    const refs = outcomeRefs(db.listOutcomes({ limit: 5 })[0]!.refs_json);
+    expect(refs).toContain("method:crew:delphi");
+    expect(refs).not.toContain("method:solo");
+    // No note: the persisted crews, else solo.
+    expect(taskApproach(db, "Solo", 8)).toEqual(["solo"]);
+    noteTaskApproach(db, { taskId: 9, claimant: "Solo", formations: [] });
+    expect(taskApproach(db, "Solo", 9)).toEqual(["solo"]);
+  });
+
+  it("records a research ask scored on citation grounding, never a judge", () => {
+    recordResearchAsk(db, {
+      actor: "Solo",
+      mode: "agent",
+      audit: { cited: 5, read: 4, unread: 1, failed: 0 },
+      at: 11,
+    });
+    recordResearchAsk(db, {
+      actor: "Solo",
+      mode: "agent",
+      audit: { cited: 4, read: 4, unread: 0, failed: 0 },
+      budgetForced: true,
+      at: 12,
+    });
+    // Nothing cited, or no audit (retriever modes): no evidence, no outcome.
+    recordResearchAsk(db, {
+      actor: "Solo",
+      mode: "agent",
+      audit: { cited: 0, read: 0, unread: 0, failed: 0 },
+    });
+    recordResearchAsk(db, { actor: "Solo", mode: "retrieve" });
+    const rows = db.listOutcomes({ limit: 10 }).filter((o) => o.source === "research:ask");
+    expect(rows).toHaveLength(2);
+    const byAt = new Map(rows.map((o) => [o.resolved_at, o]));
+    expect(byAt.get(11)).toMatchObject({
+      quality: 0.8,
+      succeeded: 1,
+      metric: "citation-grounding",
+      basis: "mechanical",
+    });
+    expect(byAt.get(12)).toMatchObject({ quality: 1, succeeded: 0 });
+    const refs = outcomeRefs(byAt.get(11)!.refs_json);
+    expect(refs).toContain("family:work:research");
+    expect(refs).toContain("method:research:agent");
+    expect(refs).toContain("method:model:vendor/a");
   });
 
   it("tags a Code Mode check with driver, runner and verification mode", () => {
