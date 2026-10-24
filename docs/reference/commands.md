@@ -3414,6 +3414,7 @@ Marina's competence map from its own resolved outcomes — per kind of work and 
 Usage: competence [<family prefix>]        what Marina's resolved record says each method is good at
        competence mine [<family prefix>]   the same, adding your own (and your agents') work
        competence judged [<family prefix>] also show judged grades, labelled (judged)
+       competence best <family> [mine]      which ways of working have done best at that kind of work
 Families: work:task, work:code, work:request (+ :role:<role>), forecast classes, arena trackers, benchmark names.
 
 Category: Information. Minimum rank: 0.
@@ -3439,6 +3440,14 @@ Effect: read.
 
 - `field-0` (`family prefix`): text, optional group `option-0`.
 - Group `option-0`: `family prefix`.
+
+### `competence best <family> [mine]`
+
+Effect: read.
+
+- `field-0` (`family`): text, required.
+- `field-1` (`mine`): text, optional group `option-0`.
+- Group `option-0`: `mine`.
 
 ## conduct
 

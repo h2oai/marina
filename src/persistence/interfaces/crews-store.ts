@@ -12,6 +12,7 @@ export interface CrewsStore {
   deleteCrew(id: string): void;
   addCrewMember(crewId: string, agentName: string, role: string, joinedAt: number): void;
   removeCrewMember(crewId: string, agentName: string): void;
+  getCrewsForAgent(agentName: string): import("../db-crews").CrewRow[];
   getCrewMembers(crewId: string): import("../db-crews").CrewMemberRow[];
   saveCrewInvitation(row: import("../db-crews").CrewInvitationRow): void;
   deleteCrewInvitations(crewId: string): void;
@@ -26,6 +27,7 @@ export const CREWS_STORE_METHODS = [
   "deleteCrew",
   "addCrewMember",
   "removeCrewMember",
+  "getCrewsForAgent",
   "getCrewMembers",
   "saveCrewInvitation",
   "deleteCrewInvitations",

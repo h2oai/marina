@@ -122,6 +122,16 @@ export function removeCrewMember(db: Database, crewId: string, agentName: string
   db.run("DELETE FROM crew_members WHERE crew_id = ? AND agent_name = ?", [crewId, agentName]);
 }
 
+/** The crews (not dissolved) an agent belongs to, oldest first. */
+export function getCrewsForAgent(db: Database, agentName: string): CrewRow[] {
+  return db
+    .query(
+      `SELECT c.* FROM crews c JOIN crew_members m ON m.crew_id = c.id
+        WHERE m.agent_name = ? AND c.state != 'dissolved' ORDER BY c.created_at ASC`,
+    )
+    .all(agentName) as CrewRow[];
+}
+
 export function getCrewMembers(db: Database, crewId: string): CrewMemberRow[] {
   return db
     .query("SELECT * FROM crew_members WHERE crew_id = ? ORDER BY joined_at ASC")

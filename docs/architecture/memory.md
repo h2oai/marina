@@ -301,9 +301,16 @@ learning instead of losing it.
   `evidence_live` (the outcomes weighed).
 - **Work on the competence map.** Task verdicts, judged task grades, Code Mode checks and reported
   requests carry `family:work:<task|code|request>` (plus `:role:<role>`) and `method:model:<model>`,
-  the same tags forecasts, arena rounds and benchmark runs use. `competence [prefix]` shows the
-  shared map; `competence mine` adds the caller's own work; `competence judged` adds judged grades,
-  labelled.
+  the same tags forecasts, arena rounds and benchmark runs use, plus how the work was done: a task
+  `method:crew:<formation>` (each crew the claimant belongs to) or `method:solo`; a Code Mode check
+  `method:driver:<harness>`, `method:runner:<local|container|provider>` and
+  `method:verify:<candidate|live>`. A row counts in the map once per method it names (the model
+  stays first for readers that take one). `competence [prefix]` shows the shared map;
+  `competence mine` adds the caller's own work; `competence judged` adds judged grades, labelled;
+  `competence best <family>` ranks ways of working per dimension (models with models, formations
+  with each other and solo) by the pessimistic end of the 95 % interval, needs 5 outcomes to rank,
+  and claims a lead only when the intervals separate — advice for choosing how to work, never a
+  gate.
 - **Rules, held in one place.**
   - A `measure` outcome teaches like any other when its board is named — its source (`prophet:…`)
     or an `eval:<board>` ref (`POST /v1/outcomes` adds it) — so benchmark traffic learns too, and

@@ -849,6 +849,7 @@ export async function runVerificationCommands(
         ? `failed at ${failedRun?.command.join(" ") ?? "a check"} (exit ${failedRun?.stored?.result.exitCode})`
         : `passed ${results.length} check${results.length === 1 ? "" : "s"}`,
       sessionId: session.id,
+      approach: verificationApproach(deps, session, background),
     });
   deps.db.createCodingEvent({
     sessionId: session.id,
@@ -1412,4 +1413,37 @@ export function raiseEgressChallenge(
     },
   });
   return held.token ? held.message : "";
+}
+
+/**
+ * How a verification ran, for the competence map: who drove the session
+ * (`driver:<harness>`, `driver:none` when a person or a native resident
+ * coded in place), where the commands ran (`runner:local`, `runner:container`,
+ * or the sandbox provider id) and against what (`verify:candidate` for an
+ * immutable candidate, `verify:live` for the working tree). Labels only.
+ */
+function verificationApproach(
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+  background?: { workspace: WorkspaceRuntime; candidateId?: string },
+): string[] {
+  const label = (v: string) =>
+    v
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .slice(0, 40);
+  let runner = session.execution_target;
+  if (runner === LOCAL_TARGET) {
+    try {
+      const ws = background?.workspace ?? workspaceForSession(deps, session);
+      runner = ws.describe().runner?.kind ?? "local";
+    } catch {
+      runner = "local";
+    }
+  }
+  return [
+    `driver:${label(session.driver || "none")}`,
+    `runner:${label(runner)}`,
+    `verify:${background?.candidateId ? "candidate" : "live"}`,
+  ];
 }

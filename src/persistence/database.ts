@@ -1215,6 +1215,9 @@ export class MarinaDB implements MarinaStores {
   removeCrewMember(crewId: string, agentName: string): void {
     crewsDb.removeCrewMember(this.db, crewId, agentName);
   }
+  getCrewsForAgent(agentName: string): import("./db-crews").CrewRow[] {
+    return crewsDb.getCrewsForAgent(this.db, agentName);
+  }
   getCrewMembers(crewId: string): import("./db-crews").CrewMemberRow[] {
     return crewsDb.getCrewMembers(this.db, crewId);
   }
