@@ -422,8 +422,10 @@ so they have no formation.
   typed signals (recorded under `signals`, with a `stale` flag for anything observed before the
   start reading). It has its own method key and runs only as a shadow challenger.
 
-Formation lessons use the canonical judged forecast/arena pool. Set
-`MARINA_ARENA_FORMATION_LESSONS=observe` (default), `on`, or `off`; the global `MARINA_LESSONS`
+Formation lessons use the canonical judged forecast/arena pool, and a filing takes only lessons
+from resolved arena rounds of its own answer shape (`arena:number`, `arena:profile`,
+`arena:ranking`) or its tracker's crew — never a lesson that merely shares words with the question.
+Set `MARINA_ARENA_FORMATION_LESSONS=observe` (default), `on`, or `off`; the global `MARINA_LESSONS`
 still limits injection. Recall uses the earlier of now and the lock, and its injected/observed
 records are saved with the forecast. `MARINA_ARENA_RESEARCH_LESSONS` does the same for the
 `research:` forecaster.

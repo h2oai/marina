@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Every third-party GitHub Action is pinned by commit** (the version stays as a comment). A test
+  fails on any new unpinned `uses:`, and Dependabot proposes the updates. Clears the open
+  unpinned-tag code-scanning alerts.
+- **body-parser 2.4.0, undici 6.29.1 / 8.12.3 and mcporter 0.16** (which drops a vendored zod
+  4.6.5) for four HIGH advisories the image scan reported.
+- **Sandboxed code reaches a model without holding a key.** See "Marina's models inside a
+  container" under Added.
 - **`ip-address` 10.7.4.** The address parser pulled in through the MCP SDK's rate limiter is
   upgraded within its range to the release that bounds IPv6 zone-identifier parsing.
 - The dashboard entity view and the live snapshot share one private-view rule (`src/net/entity-visibility.ts`): raw command input, the full property bag and core memory go only to the entity itself and privileged readers; others get the public properties and activity as type, time and command verb, never arguments. Regression tests hold it for the entity detail, the event list and the snapshot.
@@ -60,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Arena spread calibration is learned per series**, not per tracker: one tracker's series can be
+  miscalibrated in opposite directions.
+- **Arena challengers cover the coming week**, cheap specs first, within a time budget
+  (`shadow challengers due --hours N --budget-minutes N`), so earned routing gets its evidence.
+- **Arena filings recall only lessons from arena rounds of the same answer shape.**
 - **One memory request per journaled message.** A resident's journal entry or archive is one `capture_checkpoint` request (`POST /spaces/:space/checkpoints/:name/capture`): its new parts, its manifest and the checkpoint are stored in one transaction whose expected version is checked before anything is stored, so a forgotten or changed checkpoint refuses the whole request and nothing is captured. Before, each message cost four requests (a checkpoint read, a part batch, the manifest and the checkpoint save). Archives too large for one request, and memory services without the operation, keep the read-first path.
 - **Memory rate limits name the wait.** The per-principal memory budget (100 requests, 25 per second) now refills one token every 40 ms instead of 25 at once each second, a 429 carries `retry_after_ms` for the next token, and `retryMemoryOperation` waits exactly that (plus 5 ms) without using up an attempt, up to 30 s in all. A throttled resident used to wait at least a second per refusal.
 
@@ -202,6 +214,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Arena evidence reuse** keys on the inputs, not on when they were read, so an unchanged refile
+  can reuse its forecast.
+- **Demo worlds** log their completion events as typed `feed_event`s instead of an untyped
+  `custom` event nothing received.
 - **Deploys keep up with frequent merges.** The EC2 deploy workflow no longer drops a qualified
   build because main moved on during qualification; it deploys any build main still contains, and
   the run for the newer revision follows.
@@ -368,6 +384,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One seam for many sandboxes.** Code Mode runs work in whichever sandbox you already have:
+  every provider implements `SandboxProvider` and declares what it can do. `code sandbox providers`
+  lists them; `code sandbox use <id>` (or `provider:<id>` on any `code sandbox` command) picks one.
+  A requested sandbox never falls back to the host. Flywheel is unchanged.
+- **NVIDIA OpenShell as a sandbox provider (experimental).** Point Marina at an OpenShell gateway
+  you run (`MARINA_OPENSHELL_URL` plus its client mTLS bundle); Marina never installs one. When
+  OpenShell holds a network request, Marina raises a challenge, and a person's approval approves
+  that rule in OpenShell. See [OpenShell sandboxes](docs/integrations/openshell.md).
+- **Per-destination network for container runs.** `MARINA_CODE_CONTAINER_EGRESS` (podman) allows
+  only the listed hosts, through a proxy inside the Marina process: no sidecar, no extra program.
+  The container has loopback and one forwarded port; anything else is refused with a readable
+  line in the command output. Docker with a list is refused rather than left unenforced.
+- **A refused destination becomes a challenge.** `code run` asks a person; approving allows that
+  host for the session and re-runs the command. An address the SSRF guard refused is never offered.
+- **Marina's models inside a container.** With `MARINA_CODE_CONTAINER_MODEL_API=on`, code calls
+  `http://marina.model/v1`; the proxy forwards only `/v1/` and adds a per-command, spend-capped
+  key. The container holds no credential.
+- **Asymmetric embeddings.** Memory and corpus embedders take a query prefix, a document prefix
+  and `input_type` (`MARINA_{MEMORY,CORPUS}_EMBEDDING_{QUERY_PREFIX,DOCUMENT_PREFIX,INPUT_TYPE}`),
+  as models such as Nemotron, Qwen3, E5 and Cohere expect. Unset, nothing changes; embeddings stay
+  optional and retrieval stays lexical without them.
+- **Optional cross-encoder reranking.** `MARINA_RERANK_MODEL` turns it on for research retrieval
+  and `web swarm` (OpenRouter's rerank endpoint by default; `MARINA_RERANK_URL` points anywhere,
+  including NVIDIA's `/reranking`). Switch rerankers by changing the model, or per call with
+  `web swarm rerank:<model>|off`. Unset, nothing changes.
+- **Know what has worked.** Work outcomes record how the work was done (a task: solo or the
+  crew's formation; a Code Mode check: driver, runner and verification mode).
+  `competence best <kind of work>` ranks ways of working against others of their kind and says
+  when a leader is clear or the evidence is thin. Agents see that it exists, and `task claim` adds
+  one line of advice when a way of working clearly leads. Advice only.
 - **More of the themed terminal.**
   - **Code Mode.** On a colour terminal, the line above the prompt shows live world segments.
     `/live [status|agents|spend|alerts|readiness|world|me]` draws the dashboard's views there.

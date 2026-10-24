@@ -1398,6 +1398,41 @@ To keep images elsewhere with Podman, set `MARINA_CODE_CONTAINER_STORAGE` (and o
 `MARINA_CODE_CONTAINER_RUNROOT`) to absolute paths. `code doctor` shows where images are stored
 and warns if that is on tmpfs or under `/tmp`, where images would fill memory.
 
+### Sandbox providers: use the sandbox you already have
+
+Besides the host and a container image, a coding session can run its commands in an isolated
+sandbox from a provider you already run. Every provider plugs into one seam and declares what it can
+do; Marina keeps identity, approvals and audit, and a requested sandbox never falls back to the
+host.
+
+```text
+code sandbox providers           # what is configured, and what each can do
+code sandbox start [image]       # one provider configured: no need to name it
+code sandbox start provider:openshell
+code sandbox use openshell       # this session's commands now run there
+code sandbox local               # back to the host
+```
+
+With several providers configured, name one (`use <id>`, or `provider:<id>` on any
+`code sandbox` command). Two providers ship today:
+
+- **Flywheel** (`FLYWHEEL_TOKEN`), described in the next section.
+- **NVIDIA OpenShell** (experimental). Run an OpenShell gateway yourself — on loopback, with mutual
+  TLS and `OPENSHELL_TELEMETRY_ENABLED=false` — then point Marina at it:
+
+  ```bash
+  MARINA_OPENSHELL_URL=https://127.0.0.1:17670
+  MARINA_OPENSHELL_CA=/path/to/ca.crt
+  MARINA_OPENSHELL_CERT=/path/to/client/tls.crt
+  MARINA_OPENSHELL_KEY=/path/to/client/tls.key
+  MARINA_OPENSHELL_IMAGE=docker.io/library/python:3.13-slim   # optional
+  ```
+
+  OpenShell enforces network rules per program inside each sandbox. When it holds a request, Marina
+  turns it into a challenge for a person; approving it approves that rule in OpenShell, and the
+  agent retries. Marina never installs OpenShell. Details:
+  [OpenShell sandboxes](../integrations/openshell.md).
+
 ### Optional isolated execution with Flywheel
 
 When the Marina server has `FLYWHEEL_TOKEN`, each entity can create one durable isolated workspace.
