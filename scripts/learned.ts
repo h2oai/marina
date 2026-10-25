@@ -13,6 +13,14 @@
  *       [--instance-token T]... [--key-file F]
  *   DB_PATH=marina.db bun run learned import <dir> [--revocations <file>]... [--actor A]
  *       [--bench-corpus <path>]... [--slices id,id] [--entitlement <token.json>] [--own]
+ *       [--allow-unsigned]
+ *   bun run learned distill <db> [--out <dir>] [--name <name>] [--publisher <name>]
+ *       [--key-file F] [--bench-corpus <path>]... [--archive]
+ *                                        read a world database READ-ONLY into a bundle
+ *                                        (unsigned, and labelled so, with no key); with
+ *                                        --archive, then archive the database
+ *   bun run learned archive <db>         move a stopped world's database into a cold
+ *                                        archive directory beside it (never deletes)
  *   bun run learned entitle --artifact <id> --tiers <slice,slice> --licensee <label>
  *       [--versions <range>] [--days N] [--audience host,host] [--key-file F]
  *                                        sign an entitlement token (publisher key)
@@ -20,6 +28,8 @@
  *   bun run learned diff <old-dir> <new-dir>
  *   bun run learned keygen <path>        a new Ed25519 key (0600) for YOUR instance; prints
  *                                        the public half to pin elsewhere
+ *
+ * The same commands run as `marina learned …`.
  *
  * Signing uses the dedicated MARINA_LEARNED_SIGNING_KEY (or --key-file), never
  * the federation or arena key. Verification uses only pinned publisher keys
@@ -38,6 +48,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { version as MARINA_VERSION } from "../package.json";
 import { verifyBundle, verifyRevocations } from "../src/learned/bundle";
+import { archiveDatabase, bootstrapStory, distillDatabase } from "../src/learned/distill";
 import {
   type EntitlementGrant,
   importContext,
@@ -59,14 +70,18 @@ const REPO_ROOT = join(import.meta.dir, "..");
 
 function usage(): never {
   console.error(
-    "usage: bun run learned export|import|entitle|verify|diff|keygen … (see scripts/learned.ts)",
+    "usage: marina learned export|import|distill|archive|entitle|verify|diff|keygen … (see scripts/learned.ts)",
   );
   process.exit(2);
 }
 
-function signingKey(keyFile: string | undefined): string {
+function optionalSigningKey(keyFile: string | undefined): string | null {
   if (keyFile) return readFileSync(keyFile, "utf8").trim();
-  const key = process.env.MARINA_LEARNED_SIGNING_KEY?.trim();
+  return process.env.MARINA_LEARNED_SIGNING_KEY?.trim() || null;
+}
+
+function signingKey(keyFile: string | undefined): string {
+  const key = optionalSigningKey(keyFile);
   if (!key) throw new Error("set MARINA_LEARNED_SIGNING_KEY (or pass --key-file) to sign");
   return key;
 }
@@ -96,9 +111,9 @@ function readRevocations(paths: readonly string[] | undefined): unknown[] {
   return (paths ?? []).map((p) => JSON.parse(readFileSync(p, "utf8")) as unknown);
 }
 
-async function main(): Promise<number> {
+export async function runLearned(args: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
-    args: process.argv.slice(2),
+    args,
     allowPositionals: true,
     options: {
       out: { type: "string" },
@@ -128,6 +143,8 @@ async function main(): Promise<number> {
       versions: { type: "string" },
       days: { type: "string" },
       audience: { type: "string" },
+      "allow-unsigned": { type: "boolean" },
+      archive: { type: "boolean" },
     },
   });
   const [cmd, a, b] = positionals;
@@ -203,7 +220,7 @@ async function main(): Promise<number> {
       let entitlement: EntitlementGrant | undefined;
       if (values.entitlement) {
         const pinned = pinnedPublisherKeys();
-        const v = verifyBundle(a, pinned);
+        const v = verifyBundle(a, pinned, { allowUnsigned: values["allow-unsigned"] === true });
         if (!v.ok) {
           console.error(`Refused: ${v.error}`);
           return 1;
@@ -235,12 +252,15 @@ async function main(): Promise<number> {
             ? { benchmarkIndex: benchmarkIndex(values["bench-corpus"]) }
             : {}),
           actor: values.actor ?? "operator",
+          allowUnsigned: values["allow-unsigned"] === true,
         });
         if (!outcome.ok) {
           console.error(`Refused: ${outcome.error}`);
           return 1;
         }
         const r = outcome.report;
+        if (values["allow-unsigned"] && r.artifactId.startsWith("marina-memory:unsigned-"))
+          console.log("UNSIGNED bundle: no publisher signature; records are labelled unsigned");
         console.log(
           `Imported ${r.artifactId}@${r.version} (generation ${r.generation}): ${r.added} added, ${r.changed} changed, ${r.unchanged} unchanged, ${r.retired} retired, ${r.revoked} revoked`,
         );
@@ -256,6 +276,56 @@ async function main(): Promise<number> {
       } finally {
         db.close();
       }
+      return 0;
+    }
+    case "distill": {
+      if (!a) usage();
+      const key = optionalSigningKey(values["key-file"]);
+      const out = values.out ?? `${a.replace(/\/+$/, "")}.learned`;
+      const index = benchmarkIndex(values["bench-corpus"]);
+      const result = distillDatabase({
+        sourcePath: a,
+        outDir: out,
+        name: values.name ?? "distilled",
+        ...(values.description ? { description: values.description } : {}),
+        publisher: { name: values.publisher ?? (process.env.MARINA_NAME?.trim() || "local") },
+        signingKey: key,
+        benchmarkIndex: index,
+        instanceTokens: values["instance-token"] ?? [],
+        marinaVersion: MARINA_VERSION,
+      });
+      const m = result.manifest;
+      console.log(
+        `Distilled ${a} (read-only) into ${out}: ${m.artifact_id}@${m.version}${result.unsigned ? " UNSIGNED" : ""}`,
+      );
+      console.log(
+        `  items: ${Object.entries(m.counts)
+          .map(([k, n]) => `${k} ${n}`)
+          .join(", ")}; dropped ${result.dropped.length} (never redacted)`,
+      );
+      console.log(`  never carried: ${(m.excludes ?? []).join(", ")}`);
+      if (result.unsigned)
+        console.log(
+          "  UNSIGNED: no publisher key (MARINA_LEARNED_SIGNING_KEY or --key-file); import needs --allow-unsigned",
+        );
+      let archived: string | undefined;
+      if (values.archive) {
+        const r = archiveDatabase(a);
+        archived = r.archiveDir;
+        console.log(`Archived ${a} → ${r.archiveDir}`);
+      }
+      console.log("");
+      console.log(bootstrapStory(out, result.unsigned, archived));
+      return 0;
+    }
+    case "archive": {
+      if (!a) usage();
+      const r = archiveDatabase(a);
+      console.log(`Archived ${a} → ${r.archiveDir} (${r.moved.length} file(s); nothing deleted)`);
+      console.log("");
+      console.log(
+        "Start fresh with `marina start`, then import a bundle distilled from it (`marina learned distill <archived db>`): `MARINA_UPSTREAM=on marina learned import <bundle> --own`. Accounts, standing, grants, approvals and secrets never travel; your new world earns them through its own verified work.",
+      );
       return 0;
     }
     case "entitle": {
@@ -283,7 +353,7 @@ async function main(): Promise<number> {
     case "verify": {
       if (!a) usage();
       const pinned = pinnedPublisherKeys();
-      const v = verifyBundle(a, pinned);
+      const v = verifyBundle(a, pinned, { allowUnsigned: values["allow-unsigned"] === true });
       if (!v.ok) {
         console.error(`INVALID: ${v.error}`);
         return 1;
@@ -349,10 +419,12 @@ async function main(): Promise<number> {
   }
 }
 
-main().then(
-  (code) => process.exit(code),
-  (err) => {
-    console.error((err as Error).message);
-    process.exit(1);
-  },
-);
+if (import.meta.main) {
+  runLearned(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (err) => {
+      console.error((err as Error).message);
+      process.exit(1);
+    },
+  );
+}

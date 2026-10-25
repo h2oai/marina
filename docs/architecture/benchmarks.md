@@ -212,7 +212,7 @@ Every default that earned promotion may move is read through `resolveDefault` (`
 1. **env** — the operator's explicit setting: an env var, or an explicit flag such as `--config`. It always wins.
 2. **local slot** — `<slot>:<board>` when the choice is for a named board, else `<slot>` itself (a deployment slot such as `showcase:crew`). Only earned promotion writes it.
 3. **family slot** — `<slot>:family:<family>` for each family the caller declares. `benchmark promote` and every other per-board filing refuse family slots: one board's holdout never sets a default for a whole family. Today only an upstream seed can fill one.
-4. **upstream seed** — consulted only when no local slot answered. The hook is `setUpstreamSeedSource`; it stays empty until a learned-bundle importer registers one.
+4. **upstream seed** — consulted only when no local slot answered. It reads the database's own active `upstream_default_seeds` rows, written by a learned-bundle import (`src/learned/upstream-seed.ts`); a seed never answers while its slot has a local row. A database that never imported a bundle has no seeds and its trace is unchanged. Tests can register a source with `setUpstreamSeedSource`.
 5. **built-in** — the caller's own default, which is today's behaviour.
 
 A slot whose incumbent run was invalidated is skipped, and so is a value the caller cannot read (for example, a run whose target is not a configuration of that kind). The next layer answers instead; a value is never half-applied. With nothing promoted and no seed source, every read resolves to `env` or `built-in`, so behaviour is exactly as before.
