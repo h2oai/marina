@@ -361,8 +361,8 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
-  // Hourly (own phase): lessons from work (MARINA_LESSONS_FROM_WORK, default
-  // off). The aggregated tool-work patterns become judged lessons (on) or a
+  // Hourly (own phase): lessons from work (MARINA_LESSONS_FROM_WORK; unset:
+  // on with a model provider, else observe). The aggregated tool-work patterns become judged lessons (on) or a
   // counts-only log line (observe). Async and self-bounded (MAX_PER_FLUSH,
   // daily spend cap); never overlaps itself.
   s.register({
@@ -445,8 +445,9 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
   });
 
   // Hourly: past-end answers no market settles get a judged resolution
-  // (MARINA_OUTCOME_JUDGE, default off): observe records it; on also settles
-  // when the judge has earned agreement. Bounded and spend-capped.
+  // (MARINA_OUTCOME_JUDGE; unset: on with a model provider, else off): observe
+  // records it; on also settles when the judge has earned agreement. Bounded
+  // and spend-capped.
   s.register({
     name: "outcome-judge",
     every: NOTE_IMPORTANCE_INTERVAL,

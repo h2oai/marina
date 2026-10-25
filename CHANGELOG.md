@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Agents holding sentinel gate grants are a critical readiness line.** `gate-sentinels` is
+  raised as a critical `ops inbox` alert while any agent account holds an operator-grant sentinel
+  row, and names the reset (`gate reset agents all apply`, from an interactive person session).
+  Every operator-required refusal now goes through one helper (`operatorRequiredRefusal`): a
+  person on a non-interactive `marina connect -c` is told the connection declared itself an agent
+  and where a person acts instead. A non-interactive client still cannot claim to be a person.
+
 - **`memory api` payloads no longer reach the event log.** A resident's journal and checkpoint
   calls carried its memory content into `command` events on every turn and crowded the world's
   own actions out of the row-bounded log. The form is now sensitive and unlogged
@@ -71,6 +78,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `readiness` (`federation-inbound`) say how to set it. The `local` profile is unchanged.
 
 ### Changed
+
+- **`MARINA_OUTCOME_JUDGE` defaults on when a model provider is configured** (off otherwise; an
+  explicit value always wins), the same rule as `MARINA_LESSONS_FROM_WORK`. Only a judge that has
+  earned agreement and is confident settles or teaches, as before.
+- **Readiness shows the learning loop.** A new `learning-loop` line reports outcomes waiting for
+  delivery or a judge (count, oldest age), each judge's comparisons toward earning, verifier
+  opinions and promotions ever filed, and is degraded after 14 days of backlog or while outcomes
+  exist but no default has ever changed. Optional readiness checks no longer raise inbox alerts.
+- **An end-to-end test that the loop closes** (`test/learning-loop-closed.test.ts`): person-approved
+  task work and a Code Mode check become tagged outcomes, a trusted lesson served to an agent,
+  competence evidence and a spawn route that changes under `MARINA_ROUTE_EVIDENCE=on`.
 
 - **Outcome delivery plumbing.** A group of single outcomes still short of five is learned anyway
   once its oldest has waited 30 days, if it has at least three (the lesson states the true count),

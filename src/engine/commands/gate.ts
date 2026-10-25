@@ -16,7 +16,12 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId } from "../../types";
 import { OPEN_POSTURE_CORE } from "../autonomy";
-import { agentPrincipalReason, isOperatorPrincipal, principalKind } from "../challenges";
+import {
+  agentPrincipalReason,
+  isOperatorPrincipal,
+  operatorRequiredRefusal,
+  principalKind,
+} from "../challenges";
 import { sanitizeEntityName } from "../entity-name";
 import { getErrorMessage } from "../errors";
 import { applyGateReset, auditGateGrants, planGateReset } from "../gate-audit";
@@ -141,7 +146,7 @@ export function gateCommand(deps: {
             ].join("\n"),
           );
         if (!isOperatorPrincipal(actor))
-          return reply("Applying a gate reset takes an operator (a person at rank 9).");
+          return reply(operatorRequiredRefusal(actor, "Applying a gate reset"));
         const done = applyGateReset(deps.db, plan, actor.name);
         return reply(
           [
@@ -168,10 +173,7 @@ export function gateCommand(deps: {
       const person = principalKind(actor) === "person";
 
       if (sub === "revoke") {
-        if (!sovereign)
-          return reply(
-            `Revoking a gate takes an operator (a person at rank 9).${person ? "" : ` ${agentPrincipalReason(actor)}`}`,
-          );
+        if (!sovereign) return reply(operatorRequiredRefusal(actor, "Revoking a gate"));
         revoke(deps.db, String(target.id), gateId);
         audit(deps.db, "revoke", actor.name, target.name, gateId);
         return reply(`Revoked ${gateId} from ${target.name}.`);
