@@ -22,6 +22,7 @@ import {
 import { ENVIRONMENT_REFERENCE_PATH, environmentCatalog } from "../src/config/environment";
 import { FEATURE_STATUS } from "../src/config/feature-status";
 import { lastEvidenceAt, type PostureDb, postureCommand } from "../src/engine/commands/posture";
+import { readinessCounts } from "../src/engine/readiness";
 import { capabilityPostureCheck } from "../src/engine/readiness-learning";
 import { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, EntityId, RoomContext } from "../src/types";
@@ -85,12 +86,17 @@ describe("decide-by dates", () => {
     expect(capabilityPostureCheck(before)).toMatchObject({
       id: "capability-posture",
       status: "ok",
+      optional: true,
     });
     const after = before + 3 * 86_400_000;
     const overdue = overduePosture(after);
     expect(overdue.length).toBeGreaterThan(0);
     const check = capabilityPostureCheck(after);
+    // Degraded but optional: development deadlines never raise an alert on an install.
     expect(check.status).toBe("degraded");
+    expect(check.optional).toBe(true);
+    expect(readinessCounts([check])).toMatchObject({ degraded: 0, optional: 1 });
+    expect(check.detail).toContain("development deadlines; informational on installs");
     expect(check.detail).toContain(`${overdue.length} of `);
     expect(check.detail).toContain(overdue[0]!.subject);
     expect(check.detail).toContain(`due ${firstDeadline}`);

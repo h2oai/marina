@@ -201,7 +201,12 @@ export function gateSentinelsCheck(db: MarinaDB | undefined): ReadinessCheck {
   };
 }
 
-/** The `capability-posture` readiness line: degraded while any decide-by date has passed. */
+/**
+ * The `capability-posture` readiness line: degraded while any decide-by date
+ * has passed. Always optional: the dates are Marina's own development
+ * deadlines, so an install on an older release is never degraded (no ops
+ * alert, no header warning) because a date went by.
+ */
 export function capabilityPostureCheck(now = Date.now()): ReadinessCheck {
   const id = "capability-posture";
   const label = "Capability posture";
@@ -214,13 +219,15 @@ export function capabilityPostureCheck(now = Date.now()): ReadinessCheck {
       id,
       label,
       status: "ok",
+      optional: true,
       detail: `${waiting} technique(s) waiting on evidence, none past its decide-by date (\`posture\`)`,
     };
   return {
     id,
     label,
     status: "degraded",
-    detail: `${overdue.length} of ${waiting} technique(s) past their decide-by date; oldest ${oldest.subject} (due ${oldest.posture.decideBy}, ${-daysUntil(oldest.posture.decideBy, now)}d ago)`,
+    optional: true,
+    detail: `development deadlines; informational on installs · ${overdue.length} of ${waiting} technique(s) past their decide-by date; oldest ${oldest.subject} (due ${oldest.posture.decideBy}, ${-daysUntil(oldest.posture.decideBy, now)}d ago)`,
     remediation:
       "`posture due` lists them with their evidence: promote what won, or record a new date or a by-design reason in src/config/capability-posture.ts.",
   };

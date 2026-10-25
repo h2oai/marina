@@ -160,7 +160,8 @@ Three readiness lines watch state a world can carry silently:
   `gate reset agents all apply`, as an operator from an interactive `marina connect` on a terminal or
   the dashboard. A one-shot `marina connect -c` declares itself an agent and is refused, with that
   reason.
-- **`capability-posture`** — `degraded` while any technique shipped off or observe-only is past its
+- **`capability-posture`** (optional: the dates are Marina's development deadlines, informational
+  on installs, so it never raises an inbox alert or turns the header badge degraded) — `degraded` while any technique shipped off or observe-only is past its
   decide-by date ([capability posture](reference/capability-posture.md)); it names the count and
   the oldest. `posture due` lists them with their evidence; promote what won, or record a new date
   or a by-design reason in `src/config/capability-posture.ts`.
