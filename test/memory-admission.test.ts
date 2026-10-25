@@ -102,6 +102,7 @@ function provider(
 const lesson = (text: string, over: Partial<Lesson> = {}): Lesson => ({
   domain: "code",
   text,
+  rule: text,
   kind: "failure",
   trust: "trusted",
   resolvedAt: "2026-09-01T00:00:00.000Z",
@@ -118,6 +119,7 @@ const outcome = (over: Partial<Outcome> = {}): Outcome => ({
   attempted: "verify a change with pytest",
   detail: "pytest collection fails when run outside the repository root",
   scope: "method",
+  rule: "Run pytest from the repository root.",
   ...over,
 });
 
@@ -152,7 +154,7 @@ afterEach(() => {
 
 // The writer-free candidate text recordOutcome builds from `outcome()`.
 const CANDIDATE_TEXT =
-  "[lesson:code] failure · pytest collection fails when run outside the repository root";
+  "[lesson:code] failure · rule: Run pytest from the repository root. · pytest collection fails when run outside the repository root";
 
 describe("admission policy (pure)", () => {
   it("reads the mode switch: default off, observe, on", () => {

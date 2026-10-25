@@ -8,6 +8,9 @@
  *   lessons  a judged lesson through the armed learner (`armedLearner`),
  *            within the shared hourly budget. Over budget, or no verdict
  *            reached, the outcome waits for a later pass — never dropped.
+ *            With no model provider it waits without spending an attempt.
+ *            Forecasts, arena rounds and research asks wait for their group
+ *            and teach in aggregate (`AGGREGATE_MIN_OUTCOMES`).
  *   history  one record in MARINA_FORECAST_HISTORY (recalibration, prior
  *            shrink, routing), from the answer's pre-adjustment forecast.
  *
@@ -29,6 +32,7 @@ import { type ForecastHistory, historyFromEnv, resolvedRecord } from "../forecas
 import { SHADOW_OWNER } from "../forecast/routing-refs";
 import type { TypedForecastAnswer } from "../forecast/typed";
 import { EVAL_REF_PREFIX, sourceNamesBoard } from "../learning/eval-context";
+import { familiesForSource } from "../learning/families";
 import { lessonsMode } from "../learning/modes";
 import {
   type LessonSink,
@@ -40,7 +44,7 @@ import { armedLearner, canHoldOwnLessons, ownerLessonSink } from "../learning/se
 import { workScopeFor } from "../learning/work";
 import type { MarinaDB } from "../persistence/database";
 import type { ForecastAnswerRow } from "../persistence/db-markets";
-import type { OutcomeRow } from "../persistence/db-outcomes";
+import { AGGREGATING_REASON, type OutcomeRow } from "../persistence/db-outcomes";
 
 const logger = new Logger();
 
@@ -272,8 +276,12 @@ function lessonOutcome(db: MarinaDB, o: OutcomeRow): Outcome {
       ? { provenance: { basis: "judged", judge: o.judge ?? "unknown" } }
       : {}),
     ...(context.privateContext ? { privateContext: context.privateContext } : {}),
+    ...(o.eval_mode === "measure" ? { measured: true } : {}),
   };
 }
+
+/** Where a lesson from an outcome goes: the shared pool, or one owner's own spaces. */
+type LessonTarget = { shared: true } | { owner: string } | { skip: string };
 
 /**
  * Where a lesson from this outcome may be written. Forecasts teach the shared
@@ -282,19 +290,206 @@ function lessonOutcome(db: MarinaDB, o: OutcomeRow): Outcome {
  * (or the agents it spawned) only that person's own lesson spaces, and work
  * whose scope cannot be resolved teaches nothing.
  */
-function lessonSink(
-  db: MarinaDB,
-  o: OutcomeRow,
-  shared: LessonSink,
-): { sink: LessonSink } | { skip: string } {
-  if (o.kind === "forecast") return { sink: shared };
+function lessonTarget(db: MarinaDB, o: OutcomeRow): LessonTarget {
+  if (o.kind === "forecast") return { shared: true };
   if (!o.owner) return { skip: "no owner" };
   const scope = workScopeFor(db, o.owner);
   if (!scope) return { skip: "owner scope unresolved" };
-  if (scope.kind === "shared") return { sink: shared };
+  if (scope.kind === "shared") return { shared: true };
   return canHoldOwnLessons(db, scope.owner)
-    ? { sink: ownerLessonSink(db, scope.owner) }
+    ? { owner: scope.owner }
     : { skip: "owner cannot hold lessons" };
+}
+
+const sinkFor = (db: MarinaDB, t: { shared: true } | { owner: string }, shared: LessonSink) =>
+  "owner" in t ? ownerLessonSink(db, t.owner) : shared;
+
+// ─── Aggregate lessons ──────────────────────────────────────────────────────
+//
+// Outcomes that arrive one per round or item (forecasts, arena rounds,
+// research asks) teach in aggregate: a single round cannot show a general
+// rule, and single rounds contradict each other. Each waits, still `pending`
+// with an `aggregating: <key>` reason and no attempt spent (durable across
+// restarts), until AGGREGATE_MIN_OUTCOMES of the same scope, source shape,
+// family and measurement board are waiting; then ONE lesson is written from
+// their statistics with the aggregate writer prompt. Task verdicts and code
+// checks keep the per-outcome path.
+
+/** Single outcomes of one kind learned together once this many wait. */
+export const AGGREGATE_MIN_OUTCOMES = 5;
+/** At most this many single outcomes summarised by one aggregate lesson. */
+export const AGGREGATE_MAX_OUTCOMES = 50;
+/** Held outcomes scanned per pass for groups that are ready. */
+const AGGREGATE_SCAN = 2_000;
+
+/** Outcomes that arrive one per round or item and teach only in aggregate. */
+export function aggregatesLessons(o: Pick<OutcomeRow, "kind" | "source">): boolean {
+  return o.kind === "forecast" || o.source === "research:ask";
+}
+
+const refsOf = (o: OutcomeRow) =>
+  ((parse(o.refs_json) as unknown[] | undefined) ?? []).filter(
+    (r): r is string => typeof r === "string",
+  );
+
+/** The family or tracker an outcome's work belongs to (its first `family:` ref), or "". */
+const familyOf = (o: OutcomeRow) =>
+  refsOf(o)
+    .find((r) => r.startsWith("family:"))
+    ?.slice("family:".length) ?? "";
+
+/** The group an outcome is learned with: scope, source shape, family, measured board. */
+function aggregateKey(o: OutcomeRow, t: { shared: true } | { owner: string }): string {
+  const refs = refsOf(o);
+  const family = familyOf(o);
+  const boards =
+    o.eval_mode === "measure"
+      ? `measure:${refs
+          .filter((r) => r.startsWith(EVAL_REF_PREFIX))
+          .sort()
+          .join(",")}`
+      : "live";
+  return [
+    "owner" in t ? `owner:${t.owner}` : "shared",
+    o.owner === SHADOW_OWNER ? "shadow" : "",
+    o.domain,
+    o.source,
+    family,
+    boards,
+  ].join("|");
+}
+
+const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+/** One outcome from many of one kind: cross-outcome statistics, never one item's text. */
+export function aggregateOutcome(db: MarinaDB, rows: readonly OutcomeRow[]): Outcome {
+  const first = rows[0]!;
+  const n = rows.length;
+  const wins = rows.filter((r) => r.succeeded === 1).length;
+  const finite = (xs: Array<number | null>) =>
+    xs.filter((x): x is number => x !== null && Number.isFinite(x));
+  const qualities = finite(rows.map((r) => r.quality));
+  const losses = finite(rows.map((r) => r.loss));
+  // Success per method and per family: what the writer can compare.
+  const tally = new Map<string, { n: number; s: number }>();
+  for (const r of rows)
+    for (const ref of new Set(refsOf(r)))
+      if (ref.startsWith("method:") || ref.startsWith("family:")) {
+        const c = tally.get(ref) ?? { n: 0, s: 0 };
+        c.n++;
+        c.s += r.succeeded;
+        tally.set(ref, c);
+      }
+  const signals = [...tally]
+    .sort((a, b) => b[1].n - a[1].n)
+    .slice(0, 8)
+    .map(([k, c]) => `${k}: ${c.s} of ${c.n} succeeded`);
+  // The board refs first (leakage rule 2), then families and methods.
+  const all = [...new Set(rows.flatMap(refsOf))];
+  const refs = [
+    ...all.filter((r) => r.startsWith(EVAL_REF_PREFIX)),
+    ...all.filter((r) => r.startsWith("family:") || r.startsWith("method:")),
+  ];
+  const context = subjectContext(db, first);
+  const privateContext = rows
+    .map((r) => subjectContext(db, r).privateContext)
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 8_000);
+  const families = familiesForSource(first.source);
+  // The group's family: the lesson is judged general within it and served only to it.
+  const family = familyOf(first);
+  return {
+    domain: first.domain as OutcomeDomain,
+    source: first.source,
+    succeeded: wins * 2 >= n,
+    ...(qualities.length ? { score: mean(qualities) } : {}),
+    resolvedAt: new Date(Math.max(...rows.map((r) => r.resolved_at))).toISOString(),
+    attempted: `${context.attempted} (${n} outcomes of the same kind)`,
+    detail: [
+      `${wins} of ${n} succeeded`,
+      qualities.length ? `mean quality ${mean(qualities).toFixed(3)}` : "",
+      losses.length
+        ? `mean ${first.metric ?? "loss"} ${mean(losses).toFixed(3)} (range ${Math.min(...losses).toFixed(3)}–${Math.max(...losses).toFixed(3)})`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("; "),
+    ...(signals.length ? { signals } : {}),
+    ...(refs.length ? { refs } : {}),
+    scope: "method",
+    ...(family ? { scopeFamily: family } : {}),
+    ...(families.length ? { families } : {}),
+    ...(privateContext ? { privateContext } : {}),
+    ...(first.eval_mode === "measure" ? { measured: true } : {}),
+    aggregateOf: n,
+    provenance: {
+      learner: "outcome-aggregate",
+      aggregate: String(n),
+      ...(first.basis === "judged" ? { basis: "judged" } : {}),
+    },
+  };
+}
+
+type Learner = NonNullable<ReturnType<typeof armedLearner>>;
+
+/** Learn every group of held outcomes that reached AGGREGATE_MIN_OUTCOMES. */
+async function deliverAggregates(
+  db: MarinaDB,
+  learner: Learner,
+  tally: () => DeliveryReport,
+): Promise<void> {
+  const groups = new Map<
+    string,
+    { target: { shared: true } | { owner: string }; rows: OutcomeRow[] }
+  >();
+  for (const o of db.pendingOutcomes("lessons", AGGREGATE_SCAN, { aggregating: true })) {
+    const target = lessonTarget(db, o);
+    if ("skip" in target) {
+      db.setOutcomeDelivery(o.id, "lessons", "skipped", target.skip);
+      tally().skipped++;
+      continue;
+    }
+    const key = aggregateKey(o, target);
+    const g = groups.get(key) ?? { target, rows: [] };
+    g.rows.push(o);
+    groups.set(key, g);
+  }
+  for (const [key, g] of groups) {
+    if (g.rows.length < AGGREGATE_MIN_OUTCOMES) continue;
+    const t = tally();
+    const held = `${AGGREGATING_REASON}: ${key}`;
+    if (learner.unavailable) {
+      for (const o of g.rows)
+        db.waitOutcomeDelivery(o.id, "lessons", `${held}; ${learner.unavailable}`);
+      t.waiting += g.rows.length;
+      continue;
+    }
+    // One unit of the shared hourly budget per aggregate lesson; over it, wait.
+    if (learner.take(1) === 0) {
+      t.waiting += g.rows.length;
+      continue;
+    }
+    const rows = g.rows.slice(0, AGGREGATE_MAX_OUTCOMES);
+    // A retry keeps the aggregating reason, so the outcome stays in its group.
+    const retry = (reason: string) => {
+      for (const o of rows) t[retryOrFail(db, o, "lessons", `${held}; ${reason}`)]++;
+    };
+    try {
+      const r = await recordOutcome(
+        { ...learner.deps, sink: sinkFor(db, g.target, learner.deps.sink), deferUnjudged: true },
+        aggregateOutcome(db, rows),
+      );
+      if (r.deferred) retry(`no verdict: ${r.reason}`);
+      else
+        for (const o of rows) {
+          db.setOutcomeDelivery(o.id, "lessons", "done", `aggregate of ${rows.length}: ${r.trust}`);
+          t.done++;
+        }
+    } catch (err) {
+      retry(String(err));
+    }
+  }
 }
 
 /**
@@ -355,7 +550,9 @@ export async function deliverOutcomes(
   // Lessons: off ⇒ skipped; not armed (a script that never armed it) ⇒ wait.
   const lessonsOff = lessonsMode(env) === "off";
   const learner = lessonsOff ? undefined : armedLearner(db, env);
-  const pending = db.pendingOutcomes("lessons", max);
+  // Held-for-aggregation outcomes are scanned separately (`deliverAggregates`),
+  // so they never crowd single outcomes out of a pass.
+  const pending = db.pendingOutcomes("lessons", max, lessonsOff ? {} : { aggregating: false });
   for (const o of pending) {
     const t = tally("lessons");
     if (o.kind === "forecast" && db.isPrivateForecast(forecastId(o.subject) ?? -1)) {
@@ -374,14 +571,26 @@ export async function deliverOutcomes(
       t.skipped++;
       continue;
     }
+    const target = lessonTarget(db, o);
+    if ("skip" in target) {
+      db.setOutcomeDelivery(o.id, "lessons", "skipped", target.skip);
+      t.skipped++;
+      continue;
+    }
+    // One round or item teaches nothing alone: it waits for its group.
+    if (aggregatesLessons(o)) {
+      db.waitOutcomeDelivery(o.id, "lessons", `${AGGREGATING_REASON}: ${aggregateKey(o, target)}`);
+      t.waiting++;
+      continue;
+    }
     if (!learner) {
       t.waiting++;
       continue;
     }
-    const target = lessonSink(db, o, learner.deps.sink);
-    if ("skip" in target) {
-      db.setOutcomeDelivery(o.id, "lessons", "skipped", target.skip);
-      t.skipped++;
+    // No model provider: no rule can be written, so wait — no attempt spent.
+    if (learner.unavailable) {
+      db.waitOutcomeDelivery(o.id, "lessons", `waiting: ${learner.unavailable}`);
+      t.waiting++;
       continue;
     }
     // One unit of the shared hourly budget per judged lesson; over it, wait.
@@ -391,7 +600,7 @@ export async function deliverOutcomes(
     }
     try {
       const r = await recordOutcome(
-        { ...learner.deps, sink: target.sink, deferUnjudged: true },
+        { ...learner.deps, sink: sinkFor(db, target, learner.deps.sink), deferUnjudged: true },
         lessonOutcome(db, o),
       );
       if (r.deferred) t[retryOrFail(db, o, "lessons", `no verdict: ${r.reason}`)]++;
@@ -403,6 +612,7 @@ export async function deliverOutcomes(
       t[retryOrFail(db, o, "lessons", String(err))]++;
     }
   }
+  if (learner) await deliverAggregates(db, learner, () => tally("lessons"));
   if (report.lessons?.failed || report.history?.failed)
     logger.warn("main", "some outcome deliveries failed", { report });
   return report;

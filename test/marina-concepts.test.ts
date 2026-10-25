@@ -58,7 +58,7 @@ import { resetObligationsForTests } from "../src/net/model-api/obligations";
 import { passthruStackPolicy } from "../src/net/model-api/stack";
 import { argcheckMode, argcheckTrigger, obligationsMode } from "../src/obligations/mode";
 import { obligationsReviewMode } from "../src/obligations/review";
-import { deliverOutcomes } from "../src/outcomes/deliver";
+import { AGGREGATE_MIN_OUTCOMES, deliverOutcomes } from "../src/outcomes/deliver";
 import { resolveForecast } from "../src/outcomes/forecast";
 import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
@@ -409,23 +409,27 @@ describe("concept 3: benchmark outcomes teach", () => {
       },
       judge,
     });
-    const id = db.saveForecastAnswer({
-      entityName: "Ada",
-      question: "Will the measured event happen?",
-      kind: "probability",
-      probability: 0.8,
-      answerJson: "{}",
-      evalMode: "measure",
-      source: "prophet",
-    });
-    resolveForecast(db, id, { outcome: "no" }, Date.now() - 1_000);
+    // Single forecasts teach in aggregate: one lesson from a group of them.
+    const ids = Array.from({ length: AGGREGATE_MIN_OUTCOMES }, (_, i) =>
+      db.saveForecastAnswer({
+        entityName: "Ada",
+        question: `Will measured event ${i} happen?`,
+        kind: "probability",
+        probability: 0.8,
+        answerJson: "{}",
+        evalMode: "measure",
+        source: "prophet",
+      }),
+    );
+    for (const id of ids) resolveForecast(db, id, { outcome: "no" }, Date.now() - 1_000);
     await settleDelivery(db);
     await deliverOutcomes(db);
-    const o = db.getOutcomeBySubject(`forecast:${id}`)!;
+    const o = db.getOutcomeBySubject(`forecast:${ids[0]}`)!;
     expect(o).toMatchObject({ eval_mode: "measure", source: "prophet:probability" });
     expect(db.outcomeDeliveries(o.id).find((d) => d.consumer === "lessons")?.state).toBe("done");
-    expect(sink.all()).toHaveLength(1);
-    const domains = [sink.all()[0]!.domain];
+    const learned = sink.all().filter((l) => l.domain !== "meta");
+    expect(learned).toHaveLength(1);
+    const domains = [learned[0]!.domain];
     const q = "discount strong priors base rate";
     const own = await recallForWork(undefined, domains, q, {
       sink,

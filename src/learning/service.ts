@@ -18,11 +18,11 @@
  *
  * Marina works with whatever intelligence it has. The judge is the configured
  * decision backend (`harnessDecisionProvider`); without one, a chat-classifier
- * on the single available model through Marina's own `/v1` — uncalibrated, so
- * one conservative cut at 0.5, and every lesson it passes is labelled with that
- * judge. No vendor key is ever required: with no model reachable at all, the
- * writer falls back to the mechanical candidate and the judge to `unverified`,
- * so outcomes are still recorded and nothing is promoted.
+ * on the single available model through Marina's own `/v1` — the same bars as
+ * any judge, and every lesson it passes is labelled with that (uncalibrated)
+ * judge. No vendor key is ever required: with no model provider at all
+ * (`unavailable`), durable deliveries wait with that reason, nothing is
+ * written, and recall simply serves fewer lessons.
  *   MARINA_LESSONS_MAX_PER_HOUR=<n>          outcomes processed per hour (default 120)
  *
  * Learning is armed per database by `enableOutcomeLearning(db)` — the server
@@ -34,6 +34,7 @@
  * Lessons live in one shared space per domain (`lessons:<domain>`).
  */
 
+import { availableModels } from "../agent/available-models";
 import { roleModelFromEnv } from "../config/model-tiers";
 import { harnessDecisionProvider } from "../decisions/engines";
 import { chatClassifierProvider } from "../decisions/providers";
@@ -52,6 +53,7 @@ import { type EvalContext, evalExclusion } from "./eval-context";
 import { familiesForBenchmark, familiesForSource } from "./families";
 import { type LessonsMode, lessonsMetaMode, lessonsMode } from "./modes";
 import {
+  CURATED_SOURCE_PREFIX,
   formatLesson,
   type Lesson,
   type LessonAdmission,
@@ -88,6 +90,8 @@ interface Armed {
   writer?: LessonWriter;
   judge?: DecisionProvider;
   admit?: LessonAdmission;
+  /** The writer and judge were taken from the environment (not given by the caller). */
+  fromEnv: boolean;
   queue: Outcome[];
   draining?: Promise<void>;
   windowStart: number;
@@ -297,8 +301,8 @@ export function lessonWriterFromEnv(
 
 /**
  * The lesson judge: the configured decision backend, else a chat-classifier on
- * the single available model through this Marina's `/v1` (uncalibrated —
- * `judgeLesson` then uses one cut at 0.5).
+ * the single available model through this Marina's `/v1` (uncalibrated: its
+ * verdicts are labelled so; the bars are the same as for any judge).
  */
 export function lessonJudgeFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -368,6 +372,7 @@ export function enableOutcomeLearning(
         });
       return admit ? { admit } : {};
     })(),
+    fromEnv: opts.writer === undefined && opts.judge === undefined,
     queue: [],
     windowStart: Date.now(),
     processed: 0,
@@ -453,15 +458,19 @@ async function drain(a: Armed, env: NodeJS.ProcessEnv): Promise<void> {
  * queue (`src/outcomes/deliver.ts`): the same sink, writer, judge and
  * admission as `noteOutcome`, and `take(n)` to draw from the same hourly
  * budget (returns how many may run now; the rest wait, never dropped).
+ * `unavailable` says why no writer or judge can answer at all (no model
+ * provider configured): the producer waits without spending an attempt.
  * Undefined when learning is not armed.
  */
 export function armedLearner(
   db: object,
   env: NodeJS.ProcessEnv = process.env,
-): { deps: OutcomeLearnerDeps; take(n: number): number } | undefined {
+): { deps: OutcomeLearnerDeps; unavailable?: string; take(n: number): number } | undefined {
   const a = armed.get(db);
   if (!a) return undefined;
+  const unavailable = a.fromEnv ? modelUnavailable(env) : undefined;
   return {
+    ...(unavailable ? { unavailable } : {}),
     deps: {
       sink: a.sink,
       ...(a.writer ? { writer: a.writer } : {}),
@@ -480,6 +489,15 @@ export function armedLearner(
       return k;
     },
   };
+}
+
+/**
+ * Why the environment's writer and judge cannot answer at all: no model
+ * provider is configured (no vendor key, no local runtime), so no rule can be
+ * written and nothing can be learned until one is. Undefined when one exists.
+ */
+export function modelUnavailable(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return availableModels(env).length === 0 ? "no model provider configured" : undefined;
 }
 
 /** Wait until queued outcomes are processed (tests, scripts before exit). */
@@ -617,6 +635,7 @@ export async function recallAcross(
   const recalled = selectServed(distinctByText(per.flatMap((r) => r.recalled)), asOf, {
     ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
     ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
+    ...(opts.families?.length ? { families: opts.families } : {}),
     ...(rankedServing(opts.env) ? { rankOrder: true } : {}),
   });
   // A domain whose own mode is observe (meta under MARINA_LESSONS_META=observe)
@@ -846,9 +865,11 @@ export async function supersedeLesson(
     ...(old.scope ? { scope: old.scope } : {}),
     ...(old.families?.length ? { families: old.families } : {}),
     ...(old.subjects?.length ? { subjects: old.subjects } : {}),
+    // The curator's text is the rule (served unjudged: `servableLesson`).
+    rule: text,
     trust: "unverified",
     resolvedAt: old.resolvedAt,
-    source: `supersede:${old.id}`,
+    source: `${CURATED_SOURCE_PREFIX}${old.id}`,
     refs: [old.id, ...(old.refs ?? [])],
   };
   const { id } = await sink.write(replacement);
