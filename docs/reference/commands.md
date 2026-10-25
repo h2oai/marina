@@ -890,7 +890,11 @@ Effect: execute.
 
 Run, track, and rank benchmark evaluations from inside the world.
 Usage:
-  benchmark list                                   — show available benchmarks + cache status
+  benchmark list                                   — show available benchmarks + dataset status
+  benchmark fetch <name>                           — download one benchmark's dataset into the
+                                                     checkout (the harness downloader, every request
+                                                     through the SSRF guard; HF_TOKEN for gated sets).
+                                                     Runs in the background; needs rank 4.
   benchmark orchestrations                         — show live marina:<name> endpoints
   benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [self-judge:on]
                    [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
@@ -971,8 +975,10 @@ Usage:
                                                      only through judged lessons (`lessons`).
 
 Benchmarks: smoke, mmlu-pro, ifeval, truthfulqa, humaneval, narrativeqa, mt-bench, retention, arc-challenge, hellaswag, musr, bbh, gsm8k, math, simple-qa, frames, aime, aime-2025, gpqa, hle-verified-gold, hle-verified-gold-mm
-  (smoke is the 15-item prompt A/B set, tracked in the checkout: ready with no download,
-  whatever directory the server started in; run "benchmark list" for status)
+  Ready with no download: smoke (tracked), retention (generated). Every other benchmark needs
+  "benchmark fetch <name>" once ("benchmark list" shows which are downloaded).
+  (smoke is the 15-item prompt A/B set; tracked sets are ready whatever directory the server
+  started in)
 
 Targets: crew:<name> = the residents serving marina:<name> (a model-<name> channel with a live
   agent; see "benchmark orchestrations"); model:<id> = the bare model as a control ("marina" =
@@ -1220,6 +1226,12 @@ Effect: read.
 - Group `option-0`: `--benchmark X`.
 - Group `option-1`: `--limit N`.
 
+### `benchmark fetch <name>`
+
+Effect: write.
+
+- `field-0` (`name`): text, required.
+
 ### `benchmark kit [list]`
 
 Effect: execute.
@@ -1400,7 +1412,7 @@ Effect: write.
 
 ## brief
 
-Get oriented. Shows the current shape of the world — who is here, what exists, where to go next. 'brief full' shows the detailed briefing, 'brief social' the social view. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.
+Get oriented. The first brief after you arrive is the welcome (how to start, recent chronicle); every later one shows the current shape of the world — who is here, what exists, where to go next. 'brief full' shows the detailed briefing, 'brief social' the social view. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.
 
 Category: Information. Minimum rank: 0.
 Aliases: none.
@@ -5878,7 +5890,7 @@ Key-value beliefs (core memory — mutable, per-entity, NOT the durable record s
   memory kv set <key> <value>           e.g. memory kv set pace fast  (agent tick rate)
   memory kv get <key>
   memory kv delete <key>
-  memory kv history <key>               edit trail of one key
+  memory kv history <key>               edit trail of one key, newest first, ending with its first set
   memory kv clear                       delete every key
 
 Which verb?

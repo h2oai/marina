@@ -583,7 +583,7 @@ export class BenchmarkRunner {
     }
     if (!this.datasetReady(opts.benchmark)) {
       throw new Error(
-        `dataset not cached for ${opts.benchmark}. run "bun run benchmarks/download-all.ts"`,
+        `dataset not downloaded for ${opts.benchmark}. run "benchmark fetch ${opts.benchmark}"`,
       );
     }
 
