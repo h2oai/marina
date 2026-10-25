@@ -364,6 +364,12 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "explicit attribution, retained with its receipt",
   },
   {
+    table: "judge_ledger",
+    timeColumn: "opined_at",
+    kind: "ledger",
+    note: "every judge's opinions and their ground truth — the one earned rule's record",
+  },
+  {
     table: "challenge_outcomes",
     timeColumn: "answered_at",
     kind: "ledger",

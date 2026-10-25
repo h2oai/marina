@@ -79,6 +79,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One judge service.** The challenge judge, the task-submission verifier, the attention judges,
+  the outcome judges and the Arbiter now record every opinion and its later ground truth in one
+  ledger (`judge_ledger`, migration 179). The migration copies the rows already kept in
+  `challenge_outcomes`, `judge_observations` and judged outcomes, idempotently and without
+  changing those tables. Every surface asks one earned rule over the ledger (`judgeEarned` →
+  `earnedJudge`), counted per surface and judge, and per class for challenges. Only opinions
+  with a ground truth count. The challenge judge now earns per backend model as well as per
+  class. `MARINA_JUDGE=off|observe|on` sets every surface. The per-surface variables still win
+  for their own surface, and with neither set nothing changes. Under `MARINA_JUDGE=on` the
+  verifier bounces a submission only once it has earned that right. The new `judge stats
+  [surface]` command (rank 0) shows, per judge: n, agreement, the Wilson lower bound, whether it
+  is earned, and how many more observations it needs. It says "no judge backend" when none is
+  configured. `decision agreement`, `challenge stats` and `outcome agreement` read the same
+  ledger, and the separate tally code is removed.
 - **`MARINA_OUTCOME_JUDGE` defaults on when a model provider is configured** (off otherwise; an
   explicit value always wins), the same rule as `MARINA_LESSONS_FROM_WORK`. Only a judge that has
   earned agreement and is confident settles or teaches, as before.

@@ -53,6 +53,7 @@ import * as investigationJournalDb from "./db-investigation-journal";
 import * as investigationLifecycleDb from "./db-investigation-lifecycle";
 import * as investigationsDb from "./db-investigations";
 import * as journeysDb from "./db-journeys";
+import * as judgeLedgerDb from "./db-judge-ledger";
 import * as learnedDb from "./db-learned";
 import * as logsDb from "./db-logs";
 import * as macrosDb from "./db-macros";
@@ -2304,6 +2305,39 @@ export class MarinaDB implements MarinaStores {
     opts: { evaluator?: string; limit?: number } = {},
   ): decisionsDb.JudgeObservationRow[] {
     return decisionsDb.listJudgeObservations(this.reader, opts);
+  }
+
+  recordJudgeOpinion(row: judgeLedgerDb.JudgeOpinionInput): void {
+    judgeLedgerDb.recordJudgeOpinion(this.db, row);
+  }
+
+  settleJudgeTruth(truth: {
+    subject: string;
+    succeeded: boolean;
+    truthJson?: string | null;
+    resolvedAt: number;
+  }): number {
+    return judgeLedgerDb.settleJudgeTruth(this.db, truth);
+  }
+
+  findJudgeTruth(key: string, opinedAt: number) {
+    return judgeLedgerDb.findJudgeTruth(this.db, key, opinedAt);
+  }
+
+  listJudgeLedger(
+    opts: { surface?: string; judge?: string; limit?: number } = {},
+  ): judgeLedgerDb.JudgeLedgerRow[] {
+    return judgeLedgerDb.listJudgeLedger(this.reader, opts);
+  }
+
+  judgeLedgerTallies(
+    opts: { surface?: string; judge?: string; question?: string; byQuestion?: boolean } = {},
+  ): judgeLedgerDb.JudgeLedgerTally[] {
+    return judgeLedgerDb.judgeLedgerTallies(this.db, opts);
+  }
+
+  backfillJudgeLedger(): void {
+    judgeLedgerDb.backfillJudgeLedger(this.db);
   }
 
   recordChallengeOutcome(row: decisionsDb.ChallengeOutcomeInput): number {

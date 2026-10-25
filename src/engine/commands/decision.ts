@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { RateLimiter } from "../../auth/rate-limiter";
-import { judgeAgreement } from "../../decisions/agreement";
 import { harnessDecisionProvider } from "../../decisions/engines";
 import type { Evidence } from "../../decisions/evidence";
+import { judgeStandings } from "../../decisions/judges";
 import { loadDecisionCases, qualifyBackend, renderBackendReport } from "../../decisions/qualify";
 import type { DecisionImagePart, DecisionProvider } from "../../decisions/types";
 import { checkDraft, chooseOption } from "../../decisions/verify";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { DecisionsStore } from "../../persistence/interfaces/decisions-store";
+import type { JudgeLedgerStore } from "../../persistence/interfaces/judge-ledger-store";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
 import {
@@ -84,7 +85,7 @@ export function decisionCommand(deps: {
   /** Default: the world's configured backend (`MARINA_DECISIONS`). */
   provider?: () => DecisionProvider | undefined;
   /** Recorded judge opinions (`MARINA_DECISION_VERIFY=observe|on`) for `decision agreement`. */
-  store?: DecisionsStore;
+  store?: DecisionsStore & Pick<JudgeLedgerStore, "judgeLedgerTallies">;
   /** Runtime decision settings (`decision settings`); absent without a database. */
   settings?: DecisionSettingsDeps;
   /**
@@ -180,8 +181,8 @@ export function decisionCommand(deps: {
         const now = configured
           ? `This world judges with ${configured.kind}:${configured.model}${configured.calibrated === false ? " (uncalibrated)" : ""}.`
           : "No decision backend is configured on this world (MARINA_DECISIONS).";
-        const rows = deps.store?.listJudgeObservations({ limit: 5_000 }) ?? [];
-        const stats = judgeAgreement(rows);
+        // A view of the one judge ledger's `verify` surface (`judge stats verify`).
+        const stats = deps.store ? judgeStandings(deps.store, { surface: "verify" }) : [];
         if (stats.length === 0) {
           ctx.send(
             input.entity,
@@ -206,9 +207,9 @@ export function decisionCommand(deps: {
             dim(now),
             ...stats.map(
               (a) =>
-                `  ${bold(a.evaluator)}${a.calibrated ? "" : dim(" (uncalibrated)")}  agreed ${pct(a.agreed, a.compared)} of ${a.compared}` +
+                `  ${bold(a.judge)}${a.calibrated === false ? dim(" (uncalibrated)") : ""}  agreed ${pct(a.agreed, a.compared)} of ${a.compared}` +
                 dim(
-                  ` · passed-but-rejected ${a.falsePass} · failed-but-approved ${a.falseFail} · no opinion ${a.noOpinion} · awaiting verdict ${a.awaitingVerdict} · lower ${Math.round(a.lower * 100)}% ${a.earned ? "earned" : "not earned"}`,
+                  ` · passed-but-rejected ${a.falsePass} · failed-but-approved ${a.falseFail} · no opinion ${a.noOpinion} · awaiting verdict ${a.awaiting} · lower ${Math.round(a.lower * 100)}% ${a.earned ? "earned" : "not earned"}`,
                 ),
             ),
             dim(

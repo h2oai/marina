@@ -22,7 +22,8 @@
  *
  * Each opinion is a judged outcome `judged:<subject>` and each truth the
  * mechanical outcome `<subject>` (kind `request`: evidence only, never a
- * lesson), so `judgeAgreement` and `earnedJudge` — the one earned rule —
+ * lesson), mirrored into the one judge ledger (`attention:<kind>`), so
+ * `judgeEarned` and `earnedJudge` — the one earned rule —
  * measure every judge per `<kind>:<model>`. `observe` records only. `on`
  * lets an EARNED judge act, and only advisorily: wake and converge opinions
  * feed the same `attention_useful`/`attention_noise` counters people set
@@ -36,11 +37,11 @@
 
 import { harnessDecisionProvider } from "../decisions/engines";
 import { maskSensitiveText } from "../decisions/gate";
+import { judgeEarned as earnedOn, judgeModeFor } from "../decisions/judges";
 import { noul, score } from "../decisions/questions";
 import type { DecisionProvider, DecisionQuestions } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
-import { judgeAgreement } from "../outcomes/agreement";
 import { recordResolved } from "../outcomes/record";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
@@ -55,9 +56,9 @@ export type AttentionJudgeKind =
   | "review-sycophancy"
   | "review-value";
 
+/** `MARINA_ATTENTION_JUDGE` when set, else `MARINA_JUDGE`, else observe (`judgeModeFor`). */
 export function attentionJudgeMode(env: NodeJS.ProcessEnv = process.env): AttentionJudgeMode {
-  const v = env.MARINA_ATTENTION_JUDGE?.trim().toLowerCase();
-  return v === "off" || v === "on" ? v : "observe";
+  return judgeModeFor("attention", env).mode;
 }
 
 /** A converge question is asked from this reply depth on. */
@@ -210,9 +211,10 @@ async function run(db: MarinaDB, p: DecisionProvider, job: Job): Promise<void> {
   }
 }
 
-/** Whether `judge` (`<kind>:<model>`) has earned acting on its own. */
+/** Whether `judge` (`<kind>:<model>`) has earned acting on its own (the one judge ledger). */
 export function judgeEarned(db: MarinaDB, judge: string): boolean {
-  return judgeAgreement(db, { judge }).some((a) => a.judge === judge && a.earned);
+  const kind = judge.slice(0, judge.indexOf(":"));
+  return earnedOn(db, `attention:${kind}`, judge);
 }
 
 function truth(

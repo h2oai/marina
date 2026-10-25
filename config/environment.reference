@@ -190,11 +190,14 @@
 # @protected
 # MARINA_OPS_NOTIFY=off
 
-# Challenge judge (needs a decision backend; nothing is scored without one). `observe` (default) scores held commands in shadow so its agreement with people is measured. `on` also auto-approves `once` for a gate only after it earned that gate (25+ approved calls at 85% or better, 95% lower bound), never for the core gates, never `always`, never a deny. `off` never scores. `challenge stats` shows the record.
+# One switch for every judge surface (src/decisions/judges.ts): the challenge judge, the task-submission verifier, the attention judges and the outcome judges. `off`, `observe` or `on`. Unset, each surface keeps its own default (challenge, verify and attention `observe`; outcome `on` with a model provider, else `off`). A surface's own variable (MARINA_CHALLENGE_JUDGE, MARINA_DECISION_VERIFY, MARINA_ATTENTION_JUDGE, MARINA_OUTCOME_JUDGE) overrides this one for that surface. Every opinion and its later ground truth land in one ledger, and `judge stats` reads it. `on` lets only an EARNED judge act (25+ comparisons with a ground truth, Wilson 95% lower bound 0.85 or better, per surface and judge), with each surface's limits unchanged: the challenge judge approves `once` only, never a core gate, never `always` or a deny; attention judges only advise; the verifier bounces a submission at most once, and under this switch only once it has earned it. The Arbiter is not switched here (MARINA_FORECAST_ARBITER); its overrules are recorded in the same ledger. Needs a decision backend; with none, no judge call is made.
+# MARINA_JUDGE=observe
+
+# Challenge judge (needs a decision backend; nothing is scored without one). Overrides MARINA_JUDGE for challenges. `observe` (default) scores held commands in shadow so its agreement with people is measured. `on` also auto-approves `once` for a gate only after it earned that gate (25+ approved calls at 85% or better, 95% lower bound), never for the core gates, never `always`, never a deny. `off` never scores. `challenge stats` shows the record.
 # @protected
 # MARINA_CHALLENGE_JUDGE=observe
 
-# Attention judges (needs a decision backend; nothing is judged without one): whether a borderline wake of a supervised resident was needed now, whether a reply deep in an agent conversation (depth 3+) adds anything, whether a code review approval rests on specific checking, and how useful a review verdict is. `observe` (default) records each opinion and its later mechanical result on the outcome path, so agreement is measured per judge and model. `on` lets a judge that EARNED it (25+ comparisons, 95% lower bound 0.85 or better) act advisorily: wake and deep-reply opinions feed the `attention_useful`/`attention_noise` counters, review opinions show in `code review <id>`. A judge never blocks, closes or approves anything. `off` makes no calls and records nothing.
+# Attention judges (needs a decision backend; nothing is judged without one; overrides MARINA_JUDGE for them): whether a borderline wake of a supervised resident was needed now, whether a reply deep in an agent conversation (depth 3+) adds anything, whether a code review approval rests on specific checking, and how useful a review verdict is. `observe` (default) records each opinion and its later mechanical result on the outcome path, so agreement is measured per judge and model. `on` lets a judge that EARNED it (25+ comparisons, 95% lower bound 0.85 or better) act advisorily: wake and deep-reply opinions feed the `attention_useful`/`attention_noise` counters, review opinions show in `code review <id>`. A judge never blocks, closes or approves anything. `off` makes no calls and records nothing.
 # MARINA_ATTENTION_JUDGE=observe
 
 # Deepest spawn lineage an agent may extend (lead → sub-lead → specialist).
@@ -885,7 +888,7 @@
 # How long an ask-a-person verdict's challenge stays open, in milliseconds. Defaults to MARINA_CHALLENGE_TTL_MS.
 # MARINA_DECISION_APPROVAL_TIMEOUT_MS=3600000
 
-# Verify `task submit` deliverables: `observe` (default) records the judge's opinion without acting, so its agreement with creators is measured (`decision agreement`); `on` bounces a weak first attempt once (advisory; the creator still approves); `off` never scores. Code Mode submits (which already passed their required checks) get the opinion recorded under both `observe` and `on`, never a bounce. Needs a backend; nothing is scored without one.
+# Verify `task submit` deliverables (overrides MARINA_JUDGE for the verifier): `observe` (default) records the judge's opinion without acting, so its agreement with creators is measured (`decision agreement`); `on` bounces a weak first attempt once (advisory; the creator still approves); `off` never scores. Code Mode submits (which already passed their required checks) get the opinion recorded under both `observe` and `on`, never a bounce. Needs a backend; nothing is scored without one.
 # MARINA_DECISION_VERIFY=observe
 
 # Most images one decision request may carry (`/v1/decisions` and in-world decisions; 1–32). Every image is decoded and prepared to Jev's limits (PNG/JPEG, 256–1568 px a side, 78,400–2,458,624 px, ≤ 16 MiB) before it leaves Marina; together ≤ 30 MiB.
@@ -1050,7 +1053,7 @@
 # - Resolution: a saved answer that no market settles is researched after its end time plus 2 days, and the decision backend judges how it resolved, at most 5 per hour. Choice answers: it picks an option. Multi-select: a yes/no per option behind a "has it resolved" gate. Numbers: MARINA_OUTCOME_JUDGE_MODEL proposes the value with a verbatim quote that must be in the evidence, and the backend confirms it.
 # - Quality: a task submission its creator has not decided within 3 days is judged for whether it completes the task, at most 5 per hour.
 # - `off`: nothing. `observe`: every judgement is recorded as a judged outcome that settles and teaches nothing, measured against any mechanical result (`outcome agreement`). `on`: as observe, and a confident judgement (≥ 0.9) from a judge that has earned agreement (≥ 25 comparisons, Wilson lower bound ≥ 0.85) settles the answer or is delivered as a lesson, labelled judged. Nothing is ever filed outside this world.
-# - Unset: `on` when a model provider is configured, else `off` (the same rule as MARINA_LESSONS_FROM_WORK). An explicit value always wins. `readiness` (`learning-loop`) shows what waits unjudged and how far each judge is from earning.
+# - Overrides MARINA_JUDGE here. Unset (and MARINA_JUDGE unset): `on` when a model provider is configured, else `off` (the same rule as MARINA_LESSONS_FROM_WORK). An explicit value always wins. `readiness` (`learning-loop`) shows what waits unjudged and how far each judge is from earning.
 # MARINA_OUTCOME_JUDGE=
 
 # The model that proposes a number's resolved value for judged resolution; default the first MARINA_FORECAST_ANALYSTS model, else `role:outcome-judge=`, then MARINA_MODEL_TIER_STRONG, then marina/default.

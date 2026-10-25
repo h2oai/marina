@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resolveEvidence } from "../../decisions/evidence";
+import { judgeEarned } from "../../decisions/judges";
 import { approachAdvice } from "../../forecast/competence";
-import { recordTaskOpinion } from "../../outcomes/live";
+import { recordVerifierOpinion } from "../../outcomes/live";
 import type { EntityId } from "../../types";
 import { setChallengeHost } from "../challenges";
 import { redactCommandText } from "../command-redaction";
@@ -305,19 +306,12 @@ export function registerCoordinationCommands(engine: Engine): void {
         resolveCitedEvidence,
         (row) =>
           tryLog(engine.logger, "decisions", "Judge observation not recorded", () => {
-            engine.db?.recordJudgeObservation(row);
-            // The same opinion on the outcome path: a judged outcome, measured
-            // against the creator's verdict when it comes (`outcome agreement`).
-            if (engine.db)
-              recordTaskOpinion(engine.db, {
-                taskId: row.taskId,
-                claimant: row.claimantName,
-                judge: row.evaluator,
-                opinion: row.opinion,
-              });
+            // The verifier's table, the judge ledger and the outcome path.
+            if (engine.db) recordVerifierOpinion(engine.db, row);
           }),
         (work) => engine.trackBackground(work),
         () => (engine.db ? approachAdvice(engine.db, "work:task") : undefined),
+        (evaluator) => !!engine.db && judgeEarned(engine.db, "verify", evaluator),
       ),
     );
   }

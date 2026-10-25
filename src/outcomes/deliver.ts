@@ -30,8 +30,10 @@
  * outcome. A delivery that keeps failing ends `failed`, with its reason.
  */
 
+import { recordJudgeOpinion } from "../decisions/judges";
 import { Logger } from "../engine/logger";
 import { noteResolvedForecast, noteResolvedRecord } from "../forecast/adjust";
+import { arbiterHistory } from "../forecast/arbiter";
 import { typedFormation } from "../forecast/formations";
 import { type ForecastHistory, historyFromEnv, resolvedRecord } from "../forecast/history";
 import { recipeCard, recipeKey } from "../forecast/method-cards";
@@ -161,6 +163,31 @@ function routingEvidence(
 }
 
 /**
+ * The Arbiter's overrule on a resolved answer, scored by the truth (right =
+ * it beat the majority), in the one judge ledger (`arbiter` surface). For the
+ * readout only: the Arbiter's earned trust stays its own bar, read from
+ * as-of-fenced forecast history, which this writes beside.
+ */
+export function noteArbiterOverrule(
+  db: MarinaDB,
+  subject: string,
+  answer: Pick<TypedForecastAnswer, "answer" | "arbiter">,
+  truth: { options?: string[]; value?: unknown },
+  at: number,
+): void {
+  const arbiter = arbiterHistory(answer, truth);
+  if (!arbiter?.overruled || arbiter.right === undefined) return;
+  recordJudgeOpinion(db, {
+    surface: "arbiter",
+    judge: arbiter.evaluator,
+    subject,
+    opinion: "pass",
+    truth: arbiter.right ? "pass" : "fail",
+    opinedAt: at,
+  });
+}
+
+/**
  * The history record for a resolved forecast: a typed answer through
  * `noteResolvedForecast` (its pre-adjustment forecast and prior); a plain
  * probability or number from its saved values (that path has no adjustment
@@ -192,6 +219,7 @@ async function deliverHistory(
       resolvedAt,
       ...routed,
     });
+    if (wrote) noteArbiterOverrule(db, o.subject, typed, truth, o.resolved_at);
     return wrote || (await history.all()).some((r) => r.id === o.subject) ? "done" : "skipped";
   }
   if (row.kind === "number" && row.mean !== null && row.sd !== null && row.sd > 0) {

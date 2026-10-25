@@ -14,8 +14,10 @@
  */
 
 import { recordVerified, type VerifiedCredit } from "../agent/standing";
+import { recordJudgeOpinion } from "../decisions/judges";
 import { canonicalFormationName } from "../orchestration/formations/catalogue";
 import type { MarinaDB } from "../persistence/database";
+import type { JudgeObservationInput } from "../persistence/db-decisions";
 import type { EngineEvent } from "../types";
 import { recordResolved } from "./record";
 import { canScope, type WorkKind, workRefs } from "./work-refs";
@@ -232,6 +234,37 @@ export function recordTaskOpinion(
       ...workRefsFor(db, "task", input.claimant, taskApproach(db, input.claimant, input.taskId)),
     ],
     resolvedAt: at,
+  });
+}
+
+/**
+ * The submission verifier's opinion, recorded once for every reader: the
+ * verifier's own table (`judge_observations`), the one judge ledger (`verify`
+ * surface, settled by the creator's next verdict on the attempt) and the
+ * outcome path (`recordTaskOpinion`). Each write is best-effort.
+ */
+export function recordVerifierOpinion(
+  db: MarinaDB,
+  row: JudgeObservationInput,
+  at: number = Date.now(),
+): void {
+  db.recordJudgeObservation(row);
+  const attempt = taskBase(row.taskId, row.claimantName);
+  recordJudgeOpinion(db, {
+    surface: "verify",
+    judge: row.evaluator,
+    subject: attempt,
+    truthKey: `${attempt}:`,
+    opinion: row.opinion,
+    calibrated: row.calibrated,
+    opinedAt: at,
+  });
+  recordTaskOpinion(db, {
+    taskId: row.taskId,
+    claimant: row.claimantName,
+    judge: row.evaluator,
+    opinion: row.opinion,
+    at,
   });
 }
 

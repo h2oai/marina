@@ -136,7 +136,7 @@ export function challengeCommand(deps: {
         }
         for (const r of records) {
           lines.push(
-            `  ${bold(r.class)} ${r.earned ? "earned" : "not earned"} · allow ${r.allowApproved}/${r.allowSaid} approved (≥ ${(r.precisionLower * 100).toFixed(0)}%) · hold ${r.holdDenied}/${r.holdSaid} denied`,
+            `  ${bold(r.class)} ${dim(r.judge)} ${r.earned ? "earned" : "not earned"} · allow ${r.allowApproved}/${r.allowSaid} approved (≥ ${(r.precisionLower * 100).toFixed(0)}%) · hold ${r.holdDenied}/${r.holdSaid} denied`,
           );
         }
         ctx.send(input.entity, lines.join("\n"));

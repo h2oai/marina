@@ -5388,6 +5388,23 @@ Effect: write.
 - `field-0` (`id|latest`): text, required, choices `id`, `latest`.
 - `field-1` (`context or correction`): text, required.
 
+## judge
+
+Every judge's record against ground truth, from the one judge ledger.
+Usage:
+  judge stats [challenge|verify|attention|outcome|arbiter]
+MARINA_JUDGE=off|observe|on sets every judge surface; a surface's own variable (MARINA_CHALLENGE_JUDGE, MARINA_DECISION_VERIFY, MARINA_ATTENTION_JUDGE, MARINA_OUTCOME_JUDGE) overrides it. `on` lets only an earned judge act.
+
+Category: System. Minimum rank: 0.
+Aliases: none.
+
+### `judge stats [challenge|verify|attention|outcome|arbiter]`
+
+Effect: read.
+
+- `field-0` (`challenge|verify|attention|outcome|arbiter`): choice, optional group `option-0`, choices `challenge`, `verify`, `attention`, `outcome`, `arbiter`.
+- Group `option-0`: `challenge|verify|attention|outcome|arbiter`.
+
 ## key
 
 Manage LLM API keys.

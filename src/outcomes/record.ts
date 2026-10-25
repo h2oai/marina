@@ -8,6 +8,7 @@
  * a producer never waits on a judge and nothing is lost to a restart.
  */
 
+import { recordJudgedOutcome, settleJudgedTruth } from "../decisions/judges";
 import { logRejection, tryLog } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
@@ -99,6 +100,27 @@ export function recordResolved(
         db.linkDecisionOutcome(input.owner!, id, recorded.id);
     });
   }
-  if (recorded.created) deliverSoon(db);
+  if (recorded.created) {
+    // The judge ledger: a judged outcome is an opinion; a mechanical one is
+    // the ground truth any waiting opinion is checked against.
+    if (input.basis === "judged")
+      recordJudgedOutcome(db, {
+        subject: input.subject,
+        kind: input.kind,
+        source: input.source,
+        succeeded: input.succeeded,
+        judge: input.judge ?? null,
+        truth: input.truth,
+        resolvedAt: input.resolvedAt,
+      });
+    else
+      settleJudgedTruth(db, {
+        subject: input.subject,
+        succeeded: input.succeeded,
+        truth: input.truth,
+        resolvedAt: input.resolvedAt,
+      });
+    deliverSoon(db);
+  }
   return recorded;
 }

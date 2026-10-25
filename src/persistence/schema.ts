@@ -28,6 +28,88 @@ const MIGRATION_HOOKS: Readonly<Partial<Record<number, (db: Database) => void>>>
   143: hashMemApiKeySecrets,
 };
 
+/**
+ * Migration 179's copy of the judge rows kept before the ledger existed.
+ * Idempotent (INSERT OR IGNORE on the ledger's unique key; the UPDATEs touch
+ * only unsettled rows) and read-only on its sources. `backfillJudgeLedger`
+ * re-runs it. Self-contained so later edits elsewhere never change it.
+ *
+ *  - challenge_outcomes: people-answered holds the judge scored (allow = pass,
+ *    hold = fail); approved = pass, denied = fail. Expired and judge-answered
+ *    holds have no ground truth and are skipped. The judge's model was never
+ *    recorded, so these rows belong to judge `unknown`.
+ *  - judge_observations: the latest opinion per (task, claimant, evaluator),
+ *    settled by the claim's status (approved / rejected).
+ *  - judged outcomes: `attention-judge:<kind>` sources are `attention:<kind>`,
+ *    every other judged outcome is `outcome`; settled by the mechanical
+ *    outcome of the same subject (a task attempt: its first verdict after the
+ *    opinion), a forecast by its truth.
+ */
+export const JUDGE_LEDGER_BACKFILL_179 = `
+INSERT OR IGNORE INTO judge_ledger
+  (surface, question, judge, subject, truth_key, opinion, truth, agreed, opined_at, truth_at, origin)
+SELECT 'challenge', class, 'unknown', 'challenge:' || token, NULL,
+  CASE judge_opinion WHEN 'allow' THEN 'pass' WHEN 'hold' THEN 'fail' ELSE 'none' END,
+  CASE WHEN answer IN ('once', 'always') THEN 'pass' ELSE 'fail' END,
+  CASE WHEN judge_opinion = 'none' THEN NULL
+       WHEN (judge_opinion = 'allow') = (answer IN ('once', 'always')) THEN 1 ELSE 0 END,
+  created_at, answered_at, 'backfill:challenge_outcomes'
+FROM challenge_outcomes
+WHERE judge_opinion IN ('allow', 'hold', 'none') AND answer <> 'expired'
+  AND coalesce(answered_role, '') <> 'judge'
+ORDER BY id DESC;
+
+INSERT OR IGNORE INTO judge_ledger
+  (surface, judge, subject, truth_key, opinion, calibrated, opined_at, origin)
+SELECT 'verify', evaluator, 'task:' || task_id || ':' || claimant_name,
+  'task:' || task_id || ':' || claimant_name || ':', opinion, calibrated, created_at,
+  'backfill:judge_observations'
+FROM judge_observations ORDER BY id DESC;
+
+UPDATE judge_ledger SET
+  truth = (SELECT CASE c.status WHEN 'approved' THEN 'pass' ELSE 'fail' END FROM task_claims c
+            WHERE 'task:' || c.task_id || ':' || c.entity_name = judge_ledger.subject
+              AND c.status IN ('approved', 'rejected') LIMIT 1),
+  truth_at = opined_at
+WHERE surface = 'verify' AND truth IS NULL AND origin = 'backfill:judge_observations';
+UPDATE judge_ledger SET agreed = CASE WHEN opinion = 'none' THEN NULL ELSE opinion = truth END
+WHERE surface = 'verify' AND truth IS NOT NULL AND agreed IS NULL
+  AND origin = 'backfill:judge_observations';
+
+INSERT OR IGNORE INTO judge_ledger
+  (surface, question, judge, subject, truth_key, opinion, opinion_value, opined_at, origin)
+SELECT
+  CASE WHEN source LIKE 'attention-judge:%' THEN 'attention:' || substr(source, 17) ELSE 'outcome' END,
+  kind, coalesce(judge, 'unknown'), subject,
+  CASE WHEN subject LIKE 'judged:task:%' THEN rtrim(substr(subject, 8), '0123456789')
+       ELSE substr(subject, 8) END,
+  CASE WHEN succeeded = 1 THEN 'pass' ELSE 'fail' END,
+  CASE WHEN kind = 'forecast' THEN coalesce(truth_json, '') END,
+  resolved_at, 'backfill:outcomes'
+FROM outcomes WHERE basis = 'judged' AND subject LIKE 'judged:%';
+
+UPDATE judge_ledger SET (truth, agreed, truth_at) = (
+  SELECT CASE WHEN m.succeeded = 1 THEN 'pass' ELSE 'fail' END,
+    CASE WHEN judge_ledger.opinion_value IS NOT NULL
+         THEN judge_ledger.opinion_value = coalesce(m.truth_json, '')
+         ELSE judge_ledger.opinion = CASE WHEN m.succeeded = 1 THEN 'pass' ELSE 'fail' END END,
+    m.resolved_at
+  FROM outcomes m
+  WHERE m.basis = 'mechanical' AND (
+    (substr(judge_ledger.truth_key, -1) <> ':' AND m.subject = judge_ledger.truth_key) OR
+    (substr(judge_ledger.truth_key, -1) = ':'
+      AND m.subject BETWEEN judge_ledger.truth_key AND judge_ledger.truth_key || '~'
+      AND m.resolved_at >= judge_ledger.opined_at))
+  ORDER BY m.resolved_at LIMIT 1)
+WHERE origin = 'backfill:outcomes' AND truth IS NULL AND EXISTS (
+  SELECT 1 FROM outcomes m
+  WHERE m.basis = 'mechanical' AND (
+    (substr(judge_ledger.truth_key, -1) <> ':' AND m.subject = judge_ledger.truth_key) OR
+    (substr(judge_ledger.truth_key, -1) = ':'
+      AND m.subject BETWEEN judge_ledger.truth_key AND judge_ledger.truth_key || '~'
+      AND m.resolved_at >= judge_ledger.opined_at)));
+`;
+
 export const FORWARD_MIGRATIONS: Migration[] = [
   // Migration 168: asset record v2 (src/engine/media/asset-library.ts). Facts
   // (sha256, dimensions, duration, pages), reader text (alt, caption), origin
@@ -351,6 +433,37 @@ CREATE TABLE IF NOT EXISTS room_access (
   {
     version: 178,
     sql: `CREATE INDEX IF NOT EXISTS idx_investigation_content_attempt_bytes ON investigation_content(attempt_id, bytes);`,
+  },
+  // One judge ledger (src/decisions/judges.ts): every judge opinion — the
+  // challenge judge, the submission verifier, the attention judges, the
+  // outcome judges, the Arbiter's overrules — with its later ground truth, per
+  // (surface, judge, subject), so one earned rule reads one store. The rows
+  // already kept by challenge_outcomes, judge_observations and judged outcomes
+  // are copied in (INSERT OR IGNORE: idempotent; the source tables are not
+  // touched). Truths settle when the mechanical result arrives.
+  {
+    version: 179,
+    sql: `
+CREATE TABLE IF NOT EXISTS judge_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  surface TEXT NOT NULL,
+  question TEXT NOT NULL DEFAULT '',
+  judge TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  truth_key TEXT,
+  opinion TEXT NOT NULL CHECK (opinion IN ('pass', 'fail', 'none')),
+  opinion_value TEXT,
+  calibrated INTEGER,
+  truth TEXT CHECK (truth IN ('pass', 'fail')),
+  agreed INTEGER,
+  opined_at INTEGER NOT NULL,
+  truth_at INTEGER,
+  origin TEXT NOT NULL DEFAULT 'live',
+  UNIQUE (surface, judge, subject)
+);
+CREATE INDEX IF NOT EXISTS idx_judge_ledger_pending ON judge_ledger(truth_key) WHERE truth IS NULL;
+CREATE INDEX IF NOT EXISTS idx_judge_ledger_surface ON judge_ledger(surface, judge, question);
+${JUDGE_LEDGER_BACKFILL_179}`,
   },
 ];
 

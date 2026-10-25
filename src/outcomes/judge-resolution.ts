@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Judged resolution (`MARINA_OUTCOME_JUDGE=off|observe|on`; unset: `on` when
- * a model provider is configured, else `off` — `judgeResolutionMode`).
+ * Judged resolution (`MARINA_OUTCOME_JUDGE=off|observe|on`, else `MARINA_JUDGE`;
+ * unset: `on` when a model provider is configured, else `off`).
  * Most saved answers are never linked to a market, so nothing mechanical
  * ever settles them and they teach nothing. Past its end time (plus a grace
  * period), such an answer is researched after the fact and the configured
@@ -26,9 +26,9 @@
  * confirms it. Ranking and text answers are not judged.
  */
 
-import { availableModels } from "../agent/available-models";
 import { roleModelFromEnv } from "../config/model-tiers";
 import { harnessDecisionProvider } from "../decisions/engines";
+import { judgeModeFor } from "../decisions/judges";
 import { choice, noul } from "../decisions/questions";
 import type { ChoiceAnswer, DecisionProvider, NoulAnswer } from "../decisions/types";
 import { Logger } from "../engine/logger";
@@ -57,17 +57,14 @@ export const JUDGE_MIN_CONFIDENCE = 0.9;
 const UNRESOLVED = "not_resolved";
 
 /**
- * `MARINA_OUTCOME_JUDGE`. An explicit value always wins (junk is `off`).
- * Unset: `on` when this installation has a model provider to judge with, else
- * `off` — the same rule as `MARINA_LESSONS_FROM_WORK`. `on` never widens what
- * a judge may do: only a judge that has EARNED agreement and is confident
- * settles or teaches, its outcomes are labelled `judged`, and nothing here
- * files anything outside this world.
+ * `MARINA_OUTCOME_JUDGE` when set (junk is `off`), else `MARINA_JUDGE`, else
+ * `on` when this installation has a model provider to judge with, else `off`
+ * (`judgeModeFor`). `on` never widens what a judge may do: only a judge that
+ * has EARNED agreement and is confident settles or teaches, its outcomes are
+ * labelled `judged`, and nothing here files anything outside this world.
  */
 export function judgeResolutionMode(env: NodeJS.ProcessEnv = process.env): JudgeResolutionMode {
-  const v = env.MARINA_OUTCOME_JUDGE?.trim().toLowerCase();
-  if (v === undefined || v === "") return availableModels(env).length > 0 ? "on" : "off";
-  return v === "observe" || v === "on" ? v : "off";
+  return judgeModeFor("outcome", env).mode;
 }
 
 const recheck = new WeakMap<object, Map<number, number>>();

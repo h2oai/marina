@@ -47,6 +47,7 @@ describe("task submit verifier", () => {
     "MARINA_DECISION_MODEL",
     "MARINA_DECISION_VERIFY",
     "MARINA_AUTONOMY",
+    "MARINA_JUDGE",
   ];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   let backend: ReturnType<typeof Bun.serve>;
@@ -189,6 +190,34 @@ describe("task submit verifier", () => {
     }
     process.env.MARINA_AUTONOMY = "guarded";
     expect(decisionVerifyMode()).toBe("on");
+  });
+
+  it("under MARINA_JUDGE=on (no MARINA_DECISION_VERIFY), only an EARNED verifier bounces", async () => {
+    delete process.env.MARINA_DECISION_VERIFY;
+    process.env.MARINA_JUDGE = "on";
+    process.env.MARINA_AUTONOMY = "guarded";
+    quality = 0.5;
+    const first = claimTask();
+    engine.processCommand(bob.entity!, `task submit ${first} Rough notes`);
+    await until(() => db.listJudgeLedger({ surface: "verify" }).length === 1);
+    expect(claimStatus(first)).toBe("submitted"); // unearned: recorded, never bounced
+    expect(bob.allText().some((t) => t.includes("Not submitted yet"))).toBe(false);
+    const judge = db.listJudgeLedger({ surface: "verify" })[0]!.judge;
+    // Earn it: 25 opinions that matched the creators' verdicts.
+    for (let i = 0; i < 25; i++)
+      db.recordJudgeOpinion({
+        surface: "verify",
+        judge,
+        subject: `task:${1000 + i}:Seed`,
+        opinion: "fail",
+        truth: "fail",
+        opinedAt: i,
+      });
+    bob.clear();
+    const second = claimTask();
+    engine.processCommand(bob.entity!, `task submit ${second} Rough notes again`);
+    await until(() => bob.allText().some((t) => t.includes("Not submitted yet")));
+    expect(claimStatus(second)).toBe("claimed");
   });
 
   it("records a good submission immediately", async () => {

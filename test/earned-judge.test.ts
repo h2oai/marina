@@ -7,17 +7,15 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { judgeAgreement as decisionAgreement } from "../src/decisions/agreement";
 import {
   EARNED_JUDGE_MIN_LOWER,
   EARNED_JUDGE_MIN_N,
   earnedJudge,
-  emptyTally,
-  tallyComparison,
 } from "../src/decisions/earned-judge";
-import { EARNED_MIN_N, EARNED_MIN_PRECISION, judgeRecords } from "../src/engine/challenges";
+import { judgeEarned, judgeStandings } from "../src/decisions/judges";
+import { EARNED_MIN_N, EARNED_MIN_PRECISION, listJudgeRecords } from "../src/engine/challenges";
 import { EARNED_MIN_COMPARED, EARNED_MIN_LOWER } from "../src/outcomes/agreement";
-import type { JudgeObservationRow } from "../src/persistence/db-decisions";
+import { MarinaDB } from "../src/persistence/database";
 import { wilsonInterval } from "../src/stats";
 
 describe("earnedJudge", () => {
@@ -69,50 +67,86 @@ describe("earnedJudge", () => {
     expect(differ).toBe(0);
   });
 
-  it("tallies agreement, false passes and false fails", () => {
-    const t = emptyTally();
-    tallyComparison(t, true, true);
-    tallyComparison(t, true, false);
-    tallyComparison(t, false, true);
-    tallyComparison(t, false, false);
-    tallyComparison(t, true, true, false); // a judged forecast with a different truth
-    expect(t).toEqual({ compared: 5, agreed: 2, falsePass: 1, falseFail: 1 });
+  it("the ledger tallies agreement, false passes and false fails", () => {
+    const db = new MarinaDB(":memory:");
+    const rows: ["pass" | "fail", "pass" | "fail", boolean?][] = [
+      ["pass", "pass"],
+      ["pass", "fail"],
+      ["fail", "pass"],
+      ["fail", "fail"],
+      ["pass", "pass", false], // a judged forecast with a different truth
+    ];
+    rows.forEach(([opinion, truth, agreed], i) => {
+      db.recordJudgeOpinion({
+        surface: "outcome",
+        judge: "j",
+        subject: `s:${i}`,
+        opinion,
+        truth,
+        ...(agreed === undefined ? {} : { agreed }),
+        opinedAt: i,
+      });
+    });
+    expect(judgeStandings(db, { surface: "outcome" })[0]).toMatchObject({
+      compared: 5,
+      agreed: 2,
+      falsePass: 1,
+      falseFail: 1,
+    });
+    db.close();
   });
 });
 
 describe("every judge surface uses it", () => {
+  const ledger = (
+    surface: string,
+    rows: { opinion: "pass" | "fail"; truth: "pass" | "fail" }[],
+  ) => {
+    const db = new MarinaDB(":memory:");
+    rows.forEach((r, i) => {
+      db.recordJudgeOpinion({
+        surface,
+        question: surface === "challenge" ? "agent.spawn" : "",
+        judge: "chat-classifier:m",
+        subject: `s:${i}`,
+        opinion: r.opinion,
+        truth: r.truth,
+        opinedAt: i,
+      });
+    });
+    return db;
+  };
+
   it("the challenge judge's precision of allow", () => {
-    const rows = Array.from({ length: 30 }, (_, i) => ({
-      class: "agent.spawn",
-      answer: i < 29 ? "once" : "deny",
-      answered_role: "person",
-      judge_opinion: "allow",
-    }));
-    const [rec] = judgeRecords(rows);
+    const db = ledger(
+      "challenge",
+      Array.from({ length: 30 }, (_, i) => ({
+        opinion: "pass" as const,
+        truth: i < 29 ? ("pass" as const) : ("fail" as const),
+      })),
+    );
+    const [rec] = listJudgeRecords(db);
     expect(rec).toMatchObject({
       allowSaid: 30,
       allowApproved: 29,
       earned: earnedJudge(29, 30).earned,
     });
     expect(rec!.precisionLower).toBe(earnedJudge(29, 30).lower);
+    db.close();
   });
 
-  it("`decision agreement` reports the same lower bound and verdict", () => {
-    const row = (taskId: number, opinion: string, outcome: string): JudgeObservationRow =>
-      ({
-        id: taskId,
-        evaluator: "chat-classifier:m",
-        calibrated: 0,
-        task_id: taskId,
-        claimant_name: "bob",
-        opinion,
-        outcome,
-      }) as unknown as JudgeObservationRow;
-    const rows = Array.from({ length: 30 }, (_, i) =>
-      row(i + 1, "pass", i < 28 ? "approved" : "rejected"),
+  it("`decision agreement` (the verify surface) reports the same lower bound and verdict", () => {
+    const db = ledger(
+      "verify",
+      Array.from({ length: 30 }, (_, i) => ({
+        opinion: "pass" as const,
+        truth: i < 28 ? ("pass" as const) : ("fail" as const),
+      })),
     );
-    const [a] = decisionAgreement(rows);
+    const [a] = judgeStandings(db, { surface: "verify" });
     expect(a).toMatchObject({ compared: 30, agreed: 28, falsePass: 2, falseFail: 0 });
     expect(a).toMatchObject(earnedJudge(28, 30));
+    expect(judgeEarned(db, "verify", "chat-classifier:m")).toBe(earnedJudge(28, 30).earned);
+    db.close();
   });
 });

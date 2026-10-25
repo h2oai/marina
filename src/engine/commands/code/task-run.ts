@@ -22,7 +22,11 @@ import { harnessDecisionProvider } from "../../../decisions/engines";
 import { judgeOpinion } from "../../../decisions/policy";
 import { DecisionError, type DecisionProvider } from "../../../decisions/types";
 import { decisionVerifyMode, verifySubmission } from "../../../decisions/verify";
-import { creditVerifiedCode, recordTaskOpinion, recordTaskVerdict } from "../../../outcomes/live";
+import {
+  creditVerifiedCode,
+  recordTaskVerdict,
+  recordVerifierOpinion,
+} from "../../../outcomes/live";
 import type { CodingArtifactRow, MarinaDB } from "../../../persistence/database";
 import type { CrewId, Entity, EntityId, RoomContext } from "../../../types";
 import { getErrorMessage } from "../../errors";
@@ -442,7 +446,7 @@ export function observeCodingSubmission(
         ...(verdict.error ? { error: verdict.error } : {}),
         timestamp: Date.now(),
       });
-      deps.db.recordJudgeObservation({
+      recordVerifierOpinion(deps.db, {
         taskId: meta.taskId,
         claimantName: worker.name,
         evaluator,
@@ -451,12 +455,6 @@ export function observeCodingSubmission(
         opinion,
         signals: verdict.signals,
         ...(verdict.error ? { error: verdict.error.slice(0, 300) } : {}),
-      });
-      recordTaskOpinion(deps.db, {
-        taskId: meta.taskId,
-        claimant: worker.name,
-        judge: evaluator,
-        opinion,
       });
     })
     .catch((error) =>

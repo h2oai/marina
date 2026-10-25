@@ -15,6 +15,7 @@ import { judgeOpinion } from "../../decisions/policy";
 import {
   clearSubmissionAttempts,
   decisionVerifyMode,
+  decisionVerifyNeedsEarned,
   nextSubmissionAttempt,
   submissionSupportKeys,
   verifySubmission,
@@ -93,6 +94,8 @@ export function taskCommand(
   trackBackground?: (work: Promise<void>) => void,
   /** What the record says about doing tasks (`approachAdvice`), offered on claim; never required. */
   adviseApproach?: () => string | undefined,
+  /** Whether a verifier (`<kind>:<model>`) has earned acting (`judgeEarned` on `verify`). */
+  verifierEarned?: (evaluator: string) => boolean,
 ): CommandDef {
   return {
     category: "Coordination",
@@ -619,10 +622,18 @@ export function taskCommand(
             return;
           }
           const attempt = nextSubmissionAttempt(id, input.entity);
+          // `on` from MARINA_JUDGE: only an EARNED verifier bounces (fail closed:
+          // no ledger ⇒ never earned ⇒ recorded and accepted, as `observe`).
+          const needsEarned = decisionVerifyNeedsEarned();
           return verifySubmission(provider, task, text, attempt, evidence).then((verdict) => {
-            logVerify(verdict);
+            const evaluator = `${verdict.provider ?? provider.kind}:${verdict.model ?? provider.model}`;
+            const unearned = needsEarned && !(verifierEarned?.(evaluator) ?? false);
+            logVerify(
+              verdict,
+              unearned && verdict.action !== "accept" ? "observed" : verdict.action,
+            );
             observe(verdict);
-            if (verdict.action === "accept") {
+            if (verdict.action === "accept" || unearned) {
               record();
               return;
             }

@@ -17,9 +17,10 @@
  */
 
 import { availableModels } from "../agent/available-models";
+import { judgeStandings } from "../decisions/judges";
 import { lessonsMode } from "../learning/modes";
 import { lessonsFromWorkMode } from "../learning/work";
-import { EARNED_MIN_COMPARED, judgeAgreement } from "../outcomes/agreement";
+import { EARNED_MIN_COMPARED } from "../outcomes/agreement";
 import { QUALITY_GRACE_MS } from "../outcomes/judge-quality";
 import { judgeableEnd, judgeResolutionMode } from "../outcomes/judge-resolution";
 import type { MarinaDB } from "../persistence/database";
@@ -82,12 +83,17 @@ export function learningLoopState(db: MarinaDB, now = Date.now()): LearningLoopS
     state.oldestUnjudgedAt = oldest(state.oldestUnjudgedAt, end);
   }
 
-  for (const j of judgeAgreement(db, { limit: 2_000 })) {
+  // Every judge surface, from the one ledger (`judge stats` reads the same).
+  for (const j of judgeStandings(db)) {
+    if (j.surface === "verify") state.verifierOpinions += j.opinions;
     if (j.earned) state.earnedJudges++;
     if (!state.bestJudge || j.compared > state.bestJudge.compared)
-      state.bestJudge = { judge: j.judge, compared: j.compared, earned: j.earned };
+      state.bestJudge = {
+        judge: `${j.surface}:${j.judge}`,
+        compared: j.compared,
+        earned: j.earned,
+      };
   }
-  state.verifierOpinions = db.listJudgeObservations({ limit: 10_000 }).length;
   for (const d of db.listBenchmarkDefaults())
     state.promotions += db
       .listBenchmarkPromotions(d.slot)
