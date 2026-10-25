@@ -36,6 +36,7 @@ import {
 } from "./constants";
 import type { Engine, EngineConfig } from "./engine";
 import { getErrorMessage, tryLog } from "./errors";
+import { runLivePromotionPass } from "./live-promotion";
 import type { Logger } from "./logger";
 import { backfillAssets } from "./media/asset-library";
 import { engineAssetDescriber, runAssetMemoryPass } from "./media/asset-memory";
@@ -459,6 +460,20 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
+  // Every 6 h: judge role-model:<role> slots on shared live work. Records
+  // refused attempts and raises one ops-inbox proposal per passing candidate;
+  // never files a promotion (a person holding role.edit does that).
+  s.register({
+    name: "live-promotion",
+    every: LIVE_PROMOTION_INTERVAL,
+    phase: LIVE_PROMOTION_PHASE,
+    failureMessage: "Live promotion pass failed",
+    run: () => {
+      if (!host.db) return;
+      runLivePromotionPass(host.db);
+    },
+  });
+
   // Every ~30 s: fill sha256/dimensions and derivatives (thumbnails, posters,
   // previews) for a few assets that lack them — rows from before migration
   // 168 and writers that skip the library. Bounded per pass; boot never waits.
@@ -543,6 +558,11 @@ export const SCHEDULES_PHASE = 3;
 export const OUTCOME_DELIVERY_INTERVAL = 300;
 /** Its phase within that interval. */
 export const OUTCOME_DELIVERY_PHASE = 150;
+
+/** Ticks between live-promotion passes (src/engine/live-promotion.ts): 6 h at the default tick. */
+export const LIVE_PROMOTION_INTERVAL = 6 * NOTE_IMPORTANCE_INTERVAL;
+/** Its phase within that interval (no other job shares the interval). */
+export const LIVE_PROMOTION_PHASE = 4200;
 
 /** The hourly phase of the lessons-from-work flush (distinct from every other hourly job). */
 export const LESSONS_FROM_WORK_PHASE = 3300;

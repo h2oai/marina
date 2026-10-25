@@ -461,6 +461,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Live work can change a default by earned promotion.** A role's model now has an earned layer
+  between its env settings and its tier: the slot `role-model:<role>`, read through
+  `resolveDefault`.
+  - **Evidence.** Shared work outcomes tagged by role and model fill it. The same promotion rule
+    applies: a time-split holdout, the Agresti–Caffo interval above 0, the fishing margin, no
+    discovery loss, and a minimum number of outcomes per arm. A person's private work never counts.
+  - **Who files.** A 6-hourly job raises one ops-inbox proposal per passing candidate and records
+    refused attempts. It never files. A person holding `role.edit` files the proposal with
+    `benchmark promote role-model:<role> <model>`; an agent never can.
+  - **Reading it.** `benchmark eligible live` is the read-only view. A promoted model this
+    installation cannot call falls back to the tier, and the fallback is traced. With nothing
+    promoted, every role resolves exactly as before.
+
 - **Imported lessons reach agents.** Lessons from a learned bundle are now recalled beside the
   world's own lessons, in the resident `[Lessons]` section, `lessons`, forecasts, Code Mode and
   passthru.
