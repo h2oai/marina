@@ -71,7 +71,8 @@ export function listTasks(
     status?: string;
     groupId?: string;
     parentId?: number;
-    limit?: number;
+    /** Default 20; `null` returns every matching row. */
+    limit?: number | null;
     orderByStanding?: boolean;
   },
 ): TaskRow[] {
@@ -95,7 +96,8 @@ export function listTasks(
   const order = opts?.orderByStanding
     ? "ORDER BY t.standing DESC, t.id DESC"
     : "ORDER BY t.id DESC";
-  const limit = opts?.limit ?? 20;
+  // SQLite reads a negative LIMIT as "no limit".
+  const limit = opts?.limit === null ? -1 : (opts?.limit ?? 20);
   params.push(limit);
 
   return db

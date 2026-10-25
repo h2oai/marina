@@ -81,6 +81,10 @@ export function syncOperationalAlerts(deps: OpsDependencies): void {
   };
   const report = deps.readiness();
   for (const check of report.checks) {
+    // An optional capability the core works without is not an operational
+    // problem: `readiness` shows it neutrally, and the inbox leaves it out
+    // (any alert raised for it before resolves below).
+    if (check.optional) continue;
     if (check.status === "off" || check.status === "degraded")
       add("readiness", {
         key: `readiness:${check.id}`,
@@ -88,7 +92,7 @@ export function syncOperationalAlerts(deps: OpsDependencies): void {
         category: "readiness",
         title: check.label,
         detail: check.detail,
-        remedy: "demo preflight",
+        remedy: check.remediation ?? "readiness",
       });
   }
   for (const agent of deps.runtime.list()) {

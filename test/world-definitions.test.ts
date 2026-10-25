@@ -71,14 +71,20 @@ describe.each([
         agents: db.getAllAgentConfigs().length,
         pools: db.listMemoryPools().length,
         projects: db.listProjects().length,
-        tasks: db.listTasks().length,
+        // Every task, not the default page of 20 (a capped read hid re-seeded bounties).
+        tasks: db.countTasks(),
       };
+      // People's work since the first boot pushes the seeded tasks past the
+      // newest 20; a reboot must still find them rather than seed them again.
+      for (let i = 0; i < 25; i++) {
+        db.createTask({ title: `later work ${i}`, creatorId: "e_1", creatorName: "Someone" });
+      }
       world.seed?.(db);
       expect({
         agents: db.getAllAgentConfigs().length,
         pools: db.listMemoryPools().length,
         projects: db.listProjects().length,
-        tasks: db.listTasks().length,
+        tasks: db.countTasks() - 25,
       }).toEqual(first);
     } finally {
       db.close();
