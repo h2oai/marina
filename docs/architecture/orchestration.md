@@ -36,6 +36,27 @@
 
 See also: `docs/guides/coordination.md`, `docs/guides/emergent-organization.md`.
 
+## Orchestration on the outcome path
+
+Three orchestration surfaces record what they settle as ONE outcome each, through `recordResolved`
+(`src/outcomes/orchestration.ts`), tagged in the `family:` / `method:` / `scope:` convention of
+`src/outcomes/work-refs.ts`, so the competence map can compare ways of working. Labels and ids
+only: never the task, goal, a person's evidence text or any output. None needs a model, and a
+surface with no verdict records nothing.
+
+| Surface | When | Outcome | Tags |
+| --- | --- | --- | --- |
+| `project <name> outcome <0..1> \| …` | a PERSON records it (an agent's report on its own project is not a verdict) | kind `task`, subject `project:<id>` (settled once), `mechanical`, metric `person-verdict`, succeeded at ≥ 0.5, quality = the score | `family:work:project`, `method:orchestration:<pattern>`, the recorder's scope |
+| `pattern run` / `POST /v1/patterns/run` | the run's OWN review step returned `approve` or `revise` (today only `verification` reviews) | kind `request`, subject `judged:pattern:<run>`, `judged` by `pattern-review:<checker>` (a model's opinion: evidence for earned-judge readers, never a lesson on its own) | `family:work:request`, `method:pattern:<name>`, `method:model:<m>` when one model did the work, the caller's scope (`scope:unscoped` for an unbound API key) |
+| room formation (`build formation`) | a round closes on its own closing move with a mechanical result | kind `request`, subject `room-formation:<room>:<ref>`, `mechanical`, metric `aspect-checks`, succeeded when no check failed, quality = share passed | `family:work:request`, `method:room-formation:<formation>`, the drafter's scope |
+
+A pick between answers, a budget stop or an unreadable review is not a verdict. Of the room
+formations only `verification` defines a mechanical result: each checker's first message in the
+grammar the mediator asks for, `aspect: <aspect> pass|fail — <reason>`, is read once as a label
+(`aspectCheck`, never stored as text; the `say_sent` event stays content-free) and the round's
+tally is recorded when the drafter closes it. A `debate` ruling is free text naming a winner, not
+whether the method worked, and a `chorus` merge has no verdict, so neither records anything.
+
 ## Executable Scores
 
 `src/sdk/score-executor.ts` snapshots a validated Score and dispatches ready steps with

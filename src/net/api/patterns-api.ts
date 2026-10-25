@@ -25,7 +25,7 @@
 
 import { availableModels } from "../../agent/available-models";
 import type { Engine } from "../../engine/engine";
-import { getErrorMessage } from "../../engine/errors";
+import { getErrorMessage, tryLog } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { SpendGuard } from "../../engine/spend-guard";
 import { dailyCapRefusal } from "../../engine/spend-ledger";
@@ -37,6 +37,7 @@ import {
   TEXT_PATTERNS,
   type TextComplete,
 } from "../../orchestration/text-patterns";
+import { recordPatternRun } from "../../outcomes/orchestration";
 import { normalizePatternName } from "../../world/templates/orchestration";
 import { ensembleChecker, ensembleSize } from "../model-api/ensemble";
 import {
@@ -104,7 +105,7 @@ function membersOf(raw: unknown): { members?: string[] } | { error: Response } {
 export async function handlePatternRun(
   req: Request,
   engine: Engine,
-  _auth?: PassthruAuthResult,
+  auth?: PassthruAuthResult,
 ): Promise<Response> {
   const read = await readModelJsonBody(req);
   if (!read.ok) return read.response;
@@ -253,6 +254,17 @@ export async function handlePatternRun(
     routeReason: `pattern:${pattern}:${result.success ? "ok" : "stopped"}:steps=${result.trace.steps.length}:failed=${failed}`,
     timestamp: Date.now(),
   });
+  // A run whose own review gave a verdict is one judged outcome (labels only).
+  const db = engine.db;
+  if (db) {
+    tryLog(logger, "model-api", "Could not record the pattern run outcome", () =>
+      recordPatternRun(db, {
+        result,
+        runId: requestId,
+        ...(auth?.boundEntityName ? { owner: auth.boundEntityName } : {}),
+      }),
+    );
+  }
   return json(result, 200, {
     "x-request-id": requestId,
     [COST_USD_HEADER]: result.trace.costUsd.toFixed(8),

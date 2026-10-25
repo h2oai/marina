@@ -13,7 +13,12 @@ export interface OutcomesStore {
   getOutcome(id: number): outcomesDb.OutcomeRow | undefined;
   getOutcomeBySubject(subject: string): outcomesDb.OutcomeRow | undefined;
   listOutcomes(opts?: outcomesDb.OutcomeFilter): outcomesDb.OutcomeRow[];
-  pendingOutcomes(consumer: string, limit: number): outcomesDb.OutcomeRow[];
+  pendingOutcomes(
+    consumer: string,
+    limit: number,
+    opts?: { aggregating?: boolean },
+  ): outcomesDb.OutcomeRow[];
+  waitOutcomeDelivery(outcomeId: number, consumer: string, reason: string, now?: number): void;
   setOutcomeDelivery(
     outcomeId: number,
     consumer: string,
@@ -32,6 +37,7 @@ export const OUTCOMES_STORE_METHODS = [
   "getOutcomeBySubject",
   "listOutcomes",
   "pendingOutcomes",
+  "waitOutcomeDelivery",
   "setOutcomeDelivery",
   "outcomeDeliveries",
   "outcomeDeliveryCounts",

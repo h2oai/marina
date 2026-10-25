@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`memory api` payloads no longer reach the event log.** A resident's journal and checkpoint
+  calls carried its memory content into `command` events on every turn and crowded the world's
+  own actions out of the row-bounded log. The form is now sensitive and unlogged
+  (`CommandDef.unloggedSubcommands`), and rows already stored in clear are removed at the next
+  start.
 - **Every third-party GitHub Action is pinned by commit** (the version stays as a comment). A test
   fails on any new unpinned `uses:`, and Dependabot proposes the updates. Clears the open
   unpinned-tag code-scanning alerts.
@@ -67,6 +72,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Judged lessons: no rule, no lesson; single rounds teach in aggregate; one set of bars.** A
+  candidate whose writer gives no rule (asked twice) is deferred, never judged or stored. Forecasts,
+  arena rounds and research asks wait (durably, no attempt spent) until five of one source shape and
+  family are waiting, then teach ONE lesson from their statistics, scoped to that family and served
+  only to work of it; the judge's `general` question is asked within that declared scope. The
+  judge sees the rule as the lesson; `leak_free` is enforced only for measurement outcomes (the
+  mechanical item check still gates everything); failing only `consistent` stores the lesson
+  contested with a resolve case; calibrated and uncalibrated judges clear the same bars. Recall
+  serves only judged lessons that have a rule: never-judged (`unverified`) records stay stored but
+  are no longer served. With no model provider configured, deliveries wait with that reason and
+  nothing is written.
 - **Arena spread calibration is learned per series**, not per tracker: one tracker's series can be
   miscalibrated in opposite directions.
 - **Arena challengers cover the coming week**, cheap specs first, within a time budget
@@ -223,6 +239,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tagged with its live `code crew`'s formation. A crew benchmark run's method is
   `crew:<formation>` (`crew:unknown`), never a model id. Agents see `crew` among the coordination
   commands. None of it needs a model provider.
+- **`agent config <name> model|role|key|thinking` works on a saved agent that is not running**
+  (stopped, or listed in `MARINA_DISABLED_AGENTS`): it rewrites the stored config its next spawn
+  reads, keeping every other field. Before, it refused with "not running", so a disabled agent
+  could only come back on its old model.
 - **Arena evidence reuse** keys on the inputs, not on when they were read, so an unchanged refile
   can reuse its forecast.
 - **Demo worlds** log their completion events as typed `feed_event`s instead of an untyped
@@ -393,6 +413,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Orchestration runs land on the outcome path.** A person's `project <name> outcome` verdict,
+  a `pattern run` (or `POST /v1/patterns/run`) whose own review approved or sent back the draft,
+  and a room `verification` round closed with its checkers' `pass|fail` lines each record one
+  outcome tagged `method:orchestration:<pattern>`, `method:pattern:<name>` or
+  `method:room-formation:<formation>` (labels only; nothing without a verdict; no model needed).
+  `benchmark eligible [board]` lists, read-only, the configurations whose holdout evidence would
+  pass the promotion rule now. Arena shadow settings variants (`<spec>#<fingerprint>`) pool into
+  their runnable spec explicitly, and `forecast routes` / `arena shadow score` show the count.
 - **One seam for many sandboxes.** Code Mode runs work in whichever sandbox you already have:
   every provider implements `SandboxProvider` and declares what it can do. `code sandbox providers`
   lists them; `code sandbox use <id>` (or `provider:<id>` on any `code sandbox` command) picks one.

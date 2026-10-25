@@ -8,10 +8,11 @@
  * layer scores the candidate, and only a candidate that passes is served as a
  * lesson. Successes teach as much as failures.
  *
- *   outcome ──► candidate (mechanical summary + optional writer rule)
+ *   outcome ──► candidate (mechanical summary + writer rule; no rule ⇒ deferred, never judged)
  *           ──► judge (noul questions: grounded, general, leak-free, consistent)
  *           ──► trusted    → lesson record, served by recall
- *               unverified → lesson record, served labelled (no judge: decisions off/outage)
+ *               contested  → trusted but held (failed only `consistent`): resolve case
+ *               unverified → lesson record, never served (no judge: decisions off/outage)
  *               rejected   → audit record, never served
  *
  * Nothing here stores a benchmark's question or answer text: the candidate is
@@ -25,6 +26,7 @@
 
 import type { DecisionProvider, DecisionQuestions, NoulAnswer } from "../decisions/types";
 import { rankSortKey } from "../memory/admission-policy";
+import { EVAL_REF_PREFIX } from "./eval-context";
 import { type CaseGuard, itemLeak } from "./leak-guard";
 
 /**
@@ -150,6 +152,40 @@ export interface Outcome {
   caseGuard?: CaseGuard;
   /** Stored on the lesson's provenance (e.g. `learner`, the writer version). */
   provenance?: Record<string, string>;
+  /**
+   * A measurement outcome (`eval_mode = measure`): the judge's `leak_free`
+   * bar is enforced for it (see `leakFreeEnforced`).
+   */
+  measured?: boolean;
+  /**
+   * The outcome summarises this many single outcomes of one kind (a batch of
+   * forecast rounds or research asks): the writer gets the aggregate prompt.
+   */
+  aggregateOf?: number;
+  /**
+   * The family or tracker the outcome's work belongs to (`family:<x>`), when
+   * the lesson is scoped to it: judged general within it, served only to work
+   * of that family (`selectServed`).
+   */
+  scopeFamily?: string;
+}
+
+/**
+ * Whether the judge's `leak_free` answer is an enforced bar for `o`: only for
+ * measurement — a benchmark outcome, an `eval_mode = measure` outcome, or one
+ * naming the board it measured (`eval:<board>`). For live outcomes it is
+ * recorded but advisory. The mechanical item check (`itemLeak`) is the hard
+ * gate everywhere, before any judge.
+ */
+export function leakFreeEnforced(
+  o: Pick<Outcome, "domain" | "source" | "refs" | "measured">,
+): boolean {
+  return (
+    o.measured === true ||
+    o.domain === "benchmark" ||
+    o.source.startsWith("benchmark:") ||
+    (o.refs ?? []).some((r) => r.startsWith(EVAL_REF_PREFIX))
+  );
 }
 
 export type LessonTrust = "trusted" | "unverified" | "rejected";
@@ -174,6 +210,8 @@ export interface Lesson {
   scope?: LessonScope;
   families?: string[];
   subjects?: string[];
+  /** Served only to work of this family or tracker (see `Outcome.scopeFamily`). */
+  scopeFamily?: string;
   /**
    * Where a lesson came from when it was not learned by this loop — a record
    * migrated from an earlier store (`store`, `account`, `space`, `id`,
@@ -267,8 +305,9 @@ const WRITER_SYSTEM_CASE = [
  * another): the rule is about method, configuration or model choice.
  */
 const WRITER_SYSTEM_AGGREGATE = [
-  "You turn one aggregate outcome (a whole evaluation run, compared with the best other",
-  "configuration on the same items) into one terse, reusable lesson for an AI agent. No pleasantries.",
+  "You turn one aggregate outcome (a whole evaluation run compared with the best other configuration",
+  "on the same items, or a batch of outcomes of the same kind) into one terse, reusable lesson for",
+  "an AI agent. No pleasantries.",
   WRITER_REPLY,
   "The rule is about METHOD, CONFIGURATION or MODEL CHOICE: what worked or failed, and under",
   "what conditions (the kind of work), e.g. 'On multi-hop retrieval questions, a strong lead model",
@@ -307,45 +346,70 @@ export function mechanicalLeak(text: string, o: Outcome): string | undefined {
   return itemLeak(text, o.caseGuard, outcomeVocabulary(o));
 }
 
+/** One writer answer: a category, rule and scope, or why there is none. */
+async function askWriter(
+  o: Outcome,
+  writer: LessonWriter,
+  scope: LessonScope,
+): Promise<{ category?: string; rule?: string; scope?: LessonScope; missing?: string }> {
+  try {
+    const raw = await writer.complete(
+      o.aggregateOf || AGGREGATE_SCOPES.has(scope) ? WRITER_SYSTEM_AGGREGATE : WRITER_SYSTEM_CASE,
+      [
+        `Domain: ${o.domain} (${o.source})`,
+        `Attempted: ${clip(o.attempted, 400)}`,
+        `Result: ${o.succeeded ? "success" : "failure"}${o.score !== undefined ? ` (score ${o.score.toFixed(2)})` : ""}`,
+        o.detail ? `Detail: ${clip(o.detail, 300)}` : "",
+        o.signals?.length ? `Signals: ${clip(o.signals.join("; "), 400)}` : "",
+        o.measurement?.length
+          ? `Measurement notes (not a finding): ${clip(o.measurement.join("; "), 300)}`
+          : "",
+        o.rule ? `Draft rule (improve it; keep it general): ${clip(o.rule, 300)}` : "",
+        o.privateContext ? `Context (do not quote): ${clip(o.privateContext, 800)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) return { missing: "writer returned no JSON" };
+    const parsed = JSON.parse(m[0]) as { category?: unknown; rule?: unknown; scope?: unknown };
+    const named = typeof parsed.scope === "string" ? parsed.scope.trim().toLowerCase() : "";
+    const rule = typeof parsed.rule === "string" ? clip(parsed.rule.trim(), 220) : "";
+    return {
+      ...(typeof parsed.category === "string"
+        ? { category: clip(parsed.category.trim(), 48) }
+        : {}),
+      ...(rule ? { rule } : { missing: "writer returned no rule" }),
+      ...(LESSON_SCOPES.includes(named as LessonScope) ? { scope: named as LessonScope } : {}),
+    };
+  } catch (err) {
+    return { missing: `writer unavailable: ${clip(String((err as Error)?.message ?? err), 80)}` };
+  }
+}
+
 /**
- * A candidate lesson from one outcome: always the mechanical part; a category
- * and rule from `writer` when given and it answers (a failing writer leaves the
- * mechanical lesson, never nothing).
+ * A candidate lesson from one outcome: the mechanical part, and a category and
+ * rule from `writer`. A writer that fails, returns no JSON or no rule is asked
+ * once more; the producer's own rule stands in when it still gives none. A
+ * candidate that ends with no rule carries `provenance.no_rule` (why) and is
+ * never judged or stored (`recordOutcome` defers it).
  */
 export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): Promise<Lesson> {
   let category: string | undefined;
   let rule: string | undefined;
   let scope: LessonScope = o.scope ?? defaultScope(o.domain);
   let writerNote: string | undefined;
+  let missing: string | undefined = writer ? undefined : "no writer";
   if (writer) {
-    try {
-      const raw = await writer.complete(
-        AGGREGATE_SCOPES.has(scope) ? WRITER_SYSTEM_AGGREGATE : WRITER_SYSTEM_CASE,
-        [
-          `Domain: ${o.domain} (${o.source})`,
-          `Attempted: ${clip(o.attempted, 400)}`,
-          `Result: ${o.succeeded ? "success" : "failure"}${o.score !== undefined ? ` (score ${o.score.toFixed(2)})` : ""}`,
-          o.detail ? `Detail: ${clip(o.detail, 300)}` : "",
-          o.signals?.length ? `Signals: ${clip(o.signals.join("; "), 400)}` : "",
-          o.measurement?.length
-            ? `Measurement notes (not a finding): ${clip(o.measurement.join("; "), 300)}`
-            : "",
-          o.rule ? `Draft rule (improve it; keep it general): ${clip(o.rule, 300)}` : "",
-          o.privateContext ? `Context (do not quote): ${clip(o.privateContext, 800)}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      );
-      const m = raw.match(/\{[\s\S]*\}/);
-      const parsed = m
-        ? (JSON.parse(m[0]) as { category?: unknown; rule?: unknown; scope?: unknown })
-        : {};
-      if (typeof parsed.category === "string") category = clip(parsed.category.trim(), 48);
-      if (typeof parsed.rule === "string") rule = clip(parsed.rule.trim(), 220);
-      const named = typeof parsed.scope === "string" ? parsed.scope.trim().toLowerCase() : "";
-      if (LESSON_SCOPES.includes(named as LessonScope)) scope = named as LessonScope;
-    } catch {
-      // allow-empty-catch: a writer outage leaves the mechanical candidate
+    // A second ask only when nothing else would give the lesson a rule.
+    for (let attempt = 0; attempt < (o.rule ? 1 : 2); attempt++) {
+      const answer = await askWriter(o, writer, scope);
+      missing = answer.missing;
+      if (answer.scope) scope = answer.scope;
+      if (answer.category) category = answer.category;
+      if (!answer.rule) continue;
+      rule = answer.rule;
+      break;
     }
     // A writer's rule or category that carries item content is discarded (and
     // never stored): the producer's own rule stands in for it.
@@ -353,6 +417,7 @@ export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): P
       rule || category ? mechanicalLeak(`${category ?? ""} ${rule ?? ""}`, o) : undefined;
     if (leak) {
       writerNote = `writer rule discarded: ${leak}`;
+      missing = writerNote;
       rule = undefined;
       category = undefined;
     }
@@ -362,6 +427,7 @@ export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): P
     ...(o.provenance ?? {}),
     ...(writer ? { writer: writer.name } : {}),
     ...(writerNote ? { writer_note: writerNote } : {}),
+    ...(rule ? {} : { no_rule: missing ?? "no rule" }),
   };
   return {
     domain: o.domain,
@@ -377,6 +443,7 @@ export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): P
     scope,
     ...(o.families?.length ? { families: o.families.slice(0, MAX_FAMILIES) } : {}),
     ...(o.subjects?.length ? { subjects: o.subjects.slice(0, MAX_SUBJECTS) } : {}),
+    ...(o.scopeFamily ? { scopeFamily: o.scopeFamily } : {}),
     ...(Object.keys(provenance).length ? { provenance } : {}),
   };
 }
@@ -417,10 +484,10 @@ export const LESSON_JUDGE_QUESTIONS: DecisionQuestions = {
   general: {
     type: "noul",
     instructions:
-      "Would the lesson help on DIFFERENT but similar future work (other questions or tasks of the same kind), rather than only this one case?",
+      "Would the lesson help on DIFFERENT but similar future work WITHIN its declared scope (`applies_to`: the source shape and, when named, the family or tracker it was learned on) — other questions, rounds or tasks of that kind — rather than only this one case? A rule that holds across its declared scope is general even if it would not hold for all work. A rule that restates one case's or one round's numbers is not.",
     criteria: {
-      true: "A reusable method, check, source, pitfall, or a configuration or model choice with the kind of work it applies to.",
-      false: "A one-off fact about this case, or too vague to act on.",
+      true: "A reusable method, check, source, pitfall, setting, or a configuration or model choice that holds across the declared scope.",
+      false: "A one-off fact or one case's or round's numbers restated, or too vague to act on.",
     },
   },
   leak_free: {
@@ -452,7 +519,13 @@ export const LESSON_JUDGE_QUESTIONS: DecisionQuestions = {
   },
 };
 
-/** Bars a calibrated judge must clear; an uncalibrated one uses one cut at 0.5. */
+/**
+ * The bars every lesson judge must clear, calibrated or not: one set, so the
+ * same lesson gets the same verdict whichever engine answered (an uncalibrated
+ * judge no longer gets a single 0.5 cut; its verdicts stay labelled
+ * `(uncalibrated)`). `leak_free` is enforced only for measurement outcomes
+ * (`leakFreeEnforced`); failing only `consistent` stores the lesson contested.
+ */
 export const LESSON_JUDGE_POLICY = {
   grounded: 0.6,
   general: 0.55,
@@ -461,8 +534,8 @@ export const LESSON_JUDGE_POLICY = {
 } as const;
 
 /**
- * The `transferable` bar (calibrated; an uncalibrated judge uses 0.5). It never
- * decides trust: only whether a trusted lesson is mirrored into `lessons:meta`.
+ * The `transferable` bar (every judge). It never decides trust: only whether a
+ * trusted lesson is mirrored into `lessons:meta`.
  */
 export const TRANSFERABLE_BAR = 0.6;
 
@@ -470,8 +543,14 @@ export interface LessonVerdict {
   trust: LessonTrust;
   reason: string;
   judgement?: Record<string, number>;
-  /** The judge that answered, labelled `(uncalibrated)` when it used the single 0.5 cut. */
+  /** The judge that answered, labelled `(uncalibrated)` when the engine is not calibrated. */
   judge?: string;
+  /**
+   * Trusted, but it failed only `consistent` against the existing lesson
+   * `contests`: stored held (contested) with a resolve case, never served
+   * while that lesson is current.
+   */
+  contests?: string;
   /** The judge found the lesson transferable to other task families (its own bar). */
   transferable?: boolean;
   costUsd?: number;
@@ -507,10 +586,17 @@ export async function judgeLesson(
           ...(outcome.signals?.length ? { signals: outcome.signals.slice(0, 8) } : {}),
           ...(outcome.measurement?.length ? { measurement: outcome.measurement.slice(0, 4) } : {}),
         },
-        lesson: candidate.text,
+        // The lesson is its rule and scope; per-case numbers reach the judge
+        // only as outcome detail above, never as part of the lesson.
+        lesson: candidate.rule ? `rule: ${candidate.rule}` : candidate.text,
         ...(candidate.scope ? { scope: candidate.scope } : {}),
         ...(candidate.families?.length ? { families: candidate.families } : {}),
-        existing_lessons: existing.slice(0, 5).map((l) => l.text),
+        // What `general` is judged within: the source shape and declared family.
+        applies_to: {
+          source: outcome.source,
+          ...(candidate.scopeFamily ? { family: candidate.scopeFamily } : {}),
+        },
+        existing_lessons: existing.slice(0, 5).map((l) => (l.rule ? `rule: ${l.rule}` : l.text)),
       },
       questions: LESSON_JUDGE_QUESTIONS,
     });
@@ -518,29 +604,50 @@ export async function judgeLesson(
     for (const [k, a] of Object.entries(result.answers)) {
       if (a.type === "noul") judgement[k] = (a as NoulAnswer).noul;
     }
-    // What ANSWERED decides the bars, as for the tool gate: a composite engine
-    // (`marina/auto`) is calibrated when its calibrated primary answered alone,
-    // and uncalibrated when an uncalibrated second opinion joined in.
+    // One set of bars for every judge; what answered only labels the verdict
+    // (a composite engine is uncalibrated when an uncalibrated opinion joined in).
     const calibrated = (result.calibrated ?? provider.calibrated) !== false;
-    const bar = (k: keyof typeof LESSON_JUDGE_POLICY) =>
-      calibrated ? LESSON_JUDGE_POLICY[k] : 0.5;
+    const below = (k: keyof typeof LESSON_JUDGE_POLICY) =>
+      judgement[k] === undefined || judgement[k]! < LESSON_JUDGE_POLICY[k];
+    const show = (k: string) => `${k} ${(judgement[k] ?? 0).toFixed(2)}`;
+    const enforced = leakFreeEnforced(outcome);
+    const notes: string[] = [];
     const failed = (Object.keys(LESSON_JUDGE_POLICY) as Array<keyof typeof LESSON_JUDGE_POLICY>)
-      .filter((k) => judgement[k] === undefined || judgement[k]! < bar(k))
-      .map((k) => `${k} ${(judgement[k] ?? 0).toFixed(2)}`);
+      .filter(below)
+      .filter((k) => {
+        // Live outcomes: leak_free is recorded, not a bar (itemLeak ran above).
+        if (k === "leak_free" && !enforced) {
+          notes.push(`advisory ${show(k)}`);
+          return false;
+        }
+        // Nothing shown to contradict: consistency is not in question.
+        if (k === "consistent" && existing.length === 0) {
+          notes.push(`no existing lesson (${show(k)})`);
+          return false;
+        }
+        return true;
+      })
+      .map(show);
     const judge = `${result.model || provider.model}${calibrated ? "" : " (uncalibrated)"}`;
     const transferable =
-      judgement.transferable !== undefined &&
-      judgement.transferable >= (calibrated ? TRANSFERABLE_BAR : 0.5);
+      judgement.transferable !== undefined && judgement.transferable >= TRANSFERABLE_BAR;
+    // Failing only `consistent` is a contradiction to resolve, not a rejection.
+    const contests =
+      failed.length === 1 && failed[0]!.startsWith("consistent ")
+        ? existing.find((l) => l.id)?.id
+        : undefined;
+    const note = notes.length ? `; ${notes.join(", ")}` : "";
     return {
-      trust: failed.length ? "rejected" : "trusted",
+      trust: failed.length && !contests ? "rejected" : "trusted",
       transferable,
-      reason: failed.length
-        ? `below bar: ${failed.join(", ")}`
-        : calibrated
-          ? "passed"
-          : "passed (uncalibrated judge, one cut at 0.5)",
+      reason: contests
+        ? `contested: ${failed[0]} against ${contests}${note}`
+        : failed.length
+          ? `below bar: ${failed.join(", ")}${note}`
+          : `passed${note}`,
       judgement,
       judge,
+      ...(contests ? { contests } : {}),
       ...(result.costUsd === undefined ? {} : { costUsd: result.costUsd }),
     };
   } catch {
@@ -588,11 +695,10 @@ export function lessonMatches(l: Lesson, sel: LessonSelector): boolean {
   return true;
 }
 
-/** How a recall selects: budget, trust floor, and lessons the work must not see. */
+/** How a recall selects: budget, and lessons the work must not see. */
 export interface LessonRecallOptions {
   limit?: number;
   maxBytes?: number;
-  includeUnverified?: boolean;
   /**
    * Lessons this work must not see beyond the time rule — e.g. a measurement
    * run's self-exclusion (`evalExclusion`). Applied before the budget.
@@ -685,12 +791,30 @@ export function visibleAt(lesson: Pick<Lesson, "resolvedAt">, asOf: string): boo
 export const DEFAULT_RECALL_LIMIT = 5;
 export const DEFAULT_RECALL_BYTES = 1_200;
 
+/** A curator's replacement (`supersedeLesson`): a person's text, served unjudged. */
+export const CURATED_SOURCE_PREFIX = "supersede:";
+
 /**
- * Served, visible lessons: trusted first, then (ranked serving only) by
- * admission rank with records below the floor last, then newest; trimmed to
- * the byte budget. `exclude` drops lessons the work must not see
- * (self-exclusion); a contested lesson is never served; the leakage rule
- * `visibleAt` always applies.
+ * Whether a lesson may be served at all: it has a rule, and a judge trusted it
+ * (or a curator wrote it). Never-judged (`unverified`) lessons — migrated
+ * records, outage-era writes — stay stored but are never served, and a record
+ * without a rule (a bare mechanical restatement) is never served whatever its trust.
+ */
+export function servableLesson(l: Pick<Lesson, "trust" | "rule" | "source">): boolean {
+  if (!l.rule?.trim()) return false;
+  return (
+    l.trust === "trusted" ||
+    (l.trust === "unverified" && l.source.startsWith(CURATED_SOURCE_PREFIX))
+  );
+}
+
+/**
+ * Served, visible lessons (`servableLesson`; a family-scoped lesson only when
+ * `opts.families` names its family): trusted first, then (ranked
+ * serving only) by admission rank with records below the floor last, then
+ * newest; trimmed to the byte budget. `exclude` drops lessons the work must
+ * not see (self-exclusion); a contested lesson is never served; the leakage
+ * rule `visibleAt` always applies.
  */
 export function selectServed(
   candidates: Lesson[],
@@ -700,11 +824,11 @@ export function selectServed(
   const limit = opts.limit ?? DEFAULT_RECALL_LIMIT;
   const budget = opts.maxBytes ?? DEFAULT_RECALL_BYTES;
   const exclude = opts.exclude;
+  const families = new Set(opts.families ?? []);
   const served = candidates
-    .filter(
-      (l) =>
-        l.trust === "trusted" || (opts.includeUnverified !== false && l.trust === "unverified"),
-    )
+    .filter(servableLesson)
+    // A family-scoped lesson reaches only work that names that family.
+    .filter((l) => !l.scopeFamily || families.has(l.scopeFamily))
     .filter((l) => visibleAt(l, asOf))
     .filter((l) => !l.contested)
     .filter((l) => !exclude?.(l))
@@ -890,7 +1014,13 @@ export function memoryLessonSink(initial: Lesson[] = []): LessonSink & {
       const ranked = lessons
         .filter((l) => l.domain === domain && current(l))
         .map((l) => ({ l: view(l), hits: overlap(l, q) }))
-        .filter((x) => x.hits > 0 || q.size === 0 || (x.l.families ?? []).some((f) => fam.has(f)))
+        .filter(
+          (x) =>
+            x.hits > 0 ||
+            q.size === 0 ||
+            (x.l.families ?? []).some((f) => fam.has(f)) ||
+            (!!x.l.scopeFamily && fam.has(x.l.scopeFamily)),
+        )
         .sort((a, b) => b.hits - a.hits);
       return selectServed(
         ranked.map((x) => x.l),
@@ -953,6 +1083,47 @@ async function runAfterWrite(d: LessonAdmissionDecision, id: string | undefined)
   }
 }
 
+/**
+ * A lesson that failed only `consistent` is written HELD (`contested`, never
+ * served while the lesson it contradicts is current) and a resolve case is
+ * opened against that lesson, the same path admission's `contest` takes.
+ * Nothing changes when admission merged it (nothing new is written).
+ */
+function judgeContest(
+  d: LessonAdmissionDecision,
+  verdict: LessonVerdict,
+  sink: LessonSink,
+): LessonAdmissionDecision {
+  const against = verdict.contests;
+  if (!d.lesson || !against) return d;
+  const prior = d.afterWrite;
+  return {
+    ...d,
+    action: d.action ?? "contest",
+    lesson: {
+      ...d.lesson,
+      admission: {
+        ...(d.lesson.admission ?? { mode: "on", action: "contest", applied: true }),
+        reason: verdict.reason,
+        state: "contested",
+        contests: [...new Set([...(d.lesson.admission?.contests ?? []), against])],
+      },
+    },
+    afterWrite: async (id) => {
+      try {
+        await prior?.(id);
+      } catch {
+        // allow-empty-catch: admission's follow-up is best effort; the case below still opens
+      }
+      if (!sink.contest) return; // held anyway while `against` is current
+      await sink.contest(d.lesson!.domain, id, against, {
+        autoResolve: false,
+        rationale: `lesson judge: ${verdict.reason}`,
+      });
+    },
+  };
+}
+
 export interface OutcomeLearnerDeps {
   sink: LessonSink;
   writer?: LessonWriter;
@@ -984,6 +1155,8 @@ export interface OutcomeRecord {
   admission?: string;
   /** The existing lesson a duplicate was merged into (nothing new was written). */
   mergedInto?: string;
+  /** Written held (contested): it contradicts this trusted lesson; a resolve case is open. */
+  contests?: string;
 }
 
 /**
@@ -997,15 +1170,24 @@ export async function recordOutcome(
   outcome: Outcome,
 ): Promise<OutcomeRecord> {
   const candidate = await candidateFromOutcome(outcome, deps.writer);
+  // No rule, no lesson: a bare mechanical restatement is never judged or
+  // stored. The outcome waits (a durable caller retries it later).
+  if (!candidate.rule)
+    return {
+      trust: "unverified",
+      reason: `no rule (${candidate.provenance?.no_rule ?? "no writer"})`,
+      lesson: candidate,
+      deferred: true,
+    };
   let existing: Lesson[] = [];
   try {
     existing = await deps.sink.recall(outcome.domain, candidate.text, outcome.resolvedAt, {
-      includeUnverified: false,
       limit: 5,
     });
   } catch {
     // allow-empty-catch: consistency context is best effort
   }
+  existing = existing.filter((l) => l.trust === "trusted");
   const verdict = await judgeLesson(candidate, outcome, deps.judge, existing);
   if (verdict.costUsd) deps.onSpend?.(verdict.costUsd);
   if (deps.deferUnjudged && verdict.trust === "unverified")
@@ -1024,9 +1206,10 @@ export async function recordOutcome(
     ...(verdict.judge ? { judge: verdict.judge } : {}),
   };
   // ── Admission hook: after the judge, before the write. ──
-  const decision = deps.admit
+  const admitted = deps.admit
     ? asDecision(await deps.admit(judged, { outcome, verdict, target: "lesson", sink: deps.sink }))
     : { lesson: judged };
+  const decision = verdict.contests ? judgeContest(admitted, verdict, deps.sink) : admitted;
   const lesson = decision.lesson;
   if (!lesson)
     return {
@@ -1065,6 +1248,9 @@ export async function recordOutcome(
     lesson,
     ...(metaId ? { metaId } : {}),
     ...(decision.action ? { admission: decision.action } : {}),
+    ...(verdict.contests && lesson.admission?.state === "contested"
+      ? { contests: verdict.contests }
+      : {}),
   };
 }
 

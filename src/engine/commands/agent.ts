@@ -1112,10 +1112,7 @@ async function handleConfig(
     return;
   }
 
-  if (!deps.agentRuntime.get(name)) {
-    ctx.send(eid, `Agent "${name}" is not running.`);
-    return;
-  }
+  const running = !!deps.agentRuntime.get(name);
 
   const opts: {
     model?: string;
@@ -1149,6 +1146,20 @@ async function handleConfig(
     default:
       ctx.send(eid, `Unknown config field: ${field}. Use: model, role, key, thinking`);
       return;
+  }
+
+  if (!running) {
+    // A saved agent that is not running: its stored config is what the next
+    // spawn (boot respawn included) reads, so change that.
+    if (deps.agentRuntime.reconfigureSaved(name, opts)) {
+      ctx.send(
+        eid,
+        `Saved config of ${bold(name)} updated (${field} = ${value}); it applies when ${name} next starts.`,
+      );
+    } else {
+      ctx.send(eid, `Agent "${name}" is not running and has no saved config.`);
+    }
+    return;
   }
 
   ctx.send(eid, `Reconfiguring ${bold(name)}...`);

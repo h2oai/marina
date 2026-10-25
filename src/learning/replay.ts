@@ -151,6 +151,7 @@ function recallFrom(pool: readonly Lesson[], task: ReplayTask, rankOrder: boolea
     .slice(0, 50)
     .map((x) => x.l);
   return selectServed(hits, task.asOf, {
+    families: task.families,
     limit: DEFAULT_RECALL_LIMIT,
     maxBytes: DEFAULT_RECALL_BYTES,
     ...(rankOrder ? { rankOrder: true } : {}),

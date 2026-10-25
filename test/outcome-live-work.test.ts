@@ -93,7 +93,11 @@ describe("live work on the outcome path", () => {
     const shared = memoryLessonSink();
     enableOutcomeLearning(db, {
       sink: shared,
-      writer: null,
+      writer: {
+        name: "test/writer",
+        complete: async () =>
+          '{"category":"task work","rule":"Confirm the deliverables before submitting a task."}',
+      },
       judge: judge(),
       env: { MARINA_LESSONS: "on" },
     });

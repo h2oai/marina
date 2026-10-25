@@ -210,7 +210,12 @@ export function registerGeneralCommands(engine: Engine): void {
   engine.commands.registerBuiltin(
     triageCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
-  engine.commands.registerBuiltin(patternCommand());
+  engine.commands.registerBuiltin(
+    patternCommand({
+      db: () => engine.db,
+      nameOf: (id) => engine.entities.get(id)?.name,
+    }),
+  );
   engine.commands.registerBuiltin(timeCommand());
   engine.commands.registerBuiltin(uptimeCommand(() => engine.getUptime()));
   engine.commands.registerBuiltin(

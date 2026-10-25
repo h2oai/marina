@@ -108,4 +108,30 @@ describe("agent config persistence — thinking level", () => {
     expect(byName.has("plain")).toBe(true);
     expect(byName.get("plain")?.thinkingLevel).toBeUndefined();
   });
+
+  it("agent config on a saved agent that is not running rewrites its stored config only", () => {
+    const db = openDb();
+    db.saveAgentConfig({
+      name: "Builder",
+      model: "anthropic/claude-opus-5-5",
+      role: "architect",
+      goal: "build",
+      room: "workbench",
+      spawnedBy: "Jeffy",
+      thinkingLevel: "low",
+    });
+    const runtime = new AgentRuntime({ db, wsPort: 0 });
+    // No provider key is needed: nothing is called until the agent runs.
+    expect(runtime.reconfigureSaved("Builder", { model: "marina/cheap" })).toBe(true);
+    const row = db.getAgentConfig("Builder");
+    expect(row?.model).toBe("marina/cheap");
+    expect([row?.role, row?.goal, row?.room, row?.spawned_by, row?.thinking_level]).toEqual([
+      "architect",
+      "build",
+      "workbench",
+      "Jeffy",
+      "low",
+    ]);
+    expect(runtime.reconfigureSaved("Nobody", { model: "marina/cheap" })).toBe(false);
+  });
 });

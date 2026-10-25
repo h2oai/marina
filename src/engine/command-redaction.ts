@@ -30,6 +30,13 @@ function isSensitiveForm(def: CommandDef | undefined, input: CommandInput): bool
   return !!sub && subs.includes(sub);
 }
 
+/** Whether `input` is a plumbing form that records no `command` event (`CommandDef.unloggedSubcommands`). */
+export function isUnloggedForm(def: CommandDef | undefined, input: CommandInput): boolean {
+  const subs = def?.unloggedSubcommands;
+  const sub = input.tokens[0]?.toLowerCase();
+  return !!subs && !!sub && subs.includes(sub);
+}
+
 /** The input text a `command` event may carry. */
 export function commandInputForLog(
   raw: string,

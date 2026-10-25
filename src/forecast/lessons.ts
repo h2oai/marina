@@ -29,6 +29,8 @@ export interface ForecastLesson {
   score?: number;
   /** The producer label (e.g. `futurex:cheap`, `forecast:probability`). */
   origin?: string;
+  /** The family or tracker the lesson is scoped to (served only to work of that family). */
+  family?: string;
   /**
    * `MARINA_LESSONS=observe`: the lesson WOULD have been injected. The
    * forecaster records it on the answer (`observedLessons`) and never shows it
@@ -38,11 +40,15 @@ export interface ForecastLesson {
 }
 
 export interface LessonStore {
-  /** Lessons known at `asOf` that match `query`, served first, within `maxBytes`. */
+  /**
+   * Lessons known at `asOf` that match `query`, served first, within
+   * `maxBytes`. `families`: the work's families or tracker — a lesson scoped
+   * to a family is served only when it is named here.
+   */
   recall(
     query: string,
     asOf: string,
-    opts?: { limit?: number; maxBytes?: number },
+    opts?: { limit?: number; maxBytes?: number; families?: readonly string[] },
   ): Promise<ForecastLesson[]>;
 }
 
@@ -58,12 +64,15 @@ export async function recallForecastLessons(
    * go to relevant lessons rather than to whatever matched the words.
    */
   accept?: (lesson: ForecastLesson) => boolean,
+  /** The work's families or tracker (family-scoped lessons need a match). */
+  families?: readonly string[],
 ): Promise<{ injected: ForecastLesson[]; observed: ForecastLesson[]; error?: string }> {
   if (!store || mode === "off") return { injected: [], observed: [] };
   try {
     const recalled = await store.recall(query, asOf, {
       limit: accept ? 16 : 4,
       maxBytes: accept ? 6000 : 1500,
+      ...(families?.length ? { families } : {}),
     });
     const got = recalled
       .filter(
