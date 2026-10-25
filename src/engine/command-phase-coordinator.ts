@@ -11,7 +11,7 @@ import type { CommandContext, EngineEvent, Entity, EntityId, RoomContext, RoomId
 import type { EntityManager } from "../world/entity-manager";
 import type { RoomManager } from "../world/room-manager";
 
-import { commandInputForLog } from "./command-redaction";
+import { commandInputForLog, isUnloggedForm } from "./command-redaction";
 import { failCommandResponse } from "./command-response";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
@@ -323,6 +323,7 @@ export class CommandPhaseCoordinator {
     // via operator grant / rank promotion / approved runs.
     recordUsage(true);
 
+    if (isUnloggedForm(def, input)) return;
     this.host.logEvent({
       type: "command",
       entity: entityId,

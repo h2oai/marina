@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`memory api` payloads no longer reach the event log.** A resident's journal and checkpoint
+  calls carried its memory content into `command` events on every turn and crowded the world's
+  own actions out of the row-bounded log. The form is now sensitive and unlogged
+  (`CommandDef.unloggedSubcommands`), and rows already stored in clear are removed at the next
+  start.
 - **Every third-party GitHub Action is pinned by commit** (the version stays as a comment). A test
   fails on any new unpinned `uses:`, and Dependabot proposes the updates. Clears the open
   unpinned-tag code-scanning alerts.

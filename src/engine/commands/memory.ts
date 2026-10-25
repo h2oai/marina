@@ -175,6 +175,11 @@ export function memoryCommand(deps: {
     ],
     name: "memory",
     aliases: [],
+    // `memory api` carries a resident's journal and checkpoint payloads (its
+    // own memory content) on every turn: never logged in clear, and not
+    // logged at all (it would crowd the world's actions out of the event log).
+    sensitiveSubcommands: ["api"],
+    unloggedSubcommands: ["api"],
     help:
       "Durable memory service + key-value beliefs.\n" +
       `${KV_USAGE}\n\n` +

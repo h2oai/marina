@@ -86,6 +86,13 @@ export interface CommandDef {
    * for these; `"*"` covers every form. See src/engine/command-redaction.ts.
    */
   sensitiveSubcommands?: readonly string[];
+  /**
+   * Plumbing subcommands a runtime issues on every agent turn (`memory api`
+   * checkpoints): they record no `command` event at all, so the row-bounded
+   * event log keeps the world's actions instead of its bookkeeping. Usage is
+   * still counted. See `isUnloggedForm` in src/engine/command-redaction.ts.
+   */
+  unloggedSubcommands?: readonly string[];
 }
 
 // ─── Room Context (injected into room modules) ──────────────────────────────
