@@ -69,6 +69,11 @@ function readingLine(r: Reading, url: string, sourceTitle: string): string {
 
 // ─── FRED ───────────────────────────────────────────────────────────────────
 
+/** A request that did not complete (network, HTTP status, bad body). */
+interface FetchFailure {
+  error: string;
+}
+
 interface FredObs {
   date: string;
   value: string;
@@ -96,14 +101,22 @@ export function fredLookup(
       if (ids.length === 0) return skippedResult(name, "no series named for this question");
       const d = fredAsOfDay(cutoff, now);
       const readings: Reading[] = [];
+      const failures: string[] = [];
       for (const id of ids) {
         const r = apiKey
           ? await vintageReading(http, apiKey, id, d)
           : await latestReading(http, id, d);
-        if (r) readings.push(r);
+        if (r && "error" in r) failures.push(r.error);
+        else if (r) readings.push(r);
       }
+      // A fetch that failed is not "no data": say which, so offline reads honestly.
       if (readings.length === 0)
-        return skippedResult(name, "no observation at or before the cutoff");
+        return skippedResult(
+          name,
+          failures.length > 0
+            ? `fetch failed: ${failures[0]}`
+            : "no observation at or before the cutoff",
+        );
       const out: LookupResult = {
         name,
         lines: [],
@@ -148,7 +161,7 @@ async function vintageReading(
   key: string,
   id: string,
   d: string,
-): Promise<Reading | undefined> {
+): Promise<Reading | FetchFailure | undefined> {
   const common = { file_type: "json", api_key: key, realtime_start: d, realtime_end: d };
   const obs = await http.json<{ observations?: FredObs[] }>(
     `${FRED}/series/observations?${new URLSearchParams({
@@ -159,7 +172,7 @@ async function vintageReading(
       limit: String(HISTORY_POINTS),
     })}`,
   );
-  if (!obs.ok) return undefined;
+  if (!obs.ok) return { error: obs.error };
   const meta = await http.json<{ seriess?: Array<{ title?: string; units_short?: string }> }>(
     `${FRED}/series?${new URLSearchParams({ ...common, series_id: id })}`,
   );
@@ -172,11 +185,11 @@ async function latestReading(
   http: LookupFetch,
   id: string,
   d: string,
-): Promise<Reading | undefined> {
+): Promise<Reading | FetchFailure | undefined> {
   const r = await http.text(
     `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(id)}`,
   );
-  if (!r.ok) return undefined;
+  if (!r.ok) return { error: r.error };
   const rows = r.value
     .trim()
     .split(/\r?\n/)

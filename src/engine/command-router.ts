@@ -147,8 +147,13 @@ export class CommandRouter {
   resolveCommand(
     verb: string,
     roomCommands?: Record<string, CommandHandler>,
+    /** The input's first argument: `help all` always reaches the builtin index. */
+    firstArg?: string,
   ): { handler: CommandHandler; def?: CommandDef; owner: "room" | "builtin" } | undefined {
-    if (roomCommands && Object.hasOwn(roomCommands, verb)) {
+    // A room's own `help` describes the room; `help all` is the builtin index
+    // of every command, reachable from any room. Every other room shadow wins.
+    const builtinEscape = verb === "help" && firstArg?.toLowerCase() === "all";
+    if (!builtinEscape && roomCommands && Object.hasOwn(roomCommands, verb)) {
       const handler = roomCommands[verb];
       if (typeof handler === "function") return { handler, owner: "room" };
     }

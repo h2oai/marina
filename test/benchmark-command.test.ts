@@ -69,6 +69,26 @@ describe("benchmark command (rank-gated in-world primitive)", () => {
     expect(text).not.toContain("subjects=");
   });
 
+  it("`benchmark result` names who launched the run, not its entity id", async () => {
+    const conn = new MockConnection("c-launch");
+    engine.addConnection(conn);
+    engine.login("c-launch", "Launcher");
+    db.insertBenchmarkRun({
+      id: "br_launched_1",
+      benchmark: "smoke",
+      config_hash: "c1",
+      config_json: "{}",
+      status: "failed",
+      started_at: Date.now(),
+      agent_id: conn.entity!,
+    });
+    conn.clear();
+    await engine.dispatchCommand(conn.entity!, "benchmark result br_launched_1");
+    const text = stripAnsi(conn.allTextJoined());
+    expect(text).toContain("launched by: Launcher");
+    expect(text).not.toContain(`launched by: ${conn.entity}`);
+  });
+
   it("`benchmark run` below rank 4 is a posture-aware floor: refused when shared, passed locally", async () => {
     const conn = new MockConnection("c-floor");
     engine.addConnection(conn);

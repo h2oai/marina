@@ -714,6 +714,34 @@ describe("room commands run under their own definition", () => {
     expect(f.messages.join("\n")).not.toContain("rank 9");
   });
 
+  it("a room's own help shadows the builtin, but `help all` reaches the builtin index", async () => {
+    const calls: string[] = [];
+    const f = phaseFixture({
+      roomCommands: {
+        help: (_ctx, input) => {
+          calls.push(`room help ${input.args}`.trim());
+        },
+      },
+    });
+    f.commands.registerBuiltin({
+      name: "help",
+      help: "builtin help",
+      handler: (_ctx, input) => {
+        calls.push(`builtin help ${input.args}`.trim());
+      },
+    });
+    await f.phase.execute(f.entity.id, "help");
+    await f.phase.execute(f.entity.id, "help interview");
+    await f.phase.execute(f.entity.id, "help all");
+    await f.phase.execute(f.entity.id, "HELP ALL");
+    expect(calls).toEqual([
+      "room help",
+      "room help interview",
+      "builtin help all",
+      "builtin help ALL",
+    ]);
+  });
+
   it("only a room's own keys resolve — never Object.prototype members", () => {
     const router = new CommandRouter();
     for (const verb of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {

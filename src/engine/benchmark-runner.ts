@@ -29,6 +29,7 @@ import { caseGuardFromItems } from "../learning/leak-guard";
 import { localHttpBase } from "../net/listen-ports";
 import { DEFAULT_STACK, parseStackHeader } from "../net/model-api/stack";
 import type { MarinaDB } from "../persistence/database";
+import { MARINA_ROOT } from "../runtime-paths";
 import type { EngineEvent, EntityId } from "../types";
 import { resolveBenchmarkJudge } from "./benchmark-judge";
 import {
@@ -563,7 +564,8 @@ export class BenchmarkRunner {
     const spec = BENCHMARKS[name];
     if (!spec) return false;
     if (spec.generated) return true;
-    const path = join(process.cwd(), spec.datasetPath ?? join(DATASETS_DIR, spec.datasetFile));
+    // The checkout's own files, wherever the server was started from.
+    const path = join(MARINA_ROOT, spec.datasetPath ?? join(DATASETS_DIR, spec.datasetFile));
     return existsSync(path);
   }
 
@@ -672,8 +674,10 @@ export class BenchmarkRunner {
 
     let harness: HarnessOutcome;
     try {
+      // The harness and its datasets are paths in the checkout (MARINA_ROOT),
+      // not in whatever directory the server was started from.
       const proc = Bun.spawn(["bun", ...args], {
-        cwd: process.cwd(),
+        cwd: MARINA_ROOT,
         env: { ...process.env, ...env },
         stdout: "pipe",
         stderr: "pipe",
