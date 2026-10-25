@@ -97,6 +97,8 @@ Implementation: `parseDuration` in `src/engine/commands/format-duration.ts`.
 > readiness               Capability health — active/degraded/off, with fixes (alias: health)
 > readiness autonomy      Are agents acting on their own right now? Each requirement vs what was observed,
                           and the share of 5-minute snapshots that qualified over the last 24 h
+> posture                 What ships off or observe-only, the evidence that would switch it on,
+                          and its decide-by date (`posture all`, `posture due`, `posture <text>`)
 > trace                   List recent execution traces
 > trace find status=failed model=qwen limit=20
 > trace stats             Summarize observed model/tool mechanics

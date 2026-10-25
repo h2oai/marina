@@ -148,7 +148,7 @@ chronicle since 1h           # → entries (event + any narrative/digest)
 operator view. `ops recover` safely releases expired work leases and expires overdue message
 receipts. Attention modes set with `agent attention-mode` persist across restarts.
 
-Two readiness lines watch state a world can carry silently:
+Three readiness lines watch state a world can carry silently:
 
 - **`learning-loop`** — outcomes still waiting for delivery or for a judge (count and oldest age),
   how far each outcome judge is from earning (comparisons out of 25), verifier opinions on record,
@@ -160,6 +160,10 @@ Two readiness lines watch state a world can carry silently:
   `gate reset agents all apply`, as an operator from an interactive `marina connect` on a terminal or
   the dashboard. A one-shot `marina connect -c` declares itself an agent and is refused, with that
   reason.
+- **`capability-posture`** — `degraded` while any technique shipped off or observe-only is past its
+  decide-by date ([capability posture](reference/capability-posture.md)); it names the count and
+  the oldest. `posture due` lists them with their evidence; promote what won, or record a new date
+  or a by-design reason in `src/config/capability-posture.ts`.
 
 Optional checks never raise an inbox alert. Alerts persist across restarts and include readiness,
 agent health, attention backlog, project budget, memory contradiction, and stale-source signals. Use `ops ack <id>`, `ops resolve <id>`, and

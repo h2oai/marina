@@ -4,6 +4,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { renderPostureReference } from "../src/config/capability-posture";
 import { commandManifest } from "../src/engine/command-manifest";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
@@ -72,6 +73,12 @@ try {
     );
     console.log(`Generated reference for ${commands.length} builtin commands.`);
   }
+  const posturePath = resolve(import.meta.dir, "../docs/reference/capability-posture.md");
+  const posture = renderPostureReference();
+  if (process.argv.includes("--check")) {
+    if (readFileSync(posturePath, "utf8") !== posture)
+      throw new Error("Capability posture reference is stale; run bun run docs:api.");
+  } else writeFileSync(posturePath, posture);
   await generateSurfaceReference(engine, process.argv.includes("--check"));
   generateEnvironmentReference(process.argv.includes("--check"));
 } finally {

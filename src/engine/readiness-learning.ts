@@ -13,10 +13,15 @@
  *                   999) held by AGENT accounts: each one bypasses the gate it
  *                   names, so any is critical (`gate audit` lists them).
  *
- * Both are read-only and bounded; neither calls a model.
+ *   capability-posture  techniques shipped off or observe-only, each with a
+ *                   decide-by date (`src/config/capability-posture.ts`):
+ *                   degraded while any date has passed undecided.
+ *
+ * All are read-only and bounded; none calls a model.
  */
 
 import { availableModels } from "../agent/available-models";
+import { daysUntil, overduePosture, postureEntries } from "../config/capability-posture";
 import { judgeStandings } from "../decisions/judges";
 import { lessonsMode } from "../learning/modes";
 import { lessonsFromWorkMode } from "../learning/work";
@@ -193,5 +198,30 @@ export function gateSentinelsCheck(db: MarinaDB | undefined): ReadinessCheck {
     detail: `CRITICAL: ${audit.agentRows} sentinel (999) gate row(s) held by ${agents.length} agent account(s) — ${names}${agents.length > 5 ? ", …" : ""}; each bypasses the gate it names (\`gate audit\`)`,
     remediation:
       "As an operator in an interactive person session (`marina connect` on a terminal, or the dashboard): `gate reset agents all` to review, then `gate reset agents all apply`. A one-shot `marina connect -c` counts as an agent and is refused.",
+  };
+}
+
+/** The `capability-posture` readiness line: degraded while any decide-by date has passed. */
+export function capabilityPostureCheck(now = Date.now()): ReadinessCheck {
+  const id = "capability-posture";
+  const label = "Capability posture";
+  const entries = postureEntries();
+  const waiting = entries.filter((e) => e.posture.class === "measure").length;
+  const overdue = overduePosture(now, entries);
+  const oldest = overdue[0];
+  if (oldest?.posture.class !== "measure")
+    return {
+      id,
+      label,
+      status: "ok",
+      detail: `${waiting} technique(s) waiting on evidence, none past its decide-by date (\`posture\`)`,
+    };
+  return {
+    id,
+    label,
+    status: "degraded",
+    detail: `${overdue.length} of ${waiting} technique(s) past their decide-by date; oldest ${oldest.subject} (due ${oldest.posture.decideBy}, ${-daysUntil(oldest.posture.decideBy, now)}d ago)`,
+    remediation:
+      "`posture due` lists them with their evidence: promote what won, or record a new date or a by-design reason in src/config/capability-posture.ts.",
   };
 }

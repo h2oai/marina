@@ -13,7 +13,8 @@ What Marina ships, and what actually runs. Every major feature has one status:
 The table mirrors `FEATURE_STATUS` in [`src/config/feature-status.ts`](../../src/config/feature-status.ts);
 `test/docs-contract.test.ts` fails when the two disagree. A world command that exists only for an
 experimental feature starts its help text with `[experimental]`, and `marina worlds` marks demo worlds
-`[demo]` (`"status"` in `--json`).
+`[demo]` (`"status"` in `--json`). What would switch each non-core feature on, and by when, is in
+[capability posture](capability-posture.md).
 
 | Feature | Status | How to enable | Owner area |
 |---|---|---|---|
