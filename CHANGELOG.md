@@ -474,6 +474,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     installation cannot call falls back to the tier, and the fallback is traced. With nothing
     promoted, every role resolves exactly as before.
 
+- **Imported lessons reach agents.** Lessons from a learned bundle are now recalled beside the
+  world's own lessons, in the resident `[Lessons]` section, `lessons`, forecasts, Code Mode and
+  passthru.
+  - They are labelled `imported` (`unsigned` too, for an unsigned bundle) and ranked below every
+    local trusted lesson.
+  - Family scoping, leakage rule 2 and the as-of fence apply as for local lessons. Bundles now
+    carry each lesson's `scope`, `families`, `scope_family` and the boards it must stay out of.
+  - A local trusted lesson whose rule matches an imported one confirms it and serves in its place.
+    One the lesson judge finds contradicting it retires it.
+  - `MARINA_IMPORTED_LESSONS=off|observe|on` controls serving. Unset means `on` once anything was
+    imported; `observe` records what would be served and serves nothing; `off` is unchanged
+    output.
+  - With `MARINA_UPSTREAM` unset, an open bundle signed by a pinned publisher key may now import.
+    No key is pinned by default, so nothing changes until an operator pins one; `off` still
+    refuses.
+  - Readiness `learned` reports imported bundles, lesson counts (served, observed, confirmed,
+    retired) and the last import.
 - **Start a world fresh from a learned bundle.**
   - `marina learned distill <db>` reads an old world's database read-only (a `VACUUM INTO`
     snapshot) and writes a `marina.learned.v1` bundle through the export allow-list. It is signed

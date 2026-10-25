@@ -201,6 +201,18 @@ export interface LessonItem extends ItemBase {
   refs?: string[];
   /** Producer label (`benchmark:<name>`), internal profile only. */
   source?: string;
+  /** What the rule is about (`LessonScope`): the importer keeps it for serving. */
+  scope?: string;
+  /** Task-family tags: a recall keyed on a family finds the lesson. */
+  families?: string[];
+  /** Served only to work of this family or tracker, as at the source. */
+  scope_family?: string;
+  /**
+   * Boards the lesson's provenance names (its source, `eval:` refs and the
+   * ledger runs it cites), in clear: the importer turns them into `eval:<board>`
+   * refs so the lesson stays out of those boards' measurements (leakage rule 2).
+   */
+  boards?: string[];
 }
 
 export interface ConventionItem extends ItemBase {

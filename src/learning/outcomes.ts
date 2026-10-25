@@ -25,7 +25,7 @@
  */
 
 import type { DecisionProvider, DecisionQuestions, NoulAnswer } from "../decisions/types";
-import { rankSortKey } from "../memory/admission-policy";
+import { rankSortKey, tokenJaccard } from "../memory/admission-policy";
 import { EVAL_REF_PREFIX } from "./eval-context";
 import { type CaseGuard, itemLeak } from "./leak-guard";
 
@@ -188,7 +188,22 @@ export function leakFreeEnforced(
   );
 }
 
-export type LessonTrust = "trusted" | "unverified" | "rejected";
+/**
+ * `imported`: a lesson from a learned bundle (`src/learned/`), trusted by its
+ * publisher's judge but not by this Marina. It is served below every local
+ * `trusted` lesson and is never promoted without local evidence.
+ */
+export type LessonTrust = "trusted" | "unverified" | "rejected" | "imported";
+
+/** Where an `imported` lesson came from (`upstream:lessons:<domain>` record metadata). */
+export interface ImportedLessonOrigin {
+  artifactId: string;
+  itemKey: string;
+  /** The bundle carried no publisher signature (`--allow-unsigned`). */
+  unsigned?: boolean;
+  /** A local trusted lesson confirmed it (`confirmImportedLesson`); that lesson serves instead. */
+  confirmedBy?: string;
+}
 
 export interface Lesson {
   id?: string;
@@ -221,6 +236,8 @@ export interface Lesson {
   provenance?: Record<string, string>;
   /** The record version the store read it at (stores fill it; never written). */
   version?: number;
+  /** Set on an `imported` lesson only: its bundle and item (stores fill it; never written). */
+  imported?: ImportedLessonOrigin;
   /** Independent supports: 1 when written, +1 per admission merge. */
   support?: number;
   /** Provenance of the duplicates merged into it (newest last, capped). */
@@ -804,9 +821,16 @@ export function servableLesson(l: Pick<Lesson, "trust" | "rule" | "source">): bo
   if (!l.rule?.trim()) return false;
   return (
     l.trust === "trusted" ||
+    // Trusted by its publisher's judge. Only the imported-lesson sink returns
+    // these, and only while MARINA_IMPORTED_LESSONS serves them.
+    l.trust === "imported" ||
     (l.trust === "unverified" && l.source.startsWith(CURATED_SOURCE_PREFIX))
   );
 }
+
+/** Serving order by trust: local trusted, then a curator's unjudged text, then imported. */
+const servingOrder = (l: Pick<Lesson, "trust">): number =>
+  l.trust === "trusted" ? 0 : l.trust === "imported" ? 2 : 1;
 
 /**
  * Served, visible lessons (`servableLesson`; a family-scoped lesson only when
@@ -834,7 +858,7 @@ export function selectServed(
     .filter((l) => !exclude?.(l))
     .sort(
       (a, b) =>
-        (a.trust === "trusted" ? 0 : 1) - (b.trust === "trusted" ? 0 : 1) ||
+        servingOrder(a) - servingOrder(b) ||
         (opts.rankOrder ? rankSortKey(a.rank?.score) - rankSortKey(b.rank?.score) : 0) ||
         Date.parse(b.resolvedAt) - Date.parse(a.resolvedAt),
     );
@@ -850,13 +874,17 @@ export function selectServed(
 }
 
 /**
- * How a recalled lesson is shown to a model: labelled by trust, and a `meta`
- * lesson labelled as learned on other work (`cross-board <scope>`).
+ * How a recalled lesson is shown to a model: labelled by trust (`imported`,
+ * plus `unsigned` when its bundle carried no signature), and a `meta` lesson
+ * labelled as learned on other work (`cross-board <scope>`).
  */
 export function formatLesson(l: Lesson): string {
   const tags: string[] = [];
   if (l.domain === "meta") tags.push(`cross-board ${l.scope ?? "lesson"}`);
-  if (l.trust !== "trusted") tags.push("unverified");
+  if (l.trust === "imported") {
+    tags.push("imported");
+    if (l.imported?.unsigned) tags.push("unsigned");
+  } else if (l.trust !== "trusted") tags.push("unverified");
   return tags.length ? `${l.text} (${tags.join(", ")})` : l.text;
 }
 
@@ -1140,7 +1168,34 @@ export interface OutcomeLearnerDeps {
    * `unverified` lesson behind. For batch passes such as the ledger backfill.
    */
   deferUnjudged?: boolean;
+  /**
+   * Imported lessons beside the shared pool (`src/learned/serve.ts`). Set only
+   * for writes into the shared pool while imported lessons are served: the
+   * judge sees the nearest ones after the local trusted lessons, and the
+   * written lesson confirms or retires them (`reconcileImported`).
+   */
+  imported?: ImportedLessonLink;
 }
+
+/**
+ * How the outcome loop reaches imported lessons. A local trusted lesson whose
+ * rule matches an imported one confirms it (the local lesson cites
+ * `upstream:<item_key>` and serves in its place); one the judge finds it
+ * contradicts is retired. Imported never becomes trusted by itself.
+ */
+export interface ImportedLessonLink {
+  /** Served imported lessons of `domain` near `text`, known at `asOf`. */
+  neighbours(domain: OutcomeDomain, text: string, asOf: string): Promise<Lesson[]>;
+  /** The local trusted lesson `localId` (citing the imported item) confirms it. */
+  confirm(imported: Lesson, localId: string): Promise<void>;
+  /** The local trusted lesson `localId` contradicts it: retire it. */
+  contradict(imported: Lesson, localId: string, reason: string): Promise<void>;
+}
+
+/** Rule overlap (token Jaccard) at which a local trusted lesson confirms an imported one. */
+export const IMPORTED_CONFIRM_JACCARD = 0.6;
+
+const ruleText = (l: Pick<Lesson, "rule" | "text">) => l.rule ?? l.text;
 
 export interface OutcomeRecord {
   trust: LessonTrust;
@@ -1188,7 +1243,43 @@ export async function recordOutcome(
     // allow-empty-catch: consistency context is best effort
   }
   existing = existing.filter((l) => l.trust === "trusted");
-  const verdict = await judgeLesson(candidate, outcome, deps.judge, existing);
+  // Imported lessons near the candidate join the consistency context after
+  // the local trusted ones (none without `deps.imported`: unchanged).
+  let importedShown: Lesson[] = [];
+  if (deps.imported) {
+    try {
+      const near = await deps.imported.neighbours(
+        outcome.domain,
+        candidate.text,
+        outcome.resolvedAt,
+      );
+      importedShown = near
+        .filter((l) => l.trust === "imported" && l.id && l.imported)
+        .slice(0, Math.max(0, 5 - existing.length));
+    } catch {
+      // allow-empty-catch: imported context is best effort; the local judgement stands
+    }
+  }
+  const judgedVerdict = await judgeLesson(candidate, outcome, deps.judge, [
+    ...existing,
+    ...importedShown,
+  ]);
+  // A contradicted IMPORTED lesson never holds a local one: the local outcome
+  // is the newer evidence, so the local lesson is written and the imported
+  // one retired after the write.
+  const contradicted = judgedVerdict.contests
+    ? importedShown.find((l) => l.id === judgedVerdict.contests)
+    : undefined;
+  const verdict: LessonVerdict = contradicted
+    ? (({ contests: _c, ...rest }) => rest)(judgedVerdict)
+    : judgedVerdict;
+  // A trusted local lesson whose rule matches an imported one confirms it.
+  const confirms =
+    verdict.trust === "trusted" && !verdict.contests && !contradicted
+      ? importedShown.find(
+          (l) => tokenJaccard(ruleText(l), ruleText(candidate)) >= IMPORTED_CONFIRM_JACCARD,
+        )
+      : undefined;
   if (verdict.costUsd) deps.onSpend?.(verdict.costUsd);
   if (deps.deferUnjudged && verdict.trust === "unverified")
     return { trust: verdict.trust, reason: verdict.reason, lesson: candidate, deferred: true };
@@ -1204,6 +1295,10 @@ export async function recordOutcome(
     trust: verdict.trust,
     ...(verdict.judgement ? { judgement: verdict.judgement } : {}),
     ...(verdict.judge ? { judge: verdict.judge } : {}),
+    // The confirmation citation `confirmImportedLesson` checks.
+    ...(confirms?.imported
+      ? { refs: [...(audited.refs ?? []), `upstream:${confirms.imported.itemKey}`] }
+      : {}),
   };
   // ── Admission hook: after the judge, before the write. ──
   const admitted = deps.admit
@@ -1224,6 +1319,14 @@ export async function recordOutcome(
   let metaId: string | undefined;
   // A lesson held unserved (contested) is not mirrored until its case resolves.
   const held = lesson.admission?.state === "contested";
+  if (deps.imported && id && lesson.trust === "trusted" && !held) {
+    try {
+      if (contradicted) await deps.imported.contradict(contradicted, id, judgedVerdict.reason);
+      else if (confirms) await deps.imported.confirm(confirms, id);
+    } catch {
+      // allow-empty-catch: the local lesson stands; the imported one is reconciled on a later outcome
+    }
+  }
   const mirror = deps.meta && id && !held ? metaMirror(lesson, id, verdict) : undefined;
   if (mirror) {
     try {

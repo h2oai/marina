@@ -58,7 +58,7 @@ export function currentLessonRecord(r: RecordLike, now = Date.now()): boolean {
   return until === null || until === undefined || until > now;
 }
 
-const TRUSTS = new Set<LessonTrust>(["trusted", "unverified", "rejected"]);
+const TRUSTS = new Set<LessonTrust>(["trusted", "unverified", "rejected", "imported"]);
 
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -106,6 +106,19 @@ export function lessonFromRecord(r: RecordLike): Lesson | undefined {
         }
       : {}),
     ...(typeof r.version === "number" ? { version: r.version } : {}),
+    // An imported lesson (`src/learned/import.ts`) names its bundle and item.
+    ...(trust === "imported" && typeof m.artifact_id === "string" && typeof m.item_key === "string"
+      ? {
+          imported: {
+            artifactId: m.artifact_id,
+            itemKey: m.item_key,
+            ...(m.unsigned === true ? { unsigned: true } : {}),
+            ...(typeof m.confirmed_locally_by === "string"
+              ? { confirmedBy: m.confirmed_locally_by }
+              : {}),
+          },
+        }
+      : {}),
     ...(typeof m.support === "number" && m.support >= 1 ? { support: m.support } : {}),
     ...(Array.isArray(m.merged) ? { merged: m.merged as LessonMergeEntry[] } : {}),
     ...(isObject(m.rank) && typeof m.rank.score === "number" ? { rank: m.rank as LessonRank } : {}),
