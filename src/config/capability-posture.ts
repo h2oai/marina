@@ -153,11 +153,6 @@ export const KNOB_POSTURE: Readonly<Record<string, Posture>> = {
     "an evolve trial's adopted role beats its parent in a child world",
     JAN_15,
   ),
-  MARINA_ROUTE_EVIDENCE: measure(
-    bench(),
-    "a route chosen from ledger evidence wins its role's board",
-    NOV_15,
-  ),
   MARINA_ROUTE_EVIDENCE_WINDOW: measure(
     outcomes(),
     "live-work evidence picks the same or better models as the benchmark ledger",
