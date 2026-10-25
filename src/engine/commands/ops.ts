@@ -101,7 +101,7 @@ export function syncOperationalAlerts(deps: OpsDependencies): void {
         category: "readiness",
         title: check.label,
         detail: check.detail,
-        remedy: "demo preflight",
+        remedy: check.remediation ?? "readiness",
       });
   }
   for (const agent of deps.runtime.list()) {

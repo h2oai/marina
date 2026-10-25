@@ -8,7 +8,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BENCHMARKS as HARNESS_BENCHMARKS } from "../benchmarks/registry";
 import {
@@ -74,6 +75,19 @@ describe("one benchmark registry", () => {
     const runner = new BenchmarkRunner({} as MarinaDB, () => {});
     expect(runner.datasetReady("retention")).toBe(true);
     expect(runner.datasetReady("smoke")).toBe(true);
+  });
+
+  test("a tracked dataset is ready whatever directory the server started in", () => {
+    const runner = new BenchmarkRunner({} as MarinaDB, () => {});
+    const before = process.cwd();
+    const elsewhere = mkdtempSync(join(tmpdir(), "marina-cwd-"));
+    try {
+      process.chdir(elsewhere);
+      expect(runner.datasetReady("smoke")).toBe(true);
+    } finally {
+      process.chdir(before);
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
   });
 
   test("the web UI serves the registry's catalog, not a copy", () => {

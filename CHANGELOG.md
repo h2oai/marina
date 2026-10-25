@@ -257,6 +257,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A refused model call is reported, never stored as an answer.** `code ask` with no model
+  provider (or any other `/v1` refusal) records a failed artifact and shows the upstream message,
+  which names the provider setting that fixes it; an empty model answer is a failure too. `ask`,
+  `dig` and `desire` keep their world-only output and add one line saying why the model gave none.
+- **An input behind two gates no longer bounces between holds.** An approval also covers each other
+  non-core gate its approver could approve on its own hold (checked gate by gate with the same rule),
+  and the reply names them (`also covers: …`). A core (operator-grant) gate is never covered
+  implicitly: it is held on its own, the approver is told the run stopped there, and approving it
+  carries the earlier approval of the gates that run already passed (named in the reply), so
+  `run raw` (`agent.run`, then `shell.exec`, under `shared`) runs after two explicit answers instead
+  of looping. `code.exec.unrestricted` is never passed by an approval: only an operator's grant
+  (`challenge approve <token> always` or `gate grant`) opens it.
+- **`showcase` no longer adds a seeded bounty on every reboot** once more than 20 tasks exist: the
+  seed reads every task, not the first page (`listTasks({ limit: null })`). `task list` says how
+  many tasks it left out and takes `limit:N` to show them.
+- **`ops inbox` leaves optional capabilities out.** A readiness check the core works without is no
+  longer a CRITICAL alert with the remedy `demo preflight`; real problems keep their severity and
+  carry the check's own remediation.
+- **An offline `data series` says the fetch failed** instead of "no observation at or before the
+  cutoff".
+- **`pattern run` and `forecast` name the fix when no model is available**, and `forecast` refuses
+  before printing "Researching…".
+- **Benchmark datasets resolve against the Marina checkout**, not the server's working directory:
+  a server started elsewhere no longer shows the tracked `smoke` set as missing, and the harness
+  runs from the checkout.
+- **`help all` reaches the builtin command index from any room**, including a room whose own `help`
+  describes the room (the `craft` workshop); every other room shadow still wins.
+- **`benchmark result` names who launched a run** instead of its entity id, and **`code diff`** lists
+  new and staged files that `git diff` does not show instead of reporting no change.
 - **Crews serve, can be measured, and tag their own work.** A crew created with `crew create` now
   serves `marina:<name>` through its own `model-<name>` endpoint (its agent members are kept on it
   as they join and leave), so it can answer `/v1`, take forecast parts and be a

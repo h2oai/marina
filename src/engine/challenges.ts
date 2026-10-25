@@ -96,6 +96,7 @@ import { positiveNumberFromEnv } from "./constants";
 import { sanitizeEntityName } from "./entity-name";
 import { getErrorMessage, tryLog } from "./errors";
 import {
+  currentGatePass,
   getCurrentCodingTarget,
   getCurrentCommand,
   grantCommandPass,
@@ -167,7 +168,16 @@ export interface ChallengeHost {
   redactCommand?(raw: string): string;
 }
 
-export type SettleError = "not_found" | "self" | "agent" | "not_authorized" | "absent";
+export type SettleError =
+  | "not_found"
+  | "self"
+  | "agent"
+  | "not_authorized"
+  | "absent"
+  | "grant_only";
+
+/** Operator-grant only: no approval mints a pass for it (`settleChallenge`). */
+const UNRESTRICTED_EXEC_GATE = "code.exec.unrestricted";
 export type SettleResult =
   | { ok: true; challenge: Challenge; answer: ChallengeAnswer; note?: string; detail?: string }
   | { ok: false; error: SettleError; detail?: string };
@@ -182,6 +192,12 @@ interface Pending {
   judge?: { opinion: "allow" | "hold" | "none"; signals: Record<string, number> };
   /** Approvers already told about this hold (in this process). */
   told: Set<string>;
+  /**
+   * Raised by an approved re-run: the gates that earlier approval already
+   * let through in that run. Approving this hold carries them (re-checked
+   * against this approver), so the input does not bounce back to them.
+   */
+  carried?: { token: string; gateIds: string[] };
 }
 
 const logger = new Logger();
@@ -273,7 +289,10 @@ export function setChallengeHost(next: ChallengeHost | undefined, owner?: object
       ? (entityId, gateId, reason) => {
           const raw = getCurrentCommand(entityId);
           if (!raw) return reason;
-          return reason + raiseForCommand({ requesterId: entityId, gateId, command: raw, reason });
+          const held = raiseForCommand({ requesterId: entityId, gateId, command: raw, reason });
+          carryApproval(entityId, raw, gateId);
+          tellApproverStopped(entityId, gateId);
+          return reason + held;
         }
       : undefined,
   );
@@ -940,6 +959,55 @@ function holdsAuthority(approver: Entity, challenge: Challenge): boolean {
   return true;
 }
 
+/**
+ * The other safety gates `approver` could approve for this same held input:
+ * each is checked exactly as a hold on that gate would be (`authorize`), so an
+ * approval never covers a gate its approver could not have answered alone.
+ */
+function alsoApprovable(approver: Entity, challenge: Challenge): string[] {
+  // Core (operator-grant) gates are never covered implicitly: each needs its
+  // own hold, so the person sees exactly what they approve. Approving a core
+  // hold covers nothing extra.
+  if (challenge.gateId && isOperatorGrantGate(challenge.gateId)) return [];
+  const covered: string[] = [];
+  for (const id of Object.keys(SAFETY_GATES)) {
+    if (id === challenge.gateId || isOperatorGrantGate(id)) continue;
+    const asHeld: Challenge = { ...challenge, kind: "gate", gateId: id, minRank: undefined };
+    if (!authorize(approver, asHeld)) covered.push(id);
+  }
+  return covered;
+}
+
+/**
+ * An approved re-run stopped at a gate its approver could not cover: tell the
+ * approver now, so "running it now" is never the last word on a run that did
+ * not happen.
+ */
+function carryApproval(requesterId: string, command: string, gateId: string): void {
+  const pass = currentGatePass(requesterId);
+  const used = pass?.usedGateIds ?? [];
+  if (!pass || used.length === 0) return;
+  for (const entry of pending.values()) {
+    const c = entry.challenge;
+    if (c.requesterId === requesterId && c.command === command && c.gateId === gateId) {
+      entry.carried = { token: pass.token, gateIds: [...used] };
+    }
+  }
+}
+
+function tellApproverStopped(requesterId: string, gateId: string): void {
+  const pass = currentGatePass(requesterId);
+  if (!pass?.approverId || !host) return;
+  host.send(
+    pass.approverId,
+    isOperatorGrantGate(gateId)
+      ? `Challenge ${pass.token} did not run: it also needs the core gate ${gateId}, which no other approval covers. ` +
+          `It is held again on ${gateId} alone; an operator answers that hold.`
+      : `Challenge ${pass.token} did not run: it also needs the ${gateId} gate, which your approval cannot cover ` +
+          `(an operator, or an owner holding ${gateId}, answers for it). It is held again for them.`,
+  );
+}
+
 function authorize(approver: Entity, challenge: Challenge): SettleError | undefined {
   if (isSelfOrChild(approver, challenge)) return "self";
   if (principalKind(approver) !== "person") return "agent";
@@ -1300,6 +1368,21 @@ export function settleChallenge(
       );
     }
   }
+  // `code.exec.unrestricted` is operator-grant only: no approval mints a pass
+  // for it. An operator's `always` grants it (and the re-run then holds it);
+  // every other answer except deny is refused here, before the hold closes.
+  if (
+    answer !== "deny" &&
+    challenge.kind !== "tool" &&
+    challenge.gateId === UNRESTRICTED_EXEC_GATE &&
+    !(answer === "always" && approver !== "judge" && isOperator(approver))
+  ) {
+    return {
+      ok: false,
+      error: "grant_only",
+      detail: `${UNRESTRICTED_EXEC_GATE} is operator-grant only; no approval runs it once. An operator grants it: \`challenge approve ${challenge.token} always\` or \`gate grant ${challenge.requesterName} ${UNRESTRICTED_EXEC_GATE}\`.`,
+    };
+  }
   let effective = answer;
   let detail: string | undefined;
   const gateId = challenge.kind === "tool" ? undefined : challenge.gateId;
@@ -1331,6 +1414,34 @@ export function settleChallenge(
         ? `${gateId} is operator-grant only; this run builds nothing toward it`
         : `runs once; an approval from inside ${challenge.requesterName}'s own lineage does not build ${gateId}`;
     detail = detail ? `${detail}; ${note}` : note;
+  }
+  // The other (non-core) gates this approval covers for the same held input:
+  // named in the reply, so nothing it allows is implicit.
+  const alsoCovered =
+    effective !== "deny" && approver !== "judge" && challenge.kind !== "tool" && challenge.command
+      ? alsoApprovable(approver, challenge)
+      : [];
+  if (alsoCovered.length > 0) {
+    const covers = `also covers: ${alsoCovered.join(", ")}`;
+    detail = detail ? `${detail}; ${covers}` : covers;
+  }
+  // A hold raised by an approved re-run carries the gates that approval
+  // already let through, each re-checked against THIS approver (never wider),
+  // so approving the second gate does not send the input back to the first.
+  // Named in the reply; they build no new demonstration.
+  const carried =
+    effective !== "deny" && approver !== "judge" && entry.carried
+      ? entry.carried.gateIds.filter(
+          (id) =>
+            id !== challenge.gateId &&
+            id !== UNRESTRICTED_EXEC_GATE &&
+            !alsoCovered.includes(id) &&
+            !authorize(approver, { ...challenge, kind: "gate", gateId: id, minRank: undefined }),
+        )
+      : [];
+  if (carried.length > 0 && entry.carried) {
+    const carries = `carries ${entry.carried.token}'s approval of ${carried.join(", ")}`;
+    detail = detail ? `${detail}; ${carries}` : carries;
   }
   pending.delete(challenge.token);
   recordOutcome(entry, effective, approver);
@@ -1367,13 +1478,27 @@ export function settleChallenge(
     // A restored tool hold: its call is a world command, re-run in the slot.
     redispatchHeldCommand(challenge.requesterId, challenge.command, challenge.codingTarget);
   } else if (challenge.command) {
+    // One approval covers every non-core gate the held input needs that this
+    // approver could approve on its own hold (same `authorize` rule, gate by
+    // gate), so an input behind two gates runs on one person's answer instead
+    // of bouncing between holds. A core gate, or one the approver cannot
+    // answer for, still holds the re-run, and the approver is told
+    // (`tellApproverStopped`).
+    const gateIds = [...(challenge.gateId ? [challenge.gateId] : []), ...alsoCovered];
+    const demonstratesGateIds =
+      approver === "judge"
+        ? []
+        : gateIds.filter((id) =>
+            approvalDemonstrates(approver, { name: challenge.requesterName }, id),
+          );
     grantCommandPass(challenge.requesterId, challenge.command, {
       codingTarget: challenge.codingTarget,
-      gateIds: challenge.gateId ? [challenge.gateId] : [],
+      gateIds: [...gateIds, ...carried],
       rankWaived: challenge.minRank !== undefined,
       ...(challenge.minRank !== undefined ? { waivedRank: challenge.minRank } : {}),
       ...(approverId ? { approverId } : {}),
       ...(demonstrates ? { demonstrates: true } : {}),
+      demonstratesGateIds,
       approverName,
       token: challenge.token,
     });

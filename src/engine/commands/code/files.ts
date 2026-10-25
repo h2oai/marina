@@ -233,7 +233,22 @@ export async function diff(
     kind: "diff_viewed",
     payload: { path: path || ".", exitCode: result.exitCode, truncated: result.truncated },
   });
-  const body = result.content.trim() || dim("No git diff.");
+  let body = result.content.trim();
+  if (!body) {
+    // `git diff` shows neither new (untracked) nor staged files: name them
+    // rather than report "no change" after `code write` created one.
+    // allow-empty-catch: changedPaths is optional; without it the reply is the plain "No git diff."
+    let pending = (await workspace.changedPaths?.().catch(() => [] as string[])) ?? [];
+    if (path) pending = pending.filter((p) => p === path || p.startsWith(`${path}/`));
+    body = pending.length
+      ? `${dim("No unstaged changes to tracked files. New or staged, not shown by git diff:")}\n${pending
+          .slice(0, 20)
+          .map((p) => `  ${p}`)
+          .join(
+            "\n",
+          )}${pending.length > 20 ? `\n  … ${pending.length - 20} more` : ""}\n${dim("`code read <path>` shows one.")}`
+      : dim("No git diff.");
+  }
   const totalBytes = (result as { totalBytes?: number }).totalBytes;
   const suffix = result.truncated
     ? dim(
