@@ -86,6 +86,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is earned, and how many more observations it needs. It says "no judge backend" when none is
   configured. `decision agreement`, `challenge stats` and `outcome agreement` read the same
   ledger, and the separate tally code is removed.
+- **One orchestration surface: the formation catalogue.** Crews, `project <name> orchestrate`,
+  `pattern run` and room formations now take every formation name, description, fit, role list and
+  protocol from `src/orchestration/formations/catalogue.ts`. `crew create … formation:<f>` and
+  `crew formation` validate against it (`ensemble` and `skeptic` are refused with where they run),
+  `crew info` shows the entry's summary, roles and protocol, a `crew dispatch` names the entry's
+  Score steps when it has a free-text template, and crew mediator lines lead with the catalogue
+  name. Each project template's opening note is generated from its entry. `freeform` is a catalogue
+  entry; the project name `custom` is now an alias of it (as `nsed` is of `deliberation`): both
+  still parse, and help lists catalogue names only. Feature status lists orchestration once, with
+  one sub-entry per way to run it.
 - **Outcome delivery plumbing.** A group of single outcomes still short of five is learned anyway
   once its oldest has waited 30 days, if it has at least three (the lesson states the true count),
   so a slow family still learns. A delivery pass claims a group atomically before its model call
@@ -465,6 +475,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Imported lessons reach agents.** Lessons from a learned bundle are now recalled beside the
+  world's own lessons, in the resident `[Lessons]` section, `lessons`, forecasts, Code Mode and
+  passthru.
+  - They are labelled `imported` (`unsigned` too, for an unsigned bundle) and ranked below every
+    local trusted lesson.
+  - Family scoping, leakage rule 2 and the as-of fence apply as for local lessons. Bundles now
+    carry each lesson's `scope`, `families`, `scope_family` and the boards it must stay out of.
+  - A local trusted lesson whose rule matches an imported one confirms it and serves in its place.
+    One the lesson judge finds contradicting it retires it.
+  - `MARINA_IMPORTED_LESSONS=off|observe|on` controls serving. Unset means `on` once anything was
+    imported; `observe` records what would be served and serves nothing; `off` is unchanged
+    output.
+  - With `MARINA_UPSTREAM` unset, an open bundle signed by a pinned publisher key may now import.
+    No key is pinned by default, so nothing changes until an operator pins one; `off` still
+    refuses.
+  - Readiness `learned` reports imported bundles, lesson counts (served, observed, confirmed,
+    retired) and the last import.
+- **Start a world fresh from a learned bundle.**
+  - `marina learned distill <db>` reads an old world's database read-only (a `VACUUM INTO`
+    snapshot) and writes a `marina.learned.v1` bundle through the export allow-list. It is signed
+    with `MARINA_LEARNED_SIGNING_KEY`, or written unsigned and labelled so.
+  - `--archive` or `marina learned archive <db>` moves the database into a cold archive directory
+    beside it. Nothing is deleted, and archiving is refused while a server holds the database.
+  - Manifests now list what a bundle never carries (`excludes`: accounts, standing, grants,
+    approvals, holds, secrets, journals, numeric note ids). Verification refuses a bundle whose
+    contents overreach its manifest. Bundles without the field still import.
+  - Importing an unsigned bundle needs `--allow-unsigned`.
+  - `MARINA_BOOTSTRAP_BUNDLES` (with `MARINA_BOOTSTRAP_ACCEPT=own,unsigned`) imports the named
+    bundles after the world seed and before any agent wakes. A second boot writes nothing, and
+    boot is unchanged when the variable is unset.
+  - `resolveDefault` now reads imported upstream seeds below every local layer, as documented.
 - **Orchestration runs land on the outcome path.** A person's `project <name> outcome` verdict,
   a `pattern run` (or `POST /v1/patterns/run`) whose own review approved or sent back the draft,
   and a room `verification` round closed with its checkers' `pass|fail` lines each record one

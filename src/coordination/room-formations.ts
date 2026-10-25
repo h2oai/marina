@@ -20,16 +20,23 @@
  * state is returned, never stored here.
  */
 
-import { normalizePatternName } from "../world/templates/orchestration";
+import {
+  canonicalFormationName,
+  ROOM_FORMATION_NAMES,
+  type RoomFormationName,
+} from "../orchestration/formations/catalogue";
 
-/** Formations a room can run. Each is also a crew formation of the same name. */
-export const ROOM_FORMATIONS = ["debate", "chorus", "verification"] as const;
-export type RoomFormation = (typeof ROOM_FORMATIONS)[number];
+/**
+ * Formations a room can run: the catalogue entries marked `room` (each is
+ * also a crew formation of the same name).
+ */
+export const ROOM_FORMATIONS: readonly RoomFormationName[] = ROOM_FORMATION_NAMES;
+export type RoomFormation = RoomFormationName;
 
 /** The canonical room formation for a name (legacy aliases normalized), or undefined. */
 export function roomFormationName(name: string | undefined): RoomFormation | undefined {
   if (!name) return undefined;
-  const canonical = normalizePatternName(name.trim().toLowerCase());
+  const canonical = canonicalFormationName(name);
   return (ROOM_FORMATIONS as readonly string[]).includes(canonical)
     ? (canonical as RoomFormation)
     : undefined;

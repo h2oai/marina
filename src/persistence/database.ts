@@ -2449,6 +2449,13 @@ export class MarinaDB implements MarinaStores {
     return learnedDb.listUpstreamEvents(this.reader, opts);
   }
 
+  countUpstreamEventItems(
+    action: string,
+    opts: { artifactId?: string; itemKey?: string } = {},
+  ): number {
+    return learnedDb.countUpstreamEventItems(this.reader, action, opts);
+  }
+
   listOwnedSpaceRecords(
     ownerName: string,
     prefix: string,

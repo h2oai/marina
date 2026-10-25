@@ -1358,8 +1358,19 @@
 
 # Durable record search for unified memory context: `lexical` (default, FTS5) or `hybrid` (lexical fused with the memory vector index; needs MARINA_MEMORY_EMBEDDINGS and an indexed space). A missing provider or an incomplete index answers lexically and is labelled `semantic_degraded` on the evidence tier, never an error. Evidence-gated: measure before enabling (`bun run qualify:paraphrase`).
 # MARINA_MEMORY_CONTEXT_SEARCH=lexical
-# Learned bundles (marina.learned.v1, docs/guides/learned-bundles.md): `on` lets an operator import a signed bundle with `bun run learned import`. Imported lessons land in `upstream:*` spaces with trust `imported` and are never trusted until local outcomes confirm them; defaults seed only empty slots; ledger aggregates become down-weighted priors, never ledger rows. `off` (default) refuses every import and nothing changes.
-# MARINA_UPSTREAM=off
+# Learned bundles (marina.learned.v1, docs/guides/learned-bundles.md): `on` lets an operator import a signed bundle with `bun run learned import`. Imported lessons land in `upstream:*` spaces with trust `imported` and are never trusted until local outcomes confirm them; defaults seed only empty slots; ledger aggregates become down-weighted priors, never ledger rows. Unset (default): only a bundle signed by a PINNED publisher key whose slices are all `open` imports (no unsigned bundle, no entitlement, no `--own`); the built-in pinned key list is empty, so nothing imports until an operator pins a key in MARINA_LEARNED_PUBLISHER_KEYS. `off` refuses every import not named by MARINA_BOOTSTRAP_BUNDLES, and nothing changes.
+# MARINA_UPSTREAM=
+
+# Serving imported lessons (src/learned/serve.ts): lessons from learned bundles are recalled beside the world's own, labelled `imported` (and `unsigned` for an unsigned bundle), ranked below every local trusted lesson, under the same family scoping, owner scope, measurement self-exclusion and as-of fence. A local trusted lesson whose rule matches one confirms it (and serves in its place); one the lesson judge finds it contradicts is retired. `on` serves; `observe` records what would be served (upstream_events `observed`) and serves nothing; `off` never reads them and every surface is unchanged. Unset (default): `on` once anything has been imported. Readiness `learned` reports the counts. No model call.
+# MARINA_IMPORTED_LESSONS=
+
+# Learned bundles imported at boot, right after the world seed and before any agent wakes: comma-separated bundle directories (a directory without a manifest.json stands for every bundle directly inside it, in name order). Naming a bundle here is the operator's opt-in for that bundle whatever MARINA_UPSTREAM says; every other import rule holds (pinned signatures, revocations, no downgrade, trust `imported` in `upstream:*` spaces, seeds only for empty slots). A bundle already imported at the same generation and digest is skipped, so a restart writes nothing. A refused bundle is logged and audited; boot continues. Unset (default): nothing runs. `marina learned distill <db>` turns an old world's database into a bundle.
+# @restart
+# MARINA_BOOTSTRAP_BUNDLES=
+
+# What MARINA_BOOTSTRAP_BUNDLES may accept beyond signed, open slices: comma-separated `own` (the bundles' `private` slices are the operator's own pack; never a paid `token` slice) and `unsigned` (a bundle written with no publisher key, every record labelled `unsigned`). Default empty.
+# @restart
+# MARINA_BOOTSTRAP_ACCEPT=
 
 # Publisher keys a learned bundle or revocation list must be signed by: comma-separated `label=<base64 SPKI>` or bare base64 Ed25519 public keys, added to the keys pinned in source. A bundle signed by any other key is refused; the key embedded in a bundle is never trusted on its own.
 # @protected

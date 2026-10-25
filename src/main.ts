@@ -37,6 +37,7 @@ import {
 } from "./engine/trust-profile";
 import { loadExtensions } from "./extensions/loader";
 import { attachResidentDispatcher } from "./forecast/resident-part";
+import { importBootstrapBundles } from "./learned/bootstrap";
 import { enableOutcomeLearning } from "./learning/service";
 import { parseEmbeddingEnv } from "./memory/embedding-config";
 import { closeWorldMemoryService, worldMemoryService } from "./memory/world-service";
@@ -462,6 +463,19 @@ seedGuidePool(db, world.guideNotes, { commands: engine.commands.allBuiltins() })
 // Run world seed function (idempotent)
 if (world.seed) {
   world.seed(db);
+}
+
+// Learned bundles the operator names (MARINA_BOOTSTRAP_BUNDLES) land right after
+// the seed and before any agent wakes; unset, nothing runs. A refusal is logged
+// and audited, never fatal: the world boots with what it has.
+try {
+  for (const b of await importBootstrapBundles(db)) {
+    const line = `bootstrap bundle ${b.path}: ${b.outcome}${b.artifact ? ` ${b.artifact}` : ""} (${b.detail})`;
+    if (b.outcome === "refused") logger.error("main", line);
+    else logger.info("main", line);
+  }
+} catch (err) {
+  logger.error("main", "bootstrap bundles failed", { err });
 }
 
 // Civic rule changes enter the chronicle once per world (idempotent).

@@ -20,11 +20,17 @@
  *
  * Every candidate item is then scanned (`scan.ts`); a failing item is DROPPED,
  * never redacted, and only its key, kind and reason are reported.
+ *
+ * The manifest declares what the bundle never carries (`excludes`,
+ * `BUNDLE_EXCLUDES`). With no signing key (`signingKey: null`) the bundle is
+ * written UNSIGNED under a `marina-memory:unsigned-<id>` artifact id; an
+ * importer accepts it only with an explicit flag.
  */
 
 import { hostname } from "node:os";
 import { decodeRoleBundle, exportRoleBundle } from "../agent/role-bundle";
 import { getPromotedDefault } from "../engine/benchmark-promotion";
+import { lessonBoards } from "../learning/eval-context";
 import { LESSONS_ACCOUNT } from "../learning/service";
 import { lessonFromRecord } from "../learning/store";
 import { publicKeyOfSigningKey } from "../net/federation-crypto";
@@ -34,6 +40,7 @@ import { adoptionLog } from "../world/adoption";
 import { DIFF_FILE, jsonl, SPEC_FILE, verifyBundle, writeBundle } from "./bundle";
 import {
   type Access,
+  BUNDLE_EXCLUDES,
   CORE_TIER_BYTES,
   type ConventionItem,
   compareSemver,
@@ -63,6 +70,8 @@ import {
   type Slice,
   sliceDigest,
   type Tier,
+  UNSIGNED_ARTIFACT_PREFIX,
+  UNSIGNED_KEY_ID,
   wilsonLow,
 } from "./format";
 import { type BenchmarkTextIndex, Scanner, type ScanReason, stringsOf } from "./scan";
@@ -78,8 +87,17 @@ export interface ExportOptions {
   version?: string;
   profile?: Profile;
   publisher: { name: string; url?: string };
-  /** The dedicated Ed25519 key (MARINA_LEARNED_SIGNING_KEY), base64 PKCS#8 or PEM. */
-  signingKey: string;
+  /**
+   * The dedicated Ed25519 key (MARINA_LEARNED_SIGNING_KEY), base64 PKCS#8 or
+   * PEM. `null` writes an UNSIGNED bundle (then `unsignedIdentity` is required).
+   */
+  signingKey: string | null;
+  /**
+   * For an unsigned bundle: a stable identity of the source (a distilled
+   * database's path) that salts item keys and names the artifact, in place of
+   * the publisher key id.
+   */
+  unsignedIdentity?: string;
   /** The previous version's directory: generation, parent, lineage and diff follow from it. */
   parentDir?: string;
   /** Open the whole bundle (CC-BY-4.0, redistribution and commercial use allowed). */
@@ -246,9 +264,21 @@ export function exportLearnedBundle(db: MarinaDB, opts: ExportOptions): ExportRe
   if (!ARTIFACT_NAME.test(opts.name))
     throw new Error("name must be lower-case letters, digits, '.', '_' or '-' (≤ 64)");
   if (!opts.publisher.name.trim()) throw new Error("a publisher name is required");
-  const { publicKey, keyId } = publicKeyOfSigningKey(opts.signingKey);
+  const unsigned = opts.signingKey === null;
+  if (unsigned && !opts.unsignedIdentity?.trim())
+    throw new Error("an unsigned export needs unsignedIdentity");
+  if (unsigned && opts.parentDir) throw new Error("an unsigned export has no parent lineage");
+  const { publicKey, keyId } =
+    opts.signingKey === null
+      ? {
+          publicKey: "",
+          keyId: `${UNSIGNED_KEY_ID}:${sha256Hex(opts.unsignedIdentity ?? "")}`,
+        }
+      : publicKeyOfSigningKey(opts.signingKey);
   const salt = keyId;
-  const artifactId = `marina-memory:${keyId.slice("sha256:".length, "sha256:".length + 16)}/${opts.name}`;
+  const artifactId = unsigned
+    ? `${UNSIGNED_ARTIFACT_PREFIX}${keyId.slice(UNSIGNED_KEY_ID.length + 1, UNSIGNED_KEY_ID.length + 17)}/${opts.name}`
+    : `marina-memory:${keyId.slice("sha256:".length, "sha256:".length + 16)}/${opts.name}`;
   const instanceName = env.MARINA_NAME?.trim() || "";
   const origin = `inst:${sha256Hex(`${salt}\u0000${instanceName}\u0000${hostname()}`).slice(0, 16)}`;
   const scanner = new Scanner({
@@ -288,6 +318,15 @@ export function exportLearnedBundle(db: MarinaDB, opts: ExportOptions): ExportRe
         resolved_at: lesson.resolvedAt,
         ...(refs.length ? { refs } : {}),
         ...(profile === "internal" && lesson.source ? { source: lesson.source } : {}),
+        // Serving scope travels with the lesson: family scoping and the boards
+        // it must stay out of when an importer measures them (leakage rule 2).
+        ...(lesson.scope ? { scope: lesson.scope } : {}),
+        ...(lesson.families?.length ? { families: lesson.families } : {}),
+        ...(lesson.scopeFamily ? { scope_family: lesson.scopeFamily } : {}),
+        ...(() => {
+          const boards = lessonBoards(lesson, (id) => db.getBenchmarkRun(id)?.benchmark);
+          return boards.length ? { boards } : {};
+        })(),
         provenance: [
           {
             producer: "outcome",
@@ -476,7 +515,7 @@ export function exportLearnedBundle(db: MarinaDB, opts: ExportOptions): ExportRe
   let version = opts.version ?? "1.0.0";
   if (opts.version && !parseSemver(opts.version))
     throw new Error(`version is not semver: ${opts.version}`);
-  if (opts.parentDir) {
+  if (opts.parentDir && opts.signingKey !== null) {
     const own = [{ label: "self", publicKey, keyId }];
     const parent = verifyBundle(opts.parentDir, own);
     if (!parent.ok) throw new Error(`parent bundle refused: ${parent.error}`);
@@ -540,9 +579,10 @@ export function exportLearnedBundle(db: MarinaDB, opts: ExportOptions): ExportRe
     min_marina_version: opts.marinaVersion,
     origin,
     profile,
+    ...(unsigned ? { unsigned: true as const } : {}),
     publisher: {
       name: opts.publisher.name.trim(),
-      key_id: keyId,
+      key_id: unsigned ? UNSIGNED_KEY_ID : keyId,
       public_key: publicKey,
       ...(opts.publisher.url ? { url: opts.publisher.url } : {}),
     },
@@ -576,6 +616,7 @@ export function exportLearnedBundle(db: MarinaDB, opts: ExportOptions): ExportRe
       ],
       k_min: K_MIN,
     },
+    excludes: [...BUNDLE_EXCLUDES],
   };
 
   const files: Record<string, string> = {};

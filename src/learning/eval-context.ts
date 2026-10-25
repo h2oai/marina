@@ -164,3 +164,29 @@ export function evalExclusion(
     return false;
   };
 }
+
+/**
+ * The boards a lesson's provenance names, by the same reading `evalExclusion`
+ * makes: its source label (`benchmark:<name>`, or a non-generic producer
+ * prefix), `eval:<board>` refs and the ledger runs its `bench:` refs cite.
+ * A learned bundle carries these in clear so an importing Marina keeps the
+ * lesson out of those boards' measurements (`src/learned/export.ts`).
+ */
+export function lessonBoards(
+  lesson: Pick<Lesson, "source" | "refs">,
+  benchmarkOf?: (runId: string) => string | undefined,
+): string[] {
+  const out = new Set<string>();
+  const source = lesson.source ?? "";
+  const prefix = source.split(":")[0] ?? "";
+  if (source.startsWith("benchmark:")) out.add(source.slice("benchmark:".length));
+  else if (prefix && !GENERIC_PREFIXES.has(prefix)) out.add(prefix);
+  for (const ref of lesson.refs ?? []) {
+    if (ref.startsWith(EVAL_REF_PREFIX)) out.add(ref.slice(EVAL_REF_PREFIX.length));
+    else if (ref.startsWith("bench:")) {
+      const name = benchmarkOf?.(ref.slice("bench:".length));
+      if (name) out.add(name);
+    }
+  }
+  return [...out].filter((b) => NAME.test(b)).sort();
+}

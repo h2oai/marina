@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Import a `marina.learned.v1` bundle — opt-in (`MARINA_UPSTREAM=on`), signed
- * by a PINNED publisher key, and never trusted locally until local outcomes
- * confirm it.
+ * Import a `marina.learned.v1` bundle — signed by a PINNED publisher key, and
+ * never trusted locally until local outcomes confirm it. `MARINA_UPSTREAM=on`
+ * allows operator imports; `off` refuses every one; unset allows only a bundle
+ * signed by a pinned key whose slices are all `open` (the built-in pinned key
+ * list is empty, so unset imports nothing until an operator pins a key).
  *
  *   verify     signature against pinned keys, file digests, item hashes
  *              (`bundle.ts`); signed revocation lists; no downgrade (a lower
@@ -40,6 +42,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { importRoleBundle, type RoleBundle } from "../agent/role-bundle";
 import { getErrorMessage } from "../engine/errors";
+import { lessonBoards } from "../learning/eval-context";
 import { LESSONS_ACCOUNT } from "../learning/service";
 import { lessonFromRecord } from "../learning/store";
 import { residentMemoryOperation } from "../memory/resident-service";
@@ -68,11 +71,10 @@ import type {
 } from "./format";
 import { type BenchmarkTextIndex, Scanner, stringsOf } from "./scan";
 import { type PinnedKey, pinnedPublisherKeys } from "./sign";
+import { IMPORTED_TRUST, UPSTREAM_ACCOUNT, UPSTREAM_LESSONS_PREFIX } from "./upstream-account";
 import { validateRoomSource, validateWorldDocument } from "./world";
 
-export const UPSTREAM_ACCOUNT = "marina:upstream";
-/** The trust value of every imported record: below local `trusted`, never promoted by import. */
-export const IMPORTED_TRUST = "imported";
+export { IMPORTED_TRUST, UPSTREAM_ACCOUNT } from "./upstream-account";
 /** Down-weighting of imported ledger aggregates. */
 export const PRIOR_WEIGHT = 0.25;
 /** At most this many items of an imported cell count as prior pseudo-counts. */
@@ -80,12 +82,46 @@ export const PRIOR_N_CAP = 50;
 export const UPSTREAM_ROLE_PREFIX = "upstream.";
 const ROLE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
-export type UpstreamMode = "off" | "on";
+/**
+ * `on` allows operator imports; `off` refuses every one; `open` (the unset
+ * default) allows only a bundle signed by a pinned publisher key whose slices
+ * are all open (`openBundleRefusal`).
+ */
+export type UpstreamMode = "off" | "on" | "open";
 
-/** `MARINA_UPSTREAM`: `off` (default) refuses every import; `on` allows operator imports. */
+/**
+ * `MARINA_UPSTREAM`: `on`/`true`/`1` → `on`; unset or empty → `open`; `off`
+ * and anything else → `off` (an unreadable value never widens what imports).
+ */
 export function upstreamMode(env: NodeJS.ProcessEnv = process.env): UpstreamMode {
   const v = env.MARINA_UPSTREAM?.trim().toLowerCase();
+  if (!v) return "open";
   return v === "on" || v === "true" || v === "1" ? "on" : "off";
+}
+
+/** One line on what imports `mode` allows, for `learned` and readiness. */
+export function describeUpstreamMode(mode: UpstreamMode, pinnedKeys: number): string {
+  if (mode === "on") return "on — operators import signed bundles (`marina learned import`)";
+  if (mode === "off") return "off — every import is refused (MARINA_UPSTREAM=off)";
+  return pinnedKeys === 0
+    ? "unset — only open bundles signed by a pinned publisher key import, and no key is pinned, so nothing imports"
+    : `unset — only open bundles signed by one of ${pinnedKeys} pinned publisher key(s) import`;
+}
+
+/**
+ * Why a verified bundle may not import with `MARINA_UPSTREAM` unset, or
+ * undefined when it may: it must be signed (never `unsigned`), and every
+ * slice and the bundle's own access must be `open`, so no entitlement or
+ * `--own` assertion is involved.
+ */
+export function openBundleRefusal(m: Manifest): string | undefined {
+  if (m.unsigned) return "it is unsigned";
+  const slices = m.slices ?? [];
+  if (m.access?.model !== "open") return `its access is ${m.access?.model ?? "private"}`;
+  if (slices.length === 0) return "it declares no slices";
+  const closed = slices.find((s) => !(s.open || s.access === "open"));
+  if (closed) return `slice ${closed.id} is ${closed.access}`;
+  return undefined;
 }
 
 export interface ImportOptions {
@@ -103,6 +139,11 @@ export interface ImportOptions {
    * for the operator's own private pack. Without one, only open items are written.
    */
   entitlement?: EntitlementGrant;
+  /**
+   * Accept a bundle written with no publisher key (`learned distill` without a
+   * key). Off by default; every record it writes is labelled `unsigned`.
+   */
+  allowUnsigned?: boolean;
 }
 
 export interface ImportReport {
@@ -214,6 +255,7 @@ function upstreamMetadata(b: VerifiedBundle, item: LearnedItem): Record<string, 
     generation: m.generation,
     publisher: m.publisher.name,
     publisher_key_id: m.publisher.key_id,
+    ...(m.unsigned ? { unsigned: true } : {}),
     license: item.license ?? m.license,
     ...(item.rank !== undefined ? { publisher_rank: item.rank } : {}),
     upstream_provenance: [
@@ -281,7 +323,8 @@ export async function importLearnedBundle(
   opts: ImportOptions = {},
 ): Promise<ImportOutcome> {
   const env = opts.env ?? process.env;
-  if (upstreamMode(env) === "off") {
+  const mode = upstreamMode(env);
+  if (mode === "off") {
     return {
       ok: false,
       error: "imports are off: set MARINA_UPSTREAM=on to import learned bundles",
@@ -289,6 +332,19 @@ export async function importLearnedBundle(
   }
   const actor = opts.actor ?? "operator";
   const pinned = opts.pinned ?? pinnedPublisherKeys(env);
+  if (mode === "open") {
+    // Unset: only an open bundle signed by a pinned key. Anything else is
+    // refused exactly as `off` refuses it (no audit row, nothing written), and
+    // the caller's grants and `allowUnsigned` are never consulted.
+    const check = verifyBundle(dir, pinned, { allowUnsigned: false });
+    const why = check.ok ? openBundleRefusal(check.bundle.manifest) : check.error;
+    if (why)
+      return {
+        ok: false,
+        error: `imports are off: with MARINA_UPSTREAM unset only an open bundle signed by a pinned publisher key imports (${why}); set MARINA_UPSTREAM=on to import it`,
+      };
+  }
+  const open = mode === "open";
   const refuse = (error: string, extra: Record<string, unknown> = {}): ImportOutcome => {
     db.recordUpstreamEvent({
       action: "import",
@@ -298,7 +354,9 @@ export async function importLearnedBundle(
     });
     return { ok: false, error };
   };
-  const verified = verifyBundle(dir, pinned);
+  const verified = verifyBundle(dir, pinned, {
+    allowUnsigned: !open && opts.allowUnsigned === true,
+  });
   if (!verified.ok) return refuse(verified.error);
   const b = verified.bundle;
   const m = b.manifest;
@@ -335,7 +393,7 @@ export async function importLearnedBundle(
 
   // Entitlement: a grant must be live and not revoked by the publisher; then the
   // access plan decides item by item. A paid item is never written without one.
-  const grant = opts.entitlement;
+  const grant = open ? undefined : opts.entitlement;
   if (grant) {
     const expires = grant.expires_at ? Date.parse(grant.expires_at) : Number.POSITIVE_INFINITY;
     if (!(expires >= Date.now())) return refuse("the entitlement grant has expired");
@@ -406,6 +464,20 @@ export async function importLearnedBundle(
     // Unselected or withheld (no entitlement): not written, and not retired below.
     if (!plan.allowed.has(item.item_key)) continue;
     const prior = db.getLearnedItem(m.artifact_id, item.item_key);
+    // A local outcome contradicted this exact version (`serve.ts`): it stays
+    // retired here; a changed version from the publisher is imported again.
+    if (
+      prior?.status === "retired" &&
+      prior.content_hash === item.content_hash &&
+      db.countUpstreamEventItems("contradicted", {
+        artifactId: m.artifact_id,
+        itemKey: item.item_key,
+      }) > 0
+    ) {
+      present.add(item.item_key);
+      report.unchanged++;
+      continue;
+    }
     if (revokedItems.has(item.item_key)) {
       // Never applied; an earlier import of it is retired as `revoked` below.
       report.dropped.push({ item_key: item.item_key, reason: "revoked" });
@@ -535,6 +607,7 @@ export async function importLearnedBundle(
     outcome: "ok",
     detail: {
       publisher: m.publisher.name,
+      ...(m.unsigned ? { unsigned: true } : {}),
       license: m.license,
       added: report.added,
       changed: report.changed,
@@ -556,6 +629,15 @@ async function retireOld(run: Run, kind: string, localRef: string, reason: strin
   // Seeds, priors and roles need no action here: a seed or prior counts only
   // while its item is active (`latestUpstreamDefaultSeed`, `listEvidencePriors`),
   // and an upstream role stays until an operator deletes it.
+}
+
+/** Close an imported record's validity (`serve.ts`: a local lesson contradicted it). */
+export async function retireImportedRecord(
+  db: MarinaDB,
+  localRef: string,
+  reason: string,
+): Promise<void> {
+  await retireRecord(upstreamRun(db), localRef, reason);
 }
 
 /** Apply one item; returns its local reference, or undefined when it was skipped. */
@@ -587,7 +669,14 @@ async function applyItem(
       const l = item as LessonItem;
       const from = Date.parse(l.resolved_at);
       if (!Number.isFinite(from)) return skip("resolved_at is not a time");
-      const spaceId = await spaceFor(`upstream:lessons:${l.domain}`);
+      const spaceId = await spaceFor(`${UPSTREAM_LESSONS_PREFIX}${l.domain}`);
+      // Leakage rule 2 keys on `eval:<board>` refs: the boards the publisher
+      // tagged, plus any its source label names, keep the lesson out of
+      // those boards' measurements here too.
+      const boards = [
+        ...new Set([...(l.boards ?? []), ...lessonBoards({ source: l.source ?? "", refs: [] })]),
+      ];
+      const refs = [...(l.refs ?? []), ...boards.map((b) => `eval:${b}`)];
       const reply = await run({
         operation: "remember",
         space_id: spaceId,
@@ -606,7 +695,11 @@ async function applyItem(
             ...(l.rule ? { rule: l.rule } : {}),
             ...(l.judgement ? { judgement: l.judgement } : {}),
             ...(l.judge ? { judge: l.judge } : {}),
-            ...(l.refs?.length ? { refs: l.refs } : {}),
+            ...(refs.length ? { refs } : {}),
+            ...(l.scope ? { scope: l.scope } : {}),
+            ...(l.families?.length ? { families: l.families } : {}),
+            ...(l.scope_family ? { scope_family: l.scope_family } : {}),
+            ...(l.source ? { origin_source: l.source } : {}),
             ...upstreamMetadata(b, item),
           },
           valid_time: { from, until: null },

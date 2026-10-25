@@ -19,6 +19,8 @@
  *   marina mcp-stdio [--url <mcp-url>] [--token <t>] [--data-dir <dir>]
  *                                stdio MCP bridge to a running Marina's /mcp
  *   marina memory-mcp [...]      stdio MCP server for one Marina memory space
+ *   marina learned <verb> [...]  learned bundles: export, import, distill, archive, verify
+ *                                (scripts/learned.ts)
  *   marina status [--url|--port] is a Marina running? health + capability readiness
  *   marina init                  interactive .env setup
  *   marina supervise [...]       manage local coding agents from the dashboard
@@ -90,6 +92,7 @@ export type Dispatch =
   | { kind: "code-connected"; url: string; name: string; session: string; tui?: boolean }
   | { kind: "attach"; url?: string; name?: string; session?: string; tui?: boolean }
   | { kind: "route"; rest: string[] }
+  | { kind: "learned"; rest: string[] }
   | { kind: "inquiry"; mode: "predict" | "research" | "inquiry"; rest: string[] }
   | { kind: "supervise"; rest: string[] }
   | { kind: "start" }
@@ -190,6 +193,7 @@ export function parseDispatch(
   if (first === "status") return parseStatus(argv.slice(1));
   if (first === "supervise") return { kind: "supervise", rest: argv.slice(1) };
   if (first === "route") return { kind: "route", rest: argv.slice(1) };
+  if (first === "learned") return { kind: "learned", rest: argv.slice(1) };
   if (first === "predict" || first === "research" || first === "inquiry")
     return { kind: "inquiry", mode: first, rest: argv.slice(1) };
   if (first === "connect") return { kind: "connect", rest: argv.slice(1) };
@@ -384,6 +388,8 @@ Usage:
   marina research <question>   deep research with captured evidence
   marina inquiry [...]         saved answers, collaboration and standalone TUI
   marina route [...]           join, publish, and exchange participant messages
+  marina learned <verb> [...]  learned bundles: distill an old world's database into a
+                               bundle, archive it, import, export, verify
   marina start                 run the full server in the foreground
   marina worlds [--json]       list the worlds built into this binary
   marina endpoint [--data-dir <dir>] [--show-key]
@@ -740,6 +746,16 @@ if (import.meta.main) {
     case "route": {
       const { runRoute } = await import("./route");
       process.exit(await runRoute(dispatch.rest));
+      break;
+    }
+    case "learned": {
+      const { runLearned } = await import("./learned");
+      try {
+        process.exit(await runLearned(dispatch.rest));
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      }
       break;
     }
     case "inquiry": {

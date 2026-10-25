@@ -39,6 +39,99 @@ export const WORLD_PROFILE = "marina.world.v1";
 export const SPEC_SCHEMA = "marina.learned.spec.v1";
 export const REVOCATIONS_SCHEMA = "marina.learned.revocations.v1";
 
+/**
+ * What a bundle never carries, declared in every manifest (`excludes`). The
+ * list is additive within v1: a manifest without the field (written before it
+ * existed) still verifies, and one that has it must name every entry, so a
+ * bundle can never declare that it carries one of these. `verifyBundle`
+ * refuses contents that overreach the manifest (`manifestOverreach`).
+ */
+export const BUNDLE_EXCLUDES = [
+  "identity",
+  "accounts",
+  "standing",
+  "competence",
+  "gate_grants",
+  "ledger_rows",
+  "approvals",
+  "holds",
+  "secrets",
+  "runtime_journals",
+  "continuity_archives",
+  "numeric_note_ids",
+] as const;
+export type BundleExclude = (typeof BUNDLE_EXCLUDES)[number];
+
+/**
+ * Field names that belong to an excluded layer. An item whose body holds one
+ * of them, at any depth, overreaches its manifest and the bundle is refused.
+ */
+export const EXCLUDED_ITEM_FIELDS: ReadonlySet<string> = new Set([
+  // identity / accounts
+  "user_id",
+  "users",
+  "entity_id",
+  "account_id",
+  "accounts",
+  "principal",
+  "principals",
+  "spawned_by",
+  "email",
+  // standing, competence, grants
+  "standing",
+  "entity_standing",
+  "competence",
+  "entity_competence",
+  "gate_grants",
+  "grants",
+  "rank_floor",
+  // ledger rows
+  "benchmark_items",
+  "ledger_rows",
+  "item_outcomes",
+  "answer_hash",
+  // approvals / holds
+  "approvals",
+  "challenge_holds",
+  "holds",
+  // secrets
+  "api_key",
+  "api_keys",
+  "password",
+  "password_hash",
+  "secret",
+  "secrets",
+  "session_token",
+  "private_key",
+  // runtime journals and archives
+  "transcript",
+  "journal",
+  "checkpoint",
+  "continuity",
+  "memory_sources",
+  // numeric note ids
+  "note_id",
+  "note_ids",
+  "numeric_id",
+]);
+
+/** Prefixes an `export_policy.allow_list` entry may name (anything else overreaches). */
+export const ALLOW_LIST_PREFIXES: ReadonlySet<string> = new Set([
+  "lessons",
+  "conventions",
+  "defaults",
+  "evidence",
+  "roles",
+  "world",
+  "room_sources",
+  "publisher-curated",
+]);
+
+/** `publisher.key_id` of an unsigned bundle (`unsigned: true`, no `signature.json`). */
+export const UNSIGNED_KEY_ID = "unsigned";
+/** Every unsigned artifact id lives under this prefix, apart from any signed lineage. */
+export const UNSIGNED_ARTIFACT_PREFIX = "marina-memory:unsigned-";
+
 /** Smallest ledger cell (items) an aggregate may describe — k-anonymity. */
 export const K_MIN = 20;
 /** Rendered bytes of the `core` tier (small-model budget). */
@@ -108,6 +201,18 @@ export interface LessonItem extends ItemBase {
   refs?: string[];
   /** Producer label (`benchmark:<name>`), internal profile only. */
   source?: string;
+  /** What the rule is about (`LessonScope`): the importer keeps it for serving. */
+  scope?: string;
+  /** Task-family tags: a recall keyed on a family finds the lesson. */
+  families?: string[];
+  /** Served only to work of this family or tracker, as at the source. */
+  scope_family?: string;
+  /**
+   * Boards the lesson's provenance names (its source, `eval:` refs and the
+   * ledger runs it cites), in clear: the importer turns them into `eval:<board>`
+   * refs so the lesson stays out of those boards' measurements (leakage rule 2).
+   */
+  boards?: string[];
 }
 
 export interface ConventionItem extends ItemBase {
@@ -283,6 +388,16 @@ export interface Manifest {
   slices: Slice[];
   counts: Record<ItemKind, number>;
   export_policy: { allow_list: string[]; scans: string[]; k_min: number };
+  /**
+   * What this bundle never carries (`BUNDLE_EXCLUDES`). Added within v1:
+   * absent in bundles written before it; when present it must name every entry.
+   */
+  excludes?: string[];
+  /**
+   * True for a bundle written with no publisher key: no `signature.json`, its
+   * publisher `key_id` is `unsigned`, and import needs an explicit flag.
+   */
+  unsigned?: true;
   /** sha256 hex of every other file in the bundle. */
   files: Record<string, string>;
 }
