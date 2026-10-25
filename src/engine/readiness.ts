@@ -930,9 +930,10 @@ export function computeReadiness(engine: Engine): ReadinessReport {
 
 /** Schedules: off, or how many are failing or waiting on an absent owner. */
 /**
- * Supervised residents (Claude Code, Codex, pi launched by `marina supervise`
- * or the console): whether this server enrols them as their own world
- * accounts, and how many are enrolled and present now.
+ * Supervised residents (Claude Code, Codex, pi launched by `marina supervise`,
+ * the in-world `supervisor`, or the console): whether this server enrols them
+ * as their own world accounts, how many are enrolled and present now, and
+ * whether the in-world supervisor runs.
  */
 export function supervisedResidentsCheck(
   engine: Engine,
@@ -953,12 +954,35 @@ export function supervisedResidentsCheck(
   const present = residents.filter(
     (config) => engine.entities.findAgentByName(config.name)?.name === config.name,
   ).length;
+  const counts = `${residents.length} enrolled, ${present} present`;
+  // The in-world supervisor (`supervisor start`); mocks without one read as not running.
+  const supervisor = engine.worldSupervisor?.status() ?? { running: false };
+  if (supervisor.running)
+    return {
+      id: "supervised-residents",
+      label: "Supervised residents",
+      status: supervisor.lastError ? "degraded" : "ok",
+      optional: true,
+      detail: `on — ${counts}; in-world supervisor running for ${supervisor.owner} in ${supervisor.root} (${supervisor.adapters?.join(", ")})${supervisor.lastError ? `; last sync failed: ${supervisor.lastError}` : ""}`,
+      ...(supervisor.lastError
+        ? { remediation: "Output stays in its journal and is sent once sync recovers." }
+        : {}),
+    };
+  if (supervisor.failure)
+    return {
+      id: "supervised-residents",
+      label: "Supervised residents",
+      status: "degraded",
+      optional: true,
+      detail: `on — ${counts}; in-world supervisor stopped: ${supervisor.failure}`,
+      remediation: "Fix the cause, then `supervisor start` again.",
+    };
   return {
     id: "supervised-residents",
     label: "Supervised residents",
     status: "ok",
     optional: true,
-    detail: `on — ${residents.length} enrolled, ${present} present; launch with \`marina supervise\``,
+    detail: `on — ${counts}; in-world supervisor not running (start it with \`supervisor start\`, or run \`marina supervise\`)`,
   };
 }
 
