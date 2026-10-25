@@ -4,7 +4,7 @@
 import { retireLessonsForRun } from "../../learning/intake";
 import { bold, category, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
-import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import {
   type CompareRunJob,
   type CompareRunReport,
@@ -193,7 +193,8 @@ Usage:
 Benchmarks: ${Object.keys(BENCHMARKS).join(", ")}
   Ready with no download: ${readyWithoutDownload()}. Every other benchmark needs
   "benchmark fetch <name>" once ("benchmark list" shows which are downloaded).
-  (smoke is the 15-item prompt A/B set)
+  (smoke is the 15-item prompt A/B set; tracked sets are ready whatever directory the server
+  started in)
 
 Targets: crew:<name> = the residents serving marina:<name> (a model-<name> channel with a live
   agent; see "benchmark orchestrations"); model:<id> = the bare model as a control ("marina" =
@@ -834,7 +835,12 @@ export function benchmarkCommand(deps: {
             );
           }
           if (row.agent_id) {
-            lines.push(`  ${bold("launched by")}: ${row.agent_id}`);
+            // The launcher's name (live, else saved); the raw id only when neither is known.
+            const launcher =
+              deps.getEntity(row.agent_id)?.name ??
+              db.loadEntity(row.agent_id as EntityId)?.name ??
+              row.agent_id;
+            lines.push(`  ${bold("launched by")}: ${launcher}`);
           }
           {
             // Item labels (migration 157): checks that never ran are not failures,

@@ -969,7 +969,8 @@ Usage:
 Benchmarks: smoke, mmlu-pro, ifeval, truthfulqa, humaneval, narrativeqa, mt-bench, retention, arc-challenge, hellaswag, musr, bbh, gsm8k, math, simple-qa, frames, aime, aime-2025, gpqa, hle-verified-gold, hle-verified-gold-mm
   Ready with no download: smoke (tracked), retention (generated). Every other benchmark needs
   "benchmark fetch <name>" once ("benchmark list" shows which are downloaded).
-  (smoke is the 15-item prompt A/B set)
+  (smoke is the 15-item prompt A/B set; tracked sets are ready whatever directory the server
+  started in)
 
 Targets: crew:<name> = the residents serving marina:<name> (a model-<name> channel with a live
   agent; see "benchmark orchestrations"); model:<id> = the bare model as a control ("marina" =

@@ -190,6 +190,7 @@ export function challengeCommand(deps: {
             absent:
               result.detail ?? "The requester is not in the world right now; the hold stays open.",
             not_found: `No open challenge ${token} (it may have been answered or expired).`,
+            grant_only: result.detail ?? "That gate is operator-grant only; no approval runs it.",
           };
           ctx.send(input.entity, why[result.error]);
           return;
