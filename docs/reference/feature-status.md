@@ -58,7 +58,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | OpenShell sandbox provider | experimental | `MARINA_OPENSHELL_URL` + mTLS bundle against an operator-run gateway; `code sandbox use openshell` | src/integrations/openshell |
 | Shared spend ledger | experimental | `MARINA_SPEND_LEDGER=<path>` | src/engine/shared-spend-ledger.ts |
 | Adaptive load-balance routing | experimental | Request header `X-Load-Balance: adaptive` | src/net/model-api |
-| Benchmark route evidence for `model:route` | experimental | `MARINA_ROUTE_EVIDENCE=on` (default `observe` records only) | src/engine/benchmark-evidence.ts |
+| Benchmark route evidence for `model:route` | experimental | `MARINA_ROUTE_EVIDENCE` (default `on`; `observe` records only) | src/engine/benchmark-evidence.ts |
 | Earned forecast routing | experimental | `MARINA_FORECAST_HISTORY` with enough resolved outcomes | src/forecast |
 | Attention judges | experimental | `MARINA_ATTENTION_JUDGE=observe` (default; records opinions and results) or `on` (earned judges advise) | src/agent/attention-judge.ts |
 | Peer code review | experimental | `code review request <name>` or `auto`; supervised residents attach worktree snapshots | src/engine/commands/code/review-request.ts, src/routing/review-snapshot.ts |
@@ -117,7 +117,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
   the ways to run an entry, each with its own status: a crew (core), one free-text task (`pattern
   run`, experimental), a room's turn rule (experimental) and a project's pool notes, generated from
   the entry (demo). The other ten arena formations still run their own code (byte-identical, held
-  by `test/formation-equivalence-arena.test.ts`).
+  by `test/arena-formations-legacy.test.ts`).
 - **Text patterns.** `pattern run <pattern> [budget:<usd>] -- <task>` runs the same protocols as
   `POST /v1/patterns/run` in world (rank 0; per-run budget, default $0.50, at most $2; the daily cap;
   one run per entity), over the operator's models only. Residents reach it as the typed

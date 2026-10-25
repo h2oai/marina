@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **An imported bundle's seed no longer picks a model without a local person.** Upstream seeds
+  for default slots that choose a model (every slot class except `memory-ranking`:
+  `role-model:*`, `verify:checker`, `forecast-config*`, crew slots, run-target slots) are withheld
+  by `resolveDefault` (traced `withheld` on `default_resolved`) and each slot+value raises one
+  `ops inbox` approval. A person holding `role.edit` adopts it with
+  `benchmark promote <slot> upstream` (the model id works for a `role-model` slot), filed through
+  `fileSlotPromotion` with basis `upstream` and the bundle's artifact, version, item and value
+  digest; an agent never adopts one. `MARINA_UPSTREAM_MODEL_SEEDS=serve` restores direct serving.
+  Non-model seeds are served as before.
+
 - **Agents holding sentinel gate grants are a critical readiness line.** `gate-sentinels` is
   raised as a critical `ops inbox` alert while any agent account holds an operator-grant sentinel
   row, and names the reset (`gate reset agents all apply`, from an interactive person session).
@@ -79,6 +89,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The formation catalogue is held by behaviour, not frozen bytes.** The migration-era
+  equivalence tests (`formation-equivalence-typed`, `-text`, and the catalogue half of `-arena`)
+  and their frozen pre-catalogue copies are removed, so the catalogue's prompts and answers can
+  change when a measurement says they should. `test/formation-behaviour.test.ts` asserts what the
+  formations must do: determinism given the same replies, research before any analyst, delphi's
+  anonymous revision after every first answer, n − 1 refereed tournament matches, one skeptic call
+  after the proposals, the typed combiners' math, and the arena move cap and blowup bound on the
+  stored rounds. The resident Scores are checked by shape. The ten arena formations still on
+  their own code stay byte-identical to their frozen copy (`test/arena-formations-legacy.test.ts`)
+  until they move to the catalogue.
+- **Spawn-time route evidence is on by default** (`MARINA_ROUTE_EVIDENCE`, was `observe`). A
+  `model:route` spawn takes the evidence's pick only when at least two of its own candidates have
+  `MARINA_ROUTE_EVIDENCE_MIN_N` items (benchmark ledger or shared live work); otherwise, and on
+  any error, the router's choice stands as before. `observe` keeps the old record-only behaviour.
+- **The learning-loop test closes every hop.** `test/learning-loop-closed.test.ts` now also shows
+  the route changing under the default configuration and a role's default model changing by
+  earned promotion: the live pass raises one proposal from person-approved work, and a person
+  holding `role.edit` files it with `benchmark promote role-model:<role> <model>`.
 - **One judge service.** The challenge judge, the task-submission verifier, the attention judges,
   the outcome judges and the Arbiter now record every opinion and its later ground truth in one
   ledger (`judge_ledger`, migration 179). The migration copies the rows already kept in
@@ -288,6 +316,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files go to `data/benchmark-results` beside the world's other state, not to a checkout-shaped
   `benchmarks/results` in the working directory. A test boots a fresh world in a temporary
   directory and goes from `benchmark list` to a ledger row using only in-world commands.
+- **`agent spawn` no longer drops `model:`, `role:` and `key:`.** The spawn options accepted only
+  the word pairs (`model x role y`) for these three; the documented `key:value` form (and
+  `--model x`, `role=y`) was silently ignored, so the agent got the default model and no role.
 - **`memory query` and `memory search` lead with each record's own id.** One line per result
   (`id <record id> · memory show <record id>`, subject, a short preview) comes before the JSON
   dump, whose first id is the space's. The dump and the structured payload are unchanged.

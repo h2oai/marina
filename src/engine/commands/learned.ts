@@ -11,6 +11,7 @@ import { experimentalHelp } from "../../config/feature-status";
 import { describeUpstreamMode, upstreamMode } from "../../learned/import";
 import { importedLessonsMode, importedLessonsSetting } from "../../learned/serve";
 import { pinnedPublisherKeys } from "../../learned/sign";
+import { withholdsUpstreamSeed } from "../../learned/upstream-model-seeds";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, RoomContext } from "../../types";
@@ -146,7 +147,7 @@ export function learnedCommand(deps: { db?: MarinaDB }): CommandDef {
                   separator(),
                   ...rows.map(
                     (s) =>
-                      `${s.slot} = ${s.value_json.slice(0, 120)} ${dim(`${db.getBenchmarkDefault(s.slot) ? "shadowed by a local default" : "answers"} · upstream:${s.artifact_id}@${s.version}`)}`,
+                      `${s.slot} = ${s.value_json.slice(0, 120)} ${dim(`${db.getBenchmarkDefault(s.slot) ? "shadowed by a local default" : withholdsUpstreamSeed(s.slot) ? "withheld pending approval (chooses a model): benchmark promote <slot> upstream" : "answers"} · upstream:${s.artifact_id}@${s.version}`)}`,
                   ),
                 ].join("\n"),
           );

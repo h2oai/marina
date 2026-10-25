@@ -286,7 +286,7 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   {
     name: "Benchmark route evidence for `model:route`",
     status: "experimental",
-    enable: "`MARINA_ROUTE_EVIDENCE=on` (default `observe` records only)",
+    enable: "`MARINA_ROUTE_EVIDENCE` (default `on`; `observe` records only)",
     owner: "src/engine/benchmark-evidence.ts",
   },
   {
