@@ -118,7 +118,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
   the ways to run an entry, each with its own status: a crew (core), one free-text task (`pattern
   run`, experimental), a room's turn rule (experimental) and a project's pool notes, generated from
   the entry (demo). The other ten arena formations still run their own code (byte-identical, held
-  by `test/formation-equivalence-arena.test.ts`).
+  by `test/arena-formations-legacy.test.ts`).
 - **Text patterns.** `pattern run <pattern> [budget:<usd>] -- <task>` runs the same protocols as
   `POST /v1/patterns/run` in world (rank 0; per-run budget, default $0.50, at most $2; the daily cap;
   one run per entity), over the operator's models only. Residents reach it as the typed

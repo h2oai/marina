@@ -956,6 +956,11 @@ Usage:
                                                      rule on the outcomes and records the attempt;
                                                      a person holding role.edit only (never an agent),
                                                      never one whose work the evidence includes.
+  benchmark promote <slot> upstream                — adopt an imported bundle's seed for a slot that
+                                                     chooses a model (withheld until adopted; one
+                                                     ops-inbox approval each): a person holding
+                                                     role.edit only, recorded with basis upstream.
+                                                     For a role-model slot the model id works too.
   benchmark invalidate <run> reason:<text>         — retire a run that measured the infrastructure,
                                                      not the target (spend cap, outage): status
                                                      invalid, excluded from every ranking, pooling,
@@ -1085,6 +1090,12 @@ Effect: write.
 
 - `field-0` (`role-model`): text, required.
 - `field-1` (`model`): text, required.
+
+### `benchmark promote <slot> upstream`
+
+Effect: write.
+
+- `field-0` (`slot`): text, required.
 
 ### `benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]`
 

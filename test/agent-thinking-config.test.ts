@@ -141,6 +141,22 @@ describe("agent spawn / config option parsing", () => {
     expect(parseSpawnOptions(["budget", "12"])).toMatchObject({ budgetCalls: 12 });
   });
 
+  it("accepts model, role and key in the modifier grammar too, never dropping them", () => {
+    expect(parseSpawnOptions(["model:x/y", "role:executor", "key:k1"])).toMatchObject({
+      model: "x/y",
+      role: "executor",
+      key: "k1",
+    });
+    expect(parseSpawnOptions(["--model", "x/y", "role=coder"])).toMatchObject({
+      model: "x/y",
+      role: "coder",
+    });
+    // The word pairs still parse, and a goal keeps its text.
+    expect(
+      parseSpawnOptions(["model", "a/b", "role", "coder", "goal", "ship", "it"]),
+    ).toMatchObject({ model: "a/b", role: "coder", goal: "ship it" });
+  });
+
   it("reports a bad level or budget instead of spawning", () => {
     expect(parseSpawnOptions(["thinking:loud"])).toMatchObject({
       error: expect.stringContaining("thinking expects one of"),

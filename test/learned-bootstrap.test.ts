@@ -627,6 +627,9 @@ describe("upstream-seed layer of resolveDefault", () => {
       builtIn: "ensemble",
       db: target,
     });
+    // forecast-config chooses models: withheld until a person adopts it (or the operator opts in).
+    expect(resolveDefault(spec())).toMatchObject({ source: "builtin", value: "ensemble" });
+    using _serve = scopeProcessState({ env: { MARINA_UPSTREAM_MODEL_SEEDS: "serve" } });
     const seeded = resolveDefault(spec());
     expect(seeded).toMatchObject({ source: "upstream", value: "delphi" });
     expect(seeded.key).toContain("@upstream:marina-memory:");
