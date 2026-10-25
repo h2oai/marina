@@ -219,6 +219,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`agent config <name> model|role|key|thinking` works on a saved agent that is not running**
+  (stopped, or listed in `MARINA_DISABLED_AGENTS`): it rewrites the stored config its next spawn
+  reads, keeping every other field. Before, it refused with "not running", so a disabled agent
+  could only come back on its old model.
+
 - **Arena evidence reuse** keys on the inputs, not on when they were read, so an unchanged refile
   can reuse its forecast.
 - **Demo worlds** log their completion events as typed `feed_event`s instead of an untyped

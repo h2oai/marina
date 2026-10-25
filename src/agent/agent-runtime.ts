@@ -1200,6 +1200,34 @@ export class AgentRuntime {
     }
   }
 
+  /**
+   * `agent config` for a SAVED agent that is not running (stopped, or listed in
+   * `MARINA_DISABLED_AGENTS`): rewrite the stored config, so its next spawn —
+   * the boot respawn included — uses it. Every other stored field is kept.
+   * No provider key is needed: nothing is called until the agent runs.
+   * Returns false when there is no saved config of that name.
+   */
+  reconfigureSaved(
+    name: string,
+    opts: { model?: string; role?: string; keyName?: string; thinkingLevel?: AgentThinkingLevel },
+  ): boolean {
+    const row = this.db?.getAgentConfig(name);
+    if (!this.db || !row) return false;
+    const model = opts.model ?? row.model;
+    this.db.saveAgentConfig({
+      name: row.name,
+      model,
+      role: opts.role ?? (row.role || undefined),
+      goal: row.goal || undefined,
+      keyName: opts.keyName ?? (row.key_name || undefined),
+      room: row.room || undefined,
+      spawnedBy: row.spawned_by,
+      supports: opts.model !== undefined ? supportsFromModel(model) : parseSupports(row.supports),
+      thinkingLevel: opts.thinkingLevel,
+    });
+    return true;
+  }
+
   setAttentionMode(name: string, mode: "focused" | "balanced" | "open"): void {
     const agent = this.get(name);
     if (!agent) throw new Error(`Agent "${name}" is not running.`);
