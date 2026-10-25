@@ -13,6 +13,7 @@ import { RateLimiter } from "./auth/rate-limiter";
 import { parseExecUnrestricted } from "./coding/exec-approver";
 import { ensureConfiguredRoots } from "./coding/workspace-registry";
 import { dataDir } from "./config/data-dir";
+import { setRoleModelSlots } from "./config/model-tiers";
 import { applyStoredDecisionSettings } from "./decisions/settings";
 import { describeAutonomyPosture, getAutonomyPosture, ungatedPostureNote } from "./engine/autonomy";
 import {
@@ -298,6 +299,9 @@ worldMemoryService(db);
 // Every verdict (benchmark, forecast, code verify, arena) becomes a judged lesson
 // (src/learning/; MARINA_LESSONS=off disables).
 enableOutcomeLearning(db);
+// A role's model reads its promoted `role-model:<role>` slot (earned on live
+// work, person-approved) between its env settings and its tier.
+setRoleModelSlots(db);
 const structuredLogRetention = Math.max(
   100,
   Math.min(Number(process.env.MARINA_LOG_RETENTION) || 10_000, 1_000_000),

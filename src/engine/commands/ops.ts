@@ -25,6 +25,8 @@ export interface OpsDependencies {
   assistance?: () => AssistanceExpiryDeps;
   /** An operator: a person at rank 9 (`ops assistance expire|restore`). */
   isOperator?: (entityId: string) => boolean;
+  /** The operator-required refusal for `entityId` (says why an agent principal is one). */
+  operatorRefusal?: (entityId: string, what: string, tail?: string) => string;
 }
 
 const OPS_USAGE =
@@ -36,7 +38,14 @@ function assistanceOps(deps: OpsDependencies, entityId: string, tokens: string[]
   if (!presence) return "Assistance-job expiry is not available in this world.";
   const sub = tokens[0]?.toLowerCase();
   if ((sub === "expire" || sub === "restore") && !deps.isOperator?.(entityId))
-    return `ops assistance ${sub} takes an operator (a person at rank 9). \`ops assistance\` shows the report.`;
+    return (
+      deps.operatorRefusal?.(
+        entityId,
+        `ops assistance ${sub}`,
+        "`ops assistance` shows the report.",
+      ) ??
+      `ops assistance ${sub} takes an operator (a person at rank 9). \`ops assistance\` shows the report.`
+    );
   if (sub === "restore") {
     const id = tokens[1];
     if (!id) return "Usage: ops assistance restore <job id>";
@@ -88,7 +97,7 @@ export function syncOperationalAlerts(deps: OpsDependencies): void {
     if (check.status === "off" || check.status === "degraded")
       add("readiness", {
         key: `readiness:${check.id}`,
-        severity: check.status === "off" ? "critical" : "warning",
+        severity: check.status === "off" || check.critical ? "critical" : "warning",
         category: "readiness",
         title: check.label,
         detail: check.detail,

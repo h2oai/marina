@@ -319,6 +319,17 @@ export function principalKind(entity: Entity): PrincipalKind {
 export function agentPrincipalReason(entity: Entity): string {
   if (principalKind(entity) === "person") return "";
   const conn = host?.connectionOf(entity.id);
+  // A person's own account on a client that declared itself an agent: the
+  // client, not the account, made it one — say so, and where a person acts.
+  // (There is deliberately no way for a non-interactive client to claim to be
+  // a person: residents drive `marina connect -c` through their relay.)
+  if (
+    conn?.agent &&
+    !conn.internal &&
+    conn.protocol !== "mcp" &&
+    !host?.isAgentAccount(entity.name)
+  )
+    return `${entity.name} counts as an agent here: this connection declared itself an agent (non-interactive \`marina connect -c\`, a pipe, or an SDK client); run it from an interactive \`marina connect\` session or the dashboard.`;
   const why = conn?.internal
     ? "it is on an internal agent connection"
     : conn?.protocol === "mcp"
@@ -330,6 +341,25 @@ export function agentPrincipalReason(entity: Entity): string {
     ? "Its owner or an operator decides."
     : "A person acts from an interactive `marina connect` on a terminal or from the dashboard.";
   return `${entity.name} counts as an agent here because ${why}. ${how}`;
+}
+
+/**
+ * The one refusal for something only an operator (a person at rank 9) may do:
+ * what it takes and, when the caller counts as an agent, why and how a person
+ * acts instead (`agentPrincipalReason`). `tail` is appended (a next step).
+ */
+export function operatorRequiredRefusal(
+  entity: Entity | undefined,
+  what: string,
+  tail = "",
+): string {
+  return [
+    `${what} takes an operator (a person at rank 9).`,
+    entity ? agentPrincipalReason(entity) : "",
+    tail,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /** An operator: a person at sovereign rank. A rank-9 agent is not one. */

@@ -36,6 +36,7 @@ import {
 } from "./constants";
 import type { Engine, EngineConfig } from "./engine";
 import { getErrorMessage, tryLog } from "./errors";
+import { runLivePromotionPass } from "./live-promotion";
 import type { Logger } from "./logger";
 import { backfillAssets } from "./media/asset-library";
 import { engineAssetDescriber, runAssetMemoryPass } from "./media/asset-memory";
@@ -361,10 +362,10 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
-  // Hourly (own phase): lessons from work (MARINA_LESSONS_FROM_WORK, unset:
-  // on with a model provider, else observe). The aggregated tool-work patterns
-  // become judged lessons (on) or a counts-only log line (observe).
-  // Async and self-bounded (MAX_PER_FLUSH, daily spend cap); never overlaps itself.
+  // Hourly (own phase): lessons from work (MARINA_LESSONS_FROM_WORK; unset:
+  // on with a model provider, else observe). The aggregated tool-work patterns become judged lessons (on) or a
+  // counts-only log line (observe). Async and self-bounded (MAX_PER_FLUSH,
+  // daily spend cap); never overlaps itself.
   s.register({
     name: "lessons-from-work",
     every: NOTE_IMPORTANCE_INTERVAL,
@@ -445,8 +446,9 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
   });
 
   // Hourly: past-end answers no market settles get a judged resolution
-  // (MARINA_OUTCOME_JUDGE, default off): observe records it; on also settles
-  // when the judge has earned agreement. Bounded and spend-capped.
+  // (MARINA_OUTCOME_JUDGE; unset: on with a model provider, else off): observe
+  // records it; on also settles when the judge has earned agreement. Bounded
+  // and spend-capped.
   s.register({
     name: "outcome-judge",
     every: NOTE_IMPORTANCE_INTERVAL,
@@ -456,6 +458,20 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       if (!host.db) return;
       await judgeOpenResolutions(host.db);
       await judgeWaitingWork(host.db);
+    },
+  });
+
+  // Every 6 h: judge role-model:<role> slots on shared live work. Records
+  // refused attempts and raises one ops-inbox proposal per passing candidate;
+  // never files a promotion (a person holding role.edit does that).
+  s.register({
+    name: "live-promotion",
+    every: LIVE_PROMOTION_INTERVAL,
+    phase: LIVE_PROMOTION_PHASE,
+    failureMessage: "Live promotion pass failed",
+    run: () => {
+      if (!host.db) return;
+      runLivePromotionPass(host.db);
     },
   });
 
@@ -543,6 +559,11 @@ export const SCHEDULES_PHASE = 3;
 export const OUTCOME_DELIVERY_INTERVAL = 300;
 /** Its phase within that interval. */
 export const OUTCOME_DELIVERY_PHASE = 150;
+
+/** Ticks between live-promotion passes (src/engine/live-promotion.ts): 6 h at the default tick. */
+export const LIVE_PROMOTION_INTERVAL = 6 * NOTE_IMPORTANCE_INTERVAL;
+/** Its phase within that interval (no other job shares the interval). */
+export const LIVE_PROMOTION_PHASE = 4200;
 
 /** The hourly phase of the lessons-from-work flush (distinct from every other hourly job). */
 export const LESSONS_FROM_WORK_PHASE = 3300;

@@ -31,6 +31,7 @@ import { autoRespawnEnabled } from "./auto-respawn";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
 import { GATEWAY_SECRET_REMEDIATION, gatewayIngressRefusal } from "./gateway-runtime";
+import { gateSentinelsCheck, learningLoopCheck } from "./readiness-learning";
 import { corpusEmbeddingStatus } from "./search-providers/corpus-vectors";
 import { searchBackendHealth } from "./search-providers/health";
 import { describeSearchReadiness } from "./search-readiness";
@@ -82,6 +83,11 @@ export interface ReadinessCheck {
    * in summaries, and never a demo blocker. `status` keeps its own meaning.
    */
   optional?: true;
+  /**
+   * A safety problem, not a missing capability: the ops inbox raises it as
+   * `critical` whatever its status (e.g. agents holding sentinel gate grants).
+   */
+  critical?: true;
 }
 
 /** Summary counts; a non-ok optional check counts only as `optional`. */
@@ -735,6 +741,18 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   // Not entered: no check at all — the arena is opt-in, not a missing capability.
   checks.push(supervisedResidentsCheck(engine, env));
   if (engine.db) checks.push(learnedCheck(engine.db, env));
+
+  // ── Learning loop and gate sentinels (src/engine/readiness-learning.ts) ──
+  try {
+    checks.push(learningLoopCheck(engine.db, env));
+  } catch {
+    // allow-empty-catch: an unreadable outcome table only omits this informational line
+  }
+  try {
+    checks.push(gateSentinelsCheck(engine.db));
+  } catch {
+    // allow-empty-catch: a database before the competence table only omits this line
+  }
 
   // ── Competence map — what the resolved record says each method is good at ─
   try {

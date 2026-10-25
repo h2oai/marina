@@ -1049,8 +1049,9 @@
 # Judged outcomes (src/outcomes/judge-resolution.ts, judge-quality.ts), hourly, spend-capped; no decision backend means nothing.
 # - Resolution: a saved answer that no market settles is researched after its end time plus 2 days, and the decision backend judges how it resolved, at most 5 per hour. Choice answers: it picks an option. Multi-select: a yes/no per option behind a "has it resolved" gate. Numbers: MARINA_OUTCOME_JUDGE_MODEL proposes the value with a verbatim quote that must be in the evidence, and the backend confirms it.
 # - Quality: a task submission its creator has not decided within 3 days is judged for whether it completes the task, at most 5 per hour.
-# - `off` (default): nothing. `observe`: every judgement is recorded as a judged outcome that settles and teaches nothing, measured against any mechanical result (`outcome agreement`). `on`: as observe, and a confident judgement (≥ 0.9) from a judge that has earned agreement (≥ 25 comparisons, Wilson lower bound ≥ 0.85) settles the answer or is delivered as a lesson, labelled judged.
-# MARINA_OUTCOME_JUDGE=off
+# - `off`: nothing. `observe`: every judgement is recorded as a judged outcome that settles and teaches nothing, measured against any mechanical result (`outcome agreement`). `on`: as observe, and a confident judgement (≥ 0.9) from a judge that has earned agreement (≥ 25 comparisons, Wilson lower bound ≥ 0.85) settles the answer or is delivered as a lesson, labelled judged. Nothing is ever filed outside this world.
+# - Unset: `on` when a model provider is configured, else `off` (the same rule as MARINA_LESSONS_FROM_WORK). An explicit value always wins. `readiness` (`learning-loop`) shows what waits unjudged and how far each judge is from earning.
+# MARINA_OUTCOME_JUDGE=
 
 # The model that proposes a number's resolved value for judged resolution; default the first MARINA_FORECAST_ANALYSTS model, else `role:outcome-judge=`, then MARINA_MODEL_TIER_STRONG, then marina/default.
 # MARINA_OUTCOME_JUDGE_MODEL=

@@ -47,6 +47,7 @@ import {
   type ChallengeEvaluation,
   eligiblePromotions,
   fileSlotPromotion,
+  isLiveSlot,
   lookupChallenge,
   type SplitStats,
 } from "../benchmark-promotion";
@@ -73,6 +74,13 @@ import {
 import { resolveRunTarget, type ServingCrew } from "../benchmark-target";
 import { BENCHMARK_RUN_MIN_RANK } from "../constants";
 import { recentResolutions } from "../default-resolution";
+import { principalOf } from "../gate-context";
+import {
+  closeLiveProposals,
+  describeLiveCandidate,
+  evaluateLiveSlots,
+  LIVE_PROMOTION_MIN_PER_ARM,
+} from "../live-promotion";
 import { extractModifiers, parseModifiers, resolveMultiWordName } from "../parse-input";
 import { rankName } from "../permissions";
 import { rankFloorRefusal } from "../rank-floor";
@@ -161,6 +169,10 @@ Usage:
                                                      with every other candidate read counted as
                                                      tried; files nothing (promote stays manual,
                                                      behind role.edit)
+  benchmark eligible live [role]                   — read-only: role-model:<role> slots judged on
+                                                     LIVE work (shared outcomes tagged by role and
+                                                     model, newer half = holdout): eligible,
+                                                     refused, too little data, and open proposals
   benchmark challenge <slot> <run> [--max-cost-ratio R]
                                                    — dry run on the slot's SELECTION split (the
                                                      holdout stays unread); shows what promotion needs
@@ -172,6 +184,10 @@ Usage:
                                                      the challenger needs MARINA_PROMOTION_MIN_REPLICATES
                                                      replicates (default 2) before the holdout is read.
                                                      Needs role.edit; never the run's own author.
+  benchmark promote role-model:<role> <model>      — file a live-evidence proposal: re-checks the
+                                                     rule on the outcomes and records the attempt;
+                                                     a person holding role.edit only (never an agent),
+                                                     never one whose work the evidence includes.
   benchmark invalidate <run> reason:<text>         — retire a run that measured the infrastructure,
                                                      not the target (spend cap, outage): status
                                                      invalid, excluded from every ranking, pooling,
@@ -311,6 +327,8 @@ export function benchmarkCommand(deps: {
       { syntax: "benchmark compare-run status [id]", effect: "read" },
       { syntax: "benchmark defaults", effect: "read" },
       { syntax: "benchmark eligible [board]", effect: "read" },
+      { syntax: "benchmark eligible live [role]", effect: "read" },
+      { syntax: "benchmark promote role-model:<role> <model>", effect: "write" },
       {
         syntax: "benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]",
         effect: "write",
@@ -1442,7 +1460,12 @@ export function benchmarkCommand(deps: {
         }
 
         case "eligible": {
-          ctx.send(input.entity, renderEligible(db, tokens[1]));
+          ctx.send(
+            input.entity,
+            tokens[1]?.toLowerCase() === "live"
+              ? renderLiveEligible(db, tokens[2])
+              : renderEligible(db, tokens[1]),
+          );
           return;
         }
 
@@ -1465,6 +1488,15 @@ export function benchmarkCommand(deps: {
             : undefined;
           if (maxCostRatio !== undefined && !(maxCostRatio > 0)) {
             ctx.send(input.entity, "--max-cost-ratio must be a positive number.");
+            return;
+          }
+          if (isLiveSlot(slot)) {
+            ctx.send(
+              input.entity,
+              sub === "challenge"
+                ? renderLiveEligible(db, slot)
+                : promoteLive(db, entity, slot, runId),
+            );
             return;
           }
           if (sub === "challenge") {
@@ -1690,6 +1722,97 @@ export function renderEligible(db: MarinaDB, board: string | undefined): string 
     lines.push(`  ${dim("not yet")}  ${r.slot}  ${fmtId(r.runId)}  ${dim(r.reasons[0] ?? "")}`);
   }
   return lines.join("\n");
+}
+
+/** `benchmark eligible live [role]`: role-model slots judged on live work (read-only). */
+export function renderLiveEligible(db: MarinaDB, role: string | undefined): string {
+  const reports = evaluateLiveSlots(db, role ? { role } : {});
+  if (reports.length === 0) {
+    return `No live evidence for ${role ? `role ${role.replace(/^role-model:/, "")}` : "any role"} yet: a role-model:<role> slot is judged on shared outcomes tagged family:work:<kind>:role:<role> and method:model:<m> (world agents' verified work).`;
+  }
+  const open = new Map(
+    db
+      .listOperationalAlerts(undefined, 100_000)
+      .filter((a) => a.category === "promotion" && a.status !== "resolved")
+      .map((a) => [a.alert_key, a]),
+  );
+  const lines = [
+    header("Live promotions (role-model slots)"),
+    separator(),
+    dim(
+      `  Read-only: nothing is recorded or filed. Newer half of each role's outcomes = holdout; a candidate needs ≥ ${LIVE_PROMOTION_MIN_PER_ARM} per arm in each split, the 95% interval above 0, the fishing margin, and no discovery loss.`,
+    ),
+  ];
+  for (const r of reports) {
+    lines.push(
+      `  ${bold(r.slot)}  incumbent ${r.incumbent.model} ${dim(`[${r.incumbent.source}]`)}  ${r.outcomes} outcome(s)`,
+    );
+    if (r.candidates.length === 0)
+      lines.push(`    ${dim("no other model has done this role's work")}`);
+    for (const c of r.candidates) {
+      const proposed = [...open.keys()].some((k) =>
+        k.startsWith(`promotion:${c.slot}:${c.incumbent}>${c.candidate}`),
+      );
+      const tag =
+        c.status === "eligible"
+          ? fmtStatus(proposed ? "PROPOSED" : "ELIGIBLE", "done")
+          : c.status === "refused"
+            ? fmtStatus("REFUSED", "warn")
+            : dim(c.status);
+      lines.push(
+        `    ${tag} ${c.candidate}  ${c.status === "too-little-data" || c.status === "not-callable" ? "" : describeLiveCandidate(c)}`,
+      );
+      if (c.status === "eligible")
+        lines.push(
+          `      ${dim(`file it: benchmark promote ${c.slot} ${c.candidate} (a person holding role.edit; never an agent)`)}`,
+        );
+      for (const why of c.reasons) lines.push(`      ${dim(why)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * File a live-evidence promotion: a PERSON holding `role.edit` only. The rule
+ * is re-checked on the outcomes as they stand now; the attempt is recorded
+ * promoted or refused (`fileSlotPromotion`).
+ */
+function promoteLive(db: MarinaDB, entity: Entity, slot: string, model: string): string {
+  if (principalOf(entity.id) !== "person")
+    return `Refused: a live promotion moves a world default, so a person files it (\`benchmark promote ${slot} ${model}\` from a person session). An agent never files one.`;
+  const gate = checkRoleEdit(db, entity, `benchmark promote ${slot}`);
+  if ("reason" in gate) return gate.reason;
+  const report = evaluateLiveSlots(db, { role: slot });
+  const candidate = report[0]?.candidates.find((c) => c.candidate === model);
+  if (!candidate) {
+    const incumbent = report[0]?.incumbent.model;
+    return incumbent === model
+      ? `${model} is already what ${slot} resolves to.`
+      : `No live evidence for ${model} on ${slot}: \`benchmark eligible live\` lists the candidates.`;
+  }
+  const filed = fileSlotPromotion(db, {
+    slot,
+    live: candidate,
+    actor: {
+      key: db.durableEntityKey(entity.id),
+      entityId: entity.id,
+      keyOf: (id) => db.durableEntityKey(id),
+    },
+  });
+  if (filed.kind === "error") return filed.message;
+  if (filed.kind === "refused") {
+    return [
+      `Not promoted: ${slot} keeps ${candidate.incumbent}. Recorded as an attempt (${candidate.triedBefore + 1} candidate(s) now count toward its margin).`,
+      `  ${describeLiveCandidate(candidate)}`,
+      ...candidate.reasons.map((r) => `  ${fmtStatus("BLOCK", "warn")} ${r}`),
+    ].join("\n");
+  }
+  gate.record();
+  closeLiveProposals(db, slot);
+  return [
+    `Promoted ${model} to ${slot}, replacing ${candidate.incumbent}. Agents spawned for role ${candidate.role} without a model now run on it; env settings still win.`,
+    `  ${describeLiveCandidate(candidate)}`,
+  ].join("\n");
 }
 
 /** Dry run: the SELECTION split only — the holdout stays unread until a promotion attempt. */

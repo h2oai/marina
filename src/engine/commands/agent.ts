@@ -733,7 +733,7 @@ async function handleSpawn(
 
   ctx.send(
     eid,
-    `Spawning ${bold(name)} (${opts.model || residentDefaultModel(deps.db)}${opts.role ? `, ${opts.role}` : ""}${opts.thinkingLevel ? `, thinking ${opts.thinkingLevel}` : ""})...`,
+    `Spawning ${bold(name)} (${opts.model || residentDefaultModel(deps.db, process.env, opts.role)}${opts.role ? `, ${opts.role}` : ""}${opts.thinkingLevel ? `, thinking ${opts.thinkingLevel}` : ""})...`,
   );
 
   try {
