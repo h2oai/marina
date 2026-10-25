@@ -183,7 +183,7 @@ export function projectCommand(deps: {
       { syntax: "project <name> memory shared <desc>", effect: "write" },
       { syntax: "project <name> memory tiered <desc>", effect: "write" },
       { syntax: "project <name> orchestrate", effect: "read" },
-      { syntax: "project <name> orchestrate custom <description>", effect: "write" },
+      { syntax: "project <name> orchestrate freeform <description>", effect: "write" },
       { syntax: "project <name> outcome", effect: "read" },
       {
         syntax: "project <name> outcome <0..1> | <evidence-backed result and lessons>",
@@ -237,7 +237,9 @@ export function projectCommand(deps: {
           separator(),
           ...projects.map((p) => {
             const orch =
-              p.orchestration !== "custom" ? ` ${fmtStatus(p.orchestration, "info")}` : "";
+              normalizePatternName(p.orchestration) !== "freeform"
+                ? ` ${fmtStatus(normalizePatternName(p.orchestration), "info")}`
+                : "";
             const mem = p.memory_arch !== "custom" ? ` ${dim(`(${p.memory_arch})`)}` : "";
             const st = fmtStatus(p.status, "active");
             const desc = p.description.slice(0, 50) || dim("(no description)");
@@ -357,7 +359,7 @@ export function projectCommand(deps: {
           project.description || dim("(no description)"),
           separator(),
           `  Status: ${fmtStatus(project.status, "active")}`,
-          `  Orchestration: ${fmtStatus(project.orchestration, "info")}`,
+          `  Orchestration: ${fmtStatus(normalizePatternName(project.orchestration), "info")}`,
           `  Memory: ${bold(project.memory_arch)}`,
           `  Created by: ${fmtEntity(project.created_by)}`,
           `  Bundle: #${project.bundle_id ?? dim("none")}`,
@@ -424,24 +426,24 @@ export function projectCommand(deps: {
             return;
           }
 
-          if (pattern === "custom") {
+          if (pattern === "freeform") {
             const desc = actionArgs.slice(1).join(" ");
             if (!desc) {
-              ctx.send(input.entity, "Usage: project <name> orchestrate custom <description>");
+              ctx.send(input.entity, "Usage: project <name> orchestrate freeform <description>");
               return;
             }
-            db.updateProjectOrchestration(project.id, "custom");
+            db.updateProjectOrchestration(project.id, "freeform");
             emitProjectChange(ctx, input.entity, "update", project.name);
             if (project.pool_id) {
               db.addPoolNote(
                 project.pool_id,
                 entity.name,
-                `Custom orchestration: ${desc}`,
+                `Freeform orchestration: ${desc}`,
                 8,
                 "skill",
               );
             }
-            ctx.send(input.entity, `Set custom orchestration for "${project.name}".`);
+            ctx.send(input.entity, `Set freeform orchestration for "${project.name}".`);
             return;
           }
 
@@ -590,7 +592,7 @@ export function projectCommand(deps: {
           const lines = [
             header(`Joined project "${project.name}"`),
             separator(),
-            `  Orchestration: ${project.orchestration}`,
+            `  Orchestration: ${normalizePatternName(project.orchestration)}`,
             `  Memory: ${project.memory_arch}`,
           ];
 
@@ -622,7 +624,7 @@ export function projectCommand(deps: {
             header(`${project.name} Status`),
             separator(),
             `  Status: ${fmtStatus(project.status, "active")}`,
-            `  Orchestration: ${fmtStatus(project.orchestration, "info")}`,
+            `  Orchestration: ${fmtStatus(normalizePatternName(project.orchestration), "info")}`,
             `  Memory: ${bold(project.memory_arch)}`,
             `  Elapsed: ${Math.max(0, Math.round(elapsedMs / 1000))}s`,
           ];
@@ -902,14 +904,14 @@ export function projectCommand(deps: {
             );
             return;
           }
-          const pattern = normalizePatternName(project.orchestration || "custom");
+          const pattern = normalizePatternName(project.orchestration || "freeform");
           const content =
             `[project-outcome:${project.id} orchestration:${pattern}] score=${score.toFixed(2)} ` +
             evidence;
           if (project.pool_id) {
             db.addPoolNote(project.pool_id, entity.name, content, 9, "reflection");
           }
-          if (pattern !== "custom") {
+          if (pattern !== "freeform") {
             const traditionName = `orchestration:${pattern}`;
             let tradition = db.getMemoryPool(traditionName);
             if (!tradition) {

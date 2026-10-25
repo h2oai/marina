@@ -13,6 +13,7 @@
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@sinclair/typebox";
+import { TEXT_PATTERNS } from "../../orchestration/text-patterns";
 import {
   arbiterToolCommand,
   calcToolCommand,
@@ -190,8 +191,7 @@ const patternSchema = Type.Object({
   action: Type.Optional(lit(["run", "list"], "run (default) or list the patterns.")),
   pattern: Type.Optional(
     Type.String({
-      description:
-        "ensemble, debate, delphi, tournament, verification, deliberation, chorus or pipeline.",
+      description: `${TEXT_PATTERNS.slice(0, -1).join(", ")} or ${TEXT_PATTERNS.at(-1)}.`,
     }),
   ),
   task: Type.Optional(Type.String({ description: "The task the panel answers (for run)." })),

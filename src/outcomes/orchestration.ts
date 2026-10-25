@@ -17,6 +17,7 @@
  */
 
 import type { RoomRoundResult } from "../coordination/room-formations";
+import { canonicalFormationName } from "../orchestration/formations/catalogue";
 import { type PatternRunResult, parseReview } from "../orchestration/text-patterns";
 import type { MarinaDB } from "../persistence/database";
 import { participantOf, workRefsFor } from "./live";
@@ -37,7 +38,9 @@ export function recordProjectOutcome(
   input: { projectId: string; pattern: string; recorder: string; score: number; at?: number },
 ): { id: number; created: boolean } | undefined {
   if (!Number.isFinite(input.score) || input.score < 0 || input.score > 1) return undefined;
-  const pattern = SAFE_LABEL.test(input.pattern) ? input.pattern : "custom";
+  const pattern = SAFE_LABEL.test(input.pattern)
+    ? canonicalFormationName(input.pattern)
+    : "freeform";
   const at = input.at ?? Date.now();
   return recordResolved(db, {
     subject: `project:${input.projectId}`,

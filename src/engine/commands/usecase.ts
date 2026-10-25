@@ -872,7 +872,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
   decompose: (topic) => ({
     name: "decompose",
     description: `Decomposition planning for: ${topic}`,
-    orchestration: "custom",
+    orchestration: "freeform",
     tasks: [
       {
         title: `[bundle] Root goal: ${topic}`,
