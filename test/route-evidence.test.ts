@@ -49,9 +49,11 @@ const CANDIDATES = [
 ];
 
 describe("settings", () => {
-  test("observe by default; invalid values fall back safely", () => {
+  test("on by default; invalid values fall back safely", () => {
     const s = routeEvidenceSettingsFromEnv({});
-    expect(s.mode).toBe("observe");
+    expect(s.mode).toBe("on");
+    expect(routeEvidenceSettingsFromEnv({ MARINA_ROUTE_EVIDENCE: "" }).mode).toBe("on");
+    expect(routeEvidenceSettingsFromEnv({ MARINA_ROUTE_EVIDENCE: "observe" }).mode).toBe("observe");
     expect(routeEvidenceSettingsFromEnv({ MARINA_ROUTE_EVIDENCE: "off" }).mode).toBe("off");
     expect(routeEvidenceSettingsFromEnv({ MARINA_ROUTE_EVIDENCE: "on" }).mode).toBe("on");
     expect(s.minN).toBe(30);
