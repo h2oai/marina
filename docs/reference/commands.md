@@ -963,7 +963,8 @@ Usage:
                                                      only through judged lessons (`lessons`).
 
 Benchmarks: smoke, mmlu-pro, ifeval, truthfulqa, humaneval, narrativeqa, mt-bench, retention, arc-challenge, hellaswag, musr, bbh, gsm8k, math, simple-qa, frames, aime, aime-2025, gpqa, hle-verified-gold, hle-verified-gold-mm
-  (smoke is the 15-item prompt A/B set, always ready; run "benchmark list" for status)
+  (smoke is the 15-item prompt A/B set, tracked in the checkout: ready with no download,
+  whatever directory the server started in; run "benchmark list" for status)
 
 Targets: crew:<name> = the residents serving marina:<name> (a model-<name> channel with a live
   agent; see "benchmark orchestrations"); model:<id> = the bare model as a control ("marina" =
