@@ -536,8 +536,10 @@ function evaluateGateForExecution(
   if (holder.kind === "granted") return { ok: true, mode: "unattended" };
   if (holder.kind === "demonstrated" && holder.standingOk) return { ok: true, mode: "unattended" };
 
-  // An answered challenge: a person approved THIS run.
-  const pass = takeArmedGatePass(entityId, gateId);
+  // An answered challenge: a person approved THIS run. `code.exec.unrestricted`
+  // is operator-grant only — no approval ever passes it.
+  const pass =
+    gateId === "code.exec.unrestricted" ? undefined : takeArmedGatePass(entityId, gateId);
   if (pass) {
     return {
       ok: true,

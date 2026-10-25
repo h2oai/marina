@@ -243,11 +243,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provider (or any other `/v1` refusal) records a failed artifact and shows the upstream message,
   which names the provider setting that fixes it; an empty model answer is a failure too. `ask`,
   `dig` and `desire` keep their world-only output and add one line saying why the model gave none.
-- **One approval covers every gate a held input needs.** An input behind two gates (`run raw` needs
-  `agent.run` and `shell.exec` under `shared`) no longer bounces between holds: an approval covers
-  each other gate its approver could approve on its own hold, checked gate by gate with the same
-  rule. When the re-run still stops at a gate the approver cannot cover, the approver is told it
-  did not run.
+- **An input behind two gates no longer bounces between holds.** An approval also covers each other
+  non-core gate its approver could approve on its own hold (checked gate by gate with the same rule),
+  and the reply names them (`also covers: …`). A core (operator-grant) gate is never covered
+  implicitly: it is held on its own, the approver is told the run stopped there, and approving it
+  carries the earlier approval of the gates that run already passed (named in the reply), so
+  `run raw` (`agent.run`, then `shell.exec`, under `shared`) runs after two explicit answers instead
+  of looping. `code.exec.unrestricted` is never passed by an approval: only an operator's grant
+  (`challenge approve <token> always` or `gate grant`) opens it.
 - **`showcase` no longer adds a seeded bounty on every reboot** once more than 20 tasks exist: the
   seed reads every task, not the first page (`listTasks({ limit: null })`). `task list` says how
   many tasks it left out and takes `limit:N` to show them.

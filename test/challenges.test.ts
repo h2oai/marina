@@ -255,37 +255,46 @@ describe("challenges (engine)", () => {
     expect(db.getCompetence(builder.entity!, "admin.destructive")).toBeUndefined();
   });
 
-  it("one approval covers every gate the held input needs that the approver could approve", async () => {
-    // Like `run raw`: the router's gate (agent.run), then an imperative one (shell.exec).
+  /** A command behind the router's `agent.run` gate, then an imperative `second` gate. */
+  function registerTwoGate(name: string, second: string) {
     engine.commands.registerBuiltin({
-      name: "twogate",
+      name,
       category: "Test",
       help: "test command behind two gates",
       minRank: 0,
       gate: "agent.run",
       handler: (ctx, input) => {
-        const gate = checkGateForExecution(db, input.entity, "shell.exec");
+        const gate = checkGateForExecution(db, input.entity, second);
         if (!gate.ok) {
           ctx.send(input.entity, gate.reason ?? "refused");
           return;
         }
-        recordGateExecution(db, input.entity, "shell.exec", gate, "command:twogate");
-        ran.push("twogate");
+        recordGateExecution(db, input.entity, second, gate, `command:${name}`);
+        ran.push(name);
         ctx.send(input.entity, "both passed");
       },
     });
+  }
+  const tokensIn = (c: MockConnection) => [
+    ...new Set([...text(c).matchAll(/\b(ch_[0-9a-f]{12})\b/g)].map((m) => m[1] as string)),
+  ];
 
-    // The operator holds authority for both gates: one answer runs it.
+  it("one approval covers two non-core gates, and the reply names what it covers", async () => {
+    registerTwoGate("twogate", "agent.spawn");
     await send(builder, "twogate");
     const token = tokenIn(text(builder))!;
     expect(token).toBeDefined();
     await send(root, `challenge approve ${token}`);
+    const reply = stripAnsi(root.lastText());
+    expect(reply).toContain("also covers:");
+    expect(reply).toContain("agent.spawn");
+    // Core gates are never covered implicitly.
+    expect(reply).not.toMatch(/also covers:[^;]*shell\.exec/);
     await until(() => ran.includes("twogate"));
     expect(text(builder)).toContain("both passed");
 
-    // The owner holds agent.run but not shell.exec: the re-run stops at
-    // shell.exec, and she is told it did not run instead of being left with
-    // "running it now". The operator's answer then covers both gates.
+    // The owner holds agent.run but not agent.spawn: the re-run stops there,
+    // she is told it did not run, and the operator's answer carries hers.
     grant(db, alice.entity!, "agent.run");
     builder.clear();
     alice.clear();
@@ -293,14 +302,60 @@ describe("challenges (engine)", () => {
     const ownerToken = tokenIn(text(builder))!;
     await send(alice, `challenge approve ${ownerToken}`);
     await until(() => text(alice).includes(`Challenge ${ownerToken} did not run`));
-    expect(text(alice)).toContain("needs the shell.exec gate");
+    expect(text(alice)).toContain("needs the agent.spawn gate");
     expect(ran.filter((r) => r === "twogate")).toHaveLength(1);
-    const shellToken = [...text(builder).matchAll(/\b(ch_[0-9a-f]{12})\b/g)]
-      .map((m) => m[1])
-      .find((t) => t !== ownerToken)!;
-    expect(shellToken).toBeDefined();
-    await send(root, `challenge approve ${shellToken}`);
+    const next = tokensIn(builder).find((t) => t !== ownerToken)!;
+    expect(next).toBeDefined();
+    await send(root, `challenge approve ${next}`);
     await until(() => ran.filter((r) => r === "twogate").length === 2);
+  });
+
+  it("a core gate after a non-core approval is held on its own; approving it covers nothing extra", async () => {
+    // Like `run raw` under `shared`: agent.run, then the core shell.exec.
+    registerTwoGate("rawish", "shell.exec");
+    await send(builder, "rawish");
+    const first = tokenIn(text(builder))!;
+    root.clear();
+    await send(root, `challenge approve ${first}`);
+    expect(stripAnsi(root.lastText())).not.toMatch(/also covers:[^;]*shell\.exec/);
+    await until(() => text(root).includes(`Challenge ${first} did not run`));
+    expect(text(root)).toContain("core gate shell.exec");
+    expect(ran).not.toContain("rawish");
+
+    const shellHold = tokensIn(builder).find((t) => t !== first)!;
+    expect(shellHold).toBeDefined();
+    await send(root, `challenge approve ${shellHold}`);
+    const reply = stripAnsi(root.lastText());
+    // Nothing new is covered by a core approval; the earlier agent.run approval is carried, by name.
+    expect(reply).not.toContain("also covers");
+    expect(reply).toContain(`carries ${first}'s approval of agent.run`);
+    await until(() => ran.includes("rawish"));
+  });
+
+  it("no approval runs code.exec.unrestricted once; only an operator's grant opens it", async () => {
+    engine.commands.registerBuiltin({
+      name: "unbox",
+      category: "Test",
+      help: "test command behind code.exec.unrestricted",
+      minRank: 0,
+      handler: (ctx, input) => {
+        const gate = checkGateForExecution(db, input.entity, "code.exec.unrestricted");
+        if (!gate.ok) {
+          ctx.send(input.entity, gate.reason ?? "refused");
+          return;
+        }
+        ran.push("unbox");
+        ctx.send(input.entity, "unboxed");
+      },
+    });
+    await send(builder, "unbox");
+    const token = tokenIn(text(builder))!;
+    expect(token).toBeDefined();
+    await send(root, `challenge approve ${token}`);
+    expect(stripAnsi(root.lastText())).toContain("operator-grant only");
+    expect(ran).not.toContain("unbox");
+    await send(root, `challenge approve ${token} always`);
+    await until(() => ran.includes("unbox"));
   });
 
   it("deny and expiry reach the requester; `decision approve|deny` answer challenges too", async () => {

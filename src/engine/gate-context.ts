@@ -54,6 +54,8 @@ export interface GatePass {
    * `demonstrates`.
    */
   demonstratesGateIds?: string[];
+  /** Gates this pass has already let through in the run (consumed checks). */
+  usedGateIds?: string[];
   approverName: string;
   token: string;
 }
@@ -262,6 +264,7 @@ export function takeArmedGatePass(entityId: string, gateId: string): GatePass | 
   const pass = armedPass(entityId);
   if (!pass?.gateIds.includes(gateId)) return undefined;
   pass.gateIds = pass.gateIds.filter((id) => id !== gateId);
+  pass.usedGateIds = [...(pass.usedGateIds ?? []), gateId];
   return pass;
 }
 
