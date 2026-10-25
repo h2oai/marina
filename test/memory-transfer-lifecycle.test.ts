@@ -186,7 +186,17 @@ it("propagates imported staleness down a deep DAG while another tenant reads thr
     if (locked) lockedReads++;
   }, 5);
   try {
-    await d.service.importBundle(d.actor, destination.space, bundle, "chain");
+    // The probe above takes the writer lock every 5 ms, so under load the
+    // import may answer `storage_busy`, whose contract is "retry the same
+    // request key"; the retry is idempotent on that key.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await d.service.importBundle(d.actor, destination.space, bundle, "chain");
+        break;
+      } catch (error) {
+        if ((error as { code?: string }).code !== "storage_busy" || attempt >= 5) throw error;
+      }
+    }
   } finally {
     clearInterval(timer);
   }
