@@ -37,6 +37,7 @@ export interface LearnedStore {
   listEvidencePriors(opts?: { family?: string; limit?: number }): learnedDb.EvidencePriorRow[];
   recordUpstreamEvent(event: learnedDb.UpstreamEventInput): number;
   listUpstreamEvents(opts?: { artifactId?: string; limit?: number }): learnedDb.UpstreamEventRow[];
+  countUpstreamEventItems(action: string, opts?: { artifactId?: string; itemKey?: string }): number;
   listOwnedSpaceRecords(
     ownerName: string,
     prefix: string,
@@ -63,6 +64,7 @@ export const LEARNED_STORE_METHODS = [
   "listEvidencePriors",
   "recordUpstreamEvent",
   "listUpstreamEvents",
+  "countUpstreamEventItems",
   "listOwnedSpaceRecords",
   "listRatifiedInstitutionalRecords",
   "listLedgerCells",

@@ -56,7 +56,8 @@ export interface BackfillReport {
   skipped: number;
   /** Runs fed through the loop (or that would be, on a dry run). */
   learned: number;
-  trust: Record<LessonTrust, number>;
+  /** The judge's verdicts (a judge never answers `imported`). */
+  trust: Record<Exclude<LessonTrust, "imported">, number>;
   /** Lessons mirrored into `lessons:meta`. */
   mirrored: number;
   /** Runs fed but not written: the judge reached no verdict (left for a later pass). */
@@ -194,7 +195,7 @@ export async function backfillLedgerLessons(
         opts.onRecord?.(record);
         continue;
       }
-      report.trust[record.trust]++;
+      if (record.trust !== "imported") report.trust[record.trust]++;
       if (record.metaId) report.mirrored++;
       if (record.mergedInto) report.merged++;
       taught.add(run.id);
