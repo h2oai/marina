@@ -60,6 +60,7 @@ import { recordRoomFormationRound } from "../outcomes/orchestration";
 import type { MarinaDB } from "../persistence/database";
 import type { RoomLogKind } from "../persistence/db-rooms";
 import { writeSample } from "../resolvers/sample-writer";
+import { WorldSupervisor } from "../routing/world-supervisor";
 import type { StorageProvider } from "../storage/provider";
 import type { OtlpExporterStatus } from "../telemetry/otlp-exporter";
 import type { OtlpLogExporterStatus } from "../telemetry/otlp-log-exporter";
@@ -212,6 +213,8 @@ export class Engine {
   readonly mediaManager?: MediaManager;
   /** Expiring read grants on single private canvas nodes (`canvas-access.ts`). */
   readonly canvasGrants = new CanvasReadGrants();
+  /** The in-world native agent supervisor (`supervisor start`); stopped by `shutdown()`. */
+  readonly worldSupervisor = new WorldSupervisor();
   /** @internal */ db?: MarinaDB;
   private startedAt = Date.now();
   private fetchLastCall = new Map<string, number>(); // roomId -> timestamp
@@ -2219,6 +2222,12 @@ export class Engine {
   shutdown(): Promise<void> {
     closeInvestigationService(this.db);
     this.stop();
+    // The in-world supervisor's native agents stop and its credential is
+    // revoked before the database closes; its boot record is kept, so the
+    // next boot resumes it (MARINA_SUPERVISOR_AUTOSTART). A host that stops it
+    // earlier (main.ts, while HTTP still answers its final sync) makes this a no-op.
+    if (this.worldSupervisor.running)
+      this.trackBackground(this.worldSupervisor.stop({ keep: true }));
     const finish = () => {
       this.saveWorldState();
       releaseChallengeHost(this);

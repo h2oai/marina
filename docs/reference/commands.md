@@ -8635,6 +8635,37 @@ Effect: read.
 - `field-0` (`N`): number, optional group `option-0`.
 - Group `option-0`: `N`.
 
+## supervisor
+
+The native agent supervisor (Claude Code, Codex, pi), run by the server itself: the same supervisor as `marina supervise`, with no process to keep open. A person starts it in a configured code root (MARINA_CODE_ROOTS); it holds a routing-only supervision credential issued to that person (renewed, revoked on stop). Launch agents from Dashboard → Workspace → Streams: each becomes its own world account (supervised resident) and each launch still needs code.exec and agent.spawn. Native agents start with a minimal environment (no server keys) and use their own CLI logins. It survives a restart (MARINA_SUPERVISOR_AUTOSTART=resume) until stopped.
+Usage: supervisor [status]
+       supervisor start [root:<dir>] [label:<name>]   — run the native agent supervisor in this server
+       supervisor stop
+
+Category: Agents. Minimum rank: 5. Gate: `agent.spawn`.
+Aliases: none.
+
+### `supervisor [status]`
+
+Effect: read.
+
+- `field-0` (`status`): text, optional group `option-0`.
+- Group `option-0`: `status`.
+
+### `supervisor start [root:<dir>] [label:<name>]`
+
+Effect: execute.
+
+- `field-0` (`root`): text, optional group `option-0`.
+- `field-1` (`label`): text, optional group `option-1`.
+- Group `option-0`: `root:dir`.
+- Group `option-1`: `label:name`.
+
+### `supervisor stop`
+
+Effect: write.
+
+
 ## system-prompt
 
 Preview the assembled agent system prompt (read-only).
