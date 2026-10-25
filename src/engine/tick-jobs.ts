@@ -361,10 +361,10 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
-  // Hourly (own phase): lessons from work (MARINA_LESSONS_FROM_WORK, default
-  // off). The aggregated tool-work patterns become judged lessons (on) or a
-  // counts-only log line (observe). Async and self-bounded (MAX_PER_FLUSH,
-  // daily spend cap); never overlaps itself.
+  // Hourly (own phase): lessons from work (MARINA_LESSONS_FROM_WORK, unset:
+  // on with a model provider, else observe). The aggregated tool-work patterns
+  // become judged lessons (on) or a counts-only log line (observe).
+  // Async and self-bounded (MAX_PER_FLUSH, daily spend cap); never overlaps itself.
   s.register({
     name: "lessons-from-work",
     every: NOTE_IMPORTANCE_INTERVAL,

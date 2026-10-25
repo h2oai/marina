@@ -239,6 +239,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`memory query` and `memory search` lead with each record's own id.** One line per result
+  (`id <record id> · memory show <record id>`, subject, a short preview) comes before the JSON
+  dump, whose first id is the space's. The dump and the structured payload are unchanged.
+- **`memory kv history` shows the first set.** The trail ends with the key's creation (time and
+  first value) instead of replying "No edit history" until a second set; a key that was never
+  set says so.
+- **`brief` help names the first-login welcome.** The first brief after arrival is the welcome;
+  later ones show the shape of the world. The help said only the latter.
 - **Crews serve, can be measured, and tag their own work.** A crew created with `crew create` now
   serves `marina:<name>` through its own `model-<name>` endpoint (its agent members are kept on it
   as they join and leave), so it can answer `/v1`, take forecast parts and be a
@@ -422,6 +430,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`benchmark fetch <name>` downloads one benchmark's dataset from inside the world.** It runs
+  the harness downloader (`benchmarks/download-all.ts <name>`, which now takes registry keys) in
+  the background and messages the requester when it is done. Rank 4, like benchmark runs;
+  refused under the as-of fence. Every downloader request now goes through the SSRF guard
+  (`guardedFetch`). `benchmark list` says per dataset `tracked (ready)`, `generated (ready)`,
+  `downloaded (ready)` or ``needs `benchmark fetch <name>` ``, and `help benchmark` names the
+  datasets that need no download.
 - **Orchestration runs land on the outcome path.** A person's `project <name> outcome` verdict,
   a `pattern run` (or `POST /v1/patterns/run`) whose own review approved or sent back the draft,
   and a room `verification` round closed with its checkers' `pass|fail` lines each record one

@@ -60,7 +60,7 @@ export function briefCommand(deps: BriefDeps): CommandDef {
     ],
     name: "brief",
     aliases: [],
-    help: "Get oriented. Shows the current shape of the world — who is here, what exists, where to go next. 'brief full' shows the detailed briefing, 'brief social' the social view. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.",
+    help: "Get oriented. The first brief after you arrive is the welcome (how to start, recent chronicle); every later one shows the current shape of the world — who is here, what exists, where to go next. 'brief full' shows the detailed briefing, 'brief social' the social view. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

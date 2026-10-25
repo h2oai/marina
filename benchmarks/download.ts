@@ -3,6 +3,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { guardedFetch } from "../src/net/url-guard";
 import type { DatasetItem } from "./types";
 
 const DATASETS_DIR = join(import.meta.dir, "datasets");
@@ -28,11 +29,15 @@ function saveCache(name: string, items: DatasetItem[]): void {
   writeFileSync(cachePath(name), JSON.stringify(items, null, 2));
 }
 
-/** One datasets-server page; 429 / 5xx / truncated bodies back off and retry. */
+/**
+ * One datasets-server page; 429 / 5xx / truncated bodies back off and retry.
+ * Every request (and redirect hop) passes the server's SSRF guard, so the
+ * in-world `benchmark fetch` and this script reach only public hosts.
+ */
 async function fetchRowsPage(url: string, headers: Record<string, string>): Promise<unknown> {
   const maxAttempts = 6;
   for (let attempt = 1; ; attempt++) {
-    const resp = await fetch(url, { headers });
+    const resp = await guardedFetch(url, { headers });
     if (resp.ok) {
       const text = await resp.text();
       try {
