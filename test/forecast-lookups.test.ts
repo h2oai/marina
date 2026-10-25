@@ -352,6 +352,28 @@ describe("official series", () => {
     expect(r.readings?.[0]?.value).toBe(4.4);
   });
 
+  it("a FRED fetch that fails says so, never 'no observation'", async () => {
+    const offline: LookupFetch = {
+      json: async () => ({ ok: false, error: "fred request failed" }),
+      text: async () => ({ ok: false, error: "fred request failed" }),
+    };
+    const live = await fredLookup(undefined, offline).lookup("x", NOW, NOW, {
+      hints: { fred: ["UNRATE"] },
+    });
+    expect(live.skipped).toContain("fetch failed: fred request failed");
+    expect(live.skipped).not.toContain("no observation");
+    const vintage = await fredLookup("FK", offline).lookup("x", PAST, NOW, {
+      hints: { fred: ["UNRATE"] },
+    });
+    expect(vintage.skipped).toContain("fetch failed");
+    // A fetch that worked but holds nothing before the cutoff is still "no observation".
+    const empty = await fredLookup(
+      undefined,
+      fakeHttp([["fredgraph.csv", "observation_date,UNRATE\n2027-01-01,4.3\n"]]),
+    ).lookup("x", NOW, NOW, { hints: { fred: ["UNRATE"] } });
+    expect(empty.skipped).toContain("no observation at or before the cutoff");
+  });
+
   it("BLS is live-only and parses monthly periods", async () => {
     expect(
       (await blsLookup(undefined).lookup("x", PAST, NOW, { hints: { bls: ["CUUR0000SA0"] } }))

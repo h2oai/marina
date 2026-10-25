@@ -86,7 +86,9 @@ export class CodeSessionDriver {
         sessionId: opts.session.id,
         workspaceRoot: opts.session.workspace_root,
       });
-      const text = answer?.trim() || "(no response)";
+      const text = answer?.trim();
+      // An empty answer is not a stored response: record it as a failure.
+      if (!text) throw new Error("The model returned no answer. See `readiness providers`.");
       const artifact = this.deps.db.createCodingArtifact({
         sessionId: opts.session.id,
         kind: "agent_response",

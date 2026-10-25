@@ -1439,7 +1439,8 @@ export class MarinaDB implements MarinaStores {
     status?: string;
     groupId?: string;
     parentId?: number;
-    limit?: number;
+    /** Default 20; `null` returns every matching row. */
+    limit?: number | null;
     orderByStanding?: boolean;
   }): TaskRow[] {
     return tasksDb.listTasks(this.db, opts);
