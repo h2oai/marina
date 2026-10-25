@@ -1399,8 +1399,13 @@ export class MarinaDB implements MarinaStores {
   standingLeaderboard(limit: number) {
     return standingDb.standingLeaderboard(this.db, limit);
   }
-  ledgerForEntity(entityId: string, limit: number) {
-    return standingDb.ledgerForEntity(this.db, this.durableEntityKey(entityId), limit);
+  ledgerForEntity(entityId: string, limit: number, kinds?: standingDb.StandingKindFilter) {
+    return standingDb.ledgerForEntity(this.db, this.durableEntityKey(entityId), limit, kinds);
+  }
+  onStandingCredit(listener: (credit: standingDb.StandingCredit) => void): () => void {
+    const release = standingDb.subscribeStandingCredits(this.db, listener);
+    this.onClose(release);
+    return release;
   }
 
   // ─── Task Persistence (delegated to db-tasks.ts) ────────────────────────

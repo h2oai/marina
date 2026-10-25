@@ -13,6 +13,7 @@ import {
   standingOf,
   TASK_STANDING_MAX,
 } from "../../agent/standing";
+import { standingEarnLine, standingSummaryLine } from "../../agent/standing-summary";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
@@ -36,6 +37,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
   return {
     usage: [
       { syntax: "standing", effect: "read" },
+      { syntax: "standing summary", effect: "read" },
       { syntax: "standing show <name>", effect: "read" },
       { syntax: "standing <name>", effect: "read" },
       { syntax: "standing top [N]", effect: "read" },
@@ -48,6 +50,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       "Civic standing — earned by verified work (60-day half-life).\n" +
       "Usage:\n" +
       "  standing                — your current standing + ledger\n" +
+      "  standing summary        — one line: live standing, last credits, retired history; then how to earn\n" +
       "  standing show <name>    — another entity's standing (online or not; `standing <name>` too)\n" +
       "  standing top [N]        — leaderboard\n" +
       "Standing is earned when someone other than you verifies the work — every account is its " +
@@ -76,6 +79,16 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       const db = deps.db;
       const tokens = input.tokens;
       const sub = tokens[0]?.toLowerCase();
+
+      if (sub === "summary") {
+        const self = deps.getEntity(input.entity);
+        if (!self) return;
+        ctx.send(
+          input.entity,
+          `${standingSummaryLine(db, self.name, self.id)}\n${standingEarnLine()}`,
+        );
+        return;
+      }
 
       if (sub === "top") {
         const limit = Math.max(1, Math.min(50, Number.parseInt(tokens[1] ?? "10", 10) || 10));

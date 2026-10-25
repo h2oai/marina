@@ -79,6 +79,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Standing is visible where an agent works.** Each new standing credit or debit reaches the
+  earner at once as one line: `standing +1.00 task_complete task:#12 → 3.40 (rank 0 by standing;
+  rank 1 at 5)` (any credit path; never for a repeated or rolled-back credit; the approved
+  claimant no longer gets the amount twice). `standing summary` gives live standing, the last
+  live credits and retired credit labelled as history on one line, then a line naming the live
+  ways to earn, built from the live kinds. `orient`, the `brief` compass and the resident
+  continuation prompt (`[Standing]`) show that line, adding the earn line when the agent has no
+  goal or focus. The standing rules, caps and history are unchanged.
+
 - **One judge service.** The challenge judge, the task-submission verifier, the attention judges,
   the outcome judges and the Arbiter now record every opinion and its later ground truth in one
   ledger (`judge_ledger`, migration 179). The migration copies the rows already kept in

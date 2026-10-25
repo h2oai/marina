@@ -20,7 +20,12 @@ export interface StandingStore {
   listStandingEntities(): string[];
   staleStandingEntities(cutoff: number): string[];
   standingLeaderboard(limit: number): ReturnType<typeof standingDb.standingLeaderboard>;
-  ledgerForEntity(entityId: string, limit: number): ReturnType<typeof standingDb.ledgerForEntity>;
+  ledgerForEntity(
+    entityId: string,
+    limit: number,
+    kinds?: standingDb.StandingKindFilter,
+  ): ReturnType<typeof standingDb.ledgerForEntity>;
+  onStandingCredit(listener: (credit: standingDb.StandingCredit) => void): () => void;
 }
 
 /** Runtime mirror of `StandingStore`'s method names — the drift test compares it to the facade. */
@@ -34,6 +39,7 @@ export const STANDING_STORE_METHODS = [
   "staleStandingEntities",
   "standingLeaderboard",
   "ledgerForEntity",
+  "onStandingCredit",
 ] as const satisfies readonly (keyof StandingStore)[];
 
 export const STANDING_STORE_COMPLETE: ExactKeys<StandingStore, typeof STANDING_STORE_METHODS> =
