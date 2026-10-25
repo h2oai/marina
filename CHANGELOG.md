@@ -79,6 +79,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The formation catalogue is held by behaviour, not frozen bytes.** The migration-era
+  equivalence tests (`formation-equivalence-typed`, `-text`, and the catalogue half of `-arena`)
+  and their frozen pre-catalogue copies are removed, so the catalogue's prompts and answers can
+  change when a measurement says they should. `test/formation-behaviour.test.ts` asserts what the
+  formations must do: determinism given the same replies, research before any analyst, delphi's
+  anonymous revision after every first answer, n − 1 refereed tournament matches, one skeptic call
+  after the proposals, the typed combiners' math, and the arena move cap and blowup bound on the
+  stored rounds. The resident Scores are checked by shape. The ten arena formations still on
+  their own code stay byte-identical to their frozen copy (`test/arena-formations-legacy.test.ts`)
+  until they move to the catalogue.
 - **One judge service.** The challenge judge, the task-submission verifier, the attention judges,
   the outcome judges and the Arbiter now record every opinion and its later ground truth in one
   ledger (`judge_ledger`, migration 179). The migration copies the rows already kept in
