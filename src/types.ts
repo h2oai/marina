@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { CrewFormationName } from "./orchestration/formations/catalogue";
 import type { CommandForm, CommandUsage } from "./sdk/command-forms";
 import type { CodingCommandTarget } from "./sdk/command-target";
 import type { DurableMemoryAPI } from "./sdk/memory-operations";
@@ -384,28 +385,12 @@ export function crewId(id: string): CrewId {
 }
 
 /**
- * Crew formations are the runtime form of the 16 orchestration patterns
- * (src/world/templates/orchestration.ts). `freeform` is the no-formation
- * default — bound members, no prescribed coordination shape.
+ * A crew runs a formation from the catalogue
+ * (src/orchestration/formations/catalogue.ts): every entry with `crew: true`.
+ * `freeform` is the no-protocol default — bound members, no prescribed
+ * coordination shape.
  */
-export type CrewFormation =
-  | "deliberation"
-  | "chorus"
-  | "foundry"
-  | "swarm"
-  | "pipeline"
-  | "debate"
-  | "mapreduce"
-  | "blackboard"
-  | "symbiosis"
-  | "research"
-  | "delphi"
-  | "tournament"
-  | "verification"
-  | "auction"
-  | "ledger"
-  | "sharding"
-  | "freeform";
+export type CrewFormation = CrewFormationName;
 
 /**
  * Ephemeral crews live only in memory and GC on idle. Persisted crews survive

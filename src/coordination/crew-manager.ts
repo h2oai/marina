@@ -12,6 +12,8 @@
 
 import { getErrorMessage } from "../engine/errors";
 import type { Logger } from "../engine/logger";
+import { canonicalFormationName } from "../orchestration/formations/catalogue";
+import { scoreStepsLine } from "../orchestration/formations/describe";
 import type { MarinaDB, MemoryPoolRow } from "../persistence/database";
 import type { CrewMemberRow, CrewRow } from "../persistence/db-crews";
 import type {
@@ -26,7 +28,6 @@ import type {
   EntityId,
 } from "../types";
 import { crewId as toCrewId, entityId as toEntityId } from "../types";
-import { normalizePatternName } from "../world/templates/orchestration";
 import type { ChannelManager } from "./channel-manager";
 import {
   buildFormationBrief,
@@ -447,10 +448,13 @@ export class CrewManager {
     // The formation's starting move, restated for THIS task with the lead
     // named — the activation brief alone fired it for the first task only.
     const startMove = dispatchStartMove(crew.formation, this.formationNames(crew));
+    // Where the catalogue has a free-text Score template for the formation,
+    // the dispatch offers its steps (text only; members still run the brief).
+    const steps = scoreStepsLine(crew.formation);
     const dispatchPost = {
       channelId: crew.channelId!,
       senderName: sender?.name ?? "crew",
-      content: `[crew-task] ${message}${depositorLine}${startMove ? `\n${startMove}` : ""}`,
+      content: `[crew-task] ${message}${depositorLine}${startMove ? `\n${startMove}` : ""}${steps ? `\n${steps}` : ""}`,
     };
     const missed = this.channels.send(
       dispatchPost.channelId,
@@ -670,7 +674,12 @@ export class CrewManager {
     if (!mediator) return;
     const nudge = pick(mediator, this.mediatorView(crew));
     if (!nudge) return;
-    this.channels.send(crew.channelId, "__crew_manager__", "crew", `[formation-mediator] ${nudge}`);
+    this.channels.send(
+      crew.channelId,
+      "__crew_manager__",
+      "crew",
+      `[formation-mediator] ${canonicalFormationName(crew.formation)}: ${nudge}`,
+    );
   }
 
   /**
@@ -1360,7 +1369,7 @@ export class CrewManager {
       id: toCrewId(row.id),
       name: row.name,
       goal: row.goal,
-      formation: normalizePatternName(row.formation) as CrewFormation,
+      formation: canonicalFormationName(row.formation) as CrewFormation,
       lifetime: "persisted",
       ownerId: toEntityId(row.owner_id),
       members: memberRows.map((m) => ({

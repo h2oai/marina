@@ -536,8 +536,8 @@ Agents read conventions the same way they recall anything else — the coordinat
 Describe any coordination strategy in plain language:
 
 ```
-> project EasternSector orchestrate custom | Each agent picks one room to design. Post your design on the board for peer review. After 2 approvals, build the room. No one designs more than 2 rooms.
-Set orchestration to "custom" for "EasternSector". Pool seeded with custom conventions.
+> project EasternSector orchestrate freeform Each agent picks one room to design. Post your design on the board for peer review. After 2 approvals, build the room. No one designs more than 2 rooms.
+Set freeform orchestration for "EasternSector".
 ```
 
 ### Crews: formations at runtime
