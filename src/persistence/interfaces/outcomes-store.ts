@@ -26,6 +26,25 @@ export interface OutcomesStore {
     reason?: string,
     now?: number,
   ): void;
+  claimOutcomeDeliveries(
+    outcomeIds: readonly number[],
+    consumer: string,
+    held: string,
+    token: string,
+    now?: number,
+  ): boolean;
+  releaseOutcomeClaims(consumer: string, token: string, now?: number): number;
+  releaseStaleOutcomeClaims(consumer: string, before: number, now?: number): number;
+  outcomesMissingDeliveries(
+    consumers: readonly string[],
+    afterId: number,
+    limit: number,
+  ): outcomesDb.OutcomeRow[];
+  addMissingOutcomeDeliveries(
+    outcomeId: number,
+    consumers: readonly string[],
+    now?: number,
+  ): number;
   outcomeDeliveries(outcomeId: number): outcomesDb.DeliveryRow[];
   outcomeDeliveryCounts(): Array<{ consumer: string; state: outcomesDb.DeliveryState; n: number }>;
 }
@@ -39,6 +58,11 @@ export const OUTCOMES_STORE_METHODS = [
   "pendingOutcomes",
   "waitOutcomeDelivery",
   "setOutcomeDelivery",
+  "claimOutcomeDeliveries",
+  "releaseOutcomeClaims",
+  "releaseStaleOutcomeClaims",
+  "outcomesMissingDeliveries",
+  "addMissingOutcomeDeliveries",
   "outcomeDeliveries",
   "outcomeDeliveryCounts",
 ] as const satisfies readonly (keyof OutcomesStore)[];

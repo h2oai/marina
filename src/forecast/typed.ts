@@ -138,6 +138,14 @@ export interface TypedForecastRequest {
    * instructions under `MARINA_FORECAST_CONTRACT=on`; a caller may set it.
    */
   contract?: AnswerContract;
+  /**
+   * The question's classes, most specific first (`board:`, `category:`, …,
+   * `group:`) — what its resolved outcome is tagged `family:` with. Card
+   * routing sets it (`./card-routing.ts`); lesson recall passes it, so a
+   * lesson scoped to one of these families is served. Absent: only unscoped
+   * lessons are.
+   */
+  families?: readonly string[];
 }
 
 export interface TypedForecastOptions {
@@ -661,7 +669,10 @@ export async function forecastTyped(
   // ── Lessons (only those whose outcome was known at the cutoff) ────────────
   if (deps.lessons) {
     try {
-      const recalled = await deps.lessons.recall(`${req.question} ${req.answer.type}`, cutoff.at);
+      const query = `${req.question} ${req.answer.type}`;
+      const recalled = req.families?.length
+        ? await deps.lessons.recall(query, cutoff.at, { families: req.families })
+        : await deps.lessons.recall(query, cutoff.at);
       const record = (l: (typeof recalled)[number]) => ({
         ...(l.id ? { id: l.id } : {}),
         text: l.text,

@@ -72,6 +72,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Outcome delivery plumbing.** A group of single outcomes still short of five is learned anyway
+  once its oldest has waited 30 days, if it has at least three (the lesson states the true count),
+  so a slow family still learns. A delivery pass claims a group atomically before its model call
+  (`outcome_deliveries`, released on failure or after an hour), so two passes at once write one
+  lesson. Forecast history records name the formation from the outcome's `method:` ref
+  (`method:formation:delphi` → `delphi`; a variant card keeps its card id). Outcomes recorded
+  without a consumer's delivery row get it from a bounded, idempotent backfill at the start of
+  each delivery pass, under the same rules. Typed forecasts recall lessons scoped to their
+  question's classes. None of this needs a model provider.
 - **Judged lessons: no rule, no lesson; single rounds teach in aggregate; one set of bars.** A
   candidate whose writer gives no rule (asked twice) is deferred, never judged or stored. Forecasts,
   arena rounds and research asks wait (durably, no attempt spent) until five of one source shape and

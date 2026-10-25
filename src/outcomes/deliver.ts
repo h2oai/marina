@@ -10,9 +10,14 @@
  *            reached, the outcome waits for a later pass — never dropped.
  *            With no model provider it waits without spending an attempt.
  *            Forecasts, arena rounds and research asks wait for their group
- *            and teach in aggregate (`AGGREGATE_MIN_OUTCOMES`).
+ *            and teach in aggregate (`AGGREGATE_MIN_OUTCOMES`, or fewer once
+ *            stale), each group claimed by one pass.
  *   history  one record in MARINA_FORECAST_HISTORY (recalibration, prior
- *            shrink, routing), from the answer's pre-adjustment forecast.
+ *            shrink, routing), from the answer's pre-adjustment forecast,
+ *            naming its formation when the outcome's `method:` ref does.
+ *
+ * Each pass first backfills delivery rows an outcome is missing
+ * (`backfillOutcomeDeliveries`).
  *
  * One rule set for every producer. A measurement run (`eval_mode = measure`)
  * teaches like any other outcome when its board is named (its source or an
@@ -29,6 +34,7 @@ import { Logger } from "../engine/logger";
 import { noteResolvedForecast, noteResolvedRecord } from "../forecast/adjust";
 import { typedFormation } from "../forecast/formations";
 import { type ForecastHistory, historyFromEnv, resolvedRecord } from "../forecast/history";
+import { recipeCard, recipeKey } from "../forecast/method-cards";
 import { SHADOW_OWNER } from "../forecast/routing-refs";
 import type { TypedForecastAnswer } from "../forecast/typed";
 import { EVAL_REF_PREFIX, sourceNamesBoard } from "../learning/eval-context";
@@ -45,6 +51,7 @@ import { workScopeFor } from "../learning/work";
 import type { MarinaDB } from "../persistence/database";
 import type { ForecastAnswerRow } from "../persistence/db-markets";
 import { AGGREGATING_REASON, type OutcomeRow } from "../persistence/db-outcomes";
+import { consumersFor, OUTCOME_CONSUMERS } from "./record";
 
 const logger = new Logger();
 
@@ -116,9 +123,26 @@ function retryOrFail(
 }
 
 /**
- * The formation that produced a saved answer (a typed answer's `formation`, or
- * the typed run behind a plain answer) and the outcome's score (0–1, higher is
- * better) — what `MARINA_FORECAST_ROUTE` compares formations on.
+ * The history `formation` an outcome's `method:` ref names, when it names a
+ * typed recipe card (`src/forecast/method-cards.ts`): a plain card
+ * (`method:formation:delphi`, as the arena and typed card routing both tag it)
+ * → the bare formation (`delphi`), which formation routing reads; a variant
+ * card (`method:formation:delphi+closed-book`) → its card id, which card
+ * routing reads and formation routing ignores (a variant is not the plain
+ * formation). Any other method (`nowcast`, `research`, `model:…`) → none.
+ */
+export function formationFromMethodRef(refs: readonly string[]): string | undefined {
+  const method = refs.find((r) => r.startsWith("method:"))?.slice("method:".length);
+  const card = method?.startsWith("formation:") ? recipeCard(method) : undefined;
+  if (!card?.formation) return undefined;
+  return card.id === recipeKey(card.formation) ? card.formation : card.id;
+}
+
+/**
+ * The formation that produced a saved answer (its outcome's `method:` card,
+ * else a typed answer's `formation`, or the typed run behind a plain answer)
+ * and the outcome's score (0–1, higher is better) — what
+ * `MARINA_FORECAST_ROUTE` compares formations on. Absent when nothing names one.
  */
 function routingEvidence(
   row: ForecastAnswerRow,
@@ -127,9 +151,9 @@ function routingEvidence(
   const a = parse(row.answer_json) as
     | { formation?: { pattern?: unknown }; typed?: { formation?: { pattern?: unknown } } }
     | undefined;
-  const formation = typedFormation(
-    String(a?.formation?.pattern ?? a?.typed?.formation?.pattern ?? ""),
-  );
+  const formation =
+    formationFromMethodRef(refsOf(o)) ??
+    typedFormation(String(a?.formation?.pattern ?? a?.typed?.formation?.pattern ?? ""));
   return {
     ...(formation ? { formation } : {}),
     ...(o.quality !== null && Number.isFinite(o.quality) ? { score: o.quality } : {}),
@@ -147,6 +171,10 @@ async function deliverHistory(
   o: OutcomeRow,
   history: ForecastHistory,
 ): Promise<"done" | "skipped"> {
+  // No saved answer: nothing to record. Arena profile and ranking rounds land
+  // here on purpose: a history record is a raw forecast of one answer shape
+  // (choice, multi, number…) that recalibration and prior shrink replay, and
+  // a profile or a ranking has neither the shape nor a raw forecast to give.
   const row = answerFor(db, o);
   if (!row) return "skipped";
   const truth = parse(o.truth_json) as { options?: string[]; value?: number } | undefined;
@@ -319,6 +347,16 @@ const sinkFor = (db: MarinaDB, t: { shared: true } | { owner: string }, shared: 
 export const AGGREGATE_MIN_OUTCOMES = 5;
 /** At most this many single outcomes summarised by one aggregate lesson. */
 export const AGGREGATE_MAX_OUTCOMES = 50;
+/**
+ * A group still short of AGGREGATE_MIN_OUTCOMES is learned anyway once its
+ * oldest outcome has waited this long (a slow family, such as a monthly
+ * series, would otherwise never learn)…
+ */
+export const AGGREGATE_STALE_MS = 30 * 24 * 60 * 60 * 1000;
+/** …provided it has at least this many outcomes; smaller groups keep waiting. */
+export const AGGREGATE_STALE_MIN_OUTCOMES = 3;
+/** A claim older than this belongs to a pass that died: it is released. */
+export const AGGREGATE_CLAIM_TTL_MS = 60 * 60 * 1000;
 /** Held outcomes scanned per pass for groups that are ready. */
 const AGGREGATE_SCAN = 2_000;
 
@@ -361,8 +399,16 @@ function aggregateKey(o: OutcomeRow, t: { shared: true } | { owner: string }): s
 
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 
-/** One outcome from many of one kind: cross-outcome statistics, never one item's text. */
-export function aggregateOutcome(db: MarinaDB, rows: readonly OutcomeRow[]): Outcome {
+/**
+ * One outcome from many of one kind: cross-outcome statistics, never one
+ * item's text. `stale`: a group learned below AGGREGATE_MIN_OUTCOMES after
+ * waiting AGGREGATE_STALE_MS; the detail says so, beside the true N.
+ */
+export function aggregateOutcome(
+  db: MarinaDB,
+  rows: readonly OutcomeRow[],
+  opts: { stale?: boolean } = {},
+): Outcome {
   const first = rows[0]!;
   const n = rows.length;
   const wins = rows.filter((r) => r.succeeded === 1).length;
@@ -412,6 +458,9 @@ export function aggregateOutcome(db: MarinaDB, rows: readonly OutcomeRow[]): Out
       losses.length
         ? `mean ${first.metric ?? "loss"} ${mean(losses).toFixed(3)} (range ${Math.min(...losses).toFixed(3)}–${Math.max(...losses).toFixed(3)})`
         : "",
+      opts.stale
+        ? `only ${n} outcomes (fewer than the usual ${AGGREGATE_MIN_OUTCOMES}; learned after waiting ${Math.round(AGGREGATE_STALE_MS / 86_400_000)} days)`
+        : "",
     ]
       .filter(Boolean)
       .join("; "),
@@ -433,12 +482,39 @@ export function aggregateOutcome(db: MarinaDB, rows: readonly OutcomeRow[]): Out
 
 type Learner = NonNullable<ReturnType<typeof armedLearner>>;
 
-/** Learn every group of held outcomes that reached AGGREGATE_MIN_OUTCOMES. */
+/**
+ * Whether a waiting group is learned now: it reached AGGREGATE_MIN_OUTCOMES,
+ * or it has AGGREGATE_STALE_MIN_OUTCOMES and its oldest outcome was recorded
+ * at least AGGREGATE_STALE_MS ago. Undefined: it keeps waiting.
+ */
+export function aggregateReady(
+  rows: ReadonlyArray<Pick<OutcomeRow, "created_at">>,
+  now: number,
+): "full" | "stale" | undefined {
+  if (rows.length >= AGGREGATE_MIN_OUTCOMES) return "full";
+  if (rows.length < AGGREGATE_STALE_MIN_OUTCOMES) return undefined;
+  const oldest = Math.min(...rows.map((r) => r.created_at));
+  return now - oldest >= AGGREGATE_STALE_MS ? "stale" : undefined;
+}
+
+let claimSeq = 0;
+/** A claim token unique to this pass (no `|`, see `claimOutcomeDeliveries`). */
+const claimToken = () =>
+  `${process.pid.toString(36)}.${Date.now().toString(36)}.${(++claimSeq).toString(36)}.${Math.random().toString(36).slice(2, 8)}`;
+
+/**
+ * Learn every group of held outcomes that is ready (`aggregateReady`). A
+ * group is claimed atomically before its model call, so two passes running at
+ * once (the background pass and the tick job) never learn it twice; the claim
+ * is released when the lesson is not written.
+ */
 async function deliverAggregates(
   db: MarinaDB,
   learner: Learner,
   tally: () => DeliveryReport,
+  now: number,
 ): Promise<void> {
+  db.releaseStaleOutcomeClaims("lessons", now - AGGREGATE_CLAIM_TTL_MS, now);
   const groups = new Map<
     string,
     { target: { shared: true } | { owner: string }; rows: OutcomeRow[] }
@@ -456,7 +532,8 @@ async function deliverAggregates(
     groups.set(key, g);
   }
   for (const [key, g] of groups) {
-    if (g.rows.length < AGGREGATE_MIN_OUTCOMES) continue;
+    const ready = aggregateReady(g.rows, now);
+    if (!ready) continue;
     const t = tally();
     const held = `${AGGREGATING_REASON}: ${key}`;
     if (learner.unavailable) {
@@ -465,31 +542,90 @@ async function deliverAggregates(
       t.waiting += g.rows.length;
       continue;
     }
-    // One unit of the shared hourly budget per aggregate lesson; over it, wait.
-    if (learner.take(1) === 0) {
-      t.waiting += g.rows.length;
-      continue;
-    }
     const rows = g.rows.slice(0, AGGREGATE_MAX_OUTCOMES);
-    // A retry keeps the aggregating reason, so the outcome stays in its group.
-    const retry = (reason: string) => {
-      for (const o of rows) t[retryOrFail(db, o, "lessons", `${held}; ${reason}`)]++;
-    };
+    // Claim the group (all or none): another pass that got there first owns it.
+    const token = claimToken();
+    if (
+      !db.claimOutcomeDeliveries(
+        rows.map((o) => o.id),
+        "lessons",
+        held,
+        token,
+        now,
+      )
+    )
+      continue;
     try {
-      const r = await recordOutcome(
-        { ...learner.deps, sink: sinkFor(db, g.target, learner.deps.sink), deferUnjudged: true },
-        aggregateOutcome(db, rows),
-      );
-      if (r.deferred) retry(`no verdict: ${r.reason}`);
-      else
-        for (const o of rows) {
-          db.setOutcomeDelivery(o.id, "lessons", "done", `aggregate of ${rows.length}: ${r.trust}`);
-          t.done++;
-        }
-    } catch (err) {
-      retry(String(err));
+      // One unit of the shared hourly budget per aggregate lesson; over it, wait.
+      if (learner.take(1) === 0) {
+        t.waiting += g.rows.length;
+        continue;
+      }
+      // A retry keeps the aggregating reason, so the outcome stays in its group.
+      const retry = (reason: string) => {
+        for (const o of rows) t[retryOrFail(db, o, "lessons", `${held}; ${reason}`)]++;
+      };
+      try {
+        const r = await recordOutcome(
+          { ...learner.deps, sink: sinkFor(db, g.target, learner.deps.sink), deferUnjudged: true },
+          aggregateOutcome(db, rows, ready === "stale" ? { stale: true } : {}),
+        );
+        if (r.deferred) retry(`no verdict: ${r.reason}`);
+        else
+          for (const o of rows) {
+            db.setOutcomeDelivery(
+              o.id,
+              "lessons",
+              "done",
+              `aggregate of ${rows.length}: ${r.trust}`,
+            );
+            t.done++;
+          }
+      } catch (err) {
+        retry(String(err));
+      }
+    } finally {
+      // Anything still claimed (over budget, an unexpected throw) waits in its group again.
+      db.releaseOutcomeClaims("lessons", token);
     }
   }
+}
+
+// ─── Backfill ───────────────────────────────────────────────────────────────
+
+/** Outcomes scanned per backfill step. */
+export const BACKFILL_SCAN = 500;
+/** How far each database's backfill has scanned (process-local; a restart rescans, cheaply). */
+const backfilled = new WeakMap<MarinaDB, number>();
+
+/**
+ * Give outcomes recorded without some consumer's delivery row (recorded
+ * before that consumer existed, or before deliveries were kept) the rows
+ * `consumersFor` gives them today, as `pending`; the delivery pass then
+ * applies every rule as for any outcome (a measurement teaches only with its
+ * board named and never writes history; a benchmark run, a reported request
+ * and an unearned judged outcome get no consumer at all). A row that exists,
+ * in any state, is never touched, so nothing is delivered twice, and running
+ * it again changes nothing. At most `scan` outcomes per call; no model needed.
+ */
+export function backfillOutcomeDeliveries(
+  db: MarinaDB,
+  opts: { now?: number; scan?: number } = {},
+): { scanned: number; added: number } {
+  const after = backfilled.get(db) ?? 0;
+  const rows = db.outcomesMissingDeliveries(OUTCOME_CONSUMERS, after, opts.scan ?? BACKFILL_SCAN);
+  let added = 0;
+  for (const o of rows) {
+    const consumers = consumersFor(o.kind, o.basis, { source: o.source });
+    if (consumers.length) added += db.addMissingOutcomeDeliveries(o.id, consumers, opts.now);
+  }
+  // A full window resumes after its last row; a short one covered everything
+  // recorded so far (synchronously: nothing was recorded meanwhile), so the
+  // next call starts after the newest outcome.
+  const last = rows.at(-1)?.id ?? after;
+  const full = rows.length >= (opts.scan ?? BACKFILL_SCAN);
+  backfilled.set(db, full ? last : Math.max(last, db.listOutcomes({ limit: 1 })[0]?.id ?? after));
+  return { scanned: rows.length, added };
 }
 
 /**
@@ -498,13 +634,17 @@ async function deliverAggregates(
  */
 export async function deliverOutcomes(
   db: MarinaDB,
-  opts: { env?: NodeJS.ProcessEnv; max?: number } = {},
+  opts: { env?: NodeJS.ProcessEnv; max?: number; now?: number } = {},
 ): Promise<Record<string, DeliveryReport>> {
   const env = opts.env ?? process.env;
   const max = Math.max(1, opts.max ?? 50);
+  const now = opts.now ?? Date.now();
   const report: Record<string, DeliveryReport> = {};
   const tally = (consumer: string) =>
     (report[consumer] ??= { done: 0, skipped: 0, failed: 0, waiting: 0 });
+
+  // Outcomes recorded without some consumer's row get it first (bounded per pass).
+  backfillOutcomeDeliveries(db, { now });
 
   // History: no history configured ⇒ nothing to write (skipped, with the reason).
   const history = historyFromEnv(env);
@@ -612,7 +752,7 @@ export async function deliverOutcomes(
       t[retryOrFail(db, o, "lessons", String(err))]++;
     }
   }
-  if (learner) await deliverAggregates(db, learner, () => tally("lessons"));
+  if (learner) await deliverAggregates(db, learner, () => tally("lessons"), now);
   if (report.lessons?.failed || report.history?.failed)
     logger.warn("main", "some outcome deliveries failed", { report });
   return report;
