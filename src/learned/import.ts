@@ -103,6 +103,11 @@ export interface ImportOptions {
    * for the operator's own private pack. Without one, only open items are written.
    */
   entitlement?: EntitlementGrant;
+  /**
+   * Accept a bundle written with no publisher key (`learned distill` without a
+   * key). Off by default; every record it writes is labelled `unsigned`.
+   */
+  allowUnsigned?: boolean;
 }
 
 export interface ImportReport {
@@ -214,6 +219,7 @@ function upstreamMetadata(b: VerifiedBundle, item: LearnedItem): Record<string, 
     generation: m.generation,
     publisher: m.publisher.name,
     publisher_key_id: m.publisher.key_id,
+    ...(m.unsigned ? { unsigned: true } : {}),
     license: item.license ?? m.license,
     ...(item.rank !== undefined ? { publisher_rank: item.rank } : {}),
     upstream_provenance: [
@@ -298,7 +304,7 @@ export async function importLearnedBundle(
     });
     return { ok: false, error };
   };
-  const verified = verifyBundle(dir, pinned);
+  const verified = verifyBundle(dir, pinned, { allowUnsigned: opts.allowUnsigned === true });
   if (!verified.ok) return refuse(verified.error);
   const b = verified.bundle;
   const m = b.manifest;
@@ -535,6 +541,7 @@ export async function importLearnedBundle(
     outcome: "ok",
     detail: {
       publisher: m.publisher.name,
+      ...(m.unsigned ? { unsigned: true } : {}),
       license: m.license,
       added: report.added,
       changed: report.changed,

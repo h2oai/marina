@@ -14,6 +14,7 @@ import { publicKeyOfSigningKey } from "../net/federation-crypto";
 import { DIFF_FILE, jsonl, SPEC_FILE, writeBundle } from "./bundle";
 import {
   type Access,
+  BUNDLE_EXCLUDES,
   contentHash,
   ITEM_FILES,
   ITEM_KINDS,
@@ -165,6 +166,7 @@ export function assembleBundle(input: AssembleInput): Manifest {
     slices,
     counts,
     export_policy: { allow_list: ["publisher-curated"], scans: [], k_min: K_MIN },
+    excludes: [...BUNDLE_EXCLUDES],
   };
   const files: Record<string, string> = {};
   for (const kind of ITEM_KINDS) {
