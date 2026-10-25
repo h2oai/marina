@@ -1547,12 +1547,12 @@ Effect: read.
 - `field-0` (`room`): text, optional group `option-0`.
 - Group `option-0`: `room`.
 
-### `build formation [room] <debate|chorus|verification|off>`
+### `build formation [room] <chorus|debate|verification|off>`
 
 Effect: write.
 
 - `field-0` (`room`): text, optional group `option-0`.
-- `field-1` (`debate|chorus|verification|off`): text, required, choices `debate`, `chorus`, `verification`, `off`.
+- `field-1` (`chorus|debate|verification|off`): text, required, choices `chorus`, `debate`, `verification`, `off`.
 - Group `option-0`: `room`.
 
 ### `build link [from] <exit> <to>`
@@ -3670,7 +3670,7 @@ Usage:
   crew stall <name> <agent> [reason]
   crew complete <name> -- <summary>
   crew dissolve <name> [reason]
-Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding, freeform
+Formations (the formation catalogue; `crew info` shows each one's protocol): deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding, freeform
 Artifact kinds: map, reduce, synthesis, draft
 
 Category: Coordination. Minimum rank: 0.
@@ -7369,7 +7369,7 @@ Effect: read.
 
 - `field-0` (`name`): text, required.
 
-### `project <name> orchestrate custom <description>`
+### `project <name> orchestrate freeform <description>`
 
 Effect: write.
 

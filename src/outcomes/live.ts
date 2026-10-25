@@ -14,6 +14,7 @@
  */
 
 import { recordVerified, type VerifiedCredit } from "../agent/standing";
+import { canonicalFormationName } from "../orchestration/formations/catalogue";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 import { recordResolved } from "./record";
@@ -98,7 +99,9 @@ export function noteTaskApproach(
   db.setCoreMemory(
     TASK_APPROACH_OWNER,
     `task:${input.taskId}:${input.claimant}`,
-    JSON.stringify(formations.length ? formations.map((f) => `crew:${f}`) : ["solo"]),
+    JSON.stringify(
+      formations.length ? formations.map((f) => `crew:${canonicalFormationName(f)}`) : ["solo"],
+    ),
   );
 }
 
@@ -123,7 +126,7 @@ export function taskApproach(
       // allow-empty-catch: an unreadable note falls back to the crews on record
     }
     const bound = taskCrewBinding(db, taskId);
-    if (bound) return [`crew:${bound.formation}`];
+    if (bound) return [`crew:${canonicalFormationName(bound.formation)}`];
   }
   let crews: { formation: string }[] = [];
   try {
@@ -132,7 +135,7 @@ export function taskApproach(
     // allow-empty-catch: no crew store (older test doubles) reads as solo work
   }
   const formations = [...new Set(crews.map((c) => c.formation).filter(Boolean))];
-  return formations.length ? formations.map((f) => `crew:${f}`) : ["solo"];
+  return formations.length ? formations.map((f) => `crew:${canonicalFormationName(f)}`) : ["solo"];
 }
 
 /** Who did the work, and on what (an agent's model and role; a person's name only). */

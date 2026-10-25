@@ -2,16 +2,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Status: demo. The 16 patterns are pool-note templates written by
- * `project <name> orchestrate <pattern>`, used mostly in demos. See docs/reference/feature-status.md.
+ * Status: demo. Project orchestration — `project <name> orchestrate
+ * <pattern>` — is one of the four ways to run a catalogue formation
+ * (`src/orchestration/formations/catalogue.ts`). See
+ * docs/reference/feature-status.md.
  *
- * Every pattern here is an entry in the formation catalogue
- * (`src/orchestration/formations/catalogue.ts`): its one-line description is
- * the catalogue's `summary`, and `test/formation-catalogue.test.ts` holds
- * these templates, the crew briefs and the catalogue together.
+ * The pattern names, legacy aliases, descriptions and fit come from the
+ * catalogue. A pattern's pool-note template is GENERATED: an opening note
+ * built from the catalogue entry (title, summary, roles, protocol), plus the
+ * project-only opening move and the four project conventions kept here (how
+ * the protocol maps onto the board, task bundles and pools).
+ * `test/formation-catalogue.test.ts` holds the templates, the crew briefs and
+ * the catalogue together.
  */
 
-import { FORMATIONS } from "../../orchestration/formations/catalogue";
+import {
+  CREW_FORMATION_NAMES,
+  type CrewFormationName,
+  canonicalFormationName,
+  FORMATION_ALIASES,
+  FORMATIONS,
+  type TaskShape,
+} from "../../orchestration/formations/catalogue";
+import { protocolText } from "../../orchestration/formations/describe";
+
+export type { TaskShape };
+
 export interface TemplateNote {
   content: string;
   importance: number;
@@ -19,115 +35,42 @@ export interface TemplateNote {
 }
 
 /**
- * Canonical list of built-in orchestration pattern names. Single source
- * of truth — every site that validates, enumerates, or documents the
- * pattern set should import this. Adding a pattern means adding a line
- * here and a template export below, and nothing else.
- *
- * Order is intentional: Chorus + Foundry (Marina-native) first, then
- * the generational-memory patterns, then the estimation / selection /
- * allocation patterns added 2026-09, then `custom` last.
+ * The project orchestration patterns: the catalogue's crew formations, in
+ * catalogue order, `freeform` (operator-defined conventions, no seeded
+ * template) last.
  */
-export const ORCHESTRATION_PATTERNS = [
-  "deliberation",
-  "chorus",
-  "foundry",
-  "swarm",
-  "pipeline",
-  "debate",
-  "mapreduce",
-  "blackboard",
-  "symbiosis",
-  "research",
-  "delphi",
-  "tournament",
-  "verification",
-  "auction",
-  "ledger",
-  "sharding",
-  "custom",
-] as const;
+export const ORCHESTRATION_PATTERNS: readonly CrewFormationName[] = CREW_FORMATION_NAMES;
 
-export type OrchestrationPattern = (typeof ORCHESTRATION_PATTERNS)[number];
+export type OrchestrationPattern = CrewFormationName;
 
-/**
- * Deprecated pattern names still accepted on input and possibly present in
- * persisted rows (project orchestration values, crew formations). Descriptive
- * names classify organization strategies better than acronyms long-term, so
- * the acronyms are normalized to their functional form everywhere and never
- * advertised. `nsed` (Negotiate/Select/Execute/Debrief) → `deliberation`.
- */
-export const LEGACY_PATTERN_ALIASES: Record<string, OrchestrationPattern> = {
-  nsed: "deliberation",
-};
+/** The patterns that seed a template: every one but `freeform`. */
+export type TemplatePattern = Exclude<OrchestrationPattern, "freeform">;
 
-/** Map a possibly-legacy pattern name to its canonical form. */
+/** Legacy names accepted on input and in stored rows (the catalogue's aliases); never advertised. */
+export const LEGACY_PATTERN_ALIASES = FORMATION_ALIASES;
+
+/** Map a possibly-legacy pattern name to its catalogue form. */
 export function normalizePatternName(name: string): string {
-  return LEGACY_PATTERN_ALIASES[name] ?? name;
+  return canonicalFormationName(name);
 }
 
 /** Human-facing help string listing patterns, pipe-separated. */
 export const ORCHESTRATION_HELP = ORCHESTRATION_PATTERNS.join("|");
 
 // ─── Pattern fit (the agent-facing recognition loop) ────────────────────────
-// The templates below carry the *prose* of each pattern. This is the
-// machine-readable counterpart: which coordination *shapes* a goal can take,
-// and which patterns fit each. It powers `suggestPatterns()` — the bridge that
-// lets an agent recognize "this goal looks like a debate" instead of waiting
-// for an operator to seed a pattern.
+// Which coordination *shapes* a goal can take, and which patterns fit each:
+// the catalogue's `fit` and `summary`. It powers `suggestPatterns()` — the
+// bridge that lets an agent recognize "this goal looks like a debate" instead
+// of waiting for an operator to seed a pattern.
 
-/** Coordination shapes a goal can take. */
-export type TaskShape =
-  | "decomposable"
-  | "contested"
-  | "parallel"
-  | "sequential"
-  | "hierarchical"
-  | "shared-artifact"
-  | "open-ended"
-  | "verifiable";
-
-/**
- * Which shapes each built-in pattern fits, with a one-line "why": the
- * formation catalogue's summary (`src/orchestration/formations/catalogue.ts`),
- * so each formation is described once.
- */
-export const PATTERN_FIT: Record<
-  Exclude<OrchestrationPattern, "custom">,
-  { shapes: TaskShape[]; why: string }
-> = {
-  deliberation: {
-    shapes: ["contested", "open-ended"],
-    why: FORMATIONS.deliberation.summary,
-  },
-  chorus: { shapes: ["parallel", "shared-artifact"], why: FORMATIONS.chorus.summary },
-  foundry: { shapes: ["hierarchical", "decomposable"], why: FORMATIONS.foundry.summary },
-  swarm: { shapes: ["parallel", "open-ended"], why: FORMATIONS.swarm.summary },
-  pipeline: { shapes: ["sequential"], why: FORMATIONS.pipeline.summary },
-  debate: { shapes: ["contested"], why: FORMATIONS.debate.summary },
-  mapreduce: { shapes: ["decomposable", "parallel"], why: FORMATIONS.mapreduce.summary },
-  blackboard: { shapes: ["shared-artifact"], why: FORMATIONS.blackboard.summary },
-  symbiosis: { shapes: ["open-ended"], why: FORMATIONS.symbiosis.summary },
-  research: { shapes: ["open-ended"], why: FORMATIONS.research.summary },
-  delphi: {
-    shapes: ["contested", "open-ended"],
-    why: FORMATIONS.delphi.summary,
-  },
-  tournament: { shapes: ["contested", "parallel"], why: FORMATIONS.tournament.summary },
-  verification: {
-    shapes: ["decomposable", "shared-artifact", "verifiable"],
-    why: FORMATIONS.verification.summary,
-  },
-  auction: { shapes: ["decomposable", "parallel"], why: FORMATIONS.auction.summary },
-  ledger: {
-    shapes: ["hierarchical", "sequential"],
-    why: FORMATIONS.ledger.summary,
-  },
-  sharding: {
-    shapes: ["decomposable", "parallel", "verifiable"],
-    why: FORMATIONS.sharding.summary,
-  },
-};
+/** Which shapes each built-in pattern fits, with the catalogue's summary as its "why". */
+export const PATTERN_FIT: Readonly<Record<TemplatePattern, { shapes: TaskShape[]; why: string }>> =
+  Object.fromEntries(
+    ORCHESTRATION_PATTERNS.filter((p) => p !== "freeform").map((p) => [
+      p,
+      { shapes: FORMATIONS[p].fit, why: FORMATIONS[p].summary },
+    ]),
+  ) as Record<TemplatePattern, { shapes: TaskShape[]; why: string }>;
 
 const SHAPE_PATTERNS: { shape: TaskShape; re: RegExp }[] = [
   {
@@ -194,16 +137,7 @@ export function suggestPatterns(
     .map(({ pattern, why }) => ({ pattern, why }));
 }
 
-export const DELIBERATION_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Deliberation orchestration: flat peer deliberation through a " +
-      "propose → evaluate → execute → debrief cycle. Consider moving decisions through this " +
-      "structured cycle: someone proposes, everyone evaluates, the group converges, then executes. " +
-      "Use the project board for proposals.",
-    importance: 9,
-    type: "skill",
-  },
+const DELIBERATION_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Deliberation propose phase: post a proposal to the project board with a clear title and " +
@@ -243,18 +177,7 @@ export const DELIBERATION_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const CHORUS_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Chorus orchestration — research-first, parallel-by-default, with " +
-      "adversarial cross-role review as the quality gate. Work moves through three phases " +
-      "(Research, Build, Review), but within each phase multiple agents work in parallel. " +
-      "The group channel is the wall: agents post what they take and what they finish so " +
-      "siblings don't duplicate. Quality comes from role diversity, not approval — reviewers from different " +
-      "roles critique every output.",
-    importance: 9,
-    type: "skill",
-  },
+const CHORUS_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Chorus phases: the project creator creates three convoys via `task bundle <name>` — " +
@@ -296,17 +219,7 @@ export const CHORUS_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const FOUNDRY_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Foundry orchestration — a hierarchy that compresses human attention " +
-      "and a merge gate that serves as a useful checkpoint for landed work. Three load-bearing pieces: an " +
-      "Overseer who is the single interface for outside requests, a Patrol that detects stuck " +
-      "workers and nudges them, and a Gate through which output typically passes before it lands. " +
-      "Distribute decisions downward; direct from the top; the Gate is a helpful merge checkpoint.",
-    importance: 9,
-    type: "skill",
-  },
+const FOUNDRY_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Foundry hierarchy: the project creator is the Overseer. They designate established " +
@@ -352,16 +265,7 @@ export const FOUNDRY_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const SWARM_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Swarm orchestration (self-organizing specialist handoffs). " +
-      "There is no fixed leader. Each agent declares expertise via `memory set expertise <domain>`. " +
-      "Tasks are self-claimed based on skill match. Work flows from specialist to specialist " +
-      "through `tell` handoffs.",
-    importance: 9,
-    type: "skill",
-  },
+const SWARM_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Swarm expertise: on joining, set your expertise with `memory set expertise <skills>`. " +
@@ -400,16 +304,7 @@ export const SWARM_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const PIPELINE_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Pipeline orchestration (sequential stage-by-stage processing). " +
-      "Work typically flows through ordered stages. Each stage usually completes before the next begins. " +
-      "Use the project board as a conveyor belt - post stage outputs for the next stage " +
-      "to consume.",
-    importance: 9,
-    type: "skill",
-  },
+const PIPELINE_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Pipeline stages: the project leader defines stages as ordered child tasks in the " +
@@ -450,16 +345,7 @@ export const PIPELINE_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const DEBATE_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Debate orchestration (adversarial argumentation with judge). " +
-      "Decisions are made through structured argumentation. Agents take positions, " +
-      "argue with evidence, score each other's arguments, and a judge synthesizes " +
-      "the final decision.",
-    importance: 9,
-    type: "skill",
-  },
+const DEBATE_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Debate independence practice: consider drafting your position in your own notes before reading " +
@@ -499,15 +385,7 @@ export const DEBATE_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const MAPREDUCE_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses MapReduce orchestration (parallel decomposition and synthesis). " +
-      "A coordinator splits the problem into independent chunks. Workers process chunks " +
-      "in parallel with no cross-talk. A reducer merges all results into the final output.",
-    importance: 9,
-    type: "skill",
-  },
+const MAPREDUCE_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "MapReduce mapping: the coordinator creates one child task per chunk in the project " +
@@ -546,17 +424,7 @@ export const MAPREDUCE_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const SYMBIOSIS_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Symbiosis orchestration — mutual epistemic benefit between all " +
-      "participants. The pool tracks the team's collective knowledge frontier. Each entity " +
-      "self-profiles their exploration style. Frontiers (knowledge gaps) are identified, " +
-      "scored for both novelty and entity relevance, and assigned accordingly. The team " +
-      "dynamically shifts between exploration modes based on collective coverage health.",
-    importance: 9,
-    type: "skill",
-  },
+const SYMBIOSIS_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Symbiosis profiling: on joining, describe your exploration profile in the pool with " +
@@ -604,16 +472,7 @@ export const SYMBIOSIS_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const RESEARCH_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Research orchestration (autonomous iterative experimentation). " +
-      "Each agent runs a loop: hypothesize, act, measure, record, decide (keep or revert), " +
-      "repeat. The pool accumulates all findings. The board is the shared results log. " +
-      "No external tools needed — the world itself is the laboratory.",
-    importance: 9,
-    type: "skill",
-  },
+const RESEARCH_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Research cycle — before each iteration, consider setting your hypothesis: " +
@@ -662,16 +521,7 @@ export const RESEARCH_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const BLACKBOARD_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Blackboard orchestration (shared workspace with incremental " +
-      "refinement). The project pool IS the primary workspace — a shared blackboard " +
-      "where all agents read and write. Knowledge accumulates incrementally until the " +
-      "group converges on a solution.",
-    importance: 9,
-    type: "skill",
-  },
+const BLACKBOARD_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Blackboard shared-work convention: one practice that often helps is keeping " +
@@ -714,19 +564,7 @@ export const BLACKBOARD_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const DELPHI_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Delphi orchestration — independent estimates first, then an " +
-      "anonymized summary, then revision. Each member forms a view alone before seeing anyone " +
-      "else's, a facilitator summarizes the spread without names, and members revise in light " +
-      "of the summary. The mechanism is independence before influence: the first round tends to " +
-      "be most useful when nobody has anchored on an earlier or louder voice. Consider naming one " +
-      "facilitator (not an estimator) before the first round starts. Start with: `board post " +
-      "project:<name> [delphi] facilitator: <name> | question: <the question>`.",
-    importance: 9,
-    type: "skill",
-  },
+const DELPHI_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Delphi drafting: consider drafting your estimate privately first — `memory kv set " +
@@ -772,19 +610,7 @@ export const DELPHI_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const TOURNAMENT_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Tournament orchestration — pairwise elimination among candidate " +
-      "solutions. Several members each produce a candidate independently, candidates meet in " +
-      "pairs, the stronger of each pair advances, and rounds repeat until one remains. Comparing " +
-      "two at a time tends to be easier to judge well than ranking many at once. The losing " +
-      "candidates are not wasted: their best ideas can be grafted into the winner at the end. " +
-      "Start with: `board post project:<name> [tournament] <goal> | entrants: <names> | " +
-      "criteria: <criteria>`.",
-    importance: 9,
-    type: "skill",
-  },
+const TOURNAMENT_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Tournament entries: consider one task per entrant — `task create Candidate: <goal> | " +
@@ -829,19 +655,7 @@ export const TOURNAMENT_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const VERIFICATION_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Verification orchestration — generate, then verify from several " +
-      "angles. One or more members produce candidates; separate verifiers each check ONE aspect " +
-      "of a candidate: correctness, constraints and requirements, evidence and citations, or " +
-      "safety. A candidate passes when every aspect verifier passes it. Splitting verification by " +
-      "aspect tends to catch what one generalist reviewer misses, and keeps each check small " +
-      "enough to do thoroughly. Start with: `board post project:<name> [aspects] <candidate> | " +
-      "correctness, requirements, evidence, safety`.",
-    importance: 9,
-    type: "skill",
-  },
+const VERIFICATION_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Verification generation: authors produce candidates as ordinary tasks (`task claim <id>`, " +
@@ -886,18 +700,7 @@ export const VERIFICATION_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const AUCTION_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Auction orchestration — tasks are allocated by bids. The work is split " +
-      "into tasks or bounties, members bid by stating their fit and an expected cost, and the " +
-      "coordinator awards each task to the best fit for its cost. Afterwards the coordinator " +
-      "records whether the winner's claimed fit held up, so later awards learn from it. The " +
-      "auction is a convention over ordinary tasks and claims, not a separate mechanism. Start " +
-      "with: `pool <name> recall award-check` to see how past bidders' fit claims held up.",
-    importance: 9,
-    type: "skill",
-  },
+const AUCTION_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Auction lots: the coordinator creates the tasks (`task create <title> | <spec> " +
@@ -940,18 +743,7 @@ export const AUCTION_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const LEDGER_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Ledger orchestration — one orchestrator keeps two ledgers. The task " +
-      "ledger holds the facts, the plan and the assignments; the progress ledger holds what is " +
-      "done, what is in flight and what is stuck. Both live in the pool as known notes the " +
-      "orchestrator updates, so any member can recall where the work stands without asking. The " +
-      "orchestrator steers from the ledgers rather than from its own recollection. Start with: " +
-      "`pool <name> recall task-ledger` to find the current plan, if one exists.",
-    importance: 9,
-    type: "skill",
-  },
+const LEDGER_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Ledger task ledger: the orchestrator writes it at the start — `pool <name> add " +
@@ -995,18 +787,7 @@ export const LEDGER_TEMPLATE: TemplateNote[] = [
   },
 ];
 
-export const SHARDING_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This project uses Sharding orchestration — an oracle splits one big failing target into " +
-      "independent, claimable pieces. The oracle is whatever decides pass or fail mechanically: a " +
-      "test suite, a reference implementation, or a checker. Each failing case or shard becomes a " +
-      "task; members fix shards in parallel and re-run the oracle to confirm. The oracle, not " +
-      "opinion, decides when a shard or the whole target is done. Start with: `pool <name> " +
-      "recall oracle-baseline` to see whether a baseline run already exists.",
-    importance: 9,
-    type: "skill",
-  },
+const SHARDING_CONVENTIONS: TemplateNote[] = [
   {
     content:
       "Sharding setup: the coordinator runs the oracle once (for code, `code run <check>`) and " +
@@ -1051,26 +832,104 @@ export const SHARDING_TEMPLATE: TemplateNote[] = [
 ];
 
 /**
- * The project pool-note template per pattern (`project <name> orchestrate
- * <pattern>`), by catalogue name (`custom` has none).
+ * Each pattern's project-only opening move, appended to its generated opening
+ * note: how the catalogue protocol starts on a project's board and pool.
  */
-export const ORCHESTRATION_TEMPLATES: Readonly<
-  Record<Exclude<OrchestrationPattern, "custom">, TemplateNote[]>
-> = {
-  deliberation: DELIBERATION_TEMPLATE,
-  chorus: CHORUS_TEMPLATE,
-  foundry: FOUNDRY_TEMPLATE,
-  swarm: SWARM_TEMPLATE,
-  pipeline: PIPELINE_TEMPLATE,
-  debate: DEBATE_TEMPLATE,
-  mapreduce: MAPREDUCE_TEMPLATE,
-  blackboard: BLACKBOARD_TEMPLATE,
-  symbiosis: SYMBIOSIS_TEMPLATE,
-  research: RESEARCH_TEMPLATE,
-  delphi: DELPHI_TEMPLATE,
-  tournament: TOURNAMENT_TEMPLATE,
-  verification: VERIFICATION_TEMPLATE,
-  auction: AUCTION_TEMPLATE,
-  ledger: LEDGER_TEMPLATE,
-  sharding: SHARDING_TEMPLATE,
+const PROJECT_START: Readonly<Record<TemplatePattern, string>> = {
+  deliberation: "Use the project board for proposals.",
+  chorus:
+    "The group channel is the wall: post what you take and what you finish so siblings don't duplicate.",
+  foundry:
+    "The overseer is the single interface for outside requests; distribute decisions downward.",
+  swarm:
+    "There is no fixed leader: declare expertise with `memory set expertise <domain>` and hand work on with `tell`.",
+  pipeline:
+    "Use the project board as a conveyor belt: post stage outputs for the next stage to consume.",
+  debate: "Agents argue with evidence and score each other's arguments before the judge decides.",
+  mapreduce: "Workers process their chunks with no cross-talk until the merge.",
+  blackboard: "The project pool IS the shared blackboard where every agent reads and writes.",
+  symbiosis:
+    "The pool tracks the team's collective knowledge frontier; each member profiles its own exploration style.",
+  research: "The pool accumulates all findings; the board is the shared results log.",
+  delphi:
+    "Name one facilitator (not an estimator) before the first round. Start with: `board post project:<name> [delphi] facilitator: <name> | question: <the question>`.",
+  tournament:
+    "Start with: `board post project:<name> [tournament] <goal> | entrants: <names> | criteria: <criteria>`.",
+  verification:
+    "Start with: `board post project:<name> [aspects] <candidate> | correctness, requirements, evidence, safety`.",
+  auction:
+    "The auction is a convention over ordinary tasks and claims. Start with: `pool <name> recall award-check` to see how past bidders' fit claims held up.",
+  ledger:
+    "Both ledgers live in the pool as notes any member can recall. Start with: `pool <name> recall task-ledger` to find the current plan, if one exists.",
+  sharding:
+    "The oracle, not opinion, decides when a shard is done. Start with: `pool <name> recall oracle-baseline` to see whether a baseline run already exists.",
 };
+
+const PROJECT_CONVENTIONS: Readonly<Record<TemplatePattern, TemplateNote[]>> = {
+  deliberation: DELIBERATION_CONVENTIONS,
+  chorus: CHORUS_CONVENTIONS,
+  foundry: FOUNDRY_CONVENTIONS,
+  swarm: SWARM_CONVENTIONS,
+  pipeline: PIPELINE_CONVENTIONS,
+  debate: DEBATE_CONVENTIONS,
+  mapreduce: MAPREDUCE_CONVENTIONS,
+  blackboard: BLACKBOARD_CONVENTIONS,
+  symbiosis: SYMBIOSIS_CONVENTIONS,
+  research: RESEARCH_CONVENTIONS,
+  delphi: DELPHI_CONVENTIONS,
+  tournament: TOURNAMENT_CONVENTIONS,
+  verification: VERIFICATION_CONVENTIONS,
+  auction: AUCTION_CONVENTIONS,
+  ledger: LEDGER_CONVENTIONS,
+  sharding: SHARDING_CONVENTIONS,
+};
+
+/**
+ * A pattern's opening note, generated from its catalogue entry: title,
+ * summary, roles and protocol, then the project's opening move.
+ */
+export function projectOpeningNote(pattern: TemplatePattern): TemplateNote {
+  const entry = FORMATIONS[pattern];
+  const roles = entry.roles.length ? ` Roles: ${entry.roles.join(", ")}.` : "";
+  return {
+    content:
+      `This project uses ${entry.title} orchestration (${entry.summary}).${roles} ` +
+      `Protocol: ${protocolText(entry)}. ${PROJECT_START[pattern]}`,
+    importance: 9,
+    type: "skill",
+  };
+}
+
+/** A pattern's project template: the generated opening note, then its project conventions. */
+export function projectTemplate(pattern: TemplatePattern): TemplateNote[] {
+  return [projectOpeningNote(pattern), ...PROJECT_CONVENTIONS[pattern]];
+}
+
+/**
+ * The project pool-note template per pattern (`project <name> orchestrate
+ * <pattern>`), by catalogue name (`freeform` has none).
+ */
+export const ORCHESTRATION_TEMPLATES: Readonly<Record<TemplatePattern, TemplateNote[]>> =
+  Object.fromEntries(
+    ORCHESTRATION_PATTERNS.filter((p): p is TemplatePattern => p !== "freeform").map((p) => [
+      p,
+      projectTemplate(p),
+    ]),
+  ) as Record<TemplatePattern, TemplateNote[]>;
+
+export const DELIBERATION_TEMPLATE = ORCHESTRATION_TEMPLATES.deliberation;
+export const CHORUS_TEMPLATE = ORCHESTRATION_TEMPLATES.chorus;
+export const FOUNDRY_TEMPLATE = ORCHESTRATION_TEMPLATES.foundry;
+export const SWARM_TEMPLATE = ORCHESTRATION_TEMPLATES.swarm;
+export const PIPELINE_TEMPLATE = ORCHESTRATION_TEMPLATES.pipeline;
+export const DEBATE_TEMPLATE = ORCHESTRATION_TEMPLATES.debate;
+export const MAPREDUCE_TEMPLATE = ORCHESTRATION_TEMPLATES.mapreduce;
+export const BLACKBOARD_TEMPLATE = ORCHESTRATION_TEMPLATES.blackboard;
+export const SYMBIOSIS_TEMPLATE = ORCHESTRATION_TEMPLATES.symbiosis;
+export const RESEARCH_TEMPLATE = ORCHESTRATION_TEMPLATES.research;
+export const DELPHI_TEMPLATE = ORCHESTRATION_TEMPLATES.delphi;
+export const TOURNAMENT_TEMPLATE = ORCHESTRATION_TEMPLATES.tournament;
+export const VERIFICATION_TEMPLATE = ORCHESTRATION_TEMPLATES.verification;
+export const AUCTION_TEMPLATE = ORCHESTRATION_TEMPLATES.auction;
+export const LEDGER_TEMPLATE = ORCHESTRATION_TEMPLATES.ledger;
+export const SHARDING_TEMPLATE = ORCHESTRATION_TEMPLATES.sharding;

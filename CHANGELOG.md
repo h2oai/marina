@@ -72,6 +72,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One orchestration surface: the formation catalogue.** Crews, `project <name> orchestrate`,
+  `pattern run` and room formations now take every formation name, description, fit, role list and
+  protocol from `src/orchestration/formations/catalogue.ts`. `crew create … formation:<f>` and
+  `crew formation` validate against it (`ensemble` and `skeptic` are refused with where they run),
+  `crew info` shows the entry's summary, roles and protocol, a `crew dispatch` names the entry's
+  Score steps when it has a free-text template, and crew mediator lines lead with the catalogue
+  name. Each project template's opening note is generated from its entry. `freeform` is a catalogue
+  entry; the project name `custom` is now an alias of it (as `nsed` is of `deliberation`): both
+  still parse, and help lists catalogue names only. Feature status lists orchestration once, with
+  one sub-entry per way to run it.
 - **Outcome delivery plumbing.** A group of single outcomes still short of five is learned anyway
   once its oldest has waited 30 days, if it has at least three (the lesson states the true count),
   so a slow family still learns. A delivery pass claims a group atomically before its model call
