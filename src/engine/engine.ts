@@ -300,6 +300,7 @@ export class Engine {
         key: r.key,
         value: summarizeDefaultValue(r.value),
         ...(r.incumbentRunId ? { incumbentRunId: r.incumbentRunId } : {}),
+        ...(r.withheld ? { withheld: r.withheld } : {}),
         reason: r.reason,
         timestamp: Date.now(),
       }),

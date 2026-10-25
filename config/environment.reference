@@ -1373,6 +1373,10 @@
 # @restart
 # MARINA_BOOTSTRAP_ACCEPT=
 
+# Imported seeds for default slots that choose a model (src/learned/upstream-model-seeds.ts: every slot class except `memory-ranking` — `role-model:*`, `verify:checker`, `forecast-config*`, crew slots and any slot filled from a benchmark run's target). `propose` (default): such a seed is never served by default resolution; the `default_resolved` trace marks it `withheld`, and each slot+value raises one ops-inbox approval that a person holding `role.edit` adopts with `benchmark promote <slot> upstream` (recorded with basis `upstream` and the bundle's artifact, version, item and value digest); an agent never adopts one. `serve`: the operator's opt-in to serve those seeds directly, as before. Seeds for non-model slots are served in both modes.
+# @protected
+# MARINA_UPSTREAM_MODEL_SEEDS=propose
+
 # Publisher keys a learned bundle or revocation list must be signed by: comma-separated `label=<base64 SPKI>` or bare base64 Ed25519 public keys, added to the keys pinned in source. A bundle signed by any other key is refused; the key embedded in a bundle is never trusted on its own.
 # @protected
 # MARINA_LEARNED_PUBLISHER_KEYS=

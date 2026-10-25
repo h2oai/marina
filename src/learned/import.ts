@@ -19,7 +19,9 @@
  *   conventions→ `upstream:conventions`, trust `imported`.
  *   defaults   → `upstream_default_seeds`, ONLY for a slot with no local
  *              `benchmark_defaults` row; `resolveDefault` reads them below
- *              every local layer (`upstream-seed.ts`).
+ *              every local layer (`upstream-seed.ts`). A seed for a slot that
+ *              chooses a model is withheld and raised as an ops-inbox approval
+ *              until a person adopts it (`upstream-model-seeds.ts`).
  *   evidence   → `evidence_priors`, weight PRIOR_WEIGHT and at most
  *              PRIOR_N_CAP items per cell; never `benchmark_runs`/`_items`.
  *   roles      → created under the `upstream.` prefix (traits too), create-only,
@@ -72,6 +74,7 @@ import type {
 import { type BenchmarkTextIndex, Scanner, stringsOf } from "./scan";
 import { type PinnedKey, pinnedPublisherKeys } from "./sign";
 import { IMPORTED_TRUST, UPSTREAM_ACCOUNT, UPSTREAM_LESSONS_PREFIX } from "./upstream-account";
+import { proposeUpstreamModelSeeds } from "./upstream-model-seeds";
 import { validateRoomSource, validateWorldDocument } from "./world";
 
 export { IMPORTED_TRUST, UPSTREAM_ACCOUNT } from "./upstream-account";
@@ -157,6 +160,8 @@ export interface ImportReport {
   revoked: number;
   dropped: { item_key: string; reason: string }[];
   seeded: string[];
+  /** Approvals raised for seeds that choose a model (withheld until a person adopts them). */
+  proposed: number;
   skipped: { item_key: string; reason: string }[];
   priors: number;
   rolesCreated: string[];
@@ -450,6 +455,7 @@ export async function importLearnedBundle(
     skipped: [],
     priors: 0,
     rolesCreated: [],
+    proposed: 0,
     withheld: [...plan.withheld].map(([item_key, reason]) => ({ item_key, reason })),
   };
   const scanner = new Scanner({
@@ -587,6 +593,10 @@ export async function importLearnedBundle(
       ...(revoked !== undefined ? { detail: { reason: revoked } } : {}),
     });
   }
+
+  // A seed that chooses a model is withheld from `resolveDefault` until a
+  // local person adopts it: raise its approval now (`upstream-model-seeds.ts`).
+  report.proposed = proposeUpstreamModelSeeds(db);
 
   if (!latest || latest.generation !== m.generation) {
     db.recordLearnedArtifact({
