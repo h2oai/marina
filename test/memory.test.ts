@@ -124,11 +124,12 @@ describe("Agent Memory Primitives", () => {
       expect(conn2.lastText()).not.toContain("secret");
     });
 
-    it("should show no history when key has no edits", () => {
+    it("should show the first set when key has no edits", () => {
       engine.processCommand(conn1.entity!, "memory set goal original");
       conn1.clear();
       engine.processCommand(conn1.entity!, "memory history goal");
-      expect(conn1.lastText()).toContain("No edit history");
+      expect(stripAnsi(conn1.lastText())).toContain('set "original" (first set)');
+      expect(conn1.lastText()).not.toContain("No edit history");
     });
   });
 
