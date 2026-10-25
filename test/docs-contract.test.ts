@@ -11,6 +11,7 @@ import {
   EXPERIMENTAL_HELP_PREFIX,
   experimentalHelp,
   FEATURE_STATUS,
+  ORCHESTRATION,
 } from "../src/config/feature-status";
 import { OPEN_POSTURE_CORE } from "../src/engine/autonomy";
 import { Engine } from "../src/engine/engine";
@@ -391,8 +392,8 @@ describe("documentation contract — structure", () => {
       ["are operator[- ]grant only", OPEN_POSTURE_CORE.size],
       ["built-?in skills", BUILTIN_SKILLS.length],
       ["gates wire", wired.size],
-      // `custom` is the blank slate, not a pattern with template notes.
-      ["orchestration patterns?", ORCHESTRATION_PATTERNS.filter((p) => p !== "custom").length],
+      // `freeform` is the blank slate, not a pattern with template notes.
+      ["orchestration patterns?", ORCHESTRATION_PATTERNS.filter((p) => p !== "freeform").length],
     ];
     expect(cases.flatMap(([phrase, n]) => wrongCounts(docs, phrase, n))).toEqual([]);
     // The check must see the counts it guards, or a rewording silently disables it.
@@ -430,6 +431,23 @@ describe("documentation contract — structure", () => {
     // Exact knobs only; a family wildcard such as `MARINA_ARENA_*` is skipped.
     const knobs = FEATURE_STATUS.flatMap((f) => f.enable.match(/MARINA_[A-Z0-9_]+\*?/g) ?? []);
     expect(knobs.filter((k) => !k.endsWith("*") && !reference.includes(`# ${k}=`))).toEqual([]);
+  });
+
+  it("gives every sub-entry exactly one parent entry, and orchestration one parent", () => {
+    const parents = FEATURE_STATUS.filter((f) => !f.parent);
+    for (const f of FEATURE_STATUS.filter((e) => e.parent)) {
+      expect(
+        parents.filter((p) => p.name.startsWith(`${f.parent}:`)).map((p) => p.name),
+        f.name,
+      ).toHaveLength(1);
+      expect(f.name.startsWith(`${f.parent} › `), f.name).toBe(true);
+    }
+    // Orchestration is one feature: the catalogue, and the ways to run it as its sub-entries.
+    const orchestration = FEATURE_STATUS.filter((f) => /orchestrat|formation/i.test(f.name));
+    expect(orchestration.filter((f) => !f.parent).map((f) => f.name)).toEqual([
+      expect.stringMatching(new RegExp(`^${ORCHESTRATION}: the formation catalogue`)),
+    ]);
+    expect(orchestration.filter((f) => f.parent).length).toBeGreaterThanOrEqual(4);
   });
 
   it("labels the help of exactly the commands FEATURE_STATUS marks experimental", () => {

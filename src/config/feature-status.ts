@@ -30,7 +30,15 @@ export interface FeatureStatusEntry {
   owner: string;
   /** World commands that exist only for this feature (help is labelled). */
   commands?: readonly string[];
+  /**
+   * The feature this one is a part of: a sub-entry keeps its own status (one
+   * way to run the parent may be core while another is experimental).
+   */
+  parent?: string;
 }
+
+/** The orchestration parent entry: the formation catalogue, with one sub-entry per way to run it. */
+export const ORCHESTRATION = "Orchestration";
 
 /** The first token of an experimental command's help text. */
 export const EXPERIMENTAL_HELP_PREFIX = "[experimental]";
@@ -125,11 +133,52 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/persistence",
   },
   { name: "Code Mode", status: "core", enable: "`code`", owner: "src/engine/commands/code" },
+  // Orchestration: one catalogue of formations, four ways to run it.
   {
-    name: "Crews and formations (the runtime form of the orchestration patterns)",
+    name: "Orchestration: the formation catalogue (names, aliases, descriptions, protocols, Score templates, combiners)",
     status: "core",
-    enable: "`crew`; a crew serves `/v1` model requests and is the default benchmark target",
+    enable:
+      "Always on; run a formation as a crew, a project, one `pattern run` task or a room's turn rule; typed forecasts (`MARINA_FORECAST_FORMATION`) and arena `formation:ensemble` / `formation:delphi` run its templates",
+    owner: "src/orchestration/formations",
+  },
+  {
+    name: "Orchestration › crews (a running formation)",
+    parent: ORCHESTRATION,
+    status: "core",
+    enable:
+      "`crew create <name> <members> formation:<f>`; a crew serves `/v1` model requests and is the default benchmark target",
     owner: "src/coordination/crew-manager.ts, src/engine/commands/crew.ts",
+  },
+  {
+    name: "Orchestration › one free-text task (`pattern run`, `POST /v1/patterns/run`)",
+    parent: ORCHESTRATION,
+    status: "experimental",
+    enable:
+      "`pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run`",
+    owner: "src/orchestration/text-patterns.ts, src/engine/commands/pattern.ts",
+    commands: ["pattern"],
+  },
+  {
+    name: "Orchestration › a room's turn rule (formations in a room)",
+    parent: ORCHESTRATION,
+    status: "experimental",
+    enable:
+      "`build formation [room] <debate, chorus or verification>`, or `formation` on a room module",
+    owner: "src/coordination/room-formations.ts",
+  },
+  {
+    name: "Orchestration › projects (pool notes generated from the catalogue)",
+    parent: ORCHESTRATION,
+    status: "demo",
+    enable: "`project <name> orchestrate <pattern>`",
+    owner: "src/world/templates/orchestration.ts",
+  },
+  {
+    name: "Orchestration › legacy names (`nsed`, `custom`)",
+    parent: ORCHESTRATION,
+    status: "deprecated",
+    enable: "Accepted as `deliberation` and `freeform`, never advertised",
+    owner: "src/orchestration/formations/catalogue.ts",
   },
   {
     name: "Desires and journeys",
@@ -180,13 +229,6 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     status: "siloed",
     enable: "`quant`, `data`, `web swarm`",
     owner: "src/quant, src/forecast, src/research",
-  },
-  {
-    name: "Formation catalogue (Score templates, pure combiners)",
-    status: "siloed",
-    enable:
-      "Always on: typed forecast formations (`MARINA_FORECAST_FORMATION`), resident forecasts, `pattern run`, arena `formation:ensemble` and `formation:delphi`",
-    owner: "src/orchestration/formations",
   },
   {
     name: "Research evidence loop and survey",
@@ -260,13 +302,6 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     owner: "src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts",
   },
   {
-    name: "Formations in a room",
-    status: "experimental",
-    enable:
-      "`build formation [room] <debate, chorus or verification>`, or `formation` on a room module",
-    owner: "src/coordination/room-formations.ts",
-  },
-  {
     name: "Attention judges",
     status: "experimental",
     enable:
@@ -318,15 +353,6 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     enable:
       "`MARINA_LIGHTNING_MODEL=<OpenRouter id>` then `MARINA_DECISIONS=lightning` (no default id; off)",
     owner: "src/decisions/config.ts",
-  },
-  {
-    name: "Text patterns (`pattern run`, `POST /v1/patterns/run`)",
-    status: "experimental",
-    enable:
-      "`pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run`",
-    owner:
-      "src/orchestration/text-patterns.ts, src/orchestration/formations, src/engine/commands/pattern.ts",
-    commands: ["pattern"],
   },
   {
     name: "Typed resident analysis tools (`marina_forecast`, `marina_research`, `marina_swarm`, `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`, `marina_arbiter`, `marina_pattern`)",
@@ -457,23 +483,11 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     enable: "`MARINA_WORLD=<slug>`; `marina worlds` shows each status",
     owner: "worlds",
   },
-  {
-    name: "Orchestration templates (16 pool-note patterns; crews run them as formations)",
-    status: "demo",
-    enable: "`project <name> orchestrate <pattern>`",
-    owner: "src/world/templates/orchestration.ts",
-  },
   // ── deprecated ──────────────────────────────────────────────────────────
   {
     name: "`MARINA_HOST`",
     status: "deprecated",
     enable: "Alias of `WS_HOST` (`WS_HOST` wins)",
     owner: "src/net",
-  },
-  {
-    name: "`NSED` pattern name",
-    status: "deprecated",
-    enable: "Accepted as Deliberation, never advertised",
-    owner: "src/world/templates/orchestration.ts",
   },
 ];

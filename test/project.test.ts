@@ -268,14 +268,19 @@ describe("Project Command", () => {
       expect(seeded).toHaveLength(5);
     });
 
-    it("should handle custom orchestration", () => {
+    it("should handle freeform orchestration, and the legacy 'custom' name as its alias", () => {
       engine.processCommand(conn1.entity!, "project create CustomOrch | Custom");
       conn1.clear();
       engine.processCommand(
         conn1.entity!,
         "project CustomOrch orchestrate custom We do things our way",
       );
-      expect(conn1.lastText()).toContain("Set custom orchestration");
+      expect(conn1.lastText()).toContain("Set freeform orchestration");
+      expect(db.getProjectByName("CustomOrch")!.orchestration).toBe("freeform");
+      engine.processCommand(conn1.entity!, "project create FreeOrch | Free");
+      conn1.clear();
+      engine.processCommand(conn1.entity!, "project FreeOrch orchestrate freeform Our own way");
+      expect(conn1.lastText()).toContain("Set freeform orchestration");
     });
 
     it("should reject unknown orchestration", () => {
@@ -435,7 +440,7 @@ describe("Project Command", () => {
       expect(text).toContain("Project: InfoTest");
       expect(text).toContain("Info testing project");
       expect(text).toContain("Status: [active]");
-      expect(text).toContain("Orchestration: [custom]");
+      expect(text).toContain("Orchestration: [freeform]");
       expect(text).toContain("Memory: custom");
       expect(text).toContain("Created by: Alice");
     });

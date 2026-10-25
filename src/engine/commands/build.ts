@@ -1213,7 +1213,7 @@ export function buildCommand(deps: BuildDeps): CommandDef {
       { syntax: "build diff [args]", effect: "read" },
       { syntax: "build formation [room]", effect: "read" },
       {
-        syntax: "build formation [room] <debate|chorus|verification|off>",
+        syntax: `build formation [room] <${ROOM_FORMATIONS.join("|")}|off>`,
         effect: "write",
       },
       { syntax: "build link [from] <exit> <to>", effect: "write" },

@@ -19,7 +19,7 @@ import { evolutionSessionsWithEvidence } from "../../engine/evolution-qualificat
 import type { MarinaDB, MediaJobRow } from "../../persistence/database";
 import { supervisedResidentsEnabled } from "../../routing/residents";
 import type { EntityId, RoomId } from "../../types";
-import { ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
+import { normalizePatternName, ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
 import { isSentinelPrincipal, refuseOpenApiWrite } from "../auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas/canvas-principal";
 import { authorizeCanvasSubscription } from "../canvas/canvas-ws";
@@ -927,7 +927,8 @@ export async function handleWorldCatalogRoutes(
       return json({ error: "orchestration is required", code: "invalid_request" }, 400);
     }
     const validPatterns = ORCHESTRATION_PATTERNS as readonly string[];
-    if (!validPatterns.includes(body.orchestration)) {
+    const orchestration = normalizePatternName(body.orchestration);
+    if (!validPatterns.includes(orchestration)) {
       return json(
         {
           error: `Invalid orchestration. Valid: ${validPatterns.join(", ")}`,
@@ -941,8 +942,8 @@ export async function handleWorldCatalogRoutes(
     // The project's creator (or an operator) changes how it is orchestrated.
     const denied = authorizeOwnerOrPrivileged(engine, db, callerId, [project.created_by]);
     if (denied) return denied;
-    db.updateProjectOrchestration(projectId, body.orchestration);
-    return json({ ok: true, orchestration: body.orchestration });
+    db.updateProjectOrchestration(projectId, orchestration);
+    return json({ ok: true, orchestration });
   }
 
   return undefined;

@@ -46,16 +46,18 @@ import {
   ORCHESTRATION_PATTERNS,
   ORCHESTRATION_TEMPLATES,
   PATTERN_FIT,
+  type TemplatePattern,
 } from "../src/world/templates/orchestration";
 import { legacyResidentForecastScore } from "./fixtures/formations-legacy/resident-score";
 
-const crewPatterns = ORCHESTRATION_PATTERNS.filter((p) => p !== "custom");
+/** The patterns with a project template: every crew formation but `freeform` (the blank slate). */
+const crewPatterns = ORCHESTRATION_PATTERNS.filter((p): p is TemplatePattern => p !== "freeform");
 
 describe("one catalogue, one description per formation", () => {
   it("every orchestration pattern is a crew entry, and every crew entry a pattern", () => {
-    for (const p of crewPatterns) expect(FORMATIONS[p]?.crew, p).toBe(true);
+    for (const p of ORCHESTRATION_PATTERNS) expect(FORMATIONS[p]?.crew, p).toBe(true);
     const crew = FORMATION_NAMES.filter((n) => FORMATIONS[n].crew);
-    expect([...crew].sort()).toEqual([...crewPatterns].sort());
+    expect([...crew].sort()).toEqual([...ORCHESTRATION_PATTERNS].sort());
     for (const n of FORMATION_NAMES) expect(FORMATIONS[n].name).toBe(n);
   });
 
@@ -66,19 +68,17 @@ describe("one catalogue, one description per formation", () => {
   it("crew briefs and project templates name their catalogue entry and keep its protocol phrases", () => {
     for (const formation of Object.keys(CREW_BRIEFS) as CrewFormation[]) {
       const entry = crewFormationEntry(formation);
-      if (formation === "freeform") {
-        expect(entry).toBeUndefined();
-        continue;
-      }
       expect(entry?.name, formation).toBe(formation);
       const brief = CREW_BRIEFS[formation].toLowerCase();
-      const template = ORCHESTRATION_TEMPLATES[formation as keyof typeof ORCHESTRATION_TEMPLATES]
-        .map((n) => n.content)
-        .join(" ")
-        .toLowerCase();
       expect(entry!.markers?.length, `${formation} markers`).toBeGreaterThan(0);
       for (const m of entry!.markers ?? [])
         expect(brief.includes(m.toLowerCase()), `${formation} brief lost "${m}"`).toBe(true);
+      // `freeform` seeds no project template.
+      if (formation === "freeform") continue;
+      const template = ORCHESTRATION_TEMPLATES[formation]
+        .map((n) => n.content)
+        .join(" ")
+        .toLowerCase();
       for (const m of entry!.templateMarkers ?? entry!.markers ?? [])
         expect(template.includes(m.toLowerCase()), `${formation} template lost "${m}"`).toBe(true);
     }
@@ -95,7 +95,7 @@ describe("one catalogue, one description per formation", () => {
     expect(Object.keys(TEXT_TEMPLATES)).toEqual([...TEXT_PATTERNS]);
     for (const p of TEXT_PATTERNS) expect(FORMATIONS[p].text).toBe(TEXT_TEMPLATES[p]);
     const crewOnly = FORMATION_NAMES.filter((n) => FORMATIONS[n].crewOnly);
-    expect(Object.keys(CREW_ONLY_PATTERNS)).toEqual([...crewOnly, "custom"]);
+    expect(Object.keys(CREW_ONLY_PATTERNS)).toEqual(crewOnly);
     for (const n of crewOnly) expect(CREW_ONLY_PATTERNS[n]).toBe(FORMATIONS[n].crewOnly!);
     // A pattern is either a one-task text protocol or crew-only, never both, never neither.
     for (const p of crewPatterns)

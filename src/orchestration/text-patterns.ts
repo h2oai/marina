@@ -48,30 +48,20 @@ export type TextComplete = (
   user: string,
 ) => Promise<{ text: string; costUsd: number }>;
 
-/** The patterns this endpoint runs as one free-text task: the catalogue's text templates. */
-export const TEXT_PATTERNS = [
-  "ensemble",
-  "debate",
-  "delphi",
-  "tournament",
-  "verification",
-  "deliberation",
-  "chorus",
-  "pipeline",
-] as const satisfies readonly TextFormationName[];
+/** The patterns this endpoint runs as one free-text task: the catalogue's text templates, in order. */
+export const TEXT_PATTERNS: readonly TextFormationName[] = Object.keys(
+  TEXT_TEMPLATES,
+) as TextFormationName[];
 
-export type TextPattern = (typeof TEXT_PATTERNS)[number];
+export type TextPattern = TextFormationName;
 
 /** Catalogue patterns that need a persistent crew, each with why (the catalogue's `crewOnly`). */
-export const CREW_ONLY_PATTERNS: Readonly<Record<string, string>> = {
-  ...Object.fromEntries(
-    FORMATION_NAMES.flatMap((name) => {
-      const why = FORMATIONS[name].crewOnly;
-      return why ? [[name, why]] : [];
-    }),
-  ),
-  custom: "a crew-defined protocol with no fixed shape",
-};
+export const CREW_ONLY_PATTERNS: Readonly<Record<string, string>> = Object.fromEntries(
+  FORMATION_NAMES.flatMap((name) => {
+    const why = FORMATIONS[name].crewOnly;
+    return why ? [[name, why]] : [];
+  }),
+);
 
 /** The assignee of a text template's pure-code steps. */
 const PATTERN_PIPELINE = "model:marina-pattern";
