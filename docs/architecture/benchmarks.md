@@ -267,7 +267,7 @@ The live run's pick 1 then resolves through `resolveDefault` as in the table abo
 
 ## Route evidence: observe by default, families from roles
 
-Spawn-time route evidence (`src/engine/benchmark-evidence.ts`, `MARINA_ROUTE_EVIDENCE`) defaults to `observe`. It records what the ledger would pick on the route decision and never changes a route; `on` applies the pick, and `off` skips the lookup.
+Spawn-time route evidence (`src/engine/benchmark-evidence.ts`, `MARINA_ROUTE_EVIDENCE`) defaults to `on`. It applies the ledger's pick when at least two candidates have enough evidence and keeps the router's choice otherwise; `observe` only records the pick on the route decision, and `off` skips the lookup.
 
 When `MARINA_ROUTE_EVIDENCE_FAMILIES` is unset, the families come from the spawning role itself:
 
