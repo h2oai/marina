@@ -10,7 +10,7 @@ import { describeRouteHealth } from "../../net/model/route-health";
 import { describeEngineModels, hasProviderKey } from "../../net/model-api/upstream";
 import type { EntityId } from "../../types";
 import { engineAssistanceExpiryDeps } from "../assistance-expiry";
-import { isOperatorPrincipal } from "../challenges";
+import { isOperatorPrincipal, operatorRequiredRefusal } from "../challenges";
 import { adapterCommand } from "../commands/adapter";
 import { adminCommand } from "../commands/admin";
 import { agentCommand } from "../commands/agent";
@@ -309,6 +309,8 @@ export function registerOperationCommands(engine: Engine): void {
         readiness: () => computeReadiness(engine),
         assistance: () => engineAssistanceExpiryDeps(engine, engine.db!),
         isOperator: (id) => isOperatorPrincipal(engine.entities.get(id as EntityId)),
+        operatorRefusal: (id, what, tail) =>
+          operatorRequiredRefusal(engine.entities.get(id as EntityId), what, tail),
       }),
     );
     engine.commands.registerBuiltin(

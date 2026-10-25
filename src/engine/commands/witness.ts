@@ -27,7 +27,12 @@ import type { MarinaDB } from "../../persistence/database";
 import type { WitnessRow } from "../../persistence/db-witness";
 import type { CommandDef, Entity, EntityId } from "../../types";
 import { getAutonomyPosture } from "../autonomy";
-import { approvalDemonstrates, isOperatorPrincipal, listAnswerable } from "../challenges";
+import {
+  approvalDemonstrates,
+  isOperatorPrincipal,
+  listAnswerable,
+  operatorRequiredRefusal,
+} from "../challenges";
 import { sanitizeEntityName } from "../entity-name";
 import {
   gateNextStep,
@@ -176,7 +181,11 @@ export function witnessCommand(deps: {
         }
         if (!isOperatorPrincipal(actor)) {
           return reply(
-            "Reviewing a demonstration takes an operator (a person). Held runs you can answer: `challenge`.",
+            operatorRequiredRefusal(
+              actor,
+              "Reviewing a demonstration",
+              "Held runs you can answer: `challenge`.",
+            ),
           );
         }
         if (!target) {
