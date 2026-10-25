@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChannelManager } from "../../coordination/channel-manager";
+import {
+  CREW_FORMATION_HELP,
+  crewFormationEntry,
+  resolveCrewFormation,
+} from "../../coordination/crew-formations";
 import { CrewError, type CrewManager } from "../../coordination/crew-manager";
 import type { Task, TaskManager } from "../../coordination/task-manager";
 import { type AdvisoryOptions, advisoryMode } from "../../decisions/advisory";
 import { reviewCrewDeliverable } from "../../decisions/deliverable";
 import { memoryAccess } from "../../memory/access";
 import { bold, dim, header, separator } from "../../net/ansi";
+import { protocolText, scoreStepsLine } from "../../orchestration/formations/describe";
 import { bindTaskToCrew } from "../../outcomes/live";
 import type { MarinaDB } from "../../persistence/database";
 import type {
@@ -18,31 +24,23 @@ import type {
   Entity,
   RoomContext,
 } from "../../types";
-import { normalizePatternName } from "../../world/templates/orchestration";
 import { tryLogAsync } from "../errors";
 import { Logger } from "../logger";
 import { canonicalSub, parseModifiers, splitOnTerminator, unknownSubcommand } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
 
-const VALID_FORMATIONS: ReadonlySet<CrewFormation> = new Set<CrewFormation>([
-  "deliberation",
-  "chorus",
-  "foundry",
-  "swarm",
-  "pipeline",
-  "debate",
-  "mapreduce",
-  "blackboard",
-  "symbiosis",
-  "research",
-  "delphi",
-  "tournament",
-  "verification",
-  "auction",
-  "ledger",
-  "sharding",
-  "freeform",
-]);
+/** `crew info`'s formation lines: the catalogue's summary, roles, protocol and Score steps. */
+function formationLines(formation: string): string[] {
+  const entry = crewFormationEntry(formation);
+  if (!entry) return [];
+  const steps = scoreStepsLine(entry.name);
+  return [
+    `  formation: ${bold(entry.name)} — ${entry.summary}`,
+    ...(entry.roles.length ? [dim(`    roles: ${entry.roles.join(", ")}`)] : []),
+    dim(`    protocol: ${protocolText(entry)}`),
+    ...(steps ? [dim(`    ${steps}`)] : []),
+  ];
+}
 
 interface CrewCommandDeps {
   trackBackground?: (work: Promise<void>) => void;
@@ -122,17 +120,9 @@ function parseCreateArgs(args: string): {
     lifetime = "persisted";
   }
   if (typeof values.formation === "string") {
-    const value = values.formation.toLowerCase();
-    const canonical = normalizePatternName(value);
-    if (!VALID_FORMATIONS.has(canonical as CrewFormation)) {
-      return {
-        name,
-        members,
-        goal,
-        error: `Unknown formation "${value}". Valid: ${[...VALID_FORMATIONS].join(", ")}`,
-      };
-    }
-    formation = canonical as CrewFormation;
+    const resolved = resolveCrewFormation(values.formation);
+    if ("error" in resolved) return { name, members, goal, error: resolved.error };
+    formation = resolved.formation;
   }
 
   return { name, members, formation, lifetime, goal };
@@ -219,7 +209,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       "  crew stall <name> <agent> [reason]\n" +
       "  crew complete <name> -- <summary>\n" +
       "  crew dissolve <name> [reason]\n" +
-      "Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding, freeform\n" +
+      `Formations (the formation catalogue; \`crew info\` shows each one's protocol): ${CREW_FORMATION_HELP}\n` +
       "Artifact kinds: map, reduce, synthesis, draft",
     handler: (ctx: RoomContext, input) => {
       const caller = deps.getEntity(input.entity);
@@ -240,6 +230,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
             header(`Crew: ${crew.name}`),
             separator(),
             fmtCrewLine(crew),
+            ...formationLines(crew.formation),
             dim(`  channel: ${crew.channelId ?? "(unallocated)"}  owner: ${crew.ownerId}`),
           ];
           if (crew.poolId) {
@@ -621,21 +612,17 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       // crew formation <name> <formation> — owner or rank 3+
       if (sub === "formation") {
         const name = tokens[1];
-        const rawFormation = tokens[2]?.toLowerCase();
-        const formation = (rawFormation ? normalizePatternName(rawFormation) : undefined) as
-          | CrewFormation
-          | undefined;
-        if (!name || !formation) {
+        const rawFormation = tokens[2];
+        if (!name || !rawFormation) {
           ctx.send(input.entity, "Usage: crew formation <name> <formation>");
           return;
         }
-        if (!VALID_FORMATIONS.has(formation)) {
-          ctx.send(
-            input.entity,
-            `Unknown formation "${formation}". Valid: ${[...VALID_FORMATIONS].join(", ")}`,
-          );
+        const resolved = resolveCrewFormation(rawFormation);
+        if ("error" in resolved) {
+          ctx.send(input.entity, resolved.error);
           return;
         }
+        const formation: CrewFormation = resolved.formation;
         const crew = deps.crews.getByName(name);
         if (!crew) {
           ctx.send(input.entity, `Crew "${name}" not found.`);

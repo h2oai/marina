@@ -41,6 +41,12 @@ import { chatClassifierProvider } from "../decisions/providers";
 import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
+import {
+  importedLessonLink,
+  importedLessonsMode,
+  importedRecallSink,
+  noteImportedRecall,
+} from "../learned/serve";
 import { rankedServing } from "../memory/admission";
 import { residentMemoryOperation } from "../memory/resident-service";
 import { modelComplete } from "../model/complete";
@@ -55,6 +61,7 @@ import { type LessonsMode, lessonsMetaMode, lessonsMode } from "./modes";
 import {
   CURATED_SOURCE_PREFIX,
   formatLesson,
+  type ImportedLessonLink,
   type Lesson,
   type LessonAdmission,
   type LessonRetirement,
@@ -92,6 +99,8 @@ interface Armed {
   admit?: LessonAdmission;
   /** The writer and judge were taken from the environment (not given by the caller). */
   fromEnv: boolean;
+  /** Imported lessons the loop confirms or retires (`src/learned/serve.ts`); read per batch. */
+  importedLink: () => ImportedLessonLink | undefined;
   queue: Outcome[];
   draining?: Promise<void>;
   windowStart: number;
@@ -373,6 +382,7 @@ export function enableOutcomeLearning(
       return admit ? { admit } : {};
     })(),
     fromEnv: opts.writer === undefined && opts.judge === undefined,
+    importedLink: () => importedLessonLink(db, env),
     queue: [],
     windowStart: Date.now(),
     processed: 0,
@@ -439,6 +449,7 @@ async function drain(a: Armed, env: NodeJS.ProcessEnv): Promise<void> {
         ...(judge ? { judge } : {}),
         ...(a.admit ? { admit: a.admit } : {}),
         meta: lessonsMetaMode(env) !== "off",
+        ...withImported(a),
         // No onSpend: every judge here already records its own spend where it
         // leaves Marina — a configured backend through `metered()`
         // (src/decisions/config.ts), Marina engines and the fallback classifier
@@ -477,6 +488,7 @@ export function armedLearner(
       ...(a.judge ? { judge: a.judge } : {}),
       ...(a.admit ? { admit: a.admit } : {}),
       meta: lessonsMetaMode(env) !== "off",
+      ...withImported(a),
     },
     take(n) {
       const now = Date.now();
@@ -498,6 +510,16 @@ export function armedLearner(
  */
 export function modelUnavailable(env: NodeJS.ProcessEnv = process.env): string | undefined {
   return availableModels(env).length === 0 ? "no model provider configured" : undefined;
+}
+
+/** The armed loop's imported-lesson link as a spreadable dep (`{}` when none). */
+function withImported(a: Armed): { imported?: ImportedLessonLink } {
+  try {
+    const link = a.importedLink();
+    return link ? { imported: link } : {};
+  } catch {
+    return {};
+  }
 }
 
 /** Wait until queued outcomes are processed (tests, scripts before exit). */
@@ -587,9 +609,26 @@ export async function recallLessons(
     const own = ownSink
       ? await ownSink.recall(domain, query, asOf, recallOpts).catch(() => [] as Lesson[])
       : [];
-    const recalled = own.length
-      ? selectServed(distinctByText([...own, ...shared]), asOf, recallOpts)
-      : shared;
+    // Imported lessons (`src/learned/serve.ts`, MARINA_IMPORTED_LESSONS): the
+    // same selection over the bundle's spaces, ranked below every local
+    // trusted lesson. `observe` records what would be served and serves
+    // nothing; `off` (or nothing imported) never reads them.
+    const importedMode = db ? importedLessonsMode(db, opts.env) : "off";
+    const imported =
+      db && importedMode !== "off"
+        ? await importedRecallSink(db)
+            .recall(domain, query, asOf, recallOpts)
+            .catch(() => [] as Lesson[])
+        : [];
+    const merge = (extra: Lesson[]) =>
+      own.length || extra.length
+        ? selectServed(distinctByText([...own, ...shared, ...extra]), asOf, recallOpts)
+        : shared;
+    if (db && imported.length && importedMode === "observe")
+      noteImportedRecall(db, merge(imported), "observed");
+    const recalled = merge(importedMode === "on" ? imported : []);
+    if (db && importedMode === "on" && imported.length)
+      noteImportedRecall(db, recalled, mode === "on" ? "served" : "observed");
     return { inject: mode === "on" ? recalled : [], recalled, mode };
   } catch {
     return { inject: [], recalled: [], mode };
@@ -691,8 +730,9 @@ export async function recallForWork(
     limit: Math.max(1, Math.floor(limit * META_BUDGET_SHARE)),
     maxBytes: Math.floor(maxBytes * META_BUDGET_SHARE),
   });
-  // Meta lessons are served trusted-only, whatever the store returned.
-  const metaServed = meta.recalled.filter((l) => l.trust === "trusted");
+  // Meta lessons are served trusted-only (or imported, which a publisher's
+  // judge trusted and recallLessons returns only while serving them `on`).
+  const metaServed = meta.recalled.filter((l) => l.trust === "trusted" || l.trust === "imported");
   const metaBytes = metaServed.reduce((n, l) => n + Buffer.byteLength(l.text), 0);
   const base = await recallAcross(db, own, query, {
     ...shared,

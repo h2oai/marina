@@ -41,9 +41,9 @@ import { EVAL_REF_PREFIX, sourceNamesBoard } from "../learning/eval-context";
 import { familiesForSource } from "../learning/families";
 import { lessonsMode } from "../learning/modes";
 import {
-  type LessonSink,
   type Outcome,
   type OutcomeDomain,
+  type OutcomeLearnerDeps,
   recordOutcome,
 } from "../learning/outcomes";
 import { armedLearner, canHoldOwnLessons, ownerLessonSink } from "../learning/service";
@@ -329,8 +329,19 @@ function lessonTarget(db: MarinaDB, o: OutcomeRow): LessonTarget {
     : { skip: "owner cannot hold lessons" };
 }
 
-const sinkFor = (db: MarinaDB, t: { shared: true } | { owner: string }, shared: LessonSink) =>
-  "owner" in t ? ownerLessonSink(db, t.owner) : shared;
+/**
+ * The learner deps for a target: a person's lessons go to its own spaces, and
+ * its private work never confirms or retires the world's imported lessons.
+ */
+const depsFor = (
+  db: MarinaDB,
+  t: { shared: true } | { owner: string },
+  deps: OutcomeLearnerDeps,
+): OutcomeLearnerDeps => {
+  if (!("owner" in t)) return deps;
+  const { imported: _imported, ...rest } = deps;
+  return { ...rest, sink: ownerLessonSink(db, t.owner) };
+};
 
 // ─── Aggregate lessons ──────────────────────────────────────────────────────
 //
@@ -567,7 +578,7 @@ async function deliverAggregates(
       };
       try {
         const r = await recordOutcome(
-          { ...learner.deps, sink: sinkFor(db, g.target, learner.deps.sink), deferUnjudged: true },
+          { ...depsFor(db, g.target, learner.deps), deferUnjudged: true },
           aggregateOutcome(db, rows, ready === "stale" ? { stale: true } : {}),
         );
         if (r.deferred) retry(`no verdict: ${r.reason}`);
@@ -740,7 +751,7 @@ export async function deliverOutcomes(
     }
     try {
       const r = await recordOutcome(
-        { ...learner.deps, sink: sinkFor(db, target, learner.deps.sink), deferUnjudged: true },
+        { ...depsFor(db, target, learner.deps), deferUnjudged: true },
         lessonOutcome(db, o),
       );
       if (r.deferred) t[retryOrFail(db, o, "lessons", `no verdict: ${r.reason}`)]++;

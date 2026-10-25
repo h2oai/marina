@@ -572,7 +572,7 @@ forecast formations of the same name use the same entry with numeric and typed c
 always picks ONE whole answer; answers are never merged.
 
 Crew-only patterns (`foundry`, `swarm`, `mapreduce`, `blackboard`, `symbiosis`, `research`,
-`auction`, `ledger`, `sharding`, `custom`) need a persistent crew and are refused with `400
+`auction`, `ledger`, `sharding`, `freeform`) need a persistent crew and are refused with `400
 unsupported_parameter` (`param: "pattern"`); run them as a crew and call it as model
 `marina:<crew>`. An unknown pattern is `400` listing the supported ones.
 

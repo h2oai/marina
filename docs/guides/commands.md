@@ -556,7 +556,7 @@ run or promote candidates automatically. See [Native Evolution Protocols](native
 > project Alpha outcome 0.9 | Verified result and lessons
 ```
 
-Orchestration patterns: `deliberation`, `chorus`, `foundry`, `swarm`, `pipeline`, `debate`, `mapreduce`, `blackboard`, `symbiosis`, `research`, `delphi`, `tournament`, `verification`, `auction`, `ledger`, `sharding`, `custom`
+Orchestration patterns: `deliberation`, `chorus`, `foundry`, `swarm`, `pipeline`, `debate`, `mapreduce`, `blackboard`, `symbiosis`, `research`, `delphi`, `tournament`, `verification`, `auction`, `ledger`, `sharding`, `freeform` (the formation catalogue; `custom` and `nsed` are accepted as aliases of `freeform` and `deliberation`)
 
 Recommendations begin with task-shape fit, then use evidence recorded in each
 `orchestration:<pattern>` tradition pool to rank patterns with successful comparable outcomes. Budgets
