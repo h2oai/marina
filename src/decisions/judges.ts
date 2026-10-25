@@ -34,6 +34,7 @@
  * its own never/always rules and asks `judgeEarned` before an earned action.
  */
 
+import { availableModels } from "../agent/available-models";
 import { tryLog } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { arbiterPolicyFromEnv } from "../orchestration/arbiter";
@@ -50,7 +51,7 @@ export type JudgeModeSurface = "challenge" | "verify" | "attention" | "outcome";
 
 interface SurfaceSwitch {
   legacy: string;
-  fallback: JudgeMode;
+  fallback: JudgeMode | ((env: NodeJS.ProcessEnv) => JudgeMode);
   /** The legacy variable's own parse, exactly as before the one flag. */
   parse(v: string): JudgeMode;
 }
@@ -61,11 +62,11 @@ export const JUDGE_SURFACE_SWITCHES: Readonly<Record<JudgeModeSurface, SurfaceSw
   challenge: { legacy: "MARINA_CHALLENGE_JUDGE", fallback: "observe", parse: onOffElseObserve },
   verify: { legacy: "MARINA_DECISION_VERIFY", fallback: "observe", parse: onOffElseObserve },
   attention: { legacy: "MARINA_ATTENTION_JUDGE", fallback: "observe", parse: onOffElseObserve },
-  // The outcome judge researches and settles answers (model calls every
-  // hour), so its unset default stays off; MARINA_JUDGE turns it on.
+  // Unset: on when this installation has a model provider to judge with,
+  // else off (the same rule as MARINA_LESSONS_FROM_WORK).
   outcome: {
     legacy: "MARINA_OUTCOME_JUDGE",
-    fallback: "off",
+    fallback: (env) => (availableModels(env).length > 0 ? "on" : "off"),
     parse: (v) => (v === "observe" || v === "on" ? v : "off"),
   },
 };
@@ -98,7 +99,8 @@ export function judgeModeFor(
   if (legacy) return { mode: sw.parse(legacy), from: "legacy", variable: sw.legacy };
   const one = oneJudgeFlag(env);
   if (one) return { mode: one, from: "judge", variable: "MARINA_JUDGE" };
-  return { mode: sw.fallback, from: "default" };
+  const mode = typeof sw.fallback === "function" ? sw.fallback(env) : sw.fallback;
+  return { mode, from: "default" };
 }
 
 // ─── Writing ────────────────────────────────────────────────────────────────

@@ -231,8 +231,23 @@ A slot whose incumbent run was invalidated is skipped, and so is a value the cal
 | A board's live forecast configuration, pick 1 (`liveConfig`, used by `bun run forecastbench` and `bun run metaculus`) | `forecast-config:<board>`, family `forecast` | `--config <label>` | the saved selection's pick, else the disclosed fallback |
 | The `marina/verify` checker, when the model id names none (`src/net/model-api/verify.ts`; not consulted under a passthru pin) | `verify:checker` (an explicit `checker` field, or the checker of a `marina/verify:<p>+<c>` target) | `MARINA_VERIFY_CHECKER_MODEL`; a checker in the id wins over everything | the proposer (self-check) |
 | The showcase crew model (`worlds/showcase.ts`) | `showcase:crew` | `MARINA_CREW_MODEL` | `seedAnswererCrew`'s default |
+| A role's model when the work names none (`roleModel` / `roleModelFromEnv` / `residentDefaultModel`, `src/config/model-tiers.ts`); an agent spawned for work role `<r>` with no model reads `role-model:<r>` first, then `role-model:resident` | `role-model:<role>` (earned on LIVE work, below) | the role's own knob, `MARINA_AGENT_MODELS` `role:<role>=`, and for residents the explicit default (`MARINA_DEFAULT_MODEL` / admin default) | the role's tier |
 
 An earned value this installation cannot use never breaks a surface: a verify checker that is not a reachable upstream id is skipped, and a forecast configuration whose models cannot be wired falls back to the built-in (logged). A slot holds the challenger run's `target_json`: data, never code. Models still come only from the operator: from env, or from a promotion that an account holding `role.edit` filed on held-out evidence it did not author.
+
+## Live work files a promotion
+
+A `role-model:<role>` slot is earned on the outcome path, not on a benchmark run (`src/engine/live-promotion.ts`). The rule is the same rule on different evidence:
+
+- **Evidence.** Mechanical outcomes tagged `family:work:<kind>:role:<role>` and exactly one `method:model:<m>`, shared scope only (`sharedEvidence`). Work done for a person, and by that person's agents, never moves a world default. Measurement runs never count. Every kind of work a role does is pooled for its slot.
+- **Split.** A time split over the role's outcomes: the older half is discovery, the newer half is the holdout.
+- **Incumbent.** What the role resolves to now (`currentRoleModel`): the env layer, a promoted slot, or the tier. While an env setting answers, nothing is proposed, because a promotion would not take effect.
+- **Earned.** On the holdout, the 95 % Agresti–Caffo interval on the success-rate difference (`differenceInterval`, `src/stats`) lies above 0 and the difference clears `promotionMargin(tried)`. The candidate must not lose on discovery. Every arm in both splits needs at least `LIVE_PROMOTION_MIN_PER_ARM` (20) outcomes. The candidate must be callable on this installation.
+- **Fishing.** `tried` counts every candidate ever recorded for the slot (`attemptsBefore` on `live:<model>`), plus the other candidates the same pass compared on the holdout.
+
+The `live-promotion` tick job runs every 6 h and files nothing. It records a candidate that fails the rule as a `refused` history row, once per evidence state. For a candidate that passes, it raises ONE ops-inbox item (category `promotion`, attention kind `approval`, key `promotion:<slot>:<incumbent>><candidate>`). That item is never raised twice for the same incumbent and candidate. A PERSON holding `role.edit` files the promotion with `benchmark promote role-model:<role> <model>`. That command re-checks the rule on the outcomes as they stand and calls `fileSlotPromotion` with the live candidate, which records the attempt as `promoted` or `refused`. An agent is refused, whatever gates it holds. So is a person whose own work is part of the evidence. A person without `role.edit` is held as a challenge. `benchmark eligible live [role]` is the read-only view: eligible, proposed, refused and too-little-data candidates per slot. A ledger run never fills a `role-model:` slot.
+
+A promoted model this installation cannot call (no key for its provider, and no OpenRouter key) reads as unusable: `resolveDefault` traces the slot `unreadable` and the tier answers. A slot with nothing promoted is not resolved at all, so a world with no promotion chooses and traces exactly as before. The server registers its world DB for env-only call sites (`setRoleModelSlots`).
 
 ## Forecast selection files a promotion
 

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Agents holding sentinel gate grants are a critical readiness line.** `gate-sentinels` is
+  raised as a critical `ops inbox` alert while any agent account holds an operator-grant sentinel
+  row, and names the reset (`gate reset agents all apply`, from an interactive person session).
+  Every operator-required refusal now goes through one helper (`operatorRequiredRefusal`): a
+  person on a non-interactive `marina connect -c` is told the connection declared itself an agent
+  and where a person acts instead. A non-interactive client still cannot claim to be a person.
+
 - **`memory api` payloads no longer reach the event log.** A resident's journal and checkpoint
   calls carried its memory content into `command` events on every turn and crowded the world's
   own actions out of the row-bounded log. The form is now sensitive and unlogged
@@ -86,6 +93,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is earned, and how many more observations it needs. It says "no judge backend" when none is
   configured. `decision agreement`, `challenge stats` and `outcome agreement` read the same
   ledger, and the separate tally code is removed.
+- **`MARINA_OUTCOME_JUDGE` defaults on when a model provider is configured** (off otherwise; an
+  explicit value always wins), the same rule as `MARINA_LESSONS_FROM_WORK`. Only a judge that has
+  earned agreement and is confident settles or teaches, as before.
+- **Readiness shows the learning loop.** A new `learning-loop` line reports outcomes waiting for
+  delivery or a judge (count, oldest age), each judge's comparisons toward earning, verifier
+  opinions and promotions ever filed, and is degraded after 14 days of backlog or while outcomes
+  exist but no default has ever changed. Optional readiness checks no longer raise inbox alerts.
+- **An end-to-end test that the loop closes** (`test/learning-loop-closed.test.ts`): person-approved
+  task work and a Code Mode check become tagged outcomes, a trusted lesson served to an agent,
+  competence evidence and a spawn route that changes under `MARINA_ROUTE_EVIDENCE=on`.
+
 - **One orchestration surface: the formation catalogue.** Crews, `project <name> orchestrate`,
   `pattern run` and room formations now take every formation name, description, fit, role list and
   protocol from `src/orchestration/formations/catalogue.ts`. `crew create … formation:<f>` and
@@ -474,6 +492,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     their own capped spend scope. It installs, enables and starts nothing.
 
 ### Added
+
+- **Live work can change a default by earned promotion.** A role's model now has an earned layer
+  between its env settings and its tier: the slot `role-model:<role>`, read through
+  `resolveDefault`.
+  - **Evidence.** Shared work outcomes tagged by role and model fill it. The same promotion rule
+    applies: a time-split holdout, the Agresti–Caffo interval above 0, the fishing margin, no
+    discovery loss, and a minimum number of outcomes per arm. A person's private work never counts.
+  - **Who files.** A 6-hourly job raises one ops-inbox proposal per passing candidate and records
+    refused attempts. It never files. A person holding `role.edit` files the proposal with
+    `benchmark promote role-model:<role> <model>`; an agent never can.
+  - **Reading it.** `benchmark eligible live` is the read-only view. A promoted model this
+    installation cannot call falls back to the tier, and the fallback is traced. With nothing
+    promoted, every role resolves exactly as before.
 
 - **Imported lessons reach agents.** Lessons from a learned bundle are now recalled beside the
   world's own lessons, in the resident `[Lessons]` section, `lessons`, forecasts, Code Mode and

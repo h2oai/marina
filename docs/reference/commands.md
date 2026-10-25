@@ -933,6 +933,10 @@ Usage:
                                                      with every other candidate read counted as
                                                      tried; files nothing (promote stays manual,
                                                      behind role.edit)
+  benchmark eligible live [role]                   — read-only: role-model:<role> slots judged on
+                                                     LIVE work (shared outcomes tagged by role and
+                                                     model, newer half = holdout): eligible,
+                                                     refused, too little data, and open proposals
   benchmark challenge <slot> <run> [--max-cost-ratio R]
                                                    — dry run on the slot's SELECTION split (the
                                                      holdout stays unread); shows what promotion needs
@@ -944,6 +948,10 @@ Usage:
                                                      the challenger needs MARINA_PROMOTION_MIN_REPLICATES
                                                      replicates (default 2) before the holdout is read.
                                                      Needs role.edit; never the run's own author.
+  benchmark promote role-model:<role> <model>      — file a live-evidence proposal: re-checks the
+                                                     rule on the outcomes and records the attempt;
+                                                     a person holding role.edit only (never an agent),
+                                                     never one whose work the evidence includes.
   benchmark invalidate <run> reason:<text>         — retire a run that measured the infrastructure,
                                                      not the target (spend cap, outage): status
                                                      invalid, excluded from every ranking, pooling,
@@ -1057,6 +1065,20 @@ Effect: read.
 
 - `field-0` (`board`): text, optional group `option-0`.
 - Group `option-0`: `board`.
+
+### `benchmark eligible live [role]`
+
+Effect: read.
+
+- `field-0` (`role`): text, optional group `option-0`.
+- Group `option-0`: `role`.
+
+### `benchmark promote role-model:<role> <model>`
+
+Effect: write.
+
+- `field-0` (`role-model`): text, required.
+- `field-1` (`model`): text, required.
 
 ### `benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]`
 

@@ -11,6 +11,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { judgeEarned as attentionEarned, attentionJudgeMode } from "../src/agent/attention-judge";
+import { availableModels } from "../src/agent/available-models";
 import { earnedJudge } from "../src/decisions/earned-judge";
 import {
   judgeEarned,
@@ -379,7 +380,7 @@ describe("one flag: MARINA_JUDGE under the legacy overrides", () => {
       decisionVerifyMode(),
       attentionJudgeMode(),
       judgeResolutionMode(),
-    ]).toEqual(["observe", "observe", "observe", "off"]);
+    ]).toEqual(["observe", "observe", "observe", availableModels().length > 0 ? "on" : "off"]);
     expect(decisionVerifyNeedsEarned()).toBe(false);
     for (const s of ["challenge", "verify", "attention", "outcome"] as const)
       expect(judgeModeFor(s).from).toBe("default");

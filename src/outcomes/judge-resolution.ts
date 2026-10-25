@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Judged resolution (`MARINA_OUTCOME_JUDGE=off|observe|on`, else `MARINA_JUDGE`,
- * default off).
+ * Judged resolution (`MARINA_OUTCOME_JUDGE=off|observe|on`, else `MARINA_JUDGE`;
+ * unset: `on` when a model provider is configured, else `off`).
  * Most saved answers are never linked to a market, so nothing mechanical
  * ever settles them and they teach nothing. Past its end time (plus a grace
  * period), such an answer is researched after the fact and the configured
@@ -56,7 +56,13 @@ export const JUDGE_RECHECK_MS = 86_400_000;
 export const JUDGE_MIN_CONFIDENCE = 0.9;
 const UNRESOLVED = "not_resolved";
 
-/** `MARINA_OUTCOME_JUDGE` when set, else `MARINA_JUDGE`, else off (`judgeModeFor`). */
+/**
+ * `MARINA_OUTCOME_JUDGE` when set (junk is `off`), else `MARINA_JUDGE`, else
+ * `on` when this installation has a model provider to judge with, else `off`
+ * (`judgeModeFor`). `on` never widens what a judge may do: only a judge that
+ * has EARNED agreement and is confident settles or teaches, its outcomes are
+ * labelled `judged`, and nothing here files anything outside this world.
+ */
 export function judgeResolutionMode(env: NodeJS.ProcessEnv = process.env): JudgeResolutionMode {
   return judgeModeFor("outcome", env).mode;
 }
@@ -82,6 +88,16 @@ function candidate(row: ForecastAnswerRow, now: number): TypedForecastAnswer | u
     return undefined;
   const end = Date.parse(a.cutoff.at);
   return Number.isFinite(end) && end + JUDGE_GRACE_MS <= now ? a : undefined;
+}
+
+/**
+ * The end time (ms) of an answer the judge would take up now — past its end
+ * plus the grace period, nothing linked to settle it — else undefined
+ * (readiness: what waits unjudged).
+ */
+export function judgeableEnd(row: ForecastAnswerRow, now: number): number | undefined {
+  const a = candidate(row, now);
+  return a ? Date.parse(a.cutoff.at) : undefined;
 }
 
 export interface JudgeResolutionDeps {

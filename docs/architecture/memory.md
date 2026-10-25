@@ -261,7 +261,7 @@ learning instead of losing it.
     attempt, or the market's resolution of the same answer. It counts false passes separately.
   - A judge is `earned` only at ≥ 25 comparisons with a Wilson 95 % lower bound ≥ 0.85.
 - **Judged resolution** (`src/outcomes/judge-resolution.ts`, hourly `outcome-judge` job, phase 3150,
-  `MARINA_OUTCOME_JUDGE=off|observe|on`, default off).
+  `MARINA_OUTCOME_JUDGE=off|observe|on`; unset: `on` with a model provider, else `off`).
   - **Which answers:** an open choice, multi-select or number answer that no market settles, not a
     measurement run, past its end time plus 2 days. It is researched after the fact.
   - **Choice:** a choice question over the answer's options, plus `not_resolved`.

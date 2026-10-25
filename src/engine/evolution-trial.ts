@@ -19,6 +19,7 @@
  * the world's daily spend cap bounds what they cost.
  */
 
+import { differenceInterval } from "../stats";
 import type { BenchmarkSubject } from "./benchmark-runner";
 import { logRejection } from "./errors";
 import { Logger } from "./logger";
@@ -93,24 +94,10 @@ export function armBreakdown(a: { score?: number; answered?: number; total?: num
 }
 
 /**
- * 95% interval on p1 − p2 for two independent proportions (Agresti–Caffo: add
- * one success and one failure to each arm). Well-behaved for small n and for
- * scores of 0% or 100%, where the plain Wald interval collapses to zero width
- * and would call a 15-item tie-break "certain".
+ * 95% interval on p1 − p2 for two independent proportions (Agresti–Caffo).
+ * Lives in `src/stats`; re-exported here for existing callers.
  */
-export function differenceInterval(
-  p1: number,
-  n1: number,
-  p2: number,
-  n2: number,
-): [number, number] {
-  const a1 = (p1 * n1 + 1) / (n1 + 2);
-  const a2 = (p2 * n2 + 1) / (n2 + 2);
-  const se = Math.sqrt((a1 * (1 - a1)) / (n1 + 2) + (a2 * (1 - a2)) / (n2 + 2));
-  const d = a1 - a2;
-  // A difference of two proportions lives in [-1, 1].
-  return [Math.max(-1, d - 1.96 * se), Math.min(1, d + 1.96 * se)];
-}
+export { differenceInterval };
 
 const JOIN_TIMEOUT_MS = 60_000;
 
