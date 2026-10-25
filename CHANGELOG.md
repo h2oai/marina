@@ -281,6 +281,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`memory query` and `memory search` lead with each record's own id.** One line per result
+  (`id <record id> · memory show <record id>`, subject, a short preview) comes before the JSON
+  dump, whose first id is the space's. The dump and the structured payload are unchanged.
+- **`memory kv history` shows the first set.** The trail ends with the key's creation (time and
+  first value) instead of replying "No edit history" until a second set; a key that was never
+  set says so.
+- **`brief` help names the first-login welcome.** The first brief after arrival is the welcome;
+  later ones show the shape of the world. The help said only the latter.
 - **A refused model call is reported, never stored as an answer.** `code ask` with no model
   provider (or any other `/v1` refusal) records a failed artifact and shows the upstream message,
   which names the provider setting that fixes it; an empty model answer is a failure too. `ask`,
@@ -493,6 +501,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`benchmark fetch <name>` downloads one benchmark's dataset from inside the world.** It runs
+  the harness downloader (`benchmarks/download-all.ts <name>`, which now takes registry keys) in
+  the background and messages the requester when it is done. Rank 4, like benchmark runs;
+  refused under the as-of fence. Every downloader request now goes through the SSRF guard
+  (`guardedFetch`). `benchmark list` says per dataset `tracked (ready)`, `generated (ready)`,
+  `downloaded (ready)` or ``needs `benchmark fetch <name>` ``, and `help benchmark` names the
+  datasets that need no download.
 - **Live work can change a default by earned promotion.** A role's model now has an earned layer
   between its env settings and its tier: the slot `role-model:<role>`, read through
   `resolveDefault`.

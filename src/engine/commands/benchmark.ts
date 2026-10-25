@@ -18,6 +18,12 @@ import {
 } from "../benchmark-compare-run";
 import { benchmarkExecution, formatBenchmarkExecution } from "../benchmark-execution";
 import {
+  type DatasetFetcher,
+  datasetSourceKind,
+  spawnDatasetFetch,
+  startDatasetFetch,
+} from "../benchmark-fetch";
+import {
   getKitJob,
   KIT_FLAGS,
   kitArgs,
@@ -94,9 +100,33 @@ function variantFromStatus(s: string): "active" | "done" | "fail" | "info" | "wa
   return "info";
 }
 
+/** Benchmarks whose items need no download: tracked in the checkout or built in code. */
+function readyWithoutDownload(): string {
+  return Object.keys(BENCHMARKS)
+    .flatMap((key) => {
+      const kind = datasetSourceKind(key);
+      return kind === "tracked" || kind === "generated" ? [`${key} (${kind})`] : [];
+    })
+    .join(", ");
+}
+
+/** One benchmark's dataset state, as `benchmark list` shows it. */
+function datasetStatus(runner: BenchmarkRunner, key: string): string {
+  const kind = datasetSourceKind(key);
+  if (kind === "tracked") return fmtStatus("tracked (ready)", "done");
+  if (kind === "generated") return fmtStatus("generated (ready)", "done");
+  return runner.datasetReady(key)
+    ? fmtStatus("downloaded (ready)", "done")
+    : fmtStatus(`needs \`benchmark fetch ${key}\``, "warn");
+}
+
 const HELP = `Run, track, and rank benchmark evaluations from inside the world.
 Usage:
-  benchmark list                                   — show available benchmarks + cache status
+  benchmark list                                   — show available benchmarks + dataset status
+  benchmark fetch <name>                           — download one benchmark's dataset into the
+                                                     checkout (the harness downloader, every request
+                                                     through the SSRF guard; HF_TOKEN for gated sets).
+                                                     Runs in the background; needs rank 4.
   benchmark orchestrations                         — show live marina:<name> endpoints
   benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [self-judge:on]
                    [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
@@ -177,8 +207,10 @@ Usage:
                                                      only through judged lessons (\`lessons\`).
 
 Benchmarks: ${Object.keys(BENCHMARKS).join(", ")}
-  (smoke is the 15-item prompt A/B set, tracked in the checkout: ready with no download,
-  whatever directory the server started in; run "benchmark list" for status)
+  Ready with no download: ${readyWithoutDownload()}. Every other benchmark needs
+  "benchmark fetch <name>" once ("benchmark list" shows which are downloaded).
+  (smoke is the 15-item prompt A/B set; tracked sets are ready whatever directory the server
+  started in)
 
 Targets: crew:<name> = the residents serving marina:<name> (a model-<name> channel with a live
   agent; see "benchmark orchestrations"); model:<id> = the bare model as a control ("marina" =
@@ -278,6 +310,8 @@ export function benchmarkCommand(deps: {
    * endpoint is live.
    */
   servingCrews?: () => ServingCrew[];
+  /** Downloads one dataset (`benchmark fetch`); the harness downloader by default. */
+  fetchDataset?: DatasetFetcher;
 }): CommandDef {
   const { db, runner, listOrchestrations } = deps;
   return {
@@ -319,6 +353,7 @@ export function benchmarkCommand(deps: {
         effect: "execute",
       },
       { syntax: "benchmark runs [--benchmark X] [--limit N]", effect: "read" },
+      { syntax: "benchmark fetch <name>", effect: "write" },
       { syntax: "benchmark kit [list]", effect: "execute" },
       { syntax: "benchmark kit doctor [setup]", effect: "execute" },
       { syntax: "benchmark kit status [id]", effect: "read" },
@@ -353,14 +388,13 @@ export function benchmarkCommand(deps: {
           const lines = [
             header(`Benchmarks (${specs.length})`),
             separator(),
-            ...specs.map((s) => {
-              const ready = runner.datasetReady(s.name)
-                ? fmtStatus("ready", "done")
-                : fmtStatus("missing", "warn");
-              return `  ${category(s.name.padEnd(16))} ${ready}  ${dim(s.description)}`;
-            }),
+            ...specs.map(
+              (s) =>
+                `  ${category(s.name.padEnd(16))} ${datasetStatus(runner, s.name)}  ${dim(s.description)}`,
+            ),
             "",
             dim("Run one with: benchmark run <name> [--limit N] [--seed N]"),
+            dim("Download a dataset with: benchmark fetch <name>"),
           ];
           ctx.send(input.entity, lines.join("\n"));
           return;
@@ -593,6 +627,77 @@ export function benchmarkCommand(deps: {
               `Failed to start: ${err instanceof Error ? err.message : String(err)}`,
             );
           }
+          return;
+        }
+
+        case "fetch": {
+          // One dataset, through the harness's own downloader (SSRF-guarded),
+          // so a fresh install needs no out-of-band script.
+          const resolved = tokens[1]
+            ? resolveMultiWordName(tokens, 1, Object.keys(BENCHMARKS))
+            : undefined;
+          const key = resolved?.name;
+          if (!key || !BENCHMARKS[key]) {
+            ctx.send(
+              input.entity,
+              tokens[1]
+                ? `Unknown benchmark: ${tokens[1]}. Known: ${Object.keys(BENCHMARKS).join(", ")}`
+                : "Usage: benchmark fetch <name>   (benchmark list shows which datasets need one)",
+            );
+            return;
+          }
+          const kind = datasetSourceKind(key);
+          if (kind !== "cache") {
+            ctx.send(
+              input.entity,
+              `${key} needs no download: its items are ${kind === "tracked" ? "tracked in the checkout" : "generated in code"}.`,
+            );
+            return;
+          }
+          const fetchFloor = rankFloorRefusal(
+            entity,
+            BENCHMARK_RUN_MIN_RANK,
+            `benchmark fetch requires rank ${BENCHMARK_RUN_MIN_RANK} (${rankName(BENCHMARK_RUN_MIN_RANK)}): it downloads a dataset from the network into the checkout.`,
+          );
+          if (fetchFloor) {
+            ctx.send(input.entity, fetchFloor);
+            return;
+          }
+          if (runner.datasetReady(key)) {
+            ctx.send(
+              input.entity,
+              `${key} is already downloaded (ready). Run it: benchmark run ${key}`,
+            );
+            return;
+          }
+          const started = startDatasetFetch(
+            key,
+            deps.fetchDataset ?? spawnDatasetFetch,
+            ({ ok, output }) => {
+              const ready = ok && runner.datasetReady(key);
+              ctx.send(
+                input.entity,
+                ready
+                  ? `benchmark fetch ${key}: done. Run it: benchmark run ${key}`
+                  : `benchmark fetch ${key}: failed.\n${output}`,
+              );
+              deps.logEvent?.({
+                type: "feed_event",
+                kind: ready ? "benchmark_fetch_completed" : "benchmark_fetch_failed",
+                entity: entity.id,
+                ref: key,
+                summary: `benchmark fetch ${key} ${ready ? "completed" : "failed"}`,
+                payload: { benchmark: key },
+                timestamp: Date.now(),
+              });
+            },
+          );
+          ctx.send(
+            input.entity,
+            started
+              ? `Fetching ${key} in the background; you'll get a message when it is done (benchmark list shows its state).`
+              : `A fetch of ${key} is already running.`,
+          );
           return;
         }
 
@@ -1065,7 +1170,7 @@ export function benchmarkCommand(deps: {
           if (!runner.datasetReady(name)) {
             ctx.send(
               input.entity,
-              `Dataset not cached for ${name}. Run "bun run benchmarks/download-all.ts".`,
+              `Dataset not downloaded for ${name}. Run "benchmark fetch ${name}".`,
             );
             return;
           }

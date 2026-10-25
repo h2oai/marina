@@ -77,7 +77,7 @@ export const MEMORY_KV_HELP = `Key-value beliefs (core memory — mutable, per-e
   memory kv set <key> <value>           e.g. memory kv set pace fast  (agent tick rate)
   memory kv get <key>
   memory kv delete <key>
-  memory kv history <key>               edit trail of one key
+  memory kv history <key>               edit trail of one key, newest first, ending with its first set
   memory kv clear                       delete every key`;
 
 /** Which verb? One line each — the retrieval and verification surfaces that look alike. */
@@ -384,18 +384,29 @@ function runKv(
         return;
       }
       const history = db.getCoreMemoryHistory(entity.name, key);
-      if (history.length === 0) {
-        ctx.send(entityId, `No edit history for "${key}".`);
+      const entry = db.getCoreMemory(entity.name, key);
+      if (!entry && history.length === 0) {
+        ctx.send(entityId, `No memory entry for "${key}".`);
         return;
       }
-      const lines = [
-        header(`History: ${key}`),
-        separator(),
-        ...history.map((h) => {
-          const date = dim(new Date(h.changed_at).toISOString().slice(0, 19));
-          return `  ${date} "${h.old_value}" ${dim("\u2192")} "${h.new_value}"`;
-        }),
-      ];
+      const stamp = (at: number) => dim(new Date(at).toISOString().slice(0, 19));
+      const edit = (h: (typeof history)[number]) =>
+        `  ${stamp(h.changed_at)} "${h.old_value}" ${dim("\u2192")} "${h.new_value}"`;
+      // The trail records edits; the first set is the row's creation. Edits of the
+      // current row come first (newest first); rows from before a delete follow it.
+      const current = entry ? history.filter((h) => h.changed_at >= entry.created_at) : [];
+      const earlier = history.slice(current.length);
+      const lines = [header(`History: ${key}`), separator(), ...current.map(edit)];
+      if (entry) {
+        const missing = entry.version - 1 - current.length;
+        const first = current.length ? current[current.length - 1]!.old_value : entry.value;
+        lines.push(
+          missing <= 0
+            ? `  ${stamp(entry.created_at)} set "${first}" ${dim("(first set)")}`
+            : `  ${stamp(entry.created_at)} ${dim(`first set (${missing} older edit(s) not shown)`)}`,
+        );
+      }
+      lines.push(...earlier.map(edit));
       ctx.send(entityId, lines.join("\n"));
       return;
     }
