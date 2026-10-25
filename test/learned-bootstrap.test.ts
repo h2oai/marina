@@ -239,10 +239,19 @@ async function legacyWorld(): Promise<string> {
   return path;
 }
 
+/**
+ * The source's data: the main file and any WAL content. An empty WAL and the
+ * `-shm` index carry no data, and some SQLite builds remove them when the last
+ * (read-only) connection closes, so they are not part of the fingerprint.
+ */
 function fingerprint(path: string): string {
-  return ["", "-wal", "-shm"]
-    .map((s) => (existsSync(`${path}${s}`) ? sha256Hex(readFileSync(`${path}${s}`)) : "-"))
-    .join("/");
+  const content = (s: string) => {
+    const file = `${path}${s}`;
+    if (!existsSync(file)) return "-";
+    const bytes = readFileSync(file);
+    return bytes.length === 0 ? "-" : sha256Hex(bytes);
+  };
+  return [content(""), content("-wal")].join("/");
 }
 
 function bundleText(dir: string): string {
