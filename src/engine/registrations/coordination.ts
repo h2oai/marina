@@ -138,6 +138,7 @@ export function registerCoordinationCommands(engine: Engine): void {
         getEntity: (id) => engine.entities.get(id as EntityId),
         findAgentByName: (name) => engine.entities.findAgentByName(name),
         db: engine.db,
+        tasks: engine.taskManager,
       }),
     );
     engine.commands.registerBuiltin(

@@ -239,11 +239,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Crews serve, can be measured, and tag their own work.** A crew created with `crew create` now
+  serves `marina:<name>` through its own `model-<name>` endpoint (its agent members are kept on it
+  as they join and leave), so it can answer `/v1`, take forecast parts and be a
+  `benchmark run crew:<name>` target with its formation; the refusal names the missing step.
+  `crew dispatch` binds the work to a task (a new one at value 0, or `task:<id>`), and that binding
+  tags the outcome `crew:<formation>` before any membership fallback. Code Mode verification is
+  tagged with its live `code crew`'s formation. A crew benchmark run's method is
+  `crew:<formation>` (`crew:unknown`), never a model id. Agents see `crew` among the coordination
+  commands. None of it needs a model provider.
 - **`agent config <name> model|role|key|thinking` works on a saved agent that is not running**
   (stopped, or listed in `MARINA_DISABLED_AGENTS`): it rewrites the stored config its next spawn
   reads, keeping every other field. Before, it refused with "not running", so a disabled agent
   could only come back on its old model.
-
 - **Arena evidence reuse** keys on the inputs, not on when they were read, so an unchanged refile
   can reuse its forecast.
 - **Demo worlds** log their completion events as typed `feed_event`s instead of an untyped

@@ -461,6 +461,8 @@ export interface Crew {
   /** Updated on dispatch / member churn / channel traffic — drives idle GC. */
   lastActivityAt: number;
   result?: CrewResult;
+  /** False: an internal crew (Code Mode) with no `model-<name>` endpoint. Unset: it serves. */
+  serves?: false;
 }
 
 // ─── Events (internal engine events) ─────────────────────────────────────────

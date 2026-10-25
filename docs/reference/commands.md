@@ -3656,7 +3656,7 @@ Effect: read.
 Crews — runtime containers for multi-agent coordination.
 Usage:
   crew create <name> <a,b,c> [formation:<f>] [persist] -- <goal>   (also formation=<f> / --formation <f>)
-  crew dispatch <name> <message>
+  crew dispatch <name> [task:<id>] <message>   (binds the work to a task: a new one at value 0, or task:<id>)
   crew info <name>   (also show/view)
   crew invite <name> <agent> [role:<r>]
   crew invitations
@@ -3722,12 +3722,14 @@ Effect: write.
 
 - `field-0` (`name`): text, required.
 
-### `crew dispatch <name> <message>`
+### `crew dispatch <name> [task:<id>] <message>`
 
 Effect: write.
 
 - `field-0` (`name`): text, required.
-- `field-1` (`message`): text, required.
+- `field-1` (`task`): text, optional group `option-0`.
+- `field-2` (`message`): text, required.
+- Group `option-0`: `task:id`.
 
 ### `crew dissolve <name> [reason]`
 

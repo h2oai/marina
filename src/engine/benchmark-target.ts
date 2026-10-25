@@ -10,7 +10,8 @@
  * so the flagship in-world benchmark mostly measured the provider.
  *
  * - `crew:<name>` — the residents serving `marina:<name>` (the crew's
- *   `model-<name>` channel must have an online member).
+ *   `model-<name>` channel, created with the crew and joined by its agent
+ *   members, must have an online member).
  * - `model:<id>` — a bare-model CONTROL: the model alone, no residents,
  *   recorded `targetKind: "model"`, `control: true`. `model:marina:<name>`
  *   (the older spelling) is the crew `<name>`.
@@ -36,19 +37,25 @@ export function resolveRunTarget(opts: {
   model?: string;
   /** Live `marina:<name>` endpoints (a `model-<name>` channel with an online member). */
   orchestrations: readonly string[];
-  /** Crews that serve a live endpoint, with their formation. */
+  /**
+   * The world's crews that serve a `marina:<name>` endpoint, with their
+   * formation — online or not (`orchestrations` says which are live).
+   */
   crews: readonly ServingCrew[];
 }): RunTarget | { error: string } {
   const live = new Set(opts.orchestrations);
   const crewByName = new Map(opts.crews.map((c) => [c.name, c]));
   const asCrew = (name: string, defaulted: boolean): RunTarget | { error: string } => {
     const model = `marina:${name}`;
-    if (!live.has(model))
+    if (!live.has(model)) {
+      const others = `Live endpoints: ${[...live].join(", ") || "none"}.`;
+      const control = "Or measure a bare model as a control with model:<id>.";
       return {
-        error: `crew ${name} is not serving: no online member on model-${name}. Live endpoints: ${
-          [...live].join(", ") || "none"
-        }. Start it (crew dispatch / agent spawn), or measure a bare model as a control with model:<id>.`,
+        error: crewByName.has(name)
+          ? `crew ${name} is not serving: none of its agent members is online on model-${name} (people never answer it). ${others} An invited agent accepts with \`crew join ${name}\`; a member that is not running starts with \`agent spawn\` and needs a model provider (\`readiness providers\`). ${control}`
+          : `crew ${name} is not serving: there is no crew named ${name}. ${others} Create one with \`crew create ${name} <agents> -- <goal>\`; its agent members serve marina:${name} once they join and are online. ${control}`,
       };
+    }
     const formation = crewByName.get(name)?.formation;
     return { kind: "crew", model, crew: name, ...(formation ? { formation } : {}), defaulted };
   };

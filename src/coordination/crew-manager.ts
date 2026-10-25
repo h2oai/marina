@@ -67,6 +67,12 @@ export interface CrewManagerDeps {
    * crew context). Returning undefined omits it.
    */
   resolveAgentId?: (agentName: string) => string | undefined;
+  /**
+   * Whether a member's entity may answer on the crew's `model-<name>`
+   * endpoint. The engine admits agents only (a person never receives routed
+   * model requests); absent, every resolvable member is admitted.
+   */
+  servesEndpoint?: (entityId: string) => boolean;
   /** Optional logger for non-fatal runtime failures (e.g. a fallback nudge
    *  that fires after the channel store is gone). Silent when absent. */
   logger?: Logger;
@@ -84,6 +90,16 @@ export interface CreateCrewOpts {
   lifetime?: CrewLifetime;
   owner: EntityId;
   members: { agentName: string; role?: string }[];
+  /**
+   * False keeps the crew off a `model-<name>` endpoint (an internal crew such
+   * as a Code Mode crew). Default: the crew serves `marina:<name>`.
+   */
+  serves?: boolean;
+}
+
+/** The `model-<name>` channel a crew serves `marina:<name>` on. */
+export function crewEndpointChannel(crewName: string): string {
+  return `model-${crewName}`;
 }
 
 export interface CrewCompletionResult {
@@ -123,6 +139,7 @@ export class CrewManager {
   private readonly emit: (event: EngineEvent) => void;
   private readonly now: () => number;
   private readonly resolveAgentId: (agentName: string) => string | undefined;
+  private readonly servesEndpoint: (entityId: string) => boolean;
   private readonly logger: Logger | undefined;
   private readonly depositFallbackSchedule: readonly number[];
 
@@ -145,6 +162,7 @@ export class CrewManager {
     this.emit = deps.onEvent ?? (() => {});
     this.now = deps.now ?? (() => Date.now());
     this.resolveAgentId = deps.resolveAgentId ?? (() => undefined);
+    this.servesEndpoint = deps.servesEndpoint ?? (() => true);
     this.logger = deps.logger;
     this.depositFallbackSchedule =
       deps.depositFallbackScheduleMs ?? CrewManager.DEPOSIT_FALLBACK_SCHEDULE_MS;
@@ -164,6 +182,7 @@ export class CrewManager {
       this.indexCrew(crew);
       // Backfill: crew pools predating the group object get grouped here.
       this.ensureCrewPoolGroup(crew);
+      this.syncEndpoint(crew);
       loaded++;
     }
     for (const row of this.db.getOpenCrewInvitations()) {
@@ -335,9 +354,11 @@ export class CrewManager {
       state: "assembling",
       createdAt: now,
       lastActivityAt: now,
+      ...(opts.serves === false ? { serves: false } : {}),
     };
 
     this.indexCrew(crew);
+    this.syncEndpoint(crew);
     if (lifetime === "persisted") {
       this.provisionCrewPool(crew);
       this.persistRow(crew);
@@ -404,6 +425,7 @@ export class CrewManager {
       this.postFormationBrief(crew);
     }
     this.syncCrewPoolGroup(crew);
+    this.syncEndpoint(crew);
 
     this.transition(crew, "active");
     // The [crew-task] marker makes a dispatch a DIRECTED-work perception:
@@ -686,6 +708,7 @@ export class CrewManager {
     crew.members.push(member);
     this.indexMember(agentName, id);
     this.touch(crew);
+    this.syncEndpoint(crew);
     if (crew.lifetime === "persisted" && this.db) {
       this.db.addCrewMember(crew.id, agentName, role, member.joinedAt);
       this.persistRow(crew);
@@ -715,6 +738,7 @@ export class CrewManager {
     }
     this.deindexMember(agentName, id);
     this.touch(crew);
+    this.leaveEndpoint(crew, [agentName]);
     if (crew.lifetime === "persisted" && this.db) {
       this.db.removeCrewMember(crew.id, agentName);
       this.persistRow(crew);
@@ -744,6 +768,10 @@ export class CrewManager {
     this.syncCrewPoolGroup(crew);
 
     this.transition(crew, "dissolved");
+    this.leaveEndpoint(
+      crew,
+      crew.members.map((m) => m.agentName),
+    );
     this.byName.delete(crew.name);
     for (const m of crew.members) {
       this.deindexMember(m.agentName, id);
@@ -1132,6 +1160,56 @@ export class CrewManager {
       } catch {
         // already removed elsewhere — fine
       }
+    }
+  }
+
+  // ─── Serving endpoint ──────────────────────────────────────────────────────
+
+  /**
+   * Keep the crew's `model-<name>` endpoint in step with its roster, so a
+   * crew serves `marina:<name>` (model API, `benchmark run crew:<name>`,
+   * resident forecast parts) through its own name. Created with the crew;
+   * every member whose entity resolves and may answer (agents, not people)
+   * is joined. No responder is needed: with nobody online the endpoint
+   * simply has no one to answer yet. Idempotent; a failure never fails the
+   * crew operation that triggered it.
+   */
+  syncEndpoint(crew: Crew): void {
+    if (crew.serves === false || crew.state === "dissolved") return;
+    try {
+      const name = crewEndpointChannel(crew.name);
+      const channel =
+        this.channels.getChannelByName(name) ??
+        this.channels.createChannel({ type: "model", name, ownerId: crew.ownerId });
+      for (const m of crew.members) {
+        const id = this.resolveAgentId(m.agentName);
+        if (!id || !this.servesEndpoint(id)) continue;
+        if (!this.channels.isMember(channel.id, id)) this.channels.addMember(channel.id, id);
+      }
+    } catch (e) {
+      this.logger?.warn("crew", "crew endpoint sync failed", {
+        crew: crew.name,
+        error: getErrorMessage(e),
+      });
+    }
+  }
+
+  /** Take departed members off the crew's endpoint (the channel itself stays). */
+  private leaveEndpoint(crew: Crew, agentNames: readonly string[]): void {
+    if (crew.serves === false) return;
+    try {
+      const channel = this.channels.getChannelByName(crewEndpointChannel(crew.name));
+      if (!channel) return;
+      for (const agentName of agentNames) {
+        const id = this.resolveAgentId(agentName);
+        if (id && this.channels.isMember(channel.id, id))
+          this.channels.removeMember(channel.id, id);
+      }
+    } catch (e) {
+      this.logger?.warn("crew", "crew endpoint update failed", {
+        crew: crew.name,
+        error: getErrorMessage(e),
+      });
     }
   }
 

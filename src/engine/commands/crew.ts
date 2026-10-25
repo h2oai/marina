@@ -3,10 +3,12 @@
 
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { CrewError, type CrewManager } from "../../coordination/crew-manager";
+import type { Task, TaskManager } from "../../coordination/task-manager";
 import { type AdvisoryOptions, advisoryMode } from "../../decisions/advisory";
 import { reviewCrewDeliverable } from "../../decisions/deliverable";
 import { memoryAccess } from "../../memory/access";
 import { bold, dim, header, separator } from "../../net/ansi";
+import { bindTaskToCrew } from "../../outcomes/live";
 import type { MarinaDB } from "../../persistence/database";
 import type {
   CommandDef,
@@ -51,7 +53,11 @@ interface CrewCommandDeps {
   findAgentByName: (name: string) => Entity | undefined;
   /** Optional db — enables historical-crew lookups via pool name. */
   db?: MarinaDB;
+  /** Binds each dispatch to a task (created at value 0, or `task:<id>`). */
+  tasks?: TaskManager;
 }
+
+const DISPATCH_USAGE = "Usage: crew dispatch <name> [task:<id>] <message>";
 
 const CREATE_USAGE =
   "Usage: crew create <name> <a,b,c> [formation:<f>] [persist] -- <goal>   (also formation=<f> / --formation <f>)";
@@ -180,7 +186,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         effect: "execute",
       },
       { syntax: "crew decline <name>", effect: "write" },
-      { syntax: "crew dispatch <name> <message>", effect: "write" },
+      { syntax: "crew dispatch <name> [task:<id>] <message>", effect: "write" },
       { syntax: "crew dissolve <name> [reason]", effect: "write" },
       { syntax: "crew formation <name> <formation>", effect: "write" },
       { syntax: "crew info <name>", effect: "read" },
@@ -199,7 +205,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       "Crews — runtime containers for multi-agent coordination.\n" +
       "Usage:\n" +
       "  crew create <name> <a,b,c> [formation:<f>] [persist] -- <goal>   (also formation=<f> / --formation <f>)\n" +
-      "  crew dispatch <name> <message>\n" +
+      "  crew dispatch <name> [task:<id>] <message>   (binds the work to a task: a new one at value 0, or task:<id>)\n" +
       "  crew info <name>   (also show/view)\n" +
       "  crew invite <name> <agent> [role:<r>]\n" +
       "  crew invitations\n" +
@@ -432,11 +438,11 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         return;
       }
 
-      // crew dispatch <name> <message> — owner, member, or rank 4+
+      // crew dispatch <name> [task:<id>] <message> — owner, member, or rank 4+
       if (sub === "dispatch") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: crew dispatch <name> <message>");
+          ctx.send(input.entity, DISPATCH_USAGE);
           return;
         }
         const crew = deps.crews.getByName(name);
@@ -458,9 +464,33 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           ctx.send(input.entity, dispatchRefusal);
           return;
         }
-        const message = input.args.replace(/^dispatch\s+\S+\s*/i, "").trim();
+        let message = input.args.replace(/^dispatch\s+\S+\s*/i, "").trim();
+        // `task:<id>` first binds an existing task; else a new one is
+        // created at value 0 (the dispatch pays no standing).
+        const taskRef = /^task:(\d+)(?:\s+|$)/i.exec(message);
+        let existing: Task | undefined;
+        if (taskRef) {
+          const taskId = Number(taskRef[1]);
+          existing = deps.tasks?.get(taskId);
+          if (!existing) {
+            ctx.send(input.entity, `Task #${taskId} not found.`);
+            return;
+          }
+          if (existing.status === "completed" || existing.status === "cancelled") {
+            ctx.send(input.entity, `Task #${taskId} is ${existing.status}; nothing to dispatch.`);
+            return;
+          }
+          if (existing.creatorId !== input.entity && !deps.tasks?.getClaim(taskId, input.entity)) {
+            ctx.send(
+              input.entity,
+              `Only task #${taskId}'s creator or a claimant can hand it to a crew.`,
+            );
+            return;
+          }
+          message = message.slice(taskRef[0].length).trim() || existing.title;
+        }
         if (!message) {
-          ctx.send(input.entity, "Usage: crew dispatch <name> <message>");
+          ctx.send(input.entity, DISPATCH_USAGE);
           return;
         }
 
@@ -480,16 +510,39 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         };
 
         try {
+          if (crew.state === "dissolved")
+            throw new CrewError(`Crew ${crew.name} is dissolved`, "dissolved");
+          const task =
+            existing ??
+            deps.tasks?.create({
+              title: message.slice(0, 160),
+              description: message,
+              creatorId: input.entity,
+              creatorName: caller.name,
+              standing: 0,
+            });
+          if (task && deps.db)
+            bindTaskToCrew(deps.db, task.id, {
+              crew: crew.id,
+              name: crew.name,
+              formation: crew.formation,
+            });
+          const taskLine = task
+            ? `\n(task #${task.id}: \`task claim ${task.id}\`, then \`task submit ${task.id} <result>\`)`
+            : "";
           deps.crews.dispatch(
             crew.id,
-            message,
+            `${message}${taskLine}`,
             { id: input.entity, name: caller.name },
             {
               beforeFirstPost: joinMembers,
             },
           );
           joinMembers();
-          ctx.send(input.entity, `Dispatched to crew "${crew.name}".`);
+          ctx.send(
+            input.entity,
+            `Dispatched to crew "${crew.name}"${task ? ` as task #${task.id}` : ""}.`,
+          );
         } catch (e) {
           if (e instanceof CrewError) ctx.send(input.entity, e.message);
           else throw e;

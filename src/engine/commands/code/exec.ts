@@ -62,7 +62,7 @@ import { dim, error as fmtError, header, separator, success } from "../../../net
 import { isLoopbackIp } from "../../../net/loopback";
 import { recordVerification } from "../../../outcomes/live";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
-import type { Connection, Entity, EntityId, RoomContext } from "../../../types";
+import type { Connection, CrewId, Entity, EntityId, RoomContext } from "../../../types";
 import { raiseForTool, redispatchHeldCommand } from "../../challenges";
 import { principalOf } from "../../gate-context";
 import { getRank } from "../../permissions";
@@ -80,6 +80,7 @@ import {
   entityNameForm,
   getActiveSessionId,
   getCodeProfile,
+  latestActiveArtifact,
   parseJsonObject,
   resolveSession,
   sameEntityName,
@@ -1420,9 +1421,11 @@ export function raiseEgressChallenge(
  * (`driver:<harness>`, `driver:none` when a person or a native resident
  * coded in place), where the commands ran (`runner:local`, `runner:container`,
  * or the sandbox provider id) and against what (`verify:candidate` for an
- * immutable candidate, `verify:live` for the working tree). Labels only.
+ * immutable candidate, `verify:live` for the working tree), plus
+ * `crew:<formation>` while a `code crew` dispatched in the session is live.
+ * Labels only.
  */
-function verificationApproach(
+export function verificationApproach(
   deps: CodeDeps & { db: MarinaDB },
   session: CodingSessionRow,
   background?: { workspace: WorkspaceRuntime; candidateId?: string },
@@ -1441,9 +1444,14 @@ function verificationApproach(
       runner = "local";
     }
   }
-  return [
+  const approach = [
     `driver:${label(session.driver || "none")}`,
     `runner:${label(runner)}`,
     `verify:${background?.candidateId ? "candidate" : "live"}`,
   ];
+  const dispatched = latestActiveArtifact(deps.db, session.id, "crew_dispatched");
+  const crewId = dispatched ? parseJsonObject(dispatched.metadata_json).crewId : undefined;
+  const crew = typeof crewId === "string" ? deps.crewManager?.get(crewId as CrewId) : undefined;
+  if (crew && crew.state !== "dissolved") approach.push(`crew:${label(crew.formation)}`);
+  return approach;
 }

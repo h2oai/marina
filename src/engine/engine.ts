@@ -96,6 +96,7 @@ import { onDefaultResolved, summarizeDefaultValue } from "./default-resolution";
 import { sanitizeEntityName } from "./entity-name";
 import { getErrorMessage, logRejection, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
+import { principalOf } from "./gate-context";
 import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
 import { assetDerivativesPending, drainAssetDerivatives } from "./media/asset-library";
@@ -355,6 +356,8 @@ export class Engine {
         db: this.db,
         onEvent: (event) => this.logEvent(event),
         resolveAgentId: (name) => this.entities.findAgentByName(name)?.id,
+        // A crew's `model-<name>` endpoint is answered by agents, never people.
+        servesEndpoint: (id) => principalOf(id) === "agent",
         logger: this.logger,
       });
       // Reattach persisted crews from previous boot. Idempotent.
@@ -529,7 +532,9 @@ export class Engine {
     // submission is a resolved result — recorded once, learned from.
     this.addEventListener((event) => observeOutcomeEvent(this.db, event));
     // How a task is being worked, taken while its crew is live (a one-off
-    // crew is gone by the time the creator's verdict arrives).
+    // crew is gone by the time the creator's verdict arrives). A task bound to
+    // a crew (`crew dispatch`) is that crew's work; otherwise the claimant's
+    // live crews stand in (`noteTaskApproach`).
     this.addEventListener((event) => {
       if (event.type !== "task_claimed" || !this.db) return;
       const claimant = this.entities.get(event.entity)?.name;
@@ -546,6 +551,12 @@ export class Engine {
     // Attention judges (MARINA_ATTENTION_JUDGE, default observe; a no-op when
     // off): deep replies and review verdicts, each checked against its outcome.
     this.addEventListener((event) => observeAttentionJudgeEvent(this.db, event));
+    // A crew member who (re)appears rejoins its crews' `model-<name>`
+    // endpoints: channel membership is per entity, and entities are per session.
+    this.addEventListener((event) => {
+      if (event.type !== "entity_enter" || !event.name || !this.crewManager) return;
+      for (const crew of this.crewManager.forAgent(event.name)) this.crewManager.syncEndpoint(crew);
+    });
     // Presence (`who`, `look`, `who watch`): derived from agent events.
     this.addEventListener((event) => this.presence.observe(event));
   }
