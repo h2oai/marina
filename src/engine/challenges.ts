@@ -96,6 +96,7 @@ import { positiveNumberFromEnv } from "./constants";
 import { sanitizeEntityName } from "./entity-name";
 import { getErrorMessage, tryLog } from "./errors";
 import {
+  currentGatePass,
   getCurrentCodingTarget,
   getCurrentCommand,
   grantCommandPass,
@@ -273,7 +274,9 @@ export function setChallengeHost(next: ChallengeHost | undefined, owner?: object
       ? (entityId, gateId, reason) => {
           const raw = getCurrentCommand(entityId);
           if (!raw) return reason;
-          return reason + raiseForCommand({ requesterId: entityId, gateId, command: raw, reason });
+          const held = raiseForCommand({ requesterId: entityId, gateId, command: raw, reason });
+          tellApproverStopped(entityId, gateId);
+          return reason + held;
         }
       : undefined,
   );
@@ -910,6 +913,36 @@ function holdsAuthority(approver: Entity, challenge: Challenge): boolean {
   return true;
 }
 
+/**
+ * The other safety gates `approver` could approve for this same held input:
+ * each is checked exactly as a hold on that gate would be (`authorize`), so an
+ * approval never covers a gate its approver could not have answered alone.
+ */
+function alsoApprovable(approver: Entity, challenge: Challenge): string[] {
+  const covered: string[] = [];
+  for (const id of Object.keys(SAFETY_GATES)) {
+    if (id === challenge.gateId) continue;
+    const asHeld: Challenge = { ...challenge, kind: "gate", gateId: id, minRank: undefined };
+    if (!authorize(approver, asHeld)) covered.push(id);
+  }
+  return covered;
+}
+
+/**
+ * An approved re-run stopped at a gate its approver could not cover: tell the
+ * approver now, so "running it now" is never the last word on a run that did
+ * not happen.
+ */
+function tellApproverStopped(requesterId: string, gateId: string): void {
+  const pass = currentGatePass(requesterId);
+  if (!pass?.approverId || !host) return;
+  host.send(
+    pass.approverId,
+    `Challenge ${pass.token} did not run: it also needs the ${gateId} gate, which your approval cannot cover ` +
+      `(an operator, or an owner holding ${gateId}, answers for it). It is held again for them.`,
+  );
+}
+
 function authorize(approver: Entity, challenge: Challenge): SettleError | undefined {
   if (isSelfOrChild(approver, challenge)) return "self";
   if (principalKind(approver) !== "person") return "agent";
@@ -1337,13 +1370,27 @@ export function settleChallenge(
     // A restored tool hold: its call is a world command, re-run in the slot.
     redispatchHeldCommand(challenge.requesterId, challenge.command, challenge.codingTarget);
   } else if (challenge.command) {
+    // One approval covers every gate the held input needs that this approver
+    // could approve on its own hold (same `authorize` rule, gate by gate), so
+    // an input behind two gates runs on one person's answer instead of
+    // bouncing between holds. A gate the approver cannot answer for still
+    // holds the re-run, and the approver is told (`tellApproverStopped`).
+    const alsoCovered = approver === "judge" ? [] : alsoApprovable(approver, challenge);
+    const gateIds = [...(challenge.gateId ? [challenge.gateId] : []), ...alsoCovered];
+    const demonstratesGateIds =
+      approver === "judge"
+        ? []
+        : gateIds.filter((id) =>
+            approvalDemonstrates(approver, { name: challenge.requesterName }, id),
+          );
     grantCommandPass(challenge.requesterId, challenge.command, {
       codingTarget: challenge.codingTarget,
-      gateIds: challenge.gateId ? [challenge.gateId] : [],
+      gateIds,
       rankWaived: challenge.minRank !== undefined,
       ...(challenge.minRank !== undefined ? { waivedRank: challenge.minRank } : {}),
       ...(approverId ? { approverId } : {}),
       ...(demonstrates ? { demonstrates: true } : {}),
+      demonstratesGateIds,
       approverName,
       token: challenge.token,
     });

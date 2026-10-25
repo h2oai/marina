@@ -48,6 +48,12 @@ export interface GatePass {
    * outside the requester's lineage approved an earnable gate's run.
    */
   demonstrates?: boolean;
+  /**
+   * When set, the gates whose approved check counts as a demonstration (a
+   * pass may cover several gates; each is judged on its own). Overrides
+   * `demonstrates`.
+   */
+  demonstratesGateIds?: string[];
   approverName: string;
   token: string;
 }
@@ -244,6 +250,11 @@ export function armGatePass(entityId: string, pass: GatePass | undefined): void 
   }
   if (pass) armed.set(entityId, pass);
   else armed.delete(entityId);
+}
+
+/** The approval armed for the command running now, if any (read only). */
+export function currentGatePass(entityId: string): Readonly<GatePass> | undefined {
+  return armedPass(entityId);
 }
 
 /** Consumes the armed approval for one gate check inside the passed command. */

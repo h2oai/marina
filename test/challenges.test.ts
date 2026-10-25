@@ -255,6 +255,54 @@ describe("challenges (engine)", () => {
     expect(db.getCompetence(builder.entity!, "admin.destructive")).toBeUndefined();
   });
 
+  it("one approval covers every gate the held input needs that the approver could approve", async () => {
+    // Like `run raw`: the router's gate (agent.run), then an imperative one (shell.exec).
+    engine.commands.registerBuiltin({
+      name: "twogate",
+      category: "Test",
+      help: "test command behind two gates",
+      minRank: 0,
+      gate: "agent.run",
+      handler: (ctx, input) => {
+        const gate = checkGateForExecution(db, input.entity, "shell.exec");
+        if (!gate.ok) {
+          ctx.send(input.entity, gate.reason ?? "refused");
+          return;
+        }
+        recordGateExecution(db, input.entity, "shell.exec", gate, "command:twogate");
+        ran.push("twogate");
+        ctx.send(input.entity, "both passed");
+      },
+    });
+
+    // The operator holds authority for both gates: one answer runs it.
+    await send(builder, "twogate");
+    const token = tokenIn(text(builder))!;
+    expect(token).toBeDefined();
+    await send(root, `challenge approve ${token}`);
+    await until(() => ran.includes("twogate"));
+    expect(text(builder)).toContain("both passed");
+
+    // The owner holds agent.run but not shell.exec: the re-run stops at
+    // shell.exec, and she is told it did not run instead of being left with
+    // "running it now". The operator's answer then covers both gates.
+    grant(db, alice.entity!, "agent.run");
+    builder.clear();
+    alice.clear();
+    await send(builder, "twogate");
+    const ownerToken = tokenIn(text(builder))!;
+    await send(alice, `challenge approve ${ownerToken}`);
+    await until(() => text(alice).includes(`Challenge ${ownerToken} did not run`));
+    expect(text(alice)).toContain("needs the shell.exec gate");
+    expect(ran.filter((r) => r === "twogate")).toHaveLength(1);
+    const shellToken = [...text(builder).matchAll(/\b(ch_[0-9a-f]{12})\b/g)]
+      .map((m) => m[1])
+      .find((t) => t !== ownerToken)!;
+    expect(shellToken).toBeDefined();
+    await send(root, `challenge approve ${shellToken}`);
+    await until(() => ran.filter((r) => r === "twogate").length === 2);
+  });
+
   it("deny and expiry reach the requester; `decision approve|deny` answer challenges too", async () => {
     await send(builder, "zap one");
     const first = tokenIn(text(builder))!;

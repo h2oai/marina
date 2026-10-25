@@ -22,6 +22,7 @@ import { RateLimiter } from "../../auth/rate-limiter";
 import { experimentalHelp } from "../../config/feature-status";
 import { modelComplete } from "../../model/complete";
 import { bold, dim, header, separator } from "../../net/ansi";
+import { providerSetupHint } from "../../net/model/provider-setup";
 import { ensembleSize } from "../../net/model-api/ensemble";
 import {
   CREW_ONLY_PATTERNS,
@@ -192,7 +193,10 @@ export function patternCommand(deps: PatternCommandDeps = {}): CommandDef {
       if (capped) return ctx.send(eid, `Not running: ${capped}.`);
       const members = (deps.members ?? defaultMembers)();
       if (members.length === 0) {
-        return ctx.send(eid, "No model is available to run the pattern's members.");
+        return ctx.send(
+          eid,
+          `No model is available to run the pattern's members. ${providerSetupHint()} \`readiness providers\` checks it.`,
+        );
       }
       if (running.has(eid))
         return ctx.send(eid, "A pattern run of yours is still going; wait for it.");

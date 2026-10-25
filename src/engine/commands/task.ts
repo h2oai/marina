@@ -39,6 +39,9 @@ import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input"
 
 const logger = new Logger();
 
+/** Rows `task list` shows unless `limit:N` asks for more. */
+const TASK_LIST_PAGE = 20;
+
 const TASK_SUBS = [
   "list",
   "info",
@@ -161,17 +164,33 @@ export function taskCommand(
             return;
           }
 
-          const status = arg && validStatuses.includes(arg) ? arg : "open";
-          const groupId = arg && !validStatuses.includes(arg) ? tokens[1] : tokens[2];
+          const listMods = parseModifiers(tokens.slice(1), { limit: { type: "int" } });
+          const listArgs = listMods.rest;
+          const limit = listMods.values.limit as number | undefined;
+          if (listMods.errors.length > 0 || (limit !== undefined && limit < 1)) {
+            ctx.send(
+              input.entity,
+              "Usage: task list [open|claimed|completed|cancelled] [group] [limit:N]",
+            );
+            return;
+          }
+          const first = listArgs[0]?.toLowerCase();
+          const status = first && validStatuses.includes(first) ? first : "open";
+          const groupId = first && !validStatuses.includes(first) ? listArgs[0] : listArgs[1];
+          const pageSize = limit ?? TASK_LIST_PAGE;
           const taskList = tasks.list({
             status,
             groupId,
             orderByStanding: true,
+            limit: pageSize,
           });
           if (taskList.length === 0) {
             ctx.send(input.entity, `No ${status} tasks.`);
             return;
           }
+          const total =
+            taskList.length < pageSize ? taskList.length : tasks.count({ status, groupId });
+          const hidden = total - taskList.length;
           const lines = [
             header(`${status.charAt(0).toUpperCase() + status.slice(1)} Tasks`),
             separator(),
@@ -185,6 +204,12 @@ export function taskCommand(
               return `  ${fmtId(t.id)} ${t.title}${bounty}${prio} ${dim(`— ${t.creatorName}`)}${group}`;
             }),
           ];
+          if (hidden > 0) {
+            const shown = [status, ...(groupId ? [groupId] : [])].join(" ");
+            lines.push(
+              dim(`  … ${hidden} more — \`task list ${shown} limit:${total}\` shows them all.`),
+            );
+          }
           ctx.send(input.entity, lines.join("\n"));
           return;
         }

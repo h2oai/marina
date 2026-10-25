@@ -544,7 +544,9 @@ function evaluateGateForExecution(
       mode: "approved",
       approvedBy: pass.approverName,
       ...(pass.approverId ? { witnessId: pass.approverId } : {}),
-      ...(pass.demonstrates ? { demonstrates: true } : {}),
+      ...((pass.demonstratesGateIds ? pass.demonstratesGateIds.includes(gateId) : pass.demonstrates)
+        ? { demonstrates: true }
+        : {}),
     };
   }
 
