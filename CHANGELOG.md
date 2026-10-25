@@ -289,6 +289,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`agent spawn` no longer drops `model:`, `role:` and `key:`.** The spawn options accepted only
+  the word pairs (`model x role y`) for these three; the documented `key:value` form (and
+  `--model x`, `role=y`) was silently ignored, so the agent got the default model and no role.
 - **`memory query` and `memory search` lead with each record's own id.** One line per result
   (`id <record id> · memory show <record id>`, subject, a short preview) comes before the JSON
   dump, whose first id is the space's. The dump and the structured payload are unchanged.
