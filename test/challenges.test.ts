@@ -3,7 +3,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { blindPanelCases, liveGateCases } from "../src/decisions/challenge-labels";
-import { judgeRecords, raiseForTool, resetChallengesForTests } from "../src/engine/challenges";
+import { listJudgeRecords, raiseForTool, resetChallengesForTests } from "../src/engine/challenges";
 import { raiseEgressChallenge } from "../src/engine/commands/code/exec";
 import { sessionEgressGrants } from "../src/engine/commands/code/runner";
 import { Engine } from "../src/engine/engine";
@@ -643,21 +643,27 @@ describe("challenge judge + pi adapter", () => {
         answered_role: "admin",
         judge_opinion: "allow",
       });
+      // The same answer in the one judge ledger, under the backend that judged it.
+      const [ledgerRow] = db.listJudgeLedger({ surface: "challenge" });
+      expect(ledgerRow).toMatchObject({
+        question: "agent.spawn",
+        subject: `challenge:${token}`,
+        opinion: "pass",
+        truth: "pass",
+        agreed: 1,
+      });
+      expect(ledgerRow!.judge).toContain("stub-jev");
 
-      // Earn agent.spawn: 25 people-approved cases the judge called allow.
+      // Earn agent.spawn: 25 people-approved cases this judge called allow.
       for (let i = 0; i < 25; i++) {
-        db.recordChallengeOutcome({
-          token: `ch_seed${i}`,
-          kind: "gate",
-          class: "agent.spawn",
-          requesterName: "Jay",
-          summary: "soft",
-          reason: "seed",
-          answer: "once",
-          answeredBy: "Root",
-          answeredRole: "admin",
-          judgeOpinion: "allow",
-          createdAt: Date.now(),
+        db.recordJudgeOpinion({
+          surface: "challenge",
+          question: "agent.spawn",
+          judge: ledgerRow!.judge,
+          subject: `challenge:ch_seed${i}`,
+          opinion: "pass",
+          truth: "pass",
+          opinedAt: Date.now(),
         });
       }
       process.env.MARINA_CHALLENGE_JUDGE = "on";
@@ -701,17 +707,27 @@ describe("judge records and case exports", () => {
     }) as never;
 
   it("earns a class only on enough approved allow calls, never a core gate", () => {
-    const many = (cls: string, n: number, answer = "once") =>
-      Array.from({ length: n }, () => row({ class: cls, answer }));
-    const records = judgeRecords([
-      ...many("agent.spawn", 30),
-      ...many("role.edit", 5),
-      ...many("world.lineage", 25),
-      ...many("world.lineage", 5, "deny"),
-      ...many("shell.exec", 40),
-      row({ class: "agent.spawn", answered_role: "judge" }),
-      row({ class: "agent.spawn", answer: "expired" }),
-    ]);
+    const db = new MarinaDB(":memory:");
+    let n = 0;
+    const many = (cls: string, count: number, truth: "pass" | "fail" = "pass") => {
+      for (let i = 0; i < count; i++)
+        db.recordJudgeOpinion({
+          surface: "challenge",
+          question: cls,
+          judge: "test:judge",
+          subject: `challenge:ch_${++n}`,
+          opinion: "pass",
+          truth,
+          opinedAt: n,
+        });
+    };
+    many("agent.spawn", 30);
+    many("role.edit", 5);
+    many("world.lineage", 25);
+    many("world.lineage", 5, "fail");
+    many("shell.exec", 40);
+    const records = listJudgeRecords(db);
+    db.close();
     const by = Object.fromEntries(records.map((r) => [r.class, r]));
     expect(by["agent.spawn"]).toMatchObject({ allowSaid: 30, allowApproved: 30, earned: true });
     expect(by["role.edit"]?.earned).toBe(false); // too few

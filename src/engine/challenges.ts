@@ -82,9 +82,10 @@
  */
 
 import { independentParties } from "../agent/standing";
-import { EARNED_JUDGE_MIN_LOWER, EARNED_JUDGE_MIN_N, earnedJudge } from "../decisions/earned-judge";
+import { EARNED_JUDGE_MIN_LOWER, EARNED_JUDGE_MIN_N } from "../decisions/earned-judge";
 import { harnessDecisionProvider } from "../decisions/engines";
 import { gateToolCall, maskSecretShapes, maskSensitiveText } from "../decisions/gate";
+import { judgeEarned, judgeModeFor, judgeStandings, recordJudgeOpinion } from "../decisions/judges";
 import { noteWorkFor } from "../learning/work";
 import type { MarinaDB } from "../persistence/database";
 import type { ChallengeHoldRow } from "../persistence/db-decisions";
@@ -179,7 +180,12 @@ interface Pending {
   /** Tool kind: the redacted call the judge scores. */
   judgeInput?: { args: Record<string, unknown>; description?: string };
   /** The judge's shadow opinion, once scored. */
-  judge?: { opinion: "allow" | "hold" | "none"; signals: Record<string, number> };
+  judge?: {
+    opinion: "allow" | "hold" | "none";
+    signals: Record<string, number>;
+    /** The backend that scored it (`<kind>:<model>`): agreement is counted per judge. */
+    judge: string;
+  };
   /** Approvers already told about this hold (in this process). */
   told: Set<string>;
 }
@@ -211,13 +217,12 @@ export function challengesEnabled(env: NodeJS.ProcessEnv = process.env): boolean
 export type JudgeMode = "off" | "observe" | "on";
 
 /**
- * `MARINA_CHALLENGE_JUDGE`: `observe` (default — score holds in shadow so the
+ * `MARINA_CHALLENGE_JUDGE` (else `MARINA_JUDGE`): `observe` (default — score holds in shadow so the
  * judge's agreement with people can be measured; nothing is scored without a
  * decision provider), `on` (may approve earned classes), `off`.
  */
 export function judgeMode(env: NodeJS.ProcessEnv = process.env): JudgeMode {
-  const v = env.MARINA_CHALLENGE_JUDGE?.trim().toLowerCase();
-  return v === "on" || v === "off" ? v : "observe";
+  return judgeModeFor("challenge", env).mode;
 }
 
 /** The judge earns a class after this many people-answered cases it called allow… (`earnedJudge`) */
@@ -764,6 +769,20 @@ function recordOutcome(
   } catch {
     // allow-empty-catch: the ledger is measurement, never a reason for an answer to fail.
   }
+  // The one judge ledger: the judge's shadow call against the person's
+  // answer. An expiry has no answer, and the judge's own approval is no truth.
+  if (entry.judge && answer !== "expired" && approver !== "judge")
+    recordJudgeOpinion(db, {
+      surface: "challenge",
+      question: challengeClass(c),
+      judge: entry.judge.judge,
+      subject: `challenge:${c.token}`,
+      opinion:
+        entry.judge.opinion === "allow" ? "pass" : entry.judge.opinion === "hold" ? "fail" : "none",
+      truth: answer === "deny" ? "fail" : "pass",
+      opinedAt: c.createdAt,
+      truthAt: Date.now(),
+    });
   // Lessons from work (MARINA_LESSONS_FROM_WORK): the answer's class and kind
   // only; the summary is writer context, never stored.
   noteWorkFor(db, c.requesterName, {
@@ -779,6 +798,8 @@ function recordOutcome(
 
 export interface JudgeRecord {
   class: string;
+  /** The backend (`<kind>:<model>`; `unknown` for answers recorded before the judge ledger). */
+  judge: string;
   /** People-answered cases the judge scored. */
   scored: number;
   /** …of which it said allow, and people approved / denied those. */
@@ -792,54 +813,31 @@ export interface JudgeRecord {
   earned: boolean;
 }
 
-/** The judge's record per class, from answered outcomes (pure). */
-export function judgeRecords(
-  rows: {
-    class: string;
-    answer: string;
-    answered_role: string | null;
-    judge_opinion: string | null;
-  }[],
-): JudgeRecord[] {
-  const by = new Map<string, JudgeRecord>();
-  for (const r of rows) {
-    if (r.answer === "expired" || r.answered_role === "judge") continue;
-    if (r.judge_opinion !== "allow" && r.judge_opinion !== "hold") continue;
-    const rec = by.get(r.class) ?? {
-      class: r.class,
-      scored: 0,
-      allowSaid: 0,
-      allowApproved: 0,
-      holdSaid: 0,
-      holdDenied: 0,
-      precisionLower: 0,
-      earned: false,
-    };
-    const approved = r.answer === "once" || r.answer === "always";
-    rec.scored++;
-    if (r.judge_opinion === "allow") {
-      rec.allowSaid++;
-      if (approved) rec.allowApproved++;
-    } else {
-      rec.holdSaid++;
-      if (!approved) rec.holdDenied++;
-    }
-    by.set(r.class, rec);
-  }
-  for (const rec of by.values()) {
-    // Precision of allow: people approved what the judge said to allow.
-    const { lower, earned } = earnedJudge(rec.allowApproved, rec.allowSaid);
-    rec.precisionLower = lower;
-    rec.earned = !OPEN_POSTURE_CORE.has(rec.class) && earned;
-  }
-  return [...by.values()].sort((a, b) => a.class.localeCompare(b.class));
-}
-
-/** The judge's record for every class, from the ledger. */
-export function listJudgeRecords(): JudgeRecord[] {
-  const db = host?.db;
+/**
+ * The judge's record per class and backend, from the one judge ledger
+ * (`challenge` surface: precision of allow, `earnedJudge`). A core gate's
+ * class is never earned.
+ */
+export function listJudgeRecords(db: MarinaDB | undefined = host?.db): JudgeRecord[] {
   if (!db) return [];
-  return judgeRecords(db.listChallengeOutcomes({ limit: 10_000 }));
+  return judgeStandings(db, { surface: "challenge" })
+    .map((s) => {
+      const scored = s.opinions - s.noOpinion - s.awaiting;
+      const holdSaid = scored - s.compared;
+      return {
+        class: s.question,
+        judge: s.judge,
+        scored,
+        allowSaid: s.compared,
+        allowApproved: s.agreed,
+        holdSaid,
+        // A hold the person approved anyway is the judge's false fail.
+        holdDenied: holdSaid - s.falseFail,
+        precisionLower: s.lower,
+        earned: !OPEN_POSTURE_CORE.has(s.question) && s.earned,
+      };
+    })
+    .sort((a, b) => a.class.localeCompare(b.class) || a.judge.localeCompare(b.judge));
 }
 
 function isSelfOrChild(approver: Entity, challenge: Challenge): boolean {
@@ -1380,7 +1378,7 @@ export function redispatchHeldCommand(
 }
 
 /**
- * The judge (`MARINA_CHALLENGE_JUDGE=observe|on`): score a hold in shadow —
+ * The judge (`MARINA_CHALLENGE_JUDGE=observe|on`, else `MARINA_JUDGE`): score a hold in shadow —
  * a held command, or a decision-gate tool hold (its redacted call) — and,
  * under `on`, for a class it has earned, approve it once.
  */
@@ -1410,6 +1408,7 @@ function maybeJudge(entry: Pending): void {
   if (!call) return;
   const provider = harnessDecisionProvider();
   if (!provider) return;
+  const judge = `${provider.kind}:${provider.model}`;
   gateToolCall(provider, call.tool, call.args, undefined, call.description)
     .then((decision) => {
       const live = pending.get(challenge.token);
@@ -1417,11 +1416,14 @@ function maybeJudge(entry: Pending): void {
       live.judge = {
         opinion: decision.error ? "none" : decision.action === "allow" ? "allow" : "hold",
         signals: decision.signals,
+        judge,
       };
       if (mode !== "on" || live.judge.opinion !== "allow") return;
       if (challenge.gateId && OPEN_POSTURE_CORE.has(challenge.gateId)) return;
-      const record = listJudgeRecords().find((r) => r.class === challengeClass(challenge));
-      if (!record?.earned) return;
+      const cls = challengeClass(challenge);
+      if (OPEN_POSTURE_CORE.has(cls)) return;
+      const db = host?.db;
+      if (!db || !judgeEarned(db, "challenge", judge, { question: cls })) return;
       earnedSeen++;
       if (earnedSeen % AUDIT_EVERY === 0) return; // an audit case: people answer it
       settleChallenge(challenge.token, "judge", "once", "judged safe — an earned class");

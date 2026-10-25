@@ -375,6 +375,7 @@ export const EVIDENCE_FENCE_POLICY: Readonly<Record<string, FenceRule>> = {
   pool: "refuse",
   guide: "refuse",
   outcome: "refuse",
+  judge: "refuse",
   learned: "refuse",
   novelty: "refuse",
   market: "refuse",

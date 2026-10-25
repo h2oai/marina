@@ -870,6 +870,7 @@ When the world has a decision backend (`MARINA_DECISIONS`, see [docs/architectur
 | `decision choose <question> \| <option> \| <option> [\| …]` | Pick among up to 8 options; returns the pick and its confidence |
 | `decision agreement` | How often each judge's opinion of a task submission matched the creator's approve/reject, per backend (needs `MARINA_DECISION_VERIFY=observe` or `on`) |
 | `decision qualify` | Run the labeled gate and route cases against this world's backend: gate accuracy, hold recall, false holds, route accuracy, latency, cost (~20 billed calls; rate limited) |
+| `judge stats [challenge\|verify\|attention\|outcome\|arbiter]` | Every judge's record from the one judge ledger, per surface and judge (per class for challenges): comparisons with a ground truth, agreement, the Wilson lower bound, earned or not, and about how many more it needs at its current rate. Says "no judge backend" when none is configured. `MARINA_JUDGE` sets every surface; `decision agreement`, `challenge stats` and `outcome agreement` are views of the same ledger |
 
 When the decision gate (`MARINA_DECISION_GATE=on`, see [docs/architecture/decisions.md](../architecture/decisions.md)) scores an agent's tool call in the "ask a person" band, it opens a **challenge**: the agent's creator and the admins get a token, the agent is told at once and keeps working, and an approval replays the call automatically. The same happens when any command meets a rank floor or a safety gate — see `challenge` below. Nobody answers their own ask.
 
