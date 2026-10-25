@@ -92,7 +92,11 @@ describe("pattern run", () => {
     expect((await run(cmd, "pattern run debate budget:9 -- t")).join()).toContain("at most 2");
     expect((await run(cmd, "pattern run debate")).join()).toContain("Usage");
     const empty = patternCommand({ members: () => [], complete: fakeComplete(calls) });
-    expect((await run(empty, "pattern run debate -- t")).join()).toContain("No model is available");
+    const refusal = (await run(empty, "pattern run debate -- t")).join();
+    expect(refusal).toContain("No model is available");
+    // The refusal names the fix: a provider key, `key add`, or a local runtime.
+    expect(refusal).toContain("OPENROUTER_API_KEY");
+    expect(refusal).toContain("key add");
     expect(calls).toEqual([]);
   });
 

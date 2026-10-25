@@ -4,6 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { getErrorMessage } from "../errors";
 import { getRank } from "../permissions";
 
 // One model-backed grounding pass per entity per window — `desire` is rank 0
@@ -140,9 +141,14 @@ export function desireCommand(deps: {
             dim(`Correct or add context: journey steer ${journey.id} <context>`),
           ].join("\n"),
         );
-      } catch {
+      } catch (err) {
         // The preserved journey remains useful in world-only mode. The initial
-        // response already makes no autonomous-work claim.
+        // response already makes no autonomous-work claim; say why there is
+        // no grounding pass.
+        ctx.send(
+          input.entity,
+          dim(`Model grounding unavailable — ${getErrorMessage(err)} Your journey is preserved.`),
+        );
       }
     },
   };

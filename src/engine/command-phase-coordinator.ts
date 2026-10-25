@@ -140,7 +140,11 @@ export class CommandPhaseCoordinator {
     // definition: the builtin's rank floor and gate govern the builtin
     // handler, and a gate execution must never be credited to a room handler.
     const room = this.host.rooms.get(entity.room);
-    const resolved = this.host.commands.resolveCommand(input.verb, room?.module.commands);
+    const resolved = this.host.commands.resolveCommand(
+      input.verb,
+      room?.module.commands,
+      input.tokens[0],
+    );
     const def = resolved?.def;
     const handler = resolved?.handler;
 

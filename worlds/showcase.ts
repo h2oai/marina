@@ -872,11 +872,16 @@ function seed(db: MarinaDB): void {
     { title: "Explore the Observatory and leave a note about what you find", standing: 5 },
     { title: "Explore the Audit Room and leave a note about what you find", standing: 5 },
   ];
+  // Every task, not the default page of 20: a seeded bounty pushed past the
+  // newest 20 must still be found, or each reboot adds it again.
+  const seededBounties = new Set(
+    db
+      .listTasks({ limit: null })
+      .filter((t) => t.validation_mode === "bounty")
+      .map((t) => t.title),
+  );
   for (const b of bounties) {
-    const existing = db
-      .listTasks()
-      .find((t) => t.title === b.title && t.validation_mode === "bounty");
-    if (!existing) {
+    if (!seededBounties.has(b.title)) {
       db.createTask({
         title: b.title,
         description: b.title,
