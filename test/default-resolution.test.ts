@@ -409,13 +409,13 @@ describe("a promotion flows through to the default", () => {
   });
 });
 
-describe("route evidence: observe by default, families from the role", () => {
+describe("route evidence: on by default, families from the role", () => {
   it("every family tag names a registered benchmark", () => {
     for (const name of Object.keys(BENCHMARK_FAMILIES)) expect(BENCHMARKS[name]).toBeDefined();
     expect(benchmarksInFamilies(["math"])).toEqual(["gsm8k", "math", "aime"]);
   });
 
-  it("records the evidence pick from the role's declared families and never applies it", () => {
+  it("under observe records the evidence pick from the role's declared families and never applies it; by default applies it", () => {
     const candidates = [
       { route: "fast", model: "openrouter/a/fast" },
       { route: "powerful", model: "openrouter/b/strong" },
@@ -455,7 +455,18 @@ describe("route evidence: observe by default, families from the role", () => {
       getTrait: (name) =>
         name === "numerate" ? { capabilities: JSON.stringify({ families: ["math"] }) } : undefined,
     };
-    const settings = routeEvidenceSettingsFromEnv({});
+    // The default acts on it.
+    const byDefault = applyRouteEvidence(
+      { route: "fast", model: "openrouter/a/fast" },
+      candidates,
+      "solver",
+      routeEvidenceSettingsFromEnv({}),
+      source,
+    );
+    expect(byDefault).toMatchObject({ route: "powerful", applied: true });
+    expect(byDefault.signals).toMatchObject({ evidence_mode: "on", evidence: "applied" });
+
+    const settings = routeEvidenceSettingsFromEnv({ MARINA_ROUTE_EVIDENCE: "observe" });
     expect(settings.mode).toBe("observe");
     const r = applyRouteEvidence(
       { route: "fast", model: "openrouter/a/fast" },

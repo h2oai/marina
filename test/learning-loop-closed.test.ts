@@ -12,17 +12,25 @@
  *   4. an agent's own `lessons` recall (the path its continuation prompt
  *      uses) serves that lesson;
  *   5. the competence map ranks the models from the same outcomes;
- *   6. a spawn-time route ACTUALLY CHANGES on that evidence
- *      (`MARINA_ROUTE_EVIDENCE=on`; the default `observe` records the pick).
+ *   6. a spawn-time route ACTUALLY CHANGES on that evidence, under the
+ *      default configuration (`observe` only records the pick);
+ *   7. a role's default model changes by earned promotion: the live pass
+ *      raises a proposal and a PERSON holding `role.edit` files it.
  *
- * Every hop is asserted; a hop with no production path is a `test.todo`
- * naming the gap.
+ * Every hop is asserted.
  */
 
-import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resolveRouteModel } from "../src/agent/agent-runtime";
 import { PlatformMemoryBackend } from "../src/agent/memory-platform";
+import { residentDefaultModel, setRoleModelSlots } from "../src/config/model-tiers";
 import type { DecisionProvider } from "../src/decisions/types";
+import {
+  LIVE_PROMOTION_MIN_PER_ARM,
+  liveProposalKey,
+  runLivePromotionPass,
+} from "../src/engine/live-promotion";
+import { grant } from "../src/engine/safety-gates";
 import { competenceMap, rankMethods } from "../src/forecast/competence";
 import { outcomeRefs } from "../src/forecast/routing-refs";
 import {
@@ -42,8 +50,14 @@ import { scopeProcessState } from "./process-state";
 const RULE = "Confirm every listed deliverable is present before submitting a task.";
 const FAST = "vendor/fast-coder";
 const STRONG = "vendor/strong-coder";
-/** Tasks per agent; also the route evidence's minimum n. */
-const N = 10;
+/** What a coder with no promoted default runs on: the incumbent of `role-model:coder`. */
+const CHEAP = "marina/cheap";
+/**
+ * Tasks per agent; also the route evidence's minimum n. Enough that each
+ * model has the live promotion's minimum per arm in both halves of the time
+ * split, with a margin for the split's boundary.
+ */
+const N = 2 * LIVE_PROMOTION_MIN_PER_ARM + 4;
 
 /** The stub decision backend: every judge question answered 0.9 (confident yes). */
 const judge = (): DecisionProvider =>
@@ -91,6 +105,12 @@ describe("the learning loop closes", () => {
         MARINA_ROUTE_EVIDENCE_LIVE: undefined,
         MARINA_ROUTE_EVIDENCE_FAMILIES: undefined,
         MARINA_ROUTE_EVIDENCE_MIN_N: String(N),
+        // The coder role resolves to its tier (no env pin), so `role-model:coder` is open.
+        MARINA_DEFAULT_MODEL: undefined,
+        MARINA_AGENT_MODELS: undefined,
+        MARINA_MODEL_TIER_CHEAP: undefined,
+        MARINA_MODEL_TIER_STRONG: undefined,
+        MARINA_WORKBENCH_MODEL: undefined,
       },
     });
     realFetch = globalThis.fetch;
@@ -106,6 +126,7 @@ describe("the learning loop closes", () => {
     try {
       await settleDelivery(world.db);
       disableOutcomeLearning(world.db);
+      setRoleModelSlots(undefined);
       await world.dispose();
     } finally {
       globalThis.fetch = realFetch;
@@ -113,7 +134,7 @@ describe("the learning loop closes", () => {
     }
   });
 
-  it("live work → tagged outcomes → trusted lesson → served to an agent → competence → a route changes", async () => {
+  it("live work → tagged outcomes → trusted lesson → served to an agent → competence → a route and a default change", async () => {
     const { db, engine } = world;
     // The world's learner, armed at boot as `main.ts` does — with stub writer and judge.
     enableOutcomeLearning(db, {
@@ -127,9 +148,11 @@ describe("the learning loop closes", () => {
     // Two world agents (owner-less, so their work is shared evidence) and a person.
     db.saveAgentConfig({ name: "Swift", model: FAST, role: "coder", spawnedBy: "system" });
     db.saveAgentConfig({ name: "Mighty", model: STRONG, role: "coder", spawnedBy: "system" });
+    db.saveAgentConfig({ name: "Plain", model: CHEAP, role: "coder", spawnedBy: "system" });
     const alice = world.login("Alice");
     const swift = world.login("Swift");
     const mighty = world.login("Mighty");
+    const plain = world.login("Plain");
     const run = async (
       who: { connection: { clear(): void; allTextJoined(): string }; entityId: EntityId },
       text: string,
@@ -142,9 +165,10 @@ describe("the learning loop closes", () => {
     // ── Hop 1: live work, approved or rejected by another account (a person) ──
     let task = 0;
     for (let i = 0; i < N; i++) {
-      for (const [worker, approve] of [
-        [swift, true],
-        [mighty, i < 2],
+      for (const [worker, name, approve] of [
+        [swift, "Swift", true],
+        [mighty, "Mighty", i < 2],
+        [plain, "Plain", i % 2 === 0],
       ] as const) {
         task++;
         expect(await run(alice, `task create Job ${task} | ship deliverable ${task}`)).toContain(
@@ -152,7 +176,6 @@ describe("the learning loop closes", () => {
         );
         expect(await run(worker, `task claim ${task}`)).toContain(`Claimed task #${task}`);
         expect(await run(worker, `task submit ${task} done`)).toContain("Submitted");
-        const name = worker === swift ? "Swift" : "Mighty";
         expect(
           await run(alice, `task ${approve ? "approve" : "reject"} ${task} ${name}`),
         ).toContain(approve ? "Approved" : "Rejected");
@@ -168,9 +191,9 @@ describe("the learning loop closes", () => {
     });
 
     // ── Hop 2: one outcome per verdict, tagged with family and method ──
-    const taskRows = db.listOutcomes({ kind: "task", limit: 100 });
+    const taskRows = db.listOutcomes({ kind: "task", limit: 1_000 });
     const verdicts = taskRows.filter((o) => o.source === "task:verdict");
-    expect(verdicts).toHaveLength(2 * N);
+    expect(verdicts).toHaveLength(3 * N);
     const swiftRefs = outcomeRefs(verdicts.find((o) => o.owner === "Swift")!.refs_json);
     expect(swiftRefs).toContain("family:work:task");
     expect(swiftRefs).toContain(`method:model:${FAST}`);
@@ -218,32 +241,45 @@ describe("the learning loop closes", () => {
     // ── Hop 5: competence evidence from the same outcomes ──
     const cells = competenceMap(db, { family: "work:task" });
     const model = rankMethods(cells, "work:task").find((r) => r.dimension === "model")!;
-    expect(model.ranked.map((c) => c.method)).toEqual([`model:${FAST}`, `model:${STRONG}`]);
+    expect(model.ranked.map((c) => c.method)).toEqual([
+      `model:${FAST}`,
+      `model:${CHEAP}`,
+      `model:${STRONG}`,
+    ]);
     expect(model.verdict).toBe("lead");
 
     // ── Hop 6: a spawn route changes on that evidence ──
     const events: EngineEvent[] = [];
     const spawn = () =>
       resolveRouteModel({ name: "Next", role: "coder" }, db, (e) => events.push(e));
-    // Default (`observe`): the router's pick stands; the evidence pick is recorded.
+    // Default (`on`): the measured route replaces the router's.
+    expect(await spawn()).toBe(FAST);
+    const applied = events.at(-1) as Extract<EngineEvent, { type: "agent_decision" }>;
+    expect(applied.signals?.evidence).toBe("applied");
+    // `observe`: the router's pick stands; the evidence pick is recorded.
+    process.env.MARINA_ROUTE_EVIDENCE = "observe";
     expect(await spawn()).toBe(STRONG);
     const observed = events.at(-1) as Extract<EngineEvent, { type: "agent_decision" }>;
     expect(observed.signals?.evidence).toBe("observed");
     expect(observed.signals?.evidence_pick).toBe("fast");
-    // `on`: the measured route replaces the router's.
-    process.env.MARINA_ROUTE_EVIDENCE = "on";
-    expect(await spawn()).toBe(FAST);
-    const applied = events.at(-1) as Extract<EngineEvent, { type: "agent_decision" }>;
-    expect(applied.signals?.evidence).toBe("applied");
+
+    // ── Hop 7: a role's default model changes by earned promotion ──
+    // The coder role resolves to its tier; the live pass judges the same
+    // outcomes on a time-split holdout and raises ONE proposal, filing nothing.
+    const SLOT = "role-model:coder";
+    expect(residentDefaultModel(db, process.env, "coder")).toBe(CHEAP);
+    expect(runLivePromotionPass(db)).toMatchObject({ proposed: 1 });
+    expect(db.listBenchmarkDefaults()).toHaveLength(0);
+    const key = liveProposalKey(SLOT, CHEAP, FAST);
+    expect(db.listOperationalAlerts("open").some((a) => a.alert_key === key)).toBe(true);
+    // A person holding role.edit files it; the coder role now runs on FAST.
+    grant(db, alice.entityId, "role.edit");
+    expect(await run(alice, `benchmark promote ${SLOT} ${FAST}`)).toContain(
+      `Promoted ${FAST} to ${SLOT}`,
+    );
+    expect(residentDefaultModel(db, process.env, "coder")).toBe(FAST);
 
     // Nothing left this process.
     expect(network).toEqual([]);
   });
-
-  test.todo(
-    "live work outcomes move a PROMOTED default (`resolveDefault`) — no production path: `fileSlotPromotion` is fed only by benchmark-ledger runs (`benchmark promote`, the forecasting selection CLIs), never by the outcome path",
-  );
-  test.todo(
-    "the route changes under the DEFAULT configuration — `MARINA_ROUTE_EVIDENCE` defaults to `observe`, so live evidence is recorded and the router's pick stands until an operator sets `on`",
-  );
 });

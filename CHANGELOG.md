@@ -89,6 +89,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored rounds. The resident Scores are checked by shape. The ten arena formations still on
   their own code stay byte-identical to their frozen copy (`test/arena-formations-legacy.test.ts`)
   until they move to the catalogue.
+- **Spawn-time route evidence is on by default** (`MARINA_ROUTE_EVIDENCE`, was `observe`). A
+  `model:route` spawn takes the evidence's pick only when at least two of its own candidates have
+  `MARINA_ROUTE_EVIDENCE_MIN_N` items (benchmark ledger or shared live work); otherwise, and on
+  any error, the router's choice stands as before. `observe` keeps the old record-only behaviour.
+- **The learning-loop test closes every hop.** `test/learning-loop-closed.test.ts` now also shows
+  the route changing under the default configuration and a role's default model changing by
+  earned promotion: the live pass raises one proposal from person-approved work, and a person
+  holding `role.edit` files it with `benchmark promote role-model:<role> <model>`.
 - **One judge service.** The challenge judge, the task-submission verifier, the attention judges,
   the outcome judges and the Arbiter now record every opinion and its later ground truth in one
   ledger (`judge_ledger`, migration 179). The migration copies the rows already kept in
