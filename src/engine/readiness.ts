@@ -18,6 +18,9 @@ import { activeGateQuestions, BASELINE_GATE_QUESTIONS } from "../decisions/gate-
 import { decisionHealth } from "../decisions/health";
 import { describeDecisionSettings } from "../decisions/settings";
 import { competenceMap } from "../forecast/competence";
+import { describeUpstreamMode, upstreamMode } from "../learned/import";
+import { importedLessonStats, importedLessonsMode } from "../learned/serve";
+import { pinnedPublisherKeys } from "../learned/sign";
 import { providerSetupHint } from "../net/model/provider-setup";
 import { describeRouteHealth } from "../net/model/route-health";
 import { localModelApiKey } from "../net/model-api/shared";
@@ -731,6 +734,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   if (arena.configured) checks.push(arenaFilingCheck());
   // Not entered: no check at all — the arena is opt-in, not a missing capability.
   checks.push(supervisedResidentsCheck(engine, env));
+  if (engine.db) checks.push(learnedCheck(engine.db, env));
 
   // ── Competence map — what the resolved record says each method is good at ─
   try {
@@ -937,6 +941,79 @@ export function supervisedResidentsCheck(
     status: "ok",
     optional: true,
     detail: `on — ${residents.length} enrolled, ${present} present; launch with \`marina supervise\``,
+  };
+}
+
+/**
+ * Learned bundles: what imports `MARINA_UPSTREAM` allows (unset: open bundles
+ * signed by a pinned key only), each imported bundle (name, generation,
+ * signed or unsigned), and its lessons — imported, served, confirmed by a
+ * local lesson, retired — with the last import. Optional: a world without
+ * bundles is complete.
+ */
+export function learnedCheck(
+  db: NonNullable<Engine["db"]>,
+  env: NodeJS.ProcessEnv = process.env,
+): ReadinessCheck {
+  const label = "Learned bundles";
+  let pinned = 0;
+  try {
+    pinned = pinnedPublisherKeys(env).length;
+  } catch {
+    // allow-empty-catch: a malformed MARINA_LEARNED_PUBLISHER_KEYS pins nothing; import reports it
+  }
+  const imports = `imports ${describeUpstreamMode(upstreamMode(env), pinned)}`;
+  let stats: ReturnType<typeof importedLessonStats>;
+  try {
+    stats = importedLessonStats(db);
+  } catch {
+    return {
+      id: "learned",
+      label,
+      status: "off",
+      optional: true,
+      detail: `no learned-bundle tables in this database; ${imports}`,
+    };
+  }
+  if (stats.bundles.length === 0)
+    return {
+      id: "learned",
+      label,
+      status: "off",
+      optional: true,
+      detail: `no bundle imported; ${imports}`,
+      remediation:
+        "Name bundles in MARINA_BOOTSTRAP_BUNDLES, or run `marina learned import` (docs/guides/learned-bundles.md).",
+    };
+  const mode = importedLessonsMode(db, env);
+  const bundles = stats.bundles
+    .slice(0, 5)
+    .map((b) => `${b.name} gen ${b.generation} (${b.signed ? "signed" : "unsigned"})`)
+    .join(", ");
+  const l = stats.lessons;
+  const total = l.active + l.retired + l.revoked;
+  const last = stats.lastImportAt
+    ? new Date(stats.lastImportAt).toISOString().slice(0, 16).replace("T", " ")
+    : "never";
+  return {
+    id: "learned",
+    label,
+    status: mode === "on" || total === 0 ? "ok" : "degraded",
+    optional: true,
+    detail:
+      `${stats.bundles.length} bundle(s): ${bundles}${stats.bundles.length > 5 ? ", …" : ""}; ` +
+      `${total} imported lesson(s) (${l.active} active, ${l.retired + l.revoked} retired) — ` +
+      `serving ${mode}: ${stats.served} served, ${stats.observed} observed, ` +
+      `${stats.confirmed} confirmed locally, ${stats.contradicted} contradicted; ` +
+      `last import ${last}; ${imports}`,
+    ...(mode === "on" || total === 0
+      ? {}
+      : {
+          remediation:
+            mode === "observe"
+              ? "MARINA_IMPORTED_LESSONS=observe records what would be served; set it to on (or unset it) to serve them."
+              : "MARINA_IMPORTED_LESSONS=off: imported lessons are never served; unset it to serve them.",
+        }),
   };
 }
 

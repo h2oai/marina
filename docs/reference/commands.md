@@ -5535,7 +5535,7 @@ Usage: lessons <topic> [domain:<forecast|code|tools|benchmark|arena|research|met
        lessons retire <id> reason:<text> [domain:<forecast|code|tools|benchmark|arena|research|meta>] | lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>
        lessons supersede <id> reason:<text> -- <replacement lesson>
 
-Every verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. A wrong lesson is retired, never erased: retire/supersede close its validity (recall stops serving it; its history stays readable) and need role.edit — a lesson steers every agent it is recalled for. Criteria retirements preview until confirm:yes.
+Every verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. Lessons imported from a learned bundle are labelled (imported) and served after this world's own (MARINA_IMPORTED_LESSONS). A wrong lesson is retired, never erased: retire/supersede close its validity (recall stops serving it; its history stays readable) and need role.edit — a lesson steers every agent it is recalled for. Criteria retirements preview until confirm:yes.
 
 Category: Knowledge. Minimum rank: 0.
 Aliases: none.

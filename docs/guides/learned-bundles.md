@@ -7,16 +7,19 @@ bundle is signed by a publisher. Before anything is imported, the bundle is
 checked against publisher keys that the operator pinned.
 
 Imported knowledge is never trusted on arrival. Lessons arrive with the trust
-level `imported`. They stay below anything this Marina learned itself until its
-own outcomes confirm them.
+level `imported`. Agents are served them, labelled `imported`, below anything
+this Marina learned itself, until its own outcomes confirm or contradict them.
 
-Nothing changes for an install that never exports or imports a bundle. Imports
-are off by default (`MARINA_UPSTREAM=off`).
+Nothing changes for an install that never exports or imports a bundle. With
+`MARINA_UPSTREAM` unset, the only bundles that import are open bundles signed
+by a pinned publisher key. No key is pinned by default, so nothing imports
+until an operator pins one or sets `MARINA_UPSTREAM=on`.
 
 - [What a bundle contains](#what-a-bundle-contains)
 - [Starting fresh from a bundle](#starting-fresh-from-a-bundle)
 - [Export](#export)
 - [Verify, diff and import](#verify-diff-and-import)
+- [Serving imported lessons](#serving-imported-lessons)
 - [Licence, access and slices](#licence-access-and-slices)
 - [Entitlements for paid and private slices](#entitlements-for-paid-and-private-slices)
 - [Worlds (`marina.world.v1`)](#worlds-marinaworldv1)
@@ -238,7 +241,7 @@ Import also runs the export scans again.
 
 | Class | Where it lands |
 |---|---|
-| Lessons | `upstream:lessons:<domain>` spaces owned by the `marina:upstream` account. Each lesson has trust `imported`, its original `resolved_at` (so the leakage rule applies unchanged) and the publisher's score as `publisher_rank`. Imported lessons are never written into `lessons:*`, so they are not served as local lessons. |
+| Lessons | `upstream:lessons:<domain>` spaces owned by the `marina:upstream` account. Each lesson has trust `imported`, its original `resolved_at` (so the leakage rule applies unchanged), its serving scope (`scope`, `families`, `scope_family`) and the publisher's score as `publisher_rank`. The boards it names become `eval:<board>` refs. Imported lessons are never written into `lessons:*`; they are served from their own spaces, labelled `imported` (see [Serving imported lessons](#serving-imported-lessons)). |
 | Conventions | The `upstream:conventions` space, with trust `imported`. |
 | Defaults | `upstream_default_seeds`, and only for a slot that has no local `benchmark_defaults` row. `resolveDefault` reads the database's active seeds below every local layer (`upstreamSeedFor` in `src/learned/upstream-seed.ts`) and traces the answer as source `upstream`. A seed answers nothing once a local default exists for its slot, and the operator's env value always wins. |
 | Evidence | `evidence_priors`, down-weighted (weight 0.25, at most 50 items per cell). Evidence never enters `benchmark_runs` or `benchmark_items`. |
@@ -261,7 +264,47 @@ that citation, then:
 - adds `confirmed_locally_by` to the imported record's metadata.
 
 The imported record itself keeps trust `imported`. The trusted knowledge is the
-local lesson that confirmed it.
+local lesson that confirmed it, and recall serves that lesson instead.
+
+**When imports are allowed.** `MARINA_UPSTREAM` has three settings:
+
+| Value | What imports |
+|---|---|
+| `on` | Any bundle that verifies, subject to the access rules below. |
+| unset (default) | Only a bundle signed by a pinned publisher key whose access and every slice are `open`. An unsigned bundle, a `private` or `token` slice, an entitlement or `--own` never helps. Anything else is refused as `off` refuses it, with nothing written. The built-in pinned key list is empty, so this imports nothing until a key is pinned. |
+| `off` | Nothing, except bundles named by `MARINA_BOOTSTRAP_BUNDLES`. |
+
+## Serving imported lessons
+
+Imported lessons reach agents through the same lesson recall as the world's
+own lessons: the resident `[Lessons]` section, `lessons <topic>`, forecasts,
+Code Mode tasks and opted-in passthru requests. `MARINA_IMPORTED_LESSONS`
+controls it:
+
+| Value | Effect |
+|---|---|
+| unset (default) | `on` once anything has been imported. |
+| `on` | Imported lessons are recalled beside local ones. |
+| `observe` | What would be served is recorded (`upstream_events` action `observed`), and nothing is served. |
+| `off` | Imported lessons are never read. Every surface is exactly as without imports. |
+
+Served imported lessons follow these rules:
+- **Labels.** Each is shown as `<lesson> (imported)`, or `(imported, unsigned)` when its bundle was unsigned.
+- **Rank.** Each is ranked after every local `trusted` lesson and every curator's lesson. Rejected and unjudged lessons are never served.
+- **Scope.** Family scoping, leakage rule 2 and the as-of fence apply exactly as for local lessons:
+  - a lesson scoped to a family reaches only work of that family;
+  - a lesson tagged for a board stays out of that board's measurements;
+  - under an evidence cutoff a lesson is visible only after its `resolved_at`, and an undated lesson is never visible.
+- **Owner scope.** A person's own lessons are never exported, and imported lessons are shared like the world's pool.
+- **Local evidence moves them.** When the outcome loop writes a trusted lesson into the shared pool, the judge also sees the nearest imported lessons:
+  - a local lesson whose rule matches an imported one cites and confirms it, and serves in its place;
+  - a local lesson the judge finds contradicting one retires it (an `upstream_events` `contradicted` row). Importing the same version again leaves it retired.
+
+  A person's private work never confirms or retires imported lessons.
+
+Serving needs no model provider. Readiness `learned` reports each imported
+bundle (name, generation, signed or unsigned), how many lessons were imported,
+served, observed, confirmed locally and retired, and the last import.
 
 ## Licence, access and slices
 
@@ -424,5 +467,8 @@ countersignatures are later phases.
 | `learned seeds` | Each seeded slot, and whether a local default shadows it. |
 | `learned priors [family:<f>]` | Each prior, with its raw counts and its weighted counts. |
 | `learned events [limit:<n>]` | The audit trail. |
+
+Readiness `learned` (`readiness`, `GET /api/readiness`) summarises the same
+state, with what `MARINA_UPSTREAM` allows.
 
 Export and import stay operator acts.

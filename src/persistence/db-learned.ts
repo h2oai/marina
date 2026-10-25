@@ -363,6 +363,26 @@ export function listUpstreamEvents(
     .all(opts.artifactId ?? null, opts.limit ?? 50) as UpstreamEventRow[];
 }
 
+/**
+ * How many distinct items have an upstream event with `action` (optionally of
+ * one artifact, or one item): the served / observed / contradicted counts the
+ * `learned` readiness line reports, and the import's "retired locally" check.
+ */
+export function countUpstreamEventItems(
+  reader: Database,
+  action: string,
+  opts: { artifactId?: string; itemKey?: string } = {},
+): number {
+  const row = reader
+    .query(
+      `SELECT count(DISTINCT artifact_id || char(0) || item_key) AS n FROM upstream_events
+       WHERE action = ?1 AND item_key IS NOT NULL
+         AND (?2 IS NULL OR artifact_id = ?2) AND (?3 IS NULL OR item_key = ?3)`,
+    )
+    .get(action, opts.artifactId ?? null, opts.itemKey ?? null) as { n: number } | null;
+  return row?.n ?? 0;
+}
+
 // ─── Export allow-list readers (read-only) ──────────────────────────────────
 
 /**
