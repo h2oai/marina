@@ -13,8 +13,9 @@
  *              round-1 forecast); round two reads `delphiSummary`
  *
  * Moved here verbatim from `src/arena/formations.ts` (which re-exports them);
- * `test/formation-equivalence-arena.test.ts` holds every arena formation
- * byte-identical to the frozen pre-catalogue implementation.
+ * `test/arena-formations-legacy.test.ts` holds the arena formations still on
+ * their own code byte-identical to the frozen pre-catalogue implementation;
+ * the catalogue's are held by behaviour (`test/formation-behaviour.test.ts`).
  */
 
 /** A member's forecast or the start forecast: a normal. */

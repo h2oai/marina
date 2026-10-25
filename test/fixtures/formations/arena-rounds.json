@@ -1,5 +1,5 @@
 {
-  "note": "Stored arena rounds for the formation equivalence test (test/formation-equivalence-arena.test.ts). Synthetic series in the arena's shapes; never edit to make a test pass.",
+  "note": "Stored arena rounds for the arena formation tests (test/arena-formations-legacy.test.ts, test/formation-behaviour.test.ts). Synthetic series in the arena's shapes; never edit to make a test pass.",
   "rounds": [
     {
       "round": {
