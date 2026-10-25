@@ -83,9 +83,9 @@ describe("emergent orchestration — recognition loop", () => {
       "sharding",
     ] as const;
 
-    it("are listed before custom, with a fit", () => {
+    it("are listed before freeform, with a fit", () => {
       const names: readonly string[] = ORCHESTRATION_PATTERNS;
-      expect(names[names.length - 1]).toBe("custom");
+      expect(names[names.length - 1]).toBe("freeform");
       for (const pattern of ADDED) {
         expect(names).toContain(pattern);
         expect(PATTERN_FIT[pattern].shapes.length).toBeGreaterThan(0);
@@ -140,7 +140,7 @@ describe("emergent orchestration — recognition loop", () => {
 
     it("every built-in pattern has a runtime brief", () => {
       for (const pattern of ORCHESTRATION_PATTERNS) {
-        if (pattern === "custom") continue;
+        if (pattern === "freeform") continue;
         expect(CREW_BRIEFS[pattern as CrewFormation], pattern).toBeDefined();
       }
     });

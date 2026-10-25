@@ -1560,12 +1560,12 @@ Effect: read.
 - `field-0` (`room`): text, optional group `option-0`.
 - Group `option-0`: `room`.
 
-### `build formation [room] <debate|chorus|verification|off>`
+### `build formation [room] <chorus|debate|verification|off>`
 
 Effect: write.
 
 - `field-0` (`room`): text, optional group `option-0`.
-- `field-1` (`debate|chorus|verification|off`): text, required, choices `debate`, `chorus`, `verification`, `off`.
+- `field-1` (`chorus|debate|verification|off`): text, required, choices `chorus`, `debate`, `verification`, `off`.
 - Group `option-0`: `room`.
 
 ### `build link [from] <exit> <to>`
@@ -3683,7 +3683,7 @@ Usage:
   crew stall <name> <agent> [reason]
   crew complete <name> -- <summary>
   crew dissolve <name> [reason]
-Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding, freeform
+Formations (the formation catalogue; `crew info` shows each one's protocol): deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding, freeform
 Artifact kinds: map, reduce, synthesis, draft
 
 Category: Coordination. Minimum rank: 0.
@@ -5547,7 +5547,7 @@ Usage: lessons <topic> [domain:<forecast|code|tools|benchmark|arena|research|met
        lessons retire <id> reason:<text> [domain:<forecast|code|tools|benchmark|arena|research|meta>] | lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>
        lessons supersede <id> reason:<text> -- <replacement lesson>
 
-Every verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. A wrong lesson is retired, never erased: retire/supersede close its validity (recall stops serving it; its history stays readable) and need role.edit — a lesson steers every agent it is recalled for. Criteria retirements preview until confirm:yes.
+Every verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. Lessons imported from a learned bundle are labelled (imported) and served after this world's own (MARINA_IMPORTED_LESSONS). A wrong lesson is retired, never erased: retire/supersede close its validity (recall stops serving it; its history stays readable) and need role.edit — a lesson steers every agent it is recalled for. Criteria retirements preview until confirm:yes.
 
 Category: Knowledge. Minimum rank: 0.
 Aliases: none.
@@ -7382,7 +7382,7 @@ Effect: read.
 
 - `field-0` (`name`): text, required.
 
-### `project <name> orchestrate custom <description>`
+### `project <name> orchestrate freeform <description>`
 
 Effect: write.
 

@@ -24,6 +24,7 @@ import {
   SWARM_TEMPLATE,
   SYMBIOSIS_TEMPLATE,
   type TemplateNote,
+  type TemplatePattern,
   TOURNAMENT_TEMPLATE,
   VERIFICATION_TEMPLATE,
 } from "../src/world/templates/orchestration";
@@ -49,7 +50,7 @@ const TEMPLATES: Record<string, TemplateNote[]> = {
 };
 
 const ADDED = ["delphi", "tournament", "verification", "auction", "ledger", "sharding"];
-const BUILTIN = ORCHESTRATION_PATTERNS.filter((p) => p !== "custom");
+const BUILTIN = ORCHESTRATION_PATTERNS.filter((p): p is TemplatePattern => p !== "freeform");
 /** Supported spellings that are deliberately absent from `usage` (the bare
  *  `memory set/get/...` forms of `memory kv`, documented in memory.ts). */
 const LEGACY_BARE_FORMS = new Set(["memory set"]);

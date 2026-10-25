@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Crew formations — runtime form of the 16 orchestration patterns.
+ * Crew formations — the crew runtime of the catalogue's formations.
  *
  * Three runtime layers, each measured in the 2026-09 orchestration sweeps
  * (overview: docs/architecture/orchestration.md):
@@ -37,18 +37,25 @@
  * instead (`requestProtocolLine`): verification, deliberation, tournament and
  * delphi consult named specialists by bounded awaited tells.
  *
- * Every formation but `freeform` is an entry in the formation catalogue
+ * A crew is a running instance of a catalogue formation
  * (`src/orchestration/formations/catalogue.ts`, `crewFormationEntry`): the
- * catalogue holds its one-line description, its Score templates (where it
- * also runs as one task — typed forecasts, free-text patterns, arena rounds)
- * and the protocol phrases its brief must keep; `test/formation-catalogue.test.ts`
- * fails when a brief drifts from its entry. Crew-only formations stay crew
- * protocols here.
+ * catalogue holds its name and aliases, one-line description, roles,
+ * protocol, Score templates (where it also runs as one task — typed
+ * forecasts, free-text patterns, arena rounds) and the protocol phrases its
+ * brief must keep; `test/formation-catalogue.test.ts` fails when a brief
+ * drifts from its entry. The brief here is the crew-runtime wording of that
+ * protocol, and a dispatch offers the formation's Score steps where it has a
+ * text template (`scoreStepsLine`).
  */
 
-import { type FormationEntry, formationEntry } from "../orchestration/formations/catalogue";
+import {
+  CREW_FORMATION_NAMES,
+  type CrewFormationName,
+  canonicalFormationName,
+  type FormationEntry,
+  formationEntry,
+} from "../orchestration/formations/catalogue";
 import type { CrewFormation } from "../types";
-import { normalizePatternName } from "../world/templates/orchestration";
 
 /**
  * Protocol-priority preamble prepended to every formation brief. Measured in
@@ -137,12 +144,34 @@ export const CREW_BRIEFS: Record<CrewFormation, string> = {
 };
 
 /**
- * The catalogue entry a crew formation runs (undefined for `freeform`, which
- * has no fixed shape): its brief above is the crew-runtime form of that entry.
+ * The catalogue entry a crew formation runs (legacy names resolved; undefined
+ * for a name that is not a crew formation): its brief above is the
+ * crew-runtime form of that entry.
  */
-export function crewFormationEntry(formation: CrewFormation): FormationEntry | undefined {
-  const entry = formationEntry(normalizePatternName(formation));
+export function crewFormationEntry(formation: string): FormationEntry | undefined {
+  const entry = formationEntry(canonicalFormationName(formation));
   return entry?.crew ? entry : undefined;
+}
+
+/** The crew formations, as help and refusals list them (catalogue names only). */
+export const CREW_FORMATION_HELP = CREW_FORMATION_NAMES.join(", ");
+
+/**
+ * Validate a crew formation against the catalogue: its catalogue name, or
+ * the refusal. A catalogue formation with no crew protocol (`ensemble`,
+ * `skeptic`) is refused with where it does run.
+ */
+export function resolveCrewFormation(
+  raw: string,
+): { formation: CrewFormationName } | { error: string } {
+  const name = canonicalFormationName(raw);
+  const entry = formationEntry(name);
+  if (entry?.crew) return { formation: entry.name as CrewFormationName };
+  if (entry)
+    return {
+      error: `"${name}" is a catalogue formation with no crew protocol (it runs through \`pattern run\` or \`forecast\`). Crew formations: ${CREW_FORMATION_HELP}`,
+    };
+  return { error: `Unknown formation "${raw}". Crew formations: ${CREW_FORMATION_HELP}` };
 }
 
 /**
@@ -172,7 +201,7 @@ const BRIEF_ROUTED_FORMATIONS = new Set<CrewFormation>([
  * channel instruction, which would contradict their brief.
  */
 export function dispatchDepositorLine(formation: CrewFormation, depositor: string): string {
-  const canonical = normalizePatternName(formation) as CrewFormation;
+  const canonical = canonicalFormationName(formation) as CrewFormation;
   if (BRIEF_ROUTED_FORMATIONS.has(canonical)) {
     return (
       `(Designated depositor: ${depositor}. Only ${depositor} writes the final deliverable ` +
@@ -236,7 +265,7 @@ export function buildFormationBrief(
   goal: string,
   names: FormationNames = {},
 ): string {
-  const canonical = normalizePatternName(formation) as CrewFormation;
+  const canonical = canonicalFormationName(formation) as CrewFormation;
   const header = `[formation:${canonical}] crew goal: ${goal || "(unspecified)"}`;
   const brief = CREW_BRIEFS[canonical];
   if (!brief) return `${header}\n${PROTOCOL_PRIORITY}`;
@@ -289,7 +318,7 @@ export function dispatchStartMove(
   formation: CrewFormation,
   names: FormationNames = {},
 ): string | undefined {
-  const move = START_MOVES[normalizePatternName(formation) as CrewFormation];
+  const move = START_MOVES[canonicalFormationName(formation) as CrewFormation];
   if (!move) return undefined;
   return move({
     lead: names.lead ?? "the lead",
@@ -397,7 +426,7 @@ export function pickConsultants(
   responderModel?: string,
   count = CONSULTS_PER_REQUEST,
 ): Consultant[] {
-  const protocol = REQUEST_PROTOCOLS[normalizePatternName(formation) as CrewFormation];
+  const protocol = REQUEST_PROTOCOLS[canonicalFormationName(formation) as CrewFormation];
   if (!protocol || count <= 0) return [];
   const usedVendors = new Set([modelVendor(responderModel)].filter(Boolean));
   const picked: Consultant[] = [];
@@ -425,7 +454,7 @@ export function requestProtocolLine(
   consultants: readonly Consultant[],
   timeoutMs = CONSULT_TIMEOUT_MS,
 ): string | undefined {
-  const protocol = REQUEST_PROTOCOLS[normalizePatternName(formation) as CrewFormation];
+  const protocol = REQUEST_PROTOCOLS[canonicalFormationName(formation) as CrewFormation];
   if (!protocol || consultants.length === 0) return undefined;
   const list = consultants
     .map((c) => `${c.name} (${CONSULT_ROLE_ASPECTS[c.role] ?? c.role})`)
@@ -445,7 +474,8 @@ export interface MediatorCrewView {
 
 /**
  * A formation mediator turns crew-manager events into at most ONE structural
- * next-step line, posted on the crew channel as `[formation-mediator] …`.
+ * next-step line, posted on the crew channel as `[formation-mediator]
+ * <formation>: …` with the formation's catalogue name (as a room's are).
  * Pure functions: no timers, no state, no LLM. Return undefined to stay
  * silent. The engine-side model_request reminders (model-api) remain the
  * liveness guarantee; mediators only sharpen the next structural step.
@@ -464,7 +494,7 @@ export interface FormationMediator {
 export const FORMATION_MEDIATORS: Partial<Record<CrewFormation, FormationMediator>> = {
   pipeline: {
     onDispatch: (crew) =>
-      `Pipeline: first stage owner starts now; others wait for a handoff. Mark each: ` +
+      `First stage owner starts now; others wait for a handoff. Mark each: ` +
       `\`crew stage ${crew.name} <stage>\`.`,
     onStageCompleted: (_crew, stage, agentName) =>
       `Stage "${stage}" done by ${agentName}. Next stage owner: start from the handoff above.`,
@@ -507,5 +537,5 @@ export const FORMATION_MEDIATORS: Partial<Record<CrewFormation, FormationMediato
 
 /** Look up the mediator for a formation (legacy names normalized). */
 export function getFormationMediator(formation: CrewFormation): FormationMediator | undefined {
-  return FORMATION_MEDIATORS[normalizePatternName(formation) as CrewFormation];
+  return FORMATION_MEDIATORS[canonicalFormationName(formation) as CrewFormation];
 }

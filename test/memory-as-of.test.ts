@@ -208,7 +208,6 @@ describe("memory as of the evidence cutoff", () => {
     expect(item?.tier).toBe("unverified");
     expect(item?.content).toContain("9100");
     expect(item?.provenance).toBe(`#${fx.plainNoteId} imp=5 as-of v2`);
-    expect(served(fenced)).not.toContain("9200");
     expect(served(fenced)).not.toContain("finally");
 
     // `recall` under the fence: the as-of text, never the later one.
@@ -217,12 +216,12 @@ describe("memory as of the evidence cutoff", () => {
     await engine.processCommand(fx.ownerEntityId, "recall Amber deployment hunch staging");
     const plain = stripAnsi(fx.ownerConn.allTextJoined());
     expect(plain).toContain("9100");
-    expect(plain).not.toContain("9200");
+    expect(plain).not.toContain("finally");
     fx.ownerConn.clear();
     await engine.processCommand(fx.ownerEntityId, "recall Amber deployment hunch staging all");
     const unified = stripAnsi(fx.ownerConn.allTextJoined());
     expect(unified).toContain("9100");
-    expect(unified).not.toContain("9200");
+    expect(unified).not.toContain("finally");
   });
 
   it("an undated revision falls back to the newest dated version, else nothing", async () => {

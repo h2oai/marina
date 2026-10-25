@@ -24,6 +24,7 @@ import { modelComplete } from "../../model/complete";
 import { bold, dim, header, separator } from "../../net/ansi";
 import { providerSetupHint } from "../../net/model/provider-setup";
 import { ensembleSize } from "../../net/model-api/ensemble";
+import { canonicalFormationName, formationEntry } from "../../orchestration/formations/catalogue";
 import {
   CREW_ONLY_PATTERNS,
   isTextPattern,
@@ -35,7 +36,6 @@ import {
 import { recordPatternRun } from "../../outcomes/orchestration";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
-import { normalizePatternName } from "../../world/templates/orchestration";
 import { getErrorMessage, tryLog } from "../errors";
 import { Logger } from "../logger";
 import { parseModifiers, splitOnTerminator } from "../parse-input";
@@ -111,12 +111,17 @@ export function renderPatternRun(r: PatternRunResult): string {
 export function resolveTextPattern(
   raw: string,
 ): { pattern: (typeof TEXT_PATTERNS)[number] } | { error: string } {
-  const name = normalizePatternName(raw.trim().toLowerCase());
+  const name = canonicalFormationName(raw);
   if (isTextPattern(name)) return { pattern: name };
   const crew = CREW_ONLY_PATTERNS[name];
   if (crew) {
     return {
-      error: `"${name}" needs a persistent crew (${crew}); run it as a crew (\`project <name> orchestrate ${name}\`) and call it as model "marina:<crew>". pattern run takes: ${TEXT_PATTERNS.join(", ")}.`,
+      error: `"${name}" needs a persistent crew (${crew}); run it as a crew (\`crew create <name> <members> formation:${name}\`) and call it as model "marina:<crew>". pattern run takes: ${TEXT_PATTERNS.join(", ")}.`,
+    };
+  }
+  if (formationEntry(name)) {
+    return {
+      error: `"${name}" is a catalogue formation with no free-text protocol; it runs through \`forecast\`. pattern run takes: ${TEXT_PATTERNS.join(", ")}.`,
     };
   }
   return { error: `Unknown pattern "${raw}". pattern run takes: ${TEXT_PATTERNS.join(", ")}.` };
@@ -150,6 +155,7 @@ export function patternCommand(deps: PatternCommandDeps = {}): CommandDef {
             header("Patterns"),
             separator(),
             `${bold("pattern run")}: ${TEXT_PATTERNS.join(", ")}`,
+            ...TEXT_PATTERNS.map((p) => dim(`  ${p} — ${formationEntry(p)?.summary ?? ""}`)),
             dim(
               `crew-only (project <name> orchestrate <pattern>): ${Object.keys(CREW_ONLY_PATTERNS).join(", ")}`,
             ),

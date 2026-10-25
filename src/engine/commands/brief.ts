@@ -19,6 +19,7 @@ import {
   status,
 } from "../../net/ansi";
 import { providerSetupHint } from "../../net/model/provider-setup";
+import { canonicalFormationName } from "../../orchestration/formations/catalogue";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { describeCommand } from "../command-manifest";
@@ -472,7 +473,8 @@ function sendFullBrief(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Br
   if (projects.length > 0) {
     lines.push("", sectionHead("Projects"));
     for (const p of projects.slice(0, 5)) {
-      const orch = p.orchestration !== "custom" ? ` ${status(p.orchestration, "info")}` : "";
+      const pattern = canonicalFormationName(p.orchestration);
+      const orch = pattern !== "freeform" ? ` ${status(pattern, "info")}` : "";
       const desc = p.description.slice(0, 50) || dim("(no description)");
       lines.push(bullet(`${bold(p.name)}${orch}: ${desc}`));
     }
@@ -610,7 +612,7 @@ function getStaffingInfo(
     if (openTasks > 0 || members > 0) {
       result.push({
         name: p.name,
-        orchestration: p.orchestration ?? "custom",
+        orchestration: canonicalFormationName(p.orchestration ?? "freeform"),
         openTasks,
         members,
       });

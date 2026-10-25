@@ -376,7 +376,8 @@ export interface OrchestrationPatternOption {
 
 /**
  * LOADING FALLBACK ONLY — the authoritative list is
- * src/world/templates/orchestration.ts, served by /api/orchestration/patterns.
+ * the formation catalogue (src/orchestration/formations/catalogue.ts), served by
+ * /api/orchestration/patterns.
  * This copy is shown until the fetch resolves (or when the server is
  * unreachable) so the select never renders empty; it is not kept in sync by hand.
  */
@@ -397,7 +398,7 @@ export const ORCHESTRATION_PATTERNS_FALLBACK: OrchestrationPatternOption[] = [
   "auction",
   "ledger",
   "sharding",
-  "custom",
+  "freeform",
 ].map((id) => ({ id, name: id, description: "" }));
 
 /** Fetch the orchestration pattern catalogue; falls back to the static copy while loading. */

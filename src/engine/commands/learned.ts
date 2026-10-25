@@ -8,7 +8,9 @@
  */
 
 import { experimentalHelp } from "../../config/feature-status";
-import { upstreamMode } from "../../learned/import";
+import { describeUpstreamMode, upstreamMode } from "../../learned/import";
+import { importedLessonsMode, importedLessonsSetting } from "../../learned/serve";
+import { pinnedPublisherKeys } from "../../learned/sign";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, RoomContext } from "../../types";
@@ -17,6 +19,14 @@ import { requiresPersistence } from "./command-messages";
 
 const USAGE =
   "learned | learned artifacts | learned items [artifact:<id>] [status:active|retired|revoked] | learned seeds | learned priors [family:<f>] | learned events [limit:<n>]";
+
+function pinnedKeyCount(): number {
+  try {
+    return pinnedPublisherKeys().length;
+  } catch {
+    return 0;
+  }
+}
 
 const when = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
 
@@ -28,7 +38,8 @@ function status(db: MarinaDB): string {
   const lines = [
     header("Learned bundles"),
     separator(),
-    `Imports: ${bold(upstreamMode())} ${dim("(MARINA_UPSTREAM; operators import with `bun run learned import`)")}`,
+    `Imports: ${bold(upstreamMode())} ${dim(`(MARINA_UPSTREAM: ${describeUpstreamMode(upstreamMode(), pinnedKeyCount())})`)}`,
+    `Imported lessons: ${bold(importedLessonsMode(db))} ${dim(`(MARINA_IMPORTED_LESSONS${importedLessonsSetting() ? "" : " unset: on once anything is imported"})`)}`,
     `Artifacts imported: ${bold(String(new Set(artifacts.map((a) => a.artifact_id)).size))} (${artifacts.length} version(s))`,
     `Items: ${active.length} active, ${items.length - active.length} retired/revoked; ${confirmed} confirmed by local outcomes`,
     `Seeded default slots: ${db.listUpstreamDefaultSeeds().length}; evidence priors: ${db.listEvidencePriors().length}`,

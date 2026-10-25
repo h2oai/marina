@@ -30,7 +30,7 @@ describe("orchestration API", () => {
     for (const p of body.patterns) {
       expect(p.name.length).toBeGreaterThan(0);
       expect(p.description.length).toBeGreaterThan(0);
-      if (p.id === "custom") {
+      if (p.id === "freeform") {
         expect(p.fit).toBeUndefined();
       } else {
         const fit = PATTERN_FIT[p.id as keyof typeof PATTERN_FIT];
@@ -39,7 +39,7 @@ describe("orchestration API", () => {
       }
     }
     // Legacy acronyms are normalized upstream and never advertised.
-    expect(body.patterns.some((p) => p.id === "nsed")).toBe(false);
+    expect(body.patterns.some((p) => p.id === "nsed" || p.id === "custom")).toBe(false);
     const mapreduce = body.patterns.find((p) => p.id === "mapreduce");
     expect(mapreduce?.name).toBe("MapReduce");
   });

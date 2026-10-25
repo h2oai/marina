@@ -1,14 +1,32 @@
-# Orchestration Patterns, Crew Pools, and the Crew Runtime Layer
+# Orchestration: One Catalogue, Four Ways to Run It
 
-**When to read this:** you are adding or changing an orchestration pattern template, a formation in the catalogue (`src/orchestration/formations/`), crew pool access, crew formation briefs, or the formation mediators. `CLAUDE.md` → "Orchestration Patterns" states the invariants (convention-based, members-only crew pools, one mediator line per event); this page has the full pattern list and mechanics.
+**When to read this:** you are adding or changing a formation in the catalogue (`src/orchestration/formations/`), a project pattern template, crew pool access, crew formation briefs, or the formation mediators. `CLAUDE.md` → "Orchestration Patterns" states the invariants (convention-based, members-only crew pools, one mediator line per event); this page has the mechanics.
+
+## One catalogue, four ways to run it
+
+Every formation is one entry in `src/orchestration/formations/catalogue.ts` (`FORMATIONS`): its
+name, one-line summary, fit (task shapes), roles, protocol steps, and the Score templates it runs
+as. The catalogue is the only list of formation names. Each surface resolves a name through
+`canonicalFormationName`, so the legacy aliases `nsed` (→ `deliberation`) and `custom`
+(→ `freeform`) keep parsing; help and listings show catalogue names only.
+
+| Way to run it | Command | Which entries | What runs |
+| --- | --- | --- | --- |
+| A crew | `crew create <name> <members> formation:<f>` | `crew: true` (16 formations + `freeform`) | The crew brief (`CREW_BRIEFS`), mediators, and request protocols. `crew info` shows the entry's summary, roles and protocol. A `crew dispatch` adds the entry's Score steps when it has a free-text template (`scoreStepsLine`). |
+| A project | `project <name> orchestrate <f>` | `crew: true`, except `freeform` | Pool notes: an opening note generated from the entry (title, summary, roles, protocol) plus the pattern's project conventions. |
+| One free-text task | `pattern run <f> -- <task>`, `POST /v1/patterns/run` | the entry has `text` | The entry's Score template on the operator's models. |
+| A room's turn rule | `build formation [room] <f>` | the entry has `room` | One `[formation-mediator]` line per `say`. |
+
+`ensemble` and `skeptic` are catalogue entries without a crew protocol: they run as `pattern run`
+(ensemble) and as typed forecasts. `crew create … formation:skeptic` is refused with that reason.
+Typed forecasts and the arena's `ensemble`/`delphi` also run the catalogue's templates (see
+[The formation catalogue](#the-formation-catalogue-one-formation-one-template)).
 
 ## Patterns
-- All patterns are convention-based pool notes discovered via `recall`, not engine constraints
-- Activated via `project <name> orchestrate <pattern>`
-- Patterns: Deliberation (flat peer propose/evaluate/execute/debrief with lesson artifact; formerly "NSED" — legacy name accepted, never advertised), Chorus (parallel phases + broadcast wall + crossfire review), Foundry (Overseer/Patrol/Gate hierarchy + merge-queue invariant), Swarm (self-organizing handoffs with payload), Pipeline (sequential stages + contract per stage), Debate (sealed positions + adversarial argumentation), MapReduce (parallel decomposition with independence invariant), Blackboard (shared workspace + no-private-state invariant), Symbiosis (mutual epistemic benefit + entropy-driven mode shifts), Research (iterative experimentation), Delphi (private estimates sent to a facilitator → anonymized summary of range/median/reasons → one or two revisions; dissent kept and linked `contradicts`, fast convergence treated as a warning sign), Tournament (independent candidates → pairwise bracket judged by non-authors → recorded rulings → losers' best ideas grafted into the winner), Verification (candidates → one verifier per aspect: correctness, requirements, evidence, safety; checkable claims are run, failed aspects become rework tasks), Auction (lots posted on the board → bids state fit + expected cost → award to best fit per cost → fit-check note after approval), Ledger (orchestrator keeps a task ledger and a progress ledger as pool notes; an expired lease is the stall signal, repeated stalls trigger a replan), Sharding (an oracle — tests, reference implementation or checker — turns a failing target into claimable shard tasks; fixers never edit the oracle, the oracle decides done)
-- Templates in `src/world/templates/orchestration.ts` — 5 detailed notes per pattern (project-pool conventions) + `PATTERN_FIT` (shape recognition); `project <name> recommend` ranks fitting patterns by this world's own recorded outcomes (no static scores)
+- The 16 orchestration patterns are the catalogue's crew formations; as a project they are convention-based pool notes discovered via `recall`, not engine constraints
+- Templates in `src/world/templates/orchestration.ts`: per pattern, the generated opening note plus 4 project-convention notes, and `PATTERN_FIT` (the catalogue's fit and summary); `project <name> recommend` ranks fitting patterns by this world's own recorded outcomes (no static scores)
 - Shapes (`TaskShape`): `decomposable`, `contested`, `parallel`, `sequential`, `hierarchical`, `shared-artifact`, `open-ended`, `verifiable` (a mechanical check decides: failing tests, a test suite, a reference implementation, verification). `detectTaskShapes` keyword-matches a goal; `suggestPatterns` ranks patterns by shape overlap
-- Every command a template note quotes must exist with that syntax — `test/orchestration-patterns.test.ts` runs the knowledge-hygiene auditor over every template
+- Every command a template note quotes must exist with that syntax — `test/orchestration-templates.test.ts` runs the knowledge-hygiene auditor over every template
 
 ## Crew pools and the crew runtime layer
 - **Crew pools are members-only**: every persisted crew's `crew:<name>` pool has a group object of the same id (`memory_pools.group_id`; the existing group-pool ACL in `src/memory/access.ts` and the `gatherRetrievalContext` guard are the fence). Roster = owner ∪ current members, re-synced on create/persist, add/remove, dispatch, deposit, dissolve (final sync) and `loadFromDb` (idempotent backfill of pre-existing ungrouped pools); dissolving keeps the pool and notes (generational memory) scoped to the final roster; a successor crew reusing the name inherits and re-syncs. `crew info <dissolved>` no longer prints pool notes to non-members. Tests: `test/crew-pool-group.test.ts`.
@@ -87,9 +105,12 @@ not code. `src/orchestration/formations/` is now the one catalogue, with the Sco
 one runtime.
 
 - **Entries** (`catalogue.ts`, `FORMATIONS`). There is one entry per formation: the 16 orchestration
-  patterns plus `ensemble` and `skeptic`. Each entry has:
+  patterns, `freeform`, `ensemble` and `skeptic`. Each entry has:
   - `summary`: the one-line description (`PATTERN_FIT.why` reads it);
+  - `title`, `roles`, `protocol`, `fit`: the display name, the parts members play, the protocol in
+    surface-neutral steps and the task shapes it fits;
   - `crew`: whether the crew brief and the project template of that name exist;
+  - `room`: whether a room runs it as its turn rule;
   - `markers`: protocol phrases that brief and template must both keep;
   - `crewOnly`: why the formation needs a crew over time (`CREW_ONLY_PATTERNS` is derived from it);
   - its Score templates: `typed`, `text` and `numeric`.

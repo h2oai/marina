@@ -72,6 +72,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One orchestration surface: the formation catalogue.** Crews, `project <name> orchestrate`,
+  `pattern run` and room formations now take every formation name, description, fit, role list and
+  protocol from `src/orchestration/formations/catalogue.ts`. `crew create … formation:<f>` and
+  `crew formation` validate against it (`ensemble` and `skeptic` are refused with where they run),
+  `crew info` shows the entry's summary, roles and protocol, a `crew dispatch` names the entry's
+  Score steps when it has a free-text template, and crew mediator lines lead with the catalogue
+  name. Each project template's opening note is generated from its entry. `freeform` is a catalogue
+  entry; the project name `custom` is now an alias of it (as `nsed` is of `deliberation`): both
+  still parse, and help lists catalogue names only. Feature status lists orchestration once, with
+  one sub-entry per way to run it.
 - **Outcome delivery plumbing.** A group of single outcomes still short of five is learned anyway
   once its oldest has waited 30 days, if it has at least three (the lesson states the true count),
   so a slow family still learns. A delivery pass claims a group atomically before its model call
@@ -466,6 +476,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`guardedFetch`). `benchmark list` says per dataset `tracked (ready)`, `generated (ready)`,
   `downloaded (ready)` or ``needs `benchmark fetch <name>` ``, and `help benchmark` names the
   datasets that need no download.
+- **Imported lessons reach agents.** Lessons from a learned bundle are now recalled beside the
+  world's own lessons, in the resident `[Lessons]` section, `lessons`, forecasts, Code Mode and
+  passthru.
+  - They are labelled `imported` (`unsigned` too, for an unsigned bundle) and ranked below every
+    local trusted lesson.
+  - Family scoping, leakage rule 2 and the as-of fence apply as for local lessons. Bundles now
+    carry each lesson's `scope`, `families`, `scope_family` and the boards it must stay out of.
+  - A local trusted lesson whose rule matches an imported one confirms it and serves in its place.
+    One the lesson judge finds contradicting it retires it.
+  - `MARINA_IMPORTED_LESSONS=off|observe|on` controls serving. Unset means `on` once anything was
+    imported; `observe` records what would be served and serves nothing; `off` is unchanged
+    output.
+  - With `MARINA_UPSTREAM` unset, an open bundle signed by a pinned publisher key may now import.
+    No key is pinned by default, so nothing changes until an operator pins one; `off` still
+    refuses.
+  - Readiness `learned` reports imported bundles, lesson counts (served, observed, confirmed,
+    retired) and the last import.
 - **Start a world fresh from a learned bundle.**
   - `marina learned distill <db>` reads an old world's database read-only (a `VACUUM INTO`
     snapshot) and writes a `marina.learned.v1` bundle through the export allow-list. It is signed

@@ -30,6 +30,7 @@
 import { hostname } from "node:os";
 import { decodeRoleBundle, exportRoleBundle } from "../agent/role-bundle";
 import { getPromotedDefault } from "../engine/benchmark-promotion";
+import { lessonBoards } from "../learning/eval-context";
 import { LESSONS_ACCOUNT } from "../learning/service";
 import { lessonFromRecord } from "../learning/store";
 import { publicKeyOfSigningKey } from "../net/federation-crypto";
@@ -317,6 +318,15 @@ export function exportLearnedBundle(db: MarinaDB, opts: ExportOptions): ExportRe
         resolved_at: lesson.resolvedAt,
         ...(refs.length ? { refs } : {}),
         ...(profile === "internal" && lesson.source ? { source: lesson.source } : {}),
+        // Serving scope travels with the lesson: family scoping and the boards
+        // it must stay out of when an importer measures them (leakage rule 2).
+        ...(lesson.scope ? { scope: lesson.scope } : {}),
+        ...(lesson.families?.length ? { families: lesson.families } : {}),
+        ...(lesson.scopeFamily ? { scope_family: lesson.scopeFamily } : {}),
+        ...(() => {
+          const boards = lessonBoards(lesson, (id) => db.getBenchmarkRun(id)?.benchmark);
+          return boards.length ? { boards } : {};
+        })(),
         provenance: [
           {
             producer: "outcome",
