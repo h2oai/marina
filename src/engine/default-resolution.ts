@@ -20,8 +20,12 @@
  *                  family), so today only an upstream seed or a future
  *                  multi-board rule can fill one.
  *   4. upstream  — a seed from an imported learned bundle, consulted only when
- *                  no local slot answered (`setUpstreamSeedSource`; empty until
- *                  an importer registers one).
+ *                  no local slot answered: the ledger's own active
+ *                  `upstream_default_seeds` rows (`src/learned/upstream-seed.ts`;
+ *                  a seed never answers while its slot has a local row), or a
+ *                  source registered with `setUpstreamSeedSource` (tests). A
+ *                  database that never imported a bundle has no seeds, so its
+ *                  trace is unchanged.
  *   5. builtin   — the caller's built-in value (today's behaviour).
  *
  * A slot whose incumbent run was invalidated rests on no evidence and is
@@ -36,7 +40,9 @@
  * behaviour before this module existed.
  */
 
+import { upstreamSeedFor } from "../learned/upstream-seed";
 import type { BenchmarkDefaultRow, BenchmarkRunRow } from "../persistence/db-benchmarks";
+import type { UpstreamDefaultSeedRow } from "../persistence/db-learned";
 import { Logger } from "./logger";
 
 const logger = new Logger();
@@ -47,6 +53,8 @@ export type DefaultSource = "env" | "slot" | "family" | "upstream" | "builtin";
 export interface DefaultSlotReader {
   getBenchmarkDefault(slot: string): BenchmarkDefaultRow | undefined;
   getBenchmarkRun?(id: string): BenchmarkRunRow | undefined;
+  /** The active seed an imported learned bundle left for a slot (migration 161). */
+  latestUpstreamDefaultSeed?(slot: string): UpstreamDefaultSeedRow | undefined;
 }
 
 /** An upstream seed for a slot key: the value and the bundle version it came from. */
@@ -238,11 +246,15 @@ export function resolveDefault<T>(spec: DefaultSpec<T>): DefaultResolution<T> {
     return done(value, s.layer, s.key, { incumbentRunId: found.row.incumbent_run_id });
   }
 
-  if (upstreamSeeds) {
+  const seeds = upstreamSeeds ?? ledgerSeedSource(spec.db);
+  if (seeds) {
+    // The ledger's own seeds are traced only where one exists, so a world that
+    // never imported a bundle resolves (and traces) exactly as before.
+    const quietUnset = !upstreamSeeds;
     for (const s of slots) {
       let seed: UpstreamSeed | undefined;
       try {
-        seed = upstreamSeeds(s.key);
+        seed = seeds(s.key);
       } catch (err) {
         logger.warn("defaults", "upstream seed source failed", {
           slot: s.key,
@@ -256,17 +268,32 @@ export function resolveDefault<T>(spec: DefaultSpec<T>): DefaultResolution<T> {
         consulted.push({ layer: "upstream", key, outcome: "answered" });
         return done(value, "upstream", key);
       }
-      consulted.push({
-        layer: "upstream",
-        key: s.key,
-        outcome: seed ? "unreadable" : "unset",
-      });
+      if (seed || !quietUnset)
+        consulted.push({
+          layer: "upstream",
+          key: s.key,
+          outcome: seed ? "unreadable" : "unset",
+        });
     }
   }
 
   const label = spec.builtInLabel ?? "built-in";
   consulted.push({ layer: "builtin", key: label, outcome: "answered" });
   return done(spec.builtIn, "builtin", label);
+}
+
+/** The upstream seeds stored in `db` itself, when it can read them. */
+function ledgerSeedSource(db: DefaultSlotReader | undefined): UpstreamSeedSource | undefined {
+  const latest = db?.latestUpstreamDefaultSeed?.bind(db);
+  if (!db || !latest) return undefined;
+  const reader = {
+    getBenchmarkDefault: db.getBenchmarkDefault.bind(db),
+    latestUpstreamDefaultSeed: latest,
+  };
+  return (slotKey) => {
+    const seed = upstreamSeedFor(reader, slotKey);
+    return seed ? { value: seed.value, version: `${seed.artifactId}@${seed.version}` } : undefined;
+  };
 }
 
 function publish(r: DefaultResolution<unknown>): void {
