@@ -451,6 +451,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Start a world fresh from a learned bundle.**
+  - `marina learned distill <db>` reads an old world's database read-only (a `VACUUM INTO`
+    snapshot) and writes a `marina.learned.v1` bundle through the export allow-list. It is signed
+    with `MARINA_LEARNED_SIGNING_KEY`, or written unsigned and labelled so.
+  - `--archive` or `marina learned archive <db>` moves the database into a cold archive directory
+    beside it. Nothing is deleted, and archiving is refused while a server holds the database.
+  - Manifests now list what a bundle never carries (`excludes`: accounts, standing, grants,
+    approvals, holds, secrets, journals, numeric note ids). Verification refuses a bundle whose
+    contents overreach its manifest. Bundles without the field still import.
+  - Importing an unsigned bundle needs `--allow-unsigned`.
+  - `MARINA_BOOTSTRAP_BUNDLES` (with `MARINA_BOOTSTRAP_ACCEPT=own,unsigned`) imports the named
+    bundles after the world seed and before any agent wakes. A second boot writes nothing, and
+    boot is unchanged when the variable is unset.
+  - `resolveDefault` now reads imported upstream seeds below every local layer, as documented.
 - **Orchestration runs land on the outcome path.** A person's `project <name> outcome` verdict,
   a `pattern run` (or `POST /v1/patterns/run`) whose own review approved or sent back the draft,
   and a room `verification` round closed with its checkers' `pass|fail` lines each record one
