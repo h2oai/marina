@@ -4033,6 +4033,40 @@ export class MarinaDB implements MarinaStores {
     outcomesDb.setOutcomeDelivery(this.db, outcomeId, consumer, state, reason, now);
   }
 
+  claimOutcomeDeliveries(
+    outcomeIds: readonly number[],
+    consumer: string,
+    held: string,
+    token: string,
+    now?: number,
+  ): boolean {
+    return outcomesDb.claimOutcomeDeliveries(this.db, outcomeIds, consumer, held, token, now);
+  }
+
+  releaseOutcomeClaims(consumer: string, token: string, now?: number): number {
+    return outcomesDb.releaseOutcomeClaims(this.db, consumer, token, now);
+  }
+
+  releaseStaleOutcomeClaims(consumer: string, before: number, now?: number): number {
+    return outcomesDb.releaseStaleOutcomeClaims(this.db, consumer, before, now);
+  }
+
+  outcomesMissingDeliveries(
+    consumers: readonly string[],
+    afterId: number,
+    limit: number,
+  ): outcomesDb.OutcomeRow[] {
+    return outcomesDb.outcomesMissingDeliveries(this.db, consumers, afterId, limit);
+  }
+
+  addMissingOutcomeDeliveries(
+    outcomeId: number,
+    consumers: readonly string[],
+    now?: number,
+  ): number {
+    return outcomesDb.addMissingOutcomeDeliveries(this.db, outcomeId, consumers, now);
+  }
+
   outcomeDeliveries(outcomeId: number): outcomesDb.DeliveryRow[] {
     return outcomesDb.outcomeDeliveries(this.db, outcomeId);
   }

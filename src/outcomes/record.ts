@@ -27,6 +27,9 @@ export const RESIDENT_FORECAST_SOURCES: readonly string[] = ["market", "conduct"
 const residentForecast = (source: string | undefined) =>
   !!source && RESIDENT_FORECAST_SOURCES.some((s) => source === s || source.startsWith(`${s}:`));
 
+/** Every consumer `consumersFor` can name (the delivery backfill's scope). */
+export const OUTCOME_CONSUMERS: readonly string[] = ["lessons", "history"];
+
 /**
  * The consumers that learn from an outcome. A judged outcome has none: it is
  * an opinion, recorded for agreement and evidence, until its judge has

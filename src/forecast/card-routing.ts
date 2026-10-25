@@ -350,6 +350,11 @@ export async function forecastCarded(
     ...(req.id ? { questionId: req.id } : {}),
   });
   const card = recipeCard(routing.method) ?? defaultCard;
-  const answer = await forecastFormed(req, applyCard(deps, card), card.formation!);
+  // The class chain tags the outcome as `family:`; lessons scoped to it are recalled too.
+  const answer = await forecastFormed(
+    { ...req, families: routing.families },
+    applyCard(deps, card),
+    card.formation!,
+  );
   return { ...answer, routing };
 }
