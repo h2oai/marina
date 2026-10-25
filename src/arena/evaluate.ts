@@ -270,6 +270,8 @@ export interface ShadowScore {
   loss?: number;
   persistenceLoss?: number;
   metric?: "crps" | "energy" | "rbo-loss";
+  /** When the counted record was made (its `created_at`), when the row carried one. */
+  recordedAt?: number;
 }
 
 /**
@@ -321,7 +323,7 @@ export async function scoreShadow(
         round.target_type === "ranking_list"
           ? await scoreShadowRanking(data, round, row, site)
           : await scoreShadowProfile(data, round, row, site);
-      if (scored) out.push(scored);
+      if (scored) out.push(recorded(scored, row.created_at));
       continue;
     }
     const round = await data.round(row.round_id);
@@ -347,10 +349,14 @@ export async function scoreShadow(
       loss: crpsNormal(topline.mean, topline.sd, outcome),
       persistenceLoss: persistence,
       metric: "crps",
+      ...(row.created_at !== undefined ? { recordedAt: row.created_at } : {}),
     });
   }
   return out;
 }
+
+const recorded = (s: ShadowScore, at: number | undefined): ShadowScore =>
+  at === undefined ? s : { ...s, recordedAt: at };
 
 async function scoreShadowRanking(
   data: ArenaData,

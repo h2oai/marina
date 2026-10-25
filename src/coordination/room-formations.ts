@@ -59,6 +59,24 @@ export interface RoomRound {
   spoke: string[];
   /** The one participant whose next message closes the round. */
   closer?: string;
+  /** Verification only: the checkers' parsed `pass|fail` verdicts so far. */
+  checks?: { pass: number; fail: number; by: string[] };
+}
+
+/**
+ * The mechanical result a round closed with, when its formation defines one.
+ * Only `verification` does: its checkers' `aspect: <aspect> pass|fail` lines.
+ * A debate's ruling is free text (who won, not whether the method worked) and
+ * a chorus merge has no verdict, so neither has a result.
+ */
+export interface RoomRoundResult {
+  formation: RoomFormation;
+  /** Whose work the round was about (the verification drafter). */
+  owner: string;
+  /** The checkers whose verdict parsed. */
+  checkers: string[];
+  pass: number;
+  fail: number;
 }
 
 export interface RoomTurn {
@@ -69,29 +87,56 @@ export interface RoomTurn {
   /** The round after this message; undefined when the round closed. */
   round?: RoomRound;
   phase: "open" | "turn" | "close" | "closed" | "quiet";
+  /** Set when the round closed with a mechanical result (see `RoomRoundResult`). */
+  result?: RoomRoundResult;
 }
 
 const at = (names: readonly string[]) => names.map((name) => `@${name}`).join(" ");
 
 /**
+ * A verification checker's verdict from its message, in the grammar the
+ * mediator asks for (`aspect: <aspect> pass|fail — <reason>`); undefined for
+ * anything else. Read once, as a label: the words are never kept.
+ */
+export function aspectCheck(message: string | undefined): "pass" | "fail" | undefined {
+  const m = /^\s*aspect\s*:\s*[\w-]+\s*[:—–-]?\s*(pass|fail)\b/i.exec(message ?? "");
+  return m ? (m[1]!.toLowerCase() as "pass" | "fail") : undefined;
+}
+
+/**
  * The mediator's response to `speaker` saying something in a room running
  * `formation`, with `present` the names of everyone there (the speaker
- * included). Returns the round to keep for the next message.
+ * included). Returns the round to keep for the next message. `check` is the
+ * speaker's parsed verification verdict (`aspectCheck`), when it gave one.
  */
 export function roomFormationTurn(
   formation: RoomFormation,
   round: RoomRound | undefined,
   speaker: string,
   present: readonly string[],
+  check?: "pass" | "fail",
 ): RoomTurn {
   const current = round?.formation === formation ? round : undefined;
   if (current?.closer) {
     if (current.closer.toLowerCase() !== speaker.toLowerCase())
       return { next: [], round: current, phase: "quiet" };
+    const checks = current.checks;
+    const drafter = current.spoke[0];
     return {
       line: `${formation}: round closed by ${speaker}.`,
       next: [],
       phase: "closed",
+      ...(formation === "verification" && drafter && checks && checks.pass + checks.fail > 0
+        ? {
+            result: {
+              formation,
+              owner: drafter,
+              checkers: [...checks.by],
+              pass: checks.pass,
+              fail: checks.fail,
+            },
+          }
+        : {}),
     };
   }
   const others = present.filter((name) => name.toLowerCase() !== speaker.toLowerCase());
@@ -160,6 +205,17 @@ export function roomFormationTurn(
     case "verification": {
       const drafter = nextSpoke[0]!;
       const pending = unheard(present);
+      // A checker's first message is its check: keep its verdict (a label) when it parsed.
+      const prior = current?.checks ?? { pass: 0, fail: 0, by: [] };
+      const checks =
+        nextSpoke.length > 1 && check
+          ? {
+              pass: prior.pass + (check === "pass" ? 1 : 0),
+              fail: prior.fail + (check === "fail" ? 1 : 0),
+              by: [...prior.by, speaker],
+            }
+          : prior;
+      const kept = checks.by.length ? { checks } : {};
       if (nextSpoke.length === 1) {
         if (!pending.length) return { next: [], phase: "quiet" };
         return {
@@ -176,7 +232,7 @@ export function roomFormationTurn(
         return {
           line: `verification: ${speaker} checked. Still to check: ${at(pending)}.`,
           next: pending,
-          round: { formation, spoke: nextSpoke },
+          round: { formation, spoke: nextSpoke, ...kept },
           phase: "turn",
         };
       return {
@@ -184,7 +240,7 @@ export function roomFormationTurn(
           `verification: every aspect is checked. ${at([drafter])}: fix any fail once, then ` +
           `deliver.`,
         next: [drafter],
-        round: { formation, spoke: nextSpoke, closer: drafter },
+        round: { formation, spoke: nextSpoke, closer: drafter, ...kept },
         phase: "close",
       };
     }

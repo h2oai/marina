@@ -26,6 +26,7 @@ import {
   proposerModel,
   SIGNAL_TRACKERS,
 } from "../../arena/discovery/loop";
+import { challengerPoolKey } from "../../arena/earned-routes";
 import { evaluateResolved, type Forecaster, scoreShadow } from "../../arena/evaluate";
 import { forecasterFor, recordShadow } from "../../arena/service";
 import { RateLimiter } from "../../auth/rate-limiter";
@@ -158,8 +159,23 @@ export async function arenaShadow(
   if (action === "score") {
     const scores = await scoreShadow(deps.data(), deps.store.listArenaShadow({ limit: 2_000 }));
     if (scores.length === 0) return reply("No recorded shadow forecast has resolved yet.");
+    // Pooled per runnable spec, as route evidence reads it (`challengerPoolKey`):
+    // a spec's settings variants count once per round, the last recorded.
+    const latest = new Map<string, (typeof scores)[number]>();
+    const variants = new Map<string, Set<string>>();
+    for (const x of scores) {
+      const spec = challengerPoolKey(x.forecaster);
+      variants.set(spec, (variants.get(spec) ?? new Set()).add(x.forecaster));
+      const key = `${spec}\u0000${x.roundId}`;
+      const prior = latest.get(key);
+      if (!prior || (x.recordedAt ?? -Infinity) > (prior.recordedAt ?? -Infinity))
+        latest.set(key, x);
+    }
     const by = new Map<string, typeof scores>();
-    for (const x of scores) by.set(x.forecaster, [...(by.get(x.forecaster) ?? []), x]);
+    for (const x of latest.values()) {
+      const spec = challengerPoolKey(x.forecaster);
+      by.set(spec, [...(by.get(spec) ?? []), x]);
+    }
     return reply(
       [
         header("Shadow record — scored on outcomes no one had seen"),
@@ -167,7 +183,8 @@ export async function arenaShadow(
         ...[...by].map(([name, list]) => {
           const mean = (f: (x: (typeof list)[number]) => number) =>
             list.reduce((t, x) => t + f(x), 0) / list.length;
-          return `  ${bold(name)} n=${list.length} skill ${fmt(mean((x) => x.skill))} vs baseline ${fmt(mean((x) => x.baselineSkill))} ${dim(`· beat persistence ${list.filter((x) => x.skill > 0).length} · beat baseline ${list.filter((x) => x.skill > x.baselineSkill).length}`)}`;
+          const pooled = variants.get(name)?.size ?? 0;
+          return `  ${bold(name)} n=${list.length} skill ${fmt(mean((x) => x.skill))} vs baseline ${fmt(mean((x) => x.baselineSkill))} ${dim(`· beat persistence ${list.filter((x) => x.skill > 0).length} · beat baseline ${list.filter((x) => x.skill > x.baselineSkill).length}${pooled > 1 ? ` · ${pooled} settings variants pooled` : ""}`)}`;
         }),
       ].join("\n"),
     );

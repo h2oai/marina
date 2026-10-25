@@ -928,6 +928,11 @@ Usage:
                                                      accuracy on them, cost
   benchmark reference [model|benchmark]            — show published reference scores
   benchmark defaults                               — promoted defaults: each slot's incumbent run
+  benchmark eligible [board]                       — read-only: configurations whose holdout
+                                                     evidence would pass the promotion rule now,
+                                                     with every other candidate read counted as
+                                                     tried; files nothing (promote stays manual,
+                                                     behind role.edit)
   benchmark challenge <slot> <run> [--max-cost-ratio R]
                                                    — dry run on the slot's SELECTION split (the
                                                      holdout stays unread); shows what promotion needs
@@ -970,7 +975,7 @@ Judge: judge-scored benchmarks (frames, simple-qa, hle-verified-gold*, narrative
 
 Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
-  orchestrations, defaults, challenge, compare-run status) are rank 0. Invalid runs are listed by runs and
+  orchestrations, defaults, eligible, challenge, compare-run status) are rank 0. Invalid runs are listed by runs and
   result, marked with their reason; every other reader skips them. A run whose items were
   more than MARINA_BENCHMARK_MAX_FALLBACK_RATE (default 25%) fallbacks — errors, spend-cap
   or provider failures instead of answers — is recorded invalid automatically. Results
@@ -1044,6 +1049,13 @@ Effect: read.
 
 Effect: read.
 
+
+### `benchmark eligible [board]`
+
+Effect: read.
+
+- `field-0` (`board`): text, optional group `option-0`.
+- Group `option-0`: `board`.
 
 ### `benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]`
 

@@ -12,10 +12,16 @@ import {
   sectionHead,
   separator,
 } from "../../net/ansi";
+import { recordProjectOutcome } from "../../outcomes/orchestration";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { tryLog } from "../errors";
+import { principalOf } from "../gate-context";
+import { Logger } from "../logger";
 import { requiresPersistence } from "./command-messages";
 import { parseDuration } from "./format-duration";
+
+const logger = new Logger();
 
 /** Emit a coordination_change so the dashboard's Projects list refreshes live. */
 function emitProjectChange(
@@ -917,6 +923,19 @@ export function projectCommand(deps: {
             if (tradition) {
               db.addPoolNote(tradition.id, entity.name, content, 8, "reflection");
             }
+          }
+          // A person's verdict is also one outcome on the outcome path, tagged
+          // with the project's pattern (labels only; the evidence text stays
+          // in the pools). An agent's report on its own project is not a verdict.
+          if (principalOf(input.entity) === "person") {
+            tryLog(logger, "db", "Could not record the project outcome", () =>
+              recordProjectOutcome(db, {
+                projectId: project.id,
+                pattern,
+                recorder: entity.name,
+                score,
+              }),
+            );
           }
           db.updateProjectStatus(project.id, "completed");
           emitProjectChange(ctx, input.entity, "update", project.name);

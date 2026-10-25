@@ -39,6 +39,7 @@ import {
 import { parsePartition } from "../benchmark-partition";
 import {
   type ChallengeEvaluation,
+  eligiblePromotions,
   fileSlotPromotion,
   lookupChallenge,
   type SplitStats,
@@ -125,6 +126,11 @@ Usage:
                                                      accuracy on them, cost
   benchmark reference [model|benchmark]            — show published reference scores
   benchmark defaults                               — promoted defaults: each slot's incumbent run
+  benchmark eligible [board]                       — read-only: configurations whose holdout
+                                                     evidence would pass the promotion rule now,
+                                                     with every other candidate read counted as
+                                                     tried; files nothing (promote stays manual,
+                                                     behind role.edit)
   benchmark challenge <slot> <run> [--max-cost-ratio R]
                                                    — dry run on the slot's SELECTION split (the
                                                      holdout stays unread); shows what promotion needs
@@ -167,7 +173,7 @@ Judge: judge-scored benchmarks (frames, simple-qa, hle-verified-gold*, narrative
 
 Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
-  orchestrations, defaults, challenge, compare-run status) are rank 0. Invalid runs are listed by runs and
+  orchestrations, defaults, eligible, challenge, compare-run status) are rank 0. Invalid runs are listed by runs and
   result, marked with their reason; every other reader skips them. A run whose items were
   more than MARINA_BENCHMARK_MAX_FALLBACK_RATE (default 25%) fallbacks — errors, spend-cap
   or provider failures instead of answers — is recorded invalid automatically. Results
@@ -268,6 +274,7 @@ export function benchmarkCommand(deps: {
       },
       { syntax: "benchmark compare-run status [id]", effect: "read" },
       { syntax: "benchmark defaults", effect: "read" },
+      { syntax: "benchmark eligible [board]", effect: "read" },
       {
         syntax: "benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]",
         effect: "write",
@@ -1322,6 +1329,11 @@ export function benchmarkCommand(deps: {
           return;
         }
 
+        case "eligible": {
+          ctx.send(input.entity, renderEligible(db, tokens[1]));
+          return;
+        }
+
         case "challenge":
         case "promote": {
           const [slot, runId] = [tokens[1], tokens[2]];
@@ -1539,6 +1551,33 @@ function costLine(e: ChallengeEvaluation): string {
   const c = e.costPerItem;
   if (c.challenger === null || c.incumbent === null) return `  $/item: ${dim("unpriced")}`;
   return `  $/item: challenger ${usd(c.challenger)}  incumbent ${usd(c.incumbent)}  ratio ${c.ratio === null ? "—" : `${c.ratio.toFixed(2)}×`}`;
+}
+
+/** `benchmark eligible [board]`: what would earn a slot now (read-only; files nothing). */
+export function renderEligible(db: MarinaDB, board: string | undefined): string {
+  const rows = eligiblePromotions(db, board ? { board } : {});
+  if (rows.length === 0) {
+    return `No configuration to contest a promoted slot${board ? ` on ${board}` : ""}: a slot needs an incumbent and a completed run of another configuration on its benchmark.`;
+  }
+  const eligible = rows.filter((r) => r.eligible);
+  const lines = [
+    header(`Eligible to promote (${eligible.length} of ${rows.length})`),
+    separator(),
+    dim(
+      "  Read-only: nothing is filed. Each is judged by the promotion rule on the holdout, with every other candidate read here counted as tried.",
+    ),
+  ];
+  for (const r of eligible) {
+    const e = r.evaluation!;
+    lines.push(
+      `  ${fmtStatus("ELIGIBLE", "done")} ${bold(r.slot)}  ${fmtId(r.runId)} vs ${fmtId(r.incumbentRunId ?? "—")}  delta ${(e.stats.delta * 100).toFixed(1)} pts  95% [${(e.stats.low * 100).toFixed(1)}, ${(e.stats.high * 100).toFixed(1)}]  bar ${((r.chargedMargin ?? e.margin) * 100).toFixed(1)} pts`,
+      `    ${dim(`file it: benchmark promote ${r.slot} ${r.runId} (needs role.edit; never by the author of a pooled run)`)}`,
+    );
+  }
+  for (const r of rows.filter((x) => !x.eligible)) {
+    lines.push(`  ${dim("not yet")}  ${r.slot}  ${fmtId(r.runId)}  ${dim(r.reasons[0] ?? "")}`);
+  }
+  return lines.join("\n");
 }
 
 /** Dry run: the SELECTION split only — the holdout stays unread until a promotion attempt. */

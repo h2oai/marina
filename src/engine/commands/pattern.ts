@@ -31,9 +31,12 @@ import {
   TEXT_PATTERNS,
   type TextComplete,
 } from "../../orchestration/text-patterns";
+import { recordPatternRun } from "../../outcomes/orchestration";
+import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
 import { normalizePatternName } from "../../world/templates/orchestration";
-import { getErrorMessage } from "../errors";
+import { getErrorMessage, tryLog } from "../errors";
+import { Logger } from "../logger";
 import { parseModifiers, splitOnTerminator } from "../parse-input";
 import { SpendGuard } from "../spend-guard";
 import { dailyCapRefusal } from "../spend-ledger";
@@ -46,6 +49,8 @@ export const PATTERN_MAX_BUDGET_USD = 2;
 /** The whole run's deadline (every stage, every call). */
 const PATTERN_RUN_TIMEOUT_MS = 600_000;
 
+const logger = new Logger();
+
 export const PATTERN_USAGE = [
   "Usage: pattern run <pattern> [budget:<usd>] -- <task>",
   "       pattern list",
@@ -57,6 +62,10 @@ export interface PatternCommandDeps {
   members?: () => string[];
   /** One model call (default: `modelComplete` through `src/model`). Tests inject a fake. */
   complete?: (spec: string) => TextComplete;
+  /** The world database: a run whose own review gave a verdict is recorded as an outcome. */
+  db?: () => MarinaDB | undefined;
+  /** The caller's name (the outcome's owner and scope). */
+  nameOf?: (id: EntityId) => string | undefined;
 }
 
 function defaultMembers(): string[] {
@@ -217,6 +226,16 @@ export function patternCommand(deps: PatternCommandDeps = {}): CommandDef {
             signal: deadline,
           });
           ctx.send(eid, renderPatternRun(result));
+          const db = deps.db?.();
+          if (db) {
+            tryLog(logger, "db", "Could not record the pattern run outcome", () =>
+              recordPatternRun(db, {
+                result,
+                runId: `${eid}:${Date.now().toString(36)}`,
+                ...(deps.nameOf?.(eid) ? { owner: deps.nameOf(eid) } : {}),
+              }),
+            );
+          }
         } catch (err) {
           ctx.send(eid, `Could not run the pattern: ${getErrorMessage(err)}`);
         } finally {
