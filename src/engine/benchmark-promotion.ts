@@ -50,6 +50,7 @@ import {
 } from "./benchmark-replicates";
 import { isFamilySlot } from "./default-resolution";
 import { promotionMargin } from "./fishing-margin";
+import type { LiveCandidate } from "./live-promotion";
 
 /** Default share of items held out from selection for a new slot. */
 export const DEFAULT_HOLDOUT_FRACTION = 0.5;
@@ -366,7 +367,11 @@ type PromotionStore = Pick<
 >;
 
 /** Earlier promotion attempts on a slot that read its holdout: distinct challenger runs. */
-export function attemptsBefore(db: PromotionStore, slot: string, challengerRunId: string): number {
+export function attemptsBefore(
+  db: Pick<PromotionStore, "listBenchmarkPromotions">,
+  slot: string,
+  challengerRunId: string,
+): number {
   const ids = new Set(
     db
       .listBenchmarkPromotions(slot)
@@ -763,21 +768,29 @@ export type FiledPromotion =
  *
  * Family slots (`…:family:<f>`) are refused: one board's holdout never sets a
  * default for a whole family.
+ *
+ * A `role-model:<role>` slot is filled from LIVE evidence instead
+ * (`input.live`, judged by `src/engine/live-promotion.ts` on the outcome
+ * path's time-split holdout): the same history, the same fishing margin, the
+ * same self-attestation refusal, and a ledger run never fills it.
  */
+export function fileSlotPromotion(db: PromotionStore, input: RunPromotionInput): FiledPromotion;
 export function fileSlotPromotion(
   db: PromotionStore,
-  input: {
-    slot: string;
-    runId: string;
-    actor: PromotionActor;
-    maxCostRatio?: number;
-    /** Holdout fraction for a NEW slot (fixed once the slot exists). */
-    holdout?: number;
-    now?: number;
-    minReplicates?: number;
-  },
-): FiledPromotion {
+  input: LivePromotionInput,
+): FiledLivePromotion;
+export function fileSlotPromotion(
+  db: PromotionStore,
+  input: RunPromotionInput | LivePromotionInput,
+): FiledPromotion | FiledLivePromotion {
+  if ("live" in input) return fileLivePromotion(db, input);
   const { slot, runId, actor } = input;
+  if (isLiveSlot(slot)) {
+    return {
+      kind: "error",
+      message: `${slot} is earned on live work, not a benchmark run: \`benchmark promote ${slot} <model>\` files the model live evidence proposes (\`benchmark eligible live\`).`,
+    };
+  }
   if (isFamilySlot(slot)) {
     return {
       kind: "error",
@@ -886,4 +899,119 @@ export function fileSlotPromotion(
     replicates: found.replicates,
     ...(found.invalidIncumbent ? { invalidIncumbent: found.invalidIncumbent } : {}),
   };
+}
+
+// ─── Live evidence (role-model slots) ───────────────────────────────────────
+
+/** The input of a benchmark-run promotion. */
+export interface RunPromotionInput {
+  slot: string;
+  runId: string;
+  actor: PromotionActor;
+  maxCostRatio?: number;
+  /** Holdout fraction for a NEW slot (fixed once the slot exists). */
+  holdout?: number;
+  now?: number;
+  minReplicates?: number;
+}
+
+/** The input of a live-evidence promotion: the candidate as just judged. */
+export interface LivePromotionInput {
+  slot: string;
+  live: LiveCandidate;
+  actor: PromotionActor;
+  now?: number;
+}
+
+export type FiledLivePromotion =
+  | { kind: "error"; message: string }
+  | { kind: "promoted" | "refused"; slot: string; candidate: LiveCandidate };
+
+/** Slots earned on live work (`role-model:<role>`), never from a ledger run. */
+export function isLiveSlot(slot: string): boolean {
+  return slot.startsWith("role-model:");
+}
+
+function liveStats(c: LiveCandidate): string {
+  return JSON.stringify({
+    basis: "live",
+    split: "holdout",
+    candidate: c.candidate,
+    incumbent: c.incumbent,
+    delta: c.delta,
+    low: c.ci[0],
+    high: c.ci[1],
+    margin: c.margin,
+    triedBefore: c.triedBefore,
+    holdout: c.holdout,
+    discovery: c.discovery,
+    fingerprint: c.fingerprint,
+  });
+}
+
+function liveRow(c: LiveCandidate, outcome: "promoted" | "refused", actor: string, now: number) {
+  return {
+    slot: c.slot,
+    outcome,
+    challenger_run_id: `live:${c.candidate}`,
+    incumbent_run_id: `live:${c.incumbent}`,
+    value_json: JSON.stringify(c.candidate),
+    actor,
+    stats_json: liveStats(c),
+    reason: outcome === "refused" ? c.reasons.join("; ") : null,
+    holdout_fraction: 0.5,
+    created_at: now,
+  };
+}
+
+/**
+ * Record a live candidate that FAILED the rule as a refused attempt (it
+ * counts toward the slot's fishing margin), once per evidence state. Writes
+ * history only, never a default. Returns whether a row was added.
+ */
+export function recordLiveRefusal(
+  db: Pick<PromotionStore, "listBenchmarkPromotions" | "recordBenchmarkPromotion">,
+  c: LiveCandidate,
+  now = Date.now(),
+): boolean {
+  if (c.status !== "refused" || !isLiveSlot(c.slot)) return false;
+  const id = `live:${c.candidate}`;
+  const seen = db.listBenchmarkPromotions(c.slot).some((r) => {
+    if (r.challenger_run_id !== id || !r.stats_json) return false;
+    try {
+      return (JSON.parse(r.stats_json) as { fingerprint?: string }).fingerprint === c.fingerprint;
+    } catch {
+      return false; // allow-empty-catch: an unreadable history row matches nothing
+    }
+  });
+  if (seen) return false;
+  db.recordBenchmarkPromotion(liveRow(c, "refused", "live-promotion", now));
+  return true;
+}
+
+function fileLivePromotion(
+  db: Pick<PromotionStore, "listBenchmarkPromotions" | "recordBenchmarkPromotion">,
+  input: LivePromotionInput,
+): FiledLivePromotion {
+  const { slot, live: c, actor } = input;
+  if (!isLiveSlot(slot) || !validSlot(slot) || isFamilySlot(slot) || c.slot !== slot) {
+    return { kind: "error", message: `${slot} is not a live-evidence slot (role-model:<role>).` };
+  }
+  if (c.status === "too-little-data" || c.status === "not-callable" || c.status === "env-set") {
+    return {
+      kind: "error",
+      message: `Not filed: ${c.reasons.join("; ") || c.status}. Nothing was recorded.`,
+    };
+  }
+  // Self-attestation: no one files a promotion resting on their own work.
+  const own = c.producers.find((p) => p === actor.entityId || actor.keyOf(p) === actor.key);
+  if (own) {
+    return {
+      kind: "error",
+      message: `Refused: ${slot}'s evidence includes your own work. Someone else must file it; self-attestation is never accepted.`,
+    };
+  }
+  const outcome = c.status === "eligible" ? "promoted" : "refused";
+  db.recordBenchmarkPromotion(liveRow(c, outcome, actor.key, input.now ?? Date.now()));
+  return { kind: outcome, slot, candidate: c };
 }

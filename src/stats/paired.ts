@@ -114,3 +114,23 @@ export function pairedBootstrap(
     stats[Math.min(resamples - 1, Math.max(0, Math.floor(q * resamples)))] ?? 0;
   return { diff, interval: { low: at(alpha), high: at(1 - alpha) }, resamples };
 }
+
+/**
+ * 95% interval on p1 − p2 for two independent proportions (Agresti–Caffo: add
+ * one success and one failure to each arm). Well-behaved for small n and for
+ * scores of 0% or 100%, where the plain Wald interval collapses to zero width
+ * and would call a 15-item tie-break "certain".
+ */
+export function differenceInterval(
+  p1: number,
+  n1: number,
+  p2: number,
+  n2: number,
+): [number, number] {
+  const a1 = (p1 * n1 + 1) / (n1 + 2);
+  const a2 = (p2 * n2 + 1) / (n2 + 2);
+  const se = Math.sqrt((a1 * (1 - a1)) / (n1 + 2) + (a2 * (1 - a2)) / (n2 + 2));
+  const d = a1 - a2;
+  // A difference of two proportions lives in [-1, 1].
+  return [Math.max(-1, d - 1.96 * se), Math.min(1, d + 1.96 * se)];
+}
