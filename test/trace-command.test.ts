@@ -244,7 +244,7 @@ describe("trace command", () => {
     expect(output).toContain("anthropic/claude-opus-5.5");
     expect(output).toContain("75.0%");
     expect(output).toContain("n=4");
-    expect(output).toContain("routing evidence: observe");
+    expect(output).toContain("routing evidence: on");
   });
 
   it("makes autonomous-model and tool shadow advice agent-consumable", async () => {

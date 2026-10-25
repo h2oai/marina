@@ -16,7 +16,7 @@
  *   3. a measured board's outcome teaches other boards, never its own measurements;
  *   4. an identified /v1 caller gets the stack; an anonymous one is byte-identical;
  *   5. a plain forecast runs the typed pipeline with its runs verified;
- *   6. earned defaults are resolved and traced; route evidence observes.
+ *   6. earned defaults are resolved and traced; route evidence acts when eligible.
  *
  * No network: every model call is scripted (a stubbed `fetch`, scripted model
  * parts, a scripted judge and writer). If a default is turned off or a wire is
@@ -593,12 +593,12 @@ describe("concept 5: forecasting", () => {
   });
 });
 
-// ─── 6. Earned defaults are resolved and traced; route evidence observes ────
+// ─── 6. Earned defaults are resolved and traced; route evidence acts ────────
 
 describe("concept 6: the ledger decides defaults", () => {
-  it("forecast defaults resolve through the traced default path; route evidence observes", () => {
+  it("forecast defaults resolve through the traced default path; route evidence acts when eligible", () => {
     using _env = defaults();
-    expect(routeEvidenceSettingsFromEnv().mode).toBe("observe");
+    expect(routeEvidenceSettingsFromEnv().mode).toBe("on");
     const db = new MarinaDB(":memory:");
     const traced: string[] = [];
     const off = onDefaultResolved((r) => traced.push(String(r.slot)));
