@@ -32,12 +32,14 @@
  */
 
 import { createHash } from "node:crypto";
+import type { UpstreamSeed } from "../learned/upstream-seed";
 import type {
   BenchmarkDefaultRow,
   BenchmarkItemRow,
   BenchmarkRunRow,
 } from "../persistence/db-benchmarks";
 import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
+import { sha256Hex } from "../security/hash";
 import { invalidReason } from "./benchmark-ledger";
 import {
   comparePooledGroups,
@@ -773,6 +775,11 @@ export type FiledPromotion =
  * (`input.live`, judged by `src/engine/live-promotion.ts` on the outcome
  * path's time-split holdout): the same history, the same fishing margin, the
  * same self-attestation refusal, and a ledger run never fills it.
+ *
+ * An imported upstream seed for a model-selecting slot (`input.upstream`) is
+ * adopted as-is into an EMPTY slot, basis `upstream`, recording the bundle
+ * (artifact, version, item, value digest). The caller has checked that a
+ * PERSON holding `role.edit` asked for it (`src/learned/upstream-model-seeds.ts`).
  */
 export function fileSlotPromotion(db: PromotionStore, input: RunPromotionInput): FiledPromotion;
 export function fileSlotPromotion(
@@ -781,9 +788,14 @@ export function fileSlotPromotion(
 ): FiledLivePromotion;
 export function fileSlotPromotion(
   db: PromotionStore,
-  input: RunPromotionInput | LivePromotionInput,
-): FiledPromotion | FiledLivePromotion {
+  input: UpstreamPromotionInput,
+): FiledUpstreamPromotion;
+export function fileSlotPromotion(
+  db: PromotionStore,
+  input: RunPromotionInput | LivePromotionInput | UpstreamPromotionInput,
+): FiledPromotion | FiledLivePromotion | FiledUpstreamPromotion {
   if ("live" in input) return fileLivePromotion(db, input);
+  if ("upstream" in input) return fileUpstreamPromotion(db, input);
   const { slot, runId, actor } = input;
   if (isLiveSlot(slot)) {
     return {
@@ -1014,4 +1026,57 @@ function fileLivePromotion(
   const outcome = c.status === "eligible" ? "promoted" : "refused";
   db.recordBenchmarkPromotion(liveRow(c, outcome, actor.key, input.now ?? Date.now()));
   return { kind: outcome, slot, candidate: c };
+}
+
+// ─── Upstream seeds adopted by a local person ───────────────────────────────
+
+/** The input of adopting an imported upstream seed into its (empty) slot. */
+export interface UpstreamPromotionInput {
+  slot: string;
+  upstream: UpstreamSeed;
+  actor: PromotionActor;
+  now?: number;
+}
+
+export type FiledUpstreamPromotion =
+  | { kind: "error"; message: string }
+  | { kind: "seeded"; slot: string; seed: UpstreamSeed };
+
+function fileUpstreamPromotion(
+  db: Pick<PromotionStore, "getBenchmarkDefault" | "recordBenchmarkPromotion">,
+  input: UpstreamPromotionInput,
+): FiledUpstreamPromotion {
+  const { slot, upstream: seed, actor } = input;
+  if (!validSlot(slot) || seed.slot !== slot) {
+    return { kind: "error", message: `${slot} is not the slot this upstream seed fills.` };
+  }
+  if (db.getBenchmarkDefault(slot)) {
+    return {
+      kind: "error",
+      message: `${slot} is already set locally; an upstream seed only fills an empty slot. Nothing was recorded.`,
+    };
+  }
+  const valueJson = JSON.stringify(seed.value);
+  db.recordBenchmarkPromotion({
+    slot,
+    outcome: "seeded",
+    // No ledger run: the slot has no incumbent run, so the first local run
+    // (or live evidence) that earns it replaces the adopted seed.
+    challenger_run_id: null,
+    incumbent_run_id: null,
+    value_json: valueJson,
+    actor: actor.key,
+    stats_json: JSON.stringify({
+      basis: "upstream",
+      artifactId: seed.artifactId,
+      version: seed.version,
+      itemKey: seed.itemKey,
+      valueSha256: sha256Hex(valueJson),
+      evidence: seed.evidence ?? null,
+    }),
+    reason: `adopted ${seed.source} (approved locally)`,
+    holdout_fraction: DEFAULT_HOLDOUT_FRACTION,
+    created_at: input.now ?? Date.now(),
+  });
+  return { kind: "seeded", slot, seed };
 }

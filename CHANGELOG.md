@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **An imported bundle's seed no longer picks a model without a local person.** Upstream seeds
+  for default slots that choose a model (every slot class except `memory-ranking`:
+  `role-model:*`, `verify:checker`, `forecast-config*`, crew slots, run-target slots) are withheld
+  by `resolveDefault` (traced `withheld` on `default_resolved`) and each slot+value raises one
+  `ops inbox` approval. A person holding `role.edit` adopts it with
+  `benchmark promote <slot> upstream` (the model id works for a `role-model` slot), filed through
+  `fileSlotPromotion` with basis `upstream` and the bundle's artifact, version, item and value
+  digest; an agent never adopts one. `MARINA_UPSTREAM_MODEL_SEEDS=serve` restores direct serving.
+  Non-model seeds are served as before.
+
 - **Agents holding sentinel gate grants are a critical readiness line.** `gate-sentinels` is
   raised as a critical `ops inbox` alert while any agent account holds an operator-grant sentinel
   row, and names the reset (`gate reset agents all apply`, from an interactive person session).

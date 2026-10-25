@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { modelCallable } from "../../config/model-tiers";
+import { upstreamSeedFor } from "../../learned/upstream-seed";
 import { retireLessonsForRun } from "../../learning/intake";
 import { bold, category, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
@@ -73,7 +75,7 @@ import {
 } from "../benchmark-runner";
 import { resolveRunTarget, type ServingCrew } from "../benchmark-target";
 import { BENCHMARK_RUN_MIN_RANK } from "../constants";
-import { recentResolutions } from "../default-resolution";
+import { recentResolutions, summarizeDefaultValue } from "../default-resolution";
 import { principalOf } from "../gate-context";
 import {
   closeLiveProposals,
@@ -188,6 +190,11 @@ Usage:
                                                      rule on the outcomes and records the attempt;
                                                      a person holding role.edit only (never an agent),
                                                      never one whose work the evidence includes.
+  benchmark promote <slot> upstream                — adopt an imported bundle's seed for a slot that
+                                                     chooses a model (withheld until adopted; one
+                                                     ops-inbox approval each): a person holding
+                                                     role.edit only, recorded with basis upstream.
+                                                     For a role-model slot the model id works too.
   benchmark invalidate <run> reason:<text>         — retire a run that measured the infrastructure,
                                                      not the target (spend cap, outage): status
                                                      invalid, excluded from every ranking, pooling,
@@ -329,6 +336,7 @@ export function benchmarkCommand(deps: {
       { syntax: "benchmark eligible [board]", effect: "read" },
       { syntax: "benchmark eligible live [role]", effect: "read" },
       { syntax: "benchmark promote role-model:<role> <model>", effect: "write" },
+      { syntax: "benchmark promote <slot> upstream", effect: "write" },
       {
         syntax: "benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]",
         effect: "write",
@@ -1490,6 +1498,10 @@ export function benchmarkCommand(deps: {
             ctx.send(input.entity, "--max-cost-ratio must be a positive number.");
             return;
           }
+          if (sub === "promote" && wantsUpstreamSeed(db, slot, runId)) {
+            ctx.send(input.entity, adoptUpstreamSeed(db, entity, slot, runId));
+            return;
+          }
           if (isLiveSlot(slot)) {
             ctx.send(
               input.entity,
@@ -1786,9 +1798,10 @@ function promoteLive(db: MarinaDB, entity: Entity, slot: string, model: string):
   const candidate = report[0]?.candidates.find((c) => c.candidate === model);
   if (!candidate) {
     const incumbent = report[0]?.incumbent.model;
+    const seed = upstreamSeedFor(db, slot);
     return incumbent === model
       ? `${model} is already what ${slot} resolves to.`
-      : `No live evidence for ${model} on ${slot}: \`benchmark eligible live\` lists the candidates.`;
+      : `No live evidence for ${model} on ${slot}: \`benchmark eligible live\` lists the candidates.${seed ? ` An imported upstream seed proposes ${summarizeDefaultValue(seed.value)}: \`benchmark promote ${slot} upstream\` adopts it.` : ""}`;
   }
   const filed = fileSlotPromotion(db, {
     slot,
@@ -1813,6 +1826,57 @@ function promoteLive(db: MarinaDB, entity: Entity, slot: string, model: string):
     `Promoted ${model} to ${slot}, replacing ${candidate.incumbent}. Agents spawned for role ${candidate.role} without a model now run on it; env settings still win.`,
     `  ${describeLiveCandidate(candidate)}`,
   ].join("\n");
+}
+
+/**
+ * Whether `benchmark promote <slot> <token>` adopts an upstream seed: the
+ * literal `upstream`, or the seed's own string value when nothing else (a
+ * ledger run, live evidence for that model) answers to the token.
+ */
+function wantsUpstreamSeed(db: MarinaDB, slot: string, token: string): boolean {
+  if (token === "upstream") return true;
+  const seed = upstreamSeedFor(db, slot);
+  if (!seed || typeof seed.value !== "string" || seed.value.trim() !== token) return false;
+  if (isLiveSlot(slot))
+    return !evaluateLiveSlots(db, { role: slot })[0]?.candidates.some((c) => c.candidate === token);
+  return !db.getBenchmarkRun(token);
+}
+
+/**
+ * Adopt an imported bundle's seed into its empty slot: a PERSON holding
+ * `role.edit` only. A seed for a slot that chooses a model is never served
+ * until this runs (`src/learned/upstream-model-seeds.ts`); filed through
+ * `fileSlotPromotion` with basis `upstream`.
+ */
+function adoptUpstreamSeed(db: MarinaDB, entity: Entity, slot: string, token: string): string {
+  if (principalOf(entity.id) !== "person")
+    return `Refused: adopting an upstream seed changes which model ${slot} runs, so a person adopts it (\`benchmark promote ${slot} ${token}\` from a person session). An agent never adopts one.`;
+  const gate = checkRoleEdit(db, entity, `benchmark promote ${slot}`);
+  if ("reason" in gate) return gate.reason;
+  const seed = upstreamSeedFor(db, slot);
+  if (!seed) {
+    return db.getBenchmarkDefault(slot)
+      ? `${slot} is already set locally; an upstream seed only fills an empty slot.`
+      : `No upstream seed for ${slot}: \`learned seeds\` lists the imported seeds.`;
+  }
+  const shown = summarizeDefaultValue(seed.value);
+  if (token !== "upstream" && !(typeof seed.value === "string" && seed.value.trim() === token))
+    return `The upstream seed for ${slot} is ${shown}, not ${token}: \`benchmark promote ${slot} upstream\` adopts it.`;
+  if (isLiveSlot(slot) && typeof seed.value === "string" && !modelCallable(seed.value))
+    return `Not adopted: ${seed.value} cannot be called on this installation (no provider key). Nothing was recorded.`;
+  const filed = fileSlotPromotion(db, {
+    slot,
+    upstream: seed,
+    actor: {
+      key: db.durableEntityKey(entity.id),
+      entityId: entity.id,
+      keyOf: (id) => db.durableEntityKey(id),
+    },
+  });
+  if (filed.kind === "error") return filed.message;
+  gate.record();
+  closeLiveProposals(db, slot);
+  return `Adopted ${seed.source} into ${slot}: ${shown}. It now answers as a local slot (basis upstream); env settings still win, and earned local evidence can replace it.`;
 }
 
 /** Dry run: the SELECTION split only — the holdout stays unread until a promotion attempt. */

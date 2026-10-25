@@ -8,6 +8,7 @@ import type { SandboxProviders } from "../coding/sandbox-provider";
 import type { BoardManager } from "../coordination/board-manager";
 import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
+import { proposeUpstreamModelSeeds } from "../learned/upstream-model-seeds";
 import { flushWorkLessons } from "../learning/work";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model/model-api";
@@ -462,8 +463,9 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
   });
 
   // Every 6 h: judge role-model:<role> slots on shared live work. Records
-  // refused attempts and raises one ops-inbox proposal per passing candidate;
-  // never files a promotion (a person holding role.edit does that).
+  // refused attempts and raises one ops-inbox proposal per passing candidate,
+  // and one per withheld upstream model seed; never files a promotion (a
+  // person holding role.edit does that).
   s.register({
     name: "live-promotion",
     every: LIVE_PROMOTION_INTERVAL,
@@ -472,6 +474,8 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     run: () => {
       if (!host.db) return;
       runLivePromotionPass(host.db);
+      // Seeds imported before upstream model seeds needed approval get theirs.
+      proposeUpstreamModelSeeds(host.db);
     },
   });
 
