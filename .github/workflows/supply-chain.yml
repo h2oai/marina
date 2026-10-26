@@ -5,13 +5,38 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
+  # An advisory can be published against a dependency we already ship, with no
+  # commit to trigger anything. Without a clock the audit below only runs when
+  # someone opens a pull request, so the first symptom is a blocked deploy.
+  schedule:
+    - cron: "0 7 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # qualify:release ends in `bun audit`, so an advisory against a dependency we
+  # already ship fails every deploy while every pull request stays green — the
+  # failure surfaces far from the change that could address it. Audit here too,
+  # so it fails the pull request instead, and on a schedule so an advisory
+  # published between pull requests is not discovered by a blocked deploy.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - name: Audit dependencies for published advisories
+        run: bun audit
+
   build:
+    # The scheduled run exists for the audit; rebuilding and re-uploading a
+    # 90-day package artifact daily would add nothing.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
