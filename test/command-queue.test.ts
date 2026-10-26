@@ -187,12 +187,18 @@ describe("command queue: ordering, error path, phase budget", () => {
 
     tick(); // Alpha busy only (15 ms > 1 ms budget)
     expect(engine.queuedCommandCount).toBe(3);
-    // Round-robin resumes: Alpha's `fast` (sub-ms) then Beta's `busy` both fit
-    // before the budget check trips; Beta's `fast` waits.
-    tick();
-    expect(engine.queuedCommandCount).toBe(1);
-    tick();
+    // The rest drains over later ticks. How many commands fit in each depends
+    // on how long a sub-millisecond `fast` takes on this machine (on a loaded
+    // one it can exceed the 1 ms budget alone), so count ticks loosely and
+    // assert what the cut must never change: each entity's order.
+    let ticks = 1;
+    while (engine.queuedCommandCount > 0 && ticks < 10) {
+      tick();
+      ticks++;
+    }
     expect(engine.queuedCommandCount).toBe(0);
+    expect(ticks).toBeGreaterThanOrEqual(3); // Beta's busy can never share a tick with Alpha's
+    expect(ticks).toBeLessThanOrEqual(4); // and at least one command dispatches per tick
     await engine.drainCommands();
     expect(done(a.conn)).toEqual(["busy done", "fast done"]);
     expect(done(b.conn)).toEqual(["busy done", "fast done"]);

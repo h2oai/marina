@@ -180,6 +180,9 @@ export async function handlePreAuthRoutes(
       world: engine.world?.name ?? "Unknown",
       agentCount: engine.agentRuntime.size,
       entityCount: engine.entities.size,
+      // Lets a launcher (`marina` in a folder) confirm the server on its port
+      // is the child it started, not another instance that took the port.
+      pid: process.pid,
     });
   }
 

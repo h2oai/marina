@@ -1,7 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
 import { setRank } from "../src/engine/permissions";
 import { grant } from "../src/engine/safety-gates";
@@ -9,7 +12,11 @@ import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
-const TEST_DB = "test_building.db";
+// Per process under the OS temp folder: a fixed name in the working directory
+// is shared (and deleted) by any other run in the same checkout.
+const TEST_DIR = mkdtempSync(join(tmpdir(), "marina-building-"));
+const TEST_DB = join(TEST_DIR, "building.db");
+afterAll(() => rmSync(TEST_DIR, { recursive: true, force: true }));
 
 describe("Building System", () => {
   let db: MarinaDB;
@@ -310,10 +317,9 @@ describe("Building System - Templates", () => {
       authorName: "Architect",
     });
 
-    engine.processCommand(conn1.entity!, "build template apply basic test/applied");
-
-    // Need a small delay for async compilation
-    await Bun.sleep(100);
+    // The handler compiles the template asynchronously: wait for the command
+    // itself, not a fixed 100 ms that a loaded machine can outlast.
+    await engine.processCommand(conn1.entity!, "build template apply basic test/applied");
 
     const text = conn1.lastText();
     expect(text).toContain("Applied template");

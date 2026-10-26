@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { loadSkillFile } from "../src/agent/skill-import";
-import { evalExpression } from "../src/engine/commands/calc";
+import { evalExpression } from "../src/engine/commands/calc-eval";
 import { parseSeriesTokens, quantCommand } from "../src/engine/commands/quant";
 import type { Entity, EntityId, RoomContext } from "../src/types";
 import { stripAnsi } from "./helpers";
