@@ -13,7 +13,7 @@ import { envelopeFor, normalizeCause } from "../src/engine/message-envelope";
 import { DashboardBroadcaster, type DashboardWSData } from "../src/net/dashboard-ws";
 import { FeedPublisher } from "../src/net/feed-publisher";
 import { memoryObserver } from "../src/net/memory/memory-visibility";
-import { FORWARD_MIGRATIONS, SCHEMA_VERSION } from "../src/persistence/schema";
+import { MIGRATIONS, SCHEMA_VERSION } from "../src/persistence/schema";
 import type { EngineEvent, EntityId, Perception } from "../src/types";
 import { createTestEngine } from "./engine-fixture";
 import type { MockConnection } from "./helpers";
@@ -357,13 +357,11 @@ describe("tell_sent for owners", () => {
 
 describe("migration", () => {
   it("adds the envelope columns in the next contiguous version", () => {
-    const versions = FORWARD_MIGRATIONS.map((m) => m.version);
+    const versions = MIGRATIONS.map((m) => m.version);
     versions.forEach((v, i) => {
       if (i > 0) expect(v).toBe(versions[i - 1]! + 1);
     });
-    const envelope = FORWARD_MIGRATIONS.find((m) =>
-      m.sql.includes("direct_messages ADD COLUMN cause"),
-    );
+    const envelope = MIGRATIONS.find((m) => m.sql.includes("direct_messages ADD COLUMN cause"));
     expect(envelope).toBeDefined();
     expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(envelope!.version);
     for (const table of ["direct_messages", "channel_messages"]) {
