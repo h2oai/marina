@@ -20,6 +20,7 @@ import { AgentRuntime, getInternalModelToken } from "../agent/agent-runtime";
 import { applyRankProgression } from "../agent/rank-progression";
 import { isSeedDisabled } from "../agent/seed-registry";
 import { recordFromEvent as recordStandingEvent } from "../agent/standing";
+import { standingCreditNotice } from "../agent/standing-summary";
 import { setDefaultUpstreamDescriber } from "../agent/vision-input";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { SessionManager } from "../auth/session-manager";
@@ -223,6 +224,7 @@ export class Engine {
   private readonly background = new Set<Promise<unknown>>();
   /** Unsubscribes this engine from default-resolution traces (on shutdown). */
   private readonly releaseDefaultTrace: () => void;
+  private releaseStandingNotices?: () => void;
   /** Periodic (`tick % every === phase`) maintenance jobs; see `registerTickJobs()`. */
   private readonly tickScheduler: TickScheduler;
   /** @internal */ readonly _connections: ConnectionManager;
@@ -311,6 +313,19 @@ export class Engine {
     this.db?.onResourceChange((change) =>
       this.logEvent({ type: "resource_changed", ...change, timestamp: Date.now() }),
     );
+    // The earner sees each credit or debit the moment it lands (online only;
+    // `standing` and `brief` show it later otherwise).
+    this.releaseStandingNotices = this.db?.onStandingCredit((credit) => {
+      const db = this.db;
+      const earner = this.entities.findAgentByName(credit.entityName);
+      if (!db || !earner) return;
+      this.sendToEntity(
+        earner.id,
+        standingCreditNotice(db, { ...credit, entityId: earner.id }),
+        "standing",
+        { kind: credit.kind, ref: credit.ref, amount: credit.amount },
+      );
+    });
     this.rateLimiter = this.config.rateLimiter;
     this.loginRateLimiter = this.config.loginRateLimiter;
     this.storage = this.config.storage;
@@ -2233,6 +2248,7 @@ export class Engine {
       this.saveWorldState();
       releaseChallengeHost(this);
       this.releaseDefaultTrace();
+      this.releaseStandingNotices?.();
       return Promise.allSettled([
         this.connectorRuntime?.close(),
         this.gatewayRuntime?.close(),

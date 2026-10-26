@@ -683,7 +683,11 @@ export function taskCommand(
                 ? ` No standing paid: ${approved.credit.reason}.`
                 : "";
             ctx.send(input.entity, `Approved ${target.name}'s submission for task #${id}.${paid}`);
-            ctx.send(notify, `Your submission for task #${id} was approved!${paid}`);
+            // A credit reaches the claimant as its own `standing +N …` notice.
+            ctx.send(
+              notify,
+              `Your submission for task #${id} was approved!${approved.credit.credited ? "" : paid}`,
+            );
             logEvent?.({
               type: "task_approved",
               entity: input.entity,
