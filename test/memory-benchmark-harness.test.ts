@@ -129,6 +129,17 @@ describe("genbench primitives", () => {
   });
 });
 
+/**
+ * A pipeline hook runs the whole offline benchmark: a scratch world database
+ * per arm and seed, every seeded note written through the canonical memory
+ * path, and a resident context built for every query. That is several seconds
+ * of real work on an idle machine (~5.7 s for the synthetic run at load 18,
+ * after the scratch databases became copies of one migrated template) and
+ * scales with machine load, so it does not fit the suite's 15 s per-test
+ * default that a hook inherits.
+ */
+const PIPELINE_HOOK_MS = 60_000;
+
 describe("genbench offline pipeline (stub model + stub judge)", () => {
   const resultsDir = mkdtempSync(join(tmpdir(), "genbench-test-"));
   const originalFetch = globalThis.fetch;
@@ -159,7 +170,7 @@ describe("genbench offline pipeline (stub model + stub judge)", () => {
       resultsDir,
       quiet: true,
     });
-  });
+  }, PIPELINE_HOOK_MS);
 
   afterAll(() => {
     globalThis.fetch = originalFetch;
@@ -398,7 +409,7 @@ describe("genbench skill transfer (synthetic-skills-v1)", () => {
         resultsDir,
         quiet: true,
       });
-    });
+    }, PIPELINE_HOOK_MS);
 
     afterAll(() => {
       rmSync(resultsDir, { recursive: true, force: true });

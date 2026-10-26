@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { CALC_BLOCKED_FUNCTIONS, calcCommand, evalExpression } from "../src/engine/commands/calc";
+import { resolve } from "node:path";
+import { calcCommand } from "../src/engine/commands/calc";
+import { CALC_BLOCKED_FUNCTIONS, evalExpression } from "../src/engine/commands/calc-eval";
 import type { Entity, EntityId, RoomContext } from "../src/types";
 import { stripAnsi } from "./helpers";
 
@@ -70,4 +72,30 @@ describe("calc", () => {
     // The instance is unchanged for the next caller.
     expect(evalExpression("1/4").outputs).toEqual(["0.25"]);
   });
+});
+
+describe("calc import cost", () => {
+  test("the engine's import graph never loads mathjs (only the calc worker does)", async () => {
+    // mathjs is about a thousand CommonJS modules plus its typed-function setup;
+    // loaded with the command registry it cost every server boot, spawned CLI
+    // and test worker seconds on a busy machine.
+    const probe = Bun.spawn(
+      [
+        process.execPath,
+        "--env-file=/dev/null",
+        "-e",
+        `await import(${JSON.stringify(resolve("src/engine/engine.ts"))});
+         console.log(Object.keys(require.cache).filter((k) => k.includes("/mathjs/")).length);
+         process.exit(0);`,
+      ],
+      { env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe" },
+    );
+    const [out, err, code] = await Promise.all([
+      new Response(probe.stdout).text(),
+      new Response(probe.stderr).text(),
+      probe.exited,
+    ]);
+    expect({ code, err }).toEqual({ code: 0, err: "" });
+    expect(out.trim()).toBe("0");
+  }, 30_000);
 });

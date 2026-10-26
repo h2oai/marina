@@ -31,6 +31,7 @@ import {
   utcDay,
 } from "../src/engine/spend-ledger";
 import { MarinaDB } from "../src/persistence/database";
+import { freshDbFile } from "./fresh-db";
 
 const LEDGER = join(import.meta.dir, "../src/engine/spend-ledger.ts");
 const CLI_LEDGER = join(import.meta.dir, "../src/engine/cli-spend-ledger.ts");
@@ -41,8 +42,7 @@ let dbPath = "";
 /** A migrated world database on disk (WAL needs a file), so child processes only open it. */
 function worldDb(): string {
   dir = mkdtempSync(join(tmpdir(), "marina-spend-"));
-  dbPath = join(dir, "world.db");
-  new MarinaDB(dbPath).close();
+  dbPath = freshDbFile(join(dir, "world.db"));
   return dbPath;
 }
 

@@ -235,9 +235,8 @@ describe("Canvas — Phase 1: Asset Store", () => {
         size: 9,
         storageKey: "del-key.txt",
       });
-      engine.processCommand(entityId, "canvas asset delete del-id");
-      // Wait for async handler
-      await Bun.sleep(50);
+      // The handler is async: wait for the command, not a fixed 50 ms.
+      await engine.processCommand(entityId, "canvas asset delete del-id");
       const text = stripAnsi(conn.lastText());
       expect(text).toContain("deleted");
       expect(db.getAsset("del-id")).toBeUndefined();

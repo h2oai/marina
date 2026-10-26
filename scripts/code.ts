@@ -445,11 +445,19 @@ function freePort(): Promise<number> {
   });
 }
 
-async function waitForReady(
+/**
+ * Wait until OUR server answers on `port`. The port was free when probed, but
+ * another process can take it while the server boots (seconds on a loaded
+ * machine); then ours dies on the bind and a foreign Marina answers on the
+ * port. Ready therefore means the answer names this child's pid, so the
+ * session never attaches to someone else's world.
+ */
+export async function waitForReady(
   port: number,
-  exited: Promise<number>,
+  server: { pid: number; exited: Promise<number> },
   timeoutMs = 30_000,
 ): Promise<boolean> {
+  const { exited } = server;
   // A server that died during boot (a held lease, a bad config) cannot come
   // up: stop polling at once instead of waiting out the whole deadline.
   let dead = false;
@@ -460,7 +468,7 @@ async function waitForReady(
   while (Date.now() < deadline && !dead) {
     try {
       const res = await fetch(`http://localhost:${port}/api/setup-status`);
-      if (res.ok) return true;
+      if (res.ok && ((await res.json()) as { pid?: unknown }).pid === server.pid) return true;
     } catch {
       // not up yet
     }
@@ -845,7 +853,7 @@ export async function runCodeSession(
     else void cleanup(0);
   });
 
-  if (!(await waitForReady(port, server.exited))) {
+  if (!(await waitForReady(port, server))) {
     // A server that exited during boot has said why on stderr: let the reader
     // drain it (bounded) before printing the tail.
     await Promise.race([stderrDone, new Promise((r) => setTimeout(r, 1_000))]);

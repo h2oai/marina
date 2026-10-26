@@ -13,6 +13,7 @@ import { rotateMemoryBackups } from "../src/persistence/db-memory-backups";
 import { translateMemoryExport } from "../src/sdk/memory-adapters";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";
 import { memoryPortableDigest } from "../src/sdk/memory-portable";
+import { freshDbFile } from "./fresh-db";
 
 let directory: string,
   db: MarinaDB,
@@ -23,7 +24,7 @@ let directory: string,
   token: string;
 beforeEach(async () => {
   directory = mkdtempSync(join(tmpdir(), "marina-advanced-"));
-  db = new MarinaDB(join(directory, "memory.db"));
+  db = new MarinaDB(freshDbFile(join(directory, "memory.db")));
   raw = (db as unknown as { db: Database }).db;
   service = new MemoryService(db);
   token = db.issueMemoryCredential(
