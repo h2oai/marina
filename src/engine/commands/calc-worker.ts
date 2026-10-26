@@ -8,7 +8,7 @@
  * server's event loop never runs mathjs.
  */
 
-import { evalExpression } from "./calc";
+import { evalExpression } from "./calc-eval";
 
 declare const self: Worker;
 

@@ -39,7 +39,15 @@
  * paid model unless you name one.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -1052,12 +1060,33 @@ function gitSha(): string {
   }
 }
 
+/**
+ * One migrated, empty world database per process; every scratch database is a
+ * copy of it. A fresh install replays the schema baseline and then every later
+ * migration, each ALTER re-parsing the whole schema: ~0.15 s on an idle
+ * machine and ~0.7–1 s on a loaded one, paid once per arm × seed. Copying the
+ * closed (checkpointed, WAL-free) file and opening it costs ~0.1 s loaded, and
+ * yields the same empty schema at the same version.
+ */
+let scratchTemplatePath: string | undefined;
+function scratchTemplate(): string {
+  if (scratchTemplatePath && existsSync(scratchTemplatePath)) return scratchTemplatePath;
+  const dir = mkdtempSync(join(tmpdir(), "genbench-template-"));
+  const path = join(dir, "memory.db");
+  new MarinaDB(path).close();
+  process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
+  scratchTemplatePath = path;
+  return path;
+}
+
 class ScratchDb {
   readonly db: MarinaDB;
   private readonly dir: string;
   constructor(label: string) {
     this.dir = mkdtempSync(join(tmpdir(), `genbench-${label}-`));
-    this.db = new MarinaDB(join(this.dir, "memory.db"));
+    const path = join(this.dir, "memory.db");
+    copyFileSync(scratchTemplate(), path);
+    this.db = new MarinaDB(path);
   }
   close(): void {
     this.db.close();
