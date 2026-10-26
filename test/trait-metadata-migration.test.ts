@@ -13,9 +13,9 @@ import {
   seedTraitsAndRoles,
   seedWatchingRole,
 } from "../worlds/seed";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_trait_metadata_migration.db";
+const TEST_DB = tempDbPath("test_trait_metadata_migration.db");
 
 /** Seed every trait-creating source so the invariant covers the full set. */
 function seedAllTraits(db: MarinaDB): void {

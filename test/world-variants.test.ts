@@ -4,9 +4,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { MarinaDB } from "../src/persistence/database";
 import { WorldCollectiveManager } from "../src/world/world-collective-manager";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_world_variants.db";
+const TEST_DB = tempDbPath("test_world_variants.db");
 
 afterEach(() => cleanupDb(TEST_DB));
 

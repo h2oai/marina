@@ -6,9 +6,9 @@ import { Engine } from "../src/engine/engine";
 import { FeedPublisher } from "../src/net/feed-publisher";
 import { MarinaDB } from "../src/persistence/database";
 import type { EngineEvent, EntityId, RoomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_chronicle.db";
+const TEST_DB = tempDbPath("test_chronicle.db");
 
 describe("Chronicle — canonical append-only record", () => {
   let db: MarinaDB;

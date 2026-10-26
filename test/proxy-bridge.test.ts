@@ -12,9 +12,9 @@ import { handleModelApi } from "../src/net/model/model-api";
 import { setEndpointConfig } from "../src/net/model/model-endpoint";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_proxy_bridge.db";
+const TEST_DB = tempDbPath("test_proxy_bridge.db");
 
 const PROVIDER_ENV_KEYS = [
   "ANTHROPIC_API_KEY",

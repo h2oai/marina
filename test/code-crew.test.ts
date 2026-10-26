@@ -18,9 +18,9 @@ import {
   type RoomContext,
   roomId,
 } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_code_crew.db";
+const TEST_DB = tempDbPath("test_code_crew.db");
 
 interface CrewCall {
   opts: CreateCrewOpts;

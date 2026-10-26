@@ -336,6 +336,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is a bare world command with only ids after its verb (`task claim 16`, `then task submit #16`)
   now makes the tell a request; a result that reports a command ("Done: task submit 16 sent",
   "Status: claimed task 16") stays information. The attention corpus gains both cases.
+- **A cold `calc` no longer times out while mathjs loads.** The calc worker reports ready once
+  mathjs has loaded, and the 10 s evaluation deadline starts only then; the expression is not
+  sent before. Loading has its own, separate bound (`CALC_LOAD_TIMEOUT_MS`, 60 s), so on a busy
+  machine the first `calc` no longer fails on a fast expression, and a runaway expression is
+  still stopped 10 s into its evaluation.
+
+- **Tests no longer share fixed database file names.** 116 test files that opened a fixed
+  `test_*.db` in the working directory now use `tempDbPath(name)` from `test/helpers.ts`: a path
+  in a fresh temporary directory, removed at process exit. Parallel workers, and the suite run
+  in two checkouts at once, can no longer collide on one file.
 - **A failed spend write no longer loses the dollars.** `recordSpend` swallowed a failed
   `spend_daily` write (the engine's sink logged and returned), and the in-memory total was later
   replaced by a larger persisted one, so the day's total undercounted and the cap could be

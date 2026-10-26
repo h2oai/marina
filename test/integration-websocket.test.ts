@@ -10,7 +10,7 @@ import { preserveListenPortsForTests } from "../src/net/listen-ports";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom, until } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath, until } from "./helpers";
 
 // Servers here bind ephemeral ports and record them process-wide; restore the
 // recorded ports so later files in the same process see the defaults.
@@ -20,7 +20,7 @@ beforeAll(() => {
 });
 afterAll(() => listenPorts?.[Symbol.dispose]());
 
-const TEST_DB = "test_integration_ws.db";
+const TEST_DB = tempDbPath("test_integration_ws.db");
 
 /** Open a socket, record every message, optionally log in on open. */
 function collect(url: string, loginName?: string): { ws: WebSocket; messages: string[] } {

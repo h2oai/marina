@@ -8,9 +8,9 @@ import { CrewManager } from "../src/coordination/crew-manager";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { entityId, roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_crew_completion_standing.db";
+const TEST_DB = tempDbPath("test_crew_completion_standing.db");
 const IDS: Record<string, string> = { alice: "e_alice", bob: "e_bob" };
 const OWNER = entityId("e_alice");
 
@@ -95,7 +95,7 @@ describe("CrewManager.complete earns no standing", () => {
 });
 
 describe("crew complete command reply", () => {
-  const CMD_DB = "test_crew_completion_cmd.db";
+  const CMD_DB = tempDbPath("test_crew_completion_cmd.db");
   let db: MarinaDB;
   let engine: Engine;
   let alice: MockConnection;

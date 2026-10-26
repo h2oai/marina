@@ -6,9 +6,9 @@ import { MarinaDB } from "../src/persistence/database";
 import type { Entity, EntityId } from "../src/types";
 import { roomId } from "../src/types";
 import { pruneChannelToAuthorized, seedChannel } from "../worlds/seed";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_prune_channel.db";
+const TEST_DB = tempDbPath("test_prune_channel.db");
 
 function makeAgent(id: string, name: string): Entity {
   return {

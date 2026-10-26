@@ -8,9 +8,9 @@ import { MarinaDB, type NoteRow } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { seedGuidePool } from "../src/world/seed-guide";
 import defaultWorld from "../worlds/default";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_knowledge_hygiene.db";
+const TEST_DB = tempDbPath("test_knowledge_hygiene.db");
 
 let noteSeq = 0;
 function note(content: string, over: Partial<NoteRow> = {}): NoteRow {

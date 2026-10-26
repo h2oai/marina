@@ -12,9 +12,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_seeded_task_review.db";
+const TEST_DB = tempDbPath("test_seeded_task_review.db");
 
 describe("seeded tasks have a reviewer", () => {
   let db: MarinaDB;

@@ -12,9 +12,9 @@ import {
   runCalibration,
 } from "../src/resolvers/calibration";
 import type { Sample } from "../src/resolvers/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_conductor_finder.db";
+const TEST_DB = tempDbPath("test_conductor_finder.db");
 
 const SCORE = {
   id: "x",

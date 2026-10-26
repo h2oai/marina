@@ -57,7 +57,7 @@ import type { MemoryOperationRequest } from "../src/sdk/memory-operations";
 import { entityId, type Perception, roomId } from "../src/types";
 import { createTestEngine } from "./engine-fixture";
 import { FIXTURE_QUERY, seedUnifiedFixture } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
 const FORGED =
@@ -193,7 +193,7 @@ describe("peer text cannot forge harness lines", () => {
     ).join("\n");
     expect(forgedLines(lines)).toEqual([]);
 
-    const dbPath = "test_trust_framing_render.db";
+    const dbPath = tempDbPath("test_trust_framing_render.db");
     cleanupDb(dbPath);
     const db = new MarinaDB(dbPath);
     try {
@@ -352,7 +352,7 @@ describe("tool results are trust-tagged by the command they ran", () => {
 // ─── 3. Continuity journal and measurement quarantine ──────────────────────
 
 describe("the continuity journal is not evidence; measurement turns are not journaled", () => {
-  const TEST_DB = "test_trust_framing_journal.db";
+  const TEST_DB = tempDbPath("test_trust_framing_journal.db");
   let db: MarinaDB;
   let engine: Engine;
 
@@ -497,7 +497,7 @@ describe("the continuity journal is not evidence; measurement turns are not jour
 // ─── 4. [trusted] is never self-attested ───────────────────────────────────
 
 describe("[trusted] needs independent support", () => {
-  const TEST_DB = "test_trust_framing_trusted.db";
+  const TEST_DB = tempDbPath("test_trust_framing_trusted.db");
   afterEach(() => cleanupDb(TEST_DB));
 
   it("author-set confidence plus an author-added source is not trusted", () => {
@@ -542,7 +542,7 @@ describe("[trusted] needs independent support", () => {
 // ─── 5. Crew dispatch is honoured only from the dispatch path ──────────────
 
 describe("[crew-task] wakes a crew only from a real dispatch", () => {
-  const TEST_DB = "test_trust_framing_crew.db";
+  const TEST_DB = tempDbPath("test_trust_framing_crew.db");
   afterEach(() => cleanupDb(TEST_DB));
 
   it("a member offline at dispatch gets it later, still flagged", () => {

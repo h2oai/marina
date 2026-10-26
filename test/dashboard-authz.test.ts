@@ -9,9 +9,9 @@ import { residentMemoryOperation } from "../src/memory/resident-service";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_dashboard_authz.db";
+const TEST_DB = tempDbPath("test_dashboard_authz.db");
 
 describe("dashboard privileged-op authorization (spawn)", () => {
   let db: MarinaDB;

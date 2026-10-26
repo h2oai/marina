@@ -9,9 +9,9 @@ import { scoreRecruitCandidate } from "../src/engine/commands/recruit";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_autonomy_loop.db";
+const TEST_DB = tempDbPath("test_autonomy_loop.db");
 
 function status(overrides: Partial<AgentStatus> = {}): AgentStatus {
   return {

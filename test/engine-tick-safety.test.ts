@@ -6,9 +6,9 @@ import { Engine } from "../src/engine/engine";
 import { Logger } from "../src/engine/logger";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_engine_tick_safety.db";
+const TEST_DB = tempDbPath("test_engine_tick_safety.db");
 
 type TickAccess = { tick(): void; tickInner(): void; tickCount: number };
 

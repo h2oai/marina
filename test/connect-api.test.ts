@@ -7,10 +7,10 @@ import { McpServerAdapter } from "../src/net/mcp/mcp-server";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
-const TEST_DB = "test_connect_api.db";
+const TEST_DB = tempDbPath("test_connect_api.db");
 describe("Connect API", () => {
   let engine: Engine;
   let wsServer: WebSocketServer;

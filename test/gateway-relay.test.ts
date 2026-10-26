@@ -13,7 +13,7 @@ import {
 import { MarinaDB } from "../src/persistence/database";
 import type { Perception } from "../src/sdk/client";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
 // ─── Perception fixtures ────────────────────────────────────────────────────
 
@@ -209,7 +209,7 @@ describe("GatewayRuntime relay decisions", () => {
 // ─── Engine wiring: targeted delivery + untrusted tagging ───────────────────
 
 describe("gateway relay engine wiring", () => {
-  const TEST_DB = "test_gateway_relay.db";
+  const TEST_DB = tempDbPath("test_gateway_relay.db");
   let db: MarinaDB;
   let engine: Engine;
   let aliceConn: MockConnection;
