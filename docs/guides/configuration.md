@@ -146,13 +146,13 @@ Work that names no model runs on one of two **model tiers**
 
 | Tier | Runs | Unset |
 |------|------|-------|
-| `cheap` — `MARINA_MODEL_TIER_CHEAP` | residents spawned without a model, room agents, boot-seeded crews (the Workbench, answerer and orchestration crews, the Chronicler), memory helpers | `MARINA_DEFAULT_MODEL` or a runtime default when one is set; else the cheapest adequate tool-capable model for your keys (`openrouter/deepseek/deepseek-v4.1-flash` with an OpenRouter key; `anthropic/claude-haiku-5-5`, `openai/gpt-6-luna`, … otherwise); else `marina/default` |
+| `cheap` — `MARINA_MODEL_TIER_CHEAP` | residents spawned without a model, room agents, boot-seeded crews (the Workbench, answerer and orchestration crews, the Chronicler), memory helpers | `MARINA_DEFAULT_MODEL` or a runtime default when one is set; else the cheapest adequate tool-capable model for your keys (`openrouter/deepseek/deepseek-v4.1-flash-1017` with an OpenRouter key; `anthropic/claude-haiku-5-5`, `openai/gpt-6-luna`, … otherwise); else `marina/default` |
 | `strong` — `MARINA_MODEL_TIER_STRONG` | what grades or overrules: the benchmark judge, outcome extractor, lesson writer and judge, decision classifier, the Arbiter | `marina/default`, exactly as before — judging never turns cheap by accident |
 
 One line moves a tier; one entry moves a single role:
 
 ```bash
-MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash   # every resident and crew
+MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash-1017   # every resident and crew
 MARINA_MODEL_TIER_STRONG=openrouter/anthropic/claude-opus-5.5     # every judge and the Arbiter
 MARINA_AGENT_MODELS=role:crew=anthropic/claude-sonnet-5-5,Host=openai/gpt-6.1-sol
 ```

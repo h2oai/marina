@@ -208,7 +208,7 @@ describe("(d) direct OpenAI key", () => {
 
 // ── (c) marina/cheap through the /v1 passthru (OpenRouter mocked) ───────────
 
-const CHEAP = "deepseek/deepseek-v4.1-flash";
+const CHEAP = "deepseek/deepseek-v4.1-flash-1017";
 const ENV = [
   ...modelSourceEnvKeys(),
   "MODEL_API_KEYS",
@@ -306,7 +306,7 @@ describe("(c) marina/cheap through the local /v1 passthru", () => {
     const off = await agentRequest("marina/cheap", "off", "internal");
     expect(off).not.toHaveProperty("reasoning_effort");
 
-    // The proxy → upstream hop. deepseek-v4.1-flash has no `medium`: pi-ai would
+    // The proxy → upstream hop. deepseek-v4.1-flash (snapshot 1017 too) has no `medium`: pi-ai would
     // send `high` on a direct route, so the passthru does too.
     const sentOn = await viaPassthru(on);
     expect(sentOn.model).toBe(CHEAP);

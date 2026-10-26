@@ -46,6 +46,8 @@ const DEFAULT_MODEL_PRICES: Record<string, TokenPrice> = {
   "gemini-3.1-pro-preview": { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 0.375 },
   "deepseek-v4-pro-0813": { input: 0.3942, output: 4.2, cacheRead: 0.3153, cacheWrite: 0 },
   "deepseek-v4.1-flash": { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+  // OpenRouter list price, checked 2026-10-26 (the cheap tier's default).
+  "deepseek-v4.1-flash-1017": { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0 },
 };
 
 /** A default model's list price, or undefined (never a fabricated $0). */

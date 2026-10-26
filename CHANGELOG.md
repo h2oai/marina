@@ -89,6 +89,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The cheap tier runs the current DeepSeek V4.1 Flash snapshot.** The built-in OpenRouter pick
+  for `marina/cheap` (and the triage fact model and arena wiki extractor defaults) moves from
+  `deepseek/deepseek-v4.1-flash`, which OpenRouter serves as a fixed 2026-09-10 snapshot, to
+  `deepseek/deepseek-v4.1-flash-1017`, the 2026-10-17 snapshot (list $0.15/$0.60 per M tokens,
+  tools and reasoning). An explicit `MARINA_MODEL_TIER_CHEAP` is unchanged. A dated snapshot the
+  bundled pi-ai catalog does not list yet (`-MMDD` or `-YYYYMMDD` after a listed id) now takes its
+  base entry's capabilities under its own id (`catalogModel`, `src/net/model/catalog-snapshots.ts`):
+  the reasoning-effort clamp, the summary call's reasoning disable, image input and DeepSeek's
+  reasoning round-trip apply to it, and it resolves without the "not in the bundled registry"
+  warning. Its price comes from Marina's own list, else the provider's reported cost, never the
+  base's.
+
 - **Faster fresh databases: the install baseline moves from schema 167 to 179.** Migrations
   168–179 move verbatim to `schema-history.ts` (172's data conversion joins `MIGRATION_HOOKS`;
   `JUDGE_LEDGER_BACKFILL_179` moves with 179 and is still exported from `schema.ts`), so a new

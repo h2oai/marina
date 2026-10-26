@@ -88,6 +88,7 @@ import {
   UNIFIED_TIER_LABELS,
 } from "../memory/unified-context";
 import { stripAnsi } from "../net/ansi";
+import { catalogModel } from "../net/model/catalog-snapshots";
 import { isHostedProvider } from "../net/model/hosted-providers";
 import {
   isLocalProvider,
@@ -965,7 +966,8 @@ function normalizeSupports(supports: AgentSupports | undefined): AgentSupports {
  */
 function tryGetModel(provider: string, modelId: string): Model<Api> | undefined {
   try {
-    return piModels.getModel(provider, modelId);
+    // A dated snapshot the catalog does not list yet takes its base entry.
+    return catalogModel((id) => piModels.getModel(provider, id), modelId);
   } catch {
     return undefined;
   }

@@ -986,7 +986,7 @@ land in the world database, the same ledger the operator CLI and autopilot read.
 | `MARINA_ARENA_WIKI_EVENTS_MAX_INSERT` | `3` | most articles scheduled events may add to a Wikipedia list |
 | `MARINA_ARENA_WIKI_EXTRACTORS` | off | attention extractors for the Wikipedia specialist |
 | `MARINA_ARENA_WIKI_EXTRACTOR_TOP` | `30` | candidates the extractors read |
-| `MARINA_ARENA_WIKI_EXTRACTOR_MODEL` | `openrouter/deepseek/deepseek-v4.1-flash` | the `events` extractor's model |
+| `MARINA_ARENA_WIKI_EXTRACTOR_MODEL` | `openrouter/deepseek/deepseek-v4.1-flash-1017` | the `events` extractor's model |
 | `MARINA_ARENA_WIKI_EXTRACTOR_RETRIEVER` | unset | a date-strict retriever for the `events` extractor |
 | `MARINA_ARENA_PROPOSER` | `anthropic/claude-opus-5-5` (OpenRouter's Claude Opus 5.5 when only `OPENROUTER_API_KEY` is set) | the signal-discovery proposer |
 | `MARINA_RESEARCH_TARGET_EVIDENCE` | off | `observe` or `on`: target-aware claim selection |
