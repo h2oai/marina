@@ -333,6 +333,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed spend write no longer loses the dollars.** `recordSpend` swallowed a failed
+  `spend_daily` write (the engine's sink logged and returned), and the in-memory total was later
+  replaced by a larger persisted one, so the day's total undercounted and the cap could be
+  passed. A busy or locked write is now retried briefly; one that still fails stays pending in
+  this process, counted by `dailyCapRefusal` and every readout (scope and `purpose:` rows too),
+  and is written on the next successful write or on release — once. With `MARINA_SPEND_LEDGER`
+  the shared file and the world database each keep their own pending entries, so only the one
+  that failed is retried.
+
 - **In-world benchmarks work from a fresh install run from any directory.** The harness, the
   dataset downloader and the reproduction kit now start with the server's own Bun, so `bun` no
   longer has to be on `PATH`. They also start with `--no-env-file`, so they see the server's
