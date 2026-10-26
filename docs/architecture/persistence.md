@@ -240,10 +240,10 @@ Adding a delegate: put the query in the module, add the one-line delegate to `Ma
 
 ## Fresh schema and existing database upgrades
 
-Fresh databases install `schema-baseline.ts` (version 167, the schema of v0.8.0) in one
-SQLite transaction, then apply any `FORWARD_MIGRATIONS` in `schema.ts`. This avoids replaying
+Fresh databases install `schema-baseline.ts` (version 179) in one SQLite transaction,
+then apply any `FORWARD_MIGRATIONS` in `schema.ts` (none at the moment of a refresh). This avoids replaying
 historical ALTER statements, index rebuilds, data conversions and per-version disk commits on
-an empty database. The baseline marker stays 167; forward migrations advance the database to the
+an empty database. The baseline marker stays 179; forward migrations advance the database to the
 current version. Consolidation does not reset the schema counter.
 
 `schema-history.ts` retains the original SQL unchanged for populated databases. A
@@ -332,9 +332,11 @@ The baseline is a cache of historical replay, never a second definition:
   pass; ending support for upgrades from an old version is an explicit compatibility
   decision recorded in [compatibility](../guides/compatibility.md) and the release
   notes.
-- **Refresh only at a release boundary**, and only for migrations that already
-  shipped in a tagged release — never for a migration still on `main`, whose SQL may
-  still change before release.
+- **A folded migration is frozen.** Folding moves a migration verbatim into
+  `schema-history.ts`; from then on `bun run schema:check` pins its SQL to the
+  baseline, so a correction is a new forward migration, never an edit — the same rule
+  every merged migration already follows. Migrations still on `main` may be folded
+  (168–179 were, before their release) once they are merged.
 - **Refresh only when it pays**: fresh-install time or the size of the forward list is
   a measured problem. The baseline exists to spare empty databases the historical
   rebuilds and data conversions; it is not tidied for its own sake.
@@ -343,13 +345,15 @@ The baseline is a cache of historical replay, never a second definition:
   even with no rows (138's conversion drops `legacy_memory_outbox`). A folded hook stays
   in `MIGRATION_HOOKS` in `schema.ts`, keyed by version, so an existing database that
   upgrades through that version still converts its data; `schema-history.ts` stays pure
-  SQL. 138 and 143 are folded this way (2026-10, baseline 137 → 167, v0.8.0).
+  SQL. 138 and 143 are folded this way (2026-10, baseline 137 → 167, v0.8.0), and 172
+  (baseline 167 → 179).
 - **Seeded rows need a decision.** A migration that inserts rows on an empty database
   must reproduce them at installation, not copy the generation-time value: list the
   table in the generator's `SEEDED_TABLES` with an install-time SQL expression for every
-  per-database column (`shell_allowlist.added_at` today). The next refresh past 170
-  meets `investigation_instance` (a `randomblob` uuid per database): generation fails
-  until it gets such an entry, and `test/schema-baseline.test.ts` asserts two fresh
+  per-database column (`shell_allowlist.added_at`, and `investigation_instance.uuid`, a
+  `randomblob` id per database); a row that is the same on every empty database
+  (`memory_known_at_backfill`'s 0/0 cursor) is listed with no override. An unlisted
+  seeded table fails generation, and `test/schema-baseline.test.ts` asserts two fresh
   installs get different ids.
 - **How**: move the folded entries verbatim (same versions, same SQL) from
   `FORWARD_MIGRATIONS` to the end of `schema-history.ts` (hooks to `MIGRATION_HOOKS`),
@@ -357,8 +361,9 @@ The baseline is a cache of historical replay, never a second definition:
   `bun scripts/generate-schema-baseline.ts`, and run `bun run schema:check`,
   `test/schema-baseline.test.ts` and `test/upgrade-from-releases.test.ts`. Tests that
   need an older database build it with `migrateEmptyTo`, never from `SCHEMA_BASELINE`.
-  Before folding, check each moved migration's SQL is byte-identical to the tagged
-  release's. The schema counter never resets: `SCHEMA_VERSION` and every database's
+  Before folding, check each moved migration's SQL (and hook) is byte-identical to the
+  tagged release's, or to `main`'s for one not yet released; a constant a migration
+  interpolates (`JUDGE_LEDGER_BACKFILL_179`) moves with it and stays re-exported. The schema counter never resets: `SCHEMA_VERSION` and every database's
   `schema_version` are unchanged by a refresh, and every release fixture must still
   upgrade to exactly the fresh-install schema.
 

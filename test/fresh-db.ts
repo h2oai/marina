@@ -11,9 +11,9 @@ let template: string | undefined;
 /**
  * Write a new, empty, fully migrated world database at `path` and return it.
  *
- * A fresh install replays the schema baseline and then every later migration,
- * each ALTER re-parsing the whole schema: ~0.15 s idle and ~0.7–1 s on a
- * loaded machine, paid by every test that opens a new database file. This
+ * A fresh install executes the generated schema baseline plus any later
+ * migrations: tens of milliseconds idle and far more on a loaded machine,
+ * paid by every test that opens a new database file. This
  * copies one per-process template instead (closed, so checkpointed and
  * WAL-free) — the same schema at the same version, in a fraction of the time.
  * Use it where the test is about what happens AFTER the database exists; tests

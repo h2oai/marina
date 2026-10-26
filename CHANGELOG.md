@@ -89,6 +89,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Faster fresh databases: the install baseline moves from schema 167 to 179.** Migrations
+  168–179 move verbatim to `schema-history.ts` (172's data conversion joins `MIGRATION_HOOKS`;
+  `JUDGE_LEDGER_BACKFILL_179` moves with 179 and is still exported from `schema.ts`), so a new
+  database installs one generated schema and replays nothing. The generator now reproduces
+  `investigation_instance`'s per-database id at install time. Existing databases at any
+  version upgrade through the same SQL and hooks as before. A new database takes about 29 ms
+  in memory and 37 ms on disk, down from 76 ms and 85 ms.
+
 - **`memory` is the one memory command.** `memory note`, `memory recall`, `memory reflect`,
   `memory recap`, `memory debrief` and `memory context` run the same-named commands with the same
   rank, gates, effects and output. The bare names still work and say once per session that they

@@ -96,7 +96,7 @@ test("migration history splits exactly at the baseline and keeps every data conv
   // The folded conversions still run when an existing database upgrades through them.
   expect(
     MIGRATIONS.filter((m) => m.apply && m.version <= SCHEMA_BASELINE_VERSION).map((m) => m.version),
-  ).toEqual([138, 143]);
+  ).toEqual([138, 143, 172]);
 });
 
 test("consolidated baseline has exactly the historical schema and seeded defaults", () => {
