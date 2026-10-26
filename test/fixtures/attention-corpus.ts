@@ -271,6 +271,26 @@ function steerSteps(): CorpusStep[] {
   ];
 }
 
+/** Tells that embed a world command, and results that only report one. */
+function embeddedCommandSteps(): CorpusStep[] {
+  return [
+    {
+      label: "tell reserved task",
+      perception: tell("Lead", "Task #16 is reserved for you: task claim 16", "e1"),
+    },
+    {
+      label: "tell reserved task with steps",
+      perception: tell(
+        "Lead",
+        "Task #16 is reserved for you, Wren: task claim 16, solve it, then task submit 16 ANSWER: <answer>",
+        "e2",
+      ),
+    },
+    { label: "tell command result", perception: tell("Lead", "Done: task submit 16 sent", "e3") },
+    { label: "tell claim status", perception: tell("Lead", "Status: claimed task 16", "e4") },
+  ];
+}
+
 export function corpusScenarios(): CorpusScenario[] {
   clock = 1_700_000_000_000;
   return [
@@ -282,6 +302,7 @@ export function corpusScenarios(): CorpusScenario[] {
     { name: "balanced-nudge-all", mode: "balanced", nudge: "all", steps: mixedSteps() },
     { name: "balanced-self-echo-on", mode: "balanced", selfEcho: true, steps: mixedSteps() },
     { name: "steer-balanced", mode: "balanced", steps: steerSteps() },
+    { name: "embedded-command-balanced", mode: "balanced", steps: embeddedCommandSteps() },
   ];
 }
 
