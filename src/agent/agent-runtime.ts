@@ -410,6 +410,9 @@ export function createAgentEventRelay(
           ...(event.ttftMs === undefined ? {} : { ttftMs: event.ttftMs }),
           ...(event.inputTokens === undefined ? {} : { inputTokens: event.inputTokens }),
           ...(event.outputTokens === undefined ? {} : { outputTokens: event.outputTokens }),
+          ...(event.reasoningTokens === undefined
+            ? {}
+            : { reasoningTokens: event.reasoningTokens }),
           ...(event.cacheReadTokens === undefined
             ? {}
             : { cacheReadTokens: event.cacheReadTokens }),

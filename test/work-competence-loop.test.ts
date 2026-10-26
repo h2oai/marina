@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+  noteEffectiveThinking,
+  resetEffectiveThinkingForTests,
+} from "../src/agent/effective-thinking";
 import { routeEvidenceSettingsFromEnv } from "../src/engine/benchmark-evidence";
 import { competenceCommand } from "../src/engine/commands/competence";
 import {
@@ -27,6 +31,7 @@ import { recordResolved, settleDelivery } from "../src/outcomes/record";
 import { scopeOf, sharedEvidence, visibleTo, workRefs } from "../src/outcomes/work-refs";
 import { MarinaDB } from "../src/persistence/database";
 import type { EntityId, RoomContext } from "../src/types";
+import { scopeProcessState } from "./process-state";
 
 describe("work outcomes carry family / method / scope", () => {
   let db: MarinaDB;
@@ -111,12 +116,15 @@ describe("work outcomes carry family / method / scope", () => {
       resolvedAt: 3,
     });
     const shared = competenceMap(db, { family: "work:task" });
-    // Each family counts the model and how the task was worked (solo here).
+    // Each family counts the model, how the task was worked (solo here) and
+    // the agent's thinking level (unset ⇒ off).
     expect(shared.map((c) => c.method)).toEqual([
       "model:vendor/b",
       "solo",
+      "thinking:off",
       "model:vendor/b",
       "solo",
+      "thinking:off",
     ]);
     expect(shared.every((c) => c.basis === "mechanical")).toBe(true);
     const mine = competenceMap(db, { family: "work:task", viewer: "alice" });
@@ -248,6 +256,65 @@ describe("how work was done is part of its record", () => {
     expect(refs).toContain("method:model:vendor/a");
   });
 
+  it("tags the claimant's effective thinking level right after its one model", () => {
+    db.saveAgentConfig({
+      name: "Thinker",
+      model: "vendor/a",
+      role: "coder",
+      spawnedBy: "system",
+      thinkingLevel: "medium",
+    });
+    using _env = scopeProcessState({ env: { MARINA_AGENT_THINKING: undefined } });
+    try {
+      recordTaskVerdict(db, { taskId: 31, claimant: "Thinker", approved: true, at: 31 });
+      recordTaskVerdict(db, { taskId: 32, claimant: "Solo", approved: true, at: 32 });
+      // A running agent's wire level wins over its saved one.
+      noteEffectiveThinking("Solo", "high");
+      recordTaskVerdict(db, { taskId: 33, claimant: "Solo", approved: true, at: 33 });
+      const methodsOf = (subject: string) =>
+        outcomeRefs(
+          db.listOutcomes({ limit: 10 }).find((o) => o.subject.startsWith(subject))?.refs_json,
+        ).filter((r) => r.startsWith("method:"));
+      expect(methodsOf("task:31:Thinker")).toEqual([
+        "method:model:vendor/a",
+        "method:thinking:medium",
+        "method:solo",
+      ]);
+      // Unset ⇒ off.
+      expect(methodsOf("task:32:Solo")).toEqual([
+        "method:model:vendor/a",
+        "method:thinking:off",
+        "method:solo",
+      ]);
+      expect(methodsOf("task:33:Solo")[1]).toBe("method:thinking:high");
+      // Still exactly one method:model (live promotion reads it), and it stays first.
+      for (const subject of ["task:31:Thinker", "task:32:Solo", "task:33:Solo"]) {
+        const methods = methodsOf(subject);
+        expect(methods.filter((r) => r.startsWith("method:model:"))).toHaveLength(1);
+        expect(methods[0]).toBe("method:model:vendor/a");
+      }
+      // A spoofed approach cannot add a second thinking tag; a person's work has none.
+      expect(
+        workRefs(db, {
+          kind: "code",
+          actor: "Solo",
+          model: "vendor/a",
+          thinking: "low",
+          approach: ["thinking:max"],
+        }).filter((r) => r.startsWith("method:thinking:")),
+      ).toEqual(["method:thinking:low"]);
+      expect(
+        workRefs(db, { kind: "task", actor: "alice", thinking: "high" }).some((r) =>
+          r.startsWith("method:"),
+        ),
+      ).toBe(false);
+      // The competence map ranks thinking levels in their own dimension.
+      expect(methodDimension("thinking:medium")).toBe("thinking");
+    } finally {
+      resetEffectiveThinkingForTests();
+    }
+  });
+
   it("tags a Code Mode check with driver, runner and verification mode", () => {
     recordVerification(db, {
       artifactId: "a1",
@@ -261,6 +328,7 @@ describe("how work was done is part of its record", () => {
     const refs = outcomeRefs(db.listOutcomes({ limit: 5 })[0]!.refs_json);
     expect(refs.filter((r) => r.startsWith("method:"))).toEqual([
       "method:model:vendor/a",
+      "method:thinking:off",
       "method:driver:codex",
       "method:runner:container",
       "method:verify:candidate",

@@ -50,6 +50,7 @@ import {
   reasoningExhausted,
   reasoningExhaustedMessage,
   reasoningTokens,
+  withOpenRouterEffort,
 } from "../model/reasoning-effort";
 import {
   classifyUpstreamRefusal,
@@ -1171,6 +1172,9 @@ export function prepareUpstreamBody(
   // effort settings, direct model requests and the cap itself are untouched.
   const effort = defaultRouteReasoningEffort(body, provider, defaultRoute);
   if (effort) prepared = { ...prepared, reasoning_effort: effort };
+  // A caller's own effort (an agent's thinking level through `marina/*`) is
+  // forwarded, moved only to an effort the routed OpenRouter model accepts.
+  if (provider === "openrouter") prepared = withOpenRouterEffort(prepared);
   if (provider !== "openai") return prepared;
   // The Luna family (gpt-5.6-luna, gpt-6-luna, their -pro variants) rejects
   // legacy max_tokens (verified live 2026-09-24 on OpenAI and OpenRouter).
@@ -1913,6 +1917,8 @@ interface ProxyTraceMetrics {
   ttftMs?: number;
   inputTokens?: number;
   outputTokens?: number;
+  /** Hidden reasoning tokens the upstream reported (a share of `outputTokens`). */
+  reasoningTokens?: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   costUsd?: number;
@@ -2282,9 +2288,23 @@ function metricsFromUsage(usage: Record<string, unknown>): ProxyTraceMetrics {
         usage.cache_write_tokens ??
         usage.cacheWrite,
     );
+    // Reasoning (thinking) tokens: OpenAI / OpenRouter `completion_tokens_details`,
+    // the Responses API `output_tokens_details.reasoning_tokens`, Anthropic
+    // `output_tokens_details.thinking_tokens`. Numbers only.
+    const detail = (key: string): Record<string, unknown> | undefined =>
+      usage[key] && typeof usage[key] === "object"
+        ? (usage[key] as Record<string, unknown>)
+        : undefined;
+    const reasoning = finite(
+      detail("completion_tokens_details")?.reasoning_tokens ??
+        detail("output_tokens_details")?.reasoning_tokens ??
+        detail("output_tokens_details")?.thinking_tokens ??
+        usage.reasoning_tokens,
+    );
     return {
       ...(inputTokens === undefined ? {} : { inputTokens }),
       ...(outputTokens === undefined ? {} : { outputTokens }),
+      ...(reasoning === undefined ? {} : { reasoningTokens: reasoning }),
       ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
       ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
       ...(costUsd === undefined ? {} : { costUsd }),
