@@ -7,9 +7,9 @@ import { Engine } from "../src/engine/engine";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_federation.db";
+const TEST_DB = tempDbPath("test_federation.db");
 
 describe("federation discovery and trust", () => {
   let db: MarinaDB;

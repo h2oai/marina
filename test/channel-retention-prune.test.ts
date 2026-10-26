@@ -5,9 +5,9 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { ChannelManager } from "../src/coordination/channel-manager";
 import { MarinaDB } from "../src/persistence/database";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_channel_retention_prune.db";
+const TEST_DB = tempDbPath("test_channel_retention_prune.db");
 const HOUR_MS = 3_600_000;
 
 describe("pruneExpiredMessages honours retention_hours", () => {

@@ -6,9 +6,9 @@ import { TaskManager } from "../src/coordination/task-manager";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_reliability_roadmap.db";
+const TEST_DB = tempDbPath("test_reliability_roadmap.db");
 
 describe("reliability roadmap", () => {
   let db: MarinaDB;

@@ -8,9 +8,9 @@ import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_mem_api.db";
+const TEST_DB = tempDbPath("test_mem_api.db");
 let BASE = "";
 // Open-mode namespaces are normalized like login names (letters, digits, `_` only).
 const AGENT = "test_agent";

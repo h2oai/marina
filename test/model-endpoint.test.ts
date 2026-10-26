@@ -8,9 +8,9 @@ import {
   setEndpointConfig,
 } from "../src/net/model/model-endpoint";
 import { MarinaDB } from "../src/persistence/database";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_model_endpoint.db";
+const TEST_DB = tempDbPath("test_model_endpoint.db");
 
 describe("model-endpoint config", () => {
   let db: MarinaDB;

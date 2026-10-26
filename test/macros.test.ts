@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_macros.db";
+const TEST_DB = tempDbPath("test_macros.db");
 
 describe("Macros", () => {
   let db: MarinaDB;
@@ -151,7 +151,7 @@ describe("Macros — arguments and room scope (end to end)", () => {
   let db: MarinaDB;
   let engine: Engine;
   let conn: MockConnection;
-  const TEST_DB_ARGS = "test_macros_args.db";
+  const TEST_DB_ARGS = tempDbPath("test_macros_args.db");
 
   beforeEach(() => {
     db = new MarinaDB(TEST_DB_ARGS);

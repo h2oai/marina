@@ -13,7 +13,7 @@ import { Engine } from "../src/engine/engine";
 import { handleModelApi, pendingRequests, roundRobinCounters } from "../src/net/model/model-api";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
 const ROSTER: Consultant[] = [
   { name: "Skeptic", role: "skeptic", model: "openrouter/anthropic/claude-opus-5.5" },
@@ -57,7 +57,7 @@ describe("request protocols", () => {
   });
 });
 
-const TEST_DB = "test_formation_consults.db";
+const TEST_DB = tempDbPath("test_formation_consults.db");
 
 describe("serving crew routing", () => {
   let db: MarinaDB;

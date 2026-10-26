@@ -11,9 +11,9 @@ import {
 } from "../src/engine/sandbox";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_dynamic_commands.db";
+const TEST_DB = tempDbPath("test_dynamic_commands.db");
 
 describe("Dynamic Commands", () => {
   let db: MarinaDB;

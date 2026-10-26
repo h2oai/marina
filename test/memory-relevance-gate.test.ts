@@ -40,7 +40,7 @@ import { buildInjectedContext, resolvePassthruIdentity } from "../src/net/model/
 import { MarinaDB } from "../src/persistence/database";
 import { type Perception, roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
 const cand = (key: string, content = key, exempt = false): RelevanceCandidate => ({
@@ -411,7 +411,7 @@ describe("relevance gate bound and reasoning", () => {
 });
 
 describe("relevance gate inside buildUnifiedContext", () => {
-  const TEST_DB = "test_memory_relevance_gate.db";
+  const TEST_DB = tempDbPath("test_memory_relevance_gate.db");
   let db: MarinaDB;
   let engine: Engine;
 

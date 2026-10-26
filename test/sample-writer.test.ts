@@ -6,9 +6,9 @@ import { MarinaDB } from "../src/persistence/database";
 import type { Sample } from "../src/resolvers";
 import { findLatestSample, parseSampleFromContent, writeSample } from "../src/resolvers";
 import type { EngineEvent } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_sample_writer.db";
+const TEST_DB = tempDbPath("test_sample_writer.db");
 
 function makeSample(overrides: Partial<Sample> = {}): Sample {
   return {

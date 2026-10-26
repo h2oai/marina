@@ -23,9 +23,9 @@ import {
 import { memoryObserver } from "../src/net/memory/memory-visibility";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, type EntityId, roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_dashboard_broadcast_perf.db";
+const TEST_DB = tempDbPath("test_dashboard_broadcast_perf.db");
 
 let db: MarinaDB;
 let engine: Engine;

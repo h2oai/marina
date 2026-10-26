@@ -6,9 +6,9 @@ import { categorizeCommand } from "../src/engine/commands/help";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_help_coverage.db";
+const TEST_DB = tempDbPath("test_help_coverage.db");
 
 /**
  * Every primitive a user can run must be documented in `help`: it must be

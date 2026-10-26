@@ -19,9 +19,9 @@ import {
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_passthru_context.db";
+const TEST_DB = tempDbPath("test_passthru_context.db");
 
 function headers(rec: Record<string, string>): Headers {
   return new Headers(rec);

@@ -12,9 +12,9 @@ import { AgentRuntime } from "../src/agent/agent-runtime";
 import type { AgentHandle, AgentStatus } from "../src/agent/agent-types";
 import type { AgentOperatorStatus } from "../src/agent/lean-agent-adapter";
 import { MarinaDB } from "../src/persistence/database";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_agent_runtime_cascade.db";
+const TEST_DB = tempDbPath("test_agent_runtime_cascade.db");
 
 type RuntimeInternals = {
   agents: Map<string, AgentHandle>;

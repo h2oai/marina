@@ -7,10 +7,10 @@ import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
-const TEST_DB = "test_command_api.db";
+const TEST_DB = tempDbPath("test_command_api.db");
 
 function makeRequest(path: string, body: unknown, token?: string): [URL, string, Request] {
   const url = new URL(`http://localhost:3300${path}`);

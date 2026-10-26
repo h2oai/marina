@@ -9,9 +9,9 @@ import { FeedPublisher } from "../src/net/feed-publisher";
 import { MarinaDB } from "../src/persistence/database";
 import type { StorageProvider } from "../src/storage/provider";
 import type { EngineEvent, EntityId, RoomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_feed.db";
+const TEST_DB = tempDbPath("test_feed.db");
 
 describe("Feed Canvas System", () => {
   let db: MarinaDB;

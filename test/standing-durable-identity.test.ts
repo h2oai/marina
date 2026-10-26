@@ -22,9 +22,9 @@ import {
 import { MarinaDB } from "../src/persistence/database";
 import { MIGRATIONS } from "../src/persistence/schema";
 import { type EngineEvent, type Entity, entityId, roomId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_standing_durable.db";
+const TEST_DB = tempDbPath("test_standing_durable.db");
 
 function entity(id: string, name: string): Entity {
   return {

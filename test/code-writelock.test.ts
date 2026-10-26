@@ -20,10 +20,10 @@ import {
   type RoomContext,
   roomId,
 } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 import { scopeProperty } from "./process-state";
 
-const TEST_DB = "test_code_writelock.db";
+const TEST_DB = tempDbPath("test_code_writelock.db");
 
 function inputFor(entity: Entity, raw: string): CommandInput {
   const trimmed = raw.trim();

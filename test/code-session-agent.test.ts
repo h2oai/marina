@@ -22,9 +22,9 @@ import {
   type RoomContext,
   roomId,
 } from "../src/types";
-import { cleanupDb, stripAnsi } from "./helpers";
+import { cleanupDb, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_code_session_agent.db";
+const TEST_DB = tempDbPath("test_code_session_agent.db");
 
 function inputFor(entity: Entity, raw: string): CommandInput {
   const trimmed = raw.trim();

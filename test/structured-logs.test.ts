@@ -5,9 +5,9 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { EventLog } from "../src/engine/event-log";
 import { Logger, redactLogData } from "../src/engine/logger";
 import { MarinaDB } from "../src/persistence/database";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_structured_logs.db";
+const TEST_DB = tempDbPath("test_structured_logs.db");
 
 afterEach(() => cleanupDb(TEST_DB));
 

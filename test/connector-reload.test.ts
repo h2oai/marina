@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { ConnectorRuntime } from "../src/engine/connector-runtime";
 import { __setDnsResolverForTest } from "../src/net/url-guard";
 import { MarinaDB } from "../src/persistence/database";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_connector_reload.db";
+const TEST_DB = tempDbPath("test_connector_reload.db");
 
 describe("ConnectorRuntime.loadFromDB re-validates stored URLs", () => {
   let db: MarinaDB;

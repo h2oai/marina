@@ -17,9 +17,9 @@ import {
   runCalibration,
 } from "../src/resolvers/calibration";
 import { type Entity, entityId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_position.db";
+const TEST_DB = tempDbPath("test_position.db");
 
 let orderSeq = 0;
 function seedOrder(

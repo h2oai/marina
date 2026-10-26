@@ -42,15 +42,16 @@ import {
   MockConnection,
   makeTestRoom,
   stripAnsi,
+  tempDbPath,
 } from "./helpers";
 
-const TEST_DB = "test_code_command.db";
+const TEST_DB = tempDbPath("test_code_command.db");
 
 describe("code command startup", () => {
   it("does not fail engine startup when the configured code workspace is unavailable", () => {
     const previousRoot = process.env.MARINA_CODE_DEFAULT_ROOT;
     const previousRoots = process.env.MARINA_CODE_ROOTS;
-    const dbName = "test_code_command_startup.db";
+    const dbName = tempDbPath("test_code_command_startup.db");
     const db = new MarinaDB(dbName);
     try {
       process.env.MARINA_CODE_DEFAULT_ROOT = join(
@@ -3046,7 +3047,7 @@ function testRoomContext(sent: string[], metadata: Record<string, unknown>[] = [
 }
 
 describe("code mode — agentic dispatch (single-agent driver)", () => {
-  const DO_DB = "test_code_do.db";
+  const DO_DB = tempDbPath("test_code_do.db");
   let db: MarinaDB;
 
   beforeEach(() => {
@@ -3231,7 +3232,7 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
 });
 
 describe("code host-exec workspace root policy (Finding 2)", () => {
-  const ROOT_DB = "test_code_root_policy.db";
+  const ROOT_DB = tempDbPath("test_code_root_policy.db");
   let db: MarinaDB;
   let engine: Engine;
   let conn: MockConnection;
@@ -3315,7 +3316,7 @@ describe("code host-exec workspace root policy (Finding 2)", () => {
 });
 
 describe("code worktree (per-session isolation)", () => {
-  const WT_DB = "test_code_worktree.db";
+  const WT_DB = tempDbPath("test_code_worktree.db");
   let db: MarinaDB;
   let savedHome: string | undefined;
   /** Every temp dir this describe creates (fake HOME, repos, plain roots) — removed in afterEach. */
