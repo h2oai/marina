@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { namedLeaderboard } from "../../agent/standing";
+import { standingEarnLine, standingSummaryLine } from "../../agent/standing-summary";
 import type { CrewManager } from "../../coordination/crew-manager";
 import type { GroupManager } from "../../coordination/group-manager";
 import type { TaskManager } from "../../coordination/task-manager";
@@ -305,6 +306,12 @@ function sendCompass(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Brie
       const prog = topTask.progress > 0 ? ` ${topTask.progress}%` : "";
       lines.push(`${category("Task:")} ${topTask.title}${prog}`);
     }
+
+    // Live standing and the last credit; with no goal and no claim, how to earn.
+    lines.push(
+      standingSummaryLine(deps.db, entity.name, eid, { recent: 1, label: category("Standing:") }),
+    );
+    if (!goalEntry && myClaims.length === 0) lines.push(dim(standingEarnLine()));
 
     // Curiosity signal — entropy-based boredom detection (passive, no prescription)
     const commandDist = deps.db.getActivityByType(entity.name, "command", 50);

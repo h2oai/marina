@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Database } from "bun:sqlite";
+import { getErrorMessage } from "../engine/errors";
+import { Logger } from "../engine/logger";
 
 // ─── Standing Ledger Persistence ─────────────────────────────────────────────
 //
@@ -11,7 +13,8 @@ import type { Database } from "bun:sqlite";
 // number that permission checks read.
 //
 // The decay function and credit amounts are policy in `src/agent/standing.ts`.
-// This file is pure SQL.
+// This file is SQL plus the new-row notice (`subscribeStandingCredits`) that
+// lets the engine tell an earner the moment a credit lands.
 
 export interface StandingLedgerRow {
   id: number;
@@ -31,6 +34,59 @@ export interface StandingCacheRow {
   last_recomputed: number;
 }
 
+/** One NEW ledger row (`entityId` is the stored key: the durable account when one exists). */
+export interface StandingCredit {
+  entityId: string;
+  entityName: string;
+  kind: string;
+  ref: string;
+  amount: number;
+}
+
+const logger = new Logger();
+const creditListeners = new WeakMap<Database, Set<(credit: StandingCredit) => void>>();
+
+/**
+ * Observe new ledger rows on `db`. Every writer goes through
+ * `appendStandingEvent`, so this sees each credit and debit once. Delivered
+ * after the synchronous write (a microtask) and only when the row is still
+ * there: a rolled-back transaction delivers nothing.
+ */
+export function subscribeStandingCredits(
+  db: Database,
+  listener: (credit: StandingCredit) => void,
+): () => void {
+  let set = creditListeners.get(db);
+  if (!set) {
+    set = new Set();
+    creditListeners.set(db, set);
+  }
+  set.add(listener);
+  return () => {
+    set.delete(listener);
+  };
+}
+
+function notifyStandingCredit(db: Database, credit: StandingCredit): void {
+  if (!creditListeners.get(db)?.size) return;
+  queueMicrotask(() => {
+    try {
+      if (!hasStandingEvent(db, credit.entityId, credit.kind, credit.ref)) return;
+    } catch (error) {
+      // The database closed before delivery: nothing to tell.
+      logger.debug("db", "Standing credit check skipped", { error: getErrorMessage(error) });
+      return;
+    }
+    for (const listener of creditListeners.get(db) ?? []) {
+      try {
+        listener(credit);
+      } catch (error) {
+        logger.warn("db", "Standing credit listener failed", { error: getErrorMessage(error) });
+      }
+    }
+  });
+}
+
 export function appendStandingEvent(
   db: Database,
   row: {
@@ -44,7 +100,7 @@ export function appendStandingEvent(
     earnedAt?: number;
   },
 ): void {
-  db.run(
+  const inserted = db.run(
     `INSERT INTO entity_standing
        (entity_id, entity_name, kind, ref, task_id, amount, decay_class, earned_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -67,6 +123,14 @@ export function appendStandingEvent(
      ON CONFLICT(entity_id) DO UPDATE SET last_recomputed = 0`,
     [row.entityId],
   );
+  if (inserted.changes > 0)
+    notifyStandingCredit(db, {
+      entityId: row.entityId,
+      entityName: row.entityName,
+      kind: row.kind,
+      ref: row.ref,
+      amount: row.amount,
+    });
 }
 
 /**
@@ -216,18 +280,26 @@ export function standingLeaderboard(
     .all(limit) as { entityId: string; standing: number }[];
 }
 
+/** Newest-first ledger rows; `kinds` narrows them like `computeStanding`'s filter. */
 export function ledgerForEntity(
   db: Database,
   entityId: string,
   limit: number,
+  kinds: StandingKindFilter = {},
 ): StandingLedgerRow[] {
+  const exclude = kinds.exclude ?? [];
+  const only = kinds.only;
+  if (only && only.length === 0) return [];
+  const filter =
+    (exclude.length ? ` AND kind NOT IN (${exclude.map(() => "?").join(",")})` : "") +
+    (only ? ` AND kind IN (${only.map(() => "?").join(",")})` : "");
   return db
     .query(
       `SELECT id, entity_id, entity_name, kind, ref, task_id, amount, decay_class, earned_at
        FROM entity_standing
-       WHERE entity_id = ?
+       WHERE entity_id = ?${filter}
        ORDER BY earned_at DESC
        LIMIT ?`,
     )
-    .all(entityId, limit) as StandingLedgerRow[];
+    .all(entityId, ...exclude, ...(only ?? []), limit) as StandingLedgerRow[];
 }

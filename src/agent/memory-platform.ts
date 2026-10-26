@@ -485,6 +485,20 @@ export class PlatformMemoryBackend {
     return text.startsWith("[Skill:") ? text : undefined;
   }
 
+  /**
+   * `standing summary`: `summary` is the one-line live standing, last credits
+   * and retired history; `earn` names the live ways to earn. Empty when the
+   * world has no standing ledger.
+   */
+  async standingSummary(): Promise<{ summary: string; earn: string }> {
+    const lines = extractText(await this.client.command("standing summary"))
+      .trim()
+      .split("\n");
+    const summary = lines.find((l) => l.startsWith("standing ")) ?? "";
+    const earn = lines.find((l) => l.startsWith("earn standing:")) ?? "";
+    return { summary, earn };
+  }
+
   async workInbox(): Promise<PlatformMemoryResult> {
     const perceptions = await this.client.command("work");
     const text = extractText(perceptions);
