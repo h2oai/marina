@@ -326,16 +326,16 @@ describe("memory under the fence", () => {
       raw.run("UPDATE notes SET created_at = ? WHERE id = ?", [AFTER, late]);
 
       // Unfenced: both.
-      await f.engine.processCommand(entityId, "recall election turnout zebra");
+      await f.engine.processCommand(entityId, "memory recall election turnout zebra");
       expect(connection.lastText()).toContain("final result");
 
       // Fenced (as a routed request would): the later note is gone, on every surface.
       fenceEntity(entityId, "t", CUTOFF_MS, Date.now() + 60_000);
-      await f.engine.processCommand(entityId, "recall election turnout zebra");
+      await f.engine.processCommand(entityId, "memory recall election turnout zebra");
       const plain = stripAnsi(connection.lastText());
       expect(plain).toContain("early estimate");
       expect(plain).not.toContain("final result");
-      await f.engine.processCommand(entityId, "recall election turnout zebra all");
+      await f.engine.processCommand(entityId, "memory recall election turnout zebra all");
       const unified = stripAnsi(connection.lastText());
       expect(unified).toContain("early estimate");
       expect(unified).not.toContain("final result");

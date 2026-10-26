@@ -18,6 +18,12 @@ export interface CommandCatalogEntry {
   help: string;
   minRank: number;
   gate?: string;
+  /**
+   * The family head this command belongs to (`recall` ⇒ `memory`): the
+   * canonical form is `<familyOf> <name> …`, and the bare name is an
+   * announced alias. Rosters list the head, never the member.
+   */
+  familyOf?: string;
 }
 
 export interface CapabilityManifest {
@@ -40,12 +46,10 @@ export const ROSTER_PRIORITY: readonly string[] = [
   "channel",
   "board",
   "say",
-  "note",
-  "recall",
+  // `note`, `recall`, `reflect`, … are `memory` family members (familyOf).
   "memory",
   "pool",
   "skill",
-  "reflect",
   "orient",
   "web",
   "canvas",
@@ -134,6 +138,8 @@ export function clampSummary(text: string, max: number): string {
 function rosterEligible(entry: CommandCatalogEntry, options: RosterOptions): boolean {
   if (entry.availability?.status === "unavailable") return false;
   if (OPERATOR_CATEGORIES.has(entry.category) || OPERATOR_COMMANDS.has(entry.name)) return false;
+  // A family member is listed through its head (`memory`), never on its own.
+  if (entry.familyOf) return false;
   // Gated commands are operator or earned surfaces; `help <command>` still documents them.
   if (entry.gate) return false;
   if (

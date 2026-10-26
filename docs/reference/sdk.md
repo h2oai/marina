@@ -36,6 +36,12 @@ export interface CommandCatalogEntry {
     help: string;
     minRank: number;
     gate?: string;
+    /**
+     * The family head this command belongs to (`recall` ⇒ `memory`): the
+     * canonical form is `<familyOf> <name> …`, and the bare name is an
+     * announced alias. Rosters list the head, never the member.
+     */
+    familyOf?: string;
 }
 export interface CapabilityManifest {
     schema: "marina.capabilities.v1";

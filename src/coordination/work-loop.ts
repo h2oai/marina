@@ -194,7 +194,7 @@ export function listWorkItems(entity: Entity, deps: WorkLoopDeps, limit = 12): W
       items.push({
         kind: "memory_seed",
         title: "No observations recorded yet",
-        action: "note <what you see> importance 5 type observation",
+        action: "memory note <what you see> importance 5 type observation",
         priority: 45,
       });
     } else {
@@ -203,7 +203,7 @@ export function listWorkItems(entity: Entity, deps: WorkLoopDeps, limit = 12): W
         items.push({
           kind: "memory_seed",
           title: "You have notes but have not searched them",
-          action: "recall <topic>",
+          action: "memory recall <topic>",
           priority: 42,
         });
       }

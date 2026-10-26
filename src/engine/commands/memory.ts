@@ -10,10 +10,18 @@ import {
 import { residentMemoryOperation } from "../../memory/resident-service";
 import { bold, dim, header, label, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import type { CommandUsage } from "../../sdk/command-forms";
 import { memoryOperationError } from "../../sdk/memory-operations";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { COMMAND_FAMILIES } from "../command-families";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
+import { CONTEXT_USAGE } from "./context";
+import { DEBRIEF_USAGE } from "./debrief";
+import { NOTE_USAGE } from "./note";
+import { RECALL_USAGE } from "./recall";
+import { RECAP_USAGE } from "./recap";
+import { REFLECT_USAGE } from "./reflect";
 
 /** Durable-service verbs handled by `parseMemoryServiceCommand` (src/memory/human-interface.ts). */
 const DURABLE_SUBS = [
@@ -82,13 +90,34 @@ export const MEMORY_KV_HELP = `Key-value beliefs (core memory — mutable, per-e
 
 /** Which verb? One line each — the retrieval and verification surfaces that look alike. */
 export const MEMORY_WHICH_VERB = `Which verb?
-  recall <q>             your legacy notes, FTS-ranked (fast, no model)
+  memory recall <q>      your notes, FTS-ranked (fast, no model)
   memory query <JSON>    durable records, exact symbolic filters
-  recap <topic>          multi-source retrieve-only pull (notes + pools + chronicle), no model
+  memory recap <topic>   multi-source retrieve-only pull (notes + pools + chronicle), no model
   ask <question>         model-synthesised answer over notes + guide + pools + world search
   dig <topic>            internal notes + web evidence, optional synthesis
   share <pool> <text>    ≡ pool <pool> add <text>
   note verify <id> …     dispute or retract on your own note (verified comes from another's pool <name> ratify) | memory reaffirm <ID> … re-pin a durable record | skill verify <name> check a skill package`;
+
+/**
+ * The family members' forms as `memory <member> …`. The command phase runs
+ * them as the member (`CommandRouter.forwardFamily`), so every form keeps the
+ * member's effect and fields.
+ */
+const FAMILY_USAGE: readonly CommandUsage[] = [
+  ...NOTE_USAGE,
+  ...RECALL_USAGE,
+  ...REFLECT_USAGE,
+  ...RECAP_USAGE,
+  ...DEBRIEF_USAGE,
+  ...CONTEXT_USAGE,
+].map((entry) =>
+  typeof entry === "string" ? `memory ${entry}` : { ...entry, syntax: `memory ${entry.syntax}` },
+);
+
+/** The family line `help memory` shows under its usage. */
+export const MEMORY_FAMILY_HELP =
+  "Family: memory note <text> · memory recall <query> [evidence|all] · memory reflect [topic] · memory recap <topic> · memory debrief · memory context <query>\n" +
+  `(bare ${(COMMAND_FAMILIES.memory ?? []).join(", ")} are aliases; \`help memory full\` lists every form)`;
 
 /** Strip the first `n` whitespace-separated tokens from `args`, preserving the rest verbatim. */
 function afterTokens(args: string, n: number): string {
@@ -172,6 +201,7 @@ export function memoryCommand(deps: {
       { syntax: "memory usage", effect: "read" },
       { syntax: "memory vocabulary", effect: "read" },
       { syntax: "memory watch <NAME> [RECORD_ID ...]", effect: "write" },
+      ...FAMILY_USAGE,
     ],
     name: "memory",
     aliases: [],
@@ -181,8 +211,8 @@ export function memoryCommand(deps: {
     sensitiveSubcommands: ["api"],
     unloggedSubcommands: ["api"],
     help:
-      "Durable memory service + key-value beliefs.\n" +
-      `${KV_USAGE}\n\n` +
+      "The memory command: notes, recall, reflection, durable records and key-value beliefs.\n" +
+      `${KV_USAGE}\n${MEMORY_FAMILY_HELP}\n\n` +
       `${MEMORY_KV_HELP}\n\n` +
       `${MEMORY_WHICH_VERB}\n\n` +
       MEMORY_SERVICE_HELP +

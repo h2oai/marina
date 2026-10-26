@@ -3,6 +3,7 @@
 
 import { namedFormsForCommand } from "../sdk/named-command-forms";
 import type { CommandDef, CommandHandler, CommandInput, EntityId, RoomId } from "../types";
+import { familyMember } from "./command-families";
 import { expandMention } from "./parse-mentions";
 
 function freezeMetadata(value: unknown, seen = new Set<object>()): void {
@@ -130,6 +131,33 @@ export class CommandRouter {
     const tokens = args ? args.split(/\s+/) : [];
 
     return { raw: trimmed, verb, args, tokens, entity, room };
+  }
+
+  /**
+   * A family form (`memory recall x`, src/engine/command-families.ts) as the
+   * member's own input (`recall x`): same handler, definition, gates and
+   * output. Anything else — or a family whose head or member is not the
+   * registered builtin — comes back unchanged (`forwarded: false`).
+   */
+  forwardFamily(input: CommandInput): { input: CommandInput; forwarded: boolean } {
+    const member = familyMember(input.verb, input.tokens[0]);
+    if (
+      !member ||
+      this.builtins.get(input.verb)?.name !== input.verb ||
+      this.builtins.get(member)?.name !== member
+    )
+      return { input, forwarded: false };
+    const args = input.args.replace(/^\S+\s*/, "");
+    return {
+      input: {
+        ...input,
+        raw: args ? `${member} ${args}` : member,
+        verb: member,
+        args,
+        tokens: input.tokens.slice(1),
+      },
+      forwarded: true,
+    };
   }
 
   /** Resolve a verb to a handler. Checks room commands first, then builtins. */

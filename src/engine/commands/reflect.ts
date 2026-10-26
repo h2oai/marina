@@ -12,6 +12,7 @@ import { residentMemoryOperation } from "../../memory/resident-service";
 import { type InheritedAuthority, inheritedAuthority } from "../../memory/unified-context";
 import { bold, category, dim, id as fmtId, header, separator, status } from "../../net/ansi";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
+import type { CommandUsage } from "../../sdk/command-forms";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../../sdk/memory-assistance";
 import { memoryOperationError } from "../../sdk/memory-operations";
 import type { MemoryAdoptResult, MemoryReceipt, MemoryRecord } from "../../sdk/memory-types";
@@ -230,6 +231,16 @@ export interface ReflectAgentView {
   state: string;
 }
 
+/** `reflect` forms; `memory reflect …` (src/engine/command-families.ts) shares them. */
+export const REFLECT_USAGE: CommandUsage[] = [
+  { syntax: "reflect --template [topic] [--share <pool>]", effect: "write" },
+  { syntax: "reflect [topic] [--share <pool>] [--no-spawn]", effect: "execute" },
+  { syntax: "reflect adopt <job-id>", effect: "write" },
+  { syntax: "reflect failure <description> [--share <pool>]", effect: "write" },
+  { syntax: "reflect jobs", effect: "read" },
+  { syntax: "reflect via <helper> [topic] [--share <pool>]", effect: "execute" },
+];
+
 export function reflectCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
@@ -256,14 +267,7 @@ export function reflectCommand(deps: {
 }): CommandDef {
   return {
     category: "Memory",
-    usage: [
-      { syntax: "reflect --template [topic] [--share <pool>]", effect: "write" },
-      { syntax: "reflect [topic] [--share <pool>] [--no-spawn]", effect: "execute" },
-      { syntax: "reflect adopt <job-id>", effect: "write" },
-      { syntax: "reflect failure <description> [--share <pool>]", effect: "write" },
-      { syntax: "reflect jobs", effect: "read" },
-      { syntax: "reflect via <helper> [topic] [--share <pool>]", effect: "execute" },
-    ],
+    usage: REFLECT_USAGE,
     name: "reflect",
     aliases: [],
     help: "Reflect on your notes. Usage: reflect [topic] (files a cited job with a memory-reflector when one is available, else the deterministic template) | reflect via <helper> [topic] | reflect --template [topic] | reflect adopt <job> | reflect jobs | reflect failure <description>. Add --share <pool> to also deposit the lesson into a shared pool as a reflection others can recall. Add --no-spawn to use a running helper if there is one but never spawn a new one (session-end reflections).",
