@@ -52,13 +52,13 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Research evidence loop and survey | siloed | `MARINA_RESEARCH_*` | src/research |
 | Research web agent, cited answers, fact pass | siloed | In world: `research ask` (rank 0, spend-guarded) and the typed `marina_research` tool; benchmark scripts (`scripts/mind2web2.ts`, deepresearch) | src/research |
 | Skills | core | `skill`; 5 built-ins (`skill builtin`); residents get the best-fitting skill in their prompt (`MARINA_SKILLS_RESIDENT`, default on); note seeds with `MARINA_SEED_SKILLS=true` (showcase) | src/agent |
-| Supervised residents | core | On by default; `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) turns it off | src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts |
+| Supervised residents | core | On by default; `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) turns it off | src/routing/residents.ts, src/routing/supervisor.ts, src/routing/world-supervisor.ts, src/routing/attention-bridge.ts |
 | Resolvers, probes and watches | siloed | `probe`, `watch`; `position open` adds a resolving watch | src/resolvers, src/engine/commands/probe.ts, src/engine/commands/watch.ts |
 | Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch) | experimental | Experimental: for embedding hosts. `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint` | src/net/instance-lifecycle.ts |
 | OpenShell sandbox provider | experimental | `MARINA_OPENSHELL_URL` + mTLS bundle against an operator-run gateway; `code sandbox use openshell` | src/integrations/openshell |
 | Shared spend ledger | experimental | `MARINA_SPEND_LEDGER=<path>` | src/engine/shared-spend-ledger.ts |
 | Adaptive load-balance routing | experimental | Request header `X-Load-Balance: adaptive` | src/net/model-api |
-| Benchmark route evidence for `model:route` | experimental | `MARINA_ROUTE_EVIDENCE=on` (default `observe` records only) | src/engine/benchmark-evidence.ts |
+| Benchmark route evidence for `model:route` | experimental | `MARINA_ROUTE_EVIDENCE` (default `on`; `observe` records only) | src/engine/benchmark-evidence.ts |
 | Earned forecast routing | experimental | `MARINA_FORECAST_HISTORY` with enough resolved outcomes | src/forecast |
 | Attention judges | experimental | `MARINA_ATTENTION_JUDGE=observe` (default; records opinions and results) or `on` (earned judges advise) | src/agent/attention-judge.ts |
 | Peer code review | experimental | `code review request <name>` or `auto`; supervised residents attach worktree snapshots | src/engine/commands/code/review-request.ts, src/routing/review-snapshot.ts |
@@ -117,7 +117,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
   the ways to run an entry, each with its own status: a crew (core), one free-text task (`pattern
   run`, experimental), a room's turn rule (experimental) and a project's pool notes, generated from
   the entry (demo). The other ten arena formations still run their own code (byte-identical, held
-  by `test/formation-equivalence-arena.test.ts`).
+  by `test/arena-formations-legacy.test.ts`).
 - **Text patterns.** `pattern run <pattern> [budget:<usd>] -- <task>` runs the same protocols as
   `POST /v1/patterns/run` in world (rank 0; per-run budget, default $0.50, at most $2; the daily cap;
   one run per entity), over the operator's models only. Residents reach it as the typed

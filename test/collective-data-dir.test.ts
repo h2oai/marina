@@ -85,7 +85,7 @@ describe("variant and result locations", () => {
       }
       {
         using _state = scopeProcessState({ env: { MARINA_DATA_DIR: undefined } });
-        expect(benchmarkResultsDir()).toBe(join(process.cwd(), "benchmarks", "results"));
+        expect(benchmarkResultsDir()).toBe(join(process.cwd(), "data", "benchmark-results"));
       }
     } finally {
       db.close();

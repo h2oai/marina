@@ -103,7 +103,12 @@ export interface SupervisorOptions {
   onEvent?: (session: RoutingSession, event: RoutingEventInput) => void;
 }
 
-/** Explicit local process owner. Never embedded in the world server or generic routing client. */
+/**
+ * Explicit local process owner, run by `marina supervise` or, started by a
+ * person in the world, by the server itself (`src/routing/world-supervisor.ts`).
+ * Either way it talks to the routing API over HTTP with a supervision
+ * credential; never part of the generic routing client.
+ */
 export class MarinaSupervisor {
   private journal: RoutingRunnerJournal;
   private runs = new Map<string, Run>();

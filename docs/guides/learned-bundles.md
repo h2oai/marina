@@ -243,7 +243,7 @@ Import also runs the export scans again.
 |---|---|
 | Lessons | `upstream:lessons:<domain>` spaces owned by the `marina:upstream` account. Each lesson has trust `imported`, its original `resolved_at` (so the leakage rule applies unchanged), its serving scope (`scope`, `families`, `scope_family`) and the publisher's score as `publisher_rank`. The boards it names become `eval:<board>` refs. Imported lessons are never written into `lessons:*`; they are served from their own spaces, labelled `imported` (see [Serving imported lessons](#serving-imported-lessons)). |
 | Conventions | The `upstream:conventions` space, with trust `imported`. |
-| Defaults | `upstream_default_seeds`, and only for a slot that has no local `benchmark_defaults` row. `resolveDefault` reads the database's active seeds below every local layer (`upstreamSeedFor` in `src/learned/upstream-seed.ts`) and traces the answer as source `upstream`. A seed answers nothing once a local default exists for its slot, and the operator's env value always wins. |
+| Defaults | `upstream_default_seeds`, and only for a slot that has no local `benchmark_defaults` row. `resolveDefault` reads the database's active seeds below every local layer (`upstreamSeedFor` in `src/learned/upstream-seed.ts`) and traces the answer as source `upstream`. A seed answers nothing once a local default exists for its slot, and the operator's env value always wins. A seed for a slot that chooses a model (every slot class except `memory-ranking`: `role-model:*`, `verify:checker`, `forecast-config*`, crew slots and run-target slots) is withheld under `MARINA_UPSTREAM_MODEL_SEEDS=propose`, the default. Its trace marks it `withheld`, and each slot and value raises one `ops inbox` approval. A person holding `role.edit` adopts it with `benchmark promote <slot> upstream` (or the model id, for a `role-model` slot), recorded with basis `upstream` and the bundle's artifact, version, item and value digest. An agent never adopts one. `serve` serves those seeds directly. |
 | Evidence | `evidence_priors`, down-weighted (weight 0.25, at most 50 items per cell). Evidence never enters `benchmark_runs` or `benchmark_items`. |
 | Roles | Created under the `upstream.` prefix, for both the role and its traits. A role is only ever created, never bound to an agent, and changing it later takes `role.edit`. |
 
@@ -464,7 +464,7 @@ countersignatures are later phases.
 | `learned` | The import mode and counts of artifacts, items, confirmations, seeds and priors. |
 | `learned artifacts` | Each imported version with its licence, access and key. |
 | `learned items [artifact:<id>] [status:active\|retired\|revoked]` | Each item with its trust (`imported`) and whether it is confirmed. |
-| `learned seeds` | Each seeded slot, and whether a local default shadows it. |
+| `learned seeds` | Each seeded slot, and whether a local default shadows it or it is withheld pending approval. |
 | `learned priors [family:<f>]` | Each prior, with its raw counts and its weighted counts. |
 | `learned events [limit:<n>]` | The audit trail. |
 

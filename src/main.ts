@@ -74,6 +74,7 @@ import { MarinaDB } from "./persistence/database";
 import { acquireDatabaseLease } from "./persistence/database-lease";
 import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
 import { ensureKeySecret, type KeySecretSource } from "./persistence/key-secret-file";
+import { autostartWorldSupervisor } from "./routing/world-supervisor";
 import { LocalStorageProvider } from "./storage/local-provider";
 import { loadOtlpExporterConfig, MarinaOtlpExporter } from "./telemetry/otlp-exporter";
 import { loadOtlpLogExporterConfig, MarinaOtlpLogExporter } from "./telemetry/otlp-log-exporter";
@@ -928,6 +929,12 @@ if (
   );
 }
 
+// ─── In-world supervisor on boot ──────────────────────────────────────────────
+// MARINA_SUPERVISOR_AUTOSTART (default `resume`): the supervisor a person left
+// running restarts once the HTTP listener answers its routing calls. Never
+// blocks or fails the boot.
+void autostartWorldSupervisor(engine.worldSupervisor, db);
+
 // ─── Embedding: endpoint file, idle shutdown, parent watch ─────────────────────
 // Experimental: for embedding hosts — no production host uses it yet.
 // endpoint.json (only with MARINA_DATA_DIR) tells a host where this instance
@@ -999,6 +1006,12 @@ async function shutdown(code = 0) {
 
   clearInterval(stateInterval);
   clearInterval(sessionCleanupInterval);
+  // The in-world supervisor first, while HTTP still answers its final sync
+  // (its boot record stays: the next boot resumes it). Bounded by its own
+  // final-sync timeout and the watchdog above.
+  await engine.worldSupervisor
+    .stop({ keep: true })
+    .catch(logRejection(logger, "main", "stopping the in-world supervisor failed"));
   // External admission closes first; authenticated internal checkpoints may finish.
   stopExtensions.beginDrain();
   wsServer.beginDrain();

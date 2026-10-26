@@ -33,6 +33,7 @@ import { parseVerifyModel } from "../src/net/model-api/verify";
 import type { BenchmarkItemRow } from "../src/persistence/database";
 import { MarinaDB } from "../src/persistence/database";
 import { createTestEngine } from "./engine-fixture";
+import { scopeProcessState } from "./process-state";
 
 const IDS = Array.from({ length: 120 }, (_, i) => `item-${i}`);
 const OPERATOR = { key: "operator", keyOf: (id: string) => id };
@@ -148,8 +149,17 @@ describe("resolveDefault precedence", () => {
         ? { value: { model: "upstream-model" }, version: "v1" }
         : undefined,
     );
-    expect(resolveDefault(spec()).source).toBe("upstream");
-    expect(resolveDefault(spec()).value).toBe("upstream-model");
+    // crew:* chooses a model: by default its seed is withheld, traced, and the built-in answers.
+    const withheld = resolveDefault(spec());
+    expect(withheld.source).toBe("builtin");
+    expect(withheld.withheld).toEqual(["crew:test:family:reasoning@upstream:v1"]);
+    expect(withheld.reason).toContain("withheld pending approval");
+    {
+      // The operator's opt-in serves it directly.
+      using _serve = scopeProcessState({ env: { MARINA_UPSTREAM_MODEL_SEEDS: "serve" } });
+      expect(resolveDefault(spec()).source).toBe("upstream");
+      expect(resolveDefault(spec()).value).toBe("upstream-model");
+    }
 
     // A family slot (filled directly: the per-board path refuses family slots).
     record(db, "fam", { model: "family-model" }, weak);
@@ -409,13 +419,13 @@ describe("a promotion flows through to the default", () => {
   });
 });
 
-describe("route evidence: observe by default, families from the role", () => {
+describe("route evidence: on by default, families from the role", () => {
   it("every family tag names a registered benchmark", () => {
     for (const name of Object.keys(BENCHMARK_FAMILIES)) expect(BENCHMARKS[name]).toBeDefined();
     expect(benchmarksInFamilies(["math"])).toEqual(["gsm8k", "math", "aime"]);
   });
 
-  it("records the evidence pick from the role's declared families and never applies it", () => {
+  it("under observe records the evidence pick from the role's declared families and never applies it; by default applies it", () => {
     const candidates = [
       { route: "fast", model: "openrouter/a/fast" },
       { route: "powerful", model: "openrouter/b/strong" },
@@ -455,7 +465,18 @@ describe("route evidence: observe by default, families from the role", () => {
       getTrait: (name) =>
         name === "numerate" ? { capabilities: JSON.stringify({ families: ["math"] }) } : undefined,
     };
-    const settings = routeEvidenceSettingsFromEnv({});
+    // The default acts on it.
+    const byDefault = applyRouteEvidence(
+      { route: "fast", model: "openrouter/a/fast" },
+      candidates,
+      "solver",
+      routeEvidenceSettingsFromEnv({}),
+      source,
+    );
+    expect(byDefault).toMatchObject({ route: "powerful", applied: true });
+    expect(byDefault.signals).toMatchObject({ evidence_mode: "on", evidence: "applied" });
+
+    const settings = routeEvidenceSettingsFromEnv({ MARINA_ROUTE_EVIDENCE: "observe" });
     expect(settings.mode).toBe("observe");
     const r = applyRouteEvidence(
       { route: "fast", model: "openrouter/a/fast" },

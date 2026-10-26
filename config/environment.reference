@@ -441,6 +441,10 @@
 # @restart
 # MARINA_SUPERVISED_RESIDENTS=on
 
+# The in-world supervisor (`supervisor start`: the native agent supervisor run by the server) on boot. `resume` (default) restarts the supervisor a person started and did not stop, for that person and root, after a restart. `off` starts nothing. `person:<name>` starts one for that person's account in the default code root on every boot. Starting always needs a person's account (its supervision credential is that person's), supervised residents on, and a configured code root.
+# @restart
+# MARINA_SUPERVISOR_AUTOSTART=resume
+
 # Renewable lease on a newly claimed task, in milliseconds. Workers renew with `task heartbeat <id>`; expired ordinary work reopens.
 # MARINA_TASK_LEASE_MS=900000
 
@@ -908,8 +912,8 @@
 # MARINA_ROUTE_INSTRUCTIONS=Choose the least costly model that can complete the task.
 # MARINA_ROUTE_FALLBACK=powerful
 
-# Benchmark evidence for model:route (src/engine/benchmark-evidence.ts). After the router picks, measured ledger results may prefer another of the SAME candidates: the best Wilson lower bound among at least two candidates with MIN_N items in the role's families (and within MAX_COST_USD per item, when set). `observe` (the default) records the pick on the route decision without acting; `on` applies it; `off` skips it. Resolved once at spawn and persisted; any error keeps the router's choice. Families: a comma list of benchmark names for every role, or JSON {"*": [...], "<role>": [...]}; when unset, the spawning role's own declared families (its traits' `families` capability) are used, expanded to the registered benchmarks tagged with them; with none, evidence never applies. Evidence is traced participants and direct-model runs; window evidence only with MARINA_ROUTE_EVIDENCE_WINDOW=true, shared window evidence never. Inspect with `trace advise evidence <benchmark>`.
-# MARINA_ROUTE_EVIDENCE=observe
+# Benchmark evidence for model:route (src/engine/benchmark-evidence.ts). After the router picks, measured ledger results may prefer another of the SAME candidates: the best Wilson lower bound among at least two candidates with MIN_N items in the role's families (and within MAX_COST_USD per item, when set). `on` (the default) applies it; `observe` only records the pick on the route decision; `off` skips it. Resolved once at spawn and persisted; any error keeps the router's choice. Families: a comma list of benchmark names for every role, or JSON {"*": [...], "<role>": [...]}; when unset, the spawning role's own declared families (its traits' `families` capability) are used, expanded to the registered benchmarks tagged with them; with none, evidence never applies. Evidence is traced participants and direct-model runs; window evidence only with MARINA_ROUTE_EVIDENCE_WINDOW=true, shared window evidence never. Inspect with `trace advise evidence <benchmark>`.
+# MARINA_ROUTE_EVIDENCE=on
 
 # Live evidence in spawn-time route evidence (src/outcomes/evidence.ts): also weigh what each candidate model (and role) actually got done on real work — task verdicts, Code Mode checks, outcomes reported to POST /v1/outcomes — as families `live:<source>`, mechanical outcomes only, never measurement, and only SHARED work (a person's work, or their agents', never pools into it). Same MIN_N, objective and observe/on mode as the ledger evidence, so under the default `observe` it is recorded, not applied. Default on; `off` uses the ledger only.
 # MARINA_ROUTE_EVIDENCE_LIVE=on
@@ -1372,6 +1376,10 @@
 # What MARINA_BOOTSTRAP_BUNDLES may accept beyond signed, open slices: comma-separated `own` (the bundles' `private` slices are the operator's own pack; never a paid `token` slice) and `unsigned` (a bundle written with no publisher key, every record labelled `unsigned`). Default empty.
 # @restart
 # MARINA_BOOTSTRAP_ACCEPT=
+
+# Imported seeds for default slots that choose a model (src/learned/upstream-model-seeds.ts: every slot class except `memory-ranking` — `role-model:*`, `verify:checker`, `forecast-config*`, crew slots and any slot filled from a benchmark run's target). `propose` (default): such a seed is never served by default resolution; the `default_resolved` trace marks it `withheld`, and each slot+value raises one ops-inbox approval that a person holding `role.edit` adopts with `benchmark promote <slot> upstream` (recorded with basis `upstream` and the bundle's artifact, version, item and value digest); an agent never adopts one. `serve`: the operator's opt-in to serve those seeds directly, as before. Seeds for non-model slots are served in both modes.
+# @protected
+# MARINA_UPSTREAM_MODEL_SEEDS=propose
 
 # Publisher keys a learned bundle or revocation list must be signed by: comma-separated `label=<base64 SPKI>` or bare base64 Ed25519 public keys, added to the keys pinned in source. A bundle signed by any other key is refused; the key embedded in a bundle is never trusted on its own.
 # @protected

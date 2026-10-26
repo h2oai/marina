@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // FROZEN copy of `src/arena/formations.ts` as it was before the formation catalogue
-// (`src/orchestration/formations/`, 2026-10-20, origin/main 6c4f6d18). The
-// equivalence tests (`test/formation-equivalence*.test.ts`) require the
-// catalogue-backed implementation to reproduce this one exactly, given the
-// same model replies. Never edit this file to make those tests pass.
+// (`src/orchestration/formations/`, 2026-10-20, origin/main 6c4f6d18). It is the
+// reference for the arena formations that still run on their own code (every
+// `numeric.runtime: "arena"` entry, not `ensemble`/`delphi`):
+// `test/arena-formations-legacy.test.ts` holds those byte-identical to it. The
+// catalogue formations are no longer compared with it. Never edit this file to
+// make that test pass.
 
 /**
  * Marina's orchestration patterns as arena forecasters
@@ -80,18 +82,18 @@
  * (`formation-profile.ts`); ranking rounds keep their start.
  */
 
-import type { RoundForecast } from "../../../src/arena/forecast";
-import { forecastRound } from "../../../src/arena/forecast";
+import type { RoundForecast } from "../../src/arena/forecast";
+import { forecastRound } from "../../src/arena/forecast";
 import {
   type ForecastSignal,
   memberSignals,
   researchSignals,
   SIGNALS_REQUEST,
   signalLines,
-} from "../../../src/arena/forecast-signals";
-import type { ProfileProposal } from "../../../src/arena/formation-profile";
-import type { Complete } from "../../../src/arena/model-forecaster";
-import { parseReply } from "../../../src/arena/model-forecaster";
+} from "../../src/arena/forecast-signals";
+import type { ProfileProposal } from "../../src/arena/formation-profile";
+import type { Complete } from "../../src/arena/model-forecaster";
+import { parseReply } from "../../src/arena/model-forecaster";
 import {
   dailyBlock,
   dailyOf,
@@ -101,28 +103,28 @@ import {
   rulesLines,
   startLine,
   withoutDaily,
-} from "../../../src/arena/prompt-context";
+} from "../../src/arena/prompt-context";
 import {
   PROPOSAL_JUDGED_PATTERNS,
   type ProposalJudgeConfig,
   type ProposalJudgeRecord,
   weighProposals,
-} from "../../../src/arena/proposal-judge";
-import { buildResearchBrief } from "../../../src/arena/research/briefs";
-import type { CiviqsDaily } from "../../../src/arena/research/civiqs-nowcast";
+} from "../../src/arena/proposal-judge";
+import { buildResearchBrief } from "../../src/arena/research/briefs";
+import type { CiviqsDaily } from "../../src/arena/research/civiqs-nowcast";
 import {
   markResearchFallback,
   type ResearchFallbackMode,
   type ResearchFallbackRecord,
-} from "../../../src/arena/research-fallback";
-import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "../../../src/arena/types";
-import type { Evidence } from "../../../src/decisions/evidence";
-import type { DecisionProvider } from "../../../src/decisions/types";
-import { getErrorMessage } from "../../../src/engine/errors";
-import { judgeAudit, judgeClaim, newJudgeRecord } from "../../../src/forecast/judge";
-import { requireResearchEvidence } from "../../../src/research/admission";
-import type { Retriever } from "../../../src/research/retrieve";
-import { type PageText, verifyDossier } from "../../../src/research/verify";
+} from "../../src/arena/research-fallback";
+import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "../../src/arena/types";
+import type { Evidence } from "../../src/decisions/evidence";
+import type { DecisionProvider } from "../../src/decisions/types";
+import { getErrorMessage } from "../../src/engine/errors";
+import { judgeAudit, judgeClaim, newJudgeRecord } from "../../src/forecast/judge";
+import { requireResearchEvidence } from "../../src/research/admission";
+import type { Retriever } from "../../src/research/retrieve";
+import { type PageText, verifyDossier } from "../../src/research/verify";
 
 export const FORMATION_PATTERNS = [
   "ensemble",
@@ -176,9 +178,7 @@ export interface FormationStep {
 }
 
 export interface FormationForecast extends RoundForecast {
-  lessons?: Awaited<
-    ReturnType<typeof import("../../../src/forecast/lessons").recallForecastLessons>
-  >;
+  lessons?: Awaited<ReturnType<typeof import("../../src/forecast/lessons").recallForecastLessons>>;
   formation?: FormationPattern;
   /** The proposals the final aggregation used, by label. */
   proposals?: Record<string, Proposal>;
@@ -1366,7 +1366,7 @@ export async function formationForecastRound(
   const baseline = withoutDaily(given);
   if (round.target_type === "profile_energy" && hasEveryCell(round, baseline) && members.length) {
     // Profile rounds: the same protocols over whole profiles, aggregated per cell.
-    const { profileFormationForecastRound } = await import("../../../src/arena/formation-profile");
+    const { profileFormationForecastRound } = await import("../../src/arena/formation-profile");
     return profileFormationForecastRound(
       pattern,
       round,
@@ -1473,9 +1473,9 @@ export interface FormationStage {
 
 /** What the research crew handed over: the verified lines, and its audit record. */
 export interface ResearchDossier {
-  readSwarm?: import("../../../src/research/retrieve").ResearchReport["readSwarm"];
-  evidence?: import("../../../src/research/evidence").EvidenceSnapshot;
-  researchLoop?: import("../../../src/research/evidence-loop").ResearchLoopAudit;
+  readSwarm?: import("../../src/research/retrieve").ResearchReport["readSwarm"];
+  evidence?: import("../../src/research/evidence").EvidenceSnapshot;
+  researchLoop?: import("../../src/research/evidence-loop").ResearchLoopAudit;
   since: string;
   verified: string;
   stats?: Record<string, number>;
@@ -1485,8 +1485,8 @@ export interface ResearchDossier {
   error?: string;
   status?: "verified" | "empty" | "failed";
   warnings?: string[];
-  funnels?: import("../../../src/research/retrieve").ResearchReport["funnels"];
-  data?: import("../../../src/research/retrieve").ResearchReport["data"];
+  funnels?: import("../../src/research/retrieve").ResearchReport["funnels"];
+  data?: import("../../src/research/retrieve").ResearchReport["data"];
   /** The dossier's typed measurements (target / change claims) as signals. */
   signals?: ForecastSignal[];
 }
@@ -1692,7 +1692,7 @@ export async function composeForecastRound(
   }
   let evidenceRefresh: ComposedForecast["evidenceRefresh"];
   if (research?.refresh && dossier) {
-    const { decideEvidenceRefresh } = await import("../../../src/research/refresh");
+    const { decideEvidenceRefresh } = await import("../../src/research/refresh");
     const { key, previous } = research.refresh;
     const now = (research.refresh.now?.() ?? new Date()).toISOString();
     const prior = previous?.evidenceRefresh;
@@ -1754,7 +1754,7 @@ export async function composeForecastRound(
     };
   const handoff = numeric
     ? handoffBlock(first.pattern, one, withoutDaily(start).topline!)
-    : (await import("../../../src/arena/formation-profile")).profileHandoffBlock(
+    : (await import("../../src/arena/formation-profile")).profileHandoffBlock(
         first.pattern,
         one,
         round.cells ?? [],

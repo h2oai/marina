@@ -286,7 +286,7 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   {
     name: "Benchmark route evidence for `model:route`",
     status: "experimental",
-    enable: "`MARINA_ROUTE_EVIDENCE=on` (default `observe` records only)",
+    enable: "`MARINA_ROUTE_EVIDENCE` (default `on`; `observe` records only)",
     owner: "src/engine/benchmark-evidence.ts",
   },
   {
@@ -299,7 +299,8 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
     name: "Supervised residents",
     status: "core",
     enable: "On by default; `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) turns it off",
-    owner: "src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts",
+    owner:
+      "src/routing/residents.ts, src/routing/supervisor.ts, src/routing/world-supervisor.ts, src/routing/attention-bridge.ts",
   },
   {
     name: "Attention judges",
