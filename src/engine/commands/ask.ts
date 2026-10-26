@@ -5,6 +5,7 @@ import type { TaskManager } from "../../coordination/task-manager";
 import { category, dim, header, id, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { gatherRetrievalContext } from "./retrieval-core";
 
@@ -28,12 +29,12 @@ export function askCommand(deps: {
 
       const query = input.args.trim();
       if (!query) {
-        ctx.send(input.entity, "Usage: ask <question>");
+        refuseCommand(ctx, input.entity, "Usage: ask <question>");
         return;
       }
 
       if (!deps.db) {
-        ctx.send(input.entity, "Ask requires database support.");
+        refuseCommand(ctx, input.entity, "Ask requires database support.");
         return;
       }
 

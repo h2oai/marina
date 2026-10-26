@@ -20,6 +20,7 @@ import type { AssetRow } from "../../persistence/db-assets";
 import { normalizeAssetMime } from "../../storage/asset-mime";
 import type { CommandDef, Entity, EntityId } from "../../types";
 import { canvasReaderFor, mayReadAsset } from "../canvas-access";
+import { withoutRefusal } from "../command-response";
 import type { Engine } from "../engine";
 import { getErrorMessage } from "../errors";
 import { ingestAsset } from "../media/asset-library";
@@ -94,14 +95,18 @@ export function storedTranscript(asset: Pick<AssetRow, "metadata">): StoredTrans
 }
 
 function mayChangeAsset(engine: Engine, entity: Entity, asset: AssetRow): boolean {
+  // A probe, not the command's answer: a "no" here only skips saving the
+  // transcript, so it never fails the transcription.
   return (
-    ownershipRefusal(
-      entity,
-      {
-        owners: [asset.entity_name],
-        creatorOf: (name) => engine.db?.getAgentConfig(name)?.spawned_by || undefined,
-      },
-      "",
+    withoutRefusal(() =>
+      ownershipRefusal(
+        entity,
+        {
+          owners: [asset.entity_name],
+          creatorOf: (name) => engine.db?.getAgentConfig(name)?.spawned_by || undefined,
+        },
+        "",
+      ),
     ) === undefined
   );
 }

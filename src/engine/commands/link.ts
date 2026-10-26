@@ -4,6 +4,7 @@
 import { RateLimiter } from "../../auth/rate-limiter";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { Logger } from "../logger";
 
 /** Module logger. */
@@ -218,7 +219,7 @@ export function linkCommand(deps: {
       if (sub === "unlink") {
         const adapter = input.tokens[1]?.toLowerCase();
         if (!adapter) {
-          ctx.send(input.entity, "Usage: link unlink <telegram|discord>");
+          refuseCommand(ctx, input.entity, "Usage: link unlink <telegram|discord>");
           return;
         }
         if (!deps.db) {

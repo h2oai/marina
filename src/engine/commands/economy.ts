@@ -8,6 +8,7 @@ import {
   type MarinaDB,
 } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { refuseCommand } from "../command-response";
 import { notFound } from "./command-messages";
 
 const HELP =
@@ -71,7 +72,7 @@ export function economyCommand(deps: {
         }
         const terms = parseObject(termsText);
         if (!terms) {
-          ctx.send(input.entity, "Terms must be a JSON object.");
+          refuseCommand(ctx, input.entity, "Terms must be a JSON object.");
           return;
         }
         const row = deps.db.createEconomicContract({
@@ -109,7 +110,7 @@ export function economyCommand(deps: {
         }
         const data = parseObject(dataText);
         if (!data) {
-          ctx.send(input.entity, "Event data must be a JSON object.");
+          refuseCommand(ctx, input.entity, "Event data must be a JSON object.");
           return;
         }
         const row = deps.db.appendEconomicEvent({
@@ -153,14 +154,15 @@ export function economyCommand(deps: {
           return;
         }
         if (!SAFE_ADAPTER_ID.test(id)) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Adapter id must be 3-64 chars: letters, digits, and : . _ - (starting alphanumeric).",
           );
           return;
         }
         if (deps.db.listEconomicAdapters().some((adapter) => adapter.id === id)) {
-          ctx.send(input.entity, `Adapter ${id} already exists.`);
+          refuseCommand(ctx, input.entity, `Adapter ${id} already exists.`);
           return;
         }
         const row = deps.db.createEconomicAdapter({

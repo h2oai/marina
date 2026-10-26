@@ -19,6 +19,7 @@ import { findLatestSample, writeSample } from "../../resolvers/sample-writer";
 import type { Resolver, ResolverOutput, Sample } from "../../resolvers/types";
 import { type ActiveWatch, getActiveWatch, retireWatchNote } from "../../resolvers/watch-spec";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 
 const HELP = `Probe — invoke a resolver and write a Sample.
 Usage:
@@ -66,7 +67,8 @@ export function probeCommand(deps: {
 
       const resolver = getResolver(kind);
       if (!resolver) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           `Unknown resolver kind: ${kind}\n\nRegistered kinds: ${
             listResolvers()

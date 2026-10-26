@@ -4,6 +4,7 @@
 import { dim, error as fmtError } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { principalOf } from "../gate-context";
 import { getRank } from "../permissions";
@@ -88,7 +89,7 @@ export function runCommand(deps: RunDeps): CommandDef {
       if (sub === "quiet") {
         const binary = tokens[1];
         if (!binary) {
-          ctx.send(eid, "Usage: run quiet <binary> [args...]");
+          refuseCommand(ctx, eid, "Usage: run quiet <binary> [args...]");
           return;
         }
         try {
@@ -111,12 +112,12 @@ export function runCommand(deps: RunDeps): CommandDef {
       if (sub === "raw") {
         const commandString = tokens.slice(1).join(" ");
         if (!commandString) {
-          ctx.send(eid, "Usage: run raw <command string>");
+          refuseCommand(ctx, eid, "Usage: run raw <command string>");
           return;
         }
         const refusal = shellExecRefusal(deps.db, entity, `run raw ${commandString}`);
         if (refusal) {
-          ctx.send(eid, refusal);
+          refuseCommand(ctx, eid, refusal);
           return;
         }
         try {

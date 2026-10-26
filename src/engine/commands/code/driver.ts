@@ -7,7 +7,7 @@ import { codingRunMetadata, endCodingRun } from "../../../coding/task-run";
 import { bold, dim, error as fmtError, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
-import { failCommandResponse } from "../../command-response";
+import { failCommandResponse, refuseCommand } from "../../command-response";
 import { getErrorMessage } from "../../errors";
 import { parseModifiers } from "../../parse-input";
 import { checkGateForExecution, grant, recordGateExecution } from "../../safety-gates";
@@ -273,7 +273,8 @@ export async function doCode(
     recordGateExecution(deps.db, eid, "code.exec", dispatcherGate, "code task dispatch");
   }
   if (!dispatcherGate.ok) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       dispatcherGate.reason ??
         "Dispatching a coding agent requires the code.exec capability, which is earned through contribution.",
@@ -294,7 +295,8 @@ export async function doCode(
   // Normalized comparison: session.agent may hold a config name ("code-coder-
   // code_5") while the agent's entity logged in sanitized ("codecodercode_5").
   if (session.agent && sameEntityName(session.agent, entity.name)) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       "You are this session's coding agent — act with marina_code actions; the task is already assigned.",
     );
@@ -417,7 +419,11 @@ async function ensureSessionAgent(
   // consequence recorded.
   const gate = checkGateForExecution(deps.db, eid, "agent.spawn");
   if (!gate.ok) {
-    ctx.send(eid, gate.reason ?? "Not permitted to launch a coding agent (requires agent.spawn).");
+    refuseCommand(
+      ctx,
+      eid,
+      gate.reason ?? "Not permitted to launch a coding agent (requires agent.spawn).",
+    );
     return null;
   }
   recordGateExecution(deps.db, eid, "agent.spawn", gate, "code session coder");
@@ -487,7 +493,7 @@ export function driverCommand(
     return;
   }
   if (!names.includes(want)) {
-    ctx.send(eid, `Unknown driver "${want}". Available: ${names.join(", ")}.`);
+    refuseCommand(ctx, eid, `Unknown driver "${want}". Available: ${names.join(", ")}.`);
     return;
   }
   deps.db.updateCodingSession(session.id, { driver: want });

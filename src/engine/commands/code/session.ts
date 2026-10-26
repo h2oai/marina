@@ -15,6 +15,7 @@ import { codingWorkerState } from "../../../coding/worker-state";
 import { bold, dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import { getErrorMessage } from "../../errors";
 import { parseModifiers } from "../../parse-input";
 import { reassignWriter } from "./crew";
@@ -362,12 +363,12 @@ export function resumeSession(
   id: string | undefined,
 ): void {
   if (!id) {
-    ctx.send(eid, "Usage: code resume <session_id>");
+    refuseCommand(ctx, eid, "Usage: code resume <session_id>");
     return;
   }
   const session = deps.db.getCodingSession(id);
   if (!session) {
-    ctx.send(eid, `Coding session not found: ${id}`);
+    refuseCommand(ctx, eid, `Coding session not found: ${id}`);
     return;
   }
   // Ownership gate: only the session creator or its own bound coding agent may
@@ -475,7 +476,7 @@ export function sessionTask(
   if (!session) return;
   const title = rawTitle.trim();
   if (!title) {
-    ctx.send(eid, "Usage: code task <title>");
+    refuseCommand(ctx, eid, "Usage: code task <title>");
     return;
   }
   const taskId = deps.db.createTask({
@@ -529,7 +530,7 @@ export function modelSetting(
   if (action === "set") {
     const target = args.slice(1).join(" ").trim();
     if (!target) {
-      ctx.send(eid, "Usage: code model set <provider/model|agent|crew|direct>");
+      refuseCommand(ctx, eid, "Usage: code model set <provider/model|agent|crew|direct>");
       return;
     }
     for (const previous of deps.db
@@ -793,7 +794,7 @@ export function steer(
   if (!session) return;
   const text = normalizeSteeringArgs(args);
   if (!text) {
-    ctx.send(eid, "Usage: code steer <direction>");
+    refuseCommand(ctx, eid, "Usage: code steer <direction>");
     return;
   }
   const profile = getCodeProfile(entity);
@@ -825,7 +826,7 @@ export function observe(
   if (!session) return;
   const text = args.join(" ").trim();
   if (!text) {
-    ctx.send(eid, "Usage: code observe <what you observed>");
+    refuseCommand(ctx, eid, "Usage: code observe <what you observed>");
     return;
   }
   const artifact = deps.db.createCodingArtifact({
@@ -1069,7 +1070,7 @@ export async function recordCodingNote(
 ): Promise<void> {
   const noteKind = normalizeCodingNoteKind(kind);
   if (!noteKind) {
-    ctx.send(eid, "Usage: code plan|summary|handoff|decision <text>");
+    refuseCommand(ctx, eid, "Usage: code plan|summary|handoff|decision <text>");
     return;
   }
   const session = resolveSession(ctx, eid, entity, deps.db);
@@ -1083,7 +1084,7 @@ export async function recordCodingNote(
   if (noteKind === "handoff") {
     const resolved = resolveHandoffRecipient(deps.db, session, entity, args);
     if ("refusal" in resolved) {
-      ctx.send(eid, fmtError(resolved.refusal));
+      refuseCommand(ctx, eid, fmtError(resolved.refusal));
       return;
     }
     ({ text, to: handoffTo, notice: handoffNotice } = resolved);
@@ -1097,23 +1098,27 @@ export async function recordCodingNote(
   if (noteKind === "summary" && /^(--)?submit([:=]|$)/i.test(args[0] ?? "")) {
     const parsed = parseModifiers(args, { submit: { type: "string" } }, { leading: true });
     if (parsed.errors.length || String(parsed.values.submit).toLowerCase() !== "crew") {
-      ctx.send(eid, fmtError(`Usage: ${CREW_SUBMIT_USAGE}`));
+      refuseCommand(ctx, eid, fmtError(`Usage: ${CREW_SUBMIT_USAGE}`));
       return;
     }
     text = parsed.rest.join(" ").trim();
     if (!text) {
-      ctx.send(eid, `Usage: ${CREW_SUBMIT_USAGE}`);
+      refuseCommand(ctx, eid, `Usage: ${CREW_SUBMIT_USAGE}`);
       return;
     }
     const authority = crewSubmitAuthority(deps, session.id, entity);
     if ("refusal" in authority) {
-      ctx.send(eid, fmtError(authority.refusal));
+      refuseCommand(ctx, eid, fmtError(authority.refusal));
       return;
     }
     forCrew = authority.forCrew;
   }
   if (!text) {
-    ctx.send(eid, `Usage: code ${noteKind} <text>${noteKind === "handoff" ? " [to:<agent>]" : ""}`);
+    refuseCommand(
+      ctx,
+      eid,
+      `Usage: code ${noteKind} <text>${noteKind === "handoff" ? " [to:<agent>]" : ""}`,
+    );
     return;
   }
 

@@ -6,6 +6,7 @@ import type { MarinaDB } from "../../persistence/database";
 import { MARINA_ROOT } from "../../runtime-paths";
 import type { CommandDef, Entity, EntityId, RoomContext, RoomId, RoomModule } from "../../types";
 import type { LoadedRoom } from "../../world/room-manager";
+import { refuseCommand } from "../command-response";
 import { rankFloorRefusal } from "../rank-floor";
 
 const ROOMS_DIR = join(MARINA_ROOT, "rooms");
@@ -46,7 +47,7 @@ export function sourceCommand(deps: SourceDeps): CommandDef {
       if (sub === "command") {
         const name = tokens[1]?.toLowerCase();
         if (!name) {
-          ctx.send(input.entity, "Usage: source command <name>");
+          refuseCommand(ctx, input.entity, "Usage: source command <name>");
           return;
         }
         if (!deps.db) {
@@ -55,7 +56,7 @@ export function sourceCommand(deps: SourceDeps): CommandDef {
         }
         const cmd = deps.db.getCommandByName(name);
         if (!cmd) {
-          ctx.send(input.entity, `Command "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Command "${name}" not found.`);
           return;
         }
         ctx.send(
@@ -69,12 +70,12 @@ export function sourceCommand(deps: SourceDeps): CommandDef {
       if (sub === "connector") {
         const refusal = rankFloorRefusal(entity, 7, "Requires steward rank (7).");
         if (refusal) {
-          ctx.send(input.entity, refusal);
+          refuseCommand(ctx, input.entity, refusal);
           return;
         }
         const name = tokens[1]?.toLowerCase();
         if (!name) {
-          ctx.send(input.entity, "Usage: source connector <name>");
+          refuseCommand(ctx, input.entity, "Usage: source connector <name>");
           return;
         }
         if (!deps.db) {
@@ -83,7 +84,7 @@ export function sourceCommand(deps: SourceDeps): CommandDef {
         }
         const conn = deps.db.getConnectorByName(name);
         if (!conn) {
-          ctx.send(input.entity, `Connector "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Connector "${name}" not found.`);
           return;
         }
         const lines = [

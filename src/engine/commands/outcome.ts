@@ -21,6 +21,7 @@ import { liveEvidence } from "../../outcomes/evidence";
 import type { MarinaDB } from "../../persistence/database";
 import type { OutcomeKind } from "../../persistence/db-outcomes";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
 
@@ -51,7 +52,7 @@ export function outcomeCommand(deps: {
     handler: (ctx: RoomContext, input) => {
       const db = deps.db;
       if (!db) {
-        ctx.send(input.entity, requiresPersistence("outcomes"));
+        refuseCommand(ctx, input.entity, requiresPersistence("outcomes"));
         return;
       }
       const tokens = input.tokens;

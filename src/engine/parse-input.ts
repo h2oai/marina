@@ -7,6 +7,7 @@
 // Commands can import individual helpers as needed.
 
 import type { CommandInput } from "../types";
+import { failCommandResponse } from "./command-response";
 import { DURATION_UNITS_HINT, parseDuration } from "./commands/format-duration";
 import { escapeRegExp } from "./regexp";
 
@@ -487,9 +488,15 @@ export function canonicalSub(
   return lower;
 }
 
-/** Consistent "unknown subcommand" reply: `Unknown <name> subcommand "<sub>". <usage>`. */
+/**
+ * Consistent "unknown subcommand" reply: `Unknown <name> subcommand "<sub>". <usage>`.
+ * Building it marks the running command refused (`failCommandResponse`), so
+ * every handler that answers with it records failed usage.
+ */
 export function unknownSubcommand(name: string, sub: string | undefined, usage: string): string {
-  return `Unknown ${name} subcommand "${sub ?? ""}". ${usage}`;
+  const reply = `Unknown ${name} subcommand "${sub ?? ""}". ${usage}`;
+  failCommandResponse(reply);
+  return reply;
 }
 
 /** Commands whose trailing argument is free text (a message, a note, a value). */

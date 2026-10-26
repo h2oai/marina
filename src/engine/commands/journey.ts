@@ -11,6 +11,7 @@ import {
   type MarinaDB,
 } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { projectJourneyProgress, projectJourneyResults } from "../journey-projection";
 import { type JourneyWorkEvidence, projectJourneyState } from "../journey-state";
 
@@ -83,7 +84,7 @@ export function journeyCommand(deps: {
         case undefined:
           return list(ctx, input.entity, deps.db, entity, false);
         default:
-          ctx.send(input.entity, `Unknown journey subcommand: ${sub}\n\n${HELP}`);
+          refuseCommand(ctx, input.entity, `Unknown journey subcommand: ${sub}\n\n${HELP}`);
       }
     },
   };
@@ -231,7 +232,7 @@ function steer(
     return;
   }
   if (!summary || summary.length > 4000) {
-    ctx.send(caller, "Usage: journey steer <id|latest> <context or correction>");
+    refuseCommand(ctx, caller, "Usage: journey steer <id|latest> <context or correction>");
     return;
   }
   const event = db.appendJourneyEvent({
@@ -256,11 +257,11 @@ function create(
 ): void {
   const expression = rawExpression.trim();
   if (!expression) {
-    ctx.send(caller, "Usage: journey create <desire>");
+    refuseCommand(ctx, caller, "Usage: journey create <desire>");
     return;
   }
   if (expression.length > 4000) {
-    ctx.send(caller, "A journey desire must be 4,000 characters or fewer.");
+    refuseCommand(ctx, caller, "A journey desire must be 4,000 characters or fewer.");
     return;
   }
   const journey = db.createJourney({
@@ -367,14 +368,16 @@ function link(
     return;
   }
   if (!isLinkKind(rawKind) || !ref || args.length > 4) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       caller,
       `Usage: journey link <id|latest> <kind> <ref> [relationship]\nKinds: ${JOURNEY_LINK_KINDS.join(", ")}`,
     );
     return;
   }
   if ((relationship?.length ?? 0) > 80 || ref.length > 500) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       caller,
       "Journey references must be at most 500 characters and relationships at most 80.",
     );
@@ -408,19 +411,21 @@ function record(
     return;
   }
   if (!isEventKind(rawKind) || !summary || recordHead.length !== 2 || parts.length > 3) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       caller,
       `Usage: journey record <id|latest> <event> | <summary> [| <ref-kind>:<ref>]\nEvents: ${JOURNEY_EVENT_KINDS.join(", ")}`,
     );
     return;
   }
   if (summary.length > 4000) {
-    ctx.send(caller, "A journey evidence summary must be 4,000 characters or fewer.");
+    refuseCommand(ctx, caller, "A journey evidence summary must be 4,000 characters or fewer.");
     return;
   }
   const parsedRef = parts[2] ? parseRef(parts[2]) : undefined;
   if (parts[2] && !parsedRef) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       caller,
       `Invalid evidence reference. Use <kind>:<ref>; kinds: ${JOURNEY_LINK_KINDS.join(", ")}`,
     );

@@ -3,6 +3,7 @@
 
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import type { EvalResult } from "./calc-eval";
 
 export type { EvalResult } from "./calc-eval";
@@ -239,7 +240,11 @@ Forecast a series or price numeric ranges with \`quant fit\` / \`quant buckets\`
 
       const expr = input.args?.trim();
       if (!expr) {
-        ctx.send(input.entity, "Usage: calc <expression>. End with the value you want returned.");
+        refuseCommand(
+          ctx,
+          input.entity,
+          "Usage: calc <expression>. End with the value you want returned.",
+        );
         return;
       }
 

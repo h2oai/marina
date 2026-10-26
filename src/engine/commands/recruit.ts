@@ -8,6 +8,7 @@ import { CrewError, type CrewManager } from "../../coordination/crew-manager";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { RECRUIT_MIN_STANDING } from "../constants";
 import { rankFloorRefusal } from "../rank-floor";
 
@@ -141,7 +142,7 @@ export function recruitCommand(deps: RecruitCommandDeps): CommandDef {
           .join(" ")
           .trim();
         if (!goal) {
-          ctx.send(input.entity, "Usage: recruit match <goal> [limit=N]");
+          refuseCommand(ctx, input.entity, "Usage: recruit match <goal> [limit=N]");
           return;
         }
         const ranked = recruitableAgents(deps, caller.name)
@@ -182,7 +183,7 @@ export function recruitCommand(deps: RecruitCommandDeps): CommandDef {
                 .join(" ")
             : "";
         if (!crewName || !goal) {
-          ctx.send(input.entity, "Usage: recruit best into <crew> for <goal> [count=N]");
+          refuseCommand(ctx, input.entity, "Usage: recruit best into <crew> for <goal> [count=N]");
           return;
         }
         const perm = recruitPermission(deps, input.entity, caller);
@@ -192,7 +193,7 @@ export function recruitCommand(deps: RecruitCommandDeps): CommandDef {
         }
         const crew = deps.crews.getByName(crewName);
         if (!crew || crew.state === "dissolved") {
-          ctx.send(input.entity, `Active crew "${crewName}" not found.`);
+          refuseCommand(ctx, input.entity, `Active crew "${crewName}" not found.`);
           return;
         }
         const ownerFloor =
@@ -285,7 +286,7 @@ export function recruitCommand(deps: RecruitCommandDeps): CommandDef {
       // ── Recruit: recruit <a,b,c> into <crew> [role=<r>] ──────────────────
       const intoIdx = input.args.toLowerCase().indexOf(" into ");
       if (intoIdx < 0) {
-        ctx.send(input.entity, "Usage: recruit <a,b,c> into <crew> [role=<r>]");
+        refuseCommand(ctx, input.entity, "Usage: recruit <a,b,c> into <crew> [role=<r>]");
         return;
       }
       const members = input.args
@@ -304,7 +305,7 @@ export function recruitCommand(deps: RecruitCommandDeps): CommandDef {
         if (tok.toLowerCase().startsWith("role=")) role = tok.slice(5);
       }
       if (members.length === 0 || !crewName) {
-        ctx.send(input.entity, "Usage: recruit <a,b,c> into <crew> [role=<r>]");
+        refuseCommand(ctx, input.entity, "Usage: recruit <a,b,c> into <crew> [role=<r>]");
         return;
       }
 
@@ -316,7 +317,7 @@ export function recruitCommand(deps: RecruitCommandDeps): CommandDef {
 
       const crew = deps.crews.getByName(crewName);
       if (!crew) {
-        ctx.send(input.entity, `Crew "${crewName}" not found.`);
+        refuseCommand(ctx, input.entity, `Crew "${crewName}" not found.`);
         return;
       }
       if (crew.state === "dissolved") {

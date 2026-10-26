@@ -18,6 +18,7 @@ import {
 import type { MarinaDB } from "../../persistence/database";
 import { residentLabeler } from "../../routing/residents";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { DAY_MS, HOUR_MS } from "../constants";
 import { ACCUMULATION_NOTE_PREFIX, parseAccumulationReceipt } from "../memory-dispatch";
 import { HYGIENE_NOTE_PREFIX } from "../memory-hygiene";
@@ -47,7 +48,7 @@ export function orientCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("orient"));
+        refuseCommand(ctx, input.entity, requiresPersistence("orient"));
         return;
       }
       const db = deps.db;

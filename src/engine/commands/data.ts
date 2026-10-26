@@ -11,6 +11,7 @@ import {
   dataSources,
 } from "../../forecast/data-query";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { currentEvidenceCutoffMs } from "../evidence-fence";
 import { type ModifierSpec, parseModifiers, unknownSubcommand } from "../parse-input";
 import { parseBound } from "../search-providers/index";
@@ -107,14 +108,18 @@ Read-only. Nothing returned is dated after now or after asof:.`,
       }
       const mods = parseModifiers(tokens.slice(1), DATA_SPEC);
       if (mods.errors.length > 0) {
-        ctx.send(input.entity, `${mods.errors.join("; ")}. Usage: ${USAGE}`);
+        refuseCommand(ctx, input.entity, `${mods.errors.join("; ")}. Usage: ${USAGE}`);
         return;
       }
       let asOf: Date | undefined;
       if (typeof mods.values.asof === "string") {
         const b = parseBound(mods.values.asof);
         if (!b) {
-          ctx.send(input.entity, `asof:${mods.values.asof} is not a date (YYYY-MM-DD or ISO).`);
+          refuseCommand(
+            ctx,
+            input.entity,
+            `asof:${mods.values.asof} is not a date (YYYY-MM-DD or ISO).`,
+          );
           return;
         }
         asOf = new Date(b);
@@ -124,7 +129,7 @@ Read-only. Nothing returned is dated after now or after asof:.`,
       if (fence !== undefined && (!asOf || asOf.getTime() > fence)) asOf = new Date(fence);
       const rest = mods.rest.join(" ").trim();
       if (!rest) {
-        ctx.send(input.entity, `Usage: ${USAGE}`);
+        refuseCommand(ctx, input.entity, `Usage: ${USAGE}`);
         return;
       }
       const t = now();

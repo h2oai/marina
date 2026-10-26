@@ -36,6 +36,7 @@ import {
 import { recordPatternRun } from "../../outcomes/orchestration";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage, tryLog } from "../errors";
 import { Logger } from "../logger";
 import { parseModifiers, splitOnTerminator } from "../parse-input";
@@ -163,7 +164,7 @@ export function patternCommand(deps: PatternCommandDeps = {}): CommandDef {
         );
       }
       if (sub !== "run") {
-        return ctx.send(eid, `Unknown pattern subcommand "${first}".\n${PATTERN_USAGE}`);
+        return refuseCommand(ctx, eid, `Unknown pattern subcommand "${first}".\n${PATTERN_USAGE}`);
       }
       const args = input.args.replace(/^\s*run\b/i, "");
       // `-- <task>` keeps the task verbatim; without it, only modifiers right

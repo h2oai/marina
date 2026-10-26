@@ -10,6 +10,7 @@ import {
 import { dim, header, success } from "../../../net/ansi";
 import type { MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import { rankFloorRefusal } from "../../rank-floor";
 import {
   type CodeDeps,
@@ -159,7 +160,7 @@ async function sandboxOps(call: SandboxCall): Promise<void> {
     "Sandbox fleet operations require architect rank (5) or higher.",
   );
   if (refusal) {
-    ctx.send(eid, refusal);
+    refuseCommand(ctx, eid, refusal);
     return;
   }
   const operation = args[1]?.toLowerCase() ?? "inventory";

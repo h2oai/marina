@@ -29,6 +29,7 @@ import {
 import type { MarinaDB, ScoredNoteRow } from "../../persistence/database";
 import type { CommandUsage } from "../../sdk/command-forms";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { DAY_MS } from "../constants";
 import { currentEvidenceCutoffMs } from "../evidence-fence";
 import { extractFlags, extractModifiers } from "../parse-input";
@@ -105,7 +106,8 @@ export function recallCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Recall requires database support.",
           undefined,
@@ -116,7 +118,8 @@ export function recallCommand(deps: {
       const db = deps.db;
       const args = input.args;
       if (!args) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Usage: recall <query> [recent | important] [type <type>]",
           undefined,
@@ -169,7 +172,8 @@ export function recallCommand(deps: {
       }
 
       if (!query) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Usage: recall <query> [recent | important] [type <type>]",
           undefined,

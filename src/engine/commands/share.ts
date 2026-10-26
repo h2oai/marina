@@ -6,6 +6,7 @@ import { depositPoolNote } from "../../memory/pool-deposit";
 import { category, dim, header, id, separator, success } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { requiresPersistence } from "./command-messages";
 
 /**
@@ -33,7 +34,7 @@ export function shareCommand(deps: {
       if (!entity) return;
 
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("share"));
+        refuseCommand(ctx, input.entity, requiresPersistence("share"));
         return;
       }
       const db = deps.db;
@@ -41,7 +42,7 @@ export function shareCommand(deps: {
       const poolName = input.tokens[0];
       const content = input.tokens.slice(1).join(" ").trim();
       if (!poolName || !content) {
-        ctx.send(input.entity, "Usage: share <pool> <content>");
+        refuseCommand(ctx, input.entity, "Usage: share <pool> <content>");
         return;
       }
 
@@ -49,7 +50,8 @@ export function shareCommand(deps: {
       // Same ACL as `pool <name> add`: a group-scoped pool is invisible to
       // non-members — not-found and inaccessible read identically.
       if (!pool || !memoryAccess(db, entity).pool(pool)) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           `Pool "${poolName}" not found or inaccessible. List pools with \`pool list\`, or create one with \`pool create ${poolName}\`.`,
         );

@@ -7,6 +7,7 @@ import { bold, category, dim, header, id, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandUsage } from "../../sdk/command-forms";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { requiresPersistence } from "./command-messages";
 
 /** `debrief` forms; `memory debrief …` (src/engine/command-families.ts) shares them. */
@@ -37,7 +38,7 @@ export function debriefCommand(deps: {
       if (!entity) return;
 
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("debrief"));
+        refuseCommand(ctx, input.entity, requiresPersistence("debrief"));
         return;
       }
 

@@ -15,6 +15,7 @@ import {
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import type { QuestDef, QuestStep } from "../../world/world-definition";
+import { refuseCommand } from "../command-response";
 
 export type { QuestDef, QuestStep };
 
@@ -150,7 +151,8 @@ export function questCommand(deps: {
           const questName = input.tokens.slice(1).join(" ").toLowerCase() || "first steps";
           const quest = ALL_QUESTS.find((q) => q.name.toLowerCase() === questName);
           if (!quest) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               ALL_QUESTS.length === 0
                 ? 'No objectives are defined in this world. Try "next" for a suggestion.'
@@ -161,12 +163,13 @@ export function questCommand(deps: {
 
           const completed = (entity.properties.completed_quests as string[] | undefined) ?? [];
           if (completed.includes(quest.id)) {
-            ctx.send(input.entity, "You have already completed this objective.");
+            refuseCommand(ctx, input.entity, "You have already completed this objective.");
             return;
           }
 
           if (entity.properties.active_quest) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               'You already have an active objective. Use "quest abandon" first.',
             );
@@ -204,7 +207,8 @@ export function questCommand(deps: {
 
           const quest = ALL_QUESTS.find((q) => q.id === questId);
           if (!quest) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "That objective isn't in the current quest. `quest status` shows your active step; `quest list` shows what's available.",
             );

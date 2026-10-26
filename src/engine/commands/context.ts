@@ -1,9 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+
 import { buildUnifiedContext, renderUnifiedContext } from "../../memory/unified-context";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandUsage } from "../../sdk/command-forms";
 import type { CommandDef, Entity, EntityId } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { currentEvidenceCutoffMs, entityEvidenceFence } from "../evidence-fence";
 
@@ -76,7 +78,7 @@ export function contextCommand(deps: {
     usage: CONTEXT_USAGE,
     handler: async (ctx, input) => {
       if (!input.args.trim()) {
-        ctx.send(input.entity, "Usage: context <query> | context api <JSON>");
+        refuseCommand(ctx, input.entity, "Usage: context <query> | context api <JSON>");
         return;
       }
       let requestId: string | undefined;

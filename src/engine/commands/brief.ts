@@ -24,6 +24,7 @@ import { canonicalFormationName } from "../../orchestration/formations/catalogue
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { describeCommand } from "../command-manifest";
+import { refuseCommand } from "../command-response";
 import { getRank } from "../permissions";
 
 interface BriefDeps {
@@ -82,7 +83,8 @@ export function briefCommand(deps: BriefDeps): CommandDef {
         return sendFullBrief(ctx, input.entity, entity, deps);
       }
       if (sub !== undefined) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Usage: brief | brief full | brief social | brief watch [N] | brief unwatch",
         );
@@ -96,7 +98,8 @@ export function briefCommand(deps: BriefDeps): CommandDef {
 
 function handleWatch(ctx: RoomContext, eid: EntityId, tokens: string[], deps: BriefDeps): void {
   if (!deps.subscribeBrief) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       "Periodic briefs need a live tick loop, which isn't running here. `brief` on demand still works.",
     );
@@ -111,7 +114,8 @@ function handleWatch(ctx: RoomContext, eid: EntityId, tokens: string[], deps: Br
   if (tokens.length > 1) {
     const parsed = Number.parseInt(tokens[1]!, 10);
     if (Number.isNaN(parsed) || parsed < MIN_INTERVAL || parsed > MAX_INTERVAL) {
-      ctx.send(
+      refuseCommand(
+        ctx,
         eid,
         `Interval must be ${MIN_INTERVAL}-${MAX_INTERVAL} ticks. Default: ${DEFAULT_INTERVAL}.`,
       );
@@ -126,7 +130,8 @@ function handleWatch(ctx: RoomContext, eid: EntityId, tokens: string[], deps: Br
 
 function handleUnwatch(ctx: RoomContext, eid: EntityId, deps: BriefDeps): void {
   if (!deps.unsubscribeBrief) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       "Periodic briefs need a live tick loop, which isn't running here. `brief` on demand still works.",
     );

@@ -4,7 +4,7 @@
 import { tell } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
-import { failCommandResponse } from "../command-response";
+import { failCommandResponse, refuseCommand } from "../command-response";
 import { envelopeFields, type MessageCause, messageEnvelope } from "../message-envelope";
 import { parseModifiers } from "../parse-input";
 
@@ -168,12 +168,12 @@ export function tellCommand(deps: TellDeps): CommandDef {
       if (sub === "status" || sub === "ack") {
         const id = Number(input.tokens[1]);
         if (!Number.isInteger(id) || !deps.db) {
-          ctx.send(input.entity, `Usage: tell ${sub} <id>`);
+          refuseCommand(ctx, input.entity, `Usage: tell ${sub} <id>`);
           return;
         }
         const row = deps.db.getDirectMessage(id);
         if (!row) {
-          ctx.send(input.entity, `Message #${id} not found.`);
+          refuseCommand(ctx, input.entity, `Message #${id} not found.`);
           return;
         }
         if (sub === "ack") {
@@ -279,7 +279,7 @@ export function replyCommand(deps: TellDeps): CommandDef {
         }
         const message = input.tokens.slice(1).join(" ");
         if (!message) {
-          ctx.send(input.entity, `Reply what? Usage: re #${id} <message>`);
+          refuseCommand(ctx, input.entity, `Reply what? Usage: re #${id} <message>`);
           return;
         }
         const replyId = deliverTell(
@@ -302,7 +302,11 @@ export function replyCommand(deps: TellDeps): CommandDef {
         return;
       }
       if (input.tokens.length < 1) {
-        ctx.send(input.entity, `Reply what? Usage: re <message> (replying to ${lastFrom})`);
+        refuseCommand(
+          ctx,
+          input.entity,
+          `Reply what? Usage: re <message> (replying to ${lastFrom})`,
+        );
         return;
       }
 

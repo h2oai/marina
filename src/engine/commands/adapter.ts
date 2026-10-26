@@ -4,6 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { requiresPersistence } from "./command-messages";
 
 export function adapterCommand(deps: {
@@ -36,7 +37,7 @@ Usage:
   adapter status <platform>           — show adapter details`,
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("adapter management"));
+        refuseCommand(ctx, input.entity, requiresPersistence("adapter management"));
         return;
       }
       const entity = deps.getEntity(input.entity);
@@ -87,7 +88,7 @@ Usage:
           const config = tokens.slice(2).join(" ") || "{}";
 
           if (!platform) {
-            ctx.send(input.entity, "Usage: adapter enable <platform> [config json]");
+            refuseCommand(ctx, input.entity, "Usage: adapter enable <platform> [config json]");
             return;
           }
 
@@ -116,13 +117,13 @@ Usage:
         case "disable": {
           const platform = tokens[1]?.toLowerCase();
           if (!platform) {
-            ctx.send(input.entity, "Usage: adapter disable <platform>");
+            refuseCommand(ctx, input.entity, "Usage: adapter disable <platform>");
             return;
           }
 
           const existing = db.getAdapter(platform);
           if (!existing) {
-            ctx.send(input.entity, `Adapter "${platform}" not found.`);
+            refuseCommand(ctx, input.entity, `Adapter "${platform}" not found.`);
             return;
           }
 
@@ -143,7 +144,7 @@ Usage:
         case "status": {
           const platform = tokens[1]?.toLowerCase();
           if (!platform) {
-            ctx.send(input.entity, "Usage: adapter status <platform>");
+            refuseCommand(ctx, input.entity, "Usage: adapter status <platform>");
             return;
           }
 

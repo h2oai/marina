@@ -14,6 +14,7 @@ import type { CommandUsage } from "../../sdk/command-forms";
 import { memoryOperationError } from "../../sdk/memory-operations";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { COMMAND_FAMILIES } from "../command-families";
+import { refuseCommand } from "../command-response";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
 import { CONTEXT_USAGE } from "./context";
@@ -225,7 +226,7 @@ export function memoryCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("memory"));
+        refuseCommand(ctx, input.entity, requiresPersistence("memory"));
         return;
       }
       const db = deps.db;
@@ -333,7 +334,7 @@ function runKv(
       const key = keyOf();
       const value = key ? afterTokens(kvArgs, 1) : "";
       if (!key || !value) {
-        ctx.send(entityId, `Usage: memory kv set <key> <value> ${canon("set")}`.trim());
+        refuseCommand(ctx, entityId, `Usage: memory kv set <key> <value> ${canon("set")}`.trim());
         return;
       }
       db.setCoreMemory(entity.name, key, value);
@@ -349,11 +350,12 @@ function runKv(
     case "get": {
       const key = keyOf();
       if (!key) {
-        ctx.send(entityId, `Usage: memory kv get <key> ${canon("get")}`.trim());
+        refuseCommand(ctx, entityId, `Usage: memory kv get <key> ${canon("get")}`.trim());
         return;
       }
       const entry = db.getCoreMemory(entity.name, key);
       if (!entry) {
+        // A read that finds nothing, not a refusal: callers probe keys.
         ctx.send(
           entityId,
           `No memory entry for "${key}".`,
@@ -374,7 +376,7 @@ function runKv(
     case "delete": {
       const key = keyOf();
       if (!key) {
-        ctx.send(entityId, `Usage: memory kv delete <key> ${canon("delete")}`.trim());
+        refuseCommand(ctx, entityId, `Usage: memory kv delete <key> ${canon("delete")}`.trim());
         return;
       }
       const deleted = db.deleteCoreMemory(entity.name, key);
@@ -386,7 +388,8 @@ function runKv(
           memoryResult("core-delete", { success: true }),
         );
       } else {
-        ctx.send(
+        refuseCommand(
+          ctx,
           entityId,
           `No memory entry for "${key}".`,
           undefined,
@@ -414,7 +417,7 @@ function runKv(
     case "history": {
       const key = keyOf();
       if (!key) {
-        ctx.send(entityId, `Usage: memory kv history <key> ${canon("history")}`.trim());
+        refuseCommand(ctx, entityId, `Usage: memory kv history <key> ${canon("history")}`.trim());
         return;
       }
       const history = db.getCoreMemoryHistory(entity.name, key);

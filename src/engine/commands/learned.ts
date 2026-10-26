@@ -15,6 +15,7 @@ import { withholdsUpstreamSeed } from "../../learned/upstream-model-seeds";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
 
@@ -83,7 +84,7 @@ export function learnedCommand(deps: { db?: MarinaDB }): CommandDef {
     ),
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("learned bundles"));
+        refuseCommand(ctx, input.entity, requiresPersistence("learned bundles"));
         return;
       }
       const db = deps.db;
@@ -98,7 +99,7 @@ export function learnedCommand(deps: { db?: MarinaDB }): CommandDef {
         limit: { type: "number" },
       });
       if (parsed.errors.length) {
-        ctx.send(input.entity, `${parsed.errors.join("; ")}\nUsage: ${USAGE}`);
+        refuseCommand(ctx, input.entity, `${parsed.errors.join("; ")}\nUsage: ${USAGE}`);
         return;
       }
       const v = parsed.values;
@@ -113,7 +114,11 @@ export function learnedCommand(deps: { db?: MarinaDB }): CommandDef {
         case "items": {
           const st = v.status as string | undefined;
           if (st && !["active", "retired", "revoked"].includes(st)) {
-            ctx.send(input.entity, `status is active, retired or revoked.\nUsage: ${USAGE}`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `status is active, retired or revoked.\nUsage: ${USAGE}`,
+            );
             return;
           }
           const rows = db.listLearnedItems({

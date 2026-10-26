@@ -4,6 +4,7 @@
 import { arrival, dim } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext, RoomId } from "../../types";
 import type { LoadedRoom } from "../../world/room-manager";
+import { refuseCommand } from "../command-response";
 
 export function gotoCommand(deps: {
   getEntity: (id: EntityId) => Entity | undefined;
@@ -25,7 +26,7 @@ export function gotoCommand(deps: {
     help: "Teleport to a room or entity. Usage: goto <room-id|entity-name>",
     handler: (ctx: RoomContext, input) => {
       if (!input.args) {
-        ctx.send(input.entity, "Usage: goto <room-id|entity-name>");
+        refuseCommand(ctx, input.entity, "Usage: goto <room-id|entity-name>");
         return;
       }
 
@@ -45,7 +46,7 @@ export function gotoCommand(deps: {
         }
         const refusal = deps.entryRefusal(entity, targetRoomId);
         if (refusal) {
-          ctx.send(input.entity, refusal);
+          refuseCommand(ctx, input.entity, refusal);
           return;
         }
         teleport(ctx, input.entity, entity.name, currentRoom, targetRoomId, deps);
@@ -71,7 +72,7 @@ export function gotoCommand(deps: {
         }
         const refusal = deps.entryRefusal(entity, found.room);
         if (refusal) {
-          ctx.send(input.entity, refusal);
+          refuseCommand(ctx, input.entity, refusal);
           return;
         }
         ctx.send(input.entity, dim(`Teleporting to ${found.name}...`));
