@@ -20,17 +20,62 @@ import {
   importance,
   separator,
 } from "../../net/ansi";
-import type { MarinaDB, NoteRow } from "../../persistence/database";
+import type { MarinaDB, MemoryPoolRow, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { failCommandResponse } from "../command-response";
 import { DAY_MS } from "../constants";
-import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
+import {
+  canonicalSub,
+  parseModifiers,
+  resolveNamePrefix,
+  unknownSubcommand,
+  unquote,
+} from "../parse-input";
 import {
   auditKnowledgeNotes,
   type CommandVocabulary,
   renderKnowledgeHygieneReport,
 } from "./knowledge-hygiene";
+import { resolveProjectPrefix } from "./project";
 
 const POOL_ACTIONS = ["list", "status", "audit", "add", "ratify", "recall"];
+
+/**
+ * The pool a name means: exact, then case-insensitive, then the pool of the
+ * project it names (`Demo Pulse`, `project:Demo Pulse`) — the spellings
+ * agents read off `project info` and project templates.
+ */
+function lookupPool(
+  db: MarinaDB,
+  name: string,
+  folded: () => Map<string, MemoryPoolRow>,
+): MemoryPoolRow | undefined {
+  const exact = db.getMemoryPool(name);
+  if (exact) return exact;
+  const lower = name.toLowerCase();
+  const byCase = folded().get(lower);
+  if (byCase) return byCase;
+  const projectName = lower.startsWith("project:") ? name.slice("project:".length) : name;
+  const project = resolveProjectPrefix(db, [projectName]);
+  return project?.project.pool_id ? db.getMemoryPoolById(project.project.pool_id) : undefined;
+}
+
+/** `pool <name…> <action> …`, or verb-first `pool <action> <name…> …`. */
+export function resolvePoolTokens(
+  db: MarinaDB,
+  tokens: readonly string[],
+): { pool: MemoryPoolRow; rest: string[] } | undefined {
+  let byLower: Map<string, MemoryPoolRow> | undefined;
+  const folded = () =>
+    (byLower ??= new Map(db.listMemoryPools().map((p) => [p.name.toLowerCase(), p])));
+  const lookup = (name: string) => lookupPool(db, name, folded);
+  const direct = resolveNamePrefix(tokens, lookup);
+  if (direct) return { pool: direct.value, rest: direct.rest };
+  const verb = canonicalSub(tokens[0], POOL_ACTIONS);
+  if (!verb) return undefined;
+  const after = resolveNamePrefix(tokens.slice(1), lookup);
+  return after ? { pool: after.value, rest: [verb, ...after.rest] } : undefined;
+}
 
 const STOP_WORDS = new Set([
   "the",
@@ -138,7 +183,7 @@ export function poolCommand(deps: {
       }
       const db = deps.db;
       const access = memoryAccess(db, entity);
-      const tokens = input.tokens;
+      let tokens = input.tokens;
       const sub = canonicalSub(tokens[0], ["list", "create"]);
 
       if (!sub) {
@@ -214,18 +259,41 @@ export function poolCommand(deps: {
         return;
       }
 
-      // Pool operations: pool <name> <action> [args]
-      const poolName = tokens[0]!;
-      const action = canonicalSub(tokens[1], POOL_ACTIONS);
-      const pool = db.getMemoryPool(poolName);
-
-      if (!pool || !access.pool(pool)) {
+      // Pool operations: pool <name> <action> [args]. The name is the longest
+      // leading run of tokens naming a pool (spaces, quotes, case, or the
+      // project it belongs to); `pool recall <name> …` reads as `pool <name> recall …`.
+      const resolved = resolvePoolTokens(db, tokens);
+      if (!resolved) {
+        const typed = unquote(tokens[0]!);
+        const message = `Pool "${typed}" not found or inaccessible. List pools with \`pool list\`, or create one with \`pool create ${typed}\`.`;
         ctx.send(
           input.entity,
-          `Pool "${poolName}" not found or inaccessible. List pools with \`pool list\`, or create one with \`pool create ${poolName}\`.`,
+          message,
           undefined,
           memoryResult("pool-recall", { success: false, error: "Pool not found" }),
         );
+        failCommandResponse(message);
+        return;
+      }
+      const pool = resolved.pool;
+      const poolName = pool.name;
+      // Normalized: [name, action, ...args] — the actions below read args by index.
+      tokens = [poolName, ...resolved.rest];
+      const action = canonicalSub(tokens[1], POOL_ACTIONS);
+
+      if (!access.pool(pool)) {
+        // A project's pool is members-only, and the project is public: name the join.
+        const project = db.listProjects().find((p) => p.pool_id === pool.id);
+        const message = project
+          ? `Pool "${poolName}" is members-only for project "${project.name}": run \`project ${project.name} join\`, then retry.`
+          : `Pool "${poolName}" not found or inaccessible. List pools with \`pool list\`, or create one with \`pool create ${poolName}\`.`;
+        ctx.send(
+          input.entity,
+          message,
+          undefined,
+          memoryResult("pool-recall", { success: false, error: "Pool not found" }),
+        );
+        failCommandResponse(message);
         return;
       }
 

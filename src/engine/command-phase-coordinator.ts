@@ -13,7 +13,7 @@ import type { RoomManager } from "../world/room-manager";
 
 import { aliasNotice } from "./command-families";
 import { commandInputForLog, isUnloggedForm } from "./command-redaction";
-import { failCommandResponse } from "./command-response";
+import { failCommandResponse, observeHandlerOutcome } from "./command-response";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
 import { closestName } from "./did-you-mean";
@@ -74,6 +74,19 @@ export interface CommandPhaseHost {
 
 /** Entity ids whose announced aliases are remembered before the set is reset. */
 const MAX_ALIAS_SESSIONS = 10_000;
+
+/**
+ * Verbs agents bring from other shells and tool names, with the command that
+ * does it here. Named in the unknown-command reply instead of a spelling
+ * guess; never executed in their place. Every target must be a builtin
+ * (`test/agent-tool-failures.test.ts`).
+ */
+export const UNKNOWN_VERB_EQUIVALENTS: Readonly<Record<string, string>> = Object.freeze({
+  whoami: "`score` (your profile)",
+  inbox: "`tell inbox` (private messages) or `work` (your work inbox)",
+  focus: "`memory set focus <text>`",
+  tasks: "`task list`",
+});
 
 /** Shared/public defaults; the live limits come from `macroLimits()`. */
 export { MAX_MACRO_DEPTH, MAX_MACRO_EXPANSIONS } from "./macro-expansion";
@@ -224,13 +237,16 @@ export class CommandPhaseCoordinator {
           return;
         }
       }
-      const near = closestName(
-        input.verb,
-        this.host.commands.allBuiltins().flatMap((def) => [def.name, ...(def.aliases ?? [])]),
-      );
+      const equivalent = UNKNOWN_VERB_EQUIVALENTS[input.verb.toLowerCase()];
+      const near = equivalent
+        ? undefined
+        : closestName(
+            input.verb,
+            this.host.commands.allBuiltins().flatMap((def) => [def.name, ...(def.aliases ?? [])]),
+          );
       this.host.sendToEntity(
         entityId,
-        `Unknown command: ${input.verb}.${near ? ` Did you mean "${near}"?` : ""} Type "help" for commands.`,
+        `Unknown command: ${input.verb}.${equivalent ? ` Use ${equivalent}.` : near ? ` Did you mean "${near}"?` : ""} Type "help" for commands.`,
       );
       failCommandResponse(`Unknown command: ${input.verb}`);
       recordUsage(false);
@@ -316,13 +332,17 @@ export class CommandPhaseCoordinator {
     if (!baseCtx) return;
     const ctx = opts?.codingTarget ? { ...baseCtx, codingTarget: opts.codingTarget } : baseCtx;
 
+    // A handler that refuses (`failCommandResponse`: not the creator, no such
+    // pool, …) records failed usage and activity; it ran, so quest progress
+    // and the `command` event are unchanged.
+    let refused = false;
     try {
-      const result = handler(ctx, input);
       // Await async handlers so callers that `await processCommand` get
       // proper sequencing. A rejected promise is the same failure as a
       // synchronous throw: no quest progress, a failed activity row, failed
       // usage and no `command` event.
-      if (result instanceof Promise) await result;
+      const observed = observeHandlerOutcome(() => handler(ctx, input));
+      refused = (observed instanceof Promise ? await observed : observed).failed !== undefined;
     } catch (err) {
       const msg = getErrorMessage(err);
       failCommandResponse(msg);
@@ -354,7 +374,7 @@ export class CommandPhaseCoordinator {
       const entity = this.host.entities.get(entityId);
       if (entity) {
         tryLog(this.host.logger, "tick", "Activity tracking failed", () => {
-          this.host.db!.trackActivity(entity.name, "command", input.verb, true);
+          this.host.db!.trackActivity(entity.name, "command", input.verb, !refused);
           this.host.db!.trackActivity(entity.name, "room_visit", entity.room);
         });
       }
@@ -365,7 +385,7 @@ export class CommandPhaseCoordinator {
     // demonstration on a clean run is exactly the self-certification path that
     // let a standing-only entity auto-unlock a gate. Competence is earned only
     // via operator grant / rank promotion / approved runs.
-    recordUsage(true);
+    recordUsage(!refused);
 
     if (isUnloggedForm(def, input)) return;
     this.host.logEvent({

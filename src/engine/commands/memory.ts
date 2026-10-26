@@ -267,12 +267,16 @@ export function memoryCommand(deps: {
         return;
       }
 
+      // Search-shaped verbs name the family member that searches.
+      const search = /^(search|find|query|lookup)$/i.test(rawSub ?? "")
+        ? "To search your notes: `memory recall <query>`.\n"
+        : "";
       ctx.send(
         input.entity,
         unknownSubcommand(
           "memory",
           rawSub,
-          `${KV_USAGE}\n` +
+          `${search}${KV_USAGE}\n` +
             "Durable records: `help memory full` lists the service verbs (memory claim/resolve/source/graph act on durable records; the same-named `note claim/resolve/source/graph` act on legacy notes and mirror to their twins).",
         ),
       );

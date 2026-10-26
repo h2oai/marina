@@ -33,6 +33,7 @@ import {
 import type { JudgeObservationInput } from "../../persistence/db-decisions";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { isOperatorPrincipal } from "../challenges";
+import { failCommandResponse } from "../command-response";
 import { logRejection } from "../errors";
 import { Logger } from "../logger";
 import { mayActOn, ownershipRefusal } from "../ownership";
@@ -72,6 +73,79 @@ function isActiveClaim(claim: TaskClaim | null, now = Date.now()): boolean {
   return (
     claim.status === "claimed" && (claim.leaseExpiresAt === null || claim.leaseExpiresAt > now)
   );
+}
+
+/** Who holds a task: `Flash1 (claimed), Mini1 (submitted)`, or undefined. */
+function holders(tasks: TaskManager, id: number): string | undefined {
+  const names = tasks
+    .getClaims(id)
+    .filter((c) => isActiveClaim(c))
+    .map((c) => `${c.entityName} (${c.status})`);
+  return names.length > 0 ? names.join(", ") : undefined;
+}
+
+/** Why `task claim <id>` was refused, with the next step. */
+export function claimRefusal(tasks: TaskManager, id: number, entityId: string): string {
+  const task = Number.isFinite(id) ? tasks.get(id) : undefined;
+  if (!task) return `Cannot claim task #${id}: no such task. \`task list\` shows open tasks.`;
+  const own = tasks.getClaim(id, entityId);
+  if (own?.status === "claimed" && isActiveClaim(own))
+    return `Cannot claim task #${id}: you already hold it. Next: \`task submit ${id} <result>\`.`;
+  if (own?.status === "submitted")
+    return `Cannot claim task #${id}: you already submitted; ${task.creatorName} reviews it.`;
+  const held = holders(tasks, id);
+  return `Cannot claim task #${id}: it is ${task.status}${held ? ` (${held})` : ""}. \`task list\` shows open tasks.`;
+}
+
+/** Why `task submit <id>` was refused (`own` = the caller's claim before the attempt). */
+export function submitRefusal(
+  tasks: TaskManager,
+  id: number,
+  own: TaskClaim | null,
+  now = Date.now(),
+): string {
+  const task = Number.isFinite(id) ? tasks.get(id) : undefined;
+  if (!task) return `Cannot submit for task #${id}: no such task.`;
+  if (own?.status === "submitted")
+    return `Cannot submit for task #${id}: already submitted; ${task.creatorName} reviews it.`;
+  if (own?.status === "claimed" && own.leaseExpiresAt !== null && own.leaseExpiresAt <= now)
+    return `Cannot submit for task #${id}: your claim's lease expired. ${task.status === "open" ? `Claim it again (\`task claim ${id}\`), then submit.` : "`task info` shows who holds it now."}`;
+  if (task.status === "open")
+    return `Cannot submit for task #${id}: you have not claimed it. Claim first: \`task claim ${id}\`.`;
+  const held = holders(tasks, id);
+  return `Cannot submit for task #${id}: you hold no claim; it is ${task.status}${held ? ` (${held})` : ""}.`;
+}
+
+/** Why `task approve|reject <id> <claimant>` was refused. */
+export function reviewRefusal(
+  tasks: TaskManager,
+  id: number,
+  claimantName: string,
+  approverId: string,
+  verb: "approve" | "reject",
+): string {
+  const lead = verb === "approve" ? "Cannot approve" : "Cannot reject";
+  const task = Number.isFinite(id) ? tasks.get(id) : undefined;
+  if (!task) return `${lead}: no task #${id}.`;
+  if (task.creatorId !== approverId)
+    return `${lead}: only task #${id}'s creator (${task.creatorName}) reviews its submissions.`;
+  const pending = pendingSubmitters(tasks, id);
+  return `${lead}: no pending submission from ${claimantName} on task #${id}. ${pending ? `Pending: ${pending}.` : "None pending."}`;
+}
+
+/** Claimants with a pending (submitted) claim on a task, comma-joined. */
+export function pendingSubmitters(tasks: TaskManager, id: number): string | undefined {
+  const names = tasks
+    .getClaims(id)
+    .filter((c) => c.status === "submitted")
+    .map((c) => c.entityName);
+  return names.length > 0 ? names.join(", ") : undefined;
+}
+
+/** Send a refusal and mark the command failed (usage, correlated results). */
+function refuse(ctx: RoomContext, entity: EntityId, message: string): void {
+  ctx.send(entity, message);
+  failCommandResponse(message);
 }
 
 /** Split `<title> | <description>` on the first pipe. */
@@ -473,10 +547,7 @@ export function taskCommand(
           const id = Number.parseInt(idStr, 10);
           const claim = tasks.claim(id, input.entity, self.name);
           if (!claim) {
-            ctx.send(
-              input.entity,
-              `Cannot claim task #${idStr}. It may not exist, not be open, or you already claimed it.`,
-            );
+            refuse(ctx, input.entity, claimRefusal(tasks, id, input.entity));
             return;
           }
           let advice: string | undefined;
@@ -506,7 +577,14 @@ export function taskCommand(
           }
           const claim = tasks.heartbeat(id, input.entity);
           if (!claim?.leaseExpiresAt) {
-            ctx.send(input.entity, `Cannot renew task #${id}; no active claim was found.`);
+            const own = tasks.getClaim(id, input.entity);
+            refuse(
+              ctx,
+              input.entity,
+              own?.status === "submitted"
+                ? `Cannot renew task #${id}: already submitted; no lease to renew.`
+                : `Cannot renew task #${id}: you hold no live claim. ${tasks.get(id)?.status === "open" ? `Claim it: \`task claim ${id}\`.` : "`task info` shows its claims."}`,
+            );
             return;
           }
           const seconds = Math.max(1, Math.ceil((claim.leaseExpiresAt - Date.now()) / 1000));
@@ -544,11 +622,9 @@ export function taskCommand(
           const id = Number.parseInt(idStr, 10);
           const task = tasks.get(id);
           const record = () => {
+            const before = tasks.getClaim(id, input.entity);
             if (!tasks.submit(id, input.entity, text)) {
-              ctx.send(
-                input.entity,
-                `Cannot submit for task #${idStr}. You may not have claimed it or already submitted.`,
-              );
+              refuse(ctx, input.entity, submitRefusal(tasks, id, before));
               return;
             }
             clearSubmissionAttempts(id, input.entity);
@@ -650,7 +726,12 @@ export function taskCommand(
           const idStr = tokens[1];
           const claimantName = tokens[2];
           if (!idStr || !claimantName) {
-            ctx.send(input.entity, "Usage: task approve <id> <claimant>");
+            const pending = idStr ? pendingSubmitters(tasks, Number.parseInt(idStr, 10)) : "";
+            refuse(
+              ctx,
+              input.entity,
+              `Usage: task approve <id> <claimant>${pending ? ` (pending on #${idStr}: ${pending})` : ""}`,
+            );
             return;
           }
           const id = Number.parseInt(idStr, 10);
@@ -696,11 +777,12 @@ export function taskCommand(
               timestamp: Date.now(),
             });
           } else {
-            ctx.send(
+            refuse(
+              ctx,
               input.entity,
               tasks.get(id)?.creatorName === SYSTEM_TASK_CREATOR
                 ? `Cannot approve. Task #${id} was seeded by the world; an operator (a person at rank 9) who has not claimed it reviews its submissions.`
-                : `Cannot approve. You may not be the creator or the submission doesn't exist.`,
+                : reviewRefusal(tasks, id, target.name, input.entity, "approve"),
             );
           }
           return;
@@ -731,11 +813,12 @@ export function taskCommand(
               timestamp: Date.now(),
             });
           } else {
-            ctx.send(
+            refuse(
+              ctx,
               input.entity,
               tasks.get(id)?.creatorName === SYSTEM_TASK_CREATOR
                 ? `Cannot reject. Task #${id} was seeded by the world; an operator (a person at rank 9) who has not claimed it reviews its submissions.`
-                : `Cannot reject. You may not be the creator or the submission doesn't exist.`,
+                : reviewRefusal(tasks, id, target.name, input.entity, "reject"),
             );
           }
           return;

@@ -24,6 +24,7 @@ export { createMemoryTool } from "./memory";
 export { createMemoryServiceTool } from "./memory-service";
 export {
   agentToolExecutionMode,
+  applyEnumArgumentHints,
   applyStrictToolSchemas,
   applyToolExecutionModes,
   applyToolReplayPolicy,

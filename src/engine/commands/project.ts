@@ -14,10 +14,13 @@ import {
 } from "../../net/ansi";
 import { recordProjectOutcome } from "../../outcomes/orchestration";
 import type { MarinaDB } from "../../persistence/database";
+import type { ProjectRow } from "../../persistence/db-tasks";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { failCommandResponse } from "../command-response";
 import { tryLog } from "../errors";
 import { principalOf } from "../gate-context";
 import { Logger } from "../logger";
+import { resolveNamePrefix, unquote } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
 import { parseDuration } from "./format-duration";
 
@@ -86,6 +89,41 @@ const PROJECT_ACTIONS = new Set([
   "recommend",
   "verify",
 ]);
+
+/** Verbs that show a project (`project info X`, `project X show`). */
+const PROJECT_INFO_VERBS: ReadonlySet<string> = new Set(["info", "show", "view"]);
+
+const PROJECT_USAGE =
+  "Usage: project create <name> | <desc> | project list | project info <name> | project <name> orchestrate|recommend|decompose|memory|join|status|propose|tasks|budget|usage|verify|outcome";
+
+/**
+ * The project a command's leading tokens name: the longest run that is a
+ * project name, case-insensitive and unquoted (`project Demo Pulse tasks`,
+ * `project "demo pulse"`).
+ */
+export function resolveProjectPrefix(
+  db: MarinaDB,
+  tokens: readonly string[],
+): { project: ProjectRow; rest: string[] } | undefined {
+  let byLower: Map<string, ProjectRow> | undefined;
+  const found = resolveNamePrefix(
+    tokens,
+    (name) => {
+      const exact = db.getProjectByName(name);
+      if (exact) return exact;
+      byLower ??= new Map(db.listProjects().map((p) => [p.name.toLowerCase(), p]));
+      return byLower.get(name.toLowerCase());
+    },
+    16,
+  );
+  return found ? { project: found.value, rest: found.rest } : undefined;
+}
+
+/** The name of a project's pool as `pool <name> …` accepts it. */
+export function projectPoolName(db: MarinaDB, project: ProjectRow): string {
+  const pool = project.pool_id ? db.getMemoryPoolById(project.pool_id) : undefined;
+  return pool?.name ?? `project:${project.name}`;
+}
 
 function learnedPatternScore(db: MarinaDB, pattern: string): { average?: number; samples: number } {
   const pool = db.getMemoryPool(`orchestration:${pattern}`);
@@ -342,18 +380,7 @@ export function projectCommand(deps: {
         return;
       }
 
-      // ─── project info <name> ──────────────────────────────────────
-      if (sub === "info") {
-        const name = tokens.slice(1).join(" ");
-        if (!name) {
-          ctx.send(input.entity, "Usage: project info <name>");
-          return;
-        }
-        const project = db.getProjectByName(name);
-        if (!project) {
-          ctx.send(input.entity, `Project "${name}" not found.`);
-          return;
-        }
+      const sendInfo = (project: ProjectRow): void => {
         const lines = [
           header(`Project: ${project.name}`),
           project.description || dim("(no description)"),
@@ -363,7 +390,7 @@ export function projectCommand(deps: {
           `  Memory: ${bold(project.memory_arch)}`,
           `  Created by: ${fmtEntity(project.created_by)}`,
           `  Bundle: #${project.bundle_id ?? dim("none")}`,
-          `  Pool: ${project.pool_id ? bold(`project:${project.name}`) : dim("none")}`,
+          `  Pool: ${project.pool_id ? bold(projectPoolName(db, project)) : dim("none")}`,
           `  Group: ${project.group_id ?? dim("none")}`,
         ];
 
@@ -385,32 +412,53 @@ export function projectCommand(deps: {
         }
 
         ctx.send(input.entity, lines.join("\n"));
+      };
+      const notFound = (name: string): void => {
+        const message = `Project "${name}" not found. Use 'project list' to see projects.`;
+        ctx.send(input.entity, message);
+        failCommandResponse(message);
+      };
+
+      if (sub === "help") {
+        ctx.send(input.entity, PROJECT_USAGE);
+        return;
+      }
+
+      // ─── project info|show|view <name> ────────────────────────────
+      if (PROJECT_INFO_VERBS.has(sub)) {
+        const name = unquote(tokens.slice(1).join(" "));
+        if (!name) {
+          ctx.send(input.entity, "Usage: project info <name>");
+          return;
+        }
+        const project = resolveProjectPrefix(db, tokens.slice(1))?.project;
+        if (!project) {
+          notFound(name);
+          return;
+        }
+        sendInfo(project);
         return;
       }
 
       // ─── project <name> <action> [args] ───────────────────────────
-      // Everything else: resolve the first known action so project names may
+      // Everything else: the longest leading run of tokens that names a
+      // project (quotes and case ignored) is the name, so project names may
       // contain spaces (all use-case projects do).
-      const actionIndex = tokens.findIndex(
-        (token, index) => index > 0 && PROJECT_ACTIONS.has(token.toLowerCase()),
-      );
-      const projectName = actionIndex > 0 ? tokens.slice(0, actionIndex).join(" ") : rawFirst!;
-      const action =
-        actionIndex > 0 ? tokens[actionIndex]?.toLowerCase() : tokens[1]?.toLowerCase();
-      const actionArgs = actionIndex > 0 ? tokens.slice(actionIndex + 1) : tokens.slice(2);
-      const project = db.getProjectByName(projectName);
-
-      if (!project) {
-        ctx.send(
-          input.entity,
-          `Project "${projectName}" not found. Use 'project list' to see projects.`,
+      const resolved = resolveProjectPrefix(db, tokens);
+      if (!resolved) {
+        const actionIndex = tokens.findIndex(
+          (token, index) => index > 0 && PROJECT_ACTIONS.has(token.toLowerCase()),
         );
+        notFound(unquote(actionIndex > 0 ? tokens.slice(0, actionIndex).join(" ") : rawFirst!));
         return;
       }
+      const { project } = resolved;
+      const action = resolved.rest[0]?.toLowerCase();
+      const actionArgs = resolved.rest.slice(1);
 
-      if (!action) {
-        // Default to showing info
-        ctx.send(input.entity, `Use 'project info ${projectName}' for details.`);
+      // A bare name (or `project <name> info|show|view`) shows the project.
+      if (!action || PROJECT_INFO_VERBS.has(action)) {
+        sendInfo(project);
         return;
       }
 
@@ -612,7 +660,7 @@ export function projectCommand(deps: {
 
           lines.push(
             "",
-            `Use 'pool project:${project.name} recall <topic>' to explore project knowledge.`,
+            `Use 'pool ${projectPoolName(db, project)} recall <topic>' to explore project knowledge.`,
           );
           ctx.send(input.entity, lines.join("\n"));
           return;

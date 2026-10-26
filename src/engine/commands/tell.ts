@@ -53,7 +53,10 @@ export function deliverTell(
   if (!target) {
     // A refusal fails the command's result, so a correlated client (the
     // resident command relay, MCP, the SDK) reports it rather than success.
-    const refusal = `No one named "${targetName}" is online.`;
+    // A known account that is offline gets the route that still reaches it.
+    const refusal = deps.db?.getUserByName(targetName)
+      ? `"${targetName}" is offline; a tell reaches online entities only. Leave it where they will read it (\`board post <board> <title> | <body>\`, \`channel send <channel> <message>\`); \`who\` lists who is online.`
+      : `No one named "${targetName}" is online.`;
     ctx.send(senderId, refusal);
     failCommandResponse(refusal);
     return undefined;

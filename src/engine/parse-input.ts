@@ -225,6 +225,35 @@ export function resolveMultiWordName(
   return null;
 }
 
+/** Strip one pair of wrapping quotes (`"…"`, `'…'`, `` `…` ``) from a name. */
+export function unquote(text: string): string {
+  const t = text.trim();
+  const q = t[0];
+  return t.length >= 2 && (q === '"' || q === "'" || q === "`") && t.endsWith(q)
+    ? t.slice(1, -1).trim()
+    : t;
+}
+
+/**
+ * The longest leading run of `tokens` (up to `maxWords`) that `lookup` finds,
+ * joined with spaces and unquoted — so a stored name with spaces resolves
+ * typed bare (`project Demo Pulse status`) or quoted (`pool "demo pulse" add …`),
+ * although the tokenizer has no quote grammar. `rest` is what follows the name.
+ */
+export function resolveNamePrefix<T>(
+  tokens: readonly string[],
+  lookup: (name: string) => T | undefined,
+  maxWords = 8,
+): { value: T; name: string; rest: string[] } | undefined {
+  for (let take = Math.min(tokens.length, maxWords); take >= 1; take--) {
+    const name = unquote(tokens.slice(0, take).join(" "));
+    if (!name) continue;
+    const value = lookup(name);
+    if (value !== undefined) return { value, name, rest: tokens.slice(take) };
+  }
+  return undefined;
+}
+
 // ─── One modifier grammar ─────────────────────────────────────────────────────
 //
 // Every command that takes named options accepts the SAME four spellings for
