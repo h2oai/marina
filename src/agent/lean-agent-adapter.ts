@@ -3890,6 +3890,11 @@ export class LeanAgentAdapter implements AgentHandle {
       );
     }
 
+    // A steered attention no prompt has taken yet: pick it up now. An
+    // operator's `agent attention` breaks a declared rest like an owed
+    // request does; otherwise it would sit unread until the heartbeat.
+    if (this.attentionPending) return rate.min;
+
     // Declared rest: idle cadence unless a reply is genuinely OWED (a request
     // tell, an addressed ask). Addressed information and ambient chatter wait
     // for the agent's own wake. A NEW owed request answers at the fast tick;
@@ -3900,8 +3905,6 @@ export class LeanAgentAdapter implements AgentHandle {
       return this.outstandingRequests.size > 0 ? rate.normal : rate.idle;
     }
 
-    // A steered attention no prompt has taken yet: pick it up now.
-    if (this.attentionPending) return rate.min;
     // A bound coder whose run stopped at a per-run cap (not a spend stop)
     // continues its active task next cycle; waiting out a full tick there
     // only adds latency, the calls happen anyway.
@@ -3939,15 +3942,19 @@ export class LeanAgentAdapter implements AgentHandle {
   /**
    * Why this cycle needs no model call, or null when it does. A resident is
    * prompted when something is new or owed — a perception (while resting: an
-   * owed one), an outstanding request, its last run did work toward a focus or
-   * goal, idle consolidation or reflection has material, or the long heartbeat
-   * (`MARINA_AGENT_HEARTBEAT_MS`) is due. Otherwise the prompt would be the
+   * owed one), an outstanding request, a steered attention (resting or not),
+   * its last run did work toward a focus or goal, idle consolidation or
+   * reflection has material, or the long heartbeat (`MARINA_AGENT_HEARTBEAT_MS`)
+   * is due. Otherwise the prompt would be the
    * same "nothing needs your attention" text replayed over the whole history.
    * Crew responders and bound coders are handled by their own paths.
    */
   private idleSkipReason(now = Date.now()): "idle" | "resting" | null {
     if (this.crewResponderMode || this.activeCodingTask) return null;
     if (this.outstandingRequests.size > 0) return null;
+    // A steered attention (`agent attention`) waits in the queue until a
+    // prompt takes it: it is owed in every mode, declared rest included.
+    if (this.attentionPending) return null;
     const resting = this.loopPrefs.rest !== null;
     const fresh = this.pendingPerceptions.filter(
       (perception) => perception.id === undefined || !this.deliveredViaSteer.has(perception.id),

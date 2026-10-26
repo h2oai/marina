@@ -214,6 +214,45 @@ function opensWithImperative(message: string): boolean {
 }
 
 /**
+ * Marina commands whose subcommands take a numeric id (`task claim 16`). A
+ * clause that is exactly one of these invocations is an instruction to run it.
+ */
+const ID_COMMANDS = new Set([
+  "board",
+  "canvas",
+  "code",
+  "note",
+  "project",
+  "quest",
+  "schedule",
+  "task",
+  "tasks",
+]);
+
+/**
+ * True when a clause of `message` (split at `:` `,` `;` `.` `!`, a dash or a
+ * new line; a leading "then"/"and then" dropped) is a bare world command:
+ * `<command> <imperative subcommand> <ids…>`, e.g. "task claim 16",
+ * "then task submit 16". Only ids may follow the verb, so a delivered result
+ * that reports a command ("Done: task submit 16 sent", "Status: claimed task
+ * 16") stays information.
+ */
+function embedsCommandClause(message: string): boolean {
+  for (const raw of message.split(/[.!;:,\n]|\s[—–-]\s/)) {
+    const words = raw
+      .trim()
+      .replace(/^(?:and\s+)?then\s+/i, "")
+      .split(/\s+/);
+    if (words.length < 3) continue;
+    const [command, verb, ...args] = words;
+    if (!ID_COMMANDS.has(command!.toLowerCase())) continue;
+    if (!IMPERATIVE_OPENERS.has(verb!.toLowerCase())) continue;
+    if (args.every((arg) => /^#?\d+$/.test(arg))) return true;
+  }
+  return false;
+}
+
+/**
  * True when `message` (the tell's body, without the "X tells you:" prefix)
  * is a pure acknowledgement that owes no reply.
  */
@@ -248,7 +287,9 @@ const ADDRESSED_ASK =
  * ask is never ignored:
  * - a question mark, request phrasing (please, can you, need you to, your
  *   turn …) or a sentence opening with an imperative verb (send, check, keep
- *   …; a single word before a colon is a label, not an imperative);
+ *   …; a single word before a colon is a label, not an imperative), or a
+ *   clause that is a bare world command (`Task #16 is reserved for you: task
+ *   claim 16` — `embedsCommandClause`);
  * - a correlation tag (`[re:…]` — a caller is waiting), a `[crew-task]`
  *   dispatch or a model request envelope;
  * - an empty body.
@@ -266,6 +307,7 @@ export function classifyIncomingTell(message: string): TellIntent {
   if (/model_request/i.test(text)) return "request";
   if (REQUEST_PHRASE.test(text) || ADDRESSED_ASK.test(text)) return "request";
   if (opensWithImperative(text)) return "request";
+  if (embedsCommandClause(text)) return "request";
   return "information";
 }
 
