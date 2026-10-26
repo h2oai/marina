@@ -17,6 +17,19 @@ import type { Logger } from "./logger";
  * board-archive + note-importance + alerts + standing + rank progression fired
  * together on tick 3600, outside the tick budget. `register()` enforces that
  * two jobs sharing an interval never share a phase.
+ *
+ * Durable jobs: the tick counter restarts at 0 on every boot, so under the
+ * plain modulo rule a job waits `phase` ticks after each restart and a job
+ * whose interval exceeds typical uptime rarely or never runs. A job with
+ * `every >= DURABLE_MIN_EVERY` ticks is therefore scheduled on WALL CLOCK once
+ * a `TickScheduleClock` is attached: each run's start time is persisted, and
+ * on boot (the first `runDue`, the "arm" tick) a job whose interval
+ * (`every × tickMs`) has elapsed since that time — or that never ran — is due
+ * at `armTick + durableOffset(job)`; one that ran recently waits the remainder,
+ * rounded up to the same offset on a `DURABLE_SPREAD`-tick grid. The offset
+ * is the phase scaled into the spread window, so jobs that hold distinct
+ * phases on one interval still land on distinct ticks after a restart. After
+ * a run the next due tick is `tick + every`. Shorter jobs keep the modulo rule.
  */
 export interface TickJob {
   /** Stable identifier — unique across the schedule; shown by `describe()`. */
@@ -46,6 +59,39 @@ export interface TickJob {
   failureMessage?: string;
 }
 
+/**
+ * Jobs with an interval of at least this many ticks (10 min at the default
+ * 1 s tick) are durable on wall clock when a clock is attached; shorter jobs
+ * keep `tick % every === phase`.
+ */
+export const DURABLE_MIN_EVERY = 600;
+
+/** Window (ticks) over which overdue durable jobs are spread after a boot. */
+export const DURABLE_SPREAD = 300;
+
+/** Ticks after the arm tick at which an overdue durable job first runs. */
+export function durableOffset(job: Pick<TickJob, "every" | "phase">): number {
+  return Math.floor((job.phase * DURABLE_SPREAD) / job.every);
+}
+
+/** True when `job` is scheduled on wall clock (given an attached clock). */
+export function isDurableJob(job: Pick<TickJob, "every">): boolean {
+  return job.every >= DURABLE_MIN_EVERY;
+}
+
+/**
+ * Persistence + wall clock for durable jobs. `load`/`save` keep each job's
+ * last run start (wall-clock ms) by job name; both are best-effort (a failure
+ * is logged and the job falls back to "never ran"/unsaved).
+ */
+export interface TickScheduleClock {
+  /** Milliseconds between ticks, for converting `every` into wall time. */
+  tickMs: number;
+  now(): number;
+  load(name: string): number | undefined;
+  save(name: string, atMs: number): void;
+}
+
 /** One row of `TickScheduler.describe()` — for `readiness` / the dashboard. */
 export interface TickJobStatus {
   name: string;
@@ -66,6 +112,12 @@ export interface TickJobStatus {
   inFlight?: boolean;
   /** Times the job came due while its previous async run was still in flight (skipped). */
   skippedOverlaps?: number;
+  /** `true` when the job is scheduled on wall clock (see `DURABLE_MIN_EVERY`). */
+  durable: boolean;
+  /** Wall-clock start (ms) of the last run — persisted across restarts for durable jobs. */
+  lastRunAt?: number;
+  /** Tick at which a durable job is next due, once armed. */
+  nextDueTick?: number;
 }
 
 interface JobState {
@@ -78,6 +130,9 @@ interface JobState {
   /** The unsettled async run, if any: the job never overlaps itself. */
   inFlight?: Promise<void>;
   skippedOverlaps: number;
+  lastRunAt?: number;
+  /** Durable jobs only: the tick the job is next due at, set when armed. */
+  nextDueTick?: number;
 }
 
 function isThenable(value: unknown): value is Promise<void> {
@@ -91,8 +146,19 @@ function isThenable(value: unknown): value is Promise<void> {
 export class TickScheduler {
   private readonly jobs: JobState[] = [];
   private readonly byName = new Map<string, JobState>();
+  private clock?: TickScheduleClock;
 
   constructor(private readonly logger: Logger) {}
+
+  /**
+   * Schedule long-interval jobs on wall clock (see the class comment). Attach
+   * before the first `runDue`; jobs are armed lazily on the first tick they
+   * are checked, so `load` may read collaborators assigned after construction.
+   */
+  attachClock(clock: TickScheduleClock): this {
+    this.clock = clock;
+    return this;
+  }
 
   /**
    * Add a job to the schedule. Throws on an invalid interval/phase, a duplicate
@@ -131,7 +197,48 @@ export class TickScheduler {
 
   /** Names of the jobs that fire on `tick`, in registration order. */
   due(tick: number): string[] {
-    return this.jobs.filter((s) => TickScheduler.isDue(s.job, tick)).map((s) => s.job.name);
+    return this.jobs.filter((s) => this.isStateDue(s, tick)).map((s) => s.job.name);
+  }
+
+  private durable(state: JobState): boolean {
+    return this.clock !== undefined && isDurableJob(state.job);
+  }
+
+  private isStateDue(state: JobState, tick: number): boolean {
+    if (!this.durable(state)) return TickScheduler.isDue(state.job, tick);
+    if (state.nextDueTick === undefined) this.arm(state, tick);
+    return state.nextDueTick !== undefined && tick >= state.nextDueTick;
+  }
+
+  /** First check of a durable job in this process: place it from its persisted last run. */
+  private arm(state: JobState, tick: number): void {
+    const clock = this.clock;
+    if (!clock) return;
+    const { job } = state;
+    const offset = durableOffset(job);
+    let last: number | undefined;
+    try {
+      last = clock.load(job.name);
+    } catch (err) {
+      this.logger.warn("tick", "Tick schedule load failed", {
+        job: job.name,
+        error: getErrorMessage(err),
+      });
+    }
+    const intervalMs = job.every * Math.max(1, clock.tickMs);
+    const elapsed = last === undefined ? Number.POSITIVE_INFINITY : clock.now() - last;
+    if (last !== undefined) state.lastRunAt = last;
+    if (!(elapsed < intervalMs)) {
+      state.nextDueTick = tick + offset;
+      return;
+    }
+    // Ran recently: wait the remainder, then snap onto this job's slot of the
+    // spread grid so jobs stay on distinct ticks.
+    const remaining = Math.ceil(Math.max(0, intervalMs - elapsed) / Math.max(1, clock.tickMs));
+    const earliest = tick + Math.max(offset, remaining);
+    const slip =
+      (((offset - (earliest - tick)) % DURABLE_SPREAD) + DURABLE_SPREAD) % DURABLE_SPREAD;
+    state.nextDueTick = earliest + slip;
   }
 
   /**
@@ -143,7 +250,8 @@ export class TickScheduler {
    */
   runDue(tick: number): void {
     for (const state of this.jobs) {
-      if (!TickScheduler.isDue(state.job, tick)) continue;
+      if (!this.isStateDue(state, tick)) continue;
+      if (this.durable(state)) state.nextDueTick = tick + state.job.every;
       this.execute(state, tick);
     }
   }
@@ -162,6 +270,9 @@ export class TickScheduler {
       lastError: s.lastError,
       inFlight: s.inFlight !== undefined,
       skippedOverlaps: s.skippedOverlaps,
+      durable: this.durable(s),
+      lastRunAt: s.lastRunAt,
+      nextDueTick: s.nextDueTick,
     }));
   }
 
@@ -201,6 +312,20 @@ export class TickScheduler {
     const started = performance.now();
     state.runs++;
     state.lastRunTick = tick;
+    const clock = this.clock;
+    state.lastRunAt = clock ? clock.now() : Date.now();
+    if (clock) {
+      if (this.durable(state)) {
+        try {
+          clock.save(job.name, state.lastRunAt);
+        } catch (err) {
+          this.logger.warn("tick", "Tick schedule save failed", {
+            job: job.name,
+            error: getErrorMessage(err),
+          });
+        }
+      }
+    }
     const finish = (err?: unknown): void => {
       state.lastDurationMs = performance.now() - started;
       state.lastError = err === undefined ? undefined : getErrorMessage(err);

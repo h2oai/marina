@@ -4,7 +4,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { Logger } from "../src/engine/logger";
-import { TickScheduler } from "../src/engine/tick-scheduler";
+import { TICK_SCHEDULE_OWNER, tickScheduleClock } from "../src/engine/tick-jobs";
+import {
+  DURABLE_SPREAD,
+  durableOffset,
+  type TickScheduleClock,
+  TickScheduler,
+} from "../src/engine/tick-scheduler";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
@@ -178,6 +184,152 @@ describe("TickScheduler", () => {
   });
 });
 
+/** An in-memory clock: wall time is a variable, the store a map. */
+function fakeClock(tickMs = 1000, start = 1_000_000_000) {
+  const store = new Map<string, number>();
+  const state = { now: start };
+  const clock: TickScheduleClock = {
+    tickMs,
+    now: () => state.now,
+    load: (name) => store.get(name),
+    save: (name, at) => void store.set(name, at),
+  };
+  return { clock, store, state };
+}
+
+/**
+ * Durable jobs: the engine's tick counter restarts at 0 on every boot, so a
+ * long-interval job is placed from its persisted last run instead of waiting
+ * `phase` ticks (or forever, when the interval exceeds uptime).
+ */
+describe("TickScheduler durable jobs", () => {
+  const logger = new Logger({ level: "error" });
+  const sixHours = { name: "six-hourly", every: 21600, phase: 4200 };
+
+  function boot(clock: TickScheduleClock, fired: number[]) {
+    return new TickScheduler(logger)
+      .attachClock(clock)
+      .register({ ...sixHours, run: (tick) => void fired.push(tick) });
+  }
+
+  it("a job never run, or overdue after a restart, runs within the spread window", () => {
+    const { clock, store, state } = fakeClock();
+    const fired: number[] = [];
+    let s = boot(clock, fired);
+    for (let tick = 1; tick <= DURABLE_SPREAD; tick++) s.runDue(tick);
+    const offset = durableOffset(sixHours);
+    expect(offset).toBe(58);
+    expect(fired).toEqual([1 + offset]);
+    expect(store.get("six-hourly")).toBe(state.now);
+
+    // Restart 7 h later (> the 6 h interval): due early again, not at phase 4200.
+    state.now += 7 * 3600_000;
+    fired.length = 0;
+    s = boot(clock, fired);
+    for (let tick = 1; tick <= DURABLE_SPREAD; tick++) s.runDue(tick);
+    expect(fired).toEqual([1 + offset]);
+    expect(s.describe()[0]).toMatchObject({
+      durable: true,
+      lastRunAt: state.now,
+      nextDueTick: 1 + offset + 21600,
+    });
+  });
+
+  it("a restart shortly after a run waits the remainder, on its own slot", () => {
+    const { clock, store, state } = fakeClock();
+    store.set("six-hourly", state.now - 3600_000); // ran 1 h ago
+    const fired: number[] = [];
+    const s = boot(clock, fired);
+    s.runDue(1);
+    const due = s.describe()[0]?.nextDueTick ?? 0;
+    // 5 h remain = 18000 ticks; snapped forward onto the job's spread slot.
+    expect(due).toBeGreaterThanOrEqual(1 + 18000);
+    expect(due).toBeLessThan(1 + 18000 + DURABLE_SPREAD);
+    expect((due - 1) % DURABLE_SPREAD).toBe(durableOffset(sixHours));
+    for (let tick = 2; tick < due; tick++) s.runDue(tick);
+    expect(fired).toEqual([]);
+    s.runDue(due);
+    expect(fired).toEqual([due]);
+    expect(s.describe()[0]?.lastRunAt).toBe(state.now);
+  });
+
+  it("overdue jobs on one interval land on distinct ticks", () => {
+    const { clock } = fakeClock();
+    const fired = new Map<string, number>();
+    const s = new TickScheduler(logger).attachClock(clock);
+    for (const phase of [300, 600, 1200, 3300]) {
+      s.register({
+        name: `h${phase}`,
+        every: 3600,
+        phase,
+        run: (tick) => void fired.set(`h${phase}`, tick),
+      });
+    }
+    for (let tick = 1; tick <= DURABLE_SPREAD; tick++) s.runDue(tick);
+    const ticks = [...fired.values()];
+    expect(ticks.length).toBe(4);
+    expect(new Set(ticks).size).toBe(4);
+    expect(fired.get("h3300")).toBe(1 + 275);
+  });
+
+  it("short jobs keep the modulo rule and persist nothing", () => {
+    const { clock, store } = fakeClock();
+    const fired: number[] = [];
+    const s = new TickScheduler(logger)
+      .attachClock(clock)
+      .register({ name: "short", every: 300, phase: 150, run: (t) => void fired.push(t) });
+    for (let tick = 1; tick <= 700; tick++) s.runDue(tick);
+    expect(fired).toEqual([150, 450]);
+    expect(store.size).toBe(0);
+    expect(s.describe()[0]?.durable).toBe(false);
+  });
+
+  it("without a clock a long job keeps the modulo rule", () => {
+    const fired: number[] = [];
+    const s = new TickScheduler(logger).register({
+      name: "hourly",
+      every: 3600,
+      phase: 300,
+      run: (t) => void fired.push(t),
+    });
+    for (let tick = 1; tick <= 400; tick++) s.runDue(tick);
+    expect(fired).toEqual([300]);
+    expect(s.describe()[0]?.durable).toBe(false);
+  });
+
+  it("a durable async job never overlaps itself", async () => {
+    const { clock } = fakeClock(1000);
+    let release: () => void = () => {};
+    let starts = 0;
+    const s = new TickScheduler(logger).attachClock(clock).register({
+      name: "slow",
+      every: 600,
+      phase: 0,
+      run: () => {
+        starts++;
+        return new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
+    });
+    s.runDue(1); // armed and due at once (offset 0)
+    for (let tick = 2; tick <= 1201; tick++) s.runDue(tick);
+    expect(starts).toBe(1);
+    expect(s.describe()[0]?.skippedOverlaps).toBe(2);
+    release();
+    await s.drain();
+  });
+
+  it("still enforces the distinct-phase invariant", () => {
+    const s = new TickScheduler(logger)
+      .attachClock(fakeClock().clock)
+      .register({ name: "a", every: 3600, phase: 900, run: () => {} });
+    expect(() => s.register({ name: "b", every: 3600, phase: 900, run: () => {} })).toThrow(
+      /distinct phases/,
+    );
+  });
+});
+
 describe("Engine tick schedule", () => {
   let db: MarinaDB;
   let engine: Engine;
@@ -246,6 +398,26 @@ describe("Engine tick schedule", () => {
     const phases = hourly.map((j) => j.phase);
     expect(hourly.length).toBeGreaterThan(5);
     expect(new Set(phases).size).toBe(phases.length);
+  });
+
+  it("persists durable runs in core_memory and reads them back on the next boot", () => {
+    const host = { db, config: { tickInterval: 1000 } } as Parameters<typeof tickScheduleClock>[0];
+    let now = 5_000_000;
+    const clock = tickScheduleClock(host, () => now);
+    expect(clock.load("live-promotion")).toBeUndefined();
+    clock.save("live-promotion", now);
+    expect(db.getCoreMemory(TICK_SCHEDULE_OWNER, "live-promotion")?.value).toBe("5000000");
+    now += 60_000;
+    expect(tickScheduleClock(host, () => now).load("live-promotion")).toBe(5_000_000);
+
+    const durable = engine
+      .describeTickSchedule()
+      .filter((j) => j.durable)
+      .map((j) => j.name);
+    expect(durable).toContain("live-promotion");
+    expect(durable).toContain("lessons-from-work");
+    expect(durable).not.toContain("outcome-delivery");
+    expect(durable).not.toContain("schedules");
   });
 
   it("starts with every job unrun", () => {

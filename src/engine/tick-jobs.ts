@@ -50,7 +50,7 @@ import {
   RETENTION_TICK_PHASE,
   runRetentionPass,
 } from "./retention";
-import type { TickScheduler } from "./tick-scheduler";
+import type { TickScheduleClock, TickScheduler } from "./tick-scheduler";
 
 /** The autonomy pulse cadence (5 minutes, matching readiness's evidence window) in ticks. */
 export const AUTONOMY_PULSE_MS = 5 * 60_000;
@@ -87,8 +87,10 @@ export interface TickJobHost {
 }
 
 /**
- * Declare the periodic maintenance jobs. Every job fires on
- * `tick % every === phase`; the scheduler rejects two jobs sharing a slot.
+ * Declare the periodic maintenance jobs. A short job fires on
+ * `tick % every === phase` (long ones run on wall clock — see
+ * `DURABLE_MIN_EVERY` in tick-scheduler.ts); the scheduler rejects two jobs
+ * sharing a slot.
  * The hourly jobs share a 3600-tick interval but run at DISTINCT phases so
  * they never all land on the same tick — previously board-archive +
  * note-importance + alerts + standing + rank progression all fired together
@@ -96,6 +98,10 @@ export interface TickJobHost {
  * (`db`, managers) are checked when the job runs, not when it is declared.
  */
 export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
+  // Long-interval jobs (every >= DURABLE_MIN_EVERY ticks) run on wall clock:
+  // their last run survives a restart, so an often-restarted install still
+  // runs them (an overdue job is due within DURABLE_SPREAD ticks of boot).
+  s.attachClock(tickScheduleClock(host));
   // Every ~5 minutes of wall clock: snapshot the autonomy numbers so
   // `readiness autonomy` can report a trend, not only the current window.
   const pulseEvery = autonomyPulseTicks(host.config.tickInterval);
@@ -515,6 +521,30 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       if (host.db) backfillMemoryKnownAt(host.db.memoryRepository().raw);
     },
   });
+}
+
+/** `core_memory` owner holding each durable tick job's last run start (ms), keyed by job name. */
+export const TICK_SCHEDULE_OWNER = "tick:schedule";
+
+/** The wall clock + durable store for the tick schedule; reads `host.db` when used, not now. */
+export function tickScheduleClock(
+  host: Pick<TickJobHost, "db" | "config">,
+  now: () => number = Date.now,
+): TickScheduleClock {
+  return {
+    get tickMs() {
+      return host.config.tickInterval;
+    },
+    now,
+    load: (name) => {
+      const raw = host.db?.getCoreMemory(TICK_SCHEDULE_OWNER, name)?.value;
+      const at = raw === undefined ? Number.NaN : Number(raw);
+      return Number.isFinite(at) ? at : undefined;
+    },
+    save: (name, atMs) => {
+      host.db?.setCoreMemory(TICK_SCHEDULE_OWNER, name, String(Math.round(atMs)));
+    },
+  };
 }
 
 /** The known-at backfill's interval (ticks) and phase. */

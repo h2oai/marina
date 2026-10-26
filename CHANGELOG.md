@@ -333,6 +333,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Long-interval tick jobs run on an install that restarts often.** The tick counter restarts at
+  0 on every boot, so a job fired on `tick % every === phase` waited `phase` ticks after each
+  restart, and `live-promotion` (6 h, phase ≈ 70 min) and the late-phase hourly jobs (e.g.
+  `lessons-from-work`) were starved on a frequently restarted server. Jobs with an interval of at
+  least 600 ticks are now scheduled on wall clock: their last run is kept in `core_memory`
+  (`tick:schedule`), an overdue job runs within 300 ticks of boot (spread by its phase), and a job
+  that ran recently waits the remainder. Shorter jobs keep the modulo rule.
+  `describeTickSchedule()` reports `durable`, `lastRunAt` and `nextDueTick`.
+
 - **`agent attention` now wakes a resting resident at once.** A resident that had declared rest
   (`memory set rest <why>`) left an operator's steered attention unread until its long heartbeat
   (about 30 minutes): the idle check skipped the cycle because no perception owed a reply, and the
