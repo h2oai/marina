@@ -201,15 +201,7 @@ describe("system prompt byte budget", () => {
               // The core work commands are listed; operator surfaces are not.
               for (const core of ["work:", "web:", "challenge:"]) expect(p).toContain(`\n${core}`);
               // Commands TOOL ROUTING or MEMORY already teach are named there, not re-listed.
-              for (const taught of [
-                "task",
-                "channel",
-                "canvas",
-                "note",
-                "recall",
-                "pool",
-                "look",
-              ]) {
+              for (const taught of ["task", "channel", "canvas", "memory", "pool", "look"]) {
                 expect(p).toContain(`\`${taught}`);
                 expect(p).not.toContain(`\n${taught}:`);
               }

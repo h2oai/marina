@@ -112,7 +112,7 @@ describe("first-run commands", () => {
   });
 
   it("context with no query prints a usage line", async () => {
-    expect(await run("context")).toBe("Usage: context <query> | context api <JSON>");
+    expect(await run("memory context")).toBe("Usage: context <query> | context api <JSON>");
   });
 
   it("ask without a provider says it answers from notes only", async () => {

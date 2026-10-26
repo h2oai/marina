@@ -55,25 +55,25 @@ export function registerNamedWorldTools(
     ) => {
       switch (action) {
         case "note": {
-          let cmd = `note ${content}`;
+          let cmd = `memory note ${content}`;
           if (importance !== undefined) cmd += ` importance ${importance}`;
           if (noteType) cmd += ` type ${noteType}`;
           return runCmd(extra, cmd);
         }
         case "recall": {
-          let cmd = `recall ${content}`;
+          let cmd = `memory recall ${content}`;
           if (modifier) cmd += ` ${modifier}`;
           return runCmd(extra, cmd);
         }
         case "context": {
           if (!content.trim())
             return { ...text("Query required for think context."), isError: true };
-          let cmd = `recall ${content} ${scope === "evidence" ? "evidence" : "all"}`;
+          let cmd = `memory recall ${content} ${scope === "evidence" ? "evidence" : "all"}`;
           if (budget !== undefined) cmd += ` budget ${budget}`;
           return runCmd(extra, cmd);
         }
         case "reflect": {
-          const cmd = content ? `reflect ${content}` : "reflect";
+          const cmd = content ? `memory reflect ${content}` : "memory reflect";
           return runCmd(extra, cmd);
         }
       }

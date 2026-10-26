@@ -4471,7 +4471,7 @@ export class LeanAgentAdapter implements AgentHandle {
             `Your goal looks like it could use a coordination pattern — fitting: ${fits
               .map((f) => `${f.pattern} (${f.why})`)
               .join("; ")}.`,
-            "Adopt one with `project <name> orchestrate <pattern>` (works solo — it seeds the conventions you'll `recall`). Bring in other agents (`code crew` / `recruit`) only if the work needs more hands — or keep going solo.",
+            "Adopt one with `project <name> orchestrate <pattern>` (works solo — it seeds the conventions you'll `memory recall`). Bring in other agents (`code crew` / `recruit`) only if the work needs more hands — or keep going solo.",
           );
           // Track record: surface what PRIOR runs of the top-fitting pattern
           // learned, from its `orchestration:<pattern>` tradition pool (crews
@@ -4782,7 +4782,7 @@ export class LeanAgentAdapter implements AgentHandle {
       !this.activeCodingTask
     ) {
       // The procedure itself is the built-in `consolidate-memory` skill.
-      const reflectionContent = `${this.notesSinceReflection} new notes since your last reflection. Consolidate: state your working hypothesis, \`recall\`/\`reflect\` your focus to test it against cited notes, then curate (link, supersede, store a skill) — \`skill builtin consolidate-memory\` has the steps. The goal is a smaller, sharper memory, not more notes.`;
+      const reflectionContent = `${this.notesSinceReflection} new notes since your last reflection. Consolidate: state your working hypothesis, \`memory recall\`/\`memory reflect\` your focus to test it against cited notes, then curate (link, supersede, store a skill) — \`skill builtin consolidate-memory\` has the steps. The goal is a smaller, sharper memory, not more notes.`;
       if (this.shouldIncludeSection("reflection_due", reflectionContent)) {
         parts.push(`[Reflection Due]\n${reflectionContent}`);
       }
@@ -5385,7 +5385,7 @@ export class LeanAgentAdapter implements AgentHandle {
     }
     return (
       "[Pattern] Repeated actions — approach likely not working. Think WHY (not WHAT next): " +
-      "`think` assumption, `recall` past encounters, `novelty suggest` new angle, or move."
+      "`think` assumption, `memory recall` past encounters, `novelty suggest` new angle, or move."
     );
   }
 

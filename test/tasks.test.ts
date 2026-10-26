@@ -259,7 +259,7 @@ describe("Tasks", () => {
       "task create Neural architecture | Build transformer model !5 bounty",
     );
     conn1.clear();
-    engine.processCommand(conn1.entity!, "recall neural");
+    engine.processCommand(conn1.entity!, "memory recall neural");
     const text = stripAnsi(conn1.lastText());
     expect(text).toContain("Related Tasks");
     expect(text).toContain("Neural architecture");

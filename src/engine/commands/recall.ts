@@ -27,6 +27,7 @@ import {
   status,
 } from "../../net/ansi";
 import type { MarinaDB, ScoredNoteRow } from "../../persistence/database";
+import type { CommandUsage } from "../../sdk/command-forms";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { DAY_MS } from "../constants";
 import { currentEvidenceCutoffMs } from "../evidence-fence";
@@ -74,6 +75,16 @@ function detectIntent(query: string): {
   return null;
 }
 
+/** `recall` forms; `memory recall …` (src/engine/command-families.ts) shares them. */
+export const RECALL_USAGE: CommandUsage[] = [
+  { syntax: "recall <query> [recent | important] [type <type>]", effect: "read" },
+  {
+    syntax:
+      "recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]",
+    effect: "read",
+  },
+];
+
 export function recallCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
@@ -82,14 +93,7 @@ export function recallCommand(deps: {
 }): CommandDef {
   return {
     category: "Memory",
-    usage: [
-      { syntax: "recall <query> [recent | important] [type <type>]", effect: "read" },
-      {
-        syntax:
-          "recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]",
-        effect: "read",
-      },
-    ],
+    usage: RECALL_USAGE,
     name: "recall",
     aliases: [],
     help: "Scored, provenance-aware retrieval. Usage: recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]\n  all — unified tiers: skills, [trusted], [evidence] (durable records + sources), [proposal] (assistance answers), [unverified]\n  evidence — durable tiers only",

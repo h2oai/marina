@@ -79,6 +79,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`memory` is the one memory command.** `memory note`, `memory recall`, `memory reflect`,
+  `memory recap`, `memory debrief` and `memory context` run the same-named commands with the same
+  rank, gates, effects and output. The bare names still work and say once per session that they
+  are aliases (`(alias: use \`memory recall …\`)`). `help`, `help all` and the agent's command
+  roster list them under `memory`; the system prompt's MEMORY section teaches the family forms;
+  MCP named tools keep their parameters and now run the family forms. `pool`, `skill`, `orient`
+  and `bookmark` stay separate commands. Storage, numeric note ids and receipts are unchanged.
 - **One judge service.** The challenge judge, the task-submission verifier, the attention judges,
   the outcome judges and the Arbiter now record every opinion and its later ground truth in one
   ledger (`judge_ledger`, migration 179). The migration copies the rows already kept in

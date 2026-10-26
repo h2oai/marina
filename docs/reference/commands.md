@@ -5898,9 +5898,11 @@ Effect: read.
 
 ## memory
 
-Durable memory service + key-value beliefs.
+The memory command: notes, recall, reflection, durable records and key-value beliefs.
 Usage: memory kv list | memory kv set <key> <value> | memory kv get <key> | memory kv delete <key> | memory kv history <key> | memory kv clear
 (bare `memory set/get/delete/list/history` still work; `ls` = list, `rm`/`remove` = delete)
+Family: memory note <text> · memory recall <query> [evidence|all] · memory reflect [topic] · memory recap <topic> · memory debrief · memory context <query>
+(bare note, recall, reflect, recap, debrief, context are aliases; `help memory full` lists every form)
 
 Key-value beliefs (core memory — mutable, per-entity, NOT the durable record store):
   memory kv list                        your keys (bare `memory list` = same)
@@ -5911,9 +5913,9 @@ Key-value beliefs (core memory — mutable, per-entity, NOT the durable record s
   memory kv clear                       delete every key
 
 Which verb?
-  recall <q>             your legacy notes, FTS-ranked (fast, no model)
+  memory recall <q>      your notes, FTS-ranked (fast, no model)
   memory query <JSON>    durable records, exact symbolic filters
-  recap <topic>          multi-source retrieve-only pull (notes + pools + chronicle), no model
+  memory recap <topic>   multi-source retrieve-only pull (notes + pools + chronicle), no model
   ask <question>         model-synthesised answer over notes + guide + pools + world search
   dig <topic>            internal notes + web evidence, optional synthesis
   share <pool> <text>    ≡ pool <pool> add <text>
@@ -6343,6 +6345,338 @@ Effect: write.
 - `field-0` (`NAME`): text, required.
 - `field-1` (`RECORD_ID`): text, optional group `option-0`.
 - Group `option-0`: `RECORD_ID ...`.
+
+### `memory note <text>`
+
+Effect: write.
+
+- `field-0` (`text`): text, required.
+
+### `memory note <text> [importance N] [type T]`
+
+Effect: write.
+
+- `field-0` (`text`): text, required.
+- `field-1` (`importance`): number, optional group `option-0`.
+- `field-2` (`type`): text, optional group `option-1`.
+- Group `option-0`: `importance N`.
+- Group `option-1`: `type T`.
+
+### `memory note <text> importance <N> type <type>`
+
+Effect: write.
+
+- `field-0` (`text`): text, required.
+- `field-1` (`N`): number, required.
+- `field-2` (`type`): text, required.
+
+### `memory note claim <text> [confidence:0..1] [source:URL]`
+
+Effect: write.
+
+- `field-0` (`text`): text, required.
+- `field-1` (`confidence`): number, optional group `option-0`, min 0, max 1.
+- `field-2` (`source`): text, optional group `option-1`.
+- Group `option-0`: `confidence:0..1`.
+- Group `option-1`: `source:URL`.
+
+### `memory note claim <text> [confidence:0..1] [source:URL] [observed:YYYY-MM-DD]`
+
+Effect: write.
+
+- `field-0` (`text`): text, required.
+- `field-1` (`confidence`): number, optional group `option-0`, min 0, max 1.
+- `field-2` (`source`): text, optional group `option-1`.
+- `field-3` (`observed`): text, optional group `option-2`.
+- Group `option-0`: `confidence:0..1`.
+- Group `option-1`: `source:URL`.
+- Group `option-2`: `observed:YYYY-MM-DD`.
+
+### `memory note consolidate <keeper-id> <duplicate-id> [duplicate-id ...]`
+
+Effect: write.
+
+- `field-0` (`keeper-id`): text, required.
+- `field-1` (`duplicate-id`): text, required.
+- `field-2` (`duplicate-id`): text, optional group `option-0`.
+- Group `option-0`: `duplicate-id ...`.
+
+### `memory note contradictions`
+
+Effect: read.
+
+
+### `memory note correct <id> <new text>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`new text`): text, required.
+
+### `memory note correct <id> <text>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`text`): text, required.
+
+### `memory note delete <id>`
+
+Effect: delete.
+
+- `field-0` (`id`): text, required.
+
+### `memory note derive <your-note-id> <source-note-id>`
+
+Effect: write.
+
+- `field-0` (`your-note-id`): text, required.
+- `field-1` (`source-note-id`): text, required.
+
+### `memory note evolve <id>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+
+### `memory note explain <id>`
+
+Effect: read.
+
+- `field-0` (`id`): text, required.
+
+### `memory note graph`
+
+Effect: read.
+
+
+### `memory note link <id1> <id2> <rel>`
+
+Effect: write.
+
+- `field-0` (`id1`): text, required.
+- `field-1` (`id2`): text, required.
+- `field-2` (`rel`): text, required.
+
+### `memory note link <id1> <id2> <relationship>`
+
+Effect: write.
+
+- `field-0` (`id1`): text, required.
+- `field-1` (`id2`): text, required.
+- `field-2` (`relationship`): text, required.
+
+### `memory note list`
+
+Effect: read.
+
+
+### `memory note resolve <case-id> both <evidence-backed rationale>`
+
+Effect: write.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`evidence-backed rationale`): text, required.
+
+### `memory note resolve <case-id> left <evidence-backed rationale>`
+
+Effect: write.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`evidence-backed rationale`): text, required.
+
+### `memory note resolve <case-id> neither <evidence-backed rationale>`
+
+Effect: write.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`evidence-backed rationale`): text, required.
+
+### `memory note resolve <case-id> right <evidence-backed rationale>`
+
+Effect: write.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`evidence-backed rationale`): text, required.
+
+### `memory note room`
+
+Effect: read.
+
+
+### `memory note search <query>`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
+
+### `memory note source <your-note-id> <url|note:id|asset:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]`
+
+Effect: write.
+
+- `field-0` (`your-note-id`): text, required.
+- `field-1` (`url|note:id|asset:id`): text, required, choices `url`, `note:id`, `asset:id`.
+- `field-2` (`type`): text, optional group `option-0`.
+- `field-3` (`credibility`): number, optional group `option-1`.
+- `field-4` (`observed`): text, optional group `option-2`.
+- Group `option-0`: `type T`.
+- Group `option-1`: `credibility 0..1`.
+- Group `option-2`: `observed YYYY-MM-DD`.
+
+### `memory note trace <id>`
+
+Effect: read.
+
+- `field-0` (`id`): text, required.
+
+### `memory note types`
+
+Effect: read.
+
+
+### `memory note unlink <id1> <id2> <rel>`
+
+Effect: delete.
+
+- `field-0` (`id1`): text, required.
+- `field-1` (`id2`): text, required.
+- `field-2` (`rel`): text, required.
+
+### `memory note unlink <id1> <id2> <relationship>`
+
+Effect: delete.
+
+- `field-0` (`id1`): text, required.
+- `field-1` (`id2`): text, required.
+- `field-2` (`relationship`): text, required.
+
+### `memory note verify <your-note-id> disputed [<confidence> [<rationale>]]`
+
+Effect: write.
+
+- `field-0` (`your-note-id`): text, required.
+- `field-1` (`confidence`): number, optional group `option-0`, min 0, max 1.
+- `field-2` (`rationale`): text, optional group `option-1`.
+- Group `option-0`: `confidence rationale`.
+- Group `option-1`: `rationale`; requires `option-0`.
+
+### `memory note verify <your-note-id> unverified [<confidence> [<rationale>]]`
+
+Effect: write.
+
+- `field-0` (`your-note-id`): text, required.
+- `field-1` (`confidence`): number, optional group `option-0`, min 0, max 1.
+- `field-2` (`rationale`): text, optional group `option-1`.
+- Group `option-0`: `confidence rationale`.
+- Group `option-1`: `rationale`; requires `option-0`.
+
+### `memory recall <query> [recent | important] [type <type>]`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
+- `field-1` (`recent`): text, optional group `option-0`.
+- `field-2` (`type`): text, optional group `option-1`.
+- Group `option-0`: `recent | important`.
+- Group `option-1`: `type type`.
+
+### `memory recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
+- `field-1` (`recent|important|trusted|explain|evidence|all`): choice, optional group `option-0`, choices `recent`, `important`, `trusted`, `explain`, `evidence`, `all`.
+- `field-2` (`type`): text, optional group `option-1`.
+- `field-3` (`bytes`): number, optional group `option-2`.
+- Group `option-0`: `recent|important|trusted|explain|evidence|all`.
+- Group `option-1`: `type type`.
+- Group `option-2`: `budget bytes`.
+
+### `memory reflect --template [topic] [--share <pool>]`
+
+Effect: write.
+
+- `field-0` (`topic`): text, optional group `option-0`.
+- `field-1` (`pool`): text, optional group `option-1`.
+- Group `option-0`: `topic`.
+- Group `option-1`: `--share pool`.
+
+### `memory reflect [topic] [--share <pool>] [--no-spawn]`
+
+Effect: execute.
+
+- `field-0` (`topic`): text, optional group `option-0`.
+- `field-1` (`pool`): text, optional group `option-1`.
+- Group `option-0`: `topic`.
+- Group `option-1`: `--share pool`.
+- Group `option-2`: `--no-spawn`.
+
+### `memory reflect adopt <job-id>`
+
+Effect: write.
+
+- `field-0` (`job-id`): text, required.
+
+### `memory reflect failure <description> [--share <pool>]`
+
+Effect: write.
+
+- `field-0` (`description`): text, required.
+- `field-1` (`pool`): text, optional group `option-0`.
+- Group `option-0`: `--share pool`.
+
+### `memory reflect jobs`
+
+Effect: read.
+
+
+### `memory reflect via <helper> [topic] [--share <pool>]`
+
+Effect: execute.
+
+- `field-0` (`helper`): text, required.
+- `field-1` (`topic`): text, optional group `option-0`.
+- `field-2` (`pool`): text, optional group `option-1`.
+- Group `option-0`: `topic`.
+- Group `option-1`: `--share pool`.
+
+### `memory recap <topic>`
+
+Effect: read.
+
+- `field-0` (`topic`): text, required.
+
+### `memory recap chronicle`
+
+Effect: read.
+
+
+### `memory recap chronicle day`
+
+Effect: read.
+
+
+### `memory recap chronicle week`
+
+Effect: read.
+
+
+### `memory debrief`
+
+Effect: read.
+
+
+### `memory context <query>`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
+
+### `memory context api <JSON>`
+
+Effect: read.
+
+- `field-0` (`JSON`): json, required.
 
 ## mesh
 
