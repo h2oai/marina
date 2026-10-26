@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DecisionProvider } from "../src/decisions/types";
+import { DecisionError, type DecisionProvider } from "../src/decisions/types";
+import { recordSpend, resetSpendLedgerForTests } from "../src/engine/spend-ledger";
 import { jsonlHistory } from "../src/forecast/history";
 import { memoryLessonSink } from "../src/learning/outcomes";
 import {
@@ -13,10 +14,12 @@ import {
   enableOutcomeLearning,
   recallLessons,
 } from "../src/learning/service";
+import { classifyUnavailable, transientFailureReason } from "../src/learning/unavailable";
 import {
   AGGREGATE_MIN_OUTCOMES,
   deliverOutcomes,
   MAX_DELIVERY_ATTEMPTS,
+  REOPEN_SCAN,
 } from "../src/outcomes/deliver";
 import { fileAnswer, resolveFiled } from "../src/outcomes/filing";
 import { resolveForecast } from "../src/outcomes/forecast";
@@ -26,13 +29,14 @@ import { MarinaDB } from "../src/persistence/database";
 import type { EntityId } from "../src/types";
 import { scopeProcessState } from "./process-state";
 
-const judge = (fail = false): DecisionProvider =>
+/** A judge that passes everything, or throws `fail` on every call. */
+const judge = (fail?: Error): DecisionProvider =>
   ({
     kind: "test",
     model: "test/jev",
     calibrated: true,
     async ask(request: { questions: Record<string, unknown> }) {
-      if (fail) throw new Error("judge timeout");
+      if (fail) throw fail;
       return {
         answers: Object.fromEntries(
           Object.keys(request.questions).map((k) => [k, { type: "noul", noul: 0.9 }]),
@@ -226,13 +230,13 @@ describe("one outcome path", () => {
     expect(db.pendingOutcomes("lessons", 20)).toHaveLength(AGGREGATE_MIN_OUTCOMES);
   });
 
-  it("no verdict keeps a group pending and counts the attempt; repeated failures end failed", async () => {
+  it("a judge reply that is malformed every time keeps a group pending and counts the attempt; repeated failures end failed", async () => {
     const ids = resolveMany(AGGREGATE_MIN_OUTCOMES);
     await settleDelivery(db);
     enableOutcomeLearning(db, {
       sink: memoryLessonSink(),
       writer: ruleWriter(),
-      judge: judge(true),
+      judge: judge(new DecisionError("classifier reply has no JSON", "invalid_response")),
       env: env(),
     });
     for (let i = 0; i < MAX_DELIVERY_ATTEMPTS - 1; i++) {
@@ -247,6 +251,10 @@ describe("one outcome path", () => {
         attempts: MAX_DELIVERY_ATTEMPTS,
       });
     expect(lessonDelivery(ids[0]!).reason).toContain("no verdict");
+    // The judge's cause is kept: its kind and message.
+    expect(lessonDelivery(ids[0]!).reason).toContain(
+      "decision backend unavailable (invalid_response: classifier reply has no JSON)",
+    );
   });
 
   it("groups by family: a lesson is learned per family, scoped to it, and judged within it", async () => {
@@ -452,5 +460,240 @@ describe("board filing on the outcome path", () => {
     expect(db.getOutcomeBySubject(`forecast:${id}`)!.source).toBe("board:probability");
     await settleDelivery(db);
     db.close();
+  });
+});
+
+describe("an outage never ends a lesson delivery failed", () => {
+  let db: MarinaDB;
+  const env = (over: Record<string, string> = {}) =>
+    ({ MARINA_LESSONS: "on", ...over }) as NodeJS.ProcessEnv;
+  let taskSeq = 0;
+  beforeEach(() => {
+    db = new MarinaDB(":memory:");
+    db.saveAgentConfig({ name: "Roamer", model: "vendor/model-b", spawnedBy: "system" });
+  });
+  afterEach(async () => {
+    await settleDelivery(db);
+    disableOutcomeLearning(db);
+    resetSpendLedgerForTests();
+    db.close();
+  });
+
+  /** One approved task by a world agent: a single (non-aggregated) lesson outcome. */
+  const approvedTask = async () => {
+    const taskId = ++taskSeq;
+    observeOutcomeEvent(db, {
+      type: "task_approved",
+      entity: "e_creator" as EntityId,
+      taskId,
+      claimantName: "Roamer",
+      timestamp: 1_000 + taskId,
+    });
+    await settleDelivery(db);
+    const o = db
+      .listOutcomes({ kind: "task" })
+      .find((r) => r.subject.startsWith(`task:${taskId}:`))!;
+    return o.id;
+  };
+  const delivery = (outcomeId: number) =>
+    db.outcomeDeliveries(outcomeId).find((d) => d.consumer === "lessons")!;
+  /** A writer that counts its calls and answers with `answer` (or throws it). */
+  const writer = (answer: string | Error) => {
+    const w = {
+      name: "test/writer",
+      calls: 0,
+      async complete() {
+        w.calls++;
+        if (answer instanceof Error) throw answer;
+        return answer;
+      },
+    };
+    return w;
+  };
+  const RULE = '{"category":"tasks","rule":"State the acceptance check before starting."}';
+
+  it("the daily spend cap reached: every lesson waits, no attempt, no budget unit, no model call", async () => {
+    const ids = [await approvedTask(), await approvedTask()];
+    const w = writer(RULE);
+    const capped = env({ MARINA_DAILY_SPEND_CAP_USD: "1", MARINA_LESSONS_MAX_PER_HOUR: "1" });
+    enableOutcomeLearning(db, {
+      sink: memoryLessonSink(),
+      writer: w,
+      judge: judge(),
+      env: capped,
+    });
+    recordSpend("model_api", 2);
+    for (let i = 0; i < MAX_DELIVERY_ATTEMPTS + 1; i++) {
+      const report = await deliverOutcomes(db, { env: capped });
+      expect(report.lessons).toMatchObject({ failed: 0, done: 0, waiting: 2 });
+    }
+    expect(w.calls).toBe(0);
+    for (const id of ids) {
+      expect(delivery(id)).toMatchObject({ state: "pending", attempts: 0 });
+      expect(delivery(id).reason).toStartWith("waiting: daily spend cap reached");
+    }
+    // A new day (here: the cap lifted): the hourly unit was never spent, so one teaches.
+    resetSpendLedgerForTests();
+    const report = await deliverOutcomes(db, { env: capped });
+    expect(report.lessons).toMatchObject({ done: 1, failed: 0 });
+  });
+
+  it("a writer 429 waits with no attempt spent, and the rest of the pass makes no model call", async () => {
+    const ids = [await approvedTask(), await approvedTask(), await approvedTask()];
+    const w = writer(new Error("writer HTTP 429"));
+    enableOutcomeLearning(db, { sink: memoryLessonSink(), writer: w, judge: judge(), env: env() });
+    for (let i = 0; i < MAX_DELIVERY_ATTEMPTS + 1; i++) {
+      const report = await deliverOutcomes(db, { env: env() });
+      expect(report.lessons).toMatchObject({ failed: 0, done: 0, waiting: 3 });
+    }
+    // One outcome probed per pass (the writer is asked twice for it), never the others.
+    expect(w.calls).toBe(2 * (MAX_DELIVERY_ATTEMPTS + 1));
+    for (const id of ids) expect(delivery(id)).toMatchObject({ state: "pending", attempts: 0 });
+    expect(delivery(ids[0]!).reason).toBe(
+      "waiting: no verdict: no rule (writer unavailable (rate_limited): writer HTTP 429)",
+    );
+  });
+
+  it("a decision timeout waits with no attempt spent, and the reason carries the kind", async () => {
+    const id = await approvedTask();
+    enableOutcomeLearning(db, {
+      sink: memoryLessonSink(),
+      writer: writer(RULE),
+      judge: judge(new DecisionError("decision call timed out after 15000ms", "timeout", 504)),
+      env: env(),
+    });
+    for (let i = 0; i < MAX_DELIVERY_ATTEMPTS + 1; i++) await deliverOutcomes(db, { env: env() });
+    expect(delivery(id)).toMatchObject({ state: "pending", attempts: 0 });
+    expect(delivery(id).reason).toBe(
+      "waiting: no verdict: decision backend unavailable (timeout: decision call timed out after 15000ms)",
+    );
+  });
+
+  it("a writer that answers with no rule every time ends failed after MAX_DELIVERY_ATTEMPTS", async () => {
+    const id = await approvedTask();
+    enableOutcomeLearning(db, {
+      sink: memoryLessonSink(),
+      writer: writer('{"category":"tasks"}'),
+      judge: judge(),
+      env: env(),
+    });
+    for (let i = 0; i < MAX_DELIVERY_ATTEMPTS - 1; i++) {
+      await deliverOutcomes(db, { env: env() });
+      expect(delivery(id)).toMatchObject({ state: "pending", attempts: i + 1 });
+    }
+    await deliverOutcomes(db, { env: env() });
+    expect(delivery(id)).toMatchObject({ state: "failed", attempts: MAX_DELIVERY_ATTEMPTS });
+    expect(delivery(id).reason).toBe("no verdict: no rule (writer returned no rule)");
+    // Not an outage: a later pass leaves it failed.
+    await deliverOutcomes(db, { env: env() });
+    expect(delivery(id).state).toBe("failed");
+  });
+
+  it("legacy failed rows from an outage are re-opened, then delivered; others stay failed", async () => {
+    const judgeDown = await approvedTask();
+    const writer429 = await approvedTask();
+    const noRule = await approvedTask();
+    const refused = await approvedTask();
+    const fail = (id: number, reason: string) => {
+      for (let i = 0; i < MAX_DELIVERY_ATTEMPTS; i++)
+        db.setOutcomeDelivery(
+          id,
+          "lessons",
+          i + 1 < MAX_DELIVERY_ATTEMPTS ? "pending" : "failed",
+          reason,
+        );
+    };
+    fail(judgeDown, "no verdict: decision backend unavailable");
+    fail(writer429, "no verdict: no rule (writer unavailable: writer HTTP 429)");
+    fail(noRule, "no verdict: no rule (writer returned no rule)");
+    fail(refused, "no verdict: no rule (writer unavailable: writer HTTP 401)");
+    const sink = memoryLessonSink();
+    enableOutcomeLearning(db, { sink, writer: writer(RULE), judge: judge(), env: env() });
+    const report = await deliverOutcomes(db, { env: env() });
+    expect(report.lessons).toMatchObject({ done: 2, failed: 0 });
+    expect(delivery(judgeDown)).toMatchObject({ state: "done", attempts: 1 });
+    expect(delivery(writer429)).toMatchObject({ state: "done", attempts: 1 });
+    expect(delivery(noRule)).toMatchObject({ state: "failed", attempts: MAX_DELIVERY_ATTEMPTS });
+    expect(delivery(refused)).toMatchObject({ state: "failed", attempts: MAX_DELIVERY_ATTEMPTS });
+    expect(sink.all().filter((l) => l.domain !== "meta")).toHaveLength(2);
+    // Idempotent: nothing more to re-open.
+    expect((await deliverOutcomes(db, { env: env() })).lessons?.done ?? 0).toBe(0);
+    expect(REOPEN_SCAN).toBeGreaterThan(0);
+  });
+
+  it("a failed aggregate group from an outage is re-opened and learned in its group", async () => {
+    const ids = Array.from({ length: AGGREGATE_MIN_OUTCOMES }, () => {
+      const id = db.saveForecastAnswer({
+        entityName: "Ada",
+        question: "Will it rain?",
+        kind: "probability",
+        probability: 0.3,
+        answerJson: "{}",
+      });
+      resolveForecast(db, id, { outcome: "no" }, 1_900_000_000_000);
+      return db.getOutcomeBySubject(`forecast:${id}`)!.id;
+    });
+    await settleDelivery(db);
+    // The first pass holds them for their group; then a past outage failed the group.
+    await deliverOutcomes(db, { env: env() });
+    const held = delivery(ids[0]!).reason!;
+    expect(held).toStartWith("aggregating: ");
+    for (const id of ids)
+      for (let i = 0; i < MAX_DELIVERY_ATTEMPTS; i++)
+        db.setOutcomeDelivery(
+          id,
+          "lessons",
+          i + 1 < MAX_DELIVERY_ATTEMPTS ? "pending" : "failed",
+          `${held}; no verdict: decision backend unavailable`,
+        );
+    const sink = memoryLessonSink();
+    enableOutcomeLearning(db, { sink, writer: writer(RULE), judge: judge(), env: env() });
+    await deliverOutcomes(db, { env: env() });
+    for (const id of ids) expect(delivery(id).state).toBe("done");
+    expect(sink.all().filter((l) => l.domain !== "meta")).toHaveLength(1);
+  });
+});
+
+describe("classifyUnavailable", () => {
+  it("waits on outages and counts causes that repeat", () => {
+    const t = (err: unknown) => classifyUnavailable(err);
+    expect(t(new Error("writer HTTP 429"))).toMatchObject({
+      kind: "rate_limited",
+      transient: true,
+    });
+    expect(t(new Error("writer HTTP 503")).transient).toBe(true);
+    expect(t(new Error("writer HTTP 401"))).toMatchObject({ kind: "http_401", transient: false });
+    expect(t(new Error("fetch failed")).transient).toBe(true);
+    expect(t(new Error("daily spend cap reached ($50.00 today ≥ $50.00)"))).toMatchObject({
+      kind: "spend_cap",
+      transient: true,
+    });
+    expect(t(new DecisionError("x", "timeout", 504)).transient).toBe(true);
+    expect(t(new DecisionError("x", "overloaded", 503)).transient).toBe(true);
+    const transport = new DecisionError("decision call failed: fetch failed", "upstream_error");
+    expect(t(transport).transient).toBe(true);
+    const notFound = new DecisionError("decision backend 404: not found", "upstream_error");
+    expect(t(notFound).transient).toBe(false);
+    expect(t(new DecisionError("classifier reply has no JSON", "invalid_response"))).toMatchObject({
+      kind: "invalid_response",
+      transient: false,
+    });
+    expect(t(new DecisionError("x", "upstream_rejected", 422)).transient).toBe(false);
+  });
+
+  it("reads legacy failed reasons", () => {
+    const legacy = (reason: string) => transientFailureReason(reason);
+    expect(legacy("no verdict: decision backend unavailable")).toBe(true);
+    expect(legacy("no verdict: no rule (writer unavailable: writer HTTP 429)")).toBe(true);
+    expect(legacy("aggregating: k; no verdict: no rule (writer unavailable: fetch failed)")).toBe(
+      true,
+    );
+    expect(legacy("no verdict: no rule (writer unavailable: writer HTTP 401)")).toBe(false);
+    expect(legacy("no verdict: no rule (writer returned no rule)")).toBe(false);
+    expect(
+      legacy(
+        "no verdict: decision backend unavailable (invalid_response: classifier reply has no JSON)",
+      ),
+    ).toBe(false);
   });
 });

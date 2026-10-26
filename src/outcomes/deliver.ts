@@ -6,9 +6,18 @@
  * durable per-consumer state (`outcome_deliveries`):
  *
  *   lessons  a judged lesson through the armed learner (`armedLearner`),
- *            within the shared hourly budget. Over budget, or no verdict
- *            reached, the outcome waits for a later pass — never dropped.
- *            With no model provider it waits without spending an attempt.
+ *            within the shared hourly budget. Over budget, the outcome waits
+ *            for a later pass — never dropped. With no model provider, or
+ *            the daily spend cap reached, it waits without spending an
+ *            attempt or a budget unit. When the writer or the judge gives no
+ *            answer for a TRANSIENT cause (`src/learning/unavailable.ts`:
+ *            spend cap, throttling, 5xx, timeout, transport), the outcome
+ *            waits without spending an attempt and the rest of the pass waits
+ *            too (no further model calls); only a cause that repeats for the
+ *            same input (no rule written, a refusal, a malformed reply)
+ *            spends an attempt toward `failed`. Each pass re-opens a bounded
+ *            number of `failed` deliveries whose recorded reason was such a
+ *            transient cause (`reopenTransientFailures`).
  *            Forecasts, arena rounds and research asks wait for their group
  *            and teach in aggregate (`AGGREGATE_MIN_OUTCOMES`, or fewer once
  *            stale), each group claimed by one pass.
@@ -32,6 +41,7 @@
 
 import { recordJudgeOpinion } from "../decisions/judges";
 import { Logger } from "../engine/logger";
+import { dailyCapRefusal } from "../engine/spend-ledger";
 import { noteResolvedForecast, noteResolvedRecord } from "../forecast/adjust";
 import { arbiterHistory } from "../forecast/arbiter";
 import { typedFormation } from "../forecast/formations";
@@ -49,6 +59,7 @@ import {
   recordOutcome,
 } from "../learning/outcomes";
 import { armedLearner, canHoldOwnLessons, ownerLessonSink } from "../learning/service";
+import { transientFailureReason } from "../learning/unavailable";
 import { workScopeFor } from "../learning/work";
 import type { MarinaDB } from "../persistence/database";
 import type { ForecastAnswerRow } from "../persistence/db-markets";
@@ -57,7 +68,10 @@ import { consumersFor, OUTCOME_CONSUMERS } from "./record";
 
 const logger = new Logger();
 
-/** Attempts before a delivery that keeps failing (or never gets a verdict) ends `failed`. */
+/**
+ * Attempts before a delivery that keeps failing (or never gets a verdict for a
+ * cause that is not transient) ends `failed`.
+ */
 export const MAX_DELIVERY_ATTEMPTS = 5;
 
 export interface DeliveryReport {
@@ -552,6 +566,7 @@ async function deliverAggregates(
   learner: Learner,
   tally: () => DeliveryReport,
   now: number,
+  pass: PassState,
 ): Promise<void> {
   db.releaseStaleOutcomeClaims("lessons", now - AGGREGATE_CLAIM_TTL_MS, now);
   const groups = new Map<
@@ -575,9 +590,8 @@ async function deliverAggregates(
     if (!ready) continue;
     const t = tally();
     const held = `${AGGREGATING_REASON}: ${key}`;
-    if (learner.unavailable) {
-      for (const o of g.rows)
-        db.waitOutcomeDelivery(o.id, "lessons", `${held}; ${learner.unavailable}`);
+    if (pass.pause) {
+      for (const o of g.rows) db.waitOutcomeDelivery(o.id, "lessons", `${held}; ${pass.pause}`);
       t.waiting += g.rows.length;
       continue;
     }
@@ -609,7 +623,13 @@ async function deliverAggregates(
           { ...depsFor(db, g.target, learner.deps), deferUnjudged: true },
           aggregateOutcome(db, rows, ready === "stale" ? { stale: true } : {}),
         );
-        if (r.deferred) retry(`no verdict: ${r.reason}`);
+        if (r.deferred && r.unavailable?.transient) {
+          // An outage: the group waits (claims replaced), no attempt spent,
+          // and the rest of the pass makes no further model calls.
+          pass.pause = `waiting: no verdict: ${r.reason}`;
+          for (const o of rows) db.waitOutcomeDelivery(o.id, "lessons", `${held}; ${pass.pause}`);
+          t.waiting += rows.length;
+        } else if (r.deferred) retry(`no verdict: ${r.reason}`);
         else
           for (const o of rows) {
             db.setOutcomeDelivery(
@@ -666,6 +686,57 @@ export function backfillOutcomeDeliveries(
   backfilled.set(db, full ? last : Math.max(last, db.listOutcomes({ limit: 1 })[0]?.id ?? after));
   return { scanned: rows.length, added };
 }
+
+// ─── Outages ────────────────────────────────────────────────────────────────
+
+/** Why the rest of this pass's lessons wait (no model provider, spend cap, an outage). */
+interface PassState {
+  pause?: string;
+}
+
+/** `failed` lessons deliveries read per re-open scan, at most. */
+export const REOPEN_SCAN = 200;
+/** How far each database's re-open scan has read (process-local; a restart rescans, cheaply). */
+const reopened = new WeakMap<MarinaDB, number>();
+/**
+ * Reasons a pass may have ended a lessons delivery `failed` with while an
+ * outage should have kept it waiting (before outages waited): the judge's
+ * kind-less `decision backend unavailable`, and the writer's
+ * `writer unavailable: <message>` (today's reasons name a kind in parentheses).
+ */
+const REOPEN_LIKE = ["%no verdict: decision backend unavailable", "%writer unavailable: %"];
+
+/**
+ * Re-open `failed` lessons deliveries whose recorded reason was a transient
+ * cause (`transientFailureReason`): back to `pending`, attempts reset, so the
+ * outcome teaches after all. At most `scan` rows read per call, resuming
+ * after the last one read; only a `failed` row changes, so re-running is a
+ * no-op. A re-opened delivery that fails again records today's reason (with
+ * its kind), which is never re-opened: a transient kind waits instead of
+ * failing.
+ */
+export function reopenTransientFailures(
+  db: MarinaDB,
+  opts: { now?: number; scan?: number } = {},
+): number {
+  const scan = opts.scan ?? REOPEN_SCAN;
+  const after = reopened.get(db) ?? 0;
+  const rows = db.failedOutcomeDeliveries("lessons", REOPEN_LIKE, after, scan);
+  let n = 0;
+  for (const row of rows) {
+    if (!transientFailureReason(row.reason)) continue;
+    const reason = `reopened after an outage: ${(row.reason ?? "").slice(0, 200)}`;
+    if (db.reopenOutcomeDelivery(row.outcome_id, "lessons", reason, opts.now)) n++;
+  }
+  // A full window resumes after its last row; a short one read everything, so
+  // the next call starts over (a delivery failed later is found then).
+  reopened.set(db, rows.length >= scan ? (rows.at(-1)?.outcome_id ?? after) : 0);
+  if (n) logger.info("main", "re-opened lesson deliveries that failed during an outage", { n });
+  return n;
+}
+
+/** The daily spend cap's refusal, shortened to its first clause for a reason. */
+const capReason = (refusal: string) => refusal.split(";")[0]!.trim();
 
 /**
  * One delivery pass over pending outcomes (at most `max` per consumer).
@@ -729,6 +800,17 @@ export async function deliverOutcomes(
   // Lessons: off ⇒ skipped; not armed (a script that never armed it) ⇒ wait.
   const lessonsOff = lessonsMode(env) === "off";
   const learner = lessonsOff ? undefined : armedLearner(db, env);
+  // Deliveries a past outage ended `failed` get another chance first.
+  if (learner) reopenTransientFailures(db, { now });
+  // Nothing can be learned this pass: no model provider, or the daily spend
+  // cap is reached (every writer and judge call would be refused). Each
+  // outcome waits — no attempt, no budget unit, no model call.
+  const capped = learner ? dailyCapRefusal(env, now) : undefined;
+  const pass: PassState = learner?.unavailable
+    ? { pause: `waiting: ${learner.unavailable}` }
+    : capped
+      ? { pause: `waiting: ${capReason(capped)}` }
+      : {};
   // Held-for-aggregation outcomes are scanned separately (`deliverAggregates`),
   // so they never crowd single outcomes out of a pass.
   const pending = db.pendingOutcomes("lessons", max, lessonsOff ? {} : { aggregating: false });
@@ -766,9 +848,9 @@ export async function deliverOutcomes(
       t.waiting++;
       continue;
     }
-    // No model provider: no rule can be written, so wait — no attempt spent.
-    if (learner.unavailable) {
-      db.waitOutcomeDelivery(o.id, "lessons", `waiting: ${learner.unavailable}`);
+    // No model provider, the spend cap, or an outage this pass: wait — no attempt spent.
+    if (pass.pause) {
+      db.waitOutcomeDelivery(o.id, "lessons", pass.pause);
       t.waiting++;
       continue;
     }
@@ -782,7 +864,13 @@ export async function deliverOutcomes(
         { ...depsFor(db, target, learner.deps), deferUnjudged: true },
         lessonOutcome(db, o),
       );
-      if (r.deferred) t[retryOrFail(db, o, "lessons", `no verdict: ${r.reason}`)]++;
+      if (r.deferred && r.unavailable?.transient) {
+        // An outage, not this outcome's fault: wait without spending an
+        // attempt, and make no further model calls this pass.
+        pass.pause = `waiting: no verdict: ${r.reason}`;
+        db.waitOutcomeDelivery(o.id, "lessons", pass.pause);
+        t.waiting++;
+      } else if (r.deferred) t[retryOrFail(db, o, "lessons", `no verdict: ${r.reason}`)]++;
       else {
         db.setOutcomeDelivery(o.id, "lessons", "done", r.trust);
         t.done++;
@@ -791,7 +879,7 @@ export async function deliverOutcomes(
       t[retryOrFail(db, o, "lessons", String(err))]++;
     }
   }
-  if (learner) await deliverAggregates(db, learner, () => tally("lessons"), now);
+  if (learner) await deliverAggregates(db, learner, () => tally("lessons"), now, pass);
   if (report.lessons?.failed || report.history?.failed)
     logger.warn("main", "some outcome deliveries failed", { report });
   return report;
