@@ -18,6 +18,7 @@ import {
   roleLookup,
   routeEvidenceSettingsFromEnv,
 } from "../benchmark-evidence";
+import { refuseCommand } from "../command-response";
 import {
   analyzeTraces,
   type PromptSectionAggregate,
@@ -163,7 +164,11 @@ export function traceCommand(deps: {
             input.tokens.slice(1).join(" "),
           );
         } catch (cause) {
-          ctx.send(input.entity, cause instanceof Error ? cause.message : "Invalid trace query.");
+          refuseCommand(
+            ctx,
+            input.entity,
+            cause instanceof Error ? cause.message : "Invalid trace query.",
+          );
           return;
         }
       }
@@ -182,7 +187,8 @@ export function traceCommand(deps: {
           !["models", "routes", "autonomous", "tools"].includes(dimension ?? "") ||
           eligible.length === 0
         ) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Usage: trace choose <models|routes|autonomous|tools> <eligible-candidate...>",
           );
@@ -240,7 +246,8 @@ export function traceCommand(deps: {
           const dimension = input.tokens[1];
           const observedDimension = dimension === "autonomous" || dimension === "tools";
           if (dimension !== "models" && dimension !== "routes" && !observedDimension) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Usage: trace ${sub} <models|routes${sub === "advise" ? "|autonomous|tools" : ""}> [limit]`,
             );
@@ -287,7 +294,7 @@ export function traceCommand(deps: {
       if (sub === "judgments") {
         const traceId = input.tokens[1];
         if (!traceId) {
-          ctx.send(input.entity, "Usage: trace judgments <id>");
+          refuseCommand(ctx, input.entity, "Usage: trace judgments <id>");
           return;
         }
         sendJudgments(ctx, input.entity, traceId, deps.db?.getTraceJudgments(traceId) ?? []);
@@ -300,13 +307,13 @@ export function traceCommand(deps: {
       }
       const traceId = input.tokens[1];
       if (!traceId) {
-        ctx.send(input.entity, `Usage: trace ${sub} <id>`);
+        refuseCommand(ctx, input.entity, `Usage: trace ${sub} <id>`);
         return;
       }
       const { traces, truncated } = load(traceId, 5000);
       const trace = traces.find((candidate) => candidate.traceId === traceId);
       if (!trace) {
-        ctx.send(input.entity, `Trace "${traceId}" not found in retained history.`);
+        refuseCommand(ctx, input.entity, `Trace "${traceId}" not found in retained history.`);
         return;
       }
       if (sub === "eval") sendEvaluation(ctx, input.entity, trace, truncated);
@@ -526,24 +533,33 @@ function handleJudge(
     !criterion ||
     !rationale
   ) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       input.entity,
       "Usage: trace judge <id> <passed|failed|inconclusive> <criterion> | <rationale>",
     );
     return;
   }
   if (criterion.length > 120 || rationale.length > 1000) {
-    ctx.send(input.entity, "Criterion must be ≤120 characters and rationale ≤1000 characters.");
+    refuseCommand(
+      ctx,
+      input.entity,
+      "Criterion must be ≤120 characters and rationale ≤1000 characters.",
+    );
     return;
   }
   const trace = load(traceId, 5000).traces.find((candidate) => candidate.traceId === traceId);
   if (!trace) {
-    ctx.send(input.entity, `Trace "${traceId}" not found in retained history.`);
+    refuseCommand(ctx, input.entity, `Trace "${traceId}" not found in retained history.`);
     return;
   }
   const evaluatorEntity = deps.getEntityName(input.entity);
   if (!evaluatorEntity) {
-    ctx.send(input.entity, "Cannot attribute this judgment to an active Marina identity.");
+    refuseCommand(
+      ctx,
+      input.entity,
+      "Cannot attribute this judgment to an active Marina identity.",
+    );
     return;
   }
   const root = trace.spans.find((span) => span.kind === "model_request") ?? trace.spans[0];

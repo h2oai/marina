@@ -29,6 +29,7 @@ import {
 } from "../../../outcomes/live";
 import type { CodingArtifactRow, MarinaDB } from "../../../persistence/database";
 import type { CrewId, Entity, EntityId, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import { getErrorMessage } from "../../errors";
 import { Logger } from "../../logger";
 import { dailyBudget } from "../../spend-ledger";
@@ -747,7 +748,7 @@ export async function reviewCodingRun(
         ? tasks.approveSubmission(meta.taskId, claim.entity_id, eid)
         : tasks.rejectSubmission(meta.taskId, claim.entity_id, eid));
     if (!allowed) {
-      ctx.send(eid, "Only the task creator can review a submitted task.");
+      refuseCommand(ctx, eid, "Only the task creator can review a submitted task.");
       return;
     }
     deps.db.createCodingEvent({

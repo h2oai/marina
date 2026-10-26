@@ -4,6 +4,7 @@
 import { dim, header, separator, success } from "../../../net/ansi";
 import type { MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import {
   CODE_PROFILE_ALIASES_KEY,
   CODE_PROFILE_KEY,
@@ -576,7 +577,7 @@ export function handleProfile(
     const requested = args[1];
     const name = requested ? normalizeProfileName(requested) : getCodeProfile(entity).name;
     if (!name) {
-      ctx.send(eid, `Usage: code profile help [${Object.keys(CODE_PROFILES).join("|")}]`);
+      refuseCommand(ctx, eid, `Usage: code profile help [${Object.keys(CODE_PROFILES).join("|")}]`);
       return;
     }
     sendCode(ctx, eid, formatProfileDetail(CODE_PROFILES[name]), {
@@ -592,7 +593,7 @@ export function handleProfile(
   if (action === "use" || action === "set") {
     const name = normalizeProfileName(args[1]);
     if (!name) {
-      ctx.send(eid, `Usage: code profile use <${Object.keys(CODE_PROFILES).join("|")}>`);
+      refuseCommand(ctx, eid, `Usage: code profile use <${Object.keys(CODE_PROFILES).join("|")}>`);
       return;
     }
     entity.properties[CODE_PROFILE_KEY] = name;
@@ -627,7 +628,8 @@ export function handleProfile(
   if (action === "alias") {
     const aliasAction = args[1]?.toLowerCase();
     if (!aliasAction) {
-      ctx.send(
+      refuseCommand(
+        ctx,
         eid,
         "Usage: code profile alias <alias> <command> | code profile alias clear <alias>",
       );
@@ -637,7 +639,7 @@ export function handleProfile(
     if (aliasAction === "clear") {
       const alias = args[2]?.toLowerCase();
       if (!alias) {
-        ctx.send(eid, "Usage: code profile alias clear <alias>");
+        refuseCommand(ctx, eid, "Usage: code profile alias clear <alias>");
         return;
       }
       delete aliases[alias];
@@ -648,7 +650,7 @@ export function handleProfile(
     }
     const target = args[2]?.toLowerCase();
     if (!target) {
-      ctx.send(eid, "Usage: code profile alias <alias> <command>");
+      refuseCommand(ctx, eid, "Usage: code profile alias <alias> <command>");
       return;
     }
     aliases[aliasAction] = target;
@@ -658,7 +660,7 @@ export function handleProfile(
     return;
   }
   if (action !== "show") {
-    ctx.send(eid, "Usage: code profile [show|list|compare|help|use|aliases]");
+    refuseCommand(ctx, eid, "Usage: code profile [show|list|compare|help|use|aliases]");
     return;
   }
 

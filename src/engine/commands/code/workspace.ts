@@ -20,6 +20,7 @@ import {
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import { checkGateForExecution, recordGateExecution } from "../../safety-gates";
 import { resolveVerificationCommands } from "./artifacts";
 import { applySessionRunner } from "./runner";
@@ -139,7 +140,7 @@ export function handleWorkspace(
   if (action === "use" || action === "set") {
     const raw = args.slice(1).join(" ");
     if (!raw.trim()) {
-      ctx.send(eid, "Usage: code workspace use <path>");
+      refuseCommand(ctx, eid, "Usage: code workspace use <path>");
       return;
     }
     const choice = registry.resolveRoot(raw);
@@ -172,7 +173,7 @@ export function handleWorkspace(
     return;
   }
   if (action !== "show") {
-    ctx.send(eid, "Usage: code workspace [show|list|discover|use <path>]");
+    refuseCommand(ctx, eid, "Usage: code workspace [show|list|discover|use <path>]");
     return;
   }
   const root = getSelectedWorkspaceRoot(entity, deps);
@@ -248,7 +249,7 @@ export async function handleWorktree(
   const enabling = action === "on" || action === "enable";
   const disabling = action === "off" || action === "disable";
   if (!enabling && !disabling) {
-    ctx.send(eid, "Usage: code worktree [status|on|off|merge]");
+    refuseCommand(ctx, eid, "Usage: code worktree [status|on|off|merge]");
     return;
   }
 
@@ -263,7 +264,8 @@ export async function handleWorktree(
   }
   const gate = checkGateForExecution(deps.db, eid, "code.exec");
   if (!gate.ok) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       gate.reason ??
         "Running or applying code requires the code.exec capability, which is earned through contribution.",
@@ -282,7 +284,8 @@ export async function handleWorktree(
       return;
     }
     if (!isGitRepo(session.workspace_root)) {
-      ctx.send(
+      refuseCommand(
+        ctx,
         eid,
         `Workspace is not a git repository — worktree isolation unavailable. Staying on the shared root: ${session.workspace_root}`,
       );

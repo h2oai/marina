@@ -22,6 +22,7 @@
 import type { Entity, EntityRank } from "../types";
 import { getAutonomyPosture } from "./autonomy";
 import { raiseForCommand } from "./challenges";
+import { failCommandResponse } from "./command-response";
 import { getCurrentCommand, isRankWaivedForRun, principalOf } from "./gate-context";
 import { getRank, rankName } from "./permissions";
 import { isImplicitLocalUngated, isLocalUngated } from "./trust-profile";
@@ -47,6 +48,18 @@ export function rankFloorRefusal(
   } = {},
 ): string | undefined {
   if (getRank(entity as Entity) >= min) return undefined;
+  const refusal = floorRefusal(entity, min, message, opts);
+  // A refusal ends the command: usage and activity record it as failed.
+  if (refusal !== undefined) failCommandResponse(refusal);
+  return refusal;
+}
+
+function floorRefusal(
+  entity: Pick<Entity, "id" | "properties">,
+  min: number,
+  message: string,
+  opts: { core?: boolean; gateId?: string },
+): string | undefined {
   // The implicit local profile lifts floors, except a floor guarding a path
   // INTO the core for an AGENT: an agent promoting itself to sovereign rank
   // (which grants shell.exec) or widening the shell allowlist is held like the

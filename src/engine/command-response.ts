@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Perception } from "../types";
+import type { EntityId, Perception, RoomContext } from "../types";
 import { getErrorMessage } from "./errors";
 
 interface CommandResponse {
@@ -25,11 +25,33 @@ interface HandlerOutcome {
 
 const handlerOutcomes = new AsyncLocalStorage<HandlerOutcome>();
 
+/**
+ * Declare the running command refused: its usage and activity rows record a
+ * failure and a correlated result carries `error`. The shared refusal paths
+ * call it (`refuseCommand`, `unknownSubcommand`, `rankFloorRefusal`,
+ * `checkGateForExecution`); outside a command it is a no-op.
+ */
 export function failCommandResponse(error: string): void {
   const outcome = handlerOutcomes.getStore();
   if (outcome) outcome.failed ??= error;
   const response = responses.getStore();
   if (response?.active) response.error ??= error;
+}
+
+/**
+ * Reply with a refusal and mark the command failed — the one helper for a
+ * handler that cannot do what was asked (bad usage, no such target, not
+ * permitted, wrong state). A read that finds nothing is not a refusal: reply
+ * with `ctx.send` as usual.
+ */
+export function refuseCommand(
+  ctx: Pick<RoomContext, "send">,
+  target: EntityId,
+  message: string,
+  ...rest: [tag?: string, metadata?: Record<string, unknown>]
+): void {
+  ctx.send(target, message, ...rest);
+  failCommandResponse(message);
 }
 
 /**
@@ -46,6 +68,21 @@ export function observeHandlerOutcome(
   // command (tests, housekeeping) still see its quest and activity effects.
   const result = handlerOutcomes.run(outcome, execute);
   return result instanceof Promise ? result.then(() => outcome) : outcome;
+}
+
+/**
+ * Run a check whose "no" is not the command's answer (a permission probe that
+ * only narrows what the command does): a refusal it declares is kept out of
+ * the running command's outcome and correlated result.
+ */
+export function withoutRefusal<T>(check: () => T): T {
+  let value!: T;
+  withoutCommandResponse(() =>
+    observeHandlerOutcome(() => {
+      value = check();
+    }),
+  );
+  return value;
 }
 
 /** Only output caused by this command, addressed to its original socket, is a result. */

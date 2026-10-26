@@ -4,6 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { rankFloorRefusal } from "../rank-floor";
 
 /**
@@ -106,7 +107,7 @@ function requireWriteRank(ctx: RoomContext, entity: Entity, eid: Entity["id"]): 
     `This subcommand requires rank ${WRITE_MIN_RANK}+ (you are ${rank}).`,
   );
   if (refusal) {
-    ctx.send(eid, refusal);
+    refuseCommand(ctx, eid, refusal);
     return false;
   }
   return true;
@@ -181,7 +182,7 @@ export function bankrollCommand(deps: {
           if (!requireWriteRank(ctx, entity, input.entity)) return;
           return resetBankroll(ctx, input.entity, entity, db);
         default:
-          ctx.send(input.entity, `Unknown subcommand: ${sub}\n\n${HELP}`);
+          refuseCommand(ctx, input.entity, `Unknown subcommand: ${sub}\n\n${HELP}`);
       }
     },
   };
@@ -223,16 +224,16 @@ function setKey(
   bounds: { min: number; max: number; label: string },
 ): void {
   if (!raw) {
-    ctx.send(eid, `Usage: bankroll ${key} <value>`);
+    refuseCommand(ctx, eid, `Usage: bankroll ${key} <value>`);
     return;
   }
   const n = Number(raw);
   if (!Number.isFinite(n)) {
-    ctx.send(eid, `Invalid number: ${raw}`);
+    refuseCommand(ctx, eid, `Invalid number: ${raw}`);
     return;
   }
   if (n < bounds.min || n > bounds.max) {
-    ctx.send(eid, `${bounds.label} must be ${bounds.min}-${bounds.max}`);
+    refuseCommand(ctx, eid, `${bounds.label} must be ${bounds.min}-${bounds.max}`);
     return;
   }
   db.setCoreMemory(entity.name, key, String(n));

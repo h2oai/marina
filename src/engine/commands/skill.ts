@@ -17,6 +17,7 @@ import { memoryNoteResults, memoryResult } from "../../memory/command-result";
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { currentEvidenceCutoffMs } from "../evidence-fence";
 import { parseModifiers } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
@@ -71,7 +72,7 @@ export function skillCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("skills"));
+        refuseCommand(ctx, input.entity, requiresPersistence("skills"));
         return;
       }
       const db = deps.db;
@@ -106,7 +107,11 @@ export function skillCommand(deps: {
           const rest = input.args.slice("store".length).trim();
           const parts = rest.split("|").map((p) => p.trim());
           if (parts.length < 3) {
-            ctx.send(input.entity, "Usage: skill store <name> | <description> | <action_sequence>");
+            refuseCommand(
+              ctx,
+              input.entity,
+              "Usage: skill store <name> | <description> | <action_sequence>",
+            );
             return;
           }
           const [name, description, ...actionParts] = parts;
@@ -133,7 +138,8 @@ export function skillCommand(deps: {
         case "search": {
           const query = input.tokens.slice(1).join(" ");
           if (!query) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: skill search <query>",
               undefined,
@@ -198,7 +204,7 @@ export function skillCommand(deps: {
           const parsed = parseModifiers(input.tokens.slice(1), { bytes: { type: "int" } });
           const query = parsed.rest.join(" ").trim();
           if (!query) {
-            ctx.send(input.entity, "Usage: skill top <query> [bytes:<n>]");
+            refuseCommand(ctx, input.entity, "Usage: skill top <query> [bytes:<n>]");
             return;
           }
           const budget = Math.min(
@@ -260,12 +266,12 @@ export function skillCommand(deps: {
         case "verify": {
           const id = Number.parseInt(input.tokens[1] ?? "", 10);
           if (Number.isNaN(id)) {
-            ctx.send(input.entity, "Usage: skill verify <id>");
+            refuseCommand(ctx, input.entity, "Usage: skill verify <id>");
             return;
           }
           const note = db.getNote(id);
           if (!access.write(note) || note.note_type !== "skill") {
-            ctx.send(input.entity, `Skill #${id} not found.`);
+            refuseCommand(ctx, input.entity, `Skill #${id} not found.`);
             return;
           }
           // Add a supports self-link to indicate verification
@@ -356,17 +362,17 @@ export function skillCommand(deps: {
           const id = Number.parseInt(input.tokens[1] ?? "", 10);
           const poolName = input.tokens[2];
           if (Number.isNaN(id) || !poolName) {
-            ctx.send(input.entity, "Usage: skill share <id> <pool>");
+            refuseCommand(ctx, input.entity, "Usage: skill share <id> <pool>");
             return;
           }
           const note = db.getNote(id);
           if (!access.write(note) || note.note_type !== "skill") {
-            ctx.send(input.entity, `Skill #${id} not found.`);
+            refuseCommand(ctx, input.entity, `Skill #${id} not found.`);
             return;
           }
           const pool = db.getMemoryPool(poolName);
           if (!pool || !access.pool(pool)) {
-            ctx.send(input.entity, `Pool "${poolName}" not found.`);
+            refuseCommand(ctx, input.entity, `Pool "${poolName}" not found.`);
             return;
           }
           const sharedId = db.addPoolNote(
@@ -399,7 +405,7 @@ export function skillCommand(deps: {
             .map((t) => Number.parseInt(t, 10))
             .filter((n) => !Number.isNaN(n));
           if (ids.length < 2) {
-            ctx.send(input.entity, "Usage: skill compose <id1> <id2> [id3] ...");
+            refuseCommand(ctx, input.entity, "Usage: skill compose <id1> <id2> [id3] ...");
             return;
           }
           const skills = ids
@@ -482,7 +488,8 @@ export function skillCommand(deps: {
           }
           const path = input.tokens.slice(1).join(" ").trim();
           if (!path) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: skill import <path-to-markdown-file>\n\n" +
                 "Imports a skill from a markdown file with YAML frontmatter:\n" +

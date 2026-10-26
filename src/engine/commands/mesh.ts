@@ -4,6 +4,7 @@
 import { experimentalHelp } from "../../config/feature-status";
 import type { MarinaDB, MeshMembershipEventRow, MeshWitnessRow } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { notFound } from "./command-messages";
 
@@ -64,14 +65,15 @@ export function meshCommand(deps: {
           return;
         }
         if (!SAFE_MESH_ID.test(id)) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Mesh id must be 3-64 chars: letters, digits, and : . _ - (starting alphanumeric).",
           );
           return;
         }
         if (deps.db.getMesh(id)) {
-          ctx.send(input.entity, `Mesh ${id} already exists.`);
+          refuseCommand(ctx, input.entity, `Mesh ${id} already exists.`);
           return;
         }
         const row = deps.db.createMesh({
@@ -177,7 +179,7 @@ export function meshCommand(deps: {
         try {
           ctx.send(input.entity, deps.db.exportMeshEvent(found));
         } catch (cause) {
-          ctx.send(input.entity, `Export refused: ${getErrorMessage(cause)}`);
+          refuseCommand(ctx, input.entity, `Export refused: ${getErrorMessage(cause)}`);
         }
         return;
       }
@@ -203,7 +205,7 @@ export function meshCommand(deps: {
             `Replicated and witnessed ${row.id}; origin signature ${row.signature_json ? "verifies" : "absent (accepted by MARINA_FEDERATION_ALLOW_UNSIGNED)"}.`,
           );
         } catch (cause) {
-          ctx.send(input.entity, `Replication refused: ${getErrorMessage(cause)}`);
+          refuseCommand(ctx, input.entity, `Replication refused: ${getErrorMessage(cause)}`);
         }
         return;
       }

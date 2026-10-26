@@ -6,6 +6,7 @@ import { hostedModelsUrl, isHostedProvider } from "../../net/model/hosted-provid
 import { KEY_PROVIDERS, providerSetupHint } from "../../net/model/provider-setup";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { closestName } from "../did-you-mean";
 import { getImageProvider } from "../media/providers/image-registry";
 import { requiresPersistence } from "./command-messages";
@@ -131,7 +132,7 @@ Usage:
 Providers: ${KEY_PROVIDERS.join(", ")}`,
     handler: async (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("key management"));
+        refuseCommand(ctx, input.entity, requiresPersistence("key management"));
         return;
       }
       const entity = deps.getEntity(input.entity);
@@ -195,7 +196,8 @@ Providers: ${KEY_PROVIDERS.join(", ")}`,
           const value = tokens[3];
 
           if (!name || !provider || !value) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Usage: key add <name> <provider> <value>\nProviders: ${KEY_PROVIDERS.join(", ")}`,
             );
@@ -229,12 +231,12 @@ Providers: ${KEY_PROVIDERS.join(", ")}`,
         case "delete": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: key delete <name>");
+            refuseCommand(ctx, input.entity, "Usage: key delete <name>");
             return;
           }
           const key = db.getApiKey(name);
           if (!key) {
-            ctx.send(input.entity, `Key "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Key "${name}" not found.`);
             return;
           }
 
@@ -255,12 +257,12 @@ Providers: ${KEY_PROVIDERS.join(", ")}`,
         case "test": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: key test <name>");
+            refuseCommand(ctx, input.entity, "Usage: key test <name>");
             return;
           }
           const key = db.getApiKey(name);
           if (!key) {
-            ctx.send(input.entity, `Key "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Key "${name}" not found.`);
             return;
           }
           ctx.send(input.entity, `Testing "${name}" (${key.provider})...`);

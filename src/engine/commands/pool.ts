@@ -22,7 +22,7 @@ import {
 } from "../../net/ansi";
 import type { MarinaDB, MemoryPoolRow, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
-import { failCommandResponse } from "../command-response";
+import { failCommandResponse, refuseCommand } from "../command-response";
 import { DAY_MS } from "../constants";
 import {
   canonicalSub,
@@ -212,12 +212,12 @@ export function poolCommand(deps: {
       if (sub === "create") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: pool create <name> [group <groupName>]");
+          refuseCommand(ctx, input.entity, "Usage: pool create <name> [group <groupName>]");
           return;
         }
         const existing = db.getMemoryPool(name);
         if (existing) {
-          ctx.send(input.entity, `Pool "${name}" already exists.`);
+          refuseCommand(ctx, input.entity, `Pool "${name}" already exists.`);
           return;
         }
         // Optional group scope: `pool create <name> group <groupName>` makes
@@ -226,13 +226,14 @@ export function poolCommand(deps: {
         let groupId: string | undefined;
         if (tokens[2]) {
           if (tokens[2].toLowerCase() !== "group" || !tokens[3]) {
-            ctx.send(input.entity, "Usage: pool create <name> [group <groupName>]");
+            refuseCommand(ctx, input.entity, "Usage: pool create <name> [group <groupName>]");
             return;
           }
           const groupName = tokens.slice(3).join(" ");
           const group = db.getGroupByName(groupName) ?? db.getGroup(groupName);
           if (!group || !db.getGroupMember(group.id, input.entity)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Group "${groupName}" not found or you are not a member. Join it first, or create the pool without a group.`,
             );
@@ -391,7 +392,7 @@ export function poolCommand(deps: {
           }
           const text = addMods.rest.join(" ");
           if (!text) {
-            ctx.send(input.entity, `Usage: pool ${poolName} add <text> [importance:N]`);
+            refuseCommand(ctx, input.entity, `Usage: pool ${poolName} add <text> [importance:N]`);
             return;
           }
           let importance = 5;
@@ -460,7 +461,8 @@ export function poolCommand(deps: {
         case "ratify": {
           const noteId = Number.parseInt(tokens[2] ?? "", 10);
           if (!Number.isInteger(noteId) || noteId <= 0) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Usage: pool ${poolName} ratify <noteId> [importance:N] [rationale]`,
             );
@@ -485,7 +487,11 @@ export function poolCommand(deps: {
             { importance, rationale },
           );
           if (!result.ok) {
-            ctx.send(input.entity, `Cannot ratify #${noteId} in "${poolName}": ${result.reason}`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Cannot ratify #${noteId} in "${poolName}": ${result.reason}`,
+            );
             return;
           }
           // Legacy twin row so `note`/`recall` surfaces can follow the mirror.
@@ -523,7 +529,7 @@ export function poolCommand(deps: {
         case "recall": {
           const query = tokens.slice(2).join(" ");
           if (!query) {
-            ctx.send(input.entity, `Usage: pool ${poolName} recall <query>`);
+            refuseCommand(ctx, input.entity, `Usage: pool ${poolName} recall <query>`);
             return;
           }
           const results = db.recallPoolNotes(pool.id, query);

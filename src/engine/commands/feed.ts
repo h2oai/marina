@@ -4,6 +4,7 @@
 import { bold, category, dim, id as fmtId, header, separator, status } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
 import { formatAge } from "./format-duration";
@@ -40,7 +41,7 @@ export function feedCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("the feed"));
+        refuseCommand(ctx, input.entity, requiresPersistence("the feed"));
         return;
       }
       const db = deps.db;

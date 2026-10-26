@@ -5,6 +5,7 @@ import { bold, category, dim, id as fmtId, header, separator, status } from "../
 import type { MarinaDB } from "../../persistence/database";
 import type { ChronicleEntry, ChronicleKind } from "../../persistence/db-chronicle";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { extractModifiers, type ModifierSpec, parseModifiers, splitOn } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
 import { formatAge, parseSince } from "./format-duration";
@@ -145,7 +146,7 @@ export function chronicleCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("the chronicle"));
+        refuseCommand(ctx, input.entity, requiresPersistence("the chronicle"));
         return;
       }
       const db = deps.db;
@@ -177,7 +178,7 @@ export function chronicleCommand(deps: {
       if (sub === "show") {
         const idArg = Number.parseInt(tokens[1] ?? "", 10);
         if (!Number.isFinite(idArg) || idArg <= 0) {
-          ctx.send(input.entity, "Usage: chronicle show <id>");
+          refuseCommand(ctx, input.entity, "Usage: chronicle show <id>");
           return;
         }
         const entry = db.getChronicleEntry(idArg);
@@ -230,7 +231,8 @@ export function chronicleCommand(deps: {
           typeof mods.values.since === "number" ? mods.values.since : parseSince(mods.rest[0]);
         const sinceLabel = mods.raw.since ?? mods.rest[0];
         if (mods.errors.length > 0 || sinceMs === undefined) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             `${mods.errors.length > 0 ? `${mods.errors.join("; ")}. ` : ""}Usage: chronicle since <30m|2h|7d|1w> [limit:N]`,
           );
@@ -255,7 +257,7 @@ export function chronicleCommand(deps: {
       if (sub === "about") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: chronicle about <name>");
+          refuseCommand(ctx, input.entity, "Usage: chronicle about <name>");
           return;
         }
         const entries = db.queryChronicle({ participant: name, limit: 50 });
@@ -304,7 +306,8 @@ export function chronicleCommand(deps: {
           if (key === "since" || key === "limit") legacy[key] = mods.rest[i + 1]!;
         }
         if (mods.errors.length > 0) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             `${mods.errors.join("; ")}. Usage: chronicle pending [since:<dur>] [limit:N]`,
           );
@@ -368,7 +371,8 @@ export function chronicleCommand(deps: {
       // or supersedes (correction).
       if (sub === "record") {
         if (!isChronicler(entity, deps.db)) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Only the Chronicler can record narratives. Use `chronicle` to read, `chronicle pending` to see the queue.",
           );
@@ -378,7 +382,8 @@ export function chronicleCommand(deps: {
         const { text: titleBody, modifiers } = extractModifiers(rest, ["refs", "participants"]);
         const parts = splitOn(titleBody, "|");
         if (!parts || parts[0].length === 0) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Usage: chronicle record <title> | <body> refs <feed:N,task:N,...> [participants <names>]",
           );
@@ -412,12 +417,16 @@ export function chronicleCommand(deps: {
       // Append-only: the prior entry is untouched; readers see the chain.
       if (sub === "correct") {
         if (!isChronicler(entity, deps.db)) {
-          ctx.send(input.entity, "Only the Chronicler can record corrections.");
+          refuseCommand(ctx, input.entity, "Only the Chronicler can record corrections.");
           return;
         }
         const priorId = Number.parseInt(tokens[1] ?? "", 10);
         if (!Number.isFinite(priorId) || priorId <= 0) {
-          ctx.send(input.entity, "Usage: chronicle correct <id> <title> | <body> [refs <ids>]");
+          refuseCommand(
+            ctx,
+            input.entity,
+            "Usage: chronicle correct <id> <title> | <body> [refs <ids>]",
+          );
           return;
         }
         const prior = db.getChronicleEntry(priorId);
@@ -436,7 +445,8 @@ export function chronicleCommand(deps: {
         const { text: titleBody, modifiers } = extractModifiers(rest, ["refs", "participants"]);
         const parts = splitOn(titleBody, "|");
         if (!parts || parts[0].length === 0) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Usage: chronicle correct <id> <title> | <body> [refs <ids>] [participants <names>]",
           );
@@ -460,12 +470,13 @@ export function chronicleCommand(deps: {
       // ─── chronicle digest — period summary ─────────────────────────────
       if (sub === "digest") {
         if (!isChronicler(entity, deps.db)) {
-          ctx.send(input.entity, "Only the Chronicler can record digests.");
+          refuseCommand(ctx, input.entity, "Only the Chronicler can record digests.");
           return;
         }
         const periodKind = tokens[1]?.toLowerCase();
         if (periodKind !== "day" && periodKind !== "week") {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Usage: chronicle digest day|week <title> | <body> [refs <ids>] [period <token>]",
           );
@@ -479,7 +490,8 @@ export function chronicleCommand(deps: {
         ]);
         const parts = splitOn(titleBody, "|");
         if (!parts || parts[0].length === 0) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Usage: chronicle digest day|week <title> | <body> [refs <ids>] [period <token>]",
           );

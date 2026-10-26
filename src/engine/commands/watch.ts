@@ -26,6 +26,7 @@ import {
   type WatchSpec,
 } from "../../resolvers/watch-spec";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 
 const HELP = `Watch — declarative point-in-time observation requests.
 
@@ -89,7 +90,7 @@ export function watchCommand(deps: {
         case "retire":
           return handleRetire(ctx, input.entity, deps.db, entity.name, tokens.slice(1));
         default:
-          ctx.send(input.entity, `Unknown subcommand: ${sub}\n\n${HELP}`);
+          refuseCommand(ctx, input.entity, `Unknown subcommand: ${sub}\n\n${HELP}`);
       }
     },
   };
@@ -114,7 +115,8 @@ function handleCreate(
     const known = listResolvers()
       .map((r) => r.kind)
       .join(", ");
-    ctx.send(
+    refuseCommand(
+      ctx,
       caller,
       `Unknown resolver kind: ${kindToken}\n\nRegistered kinds: ${known || "(none)"}`,
     );
@@ -325,7 +327,7 @@ function handleRetire(
   }
   const watch = getActiveWatch(db, noteId);
   if (!watch) {
-    ctx.send(caller, `No active watch #${noteId} (already retired or never existed).`);
+    refuseCommand(ctx, caller, `No active watch #${noteId} (already retired or never existed).`);
     return;
   }
   let reason: string | undefined;

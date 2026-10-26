@@ -33,7 +33,7 @@ import {
 import type { JudgeObservationInput } from "../../persistence/db-decisions";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { isOperatorPrincipal } from "../challenges";
-import { failCommandResponse } from "../command-response";
+import { refuseCommand } from "../command-response";
 import { logRejection } from "../errors";
 import { Logger } from "../logger";
 import { mayActOn, ownershipRefusal } from "../ownership";
@@ -142,12 +142,6 @@ export function pendingSubmitters(tasks: TaskManager, id: number): string | unde
   return names.length > 0 ? names.join(", ") : undefined;
 }
 
-/** Send a refusal and mark the command failed (usage, correlated results). */
-function refuse(ctx: RoomContext, entity: EntityId, message: string): void {
-  ctx.send(entity, message);
-  failCommandResponse(message);
-}
-
 /** Split `<title> | <description>` on the first pipe. */
 function splitTitle(rest: string): { title: string; rawDesc: string } {
   const pipeIdx = rest.indexOf("|");
@@ -245,7 +239,8 @@ export function taskCommand(
           const listArgs = listMods.rest;
           const limit = listMods.values.limit as number | undefined;
           if (listMods.errors.length > 0 || (limit !== undefined && limit < 1)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: task list [open|claimed|completed|cancelled] [group] [limit:N]",
             );
@@ -294,13 +289,13 @@ export function taskCommand(
         case "info": {
           const idStr = tokens[1];
           if (!idStr) {
-            ctx.send(input.entity, "Usage: task info <id>");
+            refuseCommand(ctx, input.entity, "Usage: task info <id>");
             return;
           }
           const id = Number.parseInt(idStr, 10);
           const task = tasks.get(id);
           if (!task) {
-            ctx.send(input.entity, `Task #${idStr} not found.`);
+            refuseCommand(ctx, input.entity, `Task #${idStr} not found.`);
             return;
           }
           const claims = tasks.getClaims(task.id);
@@ -378,7 +373,8 @@ export function taskCommand(
           }
           const rest = createMods.rest.join(" ");
           if (!rest) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: task create <title> | <description> [standing:N] [bounty]   (also !N)",
             );
@@ -402,7 +398,8 @@ export function taskCommand(
           }
 
           if (standing !== undefined && (standing < 0 || standing > TASK_STANDING_MAX)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `task create: standing:${standing} is out of range — a task pays 0–${TASK_STANDING_MAX} standing, and only when another account approves it (never the claimant itself).`,
             );
@@ -431,7 +428,8 @@ export function taskCommand(
           }
           const rest = goalMods.rest.join(" ");
           if (!rest) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: task goal <title> | <description> [priority:N]   (also !pN / --priority N)",
             );
@@ -470,13 +468,13 @@ export function taskCommand(
           const idStr = tokens[1];
           const valueStr = tokens[2];
           if (!idStr) {
-            ctx.send(input.entity, "Usage: task progress <id> [+N | N]");
+            refuseCommand(ctx, input.entity, "Usage: task progress <id> [+N | N]");
             return;
           }
           const taskId = Number.parseInt(idStr, 10);
           const task = tasks.get(taskId);
           if (!task) {
-            ctx.send(input.entity, `Task #${idStr} not found.`);
+            refuseCommand(ctx, input.entity, `Task #${idStr} not found.`);
             return;
           }
           if (!valueStr) {
@@ -494,7 +492,7 @@ export function taskCommand(
             newProgress = Number.parseInt(valueStr, 10);
           }
           if (Number.isNaN(newProgress)) {
-            ctx.send(input.entity, "Progress must be a number (e.g., +20 or 50).");
+            refuseCommand(ctx, input.entity, "Progress must be a number (e.g., +20 or 50).");
             return;
           }
           if (task.status === "completed" || task.status === "cancelled") {
@@ -512,7 +510,7 @@ export function taskCommand(
             `Only task ${fmtId(taskId)}'s creator, its current claimant, or an admin can set its progress. Claim it (\`task claim ${taskId}\`) once it is open.`,
           );
           if (refusal) {
-            ctx.send(input.entity, refusal);
+            refuseCommand(ctx, input.entity, refusal);
             return;
           }
           let clamped = Math.max(0, Math.min(100, newProgress));
@@ -541,13 +539,13 @@ export function taskCommand(
         case "claim": {
           const idStr = tokens[1];
           if (!idStr) {
-            ctx.send(input.entity, "Usage: task claim <id>");
+            refuseCommand(ctx, input.entity, "Usage: task claim <id>");
             return;
           }
           const id = Number.parseInt(idStr, 10);
           const claim = tasks.claim(id, input.entity, self.name);
           if (!claim) {
-            refuse(ctx, input.entity, claimRefusal(tasks, id, input.entity));
+            refuseCommand(ctx, input.entity, claimRefusal(tasks, id, input.entity));
             return;
           }
           let advice: string | undefined;
@@ -572,13 +570,13 @@ export function taskCommand(
         case "heartbeat": {
           const id = Number.parseInt(tokens[1] ?? "", 10);
           if (!Number.isFinite(id)) {
-            ctx.send(input.entity, "Usage: task heartbeat <id>");
+            refuseCommand(ctx, input.entity, "Usage: task heartbeat <id>");
             return;
           }
           const claim = tasks.heartbeat(id, input.entity);
           if (!claim?.leaseExpiresAt) {
             const own = tasks.getClaim(id, input.entity);
-            refuse(
+            refuseCommand(
               ctx,
               input.entity,
               own?.status === "submitted"
@@ -616,7 +614,7 @@ export function taskCommand(
           const idStr = tokens[1];
           const text = tokens.slice(2).join(" ");
           if (!idStr || !text) {
-            ctx.send(input.entity, "Usage: task submit <id> <text>");
+            refuseCommand(ctx, input.entity, "Usage: task submit <id> <text>");
             return;
           }
           const id = Number.parseInt(idStr, 10);
@@ -624,7 +622,7 @@ export function taskCommand(
           const record = () => {
             const before = tasks.getClaim(id, input.entity);
             if (!tasks.submit(id, input.entity, text)) {
-              refuse(ctx, input.entity, submitRefusal(tasks, id, before));
+              refuseCommand(ctx, input.entity, submitRefusal(tasks, id, before));
               return;
             }
             clearSubmissionAttempts(id, input.entity);
@@ -727,7 +725,7 @@ export function taskCommand(
           const claimantName = tokens[2];
           if (!idStr || !claimantName) {
             const pending = idStr ? pendingSubmitters(tasks, Number.parseInt(idStr, 10)) : "";
-            refuse(
+            refuseCommand(
               ctx,
               input.entity,
               `Usage: task approve <id> <claimant>${pending ? ` (pending on #${idStr}: ${pending})` : ""}`,
@@ -750,7 +748,7 @@ export function taskCommand(
               ? { id: live.id, name: live.name }
               : undefined;
           if (!target) {
-            ctx.send(input.entity, `Player "${claimantName}" not found.`);
+            refuseCommand(ctx, input.entity, `Player "${claimantName}" not found.`);
             return;
           }
           adoptIfOperator(id);
@@ -777,7 +775,7 @@ export function taskCommand(
               timestamp: Date.now(),
             });
           } else {
-            refuse(
+            refuseCommand(
               ctx,
               input.entity,
               tasks.get(id)?.creatorName === SYSTEM_TASK_CREATOR
@@ -792,13 +790,13 @@ export function taskCommand(
           const idStr = tokens[1];
           const claimantName = tokens[2];
           if (!idStr || !claimantName) {
-            ctx.send(input.entity, "Usage: task reject <id> <claimant>");
+            refuseCommand(ctx, input.entity, "Usage: task reject <id> <claimant>");
             return;
           }
           const id = Number.parseInt(idStr, 10);
           const target = findEntity(claimantName);
           if (!target) {
-            ctx.send(input.entity, `Player "${claimantName}" not found.`);
+            refuseCommand(ctx, input.entity, `Player "${claimantName}" not found.`);
             return;
           }
           adoptIfOperator(id);
@@ -813,7 +811,7 @@ export function taskCommand(
               timestamp: Date.now(),
             });
           } else {
-            refuse(
+            refuseCommand(
               ctx,
               input.entity,
               tasks.get(id)?.creatorName === SYSTEM_TASK_CREATOR
@@ -827,14 +825,15 @@ export function taskCommand(
         case "cancel": {
           const idStr = tokens[1];
           if (!idStr) {
-            ctx.send(input.entity, "Usage: task cancel <id>");
+            refuseCommand(ctx, input.entity, "Usage: task cancel <id>");
             return;
           }
           const id = Number.parseInt(idStr, 10);
           if (tasks.cancel(id, input.entity)) {
             ctx.send(input.entity, `Cancelled task #${id}.`);
           } else {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Cannot cancel task #${idStr}. You may not be the creator or it's not open.`,
             );
@@ -845,7 +844,7 @@ export function taskCommand(
         case "bundle": {
           const rest = tokens.slice(1).join(" ");
           if (!rest) {
-            ctx.send(input.entity, "Usage: task bundle <title> | <description>");
+            refuseCommand(ctx, input.entity, "Usage: task bundle <title> | <description>");
             return;
           }
           const pipeIdx = rest.indexOf("|");
@@ -872,7 +871,7 @@ export function taskCommand(
           const idStr = tokens[1];
           const bundleIdStr = tokens[2];
           if (!idStr || !bundleIdStr) {
-            ctx.send(input.entity, "Usage: task assign <id> <bundle_id>");
+            refuseCommand(ctx, input.entity, "Usage: task assign <id> <bundle_id>");
             return;
           }
           const id = Number.parseInt(idStr, 10);
@@ -880,7 +879,8 @@ export function taskCommand(
           if (tasks.assignToBundle(id, bundleId, input.entity)) {
             ctx.send(input.entity, `Assigned task #${id} to bundle #${bundleId}.`);
           } else {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Cannot assign. You may not be the task creator or the bundle doesn't exist.`,
             );
@@ -891,13 +891,13 @@ export function taskCommand(
         case "children": {
           const idStr = tokens[1];
           if (!idStr) {
-            ctx.send(input.entity, "Usage: task children <id>");
+            refuseCommand(ctx, input.entity, "Usage: task children <id>");
             return;
           }
           const id = Number.parseInt(idStr, 10);
           const parent = tasks.get(id);
           if (!parent) {
-            ctx.send(input.entity, `Task #${idStr} not found.`);
+            refuseCommand(ctx, input.entity, `Task #${idStr} not found.`);
             return;
           }
           const children = tasks.listChildren(id);

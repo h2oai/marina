@@ -47,6 +47,7 @@ import { getStanding } from "../agent/standing";
 import type { MarinaDB } from "../persistence/database";
 import { isGrantedCompetence } from "../persistence/db-competence";
 import { getAutonomyPosture, LOCAL_AGENT_HELD_GATES } from "./autonomy";
+import { failCommandResponse } from "./command-response";
 import { onGateRefused, principalOf, takeArmedGatePass } from "./gate-context";
 import { isImplicitLocalUngated, isLocalUngated, isSovereign } from "./trust-profile";
 
@@ -506,7 +507,10 @@ export function checkGateForExecution(
   now = Date.now(),
 ): GateExecutionResult {
   const result = evaluateGateForExecution(db, entityId, gateId, now);
-  if (result.ok || !result.reason) return result;
+  if (result.ok) return result;
+  // A refusal ends the command: usage and activity record it as failed.
+  failCommandResponse(result.reason ?? `${gateId} refused`);
+  if (!result.reason) return result;
   // A refusal inside a command raises a challenge (src/engine/challenges.ts):
   // the owner and operators are asked, the caller is told it will run once
   // approved, and nothing waits — the refusal returns now.

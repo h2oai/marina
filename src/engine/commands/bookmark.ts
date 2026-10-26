@@ -3,6 +3,7 @@
 
 import { header, separator } from "../../net/ansi";
 import type { CommandDef, Entity, RoomContext, RoomId } from "../../types";
+import { refuseCommand } from "../command-response";
 
 interface Bookmark {
   room: RoomId;
@@ -69,7 +70,7 @@ export function bookmarkCommand(deps: {
           const idx = Number.parseInt(tokens[1] ?? "", 10) - 1;
           const text = tokens.slice(2).join(" ");
           if (Number.isNaN(idx) || idx < 0 || idx >= bookmarks.length || !text) {
-            ctx.send(input.entity, "Usage: bookmark note <#> <text>");
+            refuseCommand(ctx, input.entity, "Usage: bookmark note <#> <text>");
             return;
           }
           bookmarks[idx]!.note = text;
@@ -81,7 +82,7 @@ export function bookmarkCommand(deps: {
         case "delete": {
           const idx = Number.parseInt(tokens[1] ?? "", 10) - 1;
           if (Number.isNaN(idx) || idx < 0 || idx >= bookmarks.length) {
-            ctx.send(input.entity, "Usage: bookmark delete <#>");
+            refuseCommand(ctx, input.entity, "Usage: bookmark delete <#>");
             return;
           }
           bookmarks.splice(idx, 1);

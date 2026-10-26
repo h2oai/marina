@@ -29,6 +29,7 @@ import { LocalWorkspace } from "../../../coding/local-workspace";
 import { dim, header, separator } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import { parseModifiers, splitOnTerminator } from "../../parse-input";
 import { checkGateForExecution, recordGateExecution } from "../../safety-gates";
 import { type CodeDeps, parseJsonObject, resolveSession, sendCode } from "./shared";
@@ -388,7 +389,7 @@ export function handleRunner(
   }
 
   if (action !== "container") {
-    ctx.send(eid, `Usage:\n${USAGE}`);
+    refuseCommand(ctx, eid, `Usage:\n${USAGE}`);
     return;
   }
   if (session.execution_target !== "local")

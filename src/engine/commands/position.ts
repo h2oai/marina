@@ -8,6 +8,7 @@ import * as polymarket from "../../net/clients/polymarket-client";
 import type { MarinaDB } from "../../persistence/database";
 import { createWatchNote, listActiveWatches } from "../../resolvers/watch-spec";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { rankFloorRefusal } from "../rank-floor";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import { type BankrollState, readBankrollState } from "./bankroll";
@@ -183,7 +184,7 @@ function requirePositionWriteRank(ctx: RoomContext, entity: Entity, eid: EntityI
     `This subcommand requires rank ${POSITION_WRITE_MIN_RANK}+ (you are ${rank}).`,
   );
   if (refusal) {
-    ctx.send(eid, refusal);
+    refuseCommand(ctx, eid, refusal);
     return false;
   }
   return true;
@@ -273,7 +274,7 @@ export function positionCommand(deps: {
         case "reject":
           return handleReject(ctx, input.entity, tokens.slice(1), db, entity);
         default:
-          ctx.send(input.entity, `Unknown subcommand: ${sub}\n\n${HELP}`);
+          refuseCommand(ctx, input.entity, `Unknown subcommand: ${sub}\n\n${HELP}`);
       }
     },
   };
@@ -290,7 +291,8 @@ function handleSize(
 ): void {
   const [venueRaw, ticker, sideRaw, ourProbRaw, marketPriceRaw] = tokens;
   if (!venueRaw || !ticker || !sideRaw || !ourProbRaw || !marketPriceRaw) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       "Usage: position size <venue> <ticker> <yes|no> <our-prob 0-1> <market-price 1-99 cents>",
     );
@@ -299,22 +301,22 @@ function handleSize(
 
   const venue = parseVenue(venueRaw);
   if (!venue) {
-    ctx.send(eid, `Invalid venue: ${venueRaw}. Use 'kalshi' or 'polymarket'.`);
+    refuseCommand(ctx, eid, `Invalid venue: ${venueRaw}. Use 'kalshi' or 'polymarket'.`);
     return;
   }
   const side = parseSide(sideRaw);
   if (!side) {
-    ctx.send(eid, `Invalid side: ${sideRaw}. Use 'yes' or 'no'.`);
+    refuseCommand(ctx, eid, `Invalid side: ${sideRaw}. Use 'yes' or 'no'.`);
     return;
   }
   const ourProb = Number(ourProbRaw);
   if (!Number.isFinite(ourProb) || ourProb < 0 || ourProb > 1) {
-    ctx.send(eid, `our-prob must be 0-1 (got: ${ourProbRaw})`);
+    refuseCommand(ctx, eid, `our-prob must be 0-1 (got: ${ourProbRaw})`);
     return;
   }
   const marketPriceCents = Number(marketPriceRaw);
   if (!Number.isFinite(marketPriceCents) || marketPriceCents < 1 || marketPriceCents > 99) {
-    ctx.send(eid, `market-price must be 1-99 cents (got: ${marketPriceRaw})`);
+    refuseCommand(ctx, eid, `market-price must be 1-99 cents (got: ${marketPriceRaw})`);
     return;
   }
 
@@ -572,22 +574,26 @@ async function handleOpen(
 ): Promise<void> {
   const [venueRaw, ticker, sideRaw, countRaw, priceRaw] = tokens;
   if (!venueRaw || !ticker || !sideRaw || !countRaw) {
-    ctx.send(eid, "Usage: position open <venue> <ticker> <yes|no> <count> [limit-price-cents]");
+    refuseCommand(
+      ctx,
+      eid,
+      "Usage: position open <venue> <ticker> <yes|no> <count> [limit-price-cents]",
+    );
     return;
   }
   const venue = parseVenue(venueRaw);
   if (!venue) {
-    ctx.send(eid, `Invalid venue: ${venueRaw}. Use 'kalshi' or 'polymarket'.`);
+    refuseCommand(ctx, eid, `Invalid venue: ${venueRaw}. Use 'kalshi' or 'polymarket'.`);
     return;
   }
   const side = parseSide(sideRaw);
   if (!side) {
-    ctx.send(eid, `Invalid side: ${sideRaw}. Use 'yes' or 'no'.`);
+    refuseCommand(ctx, eid, `Invalid side: ${sideRaw}. Use 'yes' or 'no'.`);
     return;
   }
   const count = Number(countRaw);
   if (!Number.isFinite(count) || count < 1 || count > 10_000) {
-    ctx.send(eid, `count must be 1-10000 (got: ${countRaw})`);
+    refuseCommand(ctx, eid, `count must be 1-10000 (got: ${countRaw})`);
     return;
   }
   const priceCents = priceRaw !== undefined ? Number(priceRaw) : undefined;
@@ -595,7 +601,7 @@ async function handleOpen(
     priceCents !== undefined &&
     (!Number.isFinite(priceCents) || priceCents < 1 || priceCents > 99)
   ) {
-    ctx.send(eid, `limit-price must be 1-99 cents (got: ${priceRaw})`);
+    refuseCommand(ctx, eid, `limit-price must be 1-99 cents (got: ${priceRaw})`);
     return;
   }
 
@@ -664,7 +670,7 @@ async function handleClose(
 ): Promise<void> {
   const [orderId, countRaw] = tokens;
   if (!orderId) {
-    ctx.send(eid, "Usage: position close <order-id> [count]");
+    refuseCommand(ctx, eid, "Usage: position close <order-id> [count]");
     return;
   }
 
@@ -686,7 +692,7 @@ async function handleClose(
   const maxClose = Math.min(opener.count, held);
   const closeCount = countRaw ? Number(countRaw) : maxClose;
   if (!Number.isFinite(closeCount) || closeCount < 1 || closeCount > maxClose) {
-    ctx.send(eid, `count must be 1-${maxClose}`);
+    refuseCommand(ctx, eid, `count must be 1-${maxClose}`);
     return;
   }
 
@@ -767,7 +773,7 @@ function handlePnl(
   } else if (period === "all") {
     cutoff = 0;
   } else {
-    ctx.send(eid, "Usage: position pnl [today|week|all]");
+    refuseCommand(ctx, eid, "Usage: position pnl [today|week|all]");
     return;
   }
 
@@ -1041,7 +1047,8 @@ function handlePropose(
 ): void {
   const raw = rawArgs.trim();
   if (!raw) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       'Usage: position propose \'<json>\'\n\nJSON shape: {"requester":"<name>","summary":"...","items":[{"venue":"kalshi|polymarket","ticker":"...","side":"yes|no","count":N,"price":N,"our_prob":0.X,"edge_pp":N,"confidence":N,"rationale":"..."}]}',
     );
@@ -1105,17 +1112,17 @@ async function handleConfirm(
 ): Promise<void> {
   const idRaw = tokens[0];
   if (!idRaw) {
-    ctx.send(eid, "Usage: position confirm <proposal-id>");
+    refuseCommand(ctx, eid, "Usage: position confirm <proposal-id>");
     return;
   }
   const proposalId = Number(idRaw);
   if (!Number.isFinite(proposalId)) {
-    ctx.send(eid, `Invalid proposal id: ${idRaw}`);
+    refuseCommand(ctx, eid, `Invalid proposal id: ${idRaw}`);
     return;
   }
   const post = db.getBoardPost(proposalId);
   if (!post) {
-    ctx.send(eid, `Proposal #${proposalId} not found.`);
+    refuseCommand(ctx, eid, `Proposal #${proposalId} not found.`);
     return;
   }
   // Extract the JSON code block from the post body.
@@ -1218,17 +1225,17 @@ function handleReject(
 ): void {
   const idRaw = tokens[0];
   if (!idRaw) {
-    ctx.send(eid, "Usage: position reject <proposal-id> [reason]");
+    refuseCommand(ctx, eid, "Usage: position reject <proposal-id> [reason]");
     return;
   }
   const proposalId = Number(idRaw);
   if (!Number.isFinite(proposalId)) {
-    ctx.send(eid, `Invalid proposal id: ${idRaw}`);
+    refuseCommand(ctx, eid, `Invalid proposal id: ${idRaw}`);
     return;
   }
   const post = db.getBoardPost(proposalId);
   if (!post) {
-    ctx.send(eid, `Proposal #${proposalId} not found.`);
+    refuseCommand(ctx, eid, `Proposal #${proposalId} not found.`);
     return;
   }
   const reason = tokens.slice(1).join(" ").trim() || "(no reason given)";

@@ -6,6 +6,7 @@ import { experimentalHelp } from "../../config/feature-status";
 import { bold, dim, id as fmtId, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { rankFloorRefusal } from "../rank-floor";
 import { requiresPersistence } from "./command-messages";
 
@@ -130,7 +131,7 @@ Examples:
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("experiments"));
+        refuseCommand(ctx, input.entity, requiresPersistence("experiments"));
         return;
       }
       const db = deps.db;
@@ -172,7 +173,8 @@ Examples:
           }
           const name = tokens[1];
           if (!name) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: experiment create <name> [arms A,B,...] [metric <name>] [goal higher|lower]",
             );
@@ -180,7 +182,7 @@ Examples:
           }
           const existing = db.getExperimentByName(name);
           if (existing) {
-            ctx.send(input.entity, `Experiment "${name}" already exists.`);
+            refuseCommand(ctx, input.entity, `Experiment "${name}" already exists.`);
             return;
           }
 
@@ -246,16 +248,16 @@ Examples:
         case "join": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: experiment join <name>");
+            refuseCommand(ctx, input.entity, "Usage: experiment join <name>");
             return;
           }
           const exp = db.getExperimentByName(name);
           if (!exp) {
-            ctx.send(input.entity, `Experiment "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Experiment "${name}" not found.`);
             return;
           }
           if (exp.status !== "pending") {
-            ctx.send(input.entity, `Experiment "${name}" is already ${exp.status}.`);
+            refuseCommand(ctx, input.entity, `Experiment "${name}" is already ${exp.status}.`);
             return;
           }
           if (db.isParticipant(exp.id, entity.name)) {
@@ -274,16 +276,16 @@ Examples:
         case "start": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: experiment start <name>");
+            refuseCommand(ctx, input.entity, "Usage: experiment start <name>");
             return;
           }
           const exp = db.getExperimentByName(name);
           if (!exp) {
-            ctx.send(input.entity, `Experiment "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Experiment "${name}" not found.`);
             return;
           }
           if (exp.status !== "pending") {
-            ctx.send(input.entity, `Experiment "${name}" is already ${exp.status}.`);
+            refuseCommand(ctx, input.entity, `Experiment "${name}" is already ${exp.status}.`);
             return;
           }
           const participants = db.getParticipants(exp.id);
@@ -302,12 +304,12 @@ Examples:
         case "status": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: experiment status <name>");
+            refuseCommand(ctx, input.entity, "Usage: experiment status <name>");
             return;
           }
           const exp = db.getExperimentByName(name);
           if (!exp) {
-            ctx.send(input.entity, `Experiment "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Experiment "${name}" not found.`);
             return;
           }
           const participants = db.getParticipants(exp.id);
@@ -343,12 +345,12 @@ Examples:
         case "results": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: experiment results <name>");
+            refuseCommand(ctx, input.entity, "Usage: experiment results <name>");
             return;
           }
           const exp = db.getExperimentByName(name);
           if (!exp) {
-            ctx.send(input.entity, `Experiment "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Experiment "${name}" not found.`);
             return;
           }
           const results = db.getResults(exp.id) as ExperimentResultRow[];
@@ -376,16 +378,16 @@ Examples:
         case "complete": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: experiment complete <name>");
+            refuseCommand(ctx, input.entity, "Usage: experiment complete <name>");
             return;
           }
           const exp = db.getExperimentByName(name);
           if (!exp) {
-            ctx.send(input.entity, `Experiment "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Experiment "${name}" not found.`);
             return;
           }
           if (exp.status !== "active") {
-            ctx.send(input.entity, `Experiment "${name}" is not active.`);
+            refuseCommand(ctx, input.entity, `Experiment "${name}" is not active.`);
             return;
           }
           db.completeExperiment(exp.id);
@@ -453,16 +455,20 @@ Examples:
         case "record": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: experiment record <name> <arm> <metric> <value>");
+            refuseCommand(
+              ctx,
+              input.entity,
+              "Usage: experiment record <name> <arm> <metric> <value>",
+            );
             return;
           }
           const exp = db.getExperimentByName(name);
           if (!exp) {
-            ctx.send(input.entity, `Experiment "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Experiment "${name}" not found.`);
             return;
           }
           if (exp.status !== "active") {
-            ctx.send(input.entity, `Experiment "${name}" is not active.`);
+            refuseCommand(ctx, input.entity, `Experiment "${name}" is not active.`);
             return;
           }
           const cfg = parseConfig(exp.config);
@@ -472,12 +478,20 @@ Examples:
             const metric = tokens[3];
             const value = Number.parseFloat(tokens[4] ?? "");
             if (!armTok || !metric || Number.isNaN(value)) {
-              ctx.send(input.entity, "Usage: experiment record <name> <arm> <metric> <value>");
+              refuseCommand(
+                ctx,
+                input.entity,
+                "Usage: experiment record <name> <arm> <metric> <value>",
+              );
               return;
             }
             const arm = cfg.arms.find((a) => a.toLowerCase() === armTok.toLowerCase());
             if (!arm) {
-              ctx.send(input.entity, `Unknown arm "${armTok}". Arms: ${cfg.arms.join(", ")}.`);
+              refuseCommand(
+                ctx,
+                input.entity,
+                `Unknown arm "${armTok}". Arms: ${cfg.arms.join(", ")}.`,
+              );
               return;
             }
             db.recordResult(exp.id, entity.name, metric, value, arm);
@@ -489,7 +503,7 @@ Examples:
           const metric = tokens[2];
           const value = Number.parseFloat(tokens[3] ?? "");
           if (!metric || Number.isNaN(value)) {
-            ctx.send(input.entity, "Usage: experiment record <name> <metric> <value>");
+            refuseCommand(ctx, input.entity, "Usage: experiment record <name> <metric> <value>");
             return;
           }
           db.recordResult(exp.id, entity.name, metric, value);

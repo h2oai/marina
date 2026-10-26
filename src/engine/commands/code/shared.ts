@@ -22,7 +22,7 @@ import type {
   EntityId,
   RoomContext,
 } from "../../../types";
-import { failCommandResponse } from "../../command-response";
+import { failCommandResponse, refuseCommand } from "../../command-response";
 import { sanitizeEntityName } from "../../entity-name";
 import type { VisualDescription, VisualSource } from "../../media/vision";
 import type { TellDeps } from "../tell";
@@ -523,7 +523,7 @@ export function resolveSession(
     throw new Error("Coding target is unavailable or not authorized for this participant.");
   }
   if (!session) {
-    ctx.send(eid, `Coding session not found: ${sessionId}`);
+    refuseCommand(ctx, eid, `Coding session not found: ${sessionId}`);
     return null;
   }
   return session;

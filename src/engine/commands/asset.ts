@@ -37,6 +37,7 @@ import {
   mayReadAsset,
   mayReadCanvas,
 } from "../canvas-access";
+import { refuseCommand } from "../command-response";
 import {
   AssetBytesError,
   type AssetLibraryHost,
@@ -431,7 +432,7 @@ export async function runAssetCommand(
   if (!entity) return;
   const db = deps.db;
   if (!db) {
-    ctx.send(eid, requiresPersistence("assets"));
+    refuseCommand(ctx, eid, requiresPersistence("assets"));
     return;
   }
   const host: CanvasAccessHost = {
@@ -514,7 +515,11 @@ export async function runAssetCommand(
       }
       const text = tail ?? rest.slice(1).join(" ");
       if (tail === undefined && !text) {
-        ctx.send(eid, `Usage: asset ${sub} <id> -- <text>   (nothing after -- clears it)`);
+        refuseCommand(
+          ctx,
+          eid,
+          `Usage: asset ${sub} <id> -- <text>   (nothing after -- clears it)`,
+        );
         return;
       }
       const edit = sub === "caption" ? { caption: text || null } : { alt: text || null };
@@ -536,7 +541,7 @@ export async function runAssetCommand(
     case "delete": {
       const id = rest[0];
       if (!id) {
-        ctx.send(eid, "Usage: asset delete <id>");
+        refuseCommand(ctx, eid, "Usage: asset delete <id>");
         return;
       }
       // Deletion takes the exact id: a prefix could name a different asset
@@ -556,7 +561,8 @@ export async function runAssetCommand(
                 )
                 .slice(0, 5)
             : [];
-        ctx.send(
+        refuseCommand(
+          ctx,
           eid,
           matches.length > 0
             ? `Asset delete needs the full id. Matching: ${matches.map((a) => `${a.id} (${a.filename})`).join(", ")}`
@@ -573,7 +579,7 @@ export async function runAssetCommand(
         `Only the asset's owner (${asset.entity_name}) or an admin can delete it.`,
       );
       if (refusal) {
-        ctx.send(eid, refusal);
+        refuseCommand(ctx, eid, refusal);
         return;
       }
       const derived = db.listDerivatives([asset.id]).length;

@@ -22,6 +22,7 @@ import {
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { JudgeLedgerStore } from "../../persistence/interfaces/judge-ledger-store";
 import type { CommandDef, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { unknownSubcommand } from "../parse-input";
 
 export const JUDGE_USAGE = `Usage:
@@ -106,7 +107,7 @@ export function judgeCommand(deps: {
       }
       const surface = tokens[1]?.toLowerCase();
       if (surface && !(SURFACES as readonly string[]).includes(surface)) {
-        ctx.send(input.entity, `Unknown judge surface "${surface}".\n${JUDGE_USAGE}`);
+        refuseCommand(ctx, input.entity, `Unknown judge surface "${surface}".\n${JUDGE_USAGE}`);
         return;
       }
       const backend = deps.backend();

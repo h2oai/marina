@@ -22,6 +22,7 @@ import { RoutingError } from "../../routing/errors";
 import { residentLabeler, supervisedResidentsEnabled } from "../../routing/residents";
 import { RoutingService } from "../../routing/service";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
 import { sanitizeEntityName } from "../entity-name";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
@@ -222,7 +223,7 @@ Usage:
           }
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: agent restart <name>");
+            refuseCommand(ctx, input.entity, "Usage: agent restart <name>");
             return;
           }
           try {
@@ -249,7 +250,7 @@ Usage:
           const name = tokens[1];
           const model = tokens[2];
           if (!name || !model?.includes("/")) {
-            ctx.send(input.entity, "Usage: agent failover <name> <provider/model>");
+            refuseCommand(ctx, input.entity, "Usage: agent failover <name> <provider/model>");
             return;
           }
           try {
@@ -289,7 +290,8 @@ Usage:
               (nextMode !== undefined && !["focused", "balanced", "open"].includes(nextMode)) ||
               (!nextMode && !relay)
             ) {
-              ctx.send(
+              refuseCommand(
+                ctx,
                 input.entity,
                 "Usage: agent attention-mode <name> [focused|balanced|open] [relay:all|explicit]",
               );
@@ -302,7 +304,11 @@ Usage:
             return;
           }
           if (!name || !mode || !["focused", "balanced", "open"].includes(mode)) {
-            ctx.send(input.entity, "Usage: agent attention-mode <name> focused|balanced|open");
+            refuseCommand(
+              ctx,
+              input.entity,
+              "Usage: agent attention-mode <name> focused|balanced|open",
+            );
             return;
           }
           try {
@@ -326,13 +332,17 @@ Usage:
           const name = tokens[1];
           const feedback = tokens[2] as "useful" | "noise" | undefined;
           if (!name || !feedback || !["useful", "noise"].includes(feedback)) {
-            ctx.send(input.entity, "Usage: agent attention-feedback <name> useful|noise");
+            refuseCommand(ctx, input.entity, "Usage: agent attention-feedback <name> useful|noise");
             return;
           }
           const resident = supervisedResident(deps.db, name);
           if (resident && deps.db) {
             if (resident.spawned_by !== entity.name) {
-              ctx.send(input.entity, `Only ${resident.name}'s owner can tune its attention.`);
+              refuseCommand(
+                ctx,
+                input.entity,
+                `Only ${resident.name}'s owner can tune its attention.`,
+              );
               return;
             }
             const saved = deps.db.recordAttentionFeedback(resident.name, feedback);
@@ -382,7 +392,7 @@ Usage:
           const name = tokens[1];
           const message = tokens.slice(2).join(" ");
           if (!name || !message) {
-            ctx.send(input.entity, "Usage: agent attention <name|a,b|all> <message>");
+            refuseCommand(ctx, input.entity, "Usage: agent attention <name|a,b|all> <message>");
             return;
           }
           const names = attentionTargets(name, entity, ctx, deps);
@@ -407,7 +417,7 @@ Usage:
           const name = tokens[1];
           const description = tokens.slice(2).join(" ");
           if (!name || !description) {
-            ctx.send(input.entity, "Usage: agent focus <name> <description>");
+            refuseCommand(ctx, input.entity, "Usage: agent focus <name> <description>");
             return;
           }
           return handleFocus(ctx, input.entity, name, description, deps);
@@ -504,12 +514,12 @@ function handleStatus(
   deps: { agentRuntime: AgentRuntime; db?: MarinaDB },
 ): void {
   if (!name) {
-    ctx.send(eid, "Usage: agent status <name>");
+    refuseCommand(ctx, eid, "Usage: agent status <name>");
     return;
   }
   const agent = deps.agentRuntime.get(name);
   if (!agent) {
-    ctx.send(eid, `Agent "${name}" is not running.`);
+    refuseCommand(ctx, eid, `Agent "${name}" is not running.`);
     return;
   }
 
@@ -738,7 +748,8 @@ async function handleSpawn(
     return;
   }
   if (!/^[A-Za-z0-9_]{1,20}$/.test(name)) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       "Agent names must be 1-20 characters using only letters, numbers, and underscores.",
     );
@@ -746,7 +757,7 @@ async function handleSpawn(
   }
 
   if (!deps.agentRuntime.isAvailable()) {
-    ctx.send(eid, `No model provider — agents cannot be spawned. ${providerSetupHint()}`);
+    refuseCommand(ctx, eid, `No model provider — agents cannot be spawned. ${providerSetupHint()}`);
     return;
   }
 
@@ -810,7 +821,7 @@ async function handleStop(
   opts: { keepChildren?: boolean } = {},
 ): Promise<void> {
   if (!name) {
-    ctx.send(eid, "Usage: agent stop <name> [--keep-children]");
+    refuseCommand(ctx, eid, "Usage: agent stop <name> [--keep-children]");
     return;
   }
   const supervised = deps.db?.getAgentConfig(name);
@@ -821,7 +832,7 @@ async function handleStop(
 
   const agent = deps.agentRuntime.get(name);
   if (!agent) {
-    ctx.send(eid, `Agent "${name}" is not running.`);
+    refuseCommand(ctx, eid, `Agent "${name}" is not running.`);
     return;
   }
 
@@ -883,7 +894,7 @@ function stopSupervisedResident(
   db: MarinaDB,
 ): void {
   if (config.spawned_by !== caller.name) {
-    ctx.send(eid, `Only ${config.name}'s owner can stop it.`);
+    refuseCommand(ctx, eid, `Only ${config.name}'s owner can stop it.`);
     return;
   }
   const gate = checkGateForExecution(db, eid, "code.exec");
@@ -894,7 +905,7 @@ function stopSupervisedResident(
   recordGateExecution(db, eid, "code.exec", gate, `agent stop ${config.name}`);
   const session = config.run_session;
   if (!session) {
-    ctx.send(eid, `${bold(config.name)} is not running: no supervised run holds it.`);
+    refuseCommand(ctx, eid, `${bold(config.name)} is not running: no supervised run holds it.`);
     return;
   }
   try {
@@ -968,7 +979,7 @@ function setResidentAttention(
   change: { mode?: "focused" | "balanced" | "open"; threshold?: number; relay?: AttentionRelay },
 ): void {
   if (config.spawned_by !== caller.name) {
-    ctx.send(eid, `Only ${config.name}'s owner can change its attention.`);
+    refuseCommand(ctx, eid, `Only ${config.name}'s owner can change its attention.`);
     return;
   }
   if (change.mode) db.updateAttentionPolicy(config.name, change.mode);
@@ -1016,11 +1027,11 @@ async function handleDisable(
   deps: { agentRuntime: AgentRuntime; logEvent: (event: EngineEvent) => void; db?: MarinaDB },
 ): Promise<void> {
   if (!name) {
-    ctx.send(eid, "Usage: agent disable <name>");
+    refuseCommand(ctx, eid, "Usage: agent disable <name>");
     return;
   }
   if (!deps.db) {
-    ctx.send(eid, "Disable requires a database (persisted markers).");
+    refuseCommand(ctx, eid, "Disable requires a database (persisted markers).");
     return;
   }
   setSeedDisabled(deps.db, name, true);
@@ -1047,15 +1058,15 @@ function handleEnable(
   deps: { db?: MarinaDB },
 ): void {
   if (!name) {
-    ctx.send(eid, "Usage: agent enable <name>");
+    refuseCommand(ctx, eid, "Usage: agent enable <name>");
     return;
   }
   if (!deps.db) {
-    ctx.send(eid, "Enable requires a database (persisted markers).");
+    refuseCommand(ctx, eid, "Enable requires a database (persisted markers).");
     return;
   }
   if (!isSeedDisabled(deps.db, name)) {
-    ctx.send(eid, `Agent ${bold(name)} is not disabled.`);
+    refuseCommand(ctx, eid, `Agent ${bold(name)} is not disabled.`);
     return;
   }
   setSeedDisabled(deps.db, name, false);
@@ -1084,12 +1095,16 @@ async function handleAttention(
     // the owner's attention is a priority perception, steered in when it can be.
     const caller = deps.getEntity(eid);
     if (!caller || resident.spawned_by !== caller.name) {
-      ctx.send(eid, `Only ${resident.name}'s owner sends it attention; use tell instead.`);
+      refuseCommand(
+        ctx,
+        eid,
+        `Only ${resident.name}'s owner sends it attention; use tell instead.`,
+      );
       return;
     }
     const target = deps.findAgent?.(resident.name);
     if (!target) {
-      ctx.send(eid, `${bold(resident.name)} is not in the world right now.`);
+      refuseCommand(ctx, eid, `${bold(resident.name)} is not in the world right now.`);
       return;
     }
     ctx.send(target.id, `${caller.name} asks for your attention: ${message}`, "attention", {
@@ -1102,7 +1117,7 @@ async function handleAttention(
   }
   const agent = deps.agentRuntime.get(name);
   if (!agent) {
-    ctx.send(eid, `Agent "${name}" is not running.`);
+    refuseCommand(ctx, eid, `Agent "${name}" is not running.`);
     return;
   }
   await agent.sendAttention(message);
@@ -1118,7 +1133,7 @@ function handleFocus(
 ): void {
   const agent = deps.agentRuntime.get(name);
   if (!agent) {
-    ctx.send(eid, `Agent "${name}" is not running.`);
+    refuseCommand(ctx, eid, `Agent "${name}" is not running.`);
     return;
   }
   agent.setFocus(description);
@@ -1136,7 +1151,7 @@ async function handleConfig(
   const value = tokens.slice(2).join(" ");
 
   if (!name || !field || !value) {
-    ctx.send(eid, "Usage: agent config <name> model|role|key|thinking <value>");
+    refuseCommand(ctx, eid, "Usage: agent config <name> model|role|key|thinking <value>");
     return;
   }
 
@@ -1172,7 +1187,7 @@ async function handleConfig(
       break;
     }
     default:
-      ctx.send(eid, `Unknown config field: ${field}. Use: model, role, key, thinking`);
+      refuseCommand(ctx, eid, `Unknown config field: ${field}. Use: model, role, key, thinking`);
       return;
   }
 
@@ -1185,7 +1200,7 @@ async function handleConfig(
         `Saved config of ${bold(name)} updated (${field} = ${value}); it applies when ${name} next starts.`,
       );
     } else {
-      ctx.send(eid, `Agent "${name}" is not running and has no saved config.`);
+      refuseCommand(ctx, eid, `Agent "${name}" is not running and has no saved config.`);
     }
     return;
   }

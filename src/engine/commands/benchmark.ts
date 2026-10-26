@@ -74,6 +74,7 @@ import {
   retireOutcomeNotesForRun,
 } from "../benchmark-runner";
 import { resolveRunTarget, type ServingCrew } from "../benchmark-target";
+import { refuseCommand } from "../command-response";
 import { BENCHMARK_RUN_MIN_RANK } from "../constants";
 import { recentResolutions, summarizeDefaultValue } from "../default-resolution";
 import { principalOf } from "../gate-context";
@@ -431,7 +432,8 @@ export function benchmarkCommand(deps: {
         case "sweep": {
           const rawTarget = tokens[1];
           if (!rawTarget) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]",
             );
@@ -475,7 +477,8 @@ export function benchmarkCommand(deps: {
           }
 
           if (!sweepName) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Unknown benchmark: ${rawTarget}. Known: ${Object.keys(BENCHMARKS).join(", ")}`,
             );
@@ -542,7 +545,8 @@ export function benchmarkCommand(deps: {
 
         case "run": {
           if (!tokens[1]) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [--partition holdout|tune]",
             );
@@ -560,7 +564,8 @@ export function benchmarkCommand(deps: {
           // Voice-friendly name resolution: "mmlu pro" == "mmlu-pro", etc.
           const resolved = resolveMultiWordName(tokens, 1, Object.keys(BENCHMARKS));
           if (!resolved) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Unknown benchmark: ${tokens[1]}. Known: ${Object.keys(BENCHMARKS).join(", ")}`,
             );
@@ -574,7 +579,7 @@ export function benchmarkCommand(deps: {
           const concurrency = Number.parseInt(modifiers.concurrency ?? "", 10);
           const lessonsMode = modifiers["lessons-mode"]?.toLowerCase();
           if (lessonsMode !== undefined && lessonsMode !== "measure" && lessonsMode !== "live") {
-            ctx.send(input.entity, "lessons-mode must be measure or live.");
+            refuseCommand(ctx, input.entity, "lessons-mode must be measure or live.");
             return;
           }
           const cap =
@@ -646,7 +651,8 @@ export function benchmarkCommand(deps: {
             : undefined;
           const key = resolved?.name;
           if (!key || !BENCHMARKS[key]) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               tokens[1]
                 ? `Unknown benchmark: ${tokens[1]}. Known: ${Object.keys(BENCHMARKS).join(", ")}`
@@ -785,7 +791,8 @@ export function benchmarkCommand(deps: {
           for (const [k, v] of Object.entries(values))
             if (k !== "dry-run" && typeof v === "string") flags[k] = v;
           if (!dryRun && flags.budget === undefined) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "benchmark kit: a run needs budget:<usd> — the kit refuses when its estimate exceeds it. Add dry-run to see the plan and estimate first.",
             );
@@ -836,7 +843,7 @@ export function benchmarkCommand(deps: {
         case "result": {
           const id = tokens[1];
           if (!id) {
-            ctx.send(input.entity, "Usage: benchmark result <id>");
+            refuseCommand(ctx, input.entity, "Usage: benchmark result <id>");
             return;
           }
           const row = db.getBenchmarkRun(id);
@@ -970,7 +977,11 @@ export function benchmarkCommand(deps: {
         case "leaderboard": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: benchmark leaderboard <benchmark> [--limit N]");
+            refuseCommand(
+              ctx,
+              input.entity,
+              "Usage: benchmark leaderboard <benchmark> [--limit N]",
+            );
             return;
           }
           const rawArgs = tokens.slice(2).join(" ");
@@ -1127,7 +1138,8 @@ export function benchmarkCommand(deps: {
           }
           const name = BENCHMARKS[action] ? action : undefined;
           if (!name) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Unknown benchmark: ${tokens[1]}. Known: ${Object.keys(BENCHMARKS).join(", ")}`,
             );
@@ -1246,7 +1258,7 @@ export function benchmarkCommand(deps: {
         case "compare": {
           const [a, b] = [tokens[1], tokens[2]];
           if (!a || !b) {
-            ctx.send(input.entity, "Usage: benchmark compare <runA> <runB>");
+            refuseCommand(ctx, input.entity, "Usage: benchmark compare <runA> <runB>");
             return;
           }
           const runA = db.getBenchmarkRun(a);
@@ -1257,7 +1269,8 @@ export function benchmarkCommand(deps: {
           }
           const invalid = [runA, runB].find((r) => r.status === "invalid");
           if (invalid) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Run ${invalid.id} is invalid (${invalidReason(db, invalid)}) — invalid runs are never compared. \`benchmark revalidate\` restores it if the reason no longer holds.`,
             );
@@ -1295,7 +1308,7 @@ export function benchmarkCommand(deps: {
         case "replicates": {
           const id = tokens[1];
           if (!id) {
-            ctx.send(input.entity, "Usage: benchmark replicates <run>");
+            refuseCommand(ctx, input.entity, "Usage: benchmark replicates <run>");
             return;
           }
           const run = db.getBenchmarkRun(id);
@@ -1319,7 +1332,7 @@ export function benchmarkCommand(deps: {
           const id = tokens[1];
           const reason = freeTextModifier(tokens.slice(2), "reason");
           if (!id || !reason) {
-            ctx.send(input.entity, `Usage: benchmark ${sub} <run> reason:<text>`);
+            refuseCommand(ctx, input.entity, `Usage: benchmark ${sub} <run> reason:<text>`);
             return;
           }
           const why = reason.slice(0, MAX_VALIDITY_REASON);
@@ -1351,7 +1364,7 @@ export function benchmarkCommand(deps: {
         case "purge-content-notes": {
           const parsed = parseModifiers(tokens.slice(1), { confirm: { type: "bool" } });
           if (parsed.errors.length || parsed.rest.length) {
-            ctx.send(input.entity, "Usage: benchmark purge-content-notes [confirm:yes]");
+            refuseCommand(ctx, input.entity, "Usage: benchmark purge-content-notes [confirm:yes]");
             return;
           }
           ctx.send(
@@ -1364,7 +1377,7 @@ export function benchmarkCommand(deps: {
         case "frontier": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: benchmark frontier <benchmark>");
+            refuseCommand(ctx, input.entity, "Usage: benchmark frontier <benchmark>");
             return;
           }
           const rows = db.leaderboardBenchmark(name, 100);
@@ -1400,7 +1413,7 @@ export function benchmarkCommand(deps: {
         case "participants": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: benchmark participants <benchmark>");
+            refuseCommand(ctx, input.entity, "Usage: benchmark participants <benchmark>");
             return;
           }
           const items = db.getBenchmarkItemsForBenchmark(name);
@@ -1481,7 +1494,8 @@ export function benchmarkCommand(deps: {
         case "promote": {
           const [slot, runId] = [tokens[1], tokens[2]];
           if (!slot || !runId) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Usage: benchmark ${sub} <slot> <run> [--max-cost-ratio R]${sub === "promote" ? " [--holdout F]" : ""}`,
             );
@@ -1495,7 +1509,7 @@ export function benchmarkCommand(deps: {
             ? Number.parseFloat(modifiers["max-cost-ratio"])
             : undefined;
           if (maxCostRatio !== undefined && !(maxCostRatio > 0)) {
-            ctx.send(input.entity, "--max-cost-ratio must be a positive number.");
+            refuseCommand(ctx, input.entity, "--max-cost-ratio must be a positive number.");
             return;
           }
           if (sub === "promote" && wantsUpstreamSeed(db, slot, runId)) {

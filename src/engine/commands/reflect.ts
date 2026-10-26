@@ -17,6 +17,7 @@ import type { MemoryAssistanceJob, MemoryAssistancePage } from "../../sdk/memory
 import { memoryOperationError } from "../../sdk/memory-operations";
 import type { MemoryAdoptResult, MemoryReceipt, MemoryRecord } from "../../sdk/memory-types";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { MEMORY_REFLECTOR_ROLE } from "../constants";
 import { isLocalUngated } from "../trust-profile";
 import { requiresPersistence } from "./command-messages";
@@ -275,7 +276,7 @@ export function reflectCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("reflect"));
+        refuseCommand(ctx, input.entity, requiresPersistence("reflect"));
         return;
       }
       const db = deps.db;
@@ -295,7 +296,7 @@ export function reflectCommand(deps: {
       if (shareAt >= 0) {
         sharePool = rawTokens[shareAt + 1];
         if (!sharePool) {
-          ctx.send(input.entity, "Usage: reflect … --share <pool>");
+          refuseCommand(ctx, input.entity, "Usage: reflect … --share <pool>");
           return;
         }
         rawTokens.splice(shareAt, 2);
@@ -421,7 +422,7 @@ export function reflectCommand(deps: {
       if (sub === "failure") {
         const description = tokens.slice(1).join(" ");
         if (!description) {
-          ctx.send(input.entity, "Usage: reflect failure <what happened>");
+          refuseCommand(ctx, input.entity, "Usage: reflect failure <what happened>");
           return;
         }
 
@@ -589,7 +590,8 @@ export function reflectCommand(deps: {
           return;
         }
         if (worker.name === entity.name) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Reflection needs another participant; you cannot witness yourself.",
           );
@@ -702,7 +704,7 @@ export function reflectCommand(deps: {
       // ── reflect adopt <job> ──────────────────────────────────────────────
       const adopt = async (jobId: string | undefined) => {
         if (!jobId) {
-          ctx.send(input.entity, "Usage: reflect adopt <job-id>");
+          refuseCommand(ctx, input.entity, "Usage: reflect adopt <job-id>");
           return;
         }
         // Idempotent: the adoption marker on the legacy note is the ledger.
@@ -848,7 +850,7 @@ export function reflectCommand(deps: {
         case "via": {
           const helper = tokens[1];
           if (!helper) {
-            ctx.send(input.entity, "Usage: reflect via <helper> [topic]");
+            refuseCommand(ctx, input.entity, "Usage: reflect via <helper> [topic]");
             return;
           }
           return requestReflection(helper, tokens.slice(2).join(" ") || undefined);

@@ -17,6 +17,7 @@ import { standingEarnLine, standingSummaryLine } from "../../agent/standing-summ
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { gateNextStep, getGateProgress } from "../safety-gates";
 import { requiresPersistence } from "./command-messages";
 
@@ -73,7 +74,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       "your own lineage, count toward that).",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("standing"));
+        refuseCommand(ctx, input.entity, requiresPersistence("standing"));
         return;
       }
       const db = deps.db;
@@ -115,7 +116,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       // A bare name is the same as `show <name>`, never the caller's own.
       const targetName = sub === "show" ? tokens[1] : tokens[0];
       if (sub === "show" && !targetName) {
-        ctx.send(input.entity, "Usage: standing show <name>");
+        refuseCommand(ctx, input.entity, "Usage: standing show <name>");
         return;
       }
       const liveTarget = targetName

@@ -13,7 +13,7 @@ import type { RoomManager } from "../world/room-manager";
 
 import { aliasNotice } from "./command-families";
 import { commandInputForLog, isUnloggedForm } from "./command-redaction";
-import { failCommandResponse, observeHandlerOutcome } from "./command-response";
+import { failCommandResponse, observeHandlerOutcome, withoutRefusal } from "./command-response";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
 import { closestName } from "./did-you-mean";
@@ -293,11 +293,15 @@ export class CommandPhaseCoordinator {
     // operator's instance and the `open` posture, honours an approved rank
     // challenge for this run, and otherwise refuses and raises a challenge.
     if (def?.minRank && def.minRank > 0 && !readOnly && !(def.gate && this.host.db)) {
-      const refusal = rankFloorRefusal(
-        entity,
-        def.minRank,
-        `You must be at least ${rankName(def.minRank)} (rank ${def.minRank}) to use "${def.name}".`,
-        def.gate ? { gateId: def.gate } : {},
+      // The router states its own failure below; keep the helper's out.
+      const minRank = def.minRank;
+      const refusal = withoutRefusal(() =>
+        rankFloorRefusal(
+          entity,
+          minRank,
+          `You must be at least ${rankName(minRank)} (rank ${minRank}) to use "${def.name}".`,
+          def.gate ? { gateId: def.gate } : {},
+        ),
       );
       if (refusal !== undefined) {
         failCommandResponse(`Rank ${def.minRank} required for ${def.name}`);
@@ -317,7 +321,9 @@ export class CommandPhaseCoordinator {
     // demonstration. `recordGateExecution` writes the competence consequence
     // of whichever path authorized us (an approved run is a demonstration).
     if (def?.gate && this.host.db && !readOnly) {
-      const result = checkGateForExecution(this.host.db, entityId, def.gate);
+      const db = this.host.db;
+      const gate = def.gate;
+      const result = withoutRefusal(() => checkGateForExecution(db, entityId, gate));
       if (!result.ok) {
         failCommandResponse(result.reason ?? `Gate "${def.gate}" denied.`);
         this.host.sendToEntity(entityId, result.reason ?? `Gate "${def.gate}" denied.`);

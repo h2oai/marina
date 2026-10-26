@@ -19,6 +19,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import { fileResidentForecast } from "../../outcomes/filing";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 
 interface ConductCommandDeps {
   db: MarinaDB;
@@ -133,12 +134,12 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
       if (sub === "show") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: conduct show <name>");
+          refuseCommand(ctx, input.entity, "Usage: conduct show <name>");
           return;
         }
         const score = loadScore(deps.db, name);
         if (!score) {
-          ctx.send(input.entity, `Score "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Score "${name}" not found.`);
           return;
         }
         ctx.send(input.entity, fmtScore(name, score));
@@ -148,12 +149,12 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
       if (sub === "json") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: conduct json <name>");
+          refuseCommand(ctx, input.entity, "Usage: conduct json <name>");
           return;
         }
         const score = loadScore(deps.db, name);
         if (!score) {
-          ctx.send(input.entity, `Score "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Score "${name}" not found.`);
           return;
         }
         ctx.send(input.entity, JSON.stringify(score));
@@ -163,14 +164,14 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
       if (sub === "validate") {
         const json = afterDashes(input.args);
         if (!json) {
-          ctx.send(input.entity, "Usage: conduct validate -- <json>");
+          refuseCommand(ctx, input.entity, "Usage: conduct validate -- <json>");
           return;
         }
         try {
           const score = parseScore(json, { author: caller.name });
           const err = validateScore(score);
           if (err) {
-            ctx.send(input.entity, `Invalid: ${err}`);
+            refuseCommand(ctx, input.entity, `Invalid: ${err}`);
             return;
           }
           ctx.send(
@@ -189,11 +190,12 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
         const name = (dashIdx >= 0 ? head.slice(0, dashIdx) : head).trim().split(/\s+/)[0];
         const json = dashIdx >= 0 ? head.slice(dashIdx + 2).trim() : "";
         if (!name || !json) {
-          ctx.send(input.entity, "Usage: conduct create <name> -- <json>");
+          refuseCommand(ctx, input.entity, "Usage: conduct create <name> -- <json>");
           return;
         }
         if (loadScore(deps.db, name)) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             `Score "${name}" already exists. Use a new name or 'conduct fork'.`,
           );
@@ -203,7 +205,7 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
           const score = parseScore(json, { author: caller.name });
           const err = validateScore(score);
           if (err) {
-            ctx.send(input.entity, `Invalid: ${err}`);
+            refuseCommand(ctx, input.entity, `Invalid: ${err}`);
             return;
           }
           if (!storeScore(deps.db, caller.name, name, score)) {
@@ -227,16 +229,16 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
         const name = tokens[1];
         const newName = tokens[2];
         if (!name || !newName) {
-          ctx.send(input.entity, "Usage: conduct fork <name> <newname>");
+          refuseCommand(ctx, input.entity, "Usage: conduct fork <name> <newname>");
           return;
         }
         const score = loadScore(deps.db, name);
         if (!score) {
-          ctx.send(input.entity, `Score "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Score "${name}" not found.`);
           return;
         }
         if (loadScore(deps.db, newName)) {
-          ctx.send(input.entity, `Score "${newName}" already exists.`);
+          refuseCommand(ctx, input.entity, `Score "${newName}" already exists.`);
           return;
         }
         const forked: Score = {
@@ -255,7 +257,7 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
       if (sub === "resolve") {
         const assignee = tokens[1];
         if (!assignee) {
-          ctx.send(input.entity, "Usage: conduct resolve <assignee>");
+          refuseCommand(ctx, input.entity, "Usage: conduct resolve <assignee>");
           return;
         }
         const target = resolveLive(assignee, deps);
@@ -268,7 +270,8 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
         const name = tokens[1];
         const sampleId = tokens[2];
         if (!name || !sampleId) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Usage: conduct track <name> <sampleId> predict=<0..1> [category=<c>]",
           );
@@ -276,7 +279,7 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
         }
         const score = loadScore(deps.db, name);
         if (!score) {
-          ctx.send(input.entity, `Score "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Score "${name}" not found.`);
           return;
         }
         let predict: number | undefined;
@@ -324,7 +327,7 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
         const name = tokens[1];
         const summary = afterDashes(input.args);
         if (!name || !summary) {
-          ctx.send(input.entity, "Usage: conduct ran <name> -- <summary>");
+          refuseCommand(ctx, input.entity, "Usage: conduct ran <name> -- <summary>");
           return;
         }
         deps.logEvent?.({
@@ -344,7 +347,8 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
         const name = tokens[1];
         const scoreVal = Number(tokens[2]);
         if (!name || !Number.isFinite(scoreVal)) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Usage: conduct outcome <name> <0..1> [category=<c>] [-- <label>]",
           );
@@ -352,7 +356,7 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
         }
         const score = loadScore(deps.db, name);
         if (!score) {
-          ctx.send(input.entity, `Score "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Score "${name}" not found.`);
           return;
         }
         let category: string | undefined;
@@ -399,7 +403,8 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
         return;
       }
 
-      ctx.send(
+      refuseCommand(
+        ctx,
         input.entity,
         `Unknown conduct subcommand "${sub}". Try: list, show, json, validate, create, fork, resolve, track, ran, outcome, learned.`,
       );

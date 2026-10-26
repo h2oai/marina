@@ -6,6 +6,7 @@ import type { CommandCatalogEntry } from "../../net/discovery-types";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
 import { aliasNotice, COMMAND_FAMILIES, familyOf } from "../command-families";
 import { describeCommand } from "../command-manifest";
+import { refuseCommand } from "../command-response";
 
 export const CATEGORY_ORDER = [
   "Navigation",
@@ -212,7 +213,8 @@ export function helpCommand(
         return;
       }
 
-      ctx.send(
+      refuseCommand(
+        ctx,
         input.entity,
         `Unknown command or category: ${input.args}\n${dim('Type "help" for categories, "help all" for every command.')}`,
       );

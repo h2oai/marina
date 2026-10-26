@@ -5,6 +5,7 @@ import { header, separator } from "../../net/ansi";
 import { validateFetchUrl } from "../../net/url-guard";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import type { ConnectorRuntime } from "../connector-runtime";
 import { getErrorMessage } from "../errors";
 import { rankFloorRefusal } from "../rank-floor";
@@ -40,7 +41,7 @@ export function connectCommand(deps: {
       if (!entity) return;
 
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("connectors"));
+        refuseCommand(ctx, input.entity, requiresPersistence("connectors"));
         return;
       }
       const db = deps.db;
@@ -58,7 +59,8 @@ export function connectCommand(deps: {
         case "add": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: connect add <name> <url> | connect add <name> stdio <command> [args]",
             );
@@ -66,14 +68,15 @@ export function connectCommand(deps: {
           }
 
           if (name.length < 2 || name.length > 40) {
-            ctx.send(input.entity, "Connector name must be 2-40 characters.");
+            refuseCommand(ctx, input.entity, "Connector name must be 2-40 characters.");
             return;
           }
 
           // Check if already exists
           const existing = db.getConnectorByName(name);
           if (existing) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Connector "${name}" already exists. Use 'connect remove ${name}' first.`,
             );
@@ -87,7 +90,11 @@ export function connectCommand(deps: {
             // gate on top of the command's own `connect.manage` gate.
             const cmd = tokens[3];
             if (!cmd) {
-              ctx.send(input.entity, "Usage: connect add <name> stdio <command> [args...]");
+              refuseCommand(
+                ctx,
+                input.entity,
+                "Usage: connect add <name> stdio <command> [args...]",
+              );
               return;
             }
             const refusal = shellExecRefusal(
@@ -96,7 +103,7 @@ export function connectCommand(deps: {
               `connect add ${name} stdio ${tokens.slice(3).join(" ")}`,
             );
             if (refusal) {
-              ctx.send(input.entity, refusal);
+              refuseCommand(ctx, input.entity, refusal);
               return;
             }
             const args = tokens.slice(4);
@@ -141,14 +148,14 @@ export function connectCommand(deps: {
           // HTTP transport
           const url = tokens[2];
           if (!url) {
-            ctx.send(input.entity, "Usage: connect add <name> <url>");
+            refuseCommand(ctx, input.entity, "Usage: connect add <name> <url>");
             return;
           }
 
           try {
             new URL(url);
           } catch {
-            ctx.send(input.entity, `Invalid URL: ${url}`);
+            refuseCommand(ctx, input.entity, `Invalid URL: ${url}`);
             return;
           }
 
@@ -160,7 +167,8 @@ export function connectCommand(deps: {
             return;
           }
           if (db.getConnectorByName(name)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Connector "${name}" already exists. Use 'connect remove ${name}' first.`,
             );
@@ -204,13 +212,13 @@ export function connectCommand(deps: {
         case "remove": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: connect remove <name>");
+            refuseCommand(ctx, input.entity, "Usage: connect remove <name>");
             return;
           }
 
           const conn = db.getConnectorByName(name);
           if (!conn) {
-            ctx.send(input.entity, `Connector "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Connector "${name}" not found.`);
             return;
           }
 
@@ -270,7 +278,7 @@ export function connectCommand(deps: {
         case "tools": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: connect tools <name>");
+            refuseCommand(ctx, input.entity, "Usage: connect tools <name>");
             return;
           }
 
@@ -305,7 +313,7 @@ export function connectCommand(deps: {
           const server = tokens[1];
           const tool = tokens[2];
           if (!server || !tool) {
-            ctx.send(input.entity, "Usage: connect call <server> <tool> [json-args]");
+            refuseCommand(ctx, input.entity, "Usage: connect call <server> <tool> [json-args]");
             return;
           }
 
@@ -320,7 +328,8 @@ export function connectCommand(deps: {
             try {
               args = JSON.parse(jsonStr) as Record<string, unknown>;
             } catch {
-              ctx.send(
+              refuseCommand(
+                ctx,
                 input.entity,
                 'Invalid JSON arguments. Use: connect call <server> <tool> {"key":"value"}',
               );
@@ -344,7 +353,8 @@ export function connectCommand(deps: {
           const name = tokens[1];
           const authType = tokens[2]?.toLowerCase();
           if (!name || !authType) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: connect auth <name> bearer <token> | connect auth <name> header <key> <value>",
             );
@@ -353,7 +363,7 @@ export function connectCommand(deps: {
 
           const conn = db.getConnectorByName(name);
           if (!conn) {
-            ctx.send(input.entity, `Connector "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Connector "${name}" not found.`);
             return;
           }
 
@@ -373,7 +383,7 @@ export function connectCommand(deps: {
           if (authType === "bearer") {
             const token = tokens[3];
             if (!token) {
-              ctx.send(input.entity, "Usage: connect auth <name> bearer <token>");
+              refuseCommand(ctx, input.entity, "Usage: connect auth <name> bearer <token>");
               return;
             }
             const headers = JSON.stringify({ Authorization: `Bearer ${token}` });
@@ -383,7 +393,7 @@ export function connectCommand(deps: {
             const key = tokens[3];
             const value = tokens.slice(4).join(" ");
             if (!key || !value) {
-              ctx.send(input.entity, "Usage: connect auth <name> header <key> <value>");
+              refuseCommand(ctx, input.entity, "Usage: connect auth <name> header <key> <value>");
               return;
             }
             // Merge with existing headers
@@ -394,13 +404,14 @@ export function connectCommand(deps: {
             db.updateConnectorAuth(conn.id, "header", JSON.stringify(existing));
             ctx.send(input.entity, `Set header "${key}" for "${name}". Reconnect to apply.`);
           } else {
-            ctx.send(input.entity, "Unknown auth type. Use: bearer, header");
+            refuseCommand(ctx, input.entity, "Unknown auth type. Use: bearer, header");
           }
           return;
         }
 
         default:
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Unknown connect action. Use: add, remove, list, tools, call, auth",
           );

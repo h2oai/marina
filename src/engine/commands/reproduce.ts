@@ -5,6 +5,7 @@ import { experimentalHelp } from "../../config/feature-status";
 import { header, separator } from "../../net/ansi";
 import type { ComponentDisposition, MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { refuseCommand } from "../command-response";
 
 const HELP =
   experimentalHelp(`Record a new intellect derived from one or more parent intellects. This is a
@@ -144,7 +145,7 @@ export function reproduceCommand(deps: {
       if (sub === "show") {
         const row = deps.db.getCognitiveReproduction(input.tokens[1] ?? "");
         if (!row) {
-          ctx.send(input.entity, "Reproduction not found.");
+          refuseCommand(ctx, input.entity, "Reproduction not found.");
           return;
         }
         const verification = deps.db.verifyCognitiveReproduction(row);
