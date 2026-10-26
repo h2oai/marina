@@ -341,6 +341,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that is never well formed) counts toward `failed`. The judge's error kind and message are kept
   in the reason and logged. Each delivery pass re-opens, in bounded batches, `failed` lesson
   deliveries whose recorded reason was such an outage, so those outcomes teach after all.
+- **A failed command's partial output reaches an agent as plain text.** When a `batch` (or any
+  command) was rejected after some of its actions ran, the agent's tool error carried that output
+  with the terminal's colour codes. Every agent tool error path now strips ANSI, as successful
+  results already did.
 - **An agent's thinking level reaches the model on every route, and is visible.** With thinking
   `off`, a managed-effort Claude (claude-haiku-5.5, directly or through OpenRouter) used to think
   at effort `high`; it now gets `thinking: {type: "disabled"}`. Through `marina/*`, an agent's

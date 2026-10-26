@@ -7,7 +7,7 @@
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
-import { execCommand, type ToolContext, wrap } from "./shared";
+import { execCommand, plainErrorMessage, type ToolContext, wrap } from "./shared";
 
 const verificationMode = Type.Optional(
   Type.Union(
@@ -287,7 +287,7 @@ export function createCodeTool(ctx: ToolContext): AgentTool<typeof codeSchema> {
       try {
         return await execCommand(ctx, buildCodeCommand(params), signal);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = plainErrorMessage(err);
         return {
           content: [{ type: "text" as const, text: `Invalid marina_code request: ${message}` }],
           details: { error: message },

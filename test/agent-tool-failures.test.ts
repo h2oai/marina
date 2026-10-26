@@ -14,7 +14,14 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import { closingToolCall, RUN_CAP_CLOSING_GRACE } from "../src/agent/budget-terminal";
 import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
-import { applyEnumArgumentHints, createScopedTools, TOOL_SEARCH_NAME } from "../src/agent/tools";
+import {
+  applyEnumArgumentHints,
+  createCommandTool,
+  createScopedTools,
+  createWorldTools,
+  TOOL_SEARCH_NAME,
+} from "../src/agent/tools";
+import { createCodeTool } from "../src/agent/tools/code";
 import { UNKNOWN_VERB_EQUIVALENTS } from "../src/engine/command-phase-coordinator";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
@@ -182,6 +189,48 @@ describe("agent tool surface", () => {
     expect(batch.message).toContain("Partial command output");
     expect(batch.message).toContain("Recorded #13.");
     expect(batch.message.match(/Unknown command: no/g)).toHaveLength(1);
+  });
+
+  it("a rejected command's partial output reaches the agent without ANSI", async () => {
+    const coloured = (text: string) => ({ kind: "message", timestamp: 1, data: { text } }) as never;
+    const rejection = () =>
+      new CommandError("Unknown command: #286", [
+        coloured("\x1b[1m\x1b[36mTask \x1b[1m\x1b[33m#118\x1b[0m: claimed."),
+        coloured("\x1b[31mUnknown command: #286\x1b[0m"),
+      ]);
+    const ctx = {
+      client: {
+        isConnected: () => true,
+        command: async () => {
+          throw rejection();
+        },
+        capabilities: async () => ({ commands: [] }),
+      },
+      gameState: { handlePerception: () => {} },
+    } as never;
+    const plain = (message: string) => {
+      expect(message).not.toContain("\x1b");
+      expect(message).toContain("Partial command output");
+      expect(message).toContain("Task #118: claimed.");
+    };
+    // The error path that marina_batch, marina_command and every wrapped tool share.
+    const batch = createWorldTools(ctx).find((t) => t.name === "marina_batch")!;
+    const error = await batch.execute("1", { commands: "task claim 118; #286" }).then(
+      () => undefined,
+      (err: Error) => err,
+    );
+    expect(error).toBeInstanceOf(CommandError);
+    plain(error!.message);
+    const command = await createCommandTool(ctx)
+      .execute("2", { command: "batch task claim 118; #286" })
+      .then(
+        () => undefined,
+        (err: Error) => err,
+      );
+    plain(command!.message);
+    // Tools that report a failure as a result rather than throwing.
+    const code = await createCodeTool(ctx).execute("3", { action: "status" } as never);
+    plain((code.content[0] as { text: string }).text);
   });
 
   it("marina_tool_search matches a multi-word query word by word", async () => {

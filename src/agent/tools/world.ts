@@ -21,7 +21,13 @@ import { runScore } from "../../sdk/conduct";
 import { stripPleasantry } from "../acknowledgement";
 import { channelAction, projectCommand } from "../tool-policy";
 import { createCodeTool, createTypedCodeTools } from "./code";
-import { execCommand, formatPerceptions, type ToolContext, wrap } from "./shared";
+import {
+  execCommand,
+  formatPerceptions,
+  plainErrorMessage,
+  type ToolContext,
+  wrap,
+} from "./shared";
 
 const logger = new Logger();
 
@@ -418,7 +424,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
             },
           };
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = plainErrorMessage(err);
           return {
             content: [{ type: "text" as const, text: `tellAndAwait failed: ${msg}` }],
             details: { command: `tell ${p.target} (await)`, awaited: true, error: msg },
@@ -473,7 +479,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
             };
           }
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = plainErrorMessage(err);
           return {
             content: [{ type: "text" as const, text: `Could not parse Score: ${msg}` }],
             details: {},
@@ -529,7 +535,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
             details: { steps: run.order, result: run.result },
           };
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = plainErrorMessage(err);
           return {
             content: [
               {
