@@ -685,7 +685,7 @@ describe("Chronicle — canonical append-only record", () => {
       });
 
       conn.clear();
-      engine.processCommand(entityId, "recap chronicle");
+      engine.processCommand(entityId, "memory recap chronicle");
       const text = stripAnsi(conn.lastText());
       expect(text).toContain("Chronicle — recent");
       expect(text).toContain("Today's synthesis");
@@ -703,7 +703,7 @@ describe("Chronicle — canonical append-only record", () => {
       db.appendChronicle({ kind: "event", source: "task_approved", title: "Recent task" });
 
       conn.clear();
-      engine.processCommand(entityId, "recap chronicle day");
+      engine.processCommand(entityId, "memory recap chronicle day");
       const text = stripAnsi(conn.lastText());
       expect(text).toContain("Chronicle — last 24h");
       expect(text).toContain("Recent task");
@@ -713,14 +713,14 @@ describe("Chronicle — canonical append-only record", () => {
       db.appendChronicle({ kind: "event", source: "task_approved", title: "Recent task" });
 
       conn.clear();
-      engine.processCommand(entityId, "recap chronicle week");
+      engine.processCommand(entityId, "memory recap chronicle week");
       const text = stripAnsi(conn.lastText());
       expect(text).toContain("Chronicle — last 7d");
     });
 
     it("`recap chronicle day` reports nothing when empty", () => {
       conn.clear();
-      engine.processCommand(entityId, "recap chronicle day");
+      engine.processCommand(entityId, "memory recap chronicle day");
       const text = stripAnsi(conn.lastText());
       expect(text).toContain("Nothing chronicled in the last 24h");
     });
@@ -737,7 +737,7 @@ describe("Chronicle — canonical append-only record", () => {
       });
 
       conn.clear();
-      engine.processCommand(entityId, "recap bridge");
+      engine.processCommand(entityId, "memory recap bridge");
       const text = stripAnsi(conn.lastText());
       expect(text).toContain("Chronicle");
       expect(text).toContain("The bridge launch");
@@ -752,7 +752,7 @@ describe("Chronicle — canonical append-only record", () => {
       });
 
       conn.clear();
-      engine.processCommand(entityId, "recap zzz-no-match-here");
+      engine.processCommand(entityId, "memory recap zzz-no-match-here");
       const text = stripAnsi(conn.lastText());
       expect(text).not.toContain("Chronicle\n");
     });

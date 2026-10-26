@@ -108,7 +108,7 @@ export function createWorldMcpServer(
         : undefined;
     return runCmd(
       extra,
-      `context api ${JSON.stringify({ query, budgetBytes: 2048 })}`,
+      `memory context api ${JSON.stringify({ query, budgetBytes: 2048 })}`,
       preferences,
       "context",
     );
@@ -268,7 +268,7 @@ export function createWorldMcpServer(
         extra,
         mode === "off"
           ? "help context"
-          : `context api ${JSON.stringify({ query, scope, budgetBytes })}`,
+          : `memory context api ${JSON.stringify({ query, scope, budgetBytes })}`,
         { mode, query, scope, budgetBytes },
         "context",
       );

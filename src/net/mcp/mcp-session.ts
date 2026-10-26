@@ -175,7 +175,7 @@ export async function cmdTool(
     if (
       options?.mode === "auto" &&
       !extra.signal?.aborted &&
-      !cmd.replace(/^\//, "").startsWith("context ") &&
+      !/^(memory\s+)?context\s/i.test(cmd.replace(/^\//, "")) &&
       !result.isError
     ) {
       try {

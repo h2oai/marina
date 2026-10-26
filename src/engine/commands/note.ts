@@ -13,6 +13,7 @@ import {
   status,
 } from "../../net/ansi";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
+import type { CommandUsage } from "../../sdk/command-forms";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { tryLog } from "../errors";
 import { Logger } from "../logger";
@@ -197,6 +198,59 @@ function parseNoteText(input: string): {
   return { content: text, importance, noteType };
 }
 
+/** `note` forms; `memory note …` (src/engine/command-families.ts) shares them. */
+export const NOTE_USAGE: CommandUsage[] = [
+  { syntax: "note <text>", effect: "write" },
+  { syntax: "note <text> [importance N] [type T]", effect: "write" },
+  { syntax: "note <text> importance <N> type <type>", effect: "write" },
+  {
+    syntax: "note claim <text> [confidence:0..1] [source:URL]",
+    effect: "write",
+    fields: { confidence: { kind: "number", min: 0, max: 1 } },
+  },
+  {
+    syntax: "note claim <text> [confidence:0..1] [source:URL] [observed:YYYY-MM-DD]",
+    effect: "write",
+    fields: { confidence: { kind: "number", min: 0, max: 1 } },
+  },
+  { syntax: "note consolidate <keeper-id> <duplicate-id> [duplicate-id ...]", effect: "write" },
+  { syntax: "note contradictions", effect: "read" },
+  { syntax: "note correct <id> <new text>", effect: "write" },
+  { syntax: "note correct <id> <text>", effect: "write" },
+  { syntax: "note delete <id>", effect: "delete" },
+  { syntax: "note derive <your-note-id> <source-note-id>", effect: "write" },
+  { syntax: "note evolve <id>", effect: "write" },
+  { syntax: "note explain <id>", effect: "read" },
+  { syntax: "note graph", effect: "read" },
+  { syntax: "note link <id1> <id2> <rel>", effect: "write" },
+  { syntax: "note link <id1> <id2> <relationship>", effect: "write" },
+  { syntax: "note list", effect: "read" },
+  { syntax: "note resolve <case-id> both <evidence-backed rationale>", effect: "write" },
+  { syntax: "note resolve <case-id> left <evidence-backed rationale>", effect: "write" },
+  { syntax: "note resolve <case-id> neither <evidence-backed rationale>", effect: "write" },
+  { syntax: "note resolve <case-id> right <evidence-backed rationale>", effect: "write" },
+  { syntax: "note room", effect: "read" },
+  { syntax: "note search <query>", effect: "read" },
+  {
+    syntax:
+      "note source <your-note-id> <url|note:id|asset:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]",
+    effect: "write",
+  },
+  { syntax: "note trace <id>", effect: "read" },
+  { syntax: "note types", effect: "read" },
+  { syntax: "note unlink <id1> <id2> <rel>", effect: "delete" },
+  { syntax: "note unlink <id1> <id2> <relationship>", effect: "delete" },
+  // No `verified` form: an author cannot self-verify (see NOTE_VERIFY_USAGE).
+  ...["disputed", "unverified"].map((verdict) => ({
+    syntax: `note verify <your-note-id> ${verdict} [<confidence> [<rationale>]]`,
+    effect: "write" as const,
+    fields: {
+      confidence: { kind: "number" as const, min: 0, max: 1 },
+      rationale: { multiline: true },
+    },
+  })),
+];
+
 export function noteCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
@@ -204,57 +258,7 @@ export function noteCommand(deps: {
 }): CommandDef {
   return {
     category: "Memory",
-    usage: [
-      { syntax: "note <text>", effect: "write" },
-      { syntax: "note <text> [importance N] [type T]", effect: "write" },
-      { syntax: "note <text> importance <N> type <type>", effect: "write" },
-      {
-        syntax: "note claim <text> [confidence:0..1] [source:URL]",
-        effect: "write",
-        fields: { confidence: { kind: "number", min: 0, max: 1 } },
-      },
-      {
-        syntax: "note claim <text> [confidence:0..1] [source:URL] [observed:YYYY-MM-DD]",
-        effect: "write",
-        fields: { confidence: { kind: "number", min: 0, max: 1 } },
-      },
-      { syntax: "note consolidate <keeper-id> <duplicate-id> [duplicate-id ...]", effect: "write" },
-      { syntax: "note contradictions", effect: "read" },
-      { syntax: "note correct <id> <new text>", effect: "write" },
-      { syntax: "note correct <id> <text>", effect: "write" },
-      { syntax: "note delete <id>", effect: "delete" },
-      { syntax: "note derive <your-note-id> <source-note-id>", effect: "write" },
-      { syntax: "note evolve <id>", effect: "write" },
-      { syntax: "note explain <id>", effect: "read" },
-      { syntax: "note graph", effect: "read" },
-      { syntax: "note link <id1> <id2> <rel>", effect: "write" },
-      { syntax: "note link <id1> <id2> <relationship>", effect: "write" },
-      { syntax: "note list", effect: "read" },
-      { syntax: "note resolve <case-id> both <evidence-backed rationale>", effect: "write" },
-      { syntax: "note resolve <case-id> left <evidence-backed rationale>", effect: "write" },
-      { syntax: "note resolve <case-id> neither <evidence-backed rationale>", effect: "write" },
-      { syntax: "note resolve <case-id> right <evidence-backed rationale>", effect: "write" },
-      { syntax: "note room", effect: "read" },
-      { syntax: "note search <query>", effect: "read" },
-      {
-        syntax:
-          "note source <your-note-id> <url|note:id|asset:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]",
-        effect: "write",
-      },
-      { syntax: "note trace <id>", effect: "read" },
-      { syntax: "note types", effect: "read" },
-      { syntax: "note unlink <id1> <id2> <rel>", effect: "delete" },
-      { syntax: "note unlink <id1> <id2> <relationship>", effect: "delete" },
-      // No `verified` form: an author cannot self-verify (see NOTE_VERIFY_USAGE).
-      ...["disputed", "unverified"].map((verdict) => ({
-        syntax: `note verify <your-note-id> ${verdict} [<confidence> [<rationale>]]`,
-        effect: "write" as const,
-        fields: {
-          confidence: { kind: "number" as const, min: 0, max: 1 },
-          rationale: { multiline: true },
-        },
-      })),
-    ],
+    usage: NOTE_USAGE,
     name: "note",
     aliases: [],
     help: "Private numbered notes, kept as durable records (typed records: memory remember|query). Usage: note <text> | note claim <text> [confidence:0..1] [source:URL] (also trailing `confidence 0.9 source URL`) | note explain|verify|source|contradictions|consolidate ... | note list (ls) | note delete <id> (rm/remove)",

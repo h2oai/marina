@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { buildUnifiedContext, renderUnifiedContext } from "../../memory/unified-context";
 import type { MarinaDB } from "../../persistence/database";
+import type { CommandUsage } from "../../sdk/command-forms";
 import type { CommandDef, Entity, EntityId } from "../../types";
 import { getErrorMessage } from "../errors";
 import { currentEvidenceCutoffMs, entityEvidenceFence } from "../evidence-fence";
@@ -56,6 +57,12 @@ export async function previewParticipantContext(
   };
 }
 
+/** `context` forms; `memory context …` (src/engine/command-families.ts) shares them. */
+export const CONTEXT_USAGE: CommandUsage[] = [
+  { syntax: "context <query>", effect: "read" },
+  { syntax: "context api <JSON>", effect: "read" },
+];
+
 /** Inspection uses the same retrieval policy as prompt context, without recall rewards. */
 export function contextCommand(deps: {
   db?: MarinaDB;
@@ -66,10 +73,7 @@ export function contextCommand(deps: {
     category: "Memory",
     minRank: 0,
     help: "Preview your own query-specific memory context without awarding recall credit. Usage: context <query>\ncontext api <JSON> — query, scope (all/evidence), budgetBytes (256–16384), request_id. This is a preview, not another participant's prompt or a historical delivery receipt.",
-    usage: [
-      { syntax: "context <query>", effect: "read" },
-      { syntax: "context api <JSON>", effect: "read" },
-    ],
+    usage: CONTEXT_USAGE,
     handler: async (ctx, input) => {
       if (!input.args.trim()) {
         ctx.send(input.entity, "Usage: context <query> | context api <JSON>");

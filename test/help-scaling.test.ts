@@ -122,7 +122,7 @@ describe("help command scaling", () => {
   it("help all is the full grouped dump", () => {
     const text = run("help all");
     expect(text).toContain("Available Commands");
-    for (const name of ["look", "say", "note", "recall", "agent"]) {
+    for (const name of ["look", "say", "memory", "agent"]) {
       expect(text).toMatch(new RegExp(`^\\s+${name}\\b`, "m"));
     }
     expect(text.split("\n").length).toBeGreaterThan(engine.commands.allBuiltins().length);

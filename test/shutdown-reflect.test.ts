@@ -65,24 +65,24 @@ describe("LeanAgentAdapter.stop() session-end reflection", () => {
   it("individual stop: `reflect --no-spawn` — a running helper may take the topic, never a new one", async () => {
     const { adapter, sent } = makeAdapter("ender-a");
     await adapter.stop();
-    const reflects = sent.filter((c) => c.startsWith("reflect"));
+    const reflects = sent.filter((c) => c.startsWith("memory reflect"));
     expect(reflects).toHaveLength(1);
-    expect(reflects[0]).toMatch(/^reflect --no-spawn Session ended: /);
+    expect(reflects[0]).toMatch(/^memory reflect --no-spawn Session ended: /);
   });
 
   it("shutdown (stopAll): `reflect --template` — deterministic, no job, no helper", async () => {
     const { adapter, sent } = makeAdapter("ender-b");
     await adapter.stop({ shutdown: true });
-    const reflects = sent.filter((c) => c.startsWith("reflect"));
+    const reflects = sent.filter((c) => c.startsWith("memory reflect"));
     expect(reflects).toHaveLength(1);
-    expect(reflects[0]).toMatch(/^reflect --template Session ended: /);
+    expect(reflects[0]).toMatch(/^memory reflect --template Session ended: /);
   });
 
   it("never sends the bare (auto-spawning) form", async () => {
     for (const shutdown of [false, true]) {
       const { adapter, sent } = makeAdapter(`ender-c-${shutdown}`);
       await adapter.stop({ shutdown });
-      expect(sent.some((c) => /^reflect (Session|$)/.test(c))).toBe(false);
+      expect(sent.some((c) => /^(memory )?reflect (Session|$)/.test(c))).toBe(false);
     }
   });
 });
