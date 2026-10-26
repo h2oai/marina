@@ -156,10 +156,10 @@ describe("scope helpers and defaults", () => {
     expect(visibleTo(["scope:owner:alice"], "ann")).toBe(false);
   });
 
-  it("live route evidence is on unless explicitly off; acting stays observe by default", () => {
+  it("live route evidence is on unless explicitly off; acting is on by default", () => {
     expect(routeEvidenceSettingsFromEnv({}).live).toBe(true);
     expect(routeEvidenceSettingsFromEnv({ MARINA_ROUTE_EVIDENCE_LIVE: "off" }).live).toBe(false);
-    expect(routeEvidenceSettingsFromEnv({}).mode).toBe("observe");
+    expect(routeEvidenceSettingsFromEnv({}).mode).toBe("on");
   });
 });
 

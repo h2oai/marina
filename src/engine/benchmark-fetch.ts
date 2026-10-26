@@ -12,7 +12,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { MARINA_ROOT } from "../runtime-paths";
+import { bunScriptArgv, MARINA_ROOT } from "../runtime-paths";
 import { benchmarkEntry } from "./benchmark-registry";
 import { getErrorMessage } from "./errors";
 
@@ -46,7 +46,7 @@ export const spawnDatasetFetch: DatasetFetcher = async (key) => {
       output: `the benchmark downloader is not part of this install (${DATASET_FETCH_SCRIPT})`,
     };
   try {
-    const proc = Bun.spawn(["bun", DATASET_FETCH_SCRIPT, key], {
+    const proc = Bun.spawn([...bunScriptArgv(), DATASET_FETCH_SCRIPT, key], {
       cwd: MARINA_ROOT,
       env: process.env,
       stdout: "pipe",

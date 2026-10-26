@@ -40,8 +40,8 @@
  * and a crew formation is a `marina:<crew>` analyst — both compose with these.
  * A failed member or match drops out (a match falls to the first proposal);
  * with fewer than two usable runs every formation returns the runs' answer.
- * The catalogue implementation reproduces the pre-catalogue one exactly
- * (`test/formation-equivalence-typed.test.ts`).
+ * Held by behaviour tests (`test/formation-behaviour.test.ts`), not frozen
+ * bytes: prompts and answers may change when a measurement says they should.
  */
 
 import {

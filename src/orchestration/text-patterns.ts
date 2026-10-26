@@ -22,8 +22,8 @@
  *
  * Pure: every model call goes through the injected `complete`, every dollar
  * is counted on the injected `SpendGuard`, so the protocols are testable
- * without an engine. The catalogue implementation reproduces the
- * pre-catalogue one exactly (`test/formation-equivalence-text.test.ts`).
+ * without an engine. Held by behaviour tests (`test/patterns-run.test.ts`),
+ * not frozen bytes.
  */
 
 import { getErrorMessage } from "../engine/errors";

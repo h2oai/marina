@@ -787,6 +787,17 @@ Replayed terminal events do not retrain twice. Directly addressed events always 
 > agent config Scout key my-key               Reconfigure agent API key
 ```
 
+The native agent supervisor (Claude Code, Codex, pi) can run inside the server, so no
+`marina supervise` process has to stay open. A person starts it in a configured code root. It holds
+a routing-only credential issued to that person, and launches go through
+**Workspace → Streams**. See [participant routing](participant-routing.md#work-from-the-dashboard).
+
+```
+> supervisor start root:my-project label:Desk   Start it (person only; agent.spawn; code roots)
+> supervisor                                    Status: owner, root, installed agents
+> supervisor stop                               Stop its agents, revoke its credential
+```
+
 Models use `provider/model` format. Supported providers: anthropic, openai, google, groq, openrouter, huggingface, cerebras, xai, mistral, deepseek. Hugging Face models are addressed by Hub id — `huggingface/zai-org/GLM-5.3-Flash`, optionally with a serving suffix (`:fastest`, `:cheapest`, `:<provider>`); set `HUGGINGFACE_API_KEY` or `HF_TOKEN`.
 
 Recruitment is availability- and evidence-aware:
@@ -840,6 +851,7 @@ graded by their target: the judge is `judge:<model>`, else `MARINA_BENCHMARK_JUD
 | `benchmark eligible [board]` | Read-only: per promoted slot, the configurations whose holdout evidence would pass the promotion rule now, with every other candidate it read counted as tried. Files nothing; promotion stays `benchmark promote` |
 | `benchmark challenge <slot> <run>` | Dry run against the slot's incumbent on the SELECTION split only (the holdout stays unread); shows what promotion would need |
 | `benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]` | Seed an empty slot, or replace the incumbent only if the challenger earns it on the holdout: same benchmark, judge and items; paired 95 % interval above 0; a margin that grows with every attempt. The challenger needs `MARINA_PROMOTION_MIN_REPLICATES` replicates (default 2) before the holdout is read. Needs `role.edit`; never the challenger's own author |
+| `benchmark promote <slot> upstream` | Adopt an imported bundle's seed for a slot that chooses a model. Such a seed is withheld until adopted, with one `ops inbox` approval per slot and value. A person holding `role.edit` only, never an agent; recorded with basis `upstream`. For a `role-model` slot the model id works too |
 | `benchmark invalidate <run> reason:<text>` | Retire a run that measured the infrastructure rather than the target (spend cap, outage, mostly fallbacks): status `invalid`, items kept, an append-only audit row with who, when and why. Every ranking, pooling, comparison, promotion and route-evidence reader skips it; `runs` and `result` show it marked with the reason. An invalidated incumbent does not free its slot: a challenger must beat the best earlier incumbent still valid on the holdout, and the account that invalidated it can neither promote into the slot nor author the challenger. Needs `role.edit` |
 | `benchmark revalidate <run> reason:<text>` | Undo an invalidation, audited the same way. Needs `role.edit`; never the run's own author |
 

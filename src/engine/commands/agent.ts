@@ -34,8 +34,11 @@ const REQUIRES_BUILDER_RANK =
 const SPAWN_USAGE =
   "Usage: agent spawn <name> [model <model>] [role <role>] [key <key>] [budget <n-calls>] [thinking:off|low|medium|high] [goal <goal>]";
 
-/** Modifier grammar for `agent spawn` (`thinking:high`, `--thinking high`, `budget:30`). */
+/** Modifier grammar for `agent spawn` (`model:x`, `role:y`, `thinking:high`, `--thinking high`, `budget:30`). */
 const SPAWN_MODIFIER_SPEC: ModifierSpec = {
+  model: { type: "string" },
+  role: { type: "string" },
+  key: { type: "string" },
   thinking: { type: "string", aliases: ["think", "reasoning"] },
   budget: { type: "int" },
 };
@@ -75,10 +78,10 @@ export function parseSpawnOptions(tokens: readonly string[]): SpawnOptions | { e
     }
   }
   const out: SpawnOptions = {
-    model: words.model,
-    role: words.role,
+    model: mods.raw.model ?? words.model,
+    role: mods.raw.role ?? words.role,
     goal: words.goal,
-    key: words.key,
+    key: mods.raw.key ?? words.key,
   };
   const budgetRaw = mods.raw.budget ?? words.budget;
   if (budgetRaw !== undefined) {

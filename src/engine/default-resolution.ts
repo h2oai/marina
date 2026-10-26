@@ -25,7 +25,11 @@
  *                  a seed never answers while its slot has a local row), or a
  *                  source registered with `setUpstreamSeedSource` (tests). A
  *                  database that never imported a bundle has no seeds, so its
- *                  trace is unchanged.
+ *                  trace is unchanged. A seed for a slot that chooses a model
+ *                  (every class but memory-ranking,
+ *                  `src/learned/upstream-model-seeds.ts`) is WITHHELD under
+ *                  `MARINA_UPSTREAM_MODEL_SEEDS=propose` (the default): traced
+ *                  `withheld`, never served, until a person adopts it.
  *   5. builtin   — the caller's built-in value (today's behaviour).
  *
  * A slot whose incumbent run was invalidated rests on no evidence and is
@@ -40,6 +44,7 @@
  * behaviour before this module existed.
  */
 
+import { withholdsUpstreamSeed } from "../learned/upstream-model-seeds";
 import { upstreamSeedFor } from "../learned/upstream-seed";
 import type { BenchmarkDefaultRow, BenchmarkRunRow } from "../persistence/db-benchmarks";
 import type { UpstreamDefaultSeedRow } from "../persistence/db-learned";
@@ -89,7 +94,8 @@ export interface DefaultSpec<T> {
 export interface ConsultedLayer {
   layer: DefaultSource;
   key: string;
-  outcome: "answered" | "unset" | "invalidated" | "unreadable" | "unavailable";
+  /** `withheld`: an upstream seed for a model-selecting slot, pending local approval. */
+  outcome: "answered" | "unset" | "invalidated" | "unreadable" | "unavailable" | "withheld";
 }
 
 export interface DefaultResolution<T> {
@@ -104,6 +110,8 @@ export interface DefaultResolution<T> {
   /** One line: who answered and why the earlier layers did not. */
   reason: string;
   consulted: ConsultedLayer[];
+  /** Upstream seeds withheld pending local approval (`<slot>@upstream:<version>`). */
+  withheld?: string[];
 }
 
 const FAMILY_SEGMENT = "family";
@@ -198,7 +206,8 @@ export function resolveDefault<T>(spec: DefaultSpec<T>): DefaultResolution<T> {
   ): DefaultResolution<T> => {
     const skipped = consulted
       .filter((c) => c.outcome !== "answered")
-      .map((c) => `${c.key} ${c.outcome}`);
+      .map((c) => `${c.key} ${c.outcome === "withheld" ? "withheld pending approval" : c.outcome}`);
+    const withheld = consulted.filter((c) => c.outcome === "withheld").map((c) => c.key);
     const r: DefaultResolution<T> = {
       slot: spec.slot,
       ...(spec.surface ? { surface: spec.surface } : {}),
@@ -206,6 +215,7 @@ export function resolveDefault<T>(spec: DefaultSpec<T>): DefaultResolution<T> {
       source,
       key,
       ...extra,
+      ...(withheld.length ? { withheld } : {}),
       reason: `${source} ${key}${skipped.length ? ` (before it: ${skipped.join(", ")})` : ""}`,
       consulted,
     };
@@ -265,6 +275,11 @@ export function resolveDefault<T>(spec: DefaultSpec<T>): DefaultResolution<T> {
       const value = seed ? spec.read(seed.value) : undefined;
       if (seed && value !== undefined) {
         const key = `${s.key}@upstream:${seed.version}`;
+        if (withholdsUpstreamSeed(s.key)) {
+          // A seed that chooses a model waits for a local person to adopt it.
+          consulted.push({ layer: "upstream", key, outcome: "withheld" });
+          continue;
+        }
         consulted.push({ layer: "upstream", key, outcome: "answered" });
         return done(value, "upstream", key);
       }

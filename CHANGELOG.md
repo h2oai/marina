@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **An imported bundle's seed no longer picks a model without a local person.** Upstream seeds
+  for default slots that choose a model (every slot class except `memory-ranking`:
+  `role-model:*`, `verify:checker`, `forecast-config*`, crew slots, run-target slots) are withheld
+  by `resolveDefault` (traced `withheld` on `default_resolved`) and each slot+value raises one
+  `ops inbox` approval. A person holding `role.edit` adopts it with
+  `benchmark promote <slot> upstream` (the model id works for a `role-model` slot), filed through
+  `fileSlotPromotion` with basis `upstream` and the bundle's artifact, version, item and value
+  digest; an agent never adopts one. `MARINA_UPSTREAM_MODEL_SEEDS=serve` restores direct serving.
+  Non-model seeds are served as before.
+
 - **Agents holding sentinel gate grants are a critical readiness line.** `gate-sentinels` is
   raised as a critical `ops inbox` alert while any agent account holds an operator-grant sentinel
   row, and names the reset (`gate reset agents all apply`, from an interactive person session).
@@ -88,6 +98,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   continuation prompt (`[Standing]`) show that line, adding the earn line when the agent has no
   goal or focus. The standing rules, caps and history are unchanged.
 
+- **The formation catalogue is held by behaviour, not frozen bytes.** The migration-era
+  equivalence tests (`formation-equivalence-typed`, `-text`, and the catalogue half of `-arena`)
+  and their frozen pre-catalogue copies are removed, so the catalogue's prompts and answers can
+  change when a measurement says they should. `test/formation-behaviour.test.ts` asserts what the
+  formations must do: determinism given the same replies, research before any analyst, delphi's
+  anonymous revision after every first answer, n − 1 refereed tournament matches, one skeptic call
+  after the proposals, the typed combiners' math, and the arena move cap and blowup bound on the
+  stored rounds. The resident Scores are checked by shape. The ten arena formations still on
+  their own code stay byte-identical to their frozen copy (`test/arena-formations-legacy.test.ts`)
+  until they move to the catalogue.
+- **Spawn-time route evidence is on by default** (`MARINA_ROUTE_EVIDENCE`, was `observe`). A
+  `model:route` spawn takes the evidence's pick only when at least two of its own candidates have
+  `MARINA_ROUTE_EVIDENCE_MIN_N` items (benchmark ledger or shared live work); otherwise, and on
+  any error, the router's choice stands as before. `observe` keeps the old record-only behaviour.
+- **The learning-loop test closes every hop.** `test/learning-loop-closed.test.ts` now also shows
+  the route changing under the default configuration and a role's default model changing by
+  earned promotion: the live pass raises one proposal from person-approved work, and a person
+  holding `role.edit` files it with `benchmark promote role-model:<role> <model>`.
 - **One judge service.** The challenge judge, the task-submission verifier, the attention judges,
   the outcome judges and the Arbiter now record every opinion and its later ground truth in one
   ledger (`judge_ledger`, migration 179). The migration copies the rows already kept in
@@ -290,6 +318,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **In-world benchmarks work from a fresh install run from any directory.** The harness, the
+  dataset downloader and the reproduction kit now start with the server's own Bun, so `bun` no
+  longer has to be on `PATH`. They also start with `--no-env-file`, so they see the server's
+  settings and not the `.env` of the checkout they run in. Without `MARINA_DATA_DIR`, run result
+  files go to `data/benchmark-results` beside the world's other state, not to a checkout-shaped
+  `benchmarks/results` in the working directory. A test boots a fresh world in a temporary
+  directory and goes from `benchmark list` to a ledger row using only in-world commands.
+- **`agent spawn` no longer drops `model:`, `role:` and `key:`.** The spawn options accepted only
+  the word pairs (`model x role y`) for these three; the documented `key:value` form (and
+  `--model x`, `role=y`) was silently ignored, so the agent got the default model and no role.
 - **`memory query` and `memory search` lead with each record's own id.** One line per result
   (`id <record id> · memory show <record id>`, subject, a short preview) comes before the JSON
   dump, whose first id is the space's. The dump and the structured payload are unchanged.
@@ -510,6 +548,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The server can run the native agent supervisor itself (`supervisor start|stop|status`).** No
+  `marina supervise` process needs to stay open. A person starts it in a configured code root; an
+  agent never can. Starting it needs `agent.spawn` and is refused over telnet. It holds a
+  routing-only supervision credential issued to that person, renewed at 80 % and revoked on stop.
+  Its routing calls reach the server's own routing API over loopback under the same scope and
+  limits as an external supervisor. Launches from Streams still need `code.exec` and
+  `agent.spawn`. Native agents get only locale, path and terminal variables: no server keys or
+  secrets. A shutdown stops its agents and keeps the start, so the next boot resumes it
+  (`MARINA_SUPERVISOR_AUTOSTART=resume|off|person:<name>`). Readiness `supervised-residents`
+  reports whether it runs.
 - **`benchmark fetch <name>` downloads one benchmark's dataset from inside the world.** It runs
   the harness downloader (`benchmarks/download-all.ts <name>`, which now takes registry keys) in
   the background and messages the requester when it is done. Rank 4, like benchmark runs;

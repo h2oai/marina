@@ -369,6 +369,7 @@ export const EVIDENCE_FENCE_POLICY: Readonly<Record<string, FenceRule>> = {
   probe: "refuse",
   watch: "refuse",
   schedule: "refuse",
+  supervisor: "refuse",
   search: "refuse",
   bookmark: "refuse",
   reflect: "refuse",

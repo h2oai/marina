@@ -732,6 +732,8 @@ export type EngineEvent =
       key: string;
       value: string;
       incumbentRunId?: string;
+      /** Upstream model seeds withheld pending local approval (`<slot>@upstream:<version>`). */
+      withheld?: string[];
       reason: string;
       timestamp: number;
     }

@@ -16,10 +16,11 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { bunScriptArgv, MARINA_ROOT } from "../runtime-paths";
 import { getErrorMessage } from "./errors";
 
 /** Repository root (the kit and `scripts/repro.ts` live under it). */
-const REPO = resolve(import.meta.dir, "../..");
+const REPO = MARINA_ROOT;
 
 /** Flags the in-world command may pass to the kit, and the kit's spelling of each. */
 export const KIT_FLAGS: Record<string, string> = {
@@ -83,7 +84,7 @@ export async function kitCapture(
   timeoutMs = 120_000,
 ): Promise<{ code: number; output: string }> {
   try {
-    const proc = Bun.spawn(["bun", "run", "scripts/repro.ts", ...argv], {
+    const proc = Bun.spawn([...bunScriptArgv(), "run", "scripts/repro.ts", ...argv], {
       cwd: REPO,
       env: process.env,
       stdout: "pipe",
@@ -162,7 +163,7 @@ export function startKitJob(opts: {
   };
   jobs.set(id, job);
   const fd = openSync(logFile, "a");
-  const proc = Bun.spawn(["bun", "run", "scripts/repro.ts", ...argv], {
+  const proc = Bun.spawn([...bunScriptArgv(), "run", "scripts/repro.ts", ...argv], {
     cwd: REPO,
     env,
     stdout: fd,

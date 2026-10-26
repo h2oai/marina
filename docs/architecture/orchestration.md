@@ -134,24 +134,33 @@ Where each surface stands:
 | Surface | Runs from the catalogue | Notes |
 |---|---|---|
 | Typed forecasts (`src/forecast/formations.ts`, `skeptic.ts`) | ensemble, delphi, tournament, skeptic | Round one is the typed pipeline (the template's `research` + `f1…fK`). The rest runs as the template's Score, each member step going to that run's own part. |
-| Resident forecasts (`src/forecast/resident-forecast.ts`) | all four | Each forecaster slot is `role:`, `marina:` or `model:` (`assigneePart`). The referee and the skeptic are the pipeline's critic. The ensemble and delphi Scores are byte-identical to the pre-catalogue ones. |
+| Resident forecasts (`src/forecast/resident-forecast.ts`) | all four | Each forecaster slot is `role:`, `marina:` or `model:` (`assigneePart`). The referee and the skeptic are the pipeline's critic. The ensemble and delphi Scores are the catalogue's templates. |
 | Free-text patterns (`text-patterns.ts`: `pattern run`, `/v1/patterns/run`) | all eight | Members are the operator's models. Crew-only patterns are refused, and the catalogue gives the reason. |
-| Arena (`src/arena/formations.ts`) | ensemble, delphi | The other ten arena formations run their own protocols on the shared clamps. Moving them is a follow-up, held byte-identical meanwhile. |
+| Arena (`src/arena/formations.ts`) | ensemble, delphi | The other ten arena formations run their own protocols on the shared clamps. Moving them is a follow-up; until then they are held byte-identical to their own pre-catalogue code. |
 | Crews (`crew-formations.ts`, project templates) | none (crew protocols) | `crewFormationEntry` names each brief's entry, and `ORCHESTRATION_TEMPLATES` maps every template by name. |
 
-Equivalence is enforced, not assumed. The pre-catalogue implementations are frozen in
-`test/fixtures/formations-legacy/`. Given the same model replies, the catalogue reproduces them
-exactly, compared as JSON with key order and as the ordered list of every prompt:
+The catalogue is held by behaviour, not by frozen bytes. Its prompts and answers may change; a
+change meant to improve answers is measured (benchmarks, resolved outcomes), not pinned. The tests
+assert what a formation must do:
 
-- `test/formation-equivalence-typed.test.ts`: 4 formations × 7 answer types, with failures and junk
-  replies.
-- `test/formation-equivalence-text.test.ts`: 8 patterns × member counts × budgets × aborts.
-- `test/formation-equivalence-arena.test.ts`: all 12 arena formations on the stored rounds
-  (`test/fixtures/formations/arena-rounds.json`), with out-of-order replies.
+- `test/formation-behaviour.test.ts`: every typed formation × answer type is deterministic given the
+  same replies, well-formed with failed and junk replies, and researches before any analyst is
+  asked; delphi revises only after every first answer and never shows names; a tournament plays
+  n − 1 refereed matches; the skeptic is asked once, after the proposals; the combiners' math
+  (delphi medians, the referee's pick, the skeptic's trust, blowup bound, sd floor and
+  informative-prior rule); the catalogue's arena formations cap the move and drop blowups on the
+  stored rounds (`test/fixtures/formations/arena-rounds.json`).
+- `test/formation-catalogue.test.ts`: a brief, a template, `PATTERN_FIT`, `TEXT_PATTERNS`,
+  `CREW_ONLY_PATTERNS`, the typed list or the arena list drifting from the catalogue; templates that
+  stop instantiating to valid Scores; the resident Scores' shape; `model:` and `role:` slots giving
+  the plain formation's answer.
+- Per-protocol examples: `test/forecast-formations.test.ts`, `test/patterns-run.test.ts`,
+  `test/arena-formations.test.ts`.
 
-`test/formation-catalogue.test.ts` fails when a brief, a template, `PATTERN_FIT`, `TEXT_PATTERNS`,
-`CREW_ONLY_PATTERNS`, the typed list or the arena list drifts from the catalogue. Never edit a frozen
-fixture to make a test pass.
+The ten arena formations still on their own code are the one frozen comparison:
+`test/arena-formations-legacy.test.ts` holds them byte-identical to
+`test/fixtures/arena-formations-legacy.ts` until they move to the catalogue. Never edit that fixture
+to make the test pass.
 
 Follow-ups:
 

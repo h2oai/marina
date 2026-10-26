@@ -6,8 +6,9 @@
  * formation, one description each, and every surface named after it agrees
  * with it — the crew briefs, the project templates, `PATTERN_FIT`, the text
  * patterns, the typed formations and the arena's. Templates instantiate to
- * valid Scores; the resident Scores are byte-identical to the pre-catalogue
- * ones; `model:` and `role:` assignees run the same template.
+ * valid Scores; the resident Scores have the formation's shape (research,
+ * independent runs, delphi's anonymous summary and revisions, one pure-code
+ * combine); `model:` and `role:` assignees run the same template.
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
@@ -48,7 +49,6 @@ import {
   PATTERN_FIT,
   type TemplatePattern,
 } from "../src/world/templates/orchestration";
-import { legacyResidentForecastScore } from "./fixtures/formations-legacy/resident-score";
 
 /** The patterns with a project template: every crew formation but `freeform` (the blank slate). */
 const crewPatterns = ORCHESTRATION_PATTERNS.filter((p): p is TemplatePattern => p !== "freeform");
@@ -194,15 +194,43 @@ describe("templates", () => {
 });
 
 describe("the resident Scores are the catalogue's templates", () => {
-  it("ensemble and delphi instantiate exactly as before the catalogue", () => {
+  it("ensemble and delphi: research, 1–7 independent runs, delphi's summary and revisions, one combine", () => {
     for (const pattern of ["ensemble", "delphi"] as const)
       for (const k of [0, 1, 2, 2.6, 3, 7, 9])
         for (const assignee of [undefined, "marina:crewx", "role:analyst", "model:vendor/x"]) {
-          expect(residentForecastScore(pattern, k, assignee)).toEqual(
-            legacyResidentForecastScore(pattern, k, assignee),
+          const where = `${pattern} k=${k} ${assignee}`;
+          const score = residentForecastScore(pattern, k, assignee);
+          expect(validateScore(score), where).toBeNull();
+          expect(score.id).toBe(`forecast-${pattern}`);
+          expect(residentForecastScore(pattern, k, assignee, "custom-id").id).toBe("custom-id");
+          const n = Math.max(1, Math.min(7, Math.round(k)));
+          expect(score.goal, where).toBe(`Resident forecast (${pattern}, ${n} residents)`);
+          const ids = score.steps.map((s) => s.id);
+          const runs = Array.from({ length: n }, (_, i) => `f${i + 1}`);
+          const revisions = Array.from({ length: n }, (_, i) => `v${i + 1}`);
+          expect(ids, where).toEqual(
+            pattern === "delphi"
+              ? ["research", ...runs, "summary", ...revisions, "combine"]
+              : ["research", ...runs, "combine"],
           );
-          expect(residentForecastScore(pattern, k, assignee, "custom-id")).toEqual(
-            legacyResidentForecastScore(pattern, k, assignee, "custom-id"),
+          const step = (id: string) => score.steps.find((s) => s.id === id)!;
+          // Research and combine are the pipeline's; every run (and revision) is the assignee's.
+          expect(step("research").assignee).toBe("model:marina-forecast");
+          expect(step("research").access).toEqual([]);
+          expect(step("combine").assignee).toBe("model:marina-forecast");
+          for (const id of [...runs, ...(pattern === "delphi" ? revisions : [])])
+            expect(step(id).assignee, where).toBe(assignee ?? "role:forecaster");
+          // Runs are independent: each reads the research only.
+          for (const id of runs) expect(step(id).access, where).toEqual(["research"]);
+          if (pattern === "delphi") {
+            // The summary reads every run; a revision reads the summary and its own run only.
+            expect(step("summary").access).toEqual(runs);
+            for (let i = 0; i < n; i++)
+              expect(step(`v${i + 1}`).access).toEqual(["summary", `f${i + 1}`]);
+          }
+          // The combine reads every step but the research.
+          expect(step("combine").access, where).toEqual(
+            ids.filter((id) => id !== "research" && id !== "combine"),
           );
         }
   });

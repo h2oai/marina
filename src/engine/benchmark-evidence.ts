@@ -19,7 +19,8 @@
  * model may be invisible, so its record is its own name.
  *
  * Spawn-time `model:route` consults this evidence (`MARINA_ROUTE_EVIDENCE`,
- * default `observe`: recorded on the route decision, never applied; `on` acts).
+ * default `on`: applied when at least two candidates have enough evidence, else
+ * the router's choice stands; `observe` only records the pick on the decision).
  * Families are `MARINA_ROUTE_EVIDENCE_FAMILIES`, else the role's own declared
  * `families` expanded to the benchmarks tagged with them (`evidenceFamilies`).
  * Only the route's own candidate models with at least `minN` items in the
@@ -76,14 +77,17 @@ export const DEFAULT_ROUTE_EVIDENCE_TOLERANCE = 0.05;
 /** `value`: a paired loss at least this significant (two-sided exact McNemar) is "worse". */
 export const VALUE_PAIRED_ALPHA = 0.05;
 
-/** Parse the evidence settings. Invalid values fall back to the safe default (observe / unset). */
+/** Parse the evidence settings. An invalid mode is `observe`; other invalid values are unset. */
 export function routeEvidenceSettingsFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): RouteEvidenceSettings {
   const raw = env.MARINA_ROUTE_EVIDENCE?.trim().toLowerCase();
-  // `observe` by default: it records what the evidence would pick and never
-  // changes a route. Only an explicit `on` acts; `off` skips the lookup.
-  const mode: RouteEvidenceMode = raw === "off" || raw === "on" ? raw : "observe";
+  // `on` by default: a spawn-time route takes the evidence's pick only when
+  // at least two candidates clear the minimum n, and fails open to the
+  // router's choice otherwise. `observe` records the pick without acting;
+  // `off` skips the lookup. Junk is `observe`.
+  const mode: RouteEvidenceMode =
+    raw === undefined || raw === "" ? "on" : raw === "off" || raw === "on" ? raw : "observe";
   const n = Number.parseInt(env.MARINA_ROUTE_EVIDENCE_MIN_N ?? "", 10);
   const budget = Number.parseFloat(env.MARINA_ROUTE_EVIDENCE_MAX_COST_USD ?? "");
   const obj = env.MARINA_ROUTE_EVIDENCE_OBJECTIVE?.trim().toLowerCase();
@@ -98,7 +102,7 @@ export function routeEvidenceSettingsFromEnv(
     tolerance:
       Number.isFinite(tol) && tol >= 0 && tol <= 1 ? tol : DEFAULT_ROUTE_EVIDENCE_TOLERANCE,
     // On unless explicitly off: live work is more evidence for the same rule,
-    // recorded only under the default `observe`, and person-scoped work never
+    // and person-scoped work never
     // enters it (`src/outcomes/evidence.ts`).
     live: env.MARINA_ROUTE_EVIDENCE_LIVE?.trim().toLowerCase() !== "off",
   };
