@@ -376,6 +376,9 @@ import type { AdapterLinkRow, AdapterUserMappingRow, BanRow, UserRow } from "./d
 
 // ─── Database Class ──────────────────────────────────────────────────────────
 
+/** How long a connection waits for another process's lock before failing. */
+const OPEN_BUSY_TIMEOUT_MS = 5000;
+
 export class MarinaDB implements MarinaStores {
   compactMemoryReceipts(options: Parameters<typeof compactMemoryReceipts>[1]) {
     return compactMemoryReceipts(this.db, options);
@@ -394,13 +397,15 @@ export class MarinaDB implements MarinaStores {
     this.db = new Database(path);
     let reader: Database | undefined;
     try {
+      // First, before any statement that takes a lock: another process opening
+      // the same database at the same moment makes us wait, not fail.
+      this.db.exec(`PRAGMA busy_timeout=${OPEN_BUSY_TIMEOUT_MS}`);
       configureMemoryStorage(this.db, options.memoryLimits ?? memoryLimitsFromEnv());
       this.db.exec("PRAGMA journal_mode=WAL");
       this.db.exec(
         this.durability === "full" ? "PRAGMA synchronous=FULL" : "PRAGMA synchronous=NORMAL",
       );
       this.db.exec("PRAGMA foreign_keys=ON");
-      this.db.exec("PRAGMA busy_timeout=5000"); // Wait up to 5s for locks instead of failing immediately
       this.db.exec("PRAGMA cache_size=-64000"); // 64MB page cache (negative = KB)
       this.db.exec("PRAGMA mmap_size=268435456"); // 256MB memory-mapped I/O for reads
       this.db.exec("PRAGMA temp_store=MEMORY"); // Keep temp tables in memory
@@ -419,6 +424,7 @@ export class MarinaDB implements MarinaStores {
       // A second :memory: connection is a different, empty database. Ephemeral
       // callers share the writer; durable databases retain their read-only handle.
       reader = path === ":memory:" ? this.db : new Database(path, { readonly: true });
+      reader.exec(`PRAGMA busy_timeout=${OPEN_BUSY_TIMEOUT_MS}`);
       reader.exec("PRAGMA mmap_size=268435456");
       reader.exec("PRAGMA cache_size=-64000");
       this.reader = reader;

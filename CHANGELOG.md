@@ -345,6 +345,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Opening a world database another process is opening waits instead of failing.** The busy
+  timeout is now the first statement on a new connection (and is set on the read-only one too).
+  It used to follow `PRAGMA journal_mode=WAL`, so a server and a CLI opening the same database
+  at the same moment could fail at once with `SQLITE_BUSY`.
 - **Every command refusal is recorded as failed usage, not only task, project and pool ones.**
   A usage error, an unknown subcommand, a missing target, a permission or state refusal now sets
   `primitive_usage.success` and the command's activity row to failure, so an agent's refused
