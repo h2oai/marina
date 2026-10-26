@@ -54,7 +54,11 @@
  * the total of every process sharing it.
  */
 
+import { getErrorMessage } from "./errors";
+import { Logger } from "./logger";
 import { openSharedSpendLedger, sharedSpendLedgerPath } from "./shared-spend-ledger";
+
+const logger = new Logger();
 
 /** Where a dollar left Marina. `search` is a paid search API call (Tavily, Exa) — migration 158. */
 export type SpendSource = "model_api" | "agent" | "decision" | "forecast" | "media" | "search";
@@ -123,14 +127,176 @@ function readScopeTotal(scope: string): number {
 /** Connect persistence; the owner must release it before closing its database.
  * Releasing an older attachment cannot detach a newer world's ledger. */
 export function attachSpendLedger(next: SpendSink): () => void {
-  const attachment = { target: next };
+  const target = isDurable(next) ? next : durableSpendSink(next, "ledger");
+  const attachment = { target };
   sink = attachment;
   currentDay = "";
   roll(Date.now());
   readTotal();
   return () => {
+    // Last chance for increments a failed write left pending.
+    target.flush();
     if (sink === attachment) sink = undefined;
   };
+}
+
+/*
+ * Money already spent is never dropped. A write that fails on a busy or
+ * locked database is retried a few times (bounded, synchronous); one that
+ * still fails is kept as a PENDING increment of this process: it is counted
+ * in every total the cap and the readouts see (so the cap still bites), and
+ * written on the next successful write (or the attachment's release). An
+ * entry leaves the pending list only after its write committed — each write
+ * is one transaction, so a failed write changed nothing and a retry or a
+ * flush never counts a dollar twice. Scope and purpose rows travel with
+ * their entry, so they get the same treatment as the global total.
+ */
+interface PendingSpend {
+  day: string;
+  source: SpendSource;
+  usd: number;
+  scope?: string;
+  purpose?: string;
+}
+
+/** Back-off between attempts at a busy/locked write (ms; ≈ 75 ms in all). */
+const BUSY_RETRY_DELAYS_MS = [5, 20, 50] as const;
+
+const defaultRetrySleep = (ms: number): void => Bun.sleepSync(ms);
+let retrySleep: (ms: number) => void = defaultRetrySleep;
+
+/** True for SQLite's transient lock errors (another writer holds the database). */
+export function isTransientSpendWriteError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && /^SQLITE_(?:BUSY|LOCKED)/.test(code)) return true;
+  return /database (?:table )?is locked|database is busy|SQLITE_BUSY|SQLITE_LOCKED/i.test(
+    getErrorMessage(error),
+  );
+}
+
+function writeWithRetry(write: () => void): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      write();
+      return;
+    } catch (error) {
+      const delay = BUSY_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !isTransientSpendWriteError(error)) throw error;
+      retrySleep(delay);
+    }
+  }
+}
+
+interface DurableSpendSink extends SpendSink {
+  /** Write pending increments; true when none is left. */
+  flush(): boolean;
+  /** Increments for `day` not yet written to the ledger the cap reads. */
+  pendingFor(day: string): PendingSpend[];
+}
+
+const durable = new WeakSet<SpendSink>();
+
+function isDurable(s: SpendSink): s is DurableSpendSink {
+  return durable.has(s);
+}
+
+function sumPending(entries: PendingSpend[], scope?: string): number {
+  let usd = 0;
+  for (const e of entries) {
+    if (scope === undefined || e.scope === scope || e.purpose === scope) usd += e.usd;
+  }
+  return usd;
+}
+
+/** Pending entries as `spend_scope_daily`-shaped rows (scope and purpose rows). */
+function pendingScopeRows(entries: PendingSpend[]): { scope: string; cost_usd: number }[] {
+  const rows: { scope: string; cost_usd: number }[] = [];
+  for (const e of entries) {
+    if (e.scope) rows.push({ scope: e.scope, cost_usd: e.usd });
+    if (e.purpose) rows.push({ scope: e.purpose, cost_usd: e.usd });
+  }
+  return rows;
+}
+
+function durableSpendSink(
+  inner: SpendSink,
+  label: string,
+  onError?: (error: unknown) => void,
+): DurableSpendSink {
+  const pending: PendingSpend[] = [];
+  const write = (e: PendingSpend) =>
+    writeWithRetry(() => inner.add(e.day, e.source, e.usd, e.scope, e.purpose));
+  const report = (error: unknown, what: string) => {
+    logger.warn("spend", `Daily spend ${what}; kept pending and counted toward the cap`, {
+      ledger: label,
+      pendingUsd: sumPending(pending),
+      pendingWrites: pending.length,
+      error: getErrorMessage(error),
+    });
+    onError?.(error);
+  };
+  const flush = (): boolean => {
+    let written = 0;
+    while (pending.length > 0) {
+      try {
+        write(pending[0]!);
+      } catch (error) {
+        report(error, "not flushed");
+        return false;
+      }
+      pending.shift();
+      written++;
+    }
+    if (written > 0)
+      logger.info("spend", "Pending daily spend written", { ledger: label, written });
+    return true;
+  };
+  const pendingFor = (day: string) => pending.filter((e) => e.day === day);
+  const out: DurableSpendSink = {
+    add: (day, source, usd, scope, purpose) => {
+      const entry: PendingSpend = { day, source, usd, scope, purpose };
+      try {
+        write(entry);
+      } catch (error) {
+        pending.push(entry);
+        report(error, "not recorded");
+        return;
+      }
+      if (pending.length > 0) flush();
+    },
+    totalFor: (day) => inner.totalFor(day) + sumPending(pendingFor(day)),
+    flush,
+    pendingFor,
+    ...(inner.sharedPath ? { sharedPath: inner.sharedPath } : {}),
+  };
+  const scopeTotalFor = inner.scopeTotalFor?.bind(inner);
+  if (scopeTotalFor) {
+    out.scopeTotalFor = (day, scope) =>
+      scopeTotalFor(day, scope) + sumPending(pendingFor(day), scope);
+  }
+  const scopeRowsFor = inner.scopeRowsFor?.bind(inner);
+  if (scopeRowsFor) {
+    out.scopeRowsFor = (day) => [...scopeRowsFor(day), ...pendingScopeRows(pendingFor(day))];
+  }
+  durable.add(out);
+  return out;
+}
+
+/** This process's unwritten increments for the day, as scope rows (readouts merge them). */
+function attachedPendingScopeRows(day: string): { scope: string; cost_usd: number }[] {
+  const target = sink?.target;
+  return target && isDurable(target) ? pendingScopeRows(target.pendingFor(day)) : [];
+}
+
+/** Dollars this process spent today that are not yet written to the ledger the cap reads. */
+export function pendingSpendUsd(now = Date.now()): number {
+  const target = sink?.target;
+  return target && isDurable(target) ? sumPending(target.pendingFor(utcDay(now))) : 0;
+}
+
+/** Test hook: replace the synchronous back-off between busy retries (undefined = default). */
+export function setSpendRetrySleepForTests(sleep?: (ms: number) => void): void {
+  retrySleep = sleep ?? defaultRetrySleep;
 }
 
 /** The persistence a database-backed sink needs (`MarinaDB` fits). */
@@ -194,32 +360,35 @@ export function attachWorldSpendLedger(
   opts: WorldSpendLedgerOptions = {},
 ): () => void {
   const path = sharedSpendLedgerPath(opts.env ?? process.env);
-  if (!path) return db ? attachSpendLedger(dbSpendSink(db, opts.onError)) : () => {};
+  if (!path) {
+    if (!db) return () => {};
+    return attachSpendLedger(durableSpendSink(dbSpendSink(db), "world", opts.onError));
+  }
   const shared = openSharedSpendLedger(path);
-  const world = db ? dbSpendSink(db) : undefined;
-  const release = attachSpendLedger({
+  // Each ledger keeps its own pending increments, so a write that reached one
+  // and not the other is retried only where it failed (never counted twice).
+  const sharedSink = durableSpendSink(shared, "shared", opts.onError);
+  const world = db ? durableSpendSink(dbSpendSink(db), "world", opts.onError) : undefined;
+  const composite: DurableSpendSink = {
     add: (day, source, usd, scope, purpose) => {
-      let failure: unknown;
-      try {
-        shared.add(day, source, usd, scope);
-      } catch (error) {
-        failure = error;
-      }
-      try {
-        // Purpose rows are a per-world breakdown; the shared file keeps totals and caps.
-        world?.add(day, source, usd, scope, purpose);
-      } catch (error) {
-        failure ??= error;
-      }
-      if (failure === undefined) return;
-      if (!opts.onError) throw failure;
-      opts.onError(failure);
+      sharedSink.add(day, source, usd, scope);
+      // Purpose rows are a per-world breakdown; the shared file keeps totals and caps.
+      world?.add(day, source, usd, scope, purpose);
     },
-    totalFor: (day) => shared.totalFor(day),
-    scopeTotalFor: (day, scope) => shared.scopeTotalFor?.(day, scope) ?? 0,
-    scopeRowsFor: (day) => shared.scopeRowsFor(day),
+    totalFor: (day) => sharedSink.totalFor(day),
+    scopeTotalFor: (day, scope) => sharedSink.scopeTotalFor?.(day, scope) ?? 0,
+    scopeRowsFor: (day) => sharedSink.scopeRowsFor?.(day) ?? [],
     sharedPath: shared.path,
-  });
+    flush: () => {
+      const sharedDone = sharedSink.flush();
+      const worldDone = world?.flush() ?? true;
+      return sharedDone && worldDone;
+    },
+    // The cap reads the shared file, so its pending entries are the ones that count.
+    pendingFor: (day) => sharedSink.pendingFor(day),
+  };
+  durable.add(composite);
+  const release = attachSpendLedger(composite);
   return () => {
     release();
     shared.close();
@@ -263,12 +432,9 @@ export function recordSpend(
   today += usd;
   if (name) scopeToday.set(name, (scopeToday.get(name) ?? 0) + usd);
   const label = purpose && PURPOSE_NAME.test(purpose) ? `${PURPOSE_PREFIX}${purpose}` : undefined;
-  try {
-    sink?.target.add(currentDay, source, usd, name, label);
-  } catch {
-    // Persisting is best effort (the engine's sink already logs failures);
-    // the best known total still enforces the cap.
-  }
+  // The attached sink never throws: a failed write stays pending in it and
+  // counts toward every total until a later write lands it.
+  sink?.target.add(currentDay, source, usd, name, label);
 }
 
 /** The reserved scope prefix of a purpose row (`purpose:lessons`). */
@@ -297,7 +463,8 @@ export function purposeSpendToday(
   now = Date.now(),
 ): { purpose: string; spentUsd: number }[] {
   const by = new Map<string, number>();
-  for (const row of db.getScopeDailySpend(utcDay(now))) {
+  const day = utcDay(now);
+  for (const row of [...db.getScopeDailySpend(day), ...attachedPendingScopeRows(day)]) {
     if (!row.scope.startsWith(PURPOSE_PREFIX)) continue;
     const purpose = row.scope.slice(PURPOSE_PREFIX.length);
     by.set(purpose, (by.get(purpose) ?? 0) + row.cost_usd);
@@ -329,7 +496,11 @@ export function scopeSpendToday(
 ): { scope: string; spentUsd: number }[] {
   const by = new Map<string, number>();
   const day = utcDay(now);
-  const rows = sink?.target.scopeRowsFor?.(day) ?? db.getScopeDailySpend(day);
+  // A sink's own rows already include its pending entries.
+  const rows = sink?.target.scopeRowsFor?.(day) ?? [
+    ...db.getScopeDailySpend(day),
+    ...attachedPendingScopeRows(day),
+  ];
   for (const row of rows) {
     // Purpose rows are a breakdown of the world total, not a budget scope.
     if (row.scope.startsWith(PURPOSE_PREFIX)) continue;
@@ -575,6 +746,7 @@ export function formatSpendUsd(usd: number): string {
 
 export function resetSpendLedgerForTests(): void {
   sink = undefined;
+  retrySleep = defaultRetrySleep;
   currentDay = "";
   today = 0;
   scopeToday.clear();
