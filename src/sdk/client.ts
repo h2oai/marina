@@ -100,14 +100,19 @@ export class CommandError extends Error {
     message: string,
     readonly perceptions: Perception[] = [],
   ) {
-    const partial = perceptions
+    const texts = perceptions
       .map((p) => p.data.text ?? p.data.message)
-      .filter((text): text is string => typeof text === "string")
-      .join("\n\n");
+      .filter((text): text is string => typeof text === "string");
+    // The refusal's own message usually also arrives as output (often with a
+    // next step appended): state it once, as the headline, not as "partial".
+    const head = message.trim();
+    const echo = head ? texts.find((text) => text.trim().startsWith(head)) : undefined;
+    const partial = texts.filter((text) => text !== echo && text.trim() !== head).join("\n\n");
+    const headline = echo?.trim() ?? message;
     super(
       partial
-        ? `${message}\n\nPartial command output (completed actions are not rolled back):\n${partial}`
-        : message,
+        ? `${headline}\n\nPartial command output (completed actions are not rolled back):\n${partial}`
+        : headline,
     );
     this.name = "CommandError";
   }

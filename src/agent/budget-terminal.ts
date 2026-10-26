@@ -59,6 +59,25 @@ export interface BudgetForced {
  */
 export const SPEND_STOP_EVENT_CONTEXT = "spend-stop";
 
+/**
+ * Calls past a per-run tool cap that still run: the steer at 75 % asks the
+ * agent to finish the step or leave its state, so the calls that do exactly
+ * that — submit the result, write a note, set focus or rest — are not cut
+ * off. Bounded; the run ends after the turn anyway.
+ */
+export const RUN_CAP_CLOSING_GRACE = 3;
+
+/** Whether a tool call only hands in work or records the agent's own state. */
+export function closingToolCall(name: string, args: Record<string, unknown>): boolean {
+  const action = typeof args.action === "string" ? args.action.toLowerCase() : "";
+  if (name === "memory") return action === "write" || action === "rest";
+  if (name === "marina_focus") return action === "set";
+  if (name === "marina_task") return action === "submit";
+  if (name !== "marina_command") return false;
+  const command = typeof args.command === "string" ? args.command.trim() : "";
+  return /^(memory\s+(set|note)\s|note\s|task\s+submit\s)/i.test(command);
+}
+
 /** The first use count at which a loop with `cap` is steered (≥ 1, < cap when cap > 1). */
 export function budgetSteerAt(cap: number, fraction = BUDGET_STEER_FRACTION): number {
   return Math.max(1, Math.ceil(cap * fraction));

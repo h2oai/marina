@@ -265,7 +265,11 @@ function sendCompass(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Brie
     // Staffing signal: projects with more open tasks than members
     if (deps.taskManager && deps.groupManager) {
       const needHelp = countUnderstaffedProjects(db, deps.taskManager, deps.groupManager);
-      if (needHelp > 0) parts.push(`${A.yellow}${needHelp} need help${A.reset}`);
+      // A count, not a command: name the projects' readout.
+      if (needHelp > 0)
+        parts.push(
+          `${A.yellow}${needHelp} understaffed project${needHelp === 1 ? "" : "s"}${A.reset} (project list)`,
+        );
     }
 
     const pools = db.listMemoryPools();

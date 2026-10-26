@@ -641,7 +641,8 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       (p) => {
         const action = p.action as string;
         const pool = p.pool as string | undefined;
-        const content = p.content as string | undefined;
+        // `query` is the spelling other recall tools use; accept it for recall.
+        const content = (p.content ?? (p as { query?: unknown }).query) as string | undefined;
         const imp = p.importance as number | undefined;
         if (action === "list") return "pool list";
         if (!pool)
