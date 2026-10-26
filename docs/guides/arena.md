@@ -62,7 +62,9 @@ commands registered in every world, including the default Workbench, and filing 
 operator CLI (`bun run arena`), not a room. What matters is the database: the submission ledger,
 shadow rows and discovery notes live in `DB_PATH`, which the server's autopilot and the CLI share.
 Keep one `DB_PATH` for all arena work — starting a different world on a fresh database splits the
-ledger. The `markets` and `prediction-lab` worlds add binary yes/no market rooms, which do not
+ledger. The CLI refuses a `DB_PATH` (default `marina.db` in the working directory) that does not
+exist yet, since an empty ledger would read as "nothing filed, no route evidence"; pass `--new-db`
+to start one on purpose. The `markets` and `prediction-lab` worlds add binary yes/no market rooms, which do not
 match the arena's continuous, profile and ranking targets.
 
 ## Filing

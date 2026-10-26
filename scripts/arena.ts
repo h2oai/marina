@@ -44,7 +44,9 @@
  *
  * Reads MARINA_ARENA_* from the environment (.env). Submissions are recorded in
  * the world database (DB_PATH) so the server's autopilot and this CLI share one
- * ledger and never double-file.
+ * ledger and never double-file. A command that opens it refuses a database that
+ * does not exist yet (an empty ledger reads as "no filings, no evidence") unless
+ * `--new-db` asks for one.
  */
 
 import { closeSync, mkdtempSync, openSync, writeSync } from "node:fs";
@@ -79,6 +81,7 @@ import {
 } from "../src/arena/service";
 import { settleArenaFilings } from "../src/arena/settle";
 import { buildForecastBody, dueRounds, submitRound } from "../src/arena/submit";
+import { arenaWorldDbPath, missingWorldDbRefusal } from "../src/arena/world-db";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { getErrorMessage } from "../src/engine/errors";
 import { vendorModelSpec } from "../src/net/model/default-models";
@@ -109,6 +112,7 @@ const { positionals, values } = parseArgs({
     signal: { type: "string", multiple: true },
     hours: { type: "string" },
     "budget-minutes": { type: "string" },
+    "new-db": { type: "boolean" },
   },
 });
 const [cmd = "status", arg] = positionals;
@@ -138,14 +142,22 @@ function weightFlag(): number | undefined {
 /** Commands that can call a model (forecast, research, evaluate, propose). */
 const SPENDING_COMMANDS = new Set(["submit", "evaluate", "research", "shadow", "discover"]);
 
+/** The world database; a missing one is refused unless `--new-db` (an empty ledger misleads). */
+function worldDbPath(): string {
+  const path = arenaWorldDbPath(process.env);
+  const refusal = missingWorldDbRefusal(path, { allowNew: values["new-db"] === true });
+  if (refusal) throw new Error(refusal);
+  return path;
+}
+
 function openDb(): MarinaDB {
-  return new MarinaDB(process.env.DB_PATH || "marina.db");
+  return new MarinaDB(worldDbPath());
 }
 
 async function main(): Promise<number> {
   // Model-backed forecasters spend: count it in the world's daily ledger.
   if (cmd && SPENDING_COMMANDS.has(cmd)) {
-    attachCliSpendLedger(`bun run arena ${cmd}`, { dbPath: process.env.DB_PATH || "marina.db" });
+    attachCliSpendLedger(`bun run arena ${cmd}`, { dbPath: worldDbPath() });
   }
   const windowNotice = arenaWindowNotice();
   if (windowNotice) console.error(`warning: ${windowNotice}`);
