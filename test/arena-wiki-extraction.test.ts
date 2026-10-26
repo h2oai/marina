@@ -82,7 +82,7 @@ describe("knob", () => {
     expect(() => parseExtractorList("edits,vibes")).toThrow(/unknown extractor "vibes"/);
     const s = extractionSettings({ MARINA_ARENA_WIKI_EXTRACTORS: "events,news" });
     expect(s.extractors).toEqual(["events", "news"]);
-    expect(s.model).toBe("openrouter/deepseek/deepseek-v4.1-flash");
+    expect(s.model).toBe("openrouter/deepseek/deepseek-v4.1-flash-1017");
     expect(s.top).toBe(30);
     expect(extractionSettings({}).extractors).toEqual([]);
   });

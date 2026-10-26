@@ -28,7 +28,7 @@ import { createTestEngine } from "./engine-fixture";
 import { scopeProcessState } from "./process-state";
 
 const OR = { OPENROUTER_API_KEY: "sk-or" };
-const CHEAP_OR = "openrouter/deepseek/deepseek-v4.1-flash";
+const CHEAP_OR = "openrouter/deepseek/deepseek-v4.1-flash-1017";
 
 describe("tier aliases", () => {
   it("recognises marina/cheap, marina:cheap, bare cheap (any case) and the strong forms", () => {
@@ -45,7 +45,7 @@ describe("the cheap tier", () => {
   it("built-in: the first provider with a key, OpenRouter's DeepSeek flash first", () => {
     expect(BUILTIN_CHEAP_MODELS[0]).toEqual({
       provider: "openrouter",
-      model: "deepseek/deepseek-v4.1-flash",
+      model: "deepseek/deepseek-v4.1-flash-1017",
     });
     expect(builtinCheapModel({ env: { ...OR, ANTHROPIC_API_KEY: "a" } }).model).toBe(CHEAP_OR);
     expect(builtinCheapModel({ env: { ANTHROPIC_API_KEY: "a" } }).model).toBe(

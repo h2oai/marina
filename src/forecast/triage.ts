@@ -50,7 +50,7 @@ export type TriageClass = (typeof TRIAGE_CLASSES)[number];
 export type TriageMode = "off" | "observe" | "on";
 
 /** The cheap fact model's default (OpenRouter). `none` = fully deterministic. */
-export const DEFAULT_TRIAGE_MODEL = "openrouter/deepseek/deepseek-v4.1-flash";
+export const DEFAULT_TRIAGE_MODEL = "openrouter/deepseek/deepseek-v4.1-flash-1017";
 
 /** `MARINA_FORECAST_TRIAGE`: `observe` or `on`; anything else (unset included) is `off`. */
 export function triageModeFromEnv(env: NodeJS.ProcessEnv = process.env): TriageMode {

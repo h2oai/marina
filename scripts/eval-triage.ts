@@ -229,11 +229,11 @@ if (fbRows.length) {
   json.forecastbench = fbRows;
 }
 
-const perItem = factModelCostPerItem({ inputPerM: 0.3, outputPerM: 1.2 });
+const perItem = factModelCostPerItem({ inputPerM: 0.15, outputPerM: 0.6 });
 md.push(
   "## The optional fact model",
   "",
-  `Not run (no paid calls). Estimated cost with the default deepseek-v4.1-flash ($0.30/M in, $1.20/M out; ~700 in + ~220 out tokens): $${perItem.toFixed(5)} per item, $${(perItem * 1000).toFixed(2)} per 1,000 items.`,
+  `Not run (no paid calls). Estimated cost with the default deepseek-v4.1-flash-1017 ($0.15/M in, $0.60/M out; ~700 in + ~220 out tokens): $${perItem.toFixed(5)} per item, $${(perItem * 1000).toFixed(2)} per 1,000 items.`,
   "",
   `Classes: ${TRIAGE_CLASSES.join(", ")}. Deterministic mode at each item's own cutoff.`,
 );

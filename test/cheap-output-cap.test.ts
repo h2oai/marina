@@ -49,7 +49,7 @@ import { type EngineEvent, roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
-const CHEAP = "deepseek/deepseek-v4.1-flash";
+const CHEAP = "deepseek/deepseek-v4.1-flash-1017";
 const REASONING_BUDGET = Math.floor(DEFAULT_CHEAP_OUTPUT_CAP_TOKENS * 0.75);
 
 describe("the cheap tier's output cap setting", () => {
