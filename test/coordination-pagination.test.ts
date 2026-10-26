@@ -6,9 +6,9 @@ import { Engine } from "../src/engine/engine";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_coordination_pagination.db";
+const TEST_DB = tempDbPath("test_coordination_pagination.db");
 
 /**
  * The Coordination panel's lists/detail views "load more" instead of silently

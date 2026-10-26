@@ -6,9 +6,9 @@ import { Engine } from "../src/engine/engine";
 import { setRank } from "../src/engine/permissions";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_playground.db";
+const TEST_DB = tempDbPath("test_playground.db");
 
 // ─── Experiment Tests ───────────────────────────────────────────────────────
 

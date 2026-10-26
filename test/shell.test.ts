@@ -8,9 +8,16 @@ import { revoke } from "../src/engine/safety-gates";
 import { ShellRuntime } from "../src/engine/shell-runtime";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, grantAllGates, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import {
+  cleanupDb,
+  grantAllGates,
+  MockConnection,
+  makeTestRoom,
+  stripAnsi,
+  tempDbPath,
+} from "./helpers";
 
-const TEST_DB = "test_shell.db";
+const TEST_DB = tempDbPath("test_shell.db");
 const SCRATCH_ROOT = "test_scratch";
 
 describe("Shell", () => {

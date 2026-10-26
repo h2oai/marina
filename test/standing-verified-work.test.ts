@@ -28,9 +28,9 @@ import { resolveForecast } from "../src/outcomes/forecast";
 import { creditVerifiedCode } from "../src/outcomes/live";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_standing_verified_work.db";
+const TEST_DB = tempDbPath("test_standing_verified_work.db");
 
 describe("standing is earned by verified work", () => {
   let db: MarinaDB;

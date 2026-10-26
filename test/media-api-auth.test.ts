@@ -8,9 +8,9 @@ import { handleModelApi } from "../src/net/model/model-api";
 import type { MediaJobRow } from "../src/persistence/database";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_media_api_auth.db";
+const TEST_DB = tempDbPath("test_media_api_auth.db");
 
 /** A fake server exposing the real socket peer IP (like Bun's `server.requestIP`). */
 function peerServer(ip: string | undefined): { requestIP?: (req: Request) => { address: string } } {

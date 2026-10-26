@@ -14,10 +14,10 @@ import { pruneRequestImageBlobs, REQUEST_IMAGE_KEEP_MS } from "../src/engine/ret
 import { inlineScriptHashesFor } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { LocalStorageProvider } from "../src/storage/local-provider";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
 const DAY = 86_400_000;
-const path = "test_asset_bytes_delete.db";
+const path = tempDbPath("test_asset_bytes_delete.db");
 
 describe("LocalStorageProvider.delete", () => {
   let dir: string;

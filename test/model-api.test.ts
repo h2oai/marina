@@ -29,9 +29,9 @@ import {
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_model_api.db";
+const TEST_DB = tempDbPath("test_model_api.db");
 
 function makeRequest(
   path: string,
@@ -1980,7 +1980,7 @@ describe("tryVerifiedArithmetic", () => {
 // ─── Passthru memory gateway — injection on all four proxy surfaces ──────────
 
 describe("passthru memory gateway", () => {
-  const GATEWAY_DB = "test_model_api_gateway.db";
+  const GATEWAY_DB = tempDbPath("test_model_api_gateway.db");
   const PROVIDER_ENV = [
     ...modelSourceEnvKeys(),
     "CEREBRAS_API_KEY",

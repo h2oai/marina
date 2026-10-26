@@ -6,9 +6,9 @@ import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import type { EngineEvent } from "../src/types";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_coordination_change.db";
+const TEST_DB = tempDbPath("test_coordination_change.db");
 
 /**
  * The dashboard's Coordination panel refreshes its lists live off a single

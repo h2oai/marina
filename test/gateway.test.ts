@@ -10,10 +10,17 @@ import { __setDnsResolverForTest } from "../src/net/url-guard";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaClient } from "../src/sdk/client";
 import { roomId } from "../src/types";
-import { cleanupDb, grantAllGates, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import {
+  cleanupDb,
+  grantAllGates,
+  MockConnection,
+  makeTestRoom,
+  stripAnsi,
+  tempDbPath,
+} from "./helpers";
 import { scopeProcessState } from "./process-state";
 
-const TEST_DB = "test_gateway.db";
+const TEST_DB = tempDbPath("test_gateway.db");
 
 describe("Gateway Command", () => {
   let processState: DisposableStack | undefined;

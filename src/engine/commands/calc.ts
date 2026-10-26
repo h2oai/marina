@@ -49,24 +49,72 @@ async function evalInline(source: string): Promise<EvalResult> {
  * server's event loop, one expensive call (`rationalize`, `simplify` or `solve`
  * of a large expression) freezes every agent, room and HTTP request. Each
  * evaluation therefore runs in a worker, which is terminated at this deadline.
+ * The clock starts once the worker has loaded mathjs and said so: loading takes
+ * about a second idle and several on a loaded machine, and must not eat into
+ * the time an expression is given.
  */
 export const CALC_TIMEOUT_MS = 10_000;
+/** Separate, generous bound for a new worker to load mathjs and report ready. */
+export const CALC_LOAD_TIMEOUT_MS = 60_000;
 const CALC_POOL_SIZE = 2;
+const DEFAULT_CALC_WORKER_URL = new URL("./calc-worker.ts", import.meta.url).href;
 
 interface CalcSlot {
   worker: Worker;
+  /** Resolves `null` once the worker reported ready, or an error message if it failed first. */
+  ready: Promise<string | null>;
   busy: boolean;
 }
 
 const slots: CalcSlot[] = [];
 const waiting: Array<() => void> = [];
 let nextRequestId = 0;
+let calcWorkerUrl = DEFAULT_CALC_WORKER_URL;
 
-function newCalcWorker(): Worker {
-  const worker = new Worker(new URL("./calc-worker.ts", import.meta.url).href);
+function newCalcWorker(): Pick<CalcSlot, "worker" | "ready"> {
+  const worker = new Worker(calcWorkerUrl);
   // An idle worker never keeps the process alive.
   (worker as Worker & { unref?: () => void }).unref?.();
-  return worker;
+  const ready = new Promise<string | null>((resolve) => {
+    const done = (outcome: string | null): void => {
+      worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onError);
+      resolve(outcome);
+    };
+    const onMessage = (event: MessageEvent<{ ready?: boolean }>): void => {
+      if (event.data?.ready === true) done(null);
+    };
+    const onError = (event: ErrorEvent): void => done(`calc worker failed: ${event.message}`);
+    worker.addEventListener("message", onMessage);
+    worker.addEventListener("error", onError);
+  });
+  return { worker, ready };
+}
+
+/** Wait for the slot's worker to be ready, bounded by `loadTimeoutMs`. */
+async function awaitReady(slot: CalcSlot, loadTimeoutMs: number): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<string>((resolve) => {
+    timer = setTimeout(
+      () => resolve(`calc worker did not start within ${loadTimeoutMs} ms; try again.`),
+      loadTimeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([slot.ready, timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Test hook: terminate the pool (call it only while no evaluation is in
+ * flight) and spawn later workers from `workerUrl`, or the real calc worker
+ * when omitted.
+ */
+export function resetCalcPoolForTests(workerUrl?: string): void {
+  for (const slot of slots.splice(0)) slot.worker.terminate();
+  calcWorkerUrl = workerUrl ?? DEFAULT_CALC_WORKER_URL;
 }
 
 async function acquireSlot(): Promise<CalcSlot> {
@@ -77,7 +125,7 @@ async function acquireSlot(): Promise<CalcSlot> {
       return free;
     }
     if (slots.length < CALC_POOL_SIZE) {
-      const slot = { worker: newCalcWorker(), busy: true };
+      const slot = { ...newCalcWorker(), busy: true };
       slots.push(slot);
       return slot;
     }
@@ -88,20 +136,24 @@ async function acquireSlot(): Promise<CalcSlot> {
 function releaseSlot(slot: CalcSlot, replace: boolean): void {
   if (replace) {
     slot.worker.terminate();
-    slot.worker = newCalcWorker();
+    Object.assign(slot, newCalcWorker());
   }
   slot.busy = false;
   waiting.shift()?.();
 }
 
 /**
- * `evalExpression` bounded by `timeoutMs`, off the main thread. A timeout
- * terminates the worker (the pool replaces it) and returns an error result;
- * it never throws. Without worker support it falls back to the inline call.
+ * `evalExpression` bounded by `timeoutMs` of evaluation, off the main thread.
+ * A new worker first gets `loadTimeoutMs` to load mathjs; the evaluation
+ * deadline starts only after it reports ready, and the expression is not sent
+ * before then. A timeout terminates the worker (the pool replaces it) and
+ * returns an error result; it never throws. Without worker support it falls
+ * back to the inline call.
  */
 export async function evalExpressionBounded(
   source: string,
   timeoutMs = CALC_TIMEOUT_MS,
+  loadTimeoutMs = CALC_LOAD_TIMEOUT_MS,
 ): Promise<EvalResult> {
   if (typeof Worker === "undefined") return evalInline(source);
   let slot: CalcSlot;
@@ -110,6 +162,11 @@ export async function evalExpressionBounded(
   } catch {
     // No worker runtime in this process: evaluate inline, unbounded, as before.
     return evalInline(source);
+  }
+  const loadError = await awaitReady(slot, loadTimeoutMs);
+  if (loadError !== null) {
+    releaseSlot(slot, true);
+    return { outputs: [], error: loadError, durationMs: 0 };
   }
   const t0 = performance.now();
   const id = ++nextRequestId;

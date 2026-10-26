@@ -40,7 +40,7 @@ import {
   roomId,
 } from "../src/types";
 import { git, gitInit } from "./git-helpers";
-import { cleanupDb, stripAnsi } from "./helpers";
+import { cleanupDb, stripAnsi, tempDbPath } from "./helpers";
 
 const markers = (...names: string[]) => new Set(names);
 
@@ -693,7 +693,7 @@ MARINA_FAKE_CONTAINER=1 exec "$@"
 const IMAGE = "fake.local/img:1";
 
 describe("code verify (command level)", () => {
-  const DB = "test_code_verify_plan.db";
+  const DB = tempDbPath("test_code_verify_plan.db");
   let db: MarinaDB;
   let root: string;
   let bin: string;
@@ -946,7 +946,7 @@ describe("code verify (command level)", () => {
 });
 
 describe.skipIf(!Bun.which("go"))("code verify (Go fixture, real toolchain)", () => {
-  const DB = "test_code_verify_go.db";
+  const DB = tempDbPath("test_code_verify_go.db");
   let db: MarinaDB;
   let root: string;
   beforeEach(() => {

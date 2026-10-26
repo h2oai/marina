@@ -26,9 +26,9 @@ import {
   tierIds,
   type UnifiedFixture,
 } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_memory_as_of.db";
+const TEST_DB = tempDbPath("test_memory_as_of.db");
 const CUTOFF_MS = Date.parse("2026-06-01T00:00:00.000Z");
 const BEFORE = CUTOFF_MS - 10 * 86_400_000;
 const EARLIER = CUTOFF_MS - 20 * 86_400_000;

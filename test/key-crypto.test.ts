@@ -9,7 +9,7 @@ import {
   isEncryptedValue,
   isKeyEncryptionEnabled,
 } from "../src/persistence/key-crypto";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
 const SECRET = "test-secret-at-least-16-chars-long";
 
@@ -52,7 +52,7 @@ describe("key-crypto", () => {
 });
 
 describe("api_keys encryption at rest (DB)", () => {
-  const TEST_DB = "test_key_crypto.db";
+  const TEST_DB = tempDbPath("test_key_crypto.db");
   const prev = process.env.MARINA_KEY_SECRET;
   let db: MarinaDB;
 

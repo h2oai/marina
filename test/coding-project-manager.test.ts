@@ -11,9 +11,9 @@ import type { SandboxProvider } from "../src/coding/sandbox-provider";
 import { __setDnsResolverForTest } from "../src/net/url-guard";
 import { MarinaDB } from "../src/persistence/database";
 import { entityId } from "../src/types";
-import { cleanupDb, FAKE_SANDBOX_IDENTITY } from "./helpers";
+import { cleanupDb, FAKE_SANDBOX_IDENTITY, tempDbPath } from "./helpers";
 
-const DB_PATH = "test_coding_projects.db";
+const DB_PATH = tempDbPath("test_coding_projects.db");
 const OWNER = entityId("entity-1");
 
 afterEach(() => {

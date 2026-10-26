@@ -17,10 +17,10 @@ import { MarinaDB } from "../src/persistence/database";
 import { assetMimeForFile, mimeFromExtension } from "../src/storage/asset-mime";
 import { LocalStorageProvider } from "../src/storage/local-provider";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
-const TEST_DB = "test_asset_api.db";
+const TEST_DB = tempDbPath("test_asset_api.db");
 const ASSET_DIR = `/tmp/marina-asset-api-test-${process.pid}`;
 
 const PNG_MAGIC = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);

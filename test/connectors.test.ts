@@ -7,9 +7,9 @@ import { revoke } from "../src/engine/safety-gates";
 import { __setDnsResolverForTest } from "../src/net/url-guard";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, grantAllGates, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, grantAllGates, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_connectors.db";
+const TEST_DB = tempDbPath("test_connectors.db");
 
 describe("Connectors", () => {
   let db: MarinaDB;
