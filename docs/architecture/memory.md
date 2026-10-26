@@ -189,8 +189,17 @@ learning instead of losing it.
     judge and hourly budget as `noteOutcome`). The question is read back from the subject as
     private context.
     - An outcome over budget, or with learning not armed, waits.
-    - An outcome with no verdict is retried. After `MAX_DELIVERY_ATTEMPTS` it ends `failed`, with
-      the reason.
+    - With no model provider, or the daily spend cap reached, every outcome waits: no attempt, no
+      budget unit, no model call.
+    - When the writer or the judge gives no answer for a transient cause
+      (`src/learning/unavailable.ts`: the spend cap, HTTP 429/5xx, a timeout, a transport
+      failure), the outcome waits with no attempt spent, the reason names the kind, and the rest
+      of the pass waits too, so an outage costs at most one probe per pass.
+    - An outcome with no verdict for a cause that repeats (no rule written, an auth or request
+      refusal, a judge reply that is malformed — `invalid_response`) is retried. After
+      `MAX_DELIVERY_ATTEMPTS` it ends `failed`, with the reason and its kind.
+    - Each pass re-opens up to `REOPEN_SCAN` `failed` deliveries whose recorded reason was a
+      transient cause (`reopenTransientFailures`; idempotent): back to `pending`, attempts reset.
   - `history`: one `MARINA_FORECAST_HISTORY` record (`noteResolvedForecast` or
     `noteResolvedRecord`):
     - a typed answer's pre-adjustment forecast and prior;

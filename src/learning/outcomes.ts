@@ -25,9 +25,13 @@
  */
 
 import type { DecisionProvider, DecisionQuestions, NoulAnswer } from "../decisions/types";
+import { Logger } from "../engine/logger";
 import { rankSortKey, tokenJaccard } from "../memory/admission-policy";
 import { EVAL_REF_PREFIX } from "./eval-context";
 import { type CaseGuard, itemLeak } from "./leak-guard";
+import { classifyUnavailable, type Unavailable } from "./unavailable";
+
+const logger = new Logger();
 
 /**
  * Where a lesson is pooled. All except `meta` are producers (where an outcome came
@@ -368,7 +372,13 @@ async function askWriter(
   o: Outcome,
   writer: LessonWriter,
   scope: LessonScope,
-): Promise<{ category?: string; rule?: string; scope?: LessonScope; missing?: string }> {
+): Promise<{
+  category?: string;
+  rule?: string;
+  scope?: LessonScope;
+  missing?: string;
+  unavailable?: Unavailable;
+}> {
   try {
     const raw = await writer.complete(
       o.aggregateOf || AGGREGATE_SCOPES.has(scope) ? WRITER_SYSTEM_AGGREGATE : WRITER_SYSTEM_CASE,
@@ -400,7 +410,11 @@ async function askWriter(
       ...(LESSON_SCOPES.includes(named as LessonScope) ? { scope: named as LessonScope } : {}),
     };
   } catch (err) {
-    return { missing: `writer unavailable: ${clip(String((err as Error)?.message ?? err), 80)}` };
+    const unavailable = classifyUnavailable(err);
+    return {
+      missing: `writer unavailable (${unavailable.kind}): ${clip(unavailable.message, 80)}`,
+      unavailable,
+    };
   }
 }
 
@@ -412,6 +426,18 @@ async function askWriter(
  * never judged or stored (`recordOutcome` defers it).
  */
 export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): Promise<Lesson> {
+  return (await writeCandidate(o, writer)).lesson;
+}
+
+/**
+ * `candidateFromOutcome`, with why the writer gave no answer when it failed
+ * (`unavailable`, from its last ask) — what a durable caller waits on.
+ */
+async function writeCandidate(
+  o: Outcome,
+  writer?: LessonWriter,
+): Promise<{ lesson: Lesson; unavailable?: Unavailable }> {
+  let unavailable: Unavailable | undefined;
   let category: string | undefined;
   let rule: string | undefined;
   let scope: LessonScope = o.scope ?? defaultScope(o.domain);
@@ -422,6 +448,7 @@ export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): P
     for (let attempt = 0; attempt < (o.rule ? 1 : 2); attempt++) {
       const answer = await askWriter(o, writer, scope);
       missing = answer.missing;
+      unavailable = answer.unavailable;
       if (answer.scope) scope = answer.scope;
       if (answer.category) category = answer.category;
       if (!answer.rule) continue;
@@ -446,7 +473,7 @@ export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): P
     ...(writerNote ? { writer_note: writerNote } : {}),
     ...(rule ? {} : { no_rule: missing ?? "no rule" }),
   };
-  return {
+  const lesson: Lesson = {
     domain: o.domain,
     text: mechanicalText(o, category, rule),
     kind: o.succeeded ? "success" : "failure",
@@ -463,6 +490,7 @@ export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): P
     ...(o.scopeFamily ? { scopeFamily: o.scopeFamily } : {}),
     ...(Object.keys(provenance).length ? { provenance } : {}),
   };
+  return { lesson, ...(!rule && unavailable ? { unavailable } : {}) };
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
@@ -573,6 +601,8 @@ export interface LessonVerdict {
   costUsd?: number;
   /** Rejected by the mechanical case/item check (no judge asked; the text is withheld). */
   leak?: boolean;
+  /** The judge gave no answer: why (`classifyUnavailable`). */
+  unavailable?: Unavailable;
 }
 
 /**
@@ -667,8 +697,18 @@ export async function judgeLesson(
       ...(contests ? { contests } : {}),
       ...(result.costUsd === undefined ? {} : { costUsd: result.costUsd }),
     };
-  } catch {
-    return { trust: "unverified", reason: "decision backend unavailable" };
+  } catch (err) {
+    const unavailable = classifyUnavailable(err);
+    logger.warn("main", "lesson judge unavailable", {
+      kind: unavailable.kind,
+      transient: unavailable.transient,
+      error: unavailable.message,
+    });
+    return {
+      trust: "unverified",
+      reason: `decision backend unavailable (${unavailable.kind}: ${clip(unavailable.message, 100)})`,
+      unavailable,
+    };
   }
 }
 
@@ -1206,6 +1246,11 @@ export interface OutcomeRecord {
   metaId?: string;
   /** Not written: no verdict was reached and the caller asked to defer (`deferUnjudged`). */
   deferred?: boolean;
+  /**
+   * Deferred because the writer or the judge gave no answer: why. A durable
+   * caller waits on a `transient` cause without spending an attempt.
+   */
+  unavailable?: Unavailable;
   /** What admission did with the lesson (absent: no admission step). */
   admission?: string;
   /** The existing lesson a duplicate was merged into (nothing new was written). */
@@ -1224,7 +1269,10 @@ export async function recordOutcome(
   deps: OutcomeLearnerDeps,
   outcome: Outcome,
 ): Promise<OutcomeRecord> {
-  const candidate = await candidateFromOutcome(outcome, deps.writer);
+  const { lesson: candidate, unavailable: writerUnavailable } = await writeCandidate(
+    outcome,
+    deps.writer,
+  );
   // No rule, no lesson: a bare mechanical restatement is never judged or
   // stored. The outcome waits (a durable caller retries it later).
   if (!candidate.rule)
@@ -1233,6 +1281,7 @@ export async function recordOutcome(
       reason: `no rule (${candidate.provenance?.no_rule ?? "no writer"})`,
       lesson: candidate,
       deferred: true,
+      ...(writerUnavailable ? { unavailable: writerUnavailable } : {}),
     };
   let existing: Lesson[] = [];
   try {
@@ -1282,7 +1331,13 @@ export async function recordOutcome(
       : undefined;
   if (verdict.costUsd) deps.onSpend?.(verdict.costUsd);
   if (deps.deferUnjudged && verdict.trust === "unverified")
-    return { trust: verdict.trust, reason: verdict.reason, lesson: candidate, deferred: true };
+    return {
+      trust: verdict.trust,
+      reason: verdict.reason,
+      lesson: candidate,
+      deferred: true,
+      ...(verdict.unavailable ? { unavailable: verdict.unavailable } : {}),
+    };
   // A mechanical leak is kept as an audit record WITHOUT the leaking text.
   const audited: Lesson = verdict.leak
     ? (({ rule: _r, category: _c, ...rest }) => ({

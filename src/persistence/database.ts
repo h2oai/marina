@@ -4114,6 +4114,24 @@ export class MarinaDB implements MarinaStores {
     return outcomesDb.addMissingOutcomeDeliveries(this.db, outcomeId, consumers, now);
   }
 
+  failedOutcomeDeliveries(
+    consumer: string,
+    like: readonly string[],
+    afterId: number,
+    limit: number,
+  ): Array<{ outcome_id: number; reason: string | null }> {
+    return outcomesDb.failedOutcomeDeliveries(this.db, consumer, like, afterId, limit);
+  }
+
+  reopenOutcomeDelivery(
+    outcomeId: number,
+    consumer: string,
+    reason: string,
+    now?: number,
+  ): boolean {
+    return outcomesDb.reopenOutcomeDelivery(this.db, outcomeId, consumer, reason, now);
+  }
+
   outcomeDeliveries(outcomeId: number): outcomesDb.DeliveryRow[] {
     return outcomesDb.outcomeDeliveries(this.db, outcomeId);
   }

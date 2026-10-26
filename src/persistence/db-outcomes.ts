@@ -382,6 +382,53 @@ export function setOutcomeDelivery(
   );
 }
 
+/**
+ * `failed` deliveries for `consumer` after `afterId` (oldest first, at most
+ * `limit`) whose reason matches one of the SQL `LIKE` patterns: the
+ * candidates a delivery pass may re-open (`reopenOutcomeDelivery`).
+ */
+export function failedOutcomeDeliveries(
+  db: Database,
+  consumer: string,
+  like: readonly string[],
+  afterId: number,
+  limit: number,
+): Array<{ outcome_id: number; reason: string | null }> {
+  if (like.length === 0) return [];
+  return db
+    .query(
+      `SELECT outcome_id, reason FROM outcome_deliveries
+       WHERE consumer = ? AND state = 'failed' AND outcome_id > ?
+         AND (${like.map(() => "reason LIKE ?").join(" OR ")})
+       ORDER BY outcome_id LIMIT ?`,
+    )
+    .all(consumer, afterId, ...like, Math.max(0, limit)) as Array<{
+    outcome_id: number;
+    reason: string | null;
+  }>;
+}
+
+/**
+ * Re-open a `failed` delivery: back to `pending` with its attempts reset and
+ * `reason` recorded. Only a delivery still `failed` changes, so re-running it
+ * is a no-op. True when it changed.
+ */
+export function reopenOutcomeDelivery(
+  db: Database,
+  outcomeId: number,
+  consumer: string,
+  reason: string,
+  now = Date.now(),
+): boolean {
+  return (
+    db.run(
+      `UPDATE outcome_deliveries SET state = 'pending', attempts = 0, reason = ?, updated_at = ?
+       WHERE outcome_id = ? AND consumer = ? AND state = 'failed'`,
+      [reason, now, outcomeId, consumer],
+    ).changes > 0
+  );
+}
+
 export function outcomeDeliveries(db: Database, outcomeId: number): DeliveryRow[] {
   return db
     .query("SELECT * FROM outcome_deliveries WHERE outcome_id = ? ORDER BY consumer")
