@@ -28,6 +28,10 @@ describe("classifyIncomingTell", () => {
     "Integrated: only one note is needed; you should not add another.",
     "Your turn: pick the pair-2 winner.",
     "Need you to re-run C4 against calc.",
+    // an embedded world command is an instruction
+    "Task #16 is reserved for you: task claim 16",
+    "Task #16 is reserved for you, Flash1: task claim 16, solve it, then task submit 16 ANSWER: <answer>",
+    "Ready for review; then task submit #16",
     // a caller is waiting, dispatches and model requests
     "findings ready [re:z2lqh9]",
     "[crew-task] T6: fix the table",
@@ -49,6 +53,11 @@ describe("classifyIncomingTell", () => {
     "Integrated: #241 remains unchanged; I won't add a replacement.",
     "Confirmed: T4 #245 and T5 #247 are final; Answerer alone deposits.",
     "Task 3 is verified complete at note #243.",
+    // reporting a command run is not an instruction
+    "Done: task submit 16 sent",
+    "Status: claimed task 16",
+    "Task #16 is reserved for Flash1.",
+    "I ran task claim 16 an hour ago.",
   ])("%j is information", (message) => {
     expect(classifyIncomingTell(message)).toBe("information");
   });

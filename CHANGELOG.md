@@ -325,6 +325,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`agent attention` now wakes a resting resident at once.** A resident that had declared rest
+  (`memory set rest <why>`) left an operator's steered attention unread until its long heartbeat
+  (about 30 minutes): the idle check skipped the cycle because no perception owed a reply, and the
+  rest cadence returned before the pending-attention fast tick. A pending steered attention now
+  breaks a declared rest the way an owed request does (no skip, fast tick). Resting again after it
+  is still not a silent turn, and ambient or informational events still wait.
+- **A tell that names a world command to run now owes a reply.** "Task #16 is reserved for you:
+  task claim 16" was classified as information, so a resting addressee was not woken. A clause that
+  is a bare world command with only ids after its verb (`task claim 16`, `then task submit #16`)
+  now makes the tell a request; a result that reports a command ("Done: task submit 16 sent",
+  "Status: claimed task 16") stays information. The attention corpus gains both cases.
 - **A failed spend write no longer loses the dollars.** `recordSpend` swallowed a failed
   `spend_daily` write (the engine's sink logged and returned), and the in-memory total was later
   replaced by a larger persisted one, so the day's total undercounted and the cap could be
