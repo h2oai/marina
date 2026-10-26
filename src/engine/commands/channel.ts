@@ -90,7 +90,10 @@ export function channelCommand(
           }
           const ch = channels.getChannelByName(name);
           if (!ch) {
-            ctx.send(input.entity, `Channel "${name}" not found.`);
+            ctx.send(
+              input.entity,
+              `Channel "${name}" not found; \`channel list\` shows channels, \`board list\` boards.`,
+            );
             return;
           }
           if (channels.isMember(ch.id, input.entity)) {
@@ -110,7 +113,10 @@ export function channelCommand(
           }
           const ch = channels.getChannelByName(name);
           if (!ch) {
-            ctx.send(input.entity, `Channel "${name}" not found.`);
+            ctx.send(
+              input.entity,
+              `Channel "${name}" not found; \`channel list\` shows channels, \`board list\` boards.`,
+            );
             return;
           }
           if (!channels.isMember(ch.id, input.entity)) {
@@ -140,7 +146,10 @@ export function channelCommand(
           }
           const ch = channels.getChannelByName(name);
           if (!ch) {
-            ctx.send(input.entity, `Channel "${name}" not found.`);
+            ctx.send(
+              input.entity,
+              `Channel "${name}" not found; \`channel list\` shows channels, \`board list\` boards.`,
+            );
             return;
           }
           if (!channels.isMember(ch.id, input.entity)) {
@@ -178,7 +187,10 @@ export function channelCommand(
           }
           const ch = channels.getChannelByName(name);
           if (!ch) {
-            ctx.send(input.entity, `Channel "${name}" not found.`);
+            ctx.send(
+              input.entity,
+              `Channel "${name}" not found; \`channel list\` shows channels, \`board list\` boards.`,
+            );
             return;
           }
           if (!channels.isMember(ch.id, input.entity)) {

@@ -18,9 +18,34 @@ export function withoutCommandResponse<T>(execute: () => T): T {
   return responses.exit(execute);
 }
 
+/** One handler execution: whether it declared a refusal (`failCommandResponse`). */
+interface HandlerOutcome {
+  failed?: string;
+}
+
+const handlerOutcomes = new AsyncLocalStorage<HandlerOutcome>();
+
 export function failCommandResponse(error: string): void {
+  const outcome = handlerOutcomes.getStore();
+  if (outcome) outcome.failed ??= error;
   const response = responses.getStore();
   if (response?.active) response.error ??= error;
+}
+
+/**
+ * Run one command handler and report whether it refused through
+ * `failCommandResponse` — on every ingress, with or without a correlated
+ * response — so usage telemetry records a refusal as a failure. A nested
+ * command (batch, macro) observes its own outcome, never the outer one.
+ */
+export function observeHandlerOutcome(
+  execute: () => unknown,
+): { failed?: string } | Promise<{ failed?: string }> {
+  const outcome: HandlerOutcome = {};
+  // A synchronous handler stays synchronous: callers that do not await the
+  // command (tests, housekeeping) still see its quest and activity effects.
+  const result = handlerOutcomes.run(outcome, execute);
+  return result instanceof Promise ? result.then(() => outcome) : outcome;
 }
 
 /** Only output caused by this command, addressed to its original socket, is a result. */

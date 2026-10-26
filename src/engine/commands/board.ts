@@ -16,6 +16,20 @@ import { rankFloorRefusal } from "../rank-floor";
 
 export type BoardOp = "read" | "write" | "pin";
 
+const BOARD_SUBS: ReadonlySet<string> = new Set([
+  "list",
+  "read",
+  "post",
+  "reply",
+  "search",
+  "vote",
+  "scores",
+  "pin",
+  "archive",
+  "create",
+]);
+const BOARD_READ_ALIASES: ReadonlySet<string> = new Set(["show", "view", "history"]);
+
 const OP_REFUSAL: Record<BoardOp, string> = {
   read: "You don't have permission to read this board.",
   write: "You don't have permission to post on this board.",
@@ -110,8 +124,15 @@ export function boardCommand(
       const entity = getEntity(input.entity);
       if (!entity) return;
 
-      const tokens = input.tokens;
-      const sub = tokens[0]?.toLowerCase() ?? "list";
+      let tokens = input.tokens;
+      let sub = tokens[0]?.toLowerCase() ?? "list";
+      // `board show|view|history <board>` reads it; so does a bare board name
+      // (`board welcome`, `board welcome 3`).
+      if (BOARD_READ_ALIASES.has(sub)) sub = "read";
+      else if (!BOARD_SUBS.has(sub) && boards.getBoardByName(tokens[0]!)) {
+        tokens = ["read", ...tokens];
+        sub = "read";
+      }
 
       switch (sub) {
         case "list": {
@@ -450,7 +471,7 @@ export function boardCommand(
         default:
           ctx.send(
             input.entity,
-            "Usage: board list|read|post|reply|search|vote|scores|pin|archive|create [args]",
+            `Unknown board subcommand or board "${tokens[0]}" (\`board list\` shows boards). Usage: board list|read|post|reply|search|vote|scores|pin|archive|create [args]`,
           );
       }
     },

@@ -333,6 +333,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Agent tool calls that failed on a fresh world now run or say what to do next.**
+  - A deferred tool called by its catalog name (`marina_who`, `marina_calc`, …) runs and is
+    declared from the next request, as if `marina_tool_search` had loaded it; a tool loaded
+    mid-run is callable in the same run (it was executable only from the next one).
+    `marina_tool_search` matches a multi-word query word by word.
+  - A project or pool name with spaces resolves bare, quoted or in any case
+    (`project Demo Pulse`, `pool "demo pulse" recall …`); `project <name>` alone, `show`/`view`
+    and `project show <name>` display the project, and `project help` prints usage. `project
+    info` names the pool that exists (a seeded project's pool is not `project:<name>`), the
+    pool also resolves by its project's name, `pool recall <name> …` reads as
+    `pool <name> recall …`, and a members-only project pool names `project <name> join`.
+  - `board <name>` and `board show|view|history <name>` read the board.
+  - `task claim|submit|heartbeat|approve|reject` refusals say why (no such task, held by whom,
+    lease expired, already submitted, who reviews it) and the next command; `task approve <id>`
+    without a claimant lists the pending submitters.
+  - A `tell` to an offline account says it is offline and names the board/channel routes.
+  - `whoami`, `inbox`, `focus` and `tasks` name the command that does it here; `memory search`
+    names `memory recall`; a bare `me` names `score`.
+  - A refused tool call states its message once: an SDK `CommandError` no longer repeats the
+    refusal as "partial command output".
+  - A wrong enum argument names the allowed values, and a case variant is normalised.
+  - Past the per-run tool cap, up to three closing calls (submit, note, focus, rest) still run;
+    the cap's own warning asks for them.
+  - `brief` shows understaffed projects as a count with its readout, not as "N need help".
+- **A refused command is recorded as failed usage.** A handler refusal (`failCommandResponse`)
+  sets `primitive_usage.success` and the activity row to failure on every ingress; task,
+  project and pool refusals now declare it (a non-creator's `task approve` was a success).
+
 - **Long-interval tick jobs run on an install that restarts often.** The tick counter restarts at
   0 on every boot, so a job fired on `tick % every === phase` waited `phase` ticks after each
   restart, and `live-promotion` (6 h, phase ≈ 70 min) and the late-phase hourly jobs (e.g.

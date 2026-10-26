@@ -23,6 +23,7 @@ import type { UnifiedContextResult as ParticipantContext } from "../sdk/memory-c
 import {
   type AfterToolCallResult,
   Agent,
+  type AgentContext,
   type AgentLoopTurnUpdate,
   type AgentMessage,
   type AgentTool,
@@ -149,7 +150,9 @@ import {
   budgetFinalRequest,
   budgetSteerAt,
   budgetSteerNote,
+  closingToolCall,
   deadlinePhase,
+  RUN_CAP_CLOSING_GRACE,
   SPEND_STOP_EVENT_CONTEXT,
 } from "./budget-terminal";
 import {
@@ -1395,6 +1398,8 @@ export class LeanAgentAdapter implements AgentHandle {
   private requestSave: Promise<void> | undefined;
   private readonly toolRequestEligibility = new Map<string, Set<string>>();
   private currentRunAdmittedTools = 0;
+  /** Closing calls admitted past the run cap this run (`RUN_CAP_CLOSING_GRACE`). */
+  private currentRunClosingGrace = 0;
   private runYielded = false;
   /**
    * Ids of buffered perceptions already delivered to the model through
@@ -2064,6 +2069,10 @@ export class LeanAgentAdapter implements AgentHandle {
       // completed turn's context is over the prune threshold, run the SAME
       // transform once here and hand the compacted context to the next turn.
       prepareNextTurnWithContext: (context, signal) => this.prepareNextTurn(context, signal),
+      // Deferred tools are executable before they are declared: a model that
+      // calls one by its catalog name (without `marina_tool_search`) runs it,
+      // and it is declared from the next request on (`beforeToolCall`).
+      prepareRequest: (request) => this.withDeferredExecutable(request.context),
       // Fill `prompt_cache_key` for OpenAI upstreams behind the proxy (see
       // `withPromptCacheKey`); registry models keep pi-ai's own behaviour.
       // OpenRouter routes also get `reasoning-control` shaping: only providers
@@ -2118,6 +2127,9 @@ export class LeanAgentAdapter implements AgentHandle {
           : () => apiKey
         : undefined,
       beforeToolCall: async (context) => {
+        // A deferred tool called by name joins the declared set for the rest
+        // of the session, as if `marina_tool_search` had loaded it.
+        this.loadCalledDeferredTool(context.toolCall.name);
         // Providers may return parseable partial tool arguments at the output
         // limit. Never execute that unfinished request (especially a write).
         if (context.assistantMessage?.stopReason === "length") {
@@ -2138,15 +2150,24 @@ export class LeanAgentAdapter implements AgentHandle {
               "The task's time budget is spent: submit now with marina_code action=summary, or report with action=blocked. Other tools are refused.",
           };
         }
-        // Reserve before any await: parallel preparation must share the same limit.
-        if (this.currentRunAdmittedTools >= this.runToolCallCap()) {
-          return {
-            block: true,
-            reason: "Run tool budget reached; this tool did not execute. Continue next cycle.",
-          };
-        }
-        this.currentRunAdmittedTools++;
         const args = (context.args ?? {}) as Record<string, unknown>;
+        // Reserve before any await: parallel preparation must share the same limit.
+        // Past the cap, a call that hands in work or records the agent's own
+        // state still runs (bounded grace): the cap's warning asked for it.
+        if (this.currentRunAdmittedTools >= this.runToolCallCap()) {
+          if (
+            !closingToolCall(context.toolCall.name, args) ||
+            this.currentRunClosingGrace >= RUN_CAP_CLOSING_GRACE
+          ) {
+            return {
+              block: true,
+              reason: "Run tool budget reached; this tool did not execute. Continue next cycle.",
+            };
+          }
+          this.currentRunClosingGrace++;
+        } else {
+          this.currentRunAdmittedTools++;
+        }
         const policy = mediateToolCall(context.toolCall.name, args, [...this.currentTrustSources]);
         if (policy.block) return { block: true, reason: policy.block };
         if (policy.label) {
@@ -5007,6 +5028,35 @@ export class LeanAgentAdapter implements AgentHandle {
     context: PrepareNextTurnContext,
     signal?: AbortSignal,
   ): Promise<AgentLoopTurnUpdate | undefined> {
+    // The next turn executes exactly the declared tools (those loaded this
+    // run included); `prepareRequest` adds the undeclared deferred ones back.
+    const update = await this.compactBetweenTurns(context, signal);
+    return {
+      ...update,
+      context: { ...(update?.context ?? context.context), tools: this.agent.state.tools.slice() },
+    };
+  }
+
+  /** The request's context with every not-yet-declared deferred tool executable. */
+  private withDeferredExecutable(context: AgentContext): { context: AgentContext } | undefined {
+    const present = new Set((context.tools ?? []).map((t) => t.name));
+    const extra = this.deferredTools.filter((t) => !present.has(t.name));
+    if (extra.length === 0) return undefined;
+    return { context: { ...context, tools: [...(context.tools ?? []), ...extra] } };
+  }
+
+  /** Declare a deferred tool the model called directly (no-op for any other name). */
+  private loadCalledDeferredTool(name: string): void {
+    if (this.loadedToolNames.includes(name)) return;
+    const tool = this.deferredTools.find((t) => t.name === name);
+    if (tool) this.loadDeferredTools([tool]);
+  }
+
+  /** Mid-run compaction between turns (see `prepareNextTurn`). */
+  private async compactBetweenTurns(
+    context: PrepareNextTurnContext,
+    signal?: AbortSignal,
+  ): Promise<AgentLoopTurnUpdate | undefined> {
     const transform = this.contextTransform;
     if (!transform) return undefined;
     const received = context.context.messages;
@@ -5486,6 +5536,7 @@ export class LeanAgentAdapter implements AgentHandle {
         this.currentRunToolCalls = 0;
         this.toolCallArgs.clear();
         this.currentRunAdmittedTools = 0;
+        this.currentRunClosingGrace = 0;
         this.runYielded = false;
         this.spendStopLogged = false;
         this.toolRequestEligibility.clear();

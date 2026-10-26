@@ -16,7 +16,10 @@ export function emoteCommand(getEntity: (id: EntityId) => Entity | undefined): C
       if (!entity) return;
 
       if (!input.args) {
-        ctx.send(input.entity, "Usage: emote <action> — e.g. `emote reviews the findings`.");
+        ctx.send(
+          input.entity,
+          "Usage: emote <action> — e.g. `emote reviews the findings`. Your own profile: `score`.",
+        );
         return;
       }
 
