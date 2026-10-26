@@ -36,6 +36,7 @@ import { roleCommand } from "../commands/role";
 import { runCommand } from "../commands/run";
 import { shellCommand } from "../commands/shell";
 import { sourceCommand } from "../commands/source";
+import { supervisorCommand } from "../commands/supervisor";
 import { systemPromptCommand } from "../commands/system-prompt";
 import { traitCommand } from "../commands/trait";
 import { universalIntentCommands, usecaseCommand } from "../commands/usecase";
@@ -384,4 +385,17 @@ export function registerOperationCommands(engine: Engine): void {
       logEvent: (event) => engine.logEvent(event),
     }),
   );
+
+  // The in-world native agent supervisor (src/routing/world-supervisor.ts).
+  if (engine.db)
+    engine.commands.registerBuiltin(
+      supervisorCommand({
+        db: engine.db,
+        supervisor: engine.worldSupervisor,
+        getEntity: (id) => engine.entities.get(id as EntityId),
+        isAgent: (id) => engine.isAgentEntity(id as EntityId),
+        getConnectionProtocol: (id) => engine.getConnectionForEntity(id as EntityId)?.protocol,
+        isOperator: (entity) => isOperatorPrincipal(entity),
+      }),
+    );
 }

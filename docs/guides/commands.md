@@ -789,6 +789,17 @@ Replayed terminal events do not retrain twice. Directly addressed events always 
 > agent config Scout key my-key               Reconfigure agent API key
 ```
 
+The native agent supervisor (Claude Code, Codex, pi) can run inside the server, so no
+`marina supervise` process has to stay open. A person starts it in a configured code root. It holds
+a routing-only credential issued to that person, and launches go through
+**Workspace → Streams**. See [participant routing](participant-routing.md#work-from-the-dashboard).
+
+```
+> supervisor start root:my-project label:Desk   Start it (person only; agent.spawn; code roots)
+> supervisor                                    Status: owner, root, installed agents
+> supervisor stop                               Stop its agents, revoke its credential
+```
+
 Models use `provider/model` format. Supported providers: anthropic, openai, google, groq, openrouter, huggingface, cerebras, xai, mistral, deepseek. Hugging Face models are addressed by Hub id — `huggingface/zai-org/GLM-5.3-Flash`, optionally with a serving suffix (`:fastest`, `:cheapest`, `:<provider>`); set `HUGGINGFACE_API_KEY` or `HF_TOKEN`.
 
 Recruitment is availability- and evidence-aware:

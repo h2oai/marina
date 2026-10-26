@@ -53,7 +53,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Research evidence loop and survey | siloed | `MARINA_RESEARCH_*` | src/research |
 | Research web agent, cited answers, fact pass | siloed | In world: `research ask` (rank 0, spend-guarded) and the typed `marina_research` tool; benchmark scripts (`scripts/mind2web2.ts`, deepresearch) | src/research |
 | Skills | core | `skill`; 5 built-ins (`skill builtin`); residents get the best-fitting skill in their prompt (`MARINA_SKILLS_RESIDENT`, default on); note seeds with `MARINA_SEED_SKILLS=true` (showcase) | src/agent |
-| Supervised residents | core | On by default; `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) turns it off | src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts |
+| Supervised residents | core | On by default; `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) turns it off | src/routing/residents.ts, src/routing/supervisor.ts, src/routing/world-supervisor.ts, src/routing/attention-bridge.ts |
 | Resolvers, probes and watches | siloed | `probe`, `watch`; `position open` adds a resolving watch | src/resolvers, src/engine/commands/probe.ts, src/engine/commands/watch.ts |
 | Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch) | experimental | Experimental: for embedding hosts. `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint` | src/net/instance-lifecycle.ts |
 | OpenShell sandbox provider | experimental | `MARINA_OPENSHELL_URL` + mTLS bundle against an operator-run gateway; `code sandbox use openshell` | src/integrations/openshell |

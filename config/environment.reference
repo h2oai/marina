@@ -441,6 +441,10 @@
 # @restart
 # MARINA_SUPERVISED_RESIDENTS=on
 
+# The in-world supervisor (`supervisor start`: the native agent supervisor run by the server) on boot. `resume` (default) restarts the supervisor a person started and did not stop, for that person and root, after a restart. `off` starts nothing. `person:<name>` starts one for that person's account in the default code root on every boot. Starting always needs a person's account (its supervision credential is that person's), supervised residents on, and a configured code root.
+# @restart
+# MARINA_SUPERVISOR_AUTOSTART=resume
+
 # Renewable lease on a newly claimed task, in milliseconds. Workers renew with `task heartbeat <id>`; expired ordinary work reopens.
 # MARINA_TASK_LEASE_MS=900000
 

@@ -47,7 +47,23 @@ export async function openSupervision(options: {
       return { client: sessionClient, held: false, close: async () => {} };
     throw error;
   }
-  let current = grant;
+  return holdSupervision({ url: options.url, grant, fetch: options.fetch });
+}
+
+/**
+ * Hold an issued supervision credential: the routing client that uses it,
+ * renewal at 80 % of its lifetime (over the routing API, with the credential
+ * itself) and revocation on close. `openSupervision` reaches it from a
+ * person's world session; the in-world supervisor
+ * (`src/routing/world-supervisor.ts`) from a credential the server issued to
+ * the person who started it.
+ */
+export function holdSupervision(options: {
+  url: string;
+  grant: SupervisionCredentialGrant;
+  fetch?: typeof fetch;
+}): SupervisionHold {
+  let current = options.grant;
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const client = new MarinaRoutingClient({
