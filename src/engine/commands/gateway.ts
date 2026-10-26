@@ -5,6 +5,7 @@ import { experimentalHelp } from "../../config/feature-status";
 import { bold, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { type GatewayRuntime, validateGatewayUrl } from "../gateway-runtime";
 import { rankFloorRefusal } from "../rank-floor";
@@ -39,7 +40,7 @@ export function gatewayCommand(deps: {
       if (!entity) return;
 
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("gateways"));
+        refuseCommand(ctx, input.entity, requiresPersistence("gateways"));
         return;
       }
       const db = deps.db;
@@ -58,17 +59,17 @@ export function gatewayCommand(deps: {
           const name = tokens[1];
           const url = tokens[2];
           if (!name || !url) {
-            ctx.send(input.entity, "Usage: gateway add <name> <ws-url>");
+            refuseCommand(ctx, input.entity, "Usage: gateway add <name> <ws-url>");
             return;
           }
 
           if (name.length < 2 || name.length > 40) {
-            ctx.send(input.entity, "Gateway name must be 2-40 characters.");
+            refuseCommand(ctx, input.entity, "Gateway name must be 2-40 characters.");
             return;
           }
 
           if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-            ctx.send(input.entity, "Gateway name must be alphanumeric (plus _ and -).");
+            refuseCommand(ctx, input.entity, "Gateway name must be alphanumeric (plus _ and -).");
             return;
           }
 
@@ -88,7 +89,8 @@ export function gatewayCommand(deps: {
 
           const existing = db.getGatewayByName(name);
           if (existing) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Gateway "${name}" already exists. Use 'gateway remove ${name}' first.`,
             );
@@ -117,13 +119,13 @@ export function gatewayCommand(deps: {
         case "remove": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: gateway remove <name>");
+            refuseCommand(ctx, input.entity, "Usage: gateway remove <name>");
             return;
           }
 
           const gw = db.getGatewayByName(name);
           if (!gw) {
-            ctx.send(input.entity, `Gateway "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Gateway "${name}" not found.`);
             return;
           }
 
@@ -176,13 +178,13 @@ export function gatewayCommand(deps: {
         case "status": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: gateway status <name>");
+            refuseCommand(ctx, input.entity, "Usage: gateway status <name>");
             return;
           }
 
           const gw = db.getGatewayByName(name);
           if (!gw) {
-            ctx.send(input.entity, `Gateway "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Gateway "${name}" not found.`);
             return;
           }
 
@@ -215,12 +217,13 @@ export function gatewayCommand(deps: {
           const name = tokens[1];
           const channel = tokens[2];
           if (!name || !channel) {
-            ctx.send(input.entity, "Usage: gateway bridge <name> <channel>");
+            refuseCommand(ctx, input.entity, "Usage: gateway bridge <name> <channel>");
             return;
           }
 
           if (channel.length > 40 || !/^[a-zA-Z0-9_-]+$/.test(channel)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Channel name must be alphanumeric (plus _ and -), max 40 chars.",
             );
@@ -229,7 +232,7 @@ export function gatewayCommand(deps: {
 
           const gw = db.getGatewayByName(name);
           if (!gw) {
-            ctx.send(input.entity, `Gateway "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Gateway "${name}" not found.`);
             return;
           }
 
@@ -255,13 +258,13 @@ export function gatewayCommand(deps: {
           const name = tokens[1];
           const channel = tokens[2];
           if (!name || !channel) {
-            ctx.send(input.entity, "Usage: gateway unbridge <name> <channel>");
+            refuseCommand(ctx, input.entity, "Usage: gateway unbridge <name> <channel>");
             return;
           }
 
           const gw = db.getGatewayByName(name);
           if (!gw) {
-            ctx.send(input.entity, `Gateway "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Gateway "${name}" not found.`);
             return;
           }
 
@@ -283,7 +286,7 @@ export function gatewayCommand(deps: {
           const target = tokens[2];
           const message = tokens.slice(3).join(" ");
           if (!name || !target || !message) {
-            ctx.send(input.entity, "Usage: gateway send <name> <entity> <message>");
+            refuseCommand(ctx, input.entity, "Usage: gateway send <name> <entity> <message>");
             return;
           }
 
@@ -302,7 +305,8 @@ export function gatewayCommand(deps: {
         }
 
         default:
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Unknown gateway action. Use: add, remove, list, status, bridge, unbridge, send",
           );

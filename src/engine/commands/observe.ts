@@ -4,6 +4,7 @@
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext, RoomId } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getRank } from "../permissions";
 import { rankFloorRefusal } from "../rank-floor";
 
@@ -84,17 +85,17 @@ export function observeCommand(deps: {
         case "log": {
           const refusal = rankFloorRefusal(entity, 7, "Requires steward rank (7).");
           if (refusal) {
-            ctx.send(input.entity, refusal);
+            refuseCommand(ctx, input.entity, refusal);
             return;
           }
           const targetName = tokens[1];
           if (!targetName) {
-            ctx.send(input.entity, "Usage: observe log <entity>");
+            refuseCommand(ctx, input.entity, "Usage: observe log <entity>");
             return;
           }
           const target = deps.findEntity(targetName);
           if (!target) {
-            ctx.send(input.entity, `Entity "${targetName}" not found online.`);
+            refuseCommand(ctx, input.entity, `Entity "${targetName}" not found online.`);
             return;
           }
 
@@ -129,7 +130,7 @@ export function observeCommand(deps: {
           }
           const target = deps.findEntity(sub);
           if (!target) {
-            ctx.send(input.entity, `Entity "${sub}" not found online.`);
+            refuseCommand(ctx, input.entity, `Entity "${sub}" not found online.`);
             return;
           }
 

@@ -4,6 +4,7 @@
 import { entity as fmtEntity, rank as fmtRank, success } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityRank, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getRank, setRank } from "../permissions";
 import { rankFloorRefusal } from "../rank-floor";
 import { grantGatesForRank } from "../safety-gates";
@@ -37,7 +38,7 @@ export function rankCommand(deps: RankDeps): CommandDef {
       const tokens = input.tokens;
       const targetName = tokens[0];
       if (!targetName) {
-        ctx.send(input.entity, "Usage: rank [entity [level]]");
+        refuseCommand(ctx, input.entity, "Usage: rank [entity [level]]");
         return;
       }
 
@@ -45,7 +46,7 @@ export function rankCommand(deps: RankDeps): CommandDef {
         // Check another player's rank
         const target = deps.findEntity(targetName);
         if (!target) {
-          ctx.send(input.entity, `Entity "${targetName}" not found.`);
+          refuseCommand(ctx, input.entity, `Entity "${targetName}" not found.`);
           return;
         }
         const r = getRank(target);
@@ -66,13 +67,14 @@ export function rankCommand(deps: RankDeps): CommandDef {
 
       const target = deps.findEntity(targetName);
       if (!target) {
-        ctx.send(input.entity, `Entity "${targetName}" not found.`);
+        refuseCommand(ctx, input.entity, `Entity "${targetName}" not found.`);
         return;
       }
 
       const level = Number.parseInt(tokens[1] ?? "", 10);
       if (Number.isNaN(level) || level < 0 || level > 9) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Rank must be 0-9 (newcomer, canvas, coordinator, organizer, builder, architect, engineer, steward, guardian, sovereign).",
         );

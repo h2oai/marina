@@ -333,6 +333,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every command refusal is recorded as failed usage, not only task, project and pool ones.**
+  A usage error, an unknown subcommand, a missing target, a permission or state refusal now sets
+  `primitive_usage.success` and the command's activity row to failure, so an agent's refused
+  calls no longer count as successes in usage stats, `agent diagnose`, lessons from work or tool
+  rankings. The shared paths declare it: the new `refuseCommand` helper, `unknownSubcommand`, an
+  in-handler rank floor (`rankFloorRefusal`) and a refused safety gate (`checkGateForExecution`);
+  about 800 plain refusal replies across `src/engine/commands/` use `refuseCommand`. A read that
+  finds nothing, a bare command that prints its usage and a no-op on a state that already holds
+  (`already in channel`) stay successes; a permission probe that only narrows a command
+  (`usecase` without new agents, `audio` not saving a transcript) does not fail it. Quest
+  progress and the `command` event are unchanged, as for every handler refusal. A refused
+  command's correlated `command_result` reports `ok: false` with the refusal.
+
 - **A temporary outage no longer ends a lesson delivery `failed`.** The daily spend cap, a 429,
   a 5xx, a timeout or a dropped connection from the lesson writer or judge now leaves the
   outcome `pending` with the cause recorded and no attempt spent, and the rest of that delivery

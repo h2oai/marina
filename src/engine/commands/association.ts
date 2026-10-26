@@ -11,6 +11,7 @@ import {
   type MarinaDB,
 } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 
 const HELP =
   experimentalHelp(`Association: a named, append-only record of who takes part in something and how the
@@ -93,7 +94,7 @@ function create(
 ): void {
   const [name = "", purpose = "", ...extra] = fields(raw);
   if (!name || name.length > 120 || purpose.length > 4000 || extra.length) {
-    ctx.send(caller, "Usage: association create <name> | <purpose>");
+    refuseCommand(ctx, caller, "Usage: association create <name> | <purpose>");
     return;
   }
   const association = db.createAssociation({
@@ -119,7 +120,8 @@ function participation(
   const association = resolve(db, selector);
   const subject = parseTypedRef(subjectText);
   if (!association || !subject || extra.length || detail.length > 1000) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       caller,
       `Usage: association ${kind === "joined" ? "join" : "leave"} <association> | <kind>:<ref> | <${kind === "joined" ? "role or interpretation" : "reason"}>`,
     );
@@ -172,7 +174,8 @@ function relate(
     extra.length ||
     (revising && !prior)
   ) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       caller,
       revising
         ? "Usage: association revise <association> | <relation-id> | <kind>:<ref> | <directed|reciprocal> | <semantics> | <kind>:<ref> [| JSON terms or text]"
@@ -209,7 +212,8 @@ function link(
   const association = resolve(db, selector);
   const ref = parseTypedRef(refText);
   if (!association || !ref || !relationship || relationship.length > 200 || extra.length) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       caller,
       "Usage: association link <association> | <canonical-kind>:<ref> | <relationship>",
     );
@@ -246,7 +250,8 @@ function event(
     headExtra.length ||
     extra.length
   ) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       caller,
       `Usage: association event <association> <kind> | <detail>\nKinds: ${ASSOCIATION_EVENT_KINDS.filter((kind) => !["created", "joined", "left"].includes(kind)).join(", ")}`,
     );
@@ -269,7 +274,7 @@ function show(
 ): void {
   const association = resolve(db, selector ?? "");
   if (!association) {
-    ctx.send(caller, `Association "${selector ?? ""}" was not found or is ambiguous.`);
+    refuseCommand(ctx, caller, `Association "${selector ?? ""}" was not found or is ambiguous.`);
     return;
   }
   const events = db.listAssociationEvents(association.id);

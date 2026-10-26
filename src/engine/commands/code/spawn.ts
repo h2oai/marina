@@ -4,6 +4,7 @@
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import { checkGateForExecution, recordGateExecution } from "../../safety-gates";
 import { resolveKindArtifact } from "./artifacts";
 import {
@@ -47,7 +48,7 @@ export async function spawnRequest(
   const role = action;
   const goal = args.slice(1).join(" ").trim();
   if (!role || !goal) {
-    ctx.send(eid, "Usage: code spawn <role> <goal> | code spawn run <spawn_request>");
+    refuseCommand(ctx, eid, "Usage: code spawn <role> <goal> | code spawn run <spawn_request>");
     return;
   }
   const artifact = deps.db.createCodingArtifact({
@@ -136,7 +137,7 @@ async function runApprovedSpawnRequest(
   // doCode/crewPlan/assignCode. Defense-in-depth on the approved-spawn path.
   if (refuseTelnetDispatch(ctx, eid, deps)) return;
   if (!deps.agentRuntime?.spawn) {
-    ctx.send(eid, "Agent spawning is not available in this Marina process.");
+    refuseCommand(ctx, eid, "Agent spawning is not available in this Marina process.");
     return;
   }
   if (deps.agentRuntime.isAvailable && !deps.agentRuntime.isAvailable()) {

@@ -4,6 +4,7 @@
 import type { GroupManager } from "../../coordination/group-manager";
 import { bold, dim, entity as fmtEntity, header, rank, separator } from "../../net/ansi";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 
 export function groupCommand(
   groups: GroupManager,
@@ -69,12 +70,12 @@ export function groupCommand(
         case "info": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: group info <name>");
+            refuseCommand(ctx, input.entity, "Usage: group info <name>");
             return;
           }
           const group = groups.getByName(name);
           if (!group) {
-            ctx.send(input.entity, `Group "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Group "${name}" not found.`);
             return;
           }
           const members = groups.getMembers(group.id);
@@ -93,13 +94,13 @@ export function groupCommand(
         case "create": {
           const id = tokens[1];
           if (!id) {
-            ctx.send(input.entity, "Usage: group create <id> <name>");
+            refuseCommand(ctx, input.entity, "Usage: group create <id> <name>");
             return;
           }
           const groupName = tokens.slice(2).join(" ") || id;
           const existing = groups.get(id);
           if (existing) {
-            ctx.send(input.entity, `Group with id "${id}" already exists.`);
+            refuseCommand(ctx, input.entity, `Group with id "${id}" already exists.`);
             return;
           }
           groups.create({
@@ -122,12 +123,12 @@ export function groupCommand(
         case "join": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: group join <name>");
+            refuseCommand(ctx, input.entity, "Usage: group join <name>");
             return;
           }
           const group = groups.getByName(name) ?? groups.get(name);
           if (!group) {
-            ctx.send(input.entity, `Group "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Group "${name}" not found.`);
             return;
           }
           if (groups.isMember(group.id, input.entity)) {
@@ -143,12 +144,12 @@ export function groupCommand(
         case "leave": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: group leave <name>");
+            refuseCommand(ctx, input.entity, "Usage: group leave <name>");
             return;
           }
           const group = groups.getByName(name) ?? groups.get(name);
           if (!group) {
-            ctx.send(input.entity, `Group "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Group "${name}" not found.`);
             return;
           }
           if (!groups.isMember(group.id, input.entity)) {
@@ -156,7 +157,7 @@ export function groupCommand(
             return;
           }
           if (group.leaderId === input.entity) {
-            ctx.send(input.entity, "Leaders cannot leave. Use 'group disband' instead.");
+            refuseCommand(ctx, input.entity, "Leaders cannot leave. Use 'group disband' instead.");
             return;
           }
           groups.removeMember(group.id, input.entity);
@@ -169,21 +170,21 @@ export function groupCommand(
           const targetName = tokens[1];
           const groupName = tokens[2];
           if (!targetName || !groupName) {
-            ctx.send(input.entity, "Usage: group invite <entity> <group>");
+            refuseCommand(ctx, input.entity, "Usage: group invite <entity> <group>");
             return;
           }
           const group = groups.getByName(groupName) ?? groups.get(groupName);
           if (!group) {
-            ctx.send(input.entity, `Group "${groupName}" not found.`);
+            refuseCommand(ctx, input.entity, `Group "${groupName}" not found.`);
             return;
           }
           if (!groups.canInvite(group.id, input.entity)) {
-            ctx.send(input.entity, "You don't have permission to invite to this group.");
+            refuseCommand(ctx, input.entity, "You don't have permission to invite to this group.");
             return;
           }
           const target = findEntity(targetName);
           if (!target) {
-            ctx.send(input.entity, `Entity "${targetName}" not found.`);
+            refuseCommand(ctx, input.entity, `Entity "${targetName}" not found.`);
             return;
           }
           if (groups.isMember(group.id, target.id)) {
@@ -201,25 +202,25 @@ export function groupCommand(
           const targetName = tokens[1];
           const groupName = tokens[2];
           if (!targetName || !groupName) {
-            ctx.send(input.entity, "Usage: group kick <entity> <group>");
+            refuseCommand(ctx, input.entity, "Usage: group kick <entity> <group>");
             return;
           }
           const group = groups.getByName(groupName) ?? groups.get(groupName);
           if (!group) {
-            ctx.send(input.entity, `Group "${groupName}" not found.`);
+            refuseCommand(ctx, input.entity, `Group "${groupName}" not found.`);
             return;
           }
           if (!groups.canKick(group.id, input.entity)) {
-            ctx.send(input.entity, "You don't have permission to kick from this group.");
+            refuseCommand(ctx, input.entity, "You don't have permission to kick from this group.");
             return;
           }
           const target = findEntity(targetName);
           if (!target) {
-            ctx.send(input.entity, `Entity "${targetName}" not found.`);
+            refuseCommand(ctx, input.entity, `Entity "${targetName}" not found.`);
             return;
           }
           if (target.id === group.leaderId) {
-            ctx.send(input.entity, "Cannot kick the group leader.");
+            refuseCommand(ctx, input.entity, "Cannot kick the group leader.");
             return;
           }
           groups.removeMember(group.id, target.id);
@@ -233,28 +234,28 @@ export function groupCommand(
           const targetName = tokens[1];
           const groupName = tokens[2];
           if (!targetName || !groupName) {
-            ctx.send(input.entity, "Usage: group promote <entity> <group>");
+            refuseCommand(ctx, input.entity, "Usage: group promote <entity> <group>");
             return;
           }
           const group = groups.getByName(groupName) ?? groups.get(groupName);
           if (!group) {
-            ctx.send(input.entity, `Group "${groupName}" not found.`);
+            refuseCommand(ctx, input.entity, `Group "${groupName}" not found.`);
             return;
           }
           if (group.leaderId !== input.entity) {
-            ctx.send(input.entity, "Only the leader can promote members.");
+            refuseCommand(ctx, input.entity, "Only the leader can promote members.");
             return;
           }
           const target = findEntity(targetName);
           if (!target) {
-            ctx.send(input.entity, `Entity "${targetName}" not found.`);
+            refuseCommand(ctx, input.entity, `Entity "${targetName}" not found.`);
             return;
           }
           if (groups.promote(group.id, target.id)) {
             emitGroupUpdate(group.name);
             ctx.send(input.entity, `Promoted ${target.name} in "${group.name}".`);
           } else {
-            ctx.send(input.entity, `Cannot promote ${target.name} further.`);
+            refuseCommand(ctx, input.entity, `Cannot promote ${target.name} further.`);
           }
           return;
         }
@@ -263,28 +264,28 @@ export function groupCommand(
           const targetName = tokens[1];
           const groupName = tokens[2];
           if (!targetName || !groupName) {
-            ctx.send(input.entity, "Usage: group demote <entity> <group>");
+            refuseCommand(ctx, input.entity, "Usage: group demote <entity> <group>");
             return;
           }
           const group = groups.getByName(groupName) ?? groups.get(groupName);
           if (!group) {
-            ctx.send(input.entity, `Group "${groupName}" not found.`);
+            refuseCommand(ctx, input.entity, `Group "${groupName}" not found.`);
             return;
           }
           if (group.leaderId !== input.entity) {
-            ctx.send(input.entity, "Only the leader can demote members.");
+            refuseCommand(ctx, input.entity, "Only the leader can demote members.");
             return;
           }
           const target = findEntity(targetName);
           if (!target) {
-            ctx.send(input.entity, `Entity "${targetName}" not found.`);
+            refuseCommand(ctx, input.entity, `Entity "${targetName}" not found.`);
             return;
           }
           if (groups.demote(group.id, target.id)) {
             emitGroupUpdate(group.name);
             ctx.send(input.entity, `Demoted ${target.name} in "${group.name}".`);
           } else {
-            ctx.send(input.entity, `Cannot demote ${target.name} further.`);
+            refuseCommand(ctx, input.entity, `Cannot demote ${target.name} further.`);
           }
           return;
         }
@@ -292,16 +293,16 @@ export function groupCommand(
         case "disband": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: group disband <name>");
+            refuseCommand(ctx, input.entity, "Usage: group disband <name>");
             return;
           }
           const group = groups.getByName(name) ?? groups.get(name);
           if (!group) {
-            ctx.send(input.entity, `Group "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Group "${name}" not found.`);
             return;
           }
           if (group.leaderId !== input.entity) {
-            ctx.send(input.entity, "Only the leader can disband the group.");
+            refuseCommand(ctx, input.entity, "Only the leader can disband the group.");
             return;
           }
           groups.delete(group.id);

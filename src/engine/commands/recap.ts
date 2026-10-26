@@ -6,6 +6,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { ChronicleEntry } from "../../persistence/db-chronicle";
 import type { CommandUsage } from "../../sdk/command-forms";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { gatherRetrievalContext } from "./retrieval-core";
 
 const HELP =
@@ -73,12 +74,12 @@ export function recapCommand(deps: {
 
       const query = input.args.trim();
       if (!query) {
-        ctx.send(input.entity, "Usage: recap <topic>  (or `recap chronicle [day|week]`)");
+        refuseCommand(ctx, input.entity, "Usage: recap <topic>  (or `recap chronicle [day|week]`)");
         return;
       }
 
       if (!deps.db) {
-        ctx.send(input.entity, "Recap requires database support.");
+        refuseCommand(ctx, input.entity, "Recap requires database support.");
         return;
       }
 

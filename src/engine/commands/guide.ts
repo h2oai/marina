@@ -4,6 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { DAY_MS } from "../constants";
 import { requiresPersistence } from "./command-messages";
 import {
@@ -51,7 +52,7 @@ export function guideCommand(deps: {
     help: "Read the platform guide — orientation knowledge for this world.\nUsage: guide | guide <topic> | guide recall <topic> | guide list | guide audit\n\nThe guide is the shared `guide` pool every world seeds. `guide <topic>` recalls relevant notes; `guide audit` (alias `guide lint`) reports hygiene findings (duplicates, overlong notes, stale command references, unsupported claims, stale notes). Read-only.",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("the guide"));
+        refuseCommand(ctx, input.entity, requiresPersistence("the guide"));
         return;
       }
       const db = deps.db;
@@ -111,7 +112,7 @@ export function guideCommand(deps: {
       // recall: either `guide recall <topic>` or bare `guide <topic>`.
       const query = (sub === "recall" ? tokens.slice(1) : tokens).join(" ").trim();
       if (!query) {
-        ctx.send(input.entity, "Usage: guide recall <topic>");
+        refuseCommand(ctx, input.entity, "Usage: guide recall <topic>");
         return;
       }
       const results = db.recallPoolNotes(pool.id, query);

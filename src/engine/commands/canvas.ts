@@ -21,6 +21,7 @@ import {
 } from "../canvas-access";
 import { canvasDocumentData } from "../canvas-document";
 import { canvasItemOwners, canvasOwners } from "../canvas-ownership";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
 import { ingestAsset } from "../media/asset-library";
@@ -149,7 +150,7 @@ export function canvasCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("canvas"));
+        refuseCommand(ctx, input.entity, requiresPersistence("canvas"));
         return;
       }
       const db = deps.db;
@@ -262,7 +263,7 @@ export function canvasCommand(deps: {
         case "look":
         case "see": {
           if (!deps.look) {
-            ctx.send(eid, "Looking at canvas nodes is not available on this server.");
+            refuseCommand(ctx, eid, "Looking at canvas nodes is not available on this server.");
             return;
           }
           sendLookReply(
@@ -317,11 +318,12 @@ function handleConnect(
   const targetIdPrefix = tokens[1];
   const relationship = tokens[2]?.toLowerCase();
   if (!sourceIdPrefix || !targetIdPrefix || !relationship) {
-    ctx.send(eid, "Usage: canvas connect <src_node_id> <tgt_node_id> <relationship>");
+    refuseCommand(ctx, eid, "Usage: canvas connect <src_node_id> <tgt_node_id> <relationship>");
     return;
   }
   if (!VALID_EDGE_RELATIONSHIPS.has(relationship)) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       `Unknown relationship "${relationship}". Valid: ${[...VALID_EDGE_RELATIONSHIPS].join(", ")}`,
     );
@@ -339,7 +341,11 @@ function handleConnect(
     "canvas connect",
   );
   if (!sourceNode || !targetNode) {
-    ctx.send(eid, "One of those nodes doesn't exist. `canvas nodes <name>` lists node ids.");
+    refuseCommand(
+      ctx,
+      eid,
+      "One of those nodes doesn't exist. `canvas nodes <name>` lists node ids.",
+    );
     return;
   }
   if (sourceNode.canvas_id !== targetNode.canvas_id) {
@@ -387,7 +393,7 @@ function handleDisconnect(
 ): void {
   const edgeIdPrefix = tokens[0];
   if (!edgeIdPrefix) {
-    ctx.send(eid, "Usage: canvas disconnect <edge_id>");
+    refuseCommand(ctx, eid, "Usage: canvas disconnect <edge_id>");
     return;
   }
   let edge = db.getCanvasEdge(edgeIdPrefix);
@@ -408,7 +414,7 @@ function handleDisconnect(
   // An edge on a private canvas the caller cannot read is "not found".
   const edgeCanvas = edge ? db.getCanvas(edge.canvas_id) : undefined;
   if (!edge || (edgeCanvas && !readableCanvas(access, edgeCanvas, "canvas disconnect"))) {
-    ctx.send(eid, `Edge "${edgeIdPrefix}" not found.`);
+    refuseCommand(ctx, eid, `Edge "${edgeIdPrefix}" not found.`);
     return;
   }
   // The edge's author or the canvas owner (or an admin) may remove it.
@@ -418,7 +424,7 @@ function handleDisconnect(
     `Only the edge's author, the canvas owner, or an admin can remove edge ${edge.id.slice(0, 8)}.`,
   );
   if (refusal) {
-    ctx.send(eid, refusal);
+    refuseCommand(ctx, eid, refusal);
     return;
   }
   const ok = db.deleteCanvasEdge(edge.id);
@@ -460,12 +466,12 @@ function handleCreate(
 ): void {
   const name = tokens[0];
   if (!name) {
-    ctx.send(eid, "Usage: canvas create <name> [description]");
+    refuseCommand(ctx, eid, "Usage: canvas create <name> [description]");
     return;
   }
   const existing = db.getCanvasByName(name);
   if (existing) {
-    ctx.send(eid, `Canvas "${name}" already exists.`);
+    refuseCommand(ctx, eid, `Canvas "${name}" already exists.`);
     return;
   }
   const desc = tokens.slice(1).join(" ");
@@ -502,12 +508,12 @@ function handleInfo(
 ): void {
   const name = tokens[0];
   if (!name) {
-    ctx.send(eid, "Usage: canvas info <name>");
+    refuseCommand(ctx, eid, "Usage: canvas info <name>");
     return;
   }
   const canvas = readableCanvas(access, db.getCanvasByName(name), "canvas info");
   if (!canvas) {
-    ctx.send(eid, `Canvas "${name}" not found.`);
+    refuseCommand(ctx, eid, `Canvas "${name}" not found.`);
     return;
   }
   const nodes = db.getNodesByCanvas(canvas.id);
@@ -572,13 +578,17 @@ async function handlePublish(
   }
 
   if (!type || !assetId) {
-    ctx.send(eid, "Usage: canvas publish <type> <asset_id> [canvas_name] [reply:<node_id>]");
+    refuseCommand(
+      ctx,
+      eid,
+      "Usage: canvas publish <type> <asset_id> [canvas_name] [reply:<node_id>]",
+    );
     return;
   }
 
   const validTypes = Object.keys(TYPE_MIME_RULES);
   if (!validTypes.includes(type)) {
-    ctx.send(eid, `Invalid node type. Valid: ${validTypes.join(", ")}`);
+    refuseCommand(ctx, eid, `Invalid node type. Valid: ${validTypes.join(", ")}`);
     return;
   }
 
@@ -598,7 +608,7 @@ async function handlePublish(
             mayReadAsset(access.host, a, access.reader, "canvas publish", { log: false }),
         );
   if (!asset) {
-    ctx.send(eid, `Asset "${assetId}" not found.`);
+    refuseCommand(ctx, eid, `Asset "${assetId}" not found.`);
     return;
   }
 
@@ -607,7 +617,8 @@ async function handlePublish(
   // a broken <img> with no signal to the user that they picked the wrong type.
   const mimeOk = TYPE_MIME_RULES[type]?.(asset.mime_type ?? "") ?? true;
   if (!mimeOk) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       `Asset "${asset.filename}" (${asset.mime_type ?? "unknown"}) is not a valid ${type}. Pick a different type or upload a matching asset.`,
     );
@@ -619,7 +630,7 @@ async function handlePublish(
     try {
       panelData = await canvasDocumentData({}, asset.id, db, storage);
     } catch (error) {
-      ctx.send(eid, `Cannot publish panel: ${getErrorMessage(error)}`);
+      refuseCommand(ctx, eid, `Cannot publish panel: ${getErrorMessage(error)}`);
       return;
     }
   }
@@ -627,7 +638,7 @@ async function handlePublish(
   // Find or use default canvas — prefer "global"
   const named = canvasName ? db.getCanvasByName(canvasName) : undefined;
   if (named && !readableCanvas(access, named, "canvas publish", "write")) {
-    ctx.send(eid, `Canvas "${canvasName}" not found.`);
+    refuseCommand(ctx, eid, `Canvas "${canvasName}" not found.`);
     return;
   }
   let canvas = canvasName
@@ -769,7 +780,7 @@ function handlePost(
   }
   const text = tokens.slice(i).join(" ").trim();
   if (!text) {
-    ctx.send(eid, "Usage: canvas post [on:<canvas>] [reply:<node_id>] <text>");
+    refuseCommand(ctx, eid, "Usage: canvas post [on:<canvas>] [reply:<node_id>] <text>");
     return;
   }
 
@@ -780,7 +791,7 @@ function handlePost(
   // A private canvas the caller cannot read is "not found" (and never
   // shadowed by a new canvas of the same name).
   if (named && !readableCanvas(access, named, "canvas post", "write")) {
-    ctx.send(eid, `Canvas "${canvasName}" not found.`);
+    refuseCommand(ctx, eid, `Canvas "${canvasName}" not found.`);
     return;
   }
   let canvas = canvasName
@@ -788,7 +799,8 @@ function handlePost(
     : (db.getCanvasByName("global") ??
       db.listCanvases({ limit: 20 }).find((c) => mayReadCanvas(c, access.reader, "write")));
   if (!canvas && parentNodeId) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       `Unknown node id "${parentNodeId}": canvas "${canvasName ?? "global"}" does not exist yet. \`canvas list\` shows canvases.`,
     );
@@ -856,12 +868,12 @@ function handleNodes(
 ): void {
   const name = tokens[0];
   if (!name) {
-    ctx.send(eid, "Usage: canvas nodes <name>");
+    refuseCommand(ctx, eid, "Usage: canvas nodes <name>");
     return;
   }
   const canvas = readableCanvas(access, db.getCanvasByName(name), "canvas nodes");
   if (!canvas) {
-    ctx.send(eid, `Canvas "${name}" not found.`);
+    refuseCommand(ctx, eid, `Canvas "${name}" not found.`);
     return;
   }
   const nodes = db.getNodesByCanvas(canvas.id);
@@ -892,12 +904,12 @@ function handleDelete(
 ): void {
   const name = tokens[0];
   if (!name) {
-    ctx.send(eid, "Usage: canvas delete <name>");
+    refuseCommand(ctx, eid, "Usage: canvas delete <name>");
     return;
   }
   const canvas = readableCanvas(access, db.getCanvasByName(name), "canvas delete");
   if (!canvas) {
-    ctx.send(eid, `Canvas "${name}" not found.`);
+    refuseCommand(ctx, eid, `Canvas "${name}" not found.`);
     return;
   }
   const refusal = ownershipRefusal(
@@ -906,7 +918,7 @@ function handleDelete(
     `Only the owner of canvas "${canvas.name}" or an admin can delete it.`,
   );
   if (refusal) {
-    ctx.send(eid, refusal);
+    refuseCommand(ctx, eid, refusal);
     return;
   }
   db.deleteCanvas(canvas.id);
@@ -1003,12 +1015,12 @@ function handleEdges(
 ): void {
   const name = tokens[0];
   if (!name) {
-    ctx.send(eid, "Usage: canvas edges <name>");
+    refuseCommand(ctx, eid, "Usage: canvas edges <name>");
     return;
   }
   const canvas = readableCanvas(access, db.getCanvasByName(name), "canvas edges");
   if (!canvas) {
-    ctx.send(eid, `Canvas "${name}" not found.`);
+    refuseCommand(ctx, eid, `Canvas "${name}" not found.`);
     return;
   }
   const edges = db.getCanvasEdges(canvas.id);
@@ -1137,12 +1149,12 @@ function handleLayout(
   const algo = tokens[0]?.toLowerCase();
   const name = tokens[1];
   if (!algo || !name) {
-    ctx.send(eid, "Usage: canvas layout <grid|timeline|feed> <canvas_name>");
+    refuseCommand(ctx, eid, "Usage: canvas layout <grid|timeline|feed> <canvas_name>");
     return;
   }
   const canvas = readableCanvas(access, db.getCanvasByName(name), "canvas layout");
   if (!canvas) {
-    ctx.send(eid, `Canvas "${name}" not found.`);
+    refuseCommand(ctx, eid, `Canvas "${name}" not found.`);
     return;
   }
   // Re-laying out moves every author's nodes: the canvas owner's call.
@@ -1152,7 +1164,7 @@ function handleLayout(
     `Only the owner of canvas "${canvas.name}" or an admin can re-layout it.`,
   );
   if (refusal) {
-    ctx.send(eid, refusal);
+    refuseCommand(ctx, eid, refusal);
     return;
   }
   const nodes = db.getNodesByCanvas(canvas.id);
@@ -1258,7 +1270,7 @@ function handleLayout(
     return;
   }
 
-  ctx.send(eid, "Unknown layout algorithm. Use 'grid', 'timeline', or 'feed'.");
+  refuseCommand(ctx, eid, "Unknown layout algorithm. Use 'grid', 'timeline', or 'feed'.");
 }
 
 // ─── Asset Handling ──────────────────────────────────────────────────────
@@ -1316,7 +1328,7 @@ async function handleAsset(
     case "upload": {
       const url = tokens[1];
       if (!url) {
-        ctx.send(eid, "Usage: canvas asset upload <url or file:filename>");
+        refuseCommand(ctx, eid, "Usage: canvas asset upload <url or file:filename>");
         return;
       }
       if (!storage) {
@@ -1328,7 +1340,11 @@ async function handleAsset(
       if (url.startsWith("file:")) {
         const filename = url.slice(5);
         if (!filename || filename.includes("..") || filename.includes("/")) {
-          ctx.send(eid, "Invalid filename. Use a simple filename from your scratch directory.");
+          refuseCommand(
+            ctx,
+            eid,
+            "Invalid filename. Use a simple filename from your scratch directory.",
+          );
           return;
         }
         const root = scratchRoot ?? defaultScratchRoot();
@@ -1336,7 +1352,7 @@ async function handleAsset(
         try {
           const file = Bun.file(filePath);
           if (!(await file.exists())) {
-            ctx.send(eid, `File not found in scratch directory: ${filename}`);
+            refuseCommand(ctx, eid, `File not found in scratch directory: ${filename}`);
             return;
           }
           const bodyBytes = new Uint8Array(await file.arrayBuffer());

@@ -5,6 +5,7 @@ import { experimentalHelp } from "../../config/feature-status";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { type ConnectorRuntime, readPageVia } from "../connector-runtime";
 import { extractReadableText } from "../html-text";
 
@@ -99,7 +100,7 @@ export function scenarioCommand(deps: {
         case "report":
           return handleReport(ctx, input.entity, entity, deps);
         default:
-          ctx.send(input.entity, `Unknown subcommand: ${sub}\n\n${HELP}`);
+          refuseCommand(ctx, input.entity, `Unknown subcommand: ${sub}\n\n${HELP}`);
       }
     },
   };
@@ -150,7 +151,7 @@ async function handleExtract(
   const arg = tokens[0];
 
   if (!arg) {
-    ctx.send(eid, "Usage: scenario extract <url> | scenario extract board <name>");
+    refuseCommand(ctx, eid, "Usage: scenario extract <url> | scenario extract board <name>");
     return;
   }
 
@@ -161,7 +162,7 @@ async function handleExtract(
     const boardName = tokens[1] ?? SCENARIO_GRAPH_BOARD;
     const board = db.getBoardByName(boardName);
     if (!board) {
-      ctx.send(eid, `Board "${boardName}" not found.`);
+      refuseCommand(ctx, eid, `Board "${boardName}" not found.`);
       return;
     }
     const posts = db.listBoardPosts(board.id, { limit: 5 });
@@ -285,7 +286,11 @@ function handleInject(
   const raw = tokens.join(" ").trim();
 
   if (!raw) {
-    ctx.send(eid, "Usage: scenario inject <key>=<value>  (e.g. 'scenario inject fed_rate=cut')");
+    refuseCommand(
+      ctx,
+      eid,
+      "Usage: scenario inject <key>=<value>  (e.g. 'scenario inject fed_rate=cut')",
+    );
     return;
   }
 

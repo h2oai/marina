@@ -24,6 +24,7 @@ import {
   type RoleLoopSections,
 } from "../../persistence/db-agents";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
 import { checkRoleEdit, refuseOwnRole } from "../role-guard";
@@ -203,7 +204,7 @@ export function roleCommand(deps: {
     help: "Manage composable agent roles.\nUsage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> [traits <t1,t2,...>] [guidelines <g1> | <g2> ...] [focus <f1,f2,...>] [tone <tone>] | role edit <name> ... | role reload <name> | role delete <name>\n\nRoles are compositions of traits plus guidelines, focus areas, and tone.\n`role view <name> goal <text>` previews the PRISM-gated prompt an agent with that goal actually receives. `role lint <name>` reports pragmatic prompt-shaping warnings without changing the role. `role history <name>` shows the audited edit trail. `role reload <name>` propagates the current definition into running agents bound to it. `role export <name>` / `role import <bundle>` move a role and its traits between worlds losslessly (import only creates).",
     handler: async (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("roles"));
+        refuseCommand(ctx, input.entity, requiresPersistence("roles"));
         return;
       }
       const guardDb = deps.db;
@@ -254,12 +255,12 @@ export function roleCommand(deps: {
         case "view": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: role view <name>");
+            refuseCommand(ctx, input.entity, "Usage: role view <name>");
             return;
           }
           const resolved = resolveRole(db, name);
           if (!resolved) {
-            ctx.send(input.entity, `Role "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Role "${name}" not found.`);
             return;
           }
 
@@ -269,7 +270,7 @@ export function roleCommand(deps: {
           if (tokens[2]?.toLowerCase() === "goal") {
             const goalText = tokens.slice(3).join(" ").trim();
             if (!goalText) {
-              ctx.send(input.entity, "Usage: role view <name> goal <text>");
+              refuseCommand(ctx, input.entity, "Usage: role view <name> goal <text>");
               return;
             }
             const category = inferTaskCategory(goalText);
@@ -331,7 +332,7 @@ export function roleCommand(deps: {
         case "history": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: role history <name>");
+            refuseCommand(ctx, input.entity, "Usage: role history <name>");
             return;
           }
           const hist = db.getRoleHistory(name);
@@ -346,12 +347,12 @@ export function roleCommand(deps: {
         case "lint": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: role lint <name>");
+            refuseCommand(ctx, input.entity, "Usage: role lint <name>");
             return;
           }
           const role = db.getRole(name);
           if (!role) {
-            ctx.send(input.entity, `Role "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Role "${name}" not found.`);
             return;
           }
           ctx.send(input.entity, renderRoleLint(db, role));
@@ -362,17 +363,17 @@ export function roleCommand(deps: {
           const a = tokens[1];
           const b = tokens[2];
           if (!a || !b) {
-            ctx.send(input.entity, "Usage: role diff <a> <b>");
+            refuseCommand(ctx, input.entity, "Usage: role diff <a> <b>");
             return;
           }
           const roleA = db.getRole(a);
           const roleB = db.getRole(b);
           if (!roleA) {
-            ctx.send(input.entity, `Role "${a}" not found.`);
+            refuseCommand(ctx, input.entity, `Role "${a}" not found.`);
             return;
           }
           if (!roleB) {
-            ctx.send(input.entity, `Role "${b}" not found.`);
+            refuseCommand(ctx, input.entity, `Role "${b}" not found.`);
             return;
           }
           ctx.send(input.entity, renderRoleDiff(roleA, roleB));
@@ -384,7 +385,8 @@ export function roleCommand(deps: {
           const name = tokens[1];
           const bundle = name ? exportRoleBundle(db, name) : undefined;
           if (!bundle) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               name ? `Role "${name}" not found.` : "Usage: role export <name>",
             );
@@ -409,7 +411,8 @@ export function roleCommand(deps: {
           }
           const bundle = decodeRoleBundle(tokens[1] ?? "");
           if ("error" in bundle) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Usage: role import <bundle from role export> — ${bundle.error}`,
             );
@@ -434,17 +437,21 @@ export function roleCommand(deps: {
           // changes live behavior — the gate is the authority, no rank floor.
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: role reload <name>");
+            refuseCommand(ctx, input.entity, "Usage: role reload <name>");
             return;
           }
           if (!db.getRole(name)) {
-            ctx.send(input.entity, `Role "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Role "${name}" not found.`);
             return;
           }
           const reloadGate = guardExistingRole(name, "reload");
           if (!reloadGate) return;
           if (!deps.listAgents || !deps.reconfigureAgent) {
-            ctx.send(input.entity, "Agent runtime unavailable — cannot reload running agents.");
+            refuseCommand(
+              ctx,
+              input.entity,
+              "Agent runtime unavailable — cannot reload running agents.",
+            );
             return;
           }
           const live = new Set(["starting", "connected", "autonomous", "idle"]);
@@ -487,7 +494,8 @@ export function roleCommand(deps: {
           }
           const name = tokens[1];
           if (!name) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Usage: role ${sub} <name> [traits <t1,t2,...>] [guidelines <g1> | <g2> ...] [focus <f1,f2,...>] [tone <text>] [operating_loop|how_to_be|every_turn <text>]`,
             );
@@ -495,11 +503,19 @@ export function roleCommand(deps: {
           }
 
           if (sub === "create" && db.getRole(name)) {
-            ctx.send(input.entity, `Role "${name}" already exists. Use "role edit" to modify.`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Role "${name}" already exists. Use "role edit" to modify.`,
+            );
             return;
           }
           if (sub === "edit" && !db.getRole(name)) {
-            ctx.send(input.entity, `Role "${name}" not found. Use "role create" to define it.`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Role "${name}" not found. Use "role create" to define it.`,
+            );
             return;
           }
           // Creating is free (nothing runs on a new role until an agent is
@@ -528,11 +544,11 @@ export function roleCommand(deps: {
           // role.edit (below) is the authority for deleting an existing role.
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: role delete <name>");
+            refuseCommand(ctx, input.entity, "Usage: role delete <name>");
             return;
           }
           if (!db.getRole(name)) {
-            ctx.send(input.entity, `Role "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Role "${name}" not found.`);
             return;
           }
           const deleteGate = guardExistingRole(name, "delete");

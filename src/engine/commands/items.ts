@@ -3,6 +3,7 @@
 
 import { entity as fmtEntity } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext, RoomId } from "../../types";
+import { refuseCommand } from "../command-response";
 import { splitOn } from "../parse-input";
 
 export function getCommand(deps: {
@@ -128,7 +129,7 @@ export function giveCommand(deps: {
       // Parse: give <item> to <entity>
       const parts = splitOn(input.args, " to ");
       if (!parts) {
-        ctx.send(input.entity, "Usage: give <item> to <entity>");
+        refuseCommand(ctx, input.entity, "Usage: give <item> to <entity>");
         return;
       }
 

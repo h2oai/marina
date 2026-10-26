@@ -4,6 +4,7 @@
 import { category, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext, RoomId } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getRank } from "../permissions";
 
 export function searchCommand(deps: {
@@ -23,7 +24,7 @@ export function searchCommand(deps: {
 
       const query = input.args.trim();
       if (!query) {
-        ctx.send(input.entity, "Usage: search <query>");
+        refuseCommand(ctx, input.entity, "Usage: search <query>");
         return;
       }
 

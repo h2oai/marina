@@ -9,6 +9,7 @@ import type {
   SimulationMode,
 } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
 import { notFound } from "./command-messages";
@@ -107,7 +108,7 @@ export function labCommand(deps: {
         }
         const treatments = parseObject(treatmentsText);
         if (!treatments) {
-          ctx.send(input.entity, "Treatments must be a JSON object.");
+          refuseCommand(ctx, input.entity, "Treatments must be a JSON object.");
           return;
         }
         const row = deps.db.createSimulationRun({
@@ -148,7 +149,7 @@ export function labCommand(deps: {
         }
         const treatments = parseObject(treatmentsText);
         if (!treatments) {
-          ctx.send(input.entity, "Treatments must be a JSON object.");
+          refuseCommand(ctx, input.entity, "Treatments must be a JSON object.");
           return;
         }
         const row = deps.db.createSimulationRun({
@@ -193,7 +194,7 @@ export function labCommand(deps: {
         }
         const treatments = parseObject(treatmentsText);
         if (!treatments) {
-          ctx.send(input.entity, "Treatments must be a JSON object.");
+          refuseCommand(ctx, input.entity, "Treatments must be a JSON object.");
           return;
         }
         const ids = [];
@@ -229,7 +230,7 @@ export function labCommand(deps: {
         }
         const data = parseObject(dataText);
         if (!data) {
-          ctx.send(input.entity, "Event data must be a JSON object.");
+          refuseCommand(ctx, input.entity, "Event data must be a JSON object.");
           return;
         }
         const row = deps.db.appendSimulationEvent({
@@ -265,7 +266,7 @@ export function labCommand(deps: {
         }
         const measures = parseObject(measuresText);
         if (!measures) {
-          ctx.send(input.entity, "Measures must be a JSON object.");
+          refuseCommand(ctx, input.entity, "Measures must be a JSON object.");
           return;
         }
         // Runs and their events are already preserved append-only in their own

@@ -4,6 +4,7 @@
 import type { MacroManager } from "../../coordination/macro-manager";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import type { CommandRouter } from "../command-router";
 import { roomMacroOwner } from "../macro-expansion";
 import { rankFloorRefusal } from "../rank-floor";
@@ -105,7 +106,7 @@ export function macroCommand(
         case "create": {
           const name = parsed.name;
           if (!name || !parsed.body) {
-            ctx.send(input.entity, `Usage: macro create <name> <command with $* / $1…>`);
+            refuseCommand(ctx, input.entity, `Usage: macro create <name> <command with $* / $1…>`);
             return;
           }
           // Collision check — built-ins, aliases and room commands take priority
@@ -113,14 +114,16 @@ export function macroCommand(
           const verb = name.toLowerCase();
           const existingCmd = router.getDef(verb);
           if (existingCmd) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Cannot create macro "${name}" — conflicts with built-in command "${existingCmd.name}".`,
             );
             return;
           }
           if (isRoomCommand(verb)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Cannot create macro "${name}" — conflicts with a room command of the same name.`,
             );
@@ -130,19 +133,20 @@ export function macroCommand(
           if (parsed.room) {
             const target = roomOwner(parsed.room);
             if ("refusal" in target) {
-              ctx.send(input.entity, target.refusal);
+              refuseCommand(ctx, input.entity, target.refusal);
               return;
             }
             owner = target.owner;
           }
           const existing = macros.getByName(name, owner);
           if (existing) {
-            ctx.send(input.entity, `Macro "${name}" already exists.`);
+            refuseCommand(ctx, input.entity, `Macro "${name}" already exists.`);
             return;
           }
           const command = parsed.body;
           if (!command.split(";").some((part) => part.trim())) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Cannot create an empty macro. Usage: macro create <name> <command>",
             );
@@ -159,21 +163,21 @@ export function macroCommand(
         case "delete": {
           const name = parsed.name;
           if (!name) {
-            ctx.send(input.entity, "Usage: macro delete <name> [room:<id|here>]");
+            refuseCommand(ctx, input.entity, "Usage: macro delete <name> [room:<id|here>]");
             return;
           }
           let owner: string = input.entity;
           if (parsed.room) {
             const target = roomOwner(parsed.room);
             if ("refusal" in target) {
-              ctx.send(input.entity, target.refusal);
+              refuseCommand(ctx, input.entity, target.refusal);
               return;
             }
             owner = target.owner;
           }
           const macro = macros.getByName(name, owner);
           if (!macro) {
-            ctx.send(input.entity, `Macro "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Macro "${name}" not found.`);
             return;
           }
           macros.delete(macro.id, owner);

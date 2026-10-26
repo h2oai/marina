@@ -8,6 +8,7 @@ import * as polymarket from "../../net/clients/polymarket-client";
 import { isTabH2OConfigured, type TabH2ORow, tabh2oPredict } from "../../net/clients/tabh2o-client";
 import type { MarinaDB, MarketRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
 import { parseDuration } from "./format-duration";
 
@@ -105,7 +106,7 @@ export function marketCommand(deps: {
         case "search": {
           const query = tokens.slice(1).join(" ");
           if (!query) {
-            ctx.send(input.entity, "Usage: market search <query>");
+            refuseCommand(ctx, input.entity, "Usage: market search <query>");
             return;
           }
           const results = db.searchMarkets(query);
@@ -126,7 +127,8 @@ export function marketCommand(deps: {
         case "live": {
           const venueRaw = tokens[1]?.toLowerCase();
           if (venueRaw !== "kalshi" && venueRaw !== "polymarket") {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: market live <kalshi|polymarket> [duration] [limit]\nExamples:\n  market live kalshi 7d 25\n  market live polymarket 1w",
             );
@@ -156,12 +158,12 @@ export function marketCommand(deps: {
           // `market view <id>` and `market info <id>` normalize here.
           const marketId = tokens[1];
           if (!marketId) {
-            ctx.send(input.entity, "Usage: market show <id>   (also view/info)");
+            refuseCommand(ctx, input.entity, "Usage: market show <id>   (also view/info)");
             return;
           }
           const market = db.getMarket(marketId);
           if (!market) {
-            ctx.send(input.entity, `Market "${marketId}" not found.`);
+            refuseCommand(ctx, input.entity, `Market "${marketId}" not found.`);
             return;
           }
           const positions = db.getMarketPositions(market.id);
@@ -234,23 +236,25 @@ export function marketCommand(deps: {
         case "forecast": {
           const marketId = tokens[1];
           if (!marketId) {
-            ctx.send(input.entity, "Usage: market forecast <id>");
+            refuseCommand(ctx, input.entity, "Usage: market forecast <id>");
             return;
           }
           const target = db.getMarket(marketId);
           if (!target) {
-            ctx.send(input.entity, `Market "${marketId}" not found.`);
+            refuseCommand(ctx, input.entity, `Market "${marketId}" not found.`);
             return;
           }
           if (target.status === "resolved") {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Market ${target.id} is already resolved (${(target.outcome ?? "?").toUpperCase()}). Nothing to forecast.`,
             );
             return;
           }
           if (!isTabH2OConfigured()) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "TabH2O is not configured on this instance — ask an admin to set TABH2O_API_KEY.",
             );

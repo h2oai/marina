@@ -14,6 +14,7 @@ import { basename, join, resolve } from "node:path";
 import type { MarinaDB } from "../../persistence/database";
 import { exportState } from "../../persistence/export-import";
 import type { CommandDef, Connection, Entity } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { adminDecisions } from "./admin-decisions";
 
@@ -107,12 +108,12 @@ export function adminCommand(deps: AdminDeps): CommandDef {
         case "kick": {
           const targetName = input.tokens[1];
           if (!targetName) {
-            ctx.send(input.entity, "Usage: admin kick <entity>");
+            refuseCommand(ctx, input.entity, "Usage: admin kick <entity>");
             return;
           }
           const target = deps.findEntity(targetName);
           if (!target) {
-            ctx.send(input.entity, `Entity "${targetName}" not found.`);
+            refuseCommand(ctx, input.entity, `Entity "${targetName}" not found.`);
             return;
           }
           // Find their connection and disconnect
@@ -137,7 +138,7 @@ export function adminCommand(deps: AdminDeps): CommandDef {
         case "ban": {
           const targetName = input.tokens[1];
           if (!targetName) {
-            ctx.send(input.entity, "Usage: admin ban <entity> [reason]");
+            refuseCommand(ctx, input.entity, "Usage: admin ban <entity> [reason]");
             return;
           }
           const reason = input.tokens.slice(2).join(" ") || "No reason given";
@@ -168,13 +169,13 @@ export function adminCommand(deps: AdminDeps): CommandDef {
         case "unban": {
           const targetName = input.tokens[1];
           if (!targetName) {
-            ctx.send(input.entity, "Usage: admin unban <entity>");
+            refuseCommand(ctx, input.entity, "Usage: admin unban <entity>");
             return;
           }
           if (deps.db.removeBan(targetName)) {
             ctx.send(input.entity, `Unbanned ${targetName}.`);
           } else {
-            ctx.send(input.entity, `${targetName} is not banned.`);
+            refuseCommand(ctx, input.entity, `${targetName} is not banned.`);
           }
           break;
         }
@@ -211,7 +212,7 @@ export function adminCommand(deps: AdminDeps): CommandDef {
         case "announce": {
           const message = input.tokens.slice(1).join(" ");
           if (!message) {
-            ctx.send(input.entity, "Usage: admin announce <message>");
+            refuseCommand(ctx, input.entity, "Usage: admin announce <message>");
             return;
           }
           deps.broadcastAll(`[ADMIN] ${message}`);
@@ -222,11 +223,12 @@ export function adminCommand(deps: AdminDeps): CommandDef {
         case "reload": {
           const roomId = input.tokens[1];
           if (!roomId) {
-            ctx.send(input.entity, "Usage: admin reload <room-id>");
+            refuseCommand(ctx, input.entity, "Usage: admin reload <room-id>");
             return;
           }
           if (!deps.reloadRoom) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Room reloading isn't wired up in this world. `build reload <room>` is the per-room path.",
             );
@@ -286,7 +288,8 @@ export function adminCommand(deps: AdminDeps): CommandDef {
         case "snapshot": {
           const name = input.tokens[1];
           if (!name) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: admin snapshot <name> [--force] [--compact]\n" +
                 "  Clones the live DB into seeds/<name>.db via SQLite VACUUM INTO.\n" +
@@ -297,7 +300,8 @@ export function adminCommand(deps: AdminDeps): CommandDef {
             return;
           }
           if (!SNAPSHOT_NAME.test(name)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Invalid snapshot name "${name}" — use [A-Za-z0-9._-], max 64 chars.`,
             );
@@ -321,7 +325,8 @@ export function adminCommand(deps: AdminDeps): CommandDef {
           }
           if (existsSync(targetDb)) {
             if (!force) {
-              ctx.send(
+              refuseCommand(
+                ctx,
                 input.entity,
                 `Snapshot seeds/${name}.db already exists. Re-run with --force to overwrite.`,
               );
@@ -446,7 +451,7 @@ export function adminCommand(deps: AdminDeps): CommandDef {
         }
 
         default:
-          ctx.send(input.entity, `Unknown admin command: ${sub}`);
+          refuseCommand(ctx, input.entity, `Unknown admin command: ${sub}`);
       }
     },
   };

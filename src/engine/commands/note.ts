@@ -15,6 +15,7 @@ import {
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { CommandUsage } from "../../sdk/command-forms";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { tryLog } from "../errors";
 import { Logger } from "../logger";
 import { assetReadableBy } from "../media/asset-memory-access";
@@ -266,7 +267,7 @@ export function noteCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("notes"));
+        refuseCommand(ctx, input.entity, requiresPersistence("notes"));
         return;
       }
       const db = deps.db;
@@ -312,7 +313,8 @@ export function noteCommand(deps: {
             if (claimMods.raw[key] !== undefined) modifiers[key] = claimMods.raw[key]!;
           }
           if (!text) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: note claim <text> [confidence:0..1] [source:URL] [observed:YYYY-MM-DD]   (also trailing `confidence 0.9 source URL`)\n" +
                 "(see also: `memory claim <subject> <predicate> <JSON scalar>` asserts a typed durable claim; `note claim` records a free-text legacy claim in the same canonical record history.)",
@@ -322,7 +324,7 @@ export function noteCommand(deps: {
           const confidence =
             modifiers.confidence === undefined ? 0.5 : Number(modifiers.confidence);
           if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
-            ctx.send(input.entity, "Confidence must be between 0 and 1.");
+            refuseCommand(ctx, input.entity, "Confidence must be between 0 and 1.");
             return;
           }
           const id = db.createNote(entity.name, text, input.room, {
@@ -351,7 +353,8 @@ export function noteCommand(deps: {
           const reference = tokens[2];
           const note = db.getNote(id);
           if (!access.write(note) || !reference) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: note source <your-note-id> <url|note:id|asset:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]\n" +
                 "(see also: `memory source <source ID> [start end]` reads a durable original source by byte range; `note source` attaches a reference to a legacy note in the canonical record's sources.)",
@@ -370,7 +373,7 @@ export function noteCommand(deps: {
             sourceNoteId !== undefined &&
             (!Number.isInteger(sourceNoteId) || !access.read(db.getNote(sourceNoteId)))
           ) {
-            ctx.send(input.entity, `Source note ${reference} was not found.`);
+            refuseCommand(ctx, input.entity, `Source note ${reference} was not found.`);
             return;
           }
           // `asset:<id>` cites a stored file; only one the caller may read.
@@ -382,14 +385,14 @@ export function noteCommand(deps: {
               !assetReadableBy(db, { name: entity.name, id: entity.id }, asset) ||
               parseAssetRefs(reference, 1)[0] !== sourceAssetId
             ) {
-              ctx.send(input.entity, `Source asset ${reference} was not found.`);
+              refuseCommand(ctx, input.entity, `Source asset ${reference} was not found.`);
               return;
             }
           }
           const credibility =
             modifiers.credibility === undefined ? 0.5 : Number(modifiers.credibility);
           if (!Number.isFinite(credibility) || credibility < 0 || credibility > 1) {
-            ctx.send(input.entity, "Credibility must be between 0 and 1.");
+            refuseCommand(ctx, input.entity, "Credibility must be between 0 and 1.");
             return;
           }
           const observedAt = modifiers.observed ? Date.parse(modifiers.observed) : undefined;
@@ -425,7 +428,7 @@ export function noteCommand(deps: {
           const note = db.getNote(id);
           const source = db.getNote(sourceId);
           if (!access.write(note) || !access.read(source)) {
-            ctx.send(input.entity, "Usage: note derive <your-note-id> <source-note-id>");
+            refuseCommand(ctx, input.entity, "Usage: note derive <your-note-id> <source-note-id>");
             return;
           }
           db.addNoteSource(id, {
@@ -477,7 +480,8 @@ export function noteCommand(deps: {
             return;
           }
           if (!access.write(note)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               access.read(note)
                 ? `Note #${id} is not yours: \`note verify\` records your verdict on your own notes. Another resident's pool note is vouched for with \`pool <name> ratify ${id}\`.`
@@ -515,7 +519,7 @@ export function noteCommand(deps: {
           const id = Number.parseInt(tokens[1] ?? "", 10);
           const note = db.getNote(id);
           if (!access.write(note)) {
-            ctx.send(input.entity, `Note #${tokens[1] ?? "?"} not found or not yours.`);
+            refuseCommand(ctx, input.entity, `Note #${tokens[1] ?? "?"} not found or not yours.`);
             return;
           }
           const sources = db
@@ -610,7 +614,8 @@ export function noteCommand(deps: {
             !["left", "right", "both", "neither"].includes(resolution) ||
             !rationale
           ) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: note resolve <case-id> left|right|both|neither <evidence-backed rationale>\n" +
                 "(see also: `memory resolve <ID> <policy> <JSON>` settles competing DURABLE assertions by policy; `note resolve` adjudicates a legacy contradiction case and commits the canonical verdicts.)",
@@ -638,14 +643,15 @@ export function noteCommand(deps: {
           const keeper = Number.parseInt(tokens[1] ?? "", 10);
           const duplicates = tokens.slice(2).map(Number).filter(Number.isInteger);
           if (!Number.isInteger(keeper) || duplicates.length === 0) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: note consolidate <keeper-id> <duplicate-id> [duplicate-id ...]",
             );
             return;
           }
           if (![keeper, ...duplicates].every((id) => access.write(db.getNote(id)))) {
-            ctx.send(input.entity, "One or more notes not found or not yours.");
+            refuseCommand(ctx, input.entity, "One or more notes not found or not yours.");
             return;
           }
           const changed = db.consolidateNotes(entity.name, keeper, duplicates);
@@ -703,7 +709,7 @@ export function noteCommand(deps: {
         case "search": {
           const query = tokens.slice(1).join(" ");
           if (!query) {
-            ctx.send(input.entity, "Usage: note search <query>");
+            refuseCommand(ctx, input.entity, "Usage: note search <query>");
             return;
           }
           const notes = db.searchNotes(entity.name, query).filter(access.read);
@@ -726,7 +732,7 @@ export function noteCommand(deps: {
         case "delete": {
           const id = Number.parseInt(tokens[1] ?? "", 10);
           if (Number.isNaN(id)) {
-            ctx.send(input.entity, "Usage: note delete <id>");
+            refuseCommand(ctx, input.entity, "Usage: note delete <id>");
             return;
           }
           const target = db.getNote(id);
@@ -740,7 +746,7 @@ export function noteCommand(deps: {
             });
             ctx.send(input.entity, `Note #${id} deleted.`);
           } else {
-            ctx.send(input.entity, `Note #${id} not found or not yours.`);
+            refuseCommand(ctx, input.entity, `Note #${id} not found or not yours.`);
           }
           return;
         }
@@ -750,11 +756,12 @@ export function noteCommand(deps: {
           const id2 = Number.parseInt(tokens[2] ?? "", 10);
           const rel = tokens[3]?.toLowerCase();
           if (Number.isNaN(id1) || Number.isNaN(id2) || !rel) {
-            ctx.send(input.entity, "Usage: note link <id1> <id2> <relationship>");
+            refuseCommand(ctx, input.entity, "Usage: note link <id1> <id2> <relationship>");
             return;
           }
           if (!VALID_RELATIONSHIPS.has(rel)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Invalid relationship. Valid: ${[...VALID_RELATIONSHIPS].join(", ")}`,
             );
@@ -763,7 +770,7 @@ export function noteCommand(deps: {
           const note1 = db.getNote(id1);
           const note2 = db.getNote(id2);
           if (!access.write(note1) || !access.read(note2)) {
-            ctx.send(input.entity, "One or both notes not found.");
+            refuseCommand(ctx, input.entity, "One or both notes not found.");
             return;
           }
           try {
@@ -788,7 +795,7 @@ export function noteCommand(deps: {
           const id2 = Number.parseInt(tokens[2] ?? "", 10);
           const rel = tokens[3]?.toLowerCase();
           if (Number.isNaN(id1) || Number.isNaN(id2) || !rel) {
-            ctx.send(input.entity, "Usage: note unlink <id1> <id2> <relationship>");
+            refuseCommand(ctx, input.entity, "Usage: note unlink <id1> <id2> <relationship>");
             return;
           }
           const removed =
@@ -814,17 +821,17 @@ export function noteCommand(deps: {
         case "correct": {
           const id = Number.parseInt(tokens[1] ?? "", 10);
           if (Number.isNaN(id)) {
-            ctx.send(input.entity, "Usage: note correct <id> <new text>");
+            refuseCommand(ctx, input.entity, "Usage: note correct <id> <new text>");
             return;
           }
           const oldNote = db.getNote(id);
           if (!access.write(oldNote)) {
-            ctx.send(input.entity, `Note #${id} not found.`);
+            refuseCommand(ctx, input.entity, `Note #${id} not found.`);
             return;
           }
           const newText = tokens.slice(2).join(" ");
           if (!newText) {
-            ctx.send(input.entity, "Usage: note correct <id> <new text>");
+            refuseCommand(ctx, input.entity, "Usage: note correct <id> <new text>");
             return;
           }
           const parsed = parseNoteText(newText);
@@ -867,12 +874,12 @@ export function noteCommand(deps: {
         case "trace": {
           const id = Number.parseInt(tokens[1] ?? "", 10);
           if (Number.isNaN(id)) {
-            ctx.send(input.entity, "Usage: note trace <id>");
+            refuseCommand(ctx, input.entity, "Usage: note trace <id>");
             return;
           }
           const graph = access.trace(id, 2);
           if (graph.length === 0) {
-            ctx.send(input.entity, `Note #${id} not found.`);
+            refuseCommand(ctx, input.entity, `Note #${id} not found.`);
             return;
           }
           const lines = [header("Note Graph"), separator()];
@@ -916,12 +923,12 @@ export function noteCommand(deps: {
         case "evolve": {
           const id = Number.parseInt(tokens[1] ?? "", 10);
           if (Number.isNaN(id)) {
-            ctx.send(input.entity, "Usage: note evolve <id>");
+            refuseCommand(ctx, input.entity, "Usage: note evolve <id>");
             return;
           }
           const oldNote = db.getNote(id);
           if (!access.write(oldNote)) {
-            ctx.send(input.entity, `Note #${id} not found.`);
+            refuseCommand(ctx, input.entity, `Note #${id} not found.`);
             return;
           }
           // Gather linked notes for context
@@ -1075,7 +1082,7 @@ export function noteCommand(deps: {
           // Save a note: "note <text> [importance N] [type T]"
           const content = input.args;
           if (!content) {
-            ctx.send(input.entity, "Usage: note <text>");
+            refuseCommand(ctx, input.entity, "Usage: note <text>");
             return;
           }
           const parsed = parseNoteText(content);

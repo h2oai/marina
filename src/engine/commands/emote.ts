@@ -3,6 +3,7 @@
 
 import { emote } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 
 export function emoteCommand(getEntity: (id: EntityId) => Entity | undefined): CommandDef {
   return {
@@ -16,7 +17,8 @@ export function emoteCommand(getEntity: (id: EntityId) => Entity | undefined): C
       if (!entity) return;
 
       if (!input.args) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Usage: emote <action> — e.g. `emote reviews the findings`. Your own profile: `score`.",
         );

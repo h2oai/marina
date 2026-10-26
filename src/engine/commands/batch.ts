@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CommandDef, EntityId } from "../../types";
+import { refuseCommand } from "../command-response";
 import { splitCommandChain } from "../parse-input";
 
 const MAX_BATCH = 20;
@@ -30,7 +31,7 @@ export function batchCommand(deps: {
       );
 
       if (commands.length === 0) {
-        ctx.send(input.entity, "Usage: batch <cmd1> ; <cmd2> ; <cmd3>");
+        refuseCommand(ctx, input.entity, "Usage: batch <cmd1> ; <cmd2> ; <cmd3>");
         return;
       }
 

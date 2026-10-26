@@ -6,6 +6,7 @@ import { CrewError } from "../../../coordination/crew-manager";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { CrewFormation, Entity, EntityId, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import { sanitizeEntityName } from "../../entity-name";
 import { checkGateForExecution, recordGateExecution } from "../../safety-gates";
 import {
@@ -93,7 +94,7 @@ export async function crewPlan(
   if (!session) return;
   const { goal: text, members } = parseCrewArgs(rawGoal);
   if (!text) {
-    ctx.send(eid, "Usage: code crew <goal> [with <agentA,agentB,...>]");
+    refuseCommand(ctx, eid, "Usage: code crew <goal> [with <agentA,agentB,...>]");
     return;
   }
   const body = [
@@ -711,7 +712,8 @@ export function writerCommand(
   const isHolder = sameEntityName(session.writer, entity.name);
   const reclaim = canReclaimCodingWriter(deps.db, session, entity, target);
   if (session.writer && !isHolder && !isOwner && !reclaim) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       `Only ${session.writer} (current holder) or ${session.created_by} (session creator) can reassign the write lock.`,
     );

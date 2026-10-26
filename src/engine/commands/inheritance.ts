@@ -4,6 +4,7 @@
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, CommandInput, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import {
   decodeInheritanceBundle,
   encodeInheritanceBundle,
@@ -38,7 +39,7 @@ export function inheritanceCommand(deps: {
     help: "Inspect, export, or import shared Marina inheritance. Usage: inheritance [list] | inheritance export <guide|tradition-pool> | inheritance import <bundle-token> (import: rank 2+; `inherit <token>` also works)",
     handler: (ctx, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("inheritance"));
+        refuseCommand(ctx, input.entity, requiresPersistence("inheritance"));
         return;
       }
       const db = deps.db;
@@ -68,7 +69,8 @@ export function inheritanceCommand(deps: {
         return;
       }
       if (sub !== "export") {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Usage: inheritance [list] | inheritance export <pool> | inheritance import <bundle-token>",
         );
@@ -77,7 +79,7 @@ export function inheritanceCommand(deps: {
       const name = input.tokens.slice(1).join(" ").trim();
       const pool = db.getMemoryPool(name);
       if (!pool || pool.group_id !== null || !isExportableInheritancePool(pool.name)) {
-        ctx.send(input.entity, `Exportable inheritance pool "${name}" not found.`);
+        refuseCommand(ctx, input.entity, `Exportable inheritance pool "${name}" not found.`);
         return;
       }
       const candidates = db.getPoolNotes(pool.id, 50);
@@ -134,7 +136,7 @@ function importBundle(
   const entity = getEntity(input.entity);
   if (!entity) return;
   if (!token) {
-    ctx.send(input.entity, "Usage: inheritance import <bundle-token>");
+    refuseCommand(ctx, input.entity, "Usage: inheritance import <bundle-token>");
     return;
   }
   // Import writes a new pool — kept at the old `inherit` command's rank floor.

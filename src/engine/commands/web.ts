@@ -3,6 +3,7 @@
 
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { type ConnectorRuntime, readPageVia } from "../connector-runtime";
 import { getErrorMessage } from "../errors";
 import { currentEvidenceCutoff, fenceRefusal } from "../evidence-fence";
@@ -192,7 +193,7 @@ async function handleSearch(
   // `engines:web,academic` / `--engines web` (agent explicit control), `limit:N`.
   const parsed = parseWebSearchArgs(tokens);
   if ("error" in parsed) {
-    ctx.send(eid, `${parsed.error}. Usage: web search [engines:<a,b>] [limit:N] <query>`);
+    refuseCommand(ctx, eid, `${parsed.error}. Usage: web search [engines:<a,b>] [limit:N] <query>`);
     return;
   }
   const { query, engines, providers, maxResults } = parsed;
@@ -201,7 +202,7 @@ async function handleSearch(
   // date-strict providers answer and every result is re-checked against it.
   const before = earlierBound(parsed.before, currentEvidenceCutoff());
   if (!query) {
-    ctx.send(eid, "Usage: web search [engines:<a,b>] [limit:N] [before:<date>] <query>");
+    refuseCommand(ctx, eid, "Usage: web search [engines:<a,b>] [limit:N] [before:<date>] <query>");
     return;
   }
 
@@ -253,7 +254,7 @@ async function handleMultiSearch(
     .filter(Boolean);
 
   if (queries.length === 0) {
-    ctx.send(eid, "Usage: web multisearch <query1> | <query2> | <query3>");
+    refuseCommand(ctx, eid, "Usage: web multisearch <query1> | <query2> | <query3>");
     return;
   }
 
@@ -314,12 +315,12 @@ async function handleFetch(
 ): Promise<void> {
   const mods = parseModifiers(tokens, WEB_FETCH_SPEC);
   if (mods.errors.length > 0) {
-    ctx.send(eid, `${mods.errors.join("; ")}. Usage: web fetch <url> [asof:<date>]`);
+    refuseCommand(ctx, eid, `${mods.errors.join("; ")}. Usage: web fetch <url> [asof:<date>]`);
     return;
   }
   const url = mods.rest[0];
   if (!url?.trim()) {
-    ctx.send(eid, "Usage: web fetch <url> [asof:<date>]");
+    refuseCommand(ctx, eid, "Usage: web fetch <url> [asof:<date>]");
     return;
   }
 
@@ -359,7 +360,7 @@ async function handleFetch(
   if (typeof mods.values.asof === "string" || fenced) {
     const asked = typeof mods.values.asof === "string" ? parseBound(mods.values.asof) : undefined;
     if (typeof mods.values.asof === "string" && !asked) {
-      ctx.send(eid, `asof:${mods.values.asof} is not a date (YYYY-MM-DD or ISO).`);
+      refuseCommand(ctx, eid, `asof:${mods.values.asof} is not a date (YYYY-MM-DD or ISO).`);
       return;
     }
     // Under the as-of fence a live fetch becomes the archived page at the cutoff.

@@ -19,6 +19,7 @@ import type { ForecastAnswerRow } from "../../persistence/db-markets";
 import type { MarinaStores } from "../../persistence/interfaces";
 import { parseSampleId } from "../../resolvers/calibration";
 import type { CommandDef, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
 import { parseModifiers } from "../parse-input";
@@ -136,7 +137,7 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
         const id = Number(rest[0]);
         const sampleId = rest[1];
         if (!Number.isInteger(id) || id <= 0 || !sampleId || !parseSampleId(sampleId)) {
-          return ctx.send(input.entity, "Usage: forecast track <id> <venue>/<ticker>");
+          return refuseCommand(ctx, input.entity, "Usage: forecast track <id> <venue>/<ticker>");
         }
         if (!deps.db || !name)
           return ctx.send(input.entity, "Forecast tracking needs persistence.");

@@ -12,6 +12,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { DecisionsStore } from "../../persistence/interfaces/decisions-store";
 import type { JudgeLedgerStore } from "../../persistence/interfaces/judge-ledger-store";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
 import {
   DECISION_SETTINGS_USAGE,
@@ -233,7 +234,8 @@ export function decisionCommand(deps: {
           return;
         }
         if (qualifying) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "A qualification is already running — try again when it finishes.",
           );

@@ -21,6 +21,7 @@ import {
   crossEncoderFromEnv,
 } from "../../retrieval/rerank-client";
 import type { EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { type ConnectorRuntime, readPageVia } from "../connector-runtime";
 import { getErrorMessage } from "../errors";
 import { extractReadableText } from "../html-text";
@@ -58,14 +59,15 @@ export async function handleSwarm(
   const mods = parseModifiers(tokens, SWARM_SPEC, { leading: true });
   const question = mods.rest.join(" ").trim();
   if (mods.errors.length > 0 || !question) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       `${mods.errors.length ? `${mods.errors.join("; ")}. ` : ""}Usage: ${WEB_SWARM_USAGE}`,
     );
     return;
   }
   if (running.has(eid)) {
-    ctx.send(eid, "A read swarm of yours is already running; wait for its table.");
+    refuseCommand(ctx, eid, "A read swarm of yours is already running; wait for its table.");
     return;
   }
   const engines =

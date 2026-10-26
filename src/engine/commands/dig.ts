@@ -4,6 +4,7 @@
 import { category, dim, header, id, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import type { ConnectorRuntime } from "../connector-runtime";
 import { getErrorMessage } from "../errors";
 import { search as providerSearch, type SearchResult } from "../search-providers/index";
@@ -40,12 +41,12 @@ export function digCommand(deps: {
 
       const query = input.args.trim();
       if (!query) {
-        ctx.send(input.entity, "Usage: dig <topic>");
+        refuseCommand(ctx, input.entity, "Usage: dig <topic>");
         return;
       }
 
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("dig"));
+        refuseCommand(ctx, input.entity, requiresPersistence("dig"));
         return;
       }
 

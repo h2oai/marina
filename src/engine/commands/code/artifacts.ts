@@ -6,6 +6,7 @@ import { detectWorkspaceRunner } from "../../../coding/project-detection";
 import { dim, header, separator, success } from "../../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import {
   type CodeDeps,
   capitalize,
@@ -34,7 +35,7 @@ export function patches(
   if (!session) return;
   const statusFilter = args[0]?.toLowerCase();
   if (statusFilter && !["applied", "pending", "rejected"].includes(statusFilter)) {
-    ctx.send(eid, "Usage: code patches [pending|applied|rejected]");
+    refuseCommand(ctx, eid, "Usage: code patches [pending|applied|rejected]");
     return;
   }
   const artifacts = deps.db
@@ -213,7 +214,11 @@ export function lifecycleArtifact(
   const artifact = resolveSessionArtifact(ctx, eid, deps.db, session.id, ref);
   if (!artifact) return;
   if (artifact.kind === "patch" && artifact.status === "pending") {
-    ctx.send(eid, "Pending patches must be applied or rejected before lifecycle status changes.");
+    refuseCommand(
+      ctx,
+      eid,
+      "Pending patches must be applied or rejected before lifecycle status changes.",
+    );
     return;
   }
   const metadata = parseJsonObject(artifact.metadata_json);
@@ -330,7 +335,8 @@ export function approval(
     const kind = args[1]?.toLowerCase();
     const description = args.slice(2).join(" ").trim();
     if (!kind || !description) {
-      ctx.send(
+      refuseCommand(
+        ctx,
         eid,
         "Usage: code approval request <shell|network|secret|commit|spawn|other> <description>",
       );
@@ -444,7 +450,7 @@ export function skill(
     const name = args[1]?.toLowerCase();
     const text = args.slice(2).join(" ").trim();
     if (!name || !text) {
-      ctx.send(eid, "Usage: code skill add <name> <instructions>");
+      refuseCommand(ctx, eid, "Usage: code skill add <name> <instructions>");
       return;
     }
     const artifact = deps.db.createCodingArtifact({
@@ -480,12 +486,12 @@ export function skill(
   if (action === "use") {
     const name = args[1]?.toLowerCase();
     if (!name) {
-      ctx.send(eid, "Usage: code skill use <name>");
+      refuseCommand(ctx, eid, "Usage: code skill use <name>");
       return;
     }
     const artifact = findNamedArtifact(deps.db, session.id, "code_skill", name);
     if (!artifact) {
-      ctx.send(eid, `Code skill not found: ${name}`);
+      refuseCommand(ctx, eid, `Code skill not found: ${name}`);
       return;
     }
     deps.db.createCodingEvent({
@@ -514,7 +520,7 @@ export function skill(
     return;
   }
   if (action !== "list") {
-    ctx.send(eid, "Usage: code skill [list|add|use]");
+    refuseCommand(ctx, eid, "Usage: code skill [list|add|use]");
     return;
   }
   const skills = deps.db
@@ -612,7 +618,11 @@ export function externalLink(
     const system = args[1]?.toLowerCase();
     const externalId = args.slice(2).join(" ").trim();
     if (!system || !externalId) {
-      ctx.send(eid, "Usage: code external link <acp|mcp|cursor|zed|vscode|other> <external_id>");
+      refuseCommand(
+        ctx,
+        eid,
+        "Usage: code external link <acp|mcp|cursor|zed|vscode|other> <external_id>",
+      );
       return;
     }
     const artifact = deps.db.createCodingArtifact({
@@ -668,7 +678,7 @@ export function externalLink(
     return;
   }
   if (action !== "show" && action !== "list") {
-    ctx.send(eid, "Usage: code external [show|link|unlink]");
+    refuseCommand(ctx, eid, "Usage: code external [show|link|unlink]");
     return;
   }
   const links = deps.db
@@ -740,7 +750,7 @@ export function resolvePatchArtifact(
   id: string | undefined,
 ): CodingArtifactRow | null {
   if (!id) {
-    ctx.send(eid, "Usage: code show|apply|reject <patch_id|last patch>");
+    refuseCommand(ctx, eid, "Usage: code show|apply|reject <patch_id|last patch>");
     return null;
   }
   if (id.toLowerCase() === "last patch") {
@@ -753,7 +763,7 @@ export function resolvePatchArtifact(
   }
   const artifact = db.getCodingArtifact(id);
   if (artifact?.kind !== "patch") {
-    ctx.send(eid, `Patch not found: ${id}`);
+    refuseCommand(ctx, eid, `Patch not found: ${id}`);
     return null;
   }
   if (artifact.session_id !== sessionId) {
@@ -771,7 +781,7 @@ function resolveSessionArtifact(
   id: string | undefined,
 ): CodingArtifactRow | null {
   if (!id) {
-    ctx.send(eid, "Usage: code show <artifact_id|last|last patch|last failed>");
+    refuseCommand(ctx, eid, "Usage: code show <artifact_id|last|last patch|last failed>");
     return null;
   }
   const normalized = id.toLowerCase();
@@ -801,7 +811,7 @@ function resolveSessionArtifact(
   }
   const artifact = db.getCodingArtifact(id);
   if (!artifact) {
-    ctx.send(eid, `Artifact not found: ${id}`);
+    refuseCommand(ctx, eid, `Artifact not found: ${id}`);
     return null;
   }
   if (artifact.session_id !== sessionId) {
@@ -896,7 +906,7 @@ export function resolveKindArtifact(
   }
   const artifact = db.getCodingArtifact(ref!.trim());
   if (!artifact || artifact.kind !== kind) {
-    ctx.send(eid, `${capitalize(kind.replace(/_/g, " "))} not found: ${ref}`);
+    refuseCommand(ctx, eid, `${capitalize(kind.replace(/_/g, " "))} not found: ${ref}`);
     return null;
   }
   if (artifact.session_id !== sessionId) {
@@ -929,7 +939,7 @@ function resolveDecisionArtifact(
   }
   const artifact = db.getCodingArtifact(normalized);
   if (!artifact || !["approval", "spawn_request"].includes(artifact.kind)) {
-    ctx.send(eid, `Approval or spawn request not found: ${normalized}`);
+    refuseCommand(ctx, eid, `Approval or spawn request not found: ${normalized}`);
     return undefined;
   }
   if (artifact.session_id !== sessionId) {

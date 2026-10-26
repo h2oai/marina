@@ -9,6 +9,7 @@ import type { EvolutionSessionRow, MarinaDB } from "../../persistence/database";
 import { isGrantedCompetence } from "../../persistence/db-competence";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { parsePartition } from "../benchmark-partition";
+import { refuseCommand } from "../command-response";
 import { BENCHMARK_RUN_MIN_RANK, MAX_REPLICAS_PER_RUN } from "../constants";
 import { sanitizeEntityName } from "../entity-name";
 import { tryLog } from "../errors";
@@ -175,7 +176,7 @@ export function evolveCommand(deps: {
       const arg = (input.tokens[0] ?? "").toLowerCase();
       if (arg === "adoption") {
         if (!deps.db) {
-          ctx.send(input.entity, requiresPersistence("evolution protocols"));
+          refuseCommand(ctx, input.entity, requiresPersistence("evolution protocols"));
           return;
         }
         ctx.send(input.entity, renderAdoption(deps.db, input.tokens[1] ?? ""));
@@ -304,7 +305,7 @@ function handleEvolutionProtocol(
     return;
   }
   if (!db) {
-    ctx.send(input.entity, requiresPersistence("evolution protocols"));
+    refuseCommand(ctx, input.entity, requiresPersistence("evolution protocols"));
     return;
   }
 
@@ -359,18 +360,26 @@ function handleEvolutionProtocol(
   }
   const experiment = db.getExperimentByName(experimentName);
   if (!experiment) {
-    ctx.send(input.entity, `Experiment "${experimentName}" not found.`);
+    refuseCommand(ctx, input.entity, `Experiment "${experimentName}" not found.`);
     return;
   }
   const session = db.getEvolutionSessionByExperiment(experiment.id);
 
   if (sub === "create") {
     if (session) {
-      ctx.send(input.entity, `Experiment "${experimentName}" already has an evolution session.`);
+      refuseCommand(
+        ctx,
+        input.entity,
+        `Experiment "${experimentName}" already has an evolution session.`,
+      );
       return;
     }
     if (experiment.creator_name !== entity.name) {
-      ctx.send(input.entity, "Only the experiment creator can attach its evolution protocol.");
+      refuseCommand(
+        ctx,
+        input.entity,
+        "Only the experiment creator can attach its evolution protocol.",
+      );
       return;
     }
     const [objective, ...options] = pipeParts(input.args.replace(/^create\s+\S+\s*/i, ""));
@@ -416,7 +425,8 @@ function handleEvolutionProtocol(
   if (sub === "analyze") {
     const config = parseExperimentEvidenceConfig(experiment.config);
     if (!config.metric || config.arms.length < 2) {
-      ctx.send(
+      refuseCommand(
+        ctx,
         input.entity,
         "Robust analysis requires an armed experiment with a configured primary metric.",
       );
@@ -476,7 +486,11 @@ function handleEvolutionProtocol(
 
   if (["start", "pause", "resume", "complete"].includes(sub)) {
     if (!isCreator) {
-      ctx.send(input.entity, "Only the protocol creator can change the shared session state.");
+      refuseCommand(
+        ctx,
+        input.entity,
+        "Only the protocol creator can change the shared session state.",
+      );
       return;
     }
     const allowed: Record<string, { from: string[]; to: "active" | "paused" | "completed" }> = {
@@ -487,7 +501,11 @@ function handleEvolutionProtocol(
     };
     const transition = allowed[sub]!;
     if (!transition.from.includes(session.status)) {
-      ctx.send(input.entity, `Cannot ${sub} an evolution session that is ${session.status}.`);
+      refuseCommand(
+        ctx,
+        input.entity,
+        `Cannot ${sub} an evolution session that is ${session.status}.`,
+      );
       return;
     }
     db.updateEvolutionSessionStatus(session.id, transition.to);
@@ -518,7 +536,8 @@ function handleEvolutionProtocol(
     const runs = db.listEvolutionRuns(session.id);
     const budget = evolutionBudgetState(session, runs.length);
     if (budget.exhausted) {
-      ctx.send(
+      refuseCommand(
+        ctx,
         input.entity,
         `Proposal refused: ${budget.reasons.join("; ")}. The creator may explicitly complete the session; Marina will not continue it automatically.`,
       );
@@ -541,7 +560,11 @@ function handleEvolutionProtocol(
       parentRunId = Number(match[1]);
       const parent = db.getEvolutionRun(parentRunId);
       if (!parent || parent.session_id !== session.id) {
-        ctx.send(input.entity, `Parent run ${parentRunId} is not part of this evolution session.`);
+        refuseCommand(
+          ctx,
+          input.entity,
+          `Parent run ${parentRunId} is not part of this evolution session.`,
+        );
         return;
       }
     }
@@ -559,7 +582,8 @@ function handleEvolutionProtocol(
   const runId = Number.parseInt(input.tokens[2] ?? "", 10);
   const run = Number.isFinite(runId) ? db.getEvolutionRun(runId) : undefined;
   if (!run || run.session_id !== session.id) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       input.entity,
       `Evolution run ${input.tokens[2] ?? "(missing)"} not found in this session.`,
     );
@@ -577,12 +601,13 @@ function handleEvolutionProtocol(
 
   if (sub === "evaluate") {
     if (run.status !== "proposed") {
-      ctx.send(input.entity, `Run ${run.id} is already ${run.status}.`);
+      refuseCommand(ctx, input.entity, `Run ${run.id} is already ${run.status}.`);
       return;
     }
     const protocol = parseEvolutionProtocol(session.protocol);
     if (protocol.independentReview && run.proposed_by === entity.name) {
-      ctx.send(
+      refuseCommand(
+        ctx,
         input.entity,
         "This protocol requires evidence from someone other than the proposer.",
       );
@@ -618,7 +643,11 @@ function handleEvolutionProtocol(
 
   if (sub === "decide") {
     if (run.status !== "evaluated") {
-      ctx.send(input.entity, `Run ${run.id} must be evaluated before a decision is recorded.`);
+      refuseCommand(
+        ctx,
+        input.entity,
+        `Run ${run.id} must be evaluated before a decision is recorded.`,
+      );
       return;
     }
     const protocol = parseEvolutionProtocol(session.protocol);
@@ -626,7 +655,8 @@ function handleEvolutionProtocol(
       protocol.independentReview &&
       (run.proposed_by === entity.name || run.evaluator_name === entity.name)
     ) {
-      ctx.send(
+      refuseCommand(
+        ctx,
         input.entity,
         "This protocol requires the decision recorder to differ from both proposer and evaluator.",
       );

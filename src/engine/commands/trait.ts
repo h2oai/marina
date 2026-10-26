@@ -4,6 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB, TraitCapabilities, TraitRow } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { rankFloorRefusal } from "../rank-floor";
 import { boundRoleOf, checkRoleEdit, successorHint } from "../role-guard";
 import { requiresPersistence } from "./command-messages";
@@ -184,7 +185,7 @@ export function traitCommand(deps: {
     help: "Manage composable agent traits.\nUsage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2] | trait delete <name>\n\nTraits are atomic prompt fragments used to compose roles.\nOptional capabilities metadata enables semantic composition (synergies/tensions), task gating, and typed behavioral hints.\n`trait lint <name>` reports pragmatic prompt-shaping warnings without changing the trait. `trait history <name>` shows the audited edit trail.",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("traits"));
+        refuseCommand(ctx, input.entity, requiresPersistence("traits"));
         return;
       }
       const db = deps.db;
@@ -225,12 +226,12 @@ export function traitCommand(deps: {
         case "view": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: trait view <name>");
+            refuseCommand(ctx, input.entity, "Usage: trait view <name>");
             return;
           }
           const trait = db.getTrait(name);
           if (!trait) {
-            ctx.send(input.entity, `Trait "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Trait "${name}" not found.`);
             return;
           }
           const caps = parseTraitCapabilities(trait.capabilities);
@@ -255,7 +256,7 @@ export function traitCommand(deps: {
         case "history": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: trait history <name>");
+            refuseCommand(ctx, input.entity, "Usage: trait history <name>");
             return;
           }
           const hist = db.getTraitHistory(name);
@@ -270,12 +271,12 @@ export function traitCommand(deps: {
         case "lint": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: trait lint <name>");
+            refuseCommand(ctx, input.entity, "Usage: trait lint <name>");
             return;
           }
           const trait = db.getTrait(name);
           if (!trait) {
-            ctx.send(input.entity, `Trait "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Trait "${name}" not found.`);
             return;
           }
           ctx.send(input.entity, renderTraitLint(trait));
@@ -286,17 +287,17 @@ export function traitCommand(deps: {
           const a = tokens[1];
           const b = tokens[2];
           if (!a || !b) {
-            ctx.send(input.entity, "Usage: trait diff <a> <b>");
+            refuseCommand(ctx, input.entity, "Usage: trait diff <a> <b>");
             return;
           }
           const traitA = db.getTrait(a);
           const traitB = db.getTrait(b);
           if (!traitA) {
-            ctx.send(input.entity, `Trait "${a}" not found.`);
+            refuseCommand(ctx, input.entity, `Trait "${a}" not found.`);
             return;
           }
           if (!traitB) {
-            ctx.send(input.entity, `Trait "${b}" not found.`);
+            refuseCommand(ctx, input.entity, `Trait "${b}" not found.`);
             return;
           }
           ctx.send(input.entity, renderTraitDiff(traitA, traitB));
@@ -315,7 +316,8 @@ export function traitCommand(deps: {
           const category = tokens[2];
           const remaining = tokens.slice(3);
           if (!name || !category || remaining.length === 0) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]",
             );
@@ -328,7 +330,11 @@ export function traitCommand(deps: {
           }
           const existing = db.getTrait(name);
           if (existing) {
-            ctx.send(input.entity, `Trait "${name}" already exists. Delete it first to recreate.`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Trait "${name}" already exists. Delete it first to recreate.`,
+            );
             return;
           }
           db.saveTrait({
@@ -348,12 +354,12 @@ export function traitCommand(deps: {
           const entity = deps.getEntity?.(input.entity);
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: trait delete <name>");
+            refuseCommand(ctx, input.entity, "Usage: trait delete <name>");
             return;
           }
           const trait = db.getTrait(name);
           if (!trait) {
-            ctx.send(input.entity, `Trait "${name}" not found.`);
+            refuseCommand(ctx, input.entity, `Trait "${name}" not found.`);
             return;
           }
           // Deleting a trait changes every role built from it. Never the
