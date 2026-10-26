@@ -7543,6 +7543,38 @@ Effect: read.
 - `field-3` (`our-prob`): number, required.
 - `field-4` (`market-price`): number, required.
 
+## posture
+
+Capability posture: every feature or setting that is off or observe-only by default, the evidence that would switch it on, and its decide-by date.
+Usage: posture            what is waiting on evidence, soonest decision first
+       posture all        also what is off by design, with the reason
+       posture due        only entries past their decide-by date
+       posture <text>     entries whose name contains <text>
+
+Category: System. Minimum rank: 0.
+Aliases: none.
+
+### `posture`
+
+Effect: read.
+
+
+### `posture all`
+
+Effect: read.
+
+
+### `posture due`
+
+Effect: read.
+
+
+### `posture <text>`
+
+Effect: read.
+
+- `field-0` (`text`): text, required.
+
 ## probe
 
 Probe — invoke a resolver and write a Sample.

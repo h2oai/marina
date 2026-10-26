@@ -5,9 +5,11 @@ import { parseExecUnrestricted } from "../../coding/exec-approver";
 import { recoverCodingRuns } from "../../coding/task-run";
 import { VerificationRunner } from "../../coding/verification-runner";
 import { scratchRoot } from "../../config/data-dir";
+import { readEnvironmentReference } from "../../config/environment";
 import { probeConfiguredProviders } from "../../net/model/model-api";
 import { describeRouteHealth } from "../../net/model/route-health";
 import { describeEngineModels, hasProviderKey } from "../../net/model-api/upstream";
+import { MARINA_ROOT } from "../../runtime-paths";
 import type { EntityId } from "../../types";
 import { engineAssistanceExpiryDeps } from "../assistance-expiry";
 import { isOperatorPrincipal, operatorRequiredRefusal } from "../challenges";
@@ -26,6 +28,7 @@ import { demoCommand } from "../commands/demo";
 import { gatewayCommand } from "../commands/gateway";
 import { keyCommand } from "../commands/key";
 import { opsCommand } from "../commands/ops";
+import { postureCommand } from "../commands/posture";
 import { productivityCommand } from "../commands/productivity";
 import { quitCommand } from "../commands/quit";
 import { readinessCommand } from "../commands/readiness";
@@ -298,6 +301,13 @@ export function registerOperationCommands(engine: Engine): void {
       routeHealth: () =>
         describeRouteHealth({ hasOpenRouterKey: hasProviderKey(engine, "openrouter") }),
       pulseHistory: (sinceMs) => engine.db?.listAutonomyPulse(sinceMs) ?? [],
+    }),
+  );
+  // Capability posture — what waits on evidence, and its decide-by date; read-only.
+  engine.commands.registerBuiltin(
+    postureCommand({
+      ...(engine.db ? { db: engine.db } : {}),
+      reference: () => readEnvironmentReference(MARINA_ROOT),
     }),
   );
   if (engine.db && engine.taskManager) {

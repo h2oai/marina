@@ -31,7 +31,11 @@ import { autoRespawnEnabled } from "./auto-respawn";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
 import { GATEWAY_SECRET_REMEDIATION, gatewayIngressRefusal } from "./gateway-runtime";
-import { gateSentinelsCheck, learningLoopCheck } from "./readiness-learning";
+import {
+  capabilityPostureCheck,
+  gateSentinelsCheck,
+  learningLoopCheck,
+} from "./readiness-learning";
 import { corpusEmbeddingStatus } from "./search-providers/corpus-vectors";
 import { searchBackendHealth } from "./search-providers/health";
 import { describeSearchReadiness } from "./search-readiness";
@@ -753,6 +757,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   } catch {
     // allow-empty-catch: a database before the competence table only omits this line
   }
+  checks.push(capabilityPostureCheck());
 
   // ── Competence map — what the resolved record says each method is good at ─
   try {

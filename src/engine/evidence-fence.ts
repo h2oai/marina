@@ -422,6 +422,7 @@ export const EVIDENCE_FENCE_POLICY: Readonly<Record<string, FenceRule>> = {
   agent: "refuse",
   competence: "refuse",
   readiness: "refuse",
+  posture: "refuse",
   productivity: "refuse",
   ops: "refuse",
   demo: "refuse",
