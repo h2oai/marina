@@ -5,6 +5,7 @@ import type { AgentRuntime } from "../../agent/agent-runtime";
 import { MAX_AGENTS } from "../../agent/agent-runtime";
 import {
   AGENT_THINKING_LEVELS,
+  type AgentStatus,
   type AgentThinkingLevel,
   parseAgentThinkingLevel,
 } from "../../agent/agent-types";
@@ -471,8 +472,10 @@ function handleList(
     const cost = ops
       ? `${formatUsd(ops.totalCostUsd)} (${formatUsd(ops.costLastHourUsd)}/h)`
       : formatUsd(a.totalCostUsd ?? 0);
+    const thinking =
+      a.thinkingSent && a.thinkingSent !== "off" ? `thinking:${a.thinkingSent} ` : "";
     lines.push(
-      `${bold(a.name)} ${dim(`[${ops?.paused?.kind === "provider-auth" ? "blocked: provider auth" : (a.healthState ?? a.state)}]`)} ${a.model} ${a.role ? `role:${a.role}` : ""} ${dim(`${upMin}m · ${a.toolCalls} calls · ${cost}`)}${ops?.paused && ops.paused.kind !== "provider-auth" ? ` ${dim(`paused: ${ops.paused.kind}`)}` : ""}`,
+      `${bold(a.name)} ${dim(`[${ops?.paused?.kind === "provider-auth" ? "blocked: provider auth" : (a.healthState ?? a.state)}]`)} ${a.model} ${a.role ? `role:${a.role} ` : ""}${thinking}${dim(`${upMin}m · ${a.toolCalls} calls · ${cost}`)}${ops?.paused && ops.paused.kind !== "provider-auth" ? ` ${dim(`paused: ${ops.paused.kind}`)}` : ""}`,
     );
     if (a.focus) lines.push(`  ${dim(`focus: ${a.focus}`)}`);
   }
@@ -545,7 +548,8 @@ function handleStatus(
           `${bold("Tool provenance (7d):")} ${usage.marinaToolCalls}/${usage.toolCalls} Marina tools · ${usage.reasoningOnlyCalls} think-only`,
         ]
       : []),
-    `${bold("Tokens:")} ${(ops?.totalInputTokens ?? s.totalInputTokens ?? 0).toLocaleString()} in · ${(ops?.totalOutputTokens ?? s.totalOutputTokens ?? 0).toLocaleString()} out`,
+    `${bold("Thinking:")} ${describeThinking(s)}`,
+    `${bold("Tokens:")} ${(ops?.totalInputTokens ?? s.totalInputTokens ?? 0).toLocaleString()} in · ${(ops?.totalOutputTokens ?? s.totalOutputTokens ?? 0).toLocaleString()} out${(s.totalReasoningTokens ?? 0) > 0 ? ` (${(s.totalReasoningTokens ?? 0).toLocaleString()} reasoning)` : ""}`,
     `${bold("Cost:")} ${formatUsd(ops?.totalCostUsd ?? s.totalCostUsd ?? 0)} total · ${formatUsd(ops?.costLastHourUsd ?? 0)} last hour${capText ? dim(` (caps: ${capText})`) : ""}`,
     ...(ops?.promptCache && (ops.promptCache.coldTurns > 0 || ops.promptCache.keepAlives > 0)
       ? [
@@ -564,6 +568,27 @@ function handleStatus(
     `${bold("Entity ID:")} ${s.entityId || dim("not connected")}`,
   ];
   ctx.send(eid, lines.join("\n"));
+}
+
+/**
+ * The status line for an agent's thinking: the level its requests carry; when
+ * the model takes no reasoning setting, the configured level and that it is
+ * not sent; and the reasoning tokens the provider reported per call.
+ */
+export function describeThinking(
+  s: Pick<AgentStatus, "thinkingLevel" | "thinkingSent" | "modelCalls" | "totalReasoningTokens">,
+): string {
+  const level = s.thinkingLevel ?? "off";
+  const sent = s.thinkingSent ?? level;
+  const base =
+    level !== "off" && sent === "off"
+      ? `${level} — not sent: the model takes no reasoning setting`
+      : sent;
+  const calls = s.modelCalls ?? 0;
+  const reasoning = s.totalReasoningTokens ?? 0;
+  return calls > 0 && reasoning > 0
+    ? `${base} · ${Math.round(reasoning / calls).toLocaleString()} reasoning tokens/call reported`
+    : base;
 }
 
 /** "12s ago" / "3m ago" / "2h ago" for operator status lines. */

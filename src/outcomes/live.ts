@@ -13,6 +13,7 @@
  * judged.
  */
 
+import { effectiveThinkingLevel } from "../agent/effective-thinking";
 import { recordVerified, type VerifiedCredit } from "../agent/standing";
 import { recordJudgeOpinion } from "../decisions/judges";
 import { canonicalFormationName } from "../orchestration/formations/catalogue";
@@ -33,7 +34,7 @@ export function workRefsFor(
   return workRefs(canScope(db) ? db : undefined, {
     kind,
     actor,
-    ...(p.model ? { model: p.model } : {}),
+    ...(p.model ? { model: p.model, thinking: thinkingOf(db, actor) } : {}),
     ...(p.role ? { role: p.role } : {}),
     approach,
   });
@@ -151,6 +152,15 @@ export function participantOf(
     ...(config?.model ? { model: config.model } : {}),
     ...(config?.role ? { role: config.role } : {}),
   };
+}
+
+/**
+ * The thinking level an agent works with (`effectiveThinkingLevel`): what its
+ * running process sends, else its saved level, else the instance default,
+ * else `off`. Tagged `method:thinking:<level>` beside its model.
+ */
+export function thinkingOf(db: Pick<MarinaDB, "getAgentConfig">, name: string): string {
+  return effectiveThinkingLevel(name, db.getAgentConfig(name)?.thinking_level);
 }
 
 /** The subject a task attempt's outcomes share: `task:<id>:<claimant>`. */

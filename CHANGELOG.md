@@ -333,6 +333,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An agent's thinking level reaches the model on every route, and is visible.** With thinking
+  `off`, a managed-effort Claude (claude-haiku-5.5, directly or through OpenRouter) used to think
+  at effort `high`; it now gets `thinking: {type: "disabled"}`. Through `marina/*`, an agent's
+  `reasoning_effort` is forwarded on an OpenRouter route as an effort the routed model accepts
+  (deepseek-v4.1-flash has no `medium`, so `high`, as a direct route sends). An explicit level is
+  never overridden by the probe-verified reasoning disable, the default-route effort or the cheap
+  tier's reasoning budget. `agent status|diagnose` shows the level sent and the reasoning tokens
+  reported per call, `agent list` shows `thinking:<level>`, `model_request_lifecycle` and
+  `agent_turn_end` carry `reasoningTokens` when the upstream reports them (numbers only), and
+  work outcomes tag `method:thinking:<level>` (`off` when unset) right after the one
+  `method:model:<m>`.
+
 - **A cold `calc` no longer times out while mathjs loads.** The calc worker reports ready once
   mathjs has loaded, and the 10 s evaluation deadline starts only then; the expression is not
   sent before. Loading has its own, separate bound (`CALC_LOAD_TIMEOUT_MS`, 60 s), so on a busy

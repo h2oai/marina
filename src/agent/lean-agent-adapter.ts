@@ -169,6 +169,7 @@ import {
   effectivePromptWindow,
   hasCompletedRun,
 } from "./context-manager";
+import { noteEffectiveThinking } from "./effective-thinking";
 import {
   type PromptMetrics,
   type PromptSectionMetric,
@@ -323,6 +324,8 @@ export function evolutionControlState(
 export interface TurnUsageMetrics {
   inputTokens?: number;
   outputTokens?: number;
+  /** Reasoning (thinking) tokens the provider reported (pi-ai `usage.reasoning`); absent when 0. */
+  reasoningTokens?: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   costUsd?: number;
@@ -342,6 +345,7 @@ export function extractTurnUsage(message: unknown): TurnUsageMetrics {
   return {
     ...(finite(row.input) === undefined ? {} : { inputTokens: finite(row.input) }),
     ...(finite(row.output) === undefined ? {} : { outputTokens: finite(row.output) }),
+    ...((finite(row.reasoning) ?? 0) > 0 ? { reasoningTokens: finite(row.reasoning) } : {}),
     ...(finite(row.cacheRead) === undefined ? {} : { cacheReadTokens: finite(row.cacheRead) }),
     ...(finite(row.cacheWrite) === undefined ? {} : { cacheWriteTokens: finite(row.cacheWrite) }),
     ...(costUsd === undefined ? {} : { costUsd }),
@@ -514,6 +518,8 @@ export interface AgentOperatorStatus {
   /** Lifetime prompt-cache token counts (provider usage, or the proxy headers when usage lacks them). */
   totalCacheReadTokens?: number;
   totalCacheWriteTokens?: number;
+  /** Lifetime reasoning (thinking) tokens the provider reported — a share of `totalOutputTokens`. */
+  totalReasoningTokens?: number;
   /** Own command echoes kept out of the perception buffer (see `isSelfEchoPerception`). */
   selfEchoesDropped?: number;
   /** Cold turns, compactions before them, keep-alives (`src/agent/prompt-cache.ts`). */
@@ -1209,6 +1215,15 @@ export function applyThinkingLevel(model: Model<Api>, level: AgentThinkingLevel)
  *    which pi-ai only ever echoes as an empty placeholder. Clearing that flag too
  *    avoids the broken round-trip.
  *
+ * The Anthropic Messages API is the exception: there `model.reasoning: false`
+ * does not mean "no thinking". A managed-effort Claude (`supportsMidConvoEffort`,
+ * e.g. claude-haiku-5.5, directly or through OpenRouter) then takes pi-ai's
+ * adaptive-thinking branch at effort `high` — thinking ON while the agent asked
+ * for off. Keeping `reasoning: true` makes pi-ai send `thinking: {type:
+ * "disabled"}` instead ({@link anthropicDisablesThinking}); a model whose
+ * thinking cannot be turned off (`thinkingLevelMap.off === null`) is left to
+ * pi-ai as before.
+ *
  * When the agent DID opt into thinking, the model is left untouched.
  */
 export function neutralizeUnusedReasoning(
@@ -1218,6 +1233,7 @@ export function neutralizeUnusedReasoning(
   // The agent opted into thinking — keep reasoning; that's an explicit choice.
   if (thinkingLevel && thinkingLevel !== "off") return model;
   if (!model.reasoning) return model;
+  if (anthropicDisablesThinking(model)) return model;
   const compat = model.compat as
     | { requiresReasoningContentOnAssistantMessages?: boolean }
     | undefined;
@@ -1229,6 +1245,31 @@ export function neutralizeUnusedReasoning(
       ? { ...(model.compat as object), requiresReasoningContentOnAssistantMessages: false }
       : model.compat,
   } as Model<Api>;
+}
+
+/**
+ * An Anthropic Messages model whose thinking pi-ai turns off explicitly
+ * (`thinking: {type: "disabled"}`) when the agent's level is `off`: a
+ * reasoning model whose level map does not mark `off` as unavailable. Such a
+ * model spends no hidden reasoning with thinking off.
+ */
+export function anthropicDisablesThinking(model: Model<Api>): boolean {
+  if (model.api !== "anthropic-messages" || !model.reasoning) return false;
+  const map = (model as { thinkingLevelMap?: Record<string, string | null | undefined> })
+    .thinkingLevelMap;
+  return map?.off !== null;
+}
+
+/**
+ * The thinking level that reaches the wire: the agent's level when its model
+ * takes a reasoning setting, else `off` (a model with no reasoning support is
+ * sent none, whatever the level says).
+ */
+export function wireThinkingLevel(
+  model: Pick<Model<Api>, "reasoning">,
+  level: AgentThinkingLevel,
+): AgentThinkingLevel {
+  return level !== "off" && model.reasoning ? level : "off";
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -1518,6 +1559,7 @@ export class LeanAgentAdapter implements AgentHandle {
     totalCostUsd: 0,
     totalCacheReadTokens: 0,
     totalCacheWriteTokens: 0,
+    totalReasoningTokens: 0,
     /** Compactions run BETWEEN turns of one prompt (prepareNextTurn), not between prompts. */
     midRunCompactions: 0,
     /** Between-prompt compactions under `MARINA_AGENT_CONTEXT_CAP_TOKENS`. */
@@ -1759,6 +1801,7 @@ export class LeanAgentAdapter implements AgentHandle {
     const resolvedModel = resolveModel(modelStr, this.wsPort);
     this.thinkingLevel = resolveAgentThinkingLevel(config, process.env, !!resolvedModel.reasoning);
     this.model = applyThinkingLevel(resolvedModel, this.thinkingLevel);
+    noteEffectiveThinking(this.name, wireThinkingLevel(this.model, this.thinkingLevel));
     if (!this.promptTimeoutExplicit)
       this.promptTimeoutMs = defaultPromptTimeoutMs(
         this.thinkingLevel !== "off" && resolvedModel.reasoning ? this.thinkingLevel : "off",
@@ -1905,6 +1948,7 @@ export class LeanAgentAdapter implements AgentHandle {
           this.metrics.modelCalls++;
           this.metrics.totalInputTokens += (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
           this.metrics.totalOutputTokens += usage.outputTokens ?? 0;
+          this.metrics.totalReasoningTokens += usage.reasoningTokens ?? 0;
           this.metrics.totalCacheReadTokens += usage.cacheReadTokens ?? 0;
           this.metrics.totalCacheWriteTokens += usage.cacheWriteTokens ?? 0;
           this.metrics.totalCostUsd += cost;
@@ -3587,7 +3631,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // leaves it no room to reach a tool call (`reasoning-control`).
     const mayReasonUnasked =
       thinkingBudget === 0 &&
-      (this.model.reasoning ||
+      ((this.model.reasoning && !anthropicDisablesThinking(this.model)) ||
         isOpenRouterModel(this.model) ||
         isHostedProvider(provider) ||
         classifyModelResolution(modelStr) === "synthesized");
@@ -6016,6 +6060,9 @@ export class LeanAgentAdapter implements AgentHandle {
       contextWindow: this.model.contextWindow,
       effectiveContextWindow: this.effectiveContextWindow,
       maxOutputTokens: this.outputMaxTokens ?? this.model.maxTokens,
+      thinkingLevel: this.thinkingLevel,
+      thinkingSent: wireThinkingLevel(this.model, this.thinkingLevel),
+      totalReasoningTokens: this.metrics.totalReasoningTokens,
       peakInputTokens: this.peakAcceptedInputTokens,
       totalInputTokens: this.metrics.totalInputTokens,
       totalOutputTokens: this.metrics.totalOutputTokens,
@@ -6130,6 +6177,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // count must not be added on top of it a second time.
     this.metrics.totalInputTokens += (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
     this.metrics.totalOutputTokens += merged.outputTokens ?? 0;
+    this.metrics.totalReasoningTokens += merged.reasoningTokens ?? 0;
     this.metrics.totalCacheReadTokens += merged.cacheReadTokens ?? 0;
     this.metrics.totalCacheWriteTokens += merged.cacheWriteTokens ?? 0;
     if (merged.costUsd) {
@@ -6148,6 +6196,7 @@ export class LeanAgentAdapter implements AgentHandle {
       totalCostUsd: this.metrics.totalCostUsd,
       totalCacheReadTokens: this.metrics.totalCacheReadTokens,
       totalCacheWriteTokens: this.metrics.totalCacheWriteTokens,
+      totalReasoningTokens: this.metrics.totalReasoningTokens,
       upstreamModel: this.lastUpstreamModel,
       selfEchoesDropped: this.selfEchoesDropped,
       promptCache: { ...this.promptCache.metrics },
@@ -6459,6 +6508,8 @@ export class LeanAgentAdapter implements AgentHandle {
       this.applyModelLimits(modelStr, false);
       this.agent.state.model = this.model;
     }
+    if (opts.model || opts.thinkingLevel !== undefined)
+      noteEffectiveThinking(this.name, wireThinkingLevel(this.model, this.thinkingLevel));
     if (opts.role !== undefined) {
       this.config.role = opts.role;
       // Update rolePrompt and regenerate system prompt

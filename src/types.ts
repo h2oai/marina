@@ -789,6 +789,8 @@ export type EngineEvent =
       ttftMs?: number;
       inputTokens?: number;
       outputTokens?: number;
+      /** Hidden reasoning (thinking) tokens the provider reported — a share of `outputTokens`. */
+      reasoningTokens?: number;
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
       costUsd?: number;
@@ -899,6 +901,11 @@ export type EngineEvent =
       ttftMs?: number;
       inputTokens?: number;
       outputTokens?: number;
+      /** Reasoning (thinking) tokens the upstream reported, a share of
+       * `outputTokens` (`usage.completion_tokens_details.reasoning_tokens`,
+       * Anthropic `output_tokens_details.thinking_tokens`). Absent when the
+       * upstream reported none. */
+      reasoningTokens?: number;
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
       costUsd?: number;

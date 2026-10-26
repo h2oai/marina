@@ -265,6 +265,12 @@ export interface AgentStatus {
   effectiveContextWindow: number;
   /** Output (completion) token cap applied to each turn. */
   maxOutputTokens: number;
+  /** The agent's resolved thinking level (explicit → `MARINA_AGENT_THINKING` → crew off → off). */
+  thinkingLevel?: AgentThinkingLevel;
+  /** The level its requests carry: `off` when the model takes no reasoning setting. */
+  thinkingSent?: AgentThinkingLevel;
+  /** Lifetime reasoning (thinking) tokens the provider reported. */
+  totalReasoningTokens?: number;
   /** Highest real prompt-token count the server has accepted (0 until first reply). */
   peakInputTokens: number;
   totalInputTokens?: number;
@@ -366,6 +372,8 @@ export type AgentEvent =
       ttftMs?: number;
       inputTokens?: number;
       outputTokens?: number;
+      /** Reasoning (thinking) tokens the provider reported. */
+      reasoningTokens?: number;
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
       costUsd?: number;

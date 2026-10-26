@@ -176,7 +176,7 @@ export async function modelCall(
   let target = binding.target;
   let routed = false;
   let attempt = 0;
-  let tokens = { input: 0, output: 0, cost: 0 };
+  let tokens = { input: 0, output: 0, reasoning: 0, cost: 0 };
   emitModelTrace(lifecycle(binding, requestId, "received", { timestamp: started }));
 
   if (fallbackOn && routeLimited(String(target.model.provider))) {
@@ -213,6 +213,7 @@ export async function modelCall(
       tokens = {
         input: tokens.input + input,
         output: tokens.output + output,
+        reasoning: tokens.reasoning + (result.usage?.reasoning ?? 0),
         cost: tokens.cost + cost,
       };
       if (ledger) recordPurposeSpend(binding.purpose, binding.source, cost, env);
@@ -226,6 +227,7 @@ export async function modelCall(
             durationMs: Date.now() - started,
             inputTokens: tokens.input,
             outputTokens: tokens.output,
+            ...(tokens.reasoning > 0 ? { reasoningTokens: tokens.reasoning } : {}),
             costUsd: tokens.cost,
             ...(request.tierCapped ? { outputCap: request.maxTokens } : {}),
             ...(capHit ? { outputCapHit: true } : {}),

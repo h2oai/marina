@@ -13,7 +13,11 @@
  *   family:work:<kind>:role:<role>  the same, for the role the worker played
  *   method:model:<model>            the model that did it (an agent's configured
  *                                   model, or the model that served a request);
- *                                   a person's own work carries no model method
+ *                                   a person's own work carries no model method.
+ *                                   Always the FIRST method ref, and only one.
+ *   method:thinking:<level>         the agent's effective thinking level right
+ *                                   after its model (`off` when unset; an
+ *                                   agent's work only — `./live.ts`)
  *   method:<dimension>:<value>      how it was done, one tag per dimension
  *                                   (`approach`): e.g. `crew:<formation>` or
  *                                   `solo` for a task, `driver:<harness>`,
@@ -85,6 +89,8 @@ export function workRefs(
     actor?: string;
     model?: string;
     role?: string;
+    /** The agent's effective thinking level (`off` when unset); only with a model. */
+    thinking?: string;
     /** How the work was done, one `<dimension>:<value>` per dimension (see the module comment). */
     approach?: readonly string[];
   },
@@ -92,9 +98,13 @@ export function workRefs(
   const refs = [`family:work:${input.kind}`];
   if (input.role && SAFE.test(input.role))
     refs.push(`family:work:${input.kind}:role:${input.role}`);
-  if (input.model && SAFE.test(input.model)) refs.push(`method:model:${input.model}`);
+  if (input.model && SAFE.test(input.model)) {
+    refs.push(`method:model:${input.model}`);
+    if (input.thinking && SAFE.test(input.thinking)) refs.push(`method:thinking:${input.thinking}`);
+  }
   for (const a of input.approach ?? [])
-    if (SAFE.test(a) && !a.startsWith("model:")) refs.push(`method:${a}`);
+    if (SAFE.test(a) && !a.startsWith("model:") && !a.startsWith("thinking:"))
+      refs.push(`method:${a}`);
   refs.push(scopeRef(db, input.actor));
   return refs;
 }
