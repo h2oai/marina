@@ -333,6 +333,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`agent attention` now wakes a resting resident at once.** A resident that had declared rest
+  (`memory set rest <why>`) left an operator's steered attention unread until its long heartbeat
+  (about 30 minutes): the idle check skipped the cycle because no perception owed a reply, and the
+  rest cadence returned before the pending-attention fast tick. A pending steered attention now
+  breaks a declared rest the way an owed request does (no skip, fast tick). Resting again after it
+  is still not a silent turn, and ambient or informational events still wait.
+- **A tell that names a world command to run now owes a reply.** "Task #16 is reserved for you:
+  task claim 16" was classified as information, so a resting addressee was not woken. A clause that
+  is a bare world command with only ids after its verb (`task claim 16`, `then task submit #16`)
+  now makes the tell a request; a result that reports a command ("Done: task submit 16 sent",
+  "Status: claimed task 16") stays information. The attention corpus gains both cases.
 - **A cold `calc` no longer times out while mathjs loads.** The calc worker reports ready once
   mathjs has loaded, and the 10 s evaluation deadline starts only then; the expression is not
   sent before. Loading has its own, separate bound (`CALC_LOAD_TIMEOUT_MS`, 60 s), so on a busy
