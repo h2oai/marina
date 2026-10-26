@@ -333,6 +333,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Self-calls to `/v1` no longer keep a bearer from before the server served.** The server now
+  marks itself serving before anything can ask a model, and the classifiers on Marina's own
+  `/v1` (the `marina-self` decision backend, the lesson judge's fallback, classifier engines)
+  read their base URL and bearer on every ask (`selfChatClassifier`). Before, a decision asked
+  while agents respawned at boot fixed the local profile's key for the life of the process; the
+  server treats that key as an outside caller, so in the default `agents` endpoint mode
+  `marina/default` was refused and every lesson judgement failed with no upstream call.
+
 - **A temporary outage no longer ends a lesson delivery `failed`.** The daily spend cap, a 429,
   a 5xx, a timeout or a dropped connection from the lesson writer or judge now leaves the
   outcome `pending` with the cause recorded and no attempt spent, and the rest of that delivery
