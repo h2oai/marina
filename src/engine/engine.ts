@@ -388,15 +388,9 @@ export class Engine {
       // Command-line processes on the same DB_PATH attach the same ledger, so
       // the day's total is shared across processes (re-read on every check);
       // with MARINA_SPEND_LEDGER every process naming that file shares one
-      // total and one cap (src/engine/shared-spend-ledger.ts).
-      spendDb.onClose(
-        attachWorldSpendLedger(spendDb, {
-          onError: (error) =>
-            tryLog(this.logger, "spend", "Daily spend not recorded", () => {
-              throw error;
-            }),
-        }),
-      );
+      // total and one cap (src/engine/shared-spend-ledger.ts). A failed write
+      // is retried, kept pending (counted toward the cap) and logged there.
+      spendDb.onClose(attachWorldSpendLedger(spendDb));
 
       // Route health: a first-party key's usage limit survives a restart, so
       // a reboot does not hammer the limited route (src/net/model/route-health.ts).
