@@ -345,6 +345,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Opening a world database another process is opening waits instead of failing.** The busy
+  timeout is now the first statement on a new connection (and is set on the read-only one too).
+  It used to follow `PRAGMA journal_mode=WAL`, so a server and a CLI opening the same database
+  at the same moment could fail at once with `SQLITE_BUSY`.
 - **Self-calls to `/v1` no longer keep a bearer from before the server served.** The server now
   marks itself serving before anything can ask a model, and the classifiers on Marina's own
   `/v1` (the `marina-self` decision backend, the lesson judge's fallback, classifier engines)
