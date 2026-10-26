@@ -7,6 +7,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import type { PlatformMemoryBackend } from "../memory-platform";
+import { plainErrorMessage } from "./shared";
 
 // ─── Memory Tool (platform-only) ───────────────────────────────────────────
 
@@ -217,7 +218,7 @@ export function createMemoryTool(
             };
         }
       } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : String(error);
+        const msg = plainErrorMessage(error);
         return {
           content: [{ type: "text", text: `Memory operation failed: ${msg}` }],
           details: { success: false, error: msg },
