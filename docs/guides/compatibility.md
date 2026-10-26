@@ -61,7 +61,7 @@ Use the returned durable record ID and version for later edits. Numeric IDs are 
 interchangeable with record IDs. Existing data is converted by migration 138. `/mem` discovery now advertises its deprecated status and successor.
 Core beliefs continue to use `memory kv`; shared pools retain their membership rules.
 
-Fresh databases use the schema-167 baseline. Existing databases follow their pending
+Fresh databases use the schema-179 baseline. Existing databases follow their pending
 upgrade history unchanged. See [persistence](../architecture/persistence.md#fresh-schema-and-existing-database-upgrades).
 
 
@@ -103,7 +103,7 @@ The step-by-step operator runbook is [Upgrading a server](upgrading.md).
 1. Stop writers, record the deployed revision and schema, and create a snapshot:
    `bun run memory backup --db /instance/world.db --output /backups/pre-upgrade.db`.
    Retain its verified manifest/hash and test restoration before changing the service.
-2. Upgrade a restored copy first. Fresh databases start at the schema-167 baseline;
+2. Upgrade a restored copy first. Fresh databases start at the schema-179 baseline;
    existing databases replay their pending historical and forward migrations. A
    database created by each release (v0.5.0 onward, `test/fixtures/upgrade/`) is
    upgraded in CI and must match a fresh install's schema; the populated

@@ -89,6 +89,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Faster fresh databases: the install baseline moves from schema 167 to 179.** Migrations
+  168–179 move verbatim to `schema-history.ts` (172's data conversion joins `MIGRATION_HOOKS`;
+  `JUDGE_LEDGER_BACKFILL_179` moves with 179 and is still exported from `schema.ts`), so a new
+  database installs one generated schema and replays nothing. The generator now reproduces
+  `investigation_instance`'s per-database id at install time. Existing databases at any
+  version upgrade through the same SQL and hooks as before. A new database takes about 29 ms
+  in memory and 37 ms on disk, down from 76 ms and 85 ms.
+
 - **`memory` is the one memory command.** `memory note`, `memory recall`, `memory reflect`,
   `memory recap`, `memory debrief` and `memory context` run the same-named commands with the same
   rank, gates, effects and output. The bare names still work and say once per session that they
@@ -334,6 +342,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that ran recently waits the remainder. Shorter jobs keep the modulo rule.
   `describeTickSchedule()` reports `durable`, `lastRunAt` and `nextDueTick`.
 
+- **`agent attention` now wakes a resting resident at once.** A resident that had declared rest
+  (`memory set rest <why>`) left an operator's steered attention unread until its long heartbeat
+  (about 30 minutes): the idle check skipped the cycle because no perception owed a reply, and the
+  rest cadence returned before the pending-attention fast tick. A pending steered attention now
+  breaks a declared rest the way an owed request does (no skip, fast tick). Resting again after it
+  is still not a silent turn, and ambient or informational events still wait.
+- **A tell that names a world command to run now owes a reply.** "Task #16 is reserved for you:
+  task claim 16" was classified as information, so a resting addressee was not woken. A clause that
+  is a bare world command with only ids after its verb (`task claim 16`, `then task submit #16`)
+  now makes the tell a request; a result that reports a command ("Done: task submit 16 sent",
+  "Status: claimed task 16") stays information. The attention corpus gains both cases.
 - **A cold `calc` no longer times out while mathjs loads.** The calc worker reports ready once
   mathjs has loaded, and the 10 s evaluation deadline starts only then; the expression is not
   sent before. Loading has its own, separate bound (`CALC_LOAD_TIMEOUT_MS`, 60 s), so on a busy

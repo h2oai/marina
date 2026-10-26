@@ -25,6 +25,11 @@ if (HISTORY.at(-1)?.version !== SCHEMA_BASELINE_VERSION)
 const INSTALL_TIME = "(strftime('%s','now') * 1000)";
 const SEEDED_TABLES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   shell_allowlist: { added_at: INSTALL_TIME },
+  // One random id per database (migration 170): two installs never share it.
+  investigation_instance: { uuid: "lower(hex(randomblob(16)))" },
+  // Migration 172's backfill cursor: an empty event log leaves nothing to
+  // backfill (cursor 0, upto 0), which is exactly a fresh install's state.
+  memory_known_at_backfill: {},
 };
 
 // Replay only in a disposable database, never against an operator's world.
