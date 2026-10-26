@@ -290,6 +290,13 @@ if (process.argv.includes("--check-config")) {
   logger.info("main", "Configuration check passed.");
   process.exit(0);
 }
+// This process serves /v1: its own self-calls carry the in-process internal
+// token from the start. Marked before anything can ask a model — agents
+// respawned by `initAgents` and the lesson loop call `/v1` before the boot
+// finishes, and a bearer resolved earlier would be the local profile's key,
+// which the server treats as an outside caller (`marina/default` is then
+// refused in the default `agents` endpoint mode).
+markServingProcess();
 const releaseDatabaseLease = acquireDatabaseLease(DB_PATH);
 const db = new MarinaDB(DB_PATH, { durability });
 // Operator-set decision settings (dashboard / `admin decisions`) survive a
@@ -779,8 +786,6 @@ if (isOpenApiMode()) {
     "MARINA_OPEN_API=true — API endpoints accept unauthenticated requests (development mode)",
   );
 }
-// This process serves /v1: its own self-calls carry the in-process internal token.
-markServingProcess();
 // Local profile: a generated, persisted key instead of a closed API (see local-api-key.ts).
 // Outside it an inherited or hand-set MARINA_LOCAL_API_KEY is dropped, so it
 // can never become a bearer in a shared/public deployment (the model API also

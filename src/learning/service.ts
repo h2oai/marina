@@ -37,7 +37,7 @@
 import { availableModels } from "../agent/available-models";
 import { roleModelFromEnv } from "../config/model-tiers";
 import { harnessDecisionProvider } from "../decisions/engines";
-import { chatClassifierProvider } from "../decisions/providers";
+import { selfChatClassifier } from "../decisions/providers";
 import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
@@ -320,20 +320,24 @@ export function lessonJudgeFromEnv(
   const configured = harnessDecisionProvider(env);
   if (configured) return configured;
   const model = env.MARINA_LESSONS_JUDGE_MODEL?.trim() || roleModelFromEnv("lessons-judge", env);
-  let inner: DecisionProvider | undefined;
+  // The base URL and bearer are read on every ask (`selfChatClassifier`).
+  const inner = selfChatClassifier(
+    {
+      model,
+      timeoutMs: SELF_TIMEOUT_MS,
+      method: "verbalized",
+      ...(deps.fetch ? { fetch: deps.fetch } : {}),
+    },
+    {
+      baseUrl: () => deps.baseUrl ?? selfBaseUrl(env),
+      bearer: deps.token ?? (() => selfModelToken(env)),
+    },
+  );
   return {
     kind: "marina-classifier",
     model: `lesson-judge:${model}`,
     calibrated: false,
     async ask(request, signal) {
-      inner ??= chatClassifierProvider({
-        baseUrl: deps.baseUrl ?? selfBaseUrl(env),
-        model,
-        apiKey: await (deps.token ?? (() => selfModelToken(env)))(),
-        timeoutMs: SELF_TIMEOUT_MS,
-        method: "verbalized",
-        ...(deps.fetch ? { fetch: deps.fetch } : {}),
-      });
       const result = await inner.ask(request, signal);
       return { ...result, calibrated: false };
     },

@@ -28,6 +28,7 @@ import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai"
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { REASONING_HEADROOM_TOKENS } from "../../agent/reasoning-control";
 import { omitsSamplingParams } from "../adapters/anthropic-tools";
+import { catalogModel } from "./catalog-snapshots";
 
 /** The lowest reasoning effort a known upstream model accepts. */
 export type LowestReasoningEffort = "none" | "low";
@@ -119,7 +120,8 @@ let catalog: ReturnType<typeof builtinModels> | undefined;
 function openRouterCatalogModel(id: string): Model<Api> | undefined {
   try {
     catalog ??= builtinModels();
-    return catalog.getModel("openrouter", id) as Model<Api> | undefined;
+    const known = catalog;
+    return catalogModel((m) => known.getModel("openrouter", m) as Model<Api> | undefined, id);
   } catch {
     return undefined;
   }

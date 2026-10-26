@@ -385,8 +385,8 @@
 
 # ── Default and fallback models ──────────────────────────────────────────────
 
-# Model tiers — the one place to choose models for work that names none (src/config/model-tiers.ts; `admin models` shows the effective model per tier and role and where each came from). CHEAP runs residents (agents spawned without a model), room agents, boot-seeded crews (Workbench, answerer/orchestration crews, Chronicler) and memory helpers. Unset: MARINA_DEFAULT_MODEL or a runtime default when one is set, else the cheapest adequate tool-capable model for the keys present — openrouter/deepseek/deepseek-v4.1-flash, deepseek/deepseek-flash, anthropic/claude-haiku-5-5, openai/gpt-6-luna, google/gemini-3.1-flash-lite, groq/openai/gpt-oss-120b, cerebras/gpt-oss-120b, huggingface/zai-org/GLM-5.3-Flash, mistral/mistral-small-latest, in that order (a configured local runtime first), else marina/default. STRONG runs what grades or overrules: the benchmark judge, the outcome extractor, lesson writer and judge, the decision classifier, and the Arbiter. Unset it is marina/default exactly as before, so judging never becomes cheap by accident. Both tiers are also live /v1 model ids, `marina/cheap` and `marina/strong`, resolved per request, so an agent saved on `marina/cheap` follows a later tier change. Move one role with `role:<role>=<model>` in MARINA_AGENT_MODELS; every older role variable still wins.
-# MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash
+# Model tiers — the one place to choose models for work that names none (src/config/model-tiers.ts; `admin models` shows the effective model per tier and role and where each came from). CHEAP runs residents (agents spawned without a model), room agents, boot-seeded crews (Workbench, answerer/orchestration crews, Chronicler) and memory helpers. Unset: MARINA_DEFAULT_MODEL or a runtime default when one is set, else the cheapest adequate tool-capable model for the keys present — openrouter/deepseek/deepseek-v4.1-flash-1017, deepseek/deepseek-flash, anthropic/claude-haiku-5-5, openai/gpt-6-luna, google/gemini-3.1-flash-lite, groq/openai/gpt-oss-120b, cerebras/gpt-oss-120b, huggingface/zai-org/GLM-5.3-Flash, mistral/mistral-small-latest, in that order (a configured local runtime first), else marina/default. STRONG runs what grades or overrules: the benchmark judge, the outcome extractor, lesson writer and judge, the decision classifier, and the Arbiter. Unset it is marina/default exactly as before, so judging never becomes cheap by accident. Both tiers are also live /v1 model ids, `marina/cheap` and `marina/strong`, resolved per request, so an agent saved on `marina/cheap` follows a later tier change. Move one role with `role:<role>=<model>` in MARINA_AGENT_MODELS; every older role variable still wins.
+# MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash-1017
 # MARINA_MODEL_TIER_STRONG=openrouter/anthropic/claude-opus-5.5
 
 # Default output cap for cheap-tier requests: a request on `marina/cheap` that sets no max_tokens (a /v1 client such as the benchmark harness, a `src/model` pipeline; agents always send their own cap and keep it) gets this many, and on an OpenRouter route also `reasoning.max_tokens` at 3/4 of it, so a runaway reasoning loop stops there with room left for the answer. A caller's own max_tokens / max_completion_tokens always wins, larger or smaller; explicit model ids and the strong tier are never capped. Default 16384: on the 2026-10-20 proof run deepseek-v4.1-flash answers ran p95 6.3k / p99 13.1k output tokens, and the 0.8 % above 16k (up to ~98k) scored 0.29 on average and were a third of the cost. A reply cut at the cap is marked on its trace (`outputCapHit`) and on `x-marina-output-cap: <n>; hit`; `admin models` shows the cap and the hits since start. `0` or `off` disables it.
@@ -1045,7 +1045,7 @@
 # MARINA_FORECAST_TRIAGE=off
 
 # The cheap model that adds FACTS for triage (publisher, metric, period, expected publication date — never the class), told only the question, its answer type, its close and the cutoff as "today". Spend counts with the forecast's. `none` makes triage fully deterministic. Used only when MARINA_FORECAST_TRIAGE is observe or on; a model that cannot be built (no key) leaves triage deterministic and is recorded.
-# MARINA_FORECAST_TRIAGE_MODEL=openrouter/deepseek/deepseek-v4.1-flash
+# MARINA_FORECAST_TRIAGE_MODEL=openrouter/deepseek/deepseek-v4.1-flash-1017
 
 # Release-calendar evidence for triage: when the facts name an official FRED series, read whether the period's figure is already in it (as published the day before the cutoff; a past cutoff needs FRED_API_KEY) and, for a live cutoff with FRED_API_KEY, the next scheduled release. `off` uses dates from the text only. Free, keyless where possible.
 # MARINA_FORECAST_TRIAGE_CALENDAR=on
@@ -1149,7 +1149,7 @@
 # MARINA_ARENA_WIKI_EXTRACTORS=
 
 # The model the `events` and `news` extractors call (one narrow JSON call per candidate with evidence).
-# MARINA_ARENA_WIKI_EXTRACTOR_MODEL=openrouter/deepseek/deepseek-v4.1-flash
+# MARINA_ARENA_WIKI_EXTRACTOR_MODEL=openrouter/deepseek/deepseek-v4.1-flash-1017
 
 # How many of the specialist's best candidates the extractors read (1–100).
 # MARINA_ARENA_WIKI_EXTRACTOR_TOP=30

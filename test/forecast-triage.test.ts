@@ -358,7 +358,7 @@ describe("knobs", () => {
     expect(triageModeFromEnv({})).toBe("off");
     expect(triageModeFromEnv({ MARINA_FORECAST_TRIAGE: " Observe " })).toBe("observe");
     expect(triageModeFromEnv({ MARINA_FORECAST_TRIAGE: "yes" })).toBe("off");
-    expect(triageModelFromEnv({})).toBe("openrouter/deepseek/deepseek-v4.1-flash");
+    expect(triageModelFromEnv({})).toBe("openrouter/deepseek/deepseek-v4.1-flash-1017");
     expect(triageModelFromEnv({ MARINA_FORECAST_TRIAGE_MODEL: "none" })).toBeUndefined();
     expect(triageSettingsFromEnv({})).toBeUndefined();
     expect(triageSettingsFromEnv({ MARINA_FORECAST_TRIAGE: "off" })).toBeUndefined();
@@ -371,7 +371,7 @@ describe("knobs", () => {
     // A fact model that cannot be built leaves triage deterministic, with the reason recorded.
     const noKey = triageSettingsFromEnv({
       MARINA_FORECAST_TRIAGE: "observe",
-      MARINA_FORECAST_TRIAGE_MODEL: "openrouter/deepseek/deepseek-v4.1-flash",
+      MARINA_FORECAST_TRIAGE_MODEL: "openrouter/deepseek/deepseek-v4.1-flash-1017",
     })!;
     expect(noKey.model).toBeUndefined();
     expect(noKey.modelError).toContain("deepseek");

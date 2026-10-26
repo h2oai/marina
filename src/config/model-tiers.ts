@@ -120,14 +120,16 @@ export const TIER_ALIAS: Readonly<Record<ModelTier, string>> = {
 
 /**
  * The cheap tier's built-in pick, first provider with a key wins. Every id is
- * a cheap, tool-capable chat model (checked 2026-10-20: OpenRouter's endpoint
- * list for deepseek-v4.1-flash — $0.15/$0.60 per M list, tools on every
- * endpoint; the others from the bundled pi-ai catalog). OpenRouter first: the
+ * a cheap, tool-capable chat model (checked 2026-10-26: OpenRouter's catalog
+ * entry for deepseek-v4.1-flash-1017, the 2026-10-17 snapshot — $0.15/$0.60
+ * per M list, tools and reasoning; the others from the bundled pi-ai
+ * catalog). A dated snapshot, never the earlier one the bare id still serves:
+ * the bare id is a fixed 2026-09-10 snapshot, not an alias. OpenRouter first: the
  * cheapest adequate model and the widest fallback. Providers not listed
  * (xai, …) fall through to `marina/default`.
  */
 export const BUILTIN_CHEAP_MODELS: ReadonlyArray<{ provider: string; model: string }> = [
-  { provider: "openrouter", model: "deepseek/deepseek-v4.1-flash" },
+  { provider: "openrouter", model: "deepseek/deepseek-v4.1-flash-1017" },
   { provider: "deepseek", model: "deepseek-flash" },
   { provider: "anthropic", model: "claude-haiku-5-5" },
   { provider: "openai", model: "gpt-6-luna" },

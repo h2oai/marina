@@ -664,3 +664,37 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
     },
   };
 }
+
+/**
+ * A chat classifier on this Marina's own `/v1` whose base URL and bearer are
+ * read on EVERY ask. The same call can resolve to different bearers over a
+ * process's life: before the server marks itself serving, `selfModelToken`
+ * returns the local profile's key, which the server treats as an outside
+ * caller (in the default `agents` endpoint mode `marina/default` is then
+ * refused); afterwards it is the in-process internal token. A provider that
+ * kept its first bearer would stay on the wrong one for the life of the
+ * process. Learned capabilities are per (server, model), so rebuilding on a
+ * new bearer or URL loses nothing.
+ */
+export function selfChatClassifier(
+  opts: Omit<ProviderOptions, "apiKey" | "baseUrl">,
+  self: { baseUrl: () => string; bearer: () => Promise<string> },
+): DecisionProvider {
+  let current: { baseUrl: string; key: string; provider: DecisionProvider } | undefined;
+  return {
+    kind: "chat-classifier",
+    model: opts.model,
+    calibrated: false,
+    async ask(request, signal) {
+      const key = await self.bearer();
+      const baseUrl = self.baseUrl();
+      if (current?.key !== key || current.baseUrl !== baseUrl)
+        current = {
+          baseUrl,
+          key,
+          provider: chatClassifierProvider({ ...opts, baseUrl, apiKey: key }),
+        };
+      return current.provider.ask(request, signal);
+    },
+  };
+}

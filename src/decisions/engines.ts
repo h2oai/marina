@@ -37,7 +37,7 @@ import type { ClassifierMethod } from "./classifier-methods";
 import { combineAnswers, unsureAnswers } from "./combine";
 import { classifierTuning, getDecisionProvider } from "./config";
 import { acceptsRequestedModel } from "./model-ids";
-import { chatClassifierProvider } from "./providers";
+import { selfChatClassifier } from "./providers";
 import {
   DecisionError,
   type DecisionProvider,
@@ -103,23 +103,27 @@ export function classifierEngine(
 ): DecisionProvider {
   const tuning = classifierTuning(env);
   const id = `${CLASSIFIER_ENGINE}:${model}`;
-  let inner: DecisionProvider | undefined;
+  // The base URL and bearer are read on every ask (`selfChatClassifier`).
+  const inner = selfChatClassifier(
+    {
+      model,
+      timeoutMs: call.timeoutMs ?? CLASSIFIER_TIMEOUT_MS,
+      ...(call.reasoning ? { reasoning: call.reasoning } : {}),
+      method: method ?? tuning.method ?? "auto",
+      structured: true,
+      ...(tuning.samples === undefined ? {} : { samples: tuning.samples }),
+      ...(deps.fetch ? { fetch: deps.fetch } : {}),
+    },
+    {
+      baseUrl: () => deps.selfBaseUrl ?? selfBaseUrl(env),
+      bearer: deps.token ?? (() => selfModelToken(env)),
+    },
+  );
   const provider: DecisionProvider = {
     kind: "marina-classifier",
     model: id,
     calibrated: false,
     async ask(request, signal) {
-      inner ??= chatClassifierProvider({
-        baseUrl: deps.selfBaseUrl ?? selfBaseUrl(env),
-        model,
-        apiKey: await (deps.token ?? (() => selfModelToken(env)))(),
-        timeoutMs: call.timeoutMs ?? CLASSIFIER_TIMEOUT_MS,
-        ...(call.reasoning ? { reasoning: call.reasoning } : {}),
-        method: method ?? tuning.method ?? "auto",
-        structured: true,
-        ...(tuning.samples === undefined ? {} : { samples: tuning.samples }),
-        ...(deps.fetch ? { fetch: deps.fetch } : {}),
-      });
       const result = await inner.ask(request, signal);
       // Name the model that ACTUALLY answered (the passthru may fall back).
       return {

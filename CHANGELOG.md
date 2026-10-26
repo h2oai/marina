@@ -89,6 +89,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The cheap tier runs the current DeepSeek V4.1 Flash snapshot.** The built-in OpenRouter pick
+  for `marina/cheap` (and the triage fact model and arena wiki extractor defaults) moves from
+  `deepseek/deepseek-v4.1-flash`, which OpenRouter serves as a fixed 2026-09-10 snapshot, to
+  `deepseek/deepseek-v4.1-flash-1017`, the 2026-10-17 snapshot (list $0.15/$0.60 per M tokens,
+  tools and reasoning). An explicit `MARINA_MODEL_TIER_CHEAP` is unchanged. A dated snapshot the
+  bundled pi-ai catalog does not list yet (`-MMDD` or `-YYYYMMDD` after a listed id) now takes its
+  base entry's capabilities under its own id (`catalogModel`, `src/net/model/catalog-snapshots.ts`):
+  the reasoning-effort clamp, the summary call's reasoning disable, image input and DeepSeek's
+  reasoning round-trip apply to it, and it resolves without the "not in the bundled registry"
+  warning. Its price comes from Marina's own list, else the provider's reported cost, never the
+  base's.
+
 - **Faster fresh databases: the install baseline moves from schema 167 to 179.** Migrations
   168–179 move verbatim to `schema-history.ts` (172's data conversion joins `MIGRATION_HOOKS`;
   `JUDGE_LEDGER_BACKFILL_179` moves with 179 and is still exported from `schema.ts`), so a new
@@ -345,6 +357,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`usecase` without new agents, `audio` not saving a transcript) does not fail it. Quest
   progress and the `command` event are unchanged, as for every handler refusal. A refused
   command's correlated `command_result` reports `ok: false` with the refusal.
+- **Self-calls to `/v1` no longer keep a bearer from before the server served.** The server now
+  marks itself serving before anything can ask a model, and the classifiers on Marina's own
+  `/v1` (the `marina-self` decision backend, the lesson judge's fallback, classifier engines)
+  read their base URL and bearer on every ask (`selfChatClassifier`). Before, a decision asked
+  while agents respawned at boot fixed the local profile's key for the life of the process; the
+  server treats that key as an outside caller, so in the default `agents` endpoint mode
+  `marina/default` was refused and every lesson judgement failed with no upstream call.
 
 - **A temporary outage no longer ends a lesson delivery `failed`.** The daily spend cap, a 429,
   a 5xx, a timeout or a dropped connection from the lesson writer or judge now leaves the
