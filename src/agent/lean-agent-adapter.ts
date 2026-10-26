@@ -4617,6 +4617,25 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     }
 
+    // ── 2f. Standing (every 20th cycle, offset 15) ──
+    // One line: LIVE standing and its rank step, the last credits (kind, ref,
+    // age), retired credit labelled as history. With no focus it also names
+    // the live ways to earn. Not for crew responders or a bound coder.
+    if (cycle % 20 === 15 && !this.crewResponderMode && !this.activeCodingTask) {
+      try {
+        const standing = await this.platformMemory.standingSummary();
+        const content =
+          standing.summary && !this.focus && standing.earn
+            ? `${standing.summary} · ${standing.earn}`
+            : standing.summary;
+        if (content && this.shouldIncludeSection("standing", content)) {
+          parts.push(`[Standing] ${content}`, 45, "standing");
+        }
+      } catch {
+        // best-effort; the agent works without the standing line
+      }
+    }
+
     // ── 3. Novelty suggestions (every 5th cycle) ──
     // Coding-task mode: suppressed — exploration prompts pull a bound coder
     // off the assigned work.

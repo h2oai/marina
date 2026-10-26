@@ -377,6 +377,8 @@ describe("Command Permissions", () => {
         creatorName: "Alice",
       });
       db.recordStandingEarned(conn1.entity!, "Alice", taskId, 300);
+      // Let the earner's `standing +300` notice land before the command under test.
+      await Bun.sleep(0);
 
       // No competence row yet — the run must be refused.
       expect(db.getCompetence(conn1.entity!, "admin.destructive")).toBeUndefined();

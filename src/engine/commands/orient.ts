@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { standingEarnLine, standingSummaryLine } from "../../agent/standing-summary";
 import type { TaskManager } from "../../coordination/task-manager";
 import {
   bold,
@@ -219,12 +220,13 @@ export function orientCommand(deps: {
           lines.push(...myClaims);
         }
 
-        // Entity's earned standing (decayed, by account — what `standing` shows)
-        const self = ctx.getEntity(input.entity);
-        const standing = self ? deps.taskManager.standingOf(self.name, input.entity) : 0;
-        if (standing > 0) {
-          lines.push("", `  Your Standing: ${standing.toFixed(1)}`);
-        }
+        // Live standing by account (what `standing` shows), its last credits
+        // and retired history apart; with nothing claimed, how to earn.
+        lines.push(
+          "",
+          `  ${standingSummaryLine(db, entity.name, input.entity, { label: "Your Standing:" })}`,
+        );
+        if (myClaims.length === 0) lines.push(`  ${standingEarnLine()}`);
       }
 
       ctx.send(input.entity, lines.join("\n"));
