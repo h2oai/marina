@@ -11,9 +11,9 @@ import {
 import { setRank } from "../src/engine/permissions";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_inheritance.db";
+const TEST_DB = tempDbPath("test_inheritance.db");
 
 describe("Marina inheritance bundles", () => {
   let db: MarinaDB;

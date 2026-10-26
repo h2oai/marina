@@ -6,9 +6,9 @@ import { getStanding } from "../src/agent/standing";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_experiment_arms.db";
+const TEST_DB = tempDbPath("test_experiment_arms.db");
 
 /**
  * The sharpened `experiment` command: a controlled A/B comparison with arms,

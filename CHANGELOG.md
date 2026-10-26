@@ -325,6 +325,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A cold `calc` no longer times out while mathjs loads.** The calc worker reports ready once
+  mathjs has loaded, and the 10 s evaluation deadline starts only then; the expression is not
+  sent before. Loading has its own, separate bound (`CALC_LOAD_TIMEOUT_MS`, 60 s), so on a busy
+  machine the first `calc` no longer fails on a fast expression, and a runaway expression is
+  still stopped 10 s into its evaluation.
+
+- **Tests no longer share fixed database file names.** 116 test files that opened a fixed
+  `test_*.db` in the working directory now use `tempDbPath(name)` from `test/helpers.ts`: a path
+  in a fresh temporary directory, removed at process exit. Parallel workers, and the suite run
+  in two checkouts at once, can no longer collide on one file.
+
 - **In-world benchmarks work from a fresh install run from any directory.** The harness, the
   dataset downloader and the reproduction kit now start with the server's own Bun, so `bun` no
   longer has to be on `PATH`. They also start with `--no-env-file`, so they see the server's

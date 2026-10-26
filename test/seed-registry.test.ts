@@ -9,9 +9,9 @@ import {
 } from "../src/agent/seed-registry";
 import { MarinaDB } from "../src/persistence/database";
 import { seedOrchestrationCrews, seedSystemAgent } from "../worlds/seed";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_seed_registry.db";
+const TEST_DB = tempDbPath("test_seed_registry.db");
 
 describe("seed-registry disable markers", () => {
   let db: MarinaDB;
@@ -113,7 +113,7 @@ describe("seedSystemAgent (unified seed policy)", () => {
 });
 
 describe("seedOrchestrationCrews (MARINA_ENDPOINTS gating)", () => {
-  const DB = "test_orch_endpoints.db";
+  const DB = tempDbPath("test_orch_endpoints.db");
   let db: MarinaDB;
   let prevEnv: string | undefined;
 

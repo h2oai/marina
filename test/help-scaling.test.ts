@@ -11,9 +11,9 @@ import {
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_help_scaling.db";
+const TEST_DB = tempDbPath("test_help_scaling.db");
 
 describe("usageExcerpt", () => {
   it("returns short marker-less text untouched", () => {

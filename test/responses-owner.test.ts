@@ -7,9 +7,9 @@ import { Engine } from "../src/engine/engine";
 import { handleModelApi, pendingRequests, roundRobinCounters } from "../src/net/model/model-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_responses_owner.db";
+const TEST_DB = tempDbPath("test_responses_owner.db");
 const KEY_A = "sk-owner-a-key";
 const KEY_B = "sk-owner-b-key";
 

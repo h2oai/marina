@@ -9,7 +9,7 @@ import { Engine } from "../src/engine/engine";
 import { grant } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
 // Minimal stubs for direct handler invocation (no running engine needed).
 const rank3Ctx = () => {
@@ -21,7 +21,7 @@ const rank3Ctx = () => {
 // biome-ignore lint/suspicious/noExplicitAny: test stub
 const inp = (tokens: string[]): any => ({ entity: "e1", tokens });
 
-const TEST_DB = "test_trait_role_history.db";
+const TEST_DB = tempDbPath("test_trait_role_history.db");
 
 describe("Trait/role edit history (audit trail)", () => {
   let db: MarinaDB;

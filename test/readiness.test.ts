@@ -18,11 +18,11 @@ import { setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, EntityId, RoomContext } from "../src/types";
 import { roomId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 import { providerEnvironmentKeys } from "./hermetic-env";
 import { scopeProcessState } from "./process-state";
 
-const TEST_DB = "test_readiness.db";
+const TEST_DB = tempDbPath("test_readiness.db");
 
 // Provider credentials and local runtimes that gate agentRuntime.isAvailable().
 const KEY_VARS = providerEnvironmentKeys();

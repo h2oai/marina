@@ -11,9 +11,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { DURABLE_KEY_CACHE_MAX } from "../src/engine/constants";
 import { MarinaDB } from "../src/persistence/database";
 import { type Entity, entityId, roomId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_durable_key_cache.db";
+const TEST_DB = tempDbPath("test_durable_key_cache.db");
 
 function entity(id: string, name: string): Entity {
   return {

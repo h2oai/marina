@@ -19,9 +19,9 @@ import {
 } from "../src/agent/standing";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, entityId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_standing.db";
+const TEST_DB = tempDbPath("test_standing.db");
 /** A live kind with a fixed default amount, for the ledger mechanics below. */
 const KIND = "quest_complete" as const;
 const AMOUNT = STANDING_AMOUNTS[KIND];

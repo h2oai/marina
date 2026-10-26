@@ -7,9 +7,9 @@ import { Logger } from "../src/engine/logger";
 import { TickScheduler } from "../src/engine/tick-scheduler";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_tick_scheduler.db";
+const TEST_DB = tempDbPath("test_tick_scheduler.db");
 
 /**
  * The periodic half of the engine tick, extracted from `Engine.tickInner()`

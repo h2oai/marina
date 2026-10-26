@@ -21,7 +21,7 @@ import { LocalWorkspace } from "../src/coding/local-workspace";
 import { setCurrentCommand } from "../src/engine/gate-context";
 import { grant, recordDemonstration } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
-import { cleanupDb, until } from "./helpers";
+import { cleanupDb, tempDbPath, until } from "./helpers";
 
 /** A stub approver with a fixed decision — the simplest ExecApprover. */
 function stubApprover(decision: ExecApprovalDecision): ExecApprover {
@@ -334,7 +334,7 @@ describe("InteractiveApprover demonstration provenance (humanApproved)", () => {
 });
 
 describe("HeadlessGateApprover", () => {
-  const DB = "test_exec_headless.db";
+  const DB = tempDbPath("test_exec_headless.db");
   let db: MarinaDB;
   const audits: ExecApprovalDecision[] = [];
   const audit: ExecAuditSink = (_req, decision) => audits.push(decision);

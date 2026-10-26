@@ -415,7 +415,8 @@ affects balance — it never drops a file from a shard.
   worker processes, so a fixed shared path or port is a race. Prefer a
   `mkdtemp` directory under the OS temp folder to a fixed name in the working
   directory: two runs in one checkout cannot collide, and nothing waits on the
-  repository disk's fsync.
+  repository disk's fsync. `tempDbPath(name)` from `test/helpers.ts` returns
+  such a path (removed at process exit); never write a fixed `test_*.db`.
 - **Split by `describe`** once a file passes ~1 s or ~1,000 lines; move shared
   fixtures into `test/<family>-helpers.ts`.
 - Never reach the network: the model-API and adapter tests use mocked `fetch`

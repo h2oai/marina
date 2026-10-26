@@ -6,9 +6,9 @@ import { Engine } from "../src/engine/engine";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_evidence_api.db";
+const TEST_DB = tempDbPath("test_evidence_api.db");
 
 describe("evidence receipts API", () => {
   let db: MarinaDB;

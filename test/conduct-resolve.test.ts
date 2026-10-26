@@ -13,9 +13,9 @@ import {
   type RoomContext,
   roomId,
 } from "../src/types";
-import { cleanupDb, stripAnsi } from "./helpers";
+import { cleanupDb, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_conduct_resolve.db";
+const TEST_DB = tempDbPath("test_conduct_resolve.db");
 
 function ent(id: string, name: string): Entity {
   return {

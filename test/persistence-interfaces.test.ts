@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { MarinaDB } from "../src/persistence/database";
 import type { MarinaStores, SettingsStore } from "../src/persistence/interfaces";
 import { STORE_METHOD_MANIFEST } from "../src/persistence/interfaces";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_persistence_interfaces.db";
+const TEST_DB = tempDbPath("test_persistence_interfaces.db");
 
 /**
  * Facade members that are deliberately NOT part of any store interface: the

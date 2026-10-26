@@ -20,7 +20,7 @@ import { MarinaDB } from "../src/persistence/database";
 import { MIGRATIONS } from "../src/persistence/schema";
 import { roomId } from "../src/types";
 import { ORCHESTRATION_PATTERNS } from "../src/world/templates/orchestration";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
 const readDoc = async (path: string) => Bun.file(path).text();
 
@@ -350,7 +350,7 @@ async function marinaVarsRead(): Promise<Map<string, string>> {
 const marinaTokens = (text: string): string[] =>
   [...new Set(text.match(/MARINA_[A-Z0-9_]*[A-Z0-9]/g) ?? [])].sort();
 
-const TEST_DB = "test_docs_contract.db";
+const TEST_DB = tempDbPath("test_docs_contract.db");
 
 describe("documentation contract — structure", () => {
   let db: MarinaDB;

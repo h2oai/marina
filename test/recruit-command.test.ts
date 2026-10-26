@@ -15,10 +15,10 @@ import {
   type RoomContext,
   roomId,
 } from "../src/types";
-import { cleanupDb, stripAnsi } from "./helpers";
+import { cleanupDb, stripAnsi, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
-const TEST_DB = "test_recruit_command.db";
+const TEST_DB = tempDbPath("test_recruit_command.db");
 
 /** Minimal Entity stub — recruit only reads name, id, properties.rank. */
 function ent(id: string, name: string, rank = 0): Entity {

@@ -40,10 +40,10 @@ import {
   seedUnifiedFixture,
   tierIds,
 } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
-const TEST_DB = "test_unified_context.db";
+const TEST_DB = tempDbPath("test_unified_context.db");
 
 function sortedIds(map: Record<string, string[]>): Record<string, string[]> {
   return Object.fromEntries(

@@ -52,7 +52,7 @@ import {
   roomId,
 } from "../src/types";
 import { git, gitInit } from "./git-helpers";
-import { cleanupDb, stripAnsi } from "./helpers";
+import { cleanupDb, stripAnsi, tempDbPath } from "./helpers";
 
 const markers = (...names: string[]) => new Set(names);
 
@@ -527,7 +527,7 @@ describe("ContainerWorkspace execution (fake runtime)", () => {
 });
 
 describe("code workspace runner (command)", () => {
-  const DB = "test_code_container_runner.db";
+  const DB = tempDbPath("test_code_container_runner.db");
   let db: MarinaDB;
   let root: string;
   let rtDir: string;

@@ -7,9 +7,9 @@ import { CrewError, CrewManager } from "../src/coordination/crew-manager";
 import { MarinaDB } from "../src/persistence/database";
 import type { EngineEvent } from "../src/types";
 import { entityId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_crew_manager.db";
+const TEST_DB = tempDbPath("test_crew_manager.db");
 
 const OWNER = entityId("e_owner");
 
@@ -663,7 +663,7 @@ describe("CrewManager: deposit echo (dedup visibility)", () => {
 });
 
 describe("CrewManager: persistence", () => {
-  const PERSIST_DB = "test_crew_persist.db";
+  const PERSIST_DB = tempDbPath("test_crew_persist.db");
 
   beforeEach(() => cleanupDb(PERSIST_DB));
   afterEach(() => cleanupDb(PERSIST_DB));
@@ -834,7 +834,7 @@ describe("CrewManager: deposit-fallback timer teardown", () => {
   // here would fire into whatever file happens to be running later — this
   // exact leak surfaced as "Database has closed" thrown between unrelated
   // tests. Millisecond schedules make the timers observable.
-  const TEARDOWN_DB = "test_crew_teardown.db";
+  const TEARDOWN_DB = tempDbPath("test_crew_teardown.db");
   let db: MarinaDB;
   let channels: ChannelManager;
   let sent: string[];

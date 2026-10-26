@@ -12,9 +12,9 @@ import { Engine } from "../src/engine/engine";
 import { memoryObserver } from "../src/net/memory/memory-visibility";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_memory_visibility_batch.db";
+const TEST_DB = tempDbPath("test_memory_visibility_batch.db");
 
 let db: MarinaDB;
 let engine: Engine;
