@@ -116,6 +116,8 @@ services:
       # (Docker Desktop): - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
       # VibeThinker (optional, `--profile vibethinker`). Reaches the vLLM service
       # by name; address models as `vibethinker/<model>`. Key comes from .env.
+      # H2O-Lightning (optional, `--profile lightning`). Same shape; address
+      # models as `lightning/<model>`. Key comes from .env.
 
       # ── Optional chat adapters ──
       # - TELEGRAM_TOKEN=your_token
@@ -234,6 +236,69 @@ services:
             # Pin GPU 2 — single free A10G; the 1.5B/3B model fits with room to spare.
             - driver: nvidia
               device_ids: ["2"]
+              capabilities: ["gpu"]
+    security_opt:
+      - "no-new-privileges:true"
+    restart: unless-stopped
+
+  # ── H2O-Lightning decision model (vLLM, OpenAI-compatible) ──────────────────
+  # Optional secondary model (h2oai/h2o-lightning-4b, open weights on Hugging
+  # Face). Internal-only (no `ports:`) — only `marina` reaches it at
+  # http://lightning:8000. Pinned to GPU 3, the one llama (0+1) and vibethinker
+  # (2) leave free. Enable with `--profile lightning`; otherwise it stays down.
+  #
+  # The image is H2O's own vLLM build rather than upstream: the weights are
+  # Qwen3_5ForConditionalGeneration, which upstream vLLM v0.31 does not serve.
+  # Pinned by digest; a cu130 variant exists if the host driver is new enough.
+  #
+  # NOT YET VALIDATED ON THE GPU HOST — confirm before relying on it:
+  #   - the model is multimodal (image-text-to-text) and declares a 262144
+  #     context. LIGHTNING_CTX defaults to 32768 instead, because the KV cache
+  #     for the full window does not fit beside the weights on one 24 GB A10G;
+  #     raise it only after watching actual memory use,
+  #   - tool calling needs `--enable-auto-tool-choice` and a `--tool-call-parser`
+  #     matching this model's template; the right parser is model-specific,
+  #   - vLLM writes caches and uses shared memory, so it cannot run `read_only`
+  #     like llama.cpp; a writable HF cache and shm_size are provided instead.
+  #
+  # LIGHTNING_MODEL and LIGHTNING_API_KEY are REQUIRED when you enable this
+  # profile, but they use `:-` (not `:?`) defaults on purpose: `docker compose`
+  # interpolates EVERY service on any command, even ones excluded by profile, so
+  # a `:?` here would abort all compose operations (including the default
+  # `marina`-only deploy) whenever these are unset.
+  lightning:
+    profiles: ["lightning"]
+    image: ghcr.io/h2oai/vllm:0.30.0.1-cu129@sha256:c37a817a255218d7855dd466fe75cca8b6e2e1a6b78ededfa6293e3a841644e7
+    command:
+      - "--model"
+      - "${LIGHTNING_MODEL:-h2oai/h2o-lightning-4b}"
+      - "--served-model-name"
+      - "lightning"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--max-model-len"
+      - "${LIGHTNING_CTX:-32768}"
+      - "--api-key"
+      - "${LIGHTNING_API_KEY:-}"
+    expose:
+      - "8000" # network-internal only (NOT published)
+    volumes:
+      # Optional local model dir (read-only) + a writable HF cache for downloads.
+      - ${LIGHTNING_MODELS_DIR:-/opt/models}:/models:ro
+      - ${HF_CACHE_DIR:-./marina-data/hf-cache}:/root/.cache/huggingface
+    environment:
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-0}
+    shm_size: "8gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            # Pin GPU 3 — the last free A10G; a 4B at bf16 leaves room for the KV cache.
+            - driver: nvidia
+              device_ids: ["3"]
               capabilities: ["gpu"]
     security_opt:
       - "no-new-privileges:true"

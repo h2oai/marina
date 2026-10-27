@@ -362,11 +362,17 @@
 # VIBETHINKER_BASE_URL=http://localhost:8000/v1
 # VIBETHINKER_API_KEY=
 
-# Pin the context window (tokens) the agent compactor budgets against. Normally autodetected at launch (llama.cpp /props, Ollama /api/show); these win over the probe. Without either, llama uses 16384, Ollama 8192 and VibeThinker 40960.
+# H2O-Lightning (h2oai/h2o-lightning-4b) served by vLLM. Usable only as an explicit `lightning/<id>` model, never as a marina/default fallback. In Docker it is the optional `lightning` compose profile, whose own LIGHTNING_MODEL, LIGHTNING_CTX and LIGHTNING_MODELS_DIR are read by docker-compose.yml, not by Marina.
+# @restart
+# LIGHTNING_BASE_URL=http://localhost:8000/v1
+# LIGHTNING_API_KEY=
+
+# Pin the context window (tokens) the agent compactor budgets against. Normally autodetected at launch (llama.cpp /props, Ollama /api/show); these win over the probe. Without either, llama uses 16384, Ollama 8192, VibeThinker 40960 and H2O-Lightning 32768. Lightning's weights declare 262144, but the default matches what the compose service actually serves: the KV cache for the full window does not fit beside the weights on one 24 GB card, and a window Marina budgets against but vLLM refuses is rejected at request time.
 # @restart
 # LLAMA_CONTEXT_WINDOW=16384
 # OLLAMA_CONTEXT_WINDOW=8192
 # VIBETHINKER_CONTEXT_WINDOW=
+# LIGHTNING_CONTEXT_WINDOW=
 
 # Context window assumed for marina/default. Set it when marina/default proxies to a small local model, or requests overflow it.
 # MARINA_DEFAULT_CONTEXT_WINDOW=128000
