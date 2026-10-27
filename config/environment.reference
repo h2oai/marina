@@ -362,7 +362,7 @@
 # VIBETHINKER_BASE_URL=http://localhost:8000/v1
 # VIBETHINKER_API_KEY=
 
-# H2O-Lightning (h2oai/h2o-lightning-4b) served by vLLM. Usable only as an explicit `lightning/<id>` model, never as a marina/default fallback. In Docker it is the optional `lightning` compose profile, whose own LIGHTNING_MODEL, LIGHTNING_CTX and LIGHTNING_MODELS_DIR are read by docker-compose.yml, not by Marina.
+# H2O-Lightning (h2oai/h2o-lightning-4b) served by vLLM. Usable only as an explicit `lightning/<id>` model, never as a marina/default fallback. In Docker it is the optional `lightning` compose profile, whose own LIGHTNING_MODEL, LIGHTNING_CTX, LIGHTNING_MODELS_DIR and LIGHTNING_REASONING_PARSER are read by docker-compose.yml, not by Marina.
 # @restart
 # LIGHTNING_BASE_URL=http://localhost:8000/v1
 # LIGHTNING_API_KEY=
