@@ -272,6 +272,9 @@ services:
     command:
       - "--model"
       - "${LIGHTNING_MODEL:-h2oai/h2o-lightning-4b}"
+      # Marina forwards whatever follows the `lightning/` prefix straight to
+      # vLLM, and vLLM only answers to this name — so the model is addressed as
+      # `lightning/lightning`. `lightning/h2oai/h2o-lightning-4b` 404s upstream.
       - "--served-model-name"
       - "lightning"
       - "--host"
@@ -280,6 +283,15 @@ services:
       - "8000"
       - "--max-model-len"
       - "${LIGHTNING_CTX:-32768}"
+      # h2o-lightning-4b is a reasoning model: it emits its chain of thought in
+      # <think>…</think>. Without a parser vLLM leaves that inline in
+      # message.content and returns reasoning_content: null, so every caller
+      # sees the reasoning as part of the answer. `qwen3` is vLLM's parser for
+      # the Qwen3 series and reads those tags; these weights are qwen3_5.
+      # Overridable because the name is the one thing that could differ on a
+      # given vLLM build, and an unrecognised parser stops the server starting.
+      - "--reasoning-parser"
+      - "${LIGHTNING_REASONING_PARSER:-qwen3}"
       - "--api-key"
       - "${LIGHTNING_API_KEY:-}"
     expose:
