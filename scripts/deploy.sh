@@ -71,6 +71,38 @@ if ! $DC run --rm --no-deps -T marina bun run src/main.ts --check-config; then
   exit 1
 fi
 
+# --- pin the deployed image for later bare compose commands -----------------
+# compose resolves the service as `image: ${MARINA_IMAGE:-marina:local}` with
+# `build: .`, and MARINA_IMAGE normally lives only in this script's environment.
+# So a plain `docker compose up` run by hand on the host — during an incident,
+# say — finds it unset, falls back to marina:local and BUILDS from whatever the
+# working tree happens to be, silently replacing the deployed artifact.
+# Recording it in .env makes a bare `up` reuse this exact digest instead. The
+# deploy still exports MARINA_IMAGE, and an explicit value on the command line
+# still wins, so this only changes the no-variable case.
+# Written by truncating in place (`cat > .env`) rather than `sed -i`, which
+# would replace the file and leave it owned by whoever ran the deploy.
+persist_image_ref() {
+  local line="MARINA_IMAGE=${MARINA_IMAGE}" tmp
+  if [ ! -e .env ]; then
+    (umask 077; printf '%s\n' "$line" > .env)
+    echo "[deploy] recorded the deployed image in a new .env"
+    return
+  fi
+  tmp="$(mktemp)"
+  if grep -q '^MARINA_IMAGE=' .env; then
+    sed "s|^MARINA_IMAGE=.*|${line}|" .env > "$tmp"
+  else
+    cat .env > "$tmp"
+    [ -s "$tmp" ] && [ "$(tail -c1 "$tmp" | wc -l)" -eq 0 ] && printf '\n' >> "$tmp"
+    printf '%s\n' "$line" >> "$tmp"
+  fi
+  cat "$tmp" > .env
+  rm -f "$tmp"
+  echo "[deploy] recorded the deployed image in .env"
+}
+persist_image_ref
+
 echo "[deploy] (re)starting stack"
 $DC up -d --wait --wait-timeout 180 --remove-orphans
 
