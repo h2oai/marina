@@ -176,6 +176,12 @@ const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthro
     url: `${localProviderBaseUrl("vibethinker")}/chat/completions`,
     envKeys: ["VIBETHINKER_API_KEY"],
   },
+  // H2O-Lightning served via vLLM (OpenAI-compatible). Override the base URL
+  // with LIGHTNING_BASE_URL (compose sets the in-cluster service name).
+  lightning: {
+    url: `${localProviderBaseUrl("lightning")}/chat/completions`,
+    envKeys: ["LIGHTNING_API_KEY"],
+  },
 };
 
 /** Providers that serve other vendors' models under `<vendor>/<model>` ids. */

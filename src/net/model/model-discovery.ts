@@ -129,6 +129,21 @@ export const LOCAL_PROVIDERS: Record<string, LocalProviderSpec> = {
     contextWindowEnv: "VIBETHINKER_CONTEXT_WINDOW",
     defaultContextWindow: 40960,
   },
+  // H2O-Lightning (h2oai/h2o-lightning-4b) — a decision model with open
+  // weights. Served through vLLM's OpenAI-compatible endpoint (default port
+  // 8000) like VibeThinker. The weights declare a 262144 context, but the
+  // default here matches the compose service's --max-model-len rather than the
+  // architectural ceiling: the KV cache for the full window does not fit beside
+  // the weights on a single 24 GB card, and a context Marina budgets against
+  // but vLLM refuses would be rejected at request time.
+  lightning: {
+    baseUrlEnv: "LIGHTNING_BASE_URL",
+    defaultBaseUrl: "http://localhost:8000/v1",
+    keyEnv: "LIGHTNING_API_KEY",
+    defaultModel: "lightning",
+    contextWindowEnv: "LIGHTNING_CONTEXT_WINDOW",
+    defaultContextWindow: 32768,
+  },
 };
 
 /** True if `provider` is a self-hosted local runtime (llama.cpp / Ollama). */
@@ -358,6 +373,13 @@ const PROVIDERS: ProviderSpec[] = [
     envKey: "VIBETHINKER_API_KEY",
     // vLLM/SGLang expose /v1/models; the api-key (if the server is started with
     // one) is forwarded by the `none` branch when VIBETHINKER_API_KEY is set.
+    authStyle: "none",
+  },
+  {
+    provider: "lightning",
+    url: `${localProviderBaseUrl("lightning")}/models`,
+    envKey: "LIGHTNING_API_KEY",
+    // Same vLLM surface as VibeThinker above.
     authStyle: "none",
   },
 ];

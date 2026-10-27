@@ -5427,7 +5427,7 @@ Usage:
   key delete <name>                 — remove a key
   key test <name>                   — test key connectivity
 
-Providers: together, nebius, anthropic, openai, google, openrouter, groq, mistral, xai, huggingface, cerebras, deepseek, llama, ollama, vibethinker, stability, runway, flux, luma
+Providers: together, nebius, anthropic, openai, google, openrouter, groq, mistral, xai, huggingface, cerebras, deepseek, llama, ollama, vibethinker, lightning, stability, runway, flux, luma
 
 Category: Admin & Security. Minimum rank: 8. Gate: `key.manage`.
 Aliases: none.
