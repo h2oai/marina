@@ -82,6 +82,22 @@ describe("no-provider surfaces", () => {
     expect(out).not.toContain("more —");
   });
 
+  it("task list refuses a word that is neither a status nor a group with tasks", async () => {
+    const me = f.login("Typist");
+    f.db.createTask({
+      title: "grouped job",
+      creatorId: "e_x",
+      creatorName: "Someone",
+      groupId: "g_team",
+    });
+    await f.engine.processCommand(me.entityId, "task list availble");
+    expect(stripAnsi(me.connection.lastText())).toContain(
+      "No tasks in group availble. Usage: task list",
+    );
+    await f.engine.processCommand(me.entityId, "task list g_team");
+    expect(stripAnsi(me.connection.lastText())).toContain("grouped job");
+  });
+
   it("ops inbox leaves optional capabilities out and keeps real problems critical", () => {
     const tasks = f.engine.taskManager;
     if (!tasks) throw new Error("no task manager");

@@ -60,6 +60,16 @@ describe("Boards", () => {
     expect(stripAnsi(conn1.lastText())).toContain("My First Post");
   });
 
+  it("treats a leading | as the separator, and refuses a post with nothing in it", () => {
+    engine.processCommand(conn1.entity!, "board create general");
+    conn1.clear();
+    engine.processCommand(conn1.entity!, "board post general | Piped Title | piped body");
+    expect(stripAnsi(conn1.lastText())).toContain("Piped Title");
+    expect(stripAnsi(conn1.lastText())).not.toContain("| Piped");
+    engine.processCommand(conn1.entity!, "board post general |");
+    expect(stripAnsi(conn1.lastText())).toContain("Usage: board post");
+  });
+
   it("should read posts from a board", () => {
     engine.processCommand(conn1.entity!, "board create general");
     engine.processCommand(conn1.entity!, "board post general Hello World | Body text here");
