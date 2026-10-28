@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   compareGroup,
   compareRunReport,
@@ -18,11 +21,68 @@ import {
   setSourceRevisionForTests,
 } from "../src/engine/benchmark-runner";
 import { renderCompareRun } from "../src/engine/commands/benchmark";
+import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
 import { createTestEngine } from "./engine-fixture";
 import { stripAnsi, until } from "./helpers";
 
 const ITEMS = 20;
+
+it("keeps priced failures and provenance across restart without presenting a paired estimate", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "marina-failed-comparison-"));
+  const path = join(dir, "world.db");
+  let db = new MarinaDB(path);
+  try {
+    const runner = new BenchmarkRunner(db, () => {});
+    for (const arm of ["bare", "on"]) {
+      const config = benchmarkRunConfig(
+        { benchmark: "smoke", arm, seed: 17, replicateGroup: `cmp:restart:${arm}` },
+        {},
+      );
+      db.insertBenchmarkRun({
+        id: arm,
+        benchmark: "smoke",
+        config_hash: arm,
+        config_json: JSON.stringify(config),
+        status: "running",
+        started_at: 1,
+      });
+      runner.recordHarnessResult(
+        arm,
+        { benchmark: "smoke" },
+        Date.now(),
+        arm === "bare"
+          ? { result: result(() => true) }
+          : { error: "connection lost after priced call" },
+        { costUsd: arm === "bare" ? 0.2 : 0.37 },
+      );
+    }
+    await settleDelivery(db);
+    db.close();
+    db = new MarinaDB(path);
+    const report = compareRunReport(db, "restart", ["bare", "on"])!;
+    expect(report.b.runs).toHaveLength(1);
+    expect(report.b.runs[0]).toMatchObject({
+      status: "failed",
+      score: null,
+      seed: 17,
+      replicate_group: "cmp:restart:on",
+      cost_usd: 0.37,
+      slice_hash: null,
+    });
+    expect(report.b.runs[0]!.breakdown_json).toContain("connection lost after priced call");
+    expect(JSON.parse(report.b.runs[0]!.target_json!)).toMatchObject({
+      stack: "lessons,obligations,argcheck,learn",
+    });
+    expect(report.b.costUsd).toBe(0.37);
+    expect(report.b.valid).toHaveLength(0);
+    expect(report.paired).toBeNull();
+    expect(report.warnings.join(" ")).toContain("comparison is incomplete");
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 /** A harness result: item i correct when `right(i)`, $0.01 per item. */
 function result(right: (i: number) => boolean): HarnessResult {

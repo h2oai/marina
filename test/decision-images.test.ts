@@ -381,7 +381,7 @@ describe("decisions-api backend with images and boxes", () => {
 describe("chat-classifier backend with images", () => {
   const chatReply = (content: string) => () => ({
     model: "google/gemini-3.1-pro-preview",
-    choices: [{ message: { content } }],
+    choices: [{ finish_reason: "stop", message: { content } }],
     usage: { prompt_tokens: 900, completion_tokens: 20, cost: 0.001 },
   });
 

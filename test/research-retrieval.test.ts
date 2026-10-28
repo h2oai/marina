@@ -286,6 +286,7 @@ describe("search backends", () => {
         JSON.stringify({
           choices: [
             {
+              finish_reason: "stop",
               message: {
                 content: "",
                 annotations: [
@@ -418,6 +419,7 @@ describe("retriever specs", () => {
           JSON.stringify({
             choices: [
               {
+                finish_reason: "stop",
                 message: {
                   content: "- Derrite 25% [g1](https://g1.example/a)",
                   annotations: [

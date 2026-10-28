@@ -124,7 +124,6 @@ export function validateExperiment(input: ResearchExperiment): void {
     s.models.length > 8 ||
     !Number.isSafeInteger(s.maxTokens) ||
     s.maxTokens < 1 ||
-    s.maxTokens > 8000 ||
     !Number.isSafeInteger(s.callsPerArm) ||
     s.callsPerArm < 1 ||
     !Number.isFinite(s.timeoutMs) ||

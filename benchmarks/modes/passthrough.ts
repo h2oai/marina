@@ -99,6 +99,9 @@ export function usageFromResponse(
 
 export interface QueryResult {
   content: string;
+  /** Provider termination: unfinished answers are retained here, but not scored as completed text. */
+  finishReason?: string;
+  incomplete?: boolean;
   usage: CallUsage;
   /**
    * The endpoint's `x-request-id`. On a Marina it is the request's traceId, so
@@ -261,7 +264,9 @@ export async function queryWithUsage(
       consecutiveTimeouts.delete(endpoint);
       deadUntil.delete(endpoint);
       return {
-        content: content ?? "",
+        content: choice?.finish_reason === "stop" ? (content ?? "") : "",
+        ...(choice?.finish_reason ? { finishReason: choice.finish_reason } : {}),
+        ...(choice?.finish_reason !== "stop" ? { incomplete: true } : {}),
         usage: usageFromResponse(
           data,
           resp.headers.get(MARINA_COST_HEADER),

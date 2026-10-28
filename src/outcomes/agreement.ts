@@ -45,10 +45,27 @@ function counterpart(
 ): OutcomeRow | undefined {
   const base = judged.subject.slice("judged:".length);
   if (base.startsWith("task:")) {
-    // `task:<id>:<claimant>:<time>` → the first creator verdict on that attempt after the opinion.
     const attempt = base.split(":").slice(0, 3).join(":");
-    return db
-      .listOutcomes({ subjectPrefix: `${attempt}:`, basis: "mechanical", limit: 50 })
+    const verdicts = db.listOutcomes({
+      subjectPrefix: `${attempt}:`,
+      basis: "mechanical",
+      limit: 50,
+    });
+    const submission = base.match(/:submission:(\d+)$/)?.[1];
+    if (submission) {
+      // A delayed verifier may finish after approval. Match its actual submission,
+      // never the first verdict of a later replacement attempt.
+      return verdicts.find((o) => {
+        try {
+          const refs: unknown = JSON.parse(o.refs_json ?? "[]");
+          return Array.isArray(refs) && refs.includes(`task-submission:${submission}`);
+        } catch {
+          return false;
+        }
+      });
+    }
+    // Historical subjects contain only judgment time, without a submission identity.
+    return verdicts
       .filter((o) => o.resolved_at >= judged.resolved_at)
       .sort((a, b) => a.resolved_at - b.resolved_at)[0];
   }

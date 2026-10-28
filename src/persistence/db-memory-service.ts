@@ -77,6 +77,7 @@ import {
   getStoredNote as getNote,
   reviseStoredNote as reviseNote,
 } from "./db-note-storage";
+import { assertOutcomeLearningActive, eraseSpaceOutcomeLearning } from "./db-outcomes";
 import type { MemoryActor, MemoryScope } from "./db-principals";
 import { buildFtsQuery } from "./fts";
 
@@ -196,6 +197,10 @@ export function mutation<T extends MemoryReceipt>(
     );
   const fingerprint = hash({ operation, input });
   return db.transaction(() => {
+    // Coupled to the same write transaction as forgetting: a prepared learning
+    // request must never recreate erased text after its workflow was cancelled.
+    const learning = /^outcome:(\d+):/.exec(key);
+    if (learning) assertOutcomeLearningActive(db, Number(learning[1]));
     if (space)
       authorizeMemorySpace(
         db,
@@ -1277,8 +1282,26 @@ export function forgetMemory(
         .query("SELECT record_id FROM memory_dependencies WHERE depends_on_id=?")
         .all(id) as { record_id: string }[])
         ids.add(item.record_id);
+      // Lesson mirrors live in a separate domain space under the same owner.
+      // Their explicit provenance is an erasure dependency, including mirrors
+      // created before durable learning journals existed.
+      for (const mirror of db
+        .query(`SELECT m.id FROM memory_records original
+        JOIN memory_spaces os ON os.id=original.space_id
+        JOIN memory_spaces ms ON ms.owner_id=os.owner_id
+        JOIN memory_records m ON m.space_id=ms.id
+        WHERE original.id=? AND m.subject='lesson'
+        AND json_extract(m.metadata,'$.provenance.promoted_from')=
+          json_extract(original.metadata,'$.domain') || '/' || original.id`)
+        .all(id) as { id: string }[])
+        ids.add(mirror.id);
     }
+    const affectedSpaces = new Set([space]);
     for (const id of ids) {
+      const recordSpace = (
+        db.query("SELECT space_id FROM memory_records WHERE id=?").get(id) as { space_id: string }
+      ).space_id;
+      affectedSpaces.add(recordSpace);
       forgetMemoryNotes(db, id);
       const versions = db
         .query("SELECT note_id FROM memory_record_versions WHERE record_id=?")
@@ -1298,13 +1321,14 @@ export function forgetMemory(
         id,
         id,
       ]);
-      event(db, actor, space, "memory.forgotten", id);
+      event(db, actor, recordSpace, "memory.forgotten", id);
     }
     for (const source of sourceIds)
       db.run("DELETE FROM memory_sources WHERE id=? AND space_id=?", [source, space]);
     // Opaque checkpoints may contain copied context. Invalidate all checkpoints
     // in the affected space rather than pretending to infer their dependencies.
     db.run("DELETE FROM memory_checkpoints WHERE space_id=?", [space]);
+    for (const affected of affectedSpaces) eraseSpaceOutcomeLearning(db, affected);
     db.run("DELETE FROM memory_cached_results WHERE space_id=?", [space]);
     // Compatibility receipts may contain authored tool results. Explicit
     // forgetting retires those keys and removes their copied content as well.

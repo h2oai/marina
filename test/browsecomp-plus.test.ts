@@ -383,7 +383,7 @@ describe("formations", () => {
                 ? "Explanation: both agree [102].\nExact Answer: Galway\nConfidence: 85%"
                 : "Explanation: [102]\nExact Answer: Galway\nConfidence: 70%",
             };
-      return new Response(JSON.stringify({ choices: [{ message }] }), {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message }] }), {
         status: 200,
         headers: { "x-marina-cost-usd": "0.01" },
       });
@@ -430,7 +430,7 @@ describe("arm run", () => {
             content: "extracted_final_answer: Galway\ncorrect: yes\nconfidence: 90%",
           }
         : agentReplies[i++ % agentReplies.length];
-      return new Response(JSON.stringify({ choices: [{ message }] }), {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message }] }), {
         status: 200,
         headers: { "x-marina-cost-usd": isJudge ? "0.001" : "0.02" },
       });
@@ -530,7 +530,7 @@ describe("spend guard", () => {
               content: null,
               tool_calls: [call(`c${calls}`, "search", { query: "harbour" })],
             };
-      return new Response(JSON.stringify({ choices: [{ message }] }), {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message }] }), {
         status: 200,
         headers: { "x-marina-cost-usd": "0.02" },
       });
@@ -594,7 +594,7 @@ describe("spend guard", () => {
         req.model === "judge/qwen"
           ? { role: "assistant", content: "extracted_final_answer: Galway\ncorrect: yes" }
           : answer;
-      return new Response(JSON.stringify({ choices: [{ message }] }), {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message }] }), {
         status: 200,
         headers: { "x-marina-cost-usd": "0.01" },
       });
@@ -640,7 +640,7 @@ describe("spend guard", () => {
       const message = judging
         ? { role: "assistant", content: "extracted_final_answer: Galway\ncorrect: yes" }
         : { role: "assistant", content: "Exact Answer: Galway\nConfidence: 80%" };
-      return new Response(JSON.stringify({ choices: [{ message }] }), {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message }] }), {
         status: 200,
         headers: { "x-marina-cost-usd": "0.01" },
       });
@@ -820,6 +820,7 @@ describe("Marina opt-in headers", () => {
       return Response.json({
         choices: [
           {
+            finish_reason: "stop",
             message: {
               role: "assistant",
               content: "extracted_final_answer: a\ncorrect: yes\nconfidence: 90%",

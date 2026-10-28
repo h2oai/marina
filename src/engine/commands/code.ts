@@ -263,7 +263,7 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     await projectLifecycle(c.ctx, c.eid, c.entity, c.deps, c.args);
   },
   service: async (c) => {
-    await serviceLifecycle(c.ctx, c.eid, c.entity, c.deps, c.args);
+    await serviceLifecycle(c.ctx, c.eid, c.entity, c.deps, parseCommandArgv(c.rawAfterSub));
   },
   onboard: doctorHandler,
   setup: doctorHandler,
@@ -761,6 +761,11 @@ export function codeCommand(deps: CodeDeps): CommandDef {
 
         const profile = getCodeProfile(entity);
         const canonicalSub = workspaceRunner ? "runner" : canonicalCodeSubcommand(profile, sub);
+        const action = args[workspaceRunner ? 1 : 0]?.toLowerCase();
+        const inspectOnly =
+          (canonicalSub === "recipe" && (!action || action === "list" || action === "show")) ||
+          (canonicalSub === "run" && action === "allowlist") ||
+          (canonicalSub === "runner" && (!action || action === "show" || action === "status"));
 
         // Gate the host-execution / workspace-mutation surface behind code.exec.
         // The `code` command is rank 0 (read/inspect/propose stay open), but
@@ -777,7 +782,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         // sovereign or a code.exec.unrestricted holder, and even for an
         // allowlisted run. Refuse before the gate; do not fall through.
         const isHostExecSurface =
-          CODE_HOST_EXEC_SURFACE.has(canonicalSub) || mutatesSandbox || isProject;
+          (!inspectOnly && CODE_HOST_EXEC_SURFACE.has(canonicalSub)) || mutatesSandbox || isProject;
         if (isHostExecSurface && deps.getConnectionProtocol?.(input.entity) === "telnet") {
           failCommandResponse(TELNET_HOST_EXEC_DENY);
           ctx.send(input.entity, TELNET_HOST_EXEC_DENY);
@@ -792,6 +797,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         // host root, so they are NOT refused here. Read-only inspectors stay open.
         if (
           HOST_ROOT_EXEC_SUBCOMMANDS.has(canonicalSub) &&
+          !inspectOnly &&
           !getWorkspaceRegistry(depsWithDb).hostExecAllowed
         ) {
           failCommandResponse(NO_CODE_ROOT_DENY);
@@ -803,7 +809,11 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         // Posture-aware check: self-certification stays closed, while approved
         // runs, earned-posture reviewed practice, and an operator-declared
         // open posture authorize with their consequence recorded.
-        if (CODE_EXEC_SUBCOMMANDS.has(canonicalSub) || mutatesSandbox || isProject) {
+        if (
+          (!inspectOnly && CODE_EXEC_SUBCOMMANDS.has(canonicalSub)) ||
+          mutatesSandbox ||
+          isProject
+        ) {
           const gate = checkGateForExecution(depsWithDb.db, input.entity, "code.exec");
           if (!gate.ok) {
             failCommandResponse(gate.reason ?? "code.exec capability required.");

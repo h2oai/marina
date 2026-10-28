@@ -48,6 +48,7 @@ export default defineConfig({
           items: [
             { label: "Code with an agent", slug: "docs/guides/coding" },
             { label: "Put memory to work", slug: "docs/guides/memory-workflows" },
+            { label: "Shared task work", slug: "docs/guides/shared-task-work" },
             { label: "Start from a desire", slug: "docs/guides/journeys" },
             { label: "Forecast any question", slug: "docs/guides/forecasting" },
             { label: "Search the world", slug: "docs/guides/search" },

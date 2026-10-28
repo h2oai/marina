@@ -577,9 +577,13 @@ export function ollamaStreamChunk(model: string, content: string, isChat: boolea
   return `${JSON.stringify({ model, created_at: new Date().toISOString(), response: content, done: false })}\n`;
 }
 
-export function ollamaStreamEnd(model: string, isChat: boolean): string {
+export function ollamaStreamEnd(
+  model: string,
+  isChat: boolean,
+  terminal: Record<string, unknown> = {},
+): string {
   if (isChat) {
-    return `${JSON.stringify({ model, created_at: new Date().toISOString(), message: { role: "assistant", content: "" }, done: true, total_duration: 0, eval_count: 0 })}\n`;
+    return `${JSON.stringify({ model, created_at: new Date().toISOString(), message: { role: "assistant", content: "" }, done: true, done_reason: "stop", total_duration: 0, eval_count: 0, ...terminal })}\n`;
   }
-  return `${JSON.stringify({ model, created_at: new Date().toISOString(), response: "", done: true, total_duration: 0, eval_count: 0 })}\n`;
+  return `${JSON.stringify({ model, created_at: new Date().toISOString(), response: "", done: true, done_reason: "stop", total_duration: 0, eval_count: 0, ...terminal })}\n`;
 }

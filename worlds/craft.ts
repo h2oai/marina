@@ -82,6 +82,57 @@ interface Verdict {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
+const reviewListeners = new WeakSet<object>();
+
+const SPEC_ENVELOPE = "[craft-spec:v1] ";
+
+/** Only the submitted spec crosses the review boundary; no workshop store or implementation. */
+function importShippedSpec(ctx: RoomContext, content: string): string | undefined {
+  const line = content.split("\n").find((part) => part.startsWith(SPEC_ENVELOPE));
+  if (!line || line.length > 32_000) return undefined;
+  try {
+    const value = JSON.parse(line.slice(SPEC_ENVELOPE.length)) as Record<string, unknown>;
+    const text = (key: string) =>
+      typeof value[key] === "string" && (value[key] as string).length <= 8_000;
+    const list = (key: string) =>
+      Array.isArray(value[key]) &&
+      (value[key] as unknown[]).length <= 100 &&
+      (value[key] as unknown[]).every((item) => typeof item === "string" && item.length <= 2_000);
+    if (
+      !["id", "title", "what", "why", "createdBy"].every(text) ||
+      !/^spec-\d+$/.test(String(value.id)) ||
+      !["criteria", "files", "edges"].every(list) ||
+      typeof value.createdAt !== "number" ||
+      !Number.isFinite(value.createdAt)
+    )
+      return undefined;
+    const existing = getSpec(ctx, value.id as string);
+    // Never replace a reviewed spec with a later channel message bearing the same id.
+    if (existing) return undefined;
+    const spec: AtomicSpec = {
+      id: value.id as string,
+      title: value.title as string,
+      what: value.what as string,
+      why: value.why as string,
+      criteria: value.criteria as string[],
+      files: value.files as string[],
+      edges: value.edges as string[],
+      status: "review",
+      createdBy: value.createdBy as string,
+      createdAt: value.createdAt,
+    };
+    setSpecs(ctx, [...getSpecs(ctx), spec]);
+    return spec.id;
+  } catch {
+    return undefined;
+  }
+}
+
+function importShippedHistory(ctx: RoomContext): void {
+  for (const message of ctx.channels?.history(CRAFT_CHANNEL, 100) ?? [])
+    importShippedSpec(ctx, message.content);
+}
+
 const INTERVIEW_QUESTIONS = [
   { key: "problem", prompt: "What problem are you solving? (one paragraph)" },
   { key: "done", prompt: "What does done look like? (acceptance criteria)" },
@@ -490,7 +541,7 @@ const workshopShip: CommandHandler = (ctx, input) => {
       CRAFT_CHANNEL,
       input.entity,
       entity?.name ?? "unknown",
-      `Shipped ${specId}: ${spec.title} — ready for review`,
+      `Shipped ${specId}: ${spec.title} — ready for review\n${SPEC_ENVELOPE}${JSON.stringify(spec)}`,
     );
   }
 
@@ -628,8 +679,8 @@ const reviewReview: CommandHandler = (ctx, input) => {
     ctx.send(input.entity, `${RED}Usage: review <spec-id>${R}`);
     return;
   }
-  // Pull spec from shared store (review room reads workshop store via channel)
-  // In single-instance mode, specs are shared via the craft channel
+  // Recover submissions sent before the room listener was registered (including after restart).
+  importShippedHistory(ctx);
   const spec = getSpec(ctx, specId);
   if (!spec) {
     ctx.send(
@@ -794,8 +845,9 @@ export function workshopRoom(): RoomModule {
       }
 
       // Listen for specs arriving via craft channel (from remote workshop via gateway)
-      if (ctx.channels && !ctx.store.get<boolean>("channel_listening")) {
-        ctx.store.set("channel_listening", true);
+      if (ctx.channels && !reviewListeners.has(ctx.store)) {
+        reviewListeners.add(ctx.store);
+        importShippedHistory(ctx);
         ctx.channels.onMessage(CRAFT_CHANNEL, (_sid, senderName, content) => {
           // Broadcast channel traffic to all entities in the room
           ctx.broadcast(`${D}[craft] ${senderName}: ${content}${R}`, "craft_channel");
@@ -856,21 +908,15 @@ export function reviewRoom(): RoomModule {
     },
     onTick(ctx) {
       // Listen for specs/ship notifications from workshop via craft channel
-      if (ctx.channels && !ctx.store.get<boolean>("channel_listening")) {
-        ctx.store.set("channel_listening", true);
+      if (ctx.channels && !reviewListeners.has(ctx.store)) {
+        reviewListeners.add(ctx.store);
+        importShippedHistory(ctx);
         ctx.channels.onMessage(CRAFT_CHANNEL, (_senderId, senderName, content) => {
           ctx.broadcast(`${D}[craft] ${senderName}: ${content}${R}`, "craft_channel");
 
-          // Auto-import spec data when shipped
-          if (content.includes("Shipped") && content.includes("spec-")) {
-            const match = content.match(/spec-\d+/);
-            if (match) {
-              ctx.broadcast(
-                `${Y}New spec ready for review:${R} ${C}${match[0]}${R}`,
-                "craft_notify",
-              );
-            }
-          }
+          const specId = importShippedSpec(ctx, content);
+          if (specId)
+            ctx.broadcast(`${Y}New spec ready for review:${R} ${C}${specId}${R}`, "craft_notify");
         });
       }
     },

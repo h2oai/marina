@@ -41,6 +41,21 @@ async function collect(parts: string[], openAfterDone = false) {
 const frame = (delta: unknown, finish_reason: string | null = null) =>
   `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
 
+it.each(["length", "content_filter"])(
+  "preserves terminal %s after textual tool calls",
+  async (reason) => {
+    const result = await collect([
+      frame({
+        content: '<tool_call>{"name":"write","arguments":{"content":"partial"}}</tool_call>',
+      }),
+      frame({}, reason),
+      "data: [DONE]\n\n",
+    ]);
+    expect(result.text).toContain(`"finish_reason":"${reason}"`);
+    expect(result.text).not.toContain('"finish_reason":"tool_calls"');
+  },
+);
+
 it("continues across fragmented SSE lines, heartbeats and empty provider deltas", async () => {
   const content = frame({ content: "preserved α🙂" });
   const result = await collect([
@@ -84,4 +99,15 @@ it("keeps pulling while a textual tool-call tag is held by the parser", async ()
   ]);
   expect(result.text).toContain('"tool_calls"');
   expect(result.text).toContain('"name":"memory"');
+});
+
+it("an abrupt EOF or DONE without a finish reason cannot manufacture a successful stop", async () => {
+  for (const content of [
+    "partial",
+    '<tool_call>{"name":"write","arguments":{"content":"x"}}</tool_call>',
+  ]) {
+    for (const end of ["", "data: [DONE]\n\n"]) {
+      await expect(collect([frame({ content }), end])).rejects.toThrow("without a finish reason");
+    }
+  }
 });

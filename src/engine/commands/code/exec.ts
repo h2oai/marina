@@ -1371,9 +1371,7 @@ function sandboxGuestCwd(
   entityId: EntityId,
 ): string | undefined {
   if (session.execution_target === LOCAL_TARGET) return undefined;
-  return (
-    deps.db.listFlywheelBindings().find((row) => row.entity_id === entityId)?.guest_cwd ?? undefined
-  );
+  return deps.db.getFlywheelBinding(entityId, session.execution_target)?.guest_cwd ?? undefined;
 }
 
 /**

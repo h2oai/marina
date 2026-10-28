@@ -20,8 +20,12 @@ export interface OutcomesStore {
     state: outcomesDb.DeliveryState,
     reason?: string,
     now?: number,
+    countAttempt?: boolean,
   ): void;
   outcomeDeliveries(outcomeId: number): outcomesDb.DeliveryRow[];
+  getOutcomeLearningStep(outcomeId: number, step: string): { value_json: string } | undefined;
+  bindOutcomeLearningSpace(outcomeId: number, space: string): void;
+  saveOutcomeLearningStep(outcomeId: number, step: string, valueJson: string): void;
   outcomeDeliveryCounts(): Array<{ consumer: string; state: outcomesDb.DeliveryState; n: number }>;
 }
 
@@ -34,6 +38,9 @@ export const OUTCOMES_STORE_METHODS = [
   "pendingOutcomes",
   "setOutcomeDelivery",
   "outcomeDeliveries",
+  "getOutcomeLearningStep",
+  "bindOutcomeLearningSpace",
+  "saveOutcomeLearningStep",
   "outcomeDeliveryCounts",
 ] as const satisfies readonly (keyof OutcomesStore)[];
 

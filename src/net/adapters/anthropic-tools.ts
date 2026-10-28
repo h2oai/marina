@@ -22,7 +22,7 @@
  *   function_call "auto"|"none"|{name} (legacy)        → same
  *   parallel_tool_calls:false    → tool_choice.disable_parallel_tool_use:true
  *   stop (string | string[])     → stop_sequences[]
- *   max_tokens | max_completion_tokens → max_tokens (default 4096)
+ *   max_tokens | max_completion_tokens → max_tokens (MARINA_DEFAULT_MAX_TOKENS, default 16384)
  *   user                         → metadata.user_id
  *   response_format json_schema  → output_config.format {type:"json_schema",schema}
  *   response_format json_object  → 400 unsupported_parameter
@@ -52,6 +52,7 @@
  * Anthropic's four-breakpoint limit and never on top of a client marker.
  */
 
+import { configuredOutputTokens, defaultOutputTokens } from "../../model/output";
 import { UnsupportedParameterError } from "../model/openai-errors";
 
 // ─── Types (loose on purpose: this is a gateway over untrusted client JSON) ──
@@ -809,8 +810,7 @@ export const THINKING_BUDGET_TOKENS: Readonly<Record<string, number>> = {
  *  - `thinking: "<level>"` or `thinking: { effort: "<level>" }` — level names;
  *  - `reasoning_effort: "<level>"` — the OpenAI spelling pi-ai emits.
  * The budget is clamped so at least `MIN_ANSWER_TOKENS` fit under `max_tokens`
- * when the caller set a cap large enough; otherwise `buildAnthropicRequest`
- * raises `max_tokens` instead.
+ * when the caller set a cap. Incompatible explicit caps are rejected.
  */
 export function anthropicThinking(
   body: Record<string, unknown>,
@@ -822,7 +822,18 @@ export function anthropicThinking(
     const obj = raw as { type?: unknown; budget_tokens?: unknown; effort?: unknown };
     if (obj.type === "disabled") return undefined;
     if (typeof obj.budget_tokens === "number" && Number.isFinite(obj.budget_tokens)) {
-      budget = Math.max(1024, Math.floor(obj.budget_tokens));
+      if (!Number.isSafeInteger(obj.budget_tokens) || obj.budget_tokens < 1024)
+        throw new UnsupportedParameterError(
+          "thinking.budget_tokens",
+          "Thinking budget must be an integer of at least 1024 tokens.",
+        );
+      budget = obj.budget_tokens;
+      if (maxTokens !== undefined && budget >= maxTokens)
+        throw new UnsupportedParameterError(
+          "max_tokens",
+          "max_tokens must exceed thinking.budget_tokens.",
+        );
+      return { type: "enabled", budget_tokens: budget };
     } else if (typeof obj.effort === "string") {
       budget = THINKING_BUDGET_TOKENS[obj.effort.toLowerCase()];
     } else if (obj.type === "enabled") {
@@ -835,10 +846,14 @@ export function anthropicThinking(
     budget = THINKING_BUDGET_TOKENS[body.reasoning_effort.toLowerCase()];
   }
   if (budget === undefined) return undefined;
-  // Fit under the caller's cap when it leaves room; a too-small cap is raised
-  // by the caller instead of silently shrinking the requested depth to nothing.
-  if (maxTokens !== undefined && maxTokens - MIN_ANSWER_TOKENS >= 1024) {
-    budget = Math.min(budget, maxTokens - MIN_ANSWER_TOKENS);
+  // Named effort maps to a compatible budget; the explicit output ceiling wins.
+  if (maxTokens !== undefined) {
+    if (maxTokens <= 1024)
+      throw new UnsupportedParameterError(
+        "max_tokens",
+        "Extended thinking requires max_tokens greater than 1024; disable thinking or increase the output limit.",
+      );
+    budget = Math.min(budget, Math.max(1024, maxTokens - MIN_ANSWER_TOKENS));
   }
   return { type: "enabled", budget_tokens: budget };
 }
@@ -913,7 +928,8 @@ export function buildAnthropicRequest(
       typeof native.system === "string" && native.system
         ? [{ type: "text", text: native.system }]
         : native.system;
-    const maxTokens = typeof native.max_tokens === "number" ? native.max_tokens : 4096;
+    const maxTokens =
+      typeof native.max_tokens === "number" ? native.max_tokens : defaultOutputTokens();
     const out: Rec = { ...native, model, max_tokens: maxTokens, stream };
     if (Array.isArray(system) && system.length > 0) {
       out.system = system;
@@ -945,8 +961,8 @@ export function buildAnthropicRequest(
       ? body.max_tokens
       : typeof body.max_completion_tokens === "number"
         ? body.max_completion_tokens
-        : undefined;
-  const maxTokens = explicitMaxTokens ?? 4096;
+        : configuredOutputTokens();
+  const maxTokens = explicitMaxTokens ?? defaultOutputTokens();
   const stops = stopSequences(body.stop);
   const config = outputConfig(body.response_format);
   let system: unknown = translated.system;
@@ -963,10 +979,10 @@ export function buildAnthropicRequest(
   if (opts.trailingNote) {
     messages = appendTrailingNote(messages, opts.trailingNote) as AnthropicMessage[];
   }
-  // Only a cap the CLIENT set clamps the thinking budget; the 4096 default is
+  // Only a cap the CLIENT set clamps the thinking budget; the automatic default is
   // raised to fit the requested depth instead.
   // Claude 5 thinks adaptively: the requested depth becomes output_config.effort
-  // (a budget would be refused outright). The 4096 default is still raised to
+  // (a budget would be refused outright). The automatic default is still raised to
   // the level's budget so a deep answer is not truncated.
   const effort = usesAdaptiveThinking(model) ? adaptiveEffort(body) : undefined;
   const thinking = usesAdaptiveThinking(model)
@@ -982,13 +998,13 @@ export function buildAnthropicRequest(
   return {
     model,
     // Extended thinking must leave answer room: Anthropic requires
-    // budget_tokens < max_tokens, so the ceiling is raised when the client's
-    // cap would not fit the budget.
-    max_tokens: thinking
-      ? Math.max(maxTokens, thinking.budget_tokens + MIN_ANSWER_TOKENS)
-      : effort && explicitMaxTokens === undefined
-        ? Math.max(maxTokens, adaptiveFloor)
-        : maxTokens,
+    // budget_tokens < max_tokens; only an automatic ceiling may be raised.
+    max_tokens:
+      thinking && explicitMaxTokens === undefined
+        ? Math.max(maxTokens, thinking.budget_tokens + MIN_ANSWER_TOKENS)
+        : effort && explicitMaxTokens === undefined
+          ? Math.max(maxTokens, adaptiveFloor)
+          : maxTokens,
     stream,
     ...(thinking ? { thinking } : {}),
     ...(effort ? { thinking: { type: "adaptive" } } : {}),
@@ -1048,10 +1064,12 @@ export function anthropicFinishReason(
   stopReason: string | null | undefined,
   hasToolCalls: boolean,
 ): string {
-  if (hasToolCalls || stopReason === "tool_use") return "tool_calls";
   if (stopReason === "max_tokens") return "length";
   if (stopReason === "refusal") return "content_filter";
-  return "stop";
+  if (stopReason === "tool_use") return "tool_calls";
+  if (stopReason === "end_turn" || stopReason === "stop_sequence")
+    return hasToolCalls ? "tool_calls" : "stop";
+  return stopReason ?? "error";
 }
 
 /**
@@ -1173,7 +1191,10 @@ export class AnthropicSseTranslator {
     const frames: string[] = [];
     if (this.buffer.trim()) frames.push(...this.line(this.buffer));
     this.buffer = "";
-    if (!this.finished && this.roleSent) frames.push(...this.finish());
+    if (!this.finished) {
+      if (!this.stopReason) throw new Error("Anthropic stream ended without a stop reason");
+      frames.push(...this.finish());
+    }
     return frames;
   }
 
@@ -1196,6 +1217,7 @@ export class AnthropicSseTranslator {
 
   private finish(): string[] {
     if (this.finished) return [];
+    if (!this.stopReason) throw new Error("Anthropic stream ended without a stop reason");
     this.finished = true;
     const frames = this.role();
     const finishReason = anthropicFinishReason(this.stopReason, this.sawToolUse);
@@ -1288,7 +1310,8 @@ export class AnthropicSseTranslator {
             },
           })}\n\n`,
         );
-        frames.push(...this.finish());
+        this.finished = true;
+        frames.push("data: [DONE]\n\n");
         break;
       }
       default:

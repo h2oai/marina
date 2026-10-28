@@ -51,6 +51,7 @@ import * as intellectsDb from "./db-intellects";
 import * as investigationCollaborationDb from "./db-investigation-collaboration";
 import * as investigationJournalDb from "./db-investigation-journal";
 import * as investigationLifecycleDb from "./db-investigation-lifecycle";
+import * as investigationSpendDb from "./db-investigation-spend";
 import * as investigationsDb from "./db-investigations";
 import * as journeysDb from "./db-journeys";
 import * as learnedDb from "./db-learned";
@@ -76,6 +77,7 @@ import * as schedulesDb from "./db-schedules";
 import * as shellDb from "./db-shell";
 import * as simulationsDb from "./db-simulations";
 import * as standingDb from "./db-standing";
+import * as taskWorkDb from "./db-task-work";
 import * as tasksDb from "./db-tasks";
 import * as telemetryDb from "./db-telemetry";
 import * as usersDb from "./db-users";
@@ -1404,6 +1406,44 @@ export class MarinaDB implements MarinaStores {
 
   // ─── Task Persistence (delegated to db-tasks.ts) ────────────────────────
 
+  getTaskWorkRevision(
+    taskId: number,
+    revision?: number,
+  ): taskWorkDb.TaskWorkRevisionRow | undefined {
+    return taskWorkDb.getTaskWorkRevision(this.db, taskId, revision);
+  }
+
+  appendTaskWorkRevision(
+    input: taskWorkDb.TaskWorkRevisionInput,
+  ): taskWorkDb.TaskWorkRevisionRow | undefined {
+    return taskWorkDb.appendTaskWorkRevision(this.db, {
+      ...input,
+      authorId: this.durableEntityKey(input.authorId),
+    });
+  }
+
+  getTaskWorkCheck(
+    taskId: number,
+    reviewerId: string,
+    fingerprint: string,
+    now: number,
+  ): taskWorkDb.TaskWorkCheckRow | undefined {
+    return taskWorkDb.getTaskWorkCheck(
+      this.db,
+      taskId,
+      this.durableEntityKey(reviewerId),
+      fingerprint,
+      now,
+    );
+  }
+
+  putTaskWorkCheck(input: taskWorkDb.TaskWorkCheckInput): taskWorkDb.TaskWorkCheckRow {
+    return taskWorkDb.putTaskWorkCheck(this.db, {
+      ...input,
+      reviewerId: this.durableEntityKey(input.reviewerId),
+    });
+  }
+
   createTask(task: {
     groupId?: string;
     title: string;
@@ -2546,6 +2586,10 @@ export class MarinaDB implements MarinaStores {
     return benchmarksDb.attachBenchmarkRunItems(this.db, runId, cols, items);
   }
 
+  recordBenchmarkRunCost(id: string, costUsd: number): void {
+    benchmarksDb.recordBenchmarkRunCost(this.db, id, costUsd);
+  }
+
   getBenchmarkRun(id: string): BenchmarkRunRow | undefined {
     return benchmarksDb.getBenchmarkRun(this.reader, id);
   }
@@ -2929,6 +2973,7 @@ export class MarinaDB implements MarinaStores {
     keepAlive: boolean;
     state: FlywheelBindingState;
     lifecycleExpiresAt?: number;
+    providerId?: string;
   }): void {
     flywheelDb.saveFlywheelBinding(this.db, this.durableEntityKey(opts.entityId), opts);
   }
@@ -2936,13 +2981,13 @@ export class MarinaDB implements MarinaStores {
   // flywheel_bindings / coding_projects / coding_services are keyed by the
   // durable account id (migration 117). Reads project the live entity id back
   // so `row.entity_id === entity.id` comparisons in callers keep working.
-  listFlywheelBindings(): FlywheelBindingRow[] {
-    return flywheelDb.listFlywheelBindings(this.reader);
+  listFlywheelBindings(providerId: string | null = "flywheel"): FlywheelBindingRow[] {
+    return flywheelDb.listFlywheelBindings(this.reader, providerId);
   }
 
   /** The binding owned by this entity's account (indexed PK lookup, not a scan). */
-  getFlywheelBinding(entityId: EntityId): FlywheelBindingRow | undefined {
-    return flywheelDb.getFlywheelBinding(this.reader, this.durableEntityKey(entityId));
+  getFlywheelBinding(entityId: EntityId, providerId = "flywheel"): FlywheelBindingRow | undefined {
+    return flywheelDb.getFlywheelBinding(this.reader, this.durableEntityKey(entityId), providerId);
   }
 
   updateFlywheelBinding(
@@ -2960,12 +3005,13 @@ export class MarinaDB implements MarinaStores {
       lifecycleExpiresAt?: number | null;
       hibernatedReason?: string | null;
     },
+    providerId = "flywheel",
   ): void {
-    flywheelDb.updateFlywheelBinding(this.db, this.durableEntityKey(entityId), fields);
+    flywheelDb.updateFlywheelBinding(this.db, this.durableEntityKey(entityId), fields, providerId);
   }
 
-  deleteFlywheelBinding(entityId: EntityId): void {
-    flywheelDb.deleteFlywheelBinding(this.db, this.durableEntityKey(entityId));
+  deleteFlywheelBinding(entityId: EntityId, providerId = "flywheel"): void {
+    flywheelDb.deleteFlywheelBinding(this.db, this.durableEntityKey(entityId), providerId);
   }
 
   createCodingProject(project: {
@@ -4021,12 +4067,25 @@ export class MarinaDB implements MarinaStores {
     state: outcomesDb.DeliveryState,
     reason?: string,
     now?: number,
+    countAttempt?: boolean,
   ): void {
-    outcomesDb.setOutcomeDelivery(this.db, outcomeId, consumer, state, reason, now);
+    outcomesDb.setOutcomeDelivery(this.db, outcomeId, consumer, state, reason, now, countAttempt);
   }
 
   outcomeDeliveries(outcomeId: number): outcomesDb.DeliveryRow[] {
     return outcomesDb.outcomeDeliveries(this.db, outcomeId);
+  }
+
+  getOutcomeLearningStep(outcomeId: number, step: string): { value_json: string } | undefined {
+    return outcomesDb.getOutcomeLearningStep(this.db, outcomeId, step);
+  }
+
+  bindOutcomeLearningSpace(outcomeId: number, space: string): void {
+    outcomesDb.bindOutcomeLearningSpace(this.db, outcomeId, space);
+  }
+
+  saveOutcomeLearningStep(outcomeId: number, step: string, valueJson: string): void {
+    outcomesDb.saveOutcomeLearningStep(this.db, outcomeId, step, valueJson);
   }
 
   outcomeDeliveryCounts(): Array<{ consumer: string; state: outcomesDb.DeliveryState; n: number }> {
@@ -4571,6 +4630,16 @@ export class MarinaDB implements MarinaStores {
     ...args: StoreArguments<typeof investigationLifecycleDb.settleInvestigation>
   ) {
     return investigationLifecycleDb.settleInvestigation(this.db, ...args);
+  }
+  recordInvestigationSpend(
+    ...args: StoreArguments<typeof investigationSpendDb.recordInvestigationSpend>
+  ) {
+    return investigationSpendDb.recordInvestigationSpend(this.db, ...args);
+  }
+  investigationSpendAccounting(
+    ...args: StoreArguments<typeof investigationSpendDb.investigationSpendAccounting>
+  ) {
+    return investigationSpendDb.investigationSpendAccounting(this.db, ...args);
   }
   getInvestigation(...args: StoreArguments<typeof investigationsDb.getInvestigation>) {
     return investigationsDb.getInvestigation(this.db, ...args);

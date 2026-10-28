@@ -33,6 +33,7 @@ import {
   spendScope,
   utcDay,
 } from "../src/engine/spend-ledger";
+import { type SpendReceipt, withSpendObservation } from "../src/engine/spend-observation";
 import { projectTraces } from "../src/engine/trace-projection";
 import {
   attachModelTraceSink,
@@ -142,6 +143,20 @@ afterEach(() => {
 });
 
 describe("spend labels by purpose", () => {
+  it("observes each upstream retry once without duplicating its ledger charge", async () => {
+    provider([
+      reply({ stopReason: "error", errorMessage: "503 overloaded", costTotal: 0.01 }),
+      reply({ costTotal: 0.02 }),
+    ]);
+    const receipts = new Map<string, SpendReceipt>();
+    await withSpendObservation(
+      (r) => receipts.set(r.id, r),
+      () => modelComplete(SPEC, env()).complete("system", "user"),
+    );
+    expect([...receipts.values()].map((r) => r.state)).toEqual(["priced", "priced"]);
+    expect([...receipts.values()].reduce((s, r) => s + (r.usd ?? 0), 0)).toBeCloseTo(0.03);
+    expect(rows.reduce((s, r) => s + r.usd, 0)).toBeCloseTo(0.03);
+  });
   it("maps every purpose onto a source the spend_daily CHECK accepts", () => {
     const allowed = new Set(["model_api", "agent", "decision", "forecast", "media", "search"]);
     for (const purpose of MODEL_PURPOSES) expect(allowed.has(spendSourceFor(purpose))).toBe(true);
@@ -476,5 +491,53 @@ describe("re-export shims", () => {
   it("the arena forecaster re-exports the shared reply parser", () => {
     expect(arenaForecaster.parseReply).toBe(parseReply);
     expect(parseReply('noise {"a": 1} tail')).toEqual({ a: 1 });
+  });
+});
+
+describe("completion termination and caller budgets", () => {
+  it("retries a nonempty truncated automatic answer, charging both calls", async () => {
+    const { spy } = provider([
+      reply({ stopReason: "length", content: [{ type: "text", text: "unfinished" }] }),
+      reply({ content: [{ type: "text", text: "finished" }] }),
+    ]);
+    const made = modelComplete(SPEC, env());
+    expect(await made.complete("s", "u")).toBe("finished");
+    expect(made.usage.calls).toBe(2);
+    expect(made.usage.costUsd).toBeCloseTo(0.02);
+    const caps = spy.mock.calls.map((c) => c[2]?.maxTokens);
+    expect(caps).toEqual([16384, 32768]);
+  });
+
+  it("never returns partial text after the grown retry is exhausted", async () => {
+    provider([reply({ stopReason: "length" }), reply({ stopReason: "length" })]);
+    const made = modelComplete(SPEC, env());
+    await expect(made.complete("s", "u")).rejects.toThrow("incomplete output (length)");
+    expect(made.usage.calls).toBe(2);
+    expect(made.usage.costUsd).toBeCloseTo(0.02);
+  });
+
+  it("explicit caller and operator ceilings never grow or turn cutoff into success", async () => {
+    for (const options of [{ maxTokens: 100 }, {}]) {
+      const { spy } = provider([reply({ stopReason: "length" })]);
+      const made = modelComplete(SPEC, env({ MARINA_DEFAULT_MAX_TOKENS: "200" }), options);
+      await expect(made.complete("s", "u")).rejects.toThrow("incomplete output");
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]?.[2]?.maxTokens).toBe(options.maxTokens ?? 200);
+      expect(made.usage.calls).toBe(1);
+    }
+  });
+
+  it("an aborted reply cannot become an answer", async () => {
+    provider([reply({ stopReason: "aborted", errorMessage: "cancelled" })]);
+    await expect(modelComplete(SPEC, env()).complete("s", "u")).rejects.toThrow();
+  });
+
+  it("per-turn ceilings replace defaults, while an explicit factory ceiling still bounds them", async () => {
+    const { spy } = provider([reply(), reply(), reply()]);
+    await modelTurns(SPEC, env()).turn({ messages: [] }, { maxTokens: 32000 });
+    const bounded = modelTurns(SPEC, env(), { maxTokens: 12000 });
+    await bounded.turn({ messages: [] }, { maxTokens: 32000 });
+    await bounded.turn({ messages: [] }, { maxTokens: 3000 });
+    expect(spy.mock.calls.map((c) => c[2]?.maxTokens)).toEqual([32000, 12000, 3000]);
   });
 });

@@ -176,9 +176,9 @@ export interface PortfolioNode {
   elapsedMs: number;
 }
 
-export async function portfolioModels(env: NodeJS.ProcessEnv, maxTokens = 2000) {
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 8000)
-    throw new Error("maxTokens must be 1–8000");
+export async function portfolioModels(env: NodeJS.ProcessEnv, maxTokens?: number) {
+  if (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens < 1))
+    throw new Error("maxTokens must be a positive integer");
   const { modelComplete } = await import("../model/complete");
   const usage: Usage = { calls: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 };
   const complete: PortfolioComplete = async (spec, system, user, signal) => {

@@ -12,9 +12,12 @@ import type { AgentRuntime } from "../src/agent/agent-runtime";
 import type { AgentHandle, AgentStatus } from "../src/agent/agent-types";
 import type { AgentOperatorStatus } from "../src/agent/lean-agent-adapter";
 import { agentCommand, formatDuration } from "../src/engine/commands/agent";
+import { SAFETY_GATES } from "../src/engine/safety-gates";
+import { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, EngineEvent, Entity, EntityId, RoomContext } from "../src/types";
 import { roomId } from "../src/types";
 import { stripAnsi } from "./helpers";
+import { scopeProcessState, scopeProperty } from "./process-state";
 
 function entity(id: string, name: string, rank = 4): Entity {
   return {
@@ -156,9 +159,71 @@ describe("formatDuration", () => {
   });
 });
 
+it("records spawn demonstrations only after a successful runtime spawn", async () => {
+  using _state = scopeProcessState({ trustProfile: null, env: { MARINA_AUTONOMY: "earned" } });
+  const db = new MarinaDB(":memory:");
+  const actor = entity("u_learner", "Learner", 0);
+  db.saveEntity(actor);
+  const task = db.createTask({
+    title: "verified fixture work",
+    creatorId: actor.id,
+    creatorName: actor.name,
+  });
+  db.recordStandingEarned(
+    actor.id,
+    actor.name,
+    task,
+    SAFETY_GATES["agent.spawn"]!.minStanding + 10,
+  );
+  let available = false;
+  let fail = true;
+  let calls = 0;
+  const runtime = {
+    list: () => [],
+    isAvailable: () => available,
+    spawn: async () => {
+      calls++;
+      if (fail) throw new Error("runtime unavailable");
+      return handle(status("Child"));
+    },
+  } as unknown as AgentRuntime;
+  const command = agentCommand({
+    db,
+    agentRuntime: runtime,
+    getEntity: () => actor,
+    logEvent: () => {},
+  });
+  const run = (raw: string) =>
+    command.handler({ send: () => {} } as unknown as RoomContext, inputFor(actor, raw));
+  try {
+    await run("agent spawn Child");
+    available = true;
+    await run("agent spawn Invalid-Name");
+    await run("agent spawn Child budget -1");
+    await run("agent spawn Child");
+    expect(calls).toBe(1);
+    expect(db.listOpenWitnessRows({ entityId: actor.id, kind: "pending" })).toEqual([]);
+    fail = false;
+    await run("agent spawn Child");
+    const witnesses = db.listOpenWitnessRows({ entityId: actor.id, kind: "pending" });
+    expect(calls).toBe(2);
+    expect(witnesses).toHaveLength(1);
+    expect(witnesses[0]?.evidence).toBe("agent spawn Child");
+  } finally {
+    db.close();
+  }
+});
+
 describe("agent status — operator visibility", () => {
   it("shows tokens, cost, caps, last error, pause reason and next tick", async () => {
-    const agents = new Map<string, AgentHandle>([["scout", handle(status("scout"), ops)]]);
+    const now = 1_800_000_000_000;
+    using _clock = scopeProperty(Date, "now", () => now);
+    const currentOps: AgentOperatorStatus = {
+      ...ops,
+      lastError: { ...ops.lastError!, at: now - 12_000 },
+      paused: { ...ops.paused!, since: now - 60_000 },
+    };
+    const agents = new Map<string, AgentHandle>([["scout", handle(status("scout"), currentOps)]]);
     const out = await harness(agents).run("agent status scout");
     expect(out).toContain("Tokens: 12,345 in · 678 out");
     expect(out).toContain("Cost: $1.50 total · $0.2500 last hour");

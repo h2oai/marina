@@ -7,6 +7,7 @@ import {
   CODE_MODE_SYSTEM_PROMPT,
   formatUntrustedContext,
 } from "../../agent/prompts/support-prompts";
+import { defaultOutputTokens, requireFinishedChat } from "../../model/output";
 import { localWsPort } from "../../net/listen-ports";
 
 export function parseExecApprovalTimeout(value: string | undefined): number | undefined {
@@ -20,7 +21,7 @@ export async function answerViaLocalModel(
 ): Promise<string | undefined> {
   const port = localWsPort();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45_000);
+  const timeout = setTimeout(() => controller.abort(), 180_000);
 
   try {
     const messages = [
@@ -49,7 +50,7 @@ export async function answerViaLocalModel(
         model: "marina",
         messages,
         temperature: 0.2,
-        max_tokens: 600,
+        max_tokens: defaultOutputTokens(),
       }),
       signal: controller.signal,
     });
@@ -58,6 +59,7 @@ export async function answerViaLocalModel(
     const data = (await resp.json()) as {
       choices?: Array<{ message?: { content?: unknown } }>;
     };
+    requireFinishedChat(data, "Local model helper");
     const content = data.choices?.[0]?.message?.content;
     return typeof content === "string" ? content : undefined;
   } finally {
@@ -74,7 +76,7 @@ export async function answerCodeViaLocalModel(request: {
 }): Promise<string | undefined> {
   const port = localWsPort();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 90_000);
+  const timeout = setTimeout(() => controller.abort(), 180_000);
 
   try {
     const messages = [
@@ -104,7 +106,7 @@ export async function answerCodeViaLocalModel(request: {
         model: "marina",
         messages,
         temperature: 0.2,
-        max_tokens: 1000,
+        max_tokens: defaultOutputTokens(),
       }),
       signal: controller.signal,
     });
@@ -113,6 +115,7 @@ export async function answerCodeViaLocalModel(request: {
     const data = (await resp.json()) as {
       choices?: Array<{ message?: { content?: unknown } }>;
     };
+    requireFinishedChat(data, "Local model helper");
     const content = data.choices?.[0]?.message?.content;
     return typeof content === "string" ? content : undefined;
   } finally {

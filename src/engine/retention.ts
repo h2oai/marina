@@ -99,6 +99,37 @@ export const CONTINUITY_RECEIPT_WHERE =
   "AND json_valid(response) AND json_extract(response, '$.id') = 'resident'))";
 
 export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
+  {
+    table: "task_work_revisions",
+    kind: "append-only",
+    note: "Optional shared work history; citations and retirement reasons must survive handoffs.",
+  },
+  {
+    table: "task_work_checks",
+    timeColumn: "expires_at",
+    kind: "telemetry",
+    note: "Recomputable advisory receipts; expired receipts are never reused.",
+  },
+  {
+    table: "outcome_learning_steps",
+    kind: "append-only",
+    note: "Crash recovery journal; purged by explicit erasure or parent deletion, never independently pruned.",
+  },
+  {
+    table: "outcome_learning_state",
+    kind: "append-only",
+    note: "Erasure tombstones prevent delayed learning replay.",
+  },
+  {
+    table: "outcome_learning_spaces",
+    kind: "append-only",
+    note: "Learning erasure lineage; follows its parent outcome.",
+  },
+  {
+    table: "investigation_spend_receipts",
+    kind: "append-only",
+    note: "Per-call accounting evidence; erased with the private investigation.",
+  },
   // ── telemetry: high-volume, derivable, nobody reads it after two weeks ──
   {
     table: "primitive_usage",

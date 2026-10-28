@@ -1,11 +1,26 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type {
+  TaskWorkCheckInput,
+  TaskWorkCheckRow,
+  TaskWorkRevisionInput,
+  TaskWorkRevisionRow,
+} from "../db-task-work";
 import type { ProjectRow, TaskClaimRow, TaskRow } from "../db-tasks";
 import type { ExactKeys } from "./exact-keys";
 
 /** Tasks, claims, projects and legacy task-standing reads (`db-tasks.ts`). */
 export interface TasksStore {
+  getTaskWorkRevision(taskId: number, revision?: number): TaskWorkRevisionRow | undefined;
+  appendTaskWorkRevision(input: TaskWorkRevisionInput): TaskWorkRevisionRow | undefined;
+  getTaskWorkCheck(
+    taskId: number,
+    reviewerId: string,
+    fingerprint: string,
+    now: number,
+  ): TaskWorkCheckRow | undefined;
+  putTaskWorkCheck(input: TaskWorkCheckInput): TaskWorkCheckRow;
   createTask(task: {
     groupId?: string;
     title: string;
@@ -76,6 +91,10 @@ export interface TasksStore {
 
 /** Runtime mirror of `TasksStore`'s method names — the drift test compares it to the facade. */
 export const TASKS_STORE_METHODS = [
+  "getTaskWorkRevision",
+  "appendTaskWorkRevision",
+  "getTaskWorkCheck",
+  "putTaskWorkCheck",
   "createTask",
   "updateTaskProgress",
   "updateTaskPriority",

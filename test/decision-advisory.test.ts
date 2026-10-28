@@ -58,6 +58,7 @@ describe("bounded advisory decisions", () => {
             model: "served-model",
             choices: [
               {
+                finish_reason: "stop",
                 message: {
                   role: "assistant",
                   content: JSON.stringify({

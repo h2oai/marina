@@ -3,6 +3,7 @@
 
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { channelSelf, header, separator } from "../../net/ansi";
+import { modelResponseError } from "../../net/model-api/response-envelope";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { envelopeFields, messageEnvelope } from "../message-envelope";
 
@@ -148,6 +149,19 @@ export function channelCommand(
             return;
           }
           const message = tokens.slice(2).join(" ");
+          if (ch.name.startsWith("model-")) {
+            let frame: unknown;
+            try {
+              frame = JSON.parse(message);
+            } catch {
+              frame = undefined;
+            }
+            const error = modelResponseError(frame);
+            if (error) {
+              ctx.send(input.entity, error);
+              return;
+            }
+          }
           const envelope = messageEnvelope(input.entity);
           const { message: stored } = channels.post(ch.id, input.entity, entity.name, message, {
             envelope,

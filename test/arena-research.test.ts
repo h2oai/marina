@@ -121,6 +121,7 @@ describe("OpenRouter web retriever", () => {
         return Response.json({
           choices: [
             {
+              finish_reason: "stop",
               message: {
                 content: "Poll X: 36% ([x.com](https://x.com/a))",
                 annotations: [
@@ -145,7 +146,8 @@ describe("OpenRouter web retriever", () => {
     const retriever = openRouterWebRetriever({
       model: "m",
       apiKey: "k",
-      fetcher: async () => Response.json({ choices: [{ message: { content: "" } }] }),
+      fetcher: async () =>
+        Response.json({ choices: [{ finish_reason: "stop", message: { content: "" } }] }),
     });
     await expect(retriever({ roundId: "r", since: "d", request: "q" })).rejects.toThrow("empty");
   });
@@ -154,7 +156,12 @@ describe("OpenRouter web retriever", () => {
 describe("Perplexity Sonar and combined retrievers", () => {
   const reply = (content: string, url: string, cost: number) =>
     Response.json({
-      choices: [{ message: { content, annotations: [{ url_citation: { url, title: url } }] } }],
+      choices: [
+        {
+          finish_reason: "stop",
+          message: { content, annotations: [{ url_citation: { url, title: url } }] },
+        },
+      ],
       usage: { cost },
     });
 
@@ -191,6 +198,7 @@ describe("Perplexity Sonar and combined retrievers", () => {
         Response.json({
           choices: [
             {
+              finish_reason: "stop",
               message: {
                 content: "Poll Z: 41% approve.[1]",
                 annotations: [{ url_citation: { url: "https://z.com/p" } }],

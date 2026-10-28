@@ -28,7 +28,7 @@ export function videoCommand(_engine: Engine): CommandDef {
       const engine = _engine;
       const sub = input.tokens[0];
       if (sub === "describe" || sub === "look") {
-        const who = ctx.findEntity(input.entity);
+        const who = engine.entities.get(input.entity);
         sendLookReply(
           ctx,
           input.entity,
@@ -69,7 +69,7 @@ export function videoCommand(_engine: Engine): CommandDef {
         return;
       }
 
-      const entity = ctx.findEntity(input.entity);
+      const entity = engine.entities.get(input.entity);
       if (!entity) {
         ctx.send(input.entity, "Entity not found.");
         return;

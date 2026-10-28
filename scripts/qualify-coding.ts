@@ -448,6 +448,7 @@ export async function qualifyCoding(
       MARINA_CORPUS_EMBEDDINGS: "none",
       MARINA_ROOM_AGENTS: "false",
       MARINA_DAILY_SPEND_CAP_USD: String(options.budgetUsd),
+      MARINA_DEFAULT_MAX_TOKENS: String(spending.outputLimit),
     },
   });
   let networkFailure: string | undefined;

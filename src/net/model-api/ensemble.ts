@@ -24,6 +24,7 @@
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage, logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
+import { requireFinishedChat } from "../../model/output";
 import { parsePick } from "../../orchestration/pick";
 import type { RepairLabel } from "../../repair/output-repair";
 import { repairToolCallMessage } from "../../repair/tool-call-repair";
@@ -329,18 +330,27 @@ export async function ensembleTurn(engine: Engine, t: EnsembleTurn): Promise<Ens
     usage = addUsage(usage, d.body?.usage);
     cost += d.costUsd;
   }
-  const valid = drafts.flatMap((d, i) => (d.ok && d.message ? [i] : []));
+  const completeDraft = (d: Draft) => {
+    const reason = (d.body?.choices as Array<{ finish_reason?: unknown }> | undefined)?.[0]
+      ?.finish_reason;
+    return d.ok && d.message && (reason === "stop" || reason === "tool_calls");
+  };
+  const valid = drafts.flatMap((d, i) => (completeDraft(d) ? [i] : []));
   if (valid.length === 0) {
     const first = drafts[0]!;
     return {
-      response: new Response(first.text, {
-        status: first.ok ? 502 : first.status,
-        headers: {
-          "content-type": "application/json",
-          "x-request-id": requestId,
-          [ENSEMBLE_HEADER]: `picked=0/${n}; drafts=0/${n}; no-draft`,
+      response: new Response(
+        first.body ? JSON.stringify({ ...first.body, ...(usage ? { usage } : {}) }) : first.text,
+        {
+          status: first.status,
+          headers: {
+            "content-type": "application/json",
+            "x-request-id": requestId,
+            [ENSEMBLE_HEADER]: `picked=0/${n}; drafts=0/${n}; no-complete-draft`,
+            [COST_USD_HEADER]: String(cost),
+          },
         },
-      }),
+      ),
     };
   }
   const validMessages = valid.map((i) => drafts[i]!.message!);
@@ -361,9 +371,12 @@ export async function ensembleTurn(engine: Engine, t: EnsembleTurn): Promise<Ens
     );
     usage = addUsage(usage, pick.body?.usage);
     cost += pick.costUsd;
-    const verdict = pick.ok
-      ? parsePick(textOf(pick.message?.content), validMessages.length)
-      : undefined;
+    const pickReason = (pick.body?.choices as Array<{ finish_reason?: unknown }> | undefined)?.[0]
+      ?.finish_reason;
+    const verdict =
+      pick.ok && pickReason === "stop"
+        ? parsePick(textOf(pick.message?.content), validMessages.length)
+        : undefined;
     if (verdict) {
       picked = valid[verdict.index]!;
       label = "picked";
@@ -402,6 +415,7 @@ export async function ensembleTurn(engine: Engine, t: EnsembleTurn): Promise<Ens
         );
         cost += r.costUsd;
         usage = addUsage(usage, r.body?.usage);
+        if (r.ok) requireFinishedChat(r.body, "Ensemble repair");
         return r.ok ? textOf(r.message?.content) : "";
       },
     }).catch(
@@ -487,7 +501,7 @@ export async function completionAsSse(resp: Response, includeUsage: boolean): Pr
         null,
       ),
     );
-  parts.push(chunk({}, choice?.finish_reason ?? (calls.length ? "tool_calls" : "stop")));
+  parts.push(chunk({}, choice?.finish_reason ?? "error"));
   if (includeUsage && j.usage)
     parts.push(
       `data: ${JSON.stringify({ id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model, choices: [], usage: j.usage })}\n\n`,

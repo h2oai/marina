@@ -4,7 +4,9 @@
 import type { Database } from "bun:sqlite";
 import { appendChronicle } from "./db-chronicle";
 import { eraseOwnerInvestigations } from "./db-investigation-lifecycle";
+import { eraseOutcomeLearning } from "./db-outcomes";
 import * as principalsDb from "./db-principals";
+import { eraseTaskWorkAccount } from "./db-task-work";
 
 // ─── Users, bans, adapter links ────────────────────────────────────────────
 
@@ -94,6 +96,7 @@ export const ERASED_ACCOUNT = "[erased]";
 
 /** Rows touched by one account erasure, per table (also the audit body). */
 export interface AccountErasure {
+  task_work?: { revisions: number; checks: number };
   investigations?: number;
   decision_receipts: number;
   entity_standing: number;
@@ -127,7 +130,18 @@ export interface AccountErasure {
  */
 export function deleteUser(db: Database, id: string): AccountErasure {
   return db.transaction(() => {
+    eraseOutcomeLearning(
+      db,
+      (
+        db
+          .query(
+            "SELECT id FROM outcomes WHERE owner IN (?, ?, (SELECT name FROM users WHERE id=?), (SELECT e.id FROM entities e JOIN users u ON u.name=e.name WHERE u.id=?))",
+          )
+          .all(id, `user:${id}`, id, id) as { id: number }[]
+      ).map((row) => row.id),
+    );
     const investigations = eraseOwnerInvestigations(db, id);
+    const taskWork = eraseTaskWorkAccount(db, id, ERASED_ACCOUNT);
     const decisionReceipts = db.run("DELETE FROM decision_receipts WHERE owner = ?", [
       `user:${id}`,
     ]).changes;
@@ -150,6 +164,7 @@ export function deleteUser(db: Database, id: string): AccountErasure {
       return n;
     };
     const counts: AccountErasure = {
+      ...(taskWork ? { task_work: taskWork } : {}),
       ...(investigations ? { investigations } : {}),
       decision_receipts: decisionReceipts,
       entity_standing: del("entity_standing"),

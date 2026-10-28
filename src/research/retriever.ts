@@ -48,7 +48,7 @@ export function researchRetriever(
   const reviewer =
     settings.rounds > 1
       ? modelComplete(model!, env, {
-          maxTokens: Math.min(opts.maxTokens ?? 4000, 4000),
+          ...opts,
           purpose: "research",
           trace: { caller: "research.reviewer" },
         })
@@ -61,7 +61,7 @@ export function researchRetriever(
         model,
         async ask(request: import("../decisions/types").DecisionRequest, signal?: AbortSignal) {
           const turns = modelTurns(model, env, {
-            maxTokens: 512,
+            ...opts,
             signal,
             purpose: "research",
             trace: { caller: "research.advice" },

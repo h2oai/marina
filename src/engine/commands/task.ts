@@ -9,6 +9,7 @@ import {
 } from "../../coordination/task-manager";
 
 import { parseTaskNodeType, TASK_NODE_TYPE_MEANING } from "../../coordination/task-node-type";
+import type { TaskWork } from "../../coordination/task-work";
 import { harnessDecisionProvider } from "../../decisions/engines";
 import type { Evidence } from "../../decisions/evidence";
 import { judgeOpinion } from "../../decisions/policy";
@@ -36,6 +37,7 @@ import { logRejection } from "../errors";
 import { Logger } from "../logger";
 import { mayActOn, ownershipRefusal } from "../ownership";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
+import { handleTaskWork } from "./task/work";
 
 const logger = new Logger();
 
@@ -56,10 +58,11 @@ const TASK_SUBS = [
   "assign",
   "children",
   "standing",
+  "work",
 ];
 
 const TASK_USAGE =
-  "Usage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing [args]";
+  "Usage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing|work [args]";
 
 /** A claim that still holds the task: claimed with a live lease, or submitted. */
 function isActiveClaim(claim: TaskClaim | null, now = Date.now()): boolean {
@@ -85,11 +88,12 @@ export function taskCommand(
   logEvent?: (event: EngineEvent) => void,
   resolveEvidence?: (actor: { name: string; id: string }, text: string) => Evidence[],
   /** Durable judge opinions for `decision agreement` (db-decisions.ts). */
-  recordObservation?: (row: JudgeObservationInput) => void,
+  recordObservation?: (row: JudgeObservationInput & { submittedAt?: number }) => void,
   /** Observe-only verification must settle before persistence closes. */
   trackBackground?: (work: Promise<void>) => void,
   /** What the record says about doing tasks (`approachAdvice`), offered on claim; never required. */
   adviseApproach?: () => string | undefined,
+  work?: TaskWork,
 ): CommandDef {
   return {
     category: "Coordination",
@@ -113,10 +117,28 @@ export function taskCommand(
       { syntax: "task standing", effect: "read" },
       { syntax: "task standing [args]", effect: "read" },
       { syntax: "task submit <id> <text>", effect: "write" },
+      { syntax: "task work <id>", effect: "read" },
+      { syntax: "task work <id> show [revision]", effect: "read" },
+      { syntax: "task work <id> patch <revision> <json_fields>", effect: "write" },
+      { syntax: "task work <id> propose <revision> <json_fields>", effect: "write" },
+      { syntax: "task work <id> accept <revision> <proposal_id>", effect: "write" },
+      { syntax: "task work <id> cite <revision> <json_citation>", effect: "write" },
+      { syntax: "task work <id> expect <revision> <json_constraint>", effect: "write" },
+      { syntax: "task work <id> retire <revision> <entry_id> <reason>", effect: "write" },
+      { syntax: "task work <id> check [fresh]", effect: "write" },
+      { syntax: "task work <id> render [revision]", effect: "read" },
+      { syntax: "task work <id> artifact-edit <revision> <json_edits>", effect: "write" },
+      { syntax: "task work <id> artifact-source <revision> <json_selection>", effect: "write" },
+      { syntax: "task work <id> artifact-rule <revision> <json_check>", effect: "write" },
+      { syntax: "task work <id> artifact-rules <revision> <json_checks>", effect: "write" },
+      { syntax: "task work <id> artifact-review <json_questions>", effect: "read" },
+      { syntax: "task work <id> artifact-assess <json_assessment>", effect: "write" },
+      { syntax: "task work <id> artifact-unrule <revision> <check_id> <reason>", effect: "write" },
+      { syntax: "task work <id> artifact-check [fresh]", effect: "write" },
     ],
     name: "task",
     aliases: [],
-    help: "Manage tasks with leased create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing\n  task create <title> | <description> [standing:N] [bounty]   (also !N; N = 0–10, default 1, paid when another account approves — a person may approve its own agents)\n  task goal <title> | <description> [priority:N]   (also !pN / --priority N)\n  task info <id>   (also show/view)\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector priority:7\n  task progress 3 +20\n  task claim 3\n  task heartbeat 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine",
+    help: 'Manage tasks with leased create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing|work\n  task create <title> | <description> [standing:N] [bounty]   (also !N; N = 0–10, default 1, paid when another account approves — a person may approve its own agents)\n  task goal <title> | <description> [priority:N]   (also !pN / --priority N)\n  task info <id>   (also show/view)\n  task work <id> [experimental] — optional shared fields, citations, proposals and advisory checks.\n  task work <id> patch <revision> <json_fields> (creator/current claimant); propose uses the same form for collaborators.\n  task work <id> cite <revision> {"field":"traffic","ref":"note:1","quote":"Maximum traffic is 10 percent."}\n  task work <id> expect <revision> {"field":"traffic","op":"lte","expected":10,"citation":"c2"}\n  task work <id> check [fresh] — reuse a current receipt; no model call or approval gate.\n  task work <id> show [revision] | accept <revision> <proposal_id> | retire <revision> <entry_id> <reason>\n  task work <id> artifact-edit <revision> <json_edits> — edit the actual JSON deliverable by path; preserves untouched content.\n  task work <id> artifact-source <revision> <json_selection> — explicitly publish selected readable source values into the deliverable.\n  task work <id> render [revision] — return its exact JSON content and hash.\n  task work <id> artifact-rule <revision> <json_check> | artifact-unrule <revision> <check_id> <reason>\n  task work <id> artifact-rules <revision> <json_checks> — atomic batch of scoped value/evidence checks.\n  task work <id> artifact-review <json_questions> — evidence packet without draft answers or expectations.\n  task work <id> artifact-assess <json_assessment> — compare source-cited answers against the unchanged draft; advisory.\n  task work <id> artifact-check [fresh] — advisory coverage, projection and value checks; no approval or loop changes.\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector priority:7\n  task progress 3 +20\n  task claim 3\n  task heartbeat 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine',
     handler: (ctx: RoomContext, input) => {
       const self = ctx.getEntity(input.entity);
       if (!self) return;
@@ -137,6 +159,9 @@ export function taskCommand(
       const sub = canonicalSub(tokens[0], TASK_SUBS) ?? "list";
 
       switch (sub) {
+        case "work":
+          handleTaskWork(work, ctx, input, { id: self.id, name: self.name });
+          return;
         case "list": {
           const arg = tokens[1]?.toLowerCase();
           const validStatuses = ["open", "completed", "cancelled", "claimed"];
@@ -515,6 +540,7 @@ export function taskCommand(
           }
           const id = Number.parseInt(idStr, 10);
           const task = tasks.get(id);
+          let submittedAt: number | undefined;
           const record = () => {
             if (!tasks.submit(id, input.entity, text)) {
               ctx.send(
@@ -523,6 +549,7 @@ export function taskCommand(
               );
               return;
             }
+            submittedAt = tasks.getClaim(id, input.entity)?.submittedAt ?? undefined;
             clearSubmissionAttempts(id, input.entity);
             ctx.send(input.entity, `Submitted work for task #${id}.`);
             if (task && task.creatorId !== input.entity) {
@@ -553,6 +580,7 @@ export function taskCommand(
             recordObservation?.({
               taskId: id,
               claimantName: self.name,
+              ...(submittedAt === undefined ? {} : { submittedAt }),
               evaluator: `${verdict.provider ?? provider.kind}:${verdict.model ?? provider.model}`,
               calibrated: provider.calibrated !== false,
               mode: mode === "observe" ? "observe" : "on",
@@ -596,11 +624,12 @@ export function taskCommand(
           const attempt = nextSubmissionAttempt(id, input.entity);
           return verifySubmission(provider, task, text, attempt, evidence).then((verdict) => {
             logVerify(verdict);
-            observe(verdict);
             if (verdict.action === "accept") {
               record();
+              observe(verdict);
               return;
             }
+            observe(verdict);
             ctx.send(
               input.entity,
               `Not submitted yet — the verifier scored this below the bar (${verdict.reason}). ` +

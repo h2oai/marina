@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Explicit shadow experiment. No signing, submission, route writes or timers. */
 import { parseArgs } from "node:util";
 import { forecastRound } from "../src/arena/forecast";
 import { forecastSettings } from "../src/arena/forecast-config";
@@ -31,6 +31,8 @@ import { WorkBudget } from "../src/coordination/work-budget";
 import { researchJudge } from "../src/decisions/config";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { getErrorMessage } from "../src/engine/errors";
+/** Explicit shadow experiment. No signing, submission, route writes or timers. */
+import { defaultOutputTokens } from "../src/model/output";
 import { MarinaDB } from "../src/persistence/database";
 import { researchHypotheses } from "../src/research/hypotheses";
 import { retrieverFromSpec, withProvidedText } from "../src/research/retrieve";
@@ -52,7 +54,7 @@ const { positionals, values } = parseArgs({
     "max-calls": { type: "string", default: "32" },
     concurrency: { type: "string", default: "4" },
     "timeout-ms": { type: "string", default: "300000" },
-    "max-tokens": { type: "string", default: "2000" },
+    "max-tokens": { type: "string", default: String(defaultOutputTokens()) },
     db: { type: "string" },
     out: { type: "string" },
     help: { type: "boolean" },
@@ -62,7 +64,7 @@ const { positionals, values } = parseArgs({
 async function main() {
   if (values.help || !positionals[0]) {
     console.log(
-      "bun run arena:portfolio <round_id|score> --db <shadow.db> --models <provider/model,...> [--plan control|parallel|layered|independent|auto] [--research-paths off|shared|independent] [--research-queries 6] [--research-save capture.json] [--research-replay capture.json] [--selector jev|decisions|none] [--plan-file plan.json] [--evidence evidence.json] [--max-calls 32] [--concurrency 4] [--timeout-ms 300000] [--max-tokens 2000] [--out report.json]",
+      "bun run arena:portfolio <round_id|score> --db <shadow.db> --models <provider/model,...> [--plan control|parallel|layered|independent|auto] [--research-paths off|shared|independent] [--research-queries 6] [--research-save capture.json] [--research-replay capture.json] [--selector jev|decisions|none] [--plan-file plan.json] [--evidence evidence.json] [--max-calls 32] [--concurrency 4] [--timeout-ms 300000] [--max-tokens 16384] [--out report.json]",
     );
     return;
   }

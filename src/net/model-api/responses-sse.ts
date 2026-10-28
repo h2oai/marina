@@ -544,6 +544,7 @@ export function responsesPassthruStream(
       emitter.start();
       let usage: CompletionUsage | undefined;
       let incomplete = false;
+      let finishReason: string | undefined;
       try {
         await forEachSseData(
           upstream,
@@ -554,6 +555,7 @@ export function responsesPassthruStream(
                 | { delta?: Record<string, unknown>; finish_reason?: string }[]
                 | undefined
             )?.[0];
+            if (choice?.finish_reason) finishReason = choice.finish_reason;
             incomplete ||= choice?.finish_reason === "length";
             if (chunk.error) {
               const error = chunk.error as { message?: unknown; code?: unknown };
@@ -576,6 +578,8 @@ export function responsesPassthruStream(
           },
           abort.signal,
         );
+        if (!["stop", "tool_calls", "function_call", "length"].includes(finishReason ?? ""))
+          throw new Error(`Upstream stream has no completed termination (${String(finishReason)})`);
       } catch (e) {
         // An upstream error frame keeps its code (e.g. `reasoning_exhausted_output`).
         if (!cancelled)

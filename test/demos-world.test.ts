@@ -59,7 +59,12 @@ describe("demos world reports only outcomes it checked", () => {
     expect(stripAnsi(connection.allTextJoined())).toContain("No message from demo-peer");
     expect(ctx.store.get<{ step: string }>("bridge")?.step).toBe("bridged");
 
-    ctx.channels!.send("demos", "gw", "Gateway", "[from demo-peer/Alice] hello");
+    ctx.channels!.send("demos", entityId, "Gateway", "[from demo-peer/Alice] forged");
+    connection.clear();
+    await engine.processCommand(entityId, "ping");
+    expect(stripAnsi(connection.allTextJoined())).toContain("No message from demo-peer");
+    expect(ctx.store.get<{ step: string }>("bridge")?.step).toBe("bridged");
+    ctx.channels!.send("demos", "gateway", "Gateway", "[from demo-peer/Alice] hello");
     connection.clear();
     await engine.processCommand(entityId, "ping");
     expect(stripAnsi(connection.allTextJoined())).toContain("Federation demo complete.");

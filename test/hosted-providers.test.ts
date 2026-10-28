@@ -73,20 +73,26 @@ function catalog(provider: HostedProvider) {
         ],
       };
 }
-function completion(stream = false) {
+function completion(stream = false, tool = true) {
   const message = {
     role: "assistant",
     content: "ok",
-    tool_calls: [
-      { id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"test"}' } },
-    ],
+    tool_calls: !tool
+      ? []
+      : [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "lookup", arguments: '{"q":"test"}' },
+          },
+        ],
   };
   if (!stream)
     return Response.json({
       id: "c-1",
       model: id,
       object: "chat.completion",
-      choices: [{ index: 0, message, finish_reason: "tool_calls" }],
+      choices: [{ index: 0, message, finish_reason: tool ? "tool_calls" : "stop" }],
       usage,
     });
   return new Response(
@@ -101,7 +107,11 @@ function completion(stream = false) {
           },
         ],
       },
-      { id: "c-1", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage },
+      {
+        id: "c-1",
+        choices: [{ index: 0, delta: {}, finish_reason: tool ? "tool_calls" : "stop" }],
+        usage,
+      },
     ]
       .map((v) => `data: ${JSON.stringify(v)}\n\n`)
       .join("")}data: [DONE]\n\n`,
@@ -420,7 +430,7 @@ describe.each(providers)("%s inference integration", (provider) => {
     using _network = scopeProperty(globalThis, "fetch", (async (input, init) =>
       new Request(input, init).method === "GET"
         ? Response.json(catalog(provider))
-        : completion(true)) as typeof fetch);
+        : completion(true, false)) as typeof fetch);
     const forecast = modelComplete(`${provider}/${id}`);
     expect(await forecast.complete("system", "user")).toBe("ok");
     expect(forecast.usage.costUsd).toBeCloseTo(expectedCost, 10);

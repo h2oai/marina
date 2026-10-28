@@ -213,8 +213,8 @@ describe("stop_reason mapping", () => {
     expect(mapStopReason("stop")).toBe("end_turn");
     expect(mapStopReason("length")).toBe("max_tokens");
     expect(mapStopReason("tool_calls")).toBe("tool_use");
-    expect(mapStopReason(null)).toBe("end_turn");
-    expect(mapStopReason(undefined)).toBe("end_turn");
+    expect(() => mapStopReason(null)).toThrow();
+    expect(() => mapStopReason(undefined)).toThrow();
   });
 });
 
@@ -370,4 +370,61 @@ describe("streaming response translation", () => {
       text.indexOf("event: content_block_stop"),
     );
   });
+});
+
+it("preserves streamed tool fragments and output-limit termination", async () => {
+  const upstream = sseResponse([
+    {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { index: 0, id: "tool_1", function: { name: "write", arguments: '{"text":' } },
+            ],
+          },
+        },
+      ],
+    },
+    {
+      choices: [
+        {
+          delta: { tool_calls: [{ index: 0, function: { arguments: '"partial' } }] },
+          finish_reason: "length",
+        },
+      ],
+      usage: { completion_tokens: 12 },
+    },
+  ]);
+  const out = await readAll(translateStreamToAnthropic(upstream.body!, "m"));
+  expect(out).toContain('"type":"tool_use","id":"tool_1","name":"write"');
+  expect(out).toContain('"type":"input_json_delta"');
+  expect(out).toContain('"stop_reason":"max_tokens"');
+  expect(out).toContain('"output_tokens":12');
+});
+
+for (const chunks of [
+  [{ choices: [{ delta: { content: "partial" } }] }],
+  [{ choices: [{ delta: {}, finish_reason: "stop" }] }, { error: { message: "stream failed" } }],
+]) {
+  it("does not emit a successful terminal envelope after an incomplete or failed stream", async () => {
+    const upstream = sseResponse(chunks);
+    await expect(readAll(translateStreamToAnthropic(upstream.body!, "m"))).rejects.toThrow();
+  });
+}
+
+it("does not fabricate empty tool arguments from a truncated buffered response", async () => {
+  const { deps } = stubNonStreaming({
+    choices: [
+      {
+        finish_reason: "length",
+        message: { tool_calls: [{ id: "t", function: { name: "write", arguments: '{"text":' } }] },
+      },
+    ],
+  });
+  const out = await handleAnthropicMessages(
+    makeReq({ messages: [{ role: "user", content: "hi" }] }),
+    deps,
+  );
+  expect(out.status).toBe(502);
+  expect(await out.text()).toContain("tool arguments are incomplete or invalid");
 });

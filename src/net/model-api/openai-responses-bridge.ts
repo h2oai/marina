@@ -293,6 +293,13 @@ function chatUsage(value: unknown) {
   };
 }
 
+function incompleteFinish(response: RecordValue): string {
+  const reason = rec(response.incomplete_details).reason;
+  if (reason === "max_output_tokens") return "length";
+  if (reason === "content_filter") return "content_filter";
+  return "error";
+}
+
 export function openAIResponseToChat(response: RecordValue, model: string): RecordValue {
   if (response.error || response.status === "failed" || response.status === "cancelled")
     throw new Error(String(rec(response.error).message ?? `OpenAI response ${response.status}`));
@@ -338,7 +345,11 @@ export function openAIResponseToChat(response: RecordValue, model: string): Reco
             : {}),
         },
         finish_reason:
-          response.status === "incomplete" ? "length" : calls.length ? "tool_calls" : "stop",
+          response.status === "incomplete"
+            ? incompleteFinish(response)
+            : calls.length
+              ? "tool_calls"
+              : "stop",
       },
     ],
     ...(chatUsage(response.usage) ? { usage: chatUsage(response.usage) } : {}),
@@ -421,7 +432,11 @@ export function openAIResponsesStream(
       controller.enqueue(
         encode(
           {},
-          value.type === "response.incomplete" ? "length" : calls.size ? "tool_calls" : "stop",
+          value.type === "response.incomplete"
+            ? incompleteFinish(response)
+            : calls.size
+              ? "tool_calls"
+              : "stop",
         ),
       );
       if (includeUsage && usage)

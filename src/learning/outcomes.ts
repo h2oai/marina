@@ -25,6 +25,7 @@
 
 import type { DecisionProvider, DecisionQuestions, NoulAnswer } from "../decisions/types";
 import { rankSortKey } from "../memory/admission-policy";
+import type { LearningJournal } from "./journal";
 import { type CaseGuard, itemLeak } from "./leak-guard";
 
 /**
@@ -408,7 +409,7 @@ export const LESSON_JUDGE_QUESTIONS: DecisionQuestions = {
   grounded: {
     type: "noul",
     instructions:
-      "Is the lesson supported by the outcome it was written from (the result, detail and signals)? Any numbers it cites must match the outcome.",
+      "Is the lesson supported by the outcome and its private context? Any numbers must match. Approval or completion only establishes that someone accepted the work: it does not establish objective correctness, causality, or permission to ignore quality checks. Reject general rules inferred from those claims without supporting evidence.",
     criteria: {
       true: "The lesson follows from the stated outcome and evidence.",
       false: "The lesson claims something the outcome does not show.",
@@ -417,7 +418,7 @@ export const LESSON_JUDGE_QUESTIONS: DecisionQuestions = {
   general: {
     type: "noul",
     instructions:
-      "Would the lesson help on DIFFERENT but similar future work (other questions or tasks of the same kind), rather than only this one case?",
+      "Would the lesson help on DIFFERENT but similar future work within its stated scope (other questions, games, or tasks of the same kind), rather than only this one case? A configuration supported on held-out instances of one board or task family can be general within that scope. Cross-board or cross-family transfer is assessed separately by transferable; lack of that transfer must not lower this general score.",
     criteria: {
       true: "A reusable method, check, source, pitfall, or a configuration or model choice with the kind of work it applies to.",
       false: "A one-off fact about this case, or too vague to act on.",
@@ -490,30 +491,39 @@ export async function judgeLesson(
   outcome: Outcome,
   provider: DecisionProvider | undefined,
   existing: Lesson[] = [],
+  signal?: AbortSignal,
 ): Promise<LessonVerdict> {
   const leak = mechanicalLeak(candidate.text, outcome);
   if (leak) return { trust: "rejected", reason: leak, leak: true };
   if (!provider) return { trust: "unverified", reason: "no decision backend" };
   try {
-    const result = await provider.ask({
-      state: {
-        outcome: {
-          domain: outcome.domain,
-          source: outcome.source,
-          result: outcome.succeeded ? "success" : "failure",
-          ...(outcome.score !== undefined ? { score: outcome.score } : {}),
-          attempted: clip(outcome.attempted, 400),
-          ...(outcome.detail ? { detail: clip(outcome.detail, 300) } : {}),
-          ...(outcome.signals?.length ? { signals: outcome.signals.slice(0, 8) } : {}),
-          ...(outcome.measurement?.length ? { measurement: outcome.measurement.slice(0, 4) } : {}),
+    const result = await provider.ask(
+      {
+        state: {
+          outcome: {
+            domain: outcome.domain,
+            source: outcome.source,
+            result: outcome.succeeded ? "success" : "failure",
+            ...(outcome.score !== undefined ? { score: outcome.score } : {}),
+            attempted: clip(outcome.attempted, 400),
+            ...(outcome.privateContext
+              ? { private_context: clip(outcome.privateContext, 2_000) }
+              : {}),
+            ...(outcome.detail ? { detail: clip(outcome.detail, 300) } : {}),
+            ...(outcome.signals?.length ? { signals: outcome.signals.slice(0, 8) } : {}),
+            ...(outcome.measurement?.length
+              ? { measurement: outcome.measurement.slice(0, 4) }
+              : {}),
+          },
+          lesson: candidate.text,
+          ...(candidate.scope ? { scope: candidate.scope } : {}),
+          ...(candidate.families?.length ? { families: candidate.families } : {}),
+          existing_lessons: existing.slice(0, 5).map((l) => l.text),
         },
-        lesson: candidate.text,
-        ...(candidate.scope ? { scope: candidate.scope } : {}),
-        ...(candidate.families?.length ? { families: candidate.families } : {}),
-        existing_lessons: existing.slice(0, 5).map((l) => l.text),
+        questions: LESSON_JUDGE_QUESTIONS,
       },
-      questions: LESSON_JUDGE_QUESTIONS,
-    });
+      signal,
+    );
     const judgement: Record<string, number> = {};
     for (const [k, a] of Object.entries(result.answers)) {
       if (a.type === "noul") judgement[k] = (a as NoulAnswer).noul;
@@ -619,6 +629,10 @@ export interface LessonNeighbours {
 }
 
 export interface LessonSink {
+  /** Replay durable mutations using prepared memory requests and committed receipts. */
+  withJournal?(journal: LearningJournal): LessonSink;
+  /** Bind journal erasure lineage before retaining any candidate plaintext. */
+  prepareJournal?(domain: OutcomeDomain, meta: boolean): Promise<void>;
   /**
    * Persist a lesson (trusted / unverified served; rejected kept as audit only).
    * `key` makes the write idempotent: the same key and lesson write once.
@@ -910,6 +924,7 @@ export interface LessonAdmissionContext {
   /** `lesson` for the producer-domain write, `meta` for its cross-board mirror. */
   target: "lesson" | "meta";
   sink: LessonSink;
+  journal?: LearningJournal;
 }
 
 /**
@@ -944,8 +959,13 @@ function asDecision(r: Lesson | null | LessonAdmissionDecision): LessonAdmission
   return "text" in r && "domain" in r ? { lesson: r as Lesson } : (r as LessonAdmissionDecision);
 }
 
-async function runAfterWrite(d: LessonAdmissionDecision, id: string | undefined): Promise<void> {
+async function runAfterWrite(
+  d: LessonAdmissionDecision,
+  id: string | undefined,
+  durable = false,
+): Promise<void> {
   if (!d.afterWrite || !id) return;
+  if (durable) return d.afterWrite(id);
   try {
     await d.afterWrite(id);
   } catch {
@@ -955,6 +975,9 @@ async function runAfterWrite(d: LessonAdmissionDecision, id: string | undefined)
 
 export interface OutcomeLearnerDeps {
   sink: LessonSink;
+  journal?: LearningJournal;
+  /** Bounded shutdown: cancel between stages; an already-started store operation may finish. */
+  signal?: AbortSignal;
   writer?: LessonWriter;
   judge?: DecisionProvider;
   /** Called with the judge's cost (the writer records its own through modelComplete). */
@@ -996,18 +1019,63 @@ export async function recordOutcome(
   deps: OutcomeLearnerDeps,
   outcome: Outcome,
 ): Promise<OutcomeRecord> {
-  const candidate = await candidateFromOutcome(outcome, deps.writer);
-  let existing: Lesson[] = [];
-  try {
-    existing = await deps.sink.recall(outcome.domain, candidate.text, outcome.resolvedAt, {
-      includeUnverified: false,
-      limit: 5,
-    });
-  } catch {
-    // allow-empty-catch: consistency context is best effort
-  }
-  const verdict = await judgeLesson(candidate, outcome, deps.judge, existing);
-  if (verdict.costUsd) deps.onSpend?.(verdict.costUsd);
+  if (!deps.journal) return recordOutcomeInner(deps, outcome);
+  const journal = deps.journal;
+  if (!deps.sink.withJournal) throw new Error("Durable learning requires a journal-aware sink");
+  const sink = deps.sink.withJournal(journal.child("sink"));
+  await sink.prepareJournal?.(outcome.domain, !!deps.meta);
+  return journal.run(
+    "complete",
+    () => recordOutcomeInner({ ...deps, sink }, outcome),
+    (record) => !record.deferred,
+  );
+}
+
+async function recordOutcomeInner(
+  deps: OutcomeLearnerDeps,
+  outcome: Outcome,
+): Promise<OutcomeRecord> {
+  const { journal } = deps;
+  const settings = journal
+    ? await journal.run("settings", async () => ({ meta: !!deps.meta, admission: !!deps.admit }))
+    : { meta: !!deps.meta, admission: !!deps.admit };
+  if (settings.admission && !deps.admit)
+    throw new Error("Resume requires the configured lesson admission backend");
+  const admit = settings.admission ? deps.admit : undefined;
+  deps.signal?.throwIfAborted();
+  const makeCandidate = async (): Promise<{ candidate: Lesson; leak?: string }> => {
+    const candidate = await candidateFromOutcome(outcome, deps.writer);
+    const leak = mechanicalLeak(candidate.text, outcome);
+    if (!leak) return { candidate };
+    const { rule: _rule, category: _category, ...safe } = candidate;
+    return {
+      candidate: { ...safe, text: `[lesson:${candidate.domain}] withheld · ${leak}` },
+      leak,
+    };
+  };
+  const prepared = journal ? await journal.run("candidate", makeCandidate) : await makeCandidate();
+  const { candidate } = prepared;
+  deps.signal?.throwIfAborted();
+  const judge = async () => {
+    if (prepared.leak) return { trust: "rejected" as const, reason: prepared.leak, leak: true };
+    let existing: Lesson[] = [];
+    try {
+      existing = await deps.sink.recall(outcome.domain, candidate.text, outcome.resolvedAt, {
+        includeUnverified: false,
+        limit: 5,
+      });
+    } catch {
+      // allow-empty-catch: consistency context is best effort
+    }
+    deps.signal?.throwIfAborted();
+    const verdict = await judgeLesson(candidate, outcome, deps.judge, existing, deps.signal);
+    if (verdict.costUsd) deps.onSpend?.(verdict.costUsd);
+    return verdict;
+  };
+  const verdict = journal
+    ? await journal.run("verdict", judge, (v) => v.trust !== "unverified")
+    : await judge();
+  deps.signal?.throwIfAborted();
   if (deps.deferUnjudged && verdict.trust === "unverified")
     return { trust: verdict.trust, reason: verdict.reason, lesson: candidate, deferred: true };
   // A mechanical leak is kept as an audit record WITHOUT the leaking text.
@@ -1024,9 +1092,18 @@ export async function recordOutcome(
     ...(verdict.judge ? { judge: verdict.judge } : {}),
   };
   // ── Admission hook: after the judge, before the write. ──
-  const decision = deps.admit
-    ? asDecision(await deps.admit(judged, { outcome, verdict, target: "lesson", sink: deps.sink }))
+  const decision = admit
+    ? asDecision(
+        await admit(judged, {
+          outcome,
+          verdict,
+          target: "lesson",
+          sink: deps.sink,
+          ...(journal ? { journal: journal.child("primary-admission") } : {}),
+        }),
+      )
     : { lesson: judged };
+  deps.signal?.throwIfAborted();
   const lesson = decision.lesson;
   if (!lesson)
     return {
@@ -1037,25 +1114,34 @@ export async function recordOutcome(
       ...(decision.mergedInto ? { mergedInto: decision.mergedInto } : {}),
     };
   const { id } = await deps.sink.write(lesson);
-  await runAfterWrite(decision, id);
+  deps.signal?.throwIfAborted();
+  await runAfterWrite(decision, id, !!journal);
   let metaId: string | undefined;
   // A lesson held unserved (contested) is not mirrored until its case resolves.
   const held = lesson.admission?.state === "contested";
-  const mirror = deps.meta && id && !held ? metaMirror(lesson, id, verdict) : undefined;
+  const mirror = settings.meta && id && !held ? metaMirror(lesson, id, verdict) : undefined;
   if (mirror) {
     try {
-      const metaDecision = deps.admit
+      const metaDecision = admit
         ? asDecision(
-            await deps.admit(mirror, { outcome, verdict, target: "meta", sink: deps.sink }),
+            await admit(mirror, {
+              outcome,
+              verdict,
+              target: "meta",
+              sink: deps.sink,
+              ...(journal ? { journal: journal.child("meta-admission") } : {}),
+            }),
           )
         : { lesson: mirror };
       // Keyed by the original: a retried mirror of the same lesson writes once.
+      deps.signal?.throwIfAborted();
       if (metaDecision.lesson) {
         metaId = (await deps.sink.write(metaDecision.lesson, { key: `lesson-meta:${id}` })).id;
-        await runAfterWrite(metaDecision, metaId);
+        await runAfterWrite(metaDecision, metaId, !!journal);
       }
-    } catch {
-      // allow-empty-catch: a failed mirror leaves the lesson served in its own domain
+    } catch (error) {
+      // Durable deliveries must resume the mirror before terminal settlement.
+      if (journal) throw error;
     }
   }
   return {

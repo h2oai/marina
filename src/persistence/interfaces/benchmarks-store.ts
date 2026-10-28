@@ -53,6 +53,7 @@ export interface BenchmarksStore {
     items: readonly BenchmarkItemInput[],
   ): boolean;
   getBenchmarkRun(id: string): BenchmarkRunRow | undefined;
+  recordBenchmarkRunCost(id: string, costUsd: number): void;
   queryBenchmarkRuns(q: {
     benchmark?: string;
     status?: string;
@@ -114,6 +115,7 @@ export const BENCHMARKS_STORE_METHODS = [
   "insertBenchmarkRun",
   "completeBenchmarkRun",
   "attachBenchmarkRunItems",
+  "recordBenchmarkRunCost",
   "getBenchmarkRun",
   "queryBenchmarkRuns",
   "leaderboardBenchmark",

@@ -26,10 +26,16 @@ import {
   INJECTION_MARKER,
   resetPassthruCaptureDedupForTests,
 } from "../src/net/model/passthru-context";
+import {
+  rejectUnsupportedForAgents,
+  routeOpen,
+  routeToChannel,
+  routeToChannelStreaming,
+} from "../src/net/model-api/routing";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, until } from "./helpers";
 
 const TEST_DB = "test_model_api.db";
 
@@ -158,6 +164,47 @@ describe("Model API", () => {
     cleanupDb(TEST_DB);
   });
 
+  it.each(["single", "open", "stream"])(
+    "shutdown releases an unanswered %s resident request and refuses a late answer",
+    async (mode) => {
+      engine.processCommand(conn1.entity!, "channel join model");
+      const request =
+        mode === "stream"
+          ? new Response(routeToChannelStreaming(engine, "marina", "wait", "openai").stream).text()
+          : mode === "open"
+            ? routeOpen(engine, "marina", "wait")
+            : routeToChannel(engine, "marina", "wait");
+      const rejected = request.then(
+        () => ({ status: "unexpected success" }),
+        (error: unknown) => error,
+      );
+      await until(() => (pendingRequests.get(conn1.entity!) ?? 0) > 0);
+      engine.beginDrain();
+      expect(await rejected).toMatchObject({ status: 503 });
+      expect(pendingRequests.get(conn1.entity!) ?? 0).toBe(0);
+      const routed = engine
+        .getEventLog()
+        .find((e) => e.type === "model_request_lifecycle" && e.phase === "routed");
+      expect(routed).toBeDefined();
+      if (routed?.type !== "model_request_lifecycle") throw new Error("Missing request");
+      cm.send(
+        cm.getChannelByName("model")!.id,
+        conn1.entity!,
+        "Agent1",
+        JSON.stringify({ type: "model_response", id: routed.requestId, content: "too late" }),
+      );
+      expect(
+        engine
+          .getEventLog()
+          .filter((e) => e.type === "model_request_lifecycle" && e.phase === "completed"),
+      ).toHaveLength(0);
+      await expect(routeToChannel(engine, "marina", "after shutdown")).rejects.toMatchObject({
+        status: 503,
+      });
+      expect(pendingRequests.get(conn1.entity!) ?? 0).toBe(0);
+    },
+  );
+
   it("GET /v1/models always lists the default marina model (with compat-profile aliases)", async () => {
     const [url, method, req] = makeRequest("/v1/models", "GET");
     const resp = await handleModelApi(url, method, req, engine);
@@ -259,6 +306,37 @@ describe("Model API", () => {
       }
     }
   });
+
+  for (const stream of [false, true])
+    it(`does not settle a ${stream ? "streaming" : "single"} request on a malformed response`, async () => {
+      engine.processCommand(conn1.entity!, "channel join model");
+      cm.onMessage((channelId, sender, _name, content) => {
+        if (sender !== "__model_api__") return;
+        const request = JSON.parse(content);
+        if (request.type !== "model_request") return;
+        cm.send(
+          channelId,
+          conn1.entity!,
+          "Agent1",
+          JSON.stringify({ type: "model_response", id: request.id, answer: 437 }),
+        );
+        cm.send(
+          channelId,
+          conn1.entity!,
+          "Agent1",
+          JSON.stringify({ type: "model_response", id: request.id, content: "437" }),
+        );
+      });
+      const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+        model: "marina",
+        messages: [{ role: "user", content: "19 times 23" }],
+        stream,
+      });
+      const response = await handleModelApi(url, method, req, engine);
+      expect(response!.status).toBe(200);
+      if (stream) expect(await collectStream(response!)).toContain("437");
+      else expect((await response!.json()).choices[0].message.content).toBe("437");
+    });
 
   it("POST /v1/chat/completions routes through channel and gets JSON response", async () => {
     engine.processCommand(conn1.entity!, "channel join model");
@@ -1301,12 +1379,52 @@ describe("Model API", () => {
       expect(lifecycle[2]).toMatchObject({ inputTokens: 12, outputTokens: 4 });
     });
 
+    it("preserves Ollama length termination, caller limits and usage in JSON and NDJSON", async () => {
+      setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-4o" });
+      for (const path of ["/api/chat", "/api/generate"]) {
+        for (const stream of [false, true]) {
+          let sent: Record<string, unknown> | undefined;
+          const response = await withOpenAiUpstream(
+            async (_url, init) => {
+              sent = JSON.parse(String(init?.body));
+              return Response.json({
+                choices: [
+                  { finish_reason: "length", message: { role: "assistant", content: "partial" } },
+                ],
+                usage: { prompt_tokens: 10, completion_tokens: 7 },
+              });
+            },
+            async () => {
+              const [u, m, r] = makeRequest(path, "POST", {
+                model: "marina",
+                stream,
+                options: { num_predict: 200 },
+                messages: [{ role: "user", content: "request" }],
+                prompt: "request",
+              });
+              return (await handleModelApi(u, m, r, engine))!;
+            },
+          );
+          expect(response.status).toBe(200);
+          expect(sent?.max_tokens).toBe(200);
+          const raw = await response.text();
+          const terminal = stream ? JSON.parse(raw.trim().split("\n").at(-1)!) : JSON.parse(raw);
+          expect(terminal).toMatchObject({
+            done: true,
+            done_reason: "length",
+            prompt_eval_count: 10,
+            eval_count: 7,
+          });
+        }
+      }
+    });
+
     it("keeps a passthru stream running until the caller consumes the upstream stream", async () => {
       setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-4o" });
       const resp = await withOpenAiUpstream(
         async () =>
           new Response(
-            'data: {"id":"chatcmpl-stream","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}\n\ndata: [DONE]\n\n',
+            'data: {"id":"chatcmpl-stream","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
             { headers: { "Content-Type": "text/event-stream" } },
           ),
         async () => {
@@ -1821,12 +1939,25 @@ describe("prepareLlamaBody (llama upstream prep)", () => {
     expect(out.max_tokens as number).toBeGreaterThan(4096);
   });
 
-  it("raises a too-small caller budget but preserves a larger one", () => {
+  it("preserves explicit small and large caller budgets", () => {
     const bumped = prepareLlamaBody({ messages: [], max_tokens: 4096 }, "llama");
-    expect(bumped.max_tokens as number).toBeGreaterThan(4096);
+    expect(bumped.max_tokens).toBe(4096);
 
     const huge = prepareLlamaBody({ messages: [], max_tokens: 999_999 }, "llama");
     expect(huge.max_tokens).toBe(999_999);
+  });
+
+  it("preserves alternate completion caps and caller template settings", () => {
+    const body = {
+      messages: [],
+      max_completion_tokens: 800,
+      chat_template_kwargs: { enable_thinking: true, custom: "retained" },
+    };
+    const out = prepareLlamaBody(body, "llama");
+    expect(out.max_tokens).toBeUndefined();
+    expect(out.max_completion_tokens).toBe(800);
+    expect(out.chat_template_kwargs).toEqual(body.chat_template_kwargs);
+    expect(body.chat_template_kwargs.enable_thinking).toBe(true);
   });
 
   it("scales the budget to a quarter of a small server's context window", () => {
@@ -1942,10 +2073,10 @@ describe("prepareUpstreamBody (cloud fallback prep)", () => {
   });
 
   it("clamps completion budgets when falling back to OpenAI", () => {
-    expect(prepareUpstreamBody({ max_tokens: 32_000 }, "openai").max_tokens).toBe(16_384);
+    expect(prepareUpstreamBody({ max_tokens: 32_000 }, "openai").max_tokens).toBe(32_000);
     expect(
       prepareUpstreamBody({ max_completion_tokens: 32_000 }, "openai").max_completion_tokens,
-    ).toBe(16_384);
+    ).toBe(32_000);
     expect(prepareUpstreamBody({ model: "gpt-4o", max_tokens: 32_000 }, "openai").max_tokens).toBe(
       16_384,
     );
@@ -2288,4 +2419,12 @@ describe("passthru memory gateway", () => {
     // Upstream was asked for a completed (non-streaming) answer.
     expect(forwarded[0]!.stream).toBe(false);
   });
+});
+
+it("resident routing refuses output-token controls it cannot enforce", async () => {
+  for (const field of ["max_tokens", "max_completion_tokens", "max_output_tokens"]) {
+    const response = rejectUnsupportedForAgents({ [field]: 4000 });
+    expect(response?.status).toBe(400);
+    expect(await response?.text()).toContain(field);
+  }
 });

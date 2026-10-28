@@ -58,6 +58,7 @@ import { TAVILY_USD_PER_CREDIT } from "../engine/search-providers/tavily";
 import { waybackFetch } from "../engine/search-providers/wayback";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import type { LookupResult } from "../forecast/lookup-types";
+import { defaultOutputTokens, requireFinishedChat } from "../model/output";
 import { guardedFetch } from "../net/url-guard";
 import { closedBookRetriever } from "./isolation";
 import { fetchAllowed, type PageText } from "./verify";
@@ -212,7 +213,7 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
               // Reasoning models otherwise spend the whole budget thinking and return nothing.
               reasoning: { effort: "low" },
             }),
-        max_completion_tokens: opts.maxTokens ?? 5_000,
+        max_completion_tokens: opts.maxTokens ?? defaultOutputTokens(),
       }),
     }).catch((err: unknown) => {
       recordSearchOutcome(health, err instanceof Error ? err.message : String(err));
@@ -236,6 +237,17 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
       }>;
       usage?: { cost?: number; server_tool_use_details?: { web_search_requests?: number } };
     };
+    const searches = data.usage?.server_tool_use_details?.web_search_requests ?? 0;
+    // The model's tokens (`usage.cost`) plus the plugin's list price for the
+    // chosen engine. OpenRouter does not document whether `usage.cost` already
+    // carries the plugin's charge, so the estimate is added: the spend cap errs
+    // high, never low.
+    const pluginUsd = opts.nativeSearch
+      ? 0
+      : openRouterWebPluginUsd(opts.engine, opts.mode, maxResults, searches);
+    const costUsd = (data.usage?.cost ?? 0) + pluginUsd;
+    recordSpend("forecast", costUsd);
+    requireFinishedChat(data, "Research retrieval");
     const message = data.choices?.[0]?.message;
     const raw = (message?.content ?? "").trim();
     // Sonar cites with numbered footnotes ("…35%.[11]"), the n-th url_citation.
@@ -257,16 +269,6 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
         ...(excerpt && excerpt.length >= 200 && fetchAllowed(url) ? { text: excerpt } : {}),
       });
     }
-    const searches = data.usage?.server_tool_use_details?.web_search_requests ?? 0;
-    // The model's tokens (`usage.cost`) plus the plugin's list price for the
-    // chosen engine. OpenRouter does not document whether `usage.cost` already
-    // carries the plugin's charge, so the estimate is added: the spend cap errs
-    // high, never low.
-    const pluginUsd = opts.nativeSearch
-      ? 0
-      : openRouterWebPluginUsd(opts.engine, opts.mode, maxResults, searches);
-    const costUsd = (data.usage?.cost ?? 0) + pluginUsd;
-    recordSpend("forecast", costUsd);
     return {
       report,
       sources,
@@ -302,7 +304,9 @@ export function sonarRetriever(opts: Omit<OpenRouterWebOptions, "nativeSearch">)
     ...opts,
     model,
     nativeSearch: true,
-    ...(slow ? { timeoutMs: opts.timeoutMs ?? 600_000, maxTokens: opts.maxTokens ?? 8_000 } : {}),
+    ...(slow
+      ? { timeoutMs: opts.timeoutMs ?? 600_000, maxTokens: opts.maxTokens ?? defaultOutputTokens() }
+      : {}),
   });
 }
 

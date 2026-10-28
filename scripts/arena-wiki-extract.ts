@@ -153,7 +153,6 @@ let calls = () => 0;
 if (model && names.some((n) => n === "events" || n === "news")) {
   const { modelComplete } = await import("../src/model/complete");
   const made = modelComplete(model, process.env, {
-    maxTokens: 2_000,
     timeoutMs: 120_000,
     purpose: "arena",
   });

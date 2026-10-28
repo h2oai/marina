@@ -21,6 +21,7 @@ import type { Engine } from "../../engine/engine";
 import { getErrorMessage, logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { noteOutcome } from "../../learning/service";
+import { defaultOutputTokens, requireFinishedChat } from "../../model/output";
 import {
   type CompleteText,
   checkFinalReply,
@@ -98,7 +99,6 @@ export const SESSION_HEADER = "x-marina-session";
 /** Ambiguous matches a judge resolves per request (the rest stay open). */
 const MAX_JUDGED_MATCHES = 3;
 /** Output cap for the ledger's own model calls (room for a reasoning model's thinking). */
-const LEDGER_CALL_MAX_TOKENS = 2000;
 
 /** The opt-in this request carries: the model prefix means `on`; the header may say `observe`. */
 export function obligationsRequestMode(req: Request, model: unknown): ObligationsMode | undefined {
@@ -318,7 +318,7 @@ export function ledgerCompletion(
           { role: "system", content: system },
           { role: "user", content: user },
         ],
-        max_tokens: LEDGER_CALL_MAX_TOKENS,
+        max_tokens: defaultOutputTokens(),
         stream: false,
       },
       forceModel || undefined,
@@ -330,6 +330,7 @@ export function ledgerCompletion(
     const raw = await resp.text();
     if (!resp.ok) throw new Error(`ledger call failed (${resp.status})`);
     const body = JSON.parse(raw) as { choices?: Array<{ message?: { content?: unknown } }> };
+    requireFinishedChat(body, "Obligation ledger");
     return messageText(body.choices?.[0]?.message?.content);
   };
 }

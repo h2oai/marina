@@ -408,6 +408,7 @@ export function observeCodingSubmission(
   const meta = codingRunMetadata(run);
   const task = deps.db.getTask(meta.taskId);
   if (!task) return;
+  const submittedAt = deps.db.getTaskClaim(meta.taskId, worker.id)?.submitted_at;
   const provider: DecisionProvider =
     meta.budgetForced?.reason === "spend"
       ? {
@@ -457,6 +458,7 @@ export function observeCodingSubmission(
         claimant: worker.name,
         judge: evaluator,
         opinion,
+        ...(submittedAt == null ? {} : { submittedAt }),
       });
     })
     .catch((error) =>

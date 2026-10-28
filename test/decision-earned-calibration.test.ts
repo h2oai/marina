@@ -379,7 +379,7 @@ function selfProxy(nouls: Record<string, number | "down">) {
     return new Response(
       JSON.stringify({
         model: body.model,
-        choices: [{ message: { content: JSON.stringify({ answers }) } }],
+        choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ answers }) } }],
       }),
       { status: 200 },
     );

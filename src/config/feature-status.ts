@@ -69,6 +69,12 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   { name: "Channels and DMs", status: "core", enable: "`channel`, `tell`", owner: "src/engine" },
   { name: "Tasks", status: "core", enable: "`task`", owner: "src/engine" },
   {
+    name: "Shared task work, structured deliverables and declared checks",
+    status: "experimental",
+    enable: "Optional `task work`; advisory, no agent-loop or approval changes",
+    owner: "src/coordination",
+  },
+  {
     name: "Memory (canonical records, unified context)",
     status: "core",
     enable: "Always on",

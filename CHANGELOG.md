@@ -67,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Model helpers share the configured output allowance.** Text and JSON helpers use
+  `MARINA_DEFAULT_MAX_TOKENS` (default 16,384, bounded by model capacity) instead of small,
+  unrelated limits. Automatic allowances can grow after truncation; explicit caps stay fixed.
+  Compaction retains its separate allowance, bounded by the model rather than an 8,000-token clamp.
+
 - **Arena spread calibration is learned per series**, not per tracker: one tracker's series can be
   miscalibrated in opposite directions.
 - **Arena challengers cover the coming week**, cheap specs first, within a time budget
@@ -213,6 +218,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--entrant`) instead of a built-in id. Operators who filed before must now set their identity.
 
 ### Fixed
+
+- **Incomplete model turns stay incomplete across API adapters and internal helpers.** Length
+  stops, refusals, interrupted streams and partial tool arguments cannot become successful answers,
+  verification results or executable tool requests.
+- **Outcome learning resumes safely after a crash**, with durable admission and delivery records
+  and erasure lineage. Investigation spend keeps per-call receipts, including unknown costs.
+- **Task verdicts bind to the exact submission**, including retries within one millisecond or
+  after a clock rollback. Delayed judges cannot overwrite a replacement submission.
+- **Sandbox bindings are scoped by provider**, and OpenShell workspace handling preserves the
+  selected execution environment. Sandbox maintenance drains before shutdown.
 
 - **`agent config <name> model|role|key|thinking` works on a saved agent that is not running**
   (stopped, or listed in `MARINA_DISABLED_AGENTS`): it rewrites the stored config its next spawn
@@ -388,6 +403,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     their own capped spend scope. It installs, enables and starts nothing.
 
 ### Added
+
+- **Optional shared task work.** `task work` records revisioned drafts, proposals, source-version
+  citations and reusable advisory checks. Structured edits can render or write the deliverable
+  directly; source-coverage rules, context-scoped projections and separate evidence assessments
+  help participants check their work. These tools do not approve tasks or prescribe agent loops.
+  See [shared task work](docs/guides/shared-task-work.md). Append-only migrations 179–184 add
+  recovery journals, spend receipts, provider-scoped sandbox bindings, submission clocks and task work.
+- **Code-derived capability inventory and fresh-world qualification tools.**
+  `bun run inventory:capabilities` enumerates command forms, tick work, environment reads and
+  defaults, outcome paths and feature entries. `bun run qualify:capabilities` exercises isolated
+  production servers and records concrete coverage; reusable long-horizon comparison tools accept
+  an external, frozen task corpus. Reports and study data belong outside the public repository.
 
 - **One seam for many sandboxes.** Code Mode runs work in whichever sandbox you already have:
   every provider implements `SandboxProvider` and declares what it can do. `code sandbox providers`

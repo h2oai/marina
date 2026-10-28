@@ -287,11 +287,12 @@ export interface RoomChannelAPI {
   /** Send a message to a named channel */
   send(channelName: string, senderId: string, senderName: string, content: string): void;
 
-  /** Get recent history from a channel */
+  /** Get recent history from a channel, including the server-recorded sender identity. */
   history(
     channelName: string,
     limit?: number,
   ): {
+    senderId?: string;
     senderName: string;
     content: string;
     createdAt: number;

@@ -55,6 +55,7 @@
  */
 
 import { openSharedSpendLedger, sharedSpendLedgerPath } from "./shared-spend-ledger";
+import { observeRecordedSpend } from "./spend-observation";
 
 /** Where a dollar left Marina. `search` is a paid search API call (Tavily, Exa) — migration 158. */
 export type SpendSource = "model_api" | "agent" | "decision" | "forecast" | "media" | "search";
@@ -256,6 +257,7 @@ export function recordSpend(
   env: NodeJS.ProcessEnv = process.env,
   purpose?: string,
 ): void {
+  observeRecordedSpend(source, usd);
   if (!usd || !Number.isFinite(usd) || usd <= 0) return;
   roll(now);
   const scope = spendScope(env);

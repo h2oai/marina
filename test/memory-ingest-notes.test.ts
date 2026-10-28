@@ -145,7 +145,9 @@ describe("ingest notes: pure guards", () => {
           body: JSON.parse(String(init.body)),
           auth: new Headers(init.headers).get("authorization"),
         });
-        return Response.json({ choices: [{ message: { content: "- a note line here" } }] });
+        return Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "- a note line here" } }],
+        });
       },
     });
     expect(await writer.write({ system: "s", user: "u" })).toBe("- a note line here");

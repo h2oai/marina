@@ -47,14 +47,7 @@ import {
   referenceList,
   renumberCitations,
 } from "./citations";
-import {
-  FRAME_SYSTEM,
-  GAP_SYSTEM,
-  languageName,
-  PLAN_SYSTEM,
-  SECTION_SYSTEM,
-  sectionLength,
-} from "./prompts";
+import { FRAME_SYSTEM, GAP_SYSTEM, languageName, PLAN_SYSTEM, SECTION_SYSTEM } from "./prompts";
 import type { ResearchReport, Retriever } from "./retrieve";
 import { defaultPageText, type PageText, quoteBody, verifyDossier } from "./verify";
 
@@ -241,7 +234,7 @@ async function verifiedEvidence(
   const kept: RawEvidence[] = [];
   let dropped = 0;
   for (const line of report.report.split("\n")) {
-    const link = line.match(/\[([^\]]*)\]\((https?:\/\/\S+?)\)/);
+    const link = line.match(/\[([^\]]*)\]\(((?:https?|corpus):\/\/\S+?)\)/);
     if (!link) continue;
     if (!verified.has(line)) {
       dropped++;
@@ -527,7 +520,6 @@ export async function writeResearchReport(
 
   // ── Write sections ──────────────────────────────────────────────────────
   const outline = plan.sections.map((s, i) => `${i + 1}. ${s.heading} — ${s.goal}`).join("\n");
-  const length = sectionLength(language, plan.sections.length);
   const scope = plan.timeframe
     ? `The task limits the information to: ${plan.timeframe}. Respect this scope and say so where it matters.`
     : "";
@@ -539,7 +531,7 @@ export async function writeResearchReport(
   await pool(plan.sections, concurrency, async (section, i) => {
     const ev = evidenceBlock(sectionEvidence[i]!, (n) => book.title(n), WRITER_EVIDENCE_CHARS);
     const user = [
-      `Report language: ${languageName(language)}. Length: ${length}.`,
+      `Report language: ${languageName(language)}. Follow the TASK's length requirement across all ${plan.sections.length} sections combined; otherwise be concise and complete.`,
       scope,
       barred,
       `TASK:\n${task.prompt}`,
@@ -577,35 +569,36 @@ export async function writeResearchReport(
   let title = plan.title;
   let summary = "";
   let conclusion = "";
+  const fixed = plan.fixedStructure === true || plan.sections.length === 1;
   try {
-    const v = extractJsonValue(
-      await complete(
-        "frame",
-        FRAME_SYSTEM,
-        [
-          `Report language: ${languageName(language)}.`,
-          scope,
-          `TASK:\n${task.prompt}`,
-          `SECTIONS:\n${bodySections}`,
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
-      ),
-    ) as Record<string, unknown> | undefined;
-    title = str(v?.title) || title;
-    summary = normalizeCitationMarkers(str(v?.summary));
-    conclusion = normalizeCitationMarkers(str(v?.conclusion));
+    if (!fixed) {
+      const v = extractJsonValue(
+        await complete(
+          "frame",
+          FRAME_SYSTEM,
+          [
+            `Report language: ${languageName(language)}.`,
+            scope,
+            `TASK:\n${task.prompt}`,
+            `SECTIONS:\n${bodySections}`,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        ),
+      ) as Record<string, unknown> | undefined;
+      title = str(v?.title) || title;
+      summary = normalizeCitationMarkers(str(v?.summary));
+      conclusion = normalizeCitationMarkers(str(v?.conclusion));
+    }
   } catch (err) {
     if (err instanceof ResearchInterrupted) throw err;
     warnings.push(`opening/conclusion failed: ${(err as Error).message.slice(0, 160)}`);
   }
   const zh = language === "zh";
-  // A task that fixes the report's sections gets exactly those: the summary
-  // becomes an unheaded opening and no conclusion section is added.
-  const fixed = plan.fixedStructure === true;
+  // Fixed structures and single-section answers need no unsolicited framing call.
   const draft = [
     `# ${title || task.prompt.split("\n")[0]!.slice(0, 120)}`,
-    summary ? (fixed ? summary : `## ${zh ? "摘要" : "Executive summary"}\n\n${summary}`) : "",
+    summary ? `## ${zh ? "摘要" : "Executive summary"}\n\n${summary}` : "",
     bodySections,
     conclusion && !fixed ? `## ${zh ? "结论" : "Conclusion"}\n\n${conclusion}` : "",
   ]

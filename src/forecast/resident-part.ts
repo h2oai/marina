@@ -39,6 +39,7 @@ import {
 } from "../engine/evidence-fence";
 import type { SpendGuard } from "../engine/spend-guard";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { requireFinishedChat } from "../model/output";
 import {
   emitModelTrace,
   type ModelLifecycleEvent,
@@ -329,6 +330,7 @@ async function httpAsk(
   const text = await res.text();
   if (!res.ok) throw new Error(`${spec} HTTP ${res.status}: ${text.slice(0, 200)}`);
   const data = JSON.parse(text) as { choices?: Array<{ message?: { content?: string | null } }> };
+  requireFinishedChat(data, "Forecast resident");
   const resident = res.headers.get(RESPONDENT_HEADER)?.trim();
   const requestId = res.headers.get("x-request-id")?.trim();
   const forced = res.headers.get("x-marina-budget-forced")?.trim();

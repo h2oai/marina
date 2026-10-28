@@ -30,12 +30,13 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RateLimiter } from "../../auth/rate-limiter";
+import { defaultOutputTokens, requireFinishedChat } from "../../model/output";
 import { proxyToUpstream } from "../../net/model-api/upstream";
 import { guardedFetch } from "../../net/url-guard";
 import type { EntityId } from "../../types";
 import { type CanvasReader, canvasReaderFor, mayReadAsset, readableNode } from "../canvas-access";
 import type { Engine } from "../engine";
-import { logRejection } from "../errors";
+import { getErrorMessage, logRejection } from "../errors";
 import { Logger } from "../logger";
 import { recordAssetWrite } from "./asset-library";
 import { type ImageLimits, prepareImage } from "./image-ops";
@@ -500,7 +501,7 @@ export async function prepareVisual(
       "thumbnail=60,scale=768:-2",
       "-frames:v",
       String(VIDEO_FRAMES),
-      "-vsync",
+      "-fps_mode",
       "vfr",
       join(dir, "frame-%02d.png"),
     ]);
@@ -564,7 +565,7 @@ export function visionRequest(
   return {
     model,
     stream: false,
-    max_tokens: 1500,
+    max_tokens: defaultOutputTokens(),
     messages: [
       { role: "system", content: VISION_SYSTEM },
       { role: "user", content },
@@ -659,6 +660,11 @@ async function describeWith(
       kind: input.kind,
       notes: input.notes,
     };
+  }
+  try {
+    requireFinishedChat(body, "Vision");
+  } catch (error) {
+    return { ok: false, text: getErrorMessage(error), model, kind: input.kind, notes: input.notes };
   }
   return { ok: true, text: text.trim(), model, kind: input.kind, notes: input.notes };
 }

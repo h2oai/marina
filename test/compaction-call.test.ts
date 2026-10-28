@@ -106,14 +106,14 @@ describe("the compaction call turns reasoning off with each provider's own switc
 });
 
 describe("compactionMaxTokens", () => {
-  it("defaults, parses and clamps MARINA_AGENT_COMPACTION_MAX_TOKENS", () => {
+  it("defaults and honors explicit MARINA_AGENT_COMPACTION_MAX_TOKENS", () => {
     expect(DEFAULT_COMPACTION_MAX_TOKENS).toBe(800);
     expect(compactionMaxTokens({})).toBe(800);
     expect(compactionMaxTokens({ MARINA_AGENT_COMPACTION_MAX_TOKENS: "junk" })).toBe(800);
     expect(compactionMaxTokens({ MARINA_AGENT_COMPACTION_MAX_TOKENS: "0" })).toBe(800);
     expect(compactionMaxTokens({ MARINA_AGENT_COMPACTION_MAX_TOKENS: " 1200 " })).toBe(1200);
-    expect(compactionMaxTokens({ MARINA_AGENT_COMPACTION_MAX_TOKENS: "50" })).toBe(200);
-    expect(compactionMaxTokens({ MARINA_AGENT_COMPACTION_MAX_TOKENS: "99999" })).toBe(8000);
+    expect(compactionMaxTokens({ MARINA_AGENT_COMPACTION_MAX_TOKENS: "50" })).toBe(50);
+    expect(compactionMaxTokens({ MARINA_AGENT_COMPACTION_MAX_TOKENS: "99999" })).toBe(99999);
   });
 });
 

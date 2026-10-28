@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { SandboxProviders } from "../src/coding/sandbox-provider";
 import { Engine } from "../src/engine/engine";
 import { Logger } from "../src/engine/logger";
+import { registerTickJobs, type TickJobHost } from "../src/engine/tick-jobs";
 import { TickScheduler } from "../src/engine/tick-scheduler";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, FAKE_SANDBOX_IDENTITY, makeTestRoom } from "./helpers";
 
 const TEST_DB = "test_tick_scheduler.db";
 
@@ -19,6 +21,47 @@ const TEST_DB = "test_tick_scheduler.db";
  */
 describe("TickScheduler", () => {
   const logger = new Logger({ level: "error" });
+
+  it("tracks the registered sandbox maintenance pass through overlap and shutdown", async () => {
+    let release!: () => void;
+    let passes = 0;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const host = {
+      logger,
+      config: { tickInterval: 1000 },
+      sandboxes: new SandboxProviders([
+        {
+          ...FAKE_SANDBOX_IDENTITY,
+          maintenance: async () => {
+            passes++;
+            await held;
+          },
+        } as import("../src/coding/sandbox-provider").SandboxProvider,
+      ]),
+    } as TickJobHost;
+    const scheduler = new TickScheduler(logger);
+    const onlyMaintenance = {
+      register(job: import("../src/engine/tick-scheduler").TickJob) {
+        if (job.name === "channel-prune") scheduler.register(job);
+      },
+    } as TickScheduler;
+    registerTickJobs(host, onlyMaintenance);
+    scheduler.runDue(1800);
+    scheduler.runDue(3600);
+    expect(passes).toBe(1);
+    expect(scheduler.describe()[0]).toMatchObject({ inFlight: true, skippedOverlaps: 1 });
+    let drained = false;
+    const draining = scheduler.drain().then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    release();
+    await draining;
+    expect(drained).toBe(true);
+  });
 
   it("fires a job on exactly the ticks where tick % every === phase", () => {
     const fired: number[] = [];
@@ -197,6 +240,28 @@ describe("Engine tick schedule", () => {
     engine.stop();
     db.close();
     cleanupDb(TEST_DB);
+  });
+
+  it("drains startup sandbox reconciliation before persistence can close", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    engine.sandboxes.register({
+      ...FAKE_SANDBOX_IDENTITY,
+      reconcile: () => pending,
+    } as import("../src/coding/sandbox-provider").SandboxProvider);
+    engine.start();
+    engine.stop();
+    let drained = false;
+    const shutdown = engine.shutdown().then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    release();
+    await shutdown;
+    expect(drained).toBe(true);
   });
 
   /**

@@ -23,13 +23,14 @@ export interface FlywheelStore {
     keepAlive: boolean;
     state: FlywheelBindingState;
     lifecycleExpiresAt?: number;
+    providerId?: string;
   }): void;
   // flywheel_bindings / coding_projects / coding_services are keyed by the
   // durable account id (migration 117). Reads project the live entity id back
   // so `row.entity_id === entity.id` comparisons in callers keep working.
-  listFlywheelBindings(): FlywheelBindingRow[];
+  listFlywheelBindings(providerId?: string | null): FlywheelBindingRow[];
   /** The binding owned by this entity's account (indexed PK lookup, not a scan). */
-  getFlywheelBinding(entityId: EntityId): FlywheelBindingRow | undefined;
+  getFlywheelBinding(entityId: EntityId, providerId?: string): FlywheelBindingRow | undefined;
   updateFlywheelBinding(
     entityId: EntityId,
     fields: {
@@ -45,8 +46,9 @@ export interface FlywheelStore {
       lifecycleExpiresAt?: number | null;
       hibernatedReason?: string | null;
     },
+    providerId?: string,
   ): void;
-  deleteFlywheelBinding(entityId: EntityId): void;
+  deleteFlywheelBinding(entityId: EntityId, providerId?: string): void;
   createCodingProject(project: {
     id: string;
     entityId: EntityId;

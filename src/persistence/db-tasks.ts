@@ -160,6 +160,7 @@ export function createTaskClaim(
      VALUES (?, ?, ?, 'claimed', ?, ?, ?)
      ON CONFLICT(task_id, entity_id) DO UPDATE SET entity_name = excluded.entity_name,
        status = 'claimed', submission_text = NULL, claimed_at = excluded.claimed_at,
+       submission_clock = max(submission_clock, coalesce(submitted_at, 0)),
        submitted_at = NULL, resolved_at = NULL, heartbeat_at = excluded.heartbeat_at,
        lease_expires_at = excluded.lease_expires_at, release_reason = NULL`,
     [taskId, entityId, entityName, now, now, leaseExpiresAt ?? null],
@@ -265,9 +266,14 @@ export function updateTaskClaimStatus(
 ): void {
   const now = Date.now();
   if (status === "submitted") {
+    // Keep a per-claim high-water timestamp through reject/reclaim and clock rollback.
+    // Both judges use submitted_at as the durable submission identity.
     db.run(
-      "UPDATE task_claims SET status = ?, submission_text = ?, submitted_at = ? WHERE task_id = ? AND entity_id = ?",
-      [status, submissionText ?? null, now, taskId, entityId],
+      `UPDATE task_claims SET status = ?, submission_text = ?,
+         submitted_at = max(?, submission_clock + 1),
+         submission_clock = max(?, submission_clock + 1)
+       WHERE task_id = ? AND entity_id = ?`,
+      [status, submissionText ?? null, now, now, taskId, entityId],
     );
   } else {
     db.run(

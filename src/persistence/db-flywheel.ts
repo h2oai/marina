@@ -18,15 +18,18 @@ export function saveFlywheelBinding(
     keepAlive: boolean;
     state: FlywheelBindingState;
     lifecycleExpiresAt?: number;
+    providerId?: string;
   },
 ): void {
   const now = Date.now();
   db.run(
     `INSERT INTO flywheel_bindings
-        (entity_id, session_id, sandbox_id, image, keep_alive, state, created_at, updated_at,
+        (provider_id, entity_id, session_id, sandbox_id, image, keep_alive, state, created_at, updated_at,
          last_activity_at, lifecycle_expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(entity_id) DO UPDATE SET
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(provider_id, entity_id) DO UPDATE SET
+         active_project_id = CASE WHEN sandbox_id = excluded.sandbox_id THEN active_project_id ELSE NULL END,
+         guest_cwd = CASE WHEN sandbox_id = excluded.sandbox_id THEN guest_cwd ELSE NULL END,
          session_id = excluded.session_id,
          sandbox_id = excluded.sandbox_id,
          image = excluded.image,
@@ -37,6 +40,7 @@ export function saveFlywheelBinding(
          last_error = NULL,
          updated_at = excluded.updated_at`,
     [
+      opts.providerId ?? "flywheel",
       entityKey,
       opts.sessionId,
       opts.sandboxId,
@@ -54,27 +58,31 @@ export function saveFlywheelBinding(
 // flywheel_bindings / coding_projects / coding_services are keyed by the
 // durable account id (migration 117). Reads project the live entity id back
 // so `row.entity_id === entity.id` comparisons in callers keep working.
-export function listFlywheelBindings(reader: Database): FlywheelBindingRow[] {
+export function listFlywheelBindings(
+  reader: Database,
+  providerId: string | null = "flywheel",
+): FlywheelBindingRow[] {
   return reader
     .query(
       `SELECT fb.*, ${liveEntityIdSql("fb")} AS entity_id
-         FROM flywheel_bindings fb ORDER BY fb.created_at`,
+         FROM flywheel_bindings fb WHERE (? IS NULL OR provider_id = ?) ORDER BY fb.created_at`,
     )
-    .all() as FlywheelBindingRow[];
+    .all(providerId, providerId) as FlywheelBindingRow[];
 }
 
 /** The binding owned by this entity's account (indexed PK lookup, not a scan). */
 export function getFlywheelBinding(
   reader: Database,
   entityKey: string,
+  providerId = "flywheel",
 ): FlywheelBindingRow | undefined {
   return (
     (reader
       .query(
         `SELECT fb.*, ${liveEntityIdSql("fb")} AS entity_id
-           FROM flywheel_bindings fb WHERE fb.entity_id = ?`,
+           FROM flywheel_bindings fb WHERE fb.entity_id = ? AND fb.provider_id = ?`,
       )
-      .get(entityKey) as FlywheelBindingRow | null) ?? undefined
+      .get(entityKey, providerId) as FlywheelBindingRow | null) ?? undefined
   );
 }
 
@@ -94,6 +102,7 @@ export function updateFlywheelBinding(
     lifecycleExpiresAt?: number | null;
     hibernatedReason?: string | null;
   },
+  providerId = "flywheel",
 ): void {
   const assignments = ["updated_at = ?"];
   const values: Array<string | number | null> = [Date.now()];
@@ -141,12 +150,22 @@ export function updateFlywheelBinding(
     assignments.push("hibernated_reason = ?");
     values.push(fields.hibernatedReason);
   }
-  values.push(entityKey);
-  db.run(`UPDATE flywheel_bindings SET ${assignments.join(", ")} WHERE entity_id = ?`, values);
+  values.push(entityKey, providerId);
+  db.run(
+    `UPDATE flywheel_bindings SET ${assignments.join(", ")} WHERE entity_id = ? AND provider_id = ?`,
+    values,
+  );
 }
 
-export function deleteFlywheelBinding(db: Database, entityKey: string): void {
-  db.run("DELETE FROM flywheel_bindings WHERE entity_id = ?", [entityKey]);
+export function deleteFlywheelBinding(
+  db: Database,
+  entityKey: string,
+  providerId = "flywheel",
+): void {
+  db.run("DELETE FROM flywheel_bindings WHERE entity_id = ? AND provider_id = ?", [
+    entityKey,
+    providerId,
+  ]);
 }
 
 export function createCodingProject(
@@ -609,6 +628,7 @@ export type FlywheelBindingState =
   | "stopping";
 
 export interface FlywheelBindingRow {
+  provider_id: string;
   entity_id: string;
   session_id: string;
   sandbox_id: string;

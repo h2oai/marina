@@ -287,7 +287,7 @@ async function sandboxOps(call: SandboxCall): Promise<void> {
 function sandboxStatus(call: SandboxCall): void {
   const { ctx, eid, entity, deps, provider } = call;
   const workspace = provider.status(eid);
-  const binding = deps.db.listFlywheelBindings().find((row) => row.entity_id === eid);
+  const binding = deps.db.getFlywheelBinding(eid, provider.id);
   const activeProject = binding?.active_project_id
     ? deps.db.getCodingProject(binding.active_project_id)
     : null;
@@ -337,7 +337,7 @@ function sandboxStatus(call: SandboxCall): void {
 
 function sandboxNetwork(call: SandboxCall): void {
   const { ctx, eid, deps, provider, args } = call;
-  const binding = deps.db.listFlywheelBindings().find((row) => row.entity_id === eid);
+  const binding = deps.db.getFlywheelBinding(eid, provider.id);
   if (!binding)
     throw new Error(`Start a ${provider.label} sandbox before inspecting its network policy.`);
   if (!args[1] || args[1].toLowerCase() === "status") {

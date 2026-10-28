@@ -143,7 +143,7 @@ describe("the gate on marina/auto", () => {
       return new Response(
         JSON.stringify({
           model: "z-ai/glm-5.3-flash",
-          choices: [{ message: { content: JSON.stringify({ answers }) } }],
+          choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ answers }) } }],
         }),
       );
     }) as typeof fetch;

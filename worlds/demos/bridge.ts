@@ -86,7 +86,9 @@ const RELAY_PREFIX = `[from ${PEER_NAME}/`;
 /** Whether the bridged channel holds a message relayed from the peer. */
 function peerMessageReceived(ctx: RoomContext): boolean {
   const history = ctx.channels?.history(BRIDGE_CHANNEL, 50) ?? [];
-  return history.some((message) => message.content.startsWith(RELAY_PREFIX));
+  return history.some(
+    (message) => message.senderId === "gateway" && message.content.startsWith(RELAY_PREFIX),
+  );
 }
 
 function stepDone(state: BridgeState, step: Step): boolean {
@@ -246,7 +248,7 @@ const room: RoomModule = {
           input.entity,
           `${Y}No message from ${PEER_NAME} in '${BRIDGE_CHANNEL}' yet.${R}\n\n` +
             `Send one from this side with:\n\n` +
-            `  ${C}channel ${BRIDGE_CHANNEL} Hello from the Bridge!${R}\n\n` +
+            `  ${C}channel send ${BRIDGE_CHANNEL} Hello from the Bridge!${R}\n\n` +
             `${D}On the peer instance, post a message in its '${BRIDGE_CHANNEL}' channel, ` +
             `then type '${C}ping${R}' again. If nothing arrives, check 'gateway list' ` +
             `and that '${BRIDGE_CHANNEL}' is bridged on both sides.${R}`,

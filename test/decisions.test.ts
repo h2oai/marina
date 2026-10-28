@@ -152,7 +152,10 @@ describe("providers", () => {
       baseUrl: "http://localhost:11434/v1",
       model: "qwen3:4b",
       timeoutMs: 1000,
-      fetch: mockFetch({ choices: [{ message: { content: reply } }] }, calls),
+      fetch: mockFetch(
+        { choices: [{ finish_reason: "stop", message: { content: reply } }] },
+        calls,
+      ),
     });
     const result = await provider.ask({
       state: "rename the archive folder",

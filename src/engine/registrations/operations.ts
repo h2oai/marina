@@ -249,7 +249,7 @@ export function registerOperationCommands(engine: Engine): void {
         getEntity: (id) => engine.entities.get(id as EntityId),
         findEntity: (name) => engine.findEntityGlobal(name),
         getConnections: () => engine.connections,
-        removeConnection: (connId) => engine.removeConnection(connId),
+        removeConnection: (connId, intent) => engine.removeConnection(connId, intent),
         broadcastAll: (msg, tag?) => {
           for (const entity of engine.entities.all()) {
             if (entity.kind === "agent") {

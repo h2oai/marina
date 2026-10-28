@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { defaultOutputTokens, requireFinishedChat } from "../model/output";
 import { samplingFor } from "../net/model/sampling-params";
 import type { MemoryActor } from "../persistence/db-principals";
 import { withMemoryAbort } from "../sdk/memory-abort";
@@ -48,7 +49,7 @@ export function routerMemoryPlanner(url: string, model: string, token?: string):
       const response = await fetch(new URL("chat/completions", base), {
         method: "POST",
         redirect: "error",
-        signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]),
+        signal: AbortSignal.any([AbortSignal.timeout(180_000), ...(signal ? [signal] : [])]),
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -56,7 +57,7 @@ export function routerMemoryPlanner(url: string, model: string, token?: string):
         body: JSON.stringify({
           model,
           ...samplingFor(model, 0),
-          max_tokens: 1200,
+          max_tokens: defaultOutputTokens(),
           messages: [
             {
               role: "system",
@@ -70,6 +71,7 @@ export function routerMemoryPlanner(url: string, model: string, token?: string):
       if (!response.ok)
         throw new MemoryError(503, "planner_unavailable", "Memory planner request failed");
       const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+      requireFinishedChat(data, "Memory planner");
       const content = data.choices?.[0]?.message?.content;
       if (!content || Buffer.byteLength(content) > 32768)
         throw new MemoryError(502, "invalid_plan", "Planner returned no bounded JSON plan");

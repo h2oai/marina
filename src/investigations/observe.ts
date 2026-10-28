@@ -6,6 +6,7 @@ import type { WorkBudget } from "../coordination/work-budget";
 import { maskSensitiveText } from "../decisions/gate";
 import { getErrorMessage } from "../engine/errors";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { withSpendObservation } from "../engine/spend-observation";
 import type { ForecastScale } from "../forecast/service";
 import type { ModelPart, TypedForecastDeps } from "../forecast/typed";
 import type { MarinaDB } from "../persistence/database";
@@ -47,6 +48,7 @@ export function redactInvestigationValue(value: unknown, onRedaction: () => void
 
 export class InvestigationObservation {
   readonly gaps = new Set<string>();
+  readonly accountingGaps = new Set<string>();
   readonly controller = new AbortController();
   outstanding = 0;
   costUsd: () => number = () => 0;
@@ -60,13 +62,27 @@ export class InvestigationObservation {
     private readonly canSettle: () => boolean = () => true,
   ) {}
 
+  accounting(reportedUsd = this.costUsd()): InvestigationAttempt["accounting"] {
+    return this.db.investigationSpendAccounting(this.attempt.id, {
+      knownUsd: reportedUsd,
+      reportedUsd,
+      complete: this.accountingGaps.size === 0,
+      outstanding: this.outstanding,
+      reasons: [...this.accountingGaps],
+    });
+  }
+
+  observe<T>(action: () => T): T {
+    return withSpendObservation((receipt) => {
+      if (!this.canSettle()) return;
+      this.db.recordInvestigationSpend(this.attempt.id, this.generation, receipt);
+      this.settle();
+    }, action);
+  }
+
   settle(knownUsd = this.costUsd()): void {
     if (this.canSettle())
-      this.db.settleInvestigation(this.attempt.id, this.generation, {
-        knownUsd,
-        complete: false,
-        outstanding: this.outstanding,
-      });
+      this.db.settleInvestigation(this.attempt.id, this.generation, this.accounting(knownUsd));
   }
 
   check(): void {
@@ -170,6 +186,17 @@ export class InvestigationObservation {
     costUsd: () => number,
   ): TypedForecastDeps {
     this.costUsd = costUsd;
+    // Model attempts have receipts, including nested research calls. Search,
+    // hosted lookup and remote crew adapters do not all expose request-level
+    // billing; zero outstanding work cannot establish complete accounting.
+    if (
+      !/^(?:none|closed-book|corpus:[a-z0-9][a-z0-9._-]*)(?:\+read-swarm)?$/.test(scale.retriever)
+    )
+      this.accountingGaps.add(
+        `Retriever ${scale.retriever} lacks complete per-request billing coverage`,
+      );
+    if (deps.lookups?.length)
+      this.accountingGaps.add("Lookup adapters lack per-request billing coverage");
     this.capture("configuration", { scale, options: deps.options });
     const model = (part: ModelPart): ModelPart => {
       if (part.name.startsWith("marina:")) {

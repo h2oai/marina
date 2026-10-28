@@ -53,8 +53,10 @@ import { connects, stripAnsi } from "../net/ansi";
 import { attachRouteHealthStore, coreMemoryRouteStore } from "../net/model/route-health";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
+import { deliveryPending } from "../outcomes/deliver";
 import { fileResidentForecast } from "../outcomes/filing";
 import { noteTaskApproach, observeOutcomeEvent } from "../outcomes/live";
+import { hasPendingDelivery, settleDelivery } from "../outcomes/record";
 import type { MarinaDB } from "../persistence/database";
 import type { RoomLogKind } from "../persistence/db-rooms";
 import { writeSample } from "../resolvers/sample-writer";
@@ -200,6 +202,14 @@ export class Engine {
   /** Configured isolated-execution providers (empty: local Code Mode only). */
   readonly sandboxes: SandboxProviders;
   readonly benchmarkRunner?: BenchmarkRunner;
+  private readonly shutdownController = new AbortController();
+  /** Cancels resident requests before their responders and transports drain. */
+  get shutdownSignal(): AbortSignal {
+    return this.shutdownController.signal;
+  }
+  beginDrain(): void {
+    this.shutdownController.abort();
+  }
   readonly mediaManager?: MediaManager;
   /** Expiring read grants on single private canvas nodes (`canvas-access.ts`). */
   readonly canvasGrants = new CanvasReadGrants();
@@ -302,7 +312,10 @@ export class Engine {
     this.loginRateLimiter = this.config.loginRateLimiter;
     this.storage = this.config.storage;
     this.sandboxes = new SandboxProviders(
-      this.config.sandboxes ?? [FlywheelManager.fromEnv(this.db), OpenShellProvider.fromEnv()],
+      this.config.sandboxes ?? [
+        FlywheelManager.fromEnv(this.db),
+        OpenShellProvider.fromEnv(process.env, this.db),
+      ],
     );
 
     // Wire DB into EntityManager for write-through persistence
@@ -826,12 +839,16 @@ export class Engine {
       });
     }
     for (const provider of this.sandboxes.list()) {
-      provider.reconcile?.().catch((error) => {
-        this.logger.warn("flywheel", "Workspace reconciliation failed", {
-          provider: provider.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+      const reconciliation = provider.reconcile?.();
+      if (!reconciliation) continue;
+      this.trackBackground(
+        reconciliation.catch((error) => {
+          this.logger.warn("flywheel", "Workspace reconciliation failed", {
+            provider: provider.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }),
+      );
     }
     this.logger.info(
       "engine",
@@ -1453,6 +1470,7 @@ export class Engine {
         const ch = cm.getChannelByName(channelName);
         if (!ch) return [];
         return cm.getHistory(ch.id, limit).map((m) => ({
+          senderId: m.senderId,
           senderName: m.senderName,
           content: m.content,
           createdAt: m.createdAt,
@@ -2182,6 +2200,7 @@ export class Engine {
 
   /** Save world state and stop the engine */
   shutdown(): Promise<void> {
+    this.beginDrain();
     closeInvestigationService(this.db);
     this.stop();
     const finish = () => {
@@ -2189,6 +2208,7 @@ export class Engine {
       releaseChallengeHost(this);
       this.releaseDefaultTrace();
       return Promise.allSettled([
+        this.benchmarkRunner?.stopAll(),
         this.connectorRuntime?.close(),
         this.gatewayRuntime?.close(),
       ]).then(() => undefined);
@@ -2197,7 +2217,8 @@ export class Engine {
       this.roomTickCoordinator.pendingCount +
       this.background.size +
       this.tickScheduler.pendingCount +
-      assetDerivativesPending();
+      assetDerivativesPending() +
+      (this.db && (hasPendingDelivery(this.db) || deliveryPending(this.db)) ? 1 : 0);
     // Asset derivative jobs (sharp/ffmpeg/pdftoppm) never outlive the
     // database: queued ones are skipped, the running one is awaited.
     const drain = () =>
@@ -2215,6 +2236,7 @@ export class Engine {
     if (!pending && !learn) return finish();
     return (pending ? drain() : Promise.resolve())
       .then(() => (learn ? this.flushWorkOnShutdown() : undefined))
+      .then(() => (this.db ? settleDelivery(this.db, BACKGROUND_DRAIN_TIMEOUT_MS) : undefined))
       .then(finish);
   }
 

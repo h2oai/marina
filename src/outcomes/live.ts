@@ -103,6 +103,27 @@ export function participantOf(
 /** The subject a task attempt's outcomes share: `task:<id>:<claimant>`. */
 export const taskBase = (taskId: number, claimant: string) => `task:${taskId}:${claimant}`;
 
+/** Both judges settle the same submission, regardless of when their calls finish. */
+export const taskOpinionSubject = (taskId: number, claimant: string, submittedAt: number) =>
+  `judged:${taskBase(taskId, claimant)}:submission:${submittedAt}`;
+
+export function hasTaskOpinion(
+  db: MarinaDB,
+  taskId: number,
+  claimant: string,
+  submittedAt: number,
+): boolean {
+  if (db.getOutcomeBySubject(taskOpinionSubject(taskId, claimant, submittedAt))) return true;
+  const prefix = `judged:${taskBase(taskId, claimant)}:`;
+  // Preserve opinions written before submission identities were introduced.
+  return db
+    .listOutcomes({ subjectPrefix: prefix, limit: 20 })
+    .some(
+      (o) =>
+        !o.subject.slice(prefix.length).startsWith("submission:") && o.resolved_at >= submittedAt,
+    );
+}
+
 /**
  * A creator's verdict on a task submission as one outcome. Each verdict is its
  * own subject (a resubmission after a rejection is a new attempt).
@@ -111,8 +132,14 @@ export function recordTaskVerdict(
   db: MarinaDB,
   input: { taskId: number; claimant: string; approved: boolean; at: number; detail?: string },
 ): void {
+  const submittedAt = db
+    .getTaskClaims(input.taskId)
+    .find((row) => row.entity_name === input.claimant)?.submitted_at;
   recordResolved(db, {
-    subject: `${taskBase(input.taskId, input.claimant)}:${input.at}`,
+    subject:
+      submittedAt == null
+        ? `${taskBase(input.taskId, input.claimant)}:${input.at}`
+        : taskOpinionSubject(input.taskId, input.claimant, submittedAt).slice("judged:".length),
     kind: "task",
     source: "task:verdict",
     domain: "tools",
@@ -129,6 +156,7 @@ export function recordTaskVerdict(
     participants: [participantOf(db, input.claimant)],
     refs: [
       `task:${input.taskId}`,
+      ...(submittedAt == null ? [] : [`task-submission:${submittedAt}`]),
       ...workRefsFor(db, "task", input.claimant, taskApproach(db, input.claimant, input.taskId)),
     ],
     resolvedAt: input.at,
@@ -161,12 +189,22 @@ export function recordTaskOpinion(
     judge: string;
     opinion: "pass" | "fail" | "none";
     at?: number;
+    /** Captured before the asynchronous verifier starts; never use a later submission. */
+    submittedAt?: number;
   },
 ): void {
   if (input.opinion === "none") return;
   const at = input.at ?? Date.now();
+  const claim = db.getTaskClaims(input.taskId).find((row) => row.entity_name === input.claimant);
+  if (input.submittedAt !== undefined && claim?.submitted_at !== input.submittedAt) return;
+  const submittedAt = input.submittedAt ?? claim?.submitted_at;
+  const prefix = `judged:${taskBase(input.taskId, input.claimant)}:`;
+  if (submittedAt != null && hasTaskOpinion(db, input.taskId, input.claimant, submittedAt)) return;
   recordResolved(db, {
-    subject: `judged:${taskBase(input.taskId, input.claimant)}:${at}`,
+    subject:
+      submittedAt == null
+        ? `${prefix}${at}`
+        : taskOpinionSubject(input.taskId, input.claimant, submittedAt),
     kind: "task",
     source: "task:verdict",
     domain: "tools",

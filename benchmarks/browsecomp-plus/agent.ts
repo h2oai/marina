@@ -40,6 +40,7 @@ import {
   searchCorpusHybridPage,
 } from "../../src/engine/search-providers/corpus";
 import { corpusEmbeddingStatus } from "../../src/engine/search-providers/corpus-vectors";
+import { requireFinishedOutput } from "../../src/model/output";
 import { firstMove } from "../../src/retrieval/first-move";
 import { BudgetExhausted, type CallSpendGuard, isSpendCapRefusal } from "../call-spend-guard";
 import {
@@ -442,6 +443,8 @@ export async function toolLoop(
     run.promptTokens += reply.promptTokens;
     run.completionTokens += reply.completionTokens;
     if (reply.traceId) run.traceIds.push(reply.traceId);
+    if (reply.finishReason !== "tool_calls")
+      requireFinishedOutput(reply.finishReason, "BrowseComp turn");
     return reply;
   };
   const answer = (text: string) => {

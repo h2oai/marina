@@ -437,10 +437,10 @@ export function evaluateProviderToolProbe(
   if (typeof word !== "string" || !word.includes(nonce)) {
     return { ok: false, error: "tool_calls arguments did not carry the check word" };
   }
-  if (choice?.finish_reason !== undefined && choice.finish_reason !== "tool_calls") {
+  if (choice?.finish_reason !== "tool_calls") {
     return {
       ok: false,
-      error: `finish_reason was ${String(choice.finish_reason)}, not tool_calls`,
+      error: `finish_reason was ${String(choice?.finish_reason)}, not tool_calls`,
     };
   }
   return { ok: true };
@@ -846,12 +846,17 @@ export function normalizeToolCallSSE(
 
   const emitFinish = (c: ReadableStreamDefaultController<Uint8Array>) => {
     if (finishEmitted) return;
+    if (pendingFinish === null) throw new Error("Upstream stream ended without a finish reason");
     flushEvents(c, parser.finish());
     if (!roleSent) {
       send(c, openaiStreamRoleChunk(id, model));
       roleSent = true;
     }
-    send(c, chunk({}, parser.sawToolCall ? "tool_calls" : (pendingFinish ?? "stop")));
+    const finish =
+      parser.sawToolCall && (pendingFinish === null || pendingFinish === "stop")
+        ? "tool_calls"
+        : (pendingFinish ?? "stop");
+    send(c, chunk({}, finish));
     send(c, "data: [DONE]\n\n");
     finishEmitted = true;
   };
@@ -960,8 +965,8 @@ function llamaOutputBudget(): number {
  *   2. Guarantee a generous completion budget. `marina/default` agents send no
  *      `max_tokens` (the agent layer can't see which upstream the proxy will
  *      pick), so without this the reasoning model spends the server-default
- *      budget on `<think>` and returns no tool call. A larger caller-supplied
- *      value is always preserved.
+ *      budget on `<think>` and returns no tool call. Caller-supplied output
+ *      limits and template settings are always preserved.
  * Other providers pass through untouched.
  */
 export function prepareLlamaBody(
@@ -971,11 +976,16 @@ export function prepareLlamaBody(
   if (provider !== "llama") return body;
   const prepared: Record<string, unknown> = {
     ...body,
-    chat_template_kwargs: { enable_thinking: false },
+    chat_template_kwargs: {
+      enable_thinking: false,
+      ...(body.chat_template_kwargs && typeof body.chat_template_kwargs === "object"
+        ? body.chat_template_kwargs
+        : {}),
+    },
   };
   const budget = llamaOutputBudget();
-  const current = typeof body.max_tokens === "number" ? body.max_tokens : 0;
-  if (current < budget) prepared.max_tokens = budget;
+  if (body.max_tokens === undefined && body.max_completion_tokens === undefined)
+    prepared.max_tokens = budget;
   return prepared;
 }
 
@@ -1190,8 +1200,8 @@ export function prepareUpstreamBody(
   return bounded;
 }
 
-/** Output cap for a model the catalog does not know (gpt-4o's, the smallest current limit). */
-const UNKNOWN_OPENAI_OUTPUT_CAP = 16_384;
+/** An unknown model has no established provider ceiling; preserve the caller's limit. */
+const UNKNOWN_OPENAI_OUTPUT_CAP = Number.POSITIVE_INFINITY;
 
 /**
  * The most output tokens an OpenAI model accepts, from pi-ai's catalog

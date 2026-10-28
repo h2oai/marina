@@ -1,7 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { resolveEvidence } from "../../decisions/evidence";
+import { TaskWork } from "../../coordination/task-work";
+import { resolveEvidence, resolveEvidenceSource } from "../../decisions/evidence";
 import { approachAdvice } from "../../forecast/competence";
 import { recordTaskOpinion } from "../../outcomes/live";
 import type { EntityId } from "../../types";
@@ -307,16 +308,28 @@ export function registerCoordinationCommands(engine: Engine): void {
             engine.db?.recordJudgeObservation(row);
             // The same opinion on the outcome path: a judged outcome, measured
             // against the creator's verdict when it comes (`outcome agreement`).
-            if (engine.db)
+            if (engine.db && row.submittedAt !== undefined)
               recordTaskOpinion(engine.db, {
                 taskId: row.taskId,
                 claimant: row.claimantName,
                 judge: row.evaluator,
                 opinion: row.opinion,
+                submittedAt: row.submittedAt,
               });
           }),
         (work) => engine.trackBackground(work),
         () => (engine.db ? approachAdvice(engine.db, "work:task") : undefined),
+        engine.db
+          ? new TaskWork(engine.db, (actor, ref) =>
+              resolveEvidenceSource(engine.db!, actor, ref, {
+                canvas: {
+                  db: engine.db!,
+                  entities: { get: (id: never) => engine.entities.get(id) },
+                  canvasGrants: engine.canvasGrants,
+                },
+              }),
+            )
+          : undefined,
       ),
     );
   }

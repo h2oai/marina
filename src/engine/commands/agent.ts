@@ -644,8 +644,10 @@ async function handleSpawn(
   // competence, an operator-declared open posture, a person's approval of the
   // held spawn, or earned-posture optimistic supervision (pending attestation). The refusal
   // text names the walkable path; the operator escape hatch stays explicit.
+  let spawnGate: ReturnType<typeof checkGateForExecution> | undefined;
   if (deps.db) {
     const gate = checkGateForExecution(deps.db, eid, "agent.spawn");
+    spawnGate = gate;
     if (!gate.ok) {
       ctx.send(
         eid,
@@ -656,7 +658,6 @@ async function handleSpawn(
       );
       return;
     }
-    recordGateExecution(deps.db, eid, "agent.spawn", gate, `agent spawn ${tokens[0] ?? ""}`);
 
     // Lineage depth cap — emergence, not a fork bomb. An agent at or beyond
     // MAX_SPAWN_DEPTH may not spawn further. Operators/humans aren't in the
@@ -749,6 +750,8 @@ async function handleSpawn(
     });
 
     const status = handle.getStatus();
+    if (deps.db && spawnGate)
+      recordGateExecution(deps.db, eid, "agent.spawn", spawnGate, `agent spawn ${name}`);
     deps.logEvent({
       type: "agent_spawn",
       entity: (status.entityId ?? eid) as EntityId,

@@ -41,10 +41,11 @@ import { workScopeFor } from "../learning/work";
 import type { MarinaDB } from "../persistence/database";
 import type { ForecastAnswerRow } from "../persistence/db-markets";
 import type { OutcomeRow } from "../persistence/db-outcomes";
+import { outcomeLearningJournal } from "./journal";
 
 const logger = new Logger();
 
-/** Attempts before a delivery that keeps failing (or never gets a verdict) ends `failed`. */
+/** Attempts before repeated delivery errors end `failed`; unavailable verdicts remain pending. */
 export const MAX_DELIVERY_ATTEMPTS = 5;
 
 export interface DeliveryReport {
@@ -301,10 +302,57 @@ function lessonSink(
  * One delivery pass over pending outcomes (at most `max` per consumer).
  * Safe to run concurrently with producers; each delivery settles once.
  */
-export async function deliverOutcomes(
+const deliveryControllers = new WeakMap<MarinaDB, AbortController>();
+
+/** Stop queued work and cancel between learner stages during bounded shutdown. */
+export function abortDelivery(db: MarinaDB): void {
+  deliveryControllers.get(db)?.abort();
+}
+
+const deliveryPasses = new WeakMap<MarinaDB, Promise<Record<string, DeliveryReport>>>();
+
+export function deliverOutcomes(
   db: MarinaDB,
   opts: { env?: NodeJS.ProcessEnv; max?: number } = {},
 ): Promise<Record<string, DeliveryReport>> {
+  // Producers, periodic jobs and explicit retries share this serialization.
+  // Each queued pass reads pending rows only after its predecessor settles.
+  const previous = deliveryPasses.get(db);
+  const ready = previous
+    ? previous.then(
+        () => undefined,
+        () => undefined,
+      )
+    : Promise.resolve();
+  const run = ready.then(() => deliverPass(db, opts));
+  deliveryPasses.set(db, run);
+  const clear = () => {
+    if (deliveryPasses.get(db) === run) deliveryPasses.delete(db);
+  };
+  void run.then(clear, clear);
+  return run;
+}
+
+/** Wait for every producer, tick and explicit delivery already queued for this database. */
+export async function settleDeliveryPasses(db: MarinaDB): Promise<void> {
+  for (let run = deliveryPasses.get(db); run; run = deliveryPasses.get(db)) await run;
+}
+
+export function deliveryPending(db: MarinaDB): boolean {
+  return deliveryPasses.has(db);
+}
+
+async function deliverPass(
+  db: MarinaDB,
+  opts: { env?: NodeJS.ProcessEnv; max?: number } = {},
+): Promise<Record<string, DeliveryReport>> {
+  let controller = deliveryControllers.get(db);
+  if (!controller) {
+    controller = new AbortController();
+    deliveryControllers.set(db, controller);
+  }
+  const signal = controller.signal;
+  if (signal.aborted) return {};
   const env = opts.env ?? process.env;
   const max = Math.max(1, opts.max ?? 50);
   const report: Record<string, DeliveryReport> = {};
@@ -314,6 +362,7 @@ export async function deliverOutcomes(
   // History: no history configured ⇒ nothing to write (skipped, with the reason).
   const history = historyFromEnv(env);
   for (const o of db.pendingOutcomes("history", max)) {
+    if (signal.aborted) break;
     const t = tally("history");
     if (o.kind === "forecast" && db.isPrivateForecast(forecastId(o.subject) ?? -1)) {
       db.setOutcomeDelivery(o.id, "history", "skipped", "private investigation");
@@ -340,6 +389,7 @@ export async function deliverOutcomes(
     }
     try {
       const state = await deliverHistory(db, o, history);
+      if (signal.aborted) break;
       db.setOutcomeDelivery(
         o.id,
         "history",
@@ -348,6 +398,7 @@ export async function deliverOutcomes(
       );
       t[state]++;
     } catch (err) {
+      if (signal.aborted) break;
       t[retryOrFail(db, o, "history", String(err))]++;
     }
   }
@@ -355,8 +406,10 @@ export async function deliverOutcomes(
   // Lessons: off ⇒ skipped; not armed (a script that never armed it) ⇒ wait.
   const lessonsOff = lessonsMode(env) === "off";
   const learner = lessonsOff ? undefined : armedLearner(db, env);
+  if (signal.aborted) return report;
   const pending = db.pendingOutcomes("lessons", max);
   for (const o of pending) {
+    if (signal.aborted) break;
     const t = tally("lessons");
     if (o.kind === "forecast" && db.isPrivateForecast(forecastId(o.subject) ?? -1)) {
       db.setOutcomeDelivery(o.id, "lessons", "skipped", "private investigation");
@@ -384,22 +437,65 @@ export async function deliverOutcomes(
       t.skipped++;
       continue;
     }
-    // One unit of the shared hourly budget per judged lesson; over it, wait.
-    if (learner.take(1) === 0) {
-      t.waiting++;
-      continue;
-    }
     try {
+      const journal = target.sink.withJournal ? outcomeLearningJournal(db, o.id) : undefined;
+      const judged = journal?.has("verdict") || journal?.has("complete");
+      if (!learner.deps.judge && !judged) {
+        db.setOutcomeDelivery(
+          o.id,
+          "lessons",
+          "pending",
+          "no verdict: no decision backend",
+          undefined,
+          false,
+        );
+        t.waiting++;
+        continue;
+      }
+      // One unit of the shared hourly budget per judged lesson; over it, wait.
+      if (!judged && learner.take(1) === 0) {
+        t.waiting++;
+        continue;
+      }
       const r = await recordOutcome(
-        { ...learner.deps, sink: target.sink, deferUnjudged: true },
+        {
+          ...learner.deps,
+          sink: target.sink,
+          deferUnjudged: true,
+          signal,
+          ...(journal ? { journal } : {}),
+        },
         lessonOutcome(db, o),
       );
-      if (r.deferred) t[retryOrFail(db, o, "lessons", `no verdict: ${r.reason}`)]++;
-      else {
+      if (signal.aborted) break;
+      if (r.deferred) {
+        // Missing configuration and transient judge outages are recoverable.
+        // Preserve the outcome for a later configured run, including the reason.
+        db.setOutcomeDelivery(
+          o.id,
+          "lessons",
+          "pending",
+          `no verdict: ${r.reason}`,
+          undefined,
+          false,
+        );
+        t.waiting++;
+      } else {
         db.setOutcomeDelivery(o.id, "lessons", "done", r.trust);
         t.done++;
       }
     } catch (err) {
+      if (signal.aborted) break;
+      if ((err as { code?: string })?.code === "version_conflict") {
+        db.setOutcomeDelivery(
+          o.id,
+          "lessons",
+          "failed",
+          "needs review: admission target changed after the durable plan; no automatic rebase",
+        );
+        t.failed++;
+        continue;
+      }
       t[retryOrFail(db, o, "lessons", String(err))]++;
     }
   }

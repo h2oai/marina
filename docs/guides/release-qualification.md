@@ -40,6 +40,53 @@ candidate variant IDs and retain the promotion rationale and evidence references
 
 ## Bundled server
 
+### Capability inventory and fresh-world evidence
+
+Generate a code-derived inventory before a capability review:
+
+```bash
+bun run inventory:capabilities /tmp/marina-inventory.json
+bun run qualify:capabilities --inventory /tmp/marina-inventory.json --directory /tmp/marina-qualification --extended
+```
+
+The inventory includes registered commands and forms, built-in room handlers, periodic and
+every-tick work, environment read sites and default expressions, outcome call sites and routing,
+and feature-status entries. Catalog examples are labelled separately from code defaults.
+Pure local default expressions are evaluated with environment keys absent; computed names and
+context-dependent defaults remain explicit review gaps. Static outcome reachability is a candidate
+map, supplemented by raw ledger SQL and module imports, rather than a claim of runtime delivery.
+
+The qualification starts the production server against a new temporary database, exercises real
+WebSocket workflows, checks persisted effects, and restarts the server. It rejects a stale inventory.
+`--extended` adds concrete command fixtures, local Git workspaces, two-client handoffs, actual
+MCP stdio tool calls, child worlds, model work and external-service admissions. It copies the
+inventoried source and runtime data into a separate root without a `.env`; child worlds use that
+root too. Reports check both the original and executed source hashes. Every inventory surface
+remains in the coverage matrix. Help, queue acknowledgements, empty-data probes and prerequisites
+are not successful workflow evidence. Only the concrete exercised arguments are covered; a failed
+variant takes precedence over a passing one. Feature claims and configuration behavior need
+their own evidence beyond command checks.
+Exit status **2** means the complete inventory is not qualified, including when the audit finishes
+with explicit failures or prerequisites. The local profile, accelerated tick interval,
+and other explicit run settings are recorded; these are not default-deployment measurements.
+
+An explicitly selected OpenRouter model can run a second fresh arm after the no-provider arm:
+
+```bash
+bun run qualify:capabilities --inventory /tmp/marina-inventory.json \
+  --directory /tmp/marina-qualification --extended --live --model openrouter/PROVIDER/MODEL \
+  --budget-usd 5 --provider-env .env
+```
+
+Only the OpenRouter credential is forwarded from that file. Both model tiers use the selected
+model; autonomous room spawning and saved-agent respawning are disabled. The world spend cap is
+an admission limit, so provider calls already in flight can settle later. Reports retain the
+post-shutdown world and shared spend ledgers, plus benchmark costs. A `--diagnostic` run permits
+fixture development against a stale inventory and always records a failed provenance check;
+regenerate the inventory and rerun without that flag before citing qualification evidence.
+Keep generated inventories, transcripts, databases and internal review
+findings outside this public repository. Existing databases require separate migration qualification.
+
 ### Standalone terminal executable
 
 `bun run qualify:native` compiles `dist/marina`, copies it into a temporary directory,

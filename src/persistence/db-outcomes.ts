@@ -8,6 +8,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { MemoryError } from "../memory/service-types";
 
 export type OutcomeKind = "forecast" | "task" | "request" | "benchmark";
 export type OutcomeBasis = "mechanical" | "judged";
@@ -75,6 +76,95 @@ export interface DeliveryRow {
 }
 
 const json = (v: unknown) => (v === undefined ? null : JSON.stringify(v));
+
+export function assertOutcomeLearningActive(db: Database, outcomeId: number): void {
+  const state = db
+    .query("SELECT erased_at FROM outcome_learning_state WHERE outcome_id=?")
+    .get(outcomeId) as { erased_at: number | null } | null;
+  if (
+    state?.erased_at != null ||
+    (!state && !db.query("SELECT 1 FROM outcomes WHERE id=?").get(outcomeId))
+  )
+    throw new MemoryError(
+      410,
+      "learning_erased",
+      "Learning delivery was cancelled by explicit erasure",
+    );
+}
+
+export function bindOutcomeLearningSpace(db: Database, outcomeId: number, space: string): void {
+  db.transaction(() => {
+    assertOutcomeLearningActive(db, outcomeId);
+    const active = db
+      .query("SELECT 1 FROM memory_spaces WHERE id=? AND status='active'")
+      .get(space);
+    if (!active)
+      throw new MemoryError(410, "space_forgotten", "Learning space is no longer active");
+    db.run("INSERT OR IGNORE INTO outcome_learning_state(outcome_id) VALUES (?)", [outcomeId]);
+    db.run("INSERT OR IGNORE INTO outcome_learning_spaces(outcome_id,space_id) VALUES (?,?)", [
+      outcomeId,
+      space,
+    ]);
+  })();
+}
+
+/** Opaque journal context cannot be safely separated after explicit forgetting. */
+export function eraseOutcomeLearning(db: Database, ids: number[]): void {
+  for (const id of ids) {
+    db.run(
+      "INSERT INTO outcome_learning_state(outcome_id,erased_at) VALUES (?,?) ON CONFLICT(outcome_id) DO UPDATE SET erased_at=excluded.erased_at",
+      [id, Date.now()],
+    );
+    db.run("DELETE FROM outcome_learning_steps WHERE outcome_id=?", [id]);
+    db.run(
+      "UPDATE outcome_deliveries SET state='skipped',reason='learning cancelled by explicit erasure',updated_at=? WHERE outcome_id=? AND consumer='lessons' AND state='pending'",
+      [Date.now(), id],
+    );
+    db.run(
+      "UPDATE memory_requests SET response=json_object('id',space_id,'retired',1),retired_at=? WHERE request_key LIKE ? AND retired_at IS NULL",
+      [Date.now(), `outcome:${id}:%`],
+    );
+  }
+}
+
+export function eraseSpaceOutcomeLearning(db: Database, space: string): void {
+  eraseOutcomeLearning(
+    db,
+    (
+      db.query("SELECT outcome_id FROM outcome_learning_spaces WHERE space_id=?").all(space) as {
+        outcome_id: number;
+      }[]
+    ).map((r) => r.outcome_id),
+  );
+}
+
+export function getOutcomeLearningStep(
+  db: Database,
+  outcomeId: number,
+  step: string,
+): { value_json: string } | undefined {
+  assertOutcomeLearningActive(db, outcomeId);
+  return (
+    (db
+      .query("SELECT value_json FROM outcome_learning_steps WHERE outcome_id=? AND step=?")
+      .get(outcomeId, step) as { value_json: string } | null) ?? undefined
+  );
+}
+
+export function saveOutcomeLearningStep(
+  db: Database,
+  outcomeId: number,
+  step: string,
+  valueJson: string,
+): void {
+  db.transaction(() => {
+    assertOutcomeLearningActive(db, outcomeId);
+    db.run(
+      "INSERT OR IGNORE INTO outcome_learning_steps(outcome_id,step,value_json,created_at) VALUES (?,?,?,?)",
+      [outcomeId, step, valueJson, Date.now()],
+    );
+  })();
+}
 
 /**
  * Record one resolved subject and a pending delivery per consumer, in one
@@ -200,17 +290,17 @@ export function listOutcomes(db: Database, opts: OutcomeFilter = {}): OutcomeRow
     .all(...args, limit) as OutcomeRow[];
 }
 
-/** Outcomes still pending for `consumer`, oldest first. */
+/** Pending outcomes, least recently attempted first so unavailable rows cannot starve new work. */
 export function pendingOutcomes(db: Database, consumer: string, limit: number): OutcomeRow[] {
   return db
     .query(
       `SELECT o.* FROM outcome_deliveries d JOIN outcomes o ON o.id = d.outcome_id
-       WHERE d.consumer = ? AND d.state = 'pending' ORDER BY d.outcome_id LIMIT ?`,
+       WHERE d.consumer = ? AND d.state = 'pending' ORDER BY d.updated_at, d.outcome_id LIMIT ?`,
     )
     .all(consumer, Math.max(0, limit)) as OutcomeRow[];
 }
 
-/** Settle or retry one delivery; every call counts as one attempt. */
+/** Settle or retry a pending delivery. Unavailable verdicts do not spend the error-attempt budget. */
 export function setOutcomeDelivery(
   db: Database,
   outcomeId: number,
@@ -218,11 +308,12 @@ export function setOutcomeDelivery(
   state: DeliveryState,
   reason?: string,
   now = Date.now(),
+  countAttempt = true,
 ): void {
   db.run(
-    `UPDATE outcome_deliveries SET state = ?, reason = ?, attempts = attempts + 1, updated_at = ?
-     WHERE outcome_id = ? AND consumer = ?`,
-    [state, reason ?? null, now, outcomeId, consumer],
+    `UPDATE outcome_deliveries SET state = ?, reason = ?, attempts = attempts + ?, updated_at = ?
+     WHERE outcome_id = ? AND consumer = ? AND state = 'pending'`,
+    [state, reason ?? null, countAttempt ? 1 : 0, now, outcomeId, consumer],
   );
 }
 

@@ -125,6 +125,7 @@ describe("in-world run labelling", () => {
   test("a crew run always gets a run key; a plain control keeps the internal token", () => {
     expect(runKeyGrant("r1", { benchmark: "smoke" }, { targetKind: "crew" })).toEqual({
       runId: "r1",
+      entityName: "benchmark-r1",
       evalTag: "benchmark=smoke; mode=measure",
     });
     expect(runKeyGrant("r2", { benchmark: "smoke" }, { targetKind: "model" })).toBeUndefined();

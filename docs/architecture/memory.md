@@ -184,7 +184,7 @@ learning instead of losing it.
     judge and hourly budget as `noteOutcome`). The question is read back from the subject as
     private context.
     - An outcome over budget, or with learning not armed, waits.
-    - An outcome with no verdict is retried. After `MAX_DELIVERY_ATTEMPTS` it ends `failed`, with
+    - An outcome with no verdict remains pending without consuming the delivery-error retry budget. Missing judges do not consume the hourly lesson budget. Pending rows rotate by last attempt. Repeated delivery errors end `failed` after `MAX_DELIVERY_ATTEMPTS`, with
       the reason.
   - `history`: one `MARINA_FORECAST_HISTORY` record (`noteResolvedForecast` or
     `noteResolvedRecord`):

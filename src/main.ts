@@ -986,6 +986,7 @@ async function shutdown(code = 0) {
   wsServer.beginDrain();
   mcpServer?.beginDrain();
   telnetServer?.beginDrain();
+  engine.beginDrain();
   engine.stop();
 
   // Stop external adapters first
@@ -998,6 +999,8 @@ async function shutdown(code = 0) {
   await engine.agentRuntime
     .stopAll()
     .catch(logRejection(logger, "main", "stopping agents on shutdown failed"));
+
+  await engine.benchmarkRunner?.stopAll();
 
   await Promise.all([wsServer.drainRequests(), mcpServer?.drainRequests()]);
   await engine.drainCommands();

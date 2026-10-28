@@ -632,7 +632,10 @@ export function benchmarkCommand(deps: {
               { type: (k === "dry-run" ? "bool" : "string") as "bool" | "string" },
             ]),
           );
-          const { values, rest, errors } = parseModifiers(tokens.slice(2), spec);
+          const { values, rest, errors } = parseModifiers(
+            tokens.slice(2).map((token) => (token === "dry-run" ? "--dry-run" : token)),
+            spec,
+          );
           if (errors.length || rest.length) {
             ctx.send(
               input.entity,

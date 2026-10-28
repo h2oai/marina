@@ -325,6 +325,7 @@ export async function extractResponseTextAndUsage(resp: Response): Promise<{
   usage?: CompletionUsage;
   toolCalls?: ResponsesFunctionCall[];
   incomplete?: boolean;
+  finishReason?: string;
   reasoningItems?: Record<string, unknown>[];
 }> {
   const ct = resp.headers.get("content-type") ?? "";
@@ -369,6 +370,7 @@ export async function extractResponseTextAndUsage(resp: Response): Promise<{
     return {
       content: typeof content === "string" ? content : "",
       usage,
+      ...(choice?.finish_reason ? { finishReason: choice.finish_reason } : {}),
       ...(choice?.finish_reason === "length" ? { incomplete: true } : {}),
       ...(choice?.message?.marina_reasoning?.length
         ? { reasoningItems: choice.message.marina_reasoning }
@@ -398,8 +400,9 @@ export async function capturePassthruResponse(
   if (!resp.ok) return;
   const clone = resp.clone();
   try {
-    const text = await extractResponseText(clone);
-    if (text) capturePassthruTranscript(engine, entityId, inboundMessages, text);
+    const { content, finishReason } = await extractResponseTextAndUsage(clone);
+    if (content && finishReason === "stop")
+      capturePassthruTranscript(engine, entityId, inboundMessages, content);
   } catch {
     // Best-effort only — capture must never affect the caller's response.
   }

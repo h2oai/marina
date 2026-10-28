@@ -311,7 +311,7 @@ describe("runHLE against a fake endpoint", () => {
         }
         return Response.json(
           {
-            choices: [{ message: { content } }],
+            choices: [{ finish_reason: "stop", message: { content } }],
             usage: { prompt_tokens: 100, completion_tokens: 20 },
           },
           { headers: { "x-marina-cost-usd": "0.00100000" } },

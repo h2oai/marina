@@ -230,7 +230,6 @@ function extractorFrom(env: NodeJS.ProcessEnv): (system: string, user: string) =
     env.MARINA_FORECAST_ANALYSTS?.split(",")[0]?.trim() ||
     roleModelFromEnv("outcome-judge", env);
   return modelComplete(spec, env, {
-    maxTokens: 400,
     purpose: "outcomes",
     trace: { caller: "outcomes.extractor" },
   }).complete;

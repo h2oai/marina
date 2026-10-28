@@ -75,7 +75,7 @@ describe("dead-target detection", () => {
       fetch(req) {
         if (new URL(req.url).pathname === "/health") return new Promise<Response>(() => {});
         if (hang) return new Promise<Response>(() => {});
-        return Response.json({ choices: [{ message: { content: "A" } }] });
+        return Response.json({ choices: [{ finish_reason: "stop", message: { content: "A" } }] });
       },
     });
     const endpoint = `http://localhost:${s.port}`;

@@ -12,7 +12,7 @@ import {
   TRANSPORT_TRIP,
   withRunKey,
 } from "../src/engine/benchmark-run-keys";
-import { armStack, benchmarkRunConfig } from "../src/engine/benchmark-runner";
+import { armStack, benchmarkRunConfig, runKeyGrant } from "../src/engine/benchmark-runner";
 import { handleModelApi } from "../src/net/model/model-api";
 import { authenticate } from "../src/net/model-api/shared";
 import { createTestEngine } from "./engine-fixture";
@@ -66,6 +66,22 @@ describe("benchmark run keys", () => {
     const config = benchmarkRunConfig({ benchmark: "gsm8k", arm: "On", capUsd: 3 }, {});
     expect(config).toMatchObject({ arm: "on", capUsd: 3 });
     expect(benchmarkRunConfig({ benchmark: "gsm8k" }, {})).not.toHaveProperty("arm");
+  });
+
+  it("binds each learning arm to its own authorized identity and evaluation fence", () => {
+    const a = runKeyGrant("br_a", { benchmark: "smoke", arm: "on" }, { targetKind: "model" })!;
+    const b = runKeyGrant("br_b", { benchmark: "smoke", arm: "on" }, { targetKind: "model" })!;
+    expect(a.entityName).toBe("benchmark-br_a");
+    expect(b.entityName).not.toBe(a.entityName);
+    expect(a.evalTag).toBe("benchmark=smoke; mode=measure");
+    expect(a.stack?.split(",")).toContain("learn");
+    const token = mintRunKey(a);
+    const auth = authenticate(
+      new Request("http://localhost/v1/models", { headers: { Authorization: `Bearer ${token}` } }),
+    );
+    expect(auth).toMatchObject({ auth: { canNameMap: false, boundEntityName: a.entityName } });
+    revokeRunKey(token);
+    expect(lookupRunKey(token)).toBeUndefined();
   });
 });
 

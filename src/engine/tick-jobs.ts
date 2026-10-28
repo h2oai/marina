@@ -129,24 +129,27 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
-  // Channel prune + Flywheel workspace maintenance share the slot: the
-  // prune runs inside the tick, the maintenance is fire-and-forget with its
-  // own warning (category `flywheel`).
+  // Channel prune + sandbox maintenance share the slot. Return the work so
+  // the scheduler prevents overlapping passes and drains it before shutdown.
   s.register({
     name: "channel-prune",
     every: CHANNEL_PRUNE_INTERVAL,
     phase: 0,
     failureMessage: "Channel prune failed",
-    run: () => {
-      for (const provider of host.sandboxes?.list() ?? []) {
-        provider.maintenance?.().catch((error: unknown) => {
-          host.logger.warn("flywheel", "Workspace maintenance failed", {
-            provider: provider.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
-      }
+    run: async () => {
       host.channelManager?.pruneExpiredMessages();
+      await Promise.all(
+        (host.sandboxes?.list() ?? []).map(async (provider) => {
+          try {
+            await provider.maintenance?.();
+          } catch (error) {
+            host.logger.warn("flywheel", "Workspace maintenance failed", {
+              provider: provider.id,
+              error: getErrorMessage(error),
+            });
+          }
+        }),
+      );
     },
   });
 

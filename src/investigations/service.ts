@@ -104,33 +104,33 @@ export class InvestigationService {
         actor: attempt.actor,
         limits: budget.limits,
       });
-      const completion = await this.executor({
-        db: this.db,
-        attempt,
-        observation,
-        child: async (request, key) => {
-          observation.check();
-          const child = this.start(
-            attempt.actor,
-            { ...request, parentAttemptId: attempt.id },
-            key,
-          ).attempt;
-          await this.wait(child.id);
-          return this.db.getInvestigationAttempt(attempt.actor.key, child.id);
-        },
-      });
+      const completion = await observation.observe(() =>
+        this.executor({
+          db: this.db,
+          attempt,
+          observation,
+          child: async (request, key) => {
+            observation.check();
+            const child = this.start(
+              attempt.actor,
+              { ...request, parentAttemptId: attempt.id },
+              key,
+            ).attempt;
+            await this.wait(child.id);
+            return this.db.getInvestigationAttempt(attempt.actor.key, child.id);
+          },
+        }),
+      );
       observation.check();
       const result = completion.result;
       result.capture = {
         status: observation.gaps.size ? "partial" : result.capture.status,
         gaps: [...new Set([...result.capture.gaps, ...observation.gaps])],
       };
-      result.accounting = {
-        knownUsd: Math.max(result.accounting.knownUsd, observation.costUsd()),
-        complete: false,
-        outstanding: observation.outstanding,
-      };
-      observation.settle(result.accounting.knownUsd);
+      result.accounting = observation.accounting(
+        Math.max(result.accounting.knownUsd, observation.costUsd()),
+      );
+      observation.settle(result.accounting.reportedUsd ?? result.accounting.knownUsd);
       this.db.finishInvestigation(attempt.id, generation, {
         ...completion,
         result,

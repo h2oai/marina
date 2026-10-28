@@ -106,7 +106,9 @@ export function normalizeTextualToolCalls(data: unknown): boolean {
     if (toolCalls.length === 0) continue;
     msg.tool_calls = toolCalls;
     msg.content = cleaned.length > 0 ? cleaned : null;
-    (choice as { finish_reason?: string }).finish_reason = "tool_calls";
+    const terminal = choice as { finish_reason?: string | null };
+    // Keep truncation/refusal visible even when a preceding tool block parsed.
+    if (terminal.finish_reason === "stop") terminal.finish_reason = "tool_calls";
     changed = true;
   }
   return changed;
