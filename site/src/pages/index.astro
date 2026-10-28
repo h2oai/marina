@@ -76,7 +76,7 @@ const doors = [
     id: "terminal",
     name: "Terminal",
     blurb: "Start a coding agent in any project folder. It works in the open, alongside everyone else.",
-    code: "bun run setup:cli\ncd ~/my-project && marina .",
+    code: "bun run setup:cli && marina init\ncd ~/my-project && marina",
   },
   {
     id: "mcp",
@@ -166,8 +166,9 @@ const truths = [
           </div>
           <div class="mp-install">
             <pre id="install-cmd">git clone https://github.com/h2oai/marina
-cd marina && bun install
-bun run dashboard:build && bun run start</pre>
+cd marina && bun install && bun run dashboard:build
+bun run setup:cli && marina init
+marina start   # or: cd ~/my-project && marina</pre>
             <button type="button" class="mp-copy" data-copy="install-cmd" aria-label="Copy install commands">Copy</button>
           </div>
         </div>

@@ -1,6 +1,9 @@
 # Model API
 
-Use Marina as an OpenAI-compatible LLM endpoint. When your tools send requests, agents inside the world respond — with full access to their memory, coordination tools, and world context.
+Use Marina as an OpenAI-compatible LLM endpoint. When an agent inside the world serves the
+route (the `model` channel for `marina`, or `model-<name>` for `marina:<name>`), that agent
+answers — with its memory, coordination tools and world context. Otherwise Marina proxies the
+request directly to a configured provider.
 
 ## Direct upstream defaults
 
@@ -124,7 +127,9 @@ creates a key once, keeps it next to the database (`marina.db.local-api-key`, mo
 a ready-to-paste line at startup:
 
 ```
-  Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:3300/v1 OPENAI_API_KEY=mk_local_…
+  Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:3300/v1 OPENAI_API_KEY="$(cat '/path/to/marina.db.local-api-key')"
+
+The key itself is never printed; the line reads it from its file.
 ```
 
 Requests still need that bearer token; the loopback MCP transport is unaffected. Shared and public
@@ -401,8 +406,7 @@ The caller's own system text always comes **first** and byte-identical; the memo
 volatile tail. That ordering is what lets provider prefix caches (and the Anthropic breakpoints
 below) keep the stable prompt cached while the relevance-gated memory block changes.
 
-The Ollama routes and `/v1/responses` proxy upstream in passthru mode (previously they only routed
-to world agents). Ollama passthru always asks the upstream for a completed answer; a client that
+The Ollama routes and `/v1/responses` also proxy upstream in passthru mode. Ollama passthru always asks the upstream for a completed answer; a client that
 requested Ollama's default streaming receives it as a buffered ndjson stream. `/v1/responses`
 passthru translates Responses `tools`/`tool_choice` and `function_call`/`function_call_output` items
 to chat tools upstream and renders upstream `tool_calls` as `function_call` output items (see
@@ -426,8 +430,8 @@ The caller is mapped to a Marina entity fail-closed (`src/net/model/passthru-con
 Injection is **on** for identified callers under the `local` trust profile. Elsewhere it is
 opt-in: the entity property `passthruContext: true`, or — for bound keys only —
 `X-Marina-Context: on`. A bound key can opt a single request out with `X-Marina-Context: off`;
-name-mapped targets ignore the header entirely (their stored consent stands). The old behaviour
-where a client-supplied `[marina:shared-world-context]` marker suppressed injection is gone.
+name-mapped targets ignore the header entirely (their stored consent stands). A
+client-supplied `[marina:shared-world-context]` marker does not suppress injection.
 
 ### What is injected, in what order
 
@@ -746,21 +750,28 @@ when no turn reported tokens.
 
 ## Troubleshooting
 
-**"No agent available"** — No agent is connected to the target channel. Start a provider agent.
+**`503 No agents online for model "…"`** — No agent is connected to the target channel. Start a
+provider agent, or configure a provider key so Marina can proxy directly.
 
-**Timeout after 30 seconds** — The agent is slow to respond. Check that your external LLM provider is reachable.
+**`503 No upstream LLM providers configured`** — Add a provider key (`marina init`, the provider's
+environment variable, or **Admin → Keys**), then run `readiness providers`.
 
-**401 Unauthorized** — Configure `MODEL_API_KEYS` and send a matching bearer token. For local
-development only, restart with `MARINA_OPEN_API=true`; merely leaving the key list unset does not
-open the API.
+**Timeout** — A routed request waits up to `MODEL_REQUEST_TIMEOUT_MS` (default 10 minutes).
+Check that the answering agent's LLM provider is reachable.
+
+**401 Unauthorized** — Send a matching bearer token: under the local profile the generated key in
+`marina.db.local-api-key` (its path is printed at startup), otherwise a `MODEL_API_KEYS` secret.
+For local development only, `MARINA_OPEN_API=true` skips caller auth; merely leaving the key list
+unset does not open the API.
 
 ---
 
 ## Room Agent Routing
 
-Room agents (spawned by world rooms) use model `marina/default` which routes through the local model API. The flow:
+Room agents (spawned by world rooms) use the `room` model role — `marina/cheap` unless configured
+otherwise — which routes through the local model API. The flow:
 
-1. Room agent calls `http://localhost:3300/v1/chat/completions` with model "default" (with its tools)
+1. Room agent calls `http://localhost:3300/v1/chat/completions` with its tier model (with its tools)
 2. Because the request carries the internal token, the model API **always** proxies it straight to
    the configured upstream (ANTHROPIC_API_KEY, OPENAI_API_KEY, … or the pinned passthru model) —
    in every endpoint mode. Marina's own agents are consumers of the upstream, never participants

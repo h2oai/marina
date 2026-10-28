@@ -93,6 +93,19 @@ export function worldMenu(dir = WORLDS_DIR): [string, string][] {
   return listWorldSlugs(dir).map((slug) => [slug, WORLD_BLURBS[slug] ?? readWorldName(slug, dir)]);
 }
 
+/** One line per provider in the setup menu. */
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Claude (Opus, Sonnet, Haiku)",
+  openai: "GPT-6 Luna, Sol, Astra",
+  google: "Gemini 3.1",
+  openrouter: "one key, models from every vendor",
+  groq: "gpt-oss-120b (fast)",
+  together: "Together AI hosted models",
+  nebius: "Nebius Token Factory hosted models",
+};
+/** Menu order: the providers most people already have a key for come first. */
+const PROVIDER_ORDER = ["anthropic", "openai", "google", "openrouter", "groq"];
+
 const PROVIDERS: { name: string; env: string; url: string; model: string; authHeader: string }[] = [
   ...Object.entries(HOSTED_PROVIDERS).map(([name, spec]) => ({
     name,
@@ -208,6 +221,40 @@ export function spendCapNotice(cfg: Record<string, string>): string {
   return `${limit} Change it with MARINA_DAILY_SPEND_CAP_USD=<usd> in .env (0 = no cap). Seeded agents start on boot on a local install with a provider key; set AGENT_AUTORESPAWN=false to keep them off.`;
 }
 
+/**
+ * The settings for a local OpenAI-compatible runtime at `baseUrl`: Ollama
+ * (port 11434) has its own variables; anything else (llama.cpp, LM Studio,
+ * vLLM, SGLang) goes through the llama ones.
+ */
+export function localRuntimeSettings(
+  baseUrl: string,
+  model: string,
+  contextWindow?: string,
+): Record<string, string> {
+  const url = baseUrl.replace(/\/+$/, "");
+  if (/:11434(\/|$)/.test(url)) return { OLLAMA_BASE_URL: url, MARINA_DEFAULT_OLLAMA_MODEL: model };
+  return {
+    LLAMA_BASE_URL: url,
+    MARINA_DEFAULT_LLAMA_MODEL: model,
+    ...(contextWindow ? { LLAMA_CONTEXT_WINDOW: contextWindow } : {}),
+  };
+}
+
+/** The model ids a local runtime serves (`GET <base>/models`), or why it could not be read. */
+async function localModels(baseUrl: string): Promise<{ models: string[] } | { error: string }> {
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/models`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    const body = (await res.json()) as { data?: { id?: string }[] };
+    const models = (body.data ?? []).map((m) => m.id).filter((id): id is string => !!id);
+    return models.length ? { models } : { error: "it serves no models yet" };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export async function runInit(args: string[] = []): Promise<void> {
@@ -271,12 +318,20 @@ export async function runInit(args: string[] = []): Promise<void> {
     return;
   }
   const output = new MutableOutput(process.stdout);
-  const rl = readline.createInterface({ input: process.stdin, output });
+  // On a terminal readline must own the echo (raw mode): otherwise the terminal
+  // itself echoes every key and muting `output` hides nothing.
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output,
+    terminal: !!process.stdin.isTTY && !!process.stdout.isTTY,
+  });
   const cleanup = () => {
     rl.close();
     process.exit(0);
   };
   process.on("SIGINT", cleanup);
+  // In raw mode Ctrl+C reaches readline, not the process.
+  rl.on("SIGINT", cleanup);
   const theme = themeFor(process.stdout.isTTY ? process.stdout : undefined);
   const ui = { ...initStyles(theme), styled: theme.level > 0 };
 
@@ -329,68 +384,49 @@ export async function runInit(args: string[] = []): Promise<void> {
     }
   }
 
-  // 1. Instance name
-  cfg.MARINA_NAME = await ask("\nName your instance [Marina]: ", cfg.MARINA_NAME ?? "Marina");
-
-  // 2. World selection — derived from worlds/*.ts so the menu never goes stale.
-  const worlds = worldMenu();
-  console.log(`\n${ui.section("Choose a world:")}`);
-  const pad = Math.max(...worlds.map(([slug]) => slug.length)) + 2;
-  for (let i = 0; i < worlds.length; i++) {
+  // 1. A model: the one thing every surface needs. Asked first.
+  console.log(`\n${ui.section("── Connect a model ──")}`);
+  console.log(
+    ui.muted("Agents need a model. Paste a provider key, or point at a model on this machine."),
+  );
+  const menu = [
+    ...PROVIDER_ORDER.map((name) => PROVIDERS.find((p) => p.name === name)!).filter(Boolean),
+    ...PROVIDERS.filter((p) => !PROVIDER_ORDER.includes(p.name)),
+  ];
+  const localChoice = String(menu.length + 1);
+  const skipProvider = String(menu.length + 2);
+  console.log("");
+  for (let i = 0; i < menu.length; i++) {
+    const p = menu[i]!;
     console.log(
-      ui.choice(`${String(i + 1).padStart(2)}.`, worlds[i]![0].padEnd(pad), `— ${worlds[i]![1]}`),
+      ui.choice(`${i + 1}.`, p.name.padEnd(14), `— ${PROVIDER_LABELS[p.name] ?? p.name}`),
     );
   }
-  const worldInput = await ask(`\nWorld [${cfg.MARINA_WORLD ?? "1"}]: `, cfg.MARINA_WORLD ?? "1");
-  const worldIdx = Number.parseInt(worldInput, 10);
-  const worldMatch =
-    worldIdx >= 1 && worldIdx <= worlds.length
-      ? worlds[worldIdx - 1]![0]
-      : (worlds.find(([n]) => n === worldInput.toLowerCase())?.[0] ?? "default");
-  cfg.MARINA_WORLD = worldMatch;
-
-  // 3. Admin name — optional on a local install (every loopback login is
-  // already sovereign); it matters under shared/public or MARINA_AUTONOMY=guarded.
   console.log(
-    "\nA local install (loopback bind, no MARINA_AUTH) needs no admin: every loopback login is",
+    ui.choice(
+      `${localChoice}.`,
+      "local".padEnd(14),
+      "— Ollama, llama.cpp, LM Studio, vLLM (no key)",
+    ),
   );
-  console.log("sovereign. Set one for shared/public profiles or MARINA_AUTONOMY=guarded.");
-  cfg.MARINA_ADMINS = await ask(
-    "Admin name (auto-promoted to rank 9) []: ",
-    cfg.MARINA_ADMINS ?? "",
-  );
-
-  // 4. LLM provider
-  console.log(`\n${ui.section("── Optional: Connect an LLM Provider ──")}\n`);
-  for (let i = 0; i < PROVIDERS.length; i++) {
-    const labels = [
-      "Together AI hosted models",
-      "Nebius Token Factory hosted models",
-      "Claude (Opus, Sonnet, Haiku)",
-      "GPT-6 Luna, Sol, Astra",
-      "Gemini 3.1",
-      "gpt-oss-120b (fast)",
-      "Multi-provider routing",
-    ];
-    console.log(ui.choice(`${i + 1}.`, PROVIDERS[i]!.name.padEnd(14), `— ${labels[i]}`));
-  }
-  const skipProvider = String(PROVIDERS.length + 1);
-  console.log(ui.choice(`${skipProvider}.`, "skip".padEnd(14), "— No LLM, explore only"));
+  console.log(ui.choice(`${skipProvider}.`, "skip".padEnd(14), "— no model for now, explore only"));
 
   let chosenProvider: (typeof PROVIDERS)[number] | null = null;
-  const provInput = await ask(`\nProvider [${skipProvider}]: `, skipProvider);
+  let localLabel: string | undefined;
+  const provInput = (await ask("\nModel [1]: ", "1")).toLowerCase();
   const provIdx = Number.parseInt(provInput, 10);
-  if (provIdx >= 1 && provIdx <= PROVIDERS.length) {
-    chosenProvider = PROVIDERS[provIdx - 1]!;
-  } else if (provInput !== skipProvider && provInput.toLowerCase() !== "skip") {
-    chosenProvider = PROVIDERS.find((p) => p.name === provInput.toLowerCase()) ?? null;
+  const wantsLocal = provInput === localChoice || provInput === "local";
+  if (provIdx >= 1 && provIdx <= menu.length) {
+    chosenProvider = menu[provIdx - 1]!;
+  } else if (!wantsLocal && provInput !== skipProvider && provInput !== "skip") {
+    chosenProvider = PROVIDERS.find((p) => p.name === provInput) ?? null;
   }
 
   let providerOk = false;
   if (chosenProvider) {
     while (!providerOk) {
       console.log(ui.muted("\n(Input will not be displayed)"));
-      const key = await askHidden("Paste your API key: ");
+      const key = await askHidden(`Paste your ${chosenProvider.name} API key: `);
       if (!key) {
         console.log("Skipped.");
         chosenProvider = null;
@@ -411,26 +447,95 @@ export async function runInit(args: string[] = []): Promise<void> {
         providerOk = true;
       }
     }
+  } else if (wantsLocal) {
+    console.log(
+      ui.muted(
+        "\nThe runtime must already be running. Ollama listens on http://localhost:11434/v1,\nllama.cpp on http://localhost:8080/v1, LM Studio on http://localhost:1234/v1.",
+      ),
+    );
+    while (!providerOk) {
+      const url = await ask("Base URL [http://localhost:11434/v1]: ", "http://localhost:11434/v1");
+      process.stdout.write("Looking for models... ");
+      const found = await localModels(url);
+      if ("error" in found) {
+        console.log(ui.fail(`✗ ${url}: ${found.error}`));
+        const retry = await ask("Retry? (Y/n): ", "y");
+        if (retry.toLowerCase() === "n") break;
+        continue;
+      }
+      console.log(ui.ok(`✓ ${found.models.length} found.`));
+      const shown = found.models.slice(0, 20);
+      for (let i = 0; i < shown.length; i++) console.log(ui.choice(`${i + 1}.`, shown[i]!, ""));
+      const pick = await ask("Model [1]: ", "1");
+      const pickIdx = Number.parseInt(pick, 10);
+      const model =
+        pickIdx >= 1 && pickIdx <= shown.length ? shown[pickIdx - 1]! : pick || shown[0]!;
+      // Ollama reports its window; other servers are asked only when llama.cpp's probe fails.
+      const ollama = /:11434(\/|$)/.test(url.replace(/\/+$/, ""));
+      const window = ollama
+        ? ""
+        : await ask("Context window in tokens (blank: ask the server): ", "");
+      Object.assign(cfg, localRuntimeSettings(url, model, window));
+      localLabel = `${model} (local)`;
+      providerOk = true;
+    }
   }
+
+  // 2. Server settings: what `marina start` and every folder session share.
+  console.log(`\n${ui.section("── Server settings (Enter keeps each default) ──")}`);
+  cfg.MARINA_NAME = await ask("\nName your instance [Marina]: ", cfg.MARINA_NAME ?? "Marina");
+
+  // World selection — derived from worlds/*.ts so the menu never goes stale.
+  const worlds = worldMenu();
+  console.log(`\n${ui.section("Choose a world:")}`);
+  const pad = Math.max(...worlds.map(([slug]) => slug.length)) + 2;
+  for (let i = 0; i < worlds.length; i++) {
+    console.log(
+      ui.choice(`${String(i + 1).padStart(2)}.`, worlds[i]![0].padEnd(pad), `— ${worlds[i]![1]}`),
+    );
+  }
+  const worldInput = await ask(`\nWorld [${cfg.MARINA_WORLD ?? "1"}]: `, cfg.MARINA_WORLD ?? "1");
+  const worldIdx = Number.parseInt(worldInput, 10);
+  const worldMatch =
+    worldIdx >= 1 && worldIdx <= worlds.length
+      ? worlds[worldIdx - 1]![0]
+      : (worlds.find(([n]) => n === worldInput.toLowerCase())?.[0] ?? "default");
+  cfg.MARINA_WORLD = worldMatch;
+
+  // Admin name — optional on a local install (every loopback login is already
+  // sovereign); it matters under shared/public or MARINA_AUTONOMY=guarded.
+  console.log(
+    ui.muted(
+      "\nOn your own machine you are already the operator; leave this blank. Name an admin\nwhen other people can reach this server (MARINA_ADMINS).",
+    ),
+  );
+  cfg.MARINA_ADMINS = await ask("Admin name []: ", cfg.MARINA_ADMINS ?? "");
 
   // 5. Summary. Telnet is off by default (plaintext, unauthenticated) — only
   // list its port when the operator has actually enabled it.
-  const providerLabel = providerOk && chosenProvider ? `${chosenProvider.name} ✓` : "none";
+  const providerLabel =
+    providerOk && chosenProvider ? `${chosenProvider.name} ✓` : (localLabel ?? "none");
   const wsPort = process.env.WS_PORT?.trim() || "3300";
   const mcpPort = process.env.MCP_PORT?.trim() || String((Number(wsPort) || 3300) + 1);
   const telnetPort = process.env.TELNET_PORT?.trim();
   const ports = `${wsPort} (ws) / ${mcpPort} (mcp)`;
-  const row = (label: string, value: string) => `│ ${label.padEnd(10)}${value.padEnd(21)}│`;
-  const summary = [
-    "┌─────────────────────────────────┐",
-    row("Instance:", cfg.MARINA_NAME!),
-    row("World:", cfg.MARINA_WORLD!),
-    row("Admin:", cfg.MARINA_ADMINS || "(none)"),
-    row("LLM:", providerLabel),
-    row("Ports:", ports),
+  const rows: [string, string][] = [
+    ["Instance:", cfg.MARINA_NAME!],
+    ["World:", cfg.MARINA_WORLD!],
+    ["Admin:", cfg.MARINA_ADMINS || "(none)"],
+    ["Model:", providerLabel],
+    ["Ports:", ports],
+    ...(telnetPort && Number(telnetPort) > 0 ? [["Telnet:", telnetPort] as [string, string]] : []),
   ];
-  if (telnetPort && Number(telnetPort) > 0) summary.push(row("Telnet:", telnetPort));
-  summary.push("└─────────────────────────────────┘");
+  const width = Math.max(...rows.map(([, value]) => [...value].length)) + 10;
+  const summary = [
+    `┌${"─".repeat(width + 2)}┐`,
+    ...rows.map(
+      ([label, value]) =>
+        `│ ${label.padEnd(10)}${value}${" ".repeat(width - 10 - [...value].length)} │`,
+    ),
+    `└${"─".repeat(width + 2)}┘`,
+  ];
   console.log(`\n${summary.join("\n")}`);
   if (providerOk) console.log(`\n${spendCapNotice(cfg)}`);
 
@@ -440,7 +545,20 @@ export async function runInit(args: string[] = []): Promise<void> {
   saveChanges(cfg);
   console.log(`Writing ${ENV_PATH}... ✓`);
 
-  // 7. Offer to start
+  // 7. What next. The user-wide settings serve every folder: say how to use
+  // them rather than starting a server in this terminal.
+  if (userWide) {
+    rl.close();
+    console.log(
+      [
+        "",
+        "Next:",
+        "  cd <your project> && marina      code in that folder (its dashboard link is on the first screen)",
+        `  marina start                      the server and dashboard at http://localhost:${wsPort}`,
+      ].join("\n"),
+    );
+    return;
+  }
   const start = await ask("\nStart Marina now? (Y/n): ", "y");
   rl.close();
   if (start.toLowerCase() !== "n") {

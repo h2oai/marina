@@ -1,6 +1,6 @@
 # Autonomous Quality Loops
 
-Marina can now learn from completed work and reconcile conflicting shared knowledge without waiting
+Marina learns from completed work and reconciles conflicting shared knowledge without waiting
 for continuous operator scoring. These loops preserve agent autonomy: they change what receives
 attention and how evidence is represented, but they do not prescribe an agent's plan or conclusions.
 
@@ -168,10 +168,10 @@ or Ops inbox also refreshes cases, making new disagreements visible without wait
 hourly interval. Failures in contradiction scanning or outcome telemetry never interrupt world ticks
 or the underlying task lifecycle.
 
-These records are durable and exportable. Schema version 62 adds `contradiction_cases`,
+These records are durable and exportable: `contradiction_cases`,
 `productivity_sessions`, crew invitations, privacy-safe `primitive_usage`, prompt token/cost and
-trust-lineage attribution, and automatic attention counters on agent configuration. Do not commit
-generated `marina.db*` files; use Marina's export and snapshot tooling for state transfer.
+trust-lineage attribution, and automatic attention counters on agent configuration are tables in the
+world database. Do not commit generated `marina.db*` files; use Marina's export and snapshot tooling for state transfer.
 
 ## Execution and exploration evidence
 

@@ -32,7 +32,8 @@ dialog to contain focus and return it on dismissal.
 The only lint exceptions are listed in
 [`dashboard/accessibility-exceptions.json`](../../dashboard/accessibility-exceptions.json).
 They disable `useMediaCaption` only in the uploaded audio and video renderers.
-Marina's asset contract currently has no caption or transcript field. A blank track
+Marina's asset contract has no timed caption track (an asset's `caption` is a short
+description, and a stored transcript is indexed text, not a track). A blank track
 would not make the content accessible. These exceptions describe a content limitation,
 not a claim of WCAG conformance. Publish captioned video and add a text node containing
 a transcript or equivalent description for audio/video content.

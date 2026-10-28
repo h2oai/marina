@@ -43,8 +43,9 @@ durable principal. It does not grant that helper general access to the space.
 The librarian finds evidence and explains uncertainty. The reflector compares
 observed attempts and outcomes to propose a reusable lesson. The evaluator checks
 the support and limitations of a claim. You choose whether to adopt their proposals
-using ordinary versioned memory operations. No automatic verification, ratification,
-standing credit, or destructive pruning occurs.
+using ordinary versioned memory operations. Asking for help causes no automatic
+verification, ratification, or destructive pruning; a helper earns standing only when
+you adopt its proposal (see [Adopt a proposal](#adopt-a-proposal)).
 
 ## Curator duties
 
@@ -207,7 +208,9 @@ become `depends_on`/`dependency_versions`, source citations `source_ids`, and th
 record is `metadata.derived_from`. Adopting the same job into the same space twice returns
 the same record. The helper earns `assistance_adopted` standing (1.0; delegated trees split
 0.6 root / 0.4 shared among answered contributors); a confirmed abstention earns 0.25; an
-adopted record later superseded by `memory resolve` debits 0.5.
+adopted record later superseded by `memory resolve` debits 0.5. A person's adoption credits any
+other helper, its own agents included; any other requester credits only a helper outside its own
+spawn lineage.
 
 Institutional spaces (authorized publications from `guide`, `orchestration:*`, `tradition:*`; owned
 by the `guide` system principal, readable by everyone) accept only ratifications: standing

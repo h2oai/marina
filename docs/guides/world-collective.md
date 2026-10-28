@@ -86,4 +86,4 @@ The child's `readiness` shows today's spend; at the cap its model calls are refu
   recovered from the database.
 - This is local process isolation, not a container, VM, tenant boundary, or cross-host federation.
 - Cross-world memory transfer remains explicit. Do not treat matching display names as federated
-  identity; principal IDs are issuer/world scoped until signed federation exists.
+  identity; principal IDs are issuer/world scoped.

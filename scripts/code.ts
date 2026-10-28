@@ -25,20 +25,28 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { diffStat } from "../src/coding/unified-diff";
 import { formatAge } from "../src/engine/commands/format-duration";
 import { waitForDatabaseLease } from "../src/persistence/database-lease";
-import { IS_COMPILED } from "../src/runtime-paths";
+import { IS_COMPILED, MARINA_ROOT } from "../src/runtime-paths";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
 import { MARINA_VERSION } from "../src/version";
 import { applyCliEnvironment, userMarinaDir } from "./cli-env";
 import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
-import { inferCodeDefaultModel } from "./code-model";
+import { inferCodeDefaultModel, localRuntimeFor } from "./code-model";
 import { installedCodingAdapters } from "./code-native";
 import { styleStartupLine, themeFor } from "./code-style";
 import { formatCodePerception, terminalText } from "./code-terminal";
@@ -489,28 +497,67 @@ function say(line: string): void {
 }
 
 /** The interactive first page: the shared welcome card (`term-frame.ts`) on stderr. */
-function printWelcome(session: { dir: string; agentLabel: string; resumed?: string }): void {
+/**
+ * Where this session's dashboard is, when the bundle is there to serve. The
+ * folder session runs the whole server: the browser sees the same world.
+ */
+function dashboardLink(theme: ReturnType<typeof themeFor>, port: number): string[] {
+  const muted = theme.fg("muted");
+  if (existsSync(join(MARINA_ROOT, "dist/dashboard/index.html")))
+    return [
+      theme.fg("info")(`http://localhost:${port}`),
+      muted("/dashboard opens it signed in as you"),
+    ];
+  // A checkout builds it once; the compiled binary has no bundle to point at.
+  return IS_COMPILED ? [] : [muted("bun run dashboard:build enables it")];
+}
+
+/** A path under the home folder, written from `~`. */
+function tilde(path: string): string {
+  const home = homedir();
+  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+}
+
+function printWelcome(session: {
+  dir: string;
+  agentLabel: string;
+  port: number;
+  resumed?: string;
+  /** No provider key and no local runtime: say how to add one, first. */
+  noModel?: boolean;
+}): void {
   const stream = process.stderr;
   const theme = themeFor(stream);
   const muted = theme.fg("muted");
-  let user = "";
+  let user = process.env.USER || process.env.LOGNAME || "";
   try {
-    user = userInfo().username;
+    user ||= userInfo().username;
   } catch {
     // allow-empty-catch: no passwd entry (containers); the greeting goes without a name.
   }
-  const home = homedir();
-  const full = session.dir.startsWith(`${home}/`)
-    ? `~${session.dir.slice(home.length)}`
-    : session.dir;
+  // Bun reports "unknown" when it cannot find one; a greeting without a name reads better.
+  if (user === "unknown") user = "";
+  const full = tilde(session.dir);
   // A deep path keeps its end: the folder is the part that says where you are.
   const where = full.length > 40 ? `…${full.slice(-39)}` : full;
+  const dashboard = dashboardLink(theme, session.port);
   const card = welcomeCard(
     {
       title: `Marina ${MARINA_VERSION}`,
       greeting: `${session.resumed ? "Welcome back" : "Welcome"}${user ? `, ${user}` : ""}!`,
       details: [muted(session.agentLabel), theme.fg("info")(where)],
       sections: [
+        ...(session.noModel
+          ? [
+              {
+                title: theme.fg("warning")("Connect a model first"),
+                lines: [
+                  ...tipLines(theme, [["marina init", "add a provider key or a local model"]]),
+                  muted(`or set a key in ${tilde(join(userMarinaDir(), ".env"))}, then restart`),
+                ],
+              },
+            ]
+          : []),
         {
           title: "Tips for getting started",
           lines: tipLines(theme, [
@@ -524,6 +571,7 @@ function printWelcome(session: { dir: string; agentLabel: string; resumed?: stri
           title: session.resumed ? "Resuming" : "Session",
           lines: [muted(session.resumed?.replace(/^Resuming /, "") ?? "New session.")],
         },
+        ...(dashboard.length ? [{ title: "Dashboard", lines: dashboard }] : []),
       ],
     },
     theme,
@@ -710,8 +758,15 @@ export async function runCodeSession(
 
   // Zero-config: with no LLM provider key, name the one missing thing in a single
   // line and point at `marina init` — never a wall of text, never a false "ready".
-  const noProviderKey = harness.agent === "marina" && defaultModel === undefined;
-  if (noProviderKey) {
+  const localRuntime = localRuntimeFor(process.env);
+  const noProviderKey =
+    harness.agent === "marina" && defaultModel === undefined && localRuntime === undefined;
+  // An interactive terminal gets the welcome card (after Code Mode says
+  // whether this is a new session); scripts and --tui keep the plain lines.
+  const card =
+    opts.print === undefined && !opts.tui && !!process.stdin.isTTY && !!process.stderr.isTTY;
+  // The card says it in its own section; scripts get the one line.
+  if (noProviderKey && !card) {
     console.error(
       `No LLM provider key — set one (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, …) in ${join(userMarinaDir(), ".env")} or run \`marina init\`.`,
     );
@@ -724,11 +779,12 @@ export async function runCodeSession(
   const agentLabel =
     harness.agent !== "marina"
       ? `${harness.agent} (${harness.model ?? "its default model"})`
-      : (defaultModel ?? "default model");
-  // An interactive terminal gets the welcome card (after Code Mode says
-  // whether this is a new session); scripts and --tui keep the plain lines.
-  const card =
-    opts.print === undefined && !opts.tui && !!process.stdin.isTTY && !!process.stderr.isTTY;
+      : (defaultModel ??
+        (localRuntime
+          ? `${localRuntime.name} (local)`
+          : noProviderKey
+            ? "no model yet"
+            : "default model"));
   if (!card) say(`Starting Marina in ${folderName}…`);
   if (verbose) say(fresh ? "DB · ephemeral (deleted on exit)" : `DB · ${dbPath}`);
 
@@ -982,7 +1038,7 @@ export async function runCodeSession(
     }
     break;
   }
-  if (card) printWelcome({ dir, agentLabel, resumed });
+  if (card) printWelcome({ dir, agentLabel, port, resumed, noModel: noProviderKey });
 
   // Negotiate the host-exec posture with the server. The server independently
   // re-verifies the operator is a loopback-local sovereign before honoring this
@@ -996,6 +1052,7 @@ export async function runCodeSession(
   sessionConsole = new CodeConsole({
     tui: opts.tui,
     welcomed: card,
+    noModel: noProviderKey,
     agent,
     url: `http://localhost:${port}`,
     root: dir,

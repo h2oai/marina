@@ -18,6 +18,7 @@ scripts print their own `--help`; the linked guide is the long form.
 | `setup:cli` | Put `marina` on your `PATH`: links it into `~/.bun/bin` or `~/.local/bin`, whichever is already on `PATH`; with neither, links into `~/.bun/bin` and prints the line for your shell (`--force` replaces another link). |
 | `build:native` | Compile the `marina` dispatcher into a standalone `dist/marina` executable. See [Compatibility](compatibility.md). |
 | `build:sdk` | Build the `@marina/agent-sdk` package into `src/sdk/dist`. |
+| `pack:sdk` | Build the SDK and write an installable tarball to `dist/sdk/` (install it with `bun add <path>.tgz`; no registry needed). |
 | `create:agent <new-dir>` | Scaffold a minimal SDK agent project in a new directory (never overwrites files). |
 | `monitor` | Outside health monitor: checks `/health`, alerts once per outage (`--desktop`, webhook), pings a heartbeat URL while healthy, installs nothing on the host. See [Operations](../operations.md). |
 | `recovery create\|restore\|unlock` | Create or restore a private recovery bundle, or release the lease of a stopped database. See [Recovery](recovery.md). |
@@ -41,6 +42,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `futurex fetch\|run\|backtest\|watch\|schedule\|learn\|status` | FutureX weekly prediction benchmark: download a batch, forecast every row and write the submission file, backtest resolved rows, learn from resolved weeks; `watch --answer late` answers each row once near its cutoff, and `schedule` prints (never installs) a systemd timer for it. Never submits. See [FutureX](futurex.md). |
 | `swebench export\|subset\|run\|score\|file` | SWE-bench through the one-shot coding entry point: seeded subsets, runs per arm and replicate, scoring with the official harness, filing to the benchmark ledger. See [SWE-bench](swebench.md). |
 | `browsecomp-plus run\|compare` | BrowseComp-Plus over a local corpus: runs formations with a hard `--max-usd` stop, judges answers, and compares two arms. See [BrowseComp-Plus](browsecomp-plus.md). |
+| `tau2 summary\|convert` | Summarize τ²-bench result files and convert them into a harness-shaped file for `benchmark:import` (`--require-clean` refuses runs with infrastructure errors). See [τ²-bench](tau2.md). |
 | `longmemeval summary\|convert` | Summarize LongMemEval-V2 run folders and convert them into a ledger file. See [LongMemEval](longmemeval.md). |
 | `arena:research capture\|run\|score` | Checkpointed arena research qualification on frozen inputs. Never signs or submits. See [Arena](arena.md). |
 | `arena:portfolio` | Shadow comparison of arena formations on a disposable database. No signing, submission or route writes. See [Arena](arena.md). |
@@ -113,6 +115,7 @@ budget flag. Write their reports outside the public checkout.
 | `qualify:autonomy` / `qualify:evolution` | Autonomy and native-evolution qualification from readiness evidence. In-world views: `readiness autonomy`, `evolve qualify`. See [Autonomous quality loops](autonomous-quality-loops.md). |
 | `trial:evolution` / `trial:evolution:local` | Run an evolution trial against a server, or against a disposable local one. See [Native evolution](native-evolution.md). |
 | `qualify:flywheel` | Live Flywheel sandbox qualification. See [Flywheel live qualification](../integrations/flywheel-live-qualification.md). |
+| `inventory:capabilities <out.json>` / `qualify:capabilities` | Write an inventory of registered commands, room handlers, tick work and environment reads, then exercise it on a fresh world (`--inventory`, `--directory`, `--extended`; `--live` with `--model` and `--budget-usd` spends). See [Release qualification](release-qualification.md). |
 | `qualify:release` | The whole local release gate: SBOM, versions, typecheck, lint, tests, dashboard, browser, site, audit. See [Release qualification](release-qualification.md). |
 | `sbom [path]` | Generate and check the CycloneDX repository dependency inventory with pinned Syft. See [Supply-chain verification](supply-chain.md). |
 | `qualify:memory` | Black-box memory service proof over public HTTP and scoped keys. |

@@ -95,7 +95,7 @@ with `AGENT_AUTORESPAWN=true`, or when an operator spawns them with `agent spawn
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`, `GEMINI_API_KEY`, …) | Upstream provider key — **gates whether any agent can call a model** | unset |
 | `AGENT_AUTORESPAWN` | `true` → seeded/saved agents respawn on boot; `false` → never | unset = on for a local install with a provider, else off |
-| `MARINA_DAILY_SPEND_CAP_USD` | USD per UTC day for the whole world (server and every command-line run on the same `DB_PATH`); at the cap model calls, decisions, forecasts and media are refused and agents pause | `25` (`0` = no cap) |
+| `MARINA_DAILY_SPEND_CAP_USD` | USD per UTC day for the whole world (server and every command-line run on the same `DB_PATH`); at the cap model calls, decisions, forecasts and media are refused and agents pause | `50` (`0` = no cap) |
 | `MARINA_SPEND_SCOPE` / `MARINA_SPEND_SCOPE_CAP_USD` | A per-job budget inside the world cap (for example `futurex-live`); refused at either cap | unset / `50` (`0` = no scope cap) |
 | `MARINA_ROOM_AGENTS` | `false` → rooms never spawn their agents | enabled |
 | `MODEL_API_KEYS` | Bearer token(s) for external `/v1` callers (Marina-as-LLM). Caller auth, **not** an upstream key | unset |
@@ -291,8 +291,8 @@ http(s) URL gets a JSON POST, or `cmd:<program>` runs a local notifier, for exam
 `MARINA_OPS_NOTIFY=cmd:notify-send -a Marina`. Notices never include the held input. The dashboard's
 attention drawer also raises a desktop notification for held actions once desktop alerts are enabled.
 
-Gate grants are never reset on boot. Before 2026-10-13 a `local` profile made every loopback login
-sovereign, agents included, so an older database may show every resident holding every gate. Run
+Gate grants are never reset on boot. A database created under an earlier `local` profile, which made
+every loopback login sovereign, agents included, may show every resident holding every gate. Run
 `gate audit`, then `gate reset agents` to see the plan, and add `apply` when you want gates to
 bite again. Under the `local` profile gates are lifted anyway; the rows matter once the profile or
 `MARINA_AUTONOMY` changes.
@@ -314,14 +314,17 @@ pass — a backlog drains over a few hours rather than stalling one tick), and o
 |---|---|---|
 | `primitive_usage` | telemetry | 14 d |
 | `feed_events` | telemetry | 7 d |
-| `memory_service_events`, `coding_events` | telemetry | 30 d |
+| `memory_service_events`, `coding_events`, `routing_events`, `schedule_runs`, `attention_wakes`, `decision_receipts`, `challenge_holds` | telemetry | 30 d |
+| `room_log` | telemetry | 7 d |
 | `event_log` | telemetry | newest `MARINA_EVENT_RETENTION` rows (default 100k) |
 | `direct_messages` (acknowledged / expired / deadline-less) | ledger | 90 d |
 | `cognitive_events`, `productivity_sessions`, `core_memory_history`, `media_jobs`, `memory_assistance_actions` | ledger | 90 d |
 | `memory_requests` (continuity-journal receipts only) | telemetry | 7 d |
-| `witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events`, `benchmark_runs` | audit | 365 d |
+| `witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events` | audit | 365 d |
 | `shell_log` | audit | 90 d |
-| `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events` | append-only | never |
+| `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events`, `outcomes`, `forecast_answers`, the benchmark ledger (`benchmark_runs`, `benchmark_items`, …) | append-only | never |
+
+The complete list, with a note per table, is `RETENTION_POLICIES` in `src/engine/retention.ts`.
 
 Override any window with a single env var — `MARINA_RETENTION_OVERRIDES` — as a
 comma-separated list of `table=value`: a duration (`30d`, `12h`, `2w`), a bare integer for
@@ -336,4 +339,4 @@ are skipped, not failed. The hash-chained tables (`cognitive_events`, `evidence_
 are pruned oldest-first so the surviving chain stays contiguous and the bounded
 `verifyEvidenceChain` window keeps verifying; set them to `0` if you need the chain back to
 genesis. Live `direct_messages` with a pending deadline are left for `expireDirectMessages`
-(which now uses a partial index, migration 116) and are only aged out once settled.
+(which uses a partial index) and are only aged out once settled.

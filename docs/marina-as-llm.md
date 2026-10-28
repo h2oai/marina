@@ -28,7 +28,7 @@ So a working external endpoint needs all three of:
 | --- | --- |
 | A default model | `MARINA_DEFAULT_MODEL` env, or the dashboard Admin model picker (DB `default_model`, which overrides the env) |
 | A provider key for it | env (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) or dashboard **Admin → Keys**. Without one you get `503 "No upstream LLM providers configured. …"` naming the provider env vars, `key add`, and the local-runtime option. |
-| Caller auth | `MODEL_API_KEYS` (comma-separated bearer tokens), or `MARINA_OPEN_API=true` for local dev |
+| Caller auth | Under the `local` profile (the default for a loopback-only server) a generated key in `<DB_PATH>.local-api-key`; otherwise `MODEL_API_KEYS` (comma-separated bearer tokens). `MARINA_OPEN_API=true` skips caller auth for development only |
 
 Two distinct "defaults" exist:
 
@@ -50,20 +50,26 @@ unless `MARINA_MODEL_TIER_STRONG` is set). Both are model ids on `/v1` too. See
 ## 2. Quick start (local)
 
 ```bash
-# minimal dev setup
+# minimal local setup
 export ANTHROPIC_API_KEY=sk-ant-...        # an upstream key
-export MARINA_OPEN_API=true                # dev-only: skip caller auth
 bun run start
 ```
 
+Under the local profile the boot output prints a ready-to-paste line:
+
+```text
+  Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:3300/v1 OPENAI_API_KEY="$(cat '/path/to/marina.db.local-api-key')"
+```
+
 ```bash
-# call it like OpenAI
+# call it like OpenAI, with the generated local key
 curl http://localhost:3300/v1/chat/completions \
+  -H "Authorization: Bearer $(cat marina.db.local-api-key)" \
   -H 'content-type: application/json' \
   -d '{"model":"marina","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-For anything non-local, drop `MARINA_OPEN_API` and set `MODEL_API_KEYS`:
+For a shared or public server, set `MODEL_API_KEYS`:
 
 ```bash
 export MODEL_API_KEYS=sk-marina-abc123

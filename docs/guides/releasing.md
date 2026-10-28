@@ -13,9 +13,8 @@ operator's choice and not a release step; the repository carries no deployment w
 ## How a release is made
 
 A release is one pull request titled `release: X.Y.Z` that bumps every version and finalizes
-the changelog, followed by an annotated `vX.Y.Z` tag on the merged commit. Past releases
-(`v0.5.0` to `v0.8.0`) followed this shape; the tag message is a one-line summary ending
-"See CHANGELOG.md." Marina follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html);
+the changelog, followed by an annotated `vX.Y.Z` tag on the merged commit. The tag message is a
+one-line summary ending "See CHANGELOG.md." Marina follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html);
 while it is 0.x, a minor release may remove deprecated surfaces under the
 [version policy](compatibility.md#public-contract-and-version-policy).
 
@@ -102,9 +101,7 @@ In `CHANGELOG.md`:
    `## [Unreleased]` above it.
 2. Start the version with `### Upgrade notes`: behaviour a living world notices on upgrade,
    new migrations, changed defaults, deprecations with their replacement, and operator action
-   required. Link the upgrade procedure in [Compatibility and upgrades](compatibility.md#verified-upgrade-and-rollback);
-   a dedicated [upgrading guide](upgrading.md) is being added separately and becomes the link
-   target once it exists.
+   required. Link the [upgrading guide](upgrading.md) for the procedure.
 3. Make sure every merged user-visible PR since the last tag has an entry
    (`git log --oneline vPREVIOUS..HEAD`), under Keep a Changelog headings (`Added`, `Changed`,
    `Fixed`, `Security`, `Performance`).
@@ -133,8 +130,6 @@ awk '/^## \[X.Y.Z\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > /tmp/marina-X.Y.Z
 gh release create vX.Y.Z --verify-tag --title "Marina X.Y.Z" \
   --notes-file /tmp/marina-X.Y.Z-notes.md
 ```
-
-Earlier versions were published as tags only, without a GitHub release object.
 
 ## 5. Artifacts built by workflows
 

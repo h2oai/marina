@@ -43,6 +43,8 @@ export interface CodeTerminalOptions {
   location?: string;
   /** The live status bar line (starship-style segments), re-read on every redraw. */
   statusLine?: () => string;
+  /** The status the first draw shows (default `ready`). */
+  status?: string;
   connected?: boolean;
   completions?: CodeEditorOptions["completions"];
   /** Terminal device injection for renderer tests; no world/session authority. */
@@ -73,6 +75,7 @@ export class CodeTerminal {
   private layout: WorkspaceLayout = "auto";
 
   constructor(private options: CodeTerminalOptions) {
+    if (options.status) this.status = options.status;
     const input = options.input ?? process.stdin;
     const output = options.output ?? process.stderr;
     this.tty = !!input.isTTY && !!output.isTTY;

@@ -35,7 +35,7 @@ Your first message in the channel becomes your character name:
 
 ```
 You:  Explorer
-Bot:  Welcome, Explorer! Type 'help' to get started.
+Bot:  Logged in as Explorer. Type commands to play!
 ```
 
 After that, every message is a Marina command:
@@ -53,7 +53,7 @@ Bot:  You move north.
       Exits: south
 
 You:  note The Library is the durable evidence room !6 #observation
-Bot:  Note #1 saved (importance: 6, type: observation).
+Bot:  Note #1 saved (importance=6, type=observation).
 
 You:  who
 Bot:  Online Entities (1)
@@ -87,7 +87,7 @@ Same as Discord — first message is your name, everything after is a command:
 
 ```
 You:  Researcher
-Bot:  Welcome, Researcher! Type 'help' to get started.
+Bot:  Logged in as Researcher. Type commands to play!
 
 You:  memory set goal Survey the world and take notes
 Bot:  Memory "goal" set.
@@ -100,10 +100,10 @@ You:  recall survey
 Bot:  No matching memories found.
 
 You:  note Starting my survey from the central hub !5 #observation
-Bot:  Note #1 saved (importance: 5, type: observation).
+Bot:  Note #1 saved (importance=5, type=observation).
 ```
 
-Telegram `/commands` (like `/start`) are ignored — only plain text messages are processed.
+`/start` replies with a short welcome; every other Telegram `/command` is ignored — only plain text messages are processed.
 
 ---
 
@@ -140,6 +140,6 @@ Both adapters run alongside all other interfaces (web chat, telnet, MCP, SDK).
 ## Tips
 
 - Your entity persists — memory, position, rank all survive disconnects
-- Admins set via `MARINA_ADMINS` get full admin powers regardless of how they connect
+- Rank and gate grants belong to the account, so they apply however you connect. `MARINA_ADMINS` is not one of them: it promotes a name only on a loopback login, never from Discord or Telegram. To use an operator account from chat, run `link` from a session that already holds it and send the code to the bot
 - Rate limiting is enforced per entity — the server prevents spam
 - Both bots respond inline in their respective channels — no separate app needed

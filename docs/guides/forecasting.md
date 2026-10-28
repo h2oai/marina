@@ -125,6 +125,11 @@ qualification records outside this repository.
 
 ## What happens
 
+A plain probability or number question runs through the [typed pipeline](#typed-answers) by
+default (a yes/no choice or a typed number; the reply keeps the plain shape and attaches the typed
+answer as `typed`). The steps below are the shared core, and with `MARINA_FORECAST_PLAIN=legacy`
+they are the whole single-round path:
+
 1. **Research** — a search-grounded model (OpenRouter's web search) gathers dated, sourced facts:
    the current state, base rates, scheduled events, and what forecasters and markets expect.
 2. **Citation check** — each fact's figures are looked up in the page it cites; lines are tagged
@@ -328,8 +333,9 @@ contract is a 400.
 ## Priors, calibration, the skeptic crew and routing
 
 Four mechanisms from Marina's [Social Simulation Arena](arena.md) forecaster, generalised to any
-typed question. All are opt-in, and each learns only from **resolved history visible at the
-forecast's cutoff**: a record counts only once its outcome was known at or before the cutoff, and
+typed question. Prior shrink, recalibration and routing run by default but change an answer only
+after a held-out win (the skeptic crew is opt-in), and each learns only from **resolved history
+visible at the forecast's cutoff**: a record counts only once its outcome was known at or before the cutoff, and
 a question never learns from its own record (the same rule as lessons).
 
 **Resolved history** (`MARINA_FORECAST_HISTORY`, a JSON-lines file; `src/forecast/history.ts`). One
@@ -438,8 +444,9 @@ log-odds mean stands unshrunk, and extremity is left to calibration. With one
 configured model, every role runs on it. Rankings and short strings have no prior: the two
 proposals are combined like runs.
 
-**Formation routing** (`MARINA_FORECAST_ROUTE=off|observe|on`, default `observe`: the pick is
-recorded on every answer while the default formation answers; every forecast surface. Resolved
+**Formation routing** (`MARINA_FORECAST_ROUTE=off|observe|on`, default `on`: without enough
+paired evidence the pick is the default formation, so nothing changes until a challenger earns it;
+`observe` only records the pick on every answer; every forecast surface. Resolved
 history — kept by default next to the world database — carries each answer's formation and score;
 `src/forecast/routing.ts`). For each question class (the caller's `category` if it has enough
 records, else the answer group), a candidate formation replaces the default only when both hold:

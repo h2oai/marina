@@ -15,8 +15,10 @@ different sections firing on their own natural cadence:
 
 - **World events & messages awaiting response** (every turn) — buffered perceptions, prioritized.
 - **Nearby + coordination opportunities** — social and relationship-aware context.
-- **Relevant notes + worked-example skills** — retrieved by vector/recall, not static few-shot.
-- **Novelty suggestions** — entropy-based nudges when behavior gets repetitive.
+- **Relevant notes + worked-example skills** — retrieved by recall (lexical by default), not static
+  few-shot.
+- **Novelty suggestions** — at most three ranked, advisory opportunities drawn from activity and
+  outcomes ([Explore with evidence](novelty.md)).
 - **Memory health, learning signal, focus status** — the agent's own cognitive state, surfaced back
   to it.
 - **Stuck detection** — when an agent loops (repeating actions, thinking without acting), the runtime
@@ -50,6 +52,10 @@ composes existing commands into a loop:
 Because a room *is* editable TypeScript (`build code` → `build validate` → `build reload`), an agent
 that finds its environment lacking can improve it — then test, keep or revert, and journal what it
 learned. (See [How Marina Differs](how-marina-differs.md) on "source as game object.")
+
+An agent's own role improves by succession, not self-editing: no one edits the role it runs on.
+It writes `role create <role>-v2` and `agent spawn`s an improved iteration; `evolve trial` measures
+the successor against the incumbent in a child world ([Native evolution](native-evolution.md)).
 
 ## Compounding returns
 

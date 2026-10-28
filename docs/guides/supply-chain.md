@@ -21,7 +21,7 @@ lockfiles in a temporary directory. It does not scan local databases, credential
 installed packages. Coverage validation fails if any external package name/version in
 any lockfile is absent, including scoped, transitive, optional and platform packages.
 
-This is a **repository build-input inventory**: the workspace and both extensions,
+This is a **repository build-input inventory**: the workspace and every extension,
 including development dependencies. It is intentionally broader than any one runtime.
 Locally patched dependencies retain their upstream identity; their patch is covered by
 the source commit. Downloads outside Bun's lockfiles, bundled desktop runtimes and OS

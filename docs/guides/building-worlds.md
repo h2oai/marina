@@ -6,8 +6,13 @@ Create rooms, connect them, spawn room agents, build custom commands, and design
 
 ## Create a Room
 
-The `build room` command creates a new room. You need Builder rank (4) or higher.
-Code, reload, and destroy paths may also require a specific safety gate.
+The `build room` command creates a new room. You need Builder rank (4) or higher (a local
+install lifts rank floors for you, the operator). Writing room or command code, reloading,
+reverting and destroying also need the `world.code` safety gate: an operator grant, or a held
+run an operator approves once.
+
+The examples link new rooms to `hub/crossroads` and `coord/center`, rooms of the `showcase`
+world. In the default Workbench world, link to `workbench/start` (its start room) instead.
 
 ```
 > build room forest/clearing A Sunny Clearing
@@ -46,10 +51,10 @@ No exits yet — the room is isolated. Let's connect it.
 
 ```
 > build link forest/clearing south hub/crossroads
-Linked forest/clearing south → hub/crossroads.
+Linked exit "south" from "forest/clearing" to "hub/crossroads".
 
 > build link hub/crossroads north forest/clearing
-Linked hub/crossroads north → forest/clearing.
+Linked exit "north" from "hub/crossroads" to "forest/clearing".
 ```
 
 Now you can walk between them:
@@ -118,15 +123,15 @@ Here's how to create a small dungeon:
 
 ```
 > build room dungeon/entrance Dungeon Entrance
-Created room "dungeon/entrance".
+Created room "dungeon/entrance" with short: "Dungeon Entrance".
 > build modify dungeon/entrance long A dark archway leads underground. Cool air drifts up from below.
 
 > build room dungeon/hall The Great Hall
-Created room "dungeon/hall".
+Created room "dungeon/hall" with short: "The Great Hall".
 > build modify dungeon/hall long A vast underground chamber. Pillars carved from raw stone hold up the ceiling. Torches flicker in iron sconces.
 
 > build room dungeon/vault The Sealed Vault
-Created room "dungeon/vault".
+Created room "dungeon/vault" with short: "The Sealed Vault".
 > build modify dungeon/vault long A heavy iron door stands here, covered in runes. Whatever is inside hasn't been touched in centuries.
 ```
 
@@ -203,13 +208,15 @@ forest/clearing: private
 
 Dynamic commands let you add new behaviors without touching code.
 
-Command code and reload operations require Architect rank (5).
+Command code and reload operations need the `world.code` gate (see [Create a Room](#create-a-room)).
+Command source is a module whose default export has `name`, `help` and `handler(ctx, input)`;
+`build command code <name>` with no source prints the starting template and the `ctx` API.
 
 ```
 > build command create meditate
 Created command "meditate" with default source. Use 'build command code meditate <source>' to set source, then 'build command reload meditate'.
 
-> build command code meditate ctx.send(input.entity, "You close your eyes and breathe deeply. The sounds of the world fade. When you open your eyes, you feel centered."); ctx.broadcast(input.entity.name + " sits in quiet meditation.");
+> build command code meditate export default { name: "meditate", help: "Sit in quiet meditation", handler(ctx, input) { ctx.send(input.entity, "You close your eyes and breathe deeply. The sounds of the world fade. When you open your eyes, you feel centered."); ctx.broadcastExcept(input.entity, ctx.caller.name + " sits in quiet meditation."); } };
 Saved source for command "meditate". Use 'build command reload meditate' to compile and register.
 
 > build command validate meditate
@@ -237,11 +244,12 @@ Kira sits in quiet meditation.
 
 ## Create a Programmable Room
 
-For rooms that need logic — room agents, periodic events, entry gates — use `build room`:
+For rooms that need logic — room agents, periodic events, entry gates — create the room with
+`build room`, then give it source code:
 
 ```
 > build room tavern/bar
-Created room "tavern/bar".
+Created room "tavern/bar" with short: "An empty room".
 ```
 
 Then edit its source code:
@@ -250,21 +258,22 @@ Then edit its source code:
 > build code tavern/bar
 ```
 
-This shows you the current (empty) room code. To add behavior, write the source:
+This shows the room's current source. To add behavior, write new source after the room ID. It
+must be a module with a default export (`short`, `long`, and optional handlers such as `onEnter`):
 
 ```
-> build code tavern/bar | { short: "The Bar", long: "A long oak bar with stools. Bottles line the shelves behind.", onEnter(ctx, entity) { if (!ctx.entities.some(e => e.name === "Barkeep")) { ctx.spawn({ name: "Barkeep", short: "A weathered bartender", long: "Years of stories etched into every line on their face." }); } ctx.send(entity, "The Barkeep nods at you. 'What'll it be?'"); } }
-Saved source for "tavern/bar" (v1). Use "build validate tavern/bar" then "build reload tavern/bar".
+> build code tavern/bar export default { short: "The Bar", long: "A long oak bar with stools. Bottles line the shelves behind.", onEnter(ctx, entity) { if (!ctx.entities.some(e => e.name === "Barkeep")) { ctx.spawn({ name: "Barkeep", short: "A weathered bartender", long: "Years of stories etched into every line on their face." }); } ctx.send(entity, "The Barkeep nods at you. 'What'll it be?'"); } };
+Saved source for "tavern/bar" (v2). Use "build validate tavern/bar" to check, then "build reload tavern/bar" to apply.
 ```
 
 Validate and activate:
 
 ```
 > build validate tavern/bar
-Source for "tavern/bar" v1 is valid.
+Source for "tavern/bar" v2 is valid.
 
 > build reload tavern/bar
-Reloaded room "tavern/bar" from v1.
+Reloaded room "tavern/bar" from v2.
 ```
 
 Visit it:
