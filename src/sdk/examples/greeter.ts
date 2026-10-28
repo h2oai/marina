@@ -18,6 +18,10 @@ const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
 const AGENT_NAME = process.env.AGENT_NAME ?? "Greeter";
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI strip
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
+const ARRIVAL_TAGS = new Map([
+  ["arrive", "arrives"],
+  ["connect", "connects"],
+]);
 
 async function main() {
   const agent = new MarinaAgent(WS_URL, { autoReconnect: true });
@@ -28,14 +32,12 @@ async function main() {
 
   // Watch for arrivals and greet them
   agent.onPerception((p) => {
-    const movementArrival =
-      p.kind === "movement" && (p.data?.direction === "arrive" || p.data?.type === "arrive");
-    const connectArrival = p.kind === "message" && p.tag === "connect";
-    if (movementArrival || connectArrival) {
+    // The server sends "<name> arrives." (tag arrive) and "<name> connects."
+    // (tag connect) as room messages.
+    const verb = p.kind === "message" ? ARRIVAL_TAGS.get(p.tag ?? "") : undefined;
+    if (verb) {
       const cleanText = String(p.data?.text ?? "").replace(ANSI_RE, "");
-      const name =
-        (p.data?.entityName as string | undefined) ??
-        (connectArrival ? cleanText.match(/^([A-Za-z0-9_]+) connects\.$/)?.[1] : undefined);
+      const name = cleanText.match(new RegExp(`^(\\S+) ${verb}\\.$`))?.[1];
       if (name && name !== session.name) {
         console.log(`Greeting ${name}`);
         // allow-empty-catch: a greeting is best-effort in this example

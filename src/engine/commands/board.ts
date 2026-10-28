@@ -237,7 +237,11 @@ export function boardCommand(
             refuseCommand(ctx, input.entity, writeRefusal.message);
             return;
           }
-          const rest = tokens.slice(2).join(" ");
+          // `board post <board> | <title> | <body>`: a leading `|` only separates.
+          const rest = tokens
+            .slice(2)
+            .join(" ")
+            .replace(/^\|\s*/, "");
           const pipeIdx = rest.indexOf("|");
           let title: string;
           let body: string;
@@ -247,6 +251,10 @@ export function boardCommand(
           } else {
             title = rest;
             body = "";
+          }
+          if (!title && !body) {
+            refuseCommand(ctx, input.entity, "Usage: board post <board> <title> | <body>");
+            return;
           }
           const post = boards.createPost({
             boardId: board.id,

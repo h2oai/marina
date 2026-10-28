@@ -162,7 +162,15 @@ export function channelCommand(
             ctx.send(input.entity, `You are not in channel "${name}". Join it first.`);
             return;
           }
-          const message = tokens.slice(2).join(" ");
+          // `channel send <name> | <message>`: a leading `|` only separates.
+          const message = tokens
+            .slice(2)
+            .join(" ")
+            .replace(/^\|\s*/, "");
+          if (!message) {
+            refuseCommand(ctx, input.entity, "Usage: channel send <name> <message>");
+            return;
+          }
           if (ch.name.startsWith("model-")) {
             let frame: unknown;
             try {

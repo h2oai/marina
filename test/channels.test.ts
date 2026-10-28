@@ -69,6 +69,15 @@ describe("Channels", () => {
     expect(stripAnsi(conn2.lastText())).toContain("[general] Alice: Hello everyone!");
   });
 
+  it("treats a leading | as the separator, and refuses an empty message", () => {
+    engine.processCommand(conn1.entity!, "channel create general");
+    conn1.clear();
+    engine.processCommand(conn1.entity!, "channel send general | piped hello");
+    expect(stripAnsi(conn1.lastText())).toContain("[general] You: piped hello");
+    engine.processCommand(conn1.entity!, "channel send general |");
+    expect(stripAnsi(conn1.lastText())).toContain("Usage: channel send");
+  });
+
   it("rejects a malformed model envelope with repair guidance and accepts its corrected answer", () => {
     engine.processCommand(conn1.entity!, "channel create model-forecast");
     engine.processCommand(conn2.entity!, "channel join model-forecast");

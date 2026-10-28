@@ -274,6 +274,16 @@ export function taskCommand(
           const first = listArgs[0]?.toLowerCase();
           const status = first && validStatuses.includes(first) ? first : "open";
           const groupId = first && !validStatuses.includes(first) ? listArgs[0] : listArgs[1];
+          // A word that is neither a status nor a group holding tasks is a typo,
+          // not an empty group.
+          if (groupId && tasks.count({ groupId }) === 0) {
+            refuseCommand(
+              ctx,
+              input.entity,
+              `No tasks in group ${groupId}. Usage: task list [open|claimed|completed|cancelled] [group] [limit:N]`,
+            );
+            return;
+          }
           const pageSize = limit ?? TASK_LIST_PAGE;
           const taskList = tasks.list({
             status,

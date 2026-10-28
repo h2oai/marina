@@ -71,7 +71,9 @@ export class TelegramAdapter implements Adapter {
 
     this.bot.command("start", async (ctx) => {
       await ctx
-        .reply("Welcome to Marina! Send your character name to log in, or /help for commands.")
+        .reply(
+          "Welcome to Marina! Send your character name to log in, then send help for commands.",
+        )
         .catch(logRejection(logger, "telegram", "telegram reply failed"));
     });
 
