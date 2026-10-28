@@ -390,6 +390,10 @@ async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAge
   const pending: SDKUserMessage[] = [];
   let wake: (() => void) | undefined;
   let stopped = false;
+  // Input sent and not yet finished (`command_lifecycle` completed/cancelled);
+  // a CLI without lifecycle frames closes everything at each result.
+  const open = new Set<string>();
+  let lifecycle = false;
   async function* messages(): AsyncGenerator<SDKUserMessage> {
     while (!stopped) {
       if (!pending.length)
@@ -465,10 +469,16 @@ async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAge
         if (event.type === "stream_event" && delta.type === "text_delta")
           options.emit("output", { text: delta.text });
         else if (message.type !== "stream_event") options.emit(`native.${message.type}`, message);
+        if (event.type === "command_lifecycle") {
+          lifecycle = true;
+          if (event.state === "completed" || event.state === "cancelled")
+            open.delete(String(event.command_uuid));
+        }
         if (message.type === "result") {
           const final = typeof event.result === "string" ? event.result.trim() : "";
           if (final) options.reply?.(final);
           options.state({ status: "idle" });
+          if (!lifecycle) open.clear();
         }
       }
       if (mismatch) return;
@@ -494,12 +504,17 @@ async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAge
       parent_tool_use_id: null,
       session_id: "",
       uuid: id as `${string}-${string}-${string}-${string}-${string}`,
+      // Sent while earlier input is unfinished, the CLI would fold it into the
+      // running turn inside a tool result, where Claude may decline it as not
+      // from the user. `later` makes it the next turn's own user message.
+      ...(open.size ? { priority: "later" as const } : {}),
     });
+    open.add(id);
     wake?.();
   };
   return {
     prompt,
-    // Streaming input is read when the current turn ends: honestly `next-turn`.
+    // Input that arrives during a turn starts the next one (`later`): `next-turn`.
     capabilities: { steer: "next-turn" },
     async steer(text, id) {
       await prompt(text, id);

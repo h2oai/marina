@@ -243,6 +243,137 @@ describe("claude adapter resume", () => {
   });
 });
 
+/**
+ * A fake Claude SDK whose frames the test sends one at a time, recording every
+ * user message the adapter streams in (with its priority and uuid).
+ */
+function scriptedClaudeSdk() {
+  const consumed: SDKUserMessage[] = [];
+  const frames: unknown[] = [];
+  let wake: (() => void) | undefined;
+  let ended = false;
+  const sdk: ClaudeSdk = {
+    getSessionInfo: (async () => undefined) as never,
+    query: (({ prompt }: { prompt: AsyncIterable<SDKUserMessage> }) => {
+      void (async () => {
+        for await (const message of prompt) consumed.push(message);
+      })();
+      async function* run() {
+        while (true) {
+          if (!frames.length && !ended)
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+            });
+          if (!frames.length) return;
+          yield frames.shift();
+        }
+      }
+      return Object.assign(run(), { interrupt: async () => {}, close: () => {} });
+    }) as never,
+  };
+  const send = (frame: unknown) => {
+    frames.push(frame);
+    wake?.();
+  };
+  return {
+    sdk,
+    consumed,
+    send,
+    result: (text: string) => send({ type: "result", subtype: "success", result: text }),
+    end: () => {
+      ended = true;
+      wake?.();
+    },
+  };
+}
+
+describe("claude input during a turn", () => {
+  const ids = {
+    first: "11111111-1111-1111-1111-111111111111",
+    second: "22222222-2222-2222-2222-222222222222",
+    third: "33333333-3333-3333-3333-333333333333",
+  };
+  const lifecycle = (uuid: string, state: string) => ({
+    type: "command_lifecycle",
+    command_uuid: uuid,
+    state,
+  });
+
+  it("declares next-turn steering", async () => {
+    const fake = scriptedClaudeSdk();
+    const agent = await createClaudeAdapter(fake.sdk)(harness("claude", []).options);
+    expect(agent.capabilities).toEqual({ steer: "next-turn" });
+    fake.end();
+    await agent.stop();
+  });
+
+  it("sends input that arrives while earlier input is unfinished as the next turn, never folded in", async () => {
+    const fake = scriptedClaudeSdk();
+    const agent = await createClaudeAdapter(fake.sdk)(harness("claude", []).options);
+    await agent.prompt("work", ids.first);
+    await agent.prompt("also this", ids.second);
+    expect(await agent.steer!("and this", ids.third, true)).toBe("queued");
+    await until(() => fake.consumed.length === 3);
+    expect(fake.consumed.map((m) => `${m.uuid} ${m.priority ?? "-"}`)).toEqual([
+      `${ids.first} -`,
+      `${ids.second} later`,
+      `${ids.third} later`,
+    ]);
+    fake.end();
+    await agent.stop();
+  });
+
+  it("sends a plain prompt again once every earlier input completed or was cancelled", async () => {
+    const fake = scriptedClaudeSdk();
+    const agent = await createClaudeAdapter(fake.sdk)(harness("claude", []).options);
+    await agent.prompt("work", ids.first);
+    await agent.prompt("also this", ids.second);
+    fake.send(lifecycle(ids.first, "started"));
+    fake.result("done");
+    fake.send(lifecycle(ids.first, "completed"));
+    fake.send(lifecycle(ids.second, "cancelled"));
+    await Bun.sleep(10);
+    await agent.prompt("next", ids.third);
+    await until(() => fake.consumed.length === 3);
+    expect(fake.consumed[2]).toMatchObject({ uuid: ids.third });
+    expect(fake.consumed[2]?.priority).toBeUndefined();
+    fake.end();
+    await agent.stop();
+  });
+
+  it("keeps the session busy while a queued input is still to run after a result", async () => {
+    const fake = scriptedClaudeSdk();
+    const agent = await createClaudeAdapter(fake.sdk)(harness("claude", []).options);
+    await agent.prompt("work", ids.first);
+    await agent.prompt("also this", ids.second);
+    // As the CLI does: each input is acknowledged `queued` when accepted.
+    fake.send(lifecycle(ids.first, "queued"));
+    fake.send(lifecycle(ids.second, "queued"));
+    fake.result("done");
+    fake.send(lifecycle(ids.first, "completed"));
+    fake.send(lifecycle(ids.second, "started"));
+    await Bun.sleep(10);
+    await agent.prompt("next", ids.third);
+    await until(() => fake.consumed.length === 3);
+    expect(fake.consumed[2]?.priority).toBe("later");
+    fake.end();
+    await agent.stop();
+  });
+
+  it("treats each result as the end of all input on a CLI without lifecycle frames", async () => {
+    const fake = scriptedClaudeSdk();
+    const agent = await createClaudeAdapter(fake.sdk)(harness("claude", []).options);
+    await agent.prompt("work", ids.first);
+    fake.result("done");
+    await Bun.sleep(10);
+    await agent.prompt("next", ids.second);
+    await until(() => fake.consumed.length === 2);
+    expect(fake.consumed[1]?.priority).toBeUndefined();
+    fake.end();
+    await agent.stop();
+  });
+});
+
 describe("claude resident permissions", () => {
   const relaySocket = join(scratch, "relay", "relay.sock");
   const resident = { MARINA_RELAY_SOCKET: relaySocket };
