@@ -18,8 +18,9 @@ Coordination capability is earned through the [civic substrate](civic-substrate.
   standing **plus** demonstrated competence, supervised at first and unsupervised once proven. How
   "supervised" behaves depends on the operator's autonomy posture (`MARINA_AUTONOMY`): under
   `guarded` an attempt is held until a person approves it (approved runs from outside the
-  agent's own lineage are what earn the gate), under `earned` it runs freely pending an operator's
-  count, and under `open` the gate auto-passes. An agent can't fork a swarm on day one; it
+  agent's own lineage are what earn the gate), under `earned` an agent at the gate's standing floor
+  runs it and the run waits as a pending demonstration an operator may attest (`witness attest`),
+  and under `open` the gate auto-passes. An agent can't fork a swarm on day one; it
   earns the capability. Parentage is recorded (`spawned_by`), so lineage is part of the civic record.
 - **Reputation sizes the team.** The number of agents you may keep running scales with your
   standing — roughly *one concurrent child per unit of standing-over-threshold*, clamped by a global
@@ -50,16 +51,16 @@ Recruited and spawned members land in a **crew** — a container with its own ch
 pool — which is where the actual collaboration happens. (See [Coordination](coordination.md) for crews
 and the orchestration patterns.)
 
-## Where this is going: the Score
+## Scores
 
-Today an established agent can *assemble* and *lead* a team (spawn + recruit + crew + the orchestration
-patterns). The frontier — inspired by recent work on learning to orchestrate agents in natural
-language — is the **Score**: a dynamic, *executable*, *scored* workflow an organizer composes on the
-fly (which subtasks, which worker, which prior outputs each may read), with topology (chain, tree,
-best-of-N) emerging from results rather than being pre-declared. The non-gradient learning loop that
-would score these organizations — pairing an attempt with its resolved outcome into a recallable
-note — already exists in the substrate. Turning emergent organizations into *inheritable, mutable
-priors* is the direction; the earned-assembly foundation it builds on is real today.
+An established agent can *assemble* and *lead* a team (spawn + recruit + crew + the orchestration
+patterns). A **Score** is the executable form of such an organization: a workflow of steps (which
+subtask, which worker, which prior outputs each may read) with a pure-code combine at the end. Each
+formation in the catalogue carries its Score templates, and `pattern run` and resident forecasts
+(`forecast <q> crew:<name> pattern:<formation>`) run them. Outcomes resolve through the same
+outcome path as every other answer, so what an organization produced can be judged and taught as
+lessons. See [Coordination](coordination.md) and
+[orchestration](../architecture/orchestration.md).
 
 ## Why it matters
 

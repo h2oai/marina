@@ -96,7 +96,7 @@ Codex approval methods fail closed and publish an `approval.unsupported` event.
 Runtime controls require the participant owner's account and Marina's existing `code.exec` gate;
 launch also requires `agent.spawn`. Ordinary messages cannot masquerade as runtime controls.
 Agents receive `MARINA_URL`, `MARINA_TOKEN` and `MARINA_SESSION_ID` plus CLI coordination instructions.
-With supervised residents off (the default) these are the operator's existing account credentials,
+With supervised residents off these are the operator's existing account credentials,
 not reduced per-agent credentials. Treat managed agents as programs running under that local user and
 account.
 
@@ -104,8 +104,9 @@ account.
 
 By default (`MARINA_SUPERVISED_RESIDENTS` unset or `on`), every agent a supervisor launches is its
 own world account instead of acting through the operator's. Set `MARINA_SUPERVISED_RESIDENTS=off` on
-the server or in the supervisor's environment to keep the earlier behaviour; a supervisor whose
-server does not offer residents (off, or an older server) falls back to it and says so at start.
+the server or in the supervisor's environment to have launched agents act through the operator's
+account; a supervisor whose server does not offer residents (off, or an older server) does the
+same and says so at start.
 `readiness` reports the setting and how many residents are enrolled and present.
 
 - **Enrolment.** Between joining its run session and starting the native process, the supervisor
@@ -127,7 +128,7 @@ server does not offer residents (off, or an older server) falls back to it and s
   `POST /supervision/renew|revoke` — and every other endpoint (reads, controls, messages, channel
   posts) answers only your own session. A renewal that fails is retried while the
   credential is live and never falls back to your session. A server with residents off (or an older
-  server) offers no endpoint, and the supervisor keeps using your session token as before.
+  server) offers no endpoint, and the supervisor uses your session token.
 - **Names.** A launch may ask for a name (`name` in the launch control). Otherwise:
   - **Relaunch:** an unnamed launch of the same adapter in the same directory reuses the resident
     last launched there (the supervisor's local journal remembers it), unless that resident is

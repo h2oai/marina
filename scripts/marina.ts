@@ -374,6 +374,10 @@ export function parseDispatch(
 
 export const USAGE = `marina — you think, therefore you are here
 
+Start here:
+  marina init                  connect a model (a provider key, or a local one)
+  marina                       then code in this folder; its first screen links the dashboard
+
 Usage:
   marina [dir]                 code in a folder (defaults to the current directory)
   marina -p "<task>" [dir]     one-shot: run a task, print the diff + summary, exit
@@ -403,7 +407,8 @@ Usage:
   marina memory-mcp [...]      stdio MCP server for one Marina memory space
   marina status [--url <ws-url> | --port <n>]
                                health + capability readiness of the running Marina
-  marina init                  interactive setup (writes .env)
+  marina init                  set up: a model first, then server settings
+                               (writes ~/.marina/.env, which every folder reads)
   marina version               print the package version
   marina --help                show this help
 

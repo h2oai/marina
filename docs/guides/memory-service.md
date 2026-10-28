@@ -158,7 +158,7 @@ from legacy name-based `/mem` access. New `memory api`, symbolic human commands 
 reach those service records through the same authorization layer. The full world server exposes
 the same `/v1/memory` routes over its database; provision against that DB for external HTTP access.
 See [interface setup](memory-interfaces.md). Resident checkpoints and lossy context transforms
-now use these durable APIs. Legacy notes and pools retain their existing interfaces.
+use these durable APIs. Legacy notes and pools retain their existing interfaces.
 
 ## Retrieval and index behavior
 
@@ -169,7 +169,7 @@ Only an explicit `mode:"hybrid"` requests embeddings. `/search` searches memory 
 Hybrid search combines FTS5 and cosine similarity using reciprocal rank fusion (`k=60`). It
 returns current heads, applies scope and record filters, and identifies the embedding model.
 Lexical search selects at most 200 authorized current candidates through FTS5 before hydrating
-results; it no longer loads all record heads or stops at 10,000 records. Optional semantic search
+results, so it does not load every record head and has no record-count ceiling. Optional semantic search
 streams every eligible vector while retaining the top 200. `coverage` reports candidate counts
 and scored/missing/invalid vectors. Semantic work remains exact O(records × dimensions), with
 bounded JavaScript ranking memory; this is not an approximate-nearest-neighbor index.

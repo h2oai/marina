@@ -82,8 +82,9 @@ prompt. The budget is enforced in code, not by convention:
   local models) before budgeting the prompt.
 - The continuation prompt clamps each World Events line (400 chars; `model_request` payloads get
   `MARINA_PERCEPTION_MODEL_REQUEST_MAX_CHARS`), clamps the Active Coding Task, and fits sections to
-  `MARINA_CONTINUATION_BUDGET_BYTES` (6000) by priority — World Events, the response mandate, and the
-  action directive are never deferred; cadenced sections are deferred first, with a
+  the continuation budget (`continuationPromptBudgetBytes`: an eighth of the effective prompt
+  window, clamped to 6000–16000 bytes, or `MARINA_CONTINUATION_BUDGET_BYTES`) by priority — World
+  Events, the response mandate, and the action directive are never deferred; cadenced sections are deferred first, with a
   `[+N sections deferred]` note. Events that do not fit return to the buffer for the next cycle.
 - Prompt caching: the synthesized `marina/*` model emits Anthropic-style `cache_control` markers
   and a per-agent `sessionId` (`MARINA_AGENT_PROMPT_CACHE=off` disables the markers); the proxy is
@@ -97,8 +98,8 @@ prompt. The budget is enforced in code, not by convention:
   upstream — Anthropic gets `thinking: {type:"enabled", budget_tokens}` (1024 / 2048 / 8192 / 16384,
   xhigh clamps to high) with `temperature`/`top_p` omitted, OpenAI-compatible upstreams receive
   `reasoning_effort` verbatim. Registry models (`anthropic/...`, `openai/...`) take pi-ai's native
-  `thinkingLevel` / `thinkingBudgets` handling untouched. Runtime-only: not persisted to
-  `agent_configs`.
+  `thinkingLevel` / `thinkingBudgets` handling untouched. An explicit level is persisted in
+  `agent_configs.thinking_level`, so it survives the boot-time respawn.
 - Tool ordering: pi-agent-core executes a multi-tool turn in parallel by default. Every
   world-mutating tool (anything not in `READ_ONLY_TOOL_NAMES` — look, examine, who, brief, feed,
   web, think, code read/search/diff/history/…) is stamped `executionMode: "sequential"`, so a batch
@@ -163,7 +164,7 @@ Prompt changes must pass structural tests for hierarchy, provider neutrality, pr
 context labeling, plan-preserving compaction, and human-agent symmetry. They must also pass agent,
 context-manager, role, tool-profile, model-resolution, and autonomy regression suites. For behavioral
 A/B work, use the frozen smoke set — `bun run eval-prompt`, or in the world `benchmark run smoke
---model marina:answerer`, which records the run on the `smoke` leaderboard; compare task success, required evidence,
+crew:answerer`, which records the run on the `smoke` leaderboard; compare task success, required evidence,
 meaningful primitive use, total tokens, latency, calls, retries, and outcome quality. Fewer calls or
 tokens count as improvements only when the outcome still passes.
 

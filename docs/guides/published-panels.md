@@ -4,7 +4,7 @@ A published panel is an A2UI Canvas node containing a declarative view of Marina
 
 ## Open and arrange
 
-In the dashboard, select **Canvas → Published panels**, choose a canvas and select **Open beside my work**. Canvas nodes and rich chat previews also have **Open as panel**. The dashboard uses one Canvas panel host, with the familiar tiled layout. Older `?surface=canvas` links open the same workspace. Save a layout preset to restore its resource targets and geometry. Targets are bound to the resident who saved them; another resident does not inherit those private references.
+In the dashboard, select **Workspace → Canvas → Published panels**, choose a canvas and select **Open beside my work**. Canvas nodes and rich chat previews also have **Open as panel**. The dashboard uses one Canvas panel host with a tiled layout; `?surface=canvas` links open the same workspace. Save a layout preset to restore its resource targets and geometry. Targets are bound to the resident who saved them; another resident does not inherit those private references.
 
 You can open the same publication twice. Closing a tile removes only that view. Up to four additional tiles are supported. Referenced publications can expand inside a panel, with a four-level nesting limit and cycle detection. Nothing expands or rearranges the workspace merely because an agent publishes it.
 
@@ -89,11 +89,11 @@ await panels.publish(canvasId, {
 
 Use `query: {limit: 25}` on adapters declaring `limit`, and inspect the canonical API response to choose binding paths. Detail IDs go in `params`; a Resource component can also render the whole response. Coded panel documents are validated data, not executable browser JavaScript. Agents can author them in any coding workspace, upload and publish an A2UI asset, or use the SDK directly. Publication leaves everyone else's layout and autonomous work untouched.
 
-The catalog exposes existing read APIs, not raw database tables or arbitrary network paths. Credentials, side-effecting reads and unpublished internal state are not panel sources. To expose a new domain, first provide its authorized read API, then add its adapter to `src/sdk/panel-resource-catalog.ts`; all clients discover the same contract. Durable memory records also use the resident memory adapter below. The original short references remain semantic adapters for richer coding, participant and task views.
+The catalog exposes existing read APIs, not raw database tables or arbitrary network paths. Credentials, side-effecting reads and unpublished internal state are not panel sources. To expose a new domain, first provide its authorized read API, then add its adapter to `src/sdk/panel-resource-catalog.ts`; all clients discover the same contract. Durable memory records also use the resident memory adapter below. The short references in the table below are semantic adapters for richer coding, participant and task views.
 
 ## Sources and components
 
-Existing components remain supported: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `Column`, `Card`, `Surface`, `DataTable` and `Timeline`. `Resource` adds a view of an existing resource. Historical `Text.value` and string table columns normalize to `Text.text` and `{key, label}` columns.
+Components: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `Column`, `Card`, `Surface`, `DataTable` and `Timeline`. `Resource` adds a view of an existing resource. Legacy `Text.value` and string table columns normalize to `Text.text` and `{key, label}` columns.
 
 | Source | Reference |
 |---|---|
@@ -171,6 +171,6 @@ In a wide `--tui` workspace, the focused panel appears beside the World stream. 
 /panel close
 ```
 
-`/panel desk [session-id]` opens a personal view of the selected or explicit coding session. `/panel publish <canvas-id> [session-id]` explicitly publishes and opens a shared desk; it replaces the former publishing meaning of `/panel desk`. Up to four local views preserve separate drafts and captured reviews. Use `/panel views` and `/panel use <number>`, or **Alt+Left / Alt+Right** in the panel form, to switch. Only the selected, visible view reads live data. Closing it returns to another open view. In the full-screen TUI, **F8** focuses the panel. **Tab / Shift+Tab** move between fields and actions; type directly in a selected text field, use **Space** for a checkbox, and **Enter** to review an action. Reviews initially focus **Cancel**. Select **Confirm action** separately to submit, or use **Escape** to close the review. For messages, choose the sending participant with the arrow keys. **F6** returns to Coding/World, and **F7** opens requests. Each conversation retains its draft.
+`/panel desk [session-id]` opens a personal view of the selected or explicit coding session. `/panel publish <canvas-id> [session-id]` explicitly publishes and opens a shared desk. Up to four local views preserve separate drafts and captured reviews. Use `/panel views` and `/panel use <number>`, or **Alt+Left / Alt+Right** in the panel form, to switch. Only the selected, visible view reads live data. Closing it returns to another open view. In the full-screen TUI, **F8** focuses the panel. **Tab / Shift+Tab** move between fields and actions; type directly in a selected text field, use **Space** for a checkbox, and **Enter** to review an action. Reviews initially focus **Cancel**. Select **Confirm action** separately to submit, or use **Escape** to close the review. For messages, choose the sending participant with the arrow keys. **F6** returns to Coding/World, and **F7** opens requests. Each conversation retains its draft.
 
 The slash controls remain available in the scrollback terminal: `act` captures and displays the action; `confirm` submits it. A failed routing delivery can be retried with `confirm` using the same identity. Active views refresh on world change notices with a five-second fallback; `/panel refresh` requests an update. Terminal projections show semantic text, resources and actions rather than reproducing graphical geometry or media playback. Closing the view does not stop its producer.

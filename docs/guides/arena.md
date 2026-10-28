@@ -501,7 +501,7 @@ value and refuses it with "no history to forecast from"; `research:` answers it 
 - the answer is the median of the remaining means, with
   sd = max(median analyst sd, the means' sample sd, 7 % of the median);
 - with nothing usable the round is **not answered**: a `NoAnchorRefusal` whose `detail` keeps the
-  dossier, proposals and judge; `arena research <round>` prints that trail.
+  dossier, proposals and judge; `bun run arena research <round>` prints that trail.
 
 To answer such rounds, route their family to research, e.g.
 `<family>=research:<m>[,<m>…]@<retriever>`.

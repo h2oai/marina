@@ -1,7 +1,7 @@
 # Media Generation (images & video)
 
 Marina can generate images and video and surface the results in chat. Generation
-runs as a tracked **job** (pending → rendering → complete), stores the result as
+runs as a tracked **job** (pending → running → succeeded, or failed / blocked), stores the result as
 an asset, and publishes it to the canvas so it shows up inline in the Rich web
 chat — click it to view full-size.
 
@@ -21,8 +21,8 @@ Generation calls out to a provider, so you need that provider's key:
 | Video | Google Veo | `GEMINI_API_KEY` *(reused)* | `google/veo-3.1-generate-preview`, `google/veo-3.1-fast-generate-preview` |
 | Video | Luma Dream Machine | `LUMA_API_KEY` | `luma/ray-2`, `luma/ray-flash-2` |
 
-OpenAI retired `dall-e-2` and `dall-e-3` on 2026-05-12; Marina refuses them with a
-pointer to `openai/gpt-image-2` and no longer treats them as image models.
+`dall-e-2` and `dall-e-3` are retired by OpenAI; Marina refuses them with a pointer to
+`openai/gpt-image-2`.
 
 ### Local & custom image models
 
@@ -43,7 +43,8 @@ You can use **any** image model, including local ones — no code change:
   `http://localhost:<port>/v1`.
 
 Pick a provider per request with `--model` (default image model is
-`openai/gpt-image-2`; override the instance default in Admin → Model). Each participant may start at most
+`openai/gpt-image-2`, or the instance default model set in Admin → Keys → Default model when that
+is itself an image model). Each participant may start at most
 50 image and 5 video jobs in any 24 hours by default (`0` = unlimited):
 
 ```bash
@@ -197,7 +198,7 @@ with `marina_tool_search`).
 input, `marina_see` returns the image itself in the tool result, with a short
 header (source reference, dimensions, type, the question) that marks the
 content as untrusted. No second model is called. A model that cannot read
-images gets the text description instead, exactly as before.
+images gets the text description instead.
 `MARINA_AGENT_VISION` chooses:
 
 | Value | Behaviour |
@@ -265,7 +266,7 @@ who uses the node id gets "not found". A request's
 images are capped at `MARINA_VISION_MAX_BYTES` in total, and staged images are
 deleted after 7 days (`MARINA_RETENTION_OVERRIDES` entries `assets` and
 `canvas_nodes`, which apply to request images only). An open-API caller outside
-the local profile stages nothing; each image is labelled as not staged. A request may now be image-only. Remote image URLs are
+the local profile stages nothing; each image is labelled as not staged. A request may be image-only. Remote image URLs are
 not fetched at request time; the prompt names the URL, which `canvas look`
 reads through the SSRF guard if an agent chooses to.
 
@@ -360,8 +361,8 @@ back signed for the caller. The query accepts `type`, `owner`, `origin`, `tag`,
 `GET /api/assets/<id>` adds provenance, lineage and the canvases that show the
 asset. `PATCH /api/assets/<id>` sets `caption`, `alt`, `tags`, `addTags` or
 `removeTags`. It is allowed for the owner or an operator. Anyone else gets 403,
-or 404 when they cannot read the asset at all. The plain `GET /api/assets`
-array is unchanged.
+or 404 when they cannot read the asset at all. Without `view=library`,
+`GET /api/assets` returns a plain array.
 
 **Retention.** Only request images age out (7 days). Uploaded, generated and
 tool assets are kept until someone deletes them. Deleting a canvas node or a
@@ -506,7 +507,7 @@ unpriced.
 
 **HTTP.** `POST /v1/audio/transcriptions` (multipart) and `POST
 /v1/audio/speech` (JSON) follow OpenAI's API; see
-[passthru](../architecture/passthru.md#audio-endpoints-2026-10-15). They are
+[passthru](../architecture/passthru.md#audio-endpoints). They are
 compute endpoints: nothing is stored as an asset.
 
 ## Troubleshooting
@@ -520,7 +521,9 @@ compute endpoints: nothing is stored as an asset.
 - **Video job `running` for a long time** — check its `lastPollError` in
   `media jobs`; `readiness` lists a failing `media-video-poll` tick job. The job
   fails on its own at `MARINA_VIDEO_JOB_TIMEOUT_MIN`.
-- **Agent has no generate tool** — its model isn't image/video-capable. Spawn it
-  on a media model, or have it run the `image generate` command instead.
+- **Agent has no generate tool** — no image or video provider was configured when
+  it spawned (the tools follow providers, not the agent's model). Configure one and
+  respawn it, set `supports.image` / `supports.video` on its config, or have it run
+  the `image generate` command instead.
 - **Nothing appears in chat** — make sure you're in **Rich** view (Compact view
   doesn't render the canvas timeline); the result is also always in `media jobs`.

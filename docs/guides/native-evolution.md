@@ -79,8 +79,8 @@ The trial reports a 95% interval on the difference (Agresti–Caffo — honest a
 `evolve replicate` requires the interval to sit above zero as well as the fishing margin.
 Each arm also shows its answer rate and its accuracy on answered items, with a `split:` line — the
 overall score counts an unanswered item as wrong, so it mixes answer quality with reliability.
-The first real held-out trial read +6.0 overall: +0.2 points of quality, +6 answered items. A 100-item
-trial runs ~200 agent answers — roughly $10 on Claude Sonnet 5, inside a child's $50 day.
+A 100-item trial runs about 200 agent answers; price it against the child world's daily spend cap
+(`MARINA_CHILD_DAILY_SPEND_CAP_USD`, default $50).
 
 ### Earned replication: a winner spawns copies of itself
 
@@ -114,11 +114,11 @@ Adopting a winner into the parent world is a separate, reviewed step — see
 
 Cite a benchmark run by its id and `evolve evaluate` checks it: the run must exist, be completed and
 have answered something, or the evaluation is refused. Its verified score is stored with the
-evidence, together with what it measured — for a `marina:<name>` target, the agents serving it,
+evidence, together with what it measured — for a crew target (`marina:<name>`), the agents serving it,
 their role and the hash of the exact system prompt in force:
 
 ```text
-benchmark run smoke --model marina:scout-v2          # → br_…
+benchmark run smoke crew:scout-v2                    # → br_…
 evolve evaluate ScoutTrial 1 | sharper answers on the smoke set benchmark:br_da6d8043_muhobbx8
 #   verified benchmark:br_da6d8043_muhobbx8 smoke 93.3% (15/15) · marina:scout-v2 · Scout2 role scout-v2 prompt ab12cd34ef56
 ```

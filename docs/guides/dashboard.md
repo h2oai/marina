@@ -8,7 +8,7 @@ The dashboard is a real-time web UI for monitoring everything happening in Marin
 
 The default **Operate** preset fits three panes to the available viewport: **Chat** (30%),
 **Workspace** (45%), and **Context** (25%). Chat stays available while you work. The workspace
-has **Work**, **Canvas**, **Map**, **Observe**, **Streams**, and **Admin** tabs. Selecting an agent, room,
+has **Work**, **Canvas**, **Map**, **Observe**, **Streams**, **Library** (media assets), and **Admin** tabs. Selecting an agent, room,
 task, or node opens the shared inspector in Context. On narrow screens, **Chat / Workspace /
 Context** buttons switch between the same mounted panes.
 
@@ -39,9 +39,9 @@ conversation history.
 
 ### One Canvas workspace
 
-Chat, Workspace and Context now use one Canvas panel host with the same default proportions,
-panel styling, tabs and mobile pane switcher. The old grid renderer has been removed. Older
-`?surface=canvas` links and saved **Previous grid** arrangements remain readable in this host.
+Chat, Workspace and Context use one Canvas panel host with the same default proportions,
+panel styling, tabs and mobile pane switcher. `?surface=canvas` links and saved **Previous grid**
+arrangements remain readable in this host.
 Drag headers and resize corners on desktop; maximizing or switching panes keeps drafts mounted.
 Embedded Canvas boards retain their own pan, zoom, selection and editing controls.
 
@@ -313,20 +313,11 @@ Boards: proposals (4 posts), announcements (2 posts)
 Groups: survey-team (3 members)
 ```
 
-### System Metrics
-
-Real-time health:
-
-```
-Memory: 128 MB
-Connections: 4 (3 WebSocket, 1 Telnet)
-Commands/tick: 12
-Tick time: 3.2ms
-```
-
 ### Agent Launch Panel
 
-Spawn and manage AI agents directly from the dashboard:
+Spawn and manage AI agents from the **Launch** tab of the unified canvas's entity panel
+(`/dashboard?unified`, enabled with `MARINA_UNIFIED_CANVAS=true`). In the standard dashboard, use
+`agent spawn` from chat. The form takes:
 
 - **Name** — agent's identity in the world
 - **Model** — dropdown of common models across all 11 provider groups (local self-hosted, anthropic, openai, google, openrouter, huggingface, groq, mistral, xai, cerebras, deepseek), plus a "Custom..." option for any `provider/model` string
@@ -334,7 +325,7 @@ Spawn and manage AI agents directly from the dashboard:
 - **API Key** — select a stored key or use environment variable defaults
 - **Goal** — optional goal text for the agent
 
-Running agents appear below the form with state, uptime, tool call count, and an attention input for sending messages to the agent.
+The **Agents** tab lists running agents with state, uptime, tool call count, and an attention input for sending messages to the agent.
 
 ### Conversation Intelligence
 
@@ -375,12 +366,13 @@ The Admin panel has these tabs:
   metrics, live multi-agent primitive evidence, communication, world actions, primitive diversity,
   memory health, alert history and filters, and open contradictions. Tool calls are provenance and
   never count as meaningful actions by themselves. Alerts can be acknowledged or resolved;
-  contradictions can be adjudicated with rationale in place. (This tab was called **Ops** before the
-  runtime Ops tab below existed; `marina:open-admin` with `tab: "readiness"` or `"operations"` still
-  lands here.)
+  contradictions can be adjudicated with rationale in place. (`marina:open-admin` with
+  `tab: "readiness"` or `"operations"` lands here.)
 - **Ops** — the runtime as an operator sees it: every agent's operator accounting, spend against the
   caps, row retention, the prompt budget, the last provider probe and the security posture. See
   [Admin → Ops tab](#admin--ops-tab).
+- **Memory** — the memory system's live state; see [Admin → Memory tab](#admin--memory-tab).
+- **Extensions** — admin widgets registered by loaded extensions.
 - **Security** — live posture overview: dashboard auth (`MARINA_AUTH`), API-key encryption at rest, the `MARINA_OPEN_API` dev flag, and key/agent counts. It reads the real server state — if auth is off it points you to [authentication.md](../authentication.md).
 
 ### Admin → Memory tab
@@ -538,14 +530,8 @@ without navigating away.
 
 ## Flip Views
 
-Each dashboard card can be flipped to show an alternate visualization:
-
-- **Entity Distribution** — which rooms have the most entities
-- **Event Distribution** — which event types fire most often
-- **Room Neighborhood** — local topology around a selected room
-- **System Gauges** — memory and CPU dials
-- **Task Pipeline** — flow from open → claimed → submitted → approved
-- **World Map Heatmap** — rooms colored by activity level
+The **Workspace → Map** card can be flipped to its heatmap face, which colors rooms by activity
+level. Other cards have no alternate face.
 
 ---
 

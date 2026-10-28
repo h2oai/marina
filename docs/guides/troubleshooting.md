@@ -4,6 +4,29 @@ Common problems and how to fix them.
 
 ---
 
+## Agents Don't Answer, or "No Model"
+
+Agents need a model. These all mean none is connected:
+
+- `marina`'s first screen opens with **Connect a model first**, and the rule above the prompt
+  reads `no model`.
+- A task replies `No LLM provider configured`.
+- `/v1` answers `503 No upstream LLM providers configured`.
+
+Run `marina init` and choose a provider (paste its key) or `local` (pick a model your Ollama,
+llama.cpp, LM Studio or vLLM server serves). Then restart `marina` or `marina start`. Keys can
+also go in **Admin → Keys** on the dashboard, but that reaches only that server's world, so a
+key saved there does not reach another folder's session.
+[Connect a model](configuration.md#connect-a-model) has every option.
+
+If a key is set but nothing answers, run `readiness providers` (in a folder session:
+`/world readiness providers`). It makes one small call per provider and names the one that
+fails. Common causes are a mistyped key, a provider account with no credit, or a local server
+that is not running. At the daily spend cap ($50 by default), model calls stop until 00:00 UTC.
+`/cost` shows today's spend.
+
+---
+
 ## I Can't Start the Server
 
 ### "Port already in use"
@@ -150,9 +173,14 @@ Welcome, Kira!
 
 ## Model API Issues
 
-### "No agent available"
+### `503 No upstream LLM providers configured`
 
-No one is in the `model` channel. Start a provider agent:
+No model is connected; see [Agents don't answer](#agents-dont-answer-or-no-model).
+
+### `503 No agents online for model "…"`
+
+You named an agent-served model and no agent serves that channel. Configure a provider key so
+Marina can answer directly, or start a provider agent:
 
 ```bash
 PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=qwen3:4b bun run src/sdk/examples/provider.ts
@@ -160,21 +188,20 @@ PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=qwen3:4b bun run src/sdk/e
 
 ### 401 Unauthorized
 
-The Model API requires a configured key unless development-open mode is explicit. Either:
+Send a matching bearer token. On a local install Marina generates one into
+`marina.db.local-api-key` next to its database and prints where it is at startup; elsewhere use
+a `MODEL_API_KEYS` secret:
 
 ```bash
-# Add the key to your request
-curl -H "Authorization: Bearer sk-your-key" http://localhost:3300/v1/models
-
-# Or restart in explicit local-development mode
-MARINA_OPEN_API=true bun run start
+curl -H "Authorization: Bearer $OPENAI_API_KEY" http://localhost:3300/v1/models
 ```
 
-### Timeout after 30 seconds
+`MARINA_OPEN_API=true` skips caller auth for local development only.
 
-The provider agent or external LLM is too slow. Check:
-- Is the provider agent running? (`who` in Marina)
-- Is the external LLM reachable? (curl its URL directly)
+### Requests time out
+
+A routed request waits up to `MODEL_REQUEST_TIMEOUT_MS` (default 10 minutes). Check that the
+answering agent is running (`who`) and its provider is reachable (`readiness providers`).
 
 ---
 

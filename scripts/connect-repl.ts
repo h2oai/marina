@@ -380,7 +380,7 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
     const keys: [string, string][] = [
       ["enter", "run a world command (look, say hi, task list, ask <question> …)"],
       ["tab", "complete commands and /panels"],
-      ["↑ ↓", "history (kept in ~/.marina/history, secrets skipped; MARINA_HISTORY=off)"],
+      ["↑ ↓", "history (kept in ~/.marina/history/connect, secrets skipped; MARINA_HISTORY=off)"],
       ["ctrl+o", "expand the last collapsed result"],
       ["ctrl+c", "clear the line; twice to exit"],
       ["ctrl+d", "exit"],
@@ -459,7 +459,8 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
         ]
           .filter(Boolean)
           .join(dot),
-        t.fg("link")(url),
+        // The same world in a browser: the dashboard on this server.
+        t.fg("link")(httpBase(url).replace(/\/ws$/, "")),
       ].filter(Boolean),
       sections: [
         {

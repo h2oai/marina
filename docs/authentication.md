@@ -7,14 +7,16 @@ For **public / multi-user hosting**, Marina offers an *optional* authentication 
 [better-auth](https://github.com/better-auth/better-auth) (self-hosted, OIDC/SAML-capable). It is
 **off unless you turn it on**, and when off it is never imported and changes nothing.
 
-> **Default (no setup):** passwordless name-login over WebSocket/telnet, and admins set by name via
-> `MARINA_ADMINS`. Fine locally; **not** safe on a public port (anyone could claim the admin name).
-> Turning auth on closes both holes.
+> **Default (no setup):** passwordless name-login over every surface, and admins set by name via
+> `MARINA_ADMINS` (honoured only for loopback logins). Fine locally; **not** safe on a public port,
+> where anyone can claim any name, and Marina refuses to boot a non-loopback bind with passwordless
+> login unless you set `MARINA_ALLOW_INSECURE_PUBLIC=true`. Turning auth on closes the hole.
 
 ## What turning it on changes
 
 - The webchat/dashboard requires **sign-in** (email/password, plus any social providers you configure).
-- The unsafe **passwordless name-login is rejected** for external clients.
+- The unsafe **passwordless name-login is rejected** on every surface (WebSocket, telnet, MCP, dashboard
+  API, chat adapters); only internal agents and verified sign-ins log in by name.
 - A signed-in human is **bridged to a *named* Marina entity** (the "artilect"). The better-auth account
   (email/OAuth) is only an *access credential* — the in-world identity stays the named entity you claim.
 - **Admins are granted by verified email** (`MARINA_AUTH_ADMIN_EMAILS`), never by name.
@@ -145,7 +147,8 @@ Provider API keys added through the **Admin → Keys** panel (or the `key` comma
 SQLite database (`api_keys` table). Authentication gates *who can reach* the panel; encryption
 protects what's stored if the DB/volume leaks.
 
-**Enable encryption at rest** by setting a secret (≥ 16 chars):
+Stored keys are encrypted at rest. For a managed deployment, set the secret yourself (≥ 16 chars) from
+your secret manager:
 
 ```bash
 # .env
@@ -156,17 +159,21 @@ When set, key values are encrypted with **AES-256-GCM** before they touch the da
 decrypted transparently on read. On startup any existing plaintext rows are migrated to encrypted
 (logged as `Encrypted N API key(s) at rest`). **Admin → Security** shows the live state.
 
+**Without `MARINA_KEY_SECRET`**, Marina generates a secret in `<DB_PATH>.key-secret` (mode 0600) and
+encrypts keys saved from then on; rows stored as plaintext before keep working until re-saved or an
+explicit secret migrates them. Back that file up with the database.
+
 - The secret is the **only** thing that can decrypt stored keys. If you lose or change it, existing
   encrypted keys become unreadable and must be re-entered. Back it up with the same care as the DB.
-- **Without `MARINA_KEY_SECRET`, keys are stored in plaintext.** In that case prefer the provider
-  **env vars** (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …, `LLAMA_API_KEY`) — they're read live, take
-  precedence on the `marina/default` proxy path, and are **never written to the database**.
+- Provider **env vars** (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …, `LLAMA_API_KEY`) avoid stored keys
+  entirely: they're read live, take precedence on the `marina/default` proxy path, and are **never
+  written to the database**.
 
 ## Notes / current scope
 
 - Implemented: email/password + social OAuth, identity→named-entity bridge, admin-by-verified-email,
-  **opt-in API-key encryption at rest** (`MARINA_KEY_SECRET`, see above).
-- Enforcement currently targets the **web surfaces** (webchat/dashboard + HTTP). Telnet/MCP remain
-  token-or-open in public mode; gate them at the network layer if exposed.
-- Roadmap: enterprise SSO (OIDC/SAML via better-auth's SSO plugin), a dashboard sign-out control, and an
-  admin UX for issuing agent tokens.
+  API-key encryption at rest (see above).
+- Sign-in is enforced at login, the one choke point every surface uses. Telnet is plaintext
+  (off by default); keep it off a public network even with auth on.
+- Not provided: enterprise SSO (OIDC/SAML), a dashboard sign-out control, and an admin UX for
+  issuing agent tokens.

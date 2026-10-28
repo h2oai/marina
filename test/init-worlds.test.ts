@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   listWorldSlugs,
+  localRuntimeSettings,
   MutableOutput,
   NON_WORLD_FILES,
   readWorldName,
@@ -85,5 +86,23 @@ describe("MutableOutput (secret prompt echo)", () => {
     out.muted = false;
     await write("after");
     expect(chunks).toEqual(["visible", "after"]);
+  });
+});
+
+describe("init: a local model", () => {
+  it("Ollama gets its own settings; any other server goes through the llama ones", () => {
+    expect(localRuntimeSettings("http://localhost:11434/v1/", "qwen3:4b")).toEqual({
+      OLLAMA_BASE_URL: "http://localhost:11434/v1",
+      MARINA_DEFAULT_OLLAMA_MODEL: "qwen3:4b",
+    });
+    expect(localRuntimeSettings("http://localhost:1234/v1", "lmstudio-model", "32768")).toEqual({
+      LLAMA_BASE_URL: "http://localhost:1234/v1",
+      MARINA_DEFAULT_LLAMA_MODEL: "lmstudio-model",
+      LLAMA_CONTEXT_WINDOW: "32768",
+    });
+    // A blank window leaves the server's own probe in charge.
+    expect(localRuntimeSettings("http://localhost:8080/v1", "m")).not.toHaveProperty(
+      "LLAMA_CONTEXT_WINDOW",
+    );
   });
 });

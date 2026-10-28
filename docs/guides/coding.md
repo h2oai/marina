@@ -65,7 +65,10 @@ The first page is a welcome card sized to the terminal: the Marina version, the 
 model, the folder, tips, and whether the session is new or resumed. The input area sits below
 it: a rule naming the folder and status, the `❯` prompt, a rule, and a footer, the same layout
 as `marina connect`. One-shot `-p`, redirected output and `--tui` keep the plain lines. With no
-provider key, one line names the missing key and offers `marina init`. `--verbose` adds the database, the server endpoints and
+model connected, the card opens with **Connect a model first** and the rule reads `no model`
+([connect one](configuration.md#connect-a-model)). The folder session runs the whole Marina
+server, so the card's **Dashboard** section links to it (`http://localhost:<port>`, a port chosen
+per launch): the same world, sessions and agents in a browser. `/dashboard` opens it signed in. `--verbose` adds the database, the server endpoints and
 the federation address; `/status` and `/project` show the rest whenever you want them.
 
 Inside the terminal, `/help` shows one screen of essentials and `/help all` lists every control;
@@ -73,14 +76,16 @@ Tab completes their names and the `/verify` and `/review` actions; when several 
 footer lists them. `/quit`, `/exit` and Ctrl+D
 leave. Streaming
 output preserves the current draft and cursor, including wrapped lines and terminal resizing.
-The prompt names the folder and what the agent is doing (`myapp · working ›`), and adds what
-is waiting only when something is (`myapp · ready · 1 request · World 3 ›`); transcript labels distinguish world messages, check
+The rule above the `❯` prompt names the folder and what the agent is doing (`myapp · working`);
+what is waiting appears only when something is (`1 request · World 3`), on the rule and at the
+right of the footer. In a world or answer view the rule names that destination instead
+(`world command`, `answer`). Transcript labels distinguish world messages, check
 receipts, results, submitted work and review. Permission details appear above a short answer
 prompt. End a line with `\` to continue a task on another line.
 
 In an interactive terminal, **Coding** is the initial view. F6 switches between Coding and
 **World**, preserving each view's draft, cursor, multiline input and command history. The
-prompt counts unread output in the other conversation (`World 3`, `Coding 2`). Use `/view coding` or
+input rule counts unread output in the other conversation (`World 3`, `Coding 2`). Use `/view coding` or
 `/view world` when function keys are unavailable. World input uses normal Marina commands;
 `/world <command>` also works from either conversation. Incoming world events and coding
 output continue to arrive while you focus elsewhere.
@@ -504,8 +509,9 @@ The last command should fail. That failure is the agent's starting point.
 
 ### 2. Provide one model key
 
-The folder-scoped launcher uses provider keys from the shell that starts it. Choose one provider;
-do not paste a real key into a command you intend to save or share:
+The folder-scoped launcher reads provider keys from the shell that starts it, then from
+`~/.marina/.env` (`marina init` writes one). Choose one provider; do not paste a real key into a
+command you intend to save or share:
 
 ```bash
 export ANTHROPIC_API_KEY="your-key-here"
@@ -526,20 +532,20 @@ cd /path/to/marina
 bun run code /tmp/marina-coding-agent-demo
 ```
 
-Wait for the `»` prompt, then paste this task exactly:
+Wait for the welcome card and the `❯` prompt, then paste this task exactly:
 
 ```text
 Fix the percentage-discount bug. Treat percent as a value from 0 through 100, reject invalid cents or percent inputs, add regression tests for boundaries and invalid inputs, then run the test and typecheck scripts. Do not change dependencies.
 ```
 
-Marina creates a temporary local world, binds one coding agent to the demo directory, and streams
+Marina starts a folder-scoped local world, binds one coding agent to the demo directory, and streams
 its progress. The expected lifecycle is `received → inspect → plan → patch → apply → verify →
 complete`. The agent may phrase its messages differently, but a completion must identify changed
 paths and successful checks. It must not claim success from a proposed patch alone.
 
 ### 4. Inspect or steer while it works
 
-At the same `»` prompt, these are safe to paste:
+At the same `❯` prompt, these are safe to paste:
 
 ```text
 status
@@ -549,10 +555,10 @@ focus on input validation before changing anything else
 ```
 
 Because this launcher is already in Code Mode, omit the `code` prefix. A plain sentence is steering
-or a new task; `status`, `diff`, and `show` are commands. Use `Ctrl-C` to stop the launcher. The
-session's database persists per folder (see below), so relaunching resumes where you left off;
-edits in the demo folder remain available to inspect. Pass `--fresh` for the old throwaway
-behavior.
+or a new task; `status`, `diff`, and `show` are commands. Ctrl+C interrupts the worker; a second
+Ctrl+C, `/quit` or Ctrl+D exits. The session's database persists per folder (see below), so
+relaunching resumes where you left off; edits in the demo folder remain available to inspect.
+Pass `--fresh` for a throwaway database instead.
 
 ### 5. Verify independently
 
@@ -623,15 +629,15 @@ you straight into agentic Code Mode (needs an LLM provider key in your env):
 bun run code            # the current directory
 bun run code ~/projects/acme   # …or any directory
 # It evaluates the directory, then you say what you want, in plain English:
-» fix the off-by-one in the tokenizer and add a regression test
+❯ fix the off-by-one in the tokenizer and add a regression test
 ```
 
 **Sessions persist per folder.** Each directory gets its own Marina database at
 `~/.marina/projects/<slug>/marina.db` (slug = folder basename + a short hash of the absolute
 path), so sessions, artifacts, and agent memory accrete across launches — relaunching in the same
-folder prints `Resuming session <id> — started <age>, workspace <path>` and picks up where the
-last run left off. Pass `--fresh` (or set `MARINA_CODE_FRESH=1`) for the old behavior: a
-throwaway database, deleted on exit. Only the ephemeral DB is ever deleted; the per-folder one is
+folder shows **Resuming** on the welcome card (the session's title, when it started and, if
+different, its workspace) and picks up where the last run left off. Pass `--fresh` (or set
+`MARINA_CODE_FRESH=1`) for a throwaway database, deleted on exit. Only the ephemeral DB is ever deleted; the per-folder one is
 yours to keep or remove.
 
 **One-shot mode** (`marina -p "<task>" [dir]`, alias `--print`) dispatches a single task
@@ -1247,9 +1253,10 @@ moves it.
 
 **Approvals are first-class, auditable artifacts.** Risky actions can be surfaced as **approvals** —
 request/approve/deny artifacts that leave a visible decision trail and render as cards with
-Approve/Deny buttons in the dashboard. *(Today these are advisory: they record the decision but don't
-yet block the underlying action, and the requester can decide their own — enforced approvals with
-separation-of-duties are on the roadmap.)* From any surface:
+Approve/Deny buttons in the dashboard. *(These records are advisory: they record the decision, and
+any session participant, the requester included, can decide one. Only `code service publish`
+requires a matching approved network request. Commands held by a safety gate are approved by a
+person through a challenge, not through these records.)* From any surface:
 
 ```
 > code approvals                 # pending requests

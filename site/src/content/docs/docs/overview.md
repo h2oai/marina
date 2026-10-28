@@ -77,7 +77,7 @@ and the same permissions and spend limits apply.
 | If you… | Start with |
 | --- | --- |
 | want to look around | the dashboard at `http://localhost:3300` ([Getting started](../guides/getting-started/)) |
-| write code | `marina .` in any project folder ([Coding](../guides/coding/)) |
+| write code | `marina` in any project folder ([Coding](../guides/coding/)) |
 | use Claude Code, Codex or Cursor | the MCP endpoint ([MCP](../guides/mcp-integration/)) |
 | have an OpenAI-compatible tool | `http://localhost:3300/v1` ([Model API](../guides/model-api/)) |
 | build agents | the SDK ([Agent development](../guides/agent-development/)) |
@@ -87,15 +87,16 @@ and the same permissions and spend limits apply.
 
 ```bash
 git clone https://github.com/h2oai/marina.git
-cd marina && bun install
-bun run dashboard:build && bun run start
-# open http://localhost:3300
+cd marina && bun install && bun run dashboard:build
+bun run setup:cli    # puts `marina` on your PATH
+marina init          # connect a model: a provider key, or a local one
+cd ~/my-project && marina    # code here; the first screen links this world's dashboard
+marina start                 # or run the server and open http://localhost:3300
 ```
 
-You can explore without any AI provider. When you want the agents to wake up, add a key in
-**Admin → Keys**, or start with one local model. Type `readiness` any time to see what's working
-and what to switch on next. The [Getting started guide](../guides/getting-started/) takes it from
-there.
-
-To code in your own projects the way you would with Claude Code or Codex, run
-`bun run setup:cli` once, then `marina` in any project folder (see [Coding](../guides/coding/)).
+You can explore without any model. `marina init` asks for one first: a provider key (Anthropic,
+OpenAI, Google, OpenRouter, …) or a model your Ollama, llama.cpp, LM Studio or vLLM server
+serves. You can also paste a key in the dashboard under **Admin → Keys**. Type `readiness` any time
+to see what's working and what to switch on next.
+[Connect a model](../guides/configuration/#connect-a-model) covers every option, and the
+[Getting started guide](../guides/getting-started/) takes it from there.

@@ -33,8 +33,8 @@ bravado.
 ```
 market list [open|resolved|closed]     # browse markets by status
 market search <query>                  # full-text search over questions
-market live                            # live external markets (Kalshi/Polymarket feeds)
-market view <id>                       # one market in full, with all positions
+market live <kalshi|polymarket> [7d] [25]   # live external markets on one venue (window, limit)
+market show <id>                       # one market in full, with all positions (also view/info)
 market leaderboard                     # top forecasters by calibration (Brier)
 market score [entity]                  # a forecaster's calibration stats
 market forecast <id>                   # a model-backed forecast for a market
@@ -59,7 +59,9 @@ position propose '<json>'                                   # post a portfolio f
 position confirm <id>  /  position reject <id> [reason]     # decide a proposed portfolio
 ```
 
-Venues: **kalshi** and **polymarket**.
+Venues: **kalshi** and **polymarket**. `position` and `bankroll` need rank 2 (`size`, `list`, `pnl`,
+`propose`, `reject`, `bankroll show`); `open`, `close`, `confirm` and changing the bankroll need
+rank 5.
 
 **Hard rules enforced at the data layer** (not just prompts), checked on every open — paper and
 live alike:

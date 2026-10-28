@@ -59,19 +59,18 @@ versions and the executable hash **before signing**. OS signing can change those
 bytes; release attestations cover the final distribution artifacts.
 
 Use the package scripts, not a raw `electrobun build`, so the hook receives the
-build executable. A missing or mismatched runtime fails the build. The v1 Bun
-FFI patch is retired: v2 provides the native string conversion fixes and uses
-core-owned numeric object IDs. Tests exercise callbacks through a compiled C
-fixture, including cancelled file dialogs and tray events.
+build executable. A missing or mismatched runtime fails the build. Tests
+exercise native callbacks through a compiled C fixture, including cancelled file
+dialogs and tray events.
 
 World definitions and inline rooms are bundled with the engine. External room
 directories are compiled into `dist/rooms`, including their runtime imports.
 LICENSE and NOTICE are included in the app. Fonts are cached for offline use;
 a failed optional font download falls back to system fonts.
 
-App identity remains `dev.marina.desktop`. Existing preferences and databases
-remain in the same OS data directory. Linux also honors an absolute
-`XDG_DATA_HOME`; its default remains `~/.local/share/marina`. Window replacement
+The app identity is `dev.marina.desktop`; preferences and databases live in that
+app's OS data directory. Linux honors an absolute `XDG_DATA_HOME`; the default is
+`~/.local/share/marina`. Window replacement
 creates the new window before closing the old one. Quit requests veto native
 teardown until the engine drains pending work and closes persistence.
 
@@ -121,8 +120,8 @@ machine's keychain. Notarization also requires `APPLE_ID`, `APPLE_TEAM_ID`, and
 name alone does not mean a signed or notarized release. Validate those steps on
 the native target before publishing. Windows installer signing is not configured.
 
-`release.baseUrl` remains unset and delta-patch generation is disabled: this
-migration does not introduce a public update feed. Installing over an earlier
+`release.baseUrl` is unset and delta-patch generation is disabled, so there is
+no public update feed. Installing over an earlier
 release, native dialogs, OS signing and updates still need target-OS acceptance
 testing. Linux validation does not certify macOS or Windows.
 
