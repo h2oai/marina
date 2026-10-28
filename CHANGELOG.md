@@ -345,6 +345,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A prompt sent to a supervised Claude session while it works runs as its own next turn.** The
+  Claude CLI folded it into the running turn, attached to a tool result, where Claude may decline
+  it as not coming from the user. It is now sent with `priority: later`, so it starts the next
+  turn, as the adapter's `next-turn` steering declares.
 - **Opening a world database another process is opening waits instead of failing.** The busy
   timeout is now the first statement on a new connection (and is set on the read-only one too).
   It used to follow `PRAGMA journal_mode=WAL`, so a server and a CLI opening the same database
