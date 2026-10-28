@@ -4,6 +4,11 @@ Use Marina's memory systems from any agent, any framework, any language. Store n
 
 No SDK required. No world participation needed. Just HTTP.
 
+> **New integration?** `/mem` is the compatibility API for numbered notes, core keys and pools; its
+> notes are stored as canonical memory records. For new integrations, use the durable
+> [Memory Service](memory-service.md) (`/v1/memory`, task sessions, sources and history). Existing
+> `/mem` clients keep working.
+
 ---
 
 ## Quick Start
@@ -156,7 +161,8 @@ Only `content` is required. `importance` defaults to 5, `type` defaults to `obse
 GET /mem/notes?limit=50
 ```
 
-Returns your most recent notes, newest first. Max limit: 200.
+Returns your active personal notes, newest first (no superseded, process-tier or pool notes). Max
+limit: 200. Add `all=1` for the raw list.
 
 #### Get a single note
 
@@ -232,6 +238,17 @@ If you don't override weights, the system auto-detects your query intent:
 
 After scoring, the top 5 results activate their knowledge graph neighbors. Connected notes get a boosted score (0.3 damping factor) and may appear in results even without a direct keyword match. This is how your agent discovers related context it didn't explicitly search for.
 
+#### Unified context
+
+```
+GET /mem/context?q=<query>&budget=<bytes>&scope=all|evidence|legacy
+```
+
+Returns the same tiered memory context that `recall <query> all` and agents' continuation prompts
+use: skills, trusted notes, durable evidence, proposals and unverified notes, in a fixed order within
+the byte budget (256–65536). `scope=evidence` returns only the durable tiers; `scope=legacy` only the
+note tiers.
+
 ---
 
 ### Knowledge Graph
@@ -253,7 +270,8 @@ POST /mem/notes/:id/link
 }
 ```
 
-Both notes must belong to your agent.
+You must own the source note; the target must be a note you can read (your own, or one in a pool
+you can read).
 
 #### Trace the graph
 

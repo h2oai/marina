@@ -46,33 +46,35 @@ You need [Bun](https://bun.sh) 1.4.3 or newer.
 
 ```bash
 git clone https://github.com/h2oai/marina.git
-cd marina && bun install
-bun run dashboard:build && bun run start
+cd marina && bun install && bun run dashboard:build
+bun run setup:cli    # puts `marina` on your PATH
+marina init          # connect a model: paste a provider key, or pick a local one
 ```
 
-Open **http://localhost:3300**, pick a name, and press **Start Here**. You can look around
-without any AI provider. To bring the agents to life, add a key in **Admin → Keys** or start
-with one:
+Then work wherever you are. Every way in reaches the same world:
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-... bun run start   # or OPENAI_, GEMINI_, OPENROUTER_ …
-OLLAMA_BASE_URL=http://localhost:11434/v1 bun run start   # or one local model
+cd ~/your-project && marina   # code in this folder, like Claude Code or Codex
+marina start                  # or run the server and open http://localhost:3300
 ```
 
-A daily spend cap ($50 by default) keeps an eager agent from surprising you. The
-[Getting Started guide](docs/guides/getting-started.md) walks you to your first reviewed result.
+`marina` in a folder runs the whole Marina server for that folder. Its first screen shows a
+link to that folder's dashboard. In the browser, pick a name and press **Start Here**.
 
-### Use `marina` like Claude Code or Codex
+`marina init` asks for the model first: Anthropic, OpenAI, Google, OpenRouter (one key for every
+vendor), Groq and others, or a model your own Ollama, llama.cpp, LM Studio or vLLM server
+serves. It writes `~/.marina/.env`, which every folder uses; your project's own `.env` is never
+read. You can also paste a key in the dashboard under **Admin → Keys**, or set one when starting:
 
 ```bash
-bun run setup:cli    # once, from the checkout: puts `marina` on your PATH
-cd ~/your-project
-marina               # code in this folder (--tui fullscreen, -p "<task>" one-shot)
+ANTHROPIC_API_KEY=sk-ant-... marina start                 # or OPENAI_, GEMINI_, OPENROUTER_ …
+OLLAMA_BASE_URL=http://localhost:11434/v1 marina start    # or one local model
 ```
 
-Provider keys go in `~/.marina/.env` (`marina init` writes it) and apply in every folder; your
-project's own `.env` is never read ([settings](docs/guides/configuration.md#where-the-marina-cli-reads-settings)).
-See the [coding guide](docs/guides/coding.md#start-in-your-project-folder).
+You can look around without any model. A daily spend cap ($50 by default) keeps an eager agent
+from surprising you. [Connect a model](docs/guides/configuration.md#connect-a-model) covers every
+option, and the [Getting Started guide](docs/guides/getting-started.md) walks you to your first
+reviewed result. For the coding terminal, see the [coding guide](docs/guides/coding.md#start-in-your-project-folder).
 
 ## Try this first
 
@@ -131,7 +133,7 @@ WebSocket), so it works with almost anything.
 | You have… | Do this |
 | --- | --- |
 | A browser | Open `http://localhost:3300`. Chat, map, tasks and canvas live in the dashboard. |
-| A project folder | `bun run setup:cli`, then `marina .` starts a coding agent right there. [Coding guide](docs/guides/coding.md) |
+| A project folder | `marina` in that folder starts a coding agent there, with the dashboard one link away. [Coding guide](docs/guides/coding.md) |
 | Claude Code, Codex, Cursor | `claude mcp add --transport http marina http://localhost:3301/mcp` [MCP guide](docs/guides/mcp-integration.md) |
 | Any OpenAI-compatible tool | Use `http://localhost:3300/v1` and the local key printed at startup. [Model API](docs/guides/model-api.md) |
 | Your own agent code | `new MarinaAgent("ws://localhost:3300")` [Agent development](docs/guides/agent-development.md) |

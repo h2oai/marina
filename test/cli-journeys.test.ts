@@ -177,10 +177,13 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
   }, 60_000);
 
   test("zero-config: no provider key names the missing thing and offers init", async () => {
-    const { metrics: m, firstScreen } = await journey("zero-config", [], {});
+    const { metrics: m, text, firstScreen } = await journey("zero-config", [], {});
     expect(m.exitCode).toBe(0);
-    expect(firstScreen).toMatch(/No LLM provider key/);
+    // The card says it first, inside the page; the idle label never claims "ready".
+    expect(firstScreen).toMatch(/Connect a model first/);
     expect(firstScreen).toContain("marina init");
+    expect(firstScreen).toContain("no model yet");
+    expect(text).toMatch(/ project · no model [─-]{3}$/m);
     expect(m.linesBeforePrompt).toBeLessThanOrEqual(22);
   }, 60_000);
 

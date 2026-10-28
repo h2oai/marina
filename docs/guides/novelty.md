@@ -56,7 +56,7 @@ For a useful experiment:
 5. Record the result through existing tasks, benchmark ledgers and outcome lessons. Keep the
    simpler method when it wins. A novel idea is a hypothesis until supported by outcomes.
 
-Benchmark outcome learning now includes observed execution coverage separately from the declared
+Benchmark outcome learning includes observed execution coverage separately from the declared
 team. Comparisons require the same item slice and judge. Existing lesson trust and review rules
 still apply. Imported historical evidence is not silently replayed as a new successful experiment.
 See [execution evidence](execution-evidence.md) for attribution and live handoff checks.

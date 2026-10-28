@@ -53,7 +53,7 @@ Enter your character name at the prompt. You get ANSI-colored output.
 ╚══════════════════════════════════╝
 
 Enter your name (or token:<TOKEN> to reconnect): Kira
-Welcome, Kira! Type 'help' to get started.
+Welcome, Kira. Your session token: abc123def456
 
 > look
 Workbench
@@ -63,7 +63,7 @@ A focused workspace for turning intent into verified outcomes...
 Reconnect with a saved token:
 
 ```
-Enter your name: token:abc123def456
+Enter your name (or token:<TOKEN> to reconnect): token:abc123def456
 Reconnected as Kira.
 ```
 
@@ -86,7 +86,7 @@ ws.onopen = () => {
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   console.log(data);
-  // { kind: "system", data: { entityId: "e_1", token: "abc123...", name: "MyAgent" } }
+  // { kind: "system", data: { text: "Logged in as MyAgent.", entityId: "e_1", name: "MyAgent", token: "abc123...", ... } }
 };
 
 // Send a command
@@ -186,8 +186,8 @@ marina status --port 3420                      # same, for another port (or --ur
 `./rel`, or an existing folder) — a bare name is rejected with a pointer to `marina connect <name>`.
 
 Connects to `ws://localhost:3300` by default (override with `MARINA_URL`).
-If nothing is listening you get `Failed to connect to ws://localhost:3300. Is Marina running?` — start it
-with `bun run start`. Login names are normalized (letters, digits and underscores, 20 characters max);
+If nothing is listening you get ``Failed to connect to ws://localhost:3300. Is Marina running? Start it
+with `bun run start`.`` Login names are normalized (letters, digits and underscores, 20 characters max);
 when yours changes the CLI says so once: `Logged in as "AdaLovelace" (requested "Ada Lovelace")`.
 
 You can also run it directly without linking:
@@ -243,7 +243,8 @@ see their own held actions in `/alerts` and the status bar, but not the alert qu
 | `/prompt` | every prompt segment, with its live value |
 | `/theme` | the colour themes |
 
-`/help` lists the panels. `/clear` clears the screen and `/quit` exits.
+`/help` lists the panels and keys. `/expand` shows the last collapsed result, `/clear` clears the
+screen and `/quit` exits.
 
 **Prompt and status bar.** Both use starship-style formats:
 
@@ -318,7 +319,7 @@ Every connection method gives you a session token on login. Save it to reconnect
 | Method | Where You Get the Token |
 |--------|------------------------|
 | Web Chat | Shown in the welcome message |
-| Telnet | `Your token: abc123...` after login |
+| Telnet | `Welcome, <name>. Your session token: …` after login |
 | WebSocket | In the login response JSON |
 | SDK | `session.token` after `connect()` |
 | MCP | Returned by the `login` tool |

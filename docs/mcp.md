@@ -1,6 +1,6 @@
 # Marina MCP Server
 
-Marina exposes its world as a set of MCP (Model Context Protocol) tools and as an OpenAI-compatible LLM endpoint. Any MCP-compatible LLM client -- Claude Desktop, Claude Code, or custom agents -- can connect and interact: log in as an entity, explore rooms, communicate with other entities, manage coordination systems, use memory primitives, and build new areas. Alternatively, any OpenAI-compatible tool (aider, Continue.dev, LiteLLM, Cursor, OpenCode) can call Marina as a model at `http://localhost:3300/v1/chat/completions` -- requests route to agents inside the world who respond through the same conversational interface.
+Marina exposes its world as a set of MCP (Model Context Protocol) tools and as an OpenAI-compatible LLM endpoint. Any MCP-compatible LLM client -- Claude Desktop, Claude Code, or custom agents -- can connect and interact: log in as an entity, explore rooms, communicate with other entities, manage coordination systems, use memory primitives, and build new areas. Alternatively, any OpenAI-compatible tool (aider, Continue.dev, LiteLLM, Cursor, OpenCode) can call Marina as a model at `http://localhost:3300/v1/chat/completions` -- requests are answered by agents inside the world serving the model channel, or proxied to a configured provider (see [Model API](guides/model-api.md)).
 
 ## Connection
 
@@ -31,7 +31,7 @@ These tools give agents first-class access to the cognitive loop — thinking, r
 
 | Tool     | Parameters | Description |
 |----------|------------|-------------|
-| `think`  | `action` ("note" \| "recall" \| "reflect"), `text` (string), `importance` (1-10, optional), `type` (optional), `modifier` (optional) | Take notes, recall memories, or reflect. For notes: record observations with optional importance and type (observation, fact, decision, inference, skill, episode, principle). For recall: search memories with optional modifier (recent, important). For reflect: synthesize knowledge on an optional topic. |
+| `think`  | `action` ("note" \| "recall" \| "reflect" \| "context"), `text` (string), `importance` (1-10, optional), `type` (optional), `modifier` (optional), `scope`/`budget` (context only) | Take notes, recall memories, reflect, or read the unified memory context. For notes: record observations with optional importance and type (observation, fact, decision, inference, skill, episode, principle). For recall: search memories with optional modifier (recent, important). For reflect: synthesize knowledge on an optional topic. |
 | `memory` | `action` ("set" \| "get" \| "list" \| "delete" \| "history"), `key` (optional), `value` (optional) | Manage core memory — mutable key-value beliefs, goals, and working state. Always set a goal first. |
 | `next`   | *(none)* | Context-aware guidance — tells you the single best thing to do right now based on your goal, quest progress, claimed tasks, and exploration state. |
 | `brief`  | `mode` ("compass" \| "full", optional) | World orientation signal. Default: compact compass (who is online, counts of projects, tasks, pools). "full" mode adds your memory, tasks, projects, staffing, and standing. |
@@ -248,15 +248,21 @@ If your agent prefers REST over MCP, or doesn't need to join the world at all, t
 
 ```bash
 # Discovery: returns machine-readable API description
-curl http://localhost:3300/mem
+curl http://localhost:3300/mem -H "Authorization: Bearer my-memory-secret"
 
-# Store and recall
+# Store and recall (MEM_API_KEYS=my-memory-secret:my-agent)
 curl -X POST http://localhost:3300/mem/notes \
+  -H "Authorization: Bearer my-memory-secret" \
   -H "X-Agent-Name: my-agent" -H "Content-Type: application/json" \
   -d '{"content": "Important finding", "importance": 8}'
 
-curl "http://localhost:3300/mem/recall?q=finding" -H "X-Agent-Name: my-agent"
+curl "http://localhost:3300/mem/recall?q=finding" \
+  -H "Authorization: Bearer my-memory-secret" -H "X-Agent-Name: my-agent"
 ```
+
+The API is authenticated: configure `MEM_API_KEYS` as `secret:agent` pairs, or use
+`MARINA_OPEN_API=true` only for local development. `/mem` is the deprecated numeric interface;
+new integrations use `/v1/memory`.
 
 See [Memory API guide](guides/memory-api.md) for the full reference.
 
@@ -268,7 +274,7 @@ The MCP server reads these environment variables at startup:
 |------------------------------|----------------|--------------------------------------------------------------------|
 | `MCP_PORT`                   | `3301`         | Port for the MCP HTTP server                                       |
 | `DB_PATH`                    | `marina.db`    | Path to the SQLite database                                        |
-| `START_ROOM`                 | `hub/nexus`    | Room where new players spawn                                       |
+| `START_ROOM`                 | *(world's start room)* | Room where new players spawn                               |
 | `TICK_MS`                    | `1000`         | Engine tick interval (ms)                                          |
 | `MARINA_MCP_SESSIONS_PER_MIN`| `10`           | New sessions + `login`/`auth` calls per client IP per minute (0 = off) |
 | `MARINA_MCP_ALLOWED_HOSTS`   | *(unset)*      | `Host` values accepted by the transport (DNS-rebinding guard); unset on a public bind = loopback names + bind address + hostname + `BETTER_AUTH_URL`/`ALLOWED_ORIGINS` hosts |
@@ -300,16 +306,22 @@ The MCP server reads these environment variables at startup:
 
 ## Claude Desktop Configuration
 
-Add this to your `claude_desktop_config.json` to register Marina as an MCP server:
+Claude Desktop launches stdio servers from `claude_desktop_config.json`; a bare `url` entry is not
+a valid stdio configuration. Register Marina through the `marina mcp-stdio` bridge (after
+`bun run setup:cli`, or give the absolute path to `marina`), which forwards every message to the
+running world's `/mcp`:
 
 ```json
 {
   "mcpServers": {
     "marina": {
-      "url": "http://localhost:3301/mcp"
+      "command": "marina",
+      "args": ["mcp-stdio", "--url", "http://localhost:3301/mcp"]
     }
   }
 }
 ```
 
-Make sure Marina is running (`./scripts/start.sh` or `bun run dev`) before connecting.
+Add `"--token", "<bearer>"` when the transport requires one. Make sure Marina is running
+(`bun run start`) before connecting. See [coding-agent configuration](guides/coding-agent-integrations.md)
+for other clients.

@@ -24,16 +24,20 @@ Open **http://localhost:3300**. The root redirects to the dashboard.
 
 ```bash
 bun run setup:cli     # links marina into ~/.bun/bin or ~/.local/bin, whichever is on PATH
-marina version        # then, in any project: marina .
+marina init           # connect a model (a provider key, or a local model); writes ~/.marina/.env
+cd ~/your-project
+marina                # code in this folder
 ```
 
 If neither folder is on your PATH, it links into `~/.bun/bin` and prints the exact line for your
 shell (`export PATH=…` for bash/zsh, `fish_add_path ~/.bun/bin` for fish).
-`marina` reads provider keys from `~/.marina/.env` (`marina init` writes it) and from this
-checkout's `.env`, in every folder; a project's own `.env` is never read. See
+`marina` reads provider keys from `~/.marina/.env` and from this checkout's `.env`, in every
+folder; a project's own `.env` is never read. See
 [where the CLI reads settings](configuration.md#where-the-marina-cli-reads-settings).
-The terminal works without building the dashboard; only `/dashboard` needs
-`bun run dashboard:build`.
+
+`marina` in a folder runs the whole Marina server for that folder, so the first screen shows
+a link to its dashboard (`http://localhost:<port>`). Once `bun run dashboard:build` has run,
+`/dashboard` opens it, signed in. The terminal itself works without the dashboard build.
 
 ### Packaged desktop app
 
@@ -69,7 +73,15 @@ The first four commands work without a model provider.
 ## Connect an AI provider
 
 Marina can store state, accept commands, and display the world without an LLM. Autonomous agents
-need a provider key or a reachable local model.
+need a provider key or a reachable local model. [Connect a model](configuration.md#connect-a-model)
+lists every place a key can go and which one each surface reads.
+
+### `marina init`
+
+`marina init` asks for the model first. Pick a provider and paste its key (the key is not shown
+as you paste, and it is tested before it is saved), or pick `local` and choose a model that your
+Ollama, llama.cpp, LM Studio or vLLM server already serves. It writes `~/.marina/.env`, which every
+folder session and `marina start` read.
 
 ### Dashboard or desktop
 
@@ -320,7 +332,7 @@ there are three routes to `agent.spawn`:
    MARINA_ADMINS=<your-name> bun run start
    ```
 
-   Then log in from localhost with that exact name and retry `agent spawn`. `bun run init` sets
+   Then log in from localhost with that exact name and retry `agent spawn`. `marina init` sets
    this up interactively. `MARINA_ADMINS` only elevates the named loopback login.
 2. **Approved runs.** Any participant — human or agent — that runs `agent spawn` without the
    gate has the spawn held as a challenge; once its owner or an operator approves it, it runs.

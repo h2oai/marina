@@ -72,7 +72,24 @@ settings and inspect its reported connection state. Source: [Cursor MCP configur
 
 Do not paste a bare HTTP `url` entry into a stdio-only desktop configuration. Use that client's
 supported remote-connector UI for a reachable server with a compatible authentication method,
-or use Marina's existing **memory-only** stdio bridge:
+or launch `marina mcp-stdio`, a stdio bridge that forwards every message to a running world's
+`/mcp` (the full world tool surface; needs `marina` on `PATH`, see `bun run setup:cli`):
+
+```json
+{
+  "mcpServers": {
+    "marina": {
+      "command": "marina",
+      "args": ["mcp-stdio", "--url", "http://127.0.0.1:3301/mcp"]
+    }
+  }
+}
+```
+
+Add `"--token", "<bearer>"` (or set `MARINA_TOKEN`) when the transport requires a bearer. Without
+`--url` it uses `MARINA_MCP_URL`, then the instance recorded in `--data-dir` / `MARINA_DATA_DIR`.
+
+For scoped memory only, use Marina's **memory-only** stdio bridge instead:
 
 ```json
 {

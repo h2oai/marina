@@ -78,7 +78,7 @@ bun run test:coverage          # full suite + coverage (text + coverage/lcov.inf
 bun run check:coverage         # per-directory report from coverage/lcov.info
 bun run typecheck && bun run lint
 bun run test:ui                # frontend (Vitest on Node)
-bun run test:browser           # build + six real discovery/memory/participation journeys
+bun run test:browser           # build + every Playwright journey in dashboard/e2e
 bun run docs:api --check       # generated builtin API reference matches current definitions
 make help                     # optional task shortcuts, all delegate to package scripts
 ```
@@ -160,7 +160,7 @@ CI runs the configured participation journeys and retains traces/screenshots on 
 `coding-desk.spec.ts` covers publishing a desk, editing a draft during live changes, recovering
 after a real socket disconnect, and closing the view without stopping work. Published-panel and
 workspace journeys cover reviewed actions, repeated views, layout persistence and access failures.
-The critical journey list is the root `package.json`'s `test:browser` script;
+`bun run test:browser` runs every `dashboard/e2e/*.spec.ts`;
 `dashboard/playwright.config.ts` configures the shared fixture and browser.
 
 ## Shutdown and generated adversarial cases
@@ -208,7 +208,7 @@ in place even when generated cases pass.
 
 ## The fast loop
 
-`scripts/test-fast.ts` runs an explicit list of 139 files that are
+`scripts/test-fast.ts` runs an explicit list of 137 files that are
 cheap (≤ 1.5 s measured) and self-contained (no engine boot, no listening
 server). It is the loop to run before every commit; the full suite and the
 shards run in CI.
@@ -340,8 +340,8 @@ live registries and fails when something new lands **undocumented**.
 - every `MARINA_*` name in `config/environment.reference` is read somewhere in
   `src/`, `scripts/` or `worlds/`, and every key in `.env.example` is also in the
   reference
-- the reverse: every `MARINA_*` variable read in `src/`, `scripts/` or `worlds/`
-  (outside `src/sdk/examples/`) is in the reference, or in
+- the reverse: every `MARINA_*` variable read in `src/`, `scripts/`, `worlds/` or
+  `benchmarks/` (outside `src/sdk/examples/`) is in the reference, or in
   `ENV_VARS_OUTSIDE_SERVER_CATALOG` with the reason it is not a server setting
 - `docs/reference/environment.md` matches what
   `scripts/generate-environment-reference.ts` renders from the reference
@@ -373,14 +373,16 @@ table behind `/api/logs`, the log viewer, the OTLP exporter, and the secret
 redaction in `redactLogData`. Two static fences keep it out:
 
 - `test/adapter-logging.test.ts` — `src/agent/lean-agent-adapter.ts`
-- `test/net-logging.test.ts` — all of `src/net/**` and `src/integrations/**`
+- `test/net-logging.test.ts` — all of `src/**` except the `src/sdk/` client package
 
 Log through a module `Logger` with the module's own category (`ws`, `mcp`,
 `telnet`, `discord`, `telegram`, `feed`, `main`, ...) and fold extra values into
-the structured `data` argument rather than string-concatenating them. The one
-deliberate exception is the multi-line boot banner in `src/main.ts`: the
-Logger's text sink stamps `[iso] LEVEL [category]` on every entry, which would
-mangle a banner. `test/net-logging.test.ts` pins it to exactly one call.
+the structured `data` argument rather than string-concatenating them. The
+deliberate exceptions are the Logger's own sinks (`src/engine/logger.ts`), the
+stdout result line of `src/memory/import-process.ts`, and the multi-line boot
+banner in `src/main.ts`: the Logger's text sink stamps `[iso] LEVEL [category]`
+on every entry, which would mangle a banner. `test/net-logging.test.ts` pins the
+banner to exactly one call.
 
 ## Regenerating `test/timing.json`
 
@@ -551,7 +553,8 @@ bun run qualify:coding --directory /tmp/marina-coding-check --budget-usd 1 --sce
 ```
 
 Use a new private directory outside the source checkout. The script creates its own world and
-participants, uses an explicitly selected model with a conservative upstream spending reservation (maximum $2),
+participants, uses an explicitly selected model with a conservative upstream spending reservation
+(`--budget-usd`, an explicit finite ceiling up to $1,000),
 and never connects to a running world. It asks the worker to edit, verify a captured candidate,
 inspect the receipt and submit through normal coding tools. It then independently checks the
 result, preserves the original acceptance tests, and performs canonical owner review. World

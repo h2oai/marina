@@ -162,7 +162,7 @@ Marina's HTTP API requires authentication **by default** — but it's easy to we
 - [ ] **Enable dashboard sign-in** with `MARINA_AUTH=better-auth` (+ `BETTER_AUTH_SECRET`) for any human-facing public host — see [authentication.md](../authentication.md). Without it the dashboard is open to anyone who can reach it.
 - [ ] **Encrypt API keys at rest.** Provider keys saved in the Admin → Keys panel are AES-256-GCM encrypted in the DB. Without `MARINA_KEY_SECRET`, Marina generates the secret itself in `<DB_PATH>.key-secret` (mode 0600) and encrypts keys saved from then on (keys stored as plaintext before keep working until you re-save them or set an explicit secret). For a managed deployment set `MARINA_KEY_SECRET` (≥ 16 chars; `openssl rand -base64 32`) from your secret manager — an explicit secret also encrypts existing plaintext rows in place — or prefer the provider **env vars** (`ANTHROPIC_API_KEY`, …, `LLAMA_API_KEY`), which are read live and never persisted. Admin → Security shows the live state. (Back up the secret or the `.key-secret` file with the database — losing it orphans stored keys.)
 - [ ] **Set `ALLOWED_ORIGINS`** to your real dashboard origin(s) if clients run cross-origin. Unset = same-origin only (no CORS header), which is the safe default.
-- [ ] **Don't publish ports 4000 (telnet) and 3302 (log viewer)** — neither is authenticated. Telnet is off by default (`TELNET_PORT=0`), and both listeners now bind the resolved `WS_HOST` (loopback unless you opt into exposure), but the publish spec is still your boundary: keep them off your public load balancer / security group. The default docker-compose publishes all ports to the host's `127.0.0.1` only.
+- [ ] **Don't publish ports 4000 (telnet) and 3302 (log viewer)** — neither is authenticated. Telnet is off by default (`TELNET_PORT=0`), and both listeners bind the resolved `WS_HOST` (loopback unless you opt into exposure), but the publish spec is still your boundary: keep them off your public load balancer / security group. The default docker-compose publishes all ports to the host's `127.0.0.1` only.
 - [ ] **Set `GATEWAY_SECRET`** if (and only if) you use [federation](federation.md). Otherwise leave it unset.
 - [ ] **Terminate TLS at a reverse proxy** (next section). Marina speaks plain HTTP/WS; never expose `3300` directly to the internet.
 - [ ] Rate limits are built in (WS 5/s, MCP 5/s, Model API 2/s per IP, Memory API 10/s per agent, dashboard REST 60/10 s per principal, canvas + asset writes 30/10 s per principal, public `/api/entity/*` 30/10 s per IP, MCP sessions 10/min per IP, pre-auth `/api/setup-status` 20/min per IP, model-API reads 120/min per IP, public asset reads 300/min per IP, and 20 failed `/v1` / `/mem` credentials per IP per minute before that address is refused) but a proxy-level limit is still wise. Per-IP limits key on the TCP peer; set `MARINA_TRUST_PROXY=true` behind your reverse proxy so they key on `X-Forwarded-For` instead.
@@ -306,7 +306,7 @@ Keep `auto_stop_machines = false` and `min_machines_running = 1` — and **do no
 
 - **Logs**: set `LOG_FORMAT=json` and collect stdout with your aggregator (CloudWatch, Loki, etc.).
 - **Health**: `curl https://your-host/health` returns 200 + JSON when live; this is what the container and load balancer probes use.
-- **Upgrades**: `git pull` (or pull a new image tag), then `docker compose up -d --build`. Back up first; migrations in `src/persistence/database.ts` run automatically on boot and are append-only.
+- **Upgrades**: `git pull` (or pull a new image tag), then `docker compose up -d --build`. Back up first; migrations (`src/persistence/schema.ts`) run automatically on boot and are append-only. See [Upgrading](upgrading.md).
 - **Stuck?** See [Troubleshooting](troubleshooting.md).
 
 ## Workspace tooling
@@ -332,14 +332,14 @@ with their lockfiles via the root `files` list and installed on demand with
 
 Bun uses the *isolated* linker for workspaces: each member's `node_modules/` holds symlinks into the
 shared `node_modules/.bun/` store, and only packages a member **declares** are resolvable from it. A
-bare import of a transitive dependency ("phantom dependency") that used to work under a hoisted
-`node_modules/` now fails at build or run time — declare it in that member's `package.json` instead.
+bare import of a transitive dependency ("phantom dependency") fails at build or run time — declare
+it in that member's `package.json` instead.
 Two root-only tables apply to the whole graph regardless of which member pulls the package in:
 `overrides` and `patchedDependencies` (Bun ignores both in member manifests; `check:overrides`
 lists any it finds there as IGNORED).
 
-Build outputs are unchanged: `bun run dashboard:build` still emits `dist/dashboard`, `bun run
-build:memory` still emits `dist/memory.js`, and `prepack` runs both so the npm tarball keeps them.
+`bun run dashboard:build` emits `dist/dashboard`, `bun run build:memory` emits `dist/memory.js`,
+and `prepack` runs both so the npm tarball includes them.
 
 ### `bun run check:versions`
 
@@ -371,10 +371,11 @@ Why each override exists (keep this table in sync with `package.json`):
 
 | Override | Kind | Reason |
 |----------|------|--------|
-| `qs` `^6.16.0` | floor | Express 5 transitive security advisory; `typed-rest-client` still pins `qs` 6.15.1, so the floor forces the patched version. |
+| `qs` `^6.16.1` | floor | Express 5 transitive security advisories (GHSA-6pq8-jhm2-2vcw covers ≤ 6.16.0); `typed-rest-client` pins an older `qs`, so the floor forces the patched version. |
+| `fast-uri` `^3.1.9` | floor | URI scheme spoofing and host confusion advisories (fixed in 3.1.9), reached through `ajv` from `@modelcontextprotocol/sdk` and `@stryker-mutator/core`. |
 | `postcss-selector-parser` `^7.1.6` | floor | GHSA-rj75-hqrm-r3gf (CPU exhaustion on flat selectors). Expressive Code still pulls parser 6.x through `postcss-nested` 6.x; the site build qualifies compatibility with the patched 7.x parser. Remove when that dependency chain accepts the fix. |
 
-Floors whose dependents already resolve at or above the patched version on their own were removed on 2026-10-10 once `check:overrides --strict` agreed (the lockfile holds the fixed versions). That includes the root `undici` floor, which had been forcing `jsdom` and `unifont` down to 6.x, and the dashboard's own `overrides` table, which Bun ignores in workspace members. Re-add a floor here, with its advisory, if an audit finds a regression.
+A floor stays only while `check:overrides --strict` reports it `still needed`; once every dependent resolves to the patched version on its own, remove it. Re-add a floor here, with its advisory, if an audit finds a regression.
 
 ## Continuous deployment (CI/CD)
 

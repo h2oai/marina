@@ -52,6 +52,8 @@ export interface CodeConsoleOptions {
   tui?: boolean;
   /** The welcome card already told the person what to type. */
   welcomed?: boolean;
+  /** No provider key or local runtime: idle reads "no model", never "ready". */
+  noModel?: boolean;
   terminalStreams?: Pick<CodeTerminalOptions, "input" | "output">;
   /** Where plain (non-terminal) output goes; default stdout. `-p --json` uses stderr. */
   plainOutput?: NodeJS.WritableStream;
@@ -67,7 +69,7 @@ export class CodeConsole {
   private harness: CodingHarness;
   private marinaHarness: CodingHarness;
   private marinaBusy = false;
-  private marinaPhase = "ready";
+  private marinaPhase: string;
   private checksRunning = false;
   private verificationReadiness?: string;
   private workerActivity?: string;
@@ -84,6 +86,7 @@ export class CodeConsole {
   private commandSequence = 0;
   private selectionSequence = 0;
   constructor(private options: CodeConsoleOptions) {
+    this.marinaPhase = this.idlePhase();
     this.sessionId = options.sessionId;
     this.harness = options.harness;
     this.marinaHarness =
@@ -152,6 +155,9 @@ export class CodeConsole {
   }
   get currentSessionId(): string | undefined {
     return this.sessionId;
+  }
+  private idlePhase(): string {
+    return this.options.noModel ? "no model" : "ready";
   }
   private activity() {
     if (this.runSettled || this.marinaPhase === "interrupt requested") return this.marinaPhase;
@@ -284,7 +290,7 @@ export class CodeConsole {
     // Once an attempt is known, only its run-scoped terminal event can settle it.
     if (this.runId) return;
     this.marinaBusy = false;
-    this.marinaPhase = "ready";
+    this.marinaPhase = this.idlePhase();
     this.workerActivity = undefined;
     this.workerObservedAt = -Infinity;
     this.updatePrompt();
@@ -502,6 +508,8 @@ export class CodeConsole {
       });
     }
     if (interactive && this.terminal) this.startLiveStatus();
+    // The terminal starts out "ready"; say what this session really is.
+    if (this.options.noModel) this.updatePrompt();
     if (interactive && !this.options.welcomed) this.write("Type a task in plain words, or /help.");
     if (this.options.connected) {
       this.terminal?.setTarget(`marina:${this.sessionId}`);

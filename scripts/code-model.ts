@@ -23,6 +23,24 @@ export function inferCodeDefaultModel(env: Record<string, string | undefined>): 
     const override = env[`MARINA_DEFAULT_${key.replace(/_API_KEY$/, "")}_MODEL`]?.trim();
     return `${provider}/${override || builtIn}`;
   }
+  // A local runtime with a pinned model is addressed directly; without one,
+  // marina/default falls back to the runtime and picks its model.
+  const local = localRuntimeFor(env);
+  return local?.model ? `${local.name}/${local.model}` : undefined;
+}
+
+/**
+ * The local runtime the operator opted into (its base URL or key is set),
+ * in marina/default's fallback order: llama.cpp-compatible, then Ollama.
+ */
+export function localRuntimeFor(
+  env: Record<string, string | undefined>,
+): { name: "llama" | "ollama"; model?: string } | undefined {
+  for (const name of ["llama", "ollama"] as const) {
+    const prefix = name.toUpperCase();
+    if (!env[`${prefix}_BASE_URL`]?.trim() && !env[`${prefix}_API_KEY`]?.trim()) continue;
+    return { name, model: env[`MARINA_DEFAULT_${prefix}_MODEL`]?.trim() || undefined };
+  }
   return undefined;
 }
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import { inferCodeDefaultModel } from "../scripts/code-model";
+import { inferCodeDefaultModel, localRuntimeFor } from "../scripts/code-model";
 
 describe("folder-scoped code launcher model selection", () => {
   it("preserves an explicit Marina default", () => {
@@ -34,5 +34,27 @@ describe("folder-scoped code launcher model selection", () => {
 
   it("returns undefined when no supported provider is configured", () => {
     expect(inferCodeDefaultModel({})).toBeUndefined();
+  });
+
+  it("counts a local runtime, addressing its pinned model directly", () => {
+    const ollama = { OLLAMA_BASE_URL: "http://localhost:11434/v1" };
+    expect(localRuntimeFor(ollama)).toEqual({ name: "ollama", model: undefined });
+    // No pinned model: marina/default falls back to the runtime and chooses.
+    expect(inferCodeDefaultModel(ollama)).toBeUndefined();
+    expect(inferCodeDefaultModel({ ...ollama, MARINA_DEFAULT_OLLAMA_MODEL: "qwen3:4b" })).toBe(
+      "ollama/qwen3:4b",
+    );
+    expect(
+      inferCodeDefaultModel({
+        LLAMA_BASE_URL: "http://localhost:8080/v1",
+        MARINA_DEFAULT_LLAMA_MODEL: "local-model",
+        ...ollama,
+      }),
+    ).toBe("llama/local-model");
+    // A provider key still wins over a local runtime.
+    expect(inferCodeDefaultModel({ ...ollama, ANTHROPIC_API_KEY: "key" })).toBe(
+      "anthropic/claude-opus-5-5",
+    );
+    expect(localRuntimeFor({})).toBeUndefined();
   });
 });

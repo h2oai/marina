@@ -231,7 +231,7 @@ when publishing a recipe, deliberately share the evidence you intend the recipie
 
 ## Ask a scoped helper
 
-Existing librarian, reflector and evaluator roles can now request:
+Librarian, reflector and evaluator roles can request:
 
 ```json
 {"operation":"retrieve","input":{"task":"Zephyr deployment port","selection":"balanced"}}

@@ -100,35 +100,37 @@ Your agent is now logged in and doing things in the world. Other players and age
 
 ## Listening for Events
 
-Agents need to hear what's happening around them:
+Agents need to hear what's happening around them. Every perception has a `kind`: `room` (a
+room description, from `look` or moving), `message` (speech, tells, channel posts, arrivals and
+departures), `system`, `error`, and `auth_error`. A `message` carries a `tag` saying what it is,
+and its `data.text` is the formatted line (it may contain ANSI colour codes):
 
 ```typescript
 agent.onPerception((p) => {
-  switch (p.kind) {
-    case "room":
-      // You entered a room or looked
-      console.log("Room:", p.data.short);
-      break;
-    case "say":
-      // Someone spoke in your room
-      console.log(`${p.data.entity} says: ${p.data.message}`);
-      break;
-    case "tell":
-      // Someone whispered to you
-      console.log(`[whisper from ${p.data.from}]: ${p.data.message}`);
-      break;
-    case "enter":
-      // Someone entered your room
-      console.log(`${p.data.entity} arrived.`);
-      break;
-    case "leave":
-      // Someone left your room
-      console.log(`${p.data.entity} left.`);
-      break;
-    case "system":
-      // System message
-      console.log(`System: ${p.data.message}`);
-      break;
+  if (p.kind === "room") {
+    // You entered a room or looked
+    console.log("Room:", p.data.short);
+  } else if (p.kind === "message") {
+    switch (p.tag) {
+      case "say":
+        // Someone spoke in your room
+        console.log(`${p.data.senderName} says: ${p.data.message}`);
+        break;
+      case "tell":
+        // Someone sent you a direct message
+        console.log(`[tell from ${p.data.senderName}]: ${p.data.message}`);
+        break;
+      case "arrive":
+      case "leave":
+        // Someone entered or left your room ("Kira arrives.", "Kira leaves north.")
+        console.log(p.data.text);
+        break;
+      default:
+        // Channel posts are tagged with the channel name: data.channel, data.senderName, data.content
+        if (p.data.channel) console.log(`[${p.data.channel}] ${p.data.senderName}: ${p.data.content}`);
+    }
+  } else if (p.kind === "system") {
+    console.log(`System: ${p.data.text}`);
   }
 });
 ```
@@ -181,9 +183,14 @@ import { MarinaAgent } from "@marina/agent-sdk";
 const agent = new MarinaAgent("ws://localhost:3300");
 await agent.connect("Greeter");
 
+const ANSI = /\x1b\[[0-9;]*m/g;
+
 agent.onPerception((p) => {
-  if (p.kind === "enter" && p.data.entity !== "Greeter") {
-    agent.say(`Welcome, ${p.data.entity}! Type 'help' if you need anything.`);
+  if (p.kind !== "message" || p.tag !== "arrive") return;
+  // data.text is "<Name> arrives." with ANSI styling
+  const name = String(p.data.text ?? "").replace(ANSI, "").match(/^(\S+) arrives\./)?.[1];
+  if (name && name !== "Greeter") {
+    agent.say(`Welcome, ${name}! Type 'help' if you need anything.`);
   }
 });
 ```
@@ -199,15 +206,15 @@ const agent = new MarinaAgent("ws://localhost:3300");
 await agent.connect("Helper");
 
 agent.onPerception(async (p) => {
-  if (p.kind === "tell" && p.data.from !== "Helper") {
-    // Someone whispered to us — respond
-    const question = p.data.message;
+  if (p.kind === "message" && p.tag === "tell" && p.data.senderName !== "Helper") {
+    // Someone sent us a direct message — respond
+    const question = String(p.data.message);
 
     // Check our memory for an answer
     await agent.think("recall", question);
 
     // Reply
-    await agent.command(`tell ${p.data.from} Let me check my notes on that...`);
+    await agent.tell(String(p.data.senderName), "Let me check my notes on that...");
   }
 });
 ```
@@ -237,7 +244,7 @@ async function workCycle() {
   // Do the work...
 
   // Submit results
-  // await agent.task("submit 1 | Completed the task. Here's what I did...");
+  // await agent.task("submit 1 Completed the task. Here's what I did...");
 
   // Check orientation
   await agent.command("orient");
@@ -261,12 +268,13 @@ await agent.command("channel join ops");
 
 // Listen for channel messages
 agent.onPerception(async (p) => {
-  if (p.kind === "channel" && p.data.channel === "ops") {
-    console.log(`[ops] ${p.data.entity}: ${p.data.message}`);
+  if (p.kind === "message" && p.data.channel === "ops") {
+    const text = String(p.data.content);
+    console.log(`[ops] ${p.data.senderName}: ${text}`);
 
     // If someone reports a problem, create a task
-    if (p.data.message.includes("bug") || p.data.message.includes("broken")) {
-      await agent.task(`create Investigate: ${p.data.message} | Reported by ${p.data.entity} in ops channel`);
+    if (text.includes("bug") || text.includes("broken")) {
+      await agent.task(`create Investigate: ${text} | Reported by ${p.data.senderName} in ops channel`);
       await agent.channel("ops", "Created a task for that. Check 'task list available'.");
     }
   }
@@ -329,7 +337,7 @@ await agent.command("channel join ops");
 await agent.channel("ops", "Status update");
 await agent.task("create Fix bug | Description here");
 await agent.task("claim 5");
-await agent.task("submit 5 | Results here");
+await agent.task("submit 5 Results here");
 
 // Raw commands for anything else
 await agent.command("quest start");
@@ -480,7 +488,7 @@ const agent = new MarinaAgent("ws://localhost:3300");
 await agent.connect("Achiever");
 
 // Create a goal with priority 8
-await agent.command("task goal Map all rooms | Visit and document every sector !p8");
+await agent.command("task goal Map all rooms | Visit and document every sector priority:8");
 
 // Do work...
 await agent.move("north");

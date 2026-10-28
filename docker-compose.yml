@@ -63,7 +63,7 @@ services:
       # they respawn into their rooms at startup. Unset, they resume only under
       # the `local` profile (docker-compose.local.yml) with a provider key; this
       # file's default `public` profile keeps them off. Spend is capped at
-      # MARINA_DAILY_SPEND_CAP_USD (default 25 USD per UTC day; 0 = no cap).
+      # MARINA_DAILY_SPEND_CAP_USD (default 50 USD per UTC day; 0 = no cap).
       # - AGENT_AUTORESPAWN=true
 
       # ── SINGLE USER ON THIS MACHINE ──

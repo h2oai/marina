@@ -52,6 +52,7 @@ bun run mind2web2 record --official $OFFICIAL --out $OUT --arm single --split he
 |---|---|---|
 | `single` | `marina-single` | One research loop on `anthropic/claude-opus-5-5` writes the answer. |
 | `lead` | `marina-lead` | The lead plans up to three parts; researchers each run the loop on one; the lead writes; `openai/gpt-6.1-sol` checks each cited claim against the text of the page it cites; the lead revises once. |
+| `full` | `marina-full` | The `lead` arm plus the read swarm (`openrouter/openai/gpt-6-luna` reads pages in full) with the decision backend reranking the swarm's opening pool. |
 
 Both end with the mechanical citation audit: a cited URL the agent never opened, or one that failed
 to load, gets one repair pass.

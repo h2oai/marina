@@ -15,7 +15,7 @@ The export ends with a directly reusable command:
 inheritance import <bundle-token>
 ```
 
-(`inherit <bundle-token>` is an equivalent alias — the historical short form.) Importing requires
+(`inherit <bundle-token>` is an equivalent alias.) Importing requires
 coordinator rank (2+). It validates strict size and field bounds, computes a stable
 digest, and creates an `inheritance:<digest>` pool. Imported artifacts are labelled **unverified
 evidence**, attributed to the importing entity while retaining the peer's claimed source, pool, and

@@ -6,6 +6,47 @@ starter to copy; [`config/environment.reference`](../../config/environment.refer
 complete annotated catalog that the dashboard settings editor (Admin → Settings) and the
 generated [environment reference](../reference/environment.md) are built from.
 
+### Connect a model
+
+Agents need a model: a provider key, or a model running on your machine. Pick the place that
+matches how you use Marina:
+
+| You use | Do this | It applies to |
+|---------|---------|---------------|
+| `marina` in a folder, or `marina start` | `marina init`: choose a provider and paste its key, or choose `local` and pick a model your Ollama, llama.cpp, LM Studio or vLLM server already serves | every folder and every `marina start` (it writes `~/.marina/.env`) |
+| The dashboard | **Admin → Keys**: paste, save, **Test** | that server's world (stored in its database, no restart) |
+| The desktop app | **Connect an AI provider** on first launch, or **Admin → Keys** | the app's world |
+| A source checkout, Docker or a service | a variable such as `ANTHROPIC_API_KEY=…` in the environment or the instance's `.env` | that process |
+
+Each folder session runs its own world with its own database, so a key saved in a dashboard's
+**Admin → Keys** reaches only that world. For keys every folder shares, use `marina init` or
+`~/.marina/.env`.
+
+Supported keys: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`
+(one key, models from every vendor), `GROQ_API_KEY`, `TOGETHER_API_KEY`, `NEBIUS_API_KEY`,
+`HUGGINGFACE_API_KEY` and [more](../reference/environment.md#model-provider-keys). A local model
+is a base URL: `OLLAMA_BASE_URL=http://localhost:11434/v1` (with `MARINA_DEFAULT_OLLAMA_MODEL` to
+pin one), or `LLAMA_BASE_URL` plus `MARINA_DEFAULT_LLAMA_MODEL` for llama.cpp and any other
+OpenAI-compatible server ([one model](single-model.md) explains what changes).
+
+**Which model the coder uses.** In a folder session, Marina's coding agent uses
+`MARINA_DEFAULT_MODEL` when set, else the first configured provider's default in the order
+Anthropic, OpenAI, Google, OpenRouter, Together, Nebius, Groq, Hugging Face (override one with
+`MARINA_DEFAULT_<PROVIDER>_MODEL`, e.g. `MARINA_DEFAULT_ANTHROPIC_MODEL`), else a pinned local
+model. The welcome card names it. To change it:
+
+```bash
+marina --model openrouter/<model-id>        # for this launch
+/model anthropic/claude-sonnet-5            # inside the session
+/fast                                       # inside the session: the cheapest model your keys reach
+marina --agent claude                       # or run Claude Code, Codex or pi with their own login
+```
+
+Residents, crews and judges choose their models by tier, below in
+[Choose models](#choose-models-cheap-by-default). Check what works with `readiness providers` in
+any Marina terminal (`/world readiness providers` in a folder session); it makes one small call
+per provider.
+
 ### Where the `marina` CLI reads settings
 
 The `marina` command works the same in every folder and never reads your project's own `.env`
