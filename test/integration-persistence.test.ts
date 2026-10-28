@@ -10,9 +10,9 @@ import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import type { EntityId } from "../src/types";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_integration_persist.db";
+const TEST_DB = tempDbPath("test_integration_persist.db");
 
 // ─── Persistence Integration Tests ────────────────────────────────────────────
 

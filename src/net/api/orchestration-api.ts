@@ -3,7 +3,8 @@
 
 /**
  * /api/orchestration — read-only catalogue of the built-in orchestration
- * patterns, single-sourced from `src/world/templates/orchestration.ts`.
+ * patterns, single-sourced from the formation catalogue
+ * (`src/orchestration/formations/catalogue.ts`).
  *
  * The dashboard bundle cannot import server modules, so before this route it
  * carried a hand-copied pattern list that had to be kept in sync by hand. Now
@@ -18,6 +19,7 @@
  * outside the prefix return `null` so the caller keeps routing.
  */
 
+import { FORMATIONS } from "../../orchestration/formations/catalogue";
 import {
   ORCHESTRATION_PATTERNS,
   type OrchestrationPattern,
@@ -29,28 +31,18 @@ export interface OrchestrationPatternView {
   id: string;
   name: string;
   description: string;
-  /** Comma-joined coordination shapes the pattern fits (absent for `custom`). */
+  /** Comma-joined coordination shapes the pattern fits (absent for `freeform`). */
   fit?: string;
 }
 
 const PREFIX = "/api/orchestration";
 
-/** Display name: title-cased id (`mapreduce` → `MapReduce`, `nsed`-style acronyms never appear). */
-function displayName(id: string): string {
-  if (id === "mapreduce") return "MapReduce";
-  return id.charAt(0).toUpperCase() + id.slice(1);
-}
-
+/** A pattern as the route serves it: the catalogue's title, summary and fit. */
 function describe(id: OrchestrationPattern): OrchestrationPatternView {
-  if (id === "custom") {
-    return {
-      id,
-      name: displayName(id),
-      description: "Operator-defined conventions — no seeded template",
-    };
-  }
+  const entry = FORMATIONS[id];
+  if (id === "freeform") return { id, name: entry.title, description: entry.summary };
   const fit = PATTERN_FIT[id];
-  return { id, name: displayName(id), description: fit.why, fit: fit.shapes.join(", ") };
+  return { id, name: entry.title, description: fit.why, fit: fit.shapes.join(", ") };
 }
 
 /** The pattern catalogue as served by the route — exported for tests and other servers. */

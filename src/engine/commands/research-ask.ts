@@ -24,6 +24,7 @@ import {
   residentRetrieverSpec,
 } from "../../research/ask";
 import type { CommandInput, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { parseModifiers, splitOnTerminator } from "../parse-input";
 
 export const RESEARCH_ASK_SYNTAX =
@@ -98,7 +99,7 @@ export function researchAskHandler(
     const refused =
       "error" in moded ? moded.error : picked && "error" in picked ? picked.error : undefined;
     if (refused) {
-      ctx.send(eid, `Could not research: ${refused}`);
+      refuseCommand(ctx, eid, `Could not research: ${refused}`);
       return;
     }
     if (running.has(eid)) {

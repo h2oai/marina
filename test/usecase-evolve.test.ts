@@ -8,9 +8,9 @@ import { Engine } from "../src/engine/engine";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import type { EntityId, RoomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_usecase_evolve.db";
+const TEST_DB = tempDbPath("test_usecase_evolve.db");
 const PROVIDER_VARS = [...modelSourceEnvKeys(), "CEREBRAS_API_KEY"];
 
 function makeRequest(path: string, body: unknown): [URL, string, Request] {

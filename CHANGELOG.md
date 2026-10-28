@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **An imported bundle's seed no longer picks a model without a local person.** Upstream seeds
+  for default slots that choose a model (every slot class except `memory-ranking`:
+  `role-model:*`, `verify:checker`, `forecast-config*`, crew slots, run-target slots) are withheld
+  by `resolveDefault` (traced `withheld` on `default_resolved`) and each slot+value raises one
+  `ops inbox` approval. A person holding `role.edit` adopts it with
+  `benchmark promote <slot> upstream` (the model id works for a `role-model` slot), filed through
+  `fileSlotPromotion` with basis `upstream` and the bundle's artifact, version, item and value
+  digest; an agent never adopts one. `MARINA_UPSTREAM_MODEL_SEEDS=serve` restores direct serving.
+  Non-model seeds are served as before.
+
+- **Agents holding sentinel gate grants are a critical readiness line.** `gate-sentinels` is
+  raised as a critical `ops inbox` alert while any agent account holds an operator-grant sentinel
+  row, and names the reset (`gate reset agents all apply`, from an interactive person session).
+  Every operator-required refusal now goes through one helper (`operatorRequiredRefusal`): a
+  person on a non-interactive `marina connect -c` is told the connection declared itself an agent
+  and where a person acts instead. A non-interactive client still cannot claim to be a person.
+
+- **`memory api` payloads no longer reach the event log.** A resident's journal and checkpoint
+  calls carried its memory content into `command` events on every turn and crowded the world's
+  own actions out of the row-bounded log. The form is now sensitive and unlogged
+  (`CommandDef.unloggedSubcommands`), and rows already stored in clear are removed at the next
+  start.
 - **Every third-party GitHub Action is pinned by commit** (the version stays as a comment). A test
   fails on any new unpinned `uses:`, and Dependabot proposes the updates. Clears the open
   unpinned-tag code-scanning alerts.
@@ -72,6 +94,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unrelated limits. Automatic allowances can grow after truncation; explicit caps stay fixed.
   Compaction retains its separate allowance, bounded by the model rather than an 8,000-token clamp.
 
+
+- **The cheap tier runs the current DeepSeek V4.1 Flash snapshot.** The built-in OpenRouter pick
+  for `marina/cheap` (and the triage fact model and arena wiki extractor defaults) moves from
+  `deepseek/deepseek-v4.1-flash`, which OpenRouter serves as a fixed 2026-09-10 snapshot, to
+  `deepseek/deepseek-v4.1-flash-1017`, the 2026-10-17 snapshot (list $0.15/$0.60 per M tokens,
+  tools and reasoning). An explicit `MARINA_MODEL_TIER_CHEAP` is unchanged. A dated snapshot the
+  bundled pi-ai catalog does not list yet (`-MMDD` or `-YYYYMMDD` after a listed id) now takes its
+  base entry's capabilities under its own id (`catalogModel`, `src/net/model/catalog-snapshots.ts`):
+  the reasoning-effort clamp, the summary call's reasoning disable, image input and DeepSeek's
+  reasoning round-trip apply to it, and it resolves without the "not in the bundled registry"
+  warning. Its price comes from Marina's own list, else the provider's reported cost, never the
+  base's.
+
+- **Faster fresh databases: the install baseline moves from schema 167 to 179.** Migrations
+  168–179 move verbatim to `schema-history.ts` (172's data conversion joins `MIGRATION_HOOKS`;
+  `JUDGE_LEDGER_BACKFILL_179` moves with 179 and is still exported from `schema.ts`), so a new
+  database installs one generated schema and replays nothing. The generator now reproduces
+  `investigation_instance`'s per-database id at install time. Existing databases at any
+  version upgrade through the same SQL and hooks as before. A new database takes about 29 ms
+  in memory and 37 ms on disk, down from 76 ms and 85 ms.
+
+- **`memory` is the one memory command.** `memory note`, `memory recall`, `memory reflect`,
+  `memory recap`, `memory debrief` and `memory context` run the same-named commands with the same
+  rank, gates, effects and output. The bare names still work and say once per session that they
+  are aliases (`(alias: use \`memory recall …\`)`). `help`, `help all` and the agent's command
+  roster list them under `memory`; the system prompt's MEMORY section teaches the family forms;
+  MCP named tools keep their parameters and now run the family forms. `pool`, `skill`, `orient`
+  and `bookmark` stay separate commands. Storage, numeric note ids and receipts are unchanged.
+- **Standing is visible where an agent works.** Each new standing credit or debit reaches the
+  earner at once as one line: `standing +1.00 task_complete task:#12 → 3.40 (rank 0 by standing;
+  rank 1 at 5)` (any credit path; never for a repeated or rolled-back credit; the approved
+  claimant no longer gets the amount twice). `standing summary` gives live standing, the last
+  live credits and retired credit labelled as history on one line, then a line naming the live
+  ways to earn, built from the live kinds. `orient`, the `brief` compass and the resident
+  continuation prompt (`[Standing]`) show that line, adding the earn line when the agent has no
+  goal or focus. The standing rules, caps and history are unchanged.
+
+- **The formation catalogue is held by behaviour, not frozen bytes.** The migration-era
+  equivalence tests (`formation-equivalence-typed`, `-text`, and the catalogue half of `-arena`)
+  and their frozen pre-catalogue copies are removed, so the catalogue's prompts and answers can
+  change when a measurement says they should. `test/formation-behaviour.test.ts` asserts what the
+  formations must do: determinism given the same replies, research before any analyst, delphi's
+  anonymous revision after every first answer, n − 1 refereed tournament matches, one skeptic call
+  after the proposals, the typed combiners' math, and the arena move cap and blowup bound on the
+  stored rounds. The resident Scores are checked by shape. The ten arena formations still on
+  their own code stay byte-identical to their frozen copy (`test/arena-formations-legacy.test.ts`)
+  until they move to the catalogue.
+- **Spawn-time route evidence is on by default** (`MARINA_ROUTE_EVIDENCE`, was `observe`). A
+  `model:route` spawn takes the evidence's pick only when at least two of its own candidates have
+  `MARINA_ROUTE_EVIDENCE_MIN_N` items (benchmark ledger or shared live work); otherwise, and on
+  any error, the router's choice stands as before. `observe` keeps the old record-only behaviour.
+- **The learning-loop test closes every hop.** `test/learning-loop-closed.test.ts` now also shows
+  the route changing under the default configuration and a role's default model changing by
+  earned promotion: the live pass raises one proposal from person-approved work, and a person
+  holding `role.edit` files it with `benchmark promote role-model:<role> <model>`.
+- **One judge service.** The challenge judge, the task-submission verifier, the attention judges,
+  the outcome judges and the Arbiter now record every opinion and its later ground truth in one
+  ledger (`judge_ledger`, migration 179). The migration copies the rows already kept in
+  `challenge_outcomes`, `judge_observations` and judged outcomes, idempotently and without
+  changing those tables. Every surface asks one earned rule over the ledger (`judgeEarned` →
+  `earnedJudge`), counted per surface and judge, and per class for challenges. Only opinions
+  with a ground truth count. The challenge judge now earns per backend model as well as per
+  class. `MARINA_JUDGE=off|observe|on` sets every surface. The per-surface variables still win
+  for their own surface, and with neither set nothing changes. Under `MARINA_JUDGE=on` the
+  verifier bounces a submission only once it has earned that right. The new `judge stats
+  [surface]` command (rank 0) shows, per judge: n, agreement, the Wilson lower bound, whether it
+  is earned, and how many more observations it needs. It says "no judge backend" when none is
+  configured. `decision agreement`, `challenge stats` and `outcome agreement` read the same
+  ledger, and the separate tally code is removed.
+- **`MARINA_OUTCOME_JUDGE` defaults on when a model provider is configured** (off otherwise; an
+  explicit value always wins), the same rule as `MARINA_LESSONS_FROM_WORK`. Only a judge that has
+  earned agreement and is confident settles or teaches, as before.
+- **Readiness shows the learning loop.** A new `learning-loop` line reports outcomes waiting for
+  delivery or a judge (count, oldest age), each judge's comparisons toward earning, verifier
+  opinions and promotions ever filed, and is degraded after 14 days of backlog or while outcomes
+  exist but no default has ever changed. Optional readiness checks no longer raise inbox alerts.
+- **An end-to-end test that the loop closes** (`test/learning-loop-closed.test.ts`): person-approved
+  task work and a Code Mode check become tagged outcomes, a trusted lesson served to an agent,
+  competence evidence and a spawn route that changes under `MARINA_ROUTE_EVIDENCE=on`.
+
+- **One orchestration surface: the formation catalogue.** Crews, `project <name> orchestrate`,
+  `pattern run` and room formations now take every formation name, description, fit, role list and
+  protocol from `src/orchestration/formations/catalogue.ts`. `crew create … formation:<f>` and
+  `crew formation` validate against it (`ensemble` and `skeptic` are refused with where they run),
+  `crew info` shows the entry's summary, roles and protocol, a `crew dispatch` names the entry's
+  Score steps when it has a free-text template, and crew mediator lines lead with the catalogue
+  name. Each project template's opening note is generated from its entry. `freeform` is a catalogue
+  entry; the project name `custom` is now an alias of it (as `nsed` is of `deliberation`): both
+  still parse, and help lists catalogue names only. Feature status lists orchestration once, with
+  one sub-entry per way to run it.
+- **Outcome delivery plumbing.** A group of single outcomes still short of five is learned anyway
+  once its oldest has waited 30 days, if it has at least three (the lesson states the true count),
+  so a slow family still learns. A delivery pass claims a group atomically before its model call
+  (`outcome_deliveries`, released on failure or after an hour), so two passes at once write one
+  lesson. Forecast history records name the formation from the outcome's `method:` ref
+  (`method:formation:delphi` → `delphi`; a variant card keeps its card id). Outcomes recorded
+  without a consumer's delivery row get it from a bounded, idempotent backfill at the start of
+  each delivery pass, under the same rules. Typed forecasts recall lessons scoped to their
+  question's classes. None of this needs a model provider.
+- **Judged lessons: no rule, no lesson; single rounds teach in aggregate; one set of bars.** A
+  candidate whose writer gives no rule (asked twice) is deferred, never judged or stored. Forecasts,
+  arena rounds and research asks wait (durably, no attempt spent) until five of one source shape and
+  family are waiting, then teach ONE lesson from their statistics, scoped to that family and served
+  only to work of it; the judge's `general` question is asked within that declared scope. The
+  judge sees the rule as the lesson; `leak_free` is enforced only for measurement outcomes (the
+  mechanical item check still gates everything); failing only `consistent` stores the lesson
+  contested with a resolve case; calibrated and uncalibrated judges clear the same bars. Recall
+  serves only judged lessons that have a rule: never-judged (`unverified`) records stay stored but
+  are no longer served. With no model provider configured, deliveries wait with that reason and
+  nothing is written.
 - **Arena spread calibration is learned per series**, not per tracker: one tracker's series can be
   miscalibrated in opposite directions.
 - **Arena challengers cover the coming week**, cheap specs first, within a time budget
@@ -229,10 +361,186 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sandbox bindings are scoped by provider**, and OpenShell workspace handling preserves the
   selected execution environment. Sandbox maintenance drains before shutdown.
 
+
+- **A prompt sent to a supervised Claude session while it works runs as its own next turn.** The
+  Claude CLI folded it into the running turn, attached to a tool result, where Claude may decline
+  it as not coming from the user. It is now sent with `priority: later`, so it starts the next
+  turn, as the adapter's `next-turn` steering declares.
+- **Opening a world database another process is opening waits instead of failing.** The busy
+  timeout is now the first statement on a new connection (and is set on the read-only one too).
+  It used to follow `PRAGMA journal_mode=WAL`, so a server and a CLI opening the same database
+  at the same moment could fail at once with `SQLITE_BUSY`.
+- **Every command refusal is recorded as failed usage, not only task, project and pool ones.**
+  A usage error, an unknown subcommand, a missing target, a permission or state refusal now sets
+  `primitive_usage.success` and the command's activity row to failure, so an agent's refused
+  calls no longer count as successes in usage stats, `agent diagnose`, lessons from work or tool
+  rankings. The shared paths declare it: the new `refuseCommand` helper, `unknownSubcommand`, an
+  in-handler rank floor (`rankFloorRefusal`) and a refused safety gate (`checkGateForExecution`);
+  about 800 plain refusal replies across `src/engine/commands/` use `refuseCommand`. A read that
+  finds nothing, a bare command that prints its usage and a no-op on a state that already holds
+  (`already in channel`) stay successes; a permission probe that only narrows a command
+  (`usecase` without new agents, `audio` not saving a transcript) does not fail it. Quest
+  progress and the `command` event are unchanged, as for every handler refusal. A refused
+  command's correlated `command_result` reports `ok: false` with the refusal.
+- **Self-calls to `/v1` no longer keep a bearer from before the server served.** The server now
+  marks itself serving before anything can ask a model, and the classifiers on Marina's own
+  `/v1` (the `marina-self` decision backend, the lesson judge's fallback, classifier engines)
+  read their base URL and bearer on every ask (`selfChatClassifier`). Before, a decision asked
+  while agents respawned at boot fixed the local profile's key for the life of the process; the
+  server treats that key as an outside caller, so in the default `agents` endpoint mode
+  `marina/default` was refused and every lesson judgement failed with no upstream call.
+
+- **A temporary outage no longer ends a lesson delivery `failed`.** The daily spend cap, a 429,
+  a 5xx, a timeout or a dropped connection from the lesson writer or judge now leaves the
+  outcome `pending` with the cause recorded and no attempt spent, and the rest of that delivery
+  pass makes no further model calls; the cap is checked before the pass and spends no budget
+  unit. Only a cause that repeats for the same input (no rule written, a refusal, a judge reply
+  that is never well formed) counts toward `failed`. The judge's error kind and message are kept
+  in the reason and logged. Each delivery pass re-opens, in bounded batches, `failed` lesson
+  deliveries whose recorded reason was such an outage, so those outcomes teach after all.
+- **A failed command's partial output reaches an agent as plain text.** When a `batch` (or any
+  command) was rejected after some of its actions ran, the agent's tool error carried that output
+  with the terminal's colour codes. Every agent tool error path now strips ANSI, as successful
+  results already did.
+- **An agent's thinking level reaches the model on every route, and is visible.** With thinking
+  `off`, a managed-effort Claude (claude-haiku-5.5, directly or through OpenRouter) used to think
+  at effort `high`; it now gets `thinking: {type: "disabled"}`. Through `marina/*`, an agent's
+  `reasoning_effort` is forwarded on an OpenRouter route as an effort the routed model accepts
+  (deepseek-v4.1-flash has no `medium`, so `high`, as a direct route sends). An explicit level is
+  never overridden by the probe-verified reasoning disable, the default-route effort or the cheap
+  tier's reasoning budget. `agent status|diagnose` shows the level sent and the reasoning tokens
+  reported per call, `agent list` shows `thinking:<level>`, `model_request_lifecycle` and
+  `agent_turn_end` carry `reasoningTokens` when the upstream reports them (numbers only), and
+  work outcomes tag `method:thinking:<level>` (`off` when unset) right after the one
+  `method:model:<m>`.
+- **Agent tool calls that failed on a fresh world now run or say what to do next.**
+  - A deferred tool called by its catalog name (`marina_who`, `marina_calc`, …) runs and is
+    declared from the next request, as if `marina_tool_search` had loaded it; a tool loaded
+    mid-run is callable in the same run (it was executable only from the next one).
+    `marina_tool_search` matches a multi-word query word by word.
+  - A project or pool name with spaces resolves bare, quoted or in any case
+    (`project Demo Pulse`, `pool "demo pulse" recall …`); `project <name>` alone, `show`/`view`
+    and `project show <name>` display the project, and `project help` prints usage. `project
+    info` names the pool that exists (a seeded project's pool is not `project:<name>`), the
+    pool also resolves by its project's name, `pool recall <name> …` reads as
+    `pool <name> recall …`, and a members-only project pool names `project <name> join`.
+  - `board <name>` and `board show|view|history <name>` read the board.
+  - `task claim|submit|heartbeat|approve|reject` refusals say why (no such task, held by whom,
+    lease expired, already submitted, who reviews it) and the next command; `task approve <id>`
+    without a claimant lists the pending submitters.
+  - A `tell` to an offline account says it is offline and names the board/channel routes.
+  - `whoami`, `inbox`, `focus` and `tasks` name the command that does it here; `memory search`
+    names `memory recall`; a bare `me` names `score`.
+  - A refused tool call states its message once: an SDK `CommandError` no longer repeats the
+    refusal as "partial command output".
+  - A wrong enum argument names the allowed values, and a case variant is normalised.
+  - Past the per-run tool cap, up to three closing calls (submit, note, focus, rest) still run;
+    the cap's own warning asks for them.
+  - `brief` shows understaffed projects as a count with its readout, not as "N need help".
+- **A refused command is recorded as failed usage.** A handler refusal (`failCommandResponse`)
+  sets `primitive_usage.success` and the activity row to failure on every ingress; task,
+  project and pool refusals now declare it (a non-creator's `task approve` was a success).
+
+- **Long-interval tick jobs run on an install that restarts often.** The tick counter restarts at
+  0 on every boot, so a job fired on `tick % every === phase` waited `phase` ticks after each
+  restart, and `live-promotion` (6 h, phase ≈ 70 min) and the late-phase hourly jobs (e.g.
+  `lessons-from-work`) were starved on a frequently restarted server. Jobs with an interval of at
+  least 600 ticks are now scheduled on wall clock: their last run is kept in `core_memory`
+  (`tick:schedule`), an overdue job runs within 300 ticks of boot (spread by its phase), and a job
+  that ran recently waits the remainder. Shorter jobs keep the modulo rule.
+  `describeTickSchedule()` reports `durable`, `lastRunAt` and `nextDueTick`.
+
+- **`agent attention` now wakes a resting resident at once.** A resident that had declared rest
+  (`memory set rest <why>`) left an operator's steered attention unread until its long heartbeat
+  (about 30 minutes): the idle check skipped the cycle because no perception owed a reply, and the
+  rest cadence returned before the pending-attention fast tick. A pending steered attention now
+  breaks a declared rest the way an owed request does (no skip, fast tick). Resting again after it
+  is still not a silent turn, and ambient or informational events still wait.
+- **A tell that names a world command to run now owes a reply.** "Task #16 is reserved for you:
+  task claim 16" was classified as information, so a resting addressee was not woken. A clause that
+  is a bare world command with only ids after its verb (`task claim 16`, `then task submit #16`)
+  now makes the tell a request; a result that reports a command ("Done: task submit 16 sent",
+  "Status: claimed task 16") stays information. The attention corpus gains both cases.
+- **A cold `calc` no longer times out while mathjs loads.** The calc worker reports ready once
+  mathjs has loaded, and the 10 s evaluation deadline starts only then; the expression is not
+  sent before. Loading has its own, separate bound (`CALC_LOAD_TIMEOUT_MS`, 60 s), so on a busy
+  machine the first `calc` no longer fails on a fast expression, and a runaway expression is
+  still stopped 10 s into its evaluation.
+
+- **Tests no longer share fixed database file names.** 116 test files that opened a fixed
+  `test_*.db` in the working directory now use `tempDbPath(name)` from `test/helpers.ts`: a path
+  in a fresh temporary directory, removed at process exit. Parallel workers, and the suite run
+  in two checkouts at once, can no longer collide on one file.
+- **A failed spend write no longer loses the dollars.** `recordSpend` swallowed a failed
+  `spend_daily` write (the engine's sink logged and returned), and the in-memory total was later
+  replaced by a larger persisted one, so the day's total undercounted and the cap could be
+  passed. A busy or locked write is now retried briefly; one that still fails stays pending in
+  this process, counted by `dailyCapRefusal` and every readout (scope and `purpose:` rows too),
+  and is written on the next successful write or on release — once. With `MARINA_SPEND_LEDGER`
+  the shared file and the world database each keep their own pending entries, so only the one
+  that failed is retried.
+
+- **In-world benchmarks work from a fresh install run from any directory.** The harness, the
+  dataset downloader and the reproduction kit now start with the server's own Bun, so `bun` no
+  longer has to be on `PATH`. They also start with `--no-env-file`, so they see the server's
+  settings and not the `.env` of the checkout they run in. Without `MARINA_DATA_DIR`, run result
+  files go to `data/benchmark-results` beside the world's other state, not to a checkout-shaped
+  `benchmarks/results` in the working directory. A test boots a fresh world in a temporary
+  directory and goes from `benchmark list` to a ledger row using only in-world commands.
+- **`agent spawn` no longer drops `model:`, `role:` and `key:`.** The spawn options accepted only
+  the word pairs (`model x role y`) for these three; the documented `key:value` form (and
+  `--model x`, `role=y`) was silently ignored, so the agent got the default model and no role.
+- **`memory query` and `memory search` lead with each record's own id.** One line per result
+  (`id <record id> · memory show <record id>`, subject, a short preview) comes before the JSON
+  dump, whose first id is the space's. The dump and the structured payload are unchanged.
+- **`memory kv history` shows the first set.** The trail ends with the key's creation (time and
+  first value) instead of replying "No edit history" until a second set; a key that was never
+  set says so.
+- **`brief` help names the first-login welcome.** The first brief after arrival is the welcome;
+  later ones show the shape of the world. The help said only the latter.
+- **A refused model call is reported, never stored as an answer.** `code ask` with no model
+  provider (or any other `/v1` refusal) records a failed artifact and shows the upstream message,
+  which names the provider setting that fixes it; an empty model answer is a failure too. `ask`,
+  `dig` and `desire` keep their world-only output and add one line saying why the model gave none.
+- **An input behind two gates no longer bounces between holds.** An approval also covers each other
+  non-core gate its approver could approve on its own hold (checked gate by gate with the same rule),
+  and the reply names them (`also covers: …`). A core (operator-grant) gate is never covered
+  implicitly: it is held on its own, the approver is told the run stopped there, and approving it
+  carries the earlier approval of the gates that run already passed (named in the reply), so
+  `run raw` (`agent.run`, then `shell.exec`, under `shared`) runs after two explicit answers instead
+  of looping. `code.exec.unrestricted` is never passed by an approval: only an operator's grant
+  (`challenge approve <token> always` or `gate grant`) opens it.
+- **`showcase` no longer adds a seeded bounty on every reboot** once more than 20 tasks exist: the
+  seed reads every task, not the first page (`listTasks({ limit: null })`). `task list` says how
+  many tasks it left out and takes `limit:N` to show them.
+- **`ops inbox` leaves optional capabilities out.** A readiness check the core works without is no
+  longer a CRITICAL alert with the remedy `demo preflight`; real problems keep their severity and
+  carry the check's own remediation.
+- **An offline `data series` says the fetch failed** instead of "no observation at or before the
+  cutoff".
+- **`pattern run` and `forecast` name the fix when no model is available**, and `forecast` refuses
+  before printing "Researching…".
+- **Benchmark datasets resolve against the Marina checkout**, not the server's working directory:
+  a server started elsewhere no longer shows the tracked `smoke` set as missing, and the harness
+  runs from the checkout.
+- **`help all` reaches the builtin command index from any room**, including a room whose own `help`
+  describes the room (the `craft` workshop); every other room shadow still wins.
+- **`benchmark result` names who launched a run** instead of its entity id, and **`code diff`** lists
+  new and staged files that `git diff` does not show instead of reporting no change.
+- **Crews serve, can be measured, and tag their own work.** A crew created with `crew create` now
+  serves `marina:<name>` through its own `model-<name>` endpoint (its agent members are kept on it
+  as they join and leave), so it can answer `/v1`, take forecast parts and be a
+  `benchmark run crew:<name>` target with its formation; the refusal names the missing step.
+  `crew dispatch` binds the work to a task (a new one at value 0, or `task:<id>`), and that binding
+  tags the outcome `crew:<formation>` before any membership fallback. Code Mode verification is
+  tagged with its live `code crew`'s formation. A crew benchmark run's method is
+  `crew:<formation>` (`crew:unknown`), never a model id. Agents see `crew` among the coordination
+  commands. None of it needs a model provider.
 - **`agent config <name> model|role|key|thinking` works on a saved agent that is not running**
   (stopped, or listed in `MARINA_DISABLED_AGENTS`): it rewrites the stored config its next spawn
   reads, keeping every other field. Before, it refused with "not running", so a disabled agent
   could only come back on its old model.
+
 
 - **Arena evidence reuse** keys on the inputs, not on when they were read, so an unchanged refile
   can reuse its forecast.
@@ -408,7 +716,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   citations and reusable advisory checks. Structured edits can render or write the deliverable
   directly; source-coverage rules, context-scoped projections and separate evidence assessments
   help participants check their work. These tools do not approve tasks or prescribe agent loops.
-  See [shared task work](docs/guides/shared-task-work.md). Append-only migrations 179–184 add
+  See [shared task work](docs/guides/shared-task-work.md). Append-only migrations 180–185 add
   recovery journals, spend receipts, provider-scoped sandbox bindings, submission clocks and task work.
 - **Code-derived capability inventory and fresh-world qualification tools.**
   `bun run inventory:capabilities` enumerates command forms, tick work, environment reads and
@@ -416,6 +724,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   production servers and records concrete coverage; reusable long-horizon comparison tools accept
   an external, frozen task corpus. Reports and study data belong outside the public repository.
 
+
+- **Capability posture: every off-by-default technique has a decide-by date.** Each non-core
+  feature and each `MARINA_*` setting whose documented default is `off`, `observe` or `false` now
+  has a posture in `src/config/capability-posture.ts`: `measure` (where the promoting evidence
+  lands — an outcome source, a judge-ledger surface, the benchmark ledger, or an operator's
+  decision — and an ISO `decideBy` date) or `by-design` (a one-line reason, no date). The rank-0
+  `posture` command lists each entry with its current value, when its evidence source last
+  recorded anything, and the days left; the `capability-posture` readiness line is degraded while
+  any date has passed (an optional line: the dates are development deadlines, informational on
+  installs). `docs/reference/capability-posture.md` is generated by `bun run docs:api`,
+  and a test fails when a new off-by-default setting has no entry or an entry names a setting that
+  no longer exists.
+- **The server can run the native agent supervisor itself (`supervisor start|stop|status`).** No
+  `marina supervise` process needs to stay open. A person starts it in a configured code root; an
+  agent never can. Starting it needs `agent.spawn` and is refused over telnet. It holds a
+  routing-only supervision credential issued to that person, renewed at 80 % and revoked on stop.
+  Its routing calls reach the server's own routing API over loopback under the same scope and
+  limits as an external supervisor. Launches from Streams still need `code.exec` and
+  `agent.spawn`. Native agents get only locale, path and terminal variables: no server keys or
+  secrets. A shutdown stops its agents and keeps the start, so the next boot resumes it
+  (`MARINA_SUPERVISOR_AUTOSTART=resume|off|person:<name>`). Readiness `supervised-residents`
+  reports whether it runs.
+- **`benchmark fetch <name>` downloads one benchmark's dataset from inside the world.** It runs
+  the harness downloader (`benchmarks/download-all.ts <name>`, which now takes registry keys) in
+  the background and messages the requester when it is done. Rank 4, like benchmark runs;
+  refused under the as-of fence. Every downloader request now goes through the SSRF guard
+  (`guardedFetch`). `benchmark list` says per dataset `tracked (ready)`, `generated (ready)`,
+  `downloaded (ready)` or ``needs `benchmark fetch <name>` ``, and `help benchmark` names the
+  datasets that need no download.
+- **Live work can change a default by earned promotion.** A role's model now has an earned layer
+  between its env settings and its tier: the slot `role-model:<role>`, read through
+  `resolveDefault`.
+  - **Evidence.** Shared work outcomes tagged by role and model fill it. The same promotion rule
+    applies: a time-split holdout, the Agresti–Caffo interval above 0, the fishing margin, no
+    discovery loss, and a minimum number of outcomes per arm. A person's private work never counts.
+  - **Who files.** A 6-hourly job raises one ops-inbox proposal per passing candidate and records
+    refused attempts. It never files. A person holding `role.edit` files the proposal with
+    `benchmark promote role-model:<role> <model>`; an agent never can.
+  - **Reading it.** `benchmark eligible live` is the read-only view. A promoted model this
+    installation cannot call falls back to the tier, and the fallback is traced. With nothing
+    promoted, every role resolves exactly as before.
+
+- **Imported lessons reach agents.** Lessons from a learned bundle are now recalled beside the
+  world's own lessons, in the resident `[Lessons]` section, `lessons`, forecasts, Code Mode and
+  passthru.
+  - They are labelled `imported` (`unsigned` too, for an unsigned bundle) and ranked below every
+    local trusted lesson.
+  - Family scoping, leakage rule 2 and the as-of fence apply as for local lessons. Bundles now
+    carry each lesson's `scope`, `families`, `scope_family` and the boards it must stay out of.
+  - A local trusted lesson whose rule matches an imported one confirms it and serves in its place.
+    One the lesson judge finds contradicting it retires it.
+  - `MARINA_IMPORTED_LESSONS=off|observe|on` controls serving. Unset means `on` once anything was
+    imported; `observe` records what would be served and serves nothing; `off` is unchanged
+    output.
+  - With `MARINA_UPSTREAM` unset, an open bundle signed by a pinned publisher key may now import.
+    No key is pinned by default, so nothing changes until an operator pins one; `off` still
+    refuses.
+  - Readiness `learned` reports imported bundles, lesson counts (served, observed, confirmed,
+    retired) and the last import.
+- **Start a world fresh from a learned bundle.**
+  - `marina learned distill <db>` reads an old world's database read-only (a `VACUUM INTO`
+    snapshot) and writes a `marina.learned.v1` bundle through the export allow-list. It is signed
+    with `MARINA_LEARNED_SIGNING_KEY`, or written unsigned and labelled so.
+  - `--archive` or `marina learned archive <db>` moves the database into a cold archive directory
+    beside it. Nothing is deleted, and archiving is refused while a server holds the database.
+  - Manifests now list what a bundle never carries (`excludes`: accounts, standing, grants,
+    approvals, holds, secrets, journals, numeric note ids). Verification refuses a bundle whose
+    contents overreach its manifest. Bundles without the field still import.
+  - Importing an unsigned bundle needs `--allow-unsigned`.
+  - `MARINA_BOOTSTRAP_BUNDLES` (with `MARINA_BOOTSTRAP_ACCEPT=own,unsigned`) imports the named
+    bundles after the world seed and before any agent wakes. A second boot writes nothing, and
+    boot is unchanged when the variable is unset.
+  - `resolveDefault` now reads imported upstream seeds below every local layer, as documented.
+- **Orchestration runs land on the outcome path.** A person's `project <name> outcome` verdict,
+  a `pattern run` (or `POST /v1/patterns/run`) whose own review approved or sent back the draft,
+  and a room `verification` round closed with its checkers' `pass|fail` lines each record one
+  outcome tagged `method:orchestration:<pattern>`, `method:pattern:<name>` or
+  `method:room-formation:<formation>` (labels only; nothing without a verdict; no model needed).
+  `benchmark eligible [board]` lists, read-only, the configurations whose holdout evidence would
+  pass the promotion rule now. Arena shadow settings variants (`<spec>#<fingerprint>`) pool into
+  their runnable spec explicitly, and `forecast routes` / `arena shadow score` show the count.
 - **One seam for many sandboxes.** Code Mode runs work in whichever sandbox you already have:
   every provider implements `SandboxProvider` and declares what it can do. `code sandbox providers`
   lists them; `code sandbox use <id>` (or `provider:<id>` on any `code sandbox` command) picks one.

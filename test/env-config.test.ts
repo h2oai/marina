@@ -11,10 +11,10 @@ import { handleDashboardApi } from "../src/net/dashboard-api";
 import { HOT_RELOADABLE_VARS, PROTECTED_ENV_KEYS } from "../src/net/dashboard-api/keys";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
-const TEST_DB = "test_env_config.db";
+const TEST_DB = tempDbPath("test_env_config.db");
 
 interface EnvEntry {
   key: string;

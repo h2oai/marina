@@ -73,6 +73,7 @@ const lesson = (id: string, text: string): Lesson => ({
   trust: "trusted",
   resolvedAt: "2026-09-01T00:00:00.000Z",
   source: "test:prefix",
+  rule: text,
 });
 
 type Msg = Record<string, unknown>;

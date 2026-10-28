@@ -41,7 +41,7 @@ Commands, file reads and writes, `code service publish` and hibernate/resume go 
 gateway's gRPC API (`src/integrations/openshell/`, no extra dependency). A requested OpenShell
 target never falls back to the host. After a restart Marina finds its sandboxes again by label.
 Sandbox ownership follows the durable Marina account. Project selection, guest working directories,
-and service state are stored separately for each provider; migration 182 preserves existing Flywheel
+and service state are stored separately for each provider; migration 183 preserves existing Flywheel
 bindings and adds the provider key. Restarting Marina keeps the running guest and its active project.
 
 Use a guest image that includes the tools your project needs. Its working directory must be usable

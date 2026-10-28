@@ -26,6 +26,7 @@
  *    compactions; at 800 on 10 %, with no loss of fidelity).
  */
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { catalogModel } from "../net/model/catalog-snapshots";
 import { lowestReasoningEffort } from "../net/model/reasoning-effort";
 import { piModels } from "./pi-models";
 import {
@@ -67,9 +68,11 @@ export function summaryCallModel(model: Model<Api>): Model<Api> {
   if (model.reasoning || reasoningMandatory(model)) return model;
   let listed: Model<Api> | undefined;
   try {
-    listed = piModels.getModel(String(model.provider) as never, model.id as never) as
-      | Model<Api>
-      | undefined;
+    listed = catalogModel(
+      (id) =>
+        piModels.getModel(String(model.provider) as never, id as never) as Model<Api> | undefined,
+      model.id,
+    );
   } catch {
     listed = undefined;
   }

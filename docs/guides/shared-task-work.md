@@ -106,7 +106,7 @@ these commands do not monitor outside systems. Retired sources do not invalidate
 current receipts. No background checker, peer wake-up, reply suppression, model
 call or additional turn/token limit is introduced.
 
-Work revisions and receipts survive restart and world export/import. Schema 184
+Work revisions and receipts survive restart and world export/import. Schema 185
 adds their tables without modifying existing tasks or claims. Account erasure
 anonymizes shared author metadata and removes that reader's receipts. Group task
 access and the existing as-of evidence fence continue to apply.

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CommandDef } from "../../types";
+import { refuseCommand } from "../command-response";
 import type { Engine } from "../engine";
 import { DEFAULT_VIDEO_MODEL } from "../media/providers/video-util";
 import { lookReply, sendLookReply } from "../media/vision";
@@ -42,21 +43,24 @@ export function videoCommand(_engine: Engine): CommandDef {
         return;
       }
       if (sub !== "generate") {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Usage: video generate <prompt...> | video describe <node|asset|url> [question]",
         );
         return;
       }
       if (!engine.db || !engine.storage) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Video generation requires persistent storage. Configure storage to enable this command.",
         );
         return;
       }
       if (!engine.mediaManager) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Media pipeline is not configured. Ensure storage and provider keys are set.",
         );
@@ -71,7 +75,7 @@ export function videoCommand(_engine: Engine): CommandDef {
 
       const entity = engine.entities.get(input.entity);
       if (!entity) {
-        ctx.send(input.entity, "Entity not found.");
+        refuseCommand(ctx, input.entity, "Entity not found.");
         return;
       }
 

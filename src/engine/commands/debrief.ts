@@ -5,8 +5,13 @@ import { getStanding, ledgerFor } from "../../agent/standing";
 import type { TaskManager } from "../../coordination/task-manager";
 import { bold, category, dim, header, id, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import type { CommandUsage } from "../../sdk/command-forms";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { requiresPersistence } from "./command-messages";
+
+/** `debrief` forms; `memory debrief …` (src/engine/command-families.ts) shares them. */
+export const DEBRIEF_USAGE: CommandUsage[] = [{ syntax: "debrief", effect: "read" }];
 
 /**
  * Debrief — end-of-session synthesis view. Shows what the entity recently
@@ -24,7 +29,7 @@ export function debriefCommand(deps: {
 }): CommandDef {
   return {
     category: "Memory",
-    usage: [{ syntax: "debrief", effect: "read" }],
+    usage: DEBRIEF_USAGE,
     name: "debrief",
     aliases: [],
     help: "Close-out view: recent notes, claimed tasks, current standing. Usage: debrief",
@@ -33,7 +38,7 @@ export function debriefCommand(deps: {
       if (!entity) return;
 
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("debrief"));
+        refuseCommand(ctx, input.entity, requiresPersistence("debrief"));
         return;
       }
 

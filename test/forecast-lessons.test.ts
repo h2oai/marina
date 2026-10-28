@@ -19,6 +19,7 @@ import {
   SETTLEMENT_MARGIN_MS,
 } from "../benchmarks/futurex/lessons";
 import { endTimeIso, requestFor } from "../benchmarks/futurex/map";
+import type { DecisionProvider } from "../src/decisions/types";
 import type { AnswerSpec } from "../src/forecast/answer-types";
 import { LEGACY_LESSON_SUBJECT } from "../src/forecast/lessons";
 import { forecastTyped, type ModelPart } from "../src/forecast/typed";
@@ -58,6 +59,7 @@ const choice: AnswerSpec = {
 const lesson = (text: string, resolvedAt: string, over: Partial<Lesson> = {}): Lesson => ({
   domain: "forecast",
   text,
+  rule: text,
   kind: "failure",
   trust: "trusted",
   resolvedAt,
@@ -202,8 +204,25 @@ describe("FutureX replay: no lesson leaks across rows that share an end time", (
     expect(Date.parse(resolvedAt) - Date.parse(endTimeIso(shared)!)).toBe(SETTLEMENT_MARGIN_MS);
     // Row a is scored and learned from.
     const sink = memoryLessonSink();
+    // A judge that trusts the lesson: only judged lessons are served.
+    const judge = {
+      kind: "test",
+      model: "test/jev",
+      calibrated: true,
+      async ask(request: { questions: Record<string, unknown> }) {
+        return {
+          answers: Object.fromEntries(
+            Object.keys(request.questions).map((k) => [k, { type: "noul", noul: 0.9 }]),
+          ),
+          model: "test/jev",
+          provider: "test",
+          latencyMs: 1,
+          calibrated: true,
+        };
+      },
+    } as unknown as DecisionProvider;
     await recordOutcome(
-      { sink, writer },
+      { sink, writer, judge },
       futurexOutcome({
         row: a,
         result: { id: "a", spec: "choice", prediction: "A", fallback: false },
@@ -269,13 +288,9 @@ describe("the retired forecast-lesson store, bridged into the pool", () => {
       expect(m).toMatchObject({ found: 1, copied: 1, failed: 0, renamed: true });
       expect(db.getUserByName(LEGACY_FORECAST_ACCOUNT)).toBeFalsy();
       expect(db.getUserByName(LEGACY_FORECAST_OWNER)).toBeTruthy();
-      // Served from the pool, labelled, under the original resolution time.
+      // Copied but never judged: stored in the pool, never served.
       const store = forecastLessonsFor(db, { env: ON });
-      const got = await store.recall("tennis match winner", "2026-09-10T00:00:00.000Z");
-      expect(got.map((l) => l.text)).toEqual([
-        "[lesson] choice · tennis match winner · rule: favour the higher seed (unverified)",
-      ]);
-      expect(await store.recall("tennis match winner", "2026-08-20T00:00:00.000Z")).toEqual([]);
+      expect(await store.recall("tennis match winner", "2026-09-10T00:00:00.000Z")).toEqual([]);
       const [copy] = await findLessons(db, ["forecast"], { source: LEGACY_LESSON_SOURCE });
       expect(copy?.trust).toBe("unverified");
       expect(copy?.provenance).toMatchObject({ store: LEGACY_LESSON_SUBJECT, id: legacy.id });

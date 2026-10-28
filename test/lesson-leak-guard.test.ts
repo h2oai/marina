@@ -376,7 +376,7 @@ describe("judge calibration follows what answered", () => {
       },
     };
     const uncal = await judgeLesson(c, { ...c, attempted: "x", succeeded: true } as never, joined);
-    expect(uncal.trust).toBe("trusted"); // one cut at 0.5
+    expect(uncal.trust).toBe("rejected"); // the same bars for every judge
     expect(uncal.judge).toBe("marina/auto (uncalibrated)");
   });
 });

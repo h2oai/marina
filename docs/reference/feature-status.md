@@ -13,7 +13,8 @@ What Marina ships, and what actually runs. Every major feature has one status:
 The table mirrors `FEATURE_STATUS` in [`src/config/feature-status.ts`](../../src/config/feature-status.ts);
 `test/docs-contract.test.ts` fails when the two disagree. A world command that exists only for an
 experimental feature starts its help text with `[experimental]`, and `marina worlds` marks demo worlds
-`[demo]` (`"status"` in `--json`).
+`[demo]` (`"status"` in `--json`). What would switch each non-core feature on, and by when, is in
+[capability posture](capability-posture.md).
 
 | Feature | Status | How to enable | Owner area |
 |---|---|---|---|
@@ -36,7 +37,12 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Outcomes and lessons | core | `MARINA_LESSONS` | src/outcomes, src/learning |
 | Memory assistance (evaluator/reflector jobs) | core | Workers with the evaluator/reflector roles | src/persistence |
 | Code Mode | core | `code` | src/engine/commands/code |
-| Crews and formations (the runtime form of the orchestration patterns) | core | `crew`; a crew serves `/v1` model requests and is the default benchmark target | src/coordination/crew-manager.ts, src/engine/commands/crew.ts |
+| Orchestration: the formation catalogue (names, aliases, descriptions, protocols, Score templates, combiners) | core | Always on; run a formation as a crew, a project, one `pattern run` task or a room's turn rule; typed forecasts (`MARINA_FORECAST_FORMATION`) and arena `formation:ensemble` / `formation:delphi` run its templates | src/orchestration/formations |
+| Orchestration › crews (a running formation) | core | `crew create <name> <members> formation:<f>`; a crew serves `/v1` model requests and is the default benchmark target | src/coordination/crew-manager.ts, src/engine/commands/crew.ts |
+| Orchestration › one free-text task (`pattern run`, `POST /v1/patterns/run`) | experimental | `pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run` | src/orchestration/text-patterns.ts, src/engine/commands/pattern.ts |
+| Orchestration › a room's turn rule (formations in a room) | experimental | `build formation [room] <debate, chorus or verification>`, or `formation` on a room module | src/coordination/room-formations.ts |
+| Orchestration › projects (pool notes generated from the catalogue) | demo | `project <name> orchestrate <pattern>` | src/world/templates/orchestration.ts |
+| Orchestration › legacy names (`nsed`, `custom`) | deprecated | Accepted as `deliberation` and `freeform`, never advertised | src/orchestration/formations/catalogue.ts |
 | Desires and journeys | core | `desire`, `journey`; the dashboard first-run guide | src/engine/commands/desire.ts, src/engine/commands/journey.ts, src/engine/journey-state.ts |
 | Novelty suggestions (advisory exploration) | core | `novelty`; residents see suggestions in their continuation prompt | src/engine/novelty.ts, src/engine/commands/novelty.ts |
 | Canvas | siloed | `canvas`; the feed publisher writes the `feed` canvas | src/engine/commands/canvas.ts, src/net/feed-publisher.ts |
@@ -45,19 +51,17 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Benchmarks | siloed | `benchmark` (rank 4), `bun run benchmark` | benchmarks |
 | TabH2O | siloed | `TABH2O_API_KEY`; arena challenger, `market forecast` | src/arena, src/net/clients |
 | Quant helpers, data lookups, read swarm | siloed | `quant`, `data`, `web swarm` | src/quant, src/forecast, src/research |
-| Formation catalogue (Score templates, pure combiners) | siloed | Always on: typed forecast formations (`MARINA_FORECAST_FORMATION`), resident forecasts, `pattern run`, arena `formation:ensemble` and `formation:delphi` | src/orchestration/formations |
 | Research evidence loop and survey | siloed | `MARINA_RESEARCH_*` | src/research |
 | Research web agent, cited answers, fact pass | siloed | In world: `research ask` (rank 0, spend-guarded) and the typed `marina_research` tool; benchmark scripts (`scripts/mind2web2.ts`, deepresearch) | src/research |
 | Skills | core | `skill`; 5 built-ins (`skill builtin`); residents get the best-fitting skill in their prompt (`MARINA_SKILLS_RESIDENT`, default on); note seeds with `MARINA_SEED_SKILLS=true` (showcase) | src/agent |
-| Supervised residents | core | On by default; `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) turns it off | src/routing/residents.ts, src/routing/supervisor.ts, src/routing/attention-bridge.ts |
+| Supervised residents | core | On by default; `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) turns it off | src/routing/residents.ts, src/routing/supervisor.ts, src/routing/world-supervisor.ts, src/routing/attention-bridge.ts |
 | Resolvers, probes and watches | siloed | `probe`, `watch`; `position open` adds a resolving watch | src/resolvers, src/engine/commands/probe.ts, src/engine/commands/watch.ts |
 | Embedding lifecycle (data dir, endpoint file, idle shutdown, parent watch) | experimental | Experimental: for embedding hosts. `MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`, `MARINA_PARENT_PID`; `marina endpoint` | src/net/instance-lifecycle.ts |
 | OpenShell sandbox provider | experimental | `MARINA_OPENSHELL_URL` + mTLS bundle against an operator-run gateway; `code sandbox use openshell` | src/integrations/openshell |
 | Shared spend ledger | experimental | `MARINA_SPEND_LEDGER=<path>` | src/engine/shared-spend-ledger.ts |
 | Adaptive load-balance routing | experimental | Request header `X-Load-Balance: adaptive` | src/net/model-api |
-| Benchmark route evidence for `model:route` | experimental | `MARINA_ROUTE_EVIDENCE=on` (default `observe` records only) | src/engine/benchmark-evidence.ts |
+| Benchmark route evidence for `model:route` | experimental | `MARINA_ROUTE_EVIDENCE` (default `on`; `observe` records only) | src/engine/benchmark-evidence.ts |
 | Earned forecast routing | experimental | `MARINA_FORECAST_HISTORY` with enough resolved outcomes | src/forecast |
-| Formations in a room | experimental | `build formation [room] <debate, chorus or verification>`, or `formation` on a room module | src/coordination/room-formations.ts |
 | Attention judges | experimental | `MARINA_ATTENTION_JUDGE=observe` (default; records opinions and results) or `on` (earned judges advise) | src/agent/attention-judge.ts |
 | Peer code review | experimental | `code review request <name>` or `auto`; supervised residents attach worktree snapshots | src/engine/commands/code/review-request.ts, src/routing/review-snapshot.ts |
 | Private rooms | experimental | `build access <room> private` (owner or operator); `build invite <room> <name>` | src/engine/room-access.ts, src/engine/commands/build.ts |
@@ -66,7 +70,6 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Forecasts by residents (as-of fence) | experimental | `MARINA_FORECAST_RESIDENTS=on`; `forecast <q> crew:<c> pattern:<p>` (ensemble, delphi, tournament, skeptic) | src/forecast/resident-part.ts, src/forecast/resident-forecast.ts, src/engine/evidence-fence.ts |
 | Hybrid and vector retrieval | experimental | `MARINA_MEMORY_EMBEDDINGS`, `MARINA_CORPUS_EMBEDDINGS` | src/memory, src/research |
 | H2O-Lightning decision preset | experimental | `MARINA_LIGHTNING_MODEL=<OpenRouter id>` then `MARINA_DECISIONS=lightning` (no default id; off) | src/decisions/config.ts |
-| Text patterns (`pattern run`, `POST /v1/patterns/run`) | experimental | `pattern run <pattern> -- <task>` (rank 0, spend-guarded) and the typed `marina_pattern` tool; `POST /v1/patterns/run` | src/orchestration/text-patterns.ts, src/orchestration/formations, src/engine/commands/pattern.ts |
 | Typed resident analysis tools (`marina_forecast`, `marina_research`, `marina_swarm`, `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`, `marina_arbiter`, `marina_pattern`) | experimental | Deferred in the `full` tool profile: loaded by name through `marina_tool_search` (`MARINA_DEFERRED_TOOLS=off` keeps them resident); each runs its world command | src/agent/tools/analysis.ts, src/agent/analysis-commands.ts |
 | Investigations | experimental | `inquiry`, `marina inquiry`, `/api/investigations` | src/investigations |
 | Schedules | experimental | `schedule add …` | src/schedules |
@@ -85,9 +88,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Scores (`conduct`, `marina_conduct`) | experimental | `conduct`; residents run a stored Score with `marina_conduct`; SDK `runScore` | src/engine/commands/conduct.ts, src/sdk/conduct.ts |
 | Scenario boards | experimental | `scenario` (posts boards and tasks; a resident must pick up the work) | src/engine/commands/scenario.ts |
 | Built-in worlds other than `default` and `empty` (13) | demo | `MARINA_WORLD=<slug>`; `marina worlds` shows each status | worlds |
-| Orchestration templates (16 pool-note patterns; crews run them as formations) | demo | `project <name> orchestrate <pattern>` | src/world/templates/orchestration.ts |
 | `MARINA_HOST` | deprecated | Alias of `WS_HOST` (`WS_HOST` wins) | src/net |
-| `NSED` pattern name | deprecated | Accepted as Deliberation, never advertised | src/world/templates/orchestration.ts |
 
 ## Notes
 
@@ -111,16 +112,18 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
   Marina ships no model id, so the preset stays off until `MARINA_LIGHTNING_MODEL` names one.
   `decision settings` (and `admin decisions`) print one line: not configured, configured without an
   OpenRouter key, available, or active. Nothing is probed, so the line never costs a call.
+- **Orchestration.** One catalogue of formations (`src/orchestration/formations/catalogue.ts`), one
+  entry each: its name and legacy aliases, one-line description, fit, roles, protocol, the Score
+  templates it runs as (typed forecasts with model or resident members, free-text `pattern run`, the
+  arena's ensemble and delphi) and pure combiners per answer type. The `Orchestration ›` rows are
+  the ways to run an entry, each with its own status: a crew (core), one free-text task (`pattern
+  run`, experimental), a room's turn rule (experimental) and a project's pool notes, generated from
+  the entry (demo). The other ten arena formations still run their own code (byte-identical, held
+  by `test/arena-formations-legacy.test.ts`).
 - **Text patterns.** `pattern run <pattern> [budget:<usd>] -- <task>` runs the same protocols as
   `POST /v1/patterns/run` in world (rank 0; per-run budget, default $0.50, at most $2; the daily cap;
   one run per entity), over the operator's models only. Residents reach it as the typed
   `marina_pattern` tool. Experimental until a world uses it.
-- **Formation catalogue.** One entry per formation (`src/orchestration/formations/catalogue.ts`):
-  its one-line description, the Score templates it runs as (typed forecasts with model or resident
-  members, free-text `pattern run`, the arena's ensemble and delphi) and pure combiners per answer
-  type. The other ten arena formations still run their own code (byte-identical, held by
-  `test/formation-equivalence-arena.test.ts`); crew-only formations stay crew briefs that name their
-  entry.
 - **Typed analysis tools.** Residents load `marina_forecast`, `marina_research`, `marina_swarm`,
   `marina_data`, `marina_quant`, `marina_calc`, `marina_decision_check`, `marina_triage`,
   `marina_arbiter` and `marina_pattern` through `marina_tool_search`. Each builds one world command,

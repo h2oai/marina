@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { standingEarnLine, standingSummaryLine } from "../../agent/standing-summary";
 import type { TaskManager } from "../../coordination/task-manager";
 import {
   bold,
@@ -17,6 +18,7 @@ import {
 import type { MarinaDB } from "../../persistence/database";
 import { residentLabeler } from "../../routing/residents";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { DAY_MS, HOUR_MS } from "../constants";
 import { ACCUMULATION_NOTE_PREFIX, parseAccumulationReceipt } from "../memory-dispatch";
 import { HYGIENE_NOTE_PREFIX } from "../memory-hygiene";
@@ -46,7 +48,7 @@ export function orientCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("orient"));
+        refuseCommand(ctx, input.entity, requiresPersistence("orient"));
         return;
       }
       const db = deps.db;
@@ -219,12 +221,13 @@ export function orientCommand(deps: {
           lines.push(...myClaims);
         }
 
-        // Entity's earned standing (decayed, by account — what `standing` shows)
-        const self = ctx.getEntity(input.entity);
-        const standing = self ? deps.taskManager.standingOf(self.name, input.entity) : 0;
-        if (standing > 0) {
-          lines.push("", `  Your Standing: ${standing.toFixed(1)}`);
-        }
+        // Live standing by account (what `standing` shows), its last credits
+        // and retired history apart; with nothing claimed, how to earn.
+        lines.push(
+          "",
+          `  ${standingSummaryLine(db, entity.name, input.entity, { label: "Your Standing:" })}`,
+        );
+        if (myClaims.length === 0) lines.push(`  ${standingEarnLine()}`);
       }
 
       ctx.send(input.entity, lines.join("\n"));

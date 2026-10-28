@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskManager } from "../src/coordination/task-manager";
-import { recordTaskOpinion, recordTaskVerdict } from "../src/outcomes/live";
+import { recordTaskOpinion, recordTaskVerdict, recordVerifierOpinion } from "../src/outcomes/live";
 import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
 import { migrateEmptyTo } from "./schema-replay";
@@ -84,7 +84,7 @@ test("submission-clock migration retains the identity of an existing submission"
   const clock = spyOn(Date, "now").mockReturnValue(1_900_000_000_000);
   try {
     const legacy = new Database(path);
-    migrateEmptyTo(legacy, 182);
+    migrateEmptyTo(legacy, 183);
     legacy.run(
       "INSERT INTO tasks(id,title,creator_id,creator_name,created_at,updated_at) VALUES(1,'Existing','creator','Creator',1,1)",
     );
@@ -108,5 +108,55 @@ test("submission-clock migration retains the identity of an existing submission"
   } finally {
     clock.mockRestore();
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the unified judge ledger binds delayed verifier opinions to the exact submission", async () => {
+  const db = new MarinaDB(":memory:");
+  try {
+    const tasks = new TaskManager(db);
+    const task = tasks.create({
+      title: "Review evidence",
+      creatorId: "creator",
+      creatorName: "Creator",
+    });
+    tasks.claim(task.id, "worker", "Worker");
+    tasks.submit(task.id, "worker", "First attempt");
+    const first = tasks.getClaim(task.id, "worker")!.submittedAt!;
+    tasks.rejectSubmission(task.id, "worker", "creator");
+    recordTaskVerdict(db, { taskId: task.id, claimant: "Worker", approved: false, at: first + 1 });
+    const opinion = {
+      taskId: task.id,
+      claimantName: "Worker",
+      submittedAt: first,
+      evaluator: "test:verifier",
+      calibrated: true,
+      mode: "observe" as const,
+      opinion: "pass" as const,
+      signals: { delivered: 0.95 },
+    };
+    recordVerifierOpinion(db, opinion, first + 2);
+    expect(db.listJudgeLedger({ surface: "verify" })).toMatchObject([
+      { truth_key: `task:${task.id}:Worker:submission:${first}`, truth: "fail", agreed: 0 },
+    ]);
+    expect(db.listJudgeLedger({ surface: "outcome" })).toMatchObject([
+      { truth_key: `task:${task.id}:Worker:submission:${first}`, truth: "fail", agreed: 0 },
+    ]);
+    tasks.claim(task.id, "worker", "Worker");
+    tasks.submit(task.id, "worker", "Replacement");
+    const before = db.listJudgeLedger({ surface: "verify" });
+    recordVerifierOpinion(db, { ...opinion, opinion: "fail" }, first + 3);
+    expect(db.listJudgeLedger({ surface: "verify" })).toEqual(before);
+    const second = tasks.getClaim(task.id, "worker")!.submittedAt!;
+    recordVerifierOpinion(db, { ...opinion, submittedAt: second }, second + 1);
+    tasks.approveSubmission(task.id, "worker", "creator");
+    recordTaskVerdict(db, { taskId: task.id, claimant: "Worker", approved: true, at: second + 2 });
+    expect(db.listJudgeLedger({ surface: "verify" })).toMatchObject([
+      { truth_key: `task:${task.id}:Worker:submission:${second}`, truth: "pass", agreed: 1 },
+      { truth_key: `task:${task.id}:Worker:submission:${first}`, truth: "fail", agreed: 0 },
+    ]);
+  } finally {
+    await settleDelivery(db);
+    db.close();
   }
 });

@@ -13,7 +13,12 @@ export interface OutcomesStore {
   getOutcome(id: number): outcomesDb.OutcomeRow | undefined;
   getOutcomeBySubject(subject: string): outcomesDb.OutcomeRow | undefined;
   listOutcomes(opts?: outcomesDb.OutcomeFilter): outcomesDb.OutcomeRow[];
-  pendingOutcomes(consumer: string, limit: number): outcomesDb.OutcomeRow[];
+  pendingOutcomes(
+    consumer: string,
+    limit: number,
+    opts?: { aggregating?: boolean },
+  ): outcomesDb.OutcomeRow[];
+  waitOutcomeDelivery(outcomeId: number, consumer: string, reason: string, now?: number): void;
   setOutcomeDelivery(
     outcomeId: number,
     consumer: string,
@@ -22,6 +27,32 @@ export interface OutcomesStore {
     now?: number,
     countAttempt?: boolean,
   ): void;
+  claimOutcomeDeliveries(
+    outcomeIds: readonly number[],
+    consumer: string,
+    held: string,
+    token: string,
+    now?: number,
+  ): boolean;
+  releaseOutcomeClaims(consumer: string, token: string, now?: number): number;
+  releaseStaleOutcomeClaims(consumer: string, before: number, now?: number): number;
+  outcomesMissingDeliveries(
+    consumers: readonly string[],
+    afterId: number,
+    limit: number,
+  ): outcomesDb.OutcomeRow[];
+  addMissingOutcomeDeliveries(
+    outcomeId: number,
+    consumers: readonly string[],
+    now?: number,
+  ): number;
+  failedOutcomeDeliveries(
+    consumer: string,
+    like: readonly string[],
+    afterId: number,
+    limit: number,
+  ): Array<{ outcome_id: number; reason: string | null }>;
+  reopenOutcomeDelivery(outcomeId: number, consumer: string, reason: string, now?: number): boolean;
   outcomeDeliveries(outcomeId: number): outcomesDb.DeliveryRow[];
   getOutcomeLearningStep(outcomeId: number, step: string): { value_json: string } | undefined;
   bindOutcomeLearningSpace(outcomeId: number, space: string): void;
@@ -36,7 +67,15 @@ export const OUTCOMES_STORE_METHODS = [
   "getOutcomeBySubject",
   "listOutcomes",
   "pendingOutcomes",
+  "waitOutcomeDelivery",
   "setOutcomeDelivery",
+  "claimOutcomeDeliveries",
+  "releaseOutcomeClaims",
+  "releaseStaleOutcomeClaims",
+  "outcomesMissingDeliveries",
+  "addMissingOutcomeDeliveries",
+  "failedOutcomeDeliveries",
+  "reopenOutcomeDelivery",
   "outcomeDeliveries",
   "getOutcomeLearningStep",
   "bindOutcomeLearningSpace",

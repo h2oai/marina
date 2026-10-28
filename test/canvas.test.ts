@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { dirname, join } from "node:path";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { LocalStorageProvider } from "../src/storage/local-provider";
 import type { EntityId, RoomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_canvas.db";
-const TEST_ASSETS = "test_canvas_assets";
+const TEST_DB = tempDbPath("test_canvas.db");
+const TEST_ASSETS = join(dirname(TEST_DB), "test_canvas_assets");
 
 describe("Canvas — Phase 1: Asset Store", () => {
   let db: MarinaDB;
@@ -235,9 +236,8 @@ describe("Canvas — Phase 1: Asset Store", () => {
         size: 9,
         storageKey: "del-key.txt",
       });
-      engine.processCommand(entityId, "canvas asset delete del-id");
-      // Wait for async handler
-      await Bun.sleep(50);
+      // The handler is async: wait for the command, not a fixed 50 ms.
+      await engine.processCommand(entityId, "canvas asset delete del-id");
       const text = stripAnsi(conn.lastText());
       expect(text).toContain("deleted");
       expect(db.getAsset("del-id")).toBeUndefined();

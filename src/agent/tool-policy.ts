@@ -30,6 +30,7 @@
  * towards the gate.
  */
 
+import { unfoldFamily } from "../engine/command-families";
 import { ANALYSIS_TOOL_COMMANDS } from "./analysis-commands";
 
 export type ToolRisk = "read" | "self" | "communicate" | "egress" | "mutate" | "consequential";
@@ -330,7 +331,8 @@ export function commandParts(raw: string): string[] {
 
 /** Risk of ONE raw world command (the whole string is one command; only `batch` splits). */
 export function classifyCommandRisk(raw: string): ToolRisk {
-  const command = raw.trim();
+  // A family form (`memory recall x`) carries its member's risk.
+  const command = unfoldFamily(raw.trim());
   if (!command) return "mutate";
   if (/^batch(\s|$)/i.test(command)) {
     const parts = commandParts(command);
@@ -605,7 +607,7 @@ const PEER_MESSAGE_READS: Record<string, (words: string[]) => boolean> = {
 };
 
 function commandResultTrust(raw: string): { trust?: ResultTrust; peerMessages: boolean } {
-  const words = raw.trim().split(/\s+/);
+  const words = unfoldFamily(raw.trim()).split(/\s+/);
   const verb = (words[0] ?? "").toLowerCase();
   const canonical = SUBCOMMAND_ALIASES[verb] ?? verb;
   const tail = words.slice(1, 3).map((w) => w.toLowerCase());

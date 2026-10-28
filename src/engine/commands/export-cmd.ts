@@ -3,6 +3,7 @@
 
 import type { BoardManager } from "../../coordination/board-manager";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { boardRefusal } from "./board";
 
 export function exportCommand(
@@ -23,7 +24,7 @@ export function exportCommand(
       const tokens = input.tokens;
       const boardName = tokens[0];
       if (!boardName) {
-        ctx.send(input.entity, "Usage: export <board> [json]");
+        refuseCommand(ctx, input.entity, "Usage: export <board> [json]");
         return;
       }
 
@@ -31,14 +32,14 @@ export function exportCommand(
 
       const board = boards.getBoardByName(boardName);
       if (!board) {
-        ctx.send(input.entity, `Board "${boardName}" not found.`);
+        refuseCommand(ctx, input.entity, `Board "${boardName}" not found.`);
         return;
       }
 
       // Exporting reads the board: the same access rule as `board read`.
       const refusal = boardRefusal(entity, board, "read", isGroupMember);
       if (refusal) {
-        ctx.send(input.entity, refusal.message);
+        refuseCommand(ctx, input.entity, refusal.message);
         return;
       }
 

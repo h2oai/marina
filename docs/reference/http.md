@@ -276,13 +276,13 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 1
 
 ### `url.pathname.startsWith('${PREFIX}/')`
 
-[Source](../../src/net/api/orchestration-api.ts#L69)
+[Source](../../src/net/api/orchestration-api.ts#L61)
 
 - Guard: `url.pathname !== PREFIX && !url.pathname.startsWith('${PREFIX}/')`
 
 ### `url.pathname === '${PREFIX}/patterns'`
 
-[Source](../../src/net/api/orchestration-api.ts#L71)
+[Source](../../src/net/api/orchestration-api.ts#L63)
 
 - Guard: `url.pathname === '${PREFIX}/patterns'`
 - Guard: `req.method === "OPTIONS"`
@@ -484,14 +484,14 @@ Fields read here: `url.searchParams.get("refresh")`.
 
 ### `url.pathname === "/api/ui-config"`
 
-[Source](../../src/net/dashboard-api/command.ts#L188)
+[Source](../../src/net/dashboard-api/command.ts#L191)
 
 - Guard: `url.pathname === "/api/ui-config" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/command"`
 
-[Source](../../src/net/dashboard-api/command.ts#L200)
+[Source](../../src/net/dashboard-api/command.ts#L203)
 
 - Guard: `url.pathname === "/api/command" && method === "POST"`
 - Guard: `method === "POST"`
@@ -500,7 +500,7 @@ Fields read here: `command`, `error`.
 
 ### `url.pathname === "/api/ask"`
 
-[Source](../../src/net/dashboard-api/command.ts#L212)
+[Source](../../src/net/dashboard-api/command.ts#L215)
 
 - Guard: `url.pathname === "/api/ask" && method === "POST"`
 - Guard: `method === "POST"`
@@ -509,7 +509,7 @@ Fields read here: `error`, `query`.
 
 ### `url.pathname === "/api/federation/manifest"`
 
-[Source](../../src/net/dashboard-api/command.ts#L224)
+[Source](../../src/net/dashboard-api/command.ts#L227)
 
 - Guard: `url.pathname === "/api/federation/manifest" && method === "GET" && db`
 - Guard: `method === "GET"`

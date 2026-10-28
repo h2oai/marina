@@ -398,5 +398,26 @@ export function formatMemoryOperation(result: MemoryOperationResult): string {
   }
   if (lines.length) return lines.join("\n");
   // Structured perception data remains lossless even when human output is compact.
-  return `Memory service${result.space_id ? ` — space ${result.space_id}` : ""}\n${JSON.stringify(result.result, null, 2)}`;
+  const dump = `Memory service${result.space_id ? ` — space ${result.space_id}` : ""}\n${JSON.stringify(result.result, null, 2)}`;
+  const records = recordHeaderLines(value);
+  return records.length ? `${records.join("\n")}\n${dump}` : dump;
+}
+
+/** One readable line per record result (`memory query` / `memory search`), so the
+ * first id a reader sees is the record id, not the space id in the dump below. */
+function recordHeaderLines(value: Record<string, unknown> | null): string[] {
+  if (!value || !Array.isArray(value.results)) return [];
+  const records = (value.results as Record<string, unknown>[]).filter(
+    (r) => r && typeof r.id === "string" && typeof r.content === "string",
+  );
+  if (!records.length) return [];
+  return [
+    `${records.length} record${records.length === 1 ? "" : "s"}:`,
+    ...records.map((r) => {
+      const content = (r.content as string).replace(/\s+/g, " ").trim();
+      const preview = content.length > 80 ? `${content.slice(0, 79)}…` : content;
+      const subject = typeof r.subject === "string" && r.subject ? ` · subject ${r.subject}` : "";
+      return `id ${r.id} · memory show ${r.id}${subject} · ${preview}`;
+    }),
+  ];
 }

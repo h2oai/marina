@@ -94,6 +94,15 @@ export function formatPerceptions(perceptions: Perception[]): string {
   );
 }
 
+/**
+ * An error's message as an agent reads it: plain text. A rejected command
+ * (`CommandError`) carries the output it produced before failing ("Partial
+ * command output"), which the server colours for terminals.
+ */
+export function plainErrorMessage(err: unknown): string {
+  return stripAnsi(err instanceof Error ? err.message : String(err));
+}
+
 // ─── Handler refusals ───────────────────────────────────────────────────────
 //
 // Command handlers answer a bad call with an ordinary message ("Usage: …",
@@ -139,7 +148,14 @@ export async function execCommand(
   // Outgoing `tell` / `channel send` lose courtesy openers and closers.
   command = stripCommandPleasantry(command);
 
-  const perceptions = await ctx.client.command(command, signal);
+  let perceptions: Perception[];
+  try {
+    perceptions = await ctx.client.command(command, signal);
+  } catch (err) {
+    // A rejected command's error carries its partial output: plain, as on success.
+    if (err instanceof Error) err.message = plainErrorMessage(err);
+    throw err;
+  }
   for (const p of perceptions) {
     ctx.gameState.handlePerception(p);
   }

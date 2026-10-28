@@ -62,7 +62,9 @@ commands registered in every world, including the default Workbench, and filing 
 operator CLI (`bun run arena`), not a room. What matters is the database: the submission ledger,
 shadow rows and discovery notes live in `DB_PATH`, which the server's autopilot and the CLI share.
 Keep one `DB_PATH` for all arena work — starting a different world on a fresh database splits the
-ledger. The `markets` and `prediction-lab` worlds add binary yes/no market rooms, which do not
+ledger. The CLI refuses a `DB_PATH` (default `marina.db` in the working directory) that does not
+exist yet, since an empty ledger would read as "nothing filed, no route evidence"; pass `--new-db`
+to start one on purpose. The `markets` and `prediction-lab` worlds add binary yes/no market rooms, which do not
 match the arena's continuous, profile and ranking targets.
 
 ## Filing
@@ -678,6 +680,13 @@ general forecaster's promotion rule (`earnedPick` in `src/forecast/routing.ts`):
 - a paired mean gain whose 95 % lower bound is above 0;
 - a gain past `promotionMargin(tried)`, which grows with every challenger considered.
 
+A shadow record is named `<spec>#<fingerprint>` (the spec under one set of operator settings).
+Those settings variants are pooled into their runnable spec (`challengerPoolKey`): the spec is
+what a route names and runs, so each round counts once for it, from its variant recorded last
+before the lock. Nothing pools across specs: two models, two formation panels or two `tabh2o`
+modes of one method kind stay separate challengers, and only the default follows its kind across
+model upgrades. `forecast routes` and `arena shadow score` show how many variants a spec pooled.
+
 Short of that, the default answers. `MARINA_ARENA_ROUTING=observe` records the pick without acting
 on it, and `off` skips it. `<family>=!<spec>` pins a family, so evidence never replaces it; `skip`
 is always pinned. Every decision is kept in the filing's detail as `routing`.
@@ -979,7 +988,7 @@ land in the world database, the same ledger the operator CLI and autopilot read.
 | `MARINA_ARENA_WIKI_EVENTS_MAX_INSERT` | `3` | most articles scheduled events may add to a Wikipedia list |
 | `MARINA_ARENA_WIKI_EXTRACTORS` | off | attention extractors for the Wikipedia specialist |
 | `MARINA_ARENA_WIKI_EXTRACTOR_TOP` | `30` | candidates the extractors read |
-| `MARINA_ARENA_WIKI_EXTRACTOR_MODEL` | `openrouter/deepseek/deepseek-v4.1-flash` | the `events` extractor's model |
+| `MARINA_ARENA_WIKI_EXTRACTOR_MODEL` | `openrouter/deepseek/deepseek-v4.1-flash-1017` | the `events` extractor's model |
 | `MARINA_ARENA_WIKI_EXTRACTOR_RETRIEVER` | unset | a date-strict retriever for the `events` extractor |
 | `MARINA_ARENA_PROPOSER` | `anthropic/claude-opus-5-5` (OpenRouter's Claude Opus 5.5 when only `OPENROUTER_API_KEY` is set) | the signal-discovery proposer |
 | `MARINA_RESEARCH_TARGET_EVIDENCE` | off | `observe` or `on`: target-aware claim selection |

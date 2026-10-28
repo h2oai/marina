@@ -8,9 +8,9 @@ import { handleDashboardApi, projectEnvValueForRead } from "../src/net/dashboard
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_dashboard_api.db";
+const TEST_DB = tempDbPath("test_dashboard_api.db");
 
 describe("dashboard-api HTTP authorization hardening", () => {
   let db: MarinaDB;

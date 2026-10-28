@@ -4,6 +4,8 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { refuseCommand } from "../command-response";
+import { getErrorMessage } from "../errors";
 import { getRank } from "../permissions";
 
 // One model-backed grounding pass per entity per window — `desire` is rank 0
@@ -37,14 +39,15 @@ export function desireCommand(deps: {
       if (!entity) return;
       const expression = input.args.trim();
       if (!expression) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "What would you like to explore, understand, decide, improve, or create?\n\nUsage: desire <one sentence>",
         );
         return;
       }
       if (expression.length > 4000) {
-        ctx.send(input.entity, "A desire must be 4,000 characters or fewer.");
+        refuseCommand(ctx, input.entity, "A desire must be 4,000 characters or fewer.");
         return;
       }
       const journey = deps.db.createJourney({
@@ -140,9 +143,14 @@ export function desireCommand(deps: {
             dim(`Correct or add context: journey steer ${journey.id} <context>`),
           ].join("\n"),
         );
-      } catch {
+      } catch (err) {
         // The preserved journey remains useful in world-only mode. The initial
-        // response already makes no autonomous-work claim.
+        // response already makes no autonomous-work claim; say why there is
+        // no grounding pass.
+        ctx.send(
+          input.entity,
+          dim(`Model grounding unavailable — ${getErrorMessage(err)} Your journey is preserved.`),
+        );
       }
     },
   };

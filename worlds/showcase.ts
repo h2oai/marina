@@ -3,6 +3,7 @@
 
 import { join } from "node:path";
 import { resolveDefault } from "../src/engine/default-resolution";
+import { CREW_FORMATION_NAMES, formationLine } from "../src/orchestration/formations/catalogue";
 import type { MarinaDB } from "../src/persistence/database";
 import type { RoomId } from "../src/types";
 import type { WorldDefinition } from "../src/world/world-definition";
@@ -228,8 +229,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "<name> <f>' transitions the formation. 'crew persist <name>' upgrades ephemeral → persisted (auto-" +
       "creates a crew:<name> memory pool). 'crew complete <name> -- <summary>' writes a result note and " +
       "dissolves. 'crew dissolve <name>' force-ends. Members see crew context in 'brief' and 'who'. " +
-      "Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, " +
-      "research, delphi, tournament, verification, auction, ledger, sharding, freeform — same shapes as " +
+      `Formations: ${CREW_FORMATION_NAMES.join(", ")} — the formation catalogue, the same names as ` +
       "project orchestration patterns. Use a crew when the work fits " +
       "in one task; use a project when it spans tasks/bundles/governance.",
     importance: 8,
@@ -662,78 +662,15 @@ function seed(db: MarinaDB): void {
     },
   ]);
 
-  seedPoolWithNotes(db, "coordination-patterns", [
-    {
-      content: "deliberation: peer deliberation. All agents discuss, then converge on a decision.",
+  // One note per crew formation, from the formation catalogue (`name: summary`).
+  seedPoolWithNotes(
+    db,
+    "coordination-patterns",
+    CREW_FORMATION_NAMES.filter((name) => name !== "freeform").map((name) => ({
+      content: formationLine(name),
       importance: 8,
-    },
-    {
-      content:
-        "swarm: self-organizing specialist handoffs. Agents claim work matching their skills.",
-      importance: 8,
-    },
-    {
-      content: "pipeline: sequential stages. Output of one stage is input to the next.",
-      importance: 8,
-    },
-    {
-      content: "mapreduce: parallel decomposition. Split work, process in parallel, merge results.",
-      importance: 8,
-    },
-    {
-      content:
-        "blackboard: shared workspace. Agents read and refine a common artifact incrementally.",
-      importance: 8,
-    },
-    {
-      content:
-        "research: autonomous iterative experimentation. Observe, hypothesize, test, reflect.",
-      importance: 8,
-    },
-    {
-      content: "debate: adversarial argumentation. Agents argue positions, a judge decides.",
-      importance: 7,
-    },
-    {
-      content:
-        "chorus: research → build → review phases, parallel within each, post what you take on the wall to avoid duplication, crossfire review by differing roles as the quality gate.",
-      importance: 7,
-    },
-    {
-      content:
-        "foundry: hierarchy compresses human attention. Overseer directs, Patrol detects stalls and nudges, Gate is the sole path to landed work. Merge-gate is the invariant.",
-      importance: 7,
-    },
-    {
-      content: "symbiosis: mutual epistemic benefit. Agents with complementary knowledge pair up.",
-      importance: 7,
-    },
-    {
-      content:
-        "delphi: independent estimates first, then an anonymized summary of the spread, then revision.",
-      importance: 7,
-    },
-    {
-      content: "tournament: candidates compared in pairs, winners advance until one remains.",
-      importance: 7,
-    },
-    {
-      content: "verification: generate candidates, then one verifier per aspect checks each.",
-      importance: 7,
-    },
-    {
-      content: "auction: tasks awarded to the best-fit bid per cost; fit claims are checked after.",
-      importance: 7,
-    },
-    {
-      content: "ledger: an orchestrator keeps task and progress ledgers and replans on stalls.",
-      importance: 7,
-    },
-    {
-      content: "sharding: an oracle splits a failing target into claimable shards it alone judges.",
-      importance: 7,
-    },
-  ]);
+    })),
+  );
 
   seedPoolWithNotes(db, "self-evolution", [
     {
@@ -935,11 +872,16 @@ function seed(db: MarinaDB): void {
     { title: "Explore the Observatory and leave a note about what you find", standing: 5 },
     { title: "Explore the Audit Room and leave a note about what you find", standing: 5 },
   ];
+  // Every task, not the default page of 20: a seeded bounty pushed past the
+  // newest 20 must still be found, or each reboot adds it again.
+  const seededBounties = new Set(
+    db
+      .listTasks({ limit: null })
+      .filter((t) => t.validation_mode === "bounty")
+      .map((t) => t.title),
+  );
   for (const b of bounties) {
-    const existing = db
-      .listTasks()
-      .find((t) => t.title === b.title && t.validation_mode === "bounty");
-    if (!existing) {
+    if (!seededBounties.has(b.title)) {
       db.createTask({
         title: b.title,
         description: b.title,

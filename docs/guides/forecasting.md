@@ -534,7 +534,7 @@ Dates decide "already published?", never a model: the question's stated resoluti
 official FRED series that already holds the period, a release date the question names, a dated
 event that is over, the fact model's expected publication date, or a known statistic's usual
 release lag. NOW is the evidence cutoff, so in a backtest a figure published after the cutoff is
-never a lookup. `MARINA_FORECAST_TRIAGE_MODEL` (default `openrouter/deepseek/deepseek-v4.1-flash`;
+never a lookup. `MARINA_FORECAST_TRIAGE_MODEL` (default `openrouter/deepseek/deepseek-v4.1-flash-1017`;
 `none` = deterministic) adds facts — publisher, metric, period, expected publication date — and
 `MARINA_FORECAST_TRIAGE_CALENDAR` reads FRED's series and release calendar. `observe` records the
 class, its reason, the facts and the method on the answer (`triage`) without changing anything.

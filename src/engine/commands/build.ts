@@ -20,6 +20,7 @@ import type {
   RoomModule,
 } from "../../types";
 import { isOperatorPrincipal } from "../challenges";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { int, rest, token } from "../parse-input";
 import { getRank } from "../permissions";
@@ -70,7 +71,11 @@ function worldCodeRefused(
 ): boolean {
   const result = checkGateForExecution(deps.db, input.entity, "world.code");
   if (!result.ok) {
-    ctx.send(input.entity, `Cannot ${what}: ${result.reason ?? "world.code gate denied."}`);
+    refuseCommand(
+      ctx,
+      input.entity,
+      `Cannot ${what}: ${result.reason ?? "world.code gate denied."}`,
+    );
     return true;
   }
   recordGateExecution(deps.db, input.entity, "world.code", result, `build:${what}`);
@@ -105,12 +110,12 @@ function handleRoom(
 ): void {
   const roomIdStr = token(input, 1);
   if (!roomIdStr) {
-    ctx.send(input.entity, "Usage: build room <id> [short description]");
+    refuseCommand(ctx, input.entity, "Usage: build room <id> [short description]");
     return;
   }
   const newRoomId = roomIdStr as RoomId;
   if (deps.getRoom(newRoomId)) {
-    ctx.send(input.entity, `Room "${roomIdStr}" already exists.`);
+    refuseCommand(ctx, input.entity, `Room "${roomIdStr}" already exists.`);
     return;
   }
 
@@ -150,7 +155,8 @@ function handleModify(
   const value = tokens.slice(fieldIdx + 1).join(" ");
 
   if (!field || !value) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       input.entity,
       "Usage: build modify [room] <short|long|item> <value>\n  build modify short A new description\n  build modify long A longer description...\n  build modify item <key> <description>",
     );
@@ -159,7 +165,7 @@ function handleModify(
 
   const room = deps.getRoom(targetRoomId as RoomId);
   if (!room) {
-    ctx.send(input.entity, `Room "${targetRoomId}" not found.`);
+    refuseCommand(ctx, input.entity, `Room "${targetRoomId}" not found.`);
     return;
   }
 
@@ -169,20 +175,20 @@ function handleModify(
     if (typeof room.module.long === "string") {
       room.module.long = value;
     } else {
-      ctx.send(input.entity, "Cannot modify a dynamic long description.");
+      refuseCommand(ctx, input.entity, "Cannot modify a dynamic long description.");
       return;
     }
   } else if (field === "item") {
     const itemKey = tokens[fieldIdx + 1];
     const itemDesc = tokens.slice(fieldIdx + 2).join(" ");
     if (!itemKey || !itemDesc) {
-      ctx.send(input.entity, "Usage: build modify item <key> <description>");
+      refuseCommand(ctx, input.entity, "Usage: build modify item <key> <description>");
       return;
     }
     if (!room.module.items) room.module.items = {};
     room.module.items[itemKey] = itemDesc;
   } else {
-    ctx.send(input.entity, `Unknown field "${field}". Use: short, long, item`);
+    refuseCommand(ctx, input.entity, `Unknown field "${field}". Use: short, long, item`);
     return;
   }
 
@@ -216,7 +222,7 @@ function handleFormation(
   const value = args.length >= 2 ? args[1] : single ? args[0] : undefined;
   const room = deps.getRoom(targetRoomId);
   if (!room) {
-    ctx.send(input.entity, `Room "${targetRoomId}" not found.`);
+    refuseCommand(ctx, input.entity, `Room "${targetRoomId}" not found.`);
     return;
   }
   if (!value) {
@@ -232,7 +238,8 @@ function handleFormation(
   const off = value.toLowerCase() === "off";
   const formation = off ? undefined : roomFormationName(value);
   if (!off && !formation) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       input.entity,
       `Unknown room formation "${value}". Use: ${ROOM_FORMATIONS.join(", ")}, or off.`,
     );
@@ -267,7 +274,7 @@ function handleLink(
 ): void {
   const tokens = input.tokens;
   if (tokens.length < 3) {
-    ctx.send(input.entity, "Usage: build link [from] <exit> <to>");
+    refuseCommand(ctx, input.entity, "Usage: build link [from] <exit> <to>");
     return;
   }
   let fromId: string;
@@ -285,7 +292,7 @@ function handleLink(
 
   const fromRoom = deps.getRoom(fromId as RoomId);
   if (!fromRoom) {
-    ctx.send(input.entity, `Room "${fromId}" not found.`);
+    refuseCommand(ctx, input.entity, `Room "${fromId}" not found.`);
     return;
   }
 
@@ -319,7 +326,7 @@ function handleUnlink(
 ): void {
   const tokens = input.tokens;
   if (tokens.length < 2) {
-    ctx.send(input.entity, "Usage: build unlink [from] <exit>");
+    refuseCommand(ctx, input.entity, "Usage: build unlink [from] <exit>");
     return;
   }
   let fromId: string;
@@ -334,7 +341,7 @@ function handleUnlink(
 
   const fromRoom = deps.getRoom(fromId as RoomId);
   if (!fromRoom) {
-    ctx.send(input.entity, `Room "${fromId}" not found.`);
+    refuseCommand(ctx, input.entity, `Room "${fromId}" not found.`);
     return;
   }
 
@@ -367,7 +374,7 @@ function handleCode(
 
   const roomIdStr = token(input, 1);
   if (!roomIdStr) {
-    ctx.send(input.entity, "Usage: build code <room> <typescript source>");
+    refuseCommand(ctx, input.entity, "Usage: build code <room> <typescript source>");
     return;
   }
 
@@ -484,11 +491,11 @@ function handleDiff(
   const src1 = deps.db.getRoomSource(roomIdStr, v1Num);
   const src2 = deps.db.getRoomSource(roomIdStr, v2Num);
   if (!src1) {
-    ctx.send(input.entity, `Version ${v1Num} not found for "${roomIdStr}".`);
+    refuseCommand(ctx, input.entity, `Version ${v1Num} not found for "${roomIdStr}".`);
     return;
   }
   if (!src2) {
-    ctx.send(input.entity, `Version ${v2Num} not found for "${roomIdStr}".`);
+    refuseCommand(ctx, input.entity, `Version ${v2Num} not found for "${roomIdStr}".`);
     return;
   }
 
@@ -557,7 +564,7 @@ async function handleRevert(
 
   const roomIdStr = token(input, 1);
   if (!roomIdStr) {
-    ctx.send(input.entity, "Usage: build revert <room> [version]");
+    refuseCommand(ctx, input.entity, "Usage: build revert <room> [version]");
     return;
   }
 
@@ -577,7 +584,7 @@ async function handleRevert(
 
   const source = deps.db.getRoomSource(roomIdStr, targetVersion);
   if (!source) {
-    ctx.send(input.entity, `Version ${targetVersion} not found for "${roomIdStr}".`);
+    refuseCommand(ctx, input.entity, `Version ${targetVersion} not found for "${roomIdStr}".`);
     return;
   }
 
@@ -617,19 +624,20 @@ function handleDestroy(
 
   const roomIdStr = token(input, 1);
   if (!roomIdStr) {
-    ctx.send(input.entity, "Usage: build destroy <room>");
+    refuseCommand(ctx, input.entity, "Usage: build destroy <room>");
     return;
   }
 
   const room = deps.getRoom(roomIdStr as RoomId);
   if (!room) {
-    ctx.send(input.entity, `Room "${roomIdStr}" not found.`);
+    refuseCommand(ctx, input.entity, `Room "${roomIdStr}" not found.`);
     return;
   }
 
   const occupants = deps.entitiesInRoom(roomIdStr as RoomId);
   if (occupants.length > 0) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       input.entity,
       `Cannot destroy "${roomIdStr}" — ${occupants.length} entities are inside.`,
     );
@@ -653,7 +661,7 @@ function handleTemplateSave(
   const roomIdStr = input.tokens[2];
   const templateName = input.tokens[3];
   if (!roomIdStr || !templateName) {
-    ctx.send(input.entity, "Usage: build template save <room> <name> [description]");
+    refuseCommand(ctx, input.entity, "Usage: build template save <room> <name> [description]");
     return;
   }
 
@@ -662,7 +670,7 @@ function handleTemplateSave(
   if (!source) {
     const room = deps.getRoom(roomIdStr as RoomId);
     if (!room) {
-      ctx.send(input.entity, `Room "${roomIdStr}" not found.`);
+      refuseCommand(ctx, input.entity, `Room "${roomIdStr}" not found.`);
       return;
     }
     deps.db.saveRoomTemplate({
@@ -716,18 +724,18 @@ async function handleTemplateApply(
   const templateName = input.tokens[2];
   const newRoomIdStr = input.tokens[3];
   if (!templateName || !newRoomIdStr) {
-    ctx.send(input.entity, "Usage: build template apply <name> <newRoomId>");
+    refuseCommand(ctx, input.entity, "Usage: build template apply <name> <newRoomId>");
     return;
   }
 
   const template = deps.db.getRoomTemplate(templateName);
   if (!template) {
-    ctx.send(input.entity, `Template "${templateName}" not found.`);
+    refuseCommand(ctx, input.entity, `Template "${templateName}" not found.`);
     return;
   }
 
   if (deps.getRoom(newRoomIdStr as RoomId)) {
-    ctx.send(input.entity, `Room "${newRoomIdStr}" already exists.`);
+    refuseCommand(ctx, input.entity, `Room "${newRoomIdStr}" already exists.`);
     return;
   }
 
@@ -763,7 +771,7 @@ function handleTemplate(
   const sub = input.tokens[1]?.toLowerCase();
   const handler = sub ? TEMPLATE_DISPATCH[sub] : undefined;
   if (!handler) {
-    ctx.send(input.entity, "Usage: build template save|list|apply [args]");
+    refuseCommand(ctx, input.entity, "Usage: build template save|list|apply [args]");
     return;
   }
   return handler(ctx, input, entity, rank, deps);
@@ -780,22 +788,24 @@ function handleCommandCreate(
 ): void {
   const name = input.tokens[2]?.toLowerCase();
   if (!name) {
-    ctx.send(input.entity, "Usage: build command create <name>");
+    refuseCommand(ctx, input.entity, "Usage: build command create <name>");
     return;
   }
   if (name.length < 2 || name.length > 30) {
-    ctx.send(input.entity, "Command name must be 2-30 characters.");
+    refuseCommand(ctx, input.entity, "Command name must be 2-30 characters.");
     return;
   }
   if (deps.db.getCommandByName(name)) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       input.entity,
       `Command "${name}" already exists. Use 'build command code ${name}' to edit.`,
     );
     return;
   }
   if (deps.isBuiltinCommand?.(name)) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       input.entity,
       fmtError(`Cannot create "${name}" — it conflicts with a built-in command.`),
     );
@@ -825,7 +835,7 @@ function handleCommandCode(
   if (worldCodeRefused(ctx, input, deps, "set command code")) return;
   const name = input.tokens[2]?.toLowerCase();
   if (!name) {
-    ctx.send(input.entity, "Usage: build command code <name> [source]");
+    refuseCommand(ctx, input.entity, "Usage: build command code <name> [source]");
     return;
   }
   const source = input.tokens.slice(3).join(" ");
@@ -837,7 +847,7 @@ function handleCommandCode(
         `${header(`Source for command "${name}" (v${current.version}):`)}\n${current.source}`,
       );
     } else {
-      ctx.send(input.entity, `Command "${name}" not found.`);
+      refuseCommand(ctx, input.entity, `Command "${name}" not found.`);
     }
     return;
   }
@@ -869,12 +879,12 @@ function handleCommandValidate(
 ): void {
   const name = input.tokens[2]?.toLowerCase();
   if (!name) {
-    ctx.send(input.entity, "Usage: build command validate <name>");
+    refuseCommand(ctx, input.entity, "Usage: build command validate <name>");
     return;
   }
   const cmd = deps.db.getCommandByName(name);
   if (!cmd) {
-    ctx.send(input.entity, `Command "${name}" not found.`);
+    refuseCommand(ctx, input.entity, `Command "${name}" not found.`);
     return;
   }
   const validation = validateCommandSource(cmd.source);
@@ -898,12 +908,12 @@ async function handleCommandReload(
   if (worldCodeRefused(ctx, input, deps, "reload commands")) return;
   const name = input.tokens[2]?.toLowerCase();
   if (!name) {
-    ctx.send(input.entity, "Usage: build command reload <name>");
+    refuseCommand(ctx, input.entity, "Usage: build command reload <name>");
     return;
   }
   const cmd = deps.db.getCommandByName(name);
   if (!cmd) {
-    ctx.send(input.entity, `Command "${name}" not found.`);
+    refuseCommand(ctx, input.entity, `Command "${name}" not found.`);
     return;
   }
   try {
@@ -966,7 +976,7 @@ function handleCommandAudit(
 ): void {
   const name = input.tokens[2]?.toLowerCase();
   if (!name) {
-    ctx.send(input.entity, "Usage: build command audit <name>");
+    refuseCommand(ctx, input.entity, "Usage: build command audit <name>");
     return;
   }
   const history = deps.db.getCommandHistory(name);
@@ -997,12 +1007,12 @@ function handleCommandDestroy(
   if (worldCodeRefused(ctx, input, deps, "destroy commands")) return;
   const name = input.tokens[2]?.toLowerCase();
   if (!name) {
-    ctx.send(input.entity, "Usage: build command destroy <name>");
+    refuseCommand(ctx, input.entity, "Usage: build command destroy <name>");
     return;
   }
   const cmd = deps.db.getCommandByName(name);
   if (!cmd) {
-    ctx.send(input.entity, `Command "${name}" not found.`);
+    refuseCommand(ctx, input.entity, `Command "${name}" not found.`);
     return;
   }
   deps.unregisterCommand?.(name);
@@ -1031,7 +1041,8 @@ function handleCommand(
   const sub = input.tokens[1]?.toLowerCase();
   const handler = sub ? COMMAND_DISPATCH[sub] : undefined;
   if (!handler) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       input.entity,
       "Usage: build command create|code|validate|reload|list|audit|destroy <name>",
     );
@@ -1108,7 +1119,7 @@ function handleAccess(
     return;
   }
   if (!mayManageAccess(deps, entity, room)) {
-    ctx.send(input.entity, `Only ${room}'s owner or an operator can change its access.`);
+    refuseCommand(ctx, input.entity, `Only ${room}'s owner or an operator can change its access.`);
     return;
   }
   if (mode === "private" && deps.startRoom && room === deps.startRoom) {
@@ -1140,7 +1151,11 @@ function inviteHandler(invite: boolean): SubHandler {
     const room = token(input, 1);
     const name = token(input, 2);
     if (!room || !name) {
-      ctx.send(input.entity, `Usage: build ${invite ? "invite" : "uninvite"} <room> <name>`);
+      refuseCommand(
+        ctx,
+        input.entity,
+        `Usage: build ${invite ? "invite" : "uninvite"} <room> <name>`,
+      );
       return;
     }
     if (!deps.getRoom(room as RoomId)) {
@@ -1148,7 +1163,11 @@ function inviteHandler(invite: boolean): SubHandler {
       return;
     }
     if (!mayManageAccess(deps, entity, room)) {
-      ctx.send(input.entity, `Only ${room}'s owner or an operator can change its invites.`);
+      refuseCommand(
+        ctx,
+        input.entity,
+        `Only ${room}'s owner or an operator can change its invites.`,
+      );
       return;
     }
     const current = deps.db.getRoomAccess(room);
@@ -1213,7 +1232,7 @@ export function buildCommand(deps: BuildDeps): CommandDef {
       { syntax: "build diff [args]", effect: "read" },
       { syntax: "build formation [room]", effect: "read" },
       {
-        syntax: "build formation [room] <debate|chorus|verification|off>",
+        syntax: `build formation [room] <${ROOM_FORMATIONS.join("|")}|off>`,
         effect: "write",
       },
       { syntax: "build link [from] <exit> <to>", effect: "write" },
@@ -1247,7 +1266,8 @@ export function buildCommand(deps: BuildDeps): CommandDef {
       const handler = BUILD_DISPATCH[sub];
 
       if (!handler) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Usage: build room|modify|formation|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command|access|invite|uninvite [args]",
         );

@@ -73,6 +73,7 @@ describe("durable lesson crash recovery", () => {
       domain: "code",
       text: "[lesson:code] failure · pytest collection fails outside the repository root",
       kind: "failure",
+      rule: "Run pytest from the repository root so test collection uses the project configuration.",
       trust: "trusted",
       scope: "method",
       resolvedAt: "2026-09-01T00:00:00.000Z",

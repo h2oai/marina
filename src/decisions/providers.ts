@@ -518,7 +518,8 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
         !useSchema ||
         !(err instanceof DecisionError) ||
         err.code !== "upstream_rejected" ||
-        /logprob/i.test(err.message)
+        /logprob/i.test(err.message) ||
+        !/response_format|json.?schema|structured output/i.test(err.message)
       ) {
         throw err;
       }
@@ -602,12 +603,12 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
         signal,
         splitStateImages(request.state).images,
       );
-    // A 400/422, or any failure whose reason names logprobs (a relay may
-    // report the provider's rejection under another status).
+    // Only a rejection naming logprobs teaches a logprobs limitation. A
+    // rejected token cap or model cannot be repaired by changing answer format.
     const rejected = (err: unknown) =>
       err instanceof DecisionError &&
-      (err.code === "upstream_rejected" ||
-        (err.code === "upstream_error" && /logprob/i.test(err.message)));
+      (err.code === "upstream_rejected" || err.code === "upstream_error") &&
+      /logprob/i.test(err.message);
     let reply: ChatReply;
     try {
       reply = await ask(caps().topLogprobs ?? TOP_LOGPROBS);
@@ -748,6 +749,40 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
           ...(reply.costUsd === undefined ? {} : { costUsd: reply.costUsd }),
         };
       });
+    },
+  };
+}
+
+/**
+ * A chat classifier on this Marina's own `/v1` whose base URL and bearer are
+ * read on EVERY ask. The same call can resolve to different bearers over a
+ * process's life: before the server marks itself serving, `selfModelToken`
+ * returns the local profile's key, which the server treats as an outside
+ * caller (in the default `agents` endpoint mode `marina/default` is then
+ * refused); afterwards it is the in-process internal token. A provider that
+ * kept its first bearer would stay on the wrong one for the life of the
+ * process. Learned capabilities are per (server, model), so rebuilding on a
+ * new bearer or URL loses nothing.
+ */
+export function selfChatClassifier(
+  opts: Omit<ProviderOptions, "apiKey" | "baseUrl">,
+  self: { baseUrl: () => string; bearer: () => Promise<string> },
+): DecisionProvider {
+  let current: { baseUrl: string; key: string; provider: DecisionProvider } | undefined;
+  return {
+    kind: "chat-classifier",
+    model: opts.model,
+    calibrated: false,
+    async ask(request, signal) {
+      const key = await self.bearer();
+      const baseUrl = self.baseUrl();
+      if (current?.key !== key || current.baseUrl !== baseUrl)
+        current = {
+          baseUrl,
+          key,
+          provider: chatClassifierProvider({ ...opts, baseUrl, apiKey: key }),
+        };
+      return current.provider.ask(request, signal);
     },
   };
 }

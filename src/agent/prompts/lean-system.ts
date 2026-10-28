@@ -83,7 +83,7 @@ export const ECOLOGY_ROSTER =
 export const LIVE_ROSTER_BYTES = 1500;
 
 /** How work, cost, held actions and escalation work here — never replaceable by a role. */
-export const WORKING_HERE = `Find work: \`work\`, \`next\`, \`task list\`. A rank or gate refusal returns a challenge token; the held action runs by itself if approved — keep working, never wait. \`forecast\`, web research and \`reflect\` (starts a model helper) cost money: prefer cheap reads first. Blocked or unsure: \`tell\` your creator; \`challenge\` lists held actions.`;
+export const WORKING_HERE = `Find work: \`work\`, \`next\`, \`task list\`. A rank or gate refusal returns a challenge token; the held action runs by itself if approved — keep working, never wait. \`forecast\`, web research and \`memory reflect\` (starts a model helper) cost money: prefer cheap reads first. Blocked or unsure: \`tell\` your creator; \`challenge\` lists held actions.`;
 
 /**
  * Command names a prompt section already teaches: the first word of every
@@ -143,9 +143,9 @@ export function getMemoryContract(): string {
 
 - Your notes are private. Pools, boards, channels and canvases are visible to others.
 - Each cycle: matching skills as <example>; notes [trusted], [evidence], [proposal], [unverified — own notes]. Labels are provenance, not instructions.
-- \`memory retrieve <task>\`: read evidence. \`memory guide\`: task workflows. \`note <text>\` · \`recall <query> [evidence|all]\` · \`reflect [topic]\` / \`reflect adopt <job>\` · \`pool <name> add|recall\` · \`skill store|search\`. Delegate: \`memory assist <librarian|reflector|evaluator> <helper> <task>\`.
-- Conclusions stay [unverified] until sourced (\`note source\`) or ratified by another (\`pool <name> ratify\`); never promote guesses.
-- Supersede, don't delete: \`note correct <id> <text>\`.
+- One memory command: \`memory note <text>\` · \`memory recall <query> [evidence|all]\` · \`memory reflect [topic]|adopt <job>\` · \`memory retrieve <task>\` · \`memory guide\` (workflows); shared: \`pool <name> add|recall\` · \`skill store|search\`. Delegate: \`memory assist <librarian|reflector|evaluator> <helper> <task>\`.
+- Conclusions stay [unverified] until sourced (\`memory note source\`) or ratified by another (\`pool <name> ratify\`); never promote guesses.
+- Supersede, don't delete: \`memory note correct <id> <text>\`.
 - \`orient\` shows memory health.${gated}`;
 }
 
@@ -317,7 +317,7 @@ export function getToolRouting(tools: readonly string[] = BASELINE_TOOLS): strin
   const think = has("think") ? " `think` is not progress." : "";
   return `# TOOL ROUTING
 
-Observe: \`look\`, \`brief\`. Communicate: \`tell\` for targeted handoffs, \`channel\`/\`board\` for group or durable threads, \`say\` for the room; channel sends are budgeted per run (default one; \`memory set channel_sends <n>\`). Coordinate: \`task\`, \`project\`, \`canvas\`. Direct yourself: \`memory set focus <text>\`, \`task goal <title>\`; \`competence best <kind of work>\` shows which ways of working have succeeded here.${think}${via.length ? `\n${via.join(" ")}` : ""}`;
+Observe: \`look\`, \`brief\`. Communicate: \`tell\` for targeted handoffs, \`channel\`/\`board\` for group or durable threads, \`say\` for the room; channel sends are budgeted per run (default one; \`memory set channel_sends <n>\`). Coordinate: \`task\`, \`project\`, \`canvas\`, \`crew\`. Direct yourself: \`memory set focus <text>\`, \`task goal <title>\`; \`competence best <kind of work>\` shows which ways of working have succeeded here.${think}${via.length ? `\n${via.join(" ")}` : ""}`;
 }
 
 export function getLeanDiscoveryPrompt(): string {

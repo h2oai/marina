@@ -3,6 +3,7 @@
 
 import { dim, entity as fmtEntity, success } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 
 export function ignoreCommand(deps: {
   getEntity: (id: EntityId) => Entity | undefined;
@@ -44,7 +45,7 @@ export function ignoreCommand(deps: {
       if (sub === "remove" || sub === "unignore") {
         const name = input.tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: ignore remove <name>");
+          refuseCommand(ctx, input.entity, "Usage: ignore remove <name>");
           return;
         }
         const lower = name.toLowerCase();
@@ -69,7 +70,7 @@ export function ignoreCommand(deps: {
       }
 
       if (target.id === input.entity) {
-        ctx.send(input.entity, "You cannot ignore yourself.");
+        refuseCommand(ctx, input.entity, "You cannot ignore yourself.");
         return;
       }
 

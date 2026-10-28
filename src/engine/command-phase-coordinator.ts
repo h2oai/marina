@@ -3,7 +3,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { MacroManager } from "../coordination/macro-manager";
-import { stripControlSequences } from "../net/ansi";
+import { dim, stripControlSequences } from "../net/ansi";
 import type { MarinaDB } from "../persistence/database";
 import { type CodingCommandTarget, parseCodingCommandTarget } from "../sdk/command-target";
 import { classifyPrimitive } from "../telemetry/primitive-usage";
@@ -11,8 +11,9 @@ import type { CommandContext, EngineEvent, Entity, EntityId, RoomContext, RoomId
 import type { EntityManager } from "../world/entity-manager";
 import type { RoomManager } from "../world/room-manager";
 
-import { commandInputForLog } from "./command-redaction";
-import { failCommandResponse } from "./command-response";
+import { aliasNotice } from "./command-families";
+import { commandInputForLog, isUnloggedForm } from "./command-redaction";
+import { failCommandResponse, observeHandlerOutcome, withoutRefusal } from "./command-response";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
 import { closestName } from "./did-you-mean";
@@ -50,7 +51,10 @@ export interface CommandExecutionOptions {
 export interface CommandPhaseHost {
   readonly entities: Pick<EntityManager, "get">;
   readonly rooms: Pick<RoomManager, "get">;
-  readonly commands: Pick<CommandRouter, "parse" | "resolveCommand" | "allBuiltins">;
+  readonly commands: Pick<
+    CommandRouter,
+    "parse" | "resolveCommand" | "allBuiltins" | "forwardFamily"
+  >;
   readonly db?: MarinaDB;
   readonly macroManager?: Pick<MacroManager, "getByName">;
   readonly logger: Logger;
@@ -67,6 +71,22 @@ export interface CommandPhaseHost {
   buildContext(room: RoomId): RoomContext | undefined;
   logEvent(event: EngineEvent): void;
 }
+
+/** Entity ids whose announced aliases are remembered before the set is reset. */
+const MAX_ALIAS_SESSIONS = 10_000;
+
+/**
+ * Verbs agents bring from other shells and tool names, with the command that
+ * does it here. Named in the unknown-command reply instead of a spelling
+ * guess; never executed in their place. Every target must be a builtin
+ * (`test/agent-tool-failures.test.ts`).
+ */
+export const UNKNOWN_VERB_EQUIVALENTS: Readonly<Record<string, string>> = Object.freeze({
+  whoami: "`score` (your profile)",
+  inbox: "`tell inbox` (private messages) or `work` (your work inbox)",
+  focus: "`memory set focus <text>`",
+  tasks: "`task list`",
+});
 
 /** Shared/public defaults; the live limits come from `macroLimits()`. */
 export { MAX_MACRO_DEPTH, MAX_MACRO_EXPANSIONS } from "./macro-expansion";
@@ -87,6 +107,24 @@ export class CommandPhaseCoordinator {
    * frames above it and cannot recurse unbounded.
    */
   private readonly macroFrames = new AsyncLocalStorage<MacroFrame>();
+
+  /** Aliases already announced, per entity id (an entity id lives one session). */
+  private readonly announcedAliases = new Map<EntityId, Set<string>>();
+
+  private announceAlias(entityId: EntityId, name: string): void {
+    const notice = aliasNotice(name);
+    if (!notice) return;
+    let seen = this.announcedAliases.get(entityId);
+    if (seen?.has(name)) return;
+    if (!seen) {
+      // Bounded: ids are per session, so a long-lived server forgets old ones.
+      if (this.announcedAliases.size >= MAX_ALIAS_SESSIONS) this.announcedAliases.clear();
+      seen = new Set();
+      this.announcedAliases.set(entityId, seen);
+    }
+    seen.add(name);
+    this.host.sendToEntity(entityId, dim(notice));
+  }
 
   constructor(private readonly host: CommandPhaseHost) {}
 
@@ -131,16 +169,30 @@ export class CommandPhaseCoordinator {
     // Engine-initiated housekeeping (brief heartbeat, login look) must not be
     // captured by an entity's active modal — inside Code Mode the rewrite
     // would turn "brief" into the coding task `code brief`.
-    const routedRaw =
+    const modalRaw =
       opts?.bypassModal || opts?.codingTarget ? raw : this.routeModalCommand(entity, raw);
-    const input = this.host.commands.parse(routedRaw, entityId, entity.room);
+    const parsed = this.host.commands.parse(modalRaw, entityId, entity.room);
 
-    if (!input.verb && !opts?.codingTarget) return;
+    if (!parsed.verb && !opts?.codingTarget) return;
+    const room = this.host.rooms.get(entity.room);
+    // A family form (`memory recall x`, src/engine/command-families.ts) runs
+    // as its member (`recall x`) from here on: same definition, gates, fence
+    // row, quest progress, usage and logged input. Not when this room shadows
+    // the head; a forwarded member always resolves to the builtin.
+    const family =
+      room?.module.commands && Object.hasOwn(room.module.commands, parsed.verb)
+        ? { input: parsed, forwarded: false }
+        : this.host.commands.forwardFamily(parsed);
+    const input = family.input;
+    const routedRaw = family.forwarded ? input.raw : modalRaw;
     // A room command that shadows a builtin runs under its OWN (empty)
     // definition: the builtin's rank floor and gate govern the builtin
     // handler, and a gate execution must never be credited to a room handler.
-    const room = this.host.rooms.get(entity.room);
-    const resolved = this.host.commands.resolveCommand(input.verb, room?.module.commands);
+    const resolved = this.host.commands.resolveCommand(
+      input.verb,
+      family.forwarded ? undefined : room?.module.commands,
+      input.tokens[0],
+    );
     const def = resolved?.def;
     const handler = resolved?.handler;
 
@@ -185,13 +237,16 @@ export class CommandPhaseCoordinator {
           return;
         }
       }
-      const near = closestName(
-        input.verb,
-        this.host.commands.allBuiltins().flatMap((def) => [def.name, ...(def.aliases ?? [])]),
-      );
+      const equivalent = UNKNOWN_VERB_EQUIVALENTS[input.verb.toLowerCase()];
+      const near = equivalent
+        ? undefined
+        : closestName(
+            input.verb,
+            this.host.commands.allBuiltins().flatMap((def) => [def.name, ...(def.aliases ?? [])]),
+          );
       this.host.sendToEntity(
         entityId,
-        `Unknown command: ${input.verb}.${near ? ` Did you mean "${near}"?` : ""} Type "help" for commands.`,
+        `Unknown command: ${input.verb}.${equivalent ? ` Use ${equivalent}.` : near ? ` Did you mean "${near}"?` : ""} Type "help" for commands.`,
       );
       failCommandResponse(`Unknown command: ${input.verb}`);
       recordUsage(false);
@@ -238,11 +293,15 @@ export class CommandPhaseCoordinator {
     // operator's instance and the `open` posture, honours an approved rank
     // challenge for this run, and otherwise refuses and raises a challenge.
     if (def?.minRank && def.minRank > 0 && !readOnly && !(def.gate && this.host.db)) {
-      const refusal = rankFloorRefusal(
-        entity,
-        def.minRank,
-        `You must be at least ${rankName(def.minRank)} (rank ${def.minRank}) to use "${def.name}".`,
-        def.gate ? { gateId: def.gate } : {},
+      // The router states its own failure below; keep the helper's out.
+      const minRank = def.minRank;
+      const refusal = withoutRefusal(() =>
+        rankFloorRefusal(
+          entity,
+          minRank,
+          `You must be at least ${rankName(minRank)} (rank ${minRank}) to use "${def.name}".`,
+          def.gate ? { gateId: def.gate } : {},
+        ),
       );
       if (refusal !== undefined) {
         failCommandResponse(`Rank ${def.minRank} required for ${def.name}`);
@@ -262,7 +321,9 @@ export class CommandPhaseCoordinator {
     // demonstration. `recordGateExecution` writes the competence consequence
     // of whichever path authorized us (an approved run is a demonstration).
     if (def?.gate && this.host.db && !readOnly) {
-      const result = checkGateForExecution(this.host.db, entityId, def.gate);
+      const db = this.host.db;
+      const gate = def.gate;
+      const result = withoutRefusal(() => checkGateForExecution(db, entityId, gate));
       if (!result.ok) {
         failCommandResponse(result.reason ?? `Gate "${def.gate}" denied.`);
         this.host.sendToEntity(entityId, result.reason ?? `Gate "${def.gate}" denied.`);
@@ -277,13 +338,17 @@ export class CommandPhaseCoordinator {
     if (!baseCtx) return;
     const ctx = opts?.codingTarget ? { ...baseCtx, codingTarget: opts.codingTarget } : baseCtx;
 
+    // A handler that refuses (`failCommandResponse`: not the creator, no such
+    // pool, …) records failed usage and activity; it ran, so quest progress
+    // and the `command` event are unchanged.
+    let refused = false;
     try {
-      const result = handler(ctx, input);
       // Await async handlers so callers that `await processCommand` get
       // proper sequencing. A rejected promise is the same failure as a
       // synchronous throw: no quest progress, a failed activity row, failed
       // usage and no `command` event.
-      if (result instanceof Promise) await result;
+      const observed = observeHandlerOutcome(() => handler(ctx, input));
+      refused = (observed instanceof Promise ? await observed : observed).failed !== undefined;
     } catch (err) {
       const msg = getErrorMessage(err);
       failCommandResponse(msg);
@@ -302,6 +367,11 @@ export class CommandPhaseCoordinator {
       return;
     }
 
+    // A family member typed by its bare name is an announced alias: one terse
+    // trailing line, once per session (entity id) per alias.
+    if (!family.forwarded && resolved?.owner === "builtin" && def)
+      this.announceAlias(entityId, def.name);
+
     // Track quest progress based on command type
     this.trackQuest(entityId, input.verb, routedRaw);
 
@@ -310,7 +380,7 @@ export class CommandPhaseCoordinator {
       const entity = this.host.entities.get(entityId);
       if (entity) {
         tryLog(this.host.logger, "tick", "Activity tracking failed", () => {
-          this.host.db!.trackActivity(entity.name, "command", input.verb, true);
+          this.host.db!.trackActivity(entity.name, "command", input.verb, !refused);
           this.host.db!.trackActivity(entity.name, "room_visit", entity.room);
         });
       }
@@ -321,8 +391,9 @@ export class CommandPhaseCoordinator {
     // demonstration on a clean run is exactly the self-certification path that
     // let a standing-only entity auto-unlock a gate. Competence is earned only
     // via operator grant / rank promotion / approved runs.
-    recordUsage(true);
+    recordUsage(!refused);
 
+    if (isUnloggedForm(def, input)) return;
     this.host.logEvent({
       type: "command",
       entity: entityId,

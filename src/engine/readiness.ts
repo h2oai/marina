@@ -18,6 +18,9 @@ import { activeGateQuestions, BASELINE_GATE_QUESTIONS } from "../decisions/gate-
 import { decisionHealth } from "../decisions/health";
 import { describeDecisionSettings } from "../decisions/settings";
 import { competenceMap } from "../forecast/competence";
+import { describeUpstreamMode, upstreamMode } from "../learned/import";
+import { importedLessonStats, importedLessonsMode } from "../learned/serve";
+import { pinnedPublisherKeys } from "../learned/sign";
 import { providerSetupHint } from "../net/model/provider-setup";
 import { describeRouteHealth } from "../net/model/route-health";
 import { localModelApiKey } from "../net/model-api/shared";
@@ -28,6 +31,11 @@ import { autoRespawnEnabled } from "./auto-respawn";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
 import { GATEWAY_SECRET_REMEDIATION, gatewayIngressRefusal } from "./gateway-runtime";
+import {
+  capabilityPostureCheck,
+  gateSentinelsCheck,
+  learningLoopCheck,
+} from "./readiness-learning";
 import { corpusEmbeddingStatus } from "./search-providers/corpus-vectors";
 import { searchBackendHealth } from "./search-providers/health";
 import { describeSearchReadiness } from "./search-readiness";
@@ -79,6 +87,11 @@ export interface ReadinessCheck {
    * in summaries, and never a demo blocker. `status` keeps its own meaning.
    */
   optional?: true;
+  /**
+   * A safety problem, not a missing capability: the ops inbox raises it as
+   * `critical` whatever its status (e.g. agents holding sentinel gate grants).
+   */
+  critical?: true;
 }
 
 /** Summary counts; a non-ok optional check counts only as `optional`. */
@@ -731,6 +744,20 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   if (arena.configured) checks.push(arenaFilingCheck());
   // Not entered: no check at all — the arena is opt-in, not a missing capability.
   checks.push(supervisedResidentsCheck(engine, env));
+  if (engine.db) checks.push(learnedCheck(engine.db, env));
+
+  // ── Learning loop and gate sentinels (src/engine/readiness-learning.ts) ──
+  try {
+    checks.push(learningLoopCheck(engine.db, env));
+  } catch {
+    // allow-empty-catch: an unreadable outcome table only omits this informational line
+  }
+  try {
+    checks.push(gateSentinelsCheck(engine.db));
+  } catch {
+    // allow-empty-catch: a database before the competence table only omits this line
+  }
+  checks.push(capabilityPostureCheck());
 
   // ── Competence map — what the resolved record says each method is good at ─
   try {
@@ -908,9 +935,10 @@ export function computeReadiness(engine: Engine): ReadinessReport {
 
 /** Schedules: off, or how many are failing or waiting on an absent owner. */
 /**
- * Supervised residents (Claude Code, Codex, pi launched by `marina supervise`
- * or the console): whether this server enrols them as their own world
- * accounts, and how many are enrolled and present now.
+ * Supervised residents (Claude Code, Codex, pi launched by `marina supervise`,
+ * the in-world `supervisor`, or the console): whether this server enrols them
+ * as their own world accounts, how many are enrolled and present now, and
+ * whether the in-world supervisor runs.
  */
 export function supervisedResidentsCheck(
   engine: Engine,
@@ -931,12 +959,108 @@ export function supervisedResidentsCheck(
   const present = residents.filter(
     (config) => engine.entities.findAgentByName(config.name)?.name === config.name,
   ).length;
+  const counts = `${residents.length} enrolled, ${present} present`;
+  // The in-world supervisor (`supervisor start`); mocks without one read as not running.
+  const supervisor = engine.worldSupervisor?.status() ?? { running: false };
+  if (supervisor.running)
+    return {
+      id: "supervised-residents",
+      label: "Supervised residents",
+      status: supervisor.lastError ? "degraded" : "ok",
+      optional: true,
+      detail: `on — ${counts}; in-world supervisor running for ${supervisor.owner} in ${supervisor.root} (${supervisor.adapters?.join(", ")})${supervisor.lastError ? `; last sync failed: ${supervisor.lastError}` : ""}`,
+      ...(supervisor.lastError
+        ? { remediation: "Output stays in its journal and is sent once sync recovers." }
+        : {}),
+    };
+  if (supervisor.failure)
+    return {
+      id: "supervised-residents",
+      label: "Supervised residents",
+      status: "degraded",
+      optional: true,
+      detail: `on — ${counts}; in-world supervisor stopped: ${supervisor.failure}`,
+      remediation: "Fix the cause, then `supervisor start` again.",
+    };
   return {
     id: "supervised-residents",
     label: "Supervised residents",
     status: "ok",
     optional: true,
-    detail: `on — ${residents.length} enrolled, ${present} present; launch with \`marina supervise\``,
+    detail: `on — ${counts}; in-world supervisor not running (start it with \`supervisor start\`, or run \`marina supervise\`)`,
+  };
+}
+
+/**
+ * Learned bundles: what imports `MARINA_UPSTREAM` allows (unset: open bundles
+ * signed by a pinned key only), each imported bundle (name, generation,
+ * signed or unsigned), and its lessons — imported, served, confirmed by a
+ * local lesson, retired — with the last import. Optional: a world without
+ * bundles is complete.
+ */
+export function learnedCheck(
+  db: NonNullable<Engine["db"]>,
+  env: NodeJS.ProcessEnv = process.env,
+): ReadinessCheck {
+  const label = "Learned bundles";
+  let pinned = 0;
+  try {
+    pinned = pinnedPublisherKeys(env).length;
+  } catch {
+    // allow-empty-catch: a malformed MARINA_LEARNED_PUBLISHER_KEYS pins nothing; import reports it
+  }
+  const imports = `imports ${describeUpstreamMode(upstreamMode(env), pinned)}`;
+  let stats: ReturnType<typeof importedLessonStats>;
+  try {
+    stats = importedLessonStats(db);
+  } catch {
+    return {
+      id: "learned",
+      label,
+      status: "off",
+      optional: true,
+      detail: `no learned-bundle tables in this database; ${imports}`,
+    };
+  }
+  if (stats.bundles.length === 0)
+    return {
+      id: "learned",
+      label,
+      status: "off",
+      optional: true,
+      detail: `no bundle imported; ${imports}`,
+      remediation:
+        "Name bundles in MARINA_BOOTSTRAP_BUNDLES, or run `marina learned import` (docs/guides/learned-bundles.md).",
+    };
+  const mode = importedLessonsMode(db, env);
+  const bundles = stats.bundles
+    .slice(0, 5)
+    .map((b) => `${b.name} gen ${b.generation} (${b.signed ? "signed" : "unsigned"})`)
+    .join(", ");
+  const l = stats.lessons;
+  const total = l.active + l.retired + l.revoked;
+  const last = stats.lastImportAt
+    ? new Date(stats.lastImportAt).toISOString().slice(0, 16).replace("T", " ")
+    : "never";
+  return {
+    id: "learned",
+    label,
+    status: mode === "on" || total === 0 ? "ok" : "degraded",
+    optional: true,
+    detail:
+      `${stats.bundles.length} bundle(s): ${bundles}${stats.bundles.length > 5 ? ", …" : ""}; ` +
+      `${total} imported lesson(s) (${l.active} active, ${l.retired + l.revoked} retired) — ` +
+      `serving ${mode}: ${stats.served} served, ${stats.observed} observed, ` +
+      `${stats.confirmed} confirmed locally, ${stats.contradicted} contradicted; ` +
+      `last import ${last}; ${imports}`,
+    ...(mode === "on" || total === 0
+      ? {}
+      : {
+          remediation:
+            mode === "observe"
+              ? "MARINA_IMPORTED_LESSONS=observe records what would be served; set it to on (or unset it) to serve them."
+              : "MARINA_IMPORTED_LESSONS=off: imported lessons are never served; unset it to serve them.",
+        }),
   };
 }
 

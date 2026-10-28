@@ -11,9 +11,9 @@ import {
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_help_scaling.db";
+const TEST_DB = tempDbPath("test_help_scaling.db");
 
 describe("usageExcerpt", () => {
   it("returns short marker-less text untouched", () => {
@@ -122,7 +122,7 @@ describe("help command scaling", () => {
   it("help all is the full grouped dump", () => {
     const text = run("help all");
     expect(text).toContain("Available Commands");
-    for (const name of ["look", "say", "note", "recall", "agent"]) {
+    for (const name of ["look", "say", "memory", "agent"]) {
       expect(text).toMatch(new RegExp(`^\\s+${name}\\b`, "m"));
     }
     expect(text.split("\n").length).toBeGreaterThan(engine.commands.allBuiltins().length);

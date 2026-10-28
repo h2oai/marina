@@ -30,6 +30,13 @@ function isSensitiveForm(def: CommandDef | undefined, input: CommandInput): bool
   return !!sub && subs.includes(sub);
 }
 
+/** Whether `input` is a plumbing form that records no `command` event (`CommandDef.unloggedSubcommands`). */
+export function isUnloggedForm(def: CommandDef | undefined, input: CommandInput): boolean {
+  const subs = def?.unloggedSubcommands;
+  const sub = input.tokens[0]?.toLowerCase();
+  return !!subs && !!sub && subs.includes(sub);
+}
+
 /** The input text a `command` event may carry. */
 export function commandInputForLog(
   raw: string,
@@ -48,10 +55,13 @@ export function commandInputForLog(
  * summaries, approver notices): parsed and resolved against the builtins.
  */
 export function redactCommandText(
-  router: Pick<CommandRouter, "parse" | "getDef">,
+  router: Pick<CommandRouter, "parse" | "getDef"> & Partial<Pick<CommandRouter, "forwardFamily">>,
   raw: string,
 ): string {
-  const input = router.parse(raw, "" as EntityId, "" as RoomId);
+  const parsed = router.parse(raw, "" as EntityId, "" as RoomId);
+  // A family form (`memory note …`) is redacted as its member would be.
+  const family = router.forwardFamily?.(parsed);
+  const input = family?.input ?? parsed;
   return commandInputForLog(raw, input, input.verb ? router.getDef(input.verb) : undefined);
 }
 

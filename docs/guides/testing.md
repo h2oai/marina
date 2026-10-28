@@ -402,8 +402,21 @@ affects balance — it never drops a file from a shard.
   real sleep only for negative assertions ("nothing arrives within N ms").
 - **Boot one engine per file** when the tests are read-only; per-test engine
   boot (schema migrations + world seed) dominates the slow files.
+- **Copy a migrated database instead of installing one.** A new database
+  file replays the schema baseline and every later migration (~0.15 s idle,
+  up to ~1 s on a loaded machine). When the test is about what happens after
+  the database exists, `freshDbFile(path)` from `test/fresh-db.ts` copies one
+  per-process template instead; tests of installation or migration keep
+  `new MarinaDB(path)`.
+- **Await the command, don't sleep after it.** `engine.processCommand()`
+  returns the handler's promise; `await` it instead of a fixed `Bun.sleep`
+  that a loaded machine can outlast.
 - **Unique DB paths and ports per file** — the suite runs files in parallel
-  worker processes, so a fixed shared path or port is a race.
+  worker processes, so a fixed shared path or port is a race. Prefer a
+  `mkdtemp` directory under the OS temp folder to a fixed name in the working
+  directory: two runs in one checkout cannot collide, and nothing waits on the
+  repository disk's fsync. `tempDbPath(name)` from `test/helpers.ts` returns
+  such a path (removed at process exit); never write a fixed `test_*.db`.
 - **Split by `describe`** once a file passes ~1 s or ~1,000 lines; move shared
   fixtures into `test/<family>-helpers.ts`.
 - Never reach the network: the model-API and adapter tests use mocked `fetch`

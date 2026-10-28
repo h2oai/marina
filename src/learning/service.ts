@@ -18,11 +18,11 @@
  *
  * Marina works with whatever intelligence it has. The judge is the configured
  * decision backend (`harnessDecisionProvider`); without one, a chat-classifier
- * on the single available model through Marina's own `/v1` — uncalibrated, so
- * one conservative cut at 0.5, and every lesson it passes is labelled with that
- * judge. No vendor key is ever required: with no model reachable at all, the
- * writer falls back to the mechanical candidate and the judge to `unverified`,
- * so outcomes are still recorded and nothing is promoted.
+ * on the single available model through Marina's own `/v1` — the same bars as
+ * any judge, and every lesson it passes is labelled with that (uncalibrated)
+ * judge. No vendor key is ever required: with no model provider at all
+ * (`unavailable`), durable deliveries wait with that reason, nothing is
+ * written, and recall simply serves fewer lessons.
  *   MARINA_LESSONS_MAX_PER_HOUR=<n>          outcomes processed per hour (default 120)
  *
  * Learning is armed per database by `enableOutcomeLearning(db)` — the server
@@ -34,12 +34,19 @@
  * Lessons live in one shared space per domain (`lessons:<domain>`).
  */
 
+import { availableModels } from "../agent/available-models";
 import { roleModelFromEnv } from "../config/model-tiers";
 import { harnessDecisionProvider } from "../decisions/engines";
-import { chatClassifierProvider } from "../decisions/providers";
+import { selfChatClassifier } from "../decisions/providers";
 import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
+import {
+  importedLessonLink,
+  importedLessonsMode,
+  importedRecallSink,
+  noteImportedRecall,
+} from "../learned/serve";
 import { rankedServing } from "../memory/admission";
 import { residentMemoryOperation } from "../memory/resident-service";
 import { modelComplete } from "../model/complete";
@@ -53,7 +60,9 @@ import { type EvalContext, evalExclusion } from "./eval-context";
 import { familiesForBenchmark, familiesForSource } from "./families";
 import { type LessonsMode, lessonsMetaMode, lessonsMode } from "./modes";
 import {
+  CURATED_SOURCE_PREFIX,
   formatLesson,
+  type ImportedLessonLink,
   type Lesson,
   type LessonAdmission,
   type LessonRetirement,
@@ -89,6 +98,10 @@ interface Armed {
   writer?: LessonWriter;
   judge?: DecisionProvider;
   admit?: LessonAdmission;
+  /** The writer and judge were taken from the environment (not given by the caller). */
+  fromEnv: boolean;
+  /** Imported lessons the loop confirms or retires (`src/learned/serve.ts`); read per batch. */
+  importedLink: () => ImportedLessonLink | undefined;
   queue: Outcome[];
   draining?: Promise<void>;
   windowStart: number;
@@ -298,8 +311,8 @@ export function lessonWriterFromEnv(
 
 /**
  * The lesson judge: the configured decision backend, else a chat-classifier on
- * the single available model through this Marina's `/v1` (uncalibrated —
- * `judgeLesson` then uses one cut at 0.5).
+ * the single available model through this Marina's `/v1` (uncalibrated: its
+ * verdicts are labelled so; the bars are the same as for any judge).
  */
 export function lessonJudgeFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -308,20 +321,24 @@ export function lessonJudgeFromEnv(
   const configured = harnessDecisionProvider(env);
   if (configured) return configured;
   const model = env.MARINA_LESSONS_JUDGE_MODEL?.trim() || roleModelFromEnv("lessons-judge", env);
-  let inner: DecisionProvider | undefined;
+  // The base URL and bearer are read on every ask (`selfChatClassifier`).
+  const inner = selfChatClassifier(
+    {
+      model,
+      timeoutMs: SELF_TIMEOUT_MS,
+      method: "verbalized",
+      ...(deps.fetch ? { fetch: deps.fetch } : {}),
+    },
+    {
+      baseUrl: () => deps.baseUrl ?? selfBaseUrl(env),
+      bearer: deps.token ?? (() => selfModelToken(env)),
+    },
+  );
   return {
     kind: "marina-classifier",
     model: `lesson-judge:${model}`,
     calibrated: false,
     async ask(request, signal) {
-      inner ??= chatClassifierProvider({
-        baseUrl: deps.baseUrl ?? selfBaseUrl(env),
-        model,
-        apiKey: await (deps.token ?? (() => selfModelToken(env)))(),
-        timeoutMs: SELF_TIMEOUT_MS,
-        method: "verbalized",
-        ...(deps.fetch ? { fetch: deps.fetch } : {}),
-      });
       const result = await inner.ask(request, signal);
       return { ...result, calibrated: false };
     },
@@ -369,6 +386,8 @@ export function enableOutcomeLearning(
         });
       return admit ? { admit } : {};
     })(),
+    fromEnv: opts.writer === undefined && opts.judge === undefined,
+    importedLink: () => importedLessonLink(db, env),
     queue: [],
     windowStart: Date.now(),
     processed: 0,
@@ -435,6 +454,7 @@ async function drain(a: Armed, env: NodeJS.ProcessEnv): Promise<void> {
         ...(judge ? { judge } : {}),
         ...(a.admit ? { admit: a.admit } : {}),
         meta: lessonsMetaMode(env) !== "off",
+        ...withImported(a),
         // No onSpend: every judge here already records its own spend where it
         // leaves Marina — a configured backend through `metered()`
         // (src/decisions/config.ts), Marina engines and the fallback classifier
@@ -454,21 +474,26 @@ async function drain(a: Armed, env: NodeJS.ProcessEnv): Promise<void> {
  * queue (`src/outcomes/deliver.ts`): the same sink, writer, judge and
  * admission as `noteOutcome`, and `take(n)` to draw from the same hourly
  * budget (returns how many may run now; the rest wait, never dropped).
+ * `unavailable` says why no writer or judge can answer at all (no model
+ * provider configured): the producer waits without spending an attempt.
  * Undefined when learning is not armed.
  */
 export function armedLearner(
   db: object,
   env: NodeJS.ProcessEnv = process.env,
-): { deps: OutcomeLearnerDeps; take(n: number): number } | undefined {
+): { deps: OutcomeLearnerDeps; unavailable?: string; take(n: number): number } | undefined {
   const a = armed.get(db);
   if (!a) return undefined;
+  const unavailable = a.fromEnv ? modelUnavailable(env) : undefined;
   return {
+    ...(unavailable ? { unavailable } : {}),
     deps: {
       sink: a.sink,
       ...(a.writer ? { writer: a.writer } : {}),
       ...(a.judge ? { judge: a.judge } : {}),
       ...(a.admit ? { admit: a.admit } : {}),
       meta: lessonsMetaMode(env) !== "off",
+      ...withImported(a),
     },
     take(n) {
       const now = Date.now();
@@ -481,6 +506,25 @@ export function armedLearner(
       return k;
     },
   };
+}
+
+/**
+ * Why the environment's writer and judge cannot answer at all: no model
+ * provider is configured (no vendor key, no local runtime), so no rule can be
+ * written and nothing can be learned until one is. Undefined when one exists.
+ */
+export function modelUnavailable(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return availableModels(env).length === 0 ? "no model provider configured" : undefined;
+}
+
+/** The armed loop's imported-lesson link as a spreadable dep (`{}` when none). */
+function withImported(a: Armed): { imported?: ImportedLessonLink } {
+  try {
+    const link = a.importedLink();
+    return link ? { imported: link } : {};
+  } catch {
+    return {};
+  }
 }
 
 /** Wait until queued outcomes are processed (tests, scripts before exit). */
@@ -570,9 +614,26 @@ export async function recallLessons(
     const own = ownSink
       ? await ownSink.recall(domain, query, asOf, recallOpts).catch(() => [] as Lesson[])
       : [];
-    const recalled = own.length
-      ? selectServed(distinctByText([...own, ...shared]), asOf, recallOpts)
-      : shared;
+    // Imported lessons (`src/learned/serve.ts`, MARINA_IMPORTED_LESSONS): the
+    // same selection over the bundle's spaces, ranked below every local
+    // trusted lesson. `observe` records what would be served and serves
+    // nothing; `off` (or nothing imported) never reads them.
+    const importedMode = db ? importedLessonsMode(db, opts.env) : "off";
+    const imported =
+      db && importedMode !== "off"
+        ? await importedRecallSink(db)
+            .recall(domain, query, asOf, recallOpts)
+            .catch(() => [] as Lesson[])
+        : [];
+    const merge = (extra: Lesson[]) =>
+      own.length || extra.length
+        ? selectServed(distinctByText([...own, ...shared, ...extra]), asOf, recallOpts)
+        : shared;
+    if (db && imported.length && importedMode === "observe")
+      noteImportedRecall(db, merge(imported), "observed");
+    const recalled = merge(importedMode === "on" ? imported : []);
+    if (db && importedMode === "on" && imported.length)
+      noteImportedRecall(db, recalled, mode === "on" ? "served" : "observed");
     return { inject: mode === "on" ? recalled : [], recalled, mode };
   } catch {
     return { inject: [], recalled: [], mode };
@@ -618,6 +679,7 @@ export async function recallAcross(
   const recalled = selectServed(distinctByText(per.flatMap((r) => r.recalled)), asOf, {
     ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
     ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
+    ...(opts.families?.length ? { families: opts.families } : {}),
     ...(rankedServing(opts.env) ? { rankOrder: true } : {}),
   });
   // A domain whose own mode is observe (meta under MARINA_LESSONS_META=observe)
@@ -673,8 +735,9 @@ export async function recallForWork(
     limit: Math.max(1, Math.floor(limit * META_BUDGET_SHARE)),
     maxBytes: Math.floor(maxBytes * META_BUDGET_SHARE),
   });
-  // Meta lessons are served trusted-only, whatever the store returned.
-  const metaServed = meta.recalled.filter((l) => l.trust === "trusted");
+  // Meta lessons are served trusted-only (or imported, which a publisher's
+  // judge trusted and recallLessons returns only while serving them `on`).
+  const metaServed = meta.recalled.filter((l) => l.trust === "trusted" || l.trust === "imported");
   const metaBytes = metaServed.reduce((n, l) => n + Buffer.byteLength(l.text), 0);
   const base = await recallAcross(db, own, query, {
     ...shared,
@@ -847,9 +910,11 @@ export async function supersedeLesson(
     ...(old.scope ? { scope: old.scope } : {}),
     ...(old.families?.length ? { families: old.families } : {}),
     ...(old.subjects?.length ? { subjects: old.subjects } : {}),
+    // The curator's text is the rule (served unjudged: `servableLesson`).
+    rule: text,
     trust: "unverified",
     resolvedAt: old.resolvedAt,
-    source: `supersede:${old.id}`,
+    source: `${CURATED_SOURCE_PREFIX}${old.id}`,
     refs: [old.id, ...(old.refs ?? [])],
   };
   const { id } = await sink.write(replacement);

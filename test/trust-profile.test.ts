@@ -24,10 +24,10 @@ import {
 import { MarinaDB } from "../src/persistence/database";
 import { memoryLimitsFromEnv } from "../src/persistence/db-memory-storage";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
-const TEST_DB = "test_trust_profile.db";
+const TEST_DB = tempDbPath("test_trust_profile.db");
 
 describe("trust profile — resolution", () => {
   it("derives LOCAL on a loopback-only bind without sign-in", () => {

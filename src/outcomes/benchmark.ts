@@ -37,35 +37,63 @@ type RunLike = Pick<
 > &
   Partial<Pick<BenchmarkRunRow, "n" | "target_kind" | "target_json" | "label" | "cost_usd">>;
 
+function parsedTarget(run: Pick<RunLike, "target_json">): unknown {
+  try {
+    return run.target_json ? JSON.parse(run.target_json) : undefined;
+  } catch {
+    return run.target_json;
+  }
+}
+
+function targetObject(target: unknown): Record<string, unknown> | undefined {
+  return target && typeof target === "object" && !Array.isArray(target)
+    ? (target as Record<string, unknown>)
+    : undefined;
+}
+
 /**
  * The measured configuration as one compact evidence key: `<target kind>:<target>`
  * — a model id (with any passthru stack prefixes), `<model>+<stack>` for an
- * in-world arm, or the crew/population formation. Configuration only.
+ * in-world arm, or the crew/population formation. Configuration only. A crew
+ * is always `crew:<formation>` (`crew:unknown` when no formation was
+ * recorded) — never a model id; the model goes in `method:model:`
+ * (`benchmarkModelMethod`).
  */
 export function benchmarkMethod(
   run: Pick<RunLike, "target_kind" | "target_json" | "label">,
 ): string {
   const kind = run.target_kind ?? "model";
-  let target: unknown;
-  try {
-    target = run.target_json ? JSON.parse(run.target_json) : undefined;
-  } catch {
-    target = run.target_json;
-  }
+  const target = parsedTarget(run);
+  const t = targetObject(target);
+  const formation = !t
+    ? ""
+    : typeof t.formation === "string"
+      ? t.formation
+      : t.formation && typeof t.formation === "object"
+        ? String((t.formation as Record<string, unknown>).kind ?? "")
+        : "";
+  if (kind === "crew") return `crew:${formation || "unknown"}`;
   if (typeof target === "string" && target) return `${kind}:${target}`;
-  if (target && typeof target === "object" && !Array.isArray(target)) {
-    const t = target as Record<string, unknown>;
-    const formation =
-      typeof t.formation === "string"
-        ? t.formation
-        : t.formation && typeof t.formation === "object"
-          ? String((t.formation as Record<string, unknown>).kind ?? "")
-          : "";
+  if (t) {
     if (formation) return `${kind}:${formation}`;
     if (typeof t.model === "string")
       return `${kind}:${t.model}${typeof t.stack === "string" ? `+${t.stack}` : ""}`;
   }
   return `${kind}:${run.label ?? "unknown"}`;
+}
+
+/**
+ * `model:<id>` for a crew run whose target names the upstream model its
+ * residents ran on (not the `marina:<crew>` endpoint), else undefined.
+ */
+export function benchmarkModelMethod(
+  run: Pick<RunLike, "target_kind" | "target_json">,
+): string | undefined {
+  if (run.target_kind !== "crew") return undefined;
+  const model = targetObject(parsedTarget(run))?.model;
+  return typeof model === "string" && model && !model.startsWith("marina:")
+    ? `model:${model}`
+    : undefined;
 }
 
 /** Whether a run can be recorded: completed, valid and scored. */
@@ -85,6 +113,7 @@ export function recordBenchmarkRun(
   if (!recordable(run)) return undefined;
   const quality = Math.min(1, Math.max(0, run.score));
   const method = benchmarkMethod(run);
+  const modelMethod = benchmarkModelMethod(run);
   const n = run.n ?? run.total;
   return recordResolved(db, {
     subject: benchmarkSubject(run.id),
@@ -101,7 +130,12 @@ export function recordBenchmarkRun(
     detail: `${run.benchmark} ${(run.score * 100).toFixed(1)}% (n ${n}); family ${run.benchmark}; method ${method}${typeof run.cost_usd === "number" ? `; cost $${run.cost_usd.toFixed(2)}` : ""}`,
     basis: "mechanical",
     evalMode: "measure",
-    refs: [benchmarkSubject(run.id), `family:${run.benchmark}`, `method:${method}`],
+    refs: [
+      benchmarkSubject(run.id),
+      `family:${run.benchmark}`,
+      `method:${method}`,
+      ...(modelMethod ? [`method:${modelMethod}`] : []),
+    ],
     resolvedAt: Math.min(run.completed_at ?? now, now),
   });
 }

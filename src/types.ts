@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { CrewFormationName } from "./orchestration/formations/catalogue";
 import type { CommandForm, CommandUsage } from "./sdk/command-forms";
 import type { CodingCommandTarget } from "./sdk/command-target";
 import type { DurableMemoryAPI } from "./sdk/memory-operations";
@@ -86,6 +87,13 @@ export interface CommandDef {
    * for these; `"*"` covers every form. See src/engine/command-redaction.ts.
    */
   sensitiveSubcommands?: readonly string[];
+  /**
+   * Plumbing subcommands a runtime issues on every agent turn (`memory api`
+   * checkpoints): they record no `command` event at all, so the row-bounded
+   * event log keeps the world's actions instead of its bookkeeping. Usage is
+   * still counted. See `isUnloggedForm` in src/engine/command-redaction.ts.
+   */
+  unloggedSubcommands?: readonly string[];
 }
 
 // ─── Room Context (injected into room modules) ──────────────────────────────
@@ -378,28 +386,12 @@ export function crewId(id: string): CrewId {
 }
 
 /**
- * Crew formations are the runtime form of the 16 orchestration patterns
- * (src/world/templates/orchestration.ts). `freeform` is the no-formation
- * default — bound members, no prescribed coordination shape.
+ * A crew runs a formation from the catalogue
+ * (src/orchestration/formations/catalogue.ts): every entry with `crew: true`.
+ * `freeform` is the no-protocol default — bound members, no prescribed
+ * coordination shape.
  */
-export type CrewFormation =
-  | "deliberation"
-  | "chorus"
-  | "foundry"
-  | "swarm"
-  | "pipeline"
-  | "debate"
-  | "mapreduce"
-  | "blackboard"
-  | "symbiosis"
-  | "research"
-  | "delphi"
-  | "tournament"
-  | "verification"
-  | "auction"
-  | "ledger"
-  | "sharding"
-  | "freeform";
+export type CrewFormation = CrewFormationName;
 
 /**
  * Ephemeral crews live only in memory and GC on idle. Persisted crews survive
@@ -455,6 +447,8 @@ export interface Crew {
   /** Updated on dispatch / member churn / channel traffic — drives idle GC. */
   lastActivityAt: number;
   result?: CrewResult;
+  /** False: an internal crew (Code Mode) with no `model-<name>` endpoint. Unset: it serves. */
+  serves?: false;
 }
 
 // ─── Events (internal engine events) ─────────────────────────────────────────
@@ -739,6 +733,8 @@ export type EngineEvent =
       key: string;
       value: string;
       incumbentRunId?: string;
+      /** Upstream model seeds withheld pending local approval (`<slot>@upstream:<version>`). */
+      withheld?: string[];
       reason: string;
       timestamp: number;
     }
@@ -794,6 +790,8 @@ export type EngineEvent =
       ttftMs?: number;
       inputTokens?: number;
       outputTokens?: number;
+      /** Hidden reasoning (thinking) tokens the provider reported — a share of `outputTokens`. */
+      reasoningTokens?: number;
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
       costUsd?: number;
@@ -904,6 +902,11 @@ export type EngineEvent =
       ttftMs?: number;
       inputTokens?: number;
       outputTokens?: number;
+      /** Reasoning (thinking) tokens the upstream reported, a share of
+       * `outputTokens` (`usage.completion_tokens_details.reasoning_tokens`,
+       * Anthropic `output_tokens_details.thinking_tokens`). Absent when the
+       * upstream reported none. */
+      reasoningTokens?: number;
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
       costUsd?: number;

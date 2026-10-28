@@ -67,99 +67,129 @@ test("generated async schedules retain per-resident FIFO through handler failure
 });
 
 test("generated MCP cancellations skip queued work but preserve started writes and session order", async () => {
-  await fc.assert(
-    fc.asyncProperty(
-      fc.scheduler(),
-      fc.array(
-        fc.record({
-          resident: fc.integer({ min: 0, max: 1 }),
-          cancel: fc.boolean(),
-        }),
-        { maxLength: 10 },
-      ),
-      async (scheduler, actions) => {
-        const world = createTestEngine();
-        const sessions = new Map<string, McpSession>();
-        const entered = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
-        const started: string[][] = [[], []];
-        const committed: string[][] = [[], []];
-        const active = [new AbortController(), new AbortController()];
-        for (let index = 0; index < 2; index++) {
-          const { entityId, connection } = world.login(`Resident${index}`);
-          sessions.set(String(index), {
-            connId: connection.id,
-            entityId,
-            throttleKey: `fixture-${index}`,
-            perceptionBuffer: [],
-            commandTail: Promise.resolve(),
-            mcp: new McpServer({ name: "property", version: "1" }),
-            transport: new WebStandardStreamableHTTPServerTransport({
-              sessionIdGenerator: undefined,
-            }),
-          });
-        }
-        world.engine.commands.registerOwned("fixture", {
-          name: "mark",
-          help: "Fixture",
-          async handler(_ctx, input) {
-            const index = Number(world.engine.entities.get(input.entity)!.name.slice(-1));
-            started[index]!.push(input.args);
-            entered[index]!.resolve();
-            await scheduler.schedule(Promise.resolve(), `${index}:${input.args}`);
-            committed[index]!.push(input.args);
-          },
-        });
-        try {
-          const heads = active.map((controller, index) =>
-            cmdTool(
-              world.engine,
-              sessions,
-              { sessionId: String(index), signal: controller.signal },
-              "/mark head",
-            ),
-          );
-          await Promise.all(entered.map((item) => item.promise));
-          active.forEach((controller) => {
-            controller.abort();
-          });
-          const pending = actions.map((action, index) => {
-            const controller = new AbortController();
-            const result = cmdTool(
-              world.engine,
-              sessions,
-              { sessionId: String(action.resident), signal: controller.signal },
-              `/mark ${index}`,
-            );
-            if (action.cancel) controller.abort();
-            return result;
-          });
-          const results = await scheduler.waitFor(Promise.all([...heads, ...pending]));
-          for (let resident = 0; resident < 2; resident++) {
-            const expected = [
-              "head",
-              ...actions.flatMap((action, index) =>
-                action.resident === resident && !action.cancel ? [String(index)] : [],
-              ),
-            ];
-            expect(started[resident]).toEqual(expected);
-            expect(committed[resident]).toEqual(expected);
+  // One world for every generated run: what the property varies is the MCP
+  // sessions, their queues and cancellations, and each run gets fresh ones
+  // (new residents, sessions and controllers). Building a world per run cost a
+  // fresh database each time (baseline plus every later migration: ~0.15 s idle,
+  // ~1 s on a loaded machine) and put 25+ of them inside one test's budget.
+  const world = createTestEngine();
+  /** The running run's state, found by the resident a command arrives for. */
+  let current:
+    | {
+        scheduler: fc.Scheduler;
+        residents: Map<string, number>;
+        entered: PromiseWithResolvers<void>[];
+        started: string[][];
+        committed: string[][];
+      }
+    | undefined;
+  world.engine.commands.registerOwned("fixture", {
+    name: "mark",
+    help: "Fixture",
+    async handler(_ctx, input) {
+      const run = current!;
+      const index = run.residents.get(input.entity)!;
+      run.started[index]!.push(input.args);
+      run.entered[index]!.resolve();
+      await run.scheduler.schedule(Promise.resolve(), `${index}:${input.args}`);
+      run.committed[index]!.push(input.args);
+    },
+  });
+  let runs = 0;
+  try {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.scheduler(),
+        fc.array(
+          fc.record({
+            resident: fc.integer({ min: 0, max: 1 }),
+            cancel: fc.boolean(),
+          }),
+          { maxLength: 10 },
+        ),
+        async (scheduler, actions) => {
+          const run = ++runs;
+          const sessions = new Map<string, McpSession>();
+          const connections: string[] = [];
+          const residents = new Map<string, number>();
+          const entered = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+          const started: string[][] = [[], []];
+          const committed: string[][] = [[], []];
+          const active = [new AbortController(), new AbortController()];
+          for (let index = 0; index < 2; index++) {
+            const { entityId, connection } = world.login(`Run${run}R${index}`);
+            connections.push(connection.id);
+            residents.set(entityId, index);
+            sessions.set(String(index), {
+              connId: connection.id,
+              entityId,
+              throttleKey: `fixture-${run}-${index}`,
+              perceptionBuffer: [],
+              commandTail: Promise.resolve(),
+              mcp: new McpServer({ name: "property", version: "1" }),
+              transport: new WebStandardStreamableHTTPServerTransport({
+                sessionIdGenerator: undefined,
+              }),
+            });
           }
-          actions.forEach((action, index) => {
-            expect(!!results[index + 2]!.isError).toBe(action.cancel);
-          });
-          expect(mcpAdmission(world.engine).snapshot().pending).toBe(0);
-        } finally {
-          await scheduler.waitAll();
-          await Promise.all(
-            [...sessions.values()].map(async (session) => {
-              await session.commandTail;
-              await session.mcp.close();
-            }),
-          );
-          await world.dispose();
-        }
-      },
-    ),
-    propertyOptions(25),
-  );
+          current = { scheduler, residents, entered, started, committed };
+          try {
+            const heads = active.map((controller, index) =>
+              cmdTool(
+                world.engine,
+                sessions,
+                { sessionId: String(index), signal: controller.signal },
+                "/mark head",
+              ),
+            );
+            await Promise.all(entered.map((item) => item.promise));
+            active.forEach((controller) => {
+              controller.abort();
+            });
+            const pending = actions.map((action, index) => {
+              const controller = new AbortController();
+              const result = cmdTool(
+                world.engine,
+                sessions,
+                { sessionId: String(action.resident), signal: controller.signal },
+                `/mark ${index}`,
+              );
+              if (action.cancel) controller.abort();
+              return result;
+            });
+            const results = await scheduler.waitFor(Promise.all([...heads, ...pending]));
+            for (let resident = 0; resident < 2; resident++) {
+              const expected = [
+                "head",
+                ...actions.flatMap((action, index) =>
+                  action.resident === resident && !action.cancel ? [String(index)] : [],
+                ),
+              ];
+              expect(started[resident]).toEqual(expected);
+              expect(committed[resident]).toEqual(expected);
+            }
+            actions.forEach((action, index) => {
+              expect(!!results[index + 2]!.isError).toBe(action.cancel);
+            });
+            expect(mcpAdmission(world.engine).snapshot().pending).toBe(0);
+          } finally {
+            await scheduler.waitAll();
+            await Promise.all(
+              [...sessions.values()].map(async (session) => {
+                await session.commandTail;
+                await session.mcp.close();
+              }),
+            );
+            // Nothing from this run may still be queued when the next one starts.
+            await world.engine.drainCommands();
+            for (const id of connections) world.engine.removeConnection(id, "explicit");
+            current = undefined;
+          }
+        },
+      ),
+      propertyOptions(25),
+    );
+  } finally {
+    await world.dispose();
+  }
 });

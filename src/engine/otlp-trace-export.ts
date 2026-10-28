@@ -30,6 +30,7 @@ const OTLP_SAFE_SPAN_ATTRIBUTES = new Set([
   "outputTokens",
   "phase",
   "purpose",
+  "reasoningTokens",
   "requestId",
   "risk",
   "routeAdviceMode",

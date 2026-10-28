@@ -3,7 +3,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { blindPanelCases, liveGateCases } from "../src/decisions/challenge-labels";
-import { judgeRecords, raiseForTool, resetChallengesForTests } from "../src/engine/challenges";
+import { listJudgeRecords, raiseForTool, resetChallengesForTests } from "../src/engine/challenges";
 import { raiseEgressChallenge } from "../src/engine/commands/code/exec";
 import { sessionEgressGrants } from "../src/engine/commands/code/runner";
 import { Engine } from "../src/engine/engine";
@@ -253,6 +253,109 @@ describe("challenges (engine)", () => {
     await until(() => ran.includes("wipe"));
     // Not granted, and no demonstration: core gates are operator-grant only.
     expect(db.getCompetence(builder.entity!, "admin.destructive")).toBeUndefined();
+  });
+
+  /** A command behind the router's `agent.run` gate, then an imperative `second` gate. */
+  function registerTwoGate(name: string, second: string) {
+    engine.commands.registerBuiltin({
+      name,
+      category: "Test",
+      help: "test command behind two gates",
+      minRank: 0,
+      gate: "agent.run",
+      handler: (ctx, input) => {
+        const gate = checkGateForExecution(db, input.entity, second);
+        if (!gate.ok) {
+          ctx.send(input.entity, gate.reason ?? "refused");
+          return;
+        }
+        recordGateExecution(db, input.entity, second, gate, `command:${name}`);
+        ran.push(name);
+        ctx.send(input.entity, "both passed");
+      },
+    });
+  }
+  const tokensIn = (c: MockConnection) => [
+    ...new Set([...text(c).matchAll(/\b(ch_[0-9a-f]{12})\b/g)].map((m) => m[1] as string)),
+  ];
+
+  it("one approval covers two non-core gates, and the reply names what it covers", async () => {
+    registerTwoGate("twogate", "agent.spawn");
+    await send(builder, "twogate");
+    const token = tokenIn(text(builder))!;
+    expect(token).toBeDefined();
+    await send(root, `challenge approve ${token}`);
+    const reply = stripAnsi(root.lastText());
+    expect(reply).toContain("also covers:");
+    expect(reply).toContain("agent.spawn");
+    // Core gates are never covered implicitly.
+    expect(reply).not.toMatch(/also covers:[^;]*shell\.exec/);
+    await until(() => ran.includes("twogate"));
+    expect(text(builder)).toContain("both passed");
+
+    // The owner holds agent.run but not agent.spawn: the re-run stops there,
+    // she is told it did not run, and the operator's answer carries hers.
+    grant(db, alice.entity!, "agent.run");
+    builder.clear();
+    alice.clear();
+    await send(builder, "twogate");
+    const ownerToken = tokenIn(text(builder))!;
+    await send(alice, `challenge approve ${ownerToken}`);
+    await until(() => text(alice).includes(`Challenge ${ownerToken} did not run`));
+    expect(text(alice)).toContain("needs the agent.spawn gate");
+    expect(ran.filter((r) => r === "twogate")).toHaveLength(1);
+    const next = tokensIn(builder).find((t) => t !== ownerToken)!;
+    expect(next).toBeDefined();
+    await send(root, `challenge approve ${next}`);
+    await until(() => ran.filter((r) => r === "twogate").length === 2);
+  });
+
+  it("a core gate after a non-core approval is held on its own; approving it covers nothing extra", async () => {
+    // Like `run raw` under `shared`: agent.run, then the core shell.exec.
+    registerTwoGate("rawish", "shell.exec");
+    await send(builder, "rawish");
+    const first = tokenIn(text(builder))!;
+    root.clear();
+    await send(root, `challenge approve ${first}`);
+    expect(stripAnsi(root.lastText())).not.toMatch(/also covers:[^;]*shell\.exec/);
+    await until(() => text(root).includes(`Challenge ${first} did not run`));
+    expect(text(root)).toContain("core gate shell.exec");
+    expect(ran).not.toContain("rawish");
+
+    const shellHold = tokensIn(builder).find((t) => t !== first)!;
+    expect(shellHold).toBeDefined();
+    await send(root, `challenge approve ${shellHold}`);
+    const reply = stripAnsi(root.lastText());
+    // Nothing new is covered by a core approval; the earlier agent.run approval is carried, by name.
+    expect(reply).not.toContain("also covers");
+    expect(reply).toContain(`carries ${first}'s approval of agent.run`);
+    await until(() => ran.includes("rawish"));
+  });
+
+  it("no approval runs code.exec.unrestricted once; only an operator's grant opens it", async () => {
+    engine.commands.registerBuiltin({
+      name: "unbox",
+      category: "Test",
+      help: "test command behind code.exec.unrestricted",
+      minRank: 0,
+      handler: (ctx, input) => {
+        const gate = checkGateForExecution(db, input.entity, "code.exec.unrestricted");
+        if (!gate.ok) {
+          ctx.send(input.entity, gate.reason ?? "refused");
+          return;
+        }
+        ran.push("unbox");
+        ctx.send(input.entity, "unboxed");
+      },
+    });
+    await send(builder, "unbox");
+    const token = tokenIn(text(builder))!;
+    expect(token).toBeDefined();
+    await send(root, `challenge approve ${token}`);
+    expect(stripAnsi(root.lastText())).toContain("operator-grant only");
+    expect(ran).not.toContain("unbox");
+    await send(root, `challenge approve ${token} always`);
+    await until(() => ran.includes("unbox"));
   });
 
   it("deny and expiry reach the requester; `decision approve|deny` answer challenges too", async () => {
@@ -643,21 +746,27 @@ describe("challenge judge + pi adapter", () => {
         answered_role: "admin",
         judge_opinion: "allow",
       });
+      // The same answer in the one judge ledger, under the backend that judged it.
+      const [ledgerRow] = db.listJudgeLedger({ surface: "challenge" });
+      expect(ledgerRow).toMatchObject({
+        question: "agent.spawn",
+        subject: `challenge:${token}`,
+        opinion: "pass",
+        truth: "pass",
+        agreed: 1,
+      });
+      expect(ledgerRow!.judge).toContain("stub-jev");
 
-      // Earn agent.spawn: 25 people-approved cases the judge called allow.
+      // Earn agent.spawn: 25 people-approved cases this judge called allow.
       for (let i = 0; i < 25; i++) {
-        db.recordChallengeOutcome({
-          token: `ch_seed${i}`,
-          kind: "gate",
-          class: "agent.spawn",
-          requesterName: "Jay",
-          summary: "soft",
-          reason: "seed",
-          answer: "once",
-          answeredBy: "Root",
-          answeredRole: "admin",
-          judgeOpinion: "allow",
-          createdAt: Date.now(),
+        db.recordJudgeOpinion({
+          surface: "challenge",
+          question: "agent.spawn",
+          judge: ledgerRow!.judge,
+          subject: `challenge:ch_seed${i}`,
+          opinion: "pass",
+          truth: "pass",
+          opinedAt: Date.now(),
         });
       }
       process.env.MARINA_CHALLENGE_JUDGE = "on";
@@ -701,17 +810,27 @@ describe("judge records and case exports", () => {
     }) as never;
 
   it("earns a class only on enough approved allow calls, never a core gate", () => {
-    const many = (cls: string, n: number, answer = "once") =>
-      Array.from({ length: n }, () => row({ class: cls, answer }));
-    const records = judgeRecords([
-      ...many("agent.spawn", 30),
-      ...many("role.edit", 5),
-      ...many("world.lineage", 25),
-      ...many("world.lineage", 5, "deny"),
-      ...many("shell.exec", 40),
-      row({ class: "agent.spawn", answered_role: "judge" }),
-      row({ class: "agent.spawn", answer: "expired" }),
-    ]);
+    const db = new MarinaDB(":memory:");
+    let n = 0;
+    const many = (cls: string, count: number, truth: "pass" | "fail" = "pass") => {
+      for (let i = 0; i < count; i++)
+        db.recordJudgeOpinion({
+          surface: "challenge",
+          question: cls,
+          judge: "test:judge",
+          subject: `challenge:ch_${++n}`,
+          opinion: "pass",
+          truth,
+          opinedAt: n,
+        });
+    };
+    many("agent.spawn", 30);
+    many("role.edit", 5);
+    many("world.lineage", 25);
+    many("world.lineage", 5, "fail");
+    many("shell.exec", 40);
+    const records = listJudgeRecords(db);
+    db.close();
     const by = Object.fromEntries(records.map((r) => [r.class, r]));
     expect(by["agent.spawn"]).toMatchObject({ allowSaid: 30, allowApproved: 30, earned: true });
     expect(by["role.edit"]?.earned).toBe(false); // too few

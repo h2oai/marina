@@ -22,9 +22,14 @@ import { harnessDecisionProvider } from "../../../decisions/engines";
 import { judgeOpinion } from "../../../decisions/policy";
 import { DecisionError, type DecisionProvider } from "../../../decisions/types";
 import { decisionVerifyMode, verifySubmission } from "../../../decisions/verify";
-import { creditVerifiedCode, recordTaskOpinion, recordTaskVerdict } from "../../../outcomes/live";
+import {
+  creditVerifiedCode,
+  recordTaskVerdict,
+  recordVerifierOpinion,
+} from "../../../outcomes/live";
 import type { CodingArtifactRow, MarinaDB } from "../../../persistence/database";
 import type { CrewId, Entity, EntityId, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import { getErrorMessage } from "../../errors";
 import { Logger } from "../../logger";
 import { dailyBudget } from "../../spend-ledger";
@@ -443,22 +448,16 @@ export function observeCodingSubmission(
         ...(verdict.error ? { error: verdict.error } : {}),
         timestamp: Date.now(),
       });
-      deps.db.recordJudgeObservation({
+      recordVerifierOpinion(deps.db, {
         taskId: meta.taskId,
         claimantName: worker.name,
+        ...(submittedAt == null ? {} : { submittedAt }),
         evaluator,
         calibrated: provider.calibrated !== false,
         mode: "observe",
         opinion,
         signals: verdict.signals,
         ...(verdict.error ? { error: verdict.error.slice(0, 300) } : {}),
-      });
-      recordTaskOpinion(deps.db, {
-        taskId: meta.taskId,
-        claimant: worker.name,
-        judge: evaluator,
-        opinion,
-        ...(submittedAt == null ? {} : { submittedAt }),
       });
     })
     .catch((error) =>
@@ -751,7 +750,7 @@ export async function reviewCodingRun(
         ? tasks.approveSubmission(meta.taskId, claim.entity_id, eid)
         : tasks.rejectSubmission(meta.taskId, claim.entity_id, eid));
     if (!allowed) {
-      ctx.send(eid, "Only the task creator can review a submitted task.");
+      refuseCommand(ctx, eid, "Only the task creator can review a submitted task.");
       return;
     }
     deps.db.createCodingEvent({

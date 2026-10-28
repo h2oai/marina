@@ -190,11 +190,14 @@
 # @protected
 # MARINA_OPS_NOTIFY=off
 
-# Challenge judge (needs a decision backend; nothing is scored without one). `observe` (default) scores held commands in shadow so its agreement with people is measured. `on` also auto-approves `once` for a gate only after it earned that gate (25+ approved calls at 85% or better, 95% lower bound), never for the core gates, never `always`, never a deny. `off` never scores. `challenge stats` shows the record.
+# One switch for every judge surface (src/decisions/judges.ts): the challenge judge, the task-submission verifier, the attention judges and the outcome judges. `off`, `observe` or `on`. Unset, each surface keeps its own default (challenge, verify and attention `observe`; outcome `on` with a model provider, else `off`). A surface's own variable (MARINA_CHALLENGE_JUDGE, MARINA_DECISION_VERIFY, MARINA_ATTENTION_JUDGE, MARINA_OUTCOME_JUDGE) overrides this one for that surface. Every opinion and its later ground truth land in one ledger, and `judge stats` reads it. `on` lets only an EARNED judge act (25+ comparisons with a ground truth, Wilson 95% lower bound 0.85 or better, per surface and judge), with each surface's limits unchanged: the challenge judge approves `once` only, never a core gate, never `always` or a deny; attention judges only advise; the verifier bounces a submission at most once, and under this switch only once it has earned it. The Arbiter is not switched here (MARINA_FORECAST_ARBITER); its overrules are recorded in the same ledger. Needs a decision backend; with none, no judge call is made.
+# MARINA_JUDGE=observe
+
+# Challenge judge (needs a decision backend; nothing is scored without one). Overrides MARINA_JUDGE for challenges. `observe` (default) scores held commands in shadow so its agreement with people is measured. `on` also auto-approves `once` for a gate only after it earned that gate (25+ approved calls at 85% or better, 95% lower bound), never for the core gates, never `always`, never a deny. `off` never scores. `challenge stats` shows the record.
 # @protected
 # MARINA_CHALLENGE_JUDGE=observe
 
-# Attention judges (needs a decision backend; nothing is judged without one): whether a borderline wake of a supervised resident was needed now, whether a reply deep in an agent conversation (depth 3+) adds anything, whether a code review approval rests on specific checking, and how useful a review verdict is. `observe` (default) records each opinion and its later mechanical result on the outcome path, so agreement is measured per judge and model. `on` lets a judge that EARNED it (25+ comparisons, 95% lower bound 0.85 or better) act advisorily: wake and deep-reply opinions feed the `attention_useful`/`attention_noise` counters, review opinions show in `code review <id>`. A judge never blocks, closes or approves anything. `off` makes no calls and records nothing.
+# Attention judges (needs a decision backend; nothing is judged without one; overrides MARINA_JUDGE for them): whether a borderline wake of a supervised resident was needed now, whether a reply deep in an agent conversation (depth 3+) adds anything, whether a code review approval rests on specific checking, and how useful a review verdict is. `observe` (default) records each opinion and its later mechanical result on the outcome path, so agreement is measured per judge and model. `on` lets a judge that EARNED it (25+ comparisons, 95% lower bound 0.85 or better) act advisorily: wake and deep-reply opinions feed the `attention_useful`/`attention_noise` counters, review opinions show in `code review <id>`. A judge never blocks, closes or approves anything. `off` makes no calls and records nothing.
 # MARINA_ATTENTION_JUDGE=observe
 
 # Deepest spawn lineage an agent may extend (lead → sub-lead → specialist).
@@ -359,11 +362,17 @@
 # VIBETHINKER_BASE_URL=http://localhost:8000/v1
 # VIBETHINKER_API_KEY=
 
-# Pin the context window (tokens) the agent compactor budgets against. Normally autodetected at launch (llama.cpp /props, Ollama /api/show); these win over the probe. Without either, llama uses 16384, Ollama 8192 and VibeThinker 40960.
+# H2O-Lightning (h2oai/h2o-lightning-4b) served by vLLM. Usable only as an explicit `lightning/<id>` model, never as a marina/default fallback. In Docker it is the optional `lightning` compose profile, whose own LIGHTNING_MODEL, LIGHTNING_CTX, LIGHTNING_MODELS_DIR and LIGHTNING_REASONING_PARSER are read by docker-compose.yml, not by Marina.
+# @restart
+# LIGHTNING_BASE_URL=http://localhost:8000/v1
+# LIGHTNING_API_KEY=
+
+# Pin the context window (tokens) the agent compactor budgets against. Normally autodetected at launch (llama.cpp /props, Ollama /api/show); these win over the probe. Without either, llama uses 16384, Ollama 8192, VibeThinker 40960 and H2O-Lightning 32768. Lightning's weights declare 262144, but the default matches what the compose service actually serves: the KV cache for the full window does not fit beside the weights on one 24 GB card, and a window Marina budgets against but vLLM refuses is rejected at request time.
 # @restart
 # LLAMA_CONTEXT_WINDOW=16384
 # OLLAMA_CONTEXT_WINDOW=8192
 # VIBETHINKER_CONTEXT_WINDOW=
+# LIGHTNING_CONTEXT_WINDOW=
 
 # Context window assumed for marina/default. Set it when marina/default proxies to a small local model, or requests overflow it.
 # MARINA_DEFAULT_CONTEXT_WINDOW=128000
@@ -382,8 +391,8 @@
 
 # ── Default and fallback models ──────────────────────────────────────────────
 
-# Model tiers — the one place to choose models for work that names none (src/config/model-tiers.ts; `admin models` shows the effective model per tier and role and where each came from). CHEAP runs residents (agents spawned without a model), room agents, boot-seeded crews (Workbench, answerer/orchestration crews, Chronicler) and memory helpers. Unset: MARINA_DEFAULT_MODEL or a runtime default when one is set, else the cheapest adequate tool-capable model for the keys present — openrouter/deepseek/deepseek-v4.1-flash, deepseek/deepseek-flash, anthropic/claude-haiku-5-5, openai/gpt-6-luna, google/gemini-3.1-flash-lite, groq/openai/gpt-oss-120b, cerebras/gpt-oss-120b, huggingface/zai-org/GLM-5.3-Flash, mistral/mistral-small-latest, in that order (a configured local runtime first), else marina/default. STRONG runs what grades or overrules: the benchmark judge, the outcome extractor, lesson writer and judge, the decision classifier, and the Arbiter. Unset it is marina/default exactly as before, so judging never becomes cheap by accident. Both tiers are also live /v1 model ids, `marina/cheap` and `marina/strong`, resolved per request, so an agent saved on `marina/cheap` follows a later tier change. Move one role with `role:<role>=<model>` in MARINA_AGENT_MODELS; every older role variable still wins.
-# MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash
+# Model tiers — the one place to choose models for work that names none (src/config/model-tiers.ts; `admin models` shows the effective model per tier and role and where each came from). CHEAP runs residents (agents spawned without a model), room agents, boot-seeded crews (Workbench, answerer/orchestration crews, Chronicler) and memory helpers. Unset: MARINA_DEFAULT_MODEL or a runtime default when one is set, else the cheapest adequate tool-capable model for the keys present — openrouter/deepseek/deepseek-v4.1-flash-1017, deepseek/deepseek-flash, anthropic/claude-haiku-5-5, openai/gpt-6-luna, google/gemini-3.1-flash-lite, groq/openai/gpt-oss-120b, cerebras/gpt-oss-120b, huggingface/zai-org/GLM-5.3-Flash, mistral/mistral-small-latest, in that order (a configured local runtime first), else marina/default. STRONG runs what grades or overrules: the benchmark judge, the outcome extractor, lesson writer and judge, the decision classifier, and the Arbiter. Unset it is marina/default exactly as before, so judging never becomes cheap by accident. Both tiers are also live /v1 model ids, `marina/cheap` and `marina/strong`, resolved per request, so an agent saved on `marina/cheap` follows a later tier change. Move one role with `role:<role>=<model>` in MARINA_AGENT_MODELS; every older role variable still wins.
+# MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash-1017
 # MARINA_MODEL_TIER_STRONG=openrouter/anthropic/claude-opus-5.5
 
 # Default output cap for cheap-tier requests: a request on `marina/cheap` that sets no max_tokens (a /v1 client such as the benchmark harness, a `src/model` pipeline; agents always send their own cap and keep it) gets this many, and on an OpenRouter route also `reasoning.max_tokens` at 3/4 of it, so a runaway reasoning loop stops there with room left for the answer. A caller's own max_tokens / max_completion_tokens always wins, larger or smaller; explicit model ids and the strong tier are never capped. Default 16384: on the 2026-10-20 proof run deepseek-v4.1-flash answers ran p95 6.3k / p99 13.1k output tokens, and the 0.8 % above 16k (up to ~98k) scored 0.29 on average and were a third of the cost. A reply cut at the cap is marked on its trace (`outputCapHit`) and on `x-marina-output-cap: <n>; hit`; `admin models` shows the cap and the hits since start. `0` or `off` disables it.
@@ -437,6 +446,10 @@
 # Default `on`: every agent a local routing supervisor (`marina supervise`, `marina code` native agents) launches becomes its own world account, owned by the launching person: an agent config with runtime `supervised`, an owned agent principal, a 24-hour workload credential renewed while the run lives and revoked when it stops, and a world presence in the launcher's room. The native process holds no world credential: it gets MARINA_RELAY_SOCKET, a private Unix socket over which `marina connect -c` runs commands on the resident's own connection. Set it on the server (enables `POST /api/routing/residents`) and in the supervisor's environment. Supervised residents are never respawned by the server. A supervisor whose server offers no supervision endpoint (residents off, or an older server) falls back to the earlier routing and says so. `off`: routing behaves as before (the supervisor passes its own credential through).
 # @restart
 # MARINA_SUPERVISED_RESIDENTS=on
+
+# The in-world supervisor (`supervisor start`: the native agent supervisor run by the server) on boot. `resume` (default) restarts the supervisor a person started and did not stop, for that person and root, after a restart. `off` starts nothing. `person:<name>` starts one for that person's account in the default code root on every boot. Starting always needs a person's account (its supervision credential is that person's), supervised residents on, and a configured code root.
+# @restart
+# MARINA_SUPERVISOR_AUTOSTART=resume
 
 # Renewable lease on a newly claimed task, in milliseconds. Workers renew with `task heartbeat <id>`; expired ordinary work reopens.
 # MARINA_TASK_LEASE_MS=900000
@@ -885,7 +898,7 @@
 # How long an ask-a-person verdict's challenge stays open, in milliseconds. Defaults to MARINA_CHALLENGE_TTL_MS.
 # MARINA_DECISION_APPROVAL_TIMEOUT_MS=3600000
 
-# Verify `task submit` deliverables: `observe` (default) records the judge's opinion without acting, so its agreement with creators is measured (`decision agreement`); `on` bounces a weak first attempt once (advisory; the creator still approves); `off` never scores. Code Mode submits (which already passed their required checks) get the opinion recorded under both `observe` and `on`, never a bounce. Needs a backend; nothing is scored without one.
+# Verify `task submit` deliverables (overrides MARINA_JUDGE for the verifier): `observe` (default) records the judge's opinion without acting, so its agreement with creators is measured (`decision agreement`); `on` bounces a weak first attempt once (advisory; the creator still approves); `off` never scores. Code Mode submits (which already passed their required checks) get the opinion recorded under both `observe` and `on`, never a bounce. Needs a backend; nothing is scored without one.
 # MARINA_DECISION_VERIFY=observe
 
 # Most images one decision request may carry (`/v1/decisions` and in-world decisions; 1–32). Every image is decoded and prepared to Jev's limits (PNG/JPEG, 256–1568 px a side, 78,400–2,458,624 px, ≤ 16 MiB) before it leaves Marina; together ≤ 30 MiB.
@@ -905,8 +918,8 @@
 # MARINA_ROUTE_INSTRUCTIONS=Choose the least costly model that can complete the task.
 # MARINA_ROUTE_FALLBACK=powerful
 
-# Benchmark evidence for model:route (src/engine/benchmark-evidence.ts). After the router picks, measured ledger results may prefer another of the SAME candidates: the best Wilson lower bound among at least two candidates with MIN_N items in the role's families (and within MAX_COST_USD per item, when set). `observe` (the default) records the pick on the route decision without acting; `on` applies it; `off` skips it. Resolved once at spawn and persisted; any error keeps the router's choice. Families: a comma list of benchmark names for every role, or JSON {"*": [...], "<role>": [...]}; when unset, the spawning role's own declared families (its traits' `families` capability) are used, expanded to the registered benchmarks tagged with them; with none, evidence never applies. Evidence is traced participants and direct-model runs; window evidence only with MARINA_ROUTE_EVIDENCE_WINDOW=true, shared window evidence never. Inspect with `trace advise evidence <benchmark>`.
-# MARINA_ROUTE_EVIDENCE=observe
+# Benchmark evidence for model:route (src/engine/benchmark-evidence.ts). After the router picks, measured ledger results may prefer another of the SAME candidates: the best Wilson lower bound among at least two candidates with MIN_N items in the role's families (and within MAX_COST_USD per item, when set). `on` (the default) applies it; `observe` only records the pick on the route decision; `off` skips it. Resolved once at spawn and persisted; any error keeps the router's choice. Families: a comma list of benchmark names for every role, or JSON {"*": [...], "<role>": [...]}; when unset, the spawning role's own declared families (its traits' `families` capability) are used, expanded to the registered benchmarks tagged with them; with none, evidence never applies. Evidence is traced participants and direct-model runs; window evidence only with MARINA_ROUTE_EVIDENCE_WINDOW=true, shared window evidence never. Inspect with `trace advise evidence <benchmark>`.
+# MARINA_ROUTE_EVIDENCE=on
 
 # Live evidence in spawn-time route evidence (src/outcomes/evidence.ts): also weigh what each candidate model (and role) actually got done on real work — task verdicts, Code Mode checks, outcomes reported to POST /v1/outcomes — as families `live:<source>`, mechanical outcomes only, never measurement, and only SHARED work (a person's work, or their agents', never pools into it). Same MIN_N, objective and observe/on mode as the ledger evidence, so under the default `observe` it is recorded, not applied. Default on; `off` uses the ledger only.
 # MARINA_ROUTE_EVIDENCE_LIVE=on
@@ -1038,7 +1051,7 @@
 # MARINA_FORECAST_TRIAGE=off
 
 # The cheap model that adds FACTS for triage (publisher, metric, period, expected publication date — never the class), told only the question, its answer type, its close and the cutoff as "today". Spend counts with the forecast's. `none` makes triage fully deterministic. Used only when MARINA_FORECAST_TRIAGE is observe or on; a model that cannot be built (no key) leaves triage deterministic and is recorded.
-# MARINA_FORECAST_TRIAGE_MODEL=openrouter/deepseek/deepseek-v4.1-flash
+# MARINA_FORECAST_TRIAGE_MODEL=openrouter/deepseek/deepseek-v4.1-flash-1017
 
 # Release-calendar evidence for triage: when the facts name an official FRED series, read whether the period's figure is already in it (as published the day before the cutoff; a past cutoff needs FRED_API_KEY) and, for a live cutoff with FRED_API_KEY, the next scheduled release. `off` uses dates from the text only. Free, keyless where possible.
 # MARINA_FORECAST_TRIAGE_CALENDAR=on
@@ -1049,8 +1062,9 @@
 # Judged outcomes (src/outcomes/judge-resolution.ts, judge-quality.ts), hourly, spend-capped; no decision backend means nothing.
 # - Resolution: a saved answer that no market settles is researched after its end time plus 2 days, and the decision backend judges how it resolved, at most 5 per hour. Choice answers: it picks an option. Multi-select: a yes/no per option behind a "has it resolved" gate. Numbers: MARINA_OUTCOME_JUDGE_MODEL proposes the value with a verbatim quote that must be in the evidence, and the backend confirms it.
 # - Quality: a task submission its creator has not decided within 3 days is judged for whether it completes the task, at most 5 per hour.
-# - `off` (default): nothing. `observe`: every judgement is recorded as a judged outcome that settles and teaches nothing, measured against any mechanical result (`outcome agreement`). `on`: as observe, and a confident judgement (≥ 0.9) from a judge that has earned agreement (≥ 25 comparisons, Wilson lower bound ≥ 0.85) settles the answer or is delivered as a lesson, labelled judged.
-# MARINA_OUTCOME_JUDGE=off
+# - `off`: nothing. `observe`: every judgement is recorded as a judged outcome that settles and teaches nothing, measured against any mechanical result (`outcome agreement`). `on`: as observe, and a confident judgement (≥ 0.9) from a judge that has earned agreement (≥ 25 comparisons, Wilson lower bound ≥ 0.85) settles the answer or is delivered as a lesson, labelled judged. Nothing is ever filed outside this world.
+# - Overrides MARINA_JUDGE here. Unset (and MARINA_JUDGE unset): `on` when a model provider is configured, else `off` (the same rule as MARINA_LESSONS_FROM_WORK). An explicit value always wins. `readiness` (`learning-loop`) shows what waits unjudged and how far each judge is from earning.
+# MARINA_OUTCOME_JUDGE=
 
 # The model that proposes a number's resolved value for judged resolution; default the first MARINA_FORECAST_ANALYSTS model, else `role:outcome-judge=`, then MARINA_MODEL_TIER_STRONG, then marina/default.
 # MARINA_OUTCOME_JUDGE_MODEL=
@@ -1141,7 +1155,7 @@
 # MARINA_ARENA_WIKI_EXTRACTORS=
 
 # The model the `events` and `news` extractors call (one narrow JSON call per candidate with evidence).
-# MARINA_ARENA_WIKI_EXTRACTOR_MODEL=openrouter/deepseek/deepseek-v4.1-flash
+# MARINA_ARENA_WIKI_EXTRACTOR_MODEL=openrouter/deepseek/deepseek-v4.1-flash-1017
 
 # How many of the specialist's best candidates the extractors read (1–100).
 # MARINA_ARENA_WIKI_EXTRACTOR_TOP=30
@@ -1355,8 +1369,23 @@
 
 # Durable record search for unified memory context: `lexical` (default, FTS5) or `hybrid` (lexical fused with the memory vector index; needs MARINA_MEMORY_EMBEDDINGS and an indexed space). A missing provider or an incomplete index answers lexically and is labelled `semantic_degraded` on the evidence tier, never an error. Evidence-gated: measure before enabling (`bun run qualify:paraphrase`).
 # MARINA_MEMORY_CONTEXT_SEARCH=lexical
-# Learned bundles (marina.learned.v1, docs/guides/learned-bundles.md): `on` lets an operator import a signed bundle with `bun run learned import`. Imported lessons land in `upstream:*` spaces with trust `imported` and are never trusted until local outcomes confirm them; defaults seed only empty slots; ledger aggregates become down-weighted priors, never ledger rows. `off` (default) refuses every import and nothing changes.
-# MARINA_UPSTREAM=off
+# Learned bundles (marina.learned.v1, docs/guides/learned-bundles.md): `on` lets an operator import a signed bundle with `bun run learned import`. Imported lessons land in `upstream:*` spaces with trust `imported` and are never trusted until local outcomes confirm them; defaults seed only empty slots; ledger aggregates become down-weighted priors, never ledger rows. Unset (default): only a bundle signed by a PINNED publisher key whose slices are all `open` imports (no unsigned bundle, no entitlement, no `--own`); the built-in pinned key list is empty, so nothing imports until an operator pins a key in MARINA_LEARNED_PUBLISHER_KEYS. `off` refuses every import not named by MARINA_BOOTSTRAP_BUNDLES, and nothing changes.
+# MARINA_UPSTREAM=
+
+# Serving imported lessons (src/learned/serve.ts): lessons from learned bundles are recalled beside the world's own, labelled `imported` (and `unsigned` for an unsigned bundle), ranked below every local trusted lesson, under the same family scoping, owner scope, measurement self-exclusion and as-of fence. A local trusted lesson whose rule matches one confirms it (and serves in its place); one the lesson judge finds it contradicts is retired. `on` serves; `observe` records what would be served (upstream_events `observed`) and serves nothing; `off` never reads them and every surface is unchanged. Unset (default): `on` once anything has been imported. Readiness `learned` reports the counts. No model call.
+# MARINA_IMPORTED_LESSONS=
+
+# Learned bundles imported at boot, right after the world seed and before any agent wakes: comma-separated bundle directories (a directory without a manifest.json stands for every bundle directly inside it, in name order). Naming a bundle here is the operator's opt-in for that bundle whatever MARINA_UPSTREAM says; every other import rule holds (pinned signatures, revocations, no downgrade, trust `imported` in `upstream:*` spaces, seeds only for empty slots). A bundle already imported at the same generation and digest is skipped, so a restart writes nothing. A refused bundle is logged and audited; boot continues. Unset (default): nothing runs. `marina learned distill <db>` turns an old world's database into a bundle.
+# @restart
+# MARINA_BOOTSTRAP_BUNDLES=
+
+# What MARINA_BOOTSTRAP_BUNDLES may accept beyond signed, open slices: comma-separated `own` (the bundles' `private` slices are the operator's own pack; never a paid `token` slice) and `unsigned` (a bundle written with no publisher key, every record labelled `unsigned`). Default empty.
+# @restart
+# MARINA_BOOTSTRAP_ACCEPT=
+
+# Imported seeds for default slots that choose a model (src/learned/upstream-model-seeds.ts: every slot class except `memory-ranking` — `role-model:*`, `verify:checker`, `forecast-config*`, crew slots and any slot filled from a benchmark run's target). `propose` (default): such a seed is never served by default resolution; the `default_resolved` trace marks it `withheld`, and each slot+value raises one ops-inbox approval that a person holding `role.edit` adopts with `benchmark promote <slot> upstream` (recorded with basis `upstream` and the bundle's artifact, version, item and value digest); an agent never adopts one. `serve`: the operator's opt-in to serve those seeds directly, as before. Seeds for non-model slots are served in both modes.
+# @protected
+# MARINA_UPSTREAM_MODEL_SEEDS=propose
 
 # Publisher keys a learned bundle or revocation list must be signed by: comma-separated `label=<base64 SPKI>` or bare base64 Ed25519 public keys, added to the keys pinned in source. A bundle signed by any other key is refused; the key embedded in a bundle is never trusted on its own.
 # @protected

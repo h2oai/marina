@@ -1,10 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { modelCallable } from "../../config/model-tiers";
+import { upstreamSeedFor } from "../../learned/upstream-seed";
 import { retireLessonsForRun } from "../../learning/intake";
 import { bold, category, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
-import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import {
   type CompareRunJob,
   type CompareRunReport,
@@ -17,6 +19,12 @@ import {
   startCompareRun,
 } from "../benchmark-compare-run";
 import { benchmarkExecution, formatBenchmarkExecution } from "../benchmark-execution";
+import {
+  type DatasetFetcher,
+  datasetSourceKind,
+  spawnDatasetFetch,
+  startDatasetFetch,
+} from "../benchmark-fetch";
 import {
   getKitJob,
   KIT_FLAGS,
@@ -39,7 +47,9 @@ import {
 import { parsePartition } from "../benchmark-partition";
 import {
   type ChallengeEvaluation,
+  eligiblePromotions,
   fileSlotPromotion,
+  isLiveSlot,
   lookupChallenge,
   type SplitStats,
 } from "../benchmark-promotion";
@@ -64,8 +74,16 @@ import {
   retireOutcomeNotesForRun,
 } from "../benchmark-runner";
 import { resolveRunTarget, type ServingCrew } from "../benchmark-target";
+import { refuseCommand } from "../command-response";
 import { BENCHMARK_RUN_MIN_RANK } from "../constants";
-import { recentResolutions } from "../default-resolution";
+import { recentResolutions, summarizeDefaultValue } from "../default-resolution";
+import { principalOf } from "../gate-context";
+import {
+  closeLiveProposals,
+  describeLiveCandidate,
+  evaluateLiveSlots,
+  LIVE_PROMOTION_MIN_PER_ARM,
+} from "../live-promotion";
 import { extractModifiers, parseModifiers, resolveMultiWordName } from "../parse-input";
 import { rankName } from "../permissions";
 import { rankFloorRefusal } from "../rank-floor";
@@ -85,9 +103,33 @@ function variantFromStatus(s: string): "active" | "done" | "fail" | "info" | "wa
   return "info";
 }
 
+/** Benchmarks whose items need no download: tracked in the checkout or built in code. */
+function readyWithoutDownload(): string {
+  return Object.keys(BENCHMARKS)
+    .flatMap((key) => {
+      const kind = datasetSourceKind(key);
+      return kind === "tracked" || kind === "generated" ? [`${key} (${kind})`] : [];
+    })
+    .join(", ");
+}
+
+/** One benchmark's dataset state, as `benchmark list` shows it. */
+function datasetStatus(runner: BenchmarkRunner, key: string): string {
+  const kind = datasetSourceKind(key);
+  if (kind === "tracked") return fmtStatus("tracked (ready)", "done");
+  if (kind === "generated") return fmtStatus("generated (ready)", "done");
+  return runner.datasetReady(key)
+    ? fmtStatus("downloaded (ready)", "done")
+    : fmtStatus(`needs \`benchmark fetch ${key}\``, "warn");
+}
+
 const HELP = `Run, track, and rank benchmark evaluations from inside the world.
 Usage:
-  benchmark list                                   — show available benchmarks + cache status
+  benchmark list                                   — show available benchmarks + dataset status
+  benchmark fetch <name>                           — download one benchmark's dataset into the
+                                                     checkout (the harness downloader, every request
+                                                     through the SSRF guard; HF_TOKEN for gated sets).
+                                                     Runs in the background; needs rank 4.
   benchmark orchestrations                         — show live marina:<name> endpoints
   benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [self-judge:on]
                    [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
@@ -125,6 +167,15 @@ Usage:
                                                      accuracy on them, cost
   benchmark reference [model|benchmark]            — show published reference scores
   benchmark defaults                               — promoted defaults: each slot's incumbent run
+  benchmark eligible [board]                       — read-only: configurations whose holdout
+                                                     evidence would pass the promotion rule now,
+                                                     with every other candidate read counted as
+                                                     tried; files nothing (promote stays manual,
+                                                     behind role.edit)
+  benchmark eligible live [role]                   — read-only: role-model:<role> slots judged on
+                                                     LIVE work (shared outcomes tagged by role and
+                                                     model, newer half = holdout): eligible,
+                                                     refused, too little data, and open proposals
   benchmark challenge <slot> <run> [--max-cost-ratio R]
                                                    — dry run on the slot's SELECTION split (the
                                                      holdout stays unread); shows what promotion needs
@@ -136,6 +187,15 @@ Usage:
                                                      the challenger needs MARINA_PROMOTION_MIN_REPLICATES
                                                      replicates (default 2) before the holdout is read.
                                                      Needs role.edit; never the run's own author.
+  benchmark promote role-model:<role> <model>      — file a live-evidence proposal: re-checks the
+                                                     rule on the outcomes and records the attempt;
+                                                     a person holding role.edit only (never an agent),
+                                                     never one whose work the evidence includes.
+  benchmark promote <slot> upstream                — adopt an imported bundle's seed for a slot that
+                                                     chooses a model (withheld until adopted; one
+                                                     ops-inbox approval each): a person holding
+                                                     role.edit only, recorded with basis upstream.
+                                                     For a role-model slot the model id works too.
   benchmark invalidate <run> reason:<text>         — retire a run that measured the infrastructure,
                                                      not the target (spend cap, outage): status
                                                      invalid, excluded from every ranking, pooling,
@@ -155,7 +215,10 @@ Usage:
                                                      only through judged lessons (\`lessons\`).
 
 Benchmarks: ${Object.keys(BENCHMARKS).join(", ")}
-  (smoke is the 15-item prompt A/B set, always ready; run "benchmark list" for status)
+  Ready with no download: ${readyWithoutDownload()}. Every other benchmark needs
+  "benchmark fetch <name>" once ("benchmark list" shows which are downloaded).
+  (smoke is the 15-item prompt A/B set; tracked sets are ready whatever directory the server
+  started in)
 
 Targets: crew:<name> = the residents serving marina:<name> (a model-<name> channel with a live
   agent; see "benchmark orchestrations"); model:<id> = the bare model as a control ("marina" =
@@ -167,7 +230,7 @@ Judge: judge-scored benchmarks (frames, simple-qa, hle-verified-gold*, narrative
 
 Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
-  orchestrations, defaults, challenge, compare-run status) are rank 0. Invalid runs are listed by runs and
+  orchestrations, defaults, eligible, challenge, compare-run status) are rank 0. Invalid runs are listed by runs and
   result, marked with their reason; every other reader skips them. A run whose items were
   more than MARINA_BENCHMARK_MAX_FALLBACK_RATE (default 25%) fallbacks — errors, spend-cap
   or provider failures instead of answers — is recorded invalid automatically. Results
@@ -250,10 +313,13 @@ export function benchmarkCommand(deps: {
   /** The agents behind a `marina:<name>` target (role, prompt version), recorded with the run. */
   describeTarget?: (model: string) => BenchmarkSubject[];
   /**
-   * Crews serving a live `marina:<name>` endpoint, with their formation. A
-   * `benchmark run` without a target measures the one serving crew.
+   * Crews that serve a `marina:<name>` endpoint (online or not), with their
+   * formation. A `benchmark run` without a target measures the one whose
+   * endpoint is live.
    */
   servingCrews?: () => ServingCrew[];
+  /** Downloads one dataset (`benchmark fetch`); the harness downloader by default. */
+  fetchDataset?: DatasetFetcher;
 }): CommandDef {
   const { db, runner, listOrchestrations } = deps;
   return {
@@ -268,6 +334,10 @@ export function benchmarkCommand(deps: {
       },
       { syntax: "benchmark compare-run status [id]", effect: "read" },
       { syntax: "benchmark defaults", effect: "read" },
+      { syntax: "benchmark eligible [board]", effect: "read" },
+      { syntax: "benchmark eligible live [role]", effect: "read" },
+      { syntax: "benchmark promote role-model:<role> <model>", effect: "write" },
+      { syntax: "benchmark promote <slot> upstream", effect: "write" },
       {
         syntax: "benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]",
         effect: "write",
@@ -292,6 +362,7 @@ export function benchmarkCommand(deps: {
         effect: "execute",
       },
       { syntax: "benchmark runs [--benchmark X] [--limit N]", effect: "read" },
+      { syntax: "benchmark fetch <name>", effect: "write" },
       { syntax: "benchmark kit [list]", effect: "execute" },
       { syntax: "benchmark kit doctor [setup]", effect: "execute" },
       { syntax: "benchmark kit status [id]", effect: "read" },
@@ -326,14 +397,13 @@ export function benchmarkCommand(deps: {
           const lines = [
             header(`Benchmarks (${specs.length})`),
             separator(),
-            ...specs.map((s) => {
-              const ready = runner.datasetReady(s.name)
-                ? fmtStatus("ready", "done")
-                : fmtStatus("missing", "warn");
-              return `  ${category(s.name.padEnd(16))} ${ready}  ${dim(s.description)}`;
-            }),
+            ...specs.map(
+              (s) =>
+                `  ${category(s.name.padEnd(16))} ${datasetStatus(runner, s.name)}  ${dim(s.description)}`,
+            ),
             "",
             dim("Run one with: benchmark run <name> [--limit N] [--seed N]"),
+            dim("Download a dataset with: benchmark fetch <name>"),
           ];
           ctx.send(input.entity, lines.join("\n"));
           return;
@@ -344,7 +414,7 @@ export function benchmarkCommand(deps: {
           if (orchs.length === 0) {
             ctx.send(
               input.entity,
-              "No live orchestrations. Spawn agents that join model-* channels.",
+              "No live orchestrations. A crew serves marina:<name> once an agent member is online (`crew create`, then `crew join`); or spawn agents that join model-* channels.",
             );
             return;
           }
@@ -362,7 +432,8 @@ export function benchmarkCommand(deps: {
         case "sweep": {
           const rawTarget = tokens[1];
           if (!rawTarget) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]",
             );
@@ -406,7 +477,8 @@ export function benchmarkCommand(deps: {
           }
 
           if (!sweepName) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Unknown benchmark: ${rawTarget}. Known: ${Object.keys(BENCHMARKS).join(", ")}`,
             );
@@ -473,7 +545,8 @@ export function benchmarkCommand(deps: {
 
         case "run": {
           if (!tokens[1]) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [--partition holdout|tune]",
             );
@@ -491,7 +564,8 @@ export function benchmarkCommand(deps: {
           // Voice-friendly name resolution: "mmlu pro" == "mmlu-pro", etc.
           const resolved = resolveMultiWordName(tokens, 1, Object.keys(BENCHMARKS));
           if (!resolved) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Unknown benchmark: ${tokens[1]}. Known: ${Object.keys(BENCHMARKS).join(", ")}`,
             );
@@ -505,7 +579,7 @@ export function benchmarkCommand(deps: {
           const concurrency = Number.parseInt(modifiers.concurrency ?? "", 10);
           const lessonsMode = modifiers["lessons-mode"]?.toLowerCase();
           if (lessonsMode !== undefined && lessonsMode !== "measure" && lessonsMode !== "live") {
-            ctx.send(input.entity, "lessons-mode must be measure or live.");
+            refuseCommand(ctx, input.entity, "lessons-mode must be measure or live.");
             return;
           }
           const cap =
@@ -566,6 +640,78 @@ export function benchmarkCommand(deps: {
               `Failed to start: ${err instanceof Error ? err.message : String(err)}`,
             );
           }
+          return;
+        }
+
+        case "fetch": {
+          // One dataset, through the harness's own downloader (SSRF-guarded),
+          // so a fresh install needs no out-of-band script.
+          const resolved = tokens[1]
+            ? resolveMultiWordName(tokens, 1, Object.keys(BENCHMARKS))
+            : undefined;
+          const key = resolved?.name;
+          if (!key || !BENCHMARKS[key]) {
+            refuseCommand(
+              ctx,
+              input.entity,
+              tokens[1]
+                ? `Unknown benchmark: ${tokens[1]}. Known: ${Object.keys(BENCHMARKS).join(", ")}`
+                : "Usage: benchmark fetch <name>   (benchmark list shows which datasets need one)",
+            );
+            return;
+          }
+          const kind = datasetSourceKind(key);
+          if (kind !== "cache") {
+            ctx.send(
+              input.entity,
+              `${key} needs no download: its items are ${kind === "tracked" ? "tracked in the checkout" : "generated in code"}.`,
+            );
+            return;
+          }
+          const fetchFloor = rankFloorRefusal(
+            entity,
+            BENCHMARK_RUN_MIN_RANK,
+            `benchmark fetch requires rank ${BENCHMARK_RUN_MIN_RANK} (${rankName(BENCHMARK_RUN_MIN_RANK)}): it downloads a dataset from the network into the checkout.`,
+          );
+          if (fetchFloor) {
+            ctx.send(input.entity, fetchFloor);
+            return;
+          }
+          if (runner.datasetReady(key)) {
+            ctx.send(
+              input.entity,
+              `${key} is already downloaded (ready). Run it: benchmark run ${key}`,
+            );
+            return;
+          }
+          const started = startDatasetFetch(
+            key,
+            deps.fetchDataset ?? spawnDatasetFetch,
+            ({ ok, output }) => {
+              const ready = ok && runner.datasetReady(key);
+              ctx.send(
+                input.entity,
+                ready
+                  ? `benchmark fetch ${key}: done. Run it: benchmark run ${key}`
+                  : `benchmark fetch ${key}: failed.\n${output}`,
+              );
+              deps.logEvent?.({
+                type: "feed_event",
+                kind: ready ? "benchmark_fetch_completed" : "benchmark_fetch_failed",
+                entity: entity.id,
+                ref: key,
+                summary: `benchmark fetch ${key} ${ready ? "completed" : "failed"}`,
+                payload: { benchmark: key },
+                timestamp: Date.now(),
+              });
+            },
+          );
+          ctx.send(
+            input.entity,
+            started
+              ? `Fetching ${key} in the background; you'll get a message when it is done (benchmark list shows its state).`
+              : `A fetch of ${key} is already running.`,
+          );
           return;
         }
 
@@ -648,7 +794,8 @@ export function benchmarkCommand(deps: {
           for (const [k, v] of Object.entries(values))
             if (k !== "dry-run" && typeof v === "string") flags[k] = v;
           if (!dryRun && flags.budget === undefined) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "benchmark kit: a run needs budget:<usd> — the kit refuses when its estimate exceeds it. Add dry-run to see the plan and estimate first.",
             );
@@ -699,7 +846,7 @@ export function benchmarkCommand(deps: {
         case "result": {
           const id = tokens[1];
           if (!id) {
-            ctx.send(input.entity, "Usage: benchmark result <id>");
+            refuseCommand(ctx, input.entity, "Usage: benchmark result <id>");
             return;
           }
           const row = db.getBenchmarkRun(id);
@@ -724,7 +871,12 @@ export function benchmarkCommand(deps: {
             );
           }
           if (row.agent_id) {
-            lines.push(`  ${bold("launched by")}: ${row.agent_id}`);
+            // The launcher's name (live, else saved); the raw id only when neither is known.
+            const launcher =
+              deps.getEntity(row.agent_id)?.name ??
+              db.loadEntity(row.agent_id as EntityId)?.name ??
+              row.agent_id;
+            lines.push(`  ${bold("launched by")}: ${launcher}`);
           }
           {
             // Item labels (migration 157): checks that never ran are not failures,
@@ -828,7 +980,11 @@ export function benchmarkCommand(deps: {
         case "leaderboard": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: benchmark leaderboard <benchmark> [--limit N]");
+            refuseCommand(
+              ctx,
+              input.entity,
+              "Usage: benchmark leaderboard <benchmark> [--limit N]",
+            );
             return;
           }
           const rawArgs = tokens.slice(2).join(" ");
@@ -985,7 +1141,8 @@ export function benchmarkCommand(deps: {
           }
           const name = BENCHMARKS[action] ? action : undefined;
           if (!name) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Unknown benchmark: ${tokens[1]}. Known: ${Object.keys(BENCHMARKS).join(", ")}`,
             );
@@ -1036,7 +1193,7 @@ export function benchmarkCommand(deps: {
           if (!runner.datasetReady(name)) {
             ctx.send(
               input.entity,
-              `Dataset not cached for ${name}. Run "bun run benchmarks/download-all.ts".`,
+              `Dataset not downloaded for ${name}. Run "benchmark fetch ${name}".`,
             );
             return;
           }
@@ -1104,7 +1261,7 @@ export function benchmarkCommand(deps: {
         case "compare": {
           const [a, b] = [tokens[1], tokens[2]];
           if (!a || !b) {
-            ctx.send(input.entity, "Usage: benchmark compare <runA> <runB>");
+            refuseCommand(ctx, input.entity, "Usage: benchmark compare <runA> <runB>");
             return;
           }
           const runA = db.getBenchmarkRun(a);
@@ -1115,7 +1272,8 @@ export function benchmarkCommand(deps: {
           }
           const invalid = [runA, runB].find((r) => r.status === "invalid");
           if (invalid) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Run ${invalid.id} is invalid (${invalidReason(db, invalid)}) — invalid runs are never compared. \`benchmark revalidate\` restores it if the reason no longer holds.`,
             );
@@ -1153,7 +1311,7 @@ export function benchmarkCommand(deps: {
         case "replicates": {
           const id = tokens[1];
           if (!id) {
-            ctx.send(input.entity, "Usage: benchmark replicates <run>");
+            refuseCommand(ctx, input.entity, "Usage: benchmark replicates <run>");
             return;
           }
           const run = db.getBenchmarkRun(id);
@@ -1177,7 +1335,7 @@ export function benchmarkCommand(deps: {
           const id = tokens[1];
           const reason = freeTextModifier(tokens.slice(2), "reason");
           if (!id || !reason) {
-            ctx.send(input.entity, `Usage: benchmark ${sub} <run> reason:<text>`);
+            refuseCommand(ctx, input.entity, `Usage: benchmark ${sub} <run> reason:<text>`);
             return;
           }
           const why = reason.slice(0, MAX_VALIDITY_REASON);
@@ -1209,7 +1367,7 @@ export function benchmarkCommand(deps: {
         case "purge-content-notes": {
           const parsed = parseModifiers(tokens.slice(1), { confirm: { type: "bool" } });
           if (parsed.errors.length || parsed.rest.length) {
-            ctx.send(input.entity, "Usage: benchmark purge-content-notes [confirm:yes]");
+            refuseCommand(ctx, input.entity, "Usage: benchmark purge-content-notes [confirm:yes]");
             return;
           }
           ctx.send(
@@ -1222,7 +1380,7 @@ export function benchmarkCommand(deps: {
         case "frontier": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: benchmark frontier <benchmark>");
+            refuseCommand(ctx, input.entity, "Usage: benchmark frontier <benchmark>");
             return;
           }
           const rows = db.leaderboardBenchmark(name, 100);
@@ -1258,7 +1416,7 @@ export function benchmarkCommand(deps: {
         case "participants": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: benchmark participants <benchmark>");
+            refuseCommand(ctx, input.entity, "Usage: benchmark participants <benchmark>");
             return;
           }
           const items = db.getBenchmarkItemsForBenchmark(name);
@@ -1325,11 +1483,22 @@ export function benchmarkCommand(deps: {
           return;
         }
 
+        case "eligible": {
+          ctx.send(
+            input.entity,
+            tokens[1]?.toLowerCase() === "live"
+              ? renderLiveEligible(db, tokens[2])
+              : renderEligible(db, tokens[1]),
+          );
+          return;
+        }
+
         case "challenge":
         case "promote": {
           const [slot, runId] = [tokens[1], tokens[2]];
           if (!slot || !runId) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Usage: benchmark ${sub} <slot> <run> [--max-cost-ratio R]${sub === "promote" ? " [--holdout F]" : ""}`,
             );
@@ -1343,7 +1512,20 @@ export function benchmarkCommand(deps: {
             ? Number.parseFloat(modifiers["max-cost-ratio"])
             : undefined;
           if (maxCostRatio !== undefined && !(maxCostRatio > 0)) {
-            ctx.send(input.entity, "--max-cost-ratio must be a positive number.");
+            refuseCommand(ctx, input.entity, "--max-cost-ratio must be a positive number.");
+            return;
+          }
+          if (sub === "promote" && wantsUpstreamSeed(db, slot, runId)) {
+            ctx.send(input.entity, adoptUpstreamSeed(db, entity, slot, runId));
+            return;
+          }
+          if (isLiveSlot(slot)) {
+            ctx.send(
+              input.entity,
+              sub === "challenge"
+                ? renderLiveEligible(db, slot)
+                : promoteLive(db, entity, slot, runId),
+            );
             return;
           }
           if (sub === "challenge") {
@@ -1542,6 +1724,176 @@ function costLine(e: ChallengeEvaluation): string {
   const c = e.costPerItem;
   if (c.challenger === null || c.incumbent === null) return `  $/item: ${dim("unpriced")}`;
   return `  $/item: challenger ${usd(c.challenger)}  incumbent ${usd(c.incumbent)}  ratio ${c.ratio === null ? "—" : `${c.ratio.toFixed(2)}×`}`;
+}
+
+/** `benchmark eligible [board]`: what would earn a slot now (read-only; files nothing). */
+export function renderEligible(db: MarinaDB, board: string | undefined): string {
+  const rows = eligiblePromotions(db, board ? { board } : {});
+  if (rows.length === 0) {
+    return `No configuration to contest a promoted slot${board ? ` on ${board}` : ""}: a slot needs an incumbent and a completed run of another configuration on its benchmark.`;
+  }
+  const eligible = rows.filter((r) => r.eligible);
+  const lines = [
+    header(`Eligible to promote (${eligible.length} of ${rows.length})`),
+    separator(),
+    dim(
+      "  Read-only: nothing is filed. Each is judged by the promotion rule on the holdout, with every other candidate read here counted as tried.",
+    ),
+  ];
+  for (const r of eligible) {
+    const e = r.evaluation!;
+    lines.push(
+      `  ${fmtStatus("ELIGIBLE", "done")} ${bold(r.slot)}  ${fmtId(r.runId)} vs ${fmtId(r.incumbentRunId ?? "—")}  delta ${(e.stats.delta * 100).toFixed(1)} pts  95% [${(e.stats.low * 100).toFixed(1)}, ${(e.stats.high * 100).toFixed(1)}]  bar ${((r.chargedMargin ?? e.margin) * 100).toFixed(1)} pts`,
+      `    ${dim(`file it: benchmark promote ${r.slot} ${r.runId} (needs role.edit; never by the author of a pooled run)`)}`,
+    );
+  }
+  for (const r of rows.filter((x) => !x.eligible)) {
+    lines.push(`  ${dim("not yet")}  ${r.slot}  ${fmtId(r.runId)}  ${dim(r.reasons[0] ?? "")}`);
+  }
+  return lines.join("\n");
+}
+
+/** `benchmark eligible live [role]`: role-model slots judged on live work (read-only). */
+export function renderLiveEligible(db: MarinaDB, role: string | undefined): string {
+  const reports = evaluateLiveSlots(db, role ? { role } : {});
+  if (reports.length === 0) {
+    return `No live evidence for ${role ? `role ${role.replace(/^role-model:/, "")}` : "any role"} yet: a role-model:<role> slot is judged on shared outcomes tagged family:work:<kind>:role:<role> and method:model:<m> (world agents' verified work).`;
+  }
+  const open = new Map(
+    db
+      .listOperationalAlerts(undefined, 100_000)
+      .filter((a) => a.category === "promotion" && a.status !== "resolved")
+      .map((a) => [a.alert_key, a]),
+  );
+  const lines = [
+    header("Live promotions (role-model slots)"),
+    separator(),
+    dim(
+      `  Read-only: nothing is recorded or filed. Newer half of each role's outcomes = holdout; a candidate needs ≥ ${LIVE_PROMOTION_MIN_PER_ARM} per arm in each split, the 95% interval above 0, the fishing margin, and no discovery loss.`,
+    ),
+  ];
+  for (const r of reports) {
+    lines.push(
+      `  ${bold(r.slot)}  incumbent ${r.incumbent.model} ${dim(`[${r.incumbent.source}]`)}  ${r.outcomes} outcome(s)`,
+    );
+    if (r.candidates.length === 0)
+      lines.push(`    ${dim("no other model has done this role's work")}`);
+    for (const c of r.candidates) {
+      const proposed = [...open.keys()].some((k) =>
+        k.startsWith(`promotion:${c.slot}:${c.incumbent}>${c.candidate}`),
+      );
+      const tag =
+        c.status === "eligible"
+          ? fmtStatus(proposed ? "PROPOSED" : "ELIGIBLE", "done")
+          : c.status === "refused"
+            ? fmtStatus("REFUSED", "warn")
+            : dim(c.status);
+      lines.push(
+        `    ${tag} ${c.candidate}  ${c.status === "too-little-data" || c.status === "not-callable" ? "" : describeLiveCandidate(c)}`,
+      );
+      if (c.status === "eligible")
+        lines.push(
+          `      ${dim(`file it: benchmark promote ${c.slot} ${c.candidate} (a person holding role.edit; never an agent)`)}`,
+        );
+      for (const why of c.reasons) lines.push(`      ${dim(why)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * File a live-evidence promotion: a PERSON holding `role.edit` only. The rule
+ * is re-checked on the outcomes as they stand now; the attempt is recorded
+ * promoted or refused (`fileSlotPromotion`).
+ */
+function promoteLive(db: MarinaDB, entity: Entity, slot: string, model: string): string {
+  if (principalOf(entity.id) !== "person")
+    return `Refused: a live promotion moves a world default, so a person files it (\`benchmark promote ${slot} ${model}\` from a person session). An agent never files one.`;
+  const gate = checkRoleEdit(db, entity, `benchmark promote ${slot}`);
+  if ("reason" in gate) return gate.reason;
+  const report = evaluateLiveSlots(db, { role: slot });
+  const candidate = report[0]?.candidates.find((c) => c.candidate === model);
+  if (!candidate) {
+    const incumbent = report[0]?.incumbent.model;
+    const seed = upstreamSeedFor(db, slot);
+    return incumbent === model
+      ? `${model} is already what ${slot} resolves to.`
+      : `No live evidence for ${model} on ${slot}: \`benchmark eligible live\` lists the candidates.${seed ? ` An imported upstream seed proposes ${summarizeDefaultValue(seed.value)}: \`benchmark promote ${slot} upstream\` adopts it.` : ""}`;
+  }
+  const filed = fileSlotPromotion(db, {
+    slot,
+    live: candidate,
+    actor: {
+      key: db.durableEntityKey(entity.id),
+      entityId: entity.id,
+      keyOf: (id) => db.durableEntityKey(id),
+    },
+  });
+  if (filed.kind === "error") return filed.message;
+  if (filed.kind === "refused") {
+    return [
+      `Not promoted: ${slot} keeps ${candidate.incumbent}. Recorded as an attempt (${candidate.triedBefore + 1} candidate(s) now count toward its margin).`,
+      `  ${describeLiveCandidate(candidate)}`,
+      ...candidate.reasons.map((r) => `  ${fmtStatus("BLOCK", "warn")} ${r}`),
+    ].join("\n");
+  }
+  gate.record();
+  closeLiveProposals(db, slot);
+  return [
+    `Promoted ${model} to ${slot}, replacing ${candidate.incumbent}. Agents spawned for role ${candidate.role} without a model now run on it; env settings still win.`,
+    `  ${describeLiveCandidate(candidate)}`,
+  ].join("\n");
+}
+
+/**
+ * Whether `benchmark promote <slot> <token>` adopts an upstream seed: the
+ * literal `upstream`, or the seed's own string value when nothing else (a
+ * ledger run, live evidence for that model) answers to the token.
+ */
+function wantsUpstreamSeed(db: MarinaDB, slot: string, token: string): boolean {
+  if (token === "upstream") return true;
+  const seed = upstreamSeedFor(db, slot);
+  if (!seed || typeof seed.value !== "string" || seed.value.trim() !== token) return false;
+  if (isLiveSlot(slot))
+    return !evaluateLiveSlots(db, { role: slot })[0]?.candidates.some((c) => c.candidate === token);
+  return !db.getBenchmarkRun(token);
+}
+
+/**
+ * Adopt an imported bundle's seed into its empty slot: a PERSON holding
+ * `role.edit` only. A seed for a slot that chooses a model is never served
+ * until this runs (`src/learned/upstream-model-seeds.ts`); filed through
+ * `fileSlotPromotion` with basis `upstream`.
+ */
+function adoptUpstreamSeed(db: MarinaDB, entity: Entity, slot: string, token: string): string {
+  if (principalOf(entity.id) !== "person")
+    return `Refused: adopting an upstream seed changes which model ${slot} runs, so a person adopts it (\`benchmark promote ${slot} ${token}\` from a person session). An agent never adopts one.`;
+  const gate = checkRoleEdit(db, entity, `benchmark promote ${slot}`);
+  if ("reason" in gate) return gate.reason;
+  const seed = upstreamSeedFor(db, slot);
+  if (!seed) {
+    return db.getBenchmarkDefault(slot)
+      ? `${slot} is already set locally; an upstream seed only fills an empty slot.`
+      : `No upstream seed for ${slot}: \`learned seeds\` lists the imported seeds.`;
+  }
+  const shown = summarizeDefaultValue(seed.value);
+  if (token !== "upstream" && !(typeof seed.value === "string" && seed.value.trim() === token))
+    return `The upstream seed for ${slot} is ${shown}, not ${token}: \`benchmark promote ${slot} upstream\` adopts it.`;
+  if (isLiveSlot(slot) && typeof seed.value === "string" && !modelCallable(seed.value))
+    return `Not adopted: ${seed.value} cannot be called on this installation (no provider key). Nothing was recorded.`;
+  const filed = fileSlotPromotion(db, {
+    slot,
+    upstream: seed,
+    actor: {
+      key: db.durableEntityKey(entity.id),
+      entityId: entity.id,
+      keyOf: (id) => db.durableEntityKey(id),
+    },
+  });
+  if (filed.kind === "error") return filed.message;
+  gate.record();
+  closeLiveProposals(db, slot);
+  return `Adopted ${seed.source} into ${slot}: ${shown}. It now answers as a local slot (basis upstream); env settings still win, and earned local evidence can replace it.`;
 }
 
 /** Dry run: the SELECTION split only — the holdout stays unread until a promotion attempt. */

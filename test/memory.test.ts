@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_memory.db";
+const TEST_DB = tempDbPath("test_memory.db");
 
 describe("Agent Memory Primitives", () => {
   let db: MarinaDB;
@@ -124,11 +124,12 @@ describe("Agent Memory Primitives", () => {
       expect(conn2.lastText()).not.toContain("secret");
     });
 
-    it("should show no history when key has no edits", () => {
+    it("should show the first set when key has no edits", () => {
       engine.processCommand(conn1.entity!, "memory set goal original");
       conn1.clear();
       engine.processCommand(conn1.entity!, "memory history goal");
-      expect(conn1.lastText()).toContain("No edit history");
+      expect(stripAnsi(conn1.lastText())).toContain('set "original" (first set)');
+      expect(conn1.lastText()).not.toContain("No edit history");
     });
   });
 
@@ -136,7 +137,7 @@ describe("Agent Memory Primitives", () => {
 
   describe("Note Extensions", () => {
     it("should save note with importance via plain words", () => {
-      engine.processCommand(conn1.entity!, "note Found a key importance 8");
+      engine.processCommand(conn1.entity!, "memory note Found a key importance 8");
       expect(conn1.lastText()).toContain("importance=8");
       const note = db.getNote(1);
       expect(note).toBeDefined();
@@ -144,7 +145,7 @@ describe("Agent Memory Primitives", () => {
     });
 
     it("should save note with type via plain words", () => {
-      engine.processCommand(conn1.entity!, "note The door is locked type fact");
+      engine.processCommand(conn1.entity!, "memory note The door is locked type fact");
       expect(conn1.lastText()).toContain("type=fact");
       const note = db.getNote(1);
       expect(note).toBeDefined();
@@ -154,20 +155,20 @@ describe("Agent Memory Primitives", () => {
     it("should save note with both importance and type", () => {
       engine.processCommand(
         conn1.entity!,
-        "note Critical decision made importance 9 type decision",
+        "memory note Critical decision made importance 9 type decision",
       );
       expect(conn1.lastText()).toContain("importance=9");
       expect(conn1.lastText()).toContain("type=decision");
     });
 
     it("should support legacy !N and #type syntax", () => {
-      engine.processCommand(conn1.entity!, "note Legacy note !7 #fact");
+      engine.processCommand(conn1.entity!, "memory note Legacy note !7 #fact");
       expect(conn1.lastText()).toContain("importance=7");
       expect(conn1.lastText()).toContain("type=fact");
     });
 
     it("should default to importance=5 and type=observation", () => {
-      engine.processCommand(conn1.entity!, "note Just a regular note");
+      engine.processCommand(conn1.entity!, "memory note Just a regular note");
       const note = db.getNote(1);
       expect(note).toBeDefined();
       expect(note!.importance).toBe(5);
@@ -175,18 +176,18 @@ describe("Agent Memory Primitives", () => {
     });
 
     it("should show importance and type in note list", () => {
-      engine.processCommand(conn1.entity!, "note Important fact importance 8 type fact");
+      engine.processCommand(conn1.entity!, "memory note Important fact importance 8 type fact");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "note list");
+      engine.processCommand(conn1.entity!, "memory note list");
       const text = stripAnsi(conn1.lastText());
       expect(text).toContain("!8");
       expect(text).toContain("[fact]");
     });
 
     it("should correct a note with supersedes link", () => {
-      engine.processCommand(conn1.entity!, "note The door is red");
+      engine.processCommand(conn1.entity!, "memory note The door is red");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "note correct 1 The door is blue");
+      engine.processCommand(conn1.entity!, "memory note correct 1 The door is blue");
       expect(conn1.lastText()).toContain("superseding #1");
       const newNote = notesById().at(-1);
       expect(newNote).toBeDefined();
@@ -198,7 +199,7 @@ describe("Agent Memory Primitives", () => {
     });
 
     it("should strip importance/type markers from content", () => {
-      engine.processCommand(conn1.entity!, "note Found treasure here !8 #fact");
+      engine.processCommand(conn1.entity!, "memory note Found treasure here !8 #fact");
       const note = db.getNote(1);
       expect(note!.content).toBe("Found treasure here");
       expect(note!.importance).toBe(8);
@@ -206,7 +207,7 @@ describe("Agent Memory Primitives", () => {
     });
 
     it("should ignore invalid note types", () => {
-      engine.processCommand(conn1.entity!, "note test #invalid");
+      engine.processCommand(conn1.entity!, "memory note test #invalid");
       const note = db.getNote(1);
       expect(note!.note_type).toBe("observation");
       expect(note!.content).toContain("#invalid");
@@ -217,44 +218,44 @@ describe("Agent Memory Primitives", () => {
 
   describe("Recall", () => {
     it("should retrieve notes sorted by combined score", () => {
-      engine.processCommand(conn1.entity!, "note The key is hidden !9 #fact");
-      engine.processCommand(conn1.entity!, "note Found a key here !3");
+      engine.processCommand(conn1.entity!, "memory note The key is hidden !9 #fact");
+      engine.processCommand(conn1.entity!, "memory note Found a key here !3");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "recall key");
+      engine.processCommand(conn1.entity!, "memory recall key");
       const text = stripAnsi(conn1.lastText());
       expect(text).toContain("key");
       expect(text).toContain("0.");
     });
 
     it("should support --recent flag", () => {
-      engine.processCommand(conn1.entity!, "note Old key information !9");
-      engine.processCommand(conn1.entity!, "note New key discovery !3");
+      engine.processCommand(conn1.entity!, "memory note Old key information !9");
+      engine.processCommand(conn1.entity!, "memory note New key discovery !3");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "recall key --recent");
+      engine.processCommand(conn1.entity!, "memory recall key --recent");
       const text = conn1.lastText();
       expect(text).toContain("key");
     });
 
     it("should support --important flag", () => {
-      engine.processCommand(conn1.entity!, "note Trivial key mention !2");
-      engine.processCommand(conn1.entity!, "note Critical key finding !9");
+      engine.processCommand(conn1.entity!, "memory note Trivial key mention !2");
+      engine.processCommand(conn1.entity!, "memory note Critical key finding !9");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "recall key --important");
+      engine.processCommand(conn1.entity!, "memory recall key --important");
       const text = conn1.lastText();
       expect(text).toContain("key");
     });
 
     it("should update last_accessed on recalled notes", () => {
-      engine.processCommand(conn1.entity!, "note Searchable content here !5");
+      engine.processCommand(conn1.entity!, "memory note Searchable content here !5");
       const before = db.getNote(1);
       expect(before!.last_accessed).toBeNull();
-      engine.processCommand(conn1.entity!, "recall content");
+      engine.processCommand(conn1.entity!, "memory recall content");
       const after = db.getNote(1);
       expect(after!.last_accessed).not.toBeNull();
     });
 
     it("should show message when no results", () => {
-      engine.processCommand(conn1.entity!, "recall nonexistentquery");
+      engine.processCommand(conn1.entity!, "memory recall nonexistentquery");
       expect(conn1.lastText()).toContain("No matching memories");
     });
   });
@@ -263,12 +264,12 @@ describe("Agent Memory Primitives", () => {
 
   describe("Note Links", () => {
     it("should link two notes with a relationship", () => {
-      engine.processCommand(conn1.entity!, "note Premise A");
-      engine.processCommand(conn1.entity!, "note Conclusion B");
+      engine.processCommand(conn1.entity!, "memory note Premise A");
+      engine.processCommand(conn1.entity!, "memory note Conclusion B");
       conn1.clear();
       engine.processCommand(
         conn1.entity!,
-        `note link ${notesById()[0]!.id} ${notesById()[1]!.id} supports`,
+        `memory note link ${notesById()[0]!.id} ${notesById()[1]!.id} supports`,
       );
       expect(conn1.lastText()).toContain(
         `Linked note #${notesById()[0]!.id} -> #${notesById()[1]!.id} (supports)`,
@@ -276,19 +277,19 @@ describe("Agent Memory Primitives", () => {
     });
 
     it("should trace the graph from a note", () => {
-      engine.processCommand(conn1.entity!, "note Root idea");
-      engine.processCommand(conn1.entity!, "note Supporting evidence");
-      engine.processCommand(conn1.entity!, "note Related concept");
+      engine.processCommand(conn1.entity!, "memory note Root idea");
+      engine.processCommand(conn1.entity!, "memory note Supporting evidence");
+      engine.processCommand(conn1.entity!, "memory note Related concept");
       engine.processCommand(
         conn1.entity!,
-        `note link ${notesById()[0]!.id} ${notesById()[1]!.id} supports`,
+        `memory note link ${notesById()[0]!.id} ${notesById()[1]!.id} supports`,
       );
       engine.processCommand(
         conn1.entity!,
-        `note link ${notesById()[1]!.id} ${notesById()[2]!.id} related_to`,
+        `memory note link ${notesById()[1]!.id} ${notesById()[2]!.id} related_to`,
       );
       conn1.clear();
-      engine.processCommand(conn1.entity!, "note trace 1");
+      engine.processCommand(conn1.entity!, "memory note trace 1");
       const text = conn1.lastText();
       expect(text).toContain("Root idea");
       expect(text).toContain("Supporting evidence");
@@ -296,15 +297,15 @@ describe("Agent Memory Primitives", () => {
     });
 
     it("should show graph summary", () => {
-      engine.processCommand(conn1.entity!, "note Fact one #fact");
-      engine.processCommand(conn1.entity!, "note Fact two #fact");
-      engine.processCommand(conn1.entity!, "note Decision #decision");
+      engine.processCommand(conn1.entity!, "memory note Fact one #fact");
+      engine.processCommand(conn1.entity!, "memory note Fact two #fact");
+      engine.processCommand(conn1.entity!, "memory note Decision #decision");
       engine.processCommand(
         conn1.entity!,
-        `note link ${notesById()[0]!.id} ${notesById()[1]!.id} supports`,
+        `memory note link ${notesById()[0]!.id} ${notesById()[1]!.id} supports`,
       );
       conn1.clear();
-      engine.processCommand(conn1.entity!, "note graph");
+      engine.processCommand(conn1.entity!, "memory note graph");
       const text = stripAnsi(conn1.lastText());
       expect(text).toContain("[fact] 2");
       expect(text).toContain("[decision] 1");
@@ -312,17 +313,17 @@ describe("Agent Memory Primitives", () => {
     });
 
     it("should reject invalid relationships", () => {
-      engine.processCommand(conn1.entity!, "note A");
-      engine.processCommand(conn1.entity!, "note B");
+      engine.processCommand(conn1.entity!, "memory note A");
+      engine.processCommand(conn1.entity!, "memory note B");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "note link 1 2 invalid_rel");
+      engine.processCommand(conn1.entity!, "memory note link 1 2 invalid_rel");
       expect(conn1.lastText()).toContain("Invalid relationship");
     });
 
     it("should reject links to nonexistent notes", () => {
-      engine.processCommand(conn1.entity!, "note A");
+      engine.processCommand(conn1.entity!, "memory note A");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "note link 1 999 supports");
+      engine.processCommand(conn1.entity!, "memory note link 1 999 supports");
       expect(conn1.lastText()).toContain("not found");
     });
   });
@@ -333,10 +334,10 @@ describe("Agent Memory Primitives", () => {
     it("should create an episode-type note linked to sources", () => {
       // Create several high-importance notes
       for (let i = 0; i < 5; i++) {
-        engine.processCommand(conn1.entity!, `note Important observation number ${i} !8`);
+        engine.processCommand(conn1.entity!, `memory note Important observation number ${i} !8`);
       }
       conn1.clear();
-      engine.processCommand(conn1.entity!, "reflect");
+      engine.processCommand(conn1.entity!, "memory reflect");
       const text = conn1.lastText();
       expect(text).toContain("Reflection Created");
       expect(text).toContain("episode");
@@ -348,28 +349,28 @@ describe("Agent Memory Primitives", () => {
     });
 
     it("should filter by topic when provided", () => {
-      engine.processCommand(conn1.entity!, "note The key opens doors !7 #fact");
-      engine.processCommand(conn1.entity!, "note Keys are important !8 #fact");
-      engine.processCommand(conn1.entity!, "note Another key discovery !7");
-      engine.processCommand(conn1.entity!, "note Unrelated stuff !6");
+      engine.processCommand(conn1.entity!, "memory note The key opens doors !7 #fact");
+      engine.processCommand(conn1.entity!, "memory note Keys are important !8 #fact");
+      engine.processCommand(conn1.entity!, "memory note Another key discovery !7");
+      engine.processCommand(conn1.entity!, "memory note Unrelated stuff !6");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "reflect key");
+      engine.processCommand(conn1.entity!, "memory reflect key");
       const text = conn1.lastText();
       expect(text).toContain("Reflection Created");
     });
 
     it("should require at least 2 source notes", () => {
-      engine.processCommand(conn1.entity!, "note One thing !8");
+      engine.processCommand(conn1.entity!, "memory note One thing !8");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "reflect");
+      engine.processCommand(conn1.entity!, "memory reflect");
       expect(conn1.lastText()).toContain("Not enough notes");
     });
 
     it("should create part_of links from sources to reflection", () => {
       for (let i = 0; i < 3; i++) {
-        engine.processCommand(conn1.entity!, `note High importance item ${i} !8`);
+        engine.processCommand(conn1.entity!, `memory note High importance item ${i} !8`);
       }
-      engine.processCommand(conn1.entity!, "reflect");
+      engine.processCommand(conn1.entity!, "memory reflect");
       const reflection = db.getNotesByType("Alice", "episode")[0]!;
       const links = db.getNoteLinks(reflection.id);
       const partOfLinks = links.filter((l) => l.relationship === "part_of");
@@ -407,7 +408,7 @@ describe("Agent Memory Primitives", () => {
     it("should scope retrieval to pool only", () => {
       engine.processCommand(conn1.entity!, "pool create scoped");
       engine.processCommand(conn1.entity!, "pool scoped add Pool specific finding");
-      engine.processCommand(conn1.entity!, "note Personal finding about something");
+      engine.processCommand(conn1.entity!, "memory note Personal finding about something");
       conn1.clear();
       // Recall from pool should only find pool notes
       engine.processCommand(conn1.entity!, "pool scoped recall finding");
@@ -541,7 +542,7 @@ describe("Agent Memory Primitives", () => {
     });
 
     it("should show recent notes in briefing", () => {
-      engine.processCommand(conn1.entity!, "note The vault code is 7249 importance 8");
+      engine.processCommand(conn1.entity!, "memory note The vault code is 7249 importance 8");
       conn1.clear();
       engine.processCommand(conn1.entity!, "orient");
       const text = conn1.lastText();
@@ -550,8 +551,8 @@ describe("Agent Memory Primitives", () => {
     });
 
     it("should show memory health stats", () => {
-      engine.processCommand(conn1.entity!, "note First observation");
-      engine.processCommand(conn1.entity!, "note Second observation");
+      engine.processCommand(conn1.entity!, "memory note First observation");
+      engine.processCommand(conn1.entity!, "memory note Second observation");
       conn1.clear();
       engine.processCommand(conn1.entity!, "orient");
       const text = conn1.lastText();
@@ -570,23 +571,23 @@ describe("Agent Memory Primitives", () => {
 
   describe("Intent-Aware Recall", () => {
     it("should recall with default weights for simple queries", () => {
-      engine.processCommand(conn1.entity!, "note The cipher key is 42 importance 8");
+      engine.processCommand(conn1.entity!, "memory note The cipher key is 42 importance 8");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "recall cipher key");
+      engine.processCommand(conn1.entity!, "memory recall cipher key");
       expect(conn1.lastText()).toContain("cipher key");
     });
 
     it("should still respect explicit recent modifier", () => {
-      engine.processCommand(conn1.entity!, "note Found a map importance 5");
+      engine.processCommand(conn1.entity!, "memory note Found a map importance 5");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "recall map recent");
+      engine.processCommand(conn1.entity!, "memory recall map recent");
       expect(conn1.lastText()).toContain("map");
     });
 
     it("should still respect explicit important modifier", () => {
-      engine.processCommand(conn1.entity!, "note Critical discovery importance 9");
+      engine.processCommand(conn1.entity!, "memory note Critical discovery importance 9");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "recall discovery important");
+      engine.processCommand(conn1.entity!, "memory recall discovery important");
       expect(conn1.lastText()).toContain("discovery");
     });
   });
@@ -598,26 +599,29 @@ describe("Agent Memory Primitives", () => {
       // Create a note that matches the query
       engine.processCommand(
         conn1.entity!,
-        "note The main encryption cipher is AES-256 importance 8",
+        "memory note The main encryption cipher is AES-256 importance 8",
       );
       // Create a linked note that does NOT match the query keywords
-      engine.processCommand(conn1.entity!, "note The backup protocol uses RSA-4096 importance 7");
+      engine.processCommand(
+        conn1.entity!,
+        "memory note The backup protocol uses RSA-4096 importance 7",
+      );
       conn1.clear();
 
       // Link them manually via the note link subcommand
       // First get the IDs
-      engine.processCommand(conn1.entity!, "note list");
+      engine.processCommand(conn1.entity!, "memory note list");
       const listText = conn1.lastText();
       // Extract note IDs from the list
       const ids = [...listText.matchAll(/#(\d+)/g)].map((m) => m[1]);
       if (ids.length >= 2) {
         conn1.clear();
-        engine.processCommand(conn1.entity!, `note link ${ids[0]} ${ids[1]} related_to`);
+        engine.processCommand(conn1.entity!, `memory note link ${ids[0]} ${ids[1]} related_to`);
       }
 
       conn1.clear();
       // Recall for "cipher" — should find the AES note directly, and may boost the RSA note via graph link
-      engine.processCommand(conn1.entity!, "recall cipher");
+      engine.processCommand(conn1.entity!, "memory recall cipher");
       const text = conn1.lastText();
       expect(text).toContain("AES-256");
     });

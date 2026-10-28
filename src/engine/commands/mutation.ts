@@ -4,6 +4,7 @@
 import { experimentalHelp } from "../../config/feature-status";
 import type { MarinaDB, MutationDisposition } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { refuseCommand } from "../command-response";
 import { notFound } from "./command-messages";
 
 const DISPOSITIONS = ["proposed", "adopted", "rejected", "branched", "observed"] as const;
@@ -104,7 +105,11 @@ export function mutationCommand(deps: {
         try {
           parentManifest = JSON.parse(parent.manifest_json) as Record<string, unknown>;
         } catch {
-          ctx.send(input.entity, `Genome ${parent.hash} has a malformed manifest; cannot branch.`);
+          refuseCommand(
+            ctx,
+            input.entity,
+            `Genome ${parent.hash} has a malformed manifest; cannot branch.`,
+          );
           return;
         }
         const manifest = { ...parentManifest, ...patch };

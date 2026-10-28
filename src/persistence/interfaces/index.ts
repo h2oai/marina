@@ -37,6 +37,7 @@ export type { GatewaysStore } from "./gateways-store";
 export type { IntellectsStore } from "./intellects-store";
 export type { InvestigationsStore } from "./investigations-store";
 export type { JourneysStore } from "./journeys-store";
+export type { JudgeLedgerStore } from "./judge-ledger-store";
 export type { LearnedStore } from "./learned-store";
 export type { LogsStore } from "./logs-store";
 export type { MacrosStore } from "./macros-store";
@@ -123,6 +124,7 @@ import { INTELLECTS_STORE_METHODS } from "./intellects-store";
 import { INVESTIGATIONS_STORE_METHODS, type InvestigationsStore } from "./investigations-store";
 import type { JourneysStore } from "./journeys-store";
 import { JOURNEYS_STORE_METHODS } from "./journeys-store";
+import { JUDGE_LEDGER_STORE_METHODS, type JudgeLedgerStore } from "./judge-ledger-store";
 import type { LearnedStore } from "./learned-store";
 import { LEARNED_STORE_METHODS } from "./learned-store";
 import type { LogsStore } from "./logs-store";
@@ -202,6 +204,7 @@ export interface MarinaStores
     GatewaysStore,
     IntellectsStore,
     InvestigationsStore,
+    JudgeLedgerStore,
     JourneysStore,
     LearnedStore,
     LogsStore,
@@ -260,6 +263,7 @@ export const STORE_METHOD_MANIFEST: Readonly<Record<string, readonly string[]>> 
   GatewaysStore: GATEWAYS_STORE_METHODS,
   IntellectsStore: INTELLECTS_STORE_METHODS,
   InvestigationsStore: INVESTIGATIONS_STORE_METHODS,
+  JudgeLedgerStore: JUDGE_LEDGER_STORE_METHODS,
   JourneysStore: JOURNEYS_STORE_METHODS,
   LearnedStore: LEARNED_STORE_METHODS,
   LogsStore: LOGS_STORE_METHODS,

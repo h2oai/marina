@@ -467,6 +467,34 @@ describe("forecastCarded", () => {
     expect(a.routing.method).toBe("formation:ensemble");
     expect(a.routing.families).toEqual(["group:binary:no|yes"]);
   });
+
+  it("lesson recall gets the question's families (the class chain its outcome is tagged with)", async () => {
+    const calls: Array<{ families?: readonly string[] } | undefined> = [];
+    const lessons = {
+      async recall(_q: string, _asOf: string, opts?: { families?: readonly string[] }) {
+        calls.push(opts);
+        return [];
+      },
+    };
+    const a = await forecastCarded(
+      { question: "Will it?", answer: yesNo, category: "elections" },
+      { ...deps(), lessons },
+      "ensemble",
+      routeSettingsFromEnv({ MARINA_FORECAST_ROUTE: "off" }),
+      { env: {}, board: "futurex" },
+    );
+    expect(a.routing.families.length).toBeGreaterThan(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.families).toEqual(a.routing.families);
+    // A typed forecast with no families recalls exactly as before (no options).
+    calls.length = 0;
+    await forecastFormed(
+      { question: "Will it?", answer: yesNo },
+      { ...deps(), lessons },
+      "ensemble",
+    );
+    expect(calls).toEqual([undefined]);
+  });
 });
 
 describe("outcomes carry the routing tags; the competence map reads them back", () => {

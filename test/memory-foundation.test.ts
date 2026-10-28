@@ -136,7 +136,7 @@ describe("memory foundation contracts", () => {
     const result = await memory.search("trustedneedle", { trusted: true });
     expect(result.success).toBe(true);
     expect(result.results).toEqual([]);
-    expect(commands).toEqual(["recall trustedneedle trusted"]);
+    expect(commands).toEqual(["memory recall trustedneedle trusted"]);
   });
 
   it("searchTiered keeps the trusted tier strict and surfaces unverified notes as ordinary", async () => {
@@ -146,7 +146,7 @@ describe("memory foundation contracts", () => {
       verificationStatus: "verified",
     });
     const tiers = await memory.searchTiered("tierneedle");
-    expect(commands).toEqual(["recall tierneedle trusted", "recall tierneedle"]);
+    expect(commands).toEqual(["memory recall tierneedle trusted", "memory recall tierneedle"]);
     expect(tiers.trusted.map((n) => n.id)).toEqual([String(verified)]);
     expect(tiers.ordinary.map((n) => n.id).sort()).toEqual(
       [String(plain), String(verified)].sort(),
@@ -324,7 +324,7 @@ describe("memory foundation contracts", () => {
     });
     const first = current;
     for (let i = 0; i < 100; i++) {
-      command(`note correct ${current} revisionneedle state${i}`);
+      command(`memory note correct ${current} revisionneedle state${i}`);
       expect(stripAnsi(alice.lastText())).toContain("superseding");
       const successor = db.getNotesByEntity("Alice", 1)[0]!;
       expect(successor.supersedes_id).toBe(current);

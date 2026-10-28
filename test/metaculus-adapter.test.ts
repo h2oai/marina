@@ -401,7 +401,13 @@ describe("metaculus: outcomes teach", () => {
     });
     const resolved = { ...binary, status: "resolved", resolution: "no" };
     const sink = memoryLessonSink();
-    enableOutcomeLearning(db, { sink, writer: null, judge: null });
+    // A writer that gives a rule: a lesson with no rule is never stored.
+    const writer = {
+      name: "test/writer",
+      complete: async () =>
+        '{"category":"binary forecast","rule":"Shade binary forecasts toward the base rate."}',
+    };
+    enableOutcomeLearning(db, { sink, writer, judge: null });
     try {
       const opts = {
         client: fixtureClient([post(1, resolved)]),

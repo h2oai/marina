@@ -112,4 +112,31 @@ describe("GET /api/events", () => {
       expect(events.some((e) => e.type === "command")).toBe(false);
     }
   });
+
+  it("memory api payloads record no command event, and old clear rows are removed on start", async () => {
+    using _state = scopeProcessState({
+      trustProfile: "local",
+      env: { MARINA_AUTONOMY: undefined, ...noProviderEnv() },
+    });
+    world = createTestEngine();
+    const { entityId } = world.login("Journaler");
+    await world.engine.processCommand(entityId, `memory api {"op":"capture","text":"${SECRET}"}`);
+    await world.engine.processCommand(entityId, "look");
+    const live = commandInputs(world.engine.getEventLog());
+    expect(live.join("\n")).not.toContain("memory api");
+    expect(live).toContain("look");
+
+    const at = Date.now();
+    world.db.logEvent({
+      type: "command",
+      entity: entityId,
+      input: `memory api {"op":"capture","text":"${SECRET}"}`,
+      timestamp: at,
+    });
+    world.engine.start();
+    world.engine.stop();
+    const stored = commandInputs(world.db.getRecentEvents(500));
+    expect(stored.join("\n")).not.toContain(SECRET);
+    expect(stored.join("\n")).not.toContain("memory api");
+  });
 });

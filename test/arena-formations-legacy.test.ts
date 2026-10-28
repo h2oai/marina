@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The arena formations after the catalogue migration (ensemble and delphi on
- * the catalogue's numeric templates; the shared clamps moved to
- * `src/orchestration/formations/combine-numeric.ts`) are byte-identical to the
- * frozen pre-catalogue implementation on the stored rounds
- * (`test/fixtures/formations/arena-rounds.json`): every formation — the two
- * migrated and the ten still on their own code — gives the same forecast
- * (JSON, key order included) and makes the same calls in the same order,
- * with replies that arrive out of order, fail, or blow up. The reference is
- * `test/fixtures/formations-legacy/arena-formations.ts` — never edit it to pass.
+ * The arena formations that still run on their own code (catalogue entries
+ * with `numeric.runtime: "arena"`) are byte-identical to the frozen
+ * pre-catalogue implementation on the stored rounds
+ * (`test/fixtures/formations/arena-rounds.json`): the same forecast (JSON, key
+ * order included) and the same calls in the same order, with replies that
+ * arrive out of order, fail, or blow up. The reference is
+ * `test/fixtures/arena-formations-legacy.ts` — never edit it to pass.
+ *
+ * The formations that run from the catalogue (`ensemble`, `delphi`) are NOT
+ * pinned here: the catalogue is held by behaviour tests
+ * (`test/formation-behaviour.test.ts`, `test/formation-catalogue.test.ts`) and
+ * may change its prompts and answers when a measurement says it should.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -21,8 +24,9 @@ import {
   formationForecastRound,
 } from "../src/arena/formations";
 import type { ArenaLock, ArenaRound } from "../src/arena/types";
+import { FORMATIONS } from "../src/orchestration/formations/catalogue";
+import { formationForecastRound as legacyFormationForecastRound } from "./fixtures/arena-formations-legacy";
 import stored from "./fixtures/formations/arena-rounds.json";
-import { formationForecastRound as legacyFormationForecastRound } from "./fixtures/formations-legacy/arena-formations";
 
 function hash(s: string): number {
   let h = 0x811c9dc5;
@@ -75,8 +79,19 @@ function crew(seed: number, n: number, failRate: number, last: number) {
   return { members, calls };
 }
 
-describe("arena formations: catalogue ≡ pre-catalogue implementation (stored rounds)", () => {
-  for (const pattern of FORMATION_PATTERNS) {
+/** The arena formations on their own code; the catalogue-run ones are held by behaviour tests. */
+const OWN_CODE = FORMATION_PATTERNS.filter(
+  (p) => FORMATIONS[p as keyof typeof FORMATIONS]?.numeric?.runtime === "arena",
+);
+
+describe("arena formations on their own code ≡ pre-catalogue implementation (stored rounds)", () => {
+  it("covers every arena formation not run from the catalogue", () => {
+    expect(OWN_CODE).toHaveLength(FORMATION_PATTERNS.length - 2);
+    expect(OWN_CODE).not.toContain("ensemble");
+    expect(OWN_CODE).not.toContain("delphi");
+  });
+
+  for (const pattern of OWN_CODE) {
     it(`${pattern}: identical forecasts and calls`, async () => {
       let compared = 0;
       let formed = 0;

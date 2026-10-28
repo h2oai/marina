@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_pool_acl_dedup.db";
+const TEST_DB = tempDbPath("test_pool_acl_dedup.db");
 
 /**
  * Phase 0: group-scoped pools are enforceable end to end — `pool create <name>

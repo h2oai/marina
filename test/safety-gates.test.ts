@@ -19,10 +19,10 @@ import {
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
 import { GRANTED_DEMONSTRATIONS, isGrantedCompetence } from "../src/persistence/db-competence";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
-const TEST_DB = "test_safety_gates.db";
+const TEST_DB = tempDbPath("test_safety_gates.db");
 
 /** Seed an entity's standing via the existing task path. */
 function seedStanding(db: MarinaDB, entityId: string, name: string, amount: number): void {

@@ -16,7 +16,7 @@
  *
  *   bun run scripts/arena-wiki-extract.ts --dir <daily lists> --extractors edits,related \
  *     --out features.jsonl [--cache dir] [--top 30] [--weeks 2026-07-26..2026-10-18]
- *     [--model openrouter/deepseek/deepseek-v4.1-flash] [--budget 5] [--retriever asof:wikipedia]
+ *     [--model openrouter/deepseek/deepseek-v4.1-flash-1017] [--budget 5] [--retriever asof:wikipedia]
  */
 
 import { createHash } from "node:crypto";

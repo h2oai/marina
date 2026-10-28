@@ -24,8 +24,11 @@
  * `reasoningExhausted` recognizes the empty-by-cap reply so the proxy can turn
  * it into a coded error instead of a silent empty answer.
  */
+import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { REASONING_HEADROOM_TOKENS } from "../../agent/reasoning-control";
 import { omitsSamplingParams } from "../adapters/anthropic-tools";
+import { catalogModel } from "./catalog-snapshots";
 
 /** The lowest reasoning effort a known upstream model accepts. */
 export type LowestReasoningEffort = "none" | "low";
@@ -107,6 +110,65 @@ export function defaultRouteReasoningEffort(
   if (lowest === "none") return lowest;
   const cap = explicitOutputCap(body);
   return cap !== undefined && cap < SMALL_OUTPUT_CAP_TOKENS ? lowest : undefined;
+}
+
+/** The effort names pi-ai clamps between (`off`/`none` are never moved). */
+const EFFORT_LEVELS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
+
+let catalog: ReturnType<typeof builtinModels> | undefined;
+
+function openRouterCatalogModel(id: string): Model<Api> | undefined {
+  try {
+    catalog ??= builtinModels();
+    const known = catalog;
+    return catalogModel((m) => known.getModel("openrouter", m) as Model<Api> | undefined, id);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The effort `model` (an OpenRouter id) takes for a requested `effort`, the
+ * way pi-ai shapes a DIRECT OpenRouter request for the same model: an effort
+ * the catalog marks unavailable (deepseek-v4.1-flash has no `medium`) moves to
+ * the nearest available one, and a mapped name replaces the generic one.
+ * `undefined` = send it as it is (unknown model, `none`, or already valid).
+ */
+export function openRouterEffortFor(model: unknown, effort: unknown): string | undefined {
+  if (typeof model !== "string" || typeof effort !== "string") return undefined;
+  const level = effort.toLowerCase();
+  if (!EFFORT_LEVELS.has(level)) return undefined;
+  const known = openRouterCatalogModel(model.replace(/^~/, ""));
+  if (!known?.reasoning) return undefined;
+  const clamped = clampThinkingLevel(known, level as Parameters<typeof clampThinkingLevel>[1]);
+  if (clamped === "off") return undefined;
+  const map = (known as { thinkingLevelMap?: Record<string, string | null | undefined> })
+    .thinkingLevelMap;
+  const mapped = map?.[clamped];
+  const sent = typeof mapped === "string" ? mapped : clamped;
+  return sent === effort ? undefined : sent;
+}
+
+/**
+ * A request bound for OpenRouter with its reasoning effort (`reasoning_effort`
+ * or `reasoning.effort`) made one the routed model accepts
+ * ({@link openRouterEffortFor}), so a caller's thinking level reaches the
+ * model through Marina's `/v1` exactly as it would on a direct OpenRouter
+ * route. Returns the body itself when nothing needs to move.
+ */
+export function withOpenRouterEffort(body: Record<string, unknown>): Record<string, unknown> {
+  const top = openRouterEffortFor(body.model, body.reasoning_effort);
+  const reasoning =
+    body.reasoning && typeof body.reasoning === "object" && !Array.isArray(body.reasoning)
+      ? (body.reasoning as Record<string, unknown>)
+      : undefined;
+  const nested = reasoning ? openRouterEffortFor(body.model, reasoning.effort) : undefined;
+  if (top === undefined && nested === undefined) return body;
+  return {
+    ...body,
+    ...(top !== undefined ? { reasoning_effort: top } : {}),
+    ...(nested !== undefined ? { reasoning: { ...reasoning, effort: nested } } : {}),
+  };
 }
 
 /** Error code for a reply whose output cap was spent before any answer. */

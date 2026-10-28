@@ -19,6 +19,8 @@
  * unknown (a local runtime, a remote Marina, an unlisted id) is text-only.
  */
 
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { catalogModel } from "../net/model/catalog-snapshots";
 import { inferModelCapabilities } from "../net/model/model-discovery";
 import type { AgentSupports } from "./agent-types";
 import { hostedModel } from "./hosted-model";
@@ -65,7 +67,10 @@ function concreteAcceptsImages(model: string): boolean {
   if (!id) return false;
   const known = (() => {
     try {
-      return piModels.getModel(provider as never, id as never) as { input?: string[] } | undefined;
+      return catalogModel(
+        (m) => piModels.getModel(provider as never, m as never) as Model<Api> | undefined,
+        id,
+      );
     } catch {
       return undefined;
     }

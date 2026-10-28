@@ -17,8 +17,9 @@
  * per-item notes in `benchmark:<name>` pools; `purgeBenchmarkContentNotes`
  * retires them (`benchmark purge-content-notes`).
  *
- * The harness writes its result to benchmarks/results/<bench>-passthrough-<ts>.json;
- * we read the newest matching file once the subprocess exits.
+ * The harness writes its result to the file the runner names
+ * (`MARINA_BENCH_RESULT_FILE`, under `benchmarkResultsDir()`); the runner
+ * reads it once the subprocess exits.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -29,6 +30,7 @@ import { caseGuardFromItems } from "../learning/leak-guard";
 import { localHttpBase } from "../net/listen-ports";
 import { DEFAULT_STACK, parseStackHeader } from "../net/model-api/stack";
 import type { MarinaDB } from "../persistence/database";
+import { bunScriptArgv, MARINA_ROOT } from "../runtime-paths";
 import type { EngineEvent, EntityId } from "../types";
 import { resolveBenchmarkJudge } from "./benchmark-judge";
 import {
@@ -108,12 +110,14 @@ export function categoryAccuracy(
 }
 
 const DATASETS_DIR = "benchmarks/datasets";
-const RESULTS_DIR = "benchmarks/results";
+const RESULTS_DIR = join("data", "benchmark-results");
 
 /**
  * Where an in-world run's harness writes its result file: under
- * `MARINA_DATA_DIR` when set (`<dir>/benchmark-results`, nothing in the
- * checkout), else `benchmarks/results` in the working directory.
+ * `MARINA_DATA_DIR` when set (`<dir>/benchmark-results`), else
+ * `data/benchmark-results` beside the world's other state (`data/assets`,
+ * `data/scratch`) in the working directory — never a checkout path, since the
+ * server may run from any directory (a project folder included).
  */
 export function benchmarkResultsDir(env: NodeJS.ProcessEnv = process.env): string {
   const dir = dataDir(env);
@@ -567,7 +571,8 @@ export class BenchmarkRunner {
     const spec = BENCHMARKS[name];
     if (!spec) return false;
     if (spec.generated) return true;
-    const path = join(process.cwd(), spec.datasetPath ?? join(DATASETS_DIR, spec.datasetFile));
+    // The checkout's own files, wherever the server was started from.
+    const path = join(MARINA_ROOT, spec.datasetPath ?? join(DATASETS_DIR, spec.datasetFile));
     return existsSync(path);
   }
 
@@ -586,7 +591,7 @@ export class BenchmarkRunner {
     }
     if (!this.datasetReady(opts.benchmark)) {
       throw new Error(
-        `dataset not cached for ${opts.benchmark}. run "bun run benchmarks/download-all.ts"`,
+        `dataset not downloaded for ${opts.benchmark}. run "benchmark fetch ${opts.benchmark}"`,
       );
     }
 
@@ -693,8 +698,10 @@ export class BenchmarkRunner {
 
     let harness: HarnessOutcome;
     try {
-      const proc = Bun.spawn(["bun", ...args], {
-        cwd: process.cwd(),
+      // The harness and its datasets are paths in the checkout (MARINA_ROOT),
+      // not in whatever directory the server was started from.
+      const proc = Bun.spawn([...bunScriptArgv(), ...args], {
+        cwd: MARINA_ROOT,
         env: { ...process.env, ...env },
         stdout: "pipe",
         stderr: "pipe",

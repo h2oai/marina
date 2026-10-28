@@ -12,10 +12,19 @@ import {
   sectionHead,
   separator,
 } from "../../net/ansi";
+import { recordProjectOutcome } from "../../outcomes/orchestration";
 import type { MarinaDB } from "../../persistence/database";
+import type { ProjectRow } from "../../persistence/db-tasks";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { failCommandResponse, refuseCommand } from "../command-response";
+import { tryLog } from "../errors";
+import { principalOf } from "../gate-context";
+import { Logger } from "../logger";
+import { resolveNamePrefix, unquote } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
 import { parseDuration } from "./format-duration";
+
+const logger = new Logger();
 
 /** Emit a coordination_change so the dashboard's Projects list refreshes live. */
 function emitProjectChange(
@@ -80,6 +89,41 @@ const PROJECT_ACTIONS = new Set([
   "recommend",
   "verify",
 ]);
+
+/** Verbs that show a project (`project info X`, `project X show`). */
+const PROJECT_INFO_VERBS: ReadonlySet<string> = new Set(["info", "show", "view"]);
+
+const PROJECT_USAGE =
+  "Usage: project create <name> | <desc> | project list | project info <name> | project <name> orchestrate|recommend|decompose|memory|join|status|propose|tasks|budget|usage|verify|outcome";
+
+/**
+ * The project a command's leading tokens name: the longest run that is a
+ * project name, case-insensitive and unquoted (`project Demo Pulse tasks`,
+ * `project "demo pulse"`).
+ */
+export function resolveProjectPrefix(
+  db: MarinaDB,
+  tokens: readonly string[],
+): { project: ProjectRow; rest: string[] } | undefined {
+  let byLower: Map<string, ProjectRow> | undefined;
+  const found = resolveNamePrefix(
+    tokens,
+    (name) => {
+      const exact = db.getProjectByName(name);
+      if (exact) return exact;
+      byLower ??= new Map(db.listProjects().map((p) => [p.name.toLowerCase(), p]));
+      return byLower.get(name.toLowerCase());
+    },
+    16,
+  );
+  return found ? { project: found.value, rest: found.rest } : undefined;
+}
+
+/** The name of a project's pool as `pool <name> …` accepts it. */
+export function projectPoolName(db: MarinaDB, project: ProjectRow): string {
+  const pool = project.pool_id ? db.getMemoryPoolById(project.pool_id) : undefined;
+  return pool?.name ?? `project:${project.name}`;
+}
 
 function learnedPatternScore(db: MarinaDB, pattern: string): { average?: number; samples: number } {
   const pool = db.getMemoryPool(`orchestration:${pattern}`);
@@ -177,7 +221,7 @@ export function projectCommand(deps: {
       { syntax: "project <name> memory shared <desc>", effect: "write" },
       { syntax: "project <name> memory tiered <desc>", effect: "write" },
       { syntax: "project <name> orchestrate", effect: "read" },
-      { syntax: "project <name> orchestrate custom <description>", effect: "write" },
+      { syntax: "project <name> orchestrate freeform <description>", effect: "write" },
       { syntax: "project <name> outcome", effect: "read" },
       {
         syntax: "project <name> outcome <0..1> | <evidence-backed result and lessons>",
@@ -203,7 +247,7 @@ export function projectCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("projects"));
+        refuseCommand(ctx, input.entity, requiresPersistence("projects"));
         return;
       }
       const db = deps.db;
@@ -231,7 +275,9 @@ export function projectCommand(deps: {
           separator(),
           ...projects.map((p) => {
             const orch =
-              p.orchestration !== "custom" ? ` ${fmtStatus(p.orchestration, "info")}` : "";
+              normalizePatternName(p.orchestration) !== "freeform"
+                ? ` ${fmtStatus(normalizePatternName(p.orchestration), "info")}`
+                : "";
             const mem = p.memory_arch !== "custom" ? ` ${dim(`(${p.memory_arch})`)}` : "";
             const st = fmtStatus(p.status, "active");
             const desc = p.description.slice(0, 50) || dim("(no description)");
@@ -250,7 +296,7 @@ export function projectCommand(deps: {
         }
         const rest = tokens.slice(1).join(" ");
         if (!rest) {
-          ctx.send(input.entity, "Usage: project create <name> | <description>");
+          refuseCommand(ctx, input.entity, "Usage: project create <name> | <description>");
           return;
         }
         const pipeIdx = rest.indexOf("|");
@@ -265,14 +311,14 @@ export function projectCommand(deps: {
         }
 
         if (!name || name.length < 2) {
-          ctx.send(input.entity, "Project name must be at least 2 characters.");
+          refuseCommand(ctx, input.entity, "Project name must be at least 2 characters.");
           return;
         }
 
         // Check uniqueness
         const existing = db.getProjectByName(name);
         if (existing) {
-          ctx.send(input.entity, `Project "${name}" already exists.`);
+          refuseCommand(ctx, input.entity, `Project "${name}" already exists.`);
           return;
         }
 
@@ -334,28 +380,17 @@ export function projectCommand(deps: {
         return;
       }
 
-      // ─── project info <name> ──────────────────────────────────────
-      if (sub === "info") {
-        const name = tokens.slice(1).join(" ");
-        if (!name) {
-          ctx.send(input.entity, "Usage: project info <name>");
-          return;
-        }
-        const project = db.getProjectByName(name);
-        if (!project) {
-          ctx.send(input.entity, `Project "${name}" not found.`);
-          return;
-        }
+      const sendInfo = (project: ProjectRow): void => {
         const lines = [
           header(`Project: ${project.name}`),
           project.description || dim("(no description)"),
           separator(),
           `  Status: ${fmtStatus(project.status, "active")}`,
-          `  Orchestration: ${fmtStatus(project.orchestration, "info")}`,
+          `  Orchestration: ${fmtStatus(normalizePatternName(project.orchestration), "info")}`,
           `  Memory: ${bold(project.memory_arch)}`,
           `  Created by: ${fmtEntity(project.created_by)}`,
           `  Bundle: #${project.bundle_id ?? dim("none")}`,
-          `  Pool: ${project.pool_id ? bold(`project:${project.name}`) : dim("none")}`,
+          `  Pool: ${project.pool_id ? bold(projectPoolName(db, project)) : dim("none")}`,
           `  Group: ${project.group_id ?? dim("none")}`,
         ];
 
@@ -377,32 +412,53 @@ export function projectCommand(deps: {
         }
 
         ctx.send(input.entity, lines.join("\n"));
+      };
+      const notFound = (name: string): void => {
+        const message = `Project "${name}" not found. Use 'project list' to see projects.`;
+        ctx.send(input.entity, message);
+        failCommandResponse(message);
+      };
+
+      if (sub === "help") {
+        ctx.send(input.entity, PROJECT_USAGE);
+        return;
+      }
+
+      // ─── project info|show|view <name> ────────────────────────────
+      if (PROJECT_INFO_VERBS.has(sub)) {
+        const name = unquote(tokens.slice(1).join(" "));
+        if (!name) {
+          refuseCommand(ctx, input.entity, "Usage: project info <name>");
+          return;
+        }
+        const project = resolveProjectPrefix(db, tokens.slice(1))?.project;
+        if (!project) {
+          notFound(name);
+          return;
+        }
+        sendInfo(project);
         return;
       }
 
       // ─── project <name> <action> [args] ───────────────────────────
-      // Everything else: resolve the first known action so project names may
+      // Everything else: the longest leading run of tokens that names a
+      // project (quotes and case ignored) is the name, so project names may
       // contain spaces (all use-case projects do).
-      const actionIndex = tokens.findIndex(
-        (token, index) => index > 0 && PROJECT_ACTIONS.has(token.toLowerCase()),
-      );
-      const projectName = actionIndex > 0 ? tokens.slice(0, actionIndex).join(" ") : rawFirst!;
-      const action =
-        actionIndex > 0 ? tokens[actionIndex]?.toLowerCase() : tokens[1]?.toLowerCase();
-      const actionArgs = actionIndex > 0 ? tokens.slice(actionIndex + 1) : tokens.slice(2);
-      const project = db.getProjectByName(projectName);
-
-      if (!project) {
-        ctx.send(
-          input.entity,
-          `Project "${projectName}" not found. Use 'project list' to see projects.`,
+      const resolved = resolveProjectPrefix(db, tokens);
+      if (!resolved) {
+        const actionIndex = tokens.findIndex(
+          (token, index) => index > 0 && PROJECT_ACTIONS.has(token.toLowerCase()),
         );
+        notFound(unquote(actionIndex > 0 ? tokens.slice(0, actionIndex).join(" ") : rawFirst!));
         return;
       }
+      const { project } = resolved;
+      const action = resolved.rest[0]?.toLowerCase();
+      const actionArgs = resolved.rest.slice(1);
 
-      if (!action) {
-        // Default to showing info
-        ctx.send(input.entity, `Use 'project info ${projectName}' for details.`);
+      // A bare name (or `project <name> info|show|view`) shows the project.
+      if (!action || PROJECT_INFO_VERBS.has(action)) {
+        sendInfo(project);
         return;
       }
 
@@ -459,36 +515,42 @@ export function projectCommand(deps: {
           const rawPattern = actionArgs[0]?.toLowerCase();
           const pattern = rawPattern ? normalizePatternName(rawPattern) : undefined;
           if (!pattern) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Usage: project <name> orchestrate ${ORCHESTRATION_HELP} <desc>`,
             );
             return;
           }
 
-          if (pattern === "custom") {
+          if (pattern === "freeform") {
             const desc = actionArgs.slice(1).join(" ");
             if (!desc) {
-              ctx.send(input.entity, "Usage: project <name> orchestrate custom <description>");
+              refuseCommand(
+                ctx,
+                input.entity,
+                "Usage: project <name> orchestrate freeform <description>",
+              );
               return;
             }
-            db.updateProjectOrchestration(project.id, "custom");
+            db.updateProjectOrchestration(project.id, "freeform");
             emitProjectChange(ctx, input.entity, "update", project.name);
             if (project.pool_id) {
               db.addPoolNote(
                 project.pool_id,
                 entity.name,
-                `Custom orchestration: ${desc}`,
+                `Freeform orchestration: ${desc}`,
                 8,
                 "skill",
               );
             }
-            ctx.send(input.entity, `Set custom orchestration for "${project.name}".`);
+            ctx.send(input.entity, `Set freeform orchestration for "${project.name}".`);
             return;
           }
 
           if (!VALID_ORCHESTRATIONS.has(pattern)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Unknown orchestration pattern. Valid: ${[...VALID_ORCHESTRATIONS].join(", ")}`,
             );
@@ -511,7 +573,8 @@ export function projectCommand(deps: {
         case "decompose": {
           const pattern = actionArgs[0]?.toLowerCase();
           if (!pattern) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: project <name> decompose htdag|plan-exec-verify|lazy-expansion|non-overlapping|workload-tiers|custom <desc>",
             );
@@ -521,7 +584,11 @@ export function projectCommand(deps: {
           if (pattern === "custom") {
             const desc = actionArgs.slice(1).join(" ");
             if (!desc) {
-              ctx.send(input.entity, "Usage: project <name> decompose custom <description>");
+              refuseCommand(
+                ctx,
+                input.entity,
+                "Usage: project <name> decompose custom <description>",
+              );
               return;
             }
             if (project.pool_id) {
@@ -538,7 +605,8 @@ export function projectCommand(deps: {
           }
 
           if (!VALID_DECOMPOSITIONS.has(pattern)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Unknown decomposition pattern. Valid: ${[...VALID_DECOMPOSITIONS].join(", ")}`,
             );
@@ -559,7 +627,8 @@ export function projectCommand(deps: {
         case "memory": {
           const arch = actionArgs[0]?.toLowerCase();
           if (!arch) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: project <name> memory tiered|generative|graph|shared|custom <desc>",
             );
@@ -569,7 +638,7 @@ export function projectCommand(deps: {
           if (arch === "custom") {
             const desc = actionArgs.slice(1).join(" ");
             if (!desc) {
-              ctx.send(input.entity, "Usage: project <name> memory custom <description>");
+              refuseCommand(ctx, input.entity, "Usage: project <name> memory custom <description>");
               return;
             }
             db.updateProjectMemoryArch(project.id, "custom");
@@ -588,7 +657,8 @@ export function projectCommand(deps: {
           }
 
           if (!VALID_MEMORY_ARCHS.has(arch)) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Unknown memory architecture. Valid: ${[...VALID_MEMORY_ARCHS].join(", ")}`,
             );
@@ -619,7 +689,7 @@ export function projectCommand(deps: {
           }
           const group = deps.groupManager.get(project.group_id);
           if (!group) {
-            ctx.send(input.entity, "Project group not found.");
+            refuseCommand(ctx, input.entity, "Project group not found.");
             return;
           }
           if (deps.groupManager.isMember(group.id, input.entity)) {
@@ -632,7 +702,7 @@ export function projectCommand(deps: {
           const lines = [
             header(`Joined project "${project.name}"`),
             separator(),
-            `  Orchestration: ${project.orchestration}`,
+            `  Orchestration: ${normalizePatternName(project.orchestration)}`,
             `  Memory: ${project.memory_arch}`,
           ];
 
@@ -652,7 +722,7 @@ export function projectCommand(deps: {
 
           lines.push(
             "",
-            `Use 'pool project:${project.name} recall <topic>' to explore project knowledge.`,
+            `Use 'pool ${projectPoolName(db, project)} recall <topic>' to explore project knowledge.`,
           );
           ctx.send(input.entity, lines.join("\n"));
           return;
@@ -664,7 +734,7 @@ export function projectCommand(deps: {
             header(`${project.name} Status`),
             separator(),
             `  Status: ${fmtStatus(project.status, "active")}`,
-            `  Orchestration: ${fmtStatus(project.orchestration, "info")}`,
+            `  Orchestration: ${fmtStatus(normalizePatternName(project.orchestration), "info")}`,
             `  Memory: ${bold(project.memory_arch)}`,
             `  Elapsed: ${Math.max(0, Math.round(elapsedMs / 1000))}s`,
           ];
@@ -760,7 +830,8 @@ export function projectCommand(deps: {
             Object.keys(budget).length === 0 ||
             Object.values(budget).some((value) => !Number.isFinite(value) || value! <= 0)
           ) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: project <name> budget [tokens <n>] [cost <usd>] [duration <n>ms|s|m|h]",
             );
@@ -776,7 +847,7 @@ export function projectCommand(deps: {
           const tokens = Number(actionArgs[0]);
           const cost = Number(actionArgs[1] ?? 0);
           if (!Number.isFinite(tokens) || tokens < 0 || !Number.isFinite(cost) || cost < 0) {
-            ctx.send(input.entity, "Usage: project <name> usage <tokens> [cost-usd]");
+            refuseCommand(ctx, input.entity, "Usage: project <name> usage <tokens> [cost-usd]");
             return;
           }
           db.addProjectUsage(project.id, tokens, cost);
@@ -905,7 +976,7 @@ export function projectCommand(deps: {
         case "propose": {
           const text = actionArgs.join(" ");
           if (!text) {
-            ctx.send(input.entity, "Usage: project <name> propose <text>");
+            refuseCommand(ctx, input.entity, "Usage: project <name> propose <text>");
             return;
           }
           if (!project.group_id || !deps.groupManager) {
@@ -938,20 +1009,21 @@ export function projectCommand(deps: {
             .join(" ")
             .trim();
           if (!Number.isFinite(score) || score < 0 || score > 1 || !evidence) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "Usage: project <name> outcome <0..1> | <evidence-backed result and lessons>",
             );
             return;
           }
-          const pattern = normalizePatternName(project.orchestration || "custom");
+          const pattern = normalizePatternName(project.orchestration || "freeform");
           const content =
             `[project-outcome:${project.id} orchestration:${pattern}] score=${score.toFixed(2)} ` +
             evidence;
           if (project.pool_id) {
             db.addPoolNote(project.pool_id, entity.name, content, 9, "reflection");
           }
-          if (pattern !== "custom") {
+          if (pattern !== "freeform") {
             const traditionName = `orchestration:${pattern}`;
             let tradition = db.getMemoryPool(traditionName);
             if (!tradition) {
@@ -965,6 +1037,19 @@ export function projectCommand(deps: {
             if (tradition) {
               db.addPoolNote(tradition.id, entity.name, content, 8, "reflection");
             }
+          }
+          // A person's verdict is also one outcome on the outcome path, tagged
+          // with the project's pattern (labels only; the evidence text stays
+          // in the pools). An agent's report on its own project is not a verdict.
+          if (principalOf(input.entity) === "person") {
+            tryLog(logger, "db", "Could not record the project outcome", () =>
+              recordProjectOutcome(db, {
+                projectId: project.id,
+                pattern,
+                recorder: entity.name,
+                score,
+              }),
+            );
           }
           db.updateProjectStatus(project.id, "completed");
           emitProjectChange(ctx, input.entity, "update", project.name);
@@ -1000,7 +1085,8 @@ export function projectCommand(deps: {
         }
 
         default:
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             `Unknown project action "${action}". Use: orchestrate, recommend, decompose, memory, join, status, propose, tasks, budget, usage, verify, outcome`,
           );

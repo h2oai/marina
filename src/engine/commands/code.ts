@@ -21,7 +21,7 @@ import { codingRunContext } from "../../persistence/coding-run-context";
 import type { MarinaDB } from "../../persistence/database";
 import { parseCodingCommandTarget } from "../../sdk/command-target";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
-import { failCommandResponse } from "../command-response";
+import { failCommandResponse, refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { parseModifiers } from "../parse-input";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
@@ -710,7 +710,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("coding sessions"));
+        refuseCommand(ctx, input.entity, requiresPersistence("coding sessions"));
         return;
       }
       // Resolve the acting caller's transport ONCE. A telnet-origin caller is
@@ -817,7 +817,8 @@ export function codeCommand(deps: CodeDeps): CommandDef {
           const gate = checkGateForExecution(depsWithDb.db, input.entity, "code.exec");
           if (!gate.ok) {
             failCommandResponse(gate.reason ?? "code.exec capability required.");
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               gate.reason ??
                 "Running or applying code requires the code.exec capability, which is earned through contribution.",

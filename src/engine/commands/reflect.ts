@@ -12,10 +12,12 @@ import { residentMemoryOperation } from "../../memory/resident-service";
 import { type InheritedAuthority, inheritedAuthority } from "../../memory/unified-context";
 import { bold, category, dim, id as fmtId, header, separator, status } from "../../net/ansi";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
+import type { CommandUsage } from "../../sdk/command-forms";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../../sdk/memory-assistance";
 import { memoryOperationError } from "../../sdk/memory-operations";
 import type { MemoryAdoptResult, MemoryReceipt, MemoryRecord } from "../../sdk/memory-types";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { MEMORY_REFLECTOR_ROLE } from "../constants";
 import { isLocalUngated } from "../trust-profile";
 import { requiresPersistence } from "./command-messages";
@@ -230,6 +232,16 @@ export interface ReflectAgentView {
   state: string;
 }
 
+/** `reflect` forms; `memory reflect …` (src/engine/command-families.ts) shares them. */
+export const REFLECT_USAGE: CommandUsage[] = [
+  { syntax: "reflect --template [topic] [--share <pool>]", effect: "write" },
+  { syntax: "reflect [topic] [--share <pool>] [--no-spawn]", effect: "execute" },
+  { syntax: "reflect adopt <job-id>", effect: "write" },
+  { syntax: "reflect failure <description> [--share <pool>]", effect: "write" },
+  { syntax: "reflect jobs", effect: "read" },
+  { syntax: "reflect via <helper> [topic] [--share <pool>]", effect: "execute" },
+];
+
 export function reflectCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
@@ -256,14 +268,7 @@ export function reflectCommand(deps: {
 }): CommandDef {
   return {
     category: "Memory",
-    usage: [
-      { syntax: "reflect --template [topic] [--share <pool>]", effect: "write" },
-      { syntax: "reflect [topic] [--share <pool>] [--no-spawn]", effect: "execute" },
-      { syntax: "reflect adopt <job-id>", effect: "write" },
-      { syntax: "reflect failure <description> [--share <pool>]", effect: "write" },
-      { syntax: "reflect jobs", effect: "read" },
-      { syntax: "reflect via <helper> [topic] [--share <pool>]", effect: "execute" },
-    ],
+    usage: REFLECT_USAGE,
     name: "reflect",
     aliases: [],
     help: "Reflect on your notes. Usage: reflect [topic] (files a cited job with a memory-reflector when one is available, else the deterministic template) | reflect via <helper> [topic] | reflect --template [topic] | reflect adopt <job> | reflect jobs | reflect failure <description>. Add --share <pool> to also deposit the lesson into a shared pool as a reflection others can recall. Add --no-spawn to use a running helper if there is one but never spawn a new one (session-end reflections).",
@@ -271,7 +276,7 @@ export function reflectCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("reflect"));
+        refuseCommand(ctx, input.entity, requiresPersistence("reflect"));
         return;
       }
       const db = deps.db;
@@ -291,7 +296,7 @@ export function reflectCommand(deps: {
       if (shareAt >= 0) {
         sharePool = rawTokens[shareAt + 1];
         if (!sharePool) {
-          ctx.send(input.entity, "Usage: reflect … --share <pool>");
+          refuseCommand(ctx, input.entity, "Usage: reflect … --share <pool>");
           return;
         }
         rawTokens.splice(shareAt, 2);
@@ -417,7 +422,7 @@ export function reflectCommand(deps: {
       if (sub === "failure") {
         const description = tokens.slice(1).join(" ");
         if (!description) {
-          ctx.send(input.entity, "Usage: reflect failure <what happened>");
+          refuseCommand(ctx, input.entity, "Usage: reflect failure <what happened>");
           return;
         }
 
@@ -585,7 +590,8 @@ export function reflectCommand(deps: {
           return;
         }
         if (worker.name === entity.name) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Reflection needs another participant; you cannot witness yourself.",
           );
@@ -698,7 +704,7 @@ export function reflectCommand(deps: {
       // ── reflect adopt <job> ──────────────────────────────────────────────
       const adopt = async (jobId: string | undefined) => {
         if (!jobId) {
-          ctx.send(input.entity, "Usage: reflect adopt <job-id>");
+          refuseCommand(ctx, input.entity, "Usage: reflect adopt <job-id>");
           return;
         }
         // Idempotent: the adoption marker on the legacy note is the ledger.
@@ -844,7 +850,7 @@ export function reflectCommand(deps: {
         case "via": {
           const helper = tokens[1];
           if (!helper) {
-            ctx.send(input.entity, "Usage: reflect via <helper> [topic]");
+            refuseCommand(ctx, input.entity, "Usage: reflect via <helper> [topic]");
             return;
           }
           return requestReflection(helper, tokens.slice(2).join(" ") || undefined);

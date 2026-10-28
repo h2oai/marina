@@ -59,7 +59,7 @@ export function currentLessonRecord(r: RecordLike, now = Date.now()): boolean {
   return until === null || until === undefined || until > now;
 }
 
-const TRUSTS = new Set<LessonTrust>(["trusted", "unverified", "rejected"]);
+const TRUSTS = new Set<LessonTrust>(["trusted", "unverified", "rejected", "imported"]);
 
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -94,6 +94,9 @@ export function lessonFromRecord(r: RecordLike): Lesson | undefined {
     ...(LESSON_SCOPES.includes(m.scope as LessonScope) ? { scope: m.scope as LessonScope } : {}),
     ...(strings(m.families).length ? { families: strings(m.families) } : {}),
     ...(strings(m.subjects).length ? { subjects: strings(m.subjects) } : {}),
+    ...(typeof m.scope_family === "string" && m.scope_family
+      ? { scopeFamily: m.scope_family }
+      : {}),
     ...(m.provenance && typeof m.provenance === "object" && !Array.isArray(m.provenance)
       ? {
           provenance: Object.fromEntries(
@@ -104,6 +107,19 @@ export function lessonFromRecord(r: RecordLike): Lesson | undefined {
         }
       : {}),
     ...(typeof r.version === "number" ? { version: r.version } : {}),
+    // An imported lesson (`src/learned/import.ts`) names its bundle and item.
+    ...(trust === "imported" && typeof m.artifact_id === "string" && typeof m.item_key === "string"
+      ? {
+          imported: {
+            artifactId: m.artifact_id,
+            itemKey: m.item_key,
+            ...(m.unsigned === true ? { unsigned: true } : {}),
+            ...(typeof m.confirmed_locally_by === "string"
+              ? { confirmedBy: m.confirmed_locally_by }
+              : {}),
+          },
+        }
+      : {}),
     ...(typeof m.support === "number" && m.support >= 1 ? { support: m.support } : {}),
     ...(Array.isArray(m.merged) ? { merged: m.merged as LessonMergeEntry[] } : {}),
     ...(isObject(m.rank) && typeof m.rank.score === "number" ? { rank: m.rank as LessonRank } : {}),
@@ -149,6 +165,7 @@ export function lessonMetadata(lesson: Lesson): Record<string, unknown> {
     ...(lesson.scope ? { scope: lesson.scope } : {}),
     ...(lesson.families?.length ? { families: lesson.families } : {}),
     ...(lesson.subjects?.length ? { subjects: lesson.subjects } : {}),
+    ...(lesson.scopeFamily ? { scope_family: lesson.scopeFamily } : {}),
     ...(lesson.provenance ? { provenance: lesson.provenance } : {}),
     ...(lesson.support !== undefined ? { support: lesson.support } : {}),
     ...(lesson.merged?.length ? { merged: lesson.merged.slice(-MAX_MERGED_ENTRIES) } : {}),
@@ -340,7 +357,12 @@ export function durableLessonSink(
         const seen = new Set(records.map((r) => r.id));
         for (const r of (reply.result as { results?: RecordLike[] } | undefined)?.results ?? []) {
           if (seen.has(r.id)) continue;
-          if (strings(r.metadata?.families).some((f) => families.has(f))) records.push(r);
+          const scoped = r.metadata?.scope_family;
+          if (
+            strings(r.metadata?.families).some((f) => families.has(f)) ||
+            (typeof scoped === "string" && families.has(scoped))
+          )
+            records.push(r);
         }
       }
       const lessons = records

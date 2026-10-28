@@ -7,15 +7,19 @@ bundle is signed by a publisher. Before anything is imported, the bundle is
 checked against publisher keys that the operator pinned.
 
 Imported knowledge is never trusted on arrival. Lessons arrive with the trust
-level `imported`. They stay below anything this Marina learned itself until its
-own outcomes confirm them.
+level `imported`. Agents are served them, labelled `imported`, below anything
+this Marina learned itself, until its own outcomes confirm or contradict them.
 
-Nothing changes for an install that never exports or imports a bundle. Imports
-are off by default (`MARINA_UPSTREAM=off`).
+Nothing changes for an install that never exports or imports a bundle. With
+`MARINA_UPSTREAM` unset, the only bundles that import are open bundles signed
+by a pinned publisher key. No key is pinned by default, so nothing imports
+until an operator pins one or sets `MARINA_UPSTREAM=on`.
 
 - [What a bundle contains](#what-a-bundle-contains)
+- [Starting fresh from a bundle](#starting-fresh-from-a-bundle)
 - [Export](#export)
 - [Verify, diff and import](#verify-diff-and-import)
+- [Serving imported lessons](#serving-imported-lessons)
 - [Licence, access and slices](#licence-access-and-slices)
 - [Entitlements for paid and private slices](#entitlements-for-paid-and-private-slices)
 - [Worlds (`marina.world.v1`)](#worlds-marinaworldv1)
@@ -51,6 +55,20 @@ Each record also carries a provenance chain. Every hop names its producer, an
 opaque origin, hashed outcome references, the judge and whether it is
 calibrated, and a role label such as `ratifier`. A hop never names a person.
 
+The manifest's `excludes` field lists what the bundle never carries:
+`identity`, `accounts`, `standing`, `competence`, `gate_grants`,
+`ledger_rows`, `approvals`, `holds`, `secrets`, `runtime_journals`,
+`continuity_archives` and `numeric_note_ids`. Verification refuses a bundle
+whose contents overreach its manifest. It refuses in four cases:
+- the manifest lists `excludes` but leaves one of these entries out;
+- the bundle has a file the format does not define;
+- a kind has more items than the manifest declares, or the allow-list names an unknown class;
+- an item has a field that belongs to an excluded layer, at any depth.
+  Examples are `standing`, `user_id`, `api_key`, `transcript` and `note_id`.
+
+Bundles written before this field existed have no `excludes` field, and they
+still verify and import. The other three checks apply to them too.
+
 The manifest identifies the artifact with these fields:
 - `artifact_id`: `marina-memory:<publisher key fingerprint>/<name>`, or
   `marina-world:…` for a world bundle;
@@ -58,6 +76,71 @@ The manifest identifies the artifact with these fields:
 - `generation`: a monotonic integer, used to refuse downgrades;
 - `parent`: `{version, generation, manifest_digest}`;
 - `lineage`: every ancestor, oldest first.
+
+## Starting fresh from a bundle
+
+A world's state does not have to live in one long-lived database. A world can
+be the code seed plus the bundles you import into it. To move an old world
+over, distill its database into a bundle, archive the database, and start a
+new world:
+
+```bash
+marina learned distill ./old/marina.db --out ./packs/old-world --archive
+marina start                                  # a new world from the code seed
+MARINA_UPSTREAM=on DB_PATH=marina.db marina learned import ./packs/old-world --own --allow-unsigned
+```
+
+`marina learned distill <db>` opens the database read-only. It takes a
+consistent snapshot with SQLite's `VACUUM INTO`, which works even while a
+server holds the file. It then runs the ordinary export allow-list over the
+snapshot and removes the snapshot. Nothing is written to the source database.
+
+- The bundle carries trusted lessons, ratified conventions, promoted defaults,
+  ledger aggregates and adopted roles, and every item is scanned. Everything
+  else stays behind: accounts, standing, gate grants, approvals and holds,
+  secrets, journals and numeric note ids. The manifest's `excludes` field lists
+  these.
+- `--out` defaults to `<db>.learned`. `--name` defaults to `distilled`.
+  `--publisher` defaults to `MARINA_NAME`, else `local`.
+- With `MARINA_LEARNED_SIGNING_KEY` or `--key-file`, the bundle is signed like
+  any export. Without a key it is written **unsigned**:
+  - it has no `signature.json`;
+  - its publisher key is `unsigned`;
+  - its artifact id starts `marina-memory:unsigned-`.
+
+  An unsigned bundle verifies and imports only with `--allow-unsigned`, and
+  every record it writes is labelled `unsigned`. A signed bundle still needs
+  its publisher key pinned.
+- No model or provider is needed.
+
+`--archive`, or `marina learned archive <db>` on its own, moves the database
+and its `-wal`/`-shm`/`-journal` files into `<db>.archive-<UTC time>/`, next to
+the database. Nothing is deleted. Archiving is refused while a server holds
+the database's lease (`<db>.instance-lock`), so stop that server first.
+
+**Import at boot.** `MARINA_BOOTSTRAP_BUNDLES=<dir>[,<dir>]` names bundles that
+the server imports right after the world seed and before any agent wakes. A
+directory without a `manifest.json` stands for every bundle directly inside
+it, in name order.
+- Naming a bundle here is the opt-in for that bundle, whatever
+  `MARINA_UPSTREAM` says. Every other import rule applies: pinned signatures,
+  revocations, no downgrade, trust `imported`, and seeds only for empty slots.
+- `MARINA_BOOTSTRAP_ACCEPT` widens what is accepted:
+  - `own` covers your own `private` slices (never a paid `token` slice);
+  - `unsigned` accepts a bundle with no publisher key.
+- A bundle already imported at the same generation and digest is skipped, so
+  a restart writes nothing.
+- A refused bundle is logged and audited, and the world boots without it.
+
+With the variable unset, boot is unchanged.
+
+```bash
+MARINA_BOOTSTRAP_BUNDLES=./packs/old-world MARINA_BOOTSTRAP_ACCEPT=own,unsigned marina start
+```
+
+Imported knowledge starts as `imported`, and your new world earns trust again
+through its own verified work. Standing and gate competence are never carried,
+because they belong to accounts that were verified by other accounts.
 
 ## Export
 
@@ -143,9 +226,10 @@ need no flag, and paid slices need `--entitlement`; see
 
 Verification refuses the bundle at the first failure in this order:
 1. the schema is not `marina.learned.v1`;
-2. the signature does not verify against a pinned key, or the signing key is not the manifest's publisher key;
+2. the signature does not verify against a pinned key, or the signing key is not the manifest's publisher key. An unsigned bundle passes this step only with `--allow-unsigned`;
 3. a file's sha256 does not match the manifest, or an item file is present that the manifest does not list;
-4. an item does not parse, is in the wrong file, or has a `content_hash` that does not recompute.
+4. an item does not parse, is in the wrong file, or has a `content_hash` that does not recompute;
+5. the contents overreach the manifest (see `excludes` above).
 
 A refused bundle is never imported through any fallback. Import additionally
 refuses three cases:
@@ -157,9 +241,9 @@ Import also runs the export scans again.
 
 | Class | Where it lands |
 |---|---|
-| Lessons | `upstream:lessons:<domain>` spaces owned by the `marina:upstream` account. Each lesson has trust `imported`, its original `resolved_at` (so the leakage rule applies unchanged) and the publisher's score as `publisher_rank`. Imported lessons are never written into `lessons:*`, so they are not served as local lessons. |
+| Lessons | `upstream:lessons:<domain>` spaces owned by the `marina:upstream` account. Each lesson has trust `imported`, its original `resolved_at` (so the leakage rule applies unchanged), its serving scope (`scope`, `families`, `scope_family`) and the publisher's score as `publisher_rank`. The boards it names become `eval:<board>` refs. Imported lessons are never written into `lessons:*`; they are served from their own spaces, labelled `imported` (see [Serving imported lessons](#serving-imported-lessons)). |
 | Conventions | The `upstream:conventions` space, with trust `imported`. |
-| Defaults | `upstream_default_seeds`, and only for a slot that has no local `benchmark_defaults` row. Default resolution reads a seed below every local layer (`upstreamSeedFor` in `src/learned/upstream-seed.ts`). A seed answers nothing once a local default exists for its slot. |
+| Defaults | `upstream_default_seeds`, and only for a slot that has no local `benchmark_defaults` row. `resolveDefault` reads the database's active seeds below every local layer (`upstreamSeedFor` in `src/learned/upstream-seed.ts`) and traces the answer as source `upstream`. A seed answers nothing once a local default exists for its slot, and the operator's env value always wins. A seed for a slot that chooses a model (every slot class except `memory-ranking`: `role-model:*`, `verify:checker`, `forecast-config*`, crew slots and run-target slots) is withheld under `MARINA_UPSTREAM_MODEL_SEEDS=propose`, the default. Its trace marks it `withheld`, and each slot and value raises one `ops inbox` approval. A person holding `role.edit` adopts it with `benchmark promote <slot> upstream` (or the model id, for a `role-model` slot), recorded with basis `upstream` and the bundle's artifact, version, item and value digest. An agent never adopts one. `serve` serves those seeds directly. |
 | Evidence | `evidence_priors`, down-weighted (weight 0.25, at most 50 items per cell). Evidence never enters `benchmark_runs` or `benchmark_items`. |
 | Roles | Created under the `upstream.` prefix, for both the role and its traits. A role is only ever created, never bound to an agent, and changing it later takes `role.edit`. |
 
@@ -180,7 +264,47 @@ that citation, then:
 - adds `confirmed_locally_by` to the imported record's metadata.
 
 The imported record itself keeps trust `imported`. The trusted knowledge is the
-local lesson that confirmed it.
+local lesson that confirmed it, and recall serves that lesson instead.
+
+**When imports are allowed.** `MARINA_UPSTREAM` has three settings:
+
+| Value | What imports |
+|---|---|
+| `on` | Any bundle that verifies, subject to the access rules below. |
+| unset (default) | Only a bundle signed by a pinned publisher key whose access and every slice are `open`. An unsigned bundle, a `private` or `token` slice, an entitlement or `--own` never helps. Anything else is refused as `off` refuses it, with nothing written. The built-in pinned key list is empty, so this imports nothing until a key is pinned. |
+| `off` | Nothing, except bundles named by `MARINA_BOOTSTRAP_BUNDLES`. |
+
+## Serving imported lessons
+
+Imported lessons reach agents through the same lesson recall as the world's
+own lessons: the resident `[Lessons]` section, `lessons <topic>`, forecasts,
+Code Mode tasks and opted-in passthru requests. `MARINA_IMPORTED_LESSONS`
+controls it:
+
+| Value | Effect |
+|---|---|
+| unset (default) | `on` once anything has been imported. |
+| `on` | Imported lessons are recalled beside local ones. |
+| `observe` | What would be served is recorded (`upstream_events` action `observed`), and nothing is served. |
+| `off` | Imported lessons are never read. Every surface is exactly as without imports. |
+
+Served imported lessons follow these rules:
+- **Labels.** Each is shown as `<lesson> (imported)`, or `(imported, unsigned)` when its bundle was unsigned.
+- **Rank.** Each is ranked after every local `trusted` lesson and every curator's lesson. Rejected and unjudged lessons are never served.
+- **Scope.** Family scoping, leakage rule 2 and the as-of fence apply exactly as for local lessons:
+  - a lesson scoped to a family reaches only work of that family;
+  - a lesson tagged for a board stays out of that board's measurements;
+  - under an evidence cutoff a lesson is visible only after its `resolved_at`, and an undated lesson is never visible.
+- **Owner scope.** A person's own lessons are never exported, and imported lessons are shared like the world's pool.
+- **Local evidence moves them.** When the outcome loop writes a trusted lesson into the shared pool, the judge also sees the nearest imported lessons:
+  - a local lesson whose rule matches an imported one cites and confirms it, and serves in its place;
+  - a local lesson the judge finds contradicting one retires it (an `upstream_events` `contradicted` row). Importing the same version again leaves it retired.
+
+  A person's private work never confirms or retires imported lessons.
+
+Serving needs no model provider. Readiness `learned` reports each imported
+bundle (name, generation, signed or unsigned), how many lessons were imported,
+served, observed, confirmed locally and retired, and the last import.
 
 ## Licence, access and slices
 
@@ -340,8 +464,11 @@ countersignatures are later phases.
 | `learned` | The import mode and counts of artifacts, items, confirmations, seeds and priors. |
 | `learned artifacts` | Each imported version with its licence, access and key. |
 | `learned items [artifact:<id>] [status:active\|retired\|revoked]` | Each item with its trust (`imported`) and whether it is confirmed. |
-| `learned seeds` | Each seeded slot, and whether a local default shadows it. |
+| `learned seeds` | Each seeded slot, and whether a local default shadows it or it is withheld pending approval. |
 | `learned priors [family:<f>]` | Each prior, with its raw counts and its weighted counts. |
 | `learned events [limit:<n>]` | The audit trail. |
+
+Readiness `learned` (`readiness`, `GET /api/readiness`) summarises the same
+state, with what `MARINA_UPSTREAM` allows.
 
 Export and import stay operator acts.

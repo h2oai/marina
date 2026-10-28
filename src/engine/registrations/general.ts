@@ -4,6 +4,7 @@
 import { seedMemoryHelperRoles } from "../../agent/memory-helper-roles";
 import { formatUntrustedContext } from "../../agent/prompts/support-prompts";
 import { arenaRoundLockAt } from "../../arena/service";
+import { harnessDecisionProvider } from "../../decisions/engines";
 import { worldMemoryService } from "../../memory/world-service";
 import { registerBuiltinResolvers } from "../../resolvers";
 import { residentLabeler } from "../../routing/residents";
@@ -29,6 +30,7 @@ import { ignoreCommand, isIgnoring } from "../commands/ignore";
 import { imageCommand } from "../commands/image";
 import { inventoryCommand } from "../commands/inventory";
 import { dropCommand, getCommand, giveCommand } from "../commands/items";
+import { judgeCommand } from "../commands/judge";
 import { labCommand } from "../commands/lab";
 import { linkCommand } from "../commands/link";
 import { lookCommand } from "../commands/look";
@@ -208,9 +210,23 @@ export function registerGeneralCommands(engine: Engine): void {
     arbiterCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
   engine.commands.registerBuiltin(
+    judgeCommand({
+      store: () => engine.db,
+      backend: () => {
+        const p = harnessDecisionProvider();
+        return p ? `${p.kind}:${p.model}` : undefined;
+      },
+    }),
+  );
+  engine.commands.registerBuiltin(
     triageCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
-  engine.commands.registerBuiltin(patternCommand());
+  engine.commands.registerBuiltin(
+    patternCommand({
+      db: () => engine.db,
+      nameOf: (id) => engine.entities.get(id)?.name,
+    }),
+  );
   engine.commands.registerBuiltin(timeCommand());
   engine.commands.registerBuiltin(uptimeCommand(() => engine.getUptime()));
   engine.commands.registerBuiltin(

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { availableModels } from "../../agent/available-models";
 import { RateLimiter } from "../../auth/rate-limiter";
 import type { AnswerSpec } from "../../forecast/answer-types";
 import type { ForecastAnswer } from "../../forecast/question";
@@ -8,6 +9,7 @@ import { residentsMode } from "../../forecast/resident-mode";
 import type { ForecastScale } from "../../forecast/service";
 import type { TypedForecastAnswer } from "../../forecast/typed";
 import { bold, dim, header, separator } from "../../net/ansi";
+import { providerSetupHint } from "../../net/model/provider-setup";
 import {
   TYPED_FORMATION_NAMES,
   type TypedFormationName,
@@ -17,6 +19,7 @@ import type { ForecastAnswerRow } from "../../persistence/db-markets";
 import type { MarinaStores } from "../../persistence/interfaces";
 import { parseSampleId } from "../../resolvers/calibration";
 import type { CommandDef, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
 import { parseModifiers } from "../parse-input";
@@ -134,7 +137,7 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
         const id = Number(rest[0]);
         const sampleId = rest[1];
         if (!Number.isInteger(id) || id <= 0 || !sampleId || !parseSampleId(sampleId)) {
-          return ctx.send(input.entity, "Usage: forecast track <id> <venue>/<ticker>");
+          return refuseCommand(ctx, input.entity, "Usage: forecast track <id> <venue>/<ticker>");
         }
         if (!deps.db || !name)
           return ctx.send(input.entity, "Forecast tracking needs persistence.");
@@ -228,6 +231,19 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
               )}`,
             );
           })().catch((err) => ctx.send(input.entity, `Forecast failed: ${getErrorMessage(err)}`));
+        }
+        // Refuse before promising research: with nothing to think with, the
+        // pipeline would only fail after the "Researching…" line.
+        const runEnv = env ?? process.env;
+        if (
+          !runEnv.MARINA_FORECAST_ANALYSTS?.trim() &&
+          !runEnv.OPENROUTER_API_KEY?.trim() &&
+          availableModels(runEnv).length === 0
+        ) {
+          return ctx.send(
+            input.entity,
+            `No model is available to forecast with. ${providerSetupHint()} Or name models in MARINA_FORECAST_ANALYSTS.`,
+          );
         }
         ctx.send(
           input.entity,

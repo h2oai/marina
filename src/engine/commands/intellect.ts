@@ -9,6 +9,7 @@ import {
   type MarinaDB,
 } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 
 const HELP =
   experimentalHelp(`Intellect: an identity record for an agent that can outlast any one model, harness or
@@ -71,7 +72,7 @@ function create(
 ): void {
   const [name = "", purpose = "", contributorText = ""] = raw.split("|").map((part) => part.trim());
   if (!name || name.length > 100 || purpose.length > 4000) {
-    ctx.send(caller, "Usage: intellect create <name> | <purpose> [| contributor-ids]");
+    refuseCommand(ctx, caller, "Usage: intellect create <name> | <purpose> [| contributor-ids]");
     return;
   }
   const contributors = contributorText
@@ -105,11 +106,12 @@ function instance(
     .map((part) => part.trim());
   const intellect = resolve(db, selector);
   if (!intellect) {
-    ctx.send(caller, `Intellect "${selector}" was not found or is ambiguous.`);
+    refuseCommand(ctx, caller, `Intellect "${selector}" was not found or is ambiguous.`);
     return;
   }
   if (principal && !db.listPrincipals().some((item) => item.principal_id === principal)) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       caller,
       `Local principal "${principal}" does not exist. Use an empty field for a detached instance.`,
     );
@@ -141,7 +143,7 @@ function descend(
   const parent = resolve(db, space < 0 ? head : head.slice(0, space));
   const name = space < 0 ? "" : head.slice(space + 1).trim();
   if (!parent || !name) {
-    ctx.send(caller, "Usage: intellect descend <parent> <name> | <purpose>");
+    refuseCommand(ctx, caller, "Usage: intellect descend <parent> <name> | <purpose>");
     return;
   }
   const child = db.createIntellect({
@@ -182,7 +184,8 @@ function lifecycle(
   const [selector, rawKind, ...extra] = head.split(/\s+/);
   const intellect = resolve(db, selector ?? "");
   if (!intellect || !isKind(rawKind) || extra.length || !detail) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       caller,
       `Usage: intellect event <intellect> <kind> | <detail>\nKinds: ${INTELLECT_EVENT_KINDS.join(", ")}`,
     );
@@ -205,7 +208,7 @@ function show(
 ): void {
   const intellect = resolve(db, selector ?? "");
   if (!intellect) {
-    ctx.send(caller, `Intellect "${selector ?? ""}" was not found or is ambiguous.`);
+    refuseCommand(ctx, caller, `Intellect "${selector ?? ""}" was not found or is ambiguous.`);
     return;
   }
   // Newest 200 events for display; the lifecycle state comes from a dedicated

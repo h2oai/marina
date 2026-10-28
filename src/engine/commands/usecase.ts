@@ -10,6 +10,7 @@ import { recordResearchAsk } from "../../outcomes/live";
 import type { MarinaDB } from "../../persistence/database";
 import { isGrantedCompetence } from "../../persistence/db-competence";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand, withoutRefusal } from "../command-response";
 import { BENCHMARK_RUN_MIN_RANK } from "../constants";
 import { rankName } from "../permissions";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
@@ -904,7 +905,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
   decompose: (topic) => ({
     name: "decompose",
     description: `Decomposition planning for: ${topic}`,
-    orchestration: "custom",
+    orchestration: "freeform",
     tasks: [
       {
         title: `[bundle] Root goal: ${topic}`,
@@ -1217,7 +1218,9 @@ async function spawnUseCaseAgents(
   // (standing alone never passes in guarded posture), while
   // the earned posture's reviewed practice, an approved challenge and an
   // operator-declared open posture all authorize with their consequence recorded.
-  const gate = checkGateForExecution(db, requesterId, "agent.spawn");
+  // The project is already created: a refused spawn narrows the result, it
+  // does not fail the command.
+  const gate = withoutRefusal(() => checkGateForExecution(db, requesterId, "agent.spawn"));
   if (!gate.ok) {
     ctx.send(
       requesterId,
@@ -1345,12 +1348,13 @@ Examples:
       if (sub === "info") {
         const recipeName = tokens[1]?.toLowerCase();
         if (!recipeName) {
-          ctx.send(input.entity, "Usage: usecase info <recipe>");
+          refuseCommand(ctx, input.entity, "Usage: usecase info <recipe>");
           return;
         }
         const factory = getRecipe(recipeName);
         if (!factory) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             `Unknown recipe "${recipeName}". Use 'usecase list' to see options.`,
           );
@@ -1392,7 +1396,8 @@ Examples:
             dim(`Detected intent: ${recipeName}. Use 'usecase ${recipeName} ...' to be explicit.`),
           );
         } else {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             `Could not determine intent. Available recipes: ${allRecipeNames().join(", ")}\nUsage: usecase <recipe> <topic>  — or just describe what you want.`,
           );
@@ -1401,7 +1406,7 @@ Examples:
       }
 
       if (!topic) {
-        ctx.send(input.entity, `Usage: usecase ${recipeName} <topic>`);
+        refuseCommand(ctx, input.entity, `Usage: usecase ${recipeName} <topic>`);
         return;
       }
 
@@ -1410,7 +1415,7 @@ Examples:
 
       // Check for duplicate
       if (db.getProjectByName(projectName)) {
-        ctx.send(input.entity, `Project "${projectName}" already exists.`);
+        refuseCommand(ctx, input.entity, `Project "${projectName}" already exists.`);
         return;
       }
 
@@ -1575,7 +1580,7 @@ export function universalIntentCommands(deps: UseCaseCommandDeps): CommandDef[] 
       }
       const topic = input.args.trim();
       if (!topic) {
-        ctx.send(input.entity, `Usage: ${intent} <goal>`);
+        refuseCommand(ctx, input.entity, `Usage: ${intent} <goal>`);
         return;
       }
       return usecase.handler(ctx, {

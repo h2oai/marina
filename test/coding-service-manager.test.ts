@@ -6,9 +6,9 @@ import type { SandboxProvider } from "../src/coding/sandbox-provider";
 import { CodingServiceManager } from "../src/coding/service-manager";
 import { MarinaDB } from "../src/persistence/database";
 import { entityId } from "../src/types";
-import { cleanupDb, FAKE_SANDBOX_IDENTITY } from "./helpers";
+import { cleanupDb, FAKE_SANDBOX_IDENTITY, tempDbPath } from "./helpers";
 
-const DB_PATH = "test_coding_services.db";
+const DB_PATH = tempDbPath("test_coding_services.db");
 const OWNER = entityId("entity-service");
 
 afterEach(() => cleanupDb(DB_PATH));

@@ -2,11 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChannelManager } from "../../coordination/channel-manager";
+import {
+  CREW_FORMATION_HELP,
+  crewFormationEntry,
+  resolveCrewFormation,
+} from "../../coordination/crew-formations";
 import { CrewError, type CrewManager } from "../../coordination/crew-manager";
+import type { Task, TaskManager } from "../../coordination/task-manager";
 import { type AdvisoryOptions, advisoryMode } from "../../decisions/advisory";
 import { reviewCrewDeliverable } from "../../decisions/deliverable";
 import { memoryAccess } from "../../memory/access";
 import { bold, dim, header, separator } from "../../net/ansi";
+import { protocolText, scoreStepsLine } from "../../orchestration/formations/describe";
+import { bindTaskToCrew } from "../../outcomes/live";
 import type { MarinaDB } from "../../persistence/database";
 import type {
   CommandDef,
@@ -16,31 +24,24 @@ import type {
   Entity,
   RoomContext,
 } from "../../types";
-import { normalizePatternName } from "../../world/templates/orchestration";
+import { refuseCommand } from "../command-response";
 import { tryLogAsync } from "../errors";
 import { Logger } from "../logger";
 import { canonicalSub, parseModifiers, splitOnTerminator, unknownSubcommand } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
 
-const VALID_FORMATIONS: ReadonlySet<CrewFormation> = new Set<CrewFormation>([
-  "deliberation",
-  "chorus",
-  "foundry",
-  "swarm",
-  "pipeline",
-  "debate",
-  "mapreduce",
-  "blackboard",
-  "symbiosis",
-  "research",
-  "delphi",
-  "tournament",
-  "verification",
-  "auction",
-  "ledger",
-  "sharding",
-  "freeform",
-]);
+/** `crew info`'s formation lines: the catalogue's summary, roles, protocol and Score steps. */
+function formationLines(formation: string): string[] {
+  const entry = crewFormationEntry(formation);
+  if (!entry) return [];
+  const steps = scoreStepsLine(entry.name);
+  return [
+    `  formation: ${bold(entry.name)} — ${entry.summary}`,
+    ...(entry.roles.length ? [dim(`    roles: ${entry.roles.join(", ")}`)] : []),
+    dim(`    protocol: ${protocolText(entry)}`),
+    ...(steps ? [dim(`    ${steps}`)] : []),
+  ];
+}
 
 interface CrewCommandDeps {
   trackBackground?: (work: Promise<void>) => void;
@@ -51,7 +52,11 @@ interface CrewCommandDeps {
   findAgentByName: (name: string) => Entity | undefined;
   /** Optional db — enables historical-crew lookups via pool name. */
   db?: MarinaDB;
+  /** Binds each dispatch to a task (created at value 0, or `task:<id>`). */
+  tasks?: TaskManager;
 }
+
+const DISPATCH_USAGE = "Usage: crew dispatch <name> [task:<id>] <message>";
 
 const CREATE_USAGE =
   "Usage: crew create <name> <a,b,c> [formation:<f>] [persist] -- <goal>   (also formation=<f> / --formation <f>)";
@@ -116,17 +121,9 @@ function parseCreateArgs(args: string): {
     lifetime = "persisted";
   }
   if (typeof values.formation === "string") {
-    const value = values.formation.toLowerCase();
-    const canonical = normalizePatternName(value);
-    if (!VALID_FORMATIONS.has(canonical as CrewFormation)) {
-      return {
-        name,
-        members,
-        goal,
-        error: `Unknown formation "${value}". Valid: ${[...VALID_FORMATIONS].join(", ")}`,
-      };
-    }
-    formation = canonical as CrewFormation;
+    const resolved = resolveCrewFormation(values.formation);
+    if ("error" in resolved) return { name, members, goal, error: resolved.error };
+    formation = resolved.formation;
   }
 
   return { name, members, formation, lifetime, goal };
@@ -180,7 +177,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         effect: "execute",
       },
       { syntax: "crew decline <name>", effect: "write" },
-      { syntax: "crew dispatch <name> <message>", effect: "write" },
+      { syntax: "crew dispatch <name> [task:<id>] <message>", effect: "write" },
       { syntax: "crew dissolve <name> [reason]", effect: "write" },
       { syntax: "crew formation <name> <formation>", effect: "write" },
       { syntax: "crew info <name>", effect: "read" },
@@ -199,7 +196,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       "Crews — runtime containers for multi-agent coordination.\n" +
       "Usage:\n" +
       "  crew create <name> <a,b,c> [formation:<f>] [persist] -- <goal>   (also formation=<f> / --formation <f>)\n" +
-      "  crew dispatch <name> <message>\n" +
+      "  crew dispatch <name> [task:<id>] <message>   (binds the work to a task: a new one at value 0, or task:<id>)\n" +
       "  crew info <name>   (also show/view)\n" +
       "  crew invite <name> <agent> [role:<r>]\n" +
       "  crew invitations\n" +
@@ -213,7 +210,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       "  crew stall <name> <agent> [reason]\n" +
       "  crew complete <name> -- <summary>\n" +
       "  crew dissolve <name> [reason]\n" +
-      "Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding, freeform\n" +
+      `Formations (the formation catalogue; \`crew info\` shows each one's protocol): ${CREW_FORMATION_HELP}\n` +
       "Artifact kinds: map, reduce, synthesis, draft",
     handler: (ctx: RoomContext, input) => {
       const caller = deps.getEntity(input.entity);
@@ -225,7 +222,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       if (!sub || sub === "info") {
         const target = tokens[sub === "info" ? 1 : 0];
         if (!target) {
-          ctx.send(input.entity, "Usage: crew info <name>  |  crew create <name> ...");
+          refuseCommand(ctx, input.entity, "Usage: crew info <name>  |  crew create <name> ...");
           return;
         }
         const crew = deps.crews.getByName(target);
@@ -234,6 +231,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
             header(`Crew: ${crew.name}`),
             separator(),
             fmtCrewLine(crew),
+            ...formationLines(crew.formation),
             dim(`  channel: ${crew.channelId ?? "(unallocated)"}  owner: ${crew.ownerId}`),
           ];
           if (crew.poolId) {
@@ -305,7 +303,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
             return;
           }
         }
-        ctx.send(input.entity, `Crew "${target}" not found.`);
+        refuseCommand(ctx, input.entity, `Crew "${target}" not found.`);
         return;
       }
 
@@ -329,7 +327,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           if (!deps.findAgentByName(name)) missing.push(name);
         }
         if (missing.length > 0) {
-          ctx.send(input.entity, `Unknown agents: ${missing.join(", ")}`);
+          refuseCommand(ctx, input.entity, `Unknown agents: ${missing.join(", ")}`);
           return;
         }
 
@@ -389,12 +387,16 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         const crewName = tokens[1];
         const agentName = tokens[2];
         if (!crewName || !agentName) {
-          ctx.send(input.entity, "Usage: crew invite <name> <agent> [role:<r>]   (also role=<r>)");
+          refuseCommand(
+            ctx,
+            input.entity,
+            "Usage: crew invite <name> <agent> [role:<r>]   (also role=<r>)",
+          );
           return;
         }
         const crew = deps.crews.getByName(crewName);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${crewName}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${crewName}" not found.`);
           return;
         }
         const inviteRefusal =
@@ -411,7 +413,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         }
         const invitee = deps.findAgentByName(agentName);
         if (!invitee) {
-          ctx.send(input.entity, `Unknown agent: ${agentName}`);
+          refuseCommand(ctx, input.entity, `Unknown agent: ${agentName}`);
           return;
         }
         const role =
@@ -432,16 +434,16 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         return;
       }
 
-      // crew dispatch <name> <message> — owner, member, or rank 4+
+      // crew dispatch <name> [task:<id>] <message> — owner, member, or rank 4+
       if (sub === "dispatch") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: crew dispatch <name> <message>");
+          ctx.send(input.entity, DISPATCH_USAGE);
           return;
         }
         const crew = deps.crews.getByName(name);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${name}" not found.`);
           return;
         }
         const isOwner = crew.ownerId === input.entity;
@@ -458,9 +460,34 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           ctx.send(input.entity, dispatchRefusal);
           return;
         }
-        const message = input.args.replace(/^dispatch\s+\S+\s*/i, "").trim();
+        let message = input.args.replace(/^dispatch\s+\S+\s*/i, "").trim();
+        // `task:<id>` first binds an existing task; else a new one is
+        // created at value 0 (the dispatch pays no standing).
+        const taskRef = /^task:(\d+)(?:\s+|$)/i.exec(message);
+        let existing: Task | undefined;
+        if (taskRef) {
+          const taskId = Number(taskRef[1]);
+          existing = deps.tasks?.get(taskId);
+          if (!existing) {
+            refuseCommand(ctx, input.entity, `Task #${taskId} not found.`);
+            return;
+          }
+          if (existing.status === "completed" || existing.status === "cancelled") {
+            ctx.send(input.entity, `Task #${taskId} is ${existing.status}; nothing to dispatch.`);
+            return;
+          }
+          if (existing.creatorId !== input.entity && !deps.tasks?.getClaim(taskId, input.entity)) {
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Only task #${taskId}'s creator or a claimant can hand it to a crew.`,
+            );
+            return;
+          }
+          message = message.slice(taskRef[0].length).trim() || existing.title;
+        }
         if (!message) {
-          ctx.send(input.entity, "Usage: crew dispatch <name> <message>");
+          ctx.send(input.entity, DISPATCH_USAGE);
           return;
         }
 
@@ -480,16 +507,39 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         };
 
         try {
+          if (crew.state === "dissolved")
+            throw new CrewError(`Crew ${crew.name} is dissolved`, "dissolved");
+          const task =
+            existing ??
+            deps.tasks?.create({
+              title: message.slice(0, 160),
+              description: message,
+              creatorId: input.entity,
+              creatorName: caller.name,
+              standing: 0,
+            });
+          if (task && deps.db)
+            bindTaskToCrew(deps.db, task.id, {
+              crew: crew.id,
+              name: crew.name,
+              formation: crew.formation,
+            });
+          const taskLine = task
+            ? `\n(task #${task.id}: \`task claim ${task.id}\`, then \`task submit ${task.id} <result>\`)`
+            : "";
           deps.crews.dispatch(
             crew.id,
-            message,
+            `${message}${taskLine}`,
             { id: input.entity, name: caller.name },
             {
               beforeFirstPost: joinMembers,
             },
           );
           joinMembers();
-          ctx.send(input.entity, `Dispatched to crew "${crew.name}".`);
+          ctx.send(
+            input.entity,
+            `Dispatched to crew "${crew.name}"${task ? ` as task #${task.id}` : ""}.`,
+          );
         } catch (e) {
           if (e instanceof CrewError) ctx.send(input.entity, e.message);
           else throw e;
@@ -501,12 +551,12 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       if (sub === "join") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: crew join <name>");
+          refuseCommand(ctx, input.entity, "Usage: crew join <name>");
           return;
         }
         const crew = deps.crews.getByName(name);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${name}" not found.`);
           return;
         }
         try {
@@ -525,12 +575,12 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       if (sub === "decline") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: crew decline <name>");
+          refuseCommand(ctx, input.entity, "Usage: crew decline <name>");
           return;
         }
         const crew = deps.crews.getByName(name);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${name}" not found.`);
           return;
         }
         try {
@@ -547,12 +597,12 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       if (sub === "leave") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: crew leave <name>");
+          refuseCommand(ctx, input.entity, "Usage: crew leave <name>");
           return;
         }
         const crew = deps.crews.getByName(name);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${name}" not found.`);
           return;
         }
         try {
@@ -568,24 +618,20 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       // crew formation <name> <formation> — owner or rank 3+
       if (sub === "formation") {
         const name = tokens[1];
-        const rawFormation = tokens[2]?.toLowerCase();
-        const formation = (rawFormation ? normalizePatternName(rawFormation) : undefined) as
-          | CrewFormation
-          | undefined;
-        if (!name || !formation) {
-          ctx.send(input.entity, "Usage: crew formation <name> <formation>");
+        const rawFormation = tokens[2];
+        if (!name || !rawFormation) {
+          refuseCommand(ctx, input.entity, "Usage: crew formation <name> <formation>");
           return;
         }
-        if (!VALID_FORMATIONS.has(formation)) {
-          ctx.send(
-            input.entity,
-            `Unknown formation "${formation}". Valid: ${[...VALID_FORMATIONS].join(", ")}`,
-          );
+        const resolved = resolveCrewFormation(rawFormation);
+        if ("error" in resolved) {
+          ctx.send(input.entity, resolved.error);
           return;
         }
+        const formation: CrewFormation = resolved.formation;
         const crew = deps.crews.getByName(name);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${name}" not found.`);
           return;
         }
         const formationRefusal =
@@ -610,12 +656,12 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       if (sub === "persist") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: crew persist <name>");
+          refuseCommand(ctx, input.entity, "Usage: crew persist <name>");
           return;
         }
         const crew = deps.crews.getByName(name);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${name}" not found.`);
           return;
         }
         const persistRefusal =
@@ -644,17 +690,17 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         const name = tokens[1];
         const stage = tokens.slice(2).join(" ").trim();
         if (!name || !stage) {
-          ctx.send(input.entity, "Usage: crew stage <name> <stage>");
+          refuseCommand(ctx, input.entity, "Usage: crew stage <name> <stage>");
           return;
         }
         const crew = deps.crews.getByName(name);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${name}" not found.`);
           return;
         }
         const isMember = crew.members.some((m) => m.agentName === caller.name);
         if (!isMember) {
-          ctx.send(input.entity, `Only members of "${crew.name}" can mark a stage.`);
+          refuseCommand(ctx, input.entity, `Only members of "${crew.name}" can mark a stage.`);
           return;
         }
         try {
@@ -678,14 +724,16 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           | undefined;
         const ref = splitOnTerminator(input.args)[1] ?? "";
         if (!name || !kind || !ref) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             "Usage: crew artifact <name> <map|reduce|synthesis|draft> -- <ref>",
           );
           return;
         }
         if (!["map", "reduce", "synthesis", "draft"].includes(kind)) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             `Unknown artifact kind "${kind}". Use map|reduce|synthesis|draft.`,
           );
@@ -693,12 +741,12 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         }
         const crew = deps.crews.getByName(name);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${name}" not found.`);
           return;
         }
         const isMember = crew.members.some((m) => m.agentName === caller.name);
         if (!isMember) {
-          ctx.send(input.entity, `Only members of "${crew.name}" can deposit artifacts.`);
+          refuseCommand(ctx, input.entity, `Only members of "${crew.name}" can deposit artifacts.`);
           return;
         }
         try {
@@ -718,22 +766,26 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         const agentName = tokens[2];
         const reason = tokens.slice(3).join(" ") || "no progress";
         if (!name || !agentName) {
-          ctx.send(input.entity, "Usage: crew stall <name> <agent> [reason]");
+          refuseCommand(ctx, input.entity, "Usage: crew stall <name> <agent> [reason]");
           return;
         }
         const crew = deps.crews.getByName(name);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${name}" not found.`);
           return;
         }
         const isOwner = crew.ownerId === input.entity;
         const isMember = crew.members.some((m) => m.agentName === caller.name);
         if (!isOwner && !isMember) {
-          ctx.send(input.entity, `Only the owner or a member of "${crew.name}" can flag a stall.`);
+          refuseCommand(
+            ctx,
+            input.entity,
+            `Only the owner or a member of "${crew.name}" can flag a stall.`,
+          );
           return;
         }
         if (agentName === caller.name) {
-          ctx.send(input.entity, "Cannot flag yourself as stalled.");
+          refuseCommand(ctx, input.entity, "Cannot flag yourself as stalled.");
           return;
         }
         try {
@@ -754,23 +806,27 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       if (sub === "complete") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: crew complete <name> -- <summary>");
+          refuseCommand(ctx, input.entity, "Usage: crew complete <name> -- <summary>");
           return;
         }
         const crew = deps.crews.getByName(name);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${name}" not found.`);
           return;
         }
         const isOwner = crew.ownerId === input.entity;
         const isMember = crew.members.some((m) => m.agentName === caller.name);
         if (!isOwner && !isMember) {
-          ctx.send(input.entity, `Only the owner or a member can complete crew "${crew.name}".`);
+          refuseCommand(
+            ctx,
+            input.entity,
+            `Only the owner or a member can complete crew "${crew.name}".`,
+          );
           return;
         }
         const summary = splitOnTerminator(input.args)[1] ?? "";
         if (!summary) {
-          ctx.send(input.entity, "Usage: crew complete <name> -- <summary>");
+          refuseCommand(ctx, input.entity, "Usage: crew complete <name> -- <summary>");
           return;
         }
         try {
@@ -792,12 +848,12 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       if (sub === "dissolve") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: crew dissolve <name> [reason]");
+          refuseCommand(ctx, input.entity, "Usage: crew dissolve <name> [reason]");
           return;
         }
         const crew = deps.crews.getByName(name);
         if (!crew) {
-          ctx.send(input.entity, `Crew "${name}" not found.`);
+          refuseCommand(ctx, input.entity, `Crew "${name}" not found.`);
           return;
         }
         const isOwner = crew.ownerId === input.entity;

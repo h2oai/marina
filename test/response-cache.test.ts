@@ -20,9 +20,9 @@ import {
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_response_cache.db";
+const TEST_DB = tempDbPath("test_response_cache.db");
 const MODEL = "openai/gpt-4o";
 const PROVIDER_ENV = [
   "ANTHROPIC_API_KEY",

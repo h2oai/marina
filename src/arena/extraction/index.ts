@@ -9,7 +9,7 @@
  *                                          (unset/empty/off: no extraction —
  *                                          the specialist is unchanged)
  *   MARINA_ARENA_WIKI_EXTRACTOR_MODEL      the model extractors' model
- *                                          (default openrouter/deepseek/deepseek-v4.1-flash)
+ *                                          (default openrouter/deepseek/deepseek-v4.1-flash-1017)
  *   MARINA_ARENA_WIKI_EXTRACTOR_TOP        candidates extracted for (default 30)
  *   MARINA_ARENA_WIKI_EXTRACTOR_RETRIEVER  date-strict retriever for `events`
  *                                          (default none: the article text only;
@@ -23,7 +23,7 @@ import { editsExtractor, relatedExtractor } from "./wiki-deterministic";
 
 export const EXTRACTOR_NAMES = ["events", "news", "related", "edits", "gdelt"] as const;
 export type ExtractorName = (typeof EXTRACTOR_NAMES)[number];
-export const DEFAULT_EXTRACTOR_MODEL = "openrouter/deepseek/deepseek-v4.1-flash";
+export const DEFAULT_EXTRACTOR_MODEL = "openrouter/deepseek/deepseek-v4.1-flash-1017";
 export const DEFAULT_EXTRACTOR_TOP = 30;
 
 /** The extractor list in a knob value; empty means off. Unknown names are an error. */

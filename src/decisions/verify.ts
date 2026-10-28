@@ -14,6 +14,7 @@ import { getAutonomyPosture } from "../engine/autonomy";
 import { getErrorMessage } from "../engine/errors";
 import type { Evidence } from "./evidence";
 import { maskSensitiveText } from "./gate";
+import { judgeModeFor } from "./judges";
 import {
   DEFAULT_VERIFY_POLICY,
   decideVerify,
@@ -205,7 +206,7 @@ export function decisionVerifyEnabled(env: NodeJS.ProcessEnv = process.env): boo
 }
 
 /**
- * `MARINA_DECISION_VERIFY`: `observe` (default) — score every submission and
+ * `MARINA_DECISION_VERIFY` (else `MARINA_JUDGE`): `observe` (default) — score every submission and
  * record the judge's opinion, never act on it, so its agreement with the
  * creators' verdicts can be measured (`decision agreement`) before anyone
  * trusts it (nothing is scored when no decision provider exists); `on` — the
@@ -215,9 +216,19 @@ export function decisionVerifyEnabled(env: NodeJS.ProcessEnv = process.env): boo
  * bounced — decision tools inform, approval still decides.
  */
 export function decisionVerifyMode(env: NodeJS.ProcessEnv = process.env): "off" | "on" | "observe" {
-  const v = env.MARINA_DECISION_VERIFY?.trim().toLowerCase();
+  const v = judgeModeFor("verify", env).mode;
   if (v === "on") return getAutonomyPosture(env) === "guarded" ? "on" : "observe";
-  return v === "off" ? v : "observe";
+  return v;
+}
+
+/**
+ * True when `on` came from `MARINA_JUDGE` rather than `MARINA_DECISION_VERIFY`:
+ * the one flag lets only an EARNED verifier bounce a submission (`judgeEarned`
+ * on `verify`); the legacy variable keeps its old meaning (any verifier may
+ * bounce once).
+ */
+export function decisionVerifyNeedsEarned(env: NodeJS.ProcessEnv = process.env): boolean {
+  return judgeModeFor("verify", env).from === "judge";
 }
 
 /** The support questions a submission is judged on (grounded only when evidence was cited). */

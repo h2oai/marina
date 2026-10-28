@@ -29,6 +29,7 @@ import type { UnifiedContextResult as ParticipantContext } from "../sdk/memory-c
 import {
   type AfterToolCallResult,
   Agent,
+  type AgentContext,
   type AgentLoopTurnUpdate,
   type AgentMessage,
   type AgentTool,
@@ -93,6 +94,7 @@ import {
   UNIFIED_TIER_LABELS,
 } from "../memory/unified-context";
 import { stripAnsi } from "../net/ansi";
+import { catalogModel } from "../net/model/catalog-snapshots";
 import { isHostedProvider } from "../net/model/hosted-providers";
 import {
   isLocalProvider,
@@ -155,7 +157,9 @@ import {
   budgetFinalRequest,
   budgetSteerAt,
   budgetSteerNote,
+  closingToolCall,
   deadlinePhase,
+  RUN_CAP_CLOSING_GRACE,
   SPEND_STOP_EVENT_CONTEXT,
 } from "./budget-terminal";
 import {
@@ -175,6 +179,7 @@ import {
   effectivePromptWindow,
   hasCompletedRun,
 } from "./context-manager";
+import { noteEffectiveThinking } from "./effective-thinking";
 import {
   type PromptMetrics,
   type PromptSectionMetric,
@@ -329,6 +334,8 @@ export function evolutionControlState(
 export interface TurnUsageMetrics {
   inputTokens?: number;
   outputTokens?: number;
+  /** Reasoning (thinking) tokens the provider reported (pi-ai `usage.reasoning`); absent when 0. */
+  reasoningTokens?: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   costUsd?: number;
@@ -348,6 +355,7 @@ export function extractTurnUsage(message: unknown): TurnUsageMetrics {
   return {
     ...(finite(row.input) === undefined ? {} : { inputTokens: finite(row.input) }),
     ...(finite(row.output) === undefined ? {} : { outputTokens: finite(row.output) }),
+    ...((finite(row.reasoning) ?? 0) > 0 ? { reasoningTokens: finite(row.reasoning) } : {}),
     ...(finite(row.cacheRead) === undefined ? {} : { cacheReadTokens: finite(row.cacheRead) }),
     ...(finite(row.cacheWrite) === undefined ? {} : { cacheWriteTokens: finite(row.cacheWrite) }),
     ...(costUsd === undefined ? {} : { costUsd }),
@@ -520,6 +528,8 @@ export interface AgentOperatorStatus {
   /** Lifetime prompt-cache token counts (provider usage, or the proxy headers when usage lacks them). */
   totalCacheReadTokens?: number;
   totalCacheWriteTokens?: number;
+  /** Lifetime reasoning (thinking) tokens the provider reported — a share of `totalOutputTokens`. */
+  totalReasoningTokens?: number;
   /** Own command echoes kept out of the perception buffer (see `isSelfEchoPerception`). */
   selfEchoesDropped?: number;
   /** Cold turns, compactions before them, keep-alives (`src/agent/prompt-cache.ts`). */
@@ -957,7 +967,8 @@ function normalizeSupports(supports: AgentSupports | undefined): AgentSupports {
  */
 function tryGetModel(provider: string, modelId: string): Model<Api> | undefined {
   try {
-    return piModels.getModel(provider, modelId);
+    // A dated snapshot the catalog does not list yet takes its base entry.
+    return catalogModel((id) => piModels.getModel(provider, id), modelId);
   } catch {
     return undefined;
   }
@@ -1210,6 +1221,15 @@ export function applyThinkingLevel(model: Model<Api>, level: AgentThinkingLevel)
  *    which pi-ai only ever echoes as an empty placeholder. Clearing that flag too
  *    avoids the broken round-trip.
  *
+ * The Anthropic Messages API is the exception: there `model.reasoning: false`
+ * does not mean "no thinking". A managed-effort Claude (`supportsMidConvoEffort`,
+ * e.g. claude-haiku-5.5, directly or through OpenRouter) then takes pi-ai's
+ * adaptive-thinking branch at effort `high` — thinking ON while the agent asked
+ * for off. Keeping `reasoning: true` makes pi-ai send `thinking: {type:
+ * "disabled"}` instead ({@link anthropicDisablesThinking}); a model whose
+ * thinking cannot be turned off (`thinkingLevelMap.off === null`) is left to
+ * pi-ai as before.
+ *
  * When the agent DID opt into thinking, the model is left untouched.
  */
 export function neutralizeUnusedReasoning(
@@ -1219,6 +1239,7 @@ export function neutralizeUnusedReasoning(
   // The agent opted into thinking — keep reasoning; that's an explicit choice.
   if (thinkingLevel && thinkingLevel !== "off") return model;
   if (!model.reasoning) return model;
+  if (anthropicDisablesThinking(model)) return model;
   const compat = model.compat as
     | { requiresReasoningContentOnAssistantMessages?: boolean }
     | undefined;
@@ -1230,6 +1251,31 @@ export function neutralizeUnusedReasoning(
       ? { ...(model.compat as object), requiresReasoningContentOnAssistantMessages: false }
       : model.compat,
   } as Model<Api>;
+}
+
+/**
+ * An Anthropic Messages model whose thinking pi-ai turns off explicitly
+ * (`thinking: {type: "disabled"}`) when the agent's level is `off`: a
+ * reasoning model whose level map does not mark `off` as unavailable. Such a
+ * model spends no hidden reasoning with thinking off.
+ */
+export function anthropicDisablesThinking(model: Model<Api>): boolean {
+  if (model.api !== "anthropic-messages" || !model.reasoning) return false;
+  const map = (model as { thinkingLevelMap?: Record<string, string | null | undefined> })
+    .thinkingLevelMap;
+  return map?.off !== null;
+}
+
+/**
+ * The thinking level that reaches the wire: the agent's level when its model
+ * takes a reasoning setting, else `off` (a model with no reasoning support is
+ * sent none, whatever the level says).
+ */
+export function wireThinkingLevel(
+  model: Pick<Model<Api>, "reasoning">,
+  level: AgentThinkingLevel,
+): AgentThinkingLevel {
+  return level !== "off" && model.reasoning ? level : "off";
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -1397,6 +1443,8 @@ export class LeanAgentAdapter implements AgentHandle {
   private requestSave: Promise<void> | undefined;
   private readonly toolRequestEligibility = new Map<string, Set<string>>();
   private currentRunAdmittedTools = 0;
+  /** Closing calls admitted past the run cap this run (`RUN_CAP_CLOSING_GRACE`). */
+  private currentRunClosingGrace = 0;
   private runYielded = false;
   /**
    * Ids of buffered perceptions already delivered to the model through
@@ -1520,6 +1568,7 @@ export class LeanAgentAdapter implements AgentHandle {
     totalCostUsd: 0,
     totalCacheReadTokens: 0,
     totalCacheWriteTokens: 0,
+    totalReasoningTokens: 0,
     /** Compactions run BETWEEN turns of one prompt (prepareNextTurn), not between prompts. */
     midRunCompactions: 0,
     /** Between-prompt compactions under `MARINA_AGENT_CONTEXT_CAP_TOKENS`. */
@@ -1761,6 +1810,7 @@ export class LeanAgentAdapter implements AgentHandle {
     const resolvedModel = resolveModel(modelStr, this.wsPort);
     this.thinkingLevel = resolveAgentThinkingLevel(config, process.env, !!resolvedModel.reasoning);
     this.model = applyThinkingLevel(resolvedModel, this.thinkingLevel);
+    noteEffectiveThinking(this.name, wireThinkingLevel(this.model, this.thinkingLevel));
     if (!this.promptTimeoutExplicit)
       this.promptTimeoutMs = defaultPromptTimeoutMs(
         this.thinkingLevel !== "off" && resolvedModel.reasoning ? this.thinkingLevel : "off",
@@ -1920,6 +1970,7 @@ export class LeanAgentAdapter implements AgentHandle {
           this.metrics.modelCalls++;
           this.metrics.totalInputTokens += (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
           this.metrics.totalOutputTokens += usage.outputTokens ?? 0;
+          this.metrics.totalReasoningTokens += usage.reasoningTokens ?? 0;
           this.metrics.totalCacheReadTokens += usage.cacheReadTokens ?? 0;
           this.metrics.totalCacheWriteTokens += usage.cacheWriteTokens ?? 0;
           this.metrics.totalCostUsd += cost;
@@ -2079,6 +2130,10 @@ export class LeanAgentAdapter implements AgentHandle {
       // completed turn's context is over the prune threshold, run the SAME
       // transform once here and hand the compacted context to the next turn.
       prepareNextTurnWithContext: (context, signal) => this.prepareNextTurn(context, signal),
+      // Deferred tools are executable before they are declared: a model that
+      // calls one by its catalog name (without `marina_tool_search`) runs it,
+      // and it is declared from the next request on (`beforeToolCall`).
+      prepareRequest: (request) => this.withDeferredExecutable(request.context),
       // Fill `prompt_cache_key` for OpenAI upstreams behind the proxy (see
       // `withPromptCacheKey`); registry models keep pi-ai's own behaviour.
       // OpenRouter routes also get `reasoning-control` shaping: only providers
@@ -2133,6 +2188,9 @@ export class LeanAgentAdapter implements AgentHandle {
           : () => apiKey
         : undefined,
       beforeToolCall: async (context) => {
+        // A deferred tool called by name joins the declared set for the rest
+        // of the session, as if `marina_tool_search` had loaded it.
+        this.loadCalledDeferredTool(context.toolCall.name);
         // Providers may return parseable partial tool arguments at the output
         // limit. Never execute that unfinished request (especially a write).
         if (
@@ -2155,15 +2213,24 @@ export class LeanAgentAdapter implements AgentHandle {
               "The task's time budget is spent: submit now with marina_code action=summary, or report with action=blocked. Other tools are refused.",
           };
         }
-        // Reserve before any await: parallel preparation must share the same limit.
-        if (this.currentRunAdmittedTools >= this.runToolCallCap()) {
-          return {
-            block: true,
-            reason: "Run tool budget reached; this tool did not execute. Continue next cycle.",
-          };
-        }
-        this.currentRunAdmittedTools++;
         const args = (context.args ?? {}) as Record<string, unknown>;
+        // Reserve before any await: parallel preparation must share the same limit.
+        // Past the cap, a call that hands in work or records the agent's own
+        // state still runs (bounded grace): the cap's warning asked for it.
+        if (this.currentRunAdmittedTools >= this.runToolCallCap()) {
+          if (
+            !closingToolCall(context.toolCall.name, args) ||
+            this.currentRunClosingGrace >= RUN_CAP_CLOSING_GRACE
+          ) {
+            return {
+              block: true,
+              reason: "Run tool budget reached; this tool did not execute. Continue next cycle.",
+            };
+          }
+          this.currentRunClosingGrace++;
+        } else {
+          this.currentRunAdmittedTools++;
+        }
         const policy = mediateToolCall(context.toolCall.name, args, [...this.currentTrustSources]);
         if (policy.block) return { block: true, reason: policy.block };
         if (policy.label) {
@@ -3606,7 +3673,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // leaves it no room to reach a tool call (`reasoning-control`).
     const mayReasonUnasked =
       thinkingBudget === 0 &&
-      (this.model.reasoning ||
+      ((this.model.reasoning && !anthropicDisablesThinking(this.model)) ||
         isMarinaProxyModel(this.model) ||
         isOpenRouterModel(this.model) ||
         isHostedProvider(provider) ||
@@ -3868,6 +3935,11 @@ export class LeanAgentAdapter implements AgentHandle {
       );
     }
 
+    // A steered attention no prompt has taken yet: pick it up now. An
+    // operator's `agent attention` breaks a declared rest like an owed
+    // request does; otherwise it would sit unread until the heartbeat.
+    if (this.attentionPending) return rate.min;
+
     // Declared rest: idle cadence unless a reply is genuinely OWED (a request
     // tell, an addressed ask). Addressed information and ambient chatter wait
     // for the agent's own wake. A NEW owed request answers at the fast tick;
@@ -3878,8 +3950,6 @@ export class LeanAgentAdapter implements AgentHandle {
       return this.outstandingRequests.size > 0 ? rate.normal : rate.idle;
     }
 
-    // A steered attention no prompt has taken yet: pick it up now.
-    if (this.attentionPending) return rate.min;
     // A bound coder whose run stopped at a per-run cap (not a spend stop)
     // continues its active task next cycle; waiting out a full tick there
     // only adds latency, the calls happen anyway.
@@ -3917,15 +3987,19 @@ export class LeanAgentAdapter implements AgentHandle {
   /**
    * Why this cycle needs no model call, or null when it does. A resident is
    * prompted when something is new or owed — a perception (while resting: an
-   * owed one), an outstanding request, its last run did work toward a focus or
-   * goal, idle consolidation or reflection has material, or the long heartbeat
-   * (`MARINA_AGENT_HEARTBEAT_MS`) is due. Otherwise the prompt would be the
+   * owed one), an outstanding request, a steered attention (resting or not),
+   * its last run did work toward a focus or goal, idle consolidation or
+   * reflection has material, or the long heartbeat (`MARINA_AGENT_HEARTBEAT_MS`)
+   * is due. Otherwise the prompt would be the
    * same "nothing needs your attention" text replayed over the whole history.
    * Crew responders and bound coders are handled by their own paths.
    */
   private idleSkipReason(now = Date.now()): "idle" | "resting" | null {
     if (this.crewResponderMode || this.activeCodingTask) return null;
     if (this.outstandingRequests.size > 0) return null;
+    // A steered attention (`agent attention`) waits in the queue until a
+    // prompt takes it: it is owed in every mode, declared rest included.
+    if (this.attentionPending) return null;
     const resting = this.loopPrefs.rest !== null;
     const fresh = this.pendingPerceptions.filter(
       (perception) => perception.id === undefined || !this.deliveredViaSteer.has(perception.id),
@@ -4493,7 +4567,7 @@ export class LeanAgentAdapter implements AgentHandle {
             `Your goal looks like it could use a coordination pattern — fitting: ${fits
               .map((f) => `${f.pattern} (${f.why})`)
               .join("; ")}.`,
-            "Adopt one with `project <name> orchestrate <pattern>` (works solo — it seeds the conventions you'll `recall`). Bring in other agents (`code crew` / `recruit`) only if the work needs more hands — or keep going solo.",
+            "Adopt one with `project <name> orchestrate <pattern>` (works solo — it seeds the conventions you'll `memory recall`). Bring in other agents (`code crew` / `recruit`) only if the work needs more hands — or keep going solo.",
           );
           // Track record: surface what PRIOR runs of the top-fitting pattern
           // learned, from its `orchestration:<pattern>` tradition pool (crews
@@ -4636,6 +4710,25 @@ export class LeanAgentAdapter implements AgentHandle {
         }
       } catch {
         // best-effort; autonomy continues without a work pulse
+      }
+    }
+
+    // ── 2f. Standing (every 20th cycle, offset 15) ──
+    // One line: LIVE standing and its rank step, the last credits (kind, ref,
+    // age), retired credit labelled as history. With no focus it also names
+    // the live ways to earn. Not for crew responders or a bound coder.
+    if (cycle % 20 === 15 && !this.crewResponderMode && !this.activeCodingTask) {
+      try {
+        const standing = await this.platformMemory.standingSummary();
+        const content =
+          standing.summary && !this.focus && standing.earn
+            ? `${standing.summary} · ${standing.earn}`
+            : standing.summary;
+        if (content && this.shouldIncludeSection("standing", content)) {
+          parts.push(`[Standing] ${content}`, 45, "standing");
+        }
+      } catch {
+        // best-effort; the agent works without the standing line
       }
     }
 
@@ -4804,7 +4897,7 @@ export class LeanAgentAdapter implements AgentHandle {
       !this.activeCodingTask
     ) {
       // The procedure itself is the built-in `consolidate-memory` skill.
-      const reflectionContent = `${this.notesSinceReflection} new notes since your last reflection. Consolidate: state your working hypothesis, \`recall\`/\`reflect\` your focus to test it against cited notes, then curate (link, supersede, store a skill) — \`skill builtin consolidate-memory\` has the steps. The goal is a smaller, sharper memory, not more notes.`;
+      const reflectionContent = `${this.notesSinceReflection} new notes since your last reflection. Consolidate: state your working hypothesis, \`memory recall\`/\`memory reflect\` your focus to test it against cited notes, then curate (link, supersede, store a skill) — \`skill builtin consolidate-memory\` has the steps. The goal is a smaller, sharper memory, not more notes.`;
       if (this.shouldIncludeSection("reflection_due", reflectionContent)) {
         parts.push(`[Reflection Due]\n${reflectionContent}`);
       }
@@ -5000,6 +5093,35 @@ export class LeanAgentAdapter implements AgentHandle {
    * compacted list and only clamps tool results.
    */
   private async prepareNextTurn(
+    context: PrepareNextTurnContext,
+    signal?: AbortSignal,
+  ): Promise<AgentLoopTurnUpdate | undefined> {
+    // The next turn executes exactly the declared tools (those loaded this
+    // run included); `prepareRequest` adds the undeclared deferred ones back.
+    const update = await this.compactBetweenTurns(context, signal);
+    return {
+      ...update,
+      context: { ...(update?.context ?? context.context), tools: this.agent.state.tools.slice() },
+    };
+  }
+
+  /** The request's context with every not-yet-declared deferred tool executable. */
+  private withDeferredExecutable(context: AgentContext): { context: AgentContext } | undefined {
+    const present = new Set((context.tools ?? []).map((t) => t.name));
+    const extra = this.deferredTools.filter((t) => !present.has(t.name));
+    if (extra.length === 0) return undefined;
+    return { context: { ...context, tools: [...(context.tools ?? []), ...extra] } };
+  }
+
+  /** Declare a deferred tool the model called directly (no-op for any other name). */
+  private loadCalledDeferredTool(name: string): void {
+    if (this.loadedToolNames.includes(name)) return;
+    const tool = this.deferredTools.find((t) => t.name === name);
+    if (tool) this.loadDeferredTools([tool]);
+  }
+
+  /** Mid-run compaction between turns (see `prepareNextTurn`). */
+  private async compactBetweenTurns(
     context: PrepareNextTurnContext,
     signal?: AbortSignal,
   ): Promise<AgentLoopTurnUpdate | undefined> {
@@ -5417,7 +5539,7 @@ export class LeanAgentAdapter implements AgentHandle {
     }
     return (
       "[Pattern] Repeated actions — approach likely not working. Think WHY (not WHAT next): " +
-      "`think` assumption, `recall` past encounters, `novelty suggest` new angle, or move."
+      "`think` assumption, `memory recall` past encounters, `novelty suggest` new angle, or move."
     );
   }
 
@@ -5492,6 +5614,7 @@ export class LeanAgentAdapter implements AgentHandle {
         this.currentRunToolCalls = 0;
         this.toolCallArgs.clear();
         this.currentRunAdmittedTools = 0;
+        this.currentRunClosingGrace = 0;
         this.runYielded = false;
         this.spendStopLogged = false;
         this.toolRequestEligibility.clear();
@@ -6029,6 +6152,9 @@ export class LeanAgentAdapter implements AgentHandle {
       contextWindow: this.model.contextWindow,
       effectiveContextWindow: this.effectiveContextWindow,
       maxOutputTokens: this.outputMaxTokens ?? this.model.maxTokens,
+      thinkingLevel: this.thinkingLevel,
+      thinkingSent: wireThinkingLevel(this.model, this.thinkingLevel),
+      totalReasoningTokens: this.metrics.totalReasoningTokens,
       peakInputTokens: this.peakAcceptedInputTokens,
       totalInputTokens: this.metrics.totalInputTokens,
       totalOutputTokens: this.metrics.totalOutputTokens,
@@ -6151,6 +6277,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // count must not be added on top of it a second time.
     this.metrics.totalInputTokens += (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
     this.metrics.totalOutputTokens += merged.outputTokens ?? 0;
+    this.metrics.totalReasoningTokens += merged.reasoningTokens ?? 0;
     this.metrics.totalCacheReadTokens += merged.cacheReadTokens ?? 0;
     this.metrics.totalCacheWriteTokens += merged.cacheWriteTokens ?? 0;
     if (merged.costUsd) {
@@ -6169,6 +6296,7 @@ export class LeanAgentAdapter implements AgentHandle {
       totalCostUsd: this.metrics.totalCostUsd,
       totalCacheReadTokens: this.metrics.totalCacheReadTokens,
       totalCacheWriteTokens: this.metrics.totalCacheWriteTokens,
+      totalReasoningTokens: this.metrics.totalReasoningTokens,
       upstreamModel: this.lastUpstreamModel,
       selfEchoesDropped: this.selfEchoesDropped,
       promptCache: { ...this.promptCache.metrics },
@@ -6498,6 +6626,8 @@ export class LeanAgentAdapter implements AgentHandle {
       this.applyModelLimits(modelStr, false);
       this.agent.state.model = this.model;
     }
+    if (opts.model || opts.thinkingLevel !== undefined)
+      noteEffectiveThinking(this.name, wireThinkingLevel(this.model, this.thinkingLevel));
     if (opts.role !== undefined) {
       this.config.role = opts.role;
       // Update rolePrompt and regenerate system prompt

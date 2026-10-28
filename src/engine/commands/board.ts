@@ -12,9 +12,24 @@ import {
   separator,
 } from "../../net/ansi";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { rankFloorRefusal } from "../rank-floor";
 
 export type BoardOp = "read" | "write" | "pin";
+
+const BOARD_SUBS: ReadonlySet<string> = new Set([
+  "list",
+  "read",
+  "post",
+  "reply",
+  "search",
+  "vote",
+  "scores",
+  "pin",
+  "archive",
+  "create",
+]);
+const BOARD_READ_ALIASES: ReadonlySet<string> = new Set(["show", "view", "history"]);
 
 const OP_REFUSAL: Record<BoardOp, string> = {
   read: "You don't have permission to read this board.",
@@ -77,11 +92,11 @@ export function boardCommand(
     const board = post ? boards.getBoard(post.boardId) : undefined;
     const refusal = post && board ? boardRefusal(entity, board, op, isGroupMember) : undefined;
     if (!post || !board || refusal?.hidden) {
-      ctx.send(entity.id, `Post #${postIdStr} not found.`);
+      refuseCommand(ctx, entity.id, `Post #${postIdStr} not found.`);
       return undefined;
     }
     if (refusal) {
-      ctx.send(entity.id, refusal.message);
+      refuseCommand(ctx, entity.id, refusal.message);
       return undefined;
     }
     return { post, board };
@@ -110,8 +125,15 @@ export function boardCommand(
       const entity = getEntity(input.entity);
       if (!entity) return;
 
-      const tokens = input.tokens;
-      const sub = tokens[0]?.toLowerCase() ?? "list";
+      let tokens = input.tokens;
+      let sub = tokens[0]?.toLowerCase() ?? "list";
+      // `board show|view|history <board>` reads it; so does a bare board name
+      // (`board welcome`, `board welcome 3`).
+      if (BOARD_READ_ALIASES.has(sub)) sub = "read";
+      else if (!BOARD_SUBS.has(sub) && boards.getBoardByName(tokens[0]!)) {
+        tokens = ["read", ...tokens];
+        sub = "read";
+      }
 
       switch (sub) {
         case "list": {
@@ -132,7 +154,7 @@ export function boardCommand(
         case "read": {
           const boardName = tokens[1];
           if (!boardName) {
-            ctx.send(input.entity, "Usage: board read <board> [postId]");
+            refuseCommand(ctx, input.entity, "Usage: board read <board> [postId]");
             return;
           }
 
@@ -143,7 +165,7 @@ export function boardCommand(
             if (!found) return;
             const { post } = found;
             if (boards.getBoardByName(boardName)?.id !== post.boardId) {
-              ctx.send(input.entity, `Post #${postId} not found on ${boardName}.`);
+              refuseCommand(ctx, input.entity, `Post #${postId} not found on ${boardName}.`);
               return;
             }
             const votes = boards.getVoteCount(postId);
@@ -173,12 +195,12 @@ export function boardCommand(
           // List posts on board
           const board = boards.getBoardByName(boardName);
           if (!board) {
-            ctx.send(input.entity, `Board "${boardName}" not found.`);
+            refuseCommand(ctx, input.entity, `Board "${boardName}" not found.`);
             return;
           }
           const readRefusal = boardRefusal(entity, board, "read", isGroupMember);
           if (readRefusal) {
-            ctx.send(input.entity, readRefusal.message);
+            refuseCommand(ctx, input.entity, readRefusal.message);
             return;
           }
           const posts = boards.listPosts(board.id);
@@ -202,17 +224,17 @@ export function boardCommand(
           // board post <board> <title> | <body>
           const boardName = tokens[1];
           if (!boardName || tokens.length < 3) {
-            ctx.send(input.entity, "Usage: board post <board> <title> | <body>");
+            refuseCommand(ctx, input.entity, "Usage: board post <board> <title> | <body>");
             return;
           }
           const board = boards.getBoardByName(boardName);
           if (!board) {
-            ctx.send(input.entity, `Board "${boardName}" not found.`);
+            refuseCommand(ctx, input.entity, `Board "${boardName}" not found.`);
             return;
           }
           const writeRefusal = boardRefusal(entity, board, "write", isGroupMember);
           if (writeRefusal) {
-            ctx.send(input.entity, writeRefusal.message);
+            refuseCommand(ctx, input.entity, writeRefusal.message);
             return;
           }
           const rest = tokens.slice(2).join(" ");
@@ -251,7 +273,7 @@ export function boardCommand(
           // board reply <postId> <body>
           const postIdStr = tokens[1];
           if (!postIdStr || tokens.length < 3) {
-            ctx.send(input.entity, "Usage: board reply <postId> <body>");
+            refuseCommand(ctx, input.entity, "Usage: board reply <postId> <body>");
             return;
           }
           const parentId = Number.parseInt(postIdStr, 10);
@@ -261,7 +283,7 @@ export function boardCommand(
           const { post: parent, board } = found;
           const writeRefusal = boardRefusal(entity, board, "write", isGroupMember);
           if (writeRefusal) {
-            ctx.send(input.entity, writeRefusal.message);
+            refuseCommand(ctx, input.entity, writeRefusal.message);
             return;
           }
           const replyBody = tokens.slice(2).join(" ");
@@ -291,17 +313,17 @@ export function boardCommand(
           const boardName = tokens[1];
           const query = tokens.slice(2).join(" ");
           if (!boardName || !query) {
-            ctx.send(input.entity, "Usage: board search <board> <query>");
+            refuseCommand(ctx, input.entity, "Usage: board search <board> <query>");
             return;
           }
           const board = boards.getBoardByName(boardName);
           if (!board) {
-            ctx.send(input.entity, `Board "${boardName}" not found.`);
+            refuseCommand(ctx, input.entity, `Board "${boardName}" not found.`);
             return;
           }
           const searchRefusal = boardRefusal(entity, board, "read", isGroupMember);
           if (searchRefusal) {
-            ctx.send(input.entity, searchRefusal.message);
+            refuseCommand(ctx, input.entity, searchRefusal.message);
             return;
           }
           const results = boards.searchPosts(board.id, query);
@@ -324,7 +346,7 @@ export function boardCommand(
           const postIdStr = tokens[1];
           const direction = tokens[2]?.toLowerCase();
           if (!postIdStr || !direction || !["up", "down"].includes(direction)) {
-            ctx.send(input.entity, "Usage: board vote <postId> up|down [score 1-10]");
+            refuseCommand(ctx, input.entity, "Usage: board vote <postId> up|down [score 1-10]");
             return;
           }
           const postId = Number.parseInt(postIdStr, 10);
@@ -334,7 +356,7 @@ export function boardCommand(
           if (tokens[3]) {
             score = Number.parseInt(tokens[3], 10);
             if (Number.isNaN(score) || score < 1 || score > 10) {
-              ctx.send(input.entity, "Score must be between 1 and 10.");
+              refuseCommand(ctx, input.entity, "Score must be between 1 and 10.");
               return;
             }
           }
@@ -351,7 +373,7 @@ export function boardCommand(
         case "scores": {
           const postIdStr = tokens[1];
           if (!postIdStr) {
-            ctx.send(input.entity, "Usage: board scores <postId>");
+            refuseCommand(ctx, input.entity, "Usage: board scores <postId>");
             return;
           }
           const postId = Number.parseInt(postIdStr, 10);
@@ -379,7 +401,7 @@ export function boardCommand(
         case "pin": {
           const postIdStr = tokens[1];
           if (!postIdStr) {
-            ctx.send(input.entity, "Usage: board pin <postId>");
+            refuseCommand(ctx, input.entity, "Usage: board pin <postId>");
             return;
           }
           const postId = Number.parseInt(postIdStr, 10);
@@ -387,7 +409,7 @@ export function boardCommand(
           if (!found) return;
           const pinRefusal = boardRefusal(entity, found.board, "pin", isGroupMember);
           if (pinRefusal) {
-            ctx.send(input.entity, pinRefusal.message);
+            refuseCommand(ctx, input.entity, pinRefusal.message);
             return;
           }
           boards.pinPost(postId);
@@ -398,7 +420,7 @@ export function boardCommand(
         case "archive": {
           const postIdStr = tokens[1];
           if (!postIdStr) {
-            ctx.send(input.entity, "Usage: board archive <postId>");
+            refuseCommand(ctx, input.entity, "Usage: board archive <postId>");
             return;
           }
           const postId = Number.parseInt(postIdStr, 10);
@@ -414,7 +436,7 @@ export function boardCommand(
               "Only the author or a board moderator can archive this post.",
             );
             if (moderate) {
-              ctx.send(input.entity, moderate.message);
+              refuseCommand(ctx, input.entity, moderate.message);
               return;
             }
           }
@@ -426,12 +448,12 @@ export function boardCommand(
         case "create": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: board create <name>");
+            refuseCommand(ctx, input.entity, "Usage: board create <name>");
             return;
           }
           const existing = boards.getBoardByName(name);
           if (existing) {
-            ctx.send(input.entity, `Board "${name}" already exists.`);
+            refuseCommand(ctx, input.entity, `Board "${name}" already exists.`);
             return;
           }
           boards.createBoard({ name });
@@ -448,9 +470,10 @@ export function boardCommand(
         }
 
         default:
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
-            "Usage: board list|read|post|reply|search|vote|scores|pin|archive|create [args]",
+            `Unknown board subcommand or board "${tokens[0]}" (\`board list\` shows boards). Usage: board list|read|post|reply|search|vote|scores|pin|archive|create [args]`,
           );
       }
     },

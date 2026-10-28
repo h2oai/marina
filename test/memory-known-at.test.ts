@@ -23,9 +23,9 @@ import {
 import { MIGRATIONS } from "../src/persistence/schema";
 import { roomId } from "../src/types";
 import { seedUnifiedFixture, type UnifiedFixture } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_memory_known_at.db";
+const TEST_DB = tempDbPath("test_memory_known_at.db");
 const DAY = 86_400_000;
 
 describe("memory known-at persistence (migration 172)", () => {

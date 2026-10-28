@@ -12,6 +12,7 @@ import { diffStat, firstHunk, formatDiffStat, hunkCount } from "../../../coding/
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import { parsePatchActionArgs, resolveKindArtifact, resolvePatchArtifact } from "./artifacts";
 import {
   type CodeDeps,
@@ -84,7 +85,7 @@ export async function readFile(
   path: string,
 ): Promise<void> {
   if (!path.trim()) {
-    ctx.send(eid, "Usage: code read <path>");
+    refuseCommand(ctx, eid, "Usage: code read <path>");
     return;
   }
   const session = resolveSession(ctx, eid, entity, deps.db);
@@ -168,7 +169,7 @@ export async function search(
   path?: string,
 ): Promise<void> {
   if (!query.trim()) {
-    ctx.send(eid, "Usage: code search <query>");
+    refuseCommand(ctx, eid, "Usage: code search <query>");
     return;
   }
   const session = resolveSession(ctx, eid, entity, deps.db);
@@ -233,7 +234,22 @@ export async function diff(
     kind: "diff_viewed",
     payload: { path: path || ".", exitCode: result.exitCode, truncated: result.truncated },
   });
-  const body = result.content.trim() || dim("No git diff.");
+  let body = result.content.trim();
+  if (!body) {
+    // `git diff` shows neither new (untracked) nor staged files: name them
+    // rather than report "no change" after `code write` created one.
+    // allow-empty-catch: changedPaths is optional; without it the reply is the plain "No git diff."
+    let pending = (await workspace.changedPaths?.().catch(() => [] as string[])) ?? [];
+    if (path) pending = pending.filter((p) => p === path || p.startsWith(`${path}/`));
+    body = pending.length
+      ? `${dim("No unstaged changes to tracked files. New or staged, not shown by git diff:")}\n${pending
+          .slice(0, 20)
+          .map((p) => `  ${p}`)
+          .join(
+            "\n",
+          )}${pending.length > 20 ? `\n  … ${pending.length - 20} more` : ""}\n${dim("`code read <path>` shows one.")}`
+      : dim("No git diff.");
+  }
   const totalBytes = (result as { totalBytes?: number }).totalBytes;
   const suffix = result.truncated
     ? dim(
@@ -363,7 +379,11 @@ export async function applyPatch(
   // Solo-workspace guard (only enforced when there is no crew writer): the
   // session creator owns local writes. A set writer supersedes this.
   if (!session.writer && !sameEntityName(session.created_by, entity.name)) {
-    ctx.send(eid, "Only the session creator can apply patches in this local workspace mode.");
+    refuseCommand(
+      ctx,
+      eid,
+      "Only the session creator can apply patches in this local workspace mode.",
+    );
     return;
   }
   const artifact = resolvePatchArtifact(ctx, eid, deps.db, session.id, ref);
@@ -476,7 +496,11 @@ function enforceFileWriteGuard(
 ): boolean {
   if (!enforceWriteLock(ctx, eid, entity, session)) return false;
   if (!session.writer && !sameEntityName(session.created_by, entity.name)) {
-    ctx.send(eid, `Only the session creator can ${verb} files in this local workspace mode.`);
+    refuseCommand(
+      ctx,
+      eid,
+      `Only the session creator can ${verb} files in this local workspace mode.`,
+    );
     return false;
   }
   return true;
@@ -750,7 +774,11 @@ export async function revertCheckpoint(
   // Reverting a checkpoint writes the workspace — same single-writer gate.
   if (!enforceWriteLock(ctx, eid, entity, session)) return;
   if (!session.writer && !sameEntityName(session.created_by, entity.name)) {
-    ctx.send(eid, "Only the session creator can revert checkpoints in this local workspace mode.");
+    refuseCommand(
+      ctx,
+      eid,
+      "Only the session creator can revert checkpoints in this local workspace mode.",
+    );
     return;
   }
   const artifact = resolveKindArtifact(

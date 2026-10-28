@@ -1,7 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SandboxProvider } from "../src/coding/sandbox-provider";
 import { grant, listGates } from "../src/engine/safety-gates";
 import type { MarinaDB } from "../src/persistence/database";
@@ -44,6 +46,25 @@ export async function until(
     }
     await Bun.sleep(intervalMs);
   }
+}
+
+const tempDbDirs: string[] = [];
+
+/**
+ * A database path unique to this call: `name` inside a fresh `mkdtemp`
+ * directory under the OS temp folder, removed when the process exits. Use it
+ * instead of a fixed file name in the working directory, which collides when
+ * test files run in parallel workers or two checkouts run the suite at once.
+ */
+export function tempDbPath(name = "test.db"): string {
+  if (tempDbDirs.length === 0) {
+    process.once("exit", () => {
+      for (const dir of tempDbDirs) rmSync(dir, { recursive: true, force: true });
+    });
+  }
+  const dir = mkdtempSync(join(tmpdir(), "marina-test-db-"));
+  tempDbDirs.push(dir);
+  return join(dir, name);
 }
 
 /** Remove a SQLite database and its WAL/SHM sidecar files. */

@@ -31,9 +31,9 @@ import {
 import { countIndependentSources } from "../src/persistence/db-notes";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";
 import { type EntityId, roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_reputation_ranking.db";
+const TEST_DB = tempDbPath("test_reputation_ranking.db");
 
 describe("reputation-weighted shared retrieval", () => {
   let db: MarinaDB;

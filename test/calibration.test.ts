@@ -17,9 +17,9 @@ import {
 } from "../src/resolvers/calibration";
 import { writeSample } from "../src/resolvers/sample-writer";
 import type { Sample } from "../src/resolvers/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_calibration.db";
+const TEST_DB = tempDbPath("test_calibration.db");
 
 function makeResolved(idSuffix: string, overrides: Partial<Sample> = {}): Sample {
   return {

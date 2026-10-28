@@ -9,10 +9,10 @@ import { handleCanvasApi } from "../src/net/canvas/canvas-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
-const TEST_DB = "test_canvas_api_auth.db";
+const TEST_DB = tempDbPath("test_canvas_api_auth.db");
 
 function req(path: string, method: string, token?: string, body?: unknown): [URL, string, Request] {
   const url = new URL(`http://localhost:3300${path}`);

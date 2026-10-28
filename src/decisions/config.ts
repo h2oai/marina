@@ -64,7 +64,7 @@ import { LOCAL_PROVIDERS, localProviderBaseUrl } from "../net/model/model-discov
 import { selfModelToken } from "../net/model/self-model-token";
 import { type ClassifierMethod, parseClassifierMethod } from "./classifier-methods";
 import { JEV_BOX_MODEL, modelAnswersBox } from "./images";
-import { chatClassifierProvider, decisionsApiProvider } from "./providers";
+import { chatClassifierProvider, decisionsApiProvider, selfChatClassifier } from "./providers";
 import { DecisionError, type DecisionProvider } from "./types";
 
 /**
@@ -300,13 +300,22 @@ export function classifierTuning(env: NodeJS.ProcessEnv = process.env): {
 }
 
 /**
- * A chat classifier on Marina's own `/v1`. The bearer is resolved on first use
- * (the in-process internal token, or the operator/local key from a CLI). The
- * passthru hop records the upstream spend itself, so this checks the cap but
- * never records the reported cost a second time.
+ * A chat classifier on Marina's own `/v1`. The bearer is read on every ask
+ * (the in-process internal token, or the operator/local key from a CLI;
+ * `selfChatClassifier`). The passthru hop records the upstream spend itself,
+ * so this checks the cap but never records the reported cost a second time.
  */
 function selfClassifierProvider(config: DecisionConfig): DecisionProvider {
-  let inner: DecisionProvider | undefined;
+  const inner = selfChatClassifier(
+    {
+      model: config.model,
+      timeoutMs: config.timeoutMs,
+      method: config.method ?? "auto",
+      structured: true,
+      ...(config.samples === undefined ? {} : { samples: config.samples }),
+    },
+    { baseUrl: () => config.baseUrl, bearer: () => selfModelToken() },
+  );
   return {
     kind: "marina-self",
     model: config.model,
@@ -314,15 +323,6 @@ function selfClassifierProvider(config: DecisionConfig): DecisionProvider {
     async ask(request, signal) {
       const capped = dailyCapRefusal();
       if (capped) throw new DecisionError(capped, "spend_cap", 429);
-      inner ??= chatClassifierProvider({
-        baseUrl: config.baseUrl,
-        model: config.model,
-        apiKey: await selfModelToken(),
-        timeoutMs: config.timeoutMs,
-        method: config.method ?? "auto",
-        structured: true,
-        ...(config.samples === undefined ? {} : { samples: config.samples }),
-      });
       return { ...(await inner.ask(request, signal)), provider: "marina-self" };
     },
   };

@@ -290,17 +290,173 @@ export function listOutcomes(db: Database, opts: OutcomeFilter = {}): OutcomeRow
     .all(...args, limit) as OutcomeRow[];
 }
 
-/** Pending outcomes, least recently attempted first so unavailable rows cannot starve new work. */
-export function pendingOutcomes(db: Database, consumer: string, limit: number): OutcomeRow[] {
+/**
+ * The reason prefix of a pending delivery held to be learned together with
+ * others of its kind (`src/outcomes/deliver.ts`): still `pending`, no attempt spent.
+ */
+export const AGGREGATING_REASON = "aggregating";
+
+/**
+ * The reason prefix of a pending delivery one delivery pass has claimed
+ * (`claimed:<token>|<previous reason>`): no other pass picks it up until the
+ * claiming pass settles or releases it, or the claim goes stale.
+ */
+export const CLAIMED_REASON = "claimed";
+
+const reasonStarts = (prefix: string) =>
+  `substr(coalesce(d.reason, ''), 1, ${prefix.length}) = '${prefix}'`;
+
+/**
+ * Outcomes still pending for `consumer`, least recently attempted first. `aggregating`: only
+ * those held for aggregation (true) or only the others (false); omitted, all.
+ * A delivery a pass has claimed is never returned.
+ */
+export function pendingOutcomes(
+  db: Database,
+  consumer: string,
+  limit: number,
+  opts: { aggregating?: boolean } = {},
+): OutcomeRow[] {
+  const held = reasonStarts(AGGREGATING_REASON);
+  const filter =
+    opts.aggregating === undefined ? "" : opts.aggregating ? ` AND ${held}` : ` AND NOT ${held}`;
   return db
     .query(
       `SELECT o.* FROM outcome_deliveries d JOIN outcomes o ON o.id = d.outcome_id
-       WHERE d.consumer = ? AND d.state = 'pending' ORDER BY d.updated_at, d.outcome_id LIMIT ?`,
+       WHERE d.consumer = ? AND d.state = 'pending'
+         AND NOT ${reasonStarts(`${CLAIMED_REASON}:`)}${filter}
+       ORDER BY d.updated_at, d.outcome_id LIMIT ?`,
     )
     .all(consumer, Math.max(0, limit)) as OutcomeRow[];
 }
 
-/** Settle or retry a pending delivery. Unavailable verdicts do not spend the error-attempt budget. */
+/**
+ * Claim pending deliveries for one pass, all or none, in one transaction:
+ * every one must still be pending with reason `held` (or `held; …`). Each
+ * claimed reason becomes `claimed:<token>|<its reason>`. False when any was
+ * settled, changed or claimed by another pass meanwhile.
+ */
+export function claimOutcomeDeliveries(
+  db: Database,
+  outcomeIds: readonly number[],
+  consumer: string,
+  held: string,
+  token: string,
+  now = Date.now(),
+): boolean {
+  const ids = [...new Set(outcomeIds)];
+  if (ids.length === 0 || token.includes("|")) return false;
+  return db.transaction(() => {
+    const where = `consumer = ? AND state = 'pending' AND outcome_id IN (${ids.map(() => "?").join(",")})
+       AND (reason = ? OR substr(reason, 1, ?) = ?)`;
+    const args = [consumer, ...ids, held, held.length + 2, `${held}; `];
+    const { n } = db
+      .query(`SELECT COUNT(*) AS n FROM outcome_deliveries WHERE ${where}`)
+      .get(...args) as { n: number };
+    if (n !== ids.length) return false;
+    db.run(`UPDATE outcome_deliveries SET reason = ? || reason, updated_at = ? WHERE ${where}`, [
+      `${CLAIMED_REASON}:${token}|`,
+      now,
+      ...args,
+    ]);
+    return true;
+  })();
+}
+
+/** Release what a pass still holds under `token`: each reason back to what it was. */
+export function releaseOutcomeClaims(
+  db: Database,
+  consumer: string,
+  token: string,
+  now = Date.now(),
+): number {
+  const prefix = `${CLAIMED_REASON}:${token}|`;
+  return db.run(
+    `UPDATE outcome_deliveries SET reason = substr(reason, ?), updated_at = ?
+     WHERE consumer = ? AND state = 'pending' AND substr(reason, 1, ?) = ?`,
+    [prefix.length + 1, now, consumer, prefix.length, prefix],
+  ).changes;
+}
+
+/**
+ * Release claims taken before `before` (a pass that died holding them): each
+ * reason back to what it was, so a later pass learns the group.
+ */
+export function releaseStaleOutcomeClaims(
+  db: Database,
+  consumer: string,
+  before: number,
+  now = Date.now(),
+): number {
+  const prefix = `${CLAIMED_REASON}:`;
+  return db.run(
+    `UPDATE outcome_deliveries SET reason = substr(reason, instr(reason, '|') + 1), updated_at = ?
+     WHERE consumer = ? AND state = 'pending' AND substr(reason, 1, ?) = ? AND updated_at < ?`,
+    [now, consumer, prefix.length, prefix, before],
+  ).changes;
+}
+
+/**
+ * Outcomes after `afterId` (oldest first, at most `limit`) with no delivery
+ * row for at least one of `consumers`: the backfill's scan window.
+ */
+export function outcomesMissingDeliveries(
+  db: Database,
+  consumers: readonly string[],
+  afterId: number,
+  limit: number,
+): OutcomeRow[] {
+  if (consumers.length === 0) return [];
+  const missing = consumers
+    .map(
+      () =>
+        "NOT EXISTS (SELECT 1 FROM outcome_deliveries d WHERE d.outcome_id = o.id AND d.consumer = ?)",
+    )
+    .join(" OR ");
+  return db
+    .query(`SELECT o.* FROM outcomes o WHERE o.id > ? AND (${missing}) ORDER BY o.id LIMIT ?`)
+    .all(afterId, ...consumers, Math.max(0, limit)) as OutcomeRow[];
+}
+
+/**
+ * Add a pending delivery for each of `consumers` the outcome has no row for.
+ * A consumer that already has a row, in any state, is never touched. Returns
+ * the number of rows added.
+ */
+export function addMissingOutcomeDeliveries(
+  db: Database,
+  outcomeId: number,
+  consumers: readonly string[],
+  now = Date.now(),
+): number {
+  const add = db.prepare(
+    `INSERT OR IGNORE INTO outcome_deliveries (outcome_id, consumer, state, attempts, updated_at)
+     VALUES (?, ?, 'pending', 0, ?)`,
+  );
+  let added = 0;
+  for (const c of new Set(consumers)) added += add.run(outcomeId, c, now).changes;
+  return added;
+}
+
+/**
+ * Keep a pending delivery waiting with `reason` (aggregation, no model
+ * provider) WITHOUT counting an attempt: waiting is not failing.
+ */
+export function waitOutcomeDelivery(
+  db: Database,
+  outcomeId: number,
+  consumer: string,
+  reason: string,
+  now = Date.now(),
+): void {
+  db.run(
+    `UPDATE outcome_deliveries SET reason = ?, updated_at = ?
+     WHERE outcome_id = ? AND consumer = ? AND state = 'pending'`,
+    [reason, now, outcomeId, consumer],
+  );
+}
+
+/** Settle or retry a pending delivery; waiting can explicitly preserve the attempt budget. */
 export function setOutcomeDelivery(
   db: Database,
   outcomeId: number,
@@ -314,6 +470,53 @@ export function setOutcomeDelivery(
     `UPDATE outcome_deliveries SET state = ?, reason = ?, attempts = attempts + ?, updated_at = ?
      WHERE outcome_id = ? AND consumer = ? AND state = 'pending'`,
     [state, reason ?? null, countAttempt ? 1 : 0, now, outcomeId, consumer],
+  );
+}
+
+/**
+ * `failed` deliveries for `consumer` after `afterId` (oldest first, at most
+ * `limit`) whose reason matches one of the SQL `LIKE` patterns: the
+ * candidates a delivery pass may re-open (`reopenOutcomeDelivery`).
+ */
+export function failedOutcomeDeliveries(
+  db: Database,
+  consumer: string,
+  like: readonly string[],
+  afterId: number,
+  limit: number,
+): Array<{ outcome_id: number; reason: string | null }> {
+  if (like.length === 0) return [];
+  return db
+    .query(
+      `SELECT outcome_id, reason FROM outcome_deliveries
+       WHERE consumer = ? AND state = 'failed' AND outcome_id > ?
+         AND (${like.map(() => "reason LIKE ?").join(" OR ")})
+       ORDER BY outcome_id LIMIT ?`,
+    )
+    .all(consumer, afterId, ...like, Math.max(0, limit)) as Array<{
+    outcome_id: number;
+    reason: string | null;
+  }>;
+}
+
+/**
+ * Re-open a `failed` delivery: back to `pending` with its attempts reset and
+ * `reason` recorded. Only a delivery still `failed` changes, so re-running it
+ * is a no-op. True when it changed.
+ */
+export function reopenOutcomeDelivery(
+  db: Database,
+  outcomeId: number,
+  consumer: string,
+  reason: string,
+  now = Date.now(),
+): boolean {
+  return (
+    db.run(
+      `UPDATE outcome_deliveries SET state = 'pending', attempts = 0, reason = ?, updated_at = ?
+       WHERE outcome_id = ? AND consumer = ? AND state = 'failed'`,
+      [reason, now, outcomeId, consumer],
+    ).changes > 0
   );
 }
 

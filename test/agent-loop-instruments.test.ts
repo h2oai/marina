@@ -27,6 +27,10 @@ type Message = { role: string; content: unknown };
 type Internals = {
   buildContinuationPrompt(): Promise<string>;
   computeDynamicDelay(): number;
+  idleSkipReason(now?: number): "idle" | "resting" | null;
+  sendAttention(message: string): Promise<void>;
+  attentionPending: boolean;
+  lastPromptAt: number;
   getTickRate(): { min: number; normal: number; idle: number };
   detectStuck(): string | null;
   setupActionTracking(): void;
@@ -208,6 +212,34 @@ describe("deliberate rest", () => {
     const prompt = await i.buildContinuationPrompt();
     expect(prompt).toContain("[!] Ada tells you: status?");
     expect(prompt).toContain("[ACTION REQUIRED]");
+  });
+
+  it("a steered attention breaks the rest at once; ambient events still wait", async () => {
+    const { i, steered, followUps } = makeAdapter("rest-attention");
+    i.setupActionTracking();
+    i.applyLoopPreferenceCommand("memory set rest waiting for data");
+    i.lastPromptAt = Date.now();
+    // Ambient, unaddressed information keeps the rest.
+    i.pendingPerceptions.push({
+      text: "[broadcast] market moved",
+      priority: 90,
+      shouldRespond: false,
+    });
+    expect(i.idleSkipReason()).toBe("resting");
+    expect(i.computeDynamicDelay()).toBe(i.getTickRate().idle);
+
+    await i.sendAttention("review task #16 now");
+    expect(steered.some((m) => m.includes("review task #16 now"))).toBe(true);
+    expect(i.idleSkipReason()).toBeNull();
+    expect(i.computeDynamicDelay()).toBe(i.getTickRate().min);
+
+    // The prompt takes it; resting again afterwards is no silent-turn failure.
+    i.attentionPending = false;
+    await emit(i, silentTurnEnd);
+    expect(i.silentTurns).toBe(0);
+    expect(followUps).toHaveLength(0);
+    expect(i.idleSkipReason()).toBe("resting");
+    expect(i.computeDynamicDelay()).toBe(i.getTickRate().idle);
   });
 
   it("without rest, an owed reply left unanswered counts toward the circuit breaker", async () => {

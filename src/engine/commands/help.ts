@@ -4,7 +4,9 @@
 import { bold, category, dim, rank as fmtRank, header, separator } from "../../net/ansi";
 import type { CommandCatalogEntry } from "../../net/discovery-types";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
+import { aliasNotice, COMMAND_FAMILIES, familyOf } from "../command-families";
 import { describeCommand } from "../command-manifest";
+import { refuseCommand } from "../command-response";
 
 export const CATEGORY_ORDER = [
   "Navigation",
@@ -135,6 +137,7 @@ function catalogSummary(entry: CommandCatalogEntry): string {
 
 function catalogMarks(entry: CommandCatalogEntry): string {
   const marks = [
+    ...(entry.familyOf ? [`alias of ${entry.familyOf} ${entry.name}`] : []),
     ...(entry.minRank > 0 && !entry.gate ? [`rank ${entry.minRank}`] : []),
     ...(entry.gate ? [`gate ${entry.gate}`] : []),
   ];
@@ -210,7 +213,8 @@ export function helpCommand(
         return;
       }
 
-      ctx.send(
+      refuseCommand(
+        ctx,
         input.entity,
         `Unknown command or category: ${input.args}\n${dim('Type "help" for categories, "help all" for every command.')}`,
       );
@@ -227,9 +231,16 @@ function allCategories(cmds: CommandDef[]): string[] {
   return [...known, ...extra];
 }
 
+/** Family members (src/engine/command-families.ts) a head lists, by name. */
+function familyMembers(cmds: CommandDef[], head: string): string[] {
+  return (COMMAND_FAMILIES[head] ?? []).filter((name) => cmds.some((c) => c.name === name));
+}
+
+/** Top-level groups: a family member is listed under its head, never on its own. */
 function groupByCategory(cmds: CommandDef[]): Map<string, CommandDef[]> {
   const grouped = new Map<string, CommandDef[]>();
   for (const cmd of cmds) {
+    if (familyOf(cmd.name)) continue;
     const cat = categorizeCommand(cmd);
     if (!grouped.has(cat)) grouped.set(cat, []);
     grouped.get(cat)!.push(cmd);
@@ -244,12 +255,15 @@ function categoryOrder(grouped: Map<string, CommandDef[]>): string[] {
   return [...known, ...extra, "Other"];
 }
 
-function commandLine(c: CommandDef): string {
+function commandLine(c: CommandDef, members: string[] = []): string {
   const aliases = c.aliases?.length ? ` ${dim(`(${c.aliases.join(", ")})`)}` : "";
   const rankTag = c.minRank && c.minRank > 0 ? ` ${fmtRank(c.minRank)}` : "";
   // Truncate at a sentence boundary (". " or ".\n" or trailing "."), not at
   // any bare "." — "v1.2"-style strings must not fragment.
-  return `  ${bold(c.name)}${aliases}${rankTag} — ${c.help.split(/\.(?:\s|$)/)[0]}`;
+  const line = `  ${bold(c.name)}${aliases}${rankTag} — ${c.help.split(/\.(?:\s|$)/)[0]}`;
+  return members.length
+    ? `${line}\n    ${dim(`${members.map((m) => `${c.name} ${m}`).join(", ")} (aliases: ${members.join(", ")})`)}`
+    : line;
 }
 
 /** No-arg `help`: a short starter block, then one line per category with counts. */
@@ -270,7 +284,12 @@ function renderStarter(ctx: RoomContext, input: { entity: EntityId }, visible: C
   for (const cat of categoryOrder(grouped)) {
     const catCmds = grouped.get(cat);
     if (!catCmds || catCmds.length === 0) continue;
-    const names = catCmds.map((c) => c.name).join(", ");
+    const names = catCmds
+      .map((c) => {
+        const members = familyMembers(visible, c.name);
+        return members.length ? `${c.name} (${members.join(", ")})` : c.name;
+      })
+      .join(", ");
     lines.push(`  ${bold(cat)} ${dim(`(${catCmds.length})`)} — ${names}`);
   }
   ctx.send(input.entity, lines.join("\n"));
@@ -283,9 +302,9 @@ function renderCategory(
   cat: string,
   all: CommandDef[],
 ): void {
-  const cmds = all.filter((c) => categorizeCommand(c) === cat);
+  const cmds = all.filter((c) => categorizeCommand(c) === cat && !familyOf(c.name));
   const lines: string[] = [header(cat), separator()];
-  for (const c of cmds) lines.push(commandLine(c));
+  for (const c of cmds) lines.push(commandLine(c, familyMembers(all, c.name)));
   lines.push("", dim('Type "help <command>" for usage, "help" for all categories.'));
   ctx.send(input.entity, lines.join("\n"));
 }
@@ -299,9 +318,11 @@ function renderCommandDetail(
   sameNamedCategory: string | undefined,
 ): void {
   const aliases = cmd.aliases?.length ? ` ${dim(`(aliases: ${cmd.aliases.join(", ")})`)}` : "";
+  const notice = aliasNotice(cmd.name);
   const lines: string[] = [
     `${header(cmd.name)}${aliases}`,
     dim(`Category: ${categorizeCommand(cmd)}`),
+    ...(notice ? [dim(notice)] : []),
   ];
   if (full) {
     lines.push(cmd.help);
@@ -342,7 +363,7 @@ function renderCommandList(
     const catCmds = grouped.get(cat);
     if (!catCmds || catCmds.length === 0) continue;
     lines.push(`\n${category(cat)}`);
-    for (const c of catCmds) lines.push(commandLine(c));
+    for (const c of catCmds) lines.push(commandLine(c, familyMembers(cmds, c.name)));
   }
 
   lines.push("", dim('Type "help <command>" for details, "help <category>" for one group.'));

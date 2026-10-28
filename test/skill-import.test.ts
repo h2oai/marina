@@ -15,7 +15,7 @@ import { Engine } from "../src/engine/engine";
 import { setRank } from "../src/engine/permissions";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
 describe("parseSkillMarkdown", () => {
   it("parses a minimal valid skill", () => {
@@ -191,7 +191,7 @@ describe("resolveConfinedSkillPath", () => {
 });
 
 describe("skill import command (rank gate + cwd confinement)", () => {
-  const TEST_DB = "test_skill_import_cmd.db";
+  const TEST_DB = tempDbPath("test_skill_import_cmd.db");
   let db: MarinaDB;
   let engine: Engine;
   let conn: MockConnection;

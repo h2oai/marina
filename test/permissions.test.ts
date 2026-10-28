@@ -7,9 +7,9 @@ import { getRank, setRank } from "../src/engine/permissions";
 import { MarinaDB } from "../src/persistence/database";
 import type { EntityRank } from "../src/types";
 import { roomId } from "../src/types";
-import { cleanupDb, grantAllGates, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, grantAllGates, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_permissions.db";
+const TEST_DB = tempDbPath("test_permissions.db");
 
 describe("Command Permissions", () => {
   let db: MarinaDB;
@@ -377,6 +377,8 @@ describe("Command Permissions", () => {
         creatorName: "Alice",
       });
       db.recordStandingEarned(conn1.entity!, "Alice", taskId, 300);
+      // Let the earner's `standing +300` notice land before the command under test.
+      await Bun.sleep(0);
 
       // No competence row yet — the run must be refused.
       expect(db.getCompetence(conn1.entity!, "admin.destructive")).toBeUndefined();

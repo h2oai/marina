@@ -10,9 +10,9 @@ import { Engine } from "../src/engine/engine";
 import { TelnetServer } from "../src/net/telnet-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom, until } from "./helpers";
+import { cleanupDb, makeTestRoom, tempDbPath, until } from "./helpers";
 
-const TEST_DB = "test_integration_telnet.db";
+const TEST_DB = tempDbPath("test_integration_telnet.db");
 
 /** Connect to the telnet port and accumulate decoded output in `buf.text`. */
 async function connectTelnet(port: number): Promise<{

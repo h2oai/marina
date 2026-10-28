@@ -148,8 +148,26 @@ chronicle since 1h           # → entries (event + any narrative/digest)
 operator view. `ops recover` safely releases expired work leases and expires overdue message
 receipts. Attention modes set with `agent attention-mode` persist across restarts.
 
-Alerts persist across restarts and include readiness, agent health, attention backlog, project
-budget, memory contradiction, and stale-source signals. Use `ops ack <id>`, `ops resolve <id>`, and
+Three readiness lines watch state a world can carry silently:
+
+- **`learning-loop`** — outcomes still waiting for delivery or for a judge (count and oldest age),
+  how far each outcome judge is from earning (comparisons out of 25), verifier opinions on record,
+  and promotions ever filed. It is `degraded` when an outcome has waited over 14 days, or when
+  outcomes exist but no default has ever changed by promotion. Without a model provider it is an
+  optional `off` line that says so.
+- **`gate-sentinels`** — critical when any AGENT account holds an operator-grant sentinel row
+  (`gate audit` lists them). Run `gate reset agents all` (dry run), then
+  `gate reset agents all apply`, as an operator from an interactive `marina connect` on a terminal or
+  the dashboard. A one-shot `marina connect -c` declares itself an agent and is refused, with that
+  reason.
+- **`capability-posture`** (optional: the dates are Marina's development deadlines, informational
+  on installs, so it never raises an inbox alert or turns the header badge degraded) — `degraded` while any technique shipped off or observe-only is past its
+  decide-by date ([capability posture](reference/capability-posture.md)); it names the count and
+  the oldest. `posture due` lists them with their evidence; promote what won, or record a new date
+  or a by-design reason in `src/config/capability-posture.ts`.
+
+Optional checks never raise an inbox alert. Alerts persist across restarts and include readiness,
+agent health, attention backlog, project budget, memory contradiction, and stale-source signals. Use `ops ack <id>`, `ops resolve <id>`, and
 `ops history`. The dashboard Admin → Ops tab exposes the same inbox and controls.
 
 The dashboard memory inspector shows typed sources, internal-note derivations, credibility, and the

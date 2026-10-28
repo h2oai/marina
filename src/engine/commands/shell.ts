@@ -7,6 +7,7 @@ import type { MarinaDB } from "../../persistence/database";
 import { assetMimeForFile } from "../../storage/asset-mime";
 import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { ingestAsset } from "../media/asset-library";
 import { rankFloorRefusal } from "../rank-floor";
 import type { ShellRuntime } from "../shell-runtime";
@@ -84,7 +85,7 @@ export function shellCommand(deps: ShellDeps): CommandDef {
           }
           const binary = tokens[1];
           if (!binary) {
-            ctx.send(eid, "Usage: shell allow <binary>");
+            refuseCommand(ctx, eid, "Usage: shell allow <binary>");
             return;
           }
           deps.shellRuntime.allow(binary, entity.name);
@@ -100,7 +101,7 @@ export function shellCommand(deps: ShellDeps): CommandDef {
           }
           const binary = tokens[1];
           if (!binary) {
-            ctx.send(eid, "Usage: shell deny <binary>");
+            refuseCommand(ctx, eid, "Usage: shell deny <binary>");
             return;
           }
           const removed = deps.shellRuntime.deny(binary);
@@ -164,7 +165,7 @@ function handleHistory(
   tokens: string[],
 ): void {
   if (!db) {
-    ctx.send(eid, requiresPersistence("shell history"));
+    refuseCommand(ctx, eid, requiresPersistence("shell history"));
     return;
   }
   const limit = Number.parseInt(tokens[0] ?? "10", 10) || 10;
@@ -192,7 +193,7 @@ function handleLog(
   tokens: string[],
 ): void {
   if (!db) {
-    ctx.send(eid, requiresPersistence("the shell log"));
+    refuseCommand(ctx, eid, requiresPersistence("the shell log"));
     return;
   }
   const entityFilter = tokens[0] ?? null;
@@ -236,12 +237,12 @@ async function handleScratch(
     case "cat": {
       const filename = tokens[1];
       if (!filename) {
-        ctx.send(eid, "Usage: shell scratch cat <filename>");
+        refuseCommand(ctx, eid, "Usage: shell scratch cat <filename>");
         return;
       }
       const content = await runtime.readScratchFile(eid, filename);
       if (content === null) {
-        ctx.send(eid, `File not found or path invalid: ${filename}`);
+        refuseCommand(ctx, eid, `File not found or path invalid: ${filename}`);
         return;
       }
       // Truncate for display
@@ -258,14 +259,14 @@ async function handleScratch(
     case "rm": {
       const filename = tokens[1];
       if (!filename) {
-        ctx.send(eid, "Usage: shell scratch rm <filename>");
+        refuseCommand(ctx, eid, "Usage: shell scratch rm <filename>");
         return;
       }
       const deleted = runtime.deleteScratchFile(eid, filename);
       if (deleted) {
         ctx.send(eid, success(`Deleted ${filename}`));
       } else {
-        ctx.send(eid, `File not found or path invalid: ${filename}`);
+        refuseCommand(ctx, eid, `File not found or path invalid: ${filename}`);
       }
       return;
     }
@@ -294,14 +295,14 @@ async function handleSave(
   // Read the full output file
   const fullOutput = await runtime.readScratchFile(eid, lastExec.outputFile);
   if (fullOutput === null) {
-    ctx.send(eid, "Output file not found.");
+    refuseCommand(ctx, eid, "Output file not found.");
     return;
   }
 
   switch (target) {
     case "note": {
       if (!db) {
-        ctx.send(eid, requiresPersistence("notes"));
+        refuseCommand(ctx, eid, requiresPersistence("notes"));
         return;
       }
       const importance = Number.parseInt(tokens[1] ?? "5", 10) || 5;
@@ -330,19 +331,19 @@ async function handleSave(
 
     case "board": {
       if (!db) {
-        ctx.send(eid, requiresPersistence("boards"));
+        refuseCommand(ctx, eid, requiresPersistence("boards"));
         return;
       }
       const boardName = tokens[1];
       const title = tokens.slice(2).join(" ") || "Shell output";
       if (!boardName) {
-        ctx.send(eid, "Usage: shell save board <board_name> [title]");
+        refuseCommand(ctx, eid, "Usage: shell save board <board_name> [title]");
         return;
       }
       const boards = new BoardManager(db);
       const board = boards.getBoardByName(boardName) ?? boards.getBoard(boardName);
       if (!board) {
-        ctx.send(eid, `Board "${boardName}" not found.`);
+        refuseCommand(ctx, eid, `Board "${boardName}" not found.`);
         return;
       }
       const refusal = boardRefusal(
@@ -368,12 +369,12 @@ async function handleSave(
 
     case "memory": {
       if (!db) {
-        ctx.send(eid, requiresPersistence("memory"));
+        refuseCommand(ctx, eid, requiresPersistence("memory"));
         return;
       }
       const key = tokens[1];
       if (!key) {
-        ctx.send(eid, "Usage: shell save memory <key>");
+        refuseCommand(ctx, eid, "Usage: shell save memory <key>");
         return;
       }
       db.setCoreMemory(entity.name, key, fullOutput);
@@ -383,7 +384,7 @@ async function handleSave(
 
     case "canvas": {
       if (!db) {
-        ctx.send(eid, requiresPersistence("canvas"));
+        refuseCommand(ctx, eid, requiresPersistence("canvas"));
         return;
       }
       const canvasName = tokens[1] ?? "global";

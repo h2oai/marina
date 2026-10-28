@@ -5,6 +5,7 @@ import { experimentalHelp } from "../../config/feature-status";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
 import type { WorldCollectiveManager } from "../../world/world-collective-manager";
+import { refuseCommand } from "../command-response";
 import { notFound } from "./command-messages";
 
 const HELP =
@@ -63,7 +64,11 @@ export function marinaDescendCommand(deps: {
         try {
           manifest = JSON.parse(genome.manifest_json) as { worldTemplate?: string };
         } catch {
-          ctx.send(input.entity, `Genome ${hash} has a malformed manifest; cannot descend.`);
+          refuseCommand(
+            ctx,
+            input.entity,
+            `Genome ${hash} has a malformed manifest; cannot descend.`,
+          );
           return;
         }
         const variant = deps.manager().create({

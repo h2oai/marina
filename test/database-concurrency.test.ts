@@ -3,12 +3,13 @@
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { MarinaDB } from "../src/persistence/database";
 import type { Entity } from "../src/types";
 import { entityId, roomId } from "../src/types";
-import { cleanupDb } from "./helpers";
-
-const TEST_DB = "test_concurrency.db";
+import { freshDbFile } from "./fresh-db";
 
 function makeEntity(i: number): Entity {
   return {
@@ -26,14 +27,25 @@ function makeEntity(i: number): Entity {
 
 describe("Database Concurrency", () => {
   let db: MarinaDB;
+  let dir: string;
+  // A fresh database per test in the OS temp directory, not a fixed name in the
+  // working directory: two runs in one checkout no longer share (and delete)
+  // each other's file, and the checkpoints every open and close performs do
+  // not wait on fsync of the repository's disk while the rest of the suite
+  // writes to it. Each is a copy of one migrated template (`freshDbFile`), not
+  // a 19-fold replay of every migration. Nothing here tests installation or
+  // durability.
+  let TEST_DB: string;
 
   beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "marina-concurrency-"));
+    TEST_DB = freshDbFile(join(dir, "concurrency.db"));
     db = new MarinaDB(TEST_DB);
   });
 
   afterEach(() => {
     db.close();
-    cleanupDb(TEST_DB);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   // ─── 1. Concurrent writes to different tables ─────────────────────────

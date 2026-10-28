@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { MarinaDB } from "../src/persistence/database";
 import type { EngineEvent, Entity } from "../src/types";
 import { entityId, roomId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_marina.db";
+const TEST_DB = tempDbPath("test_marina.db");
 
 describe("MarinaDB", () => {
   let db: MarinaDB;

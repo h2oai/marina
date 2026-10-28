@@ -10,6 +10,7 @@ import { resetSpendLedgerForTests, spentTodayUsd } from "../src/engine/spend-led
 import {
   candidateFromOutcome,
   judgeLesson,
+  LESSON_JUDGE_QUESTIONS,
   type Lesson,
   leaksCase,
   memoryLessonSink,
@@ -48,6 +49,7 @@ const lesson = (text: string, resolvedAt: string, over: Partial<Lesson> = {}): L
   trust: "trusted",
   resolvedAt,
   source: "code:verify",
+  rule: `rule for ${text.slice(0, 20)}`,
   ...over,
 });
 
@@ -96,6 +98,8 @@ describe("outcome learning: candidates", () => {
     const bare = await candidateFromOutcome(outcome());
     expect(bare.text).toContain("[lesson:code] failure");
     expect(bare.trust).toBe("unverified");
+    expect(bare.rule).toBeUndefined();
+    expect(bare.provenance?.no_rule).toBe("no writer");
     const ruled = await candidateFromOutcome(
       outcome(),
       writer('{"category":"python test run","rule":"Run the project runner, not bun."}'),
@@ -104,15 +108,39 @@ describe("outcome learning: candidates", () => {
     expect(ruled.text).toContain("rule: Run the project runner, not bun.");
   });
 
-  it("a failing writer still yields the mechanical candidate", async () => {
+  it("a writer with no rule is asked once more, then the candidate says why it has none", async () => {
+    let calls = 0;
     const c = await candidateFromOutcome(outcome(), {
       name: "x",
       async complete() {
+        calls++;
         throw new Error("down");
       },
     });
+    expect(calls).toBe(2);
     expect(c.text).toContain("[lesson:code]");
     expect(c.rule).toBeUndefined();
+    expect(c.provenance?.no_rule).toContain("writer unavailable");
+    // No JSON, then a rule: the second answer's rule is kept.
+    const replies = ["no json here", '{"category":"x","rule":"Read the runner config first."}'];
+    const again = await candidateFromOutcome(outcome(), {
+      name: "y",
+      async complete() {
+        return replies.shift() ?? "";
+      },
+    });
+    expect(again.rule).toBe("Read the runner config first.");
+    // A producer rule stands in without a second ask.
+    let asked = 0;
+    const producer = await candidateFromOutcome(outcome({ rule: "Run the project runner." }), {
+      name: "z",
+      async complete() {
+        asked++;
+        return "{}";
+      },
+    });
+    expect(asked).toBe(1);
+    expect(producer.rule).toBe("Run the project runner.");
   });
 
   it("the leak check catches a lesson that quotes the case text", () => {
@@ -137,9 +165,113 @@ describe("outcome learning: Jev gating", () => {
 
   it("one question below its bar rejects the lesson", async () => {
     const c = await candidateFromOutcome(outcome());
-    const v = await judgeLesson(c, outcome(), judge({ leak_free: 0.4 }));
+    const v = await judgeLesson(c, outcome(), judge({ grounded: 0.4 }));
     expect(v.trust).toBe("rejected");
-    expect(v.reason).toContain("leak_free");
+    expect(v.reason).toContain("grounded");
+  });
+
+  it("the judge sees the rule and scope as the lesson; case numbers only as outcome detail", async () => {
+    const o = outcome({ rule: "Run the project's own test runner.", score: 0.25 });
+    const c = await candidateFromOutcome(o);
+    expect(c.text).toContain("score 0.25");
+    const j = judge({});
+    await judgeLesson(c, o, j);
+    const state = j.requests[0]!.state as Record<string, unknown>;
+    expect(state.lesson).toBe("rule: Run the project's own test runner.");
+    expect(state.scope).toBe("method");
+    expect((state.outcome as { detail?: string }).detail).toBe("failed at pytest -q (exit 1)");
+  });
+
+  it("leak_free is advisory for live outcomes and enforced for measurement", async () => {
+    const live = outcome({ rule: "Check the runner." });
+    const c = await candidateFromOutcome(live);
+    const v = await judgeLesson(c, live, judge({ leak_free: 0.4 }));
+    expect(v.trust).toBe("trusted");
+    expect(v.reason).toContain("advisory leak_free 0.40");
+    expect(v.judgement?.leak_free).toBe(0.4);
+    for (const measured of [
+      outcome({ rule: "Check the runner.", measured: true }),
+      outcome({ rule: "Check the runner.", refs: ["eval:some-board"] }),
+      outcome({ rule: "Check the runner.", domain: "benchmark", source: "benchmark:x" }),
+    ]) {
+      const m = await judgeLesson(c, measured, judge({ leak_free: 0.4 }));
+      expect(m.trust).toBe("rejected");
+      expect(m.reason).toContain("leak_free");
+    }
+    // The mechanical case check stays a hard gate for live outcomes too.
+    const leaky = outcome({
+      rule: "x",
+      privateContext: "the secret answer is the purple elephant on the left",
+    });
+    const lv = await judgeLesson(
+      { ...c, text: "rule: the secret answer is the purple elephant on the left" },
+      leaky,
+      judge({}),
+    );
+    expect(lv).toMatchObject({ trust: "rejected", leak: true });
+  });
+
+  it("failing only `consistent` stores the lesson contested with a resolve case", async () => {
+    const sink = memoryLessonSink([
+      lesson(
+        "[lesson:code] failure · rule: pytest runs from the package dir",
+        "2026-09-01T00:00:00Z",
+        {
+          id: "old",
+          rule: "Run pytest from the package directory.",
+        },
+      ),
+    ]);
+    const r = await recordOutcome(
+      { sink, judge: judge({ consistent: 0.2 }) },
+      outcome({ rule: "Run pytest from the repo root.", detail: "pytest collection failed" }),
+    );
+    expect(r.trust).toBe("trusted");
+    expect(r.contests).toBe("old");
+    expect(r.reason).toContain("contested: consistent 0.20");
+    expect(sink.cases()).toMatchObject([{ against: "old", resolved: false }]);
+    const stored = sink.all().find((l) => l.id === r.lessonId)!;
+    expect(stored).toMatchObject({ trust: "trusted", contested: true });
+    const served = await sink.recall("code", "pytest", "2026-12-01T00:00:00.000Z");
+    expect(served.map((l) => l.id)).toEqual(["old"]);
+    // Another failing bar besides `consistent` is still a rejection.
+    const both = await recordOutcome(
+      { sink, judge: judge({ consistent: 0.2, general: 0.1 }) },
+      outcome({ rule: "Run pytest twice.", detail: "pytest flaked" }),
+    );
+    expect(both.trust).toBe("rejected");
+    expect(sink.cases()).toHaveLength(1);
+  });
+
+  it("`general` is judged within the lesson's declared scope (source shape, family)", async () => {
+    const q = LESSON_JUDGE_QUESTIONS.general!;
+    expect(q.instructions).toContain("WITHIN its declared scope");
+    expect(q.instructions).toContain("one round's numbers is not");
+    const o = outcome({ rule: "Anchor daily trackers on persistence.", scopeFamily: "yougov" });
+    const j = judge({});
+    await judgeLesson(await candidateFromOutcome(o), o, j);
+    expect(j.requests[0]!.state).toMatchObject({
+      applies_to: { source: "code:verify", family: "yougov" },
+    });
+    // Served only to work that names its family.
+    const scoped = lesson("scoped rule", "2026-09-01T00:00:00Z", { scopeFamily: "yougov" });
+    expect(selectServed([scoped], "2026-10-01T00:00:00Z")).toHaveLength(0);
+    expect(selectServed([scoped], "2026-10-01T00:00:00Z", { families: ["civiqs"] })).toHaveLength(
+      0,
+    );
+    expect(selectServed([scoped], "2026-10-01T00:00:00Z", { families: ["yougov"] })).toHaveLength(
+      1,
+    );
+  });
+
+  it("with no existing lesson, `consistent` is not in question", async () => {
+    const r = await recordOutcome(
+      { sink: memoryLessonSink(), judge: judge({ consistent: 0.2 }) },
+      outcome({ rule: "Run pytest from the repo root." }),
+    );
+    expect(r.trust).toBe("trusted");
+    expect(r.contests).toBeUndefined();
+    expect(r.reason).toContain("no existing lesson");
   });
 
   it("decisions off or an outage never promote: unverified", async () => {
@@ -148,13 +280,23 @@ describe("outcome learning: Jev gating", () => {
     expect((await judgeLesson(c, outcome(), judge({}, { fail: true }))).trust).toBe("unverified");
   });
 
-  it("an uncalibrated judge uses one cut at 0.5 and is labelled", async () => {
+  it("an uncalibrated judge clears the same bars as a calibrated one, and is labelled", async () => {
     const c = await candidateFromOutcome(outcome());
-    // 0.55 is below the calibrated `grounded` bar (0.6) but above the single cut.
-    const v = await judgeLesson(c, outcome(), judge({ grounded: 0.55 }, { calibrated: false }));
+    // 0.55 is below the `grounded` bar (0.6): rejected whichever engine answered.
+    for (const calibrated of [true, false]) {
+      const v = await judgeLesson(c, outcome(), judge({ grounded: 0.55 }, { calibrated }));
+      expect(v.trust).toBe("rejected");
+      expect(v.reason).toContain("grounded 0.55");
+    }
+    const v = await judgeLesson(c, outcome(), judge({}, { calibrated: false }));
     expect(v.trust).toBe("trusted");
     expect(v.judge).toContain("(uncalibrated)");
-    expect(v.reason).toContain("uncalibrated");
+    // `transferable` has one bar too: 0.55 mirrors for neither engine.
+    for (const calibrated of [true, false])
+      expect(
+        (await judgeLesson(c, outcome(), judge({ transferable: 0.55 }, { calibrated })))
+          .transferable,
+      ).toBe(false);
   });
 
   it("a mechanical leak is rejected before the judge is asked", async () => {
@@ -169,21 +311,40 @@ describe("outcome learning: Jev gating", () => {
     expect(j.requests).toHaveLength(0);
   });
 
-  it("recordOutcome writes trusted, unverified and rejected lessons; recall serves only the first two", async () => {
+  it("recordOutcome writes trusted, unverified and rejected lessons; recall serves only trusted", async () => {
     const sink = memoryLessonSink();
-    await recordOutcome({ sink, judge: judge({}) }, outcome({ detail: "pytest trusted" }));
-    await recordOutcome({ sink }, outcome({ detail: "pytest unverified" }));
+    const rule = "Run the project's own test runner.";
+    await recordOutcome({ sink, judge: judge({}) }, outcome({ rule, detail: "pytest trusted" }));
+    await recordOutcome({ sink }, outcome({ rule, detail: "pytest unverified" }));
     await recordOutcome(
       { sink, judge: judge({ general: 0.1 }) },
-      outcome({ detail: "pytest rejected" }),
+      outcome({ rule, detail: "pytest rejected" }),
     );
     expect(sink.all().map((l) => l.trust)).toEqual(["trusted", "unverified", "rejected"]);
     const served = await sink.recall("code", "pytest", "2026-12-01T00:00:00.000Z");
-    expect(served.map((l) => l.trust)).toEqual(["trusted", "unverified"]);
-    const trustedOnly = await sink.recall("code", "pytest", "2026-12-01T00:00:00.000Z", {
-      includeUnverified: false,
-    });
-    expect(trustedOnly).toHaveLength(1);
+    expect(served.map((l) => l.trust)).toEqual(["trusted"]);
+  });
+
+  it("a candidate with no rule is never judged or stored: it is deferred with the reason", async () => {
+    const sink = memoryLessonSink();
+    const j = judge({});
+    const r = await recordOutcome(
+      {
+        sink,
+        judge: j,
+        writer: {
+          name: "w",
+          async complete() {
+            return '{"category":"python test run"}';
+          },
+        },
+      },
+      outcome(),
+    );
+    expect(r).toMatchObject({ deferred: true, trust: "unverified" });
+    expect(r.reason).toBe("no rule (writer returned no rule)");
+    expect(j.requests).toHaveLength(0);
+    expect(sink.all()).toHaveLength(0);
   });
 
   it("recordOutcomes bounds a batch and survives one failure", async () => {
@@ -197,7 +358,8 @@ describe("outcome learning: Jev gating", () => {
         return sink.write(l);
       },
     };
-    const r = await recordOutcomes({ sink: flaky }, [outcome(), outcome(), outcome(), outcome()], {
+    const o = outcome({ rule: "Run the project runner." });
+    const r = await recordOutcomes({ sink: flaky }, [o, o, o, o], {
       maxOutcomes: 3,
       concurrency: 1,
     });
@@ -211,6 +373,29 @@ describe("outcome learning: leakage guard and recall budget", () => {
   it("a lesson is invisible to work whose cutoff precedes its resolution", () => {
     expect(visibleAt({ resolvedAt: "2026-09-10T00:00:00Z" }, "2026-09-09T23:59:59Z")).toBe(false);
     expect(visibleAt({ resolvedAt: "2026-09-10T00:00:00Z" }, "2026-09-10T00:00:00Z")).toBe(true);
+  });
+
+  it("never serves an unverified lesson, nor any lesson without a rule", () => {
+    const at = "2026-09-30T00:00:00Z";
+    const ls = [
+      lesson("migrated never-judged lesson", "2026-09-01T00:00:00Z", { trust: "unverified" }),
+      lesson("trusted bare restatement", "2026-09-02T00:00:00Z", { rule: undefined }),
+      lesson("trusted with a rule", "2026-09-03T00:00:00Z"),
+      lesson("a curator's replacement", "2026-09-04T00:00:00Z", {
+        trust: "unverified",
+        source: "supersede:old",
+        rule: "a curator's replacement",
+      }),
+      lesson("curated but no rule", "2026-09-05T00:00:00Z", {
+        trust: "unverified",
+        source: "supersede:old2",
+        rule: undefined,
+      }),
+    ];
+    expect(selectServed(ls, at).map((l) => l.text)).toEqual([
+      "trusted with a rule",
+      "a curator's replacement",
+    ]);
   });
 
   it("selectServed: trusted first, newest first, within limit and bytes", () => {
@@ -284,7 +469,7 @@ describe("outcome learning: one local model, no vendor keys", () => {
     );
   });
 
-  it("no model reachable: outcomes are still recorded, never promoted", async () => {
+  it("no model reachable: nothing is written and nothing throws", async () => {
     const down = {
       baseUrl: "http://marina.test/v1",
       token: async () => "internal",
@@ -296,8 +481,9 @@ describe("outcome learning: one local model, no vendor keys", () => {
       { sink, writer: lessonWriterFromEnv(env, down)!, judge: lessonJudgeFromEnv(env, down) },
       outcome(),
     );
-    expect(r.trust).toBe("unverified");
-    expect(sink.all()).toHaveLength(1);
+    expect(r).toMatchObject({ trust: "unverified", deferred: true });
+    expect(r.reason).toContain("writer unavailable");
+    expect(sink.all()).toHaveLength(0);
   });
 
   it("an explicit vendor writer without its key falls back to marina/default", () => {

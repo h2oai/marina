@@ -13,6 +13,7 @@ import { RateLimiter } from "./auth/rate-limiter";
 import { parseExecUnrestricted } from "./coding/exec-approver";
 import { ensureConfiguredRoots } from "./coding/workspace-registry";
 import { dataDir } from "./config/data-dir";
+import { setRoleModelSlots } from "./config/model-tiers";
 import { applyStoredDecisionSettings } from "./decisions/settings";
 import { describeAutonomyPosture, getAutonomyPosture, ungatedPostureNote } from "./engine/autonomy";
 import {
@@ -37,6 +38,7 @@ import {
 } from "./engine/trust-profile";
 import { loadExtensions } from "./extensions/loader";
 import { attachResidentDispatcher } from "./forecast/resident-part";
+import { importBootstrapBundles } from "./learned/bootstrap";
 import { enableOutcomeLearning } from "./learning/service";
 import { parseEmbeddingEnv } from "./memory/embedding-config";
 import { closeWorldMemoryService, worldMemoryService } from "./memory/world-service";
@@ -72,6 +74,7 @@ import { MarinaDB } from "./persistence/database";
 import { acquireDatabaseLease } from "./persistence/database-lease";
 import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
 import { ensureKeySecret, type KeySecretSource } from "./persistence/key-secret-file";
+import { autostartWorldSupervisor } from "./routing/world-supervisor";
 import { LocalStorageProvider } from "./storage/local-provider";
 import { loadOtlpExporterConfig, MarinaOtlpExporter } from "./telemetry/otlp-exporter";
 import { loadOtlpLogExporterConfig, MarinaOtlpLogExporter } from "./telemetry/otlp-log-exporter";
@@ -287,6 +290,13 @@ if (process.argv.includes("--check-config")) {
   logger.info("main", "Configuration check passed.");
   process.exit(0);
 }
+// This process serves /v1: its own self-calls carry the in-process internal
+// token from the start. Marked before anything can ask a model — agents
+// respawned by `initAgents` and the lesson loop call `/v1` before the boot
+// finishes, and a bearer resolved earlier would be the local profile's key,
+// which the server treats as an outside caller (`marina/default` is then
+// refused in the default `agents` endpoint mode).
+markServingProcess();
 const releaseDatabaseLease = acquireDatabaseLease(DB_PATH);
 const db = new MarinaDB(DB_PATH, { durability });
 // Operator-set decision settings (dashboard / `admin decisions`) survive a
@@ -297,6 +307,9 @@ worldMemoryService(db);
 // Every verdict (benchmark, forecast, code verify, arena) becomes a judged lesson
 // (src/learning/; MARINA_LESSONS=off disables).
 enableOutcomeLearning(db);
+// A role's model reads its promoted `role-model:<role>` slot (earned on live
+// work, person-approved) between its env settings and its tier.
+setRoleModelSlots(db);
 const structuredLogRetention = Math.max(
   100,
   Math.min(Number(process.env.MARINA_LOG_RETENTION) || 10_000, 1_000_000),
@@ -462,6 +475,19 @@ seedGuidePool(db, world.guideNotes, { commands: engine.commands.allBuiltins() })
 // Run world seed function (idempotent)
 if (world.seed) {
   world.seed(db);
+}
+
+// Learned bundles the operator names (MARINA_BOOTSTRAP_BUNDLES) land right after
+// the seed and before any agent wakes; unset, nothing runs. A refusal is logged
+// and audited, never fatal: the world boots with what it has.
+try {
+  for (const b of await importBootstrapBundles(db)) {
+    const line = `bootstrap bundle ${b.path}: ${b.outcome}${b.artifact ? ` ${b.artifact}` : ""} (${b.detail})`;
+    if (b.outcome === "refused") logger.error("main", line);
+    else logger.info("main", line);
+  }
+} catch (err) {
+  logger.error("main", "bootstrap bundles failed", { err });
 }
 
 // Civic rule changes enter the chronicle once per world (idempotent).
@@ -760,8 +786,6 @@ if (isOpenApiMode()) {
     "MARINA_OPEN_API=true — API endpoints accept unauthenticated requests (development mode)",
   );
 }
-// This process serves /v1: its own self-calls carry the in-process internal token.
-markServingProcess();
 // Local profile: a generated, persisted key instead of a closed API (see local-api-key.ts).
 // Outside it an inherited or hand-set MARINA_LOCAL_API_KEY is dropped, so it
 // can never become a bearer in a shared/public deployment (the model API also
@@ -910,6 +934,12 @@ if (
   );
 }
 
+// ─── In-world supervisor on boot ──────────────────────────────────────────────
+// MARINA_SUPERVISOR_AUTOSTART (default `resume`): the supervisor a person left
+// running restarts once the HTTP listener answers its routing calls. Never
+// blocks or fails the boot.
+void autostartWorldSupervisor(engine.worldSupervisor, db);
+
 // ─── Embedding: endpoint file, idle shutdown, parent watch ─────────────────────
 // Experimental: for embedding hosts — no production host uses it yet.
 // endpoint.json (only with MARINA_DATA_DIR) tells a host where this instance
@@ -981,6 +1011,12 @@ async function shutdown(code = 0) {
 
   clearInterval(stateInterval);
   clearInterval(sessionCleanupInterval);
+  // The in-world supervisor first, while HTTP still answers its final sync
+  // (its boot record stays: the next boot resumes it). Bounded by its own
+  // final-sync timeout and the watchdog above.
+  await engine.worldSupervisor
+    .stop({ keep: true })
+    .catch(logRejection(logger, "main", "stopping the in-world supervisor failed"));
   // External admission closes first; authenticated internal checkpoints may finish.
   stopExtensions.beginDrain();
   wsServer.beginDrain();

@@ -410,6 +410,9 @@ export function createAgentEventRelay(
           ...(event.ttftMs === undefined ? {} : { ttftMs: event.ttftMs }),
           ...(event.inputTokens === undefined ? {} : { inputTokens: event.inputTokens }),
           ...(event.outputTokens === undefined ? {} : { outputTokens: event.outputTokens }),
+          ...(event.reasoningTokens === undefined
+            ? {}
+            : { reasoningTokens: event.reasoningTokens }),
           ...(event.cacheReadTokens === undefined
             ? {}
             : { cacheReadTokens: event.cacheReadTokens }),
@@ -727,7 +730,7 @@ export class AgentRuntime {
       // world/process default (`marina -p --model route`) routes the same way.
       // No model named: the operator's explicit default when set, else the cheap
       // tier (`marina/cheap`, a live alias — src/config/model-tiers.ts).
-      const askedModel = config.model ?? residentDefaultModel(this.db);
+      const askedModel = config.model ?? residentDefaultModel(this.db, process.env, config.role);
       const routedModel = isRouteModel(askedModel)
         ? await resolveRouteModel(config, this.db, this.onEvent)
         : undefined;

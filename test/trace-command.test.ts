@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import type { EntityId, RoomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_trace_command.db";
+const TEST_DB = tempDbPath("test_trace_command.db");
 
 describe("trace command", () => {
   let db: MarinaDB;
@@ -244,7 +244,7 @@ describe("trace command", () => {
     expect(output).toContain("anthropic/claude-opus-5.5");
     expect(output).toContain("75.0%");
     expect(output).toContain("n=4");
-    expect(output).toContain("routing evidence: observe");
+    expect(output).toContain("routing evidence: on");
   });
 
   it("makes autonomous-model and tool shadow advice agent-consumable", async () => {

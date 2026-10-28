@@ -32,12 +32,14 @@
  */
 
 import { createHash } from "node:crypto";
+import type { UpstreamSeed } from "../learned/upstream-seed";
 import type {
   BenchmarkDefaultRow,
   BenchmarkItemRow,
   BenchmarkRunRow,
 } from "../persistence/db-benchmarks";
 import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
+import { sha256Hex } from "../security/hash";
 import { invalidReason } from "./benchmark-ledger";
 import {
   comparePooledGroups,
@@ -45,10 +47,12 @@ import {
   loadReplicateGroup,
   mismatchedReplicates,
   promotionMinReplicates,
+  replicateGroupOf,
   restrictToConfiguration,
 } from "./benchmark-replicates";
 import { isFamilySlot } from "./default-resolution";
 import { promotionMargin } from "./fishing-margin";
+import type { LiveCandidate } from "./live-promotion";
 
 /** Default share of items held out from selection for a new slot. */
 export const DEFAULT_HOLDOUT_FRACTION = 0.5;
@@ -365,7 +369,11 @@ type PromotionStore = Pick<
 >;
 
 /** Earlier promotion attempts on a slot that read its holdout: distinct challenger runs. */
-export function attemptsBefore(db: PromotionStore, slot: string, challengerRunId: string): number {
+export function attemptsBefore(
+  db: Pick<PromotionStore, "listBenchmarkPromotions">,
+  slot: string,
+  challengerRunId: string,
+): number {
   const ids = new Set(
     db
       .listBenchmarkPromotions(slot)
@@ -610,6 +618,112 @@ export function lookupChallenge(
   };
 }
 
+// ─── Eligibility report (read-only) ─────────────────────────────────────────
+
+/** One configuration a slot could be contested with, and whether it would earn it. */
+export interface EligibleConfiguration {
+  slot: string;
+  benchmark: string;
+  /** The run that represents the configuration (the newest of its replicate group). */
+  runId: string;
+  group: string;
+  /** The run it contests (the incumbent, or the best earlier valid one). */
+  incumbentRunId?: string;
+  eligible: boolean;
+  /** Why not (empty when eligible). Holdout-based reasons are summarised, never itemised. */
+  reasons: string[];
+  /** For an eligible configuration: the rule's evaluation, as `benchmark promote` would file it. */
+  evaluation?: ChallengeEvaluation;
+  /** Other configurations this report read the slot's holdout for. */
+  peers: number;
+  /** The bar with every peer counted as tried (`promotionMargin(triedBefore + peers)`). */
+  chargedMargin?: number;
+}
+
+/**
+ * Which configurations of the benchmark ledger would earn a promoted slot
+ * now — READ-ONLY: nothing is filed, no attempt is recorded, and the slot's
+ * history is untouched. Promotion stays `benchmark promote` behind `role.edit`.
+ *
+ * Every candidate is judged by the one rule, `lookupChallenge(…, "holdout")`
+ * — same benchmark, judge and items, the replicate minimum before the holdout
+ * is read, the paired interval above 0 and the fishing margin. Because this
+ * report reads the holdout for every candidate of a slot without filing an
+ * attempt, it charges those reads too: a configuration is listed as eligible
+ * only when it ALSO clears `promotionMargin(triedBefore + peers)`, the bar it
+ * would face had every other candidate the report read been filed first. So
+ * a listed configuration passes when filed now, whatever order others are
+ * filed in, and reading the report repeatedly never lowers the bar. Holdout
+ * numbers are shown only for eligible configurations.
+ *
+ * One candidate per replicate group (its newest run: `lookupChallenge` pools
+ * the group). The incumbent's own group, family slots (never set from one
+ * board) and empty slots (a first seed is not a contest) are left out.
+ * Self-attestation depends on who files, so it is not checked here.
+ */
+export function eligiblePromotions(
+  db: PromotionStore,
+  opts: { board?: string; minReplicates?: number; limit?: number } = {},
+): EligibleConfiguration[] {
+  const out: EligibleConfiguration[] = [];
+  for (const def of db.listBenchmarkDefaults()) {
+    if (isFamilySlot(def.slot) || !def.incumbent_run_id) continue;
+    const incumbent = db.getBenchmarkRun(def.incumbent_run_id);
+    if (!incumbent) continue;
+    if (opts.board && incumbent.benchmark !== opts.board) continue;
+    const incumbentGroup = replicateGroupOf(incumbent);
+    const byGroup = new Map<string, BenchmarkRunRow>();
+    for (const run of db.queryBenchmarkRuns({
+      benchmark: incumbent.benchmark,
+      status: "completed",
+      limit: opts.limit ?? 500,
+    })) {
+      const group = replicateGroupOf(run);
+      if (group === incumbentGroup || run.id === incumbent.id) continue;
+      // Newest first (`queryBenchmarkRuns` order): the first run of a group represents it.
+      if (!byGroup.has(group)) byGroup.set(group, run);
+    }
+    const candidates = [...byGroup].sort(([a], [b]) => a.localeCompare(b));
+    const peers = Math.max(0, candidates.length - 1);
+    for (const [group, run] of candidates) {
+      const row: EligibleConfiguration = {
+        slot: def.slot,
+        benchmark: incumbent.benchmark,
+        runId: run.id,
+        group,
+        eligible: false,
+        reasons: [],
+        peers,
+      };
+      const found = lookupChallenge(db, def.slot, run.id, "holdout", {
+        ...(opts.minReplicates !== undefined ? { minReplicates: opts.minReplicates } : {}),
+      });
+      if (found.kind === "error") {
+        row.reasons.push(found.message);
+      } else if (found.kind === "seed") {
+        row.reasons.push("the slot has no valid incumbent to contest");
+      } else {
+        const e = found.evaluation;
+        row.incumbentRunId = found.incumbent.id;
+        const charged = promotionMargin(e.triedBefore + peers);
+        row.chargedMargin = charged;
+        if (!e.ok) {
+          row.reasons.push("does not pass the promotion rule on the holdout");
+        } else if (e.stats.delta < charged) {
+          row.reasons.push(
+            `passes alone, but not past the bar with the ${peers} other candidate(s) this report read counted as tried`,
+          );
+        } else {
+          row.eligible = true;
+          row.evaluation = e;
+        }
+      }
+      out.push(row);
+    }
+  }
+  return out;
+}
+
 // ─── Filing a promotion (the one write path) ────────────────────────────────
 
 /** Who files a promotion. */
@@ -656,21 +770,39 @@ export type FiledPromotion =
  *
  * Family slots (`…:family:<f>`) are refused: one board's holdout never sets a
  * default for a whole family.
+ *
+ * A `role-model:<role>` slot is filled from LIVE evidence instead
+ * (`input.live`, judged by `src/engine/live-promotion.ts` on the outcome
+ * path's time-split holdout): the same history, the same fishing margin, the
+ * same self-attestation refusal, and a ledger run never fills it.
+ *
+ * An imported upstream seed for a model-selecting slot (`input.upstream`) is
+ * adopted as-is into an EMPTY slot, basis `upstream`, recording the bundle
+ * (artifact, version, item, value digest). The caller has checked that a
+ * PERSON holding `role.edit` asked for it (`src/learned/upstream-model-seeds.ts`).
  */
+export function fileSlotPromotion(db: PromotionStore, input: RunPromotionInput): FiledPromotion;
 export function fileSlotPromotion(
   db: PromotionStore,
-  input: {
-    slot: string;
-    runId: string;
-    actor: PromotionActor;
-    maxCostRatio?: number;
-    /** Holdout fraction for a NEW slot (fixed once the slot exists). */
-    holdout?: number;
-    now?: number;
-    minReplicates?: number;
-  },
-): FiledPromotion {
+  input: LivePromotionInput,
+): FiledLivePromotion;
+export function fileSlotPromotion(
+  db: PromotionStore,
+  input: UpstreamPromotionInput,
+): FiledUpstreamPromotion;
+export function fileSlotPromotion(
+  db: PromotionStore,
+  input: RunPromotionInput | LivePromotionInput | UpstreamPromotionInput,
+): FiledPromotion | FiledLivePromotion | FiledUpstreamPromotion {
+  if ("live" in input) return fileLivePromotion(db, input);
+  if ("upstream" in input) return fileUpstreamPromotion(db, input);
   const { slot, runId, actor } = input;
+  if (isLiveSlot(slot)) {
+    return {
+      kind: "error",
+      message: `${slot} is earned on live work, not a benchmark run: \`benchmark promote ${slot} <model>\` files the model live evidence proposes (\`benchmark eligible live\`).`,
+    };
+  }
   if (isFamilySlot(slot)) {
     return {
       kind: "error",
@@ -779,4 +911,172 @@ export function fileSlotPromotion(
     replicates: found.replicates,
     ...(found.invalidIncumbent ? { invalidIncumbent: found.invalidIncumbent } : {}),
   };
+}
+
+// ─── Live evidence (role-model slots) ───────────────────────────────────────
+
+/** The input of a benchmark-run promotion. */
+export interface RunPromotionInput {
+  slot: string;
+  runId: string;
+  actor: PromotionActor;
+  maxCostRatio?: number;
+  /** Holdout fraction for a NEW slot (fixed once the slot exists). */
+  holdout?: number;
+  now?: number;
+  minReplicates?: number;
+}
+
+/** The input of a live-evidence promotion: the candidate as just judged. */
+export interface LivePromotionInput {
+  slot: string;
+  live: LiveCandidate;
+  actor: PromotionActor;
+  now?: number;
+}
+
+export type FiledLivePromotion =
+  | { kind: "error"; message: string }
+  | { kind: "promoted" | "refused"; slot: string; candidate: LiveCandidate };
+
+/** Slots earned on live work (`role-model:<role>`), never from a ledger run. */
+export function isLiveSlot(slot: string): boolean {
+  return slot.startsWith("role-model:");
+}
+
+function liveStats(c: LiveCandidate): string {
+  return JSON.stringify({
+    basis: "live",
+    split: "holdout",
+    candidate: c.candidate,
+    incumbent: c.incumbent,
+    delta: c.delta,
+    low: c.ci[0],
+    high: c.ci[1],
+    margin: c.margin,
+    triedBefore: c.triedBefore,
+    holdout: c.holdout,
+    discovery: c.discovery,
+    fingerprint: c.fingerprint,
+  });
+}
+
+function liveRow(c: LiveCandidate, outcome: "promoted" | "refused", actor: string, now: number) {
+  return {
+    slot: c.slot,
+    outcome,
+    challenger_run_id: `live:${c.candidate}`,
+    incumbent_run_id: `live:${c.incumbent}`,
+    value_json: JSON.stringify(c.candidate),
+    actor,
+    stats_json: liveStats(c),
+    reason: outcome === "refused" ? c.reasons.join("; ") : null,
+    holdout_fraction: 0.5,
+    created_at: now,
+  };
+}
+
+/**
+ * Record a live candidate that FAILED the rule as a refused attempt (it
+ * counts toward the slot's fishing margin), once per evidence state. Writes
+ * history only, never a default. Returns whether a row was added.
+ */
+export function recordLiveRefusal(
+  db: Pick<PromotionStore, "listBenchmarkPromotions" | "recordBenchmarkPromotion">,
+  c: LiveCandidate,
+  now = Date.now(),
+): boolean {
+  if (c.status !== "refused" || !isLiveSlot(c.slot)) return false;
+  const id = `live:${c.candidate}`;
+  const seen = db.listBenchmarkPromotions(c.slot).some((r) => {
+    if (r.challenger_run_id !== id || !r.stats_json) return false;
+    try {
+      return (JSON.parse(r.stats_json) as { fingerprint?: string }).fingerprint === c.fingerprint;
+    } catch {
+      return false; // allow-empty-catch: an unreadable history row matches nothing
+    }
+  });
+  if (seen) return false;
+  db.recordBenchmarkPromotion(liveRow(c, "refused", "live-promotion", now));
+  return true;
+}
+
+function fileLivePromotion(
+  db: Pick<PromotionStore, "listBenchmarkPromotions" | "recordBenchmarkPromotion">,
+  input: LivePromotionInput,
+): FiledLivePromotion {
+  const { slot, live: c, actor } = input;
+  if (!isLiveSlot(slot) || !validSlot(slot) || isFamilySlot(slot) || c.slot !== slot) {
+    return { kind: "error", message: `${slot} is not a live-evidence slot (role-model:<role>).` };
+  }
+  if (c.status === "too-little-data" || c.status === "not-callable" || c.status === "env-set") {
+    return {
+      kind: "error",
+      message: `Not filed: ${c.reasons.join("; ") || c.status}. Nothing was recorded.`,
+    };
+  }
+  // Self-attestation: no one files a promotion resting on their own work.
+  const own = c.producers.find((p) => p === actor.entityId || actor.keyOf(p) === actor.key);
+  if (own) {
+    return {
+      kind: "error",
+      message: `Refused: ${slot}'s evidence includes your own work. Someone else must file it; self-attestation is never accepted.`,
+    };
+  }
+  const outcome = c.status === "eligible" ? "promoted" : "refused";
+  db.recordBenchmarkPromotion(liveRow(c, outcome, actor.key, input.now ?? Date.now()));
+  return { kind: outcome, slot, candidate: c };
+}
+
+// ─── Upstream seeds adopted by a local person ───────────────────────────────
+
+/** The input of adopting an imported upstream seed into its (empty) slot. */
+export interface UpstreamPromotionInput {
+  slot: string;
+  upstream: UpstreamSeed;
+  actor: PromotionActor;
+  now?: number;
+}
+
+export type FiledUpstreamPromotion =
+  | { kind: "error"; message: string }
+  | { kind: "seeded"; slot: string; seed: UpstreamSeed };
+
+function fileUpstreamPromotion(
+  db: Pick<PromotionStore, "getBenchmarkDefault" | "recordBenchmarkPromotion">,
+  input: UpstreamPromotionInput,
+): FiledUpstreamPromotion {
+  const { slot, upstream: seed, actor } = input;
+  if (!validSlot(slot) || seed.slot !== slot) {
+    return { kind: "error", message: `${slot} is not the slot this upstream seed fills.` };
+  }
+  if (db.getBenchmarkDefault(slot)) {
+    return {
+      kind: "error",
+      message: `${slot} is already set locally; an upstream seed only fills an empty slot. Nothing was recorded.`,
+    };
+  }
+  const valueJson = JSON.stringify(seed.value);
+  db.recordBenchmarkPromotion({
+    slot,
+    outcome: "seeded",
+    // No ledger run: the slot has no incumbent run, so the first local run
+    // (or live evidence) that earns it replaces the adopted seed.
+    challenger_run_id: null,
+    incumbent_run_id: null,
+    value_json: valueJson,
+    actor: actor.key,
+    stats_json: JSON.stringify({
+      basis: "upstream",
+      artifactId: seed.artifactId,
+      version: seed.version,
+      itemKey: seed.itemKey,
+      valueSha256: sha256Hex(valueJson),
+      evidence: seed.evidence ?? null,
+    }),
+    reason: `adopted ${seed.source} (approved locally)`,
+    holdout_fraction: DEFAULT_HOLDOUT_FRACTION,
+    created_at: input.now ?? Date.now(),
+  });
+  return { kind: "seeded", slot, seed };
 }

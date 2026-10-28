@@ -13,7 +13,7 @@ import { seedGuidePool } from "../src/world/seed-guide";
 import defaultWorld from "../worlds/default";
 import emptyWorld from "../worlds/empty";
 import showcaseWorld from "../worlds/showcase";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
 describe("WorldDefinition: default world", () => {
   it("should be a compact inline workbench", () => {
@@ -60,7 +60,7 @@ describe("WorldDefinition: default world", () => {
   });
 
   it("seeds a compact demo population and visible shared work", () => {
-    const path = "test_workbench_seed.db";
+    const path = tempDbPath("test_workbench_seed.db");
     const db = new MarinaDB(path);
     try {
       defaultWorld.seed?.(db);

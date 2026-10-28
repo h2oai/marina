@@ -5,6 +5,7 @@ import type { AgentRuntime } from "../../agent/agent-runtime";
 import { MAX_AGENTS } from "../../agent/agent-runtime";
 import {
   AGENT_THINKING_LEVELS,
+  type AgentStatus,
   type AgentThinkingLevel,
   parseAgentThinkingLevel,
 } from "../../agent/agent-types";
@@ -21,6 +22,7 @@ import { RoutingError } from "../../routing/errors";
 import { residentLabeler, supervisedResidentsEnabled } from "../../routing/residents";
 import { RoutingService } from "../../routing/service";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
 import { sanitizeEntityName } from "../entity-name";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
@@ -34,8 +36,11 @@ const REQUIRES_BUILDER_RANK =
 const SPAWN_USAGE =
   "Usage: agent spawn <name> [model <model>] [role <role>] [key <key>] [budget <n-calls>] [thinking:off|low|medium|high] [goal <goal>]";
 
-/** Modifier grammar for `agent spawn` (`thinking:high`, `--thinking high`, `budget:30`). */
+/** Modifier grammar for `agent spawn` (`model:x`, `role:y`, `thinking:high`, `--thinking high`, `budget:30`). */
 const SPAWN_MODIFIER_SPEC: ModifierSpec = {
+  model: { type: "string" },
+  role: { type: "string" },
+  key: { type: "string" },
   thinking: { type: "string", aliases: ["think", "reasoning"] },
   budget: { type: "int" },
 };
@@ -75,10 +80,10 @@ export function parseSpawnOptions(tokens: readonly string[]): SpawnOptions | { e
     }
   }
   const out: SpawnOptions = {
-    model: words.model,
-    role: words.role,
+    model: mods.raw.model ?? words.model,
+    role: mods.raw.role ?? words.role,
     goal: words.goal,
-    key: words.key,
+    key: mods.raw.key ?? words.key,
   };
   const budgetRaw = mods.raw.budget ?? words.budget;
   if (budgetRaw !== undefined) {
@@ -218,7 +223,7 @@ Usage:
           }
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: agent restart <name>");
+            refuseCommand(ctx, input.entity, "Usage: agent restart <name>");
             return;
           }
           try {
@@ -245,7 +250,7 @@ Usage:
           const name = tokens[1];
           const model = tokens[2];
           if (!name || !model?.includes("/")) {
-            ctx.send(input.entity, "Usage: agent failover <name> <provider/model>");
+            refuseCommand(ctx, input.entity, "Usage: agent failover <name> <provider/model>");
             return;
           }
           try {
@@ -285,7 +290,8 @@ Usage:
               (nextMode !== undefined && !["focused", "balanced", "open"].includes(nextMode)) ||
               (!nextMode && !relay)
             ) {
-              ctx.send(
+              refuseCommand(
+                ctx,
                 input.entity,
                 "Usage: agent attention-mode <name> [focused|balanced|open] [relay:all|explicit]",
               );
@@ -298,7 +304,11 @@ Usage:
             return;
           }
           if (!name || !mode || !["focused", "balanced", "open"].includes(mode)) {
-            ctx.send(input.entity, "Usage: agent attention-mode <name> focused|balanced|open");
+            refuseCommand(
+              ctx,
+              input.entity,
+              "Usage: agent attention-mode <name> focused|balanced|open",
+            );
             return;
           }
           try {
@@ -322,13 +332,17 @@ Usage:
           const name = tokens[1];
           const feedback = tokens[2] as "useful" | "noise" | undefined;
           if (!name || !feedback || !["useful", "noise"].includes(feedback)) {
-            ctx.send(input.entity, "Usage: agent attention-feedback <name> useful|noise");
+            refuseCommand(ctx, input.entity, "Usage: agent attention-feedback <name> useful|noise");
             return;
           }
           const resident = supervisedResident(deps.db, name);
           if (resident && deps.db) {
             if (resident.spawned_by !== entity.name) {
-              ctx.send(input.entity, `Only ${resident.name}'s owner can tune its attention.`);
+              refuseCommand(
+                ctx,
+                input.entity,
+                `Only ${resident.name}'s owner can tune its attention.`,
+              );
               return;
             }
             const saved = deps.db.recordAttentionFeedback(resident.name, feedback);
@@ -378,7 +392,7 @@ Usage:
           const name = tokens[1];
           const message = tokens.slice(2).join(" ");
           if (!name || !message) {
-            ctx.send(input.entity, "Usage: agent attention <name|a,b|all> <message>");
+            refuseCommand(ctx, input.entity, "Usage: agent attention <name|a,b|all> <message>");
             return;
           }
           const names = attentionTargets(name, entity, ctx, deps);
@@ -403,7 +417,7 @@ Usage:
           const name = tokens[1];
           const description = tokens.slice(2).join(" ");
           if (!name || !description) {
-            ctx.send(input.entity, "Usage: agent focus <name> <description>");
+            refuseCommand(ctx, input.entity, "Usage: agent focus <name> <description>");
             return;
           }
           return handleFocus(ctx, input.entity, name, description, deps);
@@ -468,8 +482,10 @@ function handleList(
     const cost = ops
       ? `${formatUsd(ops.totalCostUsd)} (${formatUsd(ops.costLastHourUsd)}/h)`
       : formatUsd(a.totalCostUsd ?? 0);
+    const thinking =
+      a.thinkingSent && a.thinkingSent !== "off" ? `thinking:${a.thinkingSent} ` : "";
     lines.push(
-      `${bold(a.name)} ${dim(`[${ops?.paused?.kind === "provider-auth" ? "blocked: provider auth" : (a.healthState ?? a.state)}]`)} ${a.model} ${a.role ? `role:${a.role}` : ""} ${dim(`${upMin}m · ${a.toolCalls} calls · ${cost}`)}${ops?.paused && ops.paused.kind !== "provider-auth" ? ` ${dim(`paused: ${ops.paused.kind}`)}` : ""}`,
+      `${bold(a.name)} ${dim(`[${ops?.paused?.kind === "provider-auth" ? "blocked: provider auth" : (a.healthState ?? a.state)}]`)} ${a.model} ${a.role ? `role:${a.role} ` : ""}${thinking}${dim(`${upMin}m · ${a.toolCalls} calls · ${cost}`)}${ops?.paused && ops.paused.kind !== "provider-auth" ? ` ${dim(`paused: ${ops.paused.kind}`)}` : ""}`,
     );
     if (a.focus) lines.push(`  ${dim(`focus: ${a.focus}`)}`);
   }
@@ -498,12 +514,12 @@ function handleStatus(
   deps: { agentRuntime: AgentRuntime; db?: MarinaDB },
 ): void {
   if (!name) {
-    ctx.send(eid, "Usage: agent status <name>");
+    refuseCommand(ctx, eid, "Usage: agent status <name>");
     return;
   }
   const agent = deps.agentRuntime.get(name);
   if (!agent) {
-    ctx.send(eid, `Agent "${name}" is not running.`);
+    refuseCommand(ctx, eid, `Agent "${name}" is not running.`);
     return;
   }
 
@@ -542,7 +558,8 @@ function handleStatus(
           `${bold("Tool provenance (7d):")} ${usage.marinaToolCalls}/${usage.toolCalls} Marina tools · ${usage.reasoningOnlyCalls} think-only`,
         ]
       : []),
-    `${bold("Tokens:")} ${(ops?.totalInputTokens ?? s.totalInputTokens ?? 0).toLocaleString()} in · ${(ops?.totalOutputTokens ?? s.totalOutputTokens ?? 0).toLocaleString()} out`,
+    `${bold("Thinking:")} ${describeThinking(s)}`,
+    `${bold("Tokens:")} ${(ops?.totalInputTokens ?? s.totalInputTokens ?? 0).toLocaleString()} in · ${(ops?.totalOutputTokens ?? s.totalOutputTokens ?? 0).toLocaleString()} out${(s.totalReasoningTokens ?? 0) > 0 ? ` (${(s.totalReasoningTokens ?? 0).toLocaleString()} reasoning)` : ""}`,
     `${bold("Cost:")} ${formatUsd(ops?.totalCostUsd ?? s.totalCostUsd ?? 0)} total · ${formatUsd(ops?.costLastHourUsd ?? 0)} last hour${capText ? dim(` (caps: ${capText})`) : ""}`,
     ...(ops?.promptCache && (ops.promptCache.coldTurns > 0 || ops.promptCache.keepAlives > 0)
       ? [
@@ -561,6 +578,27 @@ function handleStatus(
     `${bold("Entity ID:")} ${s.entityId || dim("not connected")}`,
   ];
   ctx.send(eid, lines.join("\n"));
+}
+
+/**
+ * The status line for an agent's thinking: the level its requests carry; when
+ * the model takes no reasoning setting, the configured level and that it is
+ * not sent; and the reasoning tokens the provider reported per call.
+ */
+export function describeThinking(
+  s: Pick<AgentStatus, "thinkingLevel" | "thinkingSent" | "modelCalls" | "totalReasoningTokens">,
+): string {
+  const level = s.thinkingLevel ?? "off";
+  const sent = s.thinkingSent ?? level;
+  const base =
+    level !== "off" && sent === "off"
+      ? `${level} — not sent: the model takes no reasoning setting`
+      : sent;
+  const calls = s.modelCalls ?? 0;
+  const reasoning = s.totalReasoningTokens ?? 0;
+  return calls > 0 && reasoning > 0
+    ? `${base} · ${Math.round(reasoning / calls).toLocaleString()} reasoning tokens/call reported`
+    : base;
 }
 
 /** "12s ago" / "3m ago" / "2h ago" for operator status lines. */
@@ -711,7 +749,8 @@ async function handleSpawn(
     return;
   }
   if (!/^[A-Za-z0-9_]{1,20}$/.test(name)) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       "Agent names must be 1-20 characters using only letters, numbers, and underscores.",
     );
@@ -719,7 +758,7 @@ async function handleSpawn(
   }
 
   if (!deps.agentRuntime.isAvailable()) {
-    ctx.send(eid, `No model provider — agents cannot be spawned. ${providerSetupHint()}`);
+    refuseCommand(ctx, eid, `No model provider — agents cannot be spawned. ${providerSetupHint()}`);
     return;
   }
 
@@ -734,7 +773,7 @@ async function handleSpawn(
 
   ctx.send(
     eid,
-    `Spawning ${bold(name)} (${opts.model || residentDefaultModel(deps.db)}${opts.role ? `, ${opts.role}` : ""}${opts.thinkingLevel ? `, thinking ${opts.thinkingLevel}` : ""})...`,
+    `Spawning ${bold(name)} (${opts.model || residentDefaultModel(deps.db, process.env, opts.role)}${opts.role ? `, ${opts.role}` : ""}${opts.thinkingLevel ? `, thinking ${opts.thinkingLevel}` : ""})...`,
   );
 
   try {
@@ -785,7 +824,7 @@ async function handleStop(
   opts: { keepChildren?: boolean } = {},
 ): Promise<void> {
   if (!name) {
-    ctx.send(eid, "Usage: agent stop <name> [--keep-children]");
+    refuseCommand(ctx, eid, "Usage: agent stop <name> [--keep-children]");
     return;
   }
   const supervised = deps.db?.getAgentConfig(name);
@@ -796,7 +835,7 @@ async function handleStop(
 
   const agent = deps.agentRuntime.get(name);
   if (!agent) {
-    ctx.send(eid, `Agent "${name}" is not running.`);
+    refuseCommand(ctx, eid, `Agent "${name}" is not running.`);
     return;
   }
 
@@ -858,7 +897,7 @@ function stopSupervisedResident(
   db: MarinaDB,
 ): void {
   if (config.spawned_by !== caller.name) {
-    ctx.send(eid, `Only ${config.name}'s owner can stop it.`);
+    refuseCommand(ctx, eid, `Only ${config.name}'s owner can stop it.`);
     return;
   }
   const gate = checkGateForExecution(db, eid, "code.exec");
@@ -869,7 +908,7 @@ function stopSupervisedResident(
   recordGateExecution(db, eid, "code.exec", gate, `agent stop ${config.name}`);
   const session = config.run_session;
   if (!session) {
-    ctx.send(eid, `${bold(config.name)} is not running: no supervised run holds it.`);
+    refuseCommand(ctx, eid, `${bold(config.name)} is not running: no supervised run holds it.`);
     return;
   }
   try {
@@ -943,7 +982,7 @@ function setResidentAttention(
   change: { mode?: "focused" | "balanced" | "open"; threshold?: number; relay?: AttentionRelay },
 ): void {
   if (config.spawned_by !== caller.name) {
-    ctx.send(eid, `Only ${config.name}'s owner can change its attention.`);
+    refuseCommand(ctx, eid, `Only ${config.name}'s owner can change its attention.`);
     return;
   }
   if (change.mode) db.updateAttentionPolicy(config.name, change.mode);
@@ -991,11 +1030,11 @@ async function handleDisable(
   deps: { agentRuntime: AgentRuntime; logEvent: (event: EngineEvent) => void; db?: MarinaDB },
 ): Promise<void> {
   if (!name) {
-    ctx.send(eid, "Usage: agent disable <name>");
+    refuseCommand(ctx, eid, "Usage: agent disable <name>");
     return;
   }
   if (!deps.db) {
-    ctx.send(eid, "Disable requires a database (persisted markers).");
+    refuseCommand(ctx, eid, "Disable requires a database (persisted markers).");
     return;
   }
   setSeedDisabled(deps.db, name, true);
@@ -1022,15 +1061,15 @@ function handleEnable(
   deps: { db?: MarinaDB },
 ): void {
   if (!name) {
-    ctx.send(eid, "Usage: agent enable <name>");
+    refuseCommand(ctx, eid, "Usage: agent enable <name>");
     return;
   }
   if (!deps.db) {
-    ctx.send(eid, "Enable requires a database (persisted markers).");
+    refuseCommand(ctx, eid, "Enable requires a database (persisted markers).");
     return;
   }
   if (!isSeedDisabled(deps.db, name)) {
-    ctx.send(eid, `Agent ${bold(name)} is not disabled.`);
+    refuseCommand(ctx, eid, `Agent ${bold(name)} is not disabled.`);
     return;
   }
   setSeedDisabled(deps.db, name, false);
@@ -1059,12 +1098,16 @@ async function handleAttention(
     // the owner's attention is a priority perception, steered in when it can be.
     const caller = deps.getEntity(eid);
     if (!caller || resident.spawned_by !== caller.name) {
-      ctx.send(eid, `Only ${resident.name}'s owner sends it attention; use tell instead.`);
+      refuseCommand(
+        ctx,
+        eid,
+        `Only ${resident.name}'s owner sends it attention; use tell instead.`,
+      );
       return;
     }
     const target = deps.findAgent?.(resident.name);
     if (!target) {
-      ctx.send(eid, `${bold(resident.name)} is not in the world right now.`);
+      refuseCommand(ctx, eid, `${bold(resident.name)} is not in the world right now.`);
       return;
     }
     ctx.send(target.id, `${caller.name} asks for your attention: ${message}`, "attention", {
@@ -1077,7 +1120,7 @@ async function handleAttention(
   }
   const agent = deps.agentRuntime.get(name);
   if (!agent) {
-    ctx.send(eid, `Agent "${name}" is not running.`);
+    refuseCommand(ctx, eid, `Agent "${name}" is not running.`);
     return;
   }
   await agent.sendAttention(message);
@@ -1093,7 +1136,7 @@ function handleFocus(
 ): void {
   const agent = deps.agentRuntime.get(name);
   if (!agent) {
-    ctx.send(eid, `Agent "${name}" is not running.`);
+    refuseCommand(ctx, eid, `Agent "${name}" is not running.`);
     return;
   }
   agent.setFocus(description);
@@ -1111,7 +1154,7 @@ async function handleConfig(
   const value = tokens.slice(2).join(" ");
 
   if (!name || !field || !value) {
-    ctx.send(eid, "Usage: agent config <name> model|role|key|thinking <value>");
+    refuseCommand(ctx, eid, "Usage: agent config <name> model|role|key|thinking <value>");
     return;
   }
 
@@ -1147,7 +1190,7 @@ async function handleConfig(
       break;
     }
     default:
-      ctx.send(eid, `Unknown config field: ${field}. Use: model, role, key, thinking`);
+      refuseCommand(ctx, eid, `Unknown config field: ${field}. Use: model, role, key, thinking`);
       return;
   }
 
@@ -1160,7 +1203,7 @@ async function handleConfig(
         `Saved config of ${bold(name)} updated (${field} = ${value}); it applies when ${name} next starts.`,
       );
     } else {
-      ctx.send(eid, `Agent "${name}" is not running and has no saved config.`);
+      refuseCommand(ctx, eid, `Agent "${name}" is not running and has no saved config.`);
     }
     return;
   }

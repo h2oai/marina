@@ -58,7 +58,7 @@ documents the available interfaces and capture/accounting limits.
 
 ## Task submission identities
 
-Migration 183 adds a durable `task_claims.submission_clock`. Each submission advances
+Migration 184 adds a durable `task_claims.submission_clock`. Each submission advances
 `submitted_at` to at least one millisecond after that claim's previous submission, even if the
 wall clock repeats or moves backward. Reclaim clears the visible submission fields and retains
 this clock. The immediate verifier, periodic judge and creator verdict use the same submission
@@ -225,7 +225,13 @@ Adding a delegate: put the query in the module, add the one-line delegate to `Ma
 
 `processCommand` is async, and firing it un-awaited would let one entity's queued commands interleave past their first `await`. `CommandCoordinator` (`src/engine/command-coordinator.ts`) keeps a per-entity promise tail (`chains`): an idle entity's command starts synchronously, a busy entity's is chained after its previous one, so a single entity runs strictly FIFO while different entities still interleave. A rejection that escapes `processCommand` before the handler's own try (modal routing, parse, context build) is routed to the tick error path (`recordTickError`) instead of becoming an unhandled rejection. The command phase stops dispatching after `COMMAND_PHASE_BUDGET_MS` (150 ms, `MARINA_COMMAND_PHASE_BUDGET_MS`) and carries the per-entity remainder to the next tick in order; `MAX_COMMANDS_PER_TICK` still bounds the count. `drainCommands()` / `queuedCommandCount` are test seams. The macro fan-out stays un-awaited (its tests expect synchronous completion).
 
+A handler that refuses — bad usage, an unknown subcommand, no such target, not permitted, the wrong state — declares it with `failCommandResponse` (`src/engine/command-response.ts`), and `observeHandlerOutcome` records that command's `primitive_usage` row and `entity_activity` row as failed; quest progress and the `command` event are unchanged, because the handler ran. The shared refusal paths declare it themselves: `refuseCommand(ctx, entity, message)` (reply + declare), `unknownSubcommand()`, `rankFloorRefusal()` and a refused `checkGateForExecution()`. A read that finds nothing, a bare command that prints its usage, and a no-op on a state that already holds (`already in channel`) reply with plain `ctx.send` and stay successes. A permission check whose "no" only narrows what a command does runs inside `withoutRefusal()`, so it never fails the command around it.
+
 `RoomSandbox.wrapModule` returns a room command handler's value, so an async room command's promise reaches the chain; an async rejection is recorded as a room violation via `execHandler`, never as an unhandled rejection.
+
+## Periodic tick jobs: modulo for short jobs, wall clock for long ones
+
+`TickScheduler` (`src/engine/tick-scheduler.ts`, jobs in `src/engine/tick-jobs.ts`) fires a short job on `tick % every === phase`. The engine's tick counter restarts at 0 on every boot, so under that rule alone a job waited `phase` ticks after each restart, and a job whose interval exceeded typical uptime (the 6-hour `live-promotion`, the late-phase hourly jobs) rarely or never ran on an install that restarts often. Jobs with `every >= DURABLE_MIN_EVERY` (600 ticks, 10 min at the default tick) are therefore durable on wall clock: each run's start time (ms) is persisted in `core_memory` under owner `tick:schedule`, keyed by job name (no migration; `core_memory_history` is pruned by retention). On the first tick a durable job is checked after boot, it is placed from that record: if `every × tickInterval` has elapsed since its last run — or it never ran — it is due at `bootTick + durableOffset(job)`, where `durableOffset = floor(phase × DURABLE_SPREAD / every)` and `DURABLE_SPREAD` is 300 ticks; if it ran recently it waits the remainder, rounded up onto the same offset of a 300-tick grid. Distinct phases on one interval thus still land on distinct ticks after a restart (the hourly phases map to offsets 25…287). After a run the job is next due at `tick + every`. The overlap guard and `drain()` are unchanged; `describeTickSchedule()` adds `durable`, `lastRunAt` (wall ms) and `nextDueTick`.
 
 ## Migration 118 and the contradiction-case twin exclusion
 
@@ -251,10 +257,10 @@ Adding a delegate: put the query in the module, add the one-line delegate to `Ma
 
 ## Fresh schema and existing database upgrades
 
-Fresh databases install `schema-baseline.ts` (version 167, the schema of v0.8.0) in one
-SQLite transaction, then apply any `FORWARD_MIGRATIONS` in `schema.ts`. This avoids replaying
+Fresh databases install `schema-baseline.ts` (version 179) in one SQLite transaction,
+then apply any `FORWARD_MIGRATIONS` in `schema.ts` (none at the moment of a refresh). This avoids replaying
 historical ALTER statements, index rebuilds, data conversions and per-version disk commits on
-an empty database. The baseline marker stays 167; forward migrations advance the database to the
+an empty database. The baseline marker stays 179; forward migrations advance the database to the
 current version. Consolidation does not reset the schema counter.
 
 `schema-history.ts` retains the original SQL unchanged for populated databases. A
@@ -343,9 +349,11 @@ The baseline is a cache of historical replay, never a second definition:
   pass; ending support for upgrades from an old version is an explicit compatibility
   decision recorded in [compatibility](../guides/compatibility.md) and the release
   notes.
-- **Refresh only at a release boundary**, and only for migrations that already
-  shipped in a tagged release — never for a migration still on `main`, whose SQL may
-  still change before release.
+- **A folded migration is frozen.** Folding moves a migration verbatim into
+  `schema-history.ts`; from then on `bun run schema:check` pins its SQL to the
+  baseline, so a correction is a new forward migration, never an edit — the same rule
+  every merged migration already follows. Migrations still on `main` may be folded
+  (168–179 were, before their release) once they are merged.
 - **Refresh only when it pays**: fresh-install time or the size of the forward list is
   a measured problem. The baseline exists to spare empty databases the historical
   rebuilds and data conversions; it is not tidied for its own sake.
@@ -354,13 +362,15 @@ The baseline is a cache of historical replay, never a second definition:
   even with no rows (138's conversion drops `legacy_memory_outbox`). A folded hook stays
   in `MIGRATION_HOOKS` in `schema.ts`, keyed by version, so an existing database that
   upgrades through that version still converts its data; `schema-history.ts` stays pure
-  SQL. 138 and 143 are folded this way (2026-10, baseline 137 → 167, v0.8.0).
+  SQL. 138 and 143 are folded this way (2026-10, baseline 137 → 167, v0.8.0), and 172
+  (baseline 167 → 179).
 - **Seeded rows need a decision.** A migration that inserts rows on an empty database
   must reproduce them at installation, not copy the generation-time value: list the
   table in the generator's `SEEDED_TABLES` with an install-time SQL expression for every
-  per-database column (`shell_allowlist.added_at` today). The next refresh past 170
-  meets `investigation_instance` (a `randomblob` uuid per database): generation fails
-  until it gets such an entry, and `test/schema-baseline.test.ts` asserts two fresh
+  per-database column (`shell_allowlist.added_at`, and `investigation_instance.uuid`, a
+  `randomblob` id per database); a row that is the same on every empty database
+  (`memory_known_at_backfill`'s 0/0 cursor) is listed with no override. An unlisted
+  seeded table fails generation, and `test/schema-baseline.test.ts` asserts two fresh
   installs get different ids.
 - **How**: move the folded entries verbatim (same versions, same SQL) from
   `FORWARD_MIGRATIONS` to the end of `schema-history.ts` (hooks to `MIGRATION_HOOKS`),
@@ -368,8 +378,9 @@ The baseline is a cache of historical replay, never a second definition:
   `bun scripts/generate-schema-baseline.ts`, and run `bun run schema:check`,
   `test/schema-baseline.test.ts` and `test/upgrade-from-releases.test.ts`. Tests that
   need an older database build it with `migrateEmptyTo`, never from `SCHEMA_BASELINE`.
-  Before folding, check each moved migration's SQL is byte-identical to the tagged
-  release's. The schema counter never resets: `SCHEMA_VERSION` and every database's
+  Before folding, check each moved migration's SQL (and hook) is byte-identical to the
+  tagged release's, or to `main`'s for one not yet released; a constant a migration
+  interpolates (`JUDGE_LEDGER_BACKFILL_179`) moves with it and stays re-exported. The schema counter never resets: `SCHEMA_VERSION` and every database's
   `schema_version` are unchanged by a refresh, and every release fixture must still
   upgrade to exactly the fresh-install schema.
 

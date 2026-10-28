@@ -47,6 +47,7 @@ import { getStanding } from "../agent/standing";
 import type { MarinaDB } from "../persistence/database";
 import { isGrantedCompetence } from "../persistence/db-competence";
 import { getAutonomyPosture, LOCAL_AGENT_HELD_GATES } from "./autonomy";
+import { failCommandResponse } from "./command-response";
 import { onGateRefused, principalOf, takeArmedGatePass } from "./gate-context";
 import { isImplicitLocalUngated, isLocalUngated, isSovereign } from "./trust-profile";
 
@@ -506,7 +507,10 @@ export function checkGateForExecution(
   now = Date.now(),
 ): GateExecutionResult {
   const result = evaluateGateForExecution(db, entityId, gateId, now);
-  if (result.ok || !result.reason) return result;
+  if (result.ok) return result;
+  // A refusal ends the command: usage and activity record it as failed.
+  failCommandResponse(result.reason ?? `${gateId} refused`);
+  if (!result.reason) return result;
   // A refusal inside a command raises a challenge (src/engine/challenges.ts):
   // the owner and operators are asked, the caller is told it will run once
   // approved, and nothing waits — the refusal returns now.
@@ -536,15 +540,19 @@ function evaluateGateForExecution(
   if (holder.kind === "granted") return { ok: true, mode: "unattended" };
   if (holder.kind === "demonstrated" && holder.standingOk) return { ok: true, mode: "unattended" };
 
-  // An answered challenge: a person approved THIS run.
-  const pass = takeArmedGatePass(entityId, gateId);
+  // An answered challenge: a person approved THIS run. `code.exec.unrestricted`
+  // is operator-grant only — no approval ever passes it.
+  const pass =
+    gateId === "code.exec.unrestricted" ? undefined : takeArmedGatePass(entityId, gateId);
   if (pass) {
     return {
       ok: true,
       mode: "approved",
       approvedBy: pass.approverName,
       ...(pass.approverId ? { witnessId: pass.approverId } : {}),
-      ...(pass.demonstrates ? { demonstrates: true } : {}),
+      ...((pass.demonstratesGateIds ? pass.demonstratesGateIds.includes(gateId) : pass.demonstrates)
+        ? { demonstrates: true }
+        : {}),
     };
   }
 

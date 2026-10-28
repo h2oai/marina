@@ -26,9 +26,9 @@ import {
   tierIds,
   type UnifiedFixture,
 } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_memory_as_of.db";
+const TEST_DB = tempDbPath("test_memory_as_of.db");
 const CUTOFF_MS = Date.parse("2026-06-01T00:00:00.000Z");
 const BEFORE = CUTOFF_MS - 10 * 86_400_000;
 const EARLIER = CUTOFF_MS - 20 * 86_400_000;
@@ -159,7 +159,9 @@ describe("memory as of the evidence cutoff", () => {
   });
 
   it("a record revised after the cutoff is served as it stood at the cutoff", async () => {
-    await revise(fx.recordId, 1, "Amber deployment uses port 8800 after the migration");
+    // The revision's marker is a word with non-hex letters, so a random UUID in
+    // the served text can never contain it by chance.
+    await revise(fx.recordId, 1, "Amber deployment uses port 8800 after the relocation");
     dateEvent(fx.recordId, "memory.revised", AFTER, 2);
 
     const fenced = await buildUnifiedContext(db, fx.owner, FIXTURE_QUERY, { asOf: CUTOFF_MS });
@@ -170,7 +172,7 @@ describe("memory as of the evidence cutoff", () => {
     expect(record.provenance).toBe(`record ${fx.recordId} v1 as-of`);
     // The label never reveals that a later version exists.
     expect(record.provenance).not.toMatch(/current v|\/\d/);
-    expect(served(fenced)).not.toContain("8800");
+    expect(served(fenced)).not.toContain("relocation");
 
     // Revised BEFORE the cutoff: the revision is what was known (no longer dropped).
     dateEvent(fx.recordId, "memory.revised", BEFORE, 2);
@@ -179,7 +181,7 @@ describe("memory as of the evidence cutoff", () => {
     const current = later.tiers
       .find((t) => t.tier === "evidence")!
       .items.find((i) => i.id === fx.recordId)!;
-    expect(current.content).toContain("8800");
+    expect(current.content).toContain("relocation");
     expect(current.provenance).toBe(`record ${fx.recordId} v2`);
   });
 
@@ -206,7 +208,6 @@ describe("memory as of the evidence cutoff", () => {
     expect(item?.tier).toBe("unverified");
     expect(item?.content).toContain("9100");
     expect(item?.provenance).toBe(`#${fx.plainNoteId} imp=5 as-of v2`);
-    expect(served(fenced)).not.toContain("9200");
     expect(served(fenced)).not.toContain("finally");
 
     // `recall` under the fence: the as-of text, never the later one.
@@ -215,12 +216,12 @@ describe("memory as of the evidence cutoff", () => {
     await engine.processCommand(fx.ownerEntityId, "recall Amber deployment hunch staging");
     const plain = stripAnsi(fx.ownerConn.allTextJoined());
     expect(plain).toContain("9100");
-    expect(plain).not.toContain("9200");
+    expect(plain).not.toContain("finally");
     fx.ownerConn.clear();
     await engine.processCommand(fx.ownerEntityId, "recall Amber deployment hunch staging all");
     const unified = stripAnsi(fx.ownerConn.allTextJoined());
     expect(unified).toContain("9100");
-    expect(unified).not.toContain("9200");
+    expect(unified).not.toContain("finally");
   });
 
   it("an undated revision falls back to the newest dated version, else nothing", async () => {

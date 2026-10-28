@@ -5,6 +5,8 @@ import type { TaskManager } from "../../coordination/task-manager";
 import { category, dim, header, id, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
+import { getErrorMessage } from "../errors";
 import { gatherRetrievalContext } from "./retrieval-core";
 
 export function askCommand(deps: {
@@ -27,12 +29,12 @@ export function askCommand(deps: {
 
       const query = input.args.trim();
       if (!query) {
-        ctx.send(input.entity, "Usage: ask <question>");
+        refuseCommand(ctx, input.entity, "Usage: ask <question>");
         return;
       }
 
       if (!deps.db) {
-        ctx.send(input.entity, "Ask requires database support.");
+        refuseCommand(ctx, input.entity, "Ask requires database support.");
         return;
       }
 
@@ -114,6 +116,7 @@ export function askCommand(deps: {
       }
 
       let answered = false;
+      let modelFailure: string | undefined;
       if (deps.answerQuestion && !noModel) {
         try {
           const answer = await deps.answerQuestion(query, contextLines.slice(0, 16).join("\n"));
@@ -122,9 +125,13 @@ export function askCommand(deps: {
             lines.push(category("Answer"), answer.trim());
             answered = true;
           }
-        } catch {
-          // Preserve the local-context behavior if the model path is unavailable.
+        } catch (err) {
+          // Keep the local-context answer, and say why the model gave none.
+          modelFailure = getErrorMessage(err);
         }
+      }
+      if (modelFailure) {
+        lines.push(`No model answer — ${modelFailure}`, "");
       }
 
       if (sections > 0 && !answered) {

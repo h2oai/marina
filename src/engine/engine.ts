@@ -20,6 +20,7 @@ import { AgentRuntime, getInternalModelToken } from "../agent/agent-runtime";
 import { applyRankProgression } from "../agent/rank-progression";
 import { isSeedDisabled } from "../agent/seed-registry";
 import { recordFromEvent as recordStandingEvent } from "../agent/standing";
+import { standingCreditNotice } from "../agent/standing-summary";
 import { setDefaultUpstreamDescriber } from "../agent/vision-input";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { SessionManager } from "../auth/session-manager";
@@ -30,6 +31,7 @@ import { CrewManager } from "../coordination/crew-manager";
 import { GroupManager } from "../coordination/group-manager";
 import { MacroManager } from "../coordination/macro-manager";
 import {
+  aspectCheck,
   type RoomRound,
   roomFormationOf,
   roomFormationTurn,
@@ -56,10 +58,12 @@ import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import { deliveryPending } from "../outcomes/deliver";
 import { fileResidentForecast } from "../outcomes/filing";
 import { noteTaskApproach, observeOutcomeEvent } from "../outcomes/live";
+import { recordRoomFormationRound } from "../outcomes/orchestration";
 import { hasPendingDelivery, settleDelivery } from "../outcomes/record";
 import type { MarinaDB } from "../persistence/database";
 import type { RoomLogKind } from "../persistence/db-rooms";
 import { writeSample } from "../resolvers/sample-writer";
+import { WorldSupervisor } from "../routing/world-supervisor";
 import type { StorageProvider } from "../storage/provider";
 import type { OtlpExporterStatus } from "../telemetry/otlp-exporter";
 import type { OtlpLogExporterStatus } from "../telemetry/otlp-log-exporter";
@@ -96,6 +100,7 @@ import { onDefaultResolved, summarizeDefaultValue } from "./default-resolution";
 import { sanitizeEntityName } from "./entity-name";
 import { getErrorMessage, logRejection, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
+import { principalOf } from "./gate-context";
 import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
 import { assetDerivativesPending, drainAssetDerivatives } from "./media/asset-library";
@@ -190,6 +195,12 @@ export class Engine {
   readonly crewManager?: CrewManager;
   /** Each room formation's round in progress (src/coordination/room-formations.ts). */
   private readonly roomRounds = new Map<RoomId, RoomRound>();
+  /**
+   * The verification verdict (`aspectCheck`, a label) of the say being
+   * broadcast, read once by `onRoomSay` for the same message ref; the words
+   * themselves are never kept or put on the content-free `say_sent` event.
+   */
+  private lastSayCheck: { ref: string; check: "pass" | "fail" } | undefined;
 
   readonly world?: WorldDefinition;
   readonly sandbox: RoomSandbox;
@@ -213,6 +224,8 @@ export class Engine {
   readonly mediaManager?: MediaManager;
   /** Expiring read grants on single private canvas nodes (`canvas-access.ts`). */
   readonly canvasGrants = new CanvasReadGrants();
+  /** The in-world native agent supervisor (`supervisor start`); stopped by `shutdown()`. */
+  readonly worldSupervisor = new WorldSupervisor();
   /** @internal */ db?: MarinaDB;
   private startedAt = Date.now();
   private fetchLastCall = new Map<string, number>(); // roomId -> timestamp
@@ -221,6 +234,7 @@ export class Engine {
   private readonly background = new Set<Promise<unknown>>();
   /** Unsubscribes this engine from default-resolution traces (on shutdown). */
   private readonly releaseDefaultTrace: () => void;
+  private releaseStandingNotices?: () => void;
   /** Periodic (`tick % every === phase`) maintenance jobs; see `registerTickJobs()`. */
   private readonly tickScheduler: TickScheduler;
   /** @internal */ readonly _connections: ConnectionManager;
@@ -301,6 +315,7 @@ export class Engine {
         key: r.key,
         value: summarizeDefaultValue(r.value),
         ...(r.incumbentRunId ? { incumbentRunId: r.incumbentRunId } : {}),
+        ...(r.withheld ? { withheld: r.withheld } : {}),
         reason: r.reason,
         timestamp: Date.now(),
       }),
@@ -308,6 +323,19 @@ export class Engine {
     this.db?.onResourceChange((change) =>
       this.logEvent({ type: "resource_changed", ...change, timestamp: Date.now() }),
     );
+    // The earner sees each credit or debit the moment it lands (online only;
+    // `standing` and `brief` show it later otherwise).
+    this.releaseStandingNotices = this.db?.onStandingCredit((credit) => {
+      const db = this.db;
+      const earner = this.entities.findAgentByName(credit.entityName);
+      if (!db || !earner) return;
+      this.sendToEntity(
+        earner.id,
+        standingCreditNotice(db, { ...credit, entityId: earner.id }),
+        "standing",
+        { kind: credit.kind, ref: credit.ref, amount: credit.amount },
+      );
+    });
     this.rateLimiter = this.config.rateLimiter;
     this.loginRateLimiter = this.config.loginRateLimiter;
     this.storage = this.config.storage;
@@ -360,6 +388,8 @@ export class Engine {
         db: this.db,
         onEvent: (event) => this.logEvent(event),
         resolveAgentId: (name) => this.entities.findAgentByName(name)?.id,
+        // A crew's `model-<name>` endpoint is answered by agents, never people.
+        servesEndpoint: (id) => principalOf(id) === "agent",
         logger: this.logger,
       });
       // Reattach persisted crews from previous boot. Idempotent.
@@ -371,15 +401,9 @@ export class Engine {
       // Command-line processes on the same DB_PATH attach the same ledger, so
       // the day's total is shared across processes (re-read on every check);
       // with MARINA_SPEND_LEDGER every process naming that file shares one
-      // total and one cap (src/engine/shared-spend-ledger.ts).
-      spendDb.onClose(
-        attachWorldSpendLedger(spendDb, {
-          onError: (error) =>
-            tryLog(this.logger, "spend", "Daily spend not recorded", () => {
-              throw error;
-            }),
-        }),
-      );
+      // total and one cap (src/engine/shared-spend-ledger.ts). A failed write
+      // is retried, kept pending (counted toward the cap) and logged there.
+      spendDb.onClose(attachWorldSpendLedger(spendDb));
 
       // Route health: a first-party key's usage limit survives a restart, so
       // a reboot does not hammer the limited route (src/net/model/route-health.ts).
@@ -534,7 +558,9 @@ export class Engine {
     // submission is a resolved result — recorded once, learned from.
     this.addEventListener((event) => observeOutcomeEvent(this.db, event));
     // How a task is being worked, taken while its crew is live (a one-off
-    // crew is gone by the time the creator's verdict arrives).
+    // crew is gone by the time the creator's verdict arrives). A task bound to
+    // a crew (`crew dispatch`) is that crew's work; otherwise the claimant's
+    // live crews stand in (`noteTaskApproach`).
     this.addEventListener((event) => {
       if (event.type !== "task_claimed" || !this.db) return;
       const claimant = this.entities.get(event.entity)?.name;
@@ -551,6 +577,12 @@ export class Engine {
     // Attention judges (MARINA_ATTENTION_JUDGE, default observe; a no-op when
     // off): deep replies and review verdicts, each checked against its outcome.
     this.addEventListener((event) => observeAttentionJudgeEvent(this.db, event));
+    // A crew member who (re)appears rejoins its crews' `model-<name>`
+    // endpoints: channel membership is per entity, and entities are per session.
+    this.addEventListener((event) => {
+      if (event.type !== "entity_enter" || !event.name || !this.crewManager) return;
+      for (const crew of this.crewManager.forAgent(event.name)) this.crewManager.syncEndpoint(crew);
+    });
     // Presence (`who`, `look`, `who watch`): derived from agent events.
     this.addEventListener((event) => this.presence.observe(event));
   }
@@ -1101,8 +1133,12 @@ export class Engine {
    * A room with a formation answers each `say` with at most one structural
    * line, addressed to the next actor so attention owes and wakes it
    * (src/coordination/room-formations.ts). Rooms without one are untouched.
+   * A round that closes with a mechanical result is one outcome
+   * (`recordRoomFormationRound`, labels only).
    */
-  private onRoomSay(room: RoomId, speaker: string): void {
+  private onRoomSay(room: RoomId, speaker: string, saidRef: string): void {
+    const said = this.lastSayCheck?.ref === saidRef ? this.lastSayCheck.check : undefined;
+    this.lastSayCheck = undefined;
     const loaded = this.rooms.get(room);
     const formation = loaded ? roomFormationOf(loaded) : undefined;
     if (!formation) {
@@ -1114,9 +1150,15 @@ export class Engine {
       .inRoom(room)
       .filter((entity) => entity.kind === "agent")
       .map((entity) => entity.name);
-    const turn = roomFormationTurn(formation, this.roomRounds.get(room), speaker, present);
+    const turn = roomFormationTurn(formation, this.roomRounds.get(room), speaker, present, said);
     if (turn.round) this.roomRounds.set(room, turn.round);
     else this.roomRounds.delete(room);
+    const result = turn.result;
+    const outcomeDb = this.db;
+    if (result && outcomeDb)
+      tryLog(this.logger, "db", "Room formation outcome failed", () =>
+        recordRoomFormationRound(outcomeDb, { room, ref: saidRef, result }),
+      );
     if (!turn.line || turn.phase === "quiet") return;
     const line = `[formation-mediator] ${turn.line}`;
     const db = this.db;
@@ -1189,6 +1231,12 @@ export class Engine {
     const sender = this.entities.get(exclude);
     const senderName = sender?.name;
     this.appendRoomLog(room, senderName, message, tag, metadata);
+    if (tag === "say" && typeof metadata?.messageRef === "string") {
+      const check = aspectCheck(
+        typeof metadata.message === "string" ? metadata.message : undefined,
+      );
+      this.lastSayCheck = check ? { ref: metadata.messageRef, check } : undefined;
+    }
     const entities = this.entities.inRoom(room);
     for (const entity of entities) {
       if (entity.id !== exclude) {
@@ -1624,7 +1672,7 @@ export class Engine {
 
   /** @internal */ logEvent(event: EngineEvent): void {
     this._eventLog.log(event);
-    if (event.type === "say_sent") this.onRoomSay(event.room, event.from);
+    if (event.type === "say_sent") this.onRoomSay(event.room, event.from, event.messageRef);
     // Crews react to agent stops — depart the crew when the agent goes away.
     if (event.type === "agent_stop" && this.crewManager) {
       this.crewManager.onAgentStopped(event.name);
@@ -2203,10 +2251,17 @@ export class Engine {
     this.beginDrain();
     closeInvestigationService(this.db);
     this.stop();
+    // The in-world supervisor's native agents stop and its credential is
+    // revoked before the database closes; its boot record is kept, so the
+    // next boot resumes it (MARINA_SUPERVISOR_AUTOSTART). A host that stops it
+    // earlier (main.ts, while HTTP still answers its final sync) makes this a no-op.
+    if (this.worldSupervisor.running)
+      this.trackBackground(this.worldSupervisor.stop({ keep: true }));
     const finish = () => {
       this.saveWorldState();
       releaseChallengeHost(this);
       this.releaseDefaultTrace();
+      this.releaseStandingNotices?.();
       return Promise.allSettled([
         this.benchmarkRunner?.stopAll(),
         this.connectorRuntime?.close(),

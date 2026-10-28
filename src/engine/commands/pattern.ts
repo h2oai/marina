@@ -22,7 +22,9 @@ import { RateLimiter } from "../../auth/rate-limiter";
 import { experimentalHelp } from "../../config/feature-status";
 import { modelComplete } from "../../model/complete";
 import { bold, dim, header, separator } from "../../net/ansi";
+import { providerSetupHint } from "../../net/model/provider-setup";
 import { ensembleSize } from "../../net/model-api/ensemble";
+import { canonicalFormationName, formationEntry } from "../../orchestration/formations/catalogue";
 import {
   CREW_ONLY_PATTERNS,
   isTextPattern,
@@ -31,9 +33,12 @@ import {
   TEXT_PATTERNS,
   type TextComplete,
 } from "../../orchestration/text-patterns";
+import { recordPatternRun } from "../../outcomes/orchestration";
+import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
-import { normalizePatternName } from "../../world/templates/orchestration";
-import { getErrorMessage } from "../errors";
+import { refuseCommand } from "../command-response";
+import { getErrorMessage, tryLog } from "../errors";
+import { Logger } from "../logger";
 import { parseModifiers, splitOnTerminator } from "../parse-input";
 import { SpendGuard } from "../spend-guard";
 import { dailyCapRefusal } from "../spend-ledger";
@@ -46,6 +51,8 @@ export const PATTERN_MAX_BUDGET_USD = 2;
 /** The whole run's deadline (every stage, every call). */
 const PATTERN_RUN_TIMEOUT_MS = 600_000;
 
+const logger = new Logger();
+
 export const PATTERN_USAGE = [
   "Usage: pattern run <pattern> [budget:<usd>] -- <task>",
   "       pattern list",
@@ -57,6 +64,10 @@ export interface PatternCommandDeps {
   members?: () => string[];
   /** One model call (default: `modelComplete` through `src/model`). Tests inject a fake. */
   complete?: (spec: string) => TextComplete;
+  /** The world database: a run whose own review gave a verdict is recorded as an outcome. */
+  db?: () => MarinaDB | undefined;
+  /** The caller's name (the outcome's owner and scope). */
+  nameOf?: (id: EntityId) => string | undefined;
 }
 
 function defaultMembers(): string[] {
@@ -101,12 +112,17 @@ export function renderPatternRun(r: PatternRunResult): string {
 export function resolveTextPattern(
   raw: string,
 ): { pattern: (typeof TEXT_PATTERNS)[number] } | { error: string } {
-  const name = normalizePatternName(raw.trim().toLowerCase());
+  const name = canonicalFormationName(raw);
   if (isTextPattern(name)) return { pattern: name };
   const crew = CREW_ONLY_PATTERNS[name];
   if (crew) {
     return {
-      error: `"${name}" needs a persistent crew (${crew}); run it as a crew (\`project <name> orchestrate ${name}\`) and call it as model "marina:<crew>". pattern run takes: ${TEXT_PATTERNS.join(", ")}.`,
+      error: `"${name}" needs a persistent crew (${crew}); run it as a crew (\`crew create <name> <members> formation:${name}\`) and call it as model "marina:<crew>". pattern run takes: ${TEXT_PATTERNS.join(", ")}.`,
+    };
+  }
+  if (formationEntry(name)) {
+    return {
+      error: `"${name}" is a catalogue formation with no free-text protocol; it runs through \`forecast\`. pattern run takes: ${TEXT_PATTERNS.join(", ")}.`,
     };
   }
   return { error: `Unknown pattern "${raw}". pattern run takes: ${TEXT_PATTERNS.join(", ")}.` };
@@ -140,6 +156,7 @@ export function patternCommand(deps: PatternCommandDeps = {}): CommandDef {
             header("Patterns"),
             separator(),
             `${bold("pattern run")}: ${TEXT_PATTERNS.join(", ")}`,
+            ...TEXT_PATTERNS.map((p) => dim(`  ${p} — ${formationEntry(p)?.summary ?? ""}`)),
             dim(
               `crew-only (project <name> orchestrate <pattern>): ${Object.keys(CREW_ONLY_PATTERNS).join(", ")}`,
             ),
@@ -147,7 +164,7 @@ export function patternCommand(deps: PatternCommandDeps = {}): CommandDef {
         );
       }
       if (sub !== "run") {
-        return ctx.send(eid, `Unknown pattern subcommand "${first}".\n${PATTERN_USAGE}`);
+        return refuseCommand(ctx, eid, `Unknown pattern subcommand "${first}".\n${PATTERN_USAGE}`);
       }
       const args = input.args.replace(/^\s*run\b/i, "");
       // `-- <task>` keeps the task verbatim; without it, only modifiers right
@@ -183,7 +200,10 @@ export function patternCommand(deps: PatternCommandDeps = {}): CommandDef {
       if (capped) return ctx.send(eid, `Not running: ${capped}.`);
       const members = (deps.members ?? defaultMembers)();
       if (members.length === 0) {
-        return ctx.send(eid, "No model is available to run the pattern's members.");
+        return ctx.send(
+          eid,
+          `No model is available to run the pattern's members. ${providerSetupHint()} \`readiness providers\` checks it.`,
+        );
       }
       if (running.has(eid))
         return ctx.send(eid, "A pattern run of yours is still going; wait for it.");
@@ -217,6 +237,16 @@ export function patternCommand(deps: PatternCommandDeps = {}): CommandDef {
             signal: deadline,
           });
           ctx.send(eid, renderPatternRun(result));
+          const db = deps.db?.();
+          if (db) {
+            tryLog(logger, "db", "Could not record the pattern run outcome", () =>
+              recordPatternRun(db, {
+                result,
+                runId: `${eid}:${Date.now().toString(36)}`,
+                ...(deps.nameOf?.(eid) ? { owner: deps.nameOf(eid) } : {}),
+              }),
+            );
+          }
         } catch (err) {
           ctx.send(eid, `Could not run the pattern: ${getErrorMessage(err)}`);
         } finally {

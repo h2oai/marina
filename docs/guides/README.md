@@ -155,6 +155,7 @@ none submits anything by itself.
 - [Commands (generated)](../reference/commands.md): every command's syntax, parameters and permissions.
 - [Environment (generated)](../reference/environment.md): every server setting, its default, and whether the dashboard can change it.
 - [Feature status](../reference/feature-status.md): what's core, siloed, experimental, demo or deprecated, and how to turn it on.
+- [Capability posture (generated)](../reference/capability-posture.md): what ships off or observe-only, the evidence that would switch it on, and its decide-by date.
 - [Demo scenarios](../demos/README.md): guided walkthroughs you can run on a fresh world.
 - [Authentication](../authentication.md): optional sign-in for shared and public deployments.
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { namedLeaderboard } from "../../agent/standing";
+import { standingEarnLine, standingSummaryLine } from "../../agent/standing-summary";
 import type { CrewManager } from "../../coordination/crew-manager";
 import type { GroupManager } from "../../coordination/group-manager";
 import type { TaskManager } from "../../coordination/task-manager";
@@ -19,9 +20,11 @@ import {
   status,
 } from "../../net/ansi";
 import { providerSetupHint } from "../../net/model/provider-setup";
+import { canonicalFormationName } from "../../orchestration/formations/catalogue";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { describeCommand } from "../command-manifest";
+import { refuseCommand } from "../command-response";
 import { getRank } from "../permissions";
 
 interface BriefDeps {
@@ -60,7 +63,7 @@ export function briefCommand(deps: BriefDeps): CommandDef {
     ],
     name: "brief",
     aliases: [],
-    help: "Get oriented. Shows the current shape of the world — who is here, what exists, where to go next. 'brief full' shows the detailed briefing, 'brief social' the social view. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.",
+    help: "Get oriented. The first brief after you arrive is the welcome (how to start, recent chronicle); every later one shows the current shape of the world — who is here, what exists, where to go next. 'brief full' shows the detailed briefing, 'brief social' the social view. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -80,7 +83,8 @@ export function briefCommand(deps: BriefDeps): CommandDef {
         return sendFullBrief(ctx, input.entity, entity, deps);
       }
       if (sub !== undefined) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Usage: brief | brief full | brief social | brief watch [N] | brief unwatch",
         );
@@ -94,7 +98,8 @@ export function briefCommand(deps: BriefDeps): CommandDef {
 
 function handleWatch(ctx: RoomContext, eid: EntityId, tokens: string[], deps: BriefDeps): void {
   if (!deps.subscribeBrief) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       "Periodic briefs need a live tick loop, which isn't running here. `brief` on demand still works.",
     );
@@ -109,7 +114,8 @@ function handleWatch(ctx: RoomContext, eid: EntityId, tokens: string[], deps: Br
   if (tokens.length > 1) {
     const parsed = Number.parseInt(tokens[1]!, 10);
     if (Number.isNaN(parsed) || parsed < MIN_INTERVAL || parsed > MAX_INTERVAL) {
-      ctx.send(
+      refuseCommand(
+        ctx,
         eid,
         `Interval must be ${MIN_INTERVAL}-${MAX_INTERVAL} ticks. Default: ${DEFAULT_INTERVAL}.`,
       );
@@ -124,7 +130,8 @@ function handleWatch(ctx: RoomContext, eid: EntityId, tokens: string[], deps: Br
 
 function handleUnwatch(ctx: RoomContext, eid: EntityId, deps: BriefDeps): void {
   if (!deps.unsubscribeBrief) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       "Periodic briefs need a live tick loop, which isn't running here. `brief` on demand still works.",
     );
@@ -263,7 +270,11 @@ function sendCompass(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Brie
     // Staffing signal: projects with more open tasks than members
     if (deps.taskManager && deps.groupManager) {
       const needHelp = countUnderstaffedProjects(db, deps.taskManager, deps.groupManager);
-      if (needHelp > 0) parts.push(`${A.yellow}${needHelp} need help${A.reset}`);
+      // A count, not a command: name the projects' readout.
+      if (needHelp > 0)
+        parts.push(
+          `${A.yellow}${needHelp} understaffed project${needHelp === 1 ? "" : "s"}${A.reset} (project list)`,
+        );
     }
 
     const pools = db.listMemoryPools();
@@ -304,6 +315,12 @@ function sendCompass(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Brie
       const prog = topTask.progress > 0 ? ` ${topTask.progress}%` : "";
       lines.push(`${category("Task:")} ${topTask.title}${prog}`);
     }
+
+    // Live standing and the last credit; with no goal and no claim, how to earn.
+    lines.push(
+      standingSummaryLine(deps.db, entity.name, eid, { recent: 1, label: category("Standing:") }),
+    );
+    if (!goalEntry && myClaims.length === 0) lines.push(dim(standingEarnLine()));
 
     // Curiosity signal — entropy-based boredom detection (passive, no prescription)
     const commandDist = deps.db.getActivityByType(entity.name, "command", 50);
@@ -472,7 +489,8 @@ function sendFullBrief(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Br
   if (projects.length > 0) {
     lines.push("", sectionHead("Projects"));
     for (const p of projects.slice(0, 5)) {
-      const orch = p.orchestration !== "custom" ? ` ${status(p.orchestration, "info")}` : "";
+      const pattern = canonicalFormationName(p.orchestration);
+      const orch = pattern !== "freeform" ? ` ${status(pattern, "info")}` : "";
       const desc = p.description.slice(0, 50) || dim("(no description)");
       lines.push(bullet(`${bold(p.name)}${orch}: ${desc}`));
     }
@@ -610,7 +628,7 @@ function getStaffingInfo(
     if (openTasks > 0 || members > 0) {
       result.push({
         name: p.name,
-        orchestration: p.orchestration ?? "custom",
+        orchestration: canonicalFormationName(p.orchestration ?? "freeform"),
         openTasks,
         members,
       });

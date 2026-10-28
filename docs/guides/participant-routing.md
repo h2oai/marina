@@ -36,6 +36,35 @@ bun run scripts/marina.ts connect Alice -c "look"
 bun run scripts/marina.ts supervise --name Alice --root /absolute/path/to/project
 ```
 
+Or let the server run the supervisor itself, with no process to keep open. A person types, in the
+world:
+
+```text
+supervisor start [root:<dir>] [label:<name>]
+supervisor            # status (also in `readiness`, check supervised-residents)
+supervisor stop
+```
+
+The in-world supervisor is the same supervisor. The server issues the person who starts it a
+routing-only supervision credential, renews it at 80 % of its lifetime and revokes it on stop. The
+supervisor uses that credential to call the server's own routing API over loopback. Some rules
+differ from `marina supervise`:
+
+- Only a person starts it. An agent never does. Starting it needs `agent.spawn`, and telnet is
+  refused.
+- Its root must be inside the configured code roots (`MARINA_CODE_ROOTS`, or the folder `marina .`
+  opened). With no code root it is refused, the same rule as Code Mode host execution.
+- It needs supervised residents (on by default), because the server holds no session token to pass
+  to an agent.
+- Native agents start with only locale, path and terminal variables. Server provider keys and
+  secrets stay in the server, so agents use their own CLI logins under `HOME`.
+- A server shutdown stops its agents and keeps the start: the next boot resumes it for the same
+  person and root. `MARINA_SUPERVISOR_AUTOSTART=off` turns this off, and `person:<name>` starts one
+  for that account on every boot. An explicit `supervisor stop` forgets it.
+
+Its journal lives beside the world database (`<data dir>/supervisor/`). Each launch is still a
+Streams control that needs `code.exec` and `agent.spawn`.
+
 Keep the supervisor running. Open **Workspace → Streams**, select **Local agents**, choose an installed
 agent type, enter a name and task, and click **Launch agent**. Repeat for as many participants as your
 machine and provider accounts support. Select an agent to read its output, send follow-up instructions,

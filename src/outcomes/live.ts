@@ -13,8 +13,12 @@
  * judged.
  */
 
+import { effectiveThinkingLevel } from "../agent/effective-thinking";
 import { recordVerified, type VerifiedCredit } from "../agent/standing";
+import { recordJudgeOpinion } from "../decisions/judges";
+import { canonicalFormationName } from "../orchestration/formations/catalogue";
 import type { MarinaDB } from "../persistence/database";
+import type { JudgeObservationInput } from "../persistence/db-decisions";
 import type { EngineEvent } from "../types";
 import { recordResolved } from "./record";
 import { canScope, type WorkKind, workRefs } from "./work-refs";
@@ -30,7 +34,7 @@ export function workRefsFor(
   return workRefs(canScope(db) ? db : undefined, {
     kind,
     actor,
-    ...(p.model ? { model: p.model } : {}),
+    ...(p.model ? { model: p.model, thinking: thinkingOf(db, actor) } : {}),
     ...(p.role ? { role: p.role } : {}),
     approach,
   });
@@ -39,28 +43,76 @@ export function workRefsFor(
 /** Where the way a task is being worked is kept between claim and verdict (core memory, labels only). */
 export const TASK_APPROACH_OWNER = "work:approach";
 
+/** A task's crew binding: the crew `crew dispatch` handed it to (labels only). */
+export interface TaskCrewBinding {
+  crew: string;
+  name: string;
+  formation: string;
+}
+
+const crewBindingKey = (taskId: number) => `crew-task:${taskId}`;
+
 /**
- * Record, at claim time, how a task is being worked: `crew:<formation>` for
- * each live crew the claimant is in, else `solo`. Taken at claim because a
- * one-off crew is never persisted and dissolves when it completes — long
- * before the creator's verdict.
+ * Bind a task to the crew it was dispatched to (`crew dispatch`), kept beside
+ * the claim-time approach notes. The binding outlives a one-off crew, so the
+ * verdict is still tagged with the formation that did the work.
+ */
+export function bindTaskToCrew(
+  db: Pick<MarinaDB, "setCoreMemory">,
+  taskId: number,
+  binding: TaskCrewBinding,
+): void {
+  db.setCoreMemory(TASK_APPROACH_OWNER, crewBindingKey(taskId), JSON.stringify(binding));
+}
+
+/** The crew a task was dispatched to, if any. */
+export function taskCrewBinding(
+  db: Partial<Pick<MarinaDB, "getCoreMemory">>,
+  taskId: number,
+): TaskCrewBinding | undefined {
+  if (!db.getCoreMemory) return undefined;
+  try {
+    const raw = db.getCoreMemory(TASK_APPROACH_OWNER, crewBindingKey(taskId))?.value;
+    const parsed = raw ? (JSON.parse(raw) as Partial<TaskCrewBinding>) : undefined;
+    if (parsed && typeof parsed.formation === "string" && parsed.formation)
+      return {
+        crew: String(parsed.crew ?? ""),
+        name: String(parsed.name ?? ""),
+        formation: parsed.formation,
+      };
+  } catch {
+    // allow-empty-catch: an unreadable binding reads as no binding
+  }
+  return undefined;
+}
+
+/**
+ * Record, at claim time, how a task is being worked: `crew:<formation>` of
+ * the crew the task was dispatched to (`bindTaskToCrew`); with no binding,
+ * `crew:<formation>` for each live crew the claimant is in, else `solo`.
+ * Taken at claim because a one-off crew is never persisted and dissolves when
+ * it completes — long before the creator's verdict.
  */
 export function noteTaskApproach(
-  db: Pick<MarinaDB, "setCoreMemory">,
+  db: Pick<MarinaDB, "setCoreMemory"> & Partial<Pick<MarinaDB, "getCoreMemory">>,
   input: { taskId: number; claimant: string; formations: readonly string[] },
 ): void {
-  const formations = [...new Set(input.formations.filter(Boolean))];
+  const bound = taskCrewBinding(db, input.taskId);
+  const formations = bound ? [bound.formation] : [...new Set(input.formations.filter(Boolean))];
   db.setCoreMemory(
     TASK_APPROACH_OWNER,
     `task:${input.taskId}:${input.claimant}`,
-    JSON.stringify(formations.length ? formations.map((f) => `crew:${f}`) : ["solo"]),
+    JSON.stringify(
+      formations.length ? formations.map((f) => `crew:${canonicalFormationName(f)}`) : ["solo"],
+    ),
   );
 }
 
 /**
  * How a task was worked: what was recorded when it was claimed
- * (`noteTaskApproach`), else `crew:<formation>` for each persisted crew the
- * claimant belongs to, else `solo`.
+ * (`noteTaskApproach`), else the crew the task was dispatched to, else
+ * `crew:<formation>` for each persisted crew the claimant belongs to, else
+ * `solo`.
  */
 export function taskApproach(
   db: Pick<MarinaDB, "getCrewsForAgent"> & Partial<Pick<MarinaDB, "getCoreMemory">>,
@@ -76,6 +128,8 @@ export function taskApproach(
     } catch {
       // allow-empty-catch: an unreadable note falls back to the crews on record
     }
+    const bound = taskCrewBinding(db, taskId);
+    if (bound) return [`crew:${canonicalFormationName(bound.formation)}`];
   }
   let crews: { formation: string }[] = [];
   try {
@@ -84,7 +138,7 @@ export function taskApproach(
     // allow-empty-catch: no crew store (older test doubles) reads as solo work
   }
   const formations = [...new Set(crews.map((c) => c.formation).filter(Boolean))];
-  return formations.length ? formations.map((f) => `crew:${f}`) : ["solo"];
+  return formations.length ? formations.map((f) => `crew:${canonicalFormationName(f)}`) : ["solo"];
 }
 
 /** Who did the work, and on what (an agent's model and role; a person's name only). */
@@ -98,6 +152,15 @@ export function participantOf(
     ...(config?.model ? { model: config.model } : {}),
     ...(config?.role ? { role: config.role } : {}),
   };
+}
+
+/**
+ * The thinking level an agent works with (`effectiveThinkingLevel`): what its
+ * running process sends, else its saved level, else the instance default,
+ * else `off`. Tagged `method:thinking:<level>` beside its model.
+ */
+export function thinkingOf(db: Pick<MarinaDB, "getAgentConfig">, name: string): string {
+  return effectiveThinkingLevel(name, db.getAgentConfig(name)?.thinking_level);
 }
 
 /** The subject a task attempt's outcomes share: `task:<id>:<claimant>`. */
@@ -219,6 +282,48 @@ export function recordTaskOpinion(
       ...workRefsFor(db, "task", input.claimant, taskApproach(db, input.claimant, input.taskId)),
     ],
     resolvedAt: at,
+  });
+}
+
+/**
+ * The submission verifier's opinion, recorded once for every reader: the
+ * verifier's own table (`judge_observations`), the one judge ledger (`verify`
+ * surface, settled by the creator's next verdict on the attempt) and the
+ * outcome path (`recordTaskOpinion`). Each write is best-effort.
+ */
+export function recordVerifierOpinion(
+  db: MarinaDB,
+  row: JudgeObservationInput & { submittedAt?: number },
+  at: number = Date.now(),
+): void {
+  const attempt = taskBase(row.taskId, row.claimantName);
+  const submission =
+    row.submittedAt === undefined
+      ? undefined
+      : taskOpinionSubject(row.taskId, row.claimantName, row.submittedAt).slice("judged:".length);
+  if (
+    row.submittedAt !== undefined &&
+    db.getTaskClaims(row.taskId).find((claim) => claim.entity_name === row.claimantName)
+      ?.submitted_at !== row.submittedAt
+  )
+    return;
+  db.recordJudgeObservation(row);
+  recordJudgeOpinion(db, {
+    surface: "verify",
+    judge: row.evaluator,
+    subject: submission ?? attempt,
+    truthKey: submission ?? `${attempt}:`,
+    opinion: row.opinion,
+    calibrated: row.calibrated,
+    opinedAt: at,
+  });
+  recordTaskOpinion(db, {
+    taskId: row.taskId,
+    claimant: row.claimantName,
+    judge: row.evaluator,
+    opinion: row.opinion,
+    at,
+    ...(row.submittedAt === undefined ? {} : { submittedAt: row.submittedAt }),
   });
 }
 

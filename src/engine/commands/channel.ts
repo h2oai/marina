@@ -5,6 +5,7 @@ import type { ChannelManager } from "../../coordination/channel-manager";
 import { channelSelf, header, separator } from "../../net/ansi";
 import { modelResponseError } from "../../net/model-api/response-envelope";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { envelopeFields, messageEnvelope } from "../message-envelope";
 
 export function channelCommand(
@@ -86,12 +87,16 @@ export function channelCommand(
           // deliberately NOT implemented as a half-model.
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: channel join <name>");
+            refuseCommand(ctx, input.entity, "Usage: channel join <name>");
             return;
           }
           const ch = channels.getChannelByName(name);
           if (!ch) {
-            ctx.send(input.entity, `Channel "${name}" not found.`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Channel "${name}" not found; \`channel list\` shows channels, \`board list\` boards.`,
+            );
             return;
           }
           if (channels.isMember(ch.id, input.entity)) {
@@ -106,12 +111,16 @@ export function channelCommand(
         case "leave": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: channel leave <name>");
+            refuseCommand(ctx, input.entity, "Usage: channel leave <name>");
             return;
           }
           const ch = channels.getChannelByName(name);
           if (!ch) {
-            ctx.send(input.entity, `Channel "${name}" not found.`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Channel "${name}" not found; \`channel list\` shows channels, \`board list\` boards.`,
+            );
             return;
           }
           if (!channels.isMember(ch.id, input.entity)) {
@@ -129,19 +138,24 @@ export function channelCommand(
           // channel name so the JSON payload lands in the name slot. Catch it
           // with a specific correction instead of a generic usage line.
           if (name?.startsWith("{")) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               "You omitted the channel name — the message cannot come first. Usage: channel send <name> <message>",
             );
             return;
           }
           if (!name || tokens.length < 3) {
-            ctx.send(input.entity, "Usage: channel send <name> <message>");
+            refuseCommand(ctx, input.entity, "Usage: channel send <name> <message>");
             return;
           }
           const ch = channels.getChannelByName(name);
           if (!ch) {
-            ctx.send(input.entity, `Channel "${name}" not found.`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Channel "${name}" not found; \`channel list\` shows channels, \`board list\` boards.`,
+            );
             return;
           }
           if (!channels.isMember(ch.id, input.entity)) {
@@ -187,12 +201,16 @@ export function channelCommand(
         case "history": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: channel history <name> [count]");
+            refuseCommand(ctx, input.entity, "Usage: channel history <name> [count]");
             return;
           }
           const ch = channels.getChannelByName(name);
           if (!ch) {
-            ctx.send(input.entity, `Channel "${name}" not found.`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Channel "${name}" not found; \`channel list\` shows channels, \`board list\` boards.`,
+            );
             return;
           }
           if (!channels.isMember(ch.id, input.entity)) {
@@ -217,12 +235,12 @@ export function channelCommand(
         case "create": {
           const name = tokens[1];
           if (!name) {
-            ctx.send(input.entity, "Usage: channel create <name>");
+            refuseCommand(ctx, input.entity, "Usage: channel create <name>");
             return;
           }
           const existing = channels.getChannelByName(name);
           if (existing) {
-            ctx.send(input.entity, `Channel "${name}" already exists.`);
+            refuseCommand(ctx, input.entity, `Channel "${name}" already exists.`);
             return;
           }
           const ch = channels.createChannel({

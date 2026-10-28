@@ -35,6 +35,32 @@ describe("vibethinker local provider", () => {
   });
 });
 
+describe("lightning local provider", () => {
+  const prevBase = process.env.LIGHTNING_BASE_URL;
+  afterEach(() => {
+    if (prevBase === undefined) delete process.env.LIGHTNING_BASE_URL;
+    else process.env.LIGHTNING_BASE_URL = prevBase;
+  });
+
+  it("is registered as a local provider", () => {
+    expect(isLocalProvider("lightning")).toBe(true);
+    expect(MODEL_DISCOVERY_PROVIDERS).toContain("lightning");
+  });
+
+  it("defaults to the vLLM port and honors LIGHTNING_BASE_URL", () => {
+    delete process.env.LIGHTNING_BASE_URL;
+    expect(localProviderBaseUrl("lightning")).toBe("http://localhost:8000/v1");
+    process.env.LIGHTNING_BASE_URL = "http://lightning:8000/v1/";
+    expect(localProviderBaseUrl("lightning")).toBe("http://lightning:8000/v1");
+  });
+
+  // Not the weights' 262144: the default matches what the compose service
+  // serves, so the compactor never budgets a window vLLM would refuse.
+  it("defaults to the 32768 window the compose service serves", () => {
+    expect(localProviderContextWindow("lightning")).toBe(32768);
+  });
+});
+
 describe("parseProviderResponse", () => {
   it("parses Anthropic /v1/models shape", () => {
     const body = {

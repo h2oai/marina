@@ -8,16 +8,25 @@
  * benchmark runs (`./benchmark.ts`) and forecasts (`src/forecast/routing-refs.ts`)
  * use, so one competence map and one evidence reader cover all of them.
  *
- *   family:work:<kind>              the kind of work (task, code, request)
+ *   family:work:<kind>              the kind of work (task, code, request,
+ *                                   research, project)
  *   family:work:<kind>:role:<role>  the same, for the role the worker played
  *   method:model:<model>            the model that did it (an agent's configured
  *                                   model, or the model that served a request);
- *                                   a person's own work carries no model method
+ *                                   a person's own work carries no model method.
+ *                                   Always the FIRST method ref, and only one.
+ *   method:thinking:<level>         the agent's effective thinking level right
+ *                                   after its model (`off` when unset; an
+ *                                   agent's work only — `./live.ts`)
  *   method:<dimension>:<value>      how it was done, one tag per dimension
  *                                   (`approach`): e.g. `crew:<formation>` or
  *                                   `solo` for a task, `driver:<harness>`,
  *                                   `runner:<local|container|…>` and
- *                                   `verify:<mode>` for a Code Mode check — so
+ *                                   `verify:<mode>` for a Code Mode check,
+ *                                   `orchestration:<pattern>` for a project,
+ *                                   `pattern:<name>` for a pattern run and
+ *                                   `room-formation:<formation>` for a room
+ *                                   round (`./orchestration.ts`) — so
  *                                   the competence map can say which ways of
  *                                   working succeed at which kinds of work
  *   scope:shared | scope:owner:<o>  whose evidence it is (`workScopeFor`): only
@@ -34,7 +43,7 @@ import { type ScopeReader, workScopeFor } from "../learning/work";
 
 const SAFE = /^[A-Za-z0-9:._/+@-]{1,120}$/;
 
-export type WorkKind = "task" | "code" | "request" | "research";
+export type WorkKind = "task" | "code" | "request" | "research" | "project";
 
 /** A row's evidence scope from its refs: `shared`, `owner:<name>`, `unscoped`, or undefined (untagged). */
 export function scopeOf(refs: readonly string[]): string | undefined {
@@ -80,6 +89,8 @@ export function workRefs(
     actor?: string;
     model?: string;
     role?: string;
+    /** The agent's effective thinking level (`off` when unset); only with a model. */
+    thinking?: string;
     /** How the work was done, one `<dimension>:<value>` per dimension (see the module comment). */
     approach?: readonly string[];
   },
@@ -87,9 +98,13 @@ export function workRefs(
   const refs = [`family:work:${input.kind}`];
   if (input.role && SAFE.test(input.role))
     refs.push(`family:work:${input.kind}:role:${input.role}`);
-  if (input.model && SAFE.test(input.model)) refs.push(`method:model:${input.model}`);
+  if (input.model && SAFE.test(input.model)) {
+    refs.push(`method:model:${input.model}`);
+    if (input.thinking && SAFE.test(input.thinking)) refs.push(`method:thinking:${input.thinking}`);
+  }
   for (const a of input.approach ?? [])
-    if (SAFE.test(a) && !a.startsWith("model:")) refs.push(`method:${a}`);
+    if (SAFE.test(a) && !a.startsWith("model:") && !a.startsWith("thinking:"))
+      refs.push(`method:${a}`);
   refs.push(scopeRef(db, input.actor));
   return refs;
 }

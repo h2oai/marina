@@ -23,10 +23,21 @@
  * `role:<role>=<model>`. Every specific knob that existed before
  * (`MARINA_CREW_MODEL`, `MARINA_BENCHMARK_JUDGE_MODEL`, …) still wins.
  *
- * Pure: reads the env it is given plus optional runtime lookups; no network.
+ * Between a role's env settings and its tier sits ONE earned layer: the
+ * promoted slot `role-model:<role>` (`resolveDefault`), filled only by a
+ * live-evidence promotion a person approved (`src/engine/live-promotion.ts`).
+ * A promoted model this installation cannot call is skipped (traced) and the
+ * tier answers. With nothing promoted the slot is never resolved, so the
+ * choice, and its trace, is exactly what it was before.
+ *
+ * Pure apart from that ledger read: env plus optional runtime lookups; no network.
  */
 
 import { availableModels, providerEnvKeys } from "../agent/available-models";
+import { type DefaultSlotReader, resolveDefault } from "../engine/default-resolution";
+import { Logger } from "../engine/logger";
+
+const logger = new Logger();
 
 export type ModelTier = "cheap" | "strong";
 
@@ -109,14 +120,16 @@ export const TIER_ALIAS: Readonly<Record<ModelTier, string>> = {
 
 /**
  * The cheap tier's built-in pick, first provider with a key wins. Every id is
- * a cheap, tool-capable chat model (checked 2026-10-20: OpenRouter's endpoint
- * list for deepseek-v4.1-flash — $0.15/$0.60 per M list, tools on every
- * endpoint; the others from the bundled pi-ai catalog). OpenRouter first: the
+ * a cheap, tool-capable chat model (checked 2026-10-26: OpenRouter's catalog
+ * entry for deepseek-v4.1-flash-1017, the 2026-10-17 snapshot — $0.15/$0.60
+ * per M list, tools and reasoning; the others from the bundled pi-ai
+ * catalog). A dated snapshot, never the earlier one the bare id still serves:
+ * the bare id is a fixed 2026-09-10 snapshot, not an alias. OpenRouter first: the
  * cheapest adequate model and the widest fallback. Providers not listed
  * (xai, …) fall through to `marina/default`.
  */
 export const BUILTIN_CHEAP_MODELS: ReadonlyArray<{ provider: string; model: string }> = [
-  { provider: "openrouter", model: "deepseek/deepseek-v4.1-flash" },
+  { provider: "openrouter", model: "deepseek/deepseek-v4.1-flash-1017" },
   { provider: "deepseek", model: "deepseek-flash" },
   { provider: "anthropic", model: "claude-haiku-5-5" },
   { provider: "openai", model: "gpt-6-luna" },
@@ -137,6 +150,12 @@ export interface ModelChoice {
 
 export interface TierContext {
   env?: Env;
+  /**
+   * The promotion ledger the `role-model:<role>` slot is read from. Absent:
+   * the reader registered with `setRoleModelSlots` (the server's world DB),
+   * else none (env and tier only).
+   */
+  slots?: RoleModelSlotReader;
   /** The runtime `default_model` setting (dashboard / admin), when set. */
   runtimeDefault?: string;
   /** Whether a provider has a key (env or Admin → Keys). Default: env keys only. */
@@ -317,13 +336,18 @@ export function resolveTierAlias(model: unknown, ctx: TierContext = {}): ModelCh
 /**
  * The model for a role that names none. Precedence: the role's pre-existing
  * knob (`knob`, given by the caller that owns it) → `role:<role>=` in
- * `MARINA_AGENT_MODELS` → (residents only) the explicit default → the tier:
+ * `MARINA_AGENT_MODELS` → (residents only) the explicit default → a promoted
+ * `role-model:<role>` slot (earned on live work, person-approved) → the tier:
  * `marina/cheap` for a cheap role (a live alias), `MARINA_MODEL_TIER_STRONG`
  * or else `marina/default` for a strong one.
  */
 export function roleModel(
   role: ModelRole,
-  ctx: TierContext & { knob?: { name: string; value: string | undefined } } = {},
+  ctx: TierContext & {
+    knob?: { name: string; value: string | undefined };
+    /** For `resident`: the agent's work role, whose `role-model:<role>` slot is read first. */
+    workRole?: string;
+  } = {},
 ): ModelChoice {
   const env = ctx.env ?? process.env;
   const knob = ctx.knob?.value?.trim();
@@ -337,6 +361,13 @@ export function roleModel(
     const explicit = explicitDefaultModel(ctx);
     if (explicit) return explicit;
   }
+  // The earned layer: a promoted `role-model:<role>` (for a resident, the
+  // work role it was spawned for first).
+  const promoted = promotedRoleModel(
+    role === "resident" && ctx.workRole ? [ctx.workRole, role] : [role],
+    ctx,
+  );
+  if (promoted) return promoted;
   if (info.tier === "cheap") return { model: TIER_ALIAS.cheap, source: "tier:cheap" };
   const strong = envValue(env, TIER_ENV.strong);
   if (strong) return { model: strong, source: `tier:strong (env:${TIER_ENV.strong})` };
@@ -396,15 +427,24 @@ export function describeModelTiers(
 
 /**
  * The model an agent spawned without one runs on: `role:resident=` override,
- * else the runtime default (`db`), else `MARINA_DEFAULT_MODEL`, else
- * `marina/cheap`.
+ * else the runtime default (`db`), else `MARINA_DEFAULT_MODEL`, else a
+ * promoted `role-model:<workRole>` / `role-model:resident`, else `marina/cheap`.
  */
 export function residentDefaultModel(
-  db?: { getSetting?: (key: string) => string | undefined } | null,
+  db?: ({ getSetting?: (key: string) => string | undefined } & Partial<RoleModelSlotReader>) | null,
   env: Env = process.env,
+  /** The agent's work role: a promoted `role-model:<workRole>` answers before `role-model:resident`. */
+  workRole?: string,
 ): string {
   const runtimeDefault = db?.getSetting?.("default_model");
-  return roleModel("resident", { env, ...(runtimeDefault ? { runtimeDefault } : {}) }).model;
+  const slots =
+    db && typeof db.getBenchmarkDefault === "function" ? (db as RoleModelSlotReader) : undefined;
+  return roleModel("resident", {
+    env,
+    ...(runtimeDefault ? { runtimeDefault } : {}),
+    ...(slots ? { slots } : {}),
+    ...(workRole ? { workRole } : {}),
+  }).model;
 }
 
 /** A boot-seeded crew's model: `MARINA_CREW_MODEL`, else `role:crew=`, else `marina/cheap`. */
@@ -422,4 +462,107 @@ export function crewModelFromEnv(env: Env = process.env): string {
  */
 export function strongRoleOverride(role: ModelRole, env: Env = process.env): string | undefined {
   return roleModelOverrides(env).get(role) ?? envValue(env, TIER_ENV.strong);
+}
+
+// ─── The earned layer: promoted `role-model:<role>` slots ───────────────────
+
+/** The slot base a live-evidence promotion fills: `role-model:<role>`. */
+export const ROLE_MODEL_SLOT = "role-model";
+
+/** The ledger reads the promoted layer needs (any `MarinaDB`). */
+export type RoleModelSlotReader = DefaultSlotReader;
+
+let registeredSlots: RoleModelSlotReader | undefined;
+
+/**
+ * Register (or clear, with undefined) the ledger every `roleModel` call reads
+ * promoted slots from when its context names none; the server registers its
+ * world DB at boot. Returns the previous reader.
+ */
+export function setRoleModelSlots(
+  reader: RoleModelSlotReader | undefined,
+): RoleModelSlotReader | undefined {
+  const prev = registeredSlots;
+  registeredSlots = reader;
+  return prev;
+}
+
+/** The slot key for a role: `role-model:<role>` (slot-safe, lower-case). */
+export function roleModelSlotKey(role: string): string {
+  const slug = role
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${ROLE_MODEL_SLOT}:${slug}`;
+}
+
+/**
+ * Whether this installation can call `model`: a `marina/*` alias, a model of a
+ * provider with a key (env, or `ctx.hasKey`) or a configured local runtime, or
+ * any `vendor/model` id while OpenRouter (which serves them) has a key.
+ */
+export function modelCallable(model: string, ctx: TierContext = {}): boolean {
+  const m = model.trim();
+  if (!m) return false;
+  const lower = m.toLowerCase();
+  if (tierAliasOf(lower) || isDefaultAlias(lower) || lower.startsWith("marina/")) return true;
+  const env = ctx.env ?? process.env;
+  const slash = m.indexOf("/");
+  const provider = slash > 0 ? lower.slice(0, slash) : "";
+  if (!provider) return false;
+  const available = availableModels(env as NodeJS.ProcessEnv);
+  if (available.some((a) => a.provider === provider)) return true;
+  if (ctx.hasKey?.(provider)) return true;
+  return available.some((a) => a.provider === "openrouter") || ctx.hasKey?.("openrouter") === true;
+}
+
+const warnedUncallable = new Set<string>();
+
+/**
+ * The first promoted `role-model:<role>` among `roles`, read through
+ * `resolveDefault`, or undefined. A slot with nothing in it (no promotion, no
+ * upstream seed) is not resolved at all, so a world with no promotion traces
+ * nothing new. A promoted model this installation cannot call reads as
+ * unusable: `resolveDefault` traces it and the next layer answers.
+ */
+function promotedRoleModel(roles: readonly string[], ctx: TierContext): ModelChoice | undefined {
+  const reader = ctx.slots ?? registeredSlots;
+  if (!reader) return undefined;
+  for (const role of roles) {
+    const key = roleModelSlotKey(role);
+    let present = false;
+    try {
+      present = !!reader.getBenchmarkDefault(key) || !!reader.latestUpstreamDefaultSeed?.(key);
+    } catch {
+      // allow-empty-catch: a closed or unmigrated ledger has no promoted defaults
+      present = false;
+    }
+    if (!present) continue;
+    let uncallable: string | undefined;
+    const r = resolveDefault<string | null>({
+      slot: key,
+      surface: "role-model",
+      db: reader,
+      read: (v) => {
+        if (typeof v !== "string" || !v.trim()) return undefined;
+        if (!modelCallable(v, ctx)) {
+          uncallable = v;
+          return undefined;
+        }
+        return v.trim();
+      },
+      builtIn: null,
+      builtInLabel: "tier",
+    });
+    if (uncallable && !warnedUncallable.has(`${key}\u0000${uncallable}`)) {
+      warnedUncallable.add(`${key}\u0000${uncallable}`);
+      logger.warn(
+        "defaults",
+        `${key} is promoted to ${uncallable}, which this installation cannot call; the next layer answers (${r.reason})`,
+      );
+    }
+    if (r.value) return { model: r.value, source: `promoted ${r.key}` };
+  }
+  return undefined;
 }

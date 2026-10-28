@@ -4,7 +4,9 @@
 import { bold, category, dim, header, id, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { ChronicleEntry } from "../../persistence/db-chronicle";
+import type { CommandUsage } from "../../sdk/command-forms";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { gatherRetrievalContext } from "./retrieval-core";
 
 const HELP =
@@ -34,6 +36,14 @@ function formatChronicleLine(e: ChronicleEntry, now: number): string {
   return `  ${dim(age.padStart(4))} ${dim(idStr)} [${e.kind}] ${bold(title)}${dim(parts)}`;
 }
 
+/** `recap` forms; `memory recap …` (src/engine/command-families.ts) shares them. */
+export const RECAP_USAGE: CommandUsage[] = [
+  { syntax: "recap <topic>", effect: "read" },
+  { syntax: "recap chronicle", effect: "read" },
+  { syntax: "recap chronicle day", effect: "read" },
+  { syntax: "recap chronicle week", effect: "read" },
+];
+
 /**
  * Recap — retrieve-only multi-source pull on a topic.
  *
@@ -54,12 +64,7 @@ export function recapCommand(deps: {
 }): CommandDef {
   return {
     category: "Memory",
-    usage: [
-      { syntax: "recap <topic>", effect: "read" },
-      { syntax: "recap chronicle", effect: "read" },
-      { syntax: "recap chronicle day", effect: "read" },
-      { syntax: "recap chronicle week", effect: "read" },
-    ],
+    usage: RECAP_USAGE,
     name: "recap",
     aliases: [],
     help: HELP,
@@ -69,12 +74,12 @@ export function recapCommand(deps: {
 
       const query = input.args.trim();
       if (!query) {
-        ctx.send(input.entity, "Usage: recap <topic>  (or `recap chronicle [day|week]`)");
+        refuseCommand(ctx, input.entity, "Usage: recap <topic>  (or `recap chronicle [day|week]`)");
         return;
       }
 
       if (!deps.db) {
-        ctx.send(input.entity, "Recap requires database support.");
+        refuseCommand(ctx, input.entity, "Recap requires database support.");
         return;
       }
 

@@ -5,12 +5,14 @@ import { parseExecUnrestricted } from "../../coding/exec-approver";
 import { recoverCodingRuns } from "../../coding/task-run";
 import { VerificationRunner } from "../../coding/verification-runner";
 import { scratchRoot } from "../../config/data-dir";
+import { readEnvironmentReference } from "../../config/environment";
 import { probeConfiguredProviders } from "../../net/model/model-api";
 import { describeRouteHealth } from "../../net/model/route-health";
 import { describeEngineModels, hasProviderKey } from "../../net/model-api/upstream";
+import { MARINA_ROOT } from "../../runtime-paths";
 import type { EntityId } from "../../types";
 import { engineAssistanceExpiryDeps } from "../assistance-expiry";
-import { isOperatorPrincipal } from "../challenges";
+import { isOperatorPrincipal, operatorRequiredRefusal } from "../challenges";
 import { adapterCommand } from "../commands/adapter";
 import { adminCommand } from "../commands/admin";
 import { agentCommand } from "../commands/agent";
@@ -26,6 +28,7 @@ import { demoCommand } from "../commands/demo";
 import { gatewayCommand } from "../commands/gateway";
 import { keyCommand } from "../commands/key";
 import { opsCommand } from "../commands/ops";
+import { postureCommand } from "../commands/posture";
 import { productivityCommand } from "../commands/productivity";
 import { quitCommand } from "../commands/quit";
 import { readinessCommand } from "../commands/readiness";
@@ -33,6 +36,7 @@ import { roleCommand } from "../commands/role";
 import { runCommand } from "../commands/run";
 import { shellCommand } from "../commands/shell";
 import { sourceCommand } from "../commands/source";
+import { supervisorCommand } from "../commands/supervisor";
 import { systemPromptCommand } from "../commands/system-prompt";
 import { traitCommand } from "../commands/trait";
 import { universalIntentCommands, usecaseCommand } from "../commands/usecase";
@@ -299,6 +303,13 @@ export function registerOperationCommands(engine: Engine): void {
       pulseHistory: (sinceMs) => engine.db?.listAutonomyPulse(sinceMs) ?? [],
     }),
   );
+  // Capability posture — what waits on evidence, and its decide-by date; read-only.
+  engine.commands.registerBuiltin(
+    postureCommand({
+      ...(engine.db ? { db: engine.db } : {}),
+      reference: () => readEnvironmentReference(MARINA_ROOT),
+    }),
+  );
   if (engine.db && engine.taskManager) {
     engine.commands.registerBuiltin(productivityCommand(engine.db));
     engine.commands.registerBuiltin(
@@ -309,6 +320,8 @@ export function registerOperationCommands(engine: Engine): void {
         readiness: () => computeReadiness(engine),
         assistance: () => engineAssistanceExpiryDeps(engine, engine.db!),
         isOperator: (id) => isOperatorPrincipal(engine.entities.get(id as EntityId)),
+        operatorRefusal: (id, what, tail) =>
+          operatorRequiredRefusal(engine.entities.get(id as EntityId), what, tail),
       }),
     );
     engine.commands.registerBuiltin(
@@ -372,4 +385,17 @@ export function registerOperationCommands(engine: Engine): void {
       logEvent: (event) => engine.logEvent(event),
     }),
   );
+
+  // The in-world native agent supervisor (src/routing/world-supervisor.ts).
+  if (engine.db)
+    engine.commands.registerBuiltin(
+      supervisorCommand({
+        db: engine.db,
+        supervisor: engine.worldSupervisor,
+        getEntity: (id) => engine.entities.get(id as EntityId),
+        isAgent: (id) => engine.isAgentEntity(id as EntityId),
+        getConnectionProtocol: (id) => engine.getConnectionForEntity(id as EntityId)?.protocol,
+        isOperator: (entity) => isOperatorPrincipal(entity),
+      }),
+    );
 }

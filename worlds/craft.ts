@@ -282,7 +282,7 @@ const workshopHelp: CommandHandler = (ctx, input) => {
       `  ${Y}status${R}              ${D}Current craft state${R}`,
       `  ${Y}help${R}                ${D}This message${R}`,
       "",
-      `${D}All standard Marina commands also work.${R}`,
+      `${D}All standard Marina commands also work — 'help all' lists them.${R}`,
     ].join("\n"),
   );
 };
@@ -668,7 +668,7 @@ const reviewHelp: CommandHandler = (ctx, input) => {
       `  ${Y}help${R}                          ${D}This message${R}`,
       "",
       `${D}This is the holdout wall. Implementation details are not visible here.${R}`,
-      `${D}Review against the spec only. All standard commands also work.${R}`,
+      `${D}Review against the spec only. All standard commands also work ('help all').${R}`,
     ].join("\n"),
   );
 };

@@ -890,7 +890,11 @@ Effect: execute.
 
 Run, track, and rank benchmark evaluations from inside the world.
 Usage:
-  benchmark list                                   — show available benchmarks + cache status
+  benchmark list                                   — show available benchmarks + dataset status
+  benchmark fetch <name>                           — download one benchmark's dataset into the
+                                                     checkout (the harness downloader, every request
+                                                     through the SSRF guard; HF_TOKEN for gated sets).
+                                                     Runs in the background; needs rank 4.
   benchmark orchestrations                         — show live marina:<name> endpoints
   benchmark run <name> [crew:<name> | model:<id>] [--limit N] [--seed N] [--judge M] [self-judge:on]
                    [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
@@ -928,6 +932,15 @@ Usage:
                                                      accuracy on them, cost
   benchmark reference [model|benchmark]            — show published reference scores
   benchmark defaults                               — promoted defaults: each slot's incumbent run
+  benchmark eligible [board]                       — read-only: configurations whose holdout
+                                                     evidence would pass the promotion rule now,
+                                                     with every other candidate read counted as
+                                                     tried; files nothing (promote stays manual,
+                                                     behind role.edit)
+  benchmark eligible live [role]                   — read-only: role-model:<role> slots judged on
+                                                     LIVE work (shared outcomes tagged by role and
+                                                     model, newer half = holdout): eligible,
+                                                     refused, too little data, and open proposals
   benchmark challenge <slot> <run> [--max-cost-ratio R]
                                                    — dry run on the slot's SELECTION split (the
                                                      holdout stays unread); shows what promotion needs
@@ -939,6 +952,15 @@ Usage:
                                                      the challenger needs MARINA_PROMOTION_MIN_REPLICATES
                                                      replicates (default 2) before the holdout is read.
                                                      Needs role.edit; never the run's own author.
+  benchmark promote role-model:<role> <model>      — file a live-evidence proposal: re-checks the
+                                                     rule on the outcomes and records the attempt;
+                                                     a person holding role.edit only (never an agent),
+                                                     never one whose work the evidence includes.
+  benchmark promote <slot> upstream                — adopt an imported bundle's seed for a slot that
+                                                     chooses a model (withheld until adopted; one
+                                                     ops-inbox approval each): a person holding
+                                                     role.edit only, recorded with basis upstream.
+                                                     For a role-model slot the model id works too.
   benchmark invalidate <run> reason:<text>         — retire a run that measured the infrastructure,
                                                      not the target (spend cap, outage): status
                                                      invalid, excluded from every ranking, pooling,
@@ -958,7 +980,10 @@ Usage:
                                                      only through judged lessons (`lessons`).
 
 Benchmarks: smoke, mmlu-pro, ifeval, truthfulqa, humaneval, narrativeqa, mt-bench, retention, arc-challenge, hellaswag, musr, bbh, gsm8k, math, simple-qa, frames, aime, aime-2025, gpqa, hle-verified-gold, hle-verified-gold-mm
-  (smoke is the 15-item prompt A/B set, always ready; run "benchmark list" for status)
+  Ready with no download: smoke (tracked), retention (generated). Every other benchmark needs
+  "benchmark fetch <name>" once ("benchmark list" shows which are downloaded).
+  (smoke is the 15-item prompt A/B set; tracked sets are ready whatever directory the server
+  started in)
 
 Targets: crew:<name> = the residents serving marina:<name> (a model-<name> channel with a live
   agent; see "benchmark orchestrations"); model:<id> = the bare model as a control ("marina" =
@@ -970,7 +995,7 @@ Judge: judge-scored benchmarks (frames, simple-qa, hle-verified-gold*, narrative
 
 Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
-  orchestrations, defaults, challenge, compare-run status) are rank 0. Invalid runs are listed by runs and
+  orchestrations, defaults, eligible, challenge, compare-run status) are rank 0. Invalid runs are listed by runs and
   result, marked with their reason; every other reader skips them. A run whose items were
   more than MARINA_BENCHMARK_MAX_FALLBACK_RATE (default 25%) fallbacks — errors, spend-cap
   or provider failures instead of answers — is recorded invalid automatically. Results
@@ -1044,6 +1069,33 @@ Effect: read.
 
 Effect: read.
 
+
+### `benchmark eligible [board]`
+
+Effect: read.
+
+- `field-0` (`board`): text, optional group `option-0`.
+- Group `option-0`: `board`.
+
+### `benchmark eligible live [role]`
+
+Effect: read.
+
+- `field-0` (`role`): text, optional group `option-0`.
+- Group `option-0`: `role`.
+
+### `benchmark promote role-model:<role> <model>`
+
+Effect: write.
+
+- `field-0` (`role-model`): text, required.
+- `field-1` (`model`): text, required.
+
+### `benchmark promote <slot> upstream`
+
+Effect: write.
+
+- `field-0` (`slot`): text, required.
 
 ### `benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]`
 
@@ -1184,6 +1236,12 @@ Effect: read.
 - `field-1` (`--limit`): number, optional group `option-1`.
 - Group `option-0`: `--benchmark X`.
 - Group `option-1`: `--limit N`.
+
+### `benchmark fetch <name>`
+
+Effect: write.
+
+- `field-0` (`name`): text, required.
 
 ### `benchmark kit [list]`
 
@@ -1365,7 +1423,7 @@ Effect: write.
 
 ## brief
 
-Get oriented. Shows the current shape of the world — who is here, what exists, where to go next. 'brief full' shows the detailed briefing, 'brief social' the social view. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.
+Get oriented. The first brief after you arrive is the welcome (how to start, recent chronicle); every later one shows the current shape of the world — who is here, what exists, where to go next. 'brief full' shows the detailed briefing, 'brief social' the social view. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.
 
 Category: Information. Minimum rank: 0.
 Aliases: none.
@@ -1535,12 +1593,12 @@ Effect: read.
 - `field-0` (`room`): text, optional group `option-0`.
 - Group `option-0`: `room`.
 
-### `build formation [room] <debate|chorus|verification|off>`
+### `build formation [room] <chorus|debate|verification|off>`
 
 Effect: write.
 
 - `field-0` (`room`): text, optional group `option-0`.
-- `field-1` (`debate|chorus|verification|off`): text, required, choices `debate`, `chorus`, `verification`, `off`.
+- `field-1` (`chorus|debate|verification|off`): text, required, choices `chorus`, `debate`, `verification`, `off`.
 - Group `option-0`: `room`.
 
 ### `build link [from] <exit> <to>`
@@ -3644,7 +3702,7 @@ Effect: read.
 Crews — runtime containers for multi-agent coordination.
 Usage:
   crew create <name> <a,b,c> [formation:<f>] [persist] -- <goal>   (also formation=<f> / --formation <f>)
-  crew dispatch <name> <message>
+  crew dispatch <name> [task:<id>] <message>   (binds the work to a task: a new one at value 0, or task:<id>)
   crew info <name>   (also show/view)
   crew invite <name> <agent> [role:<r>]
   crew invitations
@@ -3658,7 +3716,7 @@ Usage:
   crew stall <name> <agent> [reason]
   crew complete <name> -- <summary>
   crew dissolve <name> [reason]
-Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding, freeform
+Formations (the formation catalogue; `crew info` shows each one's protocol): deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding, freeform
 Artifact kinds: map, reduce, synthesis, draft
 
 Category: Coordination. Minimum rank: 0.
@@ -3710,12 +3768,14 @@ Effect: write.
 
 - `field-0` (`name`): text, required.
 
-### `crew dispatch <name> <message>`
+### `crew dispatch <name> [task:<id>] <message>`
 
 Effect: write.
 
 - `field-0` (`name`): text, required.
-- `field-1` (`message`): text, required.
+- `field-1` (`task`): text, optional group `option-0`.
+- `field-2` (`message`): text, required.
+- Group `option-0`: `task:id`.
 
 ### `crew dissolve <name> [reason]`
 
@@ -5339,6 +5399,23 @@ Effect: write.
 - `field-0` (`id|latest`): text, required, choices `id`, `latest`.
 - `field-1` (`context or correction`): text, required.
 
+## judge
+
+Every judge's record against ground truth, from the one judge ledger.
+Usage:
+  judge stats [challenge|verify|attention|outcome|arbiter]
+MARINA_JUDGE=off|observe|on sets every judge surface; a surface's own variable (MARINA_CHALLENGE_JUDGE, MARINA_DECISION_VERIFY, MARINA_ATTENTION_JUDGE, MARINA_OUTCOME_JUDGE) overrides it. `on` lets only an earned judge act.
+
+Category: System. Minimum rank: 0.
+Aliases: none.
+
+### `judge stats [challenge|verify|attention|outcome|arbiter]`
+
+Effect: read.
+
+- `field-0` (`challenge|verify|attention|outcome|arbiter`): choice, optional group `option-0`, choices `challenge`, `verify`, `attention`, `outcome`, `arbiter`.
+- Group `option-0`: `challenge|verify|attention|outcome|arbiter`.
+
 ## key
 
 Manage LLM API keys.
@@ -5350,7 +5427,7 @@ Usage:
   key delete <name>                 — remove a key
   key test <name>                   — test key connectivity
 
-Providers: together, nebius, anthropic, openai, google, openrouter, groq, mistral, xai, huggingface, cerebras, deepseek, llama, ollama, vibethinker, stability, runway, flux, luma
+Providers: together, nebius, anthropic, openai, google, openrouter, groq, mistral, xai, huggingface, cerebras, deepseek, llama, ollama, vibethinker, lightning, stability, runway, flux, luma
 
 Category: Admin & Security. Minimum rank: 8. Gate: `key.manage`.
 Aliases: none.
@@ -5520,7 +5597,7 @@ Usage: lessons <topic> [domain:<forecast|code|tools|benchmark|arena|research|met
        lessons retire <id> reason:<text> [domain:<forecast|code|tools|benchmark|arena|research|meta>] | lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>
        lessons supersede <id> reason:<text> -- <replacement lesson>
 
-Every verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. A wrong lesson is retired, never erased: retire/supersede close its validity (recall stops serving it; its history stays readable) and need role.edit — a lesson steers every agent it is recalled for. Criteria retirements preview until confirm:yes.
+Every verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. Lessons imported from a learned bundle are labelled (imported) and served after this world's own (MARINA_IMPORTED_LESSONS). A wrong lesson is retired, never erased: retire/supersede close its validity (recall stops serving it; its history stays readable) and need role.edit — a lesson steers every agent it is recalled for. Criteria retirements preview until confirm:yes.
 
 Category: Knowledge. Minimum rank: 0.
 Aliases: none.
@@ -5832,22 +5909,24 @@ Effect: read.
 
 ## memory
 
-Durable memory service + key-value beliefs.
+The memory command: notes, recall, reflection, durable records and key-value beliefs.
 Usage: memory kv list | memory kv set <key> <value> | memory kv get <key> | memory kv delete <key> | memory kv history <key> | memory kv clear
 (bare `memory set/get/delete/list/history` still work; `ls` = list, `rm`/`remove` = delete)
+Family: memory note <text> · memory recall <query> [evidence|all] · memory reflect [topic] · memory recap <topic> · memory debrief · memory context <query>
+(bare note, recall, reflect, recap, debrief, context are aliases; `help memory full` lists every form)
 
 Key-value beliefs (core memory — mutable, per-entity, NOT the durable record store):
   memory kv list                        your keys (bare `memory list` = same)
   memory kv set <key> <value>           e.g. memory kv set pace fast  (agent tick rate)
   memory kv get <key>
   memory kv delete <key>
-  memory kv history <key>               edit trail of one key
+  memory kv history <key>               edit trail of one key, newest first, ending with its first set
   memory kv clear                       delete every key
 
 Which verb?
-  recall <q>             your legacy notes, FTS-ranked (fast, no model)
+  memory recall <q>      your notes, FTS-ranked (fast, no model)
   memory query <JSON>    durable records, exact symbolic filters
-  recap <topic>          multi-source retrieve-only pull (notes + pools + chronicle), no model
+  memory recap <topic>   multi-source retrieve-only pull (notes + pools + chronicle), no model
   ask <question>         model-synthesised answer over notes + guide + pools + world search
   dig <topic>            internal notes + web evidence, optional synthesis
   share <pool> <text>    ≡ pool <pool> add <text>
@@ -6277,6 +6356,338 @@ Effect: write.
 - `field-0` (`NAME`): text, required.
 - `field-1` (`RECORD_ID`): text, optional group `option-0`.
 - Group `option-0`: `RECORD_ID ...`.
+
+### `memory note <text>`
+
+Effect: write.
+
+- `field-0` (`text`): text, required.
+
+### `memory note <text> [importance N] [type T]`
+
+Effect: write.
+
+- `field-0` (`text`): text, required.
+- `field-1` (`importance`): number, optional group `option-0`.
+- `field-2` (`type`): text, optional group `option-1`.
+- Group `option-0`: `importance N`.
+- Group `option-1`: `type T`.
+
+### `memory note <text> importance <N> type <type>`
+
+Effect: write.
+
+- `field-0` (`text`): text, required.
+- `field-1` (`N`): number, required.
+- `field-2` (`type`): text, required.
+
+### `memory note claim <text> [confidence:0..1] [source:URL]`
+
+Effect: write.
+
+- `field-0` (`text`): text, required.
+- `field-1` (`confidence`): number, optional group `option-0`, min 0, max 1.
+- `field-2` (`source`): text, optional group `option-1`.
+- Group `option-0`: `confidence:0..1`.
+- Group `option-1`: `source:URL`.
+
+### `memory note claim <text> [confidence:0..1] [source:URL] [observed:YYYY-MM-DD]`
+
+Effect: write.
+
+- `field-0` (`text`): text, required.
+- `field-1` (`confidence`): number, optional group `option-0`, min 0, max 1.
+- `field-2` (`source`): text, optional group `option-1`.
+- `field-3` (`observed`): text, optional group `option-2`.
+- Group `option-0`: `confidence:0..1`.
+- Group `option-1`: `source:URL`.
+- Group `option-2`: `observed:YYYY-MM-DD`.
+
+### `memory note consolidate <keeper-id> <duplicate-id> [duplicate-id ...]`
+
+Effect: write.
+
+- `field-0` (`keeper-id`): text, required.
+- `field-1` (`duplicate-id`): text, required.
+- `field-2` (`duplicate-id`): text, optional group `option-0`.
+- Group `option-0`: `duplicate-id ...`.
+
+### `memory note contradictions`
+
+Effect: read.
+
+
+### `memory note correct <id> <new text>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`new text`): text, required.
+
+### `memory note correct <id> <text>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`text`): text, required.
+
+### `memory note delete <id>`
+
+Effect: delete.
+
+- `field-0` (`id`): text, required.
+
+### `memory note derive <your-note-id> <source-note-id>`
+
+Effect: write.
+
+- `field-0` (`your-note-id`): text, required.
+- `field-1` (`source-note-id`): text, required.
+
+### `memory note evolve <id>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+
+### `memory note explain <id>`
+
+Effect: read.
+
+- `field-0` (`id`): text, required.
+
+### `memory note graph`
+
+Effect: read.
+
+
+### `memory note link <id1> <id2> <rel>`
+
+Effect: write.
+
+- `field-0` (`id1`): text, required.
+- `field-1` (`id2`): text, required.
+- `field-2` (`rel`): text, required.
+
+### `memory note link <id1> <id2> <relationship>`
+
+Effect: write.
+
+- `field-0` (`id1`): text, required.
+- `field-1` (`id2`): text, required.
+- `field-2` (`relationship`): text, required.
+
+### `memory note list`
+
+Effect: read.
+
+
+### `memory note resolve <case-id> both <evidence-backed rationale>`
+
+Effect: write.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`evidence-backed rationale`): text, required.
+
+### `memory note resolve <case-id> left <evidence-backed rationale>`
+
+Effect: write.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`evidence-backed rationale`): text, required.
+
+### `memory note resolve <case-id> neither <evidence-backed rationale>`
+
+Effect: write.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`evidence-backed rationale`): text, required.
+
+### `memory note resolve <case-id> right <evidence-backed rationale>`
+
+Effect: write.
+
+- `field-0` (`case-id`): text, required.
+- `field-1` (`evidence-backed rationale`): text, required.
+
+### `memory note room`
+
+Effect: read.
+
+
+### `memory note search <query>`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
+
+### `memory note source <your-note-id> <url|note:id|asset:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]`
+
+Effect: write.
+
+- `field-0` (`your-note-id`): text, required.
+- `field-1` (`url|note:id|asset:id`): text, required, choices `url`, `note:id`, `asset:id`.
+- `field-2` (`type`): text, optional group `option-0`.
+- `field-3` (`credibility`): number, optional group `option-1`.
+- `field-4` (`observed`): text, optional group `option-2`.
+- Group `option-0`: `type T`.
+- Group `option-1`: `credibility 0..1`.
+- Group `option-2`: `observed YYYY-MM-DD`.
+
+### `memory note trace <id>`
+
+Effect: read.
+
+- `field-0` (`id`): text, required.
+
+### `memory note types`
+
+Effect: read.
+
+
+### `memory note unlink <id1> <id2> <rel>`
+
+Effect: delete.
+
+- `field-0` (`id1`): text, required.
+- `field-1` (`id2`): text, required.
+- `field-2` (`rel`): text, required.
+
+### `memory note unlink <id1> <id2> <relationship>`
+
+Effect: delete.
+
+- `field-0` (`id1`): text, required.
+- `field-1` (`id2`): text, required.
+- `field-2` (`relationship`): text, required.
+
+### `memory note verify <your-note-id> disputed [<confidence> [<rationale>]]`
+
+Effect: write.
+
+- `field-0` (`your-note-id`): text, required.
+- `field-1` (`confidence`): number, optional group `option-0`, min 0, max 1.
+- `field-2` (`rationale`): text, optional group `option-1`.
+- Group `option-0`: `confidence rationale`.
+- Group `option-1`: `rationale`; requires `option-0`.
+
+### `memory note verify <your-note-id> unverified [<confidence> [<rationale>]]`
+
+Effect: write.
+
+- `field-0` (`your-note-id`): text, required.
+- `field-1` (`confidence`): number, optional group `option-0`, min 0, max 1.
+- `field-2` (`rationale`): text, optional group `option-1`.
+- Group `option-0`: `confidence rationale`.
+- Group `option-1`: `rationale`; requires `option-0`.
+
+### `memory recall <query> [recent | important] [type <type>]`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
+- `field-1` (`recent`): text, optional group `option-0`.
+- `field-2` (`type`): text, optional group `option-1`.
+- Group `option-0`: `recent | important`.
+- Group `option-1`: `type type`.
+
+### `memory recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
+- `field-1` (`recent|important|trusted|explain|evidence|all`): choice, optional group `option-0`, choices `recent`, `important`, `trusted`, `explain`, `evidence`, `all`.
+- `field-2` (`type`): text, optional group `option-1`.
+- `field-3` (`bytes`): number, optional group `option-2`.
+- Group `option-0`: `recent|important|trusted|explain|evidence|all`.
+- Group `option-1`: `type type`.
+- Group `option-2`: `budget bytes`.
+
+### `memory reflect --template [topic] [--share <pool>]`
+
+Effect: write.
+
+- `field-0` (`topic`): text, optional group `option-0`.
+- `field-1` (`pool`): text, optional group `option-1`.
+- Group `option-0`: `topic`.
+- Group `option-1`: `--share pool`.
+
+### `memory reflect [topic] [--share <pool>] [--no-spawn]`
+
+Effect: execute.
+
+- `field-0` (`topic`): text, optional group `option-0`.
+- `field-1` (`pool`): text, optional group `option-1`.
+- Group `option-0`: `topic`.
+- Group `option-1`: `--share pool`.
+- Group `option-2`: `--no-spawn`.
+
+### `memory reflect adopt <job-id>`
+
+Effect: write.
+
+- `field-0` (`job-id`): text, required.
+
+### `memory reflect failure <description> [--share <pool>]`
+
+Effect: write.
+
+- `field-0` (`description`): text, required.
+- `field-1` (`pool`): text, optional group `option-0`.
+- Group `option-0`: `--share pool`.
+
+### `memory reflect jobs`
+
+Effect: read.
+
+
+### `memory reflect via <helper> [topic] [--share <pool>]`
+
+Effect: execute.
+
+- `field-0` (`helper`): text, required.
+- `field-1` (`topic`): text, optional group `option-0`.
+- `field-2` (`pool`): text, optional group `option-1`.
+- Group `option-0`: `topic`.
+- Group `option-1`: `--share pool`.
+
+### `memory recap <topic>`
+
+Effect: read.
+
+- `field-0` (`topic`): text, required.
+
+### `memory recap chronicle`
+
+Effect: read.
+
+
+### `memory recap chronicle day`
+
+Effect: read.
+
+
+### `memory recap chronicle week`
+
+Effect: read.
+
+
+### `memory debrief`
+
+Effect: read.
+
+
+### `memory context <query>`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
+
+### `memory context api <JSON>`
+
+Effect: read.
+
+- `field-0` (`JSON`): json, required.
 
 ## mesh
 
@@ -7131,6 +7542,38 @@ Effect: read.
 - `field-3` (`our-prob`): number, required.
 - `field-4` (`market-price`): number, required.
 
+## posture
+
+Capability posture: every feature or setting that is off or observe-only by default, the evidence that would switch it on, and its decide-by date.
+Usage: posture            what is waiting on evidence, soonest decision first
+       posture all        also what is off by design, with the reason
+       posture due        only entries past their decide-by date
+       posture <text>     entries whose name contains <text>
+
+Category: System. Minimum rank: 0.
+Aliases: none.
+
+### `posture`
+
+Effect: read.
+
+
+### `posture all`
+
+Effect: read.
+
+
+### `posture due`
+
+Effect: read.
+
+
+### `posture <text>`
+
+Effect: read.
+
+- `field-0` (`text`): text, required.
+
 ## probe
 
 Probe — invoke a resolver and write a Sample.
@@ -7354,7 +7797,7 @@ Effect: read.
 
 - `field-0` (`name`): text, required.
 
-### `project <name> orchestrate custom <description>`
+### `project <name> orchestrate freeform <description>`
 
 Effect: write.
 
@@ -8537,6 +8980,7 @@ Effect: read.
 Civic standing — earned by verified work (60-day half-life).
 Usage:
   standing                — your current standing + ledger
+  standing summary        — one line: live standing, last credits, retired history; then how to earn
   standing show <name>    — another entity's standing (online or not; `standing <name>` too)
   standing top [N]        — leaderboard
 Standing is earned when someone other than you verifies the work — every account is its own party, so a person approving its own agent's work, or a sibling agent reviewing checks that passed, credits the worker; verifying your own work never does, and an agent's verdict inside its own spawn lineage needs passing checks: a task they approve (up to 10), an approved Code Mode attempt whose checks passed (1), a forecast resolved by an external or other source (up to 0.5 by skill, once a day), an experiment another party replicated (3), a proposal its requester adopts (1), and an onboarding quest (3). Being chronicled, pool notes, recalls, crew completions and helping acts no longer earn; their past rows stay as history but count toward no standing (MARINA_STANDING_RETIRED=decay lets them fade out instead). Decay floors at 0; rank 0–4 is derived from thresholds (5/15/40/100). Above rank 4, capability is earned per-operation via the Capability gates shown in your standing view — keep building standing, then perform each gated action under supervision until it unlocks (only approvals from an independent person, outside your own lineage, count toward that).
@@ -8545,6 +8989,11 @@ Category: Civic. Minimum rank: 0.
 Aliases: none.
 
 ### `standing`
+
+Effect: read.
+
+
+### `standing summary`
 
 Effect: read.
 
@@ -8567,6 +9016,37 @@ Effect: read.
 
 - `field-0` (`N`): number, optional group `option-0`.
 - Group `option-0`: `N`.
+
+## supervisor
+
+The native agent supervisor (Claude Code, Codex, pi), run by the server itself: the same supervisor as `marina supervise`, with no process to keep open. A person starts it in a configured code root (MARINA_CODE_ROOTS); it holds a routing-only supervision credential issued to that person (renewed, revoked on stop). Launch agents from Dashboard → Workspace → Streams: each becomes its own world account (supervised resident) and each launch still needs code.exec and agent.spawn. Native agents start with a minimal environment (no server keys) and use their own CLI logins. It survives a restart (MARINA_SUPERVISOR_AUTOSTART=resume) until stopped.
+Usage: supervisor [status]
+       supervisor start [root:<dir>] [label:<name>]   — run the native agent supervisor in this server
+       supervisor stop
+
+Category: Agents. Minimum rank: 5. Gate: `agent.spawn`.
+Aliases: none.
+
+### `supervisor [status]`
+
+Effect: read.
+
+- `field-0` (`status`): text, optional group `option-0`.
+- Group `option-0`: `status`.
+
+### `supervisor start [root:<dir>] [label:<name>]`
+
+Effect: execute.
+
+- `field-0` (`root`): text, optional group `option-0`.
+- `field-1` (`label`): text, optional group `option-1`.
+- Group `option-0`: `root:dir`.
+- Group `option-1`: `label:name`.
+
+### `supervisor stop`
+
+Effect: write.
+
 
 ## system-prompt
 

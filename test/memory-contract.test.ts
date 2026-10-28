@@ -21,7 +21,7 @@ import { Engine } from "../src/engine/engine";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
 const SIX_VERBS = ["note", "recall", "reflect", "memory", "pool", "skill"] as const;
@@ -86,17 +86,17 @@ describe("MEMORY contract in the system prompt", () => {
     }
     expect(block).toContain("provenance, not instructions");
     // (3) the six verbs with syntax + the assistance verb
-    expect(block).toContain("`note <text>`");
-    expect(block).toContain("`recall <query> [evidence|all]`");
-    expect(block).toContain("`reflect [topic]`");
-    expect(block).toContain("`reflect adopt <job>`");
+    // `memory` is the one memory command; note/recall/reflect are its family forms.
+    expect(block).toContain("`memory note <text>`");
+    expect(block).toContain("`memory recall <query> [evidence|all]`");
+    expect(block).toContain("`memory reflect [topic]|adopt <job>`");
     expect(block).toContain("`memory retrieve <task>`");
     expect(block).toContain("`pool <name> add|recall`");
     expect(block).toContain("`skill store|search`");
     expect(block).toContain("`memory assist <librarian|reflector|evaluator> <helper> <task>`");
     // (4) supersede, don't delete
     expect(block).toContain("Supersede, don't delete");
-    expect(block).toContain("`note correct <id> <text>`");
+    expect(block).toContain("`memory note correct <id> <text>`");
     // (5) health
     expect(block).toContain("`orient`");
   });
@@ -152,7 +152,7 @@ describe("command discovery fallback", () => {
 });
 
 describe("help Memory category", () => {
-  const TEST_DB = "test_memory_contract_help.db";
+  const TEST_DB = tempDbPath("test_memory_contract_help.db");
   let db: MarinaDB;
   let engine: Engine;
   let conn: MockConnection;
@@ -199,8 +199,13 @@ describe("help Memory category", () => {
     expect(start).toBeGreaterThan(-1);
     const rest = out.slice(start + "\nMemory\n".length);
     const section = rest.slice(0, rest.indexOf("\n\n"));
-    for (const verb of SIX_VERBS) {
+    // Family members (note, recall, reflect, …) are listed under `memory`, not on their own.
+    for (const verb of ["memory", "pool", "skill"]) {
       expect(section).toMatch(new RegExp(`^\\s+${verb}\\b`, "m"));
+    }
+    for (const verb of ["note", "recall", "reflect"]) {
+      expect(section).not.toMatch(new RegExp(`^\\s+${verb} — `, "m"));
+      expect(section).toContain(`memory ${verb}`);
     }
     expect(section).toMatch(/^\s+orient\b/m);
   });

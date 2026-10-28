@@ -12,14 +12,14 @@ import { MarinaDB } from "../src/persistence/database";
 import { exportState, importState } from "../src/persistence/export-import";
 import { migrateEmptyTo } from "./schema-replay";
 
-test("schema-183 tasks upgrade without adopting work records; revisions and receipts survive reopen and export/import", () => {
+test("schema-184 tasks upgrade without adopting work records; revisions and receipts survive reopen and export/import", () => {
   const directory = mkdtempSync(join(tmpdir(), "marina-task-work-"));
   const path = join(directory, "world.db");
   const imported = join(directory, "imported.db");
   let db: MarinaDB | undefined;
   try {
     const legacy = new Database(path);
-    migrateEmptyTo(legacy, 183);
+    migrateEmptyTo(legacy, 184);
     legacy.run(
       "INSERT INTO tasks(id,title,creator_id,creator_name,created_at,updated_at) VALUES(1,'Legacy task','owner','Owner',1,1)",
     );

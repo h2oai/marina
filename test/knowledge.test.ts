@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_knowledge.db";
+const TEST_DB = tempDbPath("test_knowledge.db");
 
 // ─── Notes Tests ────────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ describe("Notes", () => {
   });
 
   it("should create a note", () => {
-    engine.processCommand(conn.entity!, "note This is my first note");
+    engine.processCommand(conn.entity!, "memory note This is my first note");
     expect(conn.lastText()).toContain("Note #1 saved");
   });
 
@@ -89,7 +89,7 @@ describe("Notes", () => {
   });
 
   it("should show usage when no args", () => {
-    engine.processCommand(conn.entity!, "note");
+    engine.processCommand(conn.entity!, "memory note");
     expect(conn.lastText()).toContain("Usage:");
   });
 

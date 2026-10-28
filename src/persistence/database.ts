@@ -54,6 +54,7 @@ import * as investigationLifecycleDb from "./db-investigation-lifecycle";
 import * as investigationSpendDb from "./db-investigation-spend";
 import * as investigationsDb from "./db-investigations";
 import * as journeysDb from "./db-journeys";
+import * as judgeLedgerDb from "./db-judge-ledger";
 import * as learnedDb from "./db-learned";
 import * as logsDb from "./db-logs";
 import * as macrosDb from "./db-macros";
@@ -377,6 +378,9 @@ import type { AdapterLinkRow, AdapterUserMappingRow, BanRow, UserRow } from "./d
 
 // ─── Database Class ──────────────────────────────────────────────────────────
 
+/** How long a connection waits for another process's lock before failing. */
+const OPEN_BUSY_TIMEOUT_MS = 5000;
+
 export class MarinaDB implements MarinaStores {
   compactMemoryReceipts(options: Parameters<typeof compactMemoryReceipts>[1]) {
     return compactMemoryReceipts(this.db, options);
@@ -395,13 +399,15 @@ export class MarinaDB implements MarinaStores {
     this.db = new Database(path);
     let reader: Database | undefined;
     try {
+      // First, before any statement that takes a lock: another process opening
+      // the same database at the same moment makes us wait, not fail.
+      this.db.exec(`PRAGMA busy_timeout=${OPEN_BUSY_TIMEOUT_MS}`);
       configureMemoryStorage(this.db, options.memoryLimits ?? memoryLimitsFromEnv());
       this.db.exec("PRAGMA journal_mode=WAL");
       this.db.exec(
         this.durability === "full" ? "PRAGMA synchronous=FULL" : "PRAGMA synchronous=NORMAL",
       );
       this.db.exec("PRAGMA foreign_keys=ON");
-      this.db.exec("PRAGMA busy_timeout=5000"); // Wait up to 5s for locks instead of failing immediately
       this.db.exec("PRAGMA cache_size=-64000"); // 64MB page cache (negative = KB)
       this.db.exec("PRAGMA mmap_size=268435456"); // 256MB memory-mapped I/O for reads
       this.db.exec("PRAGMA temp_store=MEMORY"); // Keep temp tables in memory
@@ -420,6 +426,7 @@ export class MarinaDB implements MarinaStores {
       // A second :memory: connection is a different, empty database. Ephemeral
       // callers share the writer; durable databases retain their read-only handle.
       reader = path === ":memory:" ? this.db : new Database(path, { readonly: true });
+      reader.exec(`PRAGMA busy_timeout=${OPEN_BUSY_TIMEOUT_MS}`);
       reader.exec("PRAGMA mmap_size=268435456");
       reader.exec("PRAGMA cache_size=-64000");
       this.reader = reader;
@@ -1400,8 +1407,13 @@ export class MarinaDB implements MarinaStores {
   standingLeaderboard(limit: number) {
     return standingDb.standingLeaderboard(this.db, limit);
   }
-  ledgerForEntity(entityId: string, limit: number) {
-    return standingDb.ledgerForEntity(this.db, this.durableEntityKey(entityId), limit);
+  ledgerForEntity(entityId: string, limit: number, kinds?: standingDb.StandingKindFilter) {
+    return standingDb.ledgerForEntity(this.db, this.durableEntityKey(entityId), limit, kinds);
+  }
+  onStandingCredit(listener: (credit: standingDb.StandingCredit) => void): () => void {
+    const release = standingDb.subscribeStandingCredits(this.db, listener);
+    this.onClose(release);
+    return release;
   }
 
   // ─── Task Persistence (delegated to db-tasks.ts) ────────────────────────
@@ -1478,7 +1490,8 @@ export class MarinaDB implements MarinaStores {
     status?: string;
     groupId?: string;
     parentId?: number;
-    limit?: number;
+    /** Default 20; `null` returns every matching row. */
+    limit?: number | null;
     orderByStanding?: boolean;
   }): TaskRow[] {
     return tasksDb.listTasks(this.db, opts);
@@ -2345,6 +2358,39 @@ export class MarinaDB implements MarinaStores {
     return decisionsDb.listJudgeObservations(this.reader, opts);
   }
 
+  recordJudgeOpinion(row: judgeLedgerDb.JudgeOpinionInput): void {
+    judgeLedgerDb.recordJudgeOpinion(this.db, row);
+  }
+
+  settleJudgeTruth(truth: {
+    subject: string;
+    succeeded: boolean;
+    truthJson?: string | null;
+    resolvedAt: number;
+  }): number {
+    return judgeLedgerDb.settleJudgeTruth(this.db, truth);
+  }
+
+  findJudgeTruth(key: string, opinedAt: number) {
+    return judgeLedgerDb.findJudgeTruth(this.db, key, opinedAt);
+  }
+
+  listJudgeLedger(
+    opts: { surface?: string; judge?: string; limit?: number } = {},
+  ): judgeLedgerDb.JudgeLedgerRow[] {
+    return judgeLedgerDb.listJudgeLedger(this.reader, opts);
+  }
+
+  judgeLedgerTallies(
+    opts: { surface?: string; judge?: string; question?: string; byQuestion?: boolean } = {},
+  ): judgeLedgerDb.JudgeLedgerTally[] {
+    return judgeLedgerDb.judgeLedgerTallies(this.db, opts);
+  }
+
+  backfillJudgeLedger(): void {
+    judgeLedgerDb.backfillJudgeLedger(this.db);
+  }
+
   recordChallengeOutcome(row: decisionsDb.ChallengeOutcomeInput): number {
     return decisionsDb.recordChallengeOutcome(this.db, row);
   }
@@ -2452,6 +2498,13 @@ export class MarinaDB implements MarinaStores {
     opts: { artifactId?: string; limit?: number } = {},
   ): learnedDb.UpstreamEventRow[] {
     return learnedDb.listUpstreamEvents(this.reader, opts);
+  }
+
+  countUpstreamEventItems(
+    action: string,
+    opts: { artifactId?: string; itemKey?: string } = {},
+  ): number {
+    return learnedDb.countUpstreamEventItems(this.reader, action, opts);
   }
 
   listOwnedSpaceRecords(
@@ -4057,8 +4110,16 @@ export class MarinaDB implements MarinaStores {
     return outcomesDb.listOutcomes(this.db, opts);
   }
 
-  pendingOutcomes(consumer: string, limit: number): outcomesDb.OutcomeRow[] {
-    return outcomesDb.pendingOutcomes(this.db, consumer, limit);
+  pendingOutcomes(
+    consumer: string,
+    limit: number,
+    opts?: { aggregating?: boolean },
+  ): outcomesDb.OutcomeRow[] {
+    return outcomesDb.pendingOutcomes(this.db, consumer, limit, opts);
+  }
+
+  waitOutcomeDelivery(outcomeId: number, consumer: string, reason: string, now?: number): void {
+    outcomesDb.waitOutcomeDelivery(this.db, outcomeId, consumer, reason, now);
   }
 
   setOutcomeDelivery(
@@ -4070,6 +4131,58 @@ export class MarinaDB implements MarinaStores {
     countAttempt?: boolean,
   ): void {
     outcomesDb.setOutcomeDelivery(this.db, outcomeId, consumer, state, reason, now, countAttempt);
+  }
+
+  claimOutcomeDeliveries(
+    outcomeIds: readonly number[],
+    consumer: string,
+    held: string,
+    token: string,
+    now?: number,
+  ): boolean {
+    return outcomesDb.claimOutcomeDeliveries(this.db, outcomeIds, consumer, held, token, now);
+  }
+
+  releaseOutcomeClaims(consumer: string, token: string, now?: number): number {
+    return outcomesDb.releaseOutcomeClaims(this.db, consumer, token, now);
+  }
+
+  releaseStaleOutcomeClaims(consumer: string, before: number, now?: number): number {
+    return outcomesDb.releaseStaleOutcomeClaims(this.db, consumer, before, now);
+  }
+
+  outcomesMissingDeliveries(
+    consumers: readonly string[],
+    afterId: number,
+    limit: number,
+  ): outcomesDb.OutcomeRow[] {
+    return outcomesDb.outcomesMissingDeliveries(this.db, consumers, afterId, limit);
+  }
+
+  addMissingOutcomeDeliveries(
+    outcomeId: number,
+    consumers: readonly string[],
+    now?: number,
+  ): number {
+    return outcomesDb.addMissingOutcomeDeliveries(this.db, outcomeId, consumers, now);
+  }
+
+  failedOutcomeDeliveries(
+    consumer: string,
+    like: readonly string[],
+    afterId: number,
+    limit: number,
+  ): Array<{ outcome_id: number; reason: string | null }> {
+    return outcomesDb.failedOutcomeDeliveries(this.db, consumer, like, afterId, limit);
+  }
+
+  reopenOutcomeDelivery(
+    outcomeId: number,
+    consumer: string,
+    reason: string,
+    now?: number,
+  ): boolean {
+    return outcomesDb.reopenOutcomeDelivery(this.db, outcomeId, consumer, reason, now);
   }
 
   outcomeDeliveries(outcomeId: number): outcomesDb.DeliveryRow[] {

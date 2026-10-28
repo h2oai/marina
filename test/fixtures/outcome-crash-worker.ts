@@ -19,6 +19,7 @@ const outcome: Outcome = {
   resolvedAt: "2026-09-10T00:00:00.000Z",
   scope: "method",
   attempted: "verify a change with pytest",
+  rule: "Run pytest from the repository root so test collection uses the project configuration.",
   detail: "pytest collection fails when run outside the repository root",
   refs: ["trace:recovered"],
 };

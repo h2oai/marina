@@ -284,6 +284,7 @@ describe("POST /v1/chat/completions with marina/verify", () => {
         id: "L1",
         domain: "tools",
         text: "confirm before you cancel an order",
+        rule: "confirm before you cancel an order",
         kind: "failure",
         trust: "trusted",
         resolvedAt: "2026-09-01T00:00:00.000Z",

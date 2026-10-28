@@ -8,15 +8,27 @@
  */
 
 import { experimentalHelp } from "../../config/feature-status";
-import { upstreamMode } from "../../learned/import";
+import { describeUpstreamMode, upstreamMode } from "../../learned/import";
+import { importedLessonsMode, importedLessonsSetting } from "../../learned/serve";
+import { pinnedPublisherKeys } from "../../learned/sign";
+import { withholdsUpstreamSeed } from "../../learned/upstream-model-seeds";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
 
 const USAGE =
   "learned | learned artifacts | learned items [artifact:<id>] [status:active|retired|revoked] | learned seeds | learned priors [family:<f>] | learned events [limit:<n>]";
+
+function pinnedKeyCount(): number {
+  try {
+    return pinnedPublisherKeys().length;
+  } catch {
+    return 0;
+  }
+}
 
 const when = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
 
@@ -28,7 +40,8 @@ function status(db: MarinaDB): string {
   const lines = [
     header("Learned bundles"),
     separator(),
-    `Imports: ${bold(upstreamMode())} ${dim("(MARINA_UPSTREAM; operators import with `bun run learned import`)")}`,
+    `Imports: ${bold(upstreamMode())} ${dim(`(MARINA_UPSTREAM: ${describeUpstreamMode(upstreamMode(), pinnedKeyCount())})`)}`,
+    `Imported lessons: ${bold(importedLessonsMode(db))} ${dim(`(MARINA_IMPORTED_LESSONS${importedLessonsSetting() ? "" : " unset: on once anything is imported"})`)}`,
     `Artifacts imported: ${bold(String(new Set(artifacts.map((a) => a.artifact_id)).size))} (${artifacts.length} version(s))`,
     `Items: ${active.length} active, ${items.length - active.length} retired/revoked; ${confirmed} confirmed by local outcomes`,
     `Seeded default slots: ${db.listUpstreamDefaultSeeds().length}; evidence priors: ${db.listEvidencePriors().length}`,
@@ -71,7 +84,7 @@ export function learnedCommand(deps: { db?: MarinaDB }): CommandDef {
     ),
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("learned bundles"));
+        refuseCommand(ctx, input.entity, requiresPersistence("learned bundles"));
         return;
       }
       const db = deps.db;
@@ -86,7 +99,7 @@ export function learnedCommand(deps: { db?: MarinaDB }): CommandDef {
         limit: { type: "number" },
       });
       if (parsed.errors.length) {
-        ctx.send(input.entity, `${parsed.errors.join("; ")}\nUsage: ${USAGE}`);
+        refuseCommand(ctx, input.entity, `${parsed.errors.join("; ")}\nUsage: ${USAGE}`);
         return;
       }
       const v = parsed.values;
@@ -101,7 +114,11 @@ export function learnedCommand(deps: { db?: MarinaDB }): CommandDef {
         case "items": {
           const st = v.status as string | undefined;
           if (st && !["active", "retired", "revoked"].includes(st)) {
-            ctx.send(input.entity, `status is active, retired or revoked.\nUsage: ${USAGE}`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `status is active, retired or revoked.\nUsage: ${USAGE}`,
+            );
             return;
           }
           const rows = db.listLearnedItems({
@@ -135,7 +152,7 @@ export function learnedCommand(deps: { db?: MarinaDB }): CommandDef {
                   separator(),
                   ...rows.map(
                     (s) =>
-                      `${s.slot} = ${s.value_json.slice(0, 120)} ${dim(`${db.getBenchmarkDefault(s.slot) ? "shadowed by a local default" : "answers"} · upstream:${s.artifact_id}@${s.version}`)}`,
+                      `${s.slot} = ${s.value_json.slice(0, 120)} ${dim(`${db.getBenchmarkDefault(s.slot) ? "shadowed by a local default" : withholdsUpstreamSeed(s.slot) ? "withheld pending approval (chooses a model): benchmark promote <slot> upstream" : "answers"} · upstream:${s.artifact_id}@${s.version}`)}`,
                   ),
                 ].join("\n"),
           );

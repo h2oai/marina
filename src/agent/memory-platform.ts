@@ -107,7 +107,7 @@ export class PlatformMemoryBackend {
     const imp = importanceLevelToNum(importance);
     const noteType = categoryToNoteType(category);
     const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
-    const cmd = `note ${content}${tagStr} importance ${imp} type ${noteType}`;
+    const cmd = `memory note ${content}${tagStr} importance ${imp} type ${noteType}`;
     const perceptions = await this.client.command(cmd);
     const text = extractText(perceptions);
     const idMatch = text.match(/Note #(\d+)/);
@@ -122,7 +122,7 @@ export class PlatformMemoryBackend {
     query: string,
     opts?: { noteType?: string; mode?: "recent" | "important"; trusted?: boolean },
   ): Promise<PlatformMemoryResult> {
-    let cmd = `recall ${query}`;
+    let cmd = `memory recall ${query}`;
     if (opts?.mode === "recent") cmd += " recent";
     if (opts?.mode === "important") cmd += " important";
     if (opts?.trusted) cmd += " trusted";
@@ -181,7 +181,7 @@ export class PlatformMemoryBackend {
       const result = await this.client.contextPreview(query, budgetBytes);
       return { success: true, text: "", context: result.context };
     }
-    let cmd = `recall ${query} all`;
+    let cmd = `memory recall ${query} all`;
     if (budgetBytes && Number.isFinite(budgetBytes)) cmd += ` budget ${Math.floor(budgetBytes)}`;
     const perceptions = await this.client.command(cmd);
     const text = extractText(perceptions);
@@ -218,13 +218,13 @@ export class PlatformMemoryBackend {
   }
 
   async update(noteId: string, newContent: string): Promise<PlatformMemoryResult> {
-    const perceptions = await this.client.command(`note correct ${noteId} ${newContent}`);
+    const perceptions = await this.client.command(`memory note correct ${noteId} ${newContent}`);
     const text = extractText(perceptions);
     return { success: /Note #\d+ created, superseding #\d+/.test(text), text };
   }
 
   async remove(noteId: string): Promise<PlatformMemoryResult> {
-    const perceptions = await this.client.command(`note delete ${noteId}`);
+    const perceptions = await this.client.command(`memory note delete ${noteId}`);
     const text = extractText(perceptions);
     return { success: text.includes("deleted"), text };
   }
@@ -244,7 +244,7 @@ export class PlatformMemoryBackend {
   ): Promise<PlatformMemoryResult> {
     const mode = opts?.helper ?? "auto";
     const flag = mode === "never" ? "--template" : mode === "existing" ? "--no-spawn" : "";
-    const cmd = ["reflect", flag, topic ?? ""].filter(Boolean).join(" ");
+    const cmd = ["memory reflect", flag, topic ?? ""].filter(Boolean).join(" ");
     const perceptions = await this.client.command(cmd);
     const text = extractText(perceptions);
     const idMatch = text.match(/Note #(\d+)/);
@@ -256,7 +256,7 @@ export class PlatformMemoryBackend {
   }
 
   async reflectFailure(description: string): Promise<PlatformMemoryResult> {
-    const perceptions = await this.client.command(`reflect failure ${description}`);
+    const perceptions = await this.client.command(`memory reflect failure ${description}`);
     const text = extractText(perceptions);
     const idMatch = text.match(/Note #(\d+)/);
     return {
@@ -483,6 +483,20 @@ export class PlatformMemoryBackend {
       await this.client.command(`skill top ${words.join(" ")} bytes:${Math.floor(bytes)}`),
     ).trim();
     return text.startsWith("[Skill:") ? text : undefined;
+  }
+
+  /**
+   * `standing summary`: `summary` is the one-line live standing, last credits
+   * and retired history; `earn` names the live ways to earn. Empty when the
+   * world has no standing ledger.
+   */
+  async standingSummary(): Promise<{ summary: string; earn: string }> {
+    const lines = extractText(await this.client.command("standing summary"))
+      .trim()
+      .split("\n");
+    const summary = lines.find((l) => l.startsWith("standing ")) ?? "";
+    const earn = lines.find((l) => l.startsWith("earn standing:")) ?? "";
+    return { summary, earn };
   }
 
   async workInbox(): Promise<PlatformMemoryResult> {

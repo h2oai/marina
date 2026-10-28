@@ -82,9 +82,10 @@
  */
 
 import { independentParties } from "../agent/standing";
-import { EARNED_JUDGE_MIN_LOWER, EARNED_JUDGE_MIN_N, earnedJudge } from "../decisions/earned-judge";
+import { EARNED_JUDGE_MIN_LOWER, EARNED_JUDGE_MIN_N } from "../decisions/earned-judge";
 import { harnessDecisionProvider } from "../decisions/engines";
 import { gateToolCall, maskSecretShapes, maskSensitiveText } from "../decisions/gate";
+import { judgeEarned, judgeModeFor, judgeStandings, recordJudgeOpinion } from "../decisions/judges";
 import { noteWorkFor } from "../learning/work";
 import type { MarinaDB } from "../persistence/database";
 import type { ChallengeHoldRow } from "../persistence/db-decisions";
@@ -96,6 +97,7 @@ import { positiveNumberFromEnv } from "./constants";
 import { sanitizeEntityName } from "./entity-name";
 import { getErrorMessage, tryLog } from "./errors";
 import {
+  currentGatePass,
   getCurrentCodingTarget,
   getCurrentCommand,
   grantCommandPass,
@@ -167,7 +169,16 @@ export interface ChallengeHost {
   redactCommand?(raw: string): string;
 }
 
-export type SettleError = "not_found" | "self" | "agent" | "not_authorized" | "absent";
+export type SettleError =
+  | "not_found"
+  | "self"
+  | "agent"
+  | "not_authorized"
+  | "absent"
+  | "grant_only";
+
+/** Operator-grant only: no approval mints a pass for it (`settleChallenge`). */
+const UNRESTRICTED_EXEC_GATE = "code.exec.unrestricted";
 export type SettleResult =
   | { ok: true; challenge: Challenge; answer: ChallengeAnswer; note?: string; detail?: string }
   | { ok: false; error: SettleError; detail?: string };
@@ -179,9 +190,20 @@ interface Pending {
   /** Tool kind: the redacted call the judge scores. */
   judgeInput?: { args: Record<string, unknown>; description?: string };
   /** The judge's shadow opinion, once scored. */
-  judge?: { opinion: "allow" | "hold" | "none"; signals: Record<string, number> };
+  judge?: {
+    opinion: "allow" | "hold" | "none";
+    signals: Record<string, number>;
+    /** The backend that scored it (`<kind>:<model>`): agreement is counted per judge. */
+    judge: string;
+  };
   /** Approvers already told about this hold (in this process). */
   told: Set<string>;
+  /**
+   * Raised by an approved re-run: the gates that earlier approval already
+   * let through in that run. Approving this hold carries them (re-checked
+   * against this approver), so the input does not bounce back to them.
+   */
+  carried?: { token: string; gateIds: string[] };
 }
 
 const logger = new Logger();
@@ -211,13 +233,12 @@ export function challengesEnabled(env: NodeJS.ProcessEnv = process.env): boolean
 export type JudgeMode = "off" | "observe" | "on";
 
 /**
- * `MARINA_CHALLENGE_JUDGE`: `observe` (default — score holds in shadow so the
+ * `MARINA_CHALLENGE_JUDGE` (else `MARINA_JUDGE`): `observe` (default — score holds in shadow so the
  * judge's agreement with people can be measured; nothing is scored without a
  * decision provider), `on` (may approve earned classes), `off`.
  */
 export function judgeMode(env: NodeJS.ProcessEnv = process.env): JudgeMode {
-  const v = env.MARINA_CHALLENGE_JUDGE?.trim().toLowerCase();
-  return v === "on" || v === "off" ? v : "observe";
+  return judgeModeFor("challenge", env).mode;
 }
 
 /** The judge earns a class after this many people-answered cases it called allow… (`earnedJudge`) */
@@ -273,7 +294,10 @@ export function setChallengeHost(next: ChallengeHost | undefined, owner?: object
       ? (entityId, gateId, reason) => {
           const raw = getCurrentCommand(entityId);
           if (!raw) return reason;
-          return reason + raiseForCommand({ requesterId: entityId, gateId, command: raw, reason });
+          const held = raiseForCommand({ requesterId: entityId, gateId, command: raw, reason });
+          carryApproval(entityId, raw, gateId);
+          tellApproverStopped(entityId, gateId);
+          return reason + held;
         }
       : undefined,
   );
@@ -300,6 +324,17 @@ export function principalKind(entity: Entity): PrincipalKind {
 export function agentPrincipalReason(entity: Entity): string {
   if (principalKind(entity) === "person") return "";
   const conn = host?.connectionOf(entity.id);
+  // A person's own account on a client that declared itself an agent: the
+  // client, not the account, made it one — say so, and where a person acts.
+  // (There is deliberately no way for a non-interactive client to claim to be
+  // a person: residents drive `marina connect -c` through their relay.)
+  if (
+    conn?.agent &&
+    !conn.internal &&
+    conn.protocol !== "mcp" &&
+    !host?.isAgentAccount(entity.name)
+  )
+    return `${entity.name} counts as an agent here: this connection declared itself an agent (non-interactive \`marina connect -c\`, a pipe, or an SDK client); run it from an interactive \`marina connect\` session or the dashboard.`;
   const why = conn?.internal
     ? "it is on an internal agent connection"
     : conn?.protocol === "mcp"
@@ -311,6 +346,25 @@ export function agentPrincipalReason(entity: Entity): string {
     ? "Its owner or an operator decides."
     : "A person acts from an interactive `marina connect` on a terminal or from the dashboard.";
   return `${entity.name} counts as an agent here because ${why}. ${how}`;
+}
+
+/**
+ * The one refusal for something only an operator (a person at rank 9) may do:
+ * what it takes and, when the caller counts as an agent, why and how a person
+ * acts instead (`agentPrincipalReason`). `tail` is appended (a next step).
+ */
+export function operatorRequiredRefusal(
+  entity: Entity | undefined,
+  what: string,
+  tail = "",
+): string {
+  return [
+    `${what} takes an operator (a person at rank 9).`,
+    entity ? agentPrincipalReason(entity) : "",
+    tail,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /** An operator: a person at sovereign rank. A rank-9 agent is not one. */
@@ -764,6 +818,20 @@ function recordOutcome(
   } catch {
     // allow-empty-catch: the ledger is measurement, never a reason for an answer to fail.
   }
+  // The one judge ledger: the judge's shadow call against the person's
+  // answer. An expiry has no answer, and the judge's own approval is no truth.
+  if (entry.judge && answer !== "expired" && approver !== "judge")
+    recordJudgeOpinion(db, {
+      surface: "challenge",
+      question: challengeClass(c),
+      judge: entry.judge.judge,
+      subject: `challenge:${c.token}`,
+      opinion:
+        entry.judge.opinion === "allow" ? "pass" : entry.judge.opinion === "hold" ? "fail" : "none",
+      truth: answer === "deny" ? "fail" : "pass",
+      opinedAt: c.createdAt,
+      truthAt: Date.now(),
+    });
   // Lessons from work (MARINA_LESSONS_FROM_WORK): the answer's class and kind
   // only; the summary is writer context, never stored.
   noteWorkFor(db, c.requesterName, {
@@ -779,6 +847,8 @@ function recordOutcome(
 
 export interface JudgeRecord {
   class: string;
+  /** The backend (`<kind>:<model>`; `unknown` for answers recorded before the judge ledger). */
+  judge: string;
   /** People-answered cases the judge scored. */
   scored: number;
   /** …of which it said allow, and people approved / denied those. */
@@ -792,54 +862,31 @@ export interface JudgeRecord {
   earned: boolean;
 }
 
-/** The judge's record per class, from answered outcomes (pure). */
-export function judgeRecords(
-  rows: {
-    class: string;
-    answer: string;
-    answered_role: string | null;
-    judge_opinion: string | null;
-  }[],
-): JudgeRecord[] {
-  const by = new Map<string, JudgeRecord>();
-  for (const r of rows) {
-    if (r.answer === "expired" || r.answered_role === "judge") continue;
-    if (r.judge_opinion !== "allow" && r.judge_opinion !== "hold") continue;
-    const rec = by.get(r.class) ?? {
-      class: r.class,
-      scored: 0,
-      allowSaid: 0,
-      allowApproved: 0,
-      holdSaid: 0,
-      holdDenied: 0,
-      precisionLower: 0,
-      earned: false,
-    };
-    const approved = r.answer === "once" || r.answer === "always";
-    rec.scored++;
-    if (r.judge_opinion === "allow") {
-      rec.allowSaid++;
-      if (approved) rec.allowApproved++;
-    } else {
-      rec.holdSaid++;
-      if (!approved) rec.holdDenied++;
-    }
-    by.set(r.class, rec);
-  }
-  for (const rec of by.values()) {
-    // Precision of allow: people approved what the judge said to allow.
-    const { lower, earned } = earnedJudge(rec.allowApproved, rec.allowSaid);
-    rec.precisionLower = lower;
-    rec.earned = !OPEN_POSTURE_CORE.has(rec.class) && earned;
-  }
-  return [...by.values()].sort((a, b) => a.class.localeCompare(b.class));
-}
-
-/** The judge's record for every class, from the ledger. */
-export function listJudgeRecords(): JudgeRecord[] {
-  const db = host?.db;
+/**
+ * The judge's record per class and backend, from the one judge ledger
+ * (`challenge` surface: precision of allow, `earnedJudge`). A core gate's
+ * class is never earned.
+ */
+export function listJudgeRecords(db: MarinaDB | undefined = host?.db): JudgeRecord[] {
   if (!db) return [];
-  return judgeRecords(db.listChallengeOutcomes({ limit: 10_000 }));
+  return judgeStandings(db, { surface: "challenge" })
+    .map((s) => {
+      const scored = s.opinions - s.noOpinion - s.awaiting;
+      const holdSaid = scored - s.compared;
+      return {
+        class: s.question,
+        judge: s.judge,
+        scored,
+        allowSaid: s.compared,
+        allowApproved: s.agreed,
+        holdSaid,
+        // A hold the person approved anyway is the judge's false fail.
+        holdDenied: holdSaid - s.falseFail,
+        precisionLower: s.lower,
+        earned: !OPEN_POSTURE_CORE.has(s.question) && s.earned,
+      };
+    })
+    .sort((a, b) => a.class.localeCompare(b.class) || a.judge.localeCompare(b.judge));
 }
 
 function isSelfOrChild(approver: Entity, challenge: Challenge): boolean {
@@ -908,6 +955,55 @@ function holdsAuthority(approver: Entity, challenge: Challenge): boolean {
     return !!db && checkUnattendedGate(db, approver.id, challenge.gateId).ok;
   }
   return true;
+}
+
+/**
+ * The other safety gates `approver` could approve for this same held input:
+ * each is checked exactly as a hold on that gate would be (`authorize`), so an
+ * approval never covers a gate its approver could not have answered alone.
+ */
+function alsoApprovable(approver: Entity, challenge: Challenge): string[] {
+  // Core (operator-grant) gates are never covered implicitly: each needs its
+  // own hold, so the person sees exactly what they approve. Approving a core
+  // hold covers nothing extra.
+  if (challenge.gateId && isOperatorGrantGate(challenge.gateId)) return [];
+  const covered: string[] = [];
+  for (const id of Object.keys(SAFETY_GATES)) {
+    if (id === challenge.gateId || isOperatorGrantGate(id)) continue;
+    const asHeld: Challenge = { ...challenge, kind: "gate", gateId: id, minRank: undefined };
+    if (!authorize(approver, asHeld)) covered.push(id);
+  }
+  return covered;
+}
+
+/**
+ * An approved re-run stopped at a gate its approver could not cover: tell the
+ * approver now, so "running it now" is never the last word on a run that did
+ * not happen.
+ */
+function carryApproval(requesterId: string, command: string, gateId: string): void {
+  const pass = currentGatePass(requesterId);
+  const used = pass?.usedGateIds ?? [];
+  if (!pass || used.length === 0) return;
+  for (const entry of pending.values()) {
+    const c = entry.challenge;
+    if (c.requesterId === requesterId && c.command === command && c.gateId === gateId) {
+      entry.carried = { token: pass.token, gateIds: [...used] };
+    }
+  }
+}
+
+function tellApproverStopped(requesterId: string, gateId: string): void {
+  const pass = currentGatePass(requesterId);
+  if (!pass?.approverId || !host) return;
+  host.send(
+    pass.approverId,
+    isOperatorGrantGate(gateId)
+      ? `Challenge ${pass.token} did not run: it also needs the core gate ${gateId}, which no other approval covers. ` +
+          `It is held again on ${gateId} alone; an operator answers that hold.`
+      : `Challenge ${pass.token} did not run: it also needs the ${gateId} gate, which your approval cannot cover ` +
+          `(an operator, or an owner holding ${gateId}, answers for it). It is held again for them.`,
+  );
 }
 
 function authorize(approver: Entity, challenge: Challenge): SettleError | undefined {
@@ -1270,6 +1366,21 @@ export function settleChallenge(
       );
     }
   }
+  // `code.exec.unrestricted` is operator-grant only: no approval mints a pass
+  // for it. An operator's `always` grants it (and the re-run then holds it);
+  // every other answer except deny is refused here, before the hold closes.
+  if (
+    answer !== "deny" &&
+    challenge.kind !== "tool" &&
+    challenge.gateId === UNRESTRICTED_EXEC_GATE &&
+    !(answer === "always" && approver !== "judge" && isOperator(approver))
+  ) {
+    return {
+      ok: false,
+      error: "grant_only",
+      detail: `${UNRESTRICTED_EXEC_GATE} is operator-grant only; no approval runs it once. An operator grants it: \`challenge approve ${challenge.token} always\` or \`gate grant ${challenge.requesterName} ${UNRESTRICTED_EXEC_GATE}\`.`,
+    };
+  }
   let effective = answer;
   let detail: string | undefined;
   const gateId = challenge.kind === "tool" ? undefined : challenge.gateId;
@@ -1301,6 +1412,34 @@ export function settleChallenge(
         ? `${gateId} is operator-grant only; this run builds nothing toward it`
         : `runs once; an approval from inside ${challenge.requesterName}'s own lineage does not build ${gateId}`;
     detail = detail ? `${detail}; ${note}` : note;
+  }
+  // The other (non-core) gates this approval covers for the same held input:
+  // named in the reply, so nothing it allows is implicit.
+  const alsoCovered =
+    effective !== "deny" && approver !== "judge" && challenge.kind !== "tool" && challenge.command
+      ? alsoApprovable(approver, challenge)
+      : [];
+  if (alsoCovered.length > 0) {
+    const covers = `also covers: ${alsoCovered.join(", ")}`;
+    detail = detail ? `${detail}; ${covers}` : covers;
+  }
+  // A hold raised by an approved re-run carries the gates that approval
+  // already let through, each re-checked against THIS approver (never wider),
+  // so approving the second gate does not send the input back to the first.
+  // Named in the reply; they build no new demonstration.
+  const carried =
+    effective !== "deny" && approver !== "judge" && entry.carried
+      ? entry.carried.gateIds.filter(
+          (id) =>
+            id !== challenge.gateId &&
+            id !== UNRESTRICTED_EXEC_GATE &&
+            !alsoCovered.includes(id) &&
+            !authorize(approver, { ...challenge, kind: "gate", gateId: id, minRank: undefined }),
+        )
+      : [];
+  if (carried.length > 0 && entry.carried) {
+    const carries = `carries ${entry.carried.token}'s approval of ${carried.join(", ")}`;
+    detail = detail ? `${detail}; ${carries}` : carries;
   }
   pending.delete(challenge.token);
   recordOutcome(entry, effective, approver);
@@ -1337,13 +1476,27 @@ export function settleChallenge(
     // A restored tool hold: its call is a world command, re-run in the slot.
     redispatchHeldCommand(challenge.requesterId, challenge.command, challenge.codingTarget);
   } else if (challenge.command) {
+    // One approval covers every non-core gate the held input needs that this
+    // approver could approve on its own hold (same `authorize` rule, gate by
+    // gate), so an input behind two gates runs on one person's answer instead
+    // of bouncing between holds. A core gate, or one the approver cannot
+    // answer for, still holds the re-run, and the approver is told
+    // (`tellApproverStopped`).
+    const gateIds = [...(challenge.gateId ? [challenge.gateId] : []), ...alsoCovered];
+    const demonstratesGateIds =
+      approver === "judge"
+        ? []
+        : gateIds.filter((id) =>
+            approvalDemonstrates(approver, { name: challenge.requesterName }, id),
+          );
     grantCommandPass(challenge.requesterId, challenge.command, {
       codingTarget: challenge.codingTarget,
-      gateIds: challenge.gateId ? [challenge.gateId] : [],
+      gateIds: [...gateIds, ...carried],
       rankWaived: challenge.minRank !== undefined,
       ...(challenge.minRank !== undefined ? { waivedRank: challenge.minRank } : {}),
       ...(approverId ? { approverId } : {}),
       ...(demonstrates ? { demonstrates: true } : {}),
+      demonstratesGateIds,
       approverName,
       token: challenge.token,
     });
@@ -1380,7 +1533,7 @@ export function redispatchHeldCommand(
 }
 
 /**
- * The judge (`MARINA_CHALLENGE_JUDGE=observe|on`): score a hold in shadow —
+ * The judge (`MARINA_CHALLENGE_JUDGE=observe|on`, else `MARINA_JUDGE`): score a hold in shadow —
  * a held command, or a decision-gate tool hold (its redacted call) — and,
  * under `on`, for a class it has earned, approve it once.
  */
@@ -1410,6 +1563,7 @@ function maybeJudge(entry: Pending): void {
   if (!call) return;
   const provider = harnessDecisionProvider();
   if (!provider) return;
+  const judge = `${provider.kind}:${provider.model}`;
   gateToolCall(provider, call.tool, call.args, undefined, call.description)
     .then((decision) => {
       const live = pending.get(challenge.token);
@@ -1417,11 +1571,14 @@ function maybeJudge(entry: Pending): void {
       live.judge = {
         opinion: decision.error ? "none" : decision.action === "allow" ? "allow" : "hold",
         signals: decision.signals,
+        judge,
       };
       if (mode !== "on" || live.judge.opinion !== "allow") return;
       if (challenge.gateId && OPEN_POSTURE_CORE.has(challenge.gateId)) return;
-      const record = listJudgeRecords().find((r) => r.class === challengeClass(challenge));
-      if (!record?.earned) return;
+      const cls = challengeClass(challenge);
+      if (OPEN_POSTURE_CORE.has(cls)) return;
+      const db = host?.db;
+      if (!db || !judgeEarned(db, "challenge", judge, { question: cls })) return;
       earnedSeen++;
       if (earnedSeen % AUDIT_EVERY === 0) return; // an audit case: people answer it
       settleChallenge(challenge.token, "judge", "once", "judged safe — an earned class");

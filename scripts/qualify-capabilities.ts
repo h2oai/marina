@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+// Copyright 2025-2026 H2O.ai, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 import { Database } from "bun:sqlite";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -16,8 +19,6 @@ import { dirname, join, resolve } from "node:path";
 import { parseEnvironment } from "../src/config/environment";
 import { chatClassifierProvider } from "../src/decisions/providers";
 import { getErrorMessage } from "../src/engine/errors";
-// Copyright 2025-2026 H2O.ai, Inc.
-// SPDX-License-Identifier: Apache-2.0
 import { judgeLesson, type Lesson, type Outcome } from "../src/learning/outcomes";
 import { MarinaClient } from "../src/sdk/client";
 import { type CoverageInventory, coverageMatrix, fullyQualified } from "./capabilities/coverage";

@@ -11,11 +11,11 @@ import {
 } from "../src/agent/rank-progression";
 import { MarinaDB } from "../src/persistence/database";
 import type { Entity, EntityId, EntityRank, RoomId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const TEST_DB = "test_agent_runtime.db";
+const TEST_DB = tempDbPath("test_agent_runtime.db");
 
 /** Create a minimal entity for rank progression tests. */
 function makeEntity(name: string, rank: EntityRank = 0): Entity {
@@ -128,13 +128,14 @@ describe("AgentRuntime", () => {
       }
 
       // Ensure no DB keys either (fresh DB has none)
-      const freshDb = new MarinaDB("test_agent_avail.db");
+      const availDb = tempDbPath("test_agent_avail.db");
+      const freshDb = new MarinaDB(availDb);
       const freshRuntime = new AgentRuntime({ db: freshDb });
       try {
         expect(freshRuntime.isAvailable()).toBe(false);
       } finally {
         freshDb.close();
-        cleanupDb("test_agent_avail.db");
+        cleanupDb(availDb);
         // Restore env
         for (const [k, v] of Object.entries(saved)) {
           if (v !== undefined) process.env[k] = v;

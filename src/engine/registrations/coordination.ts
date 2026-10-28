@@ -3,8 +3,9 @@
 
 import { TaskWork } from "../../coordination/task-work";
 import { resolveEvidence, resolveEvidenceSource } from "../../decisions/evidence";
+import { judgeEarned } from "../../decisions/judges";
 import { approachAdvice } from "../../forecast/competence";
-import { recordTaskOpinion } from "../../outcomes/live";
+import { recordVerifierOpinion } from "../../outcomes/live";
 import type { EntityId } from "../../types";
 import { setChallengeHost } from "../challenges";
 import { redactCommandText } from "../command-redaction";
@@ -139,6 +140,7 @@ export function registerCoordinationCommands(engine: Engine): void {
         getEntity: (id) => engine.entities.get(id as EntityId),
         findAgentByName: (name) => engine.entities.findAgentByName(name),
         db: engine.db,
+        tasks: engine.taskManager,
       }),
     );
     engine.commands.registerBuiltin(
@@ -305,20 +307,12 @@ export function registerCoordinationCommands(engine: Engine): void {
         resolveCitedEvidence,
         (row) =>
           tryLog(engine.logger, "decisions", "Judge observation not recorded", () => {
-            engine.db?.recordJudgeObservation(row);
-            // The same opinion on the outcome path: a judged outcome, measured
-            // against the creator's verdict when it comes (`outcome agreement`).
-            if (engine.db && row.submittedAt !== undefined)
-              recordTaskOpinion(engine.db, {
-                taskId: row.taskId,
-                claimant: row.claimantName,
-                judge: row.evaluator,
-                opinion: row.opinion,
-                submittedAt: row.submittedAt,
-              });
+            // The verifier's table, the judge ledger and the outcome path.
+            if (engine.db) recordVerifierOpinion(engine.db, row);
           }),
         (work) => engine.trackBackground(work),
         () => (engine.db ? approachAdvice(engine.db, "work:task") : undefined),
+        (evaluator) => !!engine.db && judgeEarned(engine.db, "verify", evaluator),
         engine.db
           ? new TaskWork(engine.db, (actor, ref) =>
               resolveEvidenceSource(engine.db!, actor, ref, {

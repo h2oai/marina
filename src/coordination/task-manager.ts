@@ -152,6 +152,11 @@ export class TaskManager {
     return this.db.listTasks(opts).map(rowToTask);
   }
 
+  /** How many tasks match, without the page `list` caps at. */
+  count(opts?: { status?: string; groupId?: string }): number {
+    return this.db.countTasks(opts);
+  }
+
   cancel(id: number, entityId: string): boolean {
     const task = this.get(id);
     if (!task) return false;

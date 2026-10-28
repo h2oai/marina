@@ -3,6 +3,7 @@
 import type { CommandCatalogEntry } from "../net/discovery-types";
 import { compileCommandForms } from "../sdk/command-forms";
 import type { CommandDef, CommandHandler } from "../types";
+import { familyOf } from "./command-families";
 import type { CommandRouter } from "./command-router";
 
 const descriptions = new WeakMap<CommandDef, CommandCatalogEntry>();
@@ -24,6 +25,8 @@ export function describeCommand(def: CommandDef): CommandCatalogEntry {
     namedTools: def.namedTools,
     scope: "world",
   };
+  const head = familyOf(def.name);
+  if (head) result.familyOf = head;
   descriptions.set(def, result);
   return result;
 }

@@ -10,10 +10,19 @@ import {
 import { residentMemoryOperation } from "../../memory/resident-service";
 import { bold, dim, header, label, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import type { CommandUsage } from "../../sdk/command-forms";
 import { memoryOperationError } from "../../sdk/memory-operations";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { COMMAND_FAMILIES } from "../command-families";
+import { refuseCommand } from "../command-response";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
+import { CONTEXT_USAGE } from "./context";
+import { DEBRIEF_USAGE } from "./debrief";
+import { NOTE_USAGE } from "./note";
+import { RECALL_USAGE } from "./recall";
+import { RECAP_USAGE } from "./recap";
+import { REFLECT_USAGE } from "./reflect";
 
 /** Durable-service verbs handled by `parseMemoryServiceCommand` (src/memory/human-interface.ts). */
 const DURABLE_SUBS = [
@@ -77,18 +86,39 @@ export const MEMORY_KV_HELP = `Key-value beliefs (core memory — mutable, per-e
   memory kv set <key> <value>           e.g. memory kv set pace fast  (agent tick rate)
   memory kv get <key>
   memory kv delete <key>
-  memory kv history <key>               edit trail of one key
+  memory kv history <key>               edit trail of one key, newest first, ending with its first set
   memory kv clear                       delete every key`;
 
 /** Which verb? One line each — the retrieval and verification surfaces that look alike. */
 export const MEMORY_WHICH_VERB = `Which verb?
-  recall <q>             your legacy notes, FTS-ranked (fast, no model)
+  memory recall <q>      your notes, FTS-ranked (fast, no model)
   memory query <JSON>    durable records, exact symbolic filters
-  recap <topic>          multi-source retrieve-only pull (notes + pools + chronicle), no model
+  memory recap <topic>   multi-source retrieve-only pull (notes + pools + chronicle), no model
   ask <question>         model-synthesised answer over notes + guide + pools + world search
   dig <topic>            internal notes + web evidence, optional synthesis
   share <pool> <text>    ≡ pool <pool> add <text>
   note verify <id> …     dispute or retract on your own note (verified comes from another's pool <name> ratify) | memory reaffirm <ID> … re-pin a durable record | skill verify <name> check a skill package`;
+
+/**
+ * The family members' forms as `memory <member> …`. The command phase runs
+ * them as the member (`CommandRouter.forwardFamily`), so every form keeps the
+ * member's effect and fields.
+ */
+const FAMILY_USAGE: readonly CommandUsage[] = [
+  ...NOTE_USAGE,
+  ...RECALL_USAGE,
+  ...REFLECT_USAGE,
+  ...RECAP_USAGE,
+  ...DEBRIEF_USAGE,
+  ...CONTEXT_USAGE,
+].map((entry) =>
+  typeof entry === "string" ? `memory ${entry}` : { ...entry, syntax: `memory ${entry.syntax}` },
+);
+
+/** The family line `help memory` shows under its usage. */
+export const MEMORY_FAMILY_HELP =
+  "Family: memory note <text> · memory recall <query> [evidence|all] · memory reflect [topic] · memory recap <topic> · memory debrief · memory context <query>\n" +
+  `(bare ${(COMMAND_FAMILIES.memory ?? []).join(", ")} are aliases; \`help memory full\` lists every form)`;
 
 /** Strip the first `n` whitespace-separated tokens from `args`, preserving the rest verbatim. */
 function afterTokens(args: string, n: number): string {
@@ -172,12 +202,18 @@ export function memoryCommand(deps: {
       { syntax: "memory usage", effect: "read" },
       { syntax: "memory vocabulary", effect: "read" },
       { syntax: "memory watch <NAME> [RECORD_ID ...]", effect: "write" },
+      ...FAMILY_USAGE,
     ],
     name: "memory",
     aliases: [],
+    // `memory api` carries a resident's journal and checkpoint payloads (its
+    // own memory content) on every turn: never logged in clear, and not
+    // logged at all (it would crowd the world's actions out of the event log).
+    sensitiveSubcommands: ["api"],
+    unloggedSubcommands: ["api"],
     help:
-      "Durable memory service + key-value beliefs.\n" +
-      `${KV_USAGE}\n\n` +
+      "The memory command: notes, recall, reflection, durable records and key-value beliefs.\n" +
+      `${KV_USAGE}\n${MEMORY_FAMILY_HELP}\n\n` +
       `${MEMORY_KV_HELP}\n\n` +
       `${MEMORY_WHICH_VERB}\n\n` +
       MEMORY_SERVICE_HELP +
@@ -190,7 +226,7 @@ export function memoryCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("memory"));
+        refuseCommand(ctx, input.entity, requiresPersistence("memory"));
         return;
       }
       const db = deps.db;
@@ -232,12 +268,16 @@ export function memoryCommand(deps: {
         return;
       }
 
+      // Search-shaped verbs name the family member that searches.
+      const search = /^(search|find|query|lookup)$/i.test(rawSub ?? "")
+        ? "To search your notes: `memory recall <query>`.\n"
+        : "";
       ctx.send(
         input.entity,
         unknownSubcommand(
           "memory",
           rawSub,
-          `${KV_USAGE}\n` +
+          `${search}${KV_USAGE}\n` +
             "Durable records: `help memory full` lists the service verbs (memory claim/resolve/source/graph act on durable records; the same-named `note claim/resolve/source/graph` act on legacy notes and mirror to their twins).",
         ),
       );
@@ -294,7 +334,7 @@ function runKv(
       const key = keyOf();
       const value = key ? afterTokens(kvArgs, 1) : "";
       if (!key || !value) {
-        ctx.send(entityId, `Usage: memory kv set <key> <value> ${canon("set")}`.trim());
+        refuseCommand(ctx, entityId, `Usage: memory kv set <key> <value> ${canon("set")}`.trim());
         return;
       }
       db.setCoreMemory(entity.name, key, value);
@@ -310,11 +350,12 @@ function runKv(
     case "get": {
       const key = keyOf();
       if (!key) {
-        ctx.send(entityId, `Usage: memory kv get <key> ${canon("get")}`.trim());
+        refuseCommand(ctx, entityId, `Usage: memory kv get <key> ${canon("get")}`.trim());
         return;
       }
       const entry = db.getCoreMemory(entity.name, key);
       if (!entry) {
+        // A read that finds nothing, not a refusal: callers probe keys.
         ctx.send(
           entityId,
           `No memory entry for "${key}".`,
@@ -335,7 +376,7 @@ function runKv(
     case "delete": {
       const key = keyOf();
       if (!key) {
-        ctx.send(entityId, `Usage: memory kv delete <key> ${canon("delete")}`.trim());
+        refuseCommand(ctx, entityId, `Usage: memory kv delete <key> ${canon("delete")}`.trim());
         return;
       }
       const deleted = db.deleteCoreMemory(entity.name, key);
@@ -347,7 +388,8 @@ function runKv(
           memoryResult("core-delete", { success: true }),
         );
       } else {
-        ctx.send(
+        refuseCommand(
+          ctx,
           entityId,
           `No memory entry for "${key}".`,
           undefined,
@@ -375,22 +417,33 @@ function runKv(
     case "history": {
       const key = keyOf();
       if (!key) {
-        ctx.send(entityId, `Usage: memory kv history <key> ${canon("history")}`.trim());
+        refuseCommand(ctx, entityId, `Usage: memory kv history <key> ${canon("history")}`.trim());
         return;
       }
       const history = db.getCoreMemoryHistory(entity.name, key);
-      if (history.length === 0) {
-        ctx.send(entityId, `No edit history for "${key}".`);
+      const entry = db.getCoreMemory(entity.name, key);
+      if (!entry && history.length === 0) {
+        ctx.send(entityId, `No memory entry for "${key}".`);
         return;
       }
-      const lines = [
-        header(`History: ${key}`),
-        separator(),
-        ...history.map((h) => {
-          const date = dim(new Date(h.changed_at).toISOString().slice(0, 19));
-          return `  ${date} "${h.old_value}" ${dim("\u2192")} "${h.new_value}"`;
-        }),
-      ];
+      const stamp = (at: number) => dim(new Date(at).toISOString().slice(0, 19));
+      const edit = (h: (typeof history)[number]) =>
+        `  ${stamp(h.changed_at)} "${h.old_value}" ${dim("\u2192")} "${h.new_value}"`;
+      // The trail records edits; the first set is the row's creation. Edits of the
+      // current row come first (newest first); rows from before a delete follow it.
+      const current = entry ? history.filter((h) => h.changed_at >= entry.created_at) : [];
+      const earlier = history.slice(current.length);
+      const lines = [header(`History: ${key}`), separator(), ...current.map(edit)];
+      if (entry) {
+        const missing = entry.version - 1 - current.length;
+        const first = current.length ? current[current.length - 1]!.old_value : entry.value;
+        lines.push(
+          missing <= 0
+            ? `  ${stamp(entry.created_at)} set "${first}" ${dim("(first set)")}`
+            : `  ${stamp(entry.created_at)} ${dim(`first set (${missing} older edit(s) not shown)`)}`,
+        );
+      }
+      lines.push(...earlier.map(edit));
       ctx.send(entityId, lines.join("\n"));
       return;
     }

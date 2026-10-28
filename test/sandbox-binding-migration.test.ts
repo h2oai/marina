@@ -15,7 +15,7 @@ test("provider migration retains legacy allocation and isolates new-provider sta
   const owner = entityId("owner");
   try {
     const legacy = new Database(path);
-    migrateEmptyTo(legacy, 181);
+    migrateEmptyTo(legacy, 182);
     legacy.run(`INSERT INTO flywheel_bindings(entity_id,session_id,sandbox_id,image,keep_alive,state,
       active_project_id,guest_cwd,created_at,updated_at) VALUES('owner','fw-session','fw-sandbox',
       'image',1,'running','fw-project','/workspace/fw',1,1)`);

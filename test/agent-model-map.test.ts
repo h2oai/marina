@@ -12,9 +12,9 @@ import {
   seedOrchestrationCrews,
   seedSystemAgent,
 } from "../worlds/seed";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, tempDbPath } from "./helpers";
 
-const TEST_DB = "test_agent_model_map.db";
+const TEST_DB = tempDbPath("test_agent_model_map.db");
 
 describe("parseAgentModelMap", () => {
   it("parses Name=model pairs, case-insensitive names, model strings untouched", () => {

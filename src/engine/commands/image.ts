@@ -4,6 +4,7 @@
 import type { MediaJobRow } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
 import { canvasReaderFor, mayReadCanvasRow } from "../canvas-access";
+import { refuseCommand } from "../command-response";
 import type { Engine } from "../engine";
 import { defaultImageModel } from "../media/providers/image-registry";
 import { lookReply, sendLookReply } from "../media/vision";
@@ -63,7 +64,8 @@ export function imageCommand(engine: Engine): CommandDef {
         return;
       }
       if (sub !== "generate") {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Unknown subcommand. Usage: image generate <prompt...> | image describe <node|asset|url> [question]",
         );
@@ -75,7 +77,8 @@ export function imageCommand(engine: Engine): CommandDef {
         return;
       }
       if (!engine.db || !engine.storage) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Image generation requires persistent storage. Configure storage to enable this command.",
         );
@@ -89,7 +92,8 @@ export function imageCommand(engine: Engine): CommandDef {
       }
 
       if (!engine.mediaManager) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           "Media pipeline is not configured. Ensure storage and provider keys are set.",
         );

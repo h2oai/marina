@@ -4,6 +4,8 @@
 import { describe, expect, it } from "bun:test";
 import { arenaLessonFilter } from "../src/arena/service";
 import { type ForecastLesson, recallForecastLessons } from "../src/forecast/lessons";
+import { forecastLessonsFor } from "../src/learning/forecast-bridge";
+import { type Lesson, memoryLessonSink } from "../src/learning/outcomes";
 
 const lesson = (text: string, origin?: string): ForecastLesson => ({
   text,
@@ -57,5 +59,44 @@ describe("arena lesson recall", () => {
     const plain = await recallForecastLessons(store, "q", "2026-10-24T00:00:00Z", "on");
     expect(plain.injected.map((l) => l.text)[0]).toBe("arXiv ranking rule");
     expect(plain.injected).toHaveLength(4);
+  });
+
+  it("a lesson scoped to a tracker reaches only that tracker's rounds", async () => {
+    const scoped = (tracker: string, text: string): Lesson => ({
+      domain: "forecast",
+      text,
+      rule: text,
+      kind: "success",
+      trust: "trusted",
+      resolvedAt: "2026-10-01T00:00:00Z",
+      source: "arena:number",
+      scopeFamily: tracker,
+    });
+    const sink = memoryLessonSink([
+      scoped("economist_yougov", "daily tracker anchor on persistence band spread"),
+      scoped("civiqs", "weekly tracker widen the band spread"),
+      { ...scoped("x", "any tracker band spread check"), scopeFamily: undefined },
+    ]);
+    const store = forecastLessonsFor(undefined, { sink, env: { MARINA_LESSONS: "on" } });
+    const round = { tracker: "economist_yougov", target_type: "continuous_normal" };
+    const got = await recallForecastLessons(
+      store,
+      "tracker band spread",
+      "2026-10-24T00:00:00Z",
+      "on",
+      arenaLessonFilter(round),
+      [round.tracker],
+    );
+    expect(got.injected.map((l) => l.text).sort()).toEqual([
+      "any tracker band spread check",
+      "daily tracker anchor on persistence band spread",
+    ]);
+    // Work that names no family gets only the unscoped lesson.
+    const unnamed = await recallForecastLessons(store, "tracker band spread", "2026-10-24", "on");
+    expect(unnamed.injected.map((l) => l.text)).toEqual(["any tracker band spread check"]);
+    // The filter itself refuses another tracker's scoped lesson.
+    const accept = arenaLessonFilter(round);
+    expect(accept({ origin: "arena:number", family: "civiqs" })).toBe(false);
+    expect(accept({ origin: "arena:number", family: "economist_yougov" })).toBe(true);
   });
 });

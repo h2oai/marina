@@ -1,9 +1,19 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { all, create } from "mathjs";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
+import type { EvalResult } from "./calc-eval";
+
+export type { EvalResult } from "./calc-eval";
+
+/** The inline evaluator, loaded on demand: mathjs stays out of this module's
+ * import graph (see calc-eval.ts), so only a process that evaluates pays for it. */
+async function evalInline(source: string): Promise<EvalResult> {
+  const { evalExpression } = await import("./calc-eval");
+  return evalExpression(source);
+}
 
 /**
  * `calc` — rank-0 TypeScript math engine for every agent in the world.
@@ -35,130 +45,77 @@ import type { CommandDef, Entity, RoomContext } from "../../types";
  *   calc mean([1,2,3,4,5])
  */
 
-// Build a scoped mathjs instance with high precision.
-// mathjs expressions have no access to JS globals. Two layers keep an
-// expression from mutating or re-entering the engine:
-//   1. Instance level: `import`, `createUnit` and `config` are replaced with
-//      throwers, so no path (including node methods such as
-//      `simplify(...).evaluate()`) can change the shared instance.
-//   2. Expression level: every parser scope pre-binds the meta functions
-//      (`evaluate`, `parse`, `compile`, `parser`, plus the three above) to
-//      throwers. Symbols resolve from the scope before the math namespace,
-//      so naming one inside an expression is refused.
-// `evaluate` and `parse` stay intact on the instance itself: the parser,
-// `simplify` and `derivative` call them internally, and overriding them on
-// the instance breaks every expression.
-const math = create(all as never, {
-  number: "BigNumber",
-  precision: 64,
-});
-const disabled = (name: string) => () => {
-  throw new Error(`${name} disabled`);
-};
-math.import(
-  {
-    import: disabled("import"),
-    createUnit: disabled("createUnit"),
-    config: disabled("config"),
-  },
-  { override: true },
-);
-
-/** Names an expression may not call; bound to throwers in every parser scope. */
-export const CALC_BLOCKED_FUNCTIONS = [
-  "evaluate",
-  "parse",
-  "compile",
-  "parser",
-  "import",
-  "createUnit",
-  "config",
-] as const;
-
-function sandboxedParser(): ReturnType<typeof math.parser> {
-  const parser = math.parser();
-  for (const name of CALC_BLOCKED_FUNCTIONS) parser.set(name, disabled(name));
-  return parser;
-}
-
-const MAX_EXPR_BYTES = 4_000;
-const MAX_STATEMENTS = 50;
-
-function formatValue(v: unknown): string {
-  if (v === undefined || v === null) return "";
-  // mathjs returns its own types (BigNumber, Fraction, Matrix, etc.) — each
-  // has a meaningful toString(). Wrap in math.format for consistent output.
-  try {
-    return math.format(v as never, { precision: 14 });
-  } catch {
-    return String(v);
-  }
-}
-
-export interface EvalResult {
-  outputs: string[];
-  error?: string;
-  durationMs: number;
-}
-
-export function evalExpression(source: string): EvalResult {
-  const t0 = performance.now();
-  const trimmed = source.trim();
-  if (!trimmed) {
-    return { outputs: [], durationMs: 0 };
-  }
-  if (trimmed.length > MAX_EXPR_BYTES) {
-    return {
-      outputs: [],
-      error: `expression too long (${trimmed.length} > ${MAX_EXPR_BYTES})`,
-      durationMs: 0,
-    };
-  }
-  // Split on ; or newline; run sequentially sharing a scope.
-  const statements = trimmed
-    .split(/[;\n]+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .slice(0, MAX_STATEMENTS);
-
-  const parser = sandboxedParser();
-  const outputs: string[] = [];
-  let error: string | undefined;
-  try {
-    for (const stmt of statements) {
-      const out = parser.evaluate(stmt);
-      const formatted = formatValue(out);
-      if (formatted) outputs.push(formatted);
-    }
-  } catch (err) {
-    error = err instanceof Error ? err.message : String(err);
-  }
-  return { outputs, error, durationMs: Math.round(performance.now() - t0) };
-}
-
 /**
  * Wall-clock bound for one `calc` evaluation. mathjs is synchronous: run on the
  * server's event loop, one expensive call (`rationalize`, `simplify` or `solve`
  * of a large expression) freezes every agent, room and HTTP request. Each
  * evaluation therefore runs in a worker, which is terminated at this deadline.
+ * The clock starts once the worker has loaded mathjs and said so: loading takes
+ * about a second idle and several on a loaded machine, and must not eat into
+ * the time an expression is given.
  */
 export const CALC_TIMEOUT_MS = 10_000;
+/** Separate, generous bound for a new worker to load mathjs and report ready. */
+export const CALC_LOAD_TIMEOUT_MS = 60_000;
 const CALC_POOL_SIZE = 2;
+const DEFAULT_CALC_WORKER_URL = new URL("./calc-worker.ts", import.meta.url).href;
 
 interface CalcSlot {
   worker: Worker;
+  /** Resolves `null` once the worker reported ready, or an error message if it failed first. */
+  ready: Promise<string | null>;
   busy: boolean;
 }
 
 const slots: CalcSlot[] = [];
 const waiting: Array<() => void> = [];
 let nextRequestId = 0;
+let calcWorkerUrl = DEFAULT_CALC_WORKER_URL;
 
-function newCalcWorker(): Worker {
-  const worker = new Worker(new URL("./calc-worker.ts", import.meta.url).href);
+function newCalcWorker(): Pick<CalcSlot, "worker" | "ready"> {
+  const worker = new Worker(calcWorkerUrl);
   // An idle worker never keeps the process alive.
   (worker as Worker & { unref?: () => void }).unref?.();
-  return worker;
+  const ready = new Promise<string | null>((resolve) => {
+    const done = (outcome: string | null): void => {
+      worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onError);
+      resolve(outcome);
+    };
+    const onMessage = (event: MessageEvent<{ ready?: boolean }>): void => {
+      if (event.data?.ready === true) done(null);
+    };
+    const onError = (event: ErrorEvent): void => done(`calc worker failed: ${event.message}`);
+    worker.addEventListener("message", onMessage);
+    worker.addEventListener("error", onError);
+  });
+  return { worker, ready };
+}
+
+/** Wait for the slot's worker to be ready, bounded by `loadTimeoutMs`. */
+async function awaitReady(slot: CalcSlot, loadTimeoutMs: number): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<string>((resolve) => {
+    timer = setTimeout(
+      () => resolve(`calc worker did not start within ${loadTimeoutMs} ms; try again.`),
+      loadTimeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([slot.ready, timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Test hook: terminate the pool (call it only while no evaluation is in
+ * flight) and spawn later workers from `workerUrl`, or the real calc worker
+ * when omitted.
+ */
+export function resetCalcPoolForTests(workerUrl?: string): void {
+  for (const slot of slots.splice(0)) slot.worker.terminate();
+  calcWorkerUrl = workerUrl ?? DEFAULT_CALC_WORKER_URL;
 }
 
 async function acquireSlot(): Promise<CalcSlot> {
@@ -169,7 +126,7 @@ async function acquireSlot(): Promise<CalcSlot> {
       return free;
     }
     if (slots.length < CALC_POOL_SIZE) {
-      const slot = { worker: newCalcWorker(), busy: true };
+      const slot = { ...newCalcWorker(), busy: true };
       slots.push(slot);
       return slot;
     }
@@ -180,28 +137,37 @@ async function acquireSlot(): Promise<CalcSlot> {
 function releaseSlot(slot: CalcSlot, replace: boolean): void {
   if (replace) {
     slot.worker.terminate();
-    slot.worker = newCalcWorker();
+    Object.assign(slot, newCalcWorker());
   }
   slot.busy = false;
   waiting.shift()?.();
 }
 
 /**
- * `evalExpression` bounded by `timeoutMs`, off the main thread. A timeout
- * terminates the worker (the pool replaces it) and returns an error result;
- * it never throws. Without worker support it falls back to the inline call.
+ * `evalExpression` bounded by `timeoutMs` of evaluation, off the main thread.
+ * A new worker first gets `loadTimeoutMs` to load mathjs; the evaluation
+ * deadline starts only after it reports ready, and the expression is not sent
+ * before then. A timeout terminates the worker (the pool replaces it) and
+ * returns an error result; it never throws. Without worker support it falls
+ * back to the inline call.
  */
 export async function evalExpressionBounded(
   source: string,
   timeoutMs = CALC_TIMEOUT_MS,
+  loadTimeoutMs = CALC_LOAD_TIMEOUT_MS,
 ): Promise<EvalResult> {
-  if (typeof Worker === "undefined") return evalExpression(source);
+  if (typeof Worker === "undefined") return evalInline(source);
   let slot: CalcSlot;
   try {
     slot = await acquireSlot();
   } catch {
     // No worker runtime in this process: evaluate inline, unbounded, as before.
-    return evalExpression(source);
+    return evalInline(source);
+  }
+  const loadError = await awaitReady(slot, loadTimeoutMs);
+  if (loadError !== null) {
+    releaseSlot(slot, true);
+    return { outputs: [], error: loadError, durationMs: 0 };
   }
   const t0 = performance.now();
   const id = ++nextRequestId;
@@ -274,7 +240,11 @@ Forecast a series or price numeric ranges with \`quant fit\` / \`quant buckets\`
 
       const expr = input.args?.trim();
       if (!expr) {
-        ctx.send(input.entity, "Usage: calc <expression>. End with the value you want returned.");
+        refuseCommand(
+          ctx,
+          input.entity,
+          "Usage: calc <expression>. End with the value you want returned.",
+        );
         return;
       }
 

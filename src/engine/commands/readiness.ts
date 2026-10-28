@@ -5,6 +5,7 @@ import type { ProviderProbeResult } from "../../net/model/model-api";
 import type { AutonomyPulseRow } from "../../persistence/db-telemetry";
 import type { CommandContext, CommandDef } from "../../types";
 import { ungatedPostureNote } from "../autonomy";
+import { refuseCommand } from "../command-response";
 import { rankFloorRefusal } from "../rank-floor";
 import {
   AUTONOMY_REQUIREMENTS,
@@ -193,7 +194,7 @@ export function readinessCommand(deps: {
         // Built-in commands receive a CommandContext (caller = { id, name, rank }).
         const rank = (ctx as Partial<CommandContext>).caller?.rank ?? 0;
         if (!deps.probeProviders) {
-          ctx.send(input.entity, "Provider probing is not available on this instance.");
+          refuseCommand(ctx, input.entity, "Provider probing is not available on this instance.");
           return;
         }
         const refusal = rankFloorRefusal(
@@ -202,7 +203,7 @@ export function readinessCommand(deps: {
           `readiness providers spends provider tokens; it needs rank ${PROVIDER_PROBE_MIN_RANK}+ on a gated instance (yours: ${rank}).`,
         );
         if (refusal) {
-          ctx.send(input.entity, refusal);
+          refuseCommand(ctx, input.entity, refusal);
           return;
         }
         const only = input.tokens.slice(1).map((a) => a.toLowerCase());

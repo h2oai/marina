@@ -188,15 +188,26 @@ export function createToolSearchTool(
       const wanted = new Set((params.names ?? []).map((n) => n.trim()).filter(Boolean));
       const q = params.query?.trim().toLowerCase() ?? "";
       const byName = deferred.filter((t) => wanted.has(t.name));
+      // A keyword query matches word by word ("code run python" finds
+      // marina_code); tools matching more words rank first.
+      const words = q.split(/[\s,_]+/).filter((w) => w.length > 1 && w !== "marina");
       const byQuery =
-        q.length > 0
+        words.length > 0
           ? deferred
-              .filter(
-                (t) =>
-                  !wanted.has(t.name) &&
-                  (t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q)),
-              )
+              .filter((t) => !wanted.has(t.name))
+              .map((t) => {
+                const name = t.name.toLowerCase();
+                const description = t.description.toLowerCase();
+                const score = words.reduce(
+                  (n, w) => n + (name.includes(w) ? 2 : description.includes(w) ? 1 : 0),
+                  0,
+                );
+                return { t, score };
+              })
+              .filter((m) => m.score > 0)
+              .sort((a, b) => b.score - a.score)
               .slice(0, 5)
+              .map((m) => m.t)
           : [];
       const matches = [...byName, ...byQuery];
       const unknown = [...wanted].filter((n) => !deferred.some((t) => t.name === n));
@@ -429,6 +440,57 @@ export function replayPolicyFor(name: string): ToolReplay | undefined {
   return READ_ONLY_TOOL_NAMES.has(name) ? "safe" : undefined;
 }
 
+/** The allowed values of a top-level string-enum property (`enum`, or `anyOf` of `const`). */
+function enumValues(schema: unknown): string[] | undefined {
+  if (!schema || typeof schema !== "object") return undefined;
+  const s = schema as { enum?: unknown[]; anyOf?: { const?: unknown }[] };
+  const values = Array.isArray(s.enum)
+    ? s.enum
+    : Array.isArray(s.anyOf)
+      ? s.anyOf.map((member) => member?.const)
+      : undefined;
+  return values?.every((v) => typeof v === "string") ? (values as string[]) : undefined;
+}
+
+/**
+ * Enum arguments a model gets wrong: a case variant of an allowed value is
+ * normalised; any other value is refused naming the allowed values (the
+ * schema validator only says "must be equal to one of the allowed values").
+ * Composes with a tool's own `prepareArguments`.
+ */
+export function applyEnumArgumentHints<T extends AgentTool>(tools: T[]): T[] {
+  return tools.map((tool) => {
+    const properties = (tool.parameters as { properties?: Record<string, unknown> })?.properties;
+    const enums = Object.entries(properties ?? {}).flatMap(([key, schema]) => {
+      const values = enumValues(schema);
+      return values ? [[key, values] as const] : [];
+    });
+    if (enums.length === 0) return tool;
+    const own = tool.prepareArguments;
+    return {
+      ...tool,
+      prepareArguments: (raw: unknown) => {
+        const args = own ? own(raw) : raw;
+        if (!args || typeof args !== "object") return args;
+        let out = args as Record<string, unknown>;
+        for (const [key, values] of enums) {
+          const value = out[key];
+          if (typeof value !== "string" || values.includes(value)) continue;
+          const folded = values.find((v) => v.toLowerCase() === value.trim().toLowerCase());
+          if (folded) {
+            out = { ...out, [key]: folded };
+            continue;
+          }
+          throw new Error(
+            `${tool.name}: ${key} "${value}" is not allowed; use one of ${values.join("|")}.`,
+          );
+        }
+        return out;
+      },
+    } as T;
+  });
+}
+
 /** Stamp `replay: "safe"` on read-only tools unless an explicit policy exists. */
 export function applyToolReplayPolicy<T extends AgentTool>(tools: T[]): T[] {
   return tools.map((tool) => {
@@ -456,17 +518,21 @@ export function createProfileToolset(
   // provider is configured, or when the agent's config asks for it — never
   // tied to whether the agent's own model reads or makes images.
   const generation = options?.mediaGeneration;
-  const all = applyStrictToolSchemas(
-    applyToolReplayPolicy(
-      applyToolExecutionModes(
-        createAllTools(ctx, platformMemory).filter((tool) => {
-          if (tool.name === "marina_generate_image") return !!(supports.image || generation?.image);
-          if (tool.name === "marina_generate_video") return !!(supports.video || generation?.video);
-          // Audio is a provider capability only (an OpenAI key or *_AUDIO_BASE_URL).
-          if (tool.name === "marina_transcribe") return !!generation?.transcribe;
-          if (tool.name === "marina_speak") return !!generation?.speak;
-          return true;
-        }),
+  const all = applyEnumArgumentHints(
+    applyStrictToolSchemas(
+      applyToolReplayPolicy(
+        applyToolExecutionModes(
+          createAllTools(ctx, platformMemory).filter((tool) => {
+            if (tool.name === "marina_generate_image")
+              return !!(supports.image || generation?.image);
+            if (tool.name === "marina_generate_video")
+              return !!(supports.video || generation?.video);
+            // Audio is a provider capability only (an OpenAI key or *_AUDIO_BASE_URL).
+            if (tool.name === "marina_transcribe") return !!generation?.transcribe;
+            if (tool.name === "marina_speak") return !!generation?.speak;
+            return true;
+          }),
+        ),
       ),
     ),
   );

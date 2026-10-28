@@ -62,8 +62,9 @@ import { dim, error as fmtError, header, separator, success } from "../../../net
 import { isLoopbackIp } from "../../../net/loopback";
 import { recordVerification } from "../../../outcomes/live";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
-import type { Connection, Entity, EntityId, RoomContext } from "../../../types";
+import type { Connection, CrewId, Entity, EntityId, RoomContext } from "../../../types";
 import { raiseForTool, redispatchHeldCommand } from "../../challenges";
+import { refuseCommand } from "../../command-response";
 import { principalOf } from "../../gate-context";
 import { getRank } from "../../permissions";
 import { isImplicitLocalUngated, isLocalUngated } from "../../trust-profile";
@@ -80,6 +81,7 @@ import {
   entityNameForm,
   getActiveSessionId,
   getCodeProfile,
+  latestActiveArtifact,
   parseJsonObject,
   resolveSession,
   sameEntityName,
@@ -98,7 +100,11 @@ export async function runWorkspaceCommand(
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   if (args.length === 0) {
-    ctx.send(eid, "Usage: code run <typecheck|lint|test|build|dashboard:build|bun ...|git ...>");
+    refuseCommand(
+      ctx,
+      eid,
+      "Usage: code run <typecheck|lint|test|build|dashboard:build|bun ...|git ...>",
+    );
     return;
   }
   if (args[0]?.toLowerCase() === "allowlist") {
@@ -364,7 +370,7 @@ export async function recipe(
     const name = args[1]?.toLowerCase();
     const body = args.slice(2).join(" ").trim();
     if (!name || !body) {
-      ctx.send(eid, "Usage: code recipe save <name> <command> [then <command>...]");
+      refuseCommand(ctx, eid, "Usage: code recipe save <name> <command> [then <command>...]");
       return;
     }
     const commands = parseRecipeCommands(body);
@@ -409,7 +415,7 @@ export async function recipe(
   if (action === "run") {
     const name = args[1]?.toLowerCase();
     if (!name) {
-      ctx.send(eid, "Usage: code recipe run <name>");
+      refuseCommand(ctx, eid, "Usage: code recipe run <name>");
       return;
     }
     const commands = await resolveRecipeCommands(
@@ -419,7 +425,7 @@ export async function recipe(
       name,
     );
     if (!commands) {
-      ctx.send(eid, `Recipe not found: ${name}`);
+      refuseCommand(ctx, eid, `Recipe not found: ${name}`);
       return;
     }
     await runVerificationCommands(ctx, eid, entity, deps, session, commands, `Recipe ${name}`);
@@ -428,19 +434,19 @@ export async function recipe(
   if (action === "show") {
     const name = args[1]?.toLowerCase();
     if (!name) {
-      ctx.send(eid, "Usage: code recipe show <name>");
+      refuseCommand(ctx, eid, "Usage: code recipe show <name>");
       return;
     }
     const found = findStoredRecipe(deps.db, session.id, name);
     if (!found) {
-      ctx.send(eid, `Stored recipe not found: ${name}`);
+      refuseCommand(ctx, eid, `Stored recipe not found: ${name}`);
       return;
     }
     showArtifact(ctx, eid, entity, deps, found.id);
     return;
   }
   if (action !== "list") {
-    ctx.send(eid, "Usage: code recipe [list|save|show|run]");
+    refuseCommand(ctx, eid, "Usage: code recipe [list|save|show|run]");
     return;
   }
   const workspace = workspaceForSession(deps, session);
@@ -1204,7 +1210,7 @@ export function execModeCommand(
   // here — otherwise the agent could self-enable auto-approval and ride the
   // creator's loopback-sovereign standing for unattended arbitrary host exec.
   if (!sameEntityName(session.created_by, entity.name)) {
-    ctx.send(eid, "Only the session's operator can change exec-mode.");
+    refuseCommand(ctx, eid, "Only the session's operator can change exec-mode.");
     return;
   }
   const mode = args[0]?.toLowerCase();
@@ -1216,13 +1222,14 @@ export function execModeCommand(
     return;
   }
   if (mode !== "prompt" && mode !== "auto") {
-    ctx.send(eid, "Usage: code exec-mode <prompt|auto|off>");
+    refuseCommand(ctx, eid, "Usage: code exec-mode <prompt|auto|off>");
     return;
   }
   // Honor prompt/auto ONLY when the server independently verifies a local
   // sovereign creator on a loopback connection — never the client's word alone.
   if (!verifyInteractiveEligible(deps, session)) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       "Exec-mode requires a loopback sovereign session creator; request refused. Exec stays allowlist-only.",
     );
@@ -1243,7 +1250,7 @@ export function execModeCommand(
 export function execApprove(ctx: RoomContext, eid: EntityId, entity: Entity, args: string[]): void {
   const token = args[0];
   if (!token) {
-    ctx.send(eid, "Usage: code exec-approve <token> [once]");
+    refuseCommand(ctx, eid, "Usage: code exec-approve <token> [once]");
     return;
   }
   const pending = getPendingExecApproval(token);
@@ -1264,7 +1271,7 @@ export function execApprove(ctx: RoomContext, eid: EntityId, entity: Entity, arg
 export function execDeny(ctx: RoomContext, eid: EntityId, entity: Entity, args: string[]): void {
   const token = args[0];
   if (!token) {
-    ctx.send(eid, "Usage: code exec-deny <token> [reason]");
+    refuseCommand(ctx, eid, "Usage: code exec-deny <token> [reason]");
     return;
   }
   const pending = getPendingExecApproval(token);
@@ -1418,9 +1425,11 @@ export function raiseEgressChallenge(
  * (`driver:<harness>`, `driver:none` when a person or a native resident
  * coded in place), where the commands ran (`runner:local`, `runner:container`,
  * or the sandbox provider id) and against what (`verify:candidate` for an
- * immutable candidate, `verify:live` for the working tree). Labels only.
+ * immutable candidate, `verify:live` for the working tree), plus
+ * `crew:<formation>` while a `code crew` dispatched in the session is live.
+ * Labels only.
  */
-function verificationApproach(
+export function verificationApproach(
   deps: CodeDeps & { db: MarinaDB },
   session: CodingSessionRow,
   background?: { workspace: WorkspaceRuntime; candidateId?: string },
@@ -1439,9 +1448,14 @@ function verificationApproach(
       runner = "local";
     }
   }
-  return [
+  const approach = [
     `driver:${label(session.driver || "none")}`,
     `runner:${label(runner)}`,
     `verify:${background?.candidateId ? "candidate" : "live"}`,
   ];
+  const dispatched = latestActiveArtifact(deps.db, session.id, "crew_dispatched");
+  const crewId = dispatched ? parseJsonObject(dispatched.metadata_json).crewId : undefined;
+  const crew = typeof crewId === "string" ? deps.crewManager?.get(crewId as CrewId) : undefined;
+  if (crew && crew.state !== "dissolved") approach.push(`crew:${label(crew.formation)}`);
+  return approach;
 }

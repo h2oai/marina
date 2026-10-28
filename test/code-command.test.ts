@@ -20,6 +20,11 @@ import { WorkspaceRegistry } from "../src/coding/workspace-registry";
 import { codeCommand, isLoopbackConnection } from "../src/engine/commands/code";
 import { sessionExecModeForTests } from "../src/engine/commands/code/exec";
 import { Engine } from "../src/engine/engine";
+import {
+  answerCodeViaLocalModel,
+  answerViaLocalModel,
+  LocalModelError,
+} from "../src/engine/registrations/model-helpers";
 import { grant } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
 import {
@@ -37,15 +42,16 @@ import {
   MockConnection,
   makeTestRoom,
   stripAnsi,
+  tempDbPath,
 } from "./helpers";
 
-const TEST_DB = "test_code_command.db";
+const TEST_DB = tempDbPath("test_code_command.db");
 
 describe("code command startup", () => {
   it("does not fail engine startup when the configured code workspace is unavailable", () => {
     const previousRoot = process.env.MARINA_CODE_DEFAULT_ROOT;
     const previousRoots = process.env.MARINA_CODE_ROOTS;
-    const dbName = "test_code_command_startup.db";
+    const dbName = tempDbPath("test_code_command_startup.db");
     const db = new MarinaDB(dbName);
     try {
       process.env.MARINA_CODE_DEFAULT_ROOT = join(
@@ -2166,6 +2172,72 @@ describe("code command", () => {
     expect(events.some((event) => event.kind === "code_prompt_completed")).toBe(true);
   });
 
+  it("a refused or empty model answer is a failed artifact, never a stored response", async () => {
+    const entity = engine.entities.get(conn.entity!)!;
+    const sent: string[] = [];
+    let reply: () => Promise<string | undefined> = async () => {
+      throw new LocalModelError(
+        "Model request failed (HTTP 503): No upstream LLM providers configured. Set one of OPENROUTER_API_KEY, ANTHROPIC_API_KEY.",
+      );
+    };
+    const command = codeCommand({
+      db,
+      getEntity: () => entity,
+      workspace: new LocalWorkspace(),
+      answerPrompt: () => reply(),
+    });
+    const ctx = testRoomContext(sent);
+    await command.handler(ctx, inputFor(entity, "code start No Provider"));
+    const sessionId = entity.properties.coding_session_id as string;
+
+    await command.handler(ctx, inputFor(entity, "code ask how should we fix this?"));
+    let out = stripAnsi(sent.at(-1) ?? "");
+    expect(out).not.toContain("Code response stored");
+    expect(out).toContain("No upstream LLM providers configured");
+    expect(out).toContain("OPENROUTER_API_KEY");
+
+    reply = async () => "   ";
+    await command.handler(ctx, inputFor(entity, "code ask and now?"));
+    out = stripAnsi(sent.at(-1) ?? "");
+    expect(out).not.toContain("Code response stored");
+    expect(out).toContain("returned no answer");
+
+    const responses = db
+      .listCodingArtifacts(sessionId, 10)
+      .filter((a) => a.kind === "agent_response");
+    expect(responses).toHaveLength(2);
+    expect(responses.every((a) => a.status === "failed")).toBe(true);
+    expect(responses.some((a) => a.content_text === "(no response)")).toBe(false);
+  });
+
+  it("the local model helper surfaces the /v1 refusal instead of returning nothing", async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "No upstream LLM providers configured. Set one of OPENROUTER_API_KEY.",
+          },
+        }),
+        { status: 503, headers: { "Content-Type": "application/json" } },
+      )) as unknown as typeof fetch;
+    try {
+      const request = {
+        actor: "a",
+        profile: "marina",
+        prompt: "p",
+        sessionId: "s",
+        workspaceRoot: "/tmp",
+      };
+      await expect(answerCodeViaLocalModel(request)).rejects.toThrow(
+        /HTTP 503.*No upstream LLM providers configured.*OPENROUTER_API_KEY/,
+      );
+      await expect(answerViaLocalModel("q", "")).rejects.toBeInstanceOf(LocalModelError);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it("assigns a coding session to a live Marina agent without spawning new agents", async () => {
     const entity = engine.entities.get(conn.entity!)!;
     const helperEntity = makeAgentEntity("agent_helper", "Helper");
@@ -2985,7 +3057,7 @@ function testRoomContext(sent: string[], metadata: Record<string, unknown>[] = [
 }
 
 describe("code mode — agentic dispatch (single-agent driver)", () => {
-  const DO_DB = "test_code_do.db";
+  const DO_DB = tempDbPath("test_code_do.db");
   let db: MarinaDB;
 
   beforeEach(() => {
@@ -3170,7 +3242,7 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
 });
 
 describe("code host-exec workspace root policy (Finding 2)", () => {
-  const ROOT_DB = "test_code_root_policy.db";
+  const ROOT_DB = tempDbPath("test_code_root_policy.db");
   let db: MarinaDB;
   let engine: Engine;
   let conn: MockConnection;
@@ -3274,7 +3346,7 @@ describe("code host-exec workspace root policy (Finding 2)", () => {
 });
 
 describe("code worktree (per-session isolation)", () => {
-  const WT_DB = "test_code_worktree.db";
+  const WT_DB = tempDbPath("test_code_worktree.db");
   let db: MarinaDB;
   let savedHome: string | undefined;
   /** Every temp dir this describe creates (fake HOME, repos, plain roots) — removed in afterEach. */
@@ -3315,6 +3387,30 @@ describe("code worktree (per-session isolation)", () => {
       getConnectionProtocol: () => "websocket",
     });
   }
+
+  it("`code diff` names a new untracked file instead of reporting no change", async () => {
+    const repo = makeRepoWithCommit();
+    try {
+      const entity = makeAgentEntity("u_diff_new", "DiffNew");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const command = commandFor(repo, entity);
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Untracked"));
+      await command.handler(ctx, inputFor(entity, "code diff"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("No git diff.");
+
+      writeFileSync(join(repo, "fresh.ts"), "export const fresh = 1;\n");
+      await command.handler(ctx, inputFor(entity, "code diff"));
+      const out = stripAnsi(sent.at(-1) ?? "");
+      expect(out).not.toContain("No git diff.");
+      expect(out).toContain("not shown by git diff");
+      expect(out).toContain("fresh.ts");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
 
   it("default OFF: `code start` binds no worktree (byte-identical to legacy)", async () => {
     const repo = makeRepoWithCommit();

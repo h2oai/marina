@@ -5,6 +5,7 @@ import { bold, dim, header, progressBar, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { benchmarkExecution } from "../benchmark-execution";
+import { refuseCommand } from "../command-response";
 import {
   benchmarkNoveltyOpportunities,
   type NoveltyCapability,
@@ -56,7 +57,7 @@ export function noveltyCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, requiresPersistence("novelty tracking"));
+        refuseCommand(ctx, input.entity, requiresPersistence("novelty tracking"));
         return;
       }
       const db = deps.db;

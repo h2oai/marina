@@ -8,7 +8,7 @@ import { gatherRetrievalContext } from "../src/engine/commands/retrieval-core";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, entityId, roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
 /**
  * Crew pools are members-only. Every persisted crew's `crew:<name>` pool is
@@ -17,7 +17,7 @@ import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
  * `gatherRetrievalContext`) fences crew memory from outsiders.
  */
 describe("CrewManager: crew pool group", () => {
-  const DB_PATH = "test_crew_pool_group.db";
+  const DB_PATH = tempDbPath("test_crew_pool_group.db");
   const OWNER = entityId("e_owner");
   const IDS: Record<string, string> = { alice: "e_alice", bob: "e_bob", carol: "e_carol" };
 
@@ -210,7 +210,7 @@ describe("CrewManager: crew pool group", () => {
 });
 
 describe("crew pool group: membership guard (integration)", () => {
-  const DB_PATH = "test_crew_pool_group_engine.db";
+  const DB_PATH = tempDbPath("test_crew_pool_group_engine.db");
   let db: MarinaDB;
   let engine: Engine;
   let alice: MockConnection;

@@ -164,18 +164,20 @@ export function event(
     "INSERT INTO memory_service_events(space_id,operation,reference_id,version,actor_id,created_at) VALUES (?,?,?,?,?,?)",
     [space, operation, ref ?? null, version ?? null, actor.principalId, Date.now()],
   );
-  db.run("UPDATE memory_spaces SET generation=generation+1 WHERE id=?", [space]);
-  if (
+  const retrieval =
     operation !== "checkpoint.saved" &&
     operation !== "memory.reindex" &&
     operation !== "cache.saved" &&
     operation !== "cache.deleted" &&
     !operation.startsWith("assistance.") &&
-    !(operation.startsWith("transfer.") && operation !== "transfer.committed")
-  )
-    db.run("UPDATE memory_spaces SET retrieval_generation=retrieval_generation+1 WHERE id=?", [
-      space,
-    ]);
+    !(operation.startsWith("transfer.") && operation !== "transfer.committed");
+  // One row update, not two: every UPDATE of memory_spaces also runs its
+  // storage-accounting trigger chain, so a second statement doubled that work
+  // on every memory write.
+  db.run(
+    "UPDATE memory_spaces SET generation=generation+1, retrieval_generation=retrieval_generation+? WHERE id=?",
+    [retrieval ? 1 : 0, space],
+  );
   return Number(row.lastInsertRowid);
 }
 

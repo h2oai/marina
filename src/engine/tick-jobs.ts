@@ -8,6 +8,7 @@ import type { SandboxProviders } from "../coding/sandbox-provider";
 import type { BoardManager } from "../coordination/board-manager";
 import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
+import { proposeUpstreamModelSeeds } from "../learned/upstream-model-seeds";
 import { flushWorkLessons } from "../learning/work";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model/model-api";
@@ -36,6 +37,7 @@ import {
 } from "./constants";
 import type { Engine, EngineConfig } from "./engine";
 import { getErrorMessage, tryLog } from "./errors";
+import { runLivePromotionPass } from "./live-promotion";
 import type { Logger } from "./logger";
 import { backfillAssets } from "./media/asset-library";
 import { engineAssetDescriber, runAssetMemoryPass } from "./media/asset-memory";
@@ -48,7 +50,7 @@ import {
   RETENTION_TICK_PHASE,
   runRetentionPass,
 } from "./retention";
-import type { TickScheduler } from "./tick-scheduler";
+import type { TickScheduleClock, TickScheduler } from "./tick-scheduler";
 
 /** The autonomy pulse cadence (5 minutes, matching readiness's evidence window) in ticks. */
 export const AUTONOMY_PULSE_MS = 5 * 60_000;
@@ -85,8 +87,10 @@ export interface TickJobHost {
 }
 
 /**
- * Declare the periodic maintenance jobs. Every job fires on
- * `tick % every === phase`; the scheduler rejects two jobs sharing a slot.
+ * Declare the periodic maintenance jobs. A short job fires on
+ * `tick % every === phase` (long ones run on wall clock — see
+ * `DURABLE_MIN_EVERY` in tick-scheduler.ts); the scheduler rejects two jobs
+ * sharing a slot.
  * The hourly jobs share a 3600-tick interval but run at DISTINCT phases so
  * they never all land on the same tick — previously board-archive +
  * note-importance + alerts + standing + rank progression all fired together
@@ -94,6 +98,10 @@ export interface TickJobHost {
  * (`db`, managers) are checked when the job runs, not when it is declared.
  */
 export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
+  // Long-interval jobs (every >= DURABLE_MIN_EVERY ticks) run on wall clock:
+  // their last run survives a restart, so an often-restarted install still
+  // runs them (an overdue job is due within DURABLE_SPREAD ticks of boot).
+  s.attachClock(tickScheduleClock(host));
   // Every ~5 minutes of wall clock: snapshot the autonomy numbers so
   // `readiness autonomy` can report a trend, not only the current window.
   const pulseEvery = autonomyPulseTicks(host.config.tickInterval);
@@ -364,8 +372,8 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
-  // Hourly (own phase): lessons from work (MARINA_LESSONS_FROM_WORK, default
-  // off). The aggregated tool-work patterns become judged lessons (on) or a
+  // Hourly (own phase): lessons from work (MARINA_LESSONS_FROM_WORK; unset:
+  // on with a model provider, else observe). The aggregated tool-work patterns become judged lessons (on) or a
   // counts-only log line (observe). Async and self-bounded (MAX_PER_FLUSH,
   // daily spend cap); never overlaps itself.
   s.register({
@@ -448,8 +456,9 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
   });
 
   // Hourly: past-end answers no market settles get a judged resolution
-  // (MARINA_OUTCOME_JUDGE, default off): observe records it; on also settles
-  // when the judge has earned agreement. Bounded and spend-capped.
+  // (MARINA_OUTCOME_JUDGE; unset: on with a model provider, else off): observe
+  // records it; on also settles when the judge has earned agreement. Bounded
+  // and spend-capped.
   s.register({
     name: "outcome-judge",
     every: NOTE_IMPORTANCE_INTERVAL,
@@ -459,6 +468,23 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       if (!host.db) return;
       await judgeOpenResolutions(host.db);
       await judgeWaitingWork(host.db);
+    },
+  });
+
+  // Every 6 h: judge role-model:<role> slots on shared live work. Records
+  // refused attempts and raises one ops-inbox proposal per passing candidate,
+  // and one per withheld upstream model seed; never files a promotion (a
+  // person holding role.edit does that).
+  s.register({
+    name: "live-promotion",
+    every: LIVE_PROMOTION_INTERVAL,
+    phase: LIVE_PROMOTION_PHASE,
+    failureMessage: "Live promotion pass failed",
+    run: () => {
+      if (!host.db) return;
+      runLivePromotionPass(host.db);
+      // Seeds imported before upstream model seeds needed approval get theirs.
+      proposeUpstreamModelSeeds(host.db);
     },
   });
 
@@ -498,6 +524,30 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       if (host.db) backfillMemoryKnownAt(host.db.memoryRepository().raw);
     },
   });
+}
+
+/** `core_memory` owner holding each durable tick job's last run start (ms), keyed by job name. */
+export const TICK_SCHEDULE_OWNER = "tick:schedule";
+
+/** The wall clock + durable store for the tick schedule; reads `host.db` when used, not now. */
+export function tickScheduleClock(
+  host: Pick<TickJobHost, "db" | "config">,
+  now: () => number = Date.now,
+): TickScheduleClock {
+  return {
+    get tickMs() {
+      return host.config.tickInterval;
+    },
+    now,
+    load: (name) => {
+      const raw = host.db?.getCoreMemory(TICK_SCHEDULE_OWNER, name)?.value;
+      const at = raw === undefined ? Number.NaN : Number(raw);
+      return Number.isFinite(at) ? at : undefined;
+    },
+    save: (name, atMs) => {
+      host.db?.setCoreMemory(TICK_SCHEDULE_OWNER, name, String(Math.round(atMs)));
+    },
+  };
 }
 
 /** The known-at backfill's interval (ticks) and phase. */
@@ -546,6 +596,11 @@ export const SCHEDULES_PHASE = 3;
 export const OUTCOME_DELIVERY_INTERVAL = 300;
 /** Its phase within that interval. */
 export const OUTCOME_DELIVERY_PHASE = 150;
+
+/** Ticks between live-promotion passes (src/engine/live-promotion.ts): 6 h at the default tick. */
+export const LIVE_PROMOTION_INTERVAL = 6 * NOTE_IMPORTANCE_INTERVAL;
+/** Its phase within that interval (no other job shares the interval). */
+export const LIVE_PROMOTION_PHASE = 4200;
 
 /** The hourly phase of the lessons-from-work flush (distinct from every other hourly job). */
 export const LESSONS_FROM_WORK_PHASE = 3300;
