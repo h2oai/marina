@@ -497,6 +497,7 @@ export class CodeConsole {
         viewChanged: (view) => this.panels?.setActive(view === "panel"),
         location: `${this.options.connected ? "Server" : "Local"} workspace · ${this.options.root}`,
         statusLine: () => this.liveStatusLine(),
+        status: this.idlePhase(),
         line: (text) => {
           if (!interactive) return;
           void this.submit(text);
@@ -510,8 +511,6 @@ export class CodeConsole {
       });
     }
     if (interactive && this.terminal) this.startLiveStatus();
-    // The terminal starts out "ready"; say what this session really is.
-    if (this.options.noModel) this.updatePrompt();
     if (interactive && !this.options.welcomed) this.write("Type a task in plain words, or /help.");
     if (this.options.connected) {
       this.terminal?.setTarget(`marina:${this.sessionId}`);
