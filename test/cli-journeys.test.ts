@@ -165,6 +165,8 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
     expect(firstScreen).toMatch(/^[╰+][─-]+[╯+]$/m);
     expect(firstScreen).toContain("New session.");
     expect(firstScreen).toContain("Tips for getting started");
+    // The card opens the page; no startup line above it.
+    expect(firstScreen).not.toContain("Starting Marina");
     // Internals stay off the first screen; they are one command away.
     for (const internal of ["WS ·", "Federate", "Flywheel", "Dependencies:", "[C*", "…·…"])
       expect(text).not.toContain(internal);
