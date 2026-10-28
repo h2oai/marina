@@ -96,7 +96,7 @@ export type PageText = ((url: string) => Promise<string | undefined>) & {
   provided?: (url: string) => string | undefined;
 };
 
-const LINK = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
+const LINK = /\[([^\]]*)\]\(((?:https?|corpus):\/\/[^)\s]+)\)/g;
 /** Pages fetched per dossier (provided texts are free and uncapped). */
 const MAX_PAGES = 20;
 /** Pages fetched at once. */
@@ -288,6 +288,10 @@ export async function verifyDossier(
     if (text) {
       pages.set(u, text);
       reads.provided++;
+    } else if (u.startsWith("corpus://")) {
+      // Local corpus evidence must arrive from the authorized retriever. Never
+      // turn a model-supplied corpus URI into a filesystem or network read.
+      reads.failed++;
     } else toFetch.push(u);
   }
   const queue = toFetch.slice(0, MAX_PAGES);

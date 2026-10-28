@@ -242,7 +242,9 @@ export function anthropicRequestToOpenai(raw: Record<string, unknown>): Record<s
 export function mapStopReason(reason: string | null | undefined): string {
   if (reason === "length") return "max_tokens";
   if (reason === "tool_calls" || reason === "function_call") return "tool_use";
-  return "end_turn";
+  if (reason === "stop") return "end_turn";
+  if (reason === "content_filter") return "refusal";
+  throw new Error(`Upstream response has no completed termination (${String(reason)})`);
 }
 
 function errorType(status: number): string {
@@ -272,7 +274,11 @@ export function translateStreamToAnthropic(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
+  const reader = stream.getReader();
   return new ReadableStream({
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
     async start(controller) {
       controller.enqueue(
         encoder.encode(
@@ -297,49 +303,93 @@ export function translateStreamToAnthropic(
         ),
       );
       let buffer = "";
-      let stopReason = "end_turn";
-      const reader = stream.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ") || line === "data: [DONE]") continue;
-          try {
-            const chunk = JSON.parse(line.slice(6)) as {
-              choices?: Array<{ delta?: { content?: unknown }; finish_reason?: string | null }>;
+      let stopReason: string | undefined;
+      let outputTokens = 0;
+      const tools = new Map<number, { index: number; id: string; name: string }>();
+      const emit = (name: string, data: unknown) =>
+        controller.enqueue(encoder.encode(event(name, data)));
+      const consume = (line: string) => {
+        if (!line.startsWith("data:")) return;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") return;
+        const chunk = JSON.parse(payload) as {
+          error?: { message?: string };
+          choices?: Array<{
+            delta?: {
+              content?: unknown;
+              tool_calls?: Array<{
+                index?: number;
+                id?: string;
+                function?: { name?: string; arguments?: string };
+              }>;
             };
-            const choice = chunk.choices?.[0];
-            if (typeof choice?.delta?.content === "string") {
-              controller.enqueue(
-                encoder.encode(
-                  event("content_block_delta", {
-                    type: "content_block_delta",
-                    index: 0,
-                    delta: { type: "text_delta", text: choice.delta.content },
-                  }),
-                ),
-              );
-            }
-            if (choice?.finish_reason) stopReason = mapStopReason(choice.finish_reason);
-          } catch {
-            // Ignore malformed upstream SSE records; the terminal envelope remains well formed.
+            finish_reason?: string | null;
+          }>;
+          usage?: { completion_tokens?: number };
+        };
+        if (chunk.error) throw new Error(chunk.error.message ?? "Upstream stream failed");
+        if (typeof chunk.usage?.completion_tokens === "number")
+          outputTokens = chunk.usage.completion_tokens;
+        const choice = chunk.choices?.[0];
+        if (typeof choice?.delta?.content === "string") {
+          emit("content_block_delta", {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: choice.delta.content },
+          });
+        }
+        for (const call of choice?.delta?.tool_calls ?? []) {
+          const key = call.index ?? 0;
+          let tool = tools.get(key);
+          if (!tool) {
+            if (!call.id || !call.function?.name)
+              throw new Error("Upstream tool stream lacks its id or name");
+            tool = { index: tools.size + 1, id: call.id, name: call.function.name };
+            tools.set(key, tool);
+            emit("content_block_start", {
+              type: "content_block_start",
+              index: tool.index,
+              content_block: { type: "tool_use", id: tool.id, name: tool.name, input: {} },
+            });
+          }
+          if (call.function?.arguments) {
+            emit("content_block_delta", {
+              type: "content_block_delta",
+              index: tool.index,
+              delta: { type: "input_json_delta", partial_json: call.function.arguments },
+            });
           }
         }
+        if (choice?.finish_reason != null) stopReason = mapStopReason(choice.finish_reason);
+      };
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) consume(line);
+        }
+        buffer += decoder.decode();
+        if (buffer.trim()) consume(buffer);
+        if (!stopReason) throw new Error("Upstream stream ended without a finish reason");
+        emit("content_block_stop", { type: "content_block_stop", index: 0 });
+        for (const tool of tools.values())
+          emit("content_block_stop", { type: "content_block_stop", index: tool.index });
+        emit("message_delta", {
+          type: "message_delta",
+          delta: { stop_reason: stopReason, stop_sequence: null },
+          usage: { output_tokens: outputTokens },
+        });
+        emit("message_stop", { type: "message_stop" });
+      } finally {
+        try {
+          await reader.cancel();
+        } finally {
+          reader.releaseLock();
+        }
       }
-      controller.enqueue(
-        encoder.encode(
-          event("content_block_stop", { type: "content_block_stop", index: 0 }) +
-            event("message_delta", {
-              type: "message_delta",
-              delta: { stop_reason: stopReason, stop_sequence: null },
-              usage: { output_tokens: 0 },
-            }) +
-            event("message_stop", { type: "message_stop" }),
-        ),
-      );
       controller.close();
     },
   });
@@ -395,16 +445,27 @@ export async function handleAnthropicMessages(
     usage?: { prompt_tokens?: number; completion_tokens?: number };
   };
   const choice = data.choices?.[0];
+  let stopReason: string;
+  try {
+    stopReason = mapStopReason(choice?.finish_reason);
+  } catch {
+    return errorResponse(502, "Upstream response has no completed termination");
+  }
   const content: unknown[] = [];
   if (typeof choice?.message?.content === "string" && choice.message.content) {
     content.push({ type: "text", text: choice.message.content });
   }
   for (const call of choice?.message?.tool_calls ?? []) {
-    let input: unknown = {};
+    let input: unknown;
     try {
-      input = JSON.parse(call.function?.arguments ?? "{}");
+      input = JSON.parse(call.function?.arguments ?? "");
+      if (!input || typeof input !== "object" || Array.isArray(input))
+        throw new Error("Tool input must be an object");
     } catch {
-      input = {};
+      return errorResponse(
+        502,
+        `Upstream tool arguments are incomplete or invalid (${String(choice?.finish_reason)})`,
+      );
     }
     content.push({
       type: "tool_use",
@@ -420,7 +481,7 @@ export async function handleAnthropicMessages(
       role: "assistant",
       model,
       content,
-      stop_reason: mapStopReason(choice?.finish_reason),
+      stop_reason: stopReason,
       stop_sequence: null,
       usage: {
         input_tokens: data.usage?.prompt_tokens ?? 0,

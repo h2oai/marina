@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { decideVerify } from "../src/decisions/policy";
 import { decisionVerifyMode, TASK_VERIFY_QUESTIONS } from "../src/decisions/verify";
 import { Engine } from "../src/engine/engine";
+import { judgeWaitingWork, QUALITY_GRACE_MS } from "../src/outcomes/judge-quality";
 import { MarinaDB } from "../src/persistence/database";
 import type { EngineEvent } from "../src/types";
 import { roomId } from "../src/types";
@@ -153,6 +154,40 @@ describe("task submit verifier", () => {
       expect(events.filter((e) => e.type === "agent_decision")).toHaveLength(1);
     },
   );
+
+  it("drains a late submission verifier without duplicating the periodic judge's opinion", async () => {
+    process.env.MARINA_DECISION_VERIFY = "observe";
+    responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
+    const id = claimTask();
+    await engine.dispatchCommand(bob.entity!, `task submit ${id} Mapped the east sectors`);
+    await until(() => asked.length === 1);
+    const submittedAt = engine.taskManager!.getClaim(Number(id), bob.entity!)!.submittedAt!;
+    await judgeWaitingWork(db, {
+      env: { MARINA_OUTCOME_JUDGE: "observe", MARINA_DAILY_SPEND_CAP_USD: "off" },
+      now: () => submittedAt + QUALITY_GRACE_MS + 1,
+      judge: {
+        kind: "fixture",
+        model: "periodic",
+        async ask() {
+          return {
+            answers: { complete: { type: "noul", noul: 0.9 } },
+            model: "periodic",
+            provider: "fixture",
+            latencyMs: 0,
+          };
+        },
+      },
+    });
+    const first = db.listOutcomes({ basis: "judged" });
+    expect(first).toHaveLength(1);
+    releaseResponse!();
+    await engine.shutdown();
+    expect(db.listJudgeObservations()).toHaveLength(1);
+    expect(db.listOutcomes({ basis: "judged" })).toEqual(first);
+    expect(db.outcomeDeliveries(first[0]!.id)).toEqual([]);
+  });
 
   it("bounces a below-the-bar first submission once, then records the second as is", async () => {
     quality = 0.5;

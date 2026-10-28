@@ -41,6 +41,11 @@
 
 import { MarinaAgent, type Perception } from "../client";
 import { extractChannelPayload, type Message, perceptionsToText } from "./_shared";
+import {
+  providerOutputField,
+  providerOutputTokens,
+  requireProviderAnswer,
+} from "./provider-output";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
 const AGENT_NAME = process.env.AGENT_NAME ?? "SmartProvider";
@@ -172,12 +177,20 @@ PRINCIPLE:`;
   const resp = await fetch(`${REFLECTION_PROVIDER_URL}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: REFLECTION_PROVIDER_MODEL, messages, temperature: 0 }),
+    body: JSON.stringify({
+      model: REFLECTION_PROVIDER_MODEL,
+      ...providerOutputField(REFLECTION_PROVIDER_URL),
+      messages,
+      temperature: 0,
+    }),
   });
   if (!resp.ok) {
     throw new Error(`Reflection ${resp.status}`);
   }
-  const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const data = (await resp.json()) as {
+    choices?: Array<{ finish_reason?: unknown; message?: { content?: string } }>;
+  };
+  requireProviderAnswer(data.choices?.[0]?.finish_reason);
   const text = data.choices?.[0]?.message?.content ?? "";
   return text.trim().split(/\n+/)[0]?.slice(0, 500) ?? "";
 }
@@ -225,7 +238,7 @@ async function callProvider(messages: Message[]): Promise<string> {
       },
       body: JSON.stringify({
         model: PROVIDER_MODEL,
-        max_tokens: 4096,
+        max_tokens: providerOutputTokens(),
         temperature: 0,
         ...(systemMsgs.length > 0 ? { system: systemMsgs.join("\n\n") } : {}),
         messages: nonSystem.map((m) => ({ role: m.role, content: m.content })),
@@ -236,7 +249,11 @@ async function callProvider(messages: Message[]): Promise<string> {
       const body = await resp.text().catch(() => "");
       throw new Error(`Provider ${resp.status}: ${body.slice(0, 200)}`);
     }
-    const data = (await resp.json()) as { content?: Array<{ type: string; text?: string }> };
+    const data = (await resp.json()) as {
+      stop_reason?: unknown;
+      content?: Array<{ type: string; text?: string }>;
+    };
+    requireProviderAnswer(data.stop_reason);
     return (data.content ?? [])
       .filter((b) => b.type === "text")
       .map((b) => b.text ?? "")
@@ -250,14 +267,22 @@ async function callProvider(messages: Message[]): Promise<string> {
   const resp = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify({ model: PROVIDER_MODEL, messages, temperature: 0 }),
+    body: JSON.stringify({
+      model: PROVIDER_MODEL,
+      ...providerOutputField(PROVIDER_URL),
+      messages,
+      temperature: 0,
+    }),
   });
   if (!resp.ok) {
     // allow-empty-catch: the error body is optional detail; the status is reported regardless
     const body = await resp.text().catch(() => "");
     throw new Error(`Provider ${resp.status}: ${body.slice(0, 200)}`);
   }
-  const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const data = (await resp.json()) as {
+    choices?: Array<{ finish_reason?: unknown; message?: { content?: string } }>;
+  };
+  requireProviderAnswer(data.choices?.[0]?.finish_reason);
   return data.choices?.[0]?.message?.content ?? "";
 }
 

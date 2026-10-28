@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { BoardManager } from "../../coordination/board-manager";
 import { dim, error as fmtError, header, separator, success } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import { assetMimeForFile } from "../../storage/asset-mime";
@@ -10,6 +11,7 @@ import { refuseCommand } from "../command-response";
 import { ingestAsset } from "../media/asset-library";
 import { rankFloorRefusal } from "../rank-floor";
 import type { ShellRuntime } from "../shell-runtime";
+import { boardRefusal } from "./board";
 import { requiresPersistence } from "./command-messages";
 
 /** Editing the allowlist decides what `run`/`shell` may execute: a path into the core. */
@@ -338,9 +340,20 @@ async function handleSave(
         refuseCommand(ctx, eid, "Usage: shell save board <board_name> [title]");
         return;
       }
-      const board = db.getBoard(boardName);
+      const boards = new BoardManager(db);
+      const board = boards.getBoardByName(boardName) ?? boards.getBoard(boardName);
       if (!board) {
         refuseCommand(ctx, eid, `Board "${boardName}" not found.`);
+        return;
+      }
+      const refusal = boardRefusal(
+        entity,
+        board,
+        "write",
+        (group, member) => !!db.getGroupMember(group, member),
+      );
+      if (refusal) {
+        ctx.send(eid, refusal.message);
         return;
       }
       const postId = db.createBoardPost({

@@ -64,6 +64,7 @@ import { workScopeFor } from "../learning/work";
 import type { MarinaDB } from "../persistence/database";
 import type { ForecastAnswerRow } from "../persistence/db-markets";
 import { AGGREGATING_REASON, type OutcomeRow } from "../persistence/db-outcomes";
+import { outcomeLearningJournal } from "./journal";
 import { consumersFor, OUTCOME_CONSUMERS } from "./record";
 
 const logger = new Logger();
@@ -567,6 +568,7 @@ async function deliverAggregates(
   tally: () => DeliveryReport,
   now: number,
   pass: PassState,
+  signal: AbortSignal,
 ): Promise<void> {
   db.releaseStaleOutcomeClaims("lessons", now - AGGREGATE_CLAIM_TTL_MS, now);
   const groups = new Map<
@@ -586,6 +588,7 @@ async function deliverAggregates(
     groups.set(key, g);
   }
   for (const [key, g] of groups) {
+    if (signal.aborted) break;
     const ready = aggregateReady(g.rows, now);
     if (!ready) continue;
     const t = tally();
@@ -620,9 +623,10 @@ async function deliverAggregates(
       };
       try {
         const r = await recordOutcome(
-          { ...depsFor(db, g.target, learner.deps), deferUnjudged: true },
+          { ...depsFor(db, g.target, learner.deps), deferUnjudged: true, signal },
           aggregateOutcome(db, rows, ready === "stale" ? { stale: true } : {}),
         );
+        if (signal.aborted) break;
         if (r.deferred && r.unavailable?.transient) {
           // An outage: the group waits (claims replaced), no attempt spent,
           // and the rest of the pass makes no further model calls.
@@ -641,6 +645,7 @@ async function deliverAggregates(
             t.done++;
           }
       } catch (err) {
+        if (signal.aborted) break;
         retry(String(err));
       }
     } finally {
@@ -742,10 +747,57 @@ const capReason = (refusal: string) => refusal.split(";")[0]!.trim();
  * One delivery pass over pending outcomes (at most `max` per consumer).
  * Safe to run concurrently with producers; each delivery settles once.
  */
-export async function deliverOutcomes(
+const deliveryControllers = new WeakMap<MarinaDB, AbortController>();
+
+/** Stop queued work and cancel between learner stages during bounded shutdown. */
+export function abortDelivery(db: MarinaDB): void {
+  deliveryControllers.get(db)?.abort();
+}
+
+const deliveryPasses = new WeakMap<MarinaDB, Promise<Record<string, DeliveryReport>>>();
+
+export function deliverOutcomes(
   db: MarinaDB,
   opts: { env?: NodeJS.ProcessEnv; max?: number; now?: number } = {},
 ): Promise<Record<string, DeliveryReport>> {
+  // Producers, periodic jobs and explicit retries share this serialization.
+  // Each queued pass reads pending rows only after its predecessor settles.
+  const previous = deliveryPasses.get(db);
+  const ready = previous
+    ? previous.then(
+        () => undefined,
+        () => undefined,
+      )
+    : Promise.resolve();
+  const run = ready.then(() => deliverPass(db, opts));
+  deliveryPasses.set(db, run);
+  const clear = () => {
+    if (deliveryPasses.get(db) === run) deliveryPasses.delete(db);
+  };
+  void run.then(clear, clear);
+  return run;
+}
+
+/** Wait for every producer, tick and explicit delivery already queued for this database. */
+export async function settleDeliveryPasses(db: MarinaDB): Promise<void> {
+  for (let run = deliveryPasses.get(db); run; run = deliveryPasses.get(db)) await run;
+}
+
+export function deliveryPending(db: MarinaDB): boolean {
+  return deliveryPasses.has(db);
+}
+
+async function deliverPass(
+  db: MarinaDB,
+  opts: { env?: NodeJS.ProcessEnv; max?: number; now?: number } = {},
+): Promise<Record<string, DeliveryReport>> {
+  let controller = deliveryControllers.get(db);
+  if (!controller) {
+    controller = new AbortController();
+    deliveryControllers.set(db, controller);
+  }
+  const signal = controller.signal;
+  if (signal.aborted) return {};
   const env = opts.env ?? process.env;
   const max = Math.max(1, opts.max ?? 50);
   const now = opts.now ?? Date.now();
@@ -759,6 +811,7 @@ export async function deliverOutcomes(
   // History: no history configured ⇒ nothing to write (skipped, with the reason).
   const history = historyFromEnv(env);
   for (const o of db.pendingOutcomes("history", max)) {
+    if (signal.aborted) break;
     const t = tally("history");
     if (o.kind === "forecast" && db.isPrivateForecast(forecastId(o.subject) ?? -1)) {
       db.setOutcomeDelivery(o.id, "history", "skipped", "private investigation");
@@ -785,6 +838,7 @@ export async function deliverOutcomes(
     }
     try {
       const state = await deliverHistory(db, o, history);
+      if (signal.aborted) break;
       db.setOutcomeDelivery(
         o.id,
         "history",
@@ -793,6 +847,7 @@ export async function deliverOutcomes(
       );
       t[state]++;
     } catch (err) {
+      if (signal.aborted) break;
       t[retryOrFail(db, o, "history", String(err))]++;
     }
   }
@@ -800,6 +855,7 @@ export async function deliverOutcomes(
   // Lessons: off ⇒ skipped; not armed (a script that never armed it) ⇒ wait.
   const lessonsOff = lessonsMode(env) === "off";
   const learner = lessonsOff ? undefined : armedLearner(db, env);
+  if (signal.aborted) return report;
   // Deliveries a past outage ended `failed` get another chance first.
   if (learner) reopenTransientFailures(db, { now });
   // Nothing can be learned this pass: no model provider, or the daily spend
@@ -815,6 +871,7 @@ export async function deliverOutcomes(
   // so they never crowd single outcomes out of a pass.
   const pending = db.pendingOutcomes("lessons", max, lessonsOff ? {} : { aggregating: false });
   for (const o of pending) {
+    if (signal.aborted) break;
     const t = tally("lessons");
     if (o.kind === "forecast" && db.isPrivateForecast(forecastId(o.subject) ?? -1)) {
       db.setOutcomeDelivery(o.id, "lessons", "skipped", "private investigation");
@@ -854,16 +911,32 @@ export async function deliverOutcomes(
       t.waiting++;
       continue;
     }
-    // One unit of the shared hourly budget per judged lesson; over it, wait.
-    if (learner.take(1) === 0) {
-      t.waiting++;
-      continue;
-    }
     try {
+      const deps = depsFor(db, target, learner.deps);
+      const journal = deps.sink.withJournal ? outcomeLearningJournal(db, o.id) : undefined;
+      const judged = journal?.has("verdict") || journal?.has("complete");
+      if (!learner.deps.judge && !judged) {
+        db.setOutcomeDelivery(
+          o.id,
+          "lessons",
+          "pending",
+          "no verdict: no decision backend",
+          undefined,
+          false,
+        );
+        t.waiting++;
+        continue;
+      }
+      // One unit of the shared hourly budget per judged lesson; over it, wait.
+      if (!judged && learner.take(1) === 0) {
+        t.waiting++;
+        continue;
+      }
       const r = await recordOutcome(
-        { ...depsFor(db, target, learner.deps), deferUnjudged: true },
+        { ...deps, deferUnjudged: true, signal, ...(journal ? { journal } : {}) },
         lessonOutcome(db, o),
       );
+      if (signal.aborted) break;
       if (r.deferred && r.unavailable?.transient) {
         // An outage, not this outcome's fault: wait without spending an
         // attempt, and make no further model calls this pass.
@@ -876,10 +949,22 @@ export async function deliverOutcomes(
         t.done++;
       }
     } catch (err) {
+      if (signal.aborted) break;
+      if ((err as { code?: string })?.code === "version_conflict") {
+        db.setOutcomeDelivery(
+          o.id,
+          "lessons",
+          "failed",
+          "needs review: admission target changed after the durable plan; no automatic rebase",
+        );
+        t.failed++;
+        continue;
+      }
       t[retryOrFail(db, o, "lessons", String(err))]++;
     }
   }
-  if (learner) await deliverAggregates(db, learner, () => tally("lessons"), now, pass);
+  if (learner && !signal.aborted)
+    await deliverAggregates(db, learner, () => tally("lessons"), now, pass, signal);
   if (report.lessons?.failed || report.history?.failed)
     logger.warn("main", "some outcome deliveries failed", { report });
   return report;

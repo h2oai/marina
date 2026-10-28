@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Database } from "bun:sqlite";
 /** Explicitly opt-in, bounded pilot using the production executor and HTTP/SDK/CLI paths.
  * Dry run prints the concrete plan; --live permits paid work. Never opens an existing DB.
  * bun scripts/qualify-investigations-live.ts --model openai/MODEL --budget-usd 2 [--live]
@@ -76,6 +78,11 @@ for (const key of Object.keys(process.env)) {
     delete process.env[key];
 }
 Object.assign(process.env, {
+  MARINA_DEFAULT_MODEL: model,
+  MARINA_RESEARCH_LOOP_MODEL: model,
+  MARINA_READ_SWARM_READER: model,
+  MARINA_MODEL_TIER_CHEAP: model,
+  MARINA_MODEL_TIER_STRONG: model,
   MARINA_FORECAST_ANALYSTS: model,
   MARINA_FORECAST_PLANNER: model,
   MARINA_FORECAST_RETRIEVER: plan.retriever,
@@ -246,7 +253,14 @@ try {
     );
     await assert.rejects(intruder.get(snapshot.case.id));
     const page = await client.events(snapshot.attempt.id);
-    assert(page.events.some((event) => event.kind === "stage_completed" && event.actor === model));
+    assert(
+      page.events.some(
+        (event) =>
+          event.kind === "stage_completed" &&
+          [model, model.replace(/^openrouter\//, "")].includes(event.actor ?? ""),
+      ),
+      "Model stage receipt must name the requested provider model",
+    );
     const captured = page.events.find((event) => event.outputId)?.outputId;
     assert(captured);
     await client.content(captured);
@@ -286,7 +300,7 @@ try {
   report.passed = true;
 } catch (error) {
   report.passed = false;
-  report.error = error instanceof Error ? error.message : String(error);
+  report.error = error instanceof Error ? (error.stack ?? error.message) : String(error);
   process.exitCode = 1;
 } finally {
   for (const id of ids) {
@@ -295,7 +309,21 @@ try {
     await service.wait(id);
   }
   report.knownSpendUsd = spentTodayUsd();
-  report.accountingComplete = false;
+  const receiptDb = new Database(dbPath, { readonly: true });
+  const receipts = receiptDb
+    .query("SELECT * FROM investigation_spend_receipts ORDER BY created_at,id")
+    .all() as Array<{ state: string; usd: number | null }>;
+  receiptDb.close();
+  report.receipts = receipts;
+  report.pricedReceiptUsd = receipts.reduce(
+    (sum, r) => sum + (r.state === "priced" ? (r.usd ?? 0) : 0),
+    0,
+  );
+  report.accountingComplete =
+    receipts.every((r) => r.state === "priced") &&
+    (report.cases as Array<{ attempt: { accounting: { complete: boolean } } }>).every(
+      (r) => r.attempt.accounting.complete,
+    );
   await server.stop(true);
   service.close();
   await engine.shutdown();

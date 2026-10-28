@@ -72,15 +72,15 @@ describe("anthropicThinking", () => {
     });
   });
 
-  test("a client cap clamps the budget to leave MIN_ANSWER_TOKENS; a tiny cap does not shrink it", () => {
+  test("a client cap bounds thinking while leaving answer space", () => {
     expect(anthropicThinking({ reasoning_effort: "high" }, 8000)).toEqual({
       type: "enabled",
       budget_tokens: 8000 - MIN_ANSWER_TOKENS,
     });
-    // 1500 - 1024 < 1024: the caller raises max_tokens instead.
+    // Preserve a small explicit ceiling and reserve at least one answer token.
     expect(anthropicThinking({ reasoning_effort: "high" }, 1500)).toEqual({
       type: "enabled",
-      budget_tokens: 16384,
+      budget_tokens: 1024,
     });
   });
 });
@@ -110,14 +110,14 @@ describe("buildAnthropicRequest with thinking", () => {
     expect(req.stream).toBe(true);
   });
 
-  test("a too-small explicit cap is raised above the budget rather than truncating thinking", () => {
+  test("a small explicit cap is preserved with the minimum thinking budget", () => {
     const req = buildAnthropicRequest(
       { ...base, reasoning_effort: "low", max_completion_tokens: 1200 },
       "claude-sonnet-4-5",
       false,
     );
-    expect(req.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
-    expect(req.max_tokens).toBe(2048 + MIN_ANSWER_TOKENS);
+    expect(req.thinking).toEqual({ type: "enabled", budget_tokens: 1024 });
+    expect(req.max_tokens).toBe(1200);
   });
 
   test("Claude 5 thinks adaptively: effort in output_config, never a budget", () => {
@@ -177,6 +177,6 @@ describe("buildAnthropicRequest with thinking", () => {
     );
     expect(req).not.toHaveProperty("thinking");
     expect(req.temperature).toBe(0.4);
-    expect(req.max_tokens).toBe(4096);
+    expect(req.max_tokens).toBe(16384);
   });
 });

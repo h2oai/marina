@@ -200,6 +200,7 @@ learning instead of losing it.
       `MAX_DELIVERY_ATTEMPTS` it ends `failed`, with the reason and its kind.
     - Each pass re-opens up to `REOPEN_SCAN` `failed` deliveries whose recorded reason was a
       transient cause (`reopenTransientFailures`; idempotent): back to `pending`, attempts reset.
+    - Pending rows rotate by last attempt so unavailable work cannot starve new outcomes.
   - `history`: one `MARINA_FORECAST_HISTORY` record (`noteResolvedForecast` or
     `noteResolvedRecord`):
     - a typed answer's pre-adjustment forecast and prior;

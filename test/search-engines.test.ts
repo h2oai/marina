@@ -59,6 +59,7 @@ function orReply(usage: Record<string, unknown> = { cost: 0.002 }): Response {
   return Response.json({
     choices: [
       {
+        finish_reason: "stop",
         message: {
           content: "- D+3 [p](https://polls.example/a)",
           annotations: [{ url_citation: { url: "https://polls.example/a", title: "p" } }],

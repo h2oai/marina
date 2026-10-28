@@ -1,6 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  configuredOutputTokens,
+  defaultOutputTokens,
+  requireFinishedOutput,
+} from "../model/output";
+import { checkOutputPayload } from "../model/output-payload";
 import { localWsPort } from "../net/listen-ports";
 import { receiptForUnifiedContext } from "../net/memory/memory-receipt";
 import {
@@ -607,11 +613,6 @@ export function grownPromptTimeoutMs(current: number, explicit: boolean): number
   if (explicit || current >= MAX_PROMPT_TIMEOUT_MS) return undefined;
   return Math.min(MAX_PROMPT_TIMEOUT_MS, current * 2);
 }
-
-/** Output cap for the one re-encoding shot of an owed-reply salvage (`output-repair`). */
-const REPAIR_SHOT_MAX_TOKENS = 2048;
-/** Output cap for an obligations-ledger call (extraction / judging; room for thinking). */
-const OBLIGATIONS_CALL_MAX_TOKENS = 2000;
 
 /**
  * Backstop poll while the world connection is down. A reconnect wakes the
@@ -1347,6 +1348,7 @@ export class LeanAgentAdapter implements AgentHandle {
    * override). Recomputed on a model change.
    */
   private outputMaxTokens: number | undefined;
+  private explicitOutputCap = false;
   /**
    * Ceiling an AUTOMATIC output cap may grow to after a turn ended on its
    * length limit without a tool call (`grownOutputCap`). Undefined when the cap
@@ -1932,7 +1934,20 @@ export class LeanAgentAdapter implements AgentHandle {
             maxTokens,
             signal,
             maxRetries: PROVIDER_MAX_RETRIES,
-            onPayload: (payload) => disableReasoningPayload(payload, model),
+            onPayload: (payload) => {
+              const shaped = disableReasoningPayload(payload, model) ?? payload;
+              checkOutputPayload(
+                shaped,
+                maxTokens,
+                !!process.env.MARINA_AGENT_COMPACTION_MAX_TOKENS?.trim(),
+                (detail) =>
+                  this.log.warn(LEAN_AGENT_LOG_CATEGORY, detail, {
+                    agent: this.name,
+                    purpose: "compaction",
+                  }),
+              );
+              return shaped;
+            },
             // Keep auxiliary accounting separate from a concurrent agent turn.
             fetch: (async (input, init) => {
               const response = await upstream(input, init);
@@ -1983,7 +1998,7 @@ export class LeanAgentAdapter implements AgentHandle {
         )
           // The disable was refused: once more at a low, excluded effort.
           result = await ask();
-        if (result.stopReason === "error" || result.stopReason === "aborted") return undefined;
+        if (result.stopReason !== "stop") return undefined;
 
         const text = Array.isArray(result.content)
           ? result.content
@@ -2178,11 +2193,13 @@ export class LeanAgentAdapter implements AgentHandle {
         this.loadCalledDeferredTool(context.toolCall.name);
         // Providers may return parseable partial tool arguments at the output
         // limit. Never execute that unfinished request (especially a write).
-        if (context.assistantMessage?.stopReason === "length") {
+        if (
+          context.assistantMessage &&
+          !["stop", "toolUse"].includes(context.assistantMessage.stopReason)
+        ) {
           return {
             block: true,
-            reason:
-              "The model output limit interrupted this tool request; it did not execute. Retry with a smaller, complete call and a surgical edit.",
+            reason: `The model turn ended with ${context.assistantMessage.stopReason}; this unfinished tool request did not execute. Retry a complete call, using a surgical edit for large files.`,
           };
         }
         // A coding task at its budget's final-answer point: only submit or report.
@@ -3646,7 +3663,9 @@ export class LeanAgentAdapter implements AgentHandle {
     // A synthesized proxy's maxTokens is our default, not a provider ceiling.
     const automaticCeiling = Math.min(
       Math.floor(this.model.contextWindow / 2),
-      isMarinaProxyModel(this.model) ? Number.POSITIVE_INFINITY : this.model.maxTokens,
+      isMarinaProxyModel(this.model) || classifyModelResolution(modelStr) === "synthesized"
+        ? Number.POSITIVE_INFINITY
+        : this.model.maxTokens,
     );
     // A model that may reason without being asked (any OpenRouter route, an id
     // the registry does not know, or a registry reasoning model with thinking
@@ -3655,6 +3674,7 @@ export class LeanAgentAdapter implements AgentHandle {
     const mayReasonUnasked =
       thinkingBudget === 0 &&
       ((this.model.reasoning && !anthropicDisablesThinking(this.model)) ||
+        isMarinaProxyModel(this.model) ||
         isOpenRouterModel(this.model) ||
         isHostedProvider(provider) ||
         classifyModelResolution(modelStr) === "synthesized");
@@ -3671,6 +3691,7 @@ export class LeanAgentAdapter implements AgentHandle {
         : this.config.toolProfile === "crew"
           ? compactOverride
           : defaultOverride;
+    this.explicitOutputCap = configCap !== undefined || envCap !== undefined;
     this.outputMaxTokens =
       configCap ??
       (isLocal
@@ -3679,7 +3700,7 @@ export class LeanAgentAdapter implements AgentHandle {
           ? (crewOverride ?? cloudDefault(2048))
           : this.config.toolProfile === "crew"
             ? (compactOverride ?? cloudDefault(4096))
-            : defaultOverride);
+            : (defaultOverride ?? Math.min(defaultOutputTokens(), automaticCeiling)));
     // Only an automatic cap may grow after a length-limited silent turn; an
     // operator's explicit cap (config or env) is never overridden.
     this.outputCapCeiling =
@@ -3717,7 +3738,7 @@ export class LeanAgentAdapter implements AgentHandle {
     const before = this.outputMaxTokens;
     this.outputMaxTokens = next;
     this.model = { ...this.model, maxTokens: next } as Model<Api>;
-    const reason = `output cap ${before} reached before any tool call [${this.model.id}] — cap → ${next}`;
+    const reason = `output cap ${before} reached before the turn completed [${this.model.id}] — cap → ${next}`;
     this.log.warn(LEAN_AGENT_LOG_CATEGORY, reason, { agent: this.name });
     this.emitEvent({ type: "error", error: reason, context: "output_cap" });
     return next;
@@ -3733,6 +3754,7 @@ export class LeanAgentAdapter implements AgentHandle {
    * wrong caller. Returns true when a reply was delivered.
    */
   private async salvageOwedModelReply(message: unknown): Promise<boolean> {
+    if ((message as { stopReason?: unknown } | undefined)?.stopReason !== "stop") return false;
     const mode = outputRepairMode();
     if (mode === "off") return false;
     const owed = this.outstandingRequests
@@ -3764,10 +3786,10 @@ export class LeanAgentAdapter implements AgentHandle {
           systemPrompt: system,
           messages: [{ role: "user", content: user, timestamp: Date.now() }] as Message[],
         },
-        { apiKey: routed.apiKey, maxTokens: REPAIR_SHOT_MAX_TOKENS },
+        { apiKey: routed.apiKey, ...this.auxiliaryOutputOptions() },
       );
       this.recordTurnUsage(extractTurnUsage(result), Date.now());
-      if (result.stopReason === "error") throw new Error(result.errorMessage ?? "repair failed");
+      requireFinishedOutput(result.stopReason, "Answer repair");
       return result.content
         .filter((b): b is TextContent => b.type === "text")
         .map((b) => b.text)
@@ -4345,7 +4367,7 @@ export class LeanAgentAdapter implements AgentHandle {
         );
         if (trustedEvents.some((p) => p.text.includes('"type":"model_request"'))) {
           parts.push(
-            "[ENDPOINT REQUEST — RESPONSE REQUIRED]\nAnswer the model_request now. Your prose is not delivered to the caller. Use `marina_channel` to send a JSON `model_response` on the same model channel with the exact request `id`, or delegate with `marina_tell` and then send that response. Emit the tool call in this turn.",
+            "[ENDPOINT REQUEST — RESPONSE REQUIRED]\nAnswer the model_request now. Your prose is not delivered to the caller. Use `marina_channel` to send a JSON `model_response` on the same model channel with the exact request `id` and a string `content` containing your answer. If the requested answer is JSON, encode that entire JSON object as the `content` string; do not put answer fields at the envelope top level. You may also delegate with `marina_tell` and then send that response. Emit the tool call in this turn.",
             MANDATORY_SECTION_PRIORITY,
             "endpoint_request",
           );
@@ -5419,6 +5441,16 @@ export class LeanAgentAdapter implements AgentHandle {
       ...(this.providerFetch ? { fetch: this.providerFetch } : {}),
       maxTokens: 1,
       maxRetries: 0,
+      onPayload: async (payload, model) => {
+        const shaped = (await request.options?.onPayload?.(payload, model)) ?? payload;
+        checkOutputPayload(shaped, 1, false, (detail) =>
+          this.log.warn(LEAN_AGENT_LOG_CATEGORY, detail, {
+            agent: this.name,
+            purpose: "cache-keepalive",
+          }),
+        );
+        return shaped;
+      },
     });
     const usage = extractTurnUsage(result);
     const cost = usage.costUsd ?? 0;
@@ -5696,7 +5728,7 @@ export class LeanAgentAdapter implements AgentHandle {
           this.currentRunToolCalls === 0 &&
           this.currentPromptActionable &&
           !deliberateRest;
-        if (quietTurn) this.growOutputCapAfterLengthStop(event.message);
+        this.growOutputCapAfterLengthStop(event.message);
         if (quietTurn && !silent) {
           // The run's natural end (after tool calls), a deliberate quiet turn
           // with nothing owed, or declared rest: no silent-turn counter, no
@@ -6155,6 +6187,14 @@ export class LeanAgentAdapter implements AgentHandle {
     const base: SimpleStreamOptions = {
       ...options,
       maxRetries: PROVIDER_MAX_RETRIES,
+      onPayload: async (payload, sentModel) => {
+        const shaped = (await options?.onPayload?.(payload, sentModel)) ?? payload;
+        if (this.outputMaxTokens)
+          checkOutputPayload(shaped, this.outputMaxTokens, this.explicitOutputCap, (detail) => {
+            this.log.warn(LEAN_AGENT_LOG_CATEGORY, detail, { agent: this.name, model: model.id });
+          });
+        return shaped;
+      },
       ...(this.outputMaxTokens ? { maxTokens: this.outputMaxTokens } : {}),
     };
     const proxied = isMarinaProxyModel(model);
@@ -6449,6 +6489,25 @@ export class LeanAgentAdapter implements AgentHandle {
     }
   }
 
+  /** Repair and obligations share the same explicit ceiling as the agent's main loop. */
+  private auxiliaryOutputOptions(): SimpleStreamOptions {
+    const maxTokens =
+      this.explicitOutputCap && this.outputMaxTokens ? this.outputMaxTokens : defaultOutputTokens();
+    const explicit = this.explicitOutputCap || configuredOutputTokens() !== undefined;
+    return {
+      maxTokens,
+      ...(this.providerFetch ? { fetch: this.providerFetch } : {}),
+      onPayload: (payload) => {
+        checkOutputPayload(payload, maxTokens, explicit, (detail) =>
+          this.log.warn(LEAN_AGENT_LOG_CATEGORY, detail, {
+            agent: this.name,
+            purpose: "auxiliary",
+          }),
+        );
+      },
+    };
+  }
+
   /** One obligations-ledger completion on the agent's own model (spend recorded like a turn). */
   private async obligationsComplete(system: string, user: string): Promise<string> {
     const routed = await this.routeFor(this.model, await this.resolveKeyNow());
@@ -6463,12 +6522,11 @@ export class LeanAgentAdapter implements AgentHandle {
         systemPrompt: system,
         messages: [{ role: "user", content: user, timestamp: Date.now() }] as Message[],
       },
-      { apiKey: routed.apiKey, maxTokens: OBLIGATIONS_CALL_MAX_TOKENS },
+      { apiKey: routed.apiKey, ...this.auxiliaryOutputOptions() },
     );
     // A loopback `marina/*` model's spend was recorded by the passthru already.
     if (!isMarinaProxyModel(routed.model)) recordSpend("agent", extractTurnUsage(result).costUsd);
-    if (result.stopReason === "error")
-      throw new Error(result.errorMessage ?? "obligations call failed");
+    requireFinishedOutput(result.stopReason, "Obligations");
     return result.content
       .filter((b): b is TextContent => b.type === "text")
       .map((b) => b.text)

@@ -50,7 +50,7 @@ export function imageCommand(engine: Engine): CommandDef {
         return;
       }
       if (sub === "describe" || sub === "look") {
-        const who = ctx.findEntity(input.entity);
+        const who = engine.entities.get(input.entity);
         sendLookReply(
           ctx,
           input.entity,
@@ -85,7 +85,7 @@ export function imageCommand(engine: Engine): CommandDef {
         return;
       }
 
-      const entity = ctx.findEntity(input.entity);
+      const entity = engine.entities.get(input.entity);
       if (!entity) {
         ctx.send(input.entity, "Couldn't find you in this space — reconnect and retry.");
         return;

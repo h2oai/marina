@@ -1,7 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { resolveEvidence } from "../../decisions/evidence";
+import { TaskWork } from "../../coordination/task-work";
+import { resolveEvidence, resolveEvidenceSource } from "../../decisions/evidence";
 import { judgeEarned } from "../../decisions/judges";
 import { approachAdvice } from "../../forecast/competence";
 import { recordVerifierOpinion } from "../../outcomes/live";
@@ -312,6 +313,17 @@ export function registerCoordinationCommands(engine: Engine): void {
         (work) => engine.trackBackground(work),
         () => (engine.db ? approachAdvice(engine.db, "work:task") : undefined),
         (evaluator) => !!engine.db && judgeEarned(engine.db, "verify", evaluator),
+        engine.db
+          ? new TaskWork(engine.db, (actor, ref) =>
+              resolveEvidenceSource(engine.db!, actor, ref, {
+                canvas: {
+                  db: engine.db!,
+                  entities: { get: (id: never) => engine.entities.get(id) },
+                  canvasGrants: engine.canvasGrants,
+                },
+              }),
+            )
+          : undefined,
       ),
     );
   }

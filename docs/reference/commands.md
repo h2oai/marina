@@ -7335,12 +7335,6 @@ Institutional pools (guide, orchestration:*, tradition:*): on a shared instance 
 Category: Memory. Minimum rank: 0.
 Aliases: none.
 
-### `pool <name> add`
-
-Effect: write.
-
-- `field-0` (`name`): text, required.
-
 ### `pool <name> add <text> [importance:N]`
 
 Effect: write.
@@ -7362,11 +7356,16 @@ Effect: read.
 
 - `field-0` (`name`): text, required.
 
-### `pool <name> ratify`
+### `pool <name> ratify <noteId> [importance:N] [rationale]`
 
 Effect: write.
 
 - `field-0` (`name`): text, required.
+- `field-1` (`noteId`): text, required.
+- `field-2` (`importance`): number, optional group `option-0`.
+- `field-3` (`rationale`): text, optional group `option-1`.
+- Group `option-0`: `importance:N`.
+- Group `option-1`: `rationale`.
 
 ### `pool <name> recall`
 
@@ -9071,10 +9070,24 @@ Effect: read.
 ## task
 
 Manage tasks with leased create/claim/submit workflow.
-Usage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing
+Usage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing|work
   task create <title> | <description> [standing:N] [bounty]   (also !N; N = 0–10, default 1, paid when another account approves — a person may approve its own agents)
   task goal <title> | <description> [priority:N]   (also !pN / --priority N)
   task info <id>   (also show/view)
+  task work <id> [experimental] — optional shared fields, citations, proposals and advisory checks.
+  task work <id> patch <revision> <json_fields> (creator/current claimant); propose uses the same form for collaborators.
+  task work <id> cite <revision> {"field":"traffic","ref":"note:1","quote":"Maximum traffic is 10 percent."}
+  task work <id> expect <revision> {"field":"traffic","op":"lte","expected":10,"citation":"c2"}
+  task work <id> check [fresh] — reuse a current receipt; no model call or approval gate.
+  task work <id> show [revision] | accept <revision> <proposal_id> | retire <revision> <entry_id> <reason>
+  task work <id> artifact-edit <revision> <json_edits> — edit the actual JSON deliverable by path; preserves untouched content.
+  task work <id> artifact-source <revision> <json_selection> — explicitly publish selected readable source values into the deliverable.
+  task work <id> render [revision] — return its exact JSON content and hash.
+  task work <id> artifact-rule <revision> <json_check> | artifact-unrule <revision> <check_id> <reason>
+  task work <id> artifact-rules <revision> <json_checks> — atomic batch of scoped value/evidence checks.
+  task work <id> artifact-review <json_questions> — evidence packet without draft answers or expectations.
+  task work <id> artifact-assess <json_assessment> — compare source-cited answers against the unchanged draft; advisory.
+  task work <id> artifact-check [fresh] — advisory coverage, projection and value checks; no approval or loop changes.
 
 Examples:
   task create Map the grid | Explore all sectors and document exits
@@ -9216,6 +9229,148 @@ Effect: write.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`text`): text, required.
+
+### `task work <id>`
+
+Effect: read.
+
+- `field-0` (`id`): text, required.
+
+### `task work <id> show [revision]`
+
+Effect: read.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, optional group `option-0`.
+- Group `option-0`: `revision`.
+
+### `task work <id> patch <revision> <json_fields>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`json fields`): json, required.
+
+### `task work <id> propose <revision> <json_fields>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`json fields`): json, required.
+
+### `task work <id> accept <revision> <proposal_id>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`proposal id`): text, required.
+
+### `task work <id> cite <revision> <json_citation>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`json citation`): json, required.
+
+### `task work <id> expect <revision> <json_constraint>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`json constraint`): json, required.
+
+### `task work <id> retire <revision> <entry_id> <reason>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`entry id`): text, required.
+- `field-3` (`reason`): text, required.
+
+### `task work <id> check [fresh]`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`fresh`): text, optional group `option-0`.
+- Group `option-0`: `fresh`.
+
+### `task work <id> render [revision]`
+
+Effect: read.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, optional group `option-0`.
+- Group `option-0`: `revision`.
+
+### `task work <id> artifact-edit <revision> <json_edits>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`json edits`): json, required.
+
+### `task work <id> artifact-source <revision> <json_selection>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`json selection`): json, required.
+
+### `task work <id> artifact-rule <revision> <json_check>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`json check`): json, required.
+
+### `task work <id> artifact-rules <revision> <json_checks>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`json checks`): json, required.
+
+### `task work <id> artifact-review <json_questions>`
+
+Effect: read.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`json questions`): json, required.
+
+### `task work <id> artifact-assess <json_assessment>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`json assessment`): json, required.
+
+### `task work <id> artifact-unrule <revision> <check_id> <reason>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`check id`): text, required.
+- `field-3` (`reason`): text, required.
+
+### `task work <id> artifact-check [fresh]`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`fresh`): text, optional group `option-0`.
+- Group `option-0`: `fresh`.
 
 ## tell
 

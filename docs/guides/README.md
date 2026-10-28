@@ -28,6 +28,7 @@ what's switched off, and the one thing to do next.
 | --- | --- |
 | [Code with an agent](coding.md) | Run `marina .` in a project: inspect, run, patch, review and checkpoint, alone or with a crew. |
 | [Put memory to work](memory-workflows.md) | Pull evidence back right now, or hand work to a task that a fresh agent can pick up. |
+| [Shared task work](shared-task-work.md) | Preserve citations, propose field edits and reuse advisory checks without changing agent loops. |
 | [Start from a desire](journeys.md) | Say what you want in one sentence and follow it to evidence and a result. |
 | [Forecast any question](forecasting.md) | A probability, a number or a ranked answer, with cited and checked evidence, from the CLI, a command or `/v1/forecast`. |
 | [Search](search.md) | Web, news and academic search with no keys, searching as of a date, and search as a room. |

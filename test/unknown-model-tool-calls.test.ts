@@ -156,7 +156,7 @@ describe("output cap for models that reason unasked", () => {
     expect(grownOutputCap(64_000, 64_000)).toBeUndefined();
   });
 
-  it("gives an OpenRouter crew lead headroom; registry and proxy models keep 2048", () => {
+  it("gives an OpenRouter crew lead headroom; registry models keep 2048 and proxy models leave reasoning room", () => {
     using _state = scopeProcessState({ env: { AGENT_CREW_MAX_TOKENS: undefined } });
     const lead = (model: string) =>
       new LeanAgentAdapter(
@@ -168,7 +168,7 @@ describe("output cap for models that reason unasked", () => {
       REASONING_HEADROOM_TOKENS,
     );
     expect(lead("anthropic/claude-sonnet-4-6").getStatus().maxOutputTokens).toBe(2048);
-    expect(lead("marina/default").getStatus().maxOutputTokens).toBe(2048);
+    expect(lead("marina/default").getStatus().maxOutputTokens).toBe(REASONING_HEADROOM_TOKENS);
   });
 
   it("grows an automatic cap after a length stop with no tool call, never an explicit one", () => {
@@ -184,10 +184,10 @@ describe("output cap for models that reason unasked", () => {
     );
     const a = auto as unknown as Internals;
     expect(a.growOutputCapAfterLengthStop({ stopReason: "stop" })).toBeUndefined();
-    expect(a.growOutputCapAfterLengthStop({ stopReason: "length" })).toBe(8192);
-    expect(auto.getStatus().maxOutputTokens).toBe(8192);
-    expect(a.model.maxTokens).toBe(8192);
-    expect(a.growOutputCapAfterLengthStop({ stopReason: "length" })).toBe(16_384);
+    expect(a.growOutputCapAfterLengthStop({ stopReason: "length" })).toBe(16384);
+    expect(auto.getStatus().maxOutputTokens).toBe(16384);
+    expect(a.model.maxTokens).toBe(16384);
+    expect(a.growOutputCapAfterLengthStop({ stopReason: "length" })).toBe(32768);
 
     const pinned = new LeanAgentAdapter(
       { name: "pinned", model: "marina/default", crewResponder: true, maxTokens: 2048 },
@@ -376,6 +376,18 @@ describe("spawn-time tool-calling probe", () => {
     } finally {
       resetSpendLedgerForTests();
     }
+  });
+
+  it("does not cache a length-exhausted probe as incapable or verify reasoning-off", async () => {
+    const id = "openrouter/example/length-probe";
+    const model = resolveModel(id);
+    const result = await probeToolCalling(id, model, "k", {
+      complete: async () => ({ ...TOOL_REPLY, stopReason: "length" }),
+      env: {} as NodeJS.ProcessEnv,
+    });
+    expect(result.outcome).toBe("unknown");
+    expect(toolProbeResult(id)).toBeUndefined();
+    expect(isReasoningOffVerified(model.id)).toBe(false);
   });
 
   it("shares one probe between concurrent spawns", async () => {

@@ -1016,7 +1016,7 @@ export function renderTrial(runId: number, result: TrialResult): string {
   ];
   if (result.delta !== undefined) {
     const ci = result.deltaCi
-      ? ` (95% interval ${(result.deltaCi[0] * 100).toFixed(1)} to ${(result.deltaCi[1] * 100).toFixed(1)}${result.deltaCi[0] > 0 ? " — above zero" : " — includes zero: not distinguishable from noise"})`
+      ? ` (95% interval ${(result.deltaCi[0] * 100).toFixed(1)} to ${(result.deltaCi[1] * 100).toFixed(1)}${result.deltaCi[0] > 0 ? " — above zero" : result.deltaCi[1] < 0 ? " — below zero: candidate performed worse" : " — includes zero: not distinguishable from noise"})`
       : "";
     lines.push(
       `  candidate − incumbent: ${result.delta >= 0 ? "+" : ""}${(result.delta * 100).toFixed(1)} points${ci}`,

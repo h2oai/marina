@@ -22,6 +22,7 @@ import {
 } from "../src/decisions/providers";
 import { parseQuestions } from "../src/decisions/questions";
 import { resetSpendLedgerForTests, spentTodayUsd } from "../src/engine/spend-ledger";
+import { type SpendReceipt, withSpendObservation } from "../src/engine/spend-observation";
 import { handleDecisionModels, handleDecisions } from "../src/net/api/decisions-api";
 
 // ─── A fake OpenAI-compatible upstream ───────────────────────────────────────
@@ -181,7 +182,13 @@ function reply(content: string, logprobs: unknown, model: string) {
   return new Response(
     JSON.stringify({
       model,
-      choices: [{ message: { role: "assistant", content }, ...(logprobs ? { logprobs } : {}) }],
+      choices: [
+        {
+          finish_reason: "stop",
+          message: { role: "assistant", content },
+          ...(logprobs ? { logprobs } : {}),
+        },
+      ],
       // OpenRouter reports what the call cost.
       usage: { prompt_tokens: 100, completion_tokens: 10, cost: 0.0001 },
     }),
@@ -292,13 +299,61 @@ describe("chat classifier methods", () => {
   it("auto: falls back to verbalized once when the provider returns no logprobs, then remembers", async () => {
     const up = fakeUpstream({ logprobs: false });
     const provider = classifier(up.fetch, "auto");
-    const first = await provider.ask({ state: "s", questions: Q });
+    const receipts: SpendReceipt[] = [];
+    const first = await withSpendObservation(
+      (r) => receipts.push(r),
+      () => provider.ask({ state: "s", questions: Q }),
+    );
     expect(first.method).toBe("verbalized");
     expect(up.count()).toBe(2);
+    expect(first.costUsd).toBeCloseTo(0.0002);
+    expect(first.usage).toEqual({ inputTokens: 200, outputTokens: 20 });
+    const priced = receipts.filter((r) => r.state === "priced");
+    expect(priced).toHaveLength(2);
+    expect(new Set(priced.map((r) => r.id)).size).toBe(2);
+    expect(priced.reduce((s, r) => s + r.usd!, 0)).toBe(first.costUsd!);
     const second = await provider.ask({ state: "s", questions: Q });
     expect(second.method).toBe("verbalized");
     expect(up.count()).toBe(3);
+    expect(second.costUsd).toBeCloseTo(0.0001);
     expect(up.bodies[2]!.logprobs).toBeUndefined();
+  });
+
+  it("retains priced malformed samples and failed decisions in the upstream ledger", async () => {
+    const costs: Array<number | undefined> = [];
+    const receipts: SpendReceipt[] = [];
+    let calls = 0;
+    const provider = chatClassifierProvider({
+      baseUrl: "http://qualification.invalid/v1",
+      model: "fixture",
+      timeoutMs: 1000,
+      method: "sampled",
+      samples: 3,
+      structured: true,
+      onSpend: (usd) => costs.push(usd),
+      fetch: async () =>
+        reply(
+          ++calls === 1 ? "malformed but billed" : '{"answers":{"urgent":"Y"}}',
+          undefined,
+          "fixture",
+        ),
+    });
+    const result = await withSpendObservation(
+      (r) => receipts.push(r),
+      () => provider.ask({ state: "s", questions: { urgent: Q.urgent! } }),
+    );
+    expect(result.costUsd).toBeCloseTo(0.0003);
+    expect(costs).toEqual([0.0001, 0.0001, 0.0001]);
+    expect(receipts.filter((r) => r.state === "priced")).toHaveLength(3);
+    const failing = chatClassifierProvider({
+      baseUrl: "http://qualification.invalid/v1",
+      model: "fixture",
+      timeoutMs: 1000,
+      onSpend: (usd) => costs.push(usd),
+      fetch: async () => reply("invalid answer", undefined, "fixture"),
+    });
+    await expect(failing.ask({ state: "s", questions: Q })).rejects.toThrow(/no JSON/);
+    expect(costs).toHaveLength(4);
   });
 
   it("a provider that rejects logprobs (reasoning models) is answered verbalized, never refused", async () => {

@@ -4,6 +4,7 @@
 import type * as investigationCollaborationDb from "../db-investigation-collaboration";
 import type * as investigationJournalDb from "../db-investigation-journal";
 import type * as investigationLifecycleDb from "../db-investigation-lifecycle";
+import type * as investigationSpendDb from "../db-investigation-spend";
 import type * as investigationsDb from "../db-investigations";
 import type { ExactKeys } from "./exact-keys";
 
@@ -12,6 +13,12 @@ export type StoreArguments<T extends (...args: never[]) => unknown> =
 
 /** Scoped prediction/research records. Query functions are the single signature authority. */
 export interface InvestigationsStore {
+  recordInvestigationSpend(
+    ...args: StoreArguments<typeof investigationSpendDb.recordInvestigationSpend>
+  ): void;
+  investigationSpendAccounting(
+    ...args: StoreArguments<typeof investigationSpendDb.investigationSpendAccounting>
+  ): ReturnType<typeof investigationSpendDb.investigationSpendAccounting>;
   reviewInvestigation(
     ...args: StoreArguments<typeof investigationCollaborationDb.reviewInvestigation>
   ): ReturnType<typeof investigationCollaborationDb.reviewInvestigation>;
@@ -75,6 +82,8 @@ export interface InvestigationsStore {
 }
 
 export const INVESTIGATIONS_STORE_METHODS = [
+  "recordInvestigationSpend",
+  "investigationSpendAccounting",
   "reviewInvestigation",
   "investigationResolutionTarget",
   "recordInvestigationResolution",

@@ -29,7 +29,7 @@ import { dailyCapRefusal } from "../engine/spend-ledger";
 import type { MarinaDB } from "../persistence/database";
 import { judgeEarned } from "./agreement";
 import { JUDGE_MIN_CONFIDENCE, judgeResolutionMode } from "./judge-resolution";
-import { participantOf, taskBase, workRefsFor } from "./live";
+import { hasTaskOpinion, participantOf, taskOpinionSubject, workRefsFor } from "./live";
 import { recordResolved } from "./record";
 
 const logger = new Logger();
@@ -68,12 +68,10 @@ export async function judgeWaitingWork(
   const now = opts.now ?? Date.now;
   for (const claim of db.waitingSubmissions(now() - QUALITY_GRACE_MS, 100)) {
     if (report.judged >= (opts.max ?? QUALITY_MAX_PER_PASS)) break;
-    const base = taskBase(claim.task_id, claim.entity_name);
     // Already judged since this submission (by this pass or the verifier).
-    const already = db
-      .listOutcomes({ subjectPrefix: `judged:${base}:`, limit: 20 })
-      .some((o) => o.resolved_at >= (claim.submitted_at ?? 0));
-    if (already) continue;
+    const alreadyJudged = () =>
+      hasTaskOpinion(db, claim.task_id, claim.entity_name, claim.submitted_at!);
+    if (alreadyJudged()) continue;
     const task = db.getTask(claim.task_id);
     if (!task || !claim.submission_text?.trim()) continue;
     const capped = dailyCapRefusal(env);
@@ -104,13 +102,21 @@ export async function judgeWaitingWork(
       });
       const p = (result.answers.complete as NoulAnswer | undefined)?.noul;
       if (p === undefined) throw new Error("no answer");
+      // The creator, verifier or another pass may have finished while this call waited.
+      const current = db.getTaskClaim(claim.task_id, claim.entity_id);
+      if (
+        current?.status !== "submitted" ||
+        current.submitted_at !== claim.submitted_at ||
+        alreadyJudged()
+      )
+        continue;
       const confidence = Math.max(p, 1 - p);
       const deliver =
         mode === "on" && confidence >= JUDGE_MIN_CONFIDENCE && judgeEarned(db, judgeId);
-      recordResolved(
+      const recorded = recordResolved(
         db,
         {
-          subject: `judged:${base}:${now()}`,
+          subject: taskOpinionSubject(claim.task_id, claim.entity_name, claim.submitted_at!),
           kind: "task",
           source: "task:verdict",
           domain: "tools",
@@ -127,7 +133,7 @@ export async function judgeWaitingWork(
         },
         { deliverJudged: deliver },
       );
-      if (deliver) report.delivered++;
+      if (deliver && recorded.created) report.delivered++;
     } catch (err) {
       // An outage is no opinion: nothing recorded; a later pass tries again.
       report.failed++;

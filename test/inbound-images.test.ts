@@ -165,7 +165,9 @@ describe("Anthropic inbound images", () => {
     const deps: AnthropicInboundDeps = {
       async runInternal(body) {
         seen = body;
-        return Response.json({ choices: [{ message: { content: "a dot" } }] });
+        return Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "a dot" } }],
+        });
       },
     };
     const resp = await handleAnthropicMessages(

@@ -413,6 +413,7 @@ export function observeCodingSubmission(
   const meta = codingRunMetadata(run);
   const task = deps.db.getTask(meta.taskId);
   if (!task) return;
+  const submittedAt = deps.db.getTaskClaim(meta.taskId, worker.id)?.submitted_at;
   const provider: DecisionProvider =
     meta.budgetForced?.reason === "spend"
       ? {
@@ -450,6 +451,7 @@ export function observeCodingSubmission(
       recordVerifierOpinion(deps.db, {
         taskId: meta.taskId,
         claimantName: worker.name,
+        ...(submittedAt == null ? {} : { submittedAt }),
         evaluator,
         calibrated: provider.calibrated !== false,
         mode: "observe",

@@ -45,6 +45,7 @@ import {
   viewVisual,
   visionRequest,
 } from "../../src/engine/media/vision";
+import { defaultOutputTokens, requireFinishedOutput } from "../../src/model/output";
 import { DEFAULT_KINDS, scoreAnswer, type VisualTaskKind, visualTasks } from "./items";
 import { HARD_FAMILY, HARD_KINDS, type HardKind, hardTasks, scoreHard } from "./items-hard";
 import { type ResultRow, summarize } from "./summary";
@@ -166,13 +167,17 @@ async function chat(
       continue;
     }
     const data = (await resp.json().catch(() => ({}))) as {
-      choices?: { message?: Msg }[];
+      choices?: { finish_reason?: unknown; message?: Msg }[];
       usage?: { cost?: number };
       error?: { message?: string };
     };
     const cost = Number(data.usage?.cost ?? 0);
     spent += cost;
-    if (resp.ok && data.choices?.[0]?.message) return { message: data.choices[0].message, cost };
+    if (resp.ok && data.choices?.[0]?.message) {
+      if (data.choices[0].finish_reason !== "tool_calls")
+        requireFinishedOutput(data.choices[0].finish_reason, "Vision benchmark");
+      return { message: data.choices[0].message, cost };
+    }
     last = `HTTP ${resp.status}: ${data.error?.message ?? "no message"}`;
     if (resp.status < 500 && resp.status !== 429) break;
     await new Promise((res) => setTimeout(res, 2000 * (attempt + 1)));
@@ -244,7 +249,7 @@ async function runTask(key: string, args: Args, mode: Mode, task: EvalTask): Pro
   for (let turn = 0; turn < maxTurns; turn++) {
     const result = await chat(key, {
       model: args.model,
-      max_tokens: 2048,
+      max_tokens: defaultOutputTokens(),
       messages,
       tools: [SEE_TOOL],
     });

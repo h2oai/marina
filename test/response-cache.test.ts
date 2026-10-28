@@ -95,7 +95,7 @@ describe("response cache", () => {
           `data: ${JSON.stringify({
             id: "chatcmpl-s",
             model: "gpt-4o",
-            choices: [{ index: 0, delta: { content: upstreamText }, finish_reason: null }],
+            choices: [{ index: 0, delta: { content: upstreamText }, finish_reason: "stop" }],
           })}\n\ndata: [DONE]\n\n`,
           { headers: { "Content-Type": "text/event-stream" } },
         );

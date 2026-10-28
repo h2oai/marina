@@ -50,6 +50,7 @@ import {
 import { rankedServing } from "../memory/admission";
 import { residentMemoryOperation } from "../memory/resident-service";
 import { modelComplete } from "../model/complete";
+import { defaultOutputTokens, requireFinishedChat } from "../model/output";
 import { localHttpBase } from "../net/listen-ports";
 import { selfModelToken } from "../net/model/self-model-token";
 import type { MarinaDB } from "../persistence/database";
@@ -81,7 +82,7 @@ const logger = new Logger();
 export const LESSONS_ACCOUNT = "marina:lessons";
 /** The fallback writer when a named vendor has no key: this Marina's default route. */
 export const DEFAULT_LESSONS_MODEL = "marina/default";
-const SELF_TIMEOUT_MS = 60_000;
+const SELF_TIMEOUT_MS = 180_000;
 const DEFAULT_MAX_PER_HOUR = 120;
 const MAX_QUEUE = 500;
 
@@ -266,12 +267,13 @@ export function selfModelWriter(
             { role: "system", content: system },
             { role: "user", content: user },
           ],
-          max_tokens: 600,
+          max_tokens: defaultOutputTokens(env),
         }),
         signal: AbortSignal.timeout(SELF_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`writer HTTP ${res.status}`);
       const body = (await res.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
+      requireFinishedChat(body, "Lesson writer");
       const content = body.choices?.[0]?.message?.content;
       if (typeof content !== "string") throw new Error("writer returned no text");
       return content;
@@ -292,7 +294,6 @@ export function lessonWriterFromEnv(
   if (spec.startsWith("marina/")) return selfModelWriter(spec, env, deps);
   try {
     const { complete } = modelComplete(spec, env, {
-      maxTokens: 600,
       timeoutMs: SELF_TIMEOUT_MS,
       purpose: "lessons",
       trace: { caller: "learning.writer" },

@@ -58,7 +58,7 @@ describe("short-answer grounding execution", () => {
           messages = ((await req.json()) as { messages: Message[] }).messages;
           return Response.json(
             {
-              choices: [{ message: { content: "Ada" } }],
+              choices: [{ finish_reason: "stop", message: { content: "Ada" } }],
               usage: { prompt_tokens: 20, completion_tokens: 2 },
             },
             {
@@ -120,7 +120,8 @@ describe("short-answer grounding execution", () => {
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch: () => Response.json({ choices: [{ message: { content: "" } }] }),
+      fetch: () =>
+        Response.json({ choices: [{ finish_reason: "stop", message: { content: "" } }] }),
     });
     try {
       const [item] = await runShortAnswer([{ id: "a", question: "Who?", answer: "Ada" }], {

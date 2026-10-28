@@ -17,10 +17,11 @@ on installs: that line is optional and never raises an alert. `test/capability-p
 fails when a new
 off-by-default setting has no entry.
 
-## Measure (66)
+## Measure (67)
 
 | Subject | Evidence | Promote when | Decide by |
 |---|---|---|---|
+| Shared task work, structured deliverables and declared checks | operator choice: never automatic | paired long-horizon tasks produce more complete, source-supported deliverables per total cost without restricting participant autonomy | 2026-12-01 |
 | Orchestration › one free-text task (`pattern run`, `POST /v1/patterns/run`) | benchmark ledger (any board) | a paired `benchmark compare-run` wins on the board against the single-model control | 2026-12-01 |
 | Orchestration › a room's turn rule (formations in a room) | operator choice: never automatic | a world runs a room formation in live work | 2027-01-15 |
 | Forecast pipeline | outcomes kind forecast | resolved forecasts beat the plain-model baseline outside the arena | 2026-12-01 |

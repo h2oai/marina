@@ -279,17 +279,24 @@ export function lessonAdmission(opts: LessonAdmissionOptions): LessonAdmission |
   };
   return async (lesson, ctx): Promise<Lesson | LessonAdmissionDecision> => {
     if (lesson.trust === "rejected") return lesson;
-    let run: LessonAdmissionRun;
-    try {
-      run = await admitLesson(lesson, ctx.sink, { ...opts, env, weights: currentWeights() });
-    } catch {
-      return lesson; // a neighbour search failure: written as with ranking off
-    }
+    // A prepared delivery retains its original branch across configuration changes.
+    const appliedMode = ctx.journal ? await ctx.journal.run("mode", async () => mode) : mode;
+    const decide = async () => {
+      try {
+        return await admitLesson(lesson, ctx.sink, { ...opts, env, weights: currentWeights() });
+      } catch {
+        return undefined; // a neighbour search failure: written as with ranking off
+      }
+    };
+    // Persist the plan before any merge, supersession or case mutation. A
+    // restart replays the same decision, regardless of later neighbour changes.
+    const run = ctx.journal ? await ctx.journal.run("plan", decide) : await decide();
+    if (!run) return lesson;
     const { result } = run;
     opts.onResult?.({ lesson, target: ctx.target, result });
     const ranked: Lesson = { ...lesson, ...(result.rank ? { rank: { ...result.rank } } : {}) };
-    if (mode === "observe" || result.skipped)
-      return { lesson: { ...ranked, admission: stamp(mode, result, false) }, action: "new" };
+    if (appliedMode === "observe" || result.skipped)
+      return { lesson: { ...ranked, admission: stamp(appliedMode, result, false) }, action: "new" };
     const target = result.target;
     const sink = ctx.sink;
     const domain = lesson.domain;
@@ -297,7 +304,7 @@ export function lessonAdmission(opts: LessonAdmissionOptions): LessonAdmission |
       lesson: {
         ...ranked,
         admission: {
-          ...stamp(mode, result, false),
+          ...stamp(appliedMode, result, false),
           ...(reason ? { reason: `${result.reason}; ${reason}` } : {}),
           action: "new",
         },
@@ -327,7 +334,8 @@ export function lessonAdmission(opts: LessonAdmissionOptions): LessonAdmission |
             ],
           }));
           return { lesson: null, mergedInto: target.id, action: "merge" };
-        } catch {
+        } catch (error) {
+          if (ctx.journal) throw error;
           return asNew("merge failed");
         }
       }
@@ -337,7 +345,7 @@ export function lessonAdmission(opts: LessonAdmissionOptions): LessonAdmission |
           lesson: {
             ...ranked,
             resolvedAt: later(lesson.resolvedAt, target.resolvedAt ?? lesson.resolvedAt),
-            admission: stamp(mode, result, true),
+            admission: stamp(appliedMode, result, true),
           },
           action: "supersede",
           afterWrite: async (id) => {
@@ -356,7 +364,7 @@ export function lessonAdmission(opts: LessonAdmissionOptions): LessonAdmission |
           lesson: {
             ...ranked,
             admission: {
-              ...stamp(mode, result, true),
+              ...stamp(appliedMode, result, true),
               contests: [target.id],
               ...(auto ? {} : { state: "contested" as const }),
             },
@@ -368,6 +376,7 @@ export function lessonAdmission(opts: LessonAdmissionOptions): LessonAdmission |
               if (!sink.contest) throw new Error("no resolve cases in this store");
               await sink.contest(domain, id, target.id, { autoResolve: auto, rationale });
             } catch (err) {
+              if (ctx.journal) throw err;
               // An auto-resolution still closes the weaker lesson, through the
               // ordinary audited retirement; a held lesson stays held.
               if (auto && sink.retire)
@@ -382,7 +391,10 @@ export function lessonAdmission(opts: LessonAdmissionOptions): LessonAdmission |
         };
       }
       default:
-        return { lesson: { ...ranked, admission: stamp(mode, result, true) }, action: "new" };
+        return {
+          lesson: { ...ranked, admission: stamp(appliedMode, result, true) },
+          action: "new",
+        };
     }
   };
 }

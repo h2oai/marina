@@ -80,6 +80,7 @@ import { strongRoleOverride } from "../config/model-tiers";
 import { researchJudge } from "../decisions/config";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { modelComplete } from "../model/complete";
+import { requireFinishedChat } from "../model/output";
 import { vendorModelSpec } from "../net/model/default-models";
 import { barredRetriever } from "../research/barred";
 import { strictDateFilter } from "../research/isolation";
@@ -326,6 +327,7 @@ function crewPart(spec: string, env: NodeJS.ProcessEnv): ModelPart {
       const data = JSON.parse(text) as {
         choices?: Array<{ message?: { content?: string | null } }>;
       };
+      requireFinishedChat(data, "Forecast crew");
       return data.choices?.[0]?.message?.content ?? "";
     },
   };

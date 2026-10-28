@@ -170,7 +170,7 @@ async function run(): Promise<void> {
   if (values.swarm) {
     const spec = arm.swarmReader ?? process.env.MARINA_READ_SWARM_READER?.trim();
     if (!spec) fail("--swarm needs a reader model (the arm's, or MARINA_READ_SWARM_READER)");
-    const reader = modelComplete(spec, process.env, { maxTokens: 4_000, purpose: "benchmark" });
+    const reader = modelComplete(spec, process.env, { purpose: "benchmark" });
     const judge = arm.swarmJudge ? harnessDecisionProvider(process.env) : undefined;
     swarm = {
       reader: {

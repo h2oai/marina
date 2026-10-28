@@ -140,6 +140,7 @@ export function surfaceOfJudgedOutcome(source: string): string {
 /** What a judged outcome subject (`judged:<base>`) is settled by. */
 export function truthKeyOfJudged(subject: string): string {
   const base = subject.slice("judged:".length);
+  if (/:submission:\d+$/.test(base)) return base;
   // A task attempt (`task:<id>:<claimant>:<t>`): its first verdict after the opinion.
   return base.startsWith("task:") ? base.replace(/\d+$/, "") : base;
 }

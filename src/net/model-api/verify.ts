@@ -36,6 +36,7 @@ import { getErrorMessage, logRejection } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { evalOption } from "../../learning/eval-context";
 import { lessonsBlock, lessonsHeaderValue, recallForWork } from "../../learning/service";
+import { requireFinishedChat } from "../../model/output";
 import { readOnlyCall } from "../../obligations/tool-call";
 import { isReadOnlyTool } from "../../obligations/tool-effect";
 import {
@@ -564,24 +565,19 @@ function parseConflict(raw: unknown): VerdictConflict | undefined {
   return { kind, quote, ...(call ? { call } : {}), ...(field ? { field } : {}) };
 }
 
-/** Lenient verdict parse; anything unreadable is an approval (fail open). */
+/** An unreadable verdict is unavailable; the caller may still serve the unverified draft. */
 export function parseVerdict(text: string): Verdict {
   const m = text.match(/\{[\s\S]*\}/);
-  if (m) {
-    try {
-      const j = JSON.parse(m[0]) as { verdict?: unknown; issues?: unknown; conflict?: unknown };
-      const v = typeof j.verdict === "string" ? j.verdict.toLowerCase() : "";
-      const issues = typeof j.issues === "string" ? j.issues.trim() : "";
-      if (v === "revise" && issues) {
-        const conflict = parseConflict(j.conflict);
-        return { verdict: "revise", issues, ...(conflict ? { conflict } : {}) };
-      }
-      return { verdict: "approve", issues: "" };
-    } catch {
-      // allow-empty-catch: an unparseable verdict is an approval (fail open)
-    }
+  if (!m) throw new Error("Checker returned no verdict JSON");
+  const j = JSON.parse(m[0]) as { verdict?: unknown; issues?: unknown; conflict?: unknown };
+  const v = typeof j.verdict === "string" ? j.verdict.toLowerCase() : "";
+  const issues = typeof j.issues === "string" ? j.issues.trim() : "";
+  if (v === "revise" && issues) {
+    const conflict = parseConflict(j.conflict);
+    return { verdict: "revise", issues, ...(conflict ? { conflict } : {}) };
   }
-  return { verdict: "approve", issues: "" };
+  if (v === "approve") return { verdict: "approve", issues: "" };
+  throw new Error("Checker returned an invalid verdict");
 }
 
 /** The note appended for a revision call (a trailing system message). */
@@ -862,7 +858,10 @@ export function withFirstMessage(
   choices[0] = {
     ...first,
     message,
-    ...(message.tool_calls?.length ? { finish_reason: "tool_calls" } : {}),
+    ...(message.tool_calls?.length &&
+    (first.finish_reason === "stop" || first.finish_reason === "tool_calls")
+      ? { finish_reason: "tool_calls" }
+      : {}),
   };
   return { ...body, choices };
 }
@@ -1191,8 +1190,12 @@ export async function maybeVerifyChat(
   const checkerCache = checkerCaches(spec.checker);
 
   // A draft of read-only lookups goes out unreviewed (`MARINA_VERIFY_REVIEW`).
-  const skipReview = verifyReviewMode() === "consequential" && readOnlyDraft(draft, tools);
-  if (skipReview) verdictLabel = "skipped-read-only";
+  const finishReason = (final.choices as Array<{ finish_reason?: unknown }> | undefined)?.[0]
+    ?.finish_reason;
+  const incompleteDraft = finishReason !== "stop" && finishReason !== "tool_calls";
+  const skipReview =
+    incompleteDraft || (verifyReviewMode() === "consequential" && readOnlyDraft(draft, tools));
+  if (skipReview) verdictLabel = incompleteDraft ? "incomplete-draft" : "skipped-read-only";
 
   // 2. Review (and up to `rounds` revisions).
   for (let round = 0; !skipReview && round < Math.max(1, rounds); round++) {
@@ -1220,12 +1223,16 @@ export async function maybeVerifyChat(
       );
       cost += review.costUsd ?? 0;
       usage = addUsage(usage, review.body?.usage);
+      if (review.ok) requireFinishedChat(review.body, "Draft checker");
       verdict = review.ok
         ? parseVerdict(textOf(firstMessage(review.body)?.content))
         : { verdict: "approve", issues: "" };
       if (!review.ok) verdictLabel = "checker-unavailable";
     } catch (e) {
-      log.warn("model-api", `verify: checker failed, approving draft: ${getErrorMessage(e)}`);
+      log.warn(
+        "model-api",
+        `verify: checker failed, serving unverified draft: ${getErrorMessage(e)}`,
+      );
       verdictLabel = "checker-unavailable";
       break;
     }
@@ -1311,7 +1318,9 @@ export async function maybeVerifyChat(
   // write calls under the write-guard rules). Off with MARINA_OUTPUT_REPAIR=off.
   let repairLabel: RepairLabel | undefined;
   const finalMessage = firstMessage(final);
-  if (tools?.length && finalMessage) {
+  const finalFinish = (final.choices as Array<{ finish_reason?: unknown }> | undefined)?.[0]
+    ?.finish_reason;
+  if (tools?.length && finalMessage && (finalFinish === "stop" || finalFinish === "tool_calls")) {
     const repairModel = repairModelFor(engine, proposer, pin);
     const repaired = await repairToolCallMessage({
       message: finalMessage,
@@ -1336,6 +1345,7 @@ export async function maybeVerifyChat(
         );
         cost += r.costUsd ?? 0;
         usage = addUsage(usage, r.body?.usage);
+        if (r.ok) requireFinishedChat(r.body, "Tool-call repair");
         return r.ok ? textOf(firstMessage(r.body)?.content) : "";
       },
     }).catch(

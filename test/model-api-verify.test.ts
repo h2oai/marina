@@ -68,9 +68,9 @@ describe("verdicts and rendering", () => {
       issues: "confirm first",
     });
     expect(parseVerdict('```json\n{"verdict":"approve","issues":""}\n```').verdict).toBe("approve");
-    expect(parseVerdict('{"verdict":"revise","issues":""}').verdict).toBe("approve");
-    expect(parseVerdict("no json here").verdict).toBe("approve");
-    expect(parseVerdict("{broken").verdict).toBe("approve");
+    expect(() => parseVerdict('{"verdict":"revise","issues":""}')).toThrow();
+    expect(() => parseVerdict("no json here")).toThrow();
+    expect(() => parseVerdict("{broken")).toThrow();
   });
 
   it("shows the checker the rules, tools, conversation and the draft's tool calls", () => {

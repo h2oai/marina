@@ -28,6 +28,11 @@
 
 import { MarinaAgent, type Perception } from "../client";
 import { extractChannelPayload, type Message } from "./_shared";
+import {
+  providerOutputField,
+  providerOutputTokens,
+  requireProviderAnswer,
+} from "./provider-output";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
 const AGENT_NAME = process.env.AGENT_NAME ?? "Provider";
@@ -68,7 +73,7 @@ async function callProvider(
       },
       body: JSON.stringify({
         model: PROVIDER_MODEL,
-        max_tokens: 4096,
+        max_tokens: providerOutputTokens(),
         temperature: 0,
         ...(systemMsgs.length > 0 ? { system: systemMsgs.join("\n\n") } : {}),
         messages: nonSystem.map((m) => ({ role: m.role, content: m.content })),
@@ -79,7 +84,11 @@ async function callProvider(
       const body = await resp.text().catch(() => "");
       throw new Error(`Provider error ${resp.status}: ${body.slice(0, 200)}`);
     }
-    const data = (await resp.json()) as { content?: Array<{ type: string; text?: string }> };
+    const data = (await resp.json()) as {
+      stop_reason?: unknown;
+      content?: Array<{ type: string; text?: string }>;
+    };
+    requireProviderAnswer(data.stop_reason);
     return (data.content ?? [])
       .filter((b) => b.type === "text")
       .map((b) => b.text ?? "")
@@ -99,6 +108,7 @@ async function callProvider(
     headers,
     body: JSON.stringify({
       model: PROVIDER_MODEL,
+      ...providerOutputField(PROVIDER_URL),
       messages: allMessages,
       stream,
     }),
@@ -113,8 +123,9 @@ async function callProvider(
   if (stream && resp.body) return resp.body;
 
   const data = (await resp.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ finish_reason?: unknown; message?: { content?: string } }>;
   };
+  requireProviderAnswer(data.choices?.[0]?.finish_reason);
   return data.choices?.[0]?.message?.content ?? "";
 }
 
@@ -138,6 +149,7 @@ async function streamProviderResponse(
   const reader = (body as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let finishReason: unknown;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -151,11 +163,12 @@ async function streamProviderResponse(
       if (!line.startsWith("data: ")) continue;
       const payload = line.slice(6).trim();
       if (payload === "[DONE]") {
+        requireProviderAnswer(finishReason);
         await agent.channel(channel, JSON.stringify({ type: "model_response_end", id: requestId }));
         return;
       }
 
-      let chunk: { choices?: Array<{ delta?: { content?: string } }> };
+      let chunk: { choices?: Array<{ finish_reason?: unknown; delta?: { content?: string } }> };
       try {
         chunk = JSON.parse(payload);
       } catch {
@@ -163,6 +176,7 @@ async function streamProviderResponse(
         // skipping it is the correct streaming behaviour, nothing to report.
         continue;
       }
+      if (chunk.choices?.[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason;
       const content = chunk.choices?.[0]?.delta?.content;
       if (!content) continue;
       try {
@@ -177,7 +191,8 @@ async function streamProviderResponse(
     }
   }
 
-  // Ensure we always send an end marker
+  // An incomplete stream must not settle the request as successfully answered.
+  requireProviderAnswer(finishReason);
   await agent.channel(channel, JSON.stringify({ type: "model_response_end", id: requestId }));
 }
 

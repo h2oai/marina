@@ -170,7 +170,7 @@ export interface ArmSummary {
   accuracy: number;
   wilsonLow: number;
   wilsonHigh: number;
-  /** Total spend of the valid runs; null when none was priced. */
+  /** Known spend of all attempted runs, including failed/invalid attempts. */
   costUsd: number | null;
   costPerSuccessUsd: number | null;
   /** `model@source` of each distinct target among the valid runs. */
@@ -209,14 +209,16 @@ export function summarizeArm(
   let successes = 0;
   let cost = 0;
   let priced = false;
-  for (const run of valid) {
-    const items = db.getBenchmarkItems(run.id);
-    attempts += items.length;
-    successes += items.filter((i) => i.correct === 1).length;
+  for (const run of runs) {
     if (typeof run.cost_usd === "number") {
       cost += run.cost_usd;
       priced = true;
     }
+  }
+  for (const run of valid) {
+    const items = db.getBenchmarkItems(run.id);
+    attempts += items.length;
+    successes += items.filter((i) => i.correct === 1).length;
   }
   const ci = wilsonInterval(successes, attempts);
   return {
@@ -238,6 +240,15 @@ export function summarizeArm(
 /** Why two arms are not a clean pair (different model, code, items or judge), if they are not. */
 export function pairingWarnings(a: ArmSummary, b: ArmSummary): string[] {
   const out: string[] = [];
+  for (const arm of [a, b]) {
+    const incomplete = arm.runs.filter((r) => r.status !== "completed").length;
+    if (incomplete)
+      out.push(
+        `${arm.arm}: ${incomplete} unfinished, failed or invalid attempt(s); comparison is incomplete`,
+      );
+    if (arm.runs.some((r) => r.cost_usd === null))
+      out.push(`${arm.arm}: spend is incomplete (unpriced attempts)`);
+  }
   const all = [...a.measured, ...b.measured];
   if (new Set(all).size > 1)
     out.push(
@@ -291,7 +302,12 @@ export function compareRunReport(
   const la = load(a);
   const lb = load(b);
   const paired =
-    la && lb && la.replicates.length > 0 && lb.replicates.length > 0
+    la &&
+    lb &&
+    a.runs.length === a.valid.length &&
+    b.runs.length === b.valid.length &&
+    la.replicates.length > 0 &&
+    lb.replicates.length > 0
       ? comparePooledGroups(la, lb)
       : null;
   return {

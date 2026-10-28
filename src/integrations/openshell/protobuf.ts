@@ -170,6 +170,12 @@ export class ProtoMessage {
     return v instanceof Uint8Array ? new TextDecoder().decode(v) : "";
   }
 
+  strings(field: number): string[] {
+    return (this.fields.get(field) ?? [])
+      .filter((value): value is Uint8Array => value instanceof Uint8Array)
+      .map((value) => new TextDecoder().decode(value));
+  }
+
   bytes(field: number): Uint8Array {
     const v = this.last(field);
     return v instanceof Uint8Array ? v : new Uint8Array();

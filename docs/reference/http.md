@@ -1941,13 +1941,13 @@ Fields read here: `all`, `expected_generation`, `field`, `record_ids`, `source_i
 
 ### `pathname.startsWith("/v1/")`
 
-[Source](../../src/net/model-api/ollama.ts#L612)
+[Source](../../src/net/model-api/ollama.ts#L647)
 
 ## src/net/model-api/verify.ts
 
 ### `path.split(".")`
 
-[Source](../../src/net/model-api/verify.ts#L666)
+[Source](../../src/net/model-api/verify.ts#L662)
 
 ## src/net/model/model-api.ts
 

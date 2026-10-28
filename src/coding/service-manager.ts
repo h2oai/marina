@@ -355,9 +355,10 @@ export class CodingServiceManager {
   private requireRunning(entityId: EntityId) {
     // Durable-key lookup (indexed PK) — the binding belongs to the account,
     // so it is found again after the owner re-logs in with a fresh entity id.
-    const binding = this.db.getFlywheelBinding(entityId);
+    const binding = this.db.getFlywheelBinding(entityId, this.provider.id);
     if (!binding) throw new Error("Use `code sandbox start` before starting a service.");
-    if (binding.state !== "running") throw new Error(`Flywheel sandbox is ${binding.state}.`);
+    if (binding.state !== "running")
+      throw new Error(`${this.provider.label} sandbox is ${binding.state}.`);
     return binding;
   }
 
@@ -366,7 +367,9 @@ export class CodingServiceManager {
     const sameOwner =
       this.db.durableEntityKey(service.entity_id) === this.db.durableEntityKey(entityId);
     if (!sameOwner || service.sandbox_id !== binding.sandbox_id) {
-      throw new Error("Service does not belong to this entity's current Flywheel sandbox.");
+      throw new Error(
+        `Service does not belong to this entity's current ${this.provider.label} sandbox.`,
+      );
     }
   }
 }

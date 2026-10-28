@@ -60,7 +60,7 @@ export function createInvestigation(
         );
       const attempt = attemptRow(db, previous.attempt_id);
       caseAccess(db, attempt.case_id, actor.key);
-      return { attempt: projectAttempt(attempt), created: false };
+      return { attempt: projectAttempt(db, attempt), created: false };
     }
     const allActive = db
       .query("SELECT count(*) AS n FROM investigation_attempts WHERE state IN ('queued','running')")
@@ -144,7 +144,7 @@ export function createInvestigation(
       now,
     ]);
     appendEvent(db, id, { kind: "admitted", actor: actor.name }, now);
-    return { attempt: projectAttempt(attemptRow(db, id)), created: true };
+    return { attempt: projectAttempt(db, attemptRow(db, id)), created: true };
   })();
 }
 
@@ -188,7 +188,7 @@ export function getInvestigation(
         : undefined;
     return {
       case: projectCase(db, row, access),
-      attempt: projectAttempt(attempt),
+      attempt: projectAttempt(db, attempt),
       cursor: attempt.sequence,
       children,
       ...(grants ? { grants } : {}),
@@ -218,7 +218,7 @@ export function getInvestigationAttempt(
 ): InvestigationAttempt {
   const row = attemptRow(db, id);
   caseAccess(db, row.case_id, principal);
-  return projectAttempt(row);
+  return projectAttempt(db, row);
 }
 
 export function listInvestigations(

@@ -286,6 +286,7 @@ describe("gateRelevance backends", () => {
           model: "local/one-model",
           choices: [
             {
+              finish_reason: "stop",
               message: {
                 content: JSON.stringify({ answers: { M1: { noul: 0.9 }, M2: { noul: 0.1 } } }),
               },
@@ -321,6 +322,7 @@ describe("relevance gate bound and reasoning", () => {
       JSON.stringify({
         choices: [
           {
+            finish_reason: "stop",
             message: {
               content: JSON.stringify({ answers: { M1: { noul: 0.9 }, M2: { noul: 0.1 } } }),
             },

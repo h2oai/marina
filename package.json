@@ -123,6 +123,8 @@
     "eval:triage": "bun run scripts/eval-triage.ts",
     "qualify:prompt": "bun run scripts/eval-prompt.ts marina:answerer --min-score 13",
     "qualify:autonomy": "bun run scripts/qualify-autonomy.ts",
+    "inventory:capabilities": "bun --no-env-file scripts/capability-inventory.ts",
+    "qualify:capabilities": "bun --no-env-file scripts/qualify-capabilities.ts",
     "qualify:agents:handoff": "bun scripts/qualify-agent-handoff.ts",
     "qualify:coding": "bun run scripts/qualify-coding.ts",
     "qualify:evolution": "bun run scripts/qualify-evolution.ts",

@@ -161,11 +161,10 @@ export function poolCommand(deps: {
   return {
     category: "Memory",
     usage: [
-      { syntax: "pool <name> add", effect: "write" },
       { syntax: "pool <name> add <text> [importance:N]", effect: "write" },
       { syntax: "pool <name> audit", effect: "read" },
       { syntax: "pool <name> list", effect: "read" },
-      { syntax: "pool <name> ratify", effect: "write" },
+      { syntax: "pool <name> ratify <noteId> [importance:N] [rationale]", effect: "write" },
       { syntax: "pool <name> recall", effect: "read" },
       { syntax: "pool <name> status", effect: "read" },
       { syntax: "pool create <name> [group <groupName>]", effect: "write" },

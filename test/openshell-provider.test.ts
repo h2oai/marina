@@ -11,6 +11,7 @@ import {
   phaseState,
   sandboxName,
 } from "../src/integrations/openshell/provider";
+import { MarinaDB } from "../src/persistence/database";
 import type { EntityId } from "../src/types";
 
 describe("protobuf codec", () => {
@@ -91,6 +92,8 @@ class FakeGateway {
   port = 0;
   calls: { method: string; body: ProtoMessage }[] = [];
   phase = 2;
+  exitCode = 4;
+  timedOut = false;
   failCreate = "";
   drafts: ProtoWriter[] = [];
   approved: string[] = [];
@@ -151,7 +154,7 @@ class FakeGateway {
         return this.send(stream, [this.sandbox(body.string(2))]);
       case "GetSandbox":
         return this.send(stream, [this.sandbox(body.string(1))]);
-      case "ExecSandbox":
+      case "ExecSandbox": {
         return this.send(stream, [
           new ProtoWriter().message(
             1,
@@ -159,10 +162,16 @@ class FakeGateway {
           ),
           new ProtoWriter().message(
             2,
-            new ProtoWriter().bytesField(1, new TextEncoder().encode("err\n")),
+            new ProtoWriter().bytesField(
+              1,
+              new TextEncoder().encode(
+                `err\n${this.timedOut ? "timeout: sending signal TERM to command sh\n" : ""}`,
+              ),
+            ),
           ),
-          new ProtoWriter().message(3, new ProtoWriter().uint(1, 4)),
+          new ProtoWriter().message(3, new ProtoWriter().uint(1, this.exitCode)),
         ]);
+      }
       case "GetDraftPolicy":
         return this.send(stream, [
           this.drafts.reduce((w, d) => w.message(1, d), new ProtoWriter()),
@@ -183,6 +192,42 @@ describe("OpenShellProvider against a fake gateway", () => {
   afterEach(async () => {
     await gateway?.stop();
     gateway = undefined;
+  });
+
+  it("persists its own binding without overwriting a Flywheel allocation", async () => {
+    gateway = new FakeGateway();
+    await gateway.start();
+    const db = new MarinaDB(":memory:");
+    const entity = "e_owner" as EntityId;
+    try {
+      db.saveFlywheelBinding({
+        entityId: entity,
+        sessionId: "fw-session",
+        sandboxId: "fw-sandbox",
+        image: "fw",
+        keepAlive: true,
+        state: "running",
+      });
+      const provider = new OpenShellProvider({ url: `http://127.0.0.1:${gateway.port}`, db });
+      const workspace = await provider.create(entity);
+      expect(db.getFlywheelBinding(entity, "openshell")).toMatchObject({
+        provider_id: "openshell",
+        sandbox_id: workspace.sandboxId,
+        state: "running",
+      });
+      expect(db.getFlywheelBinding(entity)?.sandbox_id).toBe("fw-sandbox");
+      // The engine accepts commands before its asynchronous inventory refresh.
+      // A fresh provider must address the existing guest without another create.
+      const restarted = new OpenShellProvider({ url: `http://127.0.0.1:${gateway.port}`, db });
+      expect(restarted.status(entity)?.sandboxId).toBe(workspace.sandboxId);
+      expect((await restarted.execDetailed(entity, "true")).output).toBe("out\nerr\n");
+      expect(gateway.calls.filter((call) => call.method === "CreateSandbox")).toHaveLength(1);
+      await restarted.stop(entity);
+      expect(db.getFlywheelBinding(entity, "openshell")).toBeUndefined();
+      expect(db.getFlywheelBinding(entity)?.sandbox_id).toBe("fw-sandbox");
+    } finally {
+      db.close();
+    }
   });
 
   it("creates a labelled sandbox, runs a command through the gateway, and deletes it", async () => {
@@ -206,12 +251,56 @@ describe("OpenShellProvider against a fake gateway", () => {
     const exec = gateway.calls.find((c) => c.method === "ExecSandbox")!.body;
     expect(exec.string(1)).toBe(sandboxName("e_one"));
     expect(exec.string(3)).toBe("/sandbox");
-    expect(exec.message(105)?.uint(1)).toBe(5);
+    expect(exec.message(105)?.uint(1)).toBe(8);
+    expect(exec.strings(2)).toEqual([
+      "timeout",
+      "--verbose",
+      "--signal=TERM",
+      "--kill-after=1s",
+      "5s",
+      "sh",
+      "-c",
+      "true",
+    ]);
     expect(exec.uint(10)).toBe(1);
-
     await provider.stop(entity);
     expect(provider.status(entity)).toBeUndefined();
     expect(gateway.calls.at(-1)?.method).toBe("DeleteSandbox");
+  });
+
+  it("reports the guest process-group timeout as an execution timeout", async () => {
+    gateway = new FakeGateway();
+    gateway.exitCode = 124;
+    gateway.timedOut = true;
+    await gateway.start();
+    const provider = new OpenShellProvider({ url: `http://127.0.0.1:${gateway.port}` });
+    const entity = "e_timeout" as EntityId;
+    await provider.create(entity);
+    const started = Date.now();
+    const failure = await provider
+      .execDetailed(entity, "sleep", ["9"], "/sandbox", { timeoutMs: 1000 })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toContain("exceeded 1000ms");
+    expect(Date.now() - started).toBeLessThan(1000);
+    await provider.stop(entity);
+  });
+
+  it.each([124, 137])("preserves a completed command's exit status %i", async (exitCode) => {
+    gateway = new FakeGateway();
+    gateway.exitCode = exitCode;
+    gateway.timedOut = false;
+    await gateway.start();
+    const provider = new OpenShellProvider({ url: `http://127.0.0.1:${gateway.port}` });
+    const entity = "e_exit_status" as EntityId;
+    await provider.create(entity);
+    const result = await provider.execDetailed(entity, "sh", ["-c", `exit ${exitCode}`]);
+    expect(result.output).toBe("out\nerr\n");
+    expect(result.events).toEqual([{ process: { kind: "exit", exitCode } }]);
+    await provider.stop(entity);
   });
 
   it("raises each pending network rule once, and approval approves it in OpenShell", async () => {

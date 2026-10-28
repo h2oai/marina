@@ -441,6 +441,18 @@ describe("held-out trials: a fixed split and an honest interval", () => {
     expect(hiTie).toBeGreaterThan(0);
   });
 
+  it("reports a resolved regression as below zero, rather than a noisy tie", () => {
+    const deltaCi = differenceInterval(50 / 72, 72, 62 / 72, 72);
+    expect(deltaCi[1]).toBeLessThan(0);
+    const report = renderTrial(1, {
+      arms: [],
+      delta: (50 - 62) / 72,
+      deltaCi,
+    });
+    expect(report).toContain("below zero: candidate performed worse");
+    expect(report).not.toContain("includes zero");
+  });
+
   it("refuses to replicate a win whose interval includes zero", async () => {
     const f = fakeDeps({
       runMs: 0,

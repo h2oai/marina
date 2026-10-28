@@ -15,7 +15,7 @@ import type { OpenAIMessage } from "../model/passthru-context";
 import type { ModelInfo } from "./models";
 import {
   capturePassthruResponse,
-  extractResponseText,
+  extractResponseTextAndUsage,
   passthruCacheLookup,
   passthruCacheStore,
   passthruTraceOptions,
@@ -303,7 +303,11 @@ export function findOllamaModel(models: ModelInfo[], ref: unknown): ModelInfo | 
   return models.find((m) => m.id === ref || m.id === bare);
 }
 
-function ollamaChatResponse(model: string, content: string): unknown {
+function ollamaChatResponse(
+  model: string,
+  content: string,
+  terminal: Record<string, unknown> = {},
+): unknown {
   return {
     model,
     created_at: new Date().toISOString(),
@@ -311,10 +315,16 @@ function ollamaChatResponse(model: string, content: string): unknown {
     done: true,
     total_duration: 0,
     eval_count: 0,
+    done_reason: "stop",
+    ...terminal,
   };
 }
 
-function ollamaGenerateResponse(model: string, content: string): unknown {
+function ollamaGenerateResponse(
+  model: string,
+  content: string,
+  terminal: Record<string, unknown> = {},
+): unknown {
   return {
     model,
     created_at: new Date().toISOString(),
@@ -322,6 +332,8 @@ function ollamaGenerateResponse(model: string, content: string): unknown {
     done: true,
     total_duration: 0,
     eval_count: 0,
+    done_reason: "stop",
+    ...terminal,
   };
 }
 
@@ -405,14 +417,25 @@ async function runOllamaPassthru(
     void capturePassthruResponse(engine, prep.identity.entityId, inbound, resp);
     passthruCacheStore(engine, prep, body, forceModel, resp);
   }
-  const text = await extractResponseText(resp.clone());
+  const extracted = await extractResponseTextAndUsage(resp.clone());
+  const text = extracted.content;
+  if (!extracted.finishReason) return errorJson(502, "Upstream returned no finish reason");
+  const terminal = {
+    done_reason: extracted.finishReason,
+    ...(extracted.usage
+      ? {
+          prompt_eval_count: extracted.usage.prompt_tokens,
+          eval_count: extracted.usage.completion_tokens,
+        }
+      : {}),
+  };
   const headers = forwardPassthruHeaders(resp.headers, { ...MODEL_CORS });
   if (input.wantStream) {
     const enc = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(enc.encode(ollamaStreamChunk(input.model, text, isChat)));
-        controller.enqueue(enc.encode(ollamaStreamEnd(input.model, isChat)));
+        controller.enqueue(enc.encode(ollamaStreamEnd(input.model, isChat, terminal)));
         safeClose(controller);
       },
     });
@@ -425,7 +448,9 @@ async function runOllamaPassthru(
     });
   }
   return json(
-    isChat ? ollamaChatResponse(input.model, text) : ollamaGenerateResponse(input.model, text),
+    isChat
+      ? ollamaChatResponse(input.model, text, terminal)
+      : ollamaGenerateResponse(input.model, text, terminal),
     200,
     headers,
   );
@@ -473,6 +498,11 @@ export async function handleOllamaChat(
         options: body.options && typeof body.options === "object" ? body.options : undefined,
       });
     }
+    if (body.options?.num_predict !== undefined)
+      return unsupportedParam(
+        "options.num_predict",
+        "In-world agent routing cannot enforce output-token limits; use the passthru endpoint mode.",
+      );
     if (hasOllamaImages(body)) return refuseRoutedImages("messages[].images");
 
     const contextParts: string[] = [];
@@ -550,6 +580,11 @@ export async function handleOllamaGenerate(
         options: body.options && typeof body.options === "object" ? body.options : undefined,
       });
     }
+    if (body.options?.num_predict !== undefined)
+      return unsupportedParam(
+        "options.num_predict",
+        "In-world agent routing cannot enforce output-token limits; use the passthru endpoint mode.",
+      );
     if (hasOllamaImages(body)) return refuseRoutedImages("images");
 
     const context = body.system ? `system: ${body.system}` : undefined;

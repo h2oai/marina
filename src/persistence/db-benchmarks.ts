@@ -73,6 +73,15 @@ export function getBenchmarkRun(reader: Database, id: string): BenchmarkRunRow |
     | undefined;
 }
 
+/** Cumulative measured spend may settle after a cancelled harness has exited. */
+export function recordBenchmarkRunCost(db: Database, id: string, costUsd: number): void {
+  if (!Number.isFinite(costUsd) || costUsd < 0) throw new Error("Invalid benchmark spend");
+  db.run("UPDATE benchmark_runs SET cost_usd = MAX(COALESCE(cost_usd, 0), ?) WHERE id = ?", [
+    costUsd,
+    id,
+  ]);
+}
+
 export function queryBenchmarkRuns(
   reader: Database,
   q: { benchmark?: string; status?: string; agentId?: string; limit?: number },
@@ -319,10 +328,10 @@ function insertItemRows(db: Database, runId: string, items: readonly BenchmarkIt
 export interface BenchmarkRunLedgerColumns {
   cost_usd: number | null;
   n: number;
-  ci_low: number;
-  ci_high: number;
+  ci_low: number | null;
+  ci_high: number | null;
   seed: number | null;
-  slice_hash: string;
+  slice_hash: string | null;
   judge: string | null;
   target_kind: BenchmarkTargetKind;
   target_json: string;

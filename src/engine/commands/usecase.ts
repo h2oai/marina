@@ -685,6 +685,38 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
     agentCount: 1,
   }),
 
+  code: (topic) => ({
+    name: "code",
+    description: `Verify a coding change: ${topic}`,
+    orchestration: "pipeline",
+    tasks: [
+      {
+        title: "Inspect the coding workspace and acceptance criteria",
+        description: `For ${topic}, use 'code workspace', 'code status' and 'code diff' to identify the actual repository and changed files. Record the requested behavior and relevant tests. If no workspace is configured, report that prerequisite and stop; do not claim verification.`,
+      },
+      {
+        title: "Run verification and inspect the results",
+        description:
+          "Use 'code verify scope:changed+full budget:10m' in the configured coding session. Inspect its artifacts and failures. A plan, task submission, or approval alone is not evidence that the change works.",
+      },
+      {
+        title: "Review the change against evidence",
+        description:
+          "Compare the diff and verification artifacts with the acceptance criteria. Report commands, results, unresolved issues and the artifact identifiers. Request independent review before approval; never approve solely because a task was submitted.",
+      },
+    ],
+    poolNotes: [
+      { content: `Coding review target: ${topic}`, importance: 10, type: "fact" },
+      {
+        content:
+          "Use the real coding workspace and verification artifacts. Missing workspace, failed checks or unavailable tools are blockers to report, never successful verification.",
+        importance: 10,
+        type: "skill",
+      },
+    ],
+    agentCount: 1,
+  }),
+
   build: (topic) => ({
     name: "build",
     description: `Build a new feature: ${topic}`,
@@ -1019,6 +1051,12 @@ function describeRecipeAgents(recipe: UseCaseRecipe): string {
 // ─── Intent Detection (keyword-based, no LLM needed) ──────────────────────
 
 const INTENT_PATTERNS: [string, RegExp[]][] = [
+  [
+    "code",
+    [
+      /\b(coding change|code change|verify (?:a |the )?(?:patch|code|coding)|review (?:a |the )?(?:patch|code)|fix (?:a |the )?bug)\b/i,
+    ],
+  ],
   [
     "evolve",
     [

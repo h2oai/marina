@@ -208,6 +208,11 @@ export const KNOB_POSTURE: Readonly<Record<string, Posture>> = {
  * Every non-core feature, keyed by its exact {@link FEATURE_STATUS} name.
  */
 export const FEATURE_POSTURE: Readonly<Record<string, Posture>> = {
+  "Shared task work, structured deliverables and declared checks": measure(
+    operator,
+    "paired long-horizon tasks produce more complete, source-supported deliverables per total cost without restricting participant autonomy",
+    DEC_1,
+  ),
   "Orchestration › one free-text task (`pattern run`, `POST /v1/patterns/run`)": measure(
     bench(),
     `${PAIRED} against the single-model control`,

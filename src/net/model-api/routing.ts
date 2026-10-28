@@ -35,8 +35,10 @@ import { adviseTraceRouting, selectAdaptiveCandidate } from "../../engine/trace-
 import type { EvalContext } from "../../learning/eval-context";
 import { formatLesson } from "../../learning/outcomes";
 import { lessonsHeaderValue, recallForWork } from "../../learning/service";
+import { requireFinishedChat } from "../../model/output";
 import type { EngineEvent } from "../../types";
 import { claimLeaseMs, isWorkOnRequest, RequestClaim } from "./request-claim";
+import { modelResponseError } from "./response-envelope";
 import type { ResponseRecord, ResponsesSseEmitter } from "./responses-sse";
 import {
   type CompletionUsage,
@@ -648,8 +650,10 @@ export async function routeToChannel(
         clearTimeout(timer);
         unsub();
         detachEvents();
+        engine.shutdownSignal.removeEventListener("abort", onShutdown);
         outcome();
       };
+      const onShutdown = () => settle(() => reject(new HttpError(503, "Instance is draining")));
       // End early with the best draft (or an error when there is none), labelled.
       const forceEnd = (reason: BudgetForced["reason"], noDraft: HttpError) => {
         const best = drafts.best();
@@ -710,7 +714,11 @@ export async function routeToChannel(
           if (senderId === claim.holder) claim.renew();
           return;
         }
-        if (parsed?.type === "model_response" && parsed.id === requestId) {
+        if (
+          parsed?.type === "model_response" &&
+          parsed.id === requestId &&
+          !modelResponseError(parsed)
+        ) {
           const repaired = repairLabelOf(parsed.repaired);
           settle(() => {
             respondedBy = senderId;
@@ -739,6 +747,12 @@ export async function routeToChannel(
       });
       engine.addEventListener(onEvent);
       detachEvents = () => engine.removeEventListener(onEvent);
+
+      engine.shutdownSignal.addEventListener("abort", onShutdown, { once: true });
+      if (engine.shutdownSignal.aborted) {
+        onShutdown();
+        return;
+      }
 
       // Send request to channel
       cm.send(channel.id, "__model_api__", "model-api", payloadFor(target));
@@ -855,7 +869,12 @@ function matchFanoutReply(
 ): { id: string; text: string } | null {
   try {
     const parsed = JSON.parse(content) as { type?: string; id?: string; content?: string };
-    if (parsed.type === "model_response" && parsed.id && pending.has(parsed.id)) {
+    if (
+      parsed?.type === "model_response" &&
+      parsed.id &&
+      pending.has(parsed.id) &&
+      !modelResponseError(parsed)
+    ) {
       return { id: parsed.id, text: parsed.content ?? "" };
     }
   } catch {
@@ -888,6 +907,7 @@ async function collectResponses(
   const runId = `req-${crypto.randomUUID().slice(0, 8)}`;
   const startedAt = Date.now();
   const targetByRequest = new Map<string, string>();
+  const dispatched = new Set<string>();
   // The as-of fence binds every fanned-out responder until the fan-out settles.
   const fenceMs = parseEvidenceCutoff(opts?.evidenceCutoff);
   const asof = fenceMs !== undefined ? new Date(fenceMs).toISOString() : undefined;
@@ -933,9 +953,10 @@ async function collectResponses(
         clearTimeout(overall);
         if (graceTimer) clearTimeout(graceTimer);
         unsub();
+        engine.shutdownSignal.removeEventListener("abort", onShutdown);
         for (const release of releaseFences.splice(0)) release();
         for (const id of pending) finishTarget(id, "failed", unresolvedDetail);
-        for (const t of targets) decrementPending(t);
+        for (const t of dispatched) decrementPending(t);
       }
 
       const unsub = cm.onMessage((channelId, senderId, _name, content) => {
@@ -964,6 +985,17 @@ async function collectResponses(
         }
       });
 
+      const onShutdown = () => {
+        if (settled) return;
+        cleanup("Instance is draining");
+        reject(new HttpError(503, "Instance is draining"));
+      };
+      engine.shutdownSignal.addEventListener("abort", onShutdown, { once: true });
+      if (engine.shutdownSignal.aborted) {
+        onShutdown();
+        return;
+      }
+
       for (const target of targets) {
         // A synchronous responder can settle the fan-out mid-loop (open mode:
         // first answer wins); don't dispatch — or trace — dead requests.
@@ -972,6 +1004,7 @@ async function collectResponses(
         pending.add(requestId);
         targetByRequest.set(requestId, target);
         incrementPending(target);
+        dispatched.add(target);
         if (fenceMs !== undefined)
           releaseFences.push(
             fenceEntity(
@@ -1075,9 +1108,11 @@ export async function routePanel(
         { role: "user", content: mergePrompt },
       ],
     });
+    if (!resp.ok) throw new Error(`Panel synthesis failed (${resp.status})`);
     const data = (await resp.json()) as {
       choices?: { message?: { content?: string } }[];
     };
+    requireFinishedChat(data, "Panel synthesis");
     const text = data.choices?.[0]?.message?.content;
     if (text) return { content: text, conversationId, requestId };
   } catch {
@@ -1282,6 +1317,7 @@ export function routeToChannelStreaming(
   let settled = false;
   let traceFinished = false;
   let cancelReminders: (() => void) | undefined;
+  let detachShutdown = () => {};
   /** First member to send a correlated frame; only it may continue the stream. */
   let streamOwner: string | undefined;
   const cleanup = () => {
@@ -1293,6 +1329,7 @@ export function routeToChannelStreaming(
     for (const release of releaseFences) release?.();
     cancelReminders?.();
     unsub?.();
+    detachShutdown();
     decrementPending(claim.holder);
   };
   const finishTrace = (phase: "completed" | "failed", detail?: string) => {
@@ -1353,7 +1390,7 @@ export function routeToChannelStreaming(
         } catch {
           return; // Non-JSON message — skip
         }
-        if (parsed.id !== reqId) return;
+        if (!parsed || parsed.id !== reqId || modelResponseError(parsed)) return;
         if (
           parsed.type !== "model_response_chunk" &&
           parsed.type !== "model_response_end" &&
@@ -1436,6 +1473,20 @@ export function routeToChannelStreaming(
       });
 
       try {
+        const onShutdown = () => {
+          cleanup();
+          finishTrace("failed", "Instance is draining");
+          if (format === "responses" && responses)
+            responses.emitter.fail("Instance is draining", "server_error");
+          else controller.error(new HttpError(503, "Instance is draining"));
+          safeClose(controller);
+        };
+        engine.shutdownSignal.addEventListener("abort", onShutdown, { once: true });
+        detachShutdown = () => engine.shutdownSignal.removeEventListener("abort", onShutdown);
+        if (engine.shutdownSignal.aborted) {
+          onShutdown();
+          return;
+        }
         cancelReminders = scheduleRequestReminders(
           cm,
           channel.id,
@@ -1475,6 +1526,13 @@ export function routeToChannelStreaming(
  * `unsupported_parameter` error the SDK can act on (drop tools, retry).
  */
 export function rejectUnsupportedForAgents(body: Record<string, unknown>): Response | undefined {
+  for (const field of ["max_tokens", "max_completion_tokens", "max_output_tokens"]) {
+    if (body[field] !== undefined)
+      return unsupportedParam(
+        field,
+        "In-world agent routing cannot enforce an output-token ceiling; use the passthru endpoint mode for token controls.",
+      );
+  }
   if (Array.isArray(body.tools) && body.tools.length > 0) {
     return unsupportedParam(
       "tools",

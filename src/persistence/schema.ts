@@ -34,7 +34,114 @@ const MIGRATION_HOOKS: Readonly<Partial<Record<number, (db: Database) => void>>>
   172: installMemoryKnownAt,
 };
 
-export const FORWARD_MIGRATIONS: Migration[] = [];
+export const FORWARD_MIGRATIONS: Migration[] = [
+  // Durable lesson decisions and memory request receipts survive a process
+  // crash between admission, primary/meta writes and delivery settlement.
+  {
+    version: 180,
+    sql: `CREATE TABLE outcome_learning_steps (
+  outcome_id INTEGER NOT NULL REFERENCES outcomes(id) ON DELETE CASCADE,
+  step TEXT NOT NULL,
+  value_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (outcome_id, step)
+);`,
+  },
+  {
+    version: 181,
+    sql: `CREATE TABLE outcome_learning_state (
+  outcome_id INTEGER PRIMARY KEY REFERENCES outcomes(id) ON DELETE CASCADE,
+  erased_at INTEGER
+);
+CREATE TABLE outcome_learning_spaces (
+  outcome_id INTEGER NOT NULL REFERENCES outcomes(id) ON DELETE CASCADE,
+  space_id TEXT NOT NULL,
+  PRIMARY KEY (outcome_id, space_id)
+);
+CREATE INDEX idx_outcome_learning_spaces_space ON outcome_learning_spaces(space_id);
+-- Pre-journal-erasure workflows have no reliable space lineage. Stop replay
+-- and discard their opaque payloads instead of risking erased-data revival.
+INSERT INTO outcome_learning_state SELECT DISTINCT outcome_id, unixepoch()*1000 FROM outcome_learning_steps;
+UPDATE outcome_deliveries SET state='skipped',reason='learning journal upgraded without erasure lineage'
+ WHERE consumer='lessons' AND state='pending' AND outcome_id IN (SELECT outcome_id FROM outcome_learning_state);
+DELETE FROM outcome_learning_steps;`,
+  },
+  {
+    version: 182,
+    sql: `CREATE TABLE investigation_spend_receipts (
+  id TEXT PRIMARY KEY,
+  attempt_id TEXT NOT NULL REFERENCES investigation_attempts(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  model TEXT,
+  state TEXT NOT NULL CHECK(state IN ('pending','priced','unknown')),
+  usd REAL,
+  reason TEXT,
+  created_at INTEGER NOT NULL,
+  settled_at INTEGER
+);
+CREATE INDEX idx_investigation_spend_attempt ON investigation_spend_receipts(attempt_id);`,
+  },
+  {
+    version: 183,
+    sql: `CREATE TABLE sandbox_bindings_183 (
+  provider_id TEXT NOT NULL DEFAULT 'flywheel',
+  entity_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  sandbox_id TEXT NOT NULL,
+  image TEXT NOT NULL,
+  keep_alive INTEGER NOT NULL DEFAULT 1,
+  state TEXT NOT NULL,
+  published_url TEXT,
+  active_project_id TEXT,
+  guest_cwd TEXT,
+  last_error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  reconciled_at INTEGER,
+  network_profile TEXT NOT NULL DEFAULT 'provider-default',
+  network_profile_enforced INTEGER NOT NULL DEFAULT 0,
+  last_activity_at INTEGER,
+  lifecycle_expires_at INTEGER,
+  hibernated_reason TEXT,
+  PRIMARY KEY(provider_id, entity_id),
+  UNIQUE(provider_id, session_id),
+  UNIQUE(provider_id, sandbox_id)
+);
+INSERT INTO sandbox_bindings_183 SELECT 'flywheel', * FROM flywheel_bindings;
+DROP TABLE flywheel_bindings;
+ALTER TABLE sandbox_bindings_183 RENAME TO flywheel_bindings;
+CREATE INDEX idx_flywheel_bindings_state ON flywheel_bindings(provider_id, state);`,
+  },
+  {
+    version: 184,
+    sql: `ALTER TABLE task_claims ADD COLUMN submission_clock INTEGER NOT NULL DEFAULT 0;
+UPDATE task_claims SET submission_clock = coalesce(submitted_at, 0);`,
+  },
+  {
+    version: 185,
+    sql: `CREATE TABLE task_work_revisions (
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  revision INTEGER NOT NULL,
+  author_id TEXT NOT NULL,
+  author_name TEXT NOT NULL,
+  action TEXT NOT NULL,
+  document TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (task_id, revision)
+);
+CREATE TABLE task_work_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  reviewer_id TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  report TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  UNIQUE (task_id, reviewer_id, fingerprint)
+);
+CREATE INDEX idx_task_work_checks_expiry ON task_work_checks(expires_at);`,
+  },
+];
 
 /** Migration 172 body — self-contained so later edits elsewhere never change it. */
 function installMemoryKnownAt(db: Database): void {

@@ -30,6 +30,7 @@ import { resolveModel } from "../agent/lean-agent-adapter";
 import { piModels } from "../agent/pi-models";
 import { getErrorMessage } from "../engine/errors";
 import { dailyCapRefusal, recordPurposeSpend, type SpendSource } from "../engine/spend-ledger";
+import { beginObservedSpend, withSpendObservation } from "../engine/spend-observation";
 import {
   classifyUpstreamRefusal,
   isDirectRoute,
@@ -39,6 +40,7 @@ import {
 } from "../net/model/route-health";
 import { noteTierOutputCapReply } from "../net/model/tier-output-cap";
 import { callCost, isLoopbackMarinaSpec, type ResolvedModel, type Usage } from "./access";
+import { checkOutputPayload } from "./output-payload";
 import type { ModelPurpose } from "./purpose";
 import {
   backoff,
@@ -97,6 +99,7 @@ export interface CallBinding {
 export interface CallRequest {
   context: Context;
   maxTokens: number;
+  explicitOutputCap?: boolean;
   toolChoice?: ToolChoice;
   timeoutMs: number;
   signals: readonly (AbortSignal | undefined)[];
@@ -195,11 +198,24 @@ export async function modelCall(
     }
     let failure: unknown;
     let message: string;
+    let observed: ReturnType<typeof beginObservedSpend>;
+    let outputDetail: string | undefined;
     try {
       await prepareHostedModel(target.model, target.apiKey, undefined, anySignal);
+      observed = beginObservedSpend(binding.source, target.spec);
       const result = await piModels.completeSimple(target.model, request.context, {
         apiKey: target.apiKey,
         maxTokens: request.maxTokens,
+        onPayload: (payload) => {
+          checkOutputPayload(
+            payload,
+            request.maxTokens,
+            request.explicitOutputCap === true,
+            (detail) => {
+              outputDetail = detail;
+            },
+          );
+        },
         ...(request.toolChoice ? { toolChoice: request.toolChoice } : {}),
         signal: AbortSignal.any([AbortSignal.timeout(request.timeoutMs), ...signals]),
       });
@@ -216,7 +232,14 @@ export async function modelCall(
         reasoning: tokens.reasoning + (result.usage?.reasoning ?? 0),
         cost: tokens.cost + cost,
       };
-      if (ledger) recordPurposeSpend(binding.purpose, binding.source, cost, env);
+      if (ledger)
+        withSpendObservation(undefined, () =>
+          recordPurposeSpend(binding.purpose, binding.source, cost, env),
+        );
+      observed?.settle(
+        result.usage ? cost : undefined,
+        result.usage ? undefined : "Provider returned no usage",
+      );
       binding.onCost?.(cost);
       if (!binding.failOn.has(result.stopReason)) {
         const capHit = !!request.tierCapped && result.stopReason === "length";
@@ -231,7 +254,13 @@ export async function modelCall(
             costUsd: tokens.cost,
             ...(request.tierCapped ? { outputCap: request.maxTokens } : {}),
             ...(capHit ? { outputCapHit: true } : {}),
-            ...(attempt > 0 ? { detail: `retries:${attempt}` } : {}),
+            ...(attempt > 0 || outputDetail
+              ? {
+                  detail: [outputDetail, attempt > 0 ? `retries:${attempt}` : undefined]
+                    .filter(Boolean)
+                    .join("; "),
+                }
+              : {}),
           }),
         );
         return result;
@@ -240,6 +269,7 @@ export async function modelCall(
       failure = new Error(message);
       if (result.stopReason === "aborted") return fail(failure, message);
     } catch (error) {
+      observed?.settle(undefined, "Provider attempt failed without a priced receipt");
       failure = error;
       message = getErrorMessage(error);
     }

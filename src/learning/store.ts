@@ -20,6 +20,7 @@
 
 import { searchNeighbourRecords } from "../memory/admission";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
+import type { LearningJournal } from "./journal";
 import {
   LESSON_SCOPES,
   type Lesson,
@@ -305,7 +306,7 @@ export function durableLessonSink(
     }
     return out.slice(0, limit);
   };
-  return {
+  const sink: LessonSink = {
     async write(lesson, writeOpts) {
       const reply = await run({
         operation: "remember",
@@ -507,4 +508,46 @@ export function durableLessonSink(
       });
     },
   };
+  sink.withJournal = (journal: LearningJournal): LessonSink => {
+    let mutationIndex = 0;
+    const mutate = <T>(method: string, action: (scoped: LessonSink) => Promise<T>) => {
+      const checkpoint = journal.child(`${mutationIndex++}:${method}`);
+      return checkpoint.run("complete", async () => {
+        let requestIndex = 0;
+        const scoped = durableLessonSink(
+          async (request) => {
+            const call = checkpoint.child(`request:${requestIndex++}`);
+            // Persist the exact body and key BEFORE the physical operation.
+            // Its memory-service receipt commits atomically with the write.
+            const saved = await call.run("input", async () => ({
+              ...request,
+              key: call.key("memory"),
+            }));
+            return call.run("result", () => run(saved));
+          },
+          spaceFor,
+          { retries: 0 },
+        );
+        return action(scoped);
+      });
+    };
+    return {
+      ...sink,
+      prepareJournal: async (domain, _meta) => {
+        // Admission also reads meta neighbours when mirroring is disabled.
+        for (const d of new Set<OutcomeDomain>([domain, "meta"])) {
+          const id = await spaceFor(d);
+          if (!id) throw new Error("Durable learning requires a persistent memory space");
+          journal.bindSpace(id);
+        }
+      },
+      write: (lesson, options) => mutate("write", (s) => s.write(lesson, options)),
+      update: (domain, id, change) => mutate("update", (s) => s.update!(domain, id, change)),
+      retire: (domain, id, retirement) =>
+        mutate("retire", (s) => s.retire!(domain, id, retirement)),
+      contest: (domain, id, against, options) =>
+        mutate("contest", (s) => s.contest!(domain, id, against, options)),
+    };
+  };
+  return sink;
 }

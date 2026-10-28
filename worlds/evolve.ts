@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeLookTarget } from "../src/engine/commands/look";
 import { BENCHMARK_RUN_MIN_RANK } from "../src/engine/constants";
 import type { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, Entity, EntityId, RoomContext, RoomId, RoomModule } from "../src/types";
@@ -35,6 +36,31 @@ function isQuestActive(entity: Entity, questId: string): boolean {
   return entity.properties.active_quest === questId;
 }
 
+/** Benchmark answers are complete answers, normalized only for case and punctuation. */
+function sameAnswer(answer: string, expected: string): boolean {
+  const normalize = (text: string) =>
+    text
+      .trim()
+      .toLowerCase()
+      .replace(/[.!?]+$/, "")
+      .trim();
+  return normalize(answer) === normalize(expected);
+}
+
+function examineBenchmarkItem(ctx: RoomContext, input: CommandInput, room: RoomModule): boolean {
+  const target = normalizeLookTarget(input.args);
+  const item = target
+    ? Object.entries(room.items ?? {}).find(([name]) => name.toLowerCase() === target)
+    : undefined;
+  if (item) {
+    ctx.send(input.entity, typeof item[1] === "function" ? item[1](ctx, input.entity) : item[1]);
+    return true;
+  }
+  const entity = target ? ctx.findEntity(target) : undefined;
+  ctx.send(input.entity, entity?.long ?? (target ? `You see no ${target} here.` : "Examine what?"));
+  return false;
+}
+
 // ─── Navigation Benchmark ────────────────────────────────────────────────────
 
 const BENCH_NAVIGATION = {
@@ -65,7 +91,7 @@ const BENCH_NAVIGATION = {
   onComplete(entity: Entity) {
     const examinations = (entity.properties.bench_nav_examinations as number) ?? 99;
     // Score: 100 if found in 1, decreasing by 10 per extra examination, min 10
-    const score = Math.max(10, 100 - (examinations - 1) * 15);
+    const score = Math.min(100, Math.max(10, 100 - (examinations - 1) * 15));
     const prev = (entity.properties.bench_navigation_best as number) ?? 0;
     entity.properties.bench_navigation_best = Math.max(score, prev);
     // Reset active flags
@@ -162,7 +188,8 @@ const ROOM_NAVIGATION: RoomModule = {
   commands: {
     examine(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_navigation")) return;
+      const examined = examineBenchmarkItem(ctx, input, ROOM_NAVIGATION);
+      if (!examined || !entity || !isQuestActive(entity, "bench_navigation")) return;
       entity.properties.bench_nav_examinations =
         ((entity.properties.bench_nav_examinations as number) ?? 0) + 1;
     },
@@ -346,8 +373,15 @@ const ROOM_RETRIEVAL: RoomModule = {
       }
       const fact = RETRIEVAL_FACTS[idx]!;
       const answer = input.args.trim().toLowerCase();
+      if (!answer) {
+        ctx.send(
+          input.entity,
+          "Enter a complete answer; an empty answer does not advance the test.",
+        );
+        return;
+      }
       const correct = fact.a.toLowerCase();
-      const isCorrect = answer.includes(correct) || correct.includes(answer);
+      const isCorrect = sameAnswer(answer, correct);
       if (isCorrect) {
         entity.properties.bench_ret_correct =
           ((entity.properties.bench_ret_correct as number) ?? 0) + 1;
@@ -857,7 +891,14 @@ const ROOM_ADAPTATION: RoomModule = {
       }
       const prompt = variant.prompts[idx]!;
       const answer = input.args.trim().toLowerCase();
-      const isCorrect = answer.includes(prompt.a) || prompt.a.includes(answer);
+      if (!answer) {
+        ctx.send(
+          input.entity,
+          "Enter a complete answer; an empty answer does not advance the test.",
+        );
+        return;
+      }
+      const isCorrect = sameAnswer(answer, prompt.a);
       if (isCorrect) {
         entity.properties.bench_ad_correct =
           ((entity.properties.bench_ad_correct as number) ?? 0) + 1;
@@ -1034,8 +1075,12 @@ const ROOM_MEMORY: RoomModule = {
   commands: {
     examine(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_memory")) return;
-      if (entity_phase(entity) === "study" && input.args.startsWith("stone-")) {
+      const examined = examineBenchmarkItem(ctx, input, ROOM_MEMORY);
+      if (!examined || !entity || !isQuestActive(entity, "bench_memory")) return;
+      if (
+        entity_phase(entity) === "study" &&
+        normalizeLookTarget(input.args).startsWith("stone-")
+      ) {
         entity.properties.bench_mem_studied =
           ((entity.properties.bench_mem_studied as number) ?? 0) + 1;
       }
@@ -1066,7 +1111,14 @@ const ROOM_MEMORY: RoomModule = {
       }
       const q = MEMORY_QUESTIONS[qidx]!;
       const answer = input.args.trim().toLowerCase();
-      const isCorrect = answer.includes(q.a) || q.a.includes(answer);
+      if (!answer) {
+        ctx.send(
+          input.entity,
+          "Enter a complete answer; an empty answer does not advance the test.",
+        );
+        return;
+      }
+      const isCorrect = sameAnswer(answer, q.a);
       if (isCorrect) {
         entity.properties.bench_mem_correct =
           ((entity.properties.bench_mem_correct as number) ?? 0) + 1;

@@ -74,6 +74,21 @@ describe("extractTextualToolCalls", () => {
 });
 
 describe("normalizeTextualToolCalls", () => {
+  it.each(["length", "content_filter"])("preserves %s when a tool block parsed", (reason) => {
+    const data = {
+      choices: [
+        {
+          message: {
+            content: '<tool_call>{"name":"write","arguments":{"content":"partial"}}</tool_call>',
+          },
+          finish_reason: reason,
+        },
+      ],
+    };
+    expect(normalizeTextualToolCalls(data)).toBe(true);
+    expect(data.choices[0]!.finish_reason).toBe(reason);
+  });
+
   it("promotes textual calls to structured tool_calls on the choice", () => {
     const data = {
       choices: [

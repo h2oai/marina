@@ -83,7 +83,17 @@ export interface InvestigationResult {
   /** Raw executor output is private content, loaded separately from a compact result. */
   outputId?: string;
   capture: { status: "complete" | "partial"; gaps: string[] };
-  accounting: { knownUsd: number; complete: boolean; outstanding: number };
+  accounting: {
+    knownUsd: number;
+    complete: boolean;
+    outstanding: number;
+    /** Coverage gaps are independent of outstanding calls and answer availability. */
+    reasons?: string[];
+    pricedCalls?: number;
+    unknownCalls?: number;
+    /** Adapter totals can overlap; retained for diagnosis, never added to receipts. */
+    reportedUsd?: number;
+  };
 }
 
 export interface InvestigationAttempt {

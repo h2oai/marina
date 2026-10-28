@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { draftAnswerKey } from "../../src/agent/budget-terminal";
 import { answerDigest } from "../../src/engine/benchmark-ledger";
+import { requireFinishedChat } from "../../src/model/output";
 import { mulberry32 } from "../../src/stats";
 import { BudgetExhausted, isSpendCapRefusal } from "../call-spend-guard";
 import { stamped } from "../run-version";
@@ -172,6 +173,7 @@ export async function judgeAnswer(
       throw new Error(`HTTP ${resp.status}: ${text.slice(0, 300)}`);
     }
     const data = JSON.parse(text) as { choices?: { message?: { content?: string | null } }[] };
+    requireFinishedChat(data, "Benchmark judge");
     // A thinking block, if a host emits one anyway, is not part of the verdict.
     const content = (data.choices?.[0]?.message?.content ?? "").replace(
       /<think>[\s\S]*?<\/think>/g,

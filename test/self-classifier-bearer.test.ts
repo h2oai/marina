@@ -6,8 +6,8 @@
  * the lesson judge's fallback, classifier engines) read their bearer on every
  * ask. Before the server marks itself serving, `selfModelToken` returns the
  * local profile's key; the server treats that key as an outside caller, so in
- * the default `agents` endpoint mode `marina/default` with a response format
- * is refused (400) and then not found (404) — no upstream call, no lifecycle
+ * the default `agents` endpoint mode `marina/default` with an output-token cap
+ * is refused (400) — no upstream call, no lifecycle
  * event. A provider that kept the first bearer it saw stayed on that key for
  * the life of the process, and every lesson judgement failed as "decision
  * backend unavailable". The server also marks itself serving before anything
@@ -146,16 +146,20 @@ describe("a classifier on the server's own /v1 follows the server's bearer", () 
   it("first asked before the server serves: the local key is refused as an outside caller", async () => {
     // The server accepts the local key once it has booted.
     process.env.MARINA_LOCAL_API_KEY = LOCAL_KEY;
-    await expect(ask(selfBackend())).rejects.toThrow(/decision backend 404/);
-    // Refused at the agents route: 400 response_format, then 404 marina/default.
-    expect(selfStatuses).toEqual([400, 404]);
+    await expect(ask(selfBackend())).rejects.toThrow(
+      /decision backend 400: Unsupported parameter:.*max_tokens/,
+    );
+    // Refused at the agents route: it cannot enforce the classifier output cap.
+    expect(selfStatuses).toEqual([400]);
     expect(upstream).toHaveLength(0);
   });
 
   it("the marina-self backend answers once the server serves, though its first ask came before", async () => {
     process.env.MARINA_LOCAL_API_KEY = LOCAL_KEY;
     const judge = selfBackend();
-    await expect(ask(judge)).rejects.toThrow(/decision backend 404/);
+    await expect(ask(judge)).rejects.toThrow(
+      /decision backend 400: Unsupported parameter:.*max_tokens/,
+    );
     markServingProcess();
     const result = await ask(judge);
     expect(result.provider).toBe("marina-self");
@@ -169,7 +173,9 @@ describe("a classifier on the server's own /v1 follows the server's bearer", () 
     process.env.MARINA_LOCAL_API_KEY = LOCAL_KEY;
     const judge = lessonJudgeFromEnv(process.env, { baseUrl: SELF });
     expect(judge.kind).toBe("marina-classifier");
-    await expect(ask(judge)).rejects.toThrow(/decision backend 404/);
+    await expect(ask(judge)).rejects.toThrow(
+      /decision backend 400: Unsupported parameter:.*max_tokens/,
+    );
     markServingProcess();
     const result = await ask(judge);
     expect(result.answers.grounded).toEqual({ type: "noul", noul: 0.9 });

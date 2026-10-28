@@ -280,7 +280,7 @@ describe("buildAnthropicRequest", () => {
   test("string stop and default max_tokens", () => {
     const req = buildAnthropicRequest({ ...base, stop: "X" }, "m", true);
     expect(req.stop_sequences).toEqual(["X"]);
-    expect(req.max_tokens).toBe(4096);
+    expect(req.max_tokens).toBe(16384);
     expect(req.stream).toBe(true);
   });
 
@@ -393,7 +393,7 @@ describe("buildAnthropicRequest", () => {
     expect(req2.system).toEqual([
       { type: "text", text: "plain", cache_control: { type: "ephemeral" } },
     ]);
-    expect(req2.max_tokens).toBe(4096);
+    expect(req2.max_tokens).toBe(16384);
   });
 });
 
@@ -435,7 +435,9 @@ describe("anthropicMessageToOpenai", () => {
     expect(anthropicFinishReason("end_turn", false)).toBe("stop");
     expect(anthropicFinishReason("stop_sequence", false)).toBe("stop");
     expect(anthropicFinishReason("max_tokens", false)).toBe("length");
+    expect(anthropicFinishReason("max_tokens", true)).toBe("length");
     expect(anthropicFinishReason("refusal", false)).toBe("content_filter");
+    expect(anthropicFinishReason("refusal", true)).toBe("content_filter");
     expect(anthropicFinishReason("end_turn", true)).toBe("tool_calls");
   });
 
@@ -589,4 +591,43 @@ describe("AnthropicSseTranslator", () => {
     });
     expect(frames[frames.length - 1]).toBe("data: [DONE]\n\n");
   });
+});
+
+test("thinking never increases an explicit output ceiling", () => {
+  expect(() =>
+    buildAnthropicRequest(
+      { max_tokens: 100, reasoning_effort: "high" },
+      "claude-sonnet-4-6",
+      false,
+    ),
+  ).toThrow(UnsupportedParameterError);
+  expect(
+    buildAnthropicRequest(
+      { max_tokens: 1500, reasoning_effort: "high" },
+      "claude-sonnet-4-6",
+      false,
+    ),
+  ).toMatchObject({ max_tokens: 1500, thinking: { budget_tokens: 1024 } });
+  expect(() =>
+    buildAnthropicRequest(
+      { max_tokens: 2000, thinking: { type: "enabled", budget_tokens: 3000 } },
+      "claude-sonnet-4-6",
+      false,
+    ),
+  ).toThrow(UnsupportedParameterError);
+  expect(
+    buildAnthropicRequest(
+      { max_tokens: 2000, thinking: { type: "enabled", budget_tokens: 1800 } },
+      "claude-sonnet-4-6",
+      false,
+    ),
+  ).toMatchObject({ max_tokens: 2000, thinking: { budget_tokens: 1800 } });
+});
+
+test("Anthropic EOF without terminal metadata is incomplete", () => {
+  const translator = new AnthropicSseTranslator("m");
+  translator.push(
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}\n\n',
+  );
+  expect(() => translator.flush()).toThrow("without a stop reason");
 });

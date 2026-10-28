@@ -8,6 +8,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { requireFinishedOutput } from "../src/model/output";
 import { seededShuffle } from "./download";
 import type { DatasetItem, ResultItem } from "./types";
 
@@ -54,7 +55,11 @@ async function callAnthropic(systemMsg: string, userMsg: string): Promise<string
       continue;
     }
     if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${await resp.text()}`);
-    const data = (await resp.json()) as { content: Array<{ type: string; text: string }> };
+    const data = (await resp.json()) as {
+      stop_reason?: unknown;
+      content: Array<{ type: string; text: string }>;
+    };
+    requireFinishedOutput(data.stop_reason, "Direct Anthropic benchmark");
     return data.content
       .filter((b) => b.type === "text")
       .map((b) => b.text)

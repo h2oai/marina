@@ -15,6 +15,7 @@ import { tierOutputCapFor } from "../config/model-tiers";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { modelAccess, type Usage } from "./access";
 import { type CallBinding, type ModelCallOptions, modelCall } from "./call";
+import { configuredOutputTokens, defaultOutputTokens } from "./output";
 import { spendSourceFor } from "./purpose";
 
 export type TurnFn = (
@@ -29,9 +30,6 @@ export interface ModelTurns {
 }
 
 const FAIL_ON_ERROR_OR_ABORT = new Set(["error", "aborted"] as const);
-
-/** A turn's output cap when the caller sets none. */
-const DEFAULT_TURN_MAX_TOKENS = 16_000;
 
 export interface ModelTurnsOptions extends ModelCallOptions {
   maxTokens?: number;
@@ -56,7 +54,7 @@ export function modelTurns(
   // `marina/cheap` with no caller cap: the tier's output cap bounds every turn.
   const tierCap = opts.maxTokens === undefined ? tierOutputCapFor(spec, env) : undefined;
   const defaultMax = Math.min(
-    DEFAULT_TURN_MAX_TOKENS,
+    defaultOutputTokens(env),
     tierCap?.maxTokens ?? Number.POSITIVE_INFINITY,
   );
   const binding: CallBinding = {
@@ -74,15 +72,20 @@ export function modelTurns(
     opts.signal?.throwIfAborted();
     const capped = dailyCapRefusal(env);
     if (capped) throw new Error(capped);
-    const maxTokens = Math.min(
-      opts.maxTokens ?? defaultMax,
-      o.maxTokens ?? Number.POSITIVE_INFINITY,
-    );
+    // A per-turn override can exceed an automatic default, but not an explicit parent cap.
+    const maxTokens =
+      opts.maxTokens === undefined
+        ? (o.maxTokens ?? defaultMax)
+        : Math.min(opts.maxTokens, o.maxTokens ?? Number.POSITIVE_INFINITY);
     return modelCall(binding, {
       context,
       maxTokens,
+      explicitOutputCap:
+        opts.maxTokens !== undefined ||
+        o.maxTokens !== undefined ||
+        configuredOutputTokens(env) !== undefined,
       // A per-turn cap below the tier's is the caller's own, not a tier hit.
-      ...(tierCap && maxTokens === defaultMax ? { tierCapped: true } : {}),
+      ...(tierCap && o.maxTokens === undefined ? { tierCapped: true } : {}),
       ...(o.toolChoice ? { toolChoice: o.toolChoice } : {}),
       timeoutMs: opts.timeoutMs ?? 300_000,
       signals: [opts.signal, o.signal],

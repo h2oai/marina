@@ -386,7 +386,7 @@ describe("src/model on marina/cheap", () => {
     await modelTurns("marina/cheap", env({ [CHEAP_OUTPUT_CAP_ENV]: "off" })).turn({
       messages: [],
     });
-    expect(seen).toEqual([30_000, 16_000, 16_000]);
+    expect(seen).toEqual([30_000, 16_384, 16_384]);
     expect(events.every((e) => e.outputCap === undefined)).toBe(true);
     expect(tierOutputCapCounts()).toEqual({ capped: 0, hits: 0 });
   });
@@ -554,13 +554,17 @@ describe("tier members inside marina/verify and the ensemble", () => {
       outputCap: 16_384,
       outputCapHit: true,
     });
+    expect(resp.headers.get("x-marina-verify")).toBe("incomplete-draft");
+    expect(calls.some((c) => c.url.includes("api.anthropic.com"))).toBe(false);
+    proposerFinish = "stop";
+    await chat("marina/verify:marina/cheap+anthropic/claude-opus-5-5");
     // The checker, named explicitly, goes to Anthropic with no tier cap.
     const checker = calls.find((c) => c.url.includes("api.anthropic.com"));
     expect(checker?.body.model).toBe("claude-opus-5-5");
-    expect(checker?.body.max_tokens).not.toBe(16_384);
+    expect(checker?.body.max_tokens).toBe(16_384);
     expect(checker?.body).not.toHaveProperty("reasoning");
     expect(completedFor("verify:checker").at(-1)).not.toHaveProperty("outputCap");
-    expect(tierOutputCapCounts()).toEqual({ capped: 1, hits: 1 });
+    expect(tierOutputCapCounts()).toEqual({ capped: 2, hits: 1 });
   });
 
   it("marina/strong inside verify resolves to the strong tier with no cap", async () => {

@@ -174,9 +174,12 @@ describe("ResidentPart", () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const fetcher = (async (url: string, init: RequestInit) => {
       calls.push({ url, init });
-      return new Response(JSON.stringify({ choices: [{ message: { content: "0.3" } }] }), {
-        headers: { "x-marina-respondent": "Lead", "x-request-id": "req-h1" },
-      });
+      return new Response(
+        JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "0.3" } }] }),
+        {
+          headers: { "x-marina-respondent": "Lead", "x-request-id": "req-h1" },
+        },
+      );
     }) as unknown as typeof fetch;
     const env = { MARINA_FORECAST_MARINA_URL: "http://marina.test:3300" };
     const p = residentPart("marina:crewx", { env, fetch: fetcher, callDeadlineMs: 45_000 });
@@ -606,7 +609,9 @@ describe("off: byte-identical", () => {
     const bodies: Array<{ url: string; init: RequestInit }> = [];
     globalThis.fetch = (async (url: string, init: RequestInit) => {
       bodies.push({ url, init });
-      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }));
+      return new Response(
+        JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "ok" } }] }),
+      );
     }) as unknown as typeof fetch;
     try {
       const env = { MARINA_FORECAST_MARINA_URL: "http://m.test" };

@@ -1,13 +1,14 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { TaskManager } from "../src/coordination/task-manager";
 import type { DecisionProvider } from "../src/decisions/types";
 import { judgeAgreement } from "../src/outcomes/agreement";
 import { judgeWaitingWork, QUALITY_GRACE_MS } from "../src/outcomes/judge-quality";
 import { judgeOpenResolutions } from "../src/outcomes/judge-resolution";
-import { recordTaskVerdict } from "../src/outcomes/live";
+import { recordTaskOpinion, recordTaskVerdict, taskOpinionSubject } from "../src/outcomes/live";
 import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
 import type { Retriever } from "../src/research/retrieve";
@@ -241,5 +242,119 @@ describe("judged quality of work with no verdict", () => {
     expect((await judgeWaitingWork(db, { env: ENV, now: later })).stoppedBy).toBe(
       "no decision backend",
     );
+  });
+
+  for (const first of ["verifier", "periodic"] as const) {
+    it(`keeps one submission opinion when ${first} finishes first`, async () => {
+      const id = submitted();
+      const submittedAt = tasks.getClaim(id, "e_helper")!.submittedAt!;
+      const later = () => submittedAt + QUALITY_GRACE_MS + 1;
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const inner = judge();
+      const pending = judgeWaitingWork(db, {
+        env: ENV,
+        now: later,
+        judge: {
+          ...inner,
+          async ask(request) {
+            started.resolve();
+            await release.promise;
+            return inner.ask(request);
+          },
+        },
+      });
+      await started.promise;
+      const verifier = () =>
+        recordTaskOpinion(db, {
+          taskId: id,
+          claimant: "Helper",
+          judge: "verifier",
+          opinion: "fail",
+          submittedAt,
+          at: later(),
+        });
+      if (first === "verifier") verifier();
+      release.resolve();
+      expect(await pending).toMatchObject({ judged: 1, failed: 0, delivered: 0 });
+      if (first === "periodic") verifier();
+      await settleDelivery(db);
+      const rows = db.listOutcomes({ basis: "judged" });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        subject: taskOpinionSubject(id, "Helper", submittedAt),
+        metric: first === "verifier" ? "judge-opinion" : "judge-quality",
+        succeeded: first === "verifier" ? 0 : 1,
+      });
+      expect(db.outcomeDeliveries(rows[0]!.id)).toEqual([]);
+      expect((await judgeWaitingWork(db, { env: ENV, judge: inner, now: later })).judged).toBe(0);
+    });
+  }
+
+  it("does not attach a late verifier to a replacement submission", () => {
+    const id = submitted();
+    const submittedAt = tasks.getClaim(id, "e_helper")!.submittedAt!;
+    (db as unknown as { db: Database }).db.run(
+      "UPDATE task_claims SET submitted_at=? WHERE task_id=?",
+      [submittedAt + 1, id],
+    );
+    recordTaskOpinion(db, {
+      taskId: id,
+      claimant: "Helper",
+      judge: "verifier",
+      opinion: "pass",
+      submittedAt,
+    });
+    expect(db.listOutcomes({ basis: "judged" })).toEqual([]);
+  });
+
+  it("matches a delayed opinion to its own creator verdict, never a replacement attempt", () => {
+    const id = submitted();
+    const submittedAt = tasks.getClaim(id, "e_helper")!.submittedAt!;
+    recordTaskVerdict(db, {
+      taskId: id,
+      claimant: "Helper",
+      approved: true,
+      at: submittedAt + 1,
+    });
+    recordTaskOpinion(db, {
+      taskId: id,
+      claimant: "Helper",
+      judge: "verifier",
+      opinion: "pass",
+      submittedAt,
+      at: submittedAt + 2,
+    });
+    expect(judgeAgreement(db)).toMatchObject([{ compared: 1, agreed: 1, falsePass: 0 }]);
+    (db as unknown as { db: Database }).db.run(
+      "UPDATE task_claims SET submitted_at=? WHERE task_id=?",
+      [submittedAt + 3, id],
+    );
+    recordTaskVerdict(db, {
+      taskId: id,
+      claimant: "Helper",
+      approved: false,
+      at: submittedAt + 4,
+    });
+    expect(judgeAgreement(db)).toMatchObject([{ compared: 1, agreed: 1, falsePass: 0 }]);
+  });
+
+  it("rechecks the creator verdict after the periodic judge returns", async () => {
+    const id = submitted();
+    const submittedAt = tasks.getClaim(id, "e_helper")!.submittedAt!;
+    const inner = judge();
+    const result = await judgeWaitingWork(db, {
+      env: ENV,
+      now: () => submittedAt + QUALITY_GRACE_MS + 1,
+      judge: {
+        ...inner,
+        async ask(request) {
+          db.updateTaskClaimStatus(id, "e_helper", "approved");
+          return inner.ask(request);
+        },
+      },
+    });
+    expect(result).toMatchObject({ judged: 1, failed: 0, delivered: 0 });
+    expect(db.listOutcomes({ basis: "judged" })).toEqual([]);
   });
 });

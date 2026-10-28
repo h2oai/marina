@@ -50,6 +50,7 @@
 import { createHash } from "node:crypto";
 import { roleModelFromEnv } from "../config/model-tiers";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { defaultOutputTokens, requireFinishedChat } from "../model/output";
 import { localHttpBase } from "../net/listen-ports";
 import { samplingFor } from "../net/model/sampling-params";
 import type { MemoryRepository } from "../persistence/db-memory-service";
@@ -151,14 +152,14 @@ export function chatNoteWriter(opts: ChatNoteWriterOptions): NoteWriter {
         body: JSON.stringify({
           model: opts.model,
           ...samplingFor(opts.model, 0),
-          max_tokens: opts.maxTokens ?? 1200,
+          max_tokens: opts.maxTokens ?? defaultOutputTokens(),
           messages: [
             { role: "system", content: prompt.system },
             { role: "user", content: prompt.user },
           ],
         }),
         signal: AbortSignal.any([
-          AbortSignal.timeout(opts.timeoutMs ?? 90_000),
+          AbortSignal.timeout(opts.timeoutMs ?? 180_000),
           ...(signal ? [signal] : []),
         ]),
       });
@@ -166,6 +167,7 @@ export function chatNoteWriter(opts: ChatNoteWriterOptions): NoteWriter {
       const body = (await response.json()) as {
         choices?: { message?: { content?: unknown } }[];
       };
+      requireFinishedChat(body, "Note writer");
       const content = body.choices?.[0]?.message?.content;
       if (typeof content === "string") return content;
       if (Array.isArray(content))

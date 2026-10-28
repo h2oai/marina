@@ -14,6 +14,41 @@ const OWNER = entityId("entity-service");
 afterEach(() => cleanupDb(DB_PATH));
 
 describe("CodingServiceManager", () => {
+  test("uses the selected provider's binding and refuses another provider's service", async () => {
+    const db = databaseWithSessionAndBinding();
+    try {
+      db.saveFlywheelBinding({
+        entityId: OWNER,
+        providerId: "openshell",
+        sessionId: "os-session",
+        sandboxId: "os-sandbox",
+        image: "guest",
+        keepAlive: true,
+        state: "running",
+      });
+      db.updateFlywheelBinding(OWNER, { guestCwd: "/workspace/projects/os" }, "openshell");
+      const provider = {
+        ...backend({ alive: true, starts: 0 }),
+        id: "openshell",
+        label: "OpenShell",
+      };
+      const openshell = new CodingServiceManager(db, provider);
+      const service = await openshell.start({
+        entityId: OWNER,
+        sessionId: "coding-session",
+        name: "os-web",
+        command: ["bun", "run", "dev"],
+        port: 3000,
+      });
+      expect(service.sandbox_id).toBe("os-sandbox");
+      expect(service.guest_cwd).toBe("/workspace/projects/os");
+      const flywheel = new CodingServiceManager(db, backend({ alive: true, starts: 0 }));
+      await expect(flywheel.stop(OWNER, service)).rejects.toThrow("current Flywheel sandbox");
+      expect((await openshell.stop(OWNER, service)).status).toBe("stopped");
+    } finally {
+      db.close();
+    }
+  });
   test("persists a bounded managed-service recipe and controls it without host fallback", async () => {
     const db = databaseWithSessionAndBinding();
     const state = { alive: true, starts: 0 };

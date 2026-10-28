@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { CONTENT_OBJECT_BYTES, InvestigationError } from "../investigations/validation";
 import type { InvestigationResult, InvestigationState } from "../sdk/investigation-types";
+import { investigationSpendAccounting } from "./db-investigation-spend";
 import { saveForecastAnswer } from "./db-markets";
 import { type AttemptRow, appendEvent, attemptRow, writableCase } from "./investigation-records";
 
@@ -117,7 +118,10 @@ export function settleInvestigation(
       .get(id, generation) as AttemptRow | null;
     if (!row) return false; // erased or replaced, never recreate it
     const previous: InvestigationResult["accounting"] = JSON.parse(row.accounting_json);
-    const next = { ...accounting, knownUsd: Math.max(previous.knownUsd, accounting.knownUsd) };
+    const next = investigationSpendAccounting(db, id, {
+      ...accounting,
+      knownUsd: Math.max(previous.knownUsd, accounting.knownUsd),
+    });
     const json = JSON.stringify(next);
     if (json === row.accounting_json) return true;
     db.run("UPDATE investigation_attempts SET accounting_json=? WHERE id=?", [json, id]);

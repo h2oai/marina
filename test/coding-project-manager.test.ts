@@ -22,6 +22,38 @@ afterEach(() => {
 });
 
 describe("CodingProjectManager", () => {
+  test("keeps project selection and reconciliation isolated between sandbox providers", async () => {
+    const db = databaseWithBinding();
+    try {
+      db.saveFlywheelBinding({
+        entityId: OWNER,
+        providerId: "openshell",
+        sessionId: "os-session",
+        sandboxId: "os-sandbox",
+        image: "guest",
+        keepAlive: true,
+        state: "running",
+      });
+      const flywheel = new CodingProjectManager(db, unusedLocal(), backend([]));
+      const openshell = new CodingProjectManager(db, unusedLocal(), {
+        ...backend([]),
+        id: "openshell",
+        label: "OpenShell",
+      });
+      const original = await flywheel.init(OWNER, "flywheel-project");
+      const separate = await openshell.init(OWNER, "openshell-project");
+      expect(flywheel.active(OWNER)?.id).toBe(original.id);
+      expect(openshell.active(OWNER)?.id).toBe(separate.id);
+      expect(openshell.reconcile(OWNER).removed).toEqual([]);
+      expect(flywheel.reconcile(OWNER).removed).toEqual([]);
+      expect(db.getCodingProject(original.id)).not.toBeNull();
+      db.deleteFlywheelBinding(OWNER, "openshell");
+      expect(db.getFlywheelBinding(OWNER)?.active_project_id).toBe(original.id);
+      await expect(openshell.init(OWNER, "absent")).rejects.toThrow("sandbox start");
+    } finally {
+      db.close();
+    }
+  });
   test("rejects unsafe, special, oversized, and suspicious archive manifests", () => {
     const regular = "-rw-r--r-- 0/0 12 2026-08-05 00:00 ./src/app.ts";
     expect(validateProjectArchiveManifest(regular, 12)).toEqual({

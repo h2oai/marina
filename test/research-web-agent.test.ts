@@ -458,3 +458,34 @@ describe("read swarm tool", () => {
     }
   });
 });
+
+test("unfinished research never executes tools or returns a completed answer", async () => {
+  for (const content of [
+    [text("partial answer")],
+    [call("t1", "web_search", { query: "must not execute" })],
+  ]) {
+    const env = fakeEnv({});
+    const model = scripted([() => ({ ...assistant(content), stopReason: "length" })]);
+    await expect(
+      researchLoop({ model, env, system: "s", prompt: "q", maxTurns: 2 }),
+    ).rejects.toThrow("incomplete output");
+    expect(env.stats.searches).toBe(0);
+  }
+});
+
+test("citation verification distinguishes clean, malformed and unfinished verdicts", async () => {
+  for (const [content, stopReason, clean] of [
+    ["[]", "stop", true],
+    ["[]", "length", false],
+    ["[{", "stop", false],
+    ['[{"claim":"x"}]', "stop", false],
+    ["no evidence", "stop", false],
+  ] as const) {
+    const c = cache();
+    c.record({ url: "https://src.org/a", status: 200, text: "source evidence" });
+    const verifier = scripted([() => ({ ...assistant([text(content)]), stopReason })]);
+    const result = verifyCitations(verifier, c, "task", "claim https://src.org/a");
+    if (clean) expect(await result).toEqual({ checked: 1, problems: [] });
+    else await expect(result).rejects.toThrow();
+  }
+});

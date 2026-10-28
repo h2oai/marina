@@ -82,7 +82,11 @@ function owe(i: Internals, id: string): string {
   return key;
 }
 
-const prose = (text: string) => ({ role: "assistant", content: [{ type: "text", text }] });
+const prose = (text: string) => ({
+  role: "assistant",
+  stopReason: "stop",
+  content: [{ type: "text", text }],
+});
 
 it("delivers a marked answer as a labelled model_response and settles the obligation", async () => {
   const { i, sent, completed, events } = setup();
@@ -187,3 +191,15 @@ it("the repair shot checks the spend caps before any model call", async () => {
   expect(routed).toBe(0);
   expect(sent).toHaveLength(0);
 });
+
+for (const stopReason of ["length", "error", "aborted", undefined]) {
+  it(`does not salvage an unfinished answer (${stopReason})`, async () => {
+    const { i, sent } = setup();
+    owe(i, "req-partial");
+    expect(await i.salvageOwedModelReply({ ...prose("Final answer: 5117"), stopReason })).toBe(
+      false,
+    );
+    expect(sent).toHaveLength(0);
+    expect(i.outstandingRequests.size).toBe(1);
+  });
+}

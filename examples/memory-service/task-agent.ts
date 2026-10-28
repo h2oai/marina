@@ -3,6 +3,7 @@
 
 /** Independent LLM agent. Only fetch and the portable client: no database,
  * server imports, fixture answers or access to the parent process's state. */
+import { requireFinishedChat } from "../../src/model/output";
 import { MarinaMemoryClient } from "../../src/sdk/memory-client";
 import type { MemoryGraphQuery, MemoryQuery, MemorySourceSearch } from "../../src/sdk/memory-types";
 import { parseAgentAction, structuredAgentInstructions } from "./task-agent-protocol";
@@ -68,6 +69,7 @@ for (let turn = 0; turn < 6; turn++) {
   cachedInputTokens += completion.usage?.prompt_tokens_details?.cached_tokens ?? 0;
   cacheWriteTokens += completion.usage?.prompt_tokens_details?.cache_write_tokens ?? 0;
   outputTokens += completion.usage?.completion_tokens ?? 0;
+  requireFinishedChat(completion, "Memory task agent");
   const content = completion.choices[0]?.message.content ?? "";
   responses.push({ turn, content, model: completion.model });
   messages.push({ role: "assistant", content });

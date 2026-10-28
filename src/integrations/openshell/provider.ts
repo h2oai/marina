@@ -31,6 +31,7 @@ import {
 import { raiseForTool } from "../../engine/challenges";
 import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
+import type { MarinaDB } from "../../persistence/database";
 import type { EntityId } from "../../types";
 import { GRPC_DEADLINE_EXCEEDED, GRPC_NOT_FOUND, GrpcClient, GrpcError } from "./grpc";
 import { ProtoMessage, ProtoWriter } from "./protobuf";
@@ -100,6 +101,7 @@ export function decodePolicyChunk(chunk: ProtoMessage): PendingNetworkRule {
 
 export interface OpenShellOptions {
   url: string;
+  db?: MarinaDB;
   /** PEM contents for mutual TLS (absent only for a loopback `http://` test gateway). */
   tls?: { ca: string; cert: string; key: string };
   workspace?: string;
@@ -141,6 +143,53 @@ export class OpenShellProvider implements SandboxProvider {
     });
     this.workspace = opts.workspace ?? "default";
     this.raise = opts.raise ?? raiseForTool;
+    // Reconciliation is asynchronous at engine startup. Restore the durable
+    // allocation immediately so the first command can address its existing
+    // guest while the gateway inventory refresh is still in flight.
+    for (const binding of opts.db?.listFlywheelBindings(this.id) ?? []) {
+      const entityId = binding.entity_id as EntityId;
+      this.sandboxes.set(this.key(entityId), {
+        entityId,
+        name: binding.session_id,
+        sessionId: binding.session_id,
+        sandboxId: binding.sandbox_id,
+        image: binding.image,
+        keepAlive: !!binding.keep_alive,
+        state: binding.state,
+        services: new Set(),
+        ...(binding.published_url ? { publishedUrl: binding.published_url } : {}),
+        ...(binding.last_error ? { lastError: binding.last_error } : {}),
+        lastActivityAt: binding.last_activity_at ?? undefined,
+        ...(binding.hibernated_reason ? { hibernatedReason: binding.hibernated_reason } : {}),
+      });
+    }
+  }
+
+  private key(entityId: EntityId): EntityId {
+    return (this.opts.db?.durableEntityKey(entityId) ?? entityId) as EntityId;
+  }
+
+  private persist(tracked: Tracked): void {
+    if (!tracked.sandboxId) return;
+    this.opts.db?.saveFlywheelBinding({
+      entityId: tracked.entityId,
+      providerId: this.id,
+      sessionId: tracked.sessionId,
+      sandboxId: tracked.sandboxId,
+      image: tracked.image,
+      keepAlive: tracked.keepAlive,
+      state: tracked.state,
+    });
+    this.opts.db?.updateFlywheelBinding(
+      tracked.entityId,
+      {
+        publishedUrl: tracked.publishedUrl ?? null,
+        lastError: tracked.lastError ?? null,
+        lastActivityAt: tracked.lastActivityAt,
+        hibernatedReason: tracked.hibernatedReason ?? null,
+      },
+      this.id,
+    );
   }
 
   /**
@@ -148,7 +197,10 @@ export class OpenShellProvider implements SandboxProvider {
    * `_CERT` / `_KEY`, file paths); undefined when no URL is set. A partial
    * bundle throws, so a misconfiguration is loud.
    */
-  static fromEnv(env: NodeJS.ProcessEnv = process.env): OpenShellProvider | undefined {
+  static fromEnv(
+    env: NodeJS.ProcessEnv = process.env,
+    db?: MarinaDB,
+  ): OpenShellProvider | undefined {
     const url = env.MARINA_OPENSHELL_URL?.trim();
     if (!url) return undefined;
     const paths = [env.MARINA_OPENSHELL_CA, env.MARINA_OPENSHELL_CERT, env.MARINA_OPENSHELL_KEY]
@@ -161,6 +213,7 @@ export class OpenShellProvider implements SandboxProvider {
     const [ca, cert, key] = paths.map((p) => readFileSync(p, "utf8"));
     return new OpenShellProvider({
       url,
+      db,
       ...(ca && cert && key ? { tls: { ca, cert, key } } : {}),
       ...(env.MARINA_OPENSHELL_WORKSPACE?.trim()
         ? { workspace: env.MARINA_OPENSHELL_WORKSPACE.trim() }
@@ -203,22 +256,24 @@ export class OpenShellProvider implements SandboxProvider {
   }
 
   private tracked(entityId: EntityId): Tracked {
-    const tracked = this.sandboxes.get(entityId);
+    const tracked = this.sandboxes.get(this.key(entityId));
     if (!tracked)
       throw new Error("This entity has no OpenShell sandbox; use `code sandbox start`.");
+    tracked.entityId = entityId;
     return tracked;
   }
 
   async create(entityId: EntityId, image = this.opts.image, keepAlive = true) {
     // A failed earlier attempt (`unavailable`) may be retried; a live sandbox may not be doubled.
-    const existing = this.sandboxes.get(entityId);
+    const key = this.key(entityId);
+    const existing = this.sandboxes.get(key);
     if (existing && existing.state !== "unavailable")
       throw new Error(
         "This entity already has an OpenShell sandbox; stop it before creating another.",
       );
-    if (!LABEL_VALUE.test(entityId))
+    if (!LABEL_VALUE.test(key))
       throw new Error("This entity id cannot label an OpenShell sandbox.");
-    const name = sandboxName(entityId);
+    const name = sandboxName(key);
     const tracked: Tracked = {
       entityId,
       name,
@@ -230,7 +285,7 @@ export class OpenShellProvider implements SandboxProvider {
       services: new Set(),
       lastActivityAt: Date.now(),
     };
-    this.sandboxes.set(entityId, tracked);
+    this.sandboxes.set(key, tracked);
     try {
       const spec = new ProtoWriter().message(
         6,
@@ -242,14 +297,16 @@ export class OpenShellProvider implements SandboxProvider {
           .message(7, this.scope())
           .message(1, spec)
           .string(2, name)
-          .stringMap(3, { [MANAGED_LABEL]: "true", [ENTITY_LABEL]: entityId })
+          .stringMap(3, { [MANAGED_LABEL]: "true", [ENTITY_LABEL]: key })
           .bytes(),
       );
       await this.waitReady(tracked);
+      this.persist(tracked);
       return publicWorkspace(tracked);
     } catch (error) {
       tracked.state = "unavailable";
       tracked.lastError = getErrorMessage(error);
+      this.persist(tracked);
       throw error;
     }
   }
@@ -296,9 +353,19 @@ export class OpenShellProvider implements SandboxProvider {
     const request = new ProtoWriter()
       .message(12, this.scope())
       .string(1, tracked.name)
-      .repeatedString(2, argv)
+      // The gateway deadline can end its relay while descendants keep running.
+      // GNU timeout owns a process group in the guest and kills that group;
+      // leave the gateway enough time to observe its terminal result.
+      .repeatedString(2, [
+        "timeout",
+        "--verbose",
+        "--signal=TERM",
+        "--kill-after=1s",
+        `${timeoutMs / 1000}s`,
+        ...argv,
+      ])
       .string(3, opts.cwd)
-      .message(105, new ProtoWriter().uint(1, Math.ceil(timeoutMs / 1000)))
+      .message(105, new ProtoWriter().uint(1, Math.ceil(timeoutMs / 1000) + 3))
       .bytesField(6, opts.stdin)
       .uint(10, true);
     try {
@@ -311,7 +378,7 @@ export class OpenShellProvider implements SandboxProvider {
           const err = event.message(2)?.bytes(1);
           if (event.has(3)) exitCode = event.message(3)?.int32(1) ?? 0;
           const data = out ?? (opts.stdoutOnly ? undefined : err);
-          if (err && opts.stdoutOnly) stderr += new TextDecoder().decode(err);
+          if (err) stderr += new TextDecoder().decode(err);
           if (!data) return;
           size += data.length;
           if (size > max) throw new Error(`Output exceeds ${max} bytes.`);
@@ -327,6 +394,11 @@ export class OpenShellProvider implements SandboxProvider {
     tracked.lastActivityAt = Date.now();
     if (exitCode === undefined)
       throw new Error("OpenShell ended the command without an exit status; outcome unknown.");
+    // GNU timeout reports signals it actually sends. Exit codes alone are
+    // ambiguous: the command can itself return 124 or 137 without timing out.
+    const signalled = /^timeout: sending signal (?:TERM|KILL) to command /m.test(stderr);
+    if (signalled && (exitCode === 124 || exitCode === 137))
+      throw new SandboxExecutionTimeoutError(timeoutMs, this.label);
     const output = new Uint8Array(size);
     let at = 0;
     for (const chunk of chunks) {
@@ -390,6 +462,7 @@ export class OpenShellProvider implements SandboxProvider {
     if (!url) throw new Error("OpenShell returned no service URL.");
     tracked.services.add(name);
     tracked.publishedUrl = url;
+    this.persist(tracked);
     return { url, subdomain: name };
   }
 
@@ -410,6 +483,7 @@ export class OpenShellProvider implements SandboxProvider {
     );
     tracked.services.delete(subdomain);
     if (tracked.services.size === 0) delete tracked.publishedUrl;
+    this.persist(tracked);
   }
 
   async hibernate(entityId: EntityId) {
@@ -421,6 +495,7 @@ export class OpenShellProvider implements SandboxProvider {
     );
     tracked.state = "hibernated";
     tracked.hibernatedReason = "requested";
+    this.persist(tracked);
   }
 
   async resume(entityId: EntityId) {
@@ -432,21 +507,23 @@ export class OpenShellProvider implements SandboxProvider {
     );
     await this.waitReady(tracked);
     delete tracked.hibernatedReason;
+    this.persist(tracked);
   }
 
   async stop(entityId: EntityId) {
-    const tracked = this.sandboxes.get(entityId);
+    const tracked = this.sandboxes.get(this.key(entityId));
     if (!tracked) return;
     await this.client.unary(
       "DeleteSandbox",
       new ProtoWriter().message(2, this.scope()).string(1, tracked.name).uint(3, true).bytes(),
       120_000,
     );
-    this.sandboxes.delete(entityId);
+    this.sandboxes.delete(this.key(entityId));
+    this.opts.db?.deleteFlywheelBinding(entityId, this.id);
   }
 
   status(entityId: EntityId): SandboxWorkspace | undefined {
-    const tracked = this.sandboxes.get(entityId);
+    const tracked = this.sandboxes.get(this.key(entityId));
     return tracked ? publicWorkspace(tracked) : undefined;
   }
 
@@ -476,17 +553,21 @@ export class OpenShellProvider implements SandboxProvider {
       for (const sandbox of reply.messages(1)) {
         const meta = sandbox.message(1);
         const entityId = meta?.stringMap(4)[ENTITY_LABEL] as EntityId | undefined;
-        if (!meta || !entityId || this.sandboxes.has(entityId)) continue;
-        this.sandboxes.set(entityId, {
-          entityId,
+        if (!meta || !entityId) continue;
+        const binding = this.opts.db?.getFlywheelBinding(entityId, this.id);
+        const tracked: Tracked = {
+          entityId: (binding?.entity_id ?? entityId) as EntityId,
           name: meta.string(2),
           sessionId: meta.string(2),
           sandboxId: meta.string(1),
           image: sandbox.message(2)?.message(6)?.string(1) || "openshell-default",
-          keepAlive: true,
+          keepAlive: binding ? !!binding.keep_alive : true,
           state: phaseState(sandbox.message(3)?.uint(6) ?? PHASE.unknown),
-          services: new Set(),
-        });
+          services: this.sandboxes.get(this.key(entityId))?.services ?? new Set(),
+          ...(binding?.published_url ? { publishedUrl: binding.published_url } : {}),
+        };
+        this.sandboxes.set(this.key(entityId), tracked);
+        this.persist(tracked);
       }
       pageToken = reply.string(2);
     } while (pageToken);

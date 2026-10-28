@@ -126,6 +126,7 @@ export function adminCommand(deps: AdminDeps): CommandDef {
                 data: { text: "You have been kicked by an admin." },
               });
               deps.removeConnection(connId, "explicit");
+              conn.close();
               ctx.send(input.entity, `Kicked ${target.name}.`);
               deps.broadcastAll(`${target.name} has been kicked.`);
               return;
@@ -155,6 +156,7 @@ export function adminCommand(deps: AdminDeps): CommandDef {
                   data: { text: `You have been banned: ${reason}` },
                 });
                 deps.removeConnection(connId, "explicit");
+                conn.close();
                 break;
               }
             }

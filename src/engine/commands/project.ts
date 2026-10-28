@@ -462,6 +462,54 @@ export function projectCommand(deps: {
         return;
       }
 
+      // The manifest's bare read forms inspect existing state; they must never
+      // require write arguments or record an empty update.
+      if (actionArgs.length === 0) {
+        let lines: string[] | undefined;
+        if (action === "budget")
+          lines = [
+            `Tokens: ${project.budget_tokens ?? "unset"}`,
+            `Cost: ${project.budget_cost === null ? "unset" : `$${project.budget_cost}`}`,
+            `Duration: ${project.budget_duration_ms === null ? "unset" : `${project.budget_duration_ms}ms`}`,
+          ];
+        else if (action === "usage")
+          lines = [`Tokens: ${project.used_tokens}`, `Cost: $${project.used_cost.toFixed(3)}`];
+        else if (action === "orchestrate") lines = [`Orchestration: ${project.orchestration}`];
+        else if (action === "memory") lines = [`Memory architecture: ${project.memory_arch}`];
+        else if (action === "decompose" || action === "outcome") {
+          const notes = project.pool_id ? db.getPoolNotes(project.pool_id, 200) : [];
+          const relevant = notes.filter((note) =>
+            action === "outcome"
+              ? note.content.startsWith(`[project-outcome:${project.id} `)
+              : /decompos|HTDAG|hierarch|plan.exec|workload.tier|non.overlap|lazy.expansion/i.test(
+                  note.content,
+                ),
+          );
+          lines = relevant.length
+            ? relevant.map((note) => `#${note.id}: ${note.content}`)
+            : [
+                `No ${action === "outcome" ? "outcomes recorded" : "decomposition guidance stored"}.`,
+              ];
+        } else if (action === "propose") {
+          const group = project.group_id ? db.getGroup(project.group_id) : undefined;
+          const posts = group?.board_id
+            ? db
+                .listBoardPosts(group.board_id)
+                .filter((post) => post.title.startsWith("[proposal] "))
+            : [];
+          lines = posts.length
+            ? posts.map((post) => `#${post.id}: ${post.title}\n${post.body}`)
+            : ["No proposals recorded."];
+        }
+        if (lines) {
+          ctx.send(
+            input.entity,
+            [header(`${project.name} ${action}`), separator(), ...lines].join("\n"),
+          );
+          return;
+        }
+      }
+
       switch (action) {
         case "orchestrate": {
           const rawPattern = actionArgs[0]?.toLowerCase();

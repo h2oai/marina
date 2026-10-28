@@ -115,6 +115,8 @@ export function recordJudgeOpinion(db: Database, row: JudgeOpinionInput): void {
 
 /** A task attempt's prefix for a verdict subject `task:<id>:<claimant>:<at>`. */
 export function attemptKeyOf(subject: string): string | undefined {
+  const submission = subject.match(/^(task:\d+:.+):submission:\d+$/);
+  if (submission) return `${submission[1]}:`;
   const m = subject.match(/^(task:\d+:.+:)\d+$/);
   return m?.[1];
 }

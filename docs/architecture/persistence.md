@@ -56,6 +56,17 @@ private notes, these are private backup artifacts. Restored access is checked th
 case policy; existing backups are outside live-case erasure. The [user guide](../guides/forecasting.md#saved-private-predictions-and-research)
 documents the available interfaces and capture/accounting limits.
 
+## Task submission identities
+
+Migration 184 adds a durable `task_claims.submission_clock`. Each submission advances
+`submitted_at` to at least one millisecond after that claim's previous submission, even if the
+wall clock repeats or moves backward. Reclaim clears the visible submission fields and retains
+this clock. The immediate verifier, periodic judge and creator verdict use the same submission
+identity, so delayed replies cannot overwrite a replacement attempt or count as a second opinion.
+Judge agreement matches the creator's verdict for that identity, including when the verifier
+finishes after review. Historical outcomes without submission identities retain their earlier
+time-based matching.
+
 ## Row retention
 - **Row retention** (`src/engine/retention.ts`, hourly tick phase 2100, `runRetentionPass`): declarative `RETENTION_POLICIES` per table class — telemetry 7–30 d (`primitive_usage`, `feed_events`, `memory_service_events`, `coding_events`, `coding_service_probes`, `event_log` by row count), `memory_service_events` keeps the dating events the migration-171 backfill has not copied yet (`KNOWN_AT_RETENTION_WHERE`), ledger 30–90 d (`direct_messages` acknowledged/expired, `cognitive_events`, `productivity_sessions`, `core_memory_history`, `media_jobs`, `memory_assistance_actions`, `memory_index_jobs` settled states only), continuity-journal receipts in `memory_requests` 7 d (`CONTINUITY_RECEIPT_WHERE`: `archive:` / `archive-batch:` / `manifest:` / `checkpoint:` keys and uuid-keyed `resident` checkpoint saves, whose per-process keys are never resent; every other receipt is kept), staged model-API request images 7 d (`assets` and `canvas_nodes` rows with `origin = request` only; their blobs and their derivatives' blobs removed first by `pruneRequestImageBlobs`; uploaded, generated, tool and derived assets are people's files and never age out — `asset_tags` / `asset_links` cascade with their asset), audit 365 d (`witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events`), `shell_log` 90 d; `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events` — and the lineage/replay logs `intellect_events`, `mesh_events`, `mesh_membership_events`, `journey_events`, `simulation_events`, `arena_submissions`, `arena_shadow`, and the benchmark ledger `benchmark_runs` / `benchmark_items` / `benchmark_promotions` / `benchmark_defaults` / `benchmark_run_validity` — are `append-only` and are never pruned (an override cannot re-enable it). `MARINA_RETENTION_OVERRIDES="table=30d,table2=0"` (0 = never). Batched deletes ≤ 5,000 rows via `db.deleteBatch` (uses `RETURNING rowid` — bun:sqlite `.changes` counts trigger writes). Missing tables/columns are skipped, not errors. Migration 116 adds the `direct_messages(deadline_at) WHERE status='delivered'` partial index plus `notes(supersedes_id)` and `note_sources(url)`.
 

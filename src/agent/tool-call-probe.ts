@@ -18,8 +18,10 @@
  * `readiness`. `MARINA_TOOL_PROBE=off|warn|refuse` (default `warn`): `refuse`
  * stops a crew lead whose model made no tool call.
  */
+
 import type { Api, AssistantMessage, Context, Message, Model } from "@earendil-works/pi-ai";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
+import { checkOutputPayload } from "../model/output-payload";
 import { isLocalProvider } from "../net/model/model-discovery";
 import { prepareHostedModel } from "./hosted-model";
 import { piModels } from "./pi-models";
@@ -142,17 +144,21 @@ const defaultComplete: ProbeComplete = async (model, context, options) => {
     apiKey: options.apiKey,
     maxTokens: options.maxTokens,
     signal: options.signal,
-    onPayload: (payload) => options.onPayload(payload),
+    onPayload: (payload) => {
+      const shaped = options.onPayload(payload) ?? payload;
+      checkOutputPayload(shaped, options.maxTokens, false);
+      return shaped;
+    },
   });
 };
 
 function classify(message: AssistantMessage): { outcome: ToolProbeOutcome; detail: string } {
   const calls = (message.content ?? []).filter((block) => block.type === "toolCall").length;
   const out = message.usage?.output ?? 0;
-  if (message.stopReason === "error" || message.stopReason === "aborted") {
+  if (message.stopReason !== "stop" && message.stopReason !== "toolUse") {
     return {
       outcome: "unknown",
-      detail: `error: ${(message.errorMessage ?? "unknown").slice(0, 160)}`,
+      detail: `incomplete (${message.stopReason}): ${(message.errorMessage ?? "no completed probe").slice(0, 160)}`,
     };
   }
   if (calls > 0) return { outcome: "tools", detail: `tool call (${out} output tokens)` };

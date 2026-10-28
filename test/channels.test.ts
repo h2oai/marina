@@ -69,6 +69,24 @@ describe("Channels", () => {
     expect(stripAnsi(conn2.lastText())).toContain("[general] Alice: Hello everyone!");
   });
 
+  it("rejects a malformed model envelope with repair guidance and accepts its corrected answer", () => {
+    engine.processCommand(conn1.entity!, "channel create model-forecast");
+    engine.processCommand(conn2.entity!, "channel join model-forecast");
+    conn1.clear();
+    conn2.clear();
+    engine.processCommand(
+      conn1.entity!,
+      'channel send model-forecast {"type":"model_response","id":"req-fixture","answer":437}',
+    );
+    expect(conn1.lastText()).toContain("content field");
+    expect(conn2.messages).toHaveLength(0);
+    engine.processCommand(
+      conn1.entity!,
+      `channel send model-forecast ${JSON.stringify({ type: "model_response", id: "req-fixture", content: JSON.stringify({ answer: 437 }) })}`,
+    );
+    expect(conn2.lastText()).toContain("437");
+  });
+
   it("should show channel history", () => {
     engine.processCommand(conn1.entity!, "channel create general");
     engine.processCommand(conn2.entity!, "channel join general");

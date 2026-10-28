@@ -12,6 +12,7 @@ import {
   type InvestigationKind,
   type InvestigationState,
 } from "../sdk/investigation-types";
+import { investigationSpendAccounting } from "./db-investigation-spend";
 
 export interface CaseRow {
   id: string;
@@ -115,7 +116,7 @@ export function projectCase(
   };
 }
 
-export function projectAttempt(row: AttemptRow): InvestigationAttempt {
+export function projectAttempt(db: Database, row: AttemptRow): InvestigationAttempt {
   return {
     id: row.id,
     caseId: row.case_id,
@@ -128,7 +129,7 @@ export function projectAttempt(row: AttemptRow): InvestigationAttempt {
     sequence: row.sequence,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    accounting: JSON.parse(row.accounting_json),
+    accounting: investigationSpendAccounting(db, row.id, JSON.parse(row.accounting_json)),
     ...(row.result_json ? { result: JSON.parse(row.result_json) } : {}),
     ...(row.error ? { error: row.error } : {}),
   };

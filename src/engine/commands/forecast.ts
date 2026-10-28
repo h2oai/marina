@@ -610,7 +610,9 @@ export function renderHistory(rows: ForecastAnswerRow[]): string {
           : r.kind === "number"
             ? r.mean === null
               ? "no answer"
-              : `${r.mean} ± ${r.sd}`
+              : r.sd === null
+                ? `${r.mean} (uncertainty not provided)`
+                : `${r.mean} ± ${r.sd}`
             : (r.prediction ?? "no answer");
       const state =
         r.resolved_at === null
@@ -631,7 +633,9 @@ export function render(a: ForecastAnswer): string {
         : `${Math.round(a.probability * 100)}% yes`
       : a.mean === undefined
         ? "no answer"
-        : `${a.mean} (80%: ${a.interval?.[0]} – ${a.interval?.[1]})`;
+        : a.interval
+          ? `${a.mean} (80%: ${a.interval[0]} – ${a.interval[1]})`
+          : `${a.mean} (uncertainty not provided)`;
   return [
     header("Forecast"),
     separator(),
@@ -644,7 +648,9 @@ export function render(a: ForecastAnswer): string {
         x.probability !== undefined
           ? `${Math.round(x.probability * 100)}%`
           : x.mean !== undefined
-            ? `${x.mean} ± ${x.sd}`
+            ? x.sd === undefined
+              ? `${x.mean} (uncertainty not provided)`
+              : `${x.mean} ± ${x.sd}`
             : x.status;
       return `  ${bold(x.name)} ${v}${x.grounded === undefined ? "" : dim(` · grounded ${x.grounded.toFixed(2)}`)}\n    ${dim(x.reason ?? "")}`;
     }),

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** Independent caller, fed a task on stdin. No fixture or database access. */
+import { requireFinishedOutput } from "../../src/model/output";
 import { PlatformMemoryBackend } from "../../src/agent/memory-platform";
 import { MarinaClient } from "../../src/sdk/client";
 import type { MemoryAnswerContract } from "../../src/sdk/memory-answer";
@@ -142,6 +143,7 @@ try {
         model: string;
         usage?: unknown;
         choices: {
+          finish_reason?: string;
           message: {
             content: string;
             tool_calls?: { function: { name: string; arguments: string } }[];
@@ -149,6 +151,8 @@ try {
         }[];
       };
       usage.push({ model: result.model, usage: result.usage });
+      const reason = result.choices[0]?.finish_reason;
+      if (reason !== "tool_calls") requireFinishedOutput(reason, "Memory workflow agent");
       const reply = result.choices[0]?.message;
       const content =
         reply?.tool_calls?.length === 1

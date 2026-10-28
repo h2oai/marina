@@ -96,7 +96,7 @@ export class CodingProjectManager {
   }
 
   active(entityId: EntityId): CodingProjectRow | null {
-    const binding = this.db.listFlywheelBindings().find((row) => row.entity_id === entityId);
+    const binding = this.db.getFlywheelBinding(entityId, this.provider.id);
     return binding?.active_project_id ? this.db.getCodingProject(binding.active_project_id) : null;
   }
 
@@ -282,7 +282,11 @@ export class CodingProjectManager {
     this.db.deleteCodingProject(entityId, project.id, project.sandbox_id);
     const binding = this.requireWorkspace(entityId);
     if (binding.active_project_id === project.id) {
-      this.db.updateFlywheelBinding(entityId, { activeProjectId: null, guestCwd: null });
+      this.db.updateFlywheelBinding(
+        entityId,
+        { activeProjectId: null, guestCwd: null },
+        this.provider.id,
+      );
     }
     return project;
   }
@@ -290,13 +294,24 @@ export class CodingProjectManager {
   reconcile(entityId: EntityId): { removed: string[] } {
     const workspace = this.requireWorkspace(entityId);
     const removed: string[] = [];
+    const otherSandboxes = new Set(
+      this.db
+        .listFlywheelBindings(null)
+        .filter((row) => row.provider_id !== this.provider.id)
+        .map((row) => row.sandbox_id),
+    );
     for (const project of this.db.listCodingProjects(entityId)) {
-      if (project.sandbox_id === workspace.sandbox_id) continue;
+      if (project.sandbox_id === workspace.sandbox_id || otherSandboxes.has(project.sandbox_id))
+        continue;
       this.db.deleteCodingProject(entityId, project.id, project.sandbox_id);
       removed.push(project.id);
     }
     if (workspace.active_project_id && removed.includes(workspace.active_project_id)) {
-      this.db.updateFlywheelBinding(entityId, { activeProjectId: null, guestCwd: null });
+      this.db.updateFlywheelBinding(
+        entityId,
+        { activeProjectId: null, guestCwd: null },
+        this.provider.id,
+      );
     }
     return { removed };
   }
@@ -372,24 +387,31 @@ export class CodingProjectManager {
   }
 
   private requireWorkspace(entityId: EntityId) {
-    const binding = this.db.listFlywheelBindings().find((row) => row.entity_id === entityId);
+    const binding = this.db.getFlywheelBinding(entityId, this.provider.id);
     if (!binding) throw new Error("Use `code sandbox start` before creating a project.");
-    if (binding.state !== "running") throw new Error(`Flywheel sandbox is ${binding.state}.`);
+    if (binding.state !== "running")
+      throw new Error(`${this.provider.label} sandbox is ${binding.state}.`);
     return binding;
   }
 
   private requireOwnedCurrentSandbox(entityId: EntityId, project: CodingProjectRow): void {
     const workspace = this.requireWorkspace(entityId);
     if (project.entity_id !== entityId || project.sandbox_id !== workspace.sandbox_id) {
-      throw new Error("Project does not belong to this entity's current Flywheel sandbox.");
+      throw new Error(
+        `Project does not belong to this entity's current ${this.provider.label} sandbox.`,
+      );
     }
   }
 
   private activate(entityId: EntityId, project: CodingProjectRow): void {
-    this.db.updateFlywheelBinding(entityId, {
-      activeProjectId: project.id,
-      guestCwd: project.guest_path,
-    });
+    this.db.updateFlywheelBinding(
+      entityId,
+      {
+        activeProjectId: project.id,
+        guestCwd: project.guest_path,
+      },
+      this.provider.id,
+    );
   }
 }
 

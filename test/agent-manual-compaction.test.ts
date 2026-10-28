@@ -304,7 +304,7 @@ describe("MARINA_AGENT_COMPACTION_MODEL", () => {
 });
 
 describe("the compaction summary call", () => {
-  function capture(reply: string) {
+  function capture(reply: string, finish = "stop") {
     const { adapter, internals } = setup();
     const bodies: Record<string, unknown>[] = [];
     internals.providerFetch = (async (_input, init) => {
@@ -315,7 +315,7 @@ describe("the compaction summary call", () => {
         created: 1,
         model: "fixture",
         choices: [
-          { index: 0, delta: { role: "assistant", content: reply }, finish_reason: "stop" },
+          { index: 0, delta: { role: "assistant", content: reply }, finish_reason: finish },
         ],
         usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
       };
@@ -325,6 +325,16 @@ describe("the compaction summary call", () => {
     }) as typeof fetch;
     return { adapter, internals, bodies };
   }
+
+  it("does not replace context with an unfinished summary", async () => {
+    using _state = scopeProcessState({ trustProfile: "shared" });
+    const { adapter, internals } = capture("UNFINISHED SUMMARY MUST NOT BE TRUSTED", "length");
+    await adapter.compactNow();
+    const text = JSON.stringify(internals.agent.state.messages);
+    expect(text).not.toContain("UNFINISHED SUMMARY MUST NOT BE TRUSTED");
+    expect(text).toContain("[Context summary");
+    expect(text).toContain("constraint-");
+  });
 
   it("turns reasoning off and uses the 800-token default cap", async () => {
     using _state = scopeProcessState({

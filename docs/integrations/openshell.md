@@ -40,6 +40,17 @@ code run python3 -m pytest
 Commands, file reads and writes, `code service publish` and hibernate/resume go through the
 gateway's gRPC API (`src/integrations/openshell/`, no extra dependency). A requested OpenShell
 target never falls back to the host. After a restart Marina finds its sandboxes again by label.
+Sandbox ownership follows the durable Marina account. Project selection, guest working directories,
+and service state are stored separately for each provider; migration 183 preserves existing Flywheel
+bindings and adds the provider key. Restarting Marina keeps the running guest and its active project.
+
+Use a guest image that includes the tools your project needs. Its working directory must be usable
+by OpenShell's sandbox identity, and executable paths must be permitted by the sandbox policy.
+Finite execution requires GNU `timeout` in the guest; Marina uses it to terminate the command's
+process group before the gateway deadline. A missing utility fails the guest command explicitly.
+An image's implicit volumes also have to satisfy the gateway's volume admission rules. Managed
+services accept quoted arguments, for example `code service start web --port 8000 -- python3 -m
+http.server 8000`; inspect `code service logs web` and `code service probe web` to verify readiness.
 
 ## Limits
 

@@ -37,14 +37,11 @@ import {
 
 /** Default output cap of a compaction summary, in tokens. */
 export const DEFAULT_COMPACTION_MAX_TOKENS = 800;
-const MIN_COMPACTION_MAX_TOKENS = 200;
-const MAX_COMPACTION_MAX_TOKENS = 8_000;
 
-/** `MARINA_AGENT_COMPACTION_MAX_TOKENS`: junk or unset ⇒ the default; clamped to 200–8000. */
+/** `MARINA_AGENT_COMPACTION_MAX_TOKENS`: a positive integer summary allowance; junk or unset ⇒ the default. */
 export function compactionMaxTokens(env: Record<string, string | undefined> = process.env): number {
   const raw = Number(env.MARINA_AGENT_COMPACTION_MAX_TOKENS?.trim() || Number.NaN);
-  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_COMPACTION_MAX_TOKENS;
-  return Math.min(MAX_COMPACTION_MAX_TOKENS, Math.max(MIN_COMPACTION_MAX_TOKENS, Math.floor(raw)));
+  return Number.isSafeInteger(raw) && raw > 0 ? raw : DEFAULT_COMPACTION_MAX_TOKENS;
 }
 
 /** Upstream model id as OpenRouter's catalog and the learned facts key it. */
@@ -84,7 +81,8 @@ export function summaryCallModel(model: Model<Api>): Model<Api> {
 
 /** Output cap for the call: the summary cap, plus room for reasoning a model cannot turn off. */
 export function summaryCallMaxTokens(model: Model<Api>, cap: number): number {
-  return reasoningMandatory(model) ? cap + REASONING_HEADROOM_TOKENS : cap;
+  const requested = reasoningMandatory(model) ? cap + REASONING_HEADROOM_TOKENS : cap;
+  return Math.min(requested, model.maxTokens, Math.floor(model.contextWindow / 2));
 }
 
 /**

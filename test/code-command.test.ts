@@ -1468,13 +1468,23 @@ describe("code command", () => {
     await command.handler(ctx, inputFor(entity, "code start Service Probe"));
     await command.handler(
       ctx,
-      inputFor(entity, "code service start web --port 3000 -- bun run dev"),
+      inputFor(
+        entity,
+        `code service start web --port 3000 -- bun -e 'console.log("a  b")' --port 9999`,
+      ),
     );
     await command.handler(ctx, inputFor(entity, "code service probe web /health"));
 
     const service = db.listCodingServices(entity.id)[0];
     expect(service).toBeDefined();
     expect(service).toMatchObject({ name: "web", pid: 5150, port: 3000, status: "running" });
+    expect(JSON.parse(service!.command_json)).toEqual([
+      "bun",
+      "-e",
+      'console.log("a  b")',
+      "--port",
+      "9999",
+    ]);
     const artifact = db
       .listCodingArtifacts(entity.properties.coding_session_id as string, 5)
       .find((candidate) => candidate.kind === "service_probe");
@@ -3309,9 +3319,29 @@ describe("code host-exec workspace root policy (Finding 2)", () => {
     const ctx = testRoomContext(sent);
     await command.handler(ctx, inputFor(entity, "code start ReadOnly"));
     sent.length = 0;
-    // `code files` is read-only and must not be blocked by the root policy.
-    await command.handler(ctx, inputFor(entity, "code files"));
-    expect(stripAnsi(sent.join("\n"))).not.toContain("no code workspace is configured");
+    for (const inspect of [
+      "files",
+      "recipe",
+      "recipe list",
+      "recipe show absent",
+      "run allowlist",
+      "workspace runner",
+      "workspace runner show",
+      "runner status",
+    ]) {
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, `code ${inspect}`));
+      expect(stripAnsi(sent.join("\n"))).not.toContain("no code workspace is configured");
+    }
+    for (const mutate of ["recipe run absent", "recipe save new git status", "runner local"]) {
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, `code ${mutate}`));
+      expect(stripAnsi(sent.join("\n"))).toContain("no code workspace is configured");
+    }
+    const session = db.listCodingSessions(entity.name, 1)[0]!;
+    expect(db.listCodingArtifacts(session.id).map((artifact) => artifact.kind)).not.toContain(
+      "command_output",
+    );
   });
 });
 

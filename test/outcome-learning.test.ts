@@ -439,7 +439,10 @@ describe("outcome learning: one local model, no vendor keys", () => {
           })
         : '{"category":"python test run","rule":"Use the repo\'s own test runner."}';
       return new Response(
-        JSON.stringify({ choices: [{ message: { content } }], usage: { prompt_tokens: 1 } }),
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content } }],
+          usage: { prompt_tokens: 1 },
+        }),
         { headers: { "content-type": "application/json" } },
       );
     };

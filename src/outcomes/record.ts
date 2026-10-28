@@ -75,9 +75,38 @@ export function deliverSoon(db: MarinaDB): void {
   scheduled.set(db, state);
 }
 
+export function hasPendingDelivery(db: MarinaDB): boolean {
+  return scheduled.has(db);
+}
+
 /** Wait for background delivery for `db` (tests, scripts before exit). */
-export async function settleDelivery(db: MarinaDB): Promise<void> {
-  for (let s = scheduled.get(db); s; s = scheduled.get(db)) await s.running;
+export async function settleDelivery(db: MarinaDB, timeoutMs?: number): Promise<void> {
+  const { settleDeliveryPasses, abortDelivery } = await import("./deliver");
+  const drain = async () => {
+    do {
+      for (let s = scheduled.get(db); s; s = scheduled.get(db)) await s.running;
+      await settleDeliveryPasses(db);
+    } while (scheduled.has(db));
+  };
+  if (timeoutMs === undefined) return drain();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      drain(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          abortDelivery(db);
+          logger.warn(
+            "outcomes",
+            "outcome delivery drain timed out; unfinished deliveries remain pending",
+          );
+          resolve();
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**

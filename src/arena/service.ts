@@ -1425,7 +1425,6 @@ export async function wikiExtractionTooling(env: NodeJS.ProcessEnv) {
   const made = needsModel
     ? (await import("../model/complete")).modelComplete(settings.model, env, {
         ...ARENA_CALL,
-        maxTokens: 2_000,
       })
     : undefined;
   let retriever: import("../research/retrieve").Retriever | undefined;

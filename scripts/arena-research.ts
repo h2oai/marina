@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Explicit, checkpointed research qualification. Never signs or submits. */
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -33,6 +33,8 @@ import { getErrorMessage } from "../src/engine/errors";
 import { SpendGuard } from "../src/engine/spend-guard";
 import { dailyCapRefusal } from "../src/engine/spend-ledger";
 import { forecastLessonsFor } from "../src/learning/forecast-bridge";
+/** Explicit, checkpointed research qualification. Never signs or submits. */
+import { defaultOutputTokens } from "../src/model/output";
 import { MarinaDB } from "../src/persistence/database";
 import { evidenceHash } from "../src/research/evidence";
 import { retrieverFromSpec, withProvidedText } from "../src/research/retrieve";
@@ -48,7 +50,7 @@ const { positionals, values } = parseArgs({
     retriever: { type: "string", default: "search" },
     "max-usd": { type: "string", default: "20" },
     "max-calls": { type: "string", default: "32" },
-    "max-tokens": { type: "string", default: "2000" },
+    "max-tokens": { type: "string", default: String(defaultOutputTokens()) },
     "research-rounds": { type: "string", default: "2" },
     reader: { type: "string" },
     history: { type: "string" },

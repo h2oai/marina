@@ -598,8 +598,10 @@ async function runResponsesPassthru(
     void capturePassthruResponse(engine, prep.identity.entityId, turns, resp);
     passthruCacheStore(engine, prep, body, forceModel, resp);
   }
-  const { content, usage, toolCalls, reasoningItems, incomplete } =
+  const { content, usage, toolCalls, reasoningItems, incomplete, finishReason } =
     await extractResponseTextAndUsage(resp.clone());
+  if (!["stop", "tool_calls", "function_call", "length"].includes(finishReason ?? ""))
+    return errorJson(502, "Upstream response has no completed termination");
   const rec: ResponseRecord = {
     ...base,
     content,

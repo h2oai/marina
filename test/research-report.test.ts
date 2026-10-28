@@ -32,7 +32,7 @@ import {
   writeResearchReport,
 } from "../src/research/report";
 import type { ResearchReport, Retriever } from "../src/research/retrieve";
-import { figuresMissing } from "../src/research/verify";
+import { figuresMissing, verifyDossier } from "../src/research/verify";
 import {
   excludedSource,
   passagesOf,
@@ -154,6 +154,48 @@ describe("barred sources", () => {
 });
 
 describe("citations", () => {
+  it("verifies supplied local corpus evidence without fetching missing corpus URIs", async () => {
+    const quote = "Before activation, validate the SHA-256 checksum.";
+    const url = "corpus://cobalt/revision-3";
+    const fetches: string[] = [];
+    const page = async (url: string) => {
+      fetches.push(url);
+      return undefined;
+    };
+    const lines = `- "${quote}" [Current](${url})\n- "Latency is 500 milliseconds." [Missing](corpus://cobalt/missing)`;
+    const verified = await verifyDossier(lines, page, [{ url, text: quote }]);
+    expect(verified.verifiedText).toContain(quote);
+    expect(verified.verifiedText).not.toContain("500");
+    expect(fetches).toEqual([]);
+    const lead: ReportModel = {
+      name: "corpus",
+      complete: async (system) =>
+        system.includes("You plan")
+          ? JSON.stringify({
+              title: "Cobalt",
+              sections: [{ heading: "Procedure", goal: "checksum", queries: ["checksum"] }],
+            })
+          : `${quote} [1].`,
+    };
+    const result = await writeResearchReport(
+      { prompt: "Describe the Cobalt checksum procedure." },
+      {
+        lead,
+        gapRound: false,
+        pageText: page,
+        retriever: async () => ({
+          report: lines,
+          sources: [{ url, text: quote }],
+          costUsd: 0,
+          searches: 1,
+          retriever: "corpus:cobalt",
+        }),
+      },
+    );
+    expect(result.sources).toEqual([{ n: 1, url, title: "Current" }]);
+    expect(result.evidence[0]?.quote).toBe(quote.slice(0, -1));
+    expect(fetches).toEqual([]);
+  });
   it("normalises marker lists and ranges", () => {
     expect(normalizeCitationMarkers("a [3, 7] b [2-4] c 【5】 d [1，2]")).toBe(
       "a [3][7] b [2][3][4] c [5] d [1][2]",
@@ -543,8 +585,39 @@ describe("research report pipeline", () => {
     );
     expect(r.plan.fixedStructure).toBe(true);
     expect(r.body.match(/^## .*/gm)).toEqual(["## Basic Data Table", "## Trend Analysis"]);
-    expect(r.body).toContain("Opening.");
+    expect(r.body).not.toContain("Opening.");
     expect(r.body).not.toContain("Closing.");
+  });
+
+  it("does not impose a long report or pay for framing a single concise section", async () => {
+    const calls: Array<{ system: string; user: string }> = [];
+    const lead: ReportModel = {
+      name: "concise",
+      complete: async (system, user) => {
+        calls.push({ system, user });
+        if (system.includes("You plan"))
+          return JSON.stringify({
+            title: "Coverage",
+            sections: [{ heading: "Findings", goal: "coverage", queries: ["coverage"] }],
+          });
+        if (system.includes("You write one section")) return "Coverage was 21% in 2019 [1].";
+        throw new Error("Unexpected framing call for a single section");
+      },
+    };
+    const result = await writeResearchReport(
+      {
+        prompt:
+          "In one concise section under 100 words, explain coverage using official sources only.",
+      },
+      { lead, retriever: fakeRetriever([]), gapRound: false },
+    );
+    expect(calls).toHaveLength(2);
+    const writer = calls[1]!;
+    expect(writer.system).toContain("permitted sources");
+    expect(writer.user).toContain("under 100 words");
+    expect(writer.user).not.toMatch(/7000|9500|7,000|9,500/);
+    expect(result.body.match(/^## .*/gm)).toEqual(["## Findings"]);
+    expect(result.warnings).toEqual([]);
   });
 });
 

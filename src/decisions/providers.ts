@@ -19,7 +19,11 @@
  * local classifier on localhost is a legitimate target.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { isReasoningMandatory, noteUpstreamRejection } from "../agent/reasoning-control";
+import { getErrorMessage } from "../engine/errors";
+import { beginObservedSpend } from "../engine/spend-observation";
+import { defaultOutputTokens, requireFinishedChat } from "../model/output";
 import { lowestReasoningEffort } from "../net/model/reasoning-effort";
 import { withoutRejectedSampling } from "../net/model/sampling-params";
 import { normalizeAnswers } from "./answers";
@@ -58,6 +62,8 @@ export interface ProviderOptions {
   model: string;
   apiKey?: string;
   timeoutMs: number;
+  /** chat-classifier output ceiling, including reasoning; defaults to MARINA_DEFAULT_MAX_TOKENS. */
+  maxTokens?: number;
   /** Decisions API path under `baseUrl`: `/decisions` (OpenRouter), `/v1/systemone` (TypeSafe). */
   path?: string;
   /**
@@ -91,6 +97,8 @@ export interface ProviderOptions {
    * world's first configured model).
    */
   visionModel?: string;
+  /** Every priced upstream attempt, including discarded probes and malformed replies. */
+  onSpend?: (usd: number | undefined) => void;
   /** Test seam. */
   fetch?: FetchLike;
 }
@@ -190,11 +198,62 @@ async function post(
     body: JSON.stringify(body),
     signal: combined,
   };
-  let res: Response;
   for (let attempt = 1; ; attempt++) {
+    const receipt = beginObservedSpend("decision", opts.model);
+    let res: Response;
+    let data: unknown;
+    let text: string;
     try {
       res = await (opts.fetch ?? fetch)(url, init);
+      text = await res.text();
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = undefined;
+      }
+      const usage = (
+        data as
+          | {
+              usage?: {
+                cost?: unknown;
+                input_tokens?: unknown;
+                prompt_tokens?: unknown;
+                output_tokens?: unknown;
+                completion_tokens?: unknown;
+              };
+            }
+          | undefined
+      )?.usage;
+      const input = usage?.input_tokens ?? usage?.prompt_tokens;
+      const output = usage?.output_tokens ?? usage?.completion_tokens;
+      const price =
+        typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0
+          ? usage.cost
+          : typeof input === "number" && opts.inputUsdPerMTok !== undefined
+            ? (input * opts.inputUsdPerMTok) / 1_000_000
+            : undefined;
+      receipt?.settle(
+        price,
+        price === undefined ? `Decision upstream HTTP ${res.status} returned no price` : undefined,
+      );
+      opts.onSpend?.(price);
+      const totals = decisionUsage.getStore();
+      if (totals) {
+        if (price !== undefined) {
+          totals.costUsd += price;
+          totals.priced++;
+        }
+        if (typeof input === "number") {
+          totals.inputTokens += input;
+          totals.tokens = true;
+        }
+        if (typeof output === "number") {
+          totals.outputTokens += output;
+          totals.tokens = true;
+        }
+      }
     } catch (err) {
+      receipt?.settle(undefined, "Decision upstream failed before a priced response was observed");
       const name = (err as Error)?.name;
       if (name === "TimeoutError" || name === "AbortError") {
         throw new DecisionError(
@@ -205,23 +264,42 @@ async function post(
       }
       throw new DecisionError(`decision call failed: ${(err as Error).message}`, "upstream_error");
     }
-    if (res.ok || attempt > 1 || !RETRYABLE.has(res.status)) break;
+    if (res.ok) {
+      if (data === undefined)
+        throw new DecisionError("decision backend returned non-JSON", "invalid_response");
+      return data;
+    }
+    if (attempt > 1 || !RETRYABLE.has(res.status)) throw statusError(res.status, text);
     const delay = retryDelayMs(res);
-    if (deadline - performance.now() - delay < RETRY_MIN_REMAINING_MS) break;
-    // allow-empty-catch: discarding a retryable response body before the retry
-    await res.body?.cancel().catch(() => undefined);
+    if (deadline - performance.now() - delay < RETRY_MIN_REMAINING_MS)
+      throw statusError(res.status, text);
     await waitFor(delay, combined);
     if (combined.aborted) {
       throw new DecisionError(`decision call timed out after ${opts.timeoutMs}ms`, "timeout", 504);
     }
   }
-  // allow-empty-catch: the error body is optional detail; the status is reported regardless
-  if (!res.ok) throw statusError(res.status, await res.text().catch(() => ""));
-  try {
-    return await res.json();
-  } catch {
-    throw new DecisionError("decision backend returned non-JSON", "invalid_response");
-  }
+}
+
+// Scope totals to one logical decision; sampled calls and concurrent decisions stay separate.
+const decisionUsage = new AsyncLocalStorage<{
+  costUsd: number;
+  priced: number;
+  inputTokens: number;
+  outputTokens: number;
+  tokens: boolean;
+}>();
+async function measureDecision(action: () => Promise<DecisionResult>): Promise<DecisionResult> {
+  const totals = { costUsd: 0, priced: 0, inputTokens: 0, outputTokens: 0, tokens: false };
+  return decisionUsage.run(totals, async () => {
+    const result = await action();
+    return {
+      ...result,
+      ...(totals.priced ? { costUsd: totals.costUsd } : {}),
+      ...(totals.tokens
+        ? { usage: { inputTokens: totals.inputTokens, outputTokens: totals.outputTokens } }
+        : {}),
+    };
+  });
 }
 
 /** A purpose-built decision model (Jev family, OpenJev) behind the Decisions API. */
@@ -231,56 +309,58 @@ export function decisionsApiProvider(opts: ProviderOptions): DecisionProvider {
     model: opts.model,
     calibrated: true,
     async ask(request: DecisionRequest, signal?: AbortSignal): Promise<DecisionResult> {
-      const started = performance.now();
-      // `box` needs Jev ≥ 1.14 (1.13 answers 400): the configured default
-      // moves up for that request; an explicitly pinned older Jev refuses.
-      let model = opts.model;
-      if (hasBoxQuestion(request.questions) && !modelAnswersBox(model)) {
-        if (!opts.boxModel) {
-          throw new DecisionError(
-            `box questions need Jev 1.14 or later; ${model} cannot answer them`,
-            "unsupported_input",
-            400,
-          );
+      return measureDecision(async () => {
+        const started = performance.now();
+        // `box` needs Jev ≥ 1.14 (1.13 answers 400): the configured default
+        // moves up for that request; an explicitly pinned older Jev refuses.
+        let model = opts.model;
+        if (hasBoxQuestion(request.questions) && !modelAnswersBox(model)) {
+          if (!opts.boxModel) {
+            throw new DecisionError(
+              `box questions need Jev 1.14 or later; ${model} cannot answer them`,
+              "unsupported_input",
+              400,
+            );
+          }
+          model = opts.boxModel;
         }
-        model = opts.boxModel;
-      }
-      const { state } = await prepareStateImages(request.state);
-      const body = (await post(
-        opts,
-        opts.path ?? "/decisions",
-        { model, state, questions: request.questions },
-        signal,
-      )) as {
-        answers?: unknown;
-        model?: unknown;
-        usage?: { cost?: unknown; input_tokens?: unknown; output_tokens?: unknown };
-      };
-      const inputTokens =
-        typeof body?.usage?.input_tokens === "number" ? body.usage.input_tokens : undefined;
-      const cost =
-        typeof body?.usage?.cost === "number"
-          ? body.usage.cost
-          : inputTokens !== undefined && opts.inputUsdPerMTok !== undefined
-            ? (inputTokens * opts.inputUsdPerMTok) / 1_000_000
-            : undefined;
-      const outputTokens =
-        typeof body?.usage?.output_tokens === "number" ? body.usage.output_tokens : undefined;
-      return {
-        answers: normalizeAnswers(request.questions, body?.answers),
-        model: typeof body?.model === "string" ? body.model : model,
-        provider: "decisions-api",
-        latencyMs: Math.round(performance.now() - started),
-        ...(cost === undefined ? {} : { costUsd: cost }),
-        ...(inputTokens === undefined && outputTokens === undefined
-          ? {}
-          : {
-              usage: {
-                ...(inputTokens === undefined ? {} : { inputTokens }),
-                ...(outputTokens === undefined ? {} : { outputTokens }),
-              },
-            }),
-      };
+        const { state } = await prepareStateImages(request.state);
+        const body = (await post(
+          opts,
+          opts.path ?? "/decisions",
+          { model, state, questions: request.questions },
+          signal,
+        )) as {
+          answers?: unknown;
+          model?: unknown;
+          usage?: { cost?: unknown; input_tokens?: unknown; output_tokens?: unknown };
+        };
+        const inputTokens =
+          typeof body?.usage?.input_tokens === "number" ? body.usage.input_tokens : undefined;
+        const cost =
+          typeof body?.usage?.cost === "number"
+            ? body.usage.cost
+            : inputTokens !== undefined && opts.inputUsdPerMTok !== undefined
+              ? (inputTokens * opts.inputUsdPerMTok) / 1_000_000
+              : undefined;
+        const outputTokens =
+          typeof body?.usage?.output_tokens === "number" ? body.usage.output_tokens : undefined;
+        return {
+          answers: normalizeAnswers(request.questions, body?.answers),
+          model: typeof body?.model === "string" ? body.model : model,
+          provider: "decisions-api",
+          latencyMs: Math.round(performance.now() - started),
+          ...(cost === undefined ? {} : { costUsd: cost }),
+          ...(inputTokens === undefined && outputTokens === undefined
+            ? {}
+            : {
+                usage: {
+                  ...(inputTokens === undefined ? {} : { inputTokens }),
+                  ...(outputTokens === undefined ? {} : { outputTokens }),
+                },
+              }),
+        };
+      });
     },
   };
 }
@@ -310,7 +390,7 @@ export function extractJsonObject(text: string): unknown {
 }
 
 /** Output cap for a classifier reply (answers are ~100 tokens; the rest is thinking room). */
-export const CLASSIFIER_MAX_TOKENS = 2_000;
+export const CLASSIFIER_MAX_TOKENS = 16_384;
 
 const isOpenRouter = (baseUrl: string) => /^https:\/\/openrouter\.ai\//.test(baseUrl);
 
@@ -404,7 +484,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
       // Reasoning models spend output tokens thinking before they answer;
       // 400 left several (qwen3.7-flash, glm-5.3-flash, deepseek-v4-flash)
       // with an empty reply. OpenRouter also accepts a reasoning budget.
-      max_tokens: CLASSIFIER_MAX_TOKENS,
+      max_tokens: opts.maxTokens ?? defaultOutputTokens(),
       ...reasoningDirective(),
       messages: [
         { role: "system", content: system },
@@ -438,7 +518,8 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
         !useSchema ||
         !(err instanceof DecisionError) ||
         err.code !== "upstream_rejected" ||
-        /logprob/i.test(err.message)
+        /logprob/i.test(err.message) ||
+        !/response_format|json.?schema|structured output/i.test(err.message)
       ) {
         throw err;
       }
@@ -450,6 +531,11 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
       model?: unknown;
       usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; cost?: unknown };
     };
+    try {
+      requireFinishedChat(b, "Decision classifier");
+    } catch (error) {
+      throw new DecisionError(getErrorMessage(error), "invalid_response");
+    }
     const content = b?.choices?.[0]?.message?.content;
     if (typeof content !== "string") {
       throw new DecisionError("classifier reply has no message content", "invalid_response");
@@ -517,12 +603,12 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
         signal,
         splitStateImages(request.state).images,
       );
-    // A 400/422, or any failure whose reason names logprobs (a relay may
-    // report the provider's rejection under another status).
+    // Only a rejection naming logprobs teaches a logprobs limitation. A
+    // rejected token cap or model cannot be repaired by changing answer format.
     const rejected = (err: unknown) =>
       err instanceof DecisionError &&
-      (err.code === "upstream_rejected" ||
-        (err.code === "upstream_error" && /logprob/i.test(err.message)));
+      (err.code === "upstream_rejected" || err.code === "upstream_error") &&
+      /logprob/i.test(err.message);
     let reply: ChatReply;
     try {
       reply = await ask(caps().topLogprobs ?? TOP_LOGPROBS);
@@ -624,43 +710,45 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
     model: opts.model,
     calibrated: false,
     async ask(asked: DecisionRequest, signal?: AbortSignal): Promise<DecisionResult> {
-      const started = performance.now();
-      let request = asked;
-      if (requestHasImages(asked)) {
-        // Images go only to a model known to read them — never sent as text
-        // with the pictures dropped. Then each is prepared to the limits.
-        const vision = opts.visionModel ?? opts.model;
-        if (!classifierReadsImages(vision, opts.baseUrl)) {
-          throw new DecisionError(
-            `classifier model ${vision} is not known to read images; use a vision model (MARINA_DECISION_MODEL) or a Jev decision backend`,
-            "unsupported_input",
-            400,
-          );
+      return measureDecision(async () => {
+        const started = performance.now();
+        let request = asked;
+        if (requestHasImages(asked)) {
+          // Images go only to a model known to read them — never sent as text
+          // with the pictures dropped. Then each is prepared to the limits.
+          const vision = opts.visionModel ?? opts.model;
+          if (!classifierReadsImages(vision, opts.baseUrl)) {
+            throw new DecisionError(
+              `classifier model ${vision} is not known to read images; use a vision model (MARINA_DECISION_MODEL) or a Jev decision backend`,
+              "unsupported_input",
+              400,
+            );
+          }
+          request = { ...asked, state: (await prepareStateImages(asked.state)).state };
         }
-        request = { ...asked, state: (await prepareStateImages(asked.state)).state };
-      }
-      // A choice with more than 26 options cannot be labeled: verbalized only.
-      const labels = method === "verbalized" ? undefined : labelQuestions(request.questions);
-      let result:
-        | Awaited<ReturnType<typeof verbalized>>
-        | Awaited<ReturnType<typeof withLogprobs>>
-        | Awaited<ReturnType<typeof sampled>>;
-      if (!labels) result = await verbalized(request, signal);
-      else if (method === "sampled") result = await sampled(request, labels, signal);
-      else if ((method === "logprobs" || method === "auto") && !caps().logprobs) {
-        result =
-          (await withLogprobs(request, labels, signal)) ?? (await verbalized(request, signal));
-      } else result = await verbalized(request, signal);
-      const { reply, answers, used } = result!;
-      return {
-        answers,
-        model: reply.model ?? opts.model,
-        provider: "chat-classifier",
-        method: used,
-        latencyMs: Math.round(performance.now() - started),
-        ...(reply.usage ? { usage: reply.usage } : {}),
-        ...(reply.costUsd === undefined ? {} : { costUsd: reply.costUsd }),
-      };
+        // A choice with more than 26 options cannot be labeled: verbalized only.
+        const labels = method === "verbalized" ? undefined : labelQuestions(request.questions);
+        let result:
+          | Awaited<ReturnType<typeof verbalized>>
+          | Awaited<ReturnType<typeof withLogprobs>>
+          | Awaited<ReturnType<typeof sampled>>;
+        if (!labels) result = await verbalized(request, signal);
+        else if (method === "sampled") result = await sampled(request, labels, signal);
+        else if ((method === "logprobs" || method === "auto") && !caps().logprobs) {
+          result =
+            (await withLogprobs(request, labels, signal)) ?? (await verbalized(request, signal));
+        } else result = await verbalized(request, signal);
+        const { reply, answers, used } = result!;
+        return {
+          answers,
+          model: reply.model ?? opts.model,
+          provider: "chat-classifier",
+          method: used,
+          latencyMs: Math.round(performance.now() - started),
+          ...(reply.usage ? { usage: reply.usage } : {}),
+          ...(reply.costUsd === undefined ? {} : { costUsd: reply.costUsd }),
+        };
+      });
     },
   };
 }

@@ -41,6 +41,8 @@ export interface RunKeyGrant {
   capUsd?: number;
   /** The entity the key's requests act as (a distinct passthru identity), if any. */
   entityName?: string;
+  /** Persist cumulative charges, including calls already admitted when the key is revoked. */
+  onSpend?: (costUsd: number) => void;
 }
 
 export interface RunKeyState extends RunKeyGrant {
@@ -126,8 +128,10 @@ export function noteRunKeyCall(outcome: {
   if (!state) return;
   state.calls++;
   state.expiresAt = Math.max(state.expiresAt, Date.now() + DEFAULT_TTL_MS);
-  if (outcome.costUsd !== undefined && Number.isFinite(outcome.costUsd))
+  if (outcome.costUsd !== undefined && Number.isFinite(outcome.costUsd)) {
     state.spentUsd += outcome.costUsd;
+    state.onSpend?.(state.spentUsd);
+  }
   if (state.capUsd !== undefined && state.spentUsd >= state.capUsd) state.tripped ??= "budget";
   if (outcome.ok) state.strikes = 0;
   else if (outcome.network && ++state.strikes >= TRANSPORT_TRIP) state.tripped ??= "transport";

@@ -54,6 +54,19 @@ Typed forecasts and the arena's `ensemble`/`delphi` also run the catalogue's tem
 
 See also: `docs/guides/coordination.md`, `docs/guides/emergent-organization.md`.
 
+Optional `task work` (`src/coordination/task-work.ts`) adds revisioned field patches,
+source-version citations, collaborator proposals and deterministic advisory checks
+to existing tasks. It has no agent-loop hooks or automatic review/approval behavior.
+The existing task creator/current claimants own draft edits; other readers can
+contribute proposals and evidence. Sources are resolved under the reader's current
+ACL before views or receipt reuse. Only reference/version/quotation offsets are
+stored, not private source text. A receipt binds the reader, revision, task criteria,
+source state and check implementation, expires after one hour and can be refreshed
+explicitly. Migration 185 adds `task_work_revisions` and `task_work_checks`; the
+former preserves revision history, the latter is recomputable. Account erasure is
+an explicit exception to author-metadata immutability. See [shared task work](../guides/shared-task-work.md)
+for the command contract and the limits of declared checks.
+
 ## Orchestration on the outcome path
 
 Three orchestration surfaces record what they settle as ONE outcome each, through `recordResolved`

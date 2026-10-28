@@ -48,7 +48,7 @@ import {
   benchmarkUsesJudge,
 } from "./benchmark-registry";
 import { mintRunKey, type RunKeyGrant, revokeRunKey } from "./benchmark-run-keys";
-import { getErrorMessage } from "./errors";
+import { getErrorMessage, tryLog } from "./errors";
 import { featureEnvSnapshot } from "./feature-env";
 import { Logger } from "./logger";
 
@@ -292,6 +292,7 @@ export function runKeyGrant(
   const stack = opts.arm ? armStack(opts.arm) : undefined;
   return {
     runId: id,
+    entityName: `benchmark-${id}`,
     ...(stack && "stack" in stack ? { stack: stack.stack } : {}),
     evalTag: `benchmark=${opts.benchmark}; mode=${config.lessonsMode ?? "measure"}`,
     ...(opts.capUsd !== undefined ? { capUsd: opts.capUsd } : {}),
@@ -548,6 +549,9 @@ export function harnessFailure(result: {
 
 export class BenchmarkRunner {
   private active = new Map<string, Promise<unknown>>();
+  private children = new Map<string, (force: boolean) => void>();
+  private closing = false;
+  private interrupted = new Set<string>();
 
   constructor(
     private db: MarinaDB,
@@ -578,6 +582,7 @@ export class BenchmarkRunner {
    * db.getBenchmarkRun(id) or wait on benchmark_completed feed events.
    */
   start(opts: BenchmarkRunOptions): BenchmarkRunHandle {
+    if (this.closing) throw new Error("Benchmark runner is shutting down");
     const spec = BENCHMARKS[opts.benchmark];
     if (!spec) {
       throw new Error(
@@ -629,6 +634,8 @@ export class BenchmarkRunner {
       agent_id: opts.agentId,
       started_at: started,
     });
+    // Provenance exists before launching the child, including failed attempts.
+    this.attachItems(id, opts, {}, undefined);
 
     this.emitFeed({
       type: "feed_event",
@@ -667,7 +674,21 @@ export class BenchmarkRunner {
     const target = this.target();
     const crewRun = config.targetKind === "crew";
     const grant = runKeyGrant(id, opts, config);
-    const runKey = grant ? mintRunKey(grant) : undefined;
+    if (grant?.entityName && !this.db.getUserByName(grant.entityName))
+      this.db.createUser({ id: `benchmark:${id}`, name: grant.entityName });
+    const runKey = grant
+      ? mintRunKey({
+          ...grant,
+          ...(!crewRun
+            ? {
+                onSpend: (costUsd: number) =>
+                  tryLog(log, "benchmark", "recording run spend failed", () =>
+                    this.db.recordBenchmarkRunCost(id, costUsd),
+                  ),
+              }
+            : {}),
+        })
+      : undefined;
     const { args, env } = harnessInvocation(
       opts.benchmark,
       config,
@@ -685,9 +706,15 @@ export class BenchmarkRunner {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const exitCode = await proc.exited;
+      this.children.set(id, (force) => proc.kill(force ? "SIGKILL" : "SIGTERM"));
+      // Drain both pipes while the child runs; a full pipe must not prevent exit.
+      const [, err, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      if (this.interrupted.has(id)) throw new Error("benchmark interrupted by shutdown");
       if (exitCode !== 0) {
-        const err = await new Response(proc.stderr).text();
         throw new Error(`harness exited ${exitCode}: ${err.slice(0, 500)}`);
       }
       const result = this.readResult(resultFile);
@@ -695,6 +722,9 @@ export class BenchmarkRunner {
       harness = { result };
     } catch (err) {
       harness = { error: getErrorMessage(err) };
+    } finally {
+      this.children.delete(id);
+      this.interrupted.delete(id);
     }
     const keyState = runKey ? revokeRunKey(runKey) : undefined;
     // A run key measured a bare-model run's upstream spend exactly; without
@@ -772,9 +802,7 @@ export class BenchmarkRunner {
       duration_ms,
     });
 
-    if (status === "completed" && harness.result) {
-      this.attachItems(id, opts, harness.result as HarnessResultFile, measured.costUsd);
-    }
+    this.attachItems(id, opts, (harness.result ?? {}) as HarnessResultFile, measured.costUsd);
 
     const now = Date.now();
     // Too many items errored instead of answering (spend cap, provider
@@ -849,8 +877,30 @@ export class BenchmarkRunner {
     const run = this.db.getBenchmarkRun(id);
     if (!run) return;
     try {
-      const config = JSON.parse(run.config_json) as Parameters<typeof inWorldTarget>[0];
+      const config = JSON.parse(run.config_json) as Parameters<typeof inWorldTarget>[0] & {
+        seed?: number;
+        judgeModel?: string;
+        replicateGroup?: string;
+      };
       const crew = crewOfTarget(config.model);
+      const replicateGroup = opts.replicateGroup ?? config.replicateGroup;
+      this.db.attachBenchmarkRunItems(
+        id,
+        {
+          cost_usd: costUsd ?? result.metadata?.usage?.costUsd ?? null,
+          n: 0,
+          ci_low: null,
+          ci_high: null,
+          seed: config.seed ?? null,
+          slice_hash: null,
+          judge: config.judgeModel ?? null,
+          target_kind: crew ? "crew" : "model",
+          target_json: JSON.stringify(inWorldTarget(config)),
+          replicate_group: replicateGroup ?? null,
+        },
+        [],
+      );
+      if (!result.items?.some((item) => item.id)) return;
       // A crew run: resolve who worked each item from its trace, exactly as a
       // filed run is (POST /v1/benchmarks/runs), so the residents' work reaches
       // route evidence per participant and role. A control has no residents.
@@ -859,13 +909,13 @@ export class BenchmarkRunner {
         {
           ...result,
           ...(resultItems ? { items: resultItems } : {}),
-          config: { ...(result.config ?? {}), dataset: opts.benchmark },
+          config: { seed: config.seed, ...(result.config ?? {}), dataset: opts.benchmark },
         },
         {
           targetKind: crew ? "crew" : "model",
           target: inWorldTarget(config),
           ...(costUsd !== undefined ? { costUsd } : {}),
-          ...(opts.replicateGroup ? { replicateGroup: opts.replicateGroup } : {}),
+          ...(replicateGroup ? { replicateGroup } : {}),
           maxFallbackRate: null,
           raw: "",
           id,
@@ -897,6 +947,23 @@ export class BenchmarkRunner {
   async done(id: string): Promise<void> {
     // allow-empty-catch: the run records its own failure; done() only waits for it to settle
     await this.active.get(id)?.catch(() => undefined);
+  }
+
+  /** Stop owned harnesses and persist their failure/provenance before DB close. */
+  async stopAll(): Promise<void> {
+    this.closing = true;
+    for (const [id, stop] of this.children) {
+      this.interrupted.add(id);
+      stop(false);
+    }
+    const force = setTimeout(() => {
+      for (const stop of this.children.values()) stop(true);
+    }, 1000);
+    try {
+      await Promise.allSettled([...this.active.values()]);
+    } finally {
+      clearTimeout(force);
+    }
   }
 
   /**

@@ -91,6 +91,7 @@ export function investigationAttemptText(
       "",
       `Attempt ${attempt.id} · ${attempt.state}`,
       `$${attempt.accounting.knownUsd.toFixed(4)} recorded${attempt.accounting.complete ? "" : " · accounting incomplete"}${attempt.accounting.outstanding ? ` · ${attempt.accounting.outstanding} call(s) still outstanding` : ""}`,
+      ...(attempt.accounting.reasons ?? []).map((reason) => `  Accounting: ${reason}`),
     ].join("\n"),
   );
 }

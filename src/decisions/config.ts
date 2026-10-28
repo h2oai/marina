@@ -58,6 +58,7 @@ import { availableModels } from "../agent/available-models";
 import { roleModelFromEnv } from "../config/model-tiers";
 import { positiveNumberFromEnv } from "../engine/constants";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
+import { withSpendObservation } from "../engine/spend-observation";
 import { localHttpBase } from "../net/listen-ports";
 import { LOCAL_PROVIDERS, localProviderBaseUrl } from "../net/model/model-discovery";
 import { selfModelToken } from "../net/model/self-model-token";
@@ -330,6 +331,8 @@ function selfClassifierProvider(config: DecisionConfig): DecisionProvider {
 export function providerFromConfig(config: DecisionConfig): DecisionProvider {
   if (config.kind === "marina-self") return selfClassifierProvider(config);
   const opts = {
+    onSpend: (usd: number | undefined) =>
+      withSpendObservation(undefined, () => recordSpend("decision", usd)),
     baseUrl: config.baseUrl,
     model: config.model,
     apiKey: config.apiKey,
@@ -354,9 +357,7 @@ function metered(provider: DecisionProvider): DecisionProvider {
     async ask(request, signal) {
       const capped = dailyCapRefusal();
       if (capped) throw new DecisionError(capped, "spend_cap", 429);
-      const result = await provider.ask(request, signal);
-      recordSpend("decision", result.costUsd);
-      return result;
+      return provider.ask(request, signal);
     },
   };
 }

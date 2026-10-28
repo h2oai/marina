@@ -45,6 +45,7 @@ import { getErrorMessage } from "../engine/errors";
 import { standaloneSearchHttp } from "../engine/search-providers/asof-http";
 import { recordSearchOutcome, searchBackendDown } from "../engine/search-providers/health";
 import type { SearchHttp, SearchProvider, SearchResult } from "../engine/search-providers/index";
+import { requireFinishedOutput } from "../model/output";
 import { type ModelTurns, messageText } from "../model/turns";
 import type { FirstMoveModel } from "../retrieval/first-move";
 import { ReadSwarm, renderCandidateTable, type SwarmStats } from "../retrieval/read-swarm";
@@ -607,6 +608,8 @@ export async function researchLoop(o: LoopOptions): Promise<LoopResult> {
   };
   for (let turn = 0; turn < o.maxTurns; turn++) {
     const reply = await ask();
+    // Never dispatch even syntactically valid tool arguments from an unfinished turn.
+    if (reply.stopReason !== "toolUse") requireFinishedOutput(reply.stopReason, "Research");
     messages.push(reply as Message);
     const calls = (reply.content ?? []).filter((b): b is ToolCall => b.type === "toolCall");
     if (!tools || calls.length === 0) {
@@ -684,6 +687,7 @@ export async function researchLoop(o: LoopOptions): Promise<LoopResult> {
   // The cap: one more turn, tools off — the best answer from what was found.
   messages.push(userMessage(budgetFinalRequest(o.maxTurns, "turns")));
   const reply = await ask("none");
+  requireFinishedOutput(reply.stopReason, "Research final answer");
   messages.push(reply as Message);
   return {
     text: messageText(reply),
@@ -939,6 +943,7 @@ async function planSubtasks(o: RunOptions, n: number, today: string): Promise<st
       ),
     ],
   });
+  requireFinishedOutput(reply.stopReason, "Research decomposition");
   const parsed = parseJsonArray(messageText(reply));
   return parsed.length > 0 ? parsed.slice(0, n) : [o.task];
 }
@@ -1040,22 +1045,24 @@ export async function verifyCitations(
       ),
     ],
   });
+  requireFinishedOutput(reply.stopReason, "Citation verifier");
   for (const p of parseProblems(messageText(reply))) problems.push(p);
   return { checked: urls.length, problems };
 }
 
 function parseProblems(text: string): VerificationReport["problems"] {
   const m = /\[[\s\S]*\]/.exec(text);
-  if (!m) return [];
+  if (!m) throw new Error("Citation verifier returned no JSON array");
   try {
     const v = JSON.parse(m[0]) as unknown;
-    if (!Array.isArray(v)) return [];
+    if (!Array.isArray(v)) throw new Error("Citation verifier returned a non-array");
     return v.flatMap((x) => {
-      if (!x || typeof x !== "object") return [];
+      if (!x || typeof x !== "object") throw new Error("Invalid citation verdict");
       const r = x as Record<string, unknown>;
       const claim = str(r.claim).slice(0, 400);
       const url = str(r.url).slice(0, 400);
-      if (!claim) return [];
+      if (!claim || !url || !["unsupported", "contradicted"].includes(str(r.verdict)))
+        throw new Error("Invalid citation verdict");
       return [
         {
           claim,
@@ -1066,6 +1073,6 @@ function parseProblems(text: string): VerificationReport["problems"] {
       ];
     });
   } catch {
-    return [];
+    throw new Error("Citation verifier returned invalid verdict JSON");
   }
 }

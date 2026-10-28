@@ -142,7 +142,7 @@ export function cacheableCompletion(data: unknown): boolean {
       message?: { tool_calls?: unknown; function_call?: unknown; content?: unknown };
       finish_reason?: unknown;
     };
-    if (c.finish_reason === "tool_calls" || c.finish_reason === "function_call") return false;
+    if (c.finish_reason !== "stop") return false;
     const calls = c.message?.tool_calls;
     if (Array.isArray(calls) && calls.length > 0) return false;
     if (c.message?.function_call) return false;

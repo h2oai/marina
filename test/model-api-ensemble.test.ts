@@ -116,6 +116,7 @@ let engine: Engine;
 let calls: { model: unknown; checker: boolean; reviewer: boolean; user: string }[];
 /** The k-th proposer draft (0-based, in call order). */
 let drafts: Array<Record<string, unknown>>;
+let draftReasons: string[];
 let checkerReply: string;
 let checkerStatus: number | undefined;
 /** The verify checker's reply (`marina/verify`'s review of the picked draft). */
@@ -129,6 +130,7 @@ beforeEach(() => {
   process.env.MARINA_OUTPUT_REPAIR = "off";
   calls = [];
   drafts = [];
+  draftReasons = [];
   checkerReply = '{"pick":1,"reason":"first"}';
   checkerStatus = undefined;
   reviewReply = '{"verdict":"approve","issues":""}';
@@ -161,7 +163,13 @@ beforeEach(() => {
       created: 1,
       model: body.model,
       choices: [
-        { index: 0, message, finish_reason: message.content === null ? "tool_calls" : "stop" },
+        {
+          index: 0,
+          message,
+          finish_reason:
+            (!checker && !reviewer ? draftReasons[proposer - 1] : undefined) ??
+            (message.content === null ? "tool_calls" : "stop"),
+        },
       ],
       usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
     });
@@ -436,4 +444,32 @@ describe("POST /v1/responses with the ensemble", () => {
     expect(text).toContain("function_call");
     expect(text).toContain("cancel_order");
   });
+});
+
+it("ensemble excludes unfinished drafts and retains all paid usage", async () => {
+  drafts = [
+    call("cancel_order", '{"id":8}'),
+    call("cancel_order", '{"id":7}'),
+    call("cancel_order", '{"id":8}'),
+  ];
+  draftReasons = ["length", "tool_calls", "length"];
+  const resp = await post("/v1/chat/completions", request(MODEL), STACK);
+  const data = (await resp!.json()) as Completion;
+  expect(data.choices[0]?.message.tool_calls?.[0]?.function.arguments).toBe('{"id":7}');
+  expect(data.usage.total_tokens).toBe(36);
+  expect(calls.filter((c) => c.checker)).toHaveLength(0);
+});
+
+it("ensemble preserves length when no draft completed", async () => {
+  drafts = Array.from({ length: 3 }, () => call("cancel_order", '{"id":8}'));
+  draftReasons = ["length", "length", "length"];
+  const resp = await post("/v1/chat/completions", request(MODEL), STACK);
+  const data = (await resp!.json()) as {
+    choices: { finish_reason: string }[];
+    usage: { total_tokens: number };
+  };
+  expect(data.choices[0]?.finish_reason).toBe("length");
+  expect(data.usage.total_tokens).toBe(36);
+  expect(resp?.headers.get("x-marina-ensemble")).toContain("no-complete-draft");
+  expect(calls.filter((c) => c.checker)).toHaveLength(0);
 });

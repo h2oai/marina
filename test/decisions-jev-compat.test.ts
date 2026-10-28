@@ -76,7 +76,11 @@ describe("TypeSafe question contract", () => {
         [
           {
             status: 200,
-            body: { choices: [{ message: { content: '{"answers":{"t":{"choice":"a"}}}' } }] },
+            body: {
+              choices: [
+                { finish_reason: "stop", message: { content: '{"answers":{"t":{"choice":"a"}}}' } },
+              ],
+            },
           },
         ],
         bodies,

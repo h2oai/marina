@@ -174,7 +174,8 @@ async function serviceStart(call: ServiceCall): Promise<void> {
   if (!name || separatorIndex < 0 || separatorIndex === args.length - 1) {
     throw new Error("Usage: code service start <name> [--port N] -- <command> [args...]");
   }
-  const portIndex = args.indexOf("--port", 2);
+  const requestedPortIndex = args.indexOf("--port", 2);
+  const portIndex = requestedPortIndex < separatorIndex ? requestedPortIndex : -1;
   const port = portIndex >= 0 ? Number(args[portIndex + 1]) : undefined;
   const service = await manager.start({
     entityId: eid,

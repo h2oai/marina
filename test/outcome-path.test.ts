@@ -24,9 +24,11 @@ import {
 import { fileAnswer, resolveFiled } from "../src/outcomes/filing";
 import { resolveForecast } from "../src/outcomes/forecast";
 import { observeOutcomeEvent } from "../src/outcomes/live";
-import { settleDelivery } from "../src/outcomes/record";
+import { deliverSoon, recordResolved, settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
 import type { EntityId } from "../src/types";
+import { createTestEngine } from "./engine-fixture";
+import { until } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
 /** A judge that passes everything, or throws `fail` on every call. */
@@ -58,6 +60,23 @@ const file = (db: MarinaDB, over: Record<string, unknown> = {}) =>
     answerJson: "{}",
     ...over,
   });
+
+let singleSequence = 0;
+function recordSingle(db: MarinaDB): number {
+  db.saveAgentConfig({ name: "DeliveryWorker", model: "test/model", spawnedBy: "system" });
+  return recordResolved(db, {
+    subject: `code:delivery-test:${++singleSequence}`,
+    kind: "task",
+    owner: "DeliveryWorker",
+    source: "code:verify",
+    domain: "tools",
+    succeeded: true,
+    basis: "mechanical",
+    refs: ["scope:shared"],
+    detail: "Relevant checks passed.",
+    resolvedAt: Date.now(),
+  }).id;
+}
 
 describe("one outcome path", () => {
   let db: MarinaDB;
@@ -332,6 +351,137 @@ describe("one outcome path", () => {
     expect(sink.all()).toHaveLength(0);
     const recalled = await recallLessons(db, "forecast", "Fed cut", { env: bare });
     expect(recalled.recalled).toEqual([]);
+  });
+
+  it("serializes producer and tick-style passes while a writer is awaiting", async () => {
+    const id = recordSingle(db);
+    await settleDelivery(db);
+    const sink = memoryLessonSink();
+    let writes = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    enableOutcomeLearning(db, {
+      sink,
+      judge: judge(),
+      env: env(),
+      writer: {
+        name: "held-writer",
+        async complete() {
+          writes++;
+          await gate;
+          return '{"category":"calibration","rule":"Check uncertainty before reporting a forecast."}';
+        },
+      },
+    });
+    deliverSoon(db);
+    await until(() => writes === 1);
+    const tick = deliverOutcomes(db, { env: env() });
+    deliverSoon(db);
+    release();
+    await Promise.all([tick, settleDelivery(db)]);
+    expect(writes).toBe(1);
+    expect(sink.all().filter((lesson) => lesson.domain !== "meta")).toHaveLength(1);
+    const outcome = db.getOutcome(id)!;
+    const before = db.outcomeDeliveries(outcome.id);
+    db.setOutcomeDelivery(outcome.id, "lessons", "failed", "late rejection");
+    expect(db.outcomeDeliveries(outcome.id)).toEqual(before);
+  });
+
+  it("missing judges use no hourly budget and rotate pending rows fairly", async () => {
+    const ids = [recordSingle(db), recordSingle(db)];
+    await settleDelivery(db);
+    const limited = env({ MARINA_LESSONS_MAX_PER_HOUR: "1" });
+    enableOutcomeLearning(db, {
+      sink: memoryLessonSink(),
+      writer: null,
+      judge: null,
+      env: limited,
+    });
+    for (let i = 0; i < 8; i++) await deliverOutcomes(db, { env: limited, max: 1 });
+    const outcomes = ids.map((id) => db.getOutcome(id)!);
+    for (const o of outcomes)
+      expect(db.outcomeDeliveries(o.id).find((d) => d.consumer === "lessons")).toMatchObject({
+        state: "pending",
+        attempts: 0,
+        reason: "no verdict: no decision backend",
+      });
+    const { armedLearner } = await import("../src/learning/service");
+    expect(armedLearner(db, limited)!.take(1)).toBe(1);
+  });
+
+  it("bounded drain cancels a late writer before it can persist a lesson", async () => {
+    const id = recordSingle(db);
+    await settleDelivery(db);
+    const sink = memoryLessonSink();
+    let started = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    enableOutcomeLearning(db, {
+      sink,
+      judge: judge(),
+      env: env(),
+      writer: {
+        name: "slow",
+        async complete() {
+          started = true;
+          await gate;
+          return '{"category":"checks","rule":"Check the evidence."}';
+        },
+      },
+    });
+    const delivery = deliverOutcomes(db, { env: env() });
+    await until(() => started);
+    await settleDelivery(db, 5);
+    release();
+    await delivery;
+    expect(sink.all()).toHaveLength(0);
+    const outcome = db.getOutcome(id)!;
+    expect(db.outcomeDeliveries(outcome.id).find((d) => d.consumer === "lessons")?.state).toBe(
+      "pending",
+    );
+  });
+
+  it("actual engine shutdown drains a producer delivery before returning", async () => {
+    const fixture = createTestEngine();
+    const sink = memoryLessonSink();
+    let started = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      enableOutcomeLearning(fixture.db, {
+        sink,
+        judge: judge(),
+        env: env(),
+        writer: {
+          name: "held",
+          async complete() {
+            started = true;
+            await gate;
+            return '{"category":"checks","rule":"Check the evidence."}';
+          },
+        },
+      });
+      recordSingle(fixture.db);
+      await until(() => started);
+      let stopped = false;
+      const shutdown = fixture.engine.shutdown().then(() => {
+        stopped = true;
+      });
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+      release();
+      await shutdown;
+      expect(sink.all().filter((lesson) => lesson.domain !== "meta")).toHaveLength(1);
+    } finally {
+      release?.();
+      await fixture.dispose();
+    }
   });
 
   it("a measurement run of a named board teaches (as that board) but never tunes", async () => {

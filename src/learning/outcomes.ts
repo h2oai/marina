@@ -28,6 +28,7 @@ import type { DecisionProvider, DecisionQuestions, NoulAnswer } from "../decisio
 import { Logger } from "../engine/logger";
 import { rankSortKey, tokenJaccard } from "../memory/admission-policy";
 import { EVAL_REF_PREFIX } from "./eval-context";
+import type { LearningJournal } from "./journal";
 import { type CaseGuard, itemLeak } from "./leak-guard";
 import { classifyUnavailable, type Unavailable } from "./unavailable";
 
@@ -520,7 +521,7 @@ export const LESSON_JUDGE_QUESTIONS: DecisionQuestions = {
   grounded: {
     type: "noul",
     instructions:
-      "Is the lesson supported by the outcome it was written from (the result, detail and signals)? Any numbers it cites must match the outcome.",
+      "Is the lesson supported by the outcome and its private context? Any numbers must match. Approval or completion only establishes that someone accepted the work: it does not establish objective correctness, causality, or permission to ignore quality checks. Reject general rules inferred from those claims without supporting evidence.",
     criteria: {
       true: "The lesson follows from the stated outcome and evidence.",
       false: "The lesson claims something the outcome does not show.",
@@ -616,37 +617,43 @@ export async function judgeLesson(
   outcome: Outcome,
   provider: DecisionProvider | undefined,
   existing: Lesson[] = [],
+  signal?: AbortSignal,
 ): Promise<LessonVerdict> {
   const leak = mechanicalLeak(candidate.text, outcome);
   if (leak) return { trust: "rejected", reason: leak, leak: true };
   if (!provider) return { trust: "unverified", reason: "no decision backend" };
   try {
-    const result = await provider.ask({
-      state: {
-        outcome: {
-          domain: outcome.domain,
-          source: outcome.source,
-          result: outcome.succeeded ? "success" : "failure",
-          ...(outcome.score !== undefined ? { score: outcome.score } : {}),
-          attempted: clip(outcome.attempted, 400),
-          ...(outcome.detail ? { detail: clip(outcome.detail, 300) } : {}),
-          ...(outcome.signals?.length ? { signals: outcome.signals.slice(0, 8) } : {}),
-          ...(outcome.measurement?.length ? { measurement: outcome.measurement.slice(0, 4) } : {}),
+    const result = await provider.ask(
+      {
+        state: {
+          outcome: {
+            domain: outcome.domain,
+            source: outcome.source,
+            result: outcome.succeeded ? "success" : "failure",
+            ...(outcome.score !== undefined ? { score: outcome.score } : {}),
+            attempted: clip(outcome.attempted, 400),
+            ...(outcome.privateContext
+              ? { private_context: clip(outcome.privateContext, 2_000) }
+              : {}),
+            ...(outcome.detail ? { detail: clip(outcome.detail, 300) } : {}),
+            ...(outcome.signals?.length ? { signals: outcome.signals.slice(0, 8) } : {}),
+            ...(outcome.measurement?.length
+              ? { measurement: outcome.measurement.slice(0, 4) }
+              : {}),
+          },
+          lesson: candidate.rule ? `rule: ${candidate.rule}` : candidate.text,
+          ...(candidate.scope ? { scope: candidate.scope } : {}),
+          ...(candidate.families?.length ? { families: candidate.families } : {}),
+          applies_to: {
+            source: outcome.source,
+            ...(candidate.scopeFamily ? { family: candidate.scopeFamily } : {}),
+          },
+          existing_lessons: existing.slice(0, 5).map((l) => (l.rule ? `rule: ${l.rule}` : l.text)),
         },
-        // The lesson is its rule and scope; per-case numbers reach the judge
-        // only as outcome detail above, never as part of the lesson.
-        lesson: candidate.rule ? `rule: ${candidate.rule}` : candidate.text,
-        ...(candidate.scope ? { scope: candidate.scope } : {}),
-        ...(candidate.families?.length ? { families: candidate.families } : {}),
-        // What `general` is judged within: the source shape and declared family.
-        applies_to: {
-          source: outcome.source,
-          ...(candidate.scopeFamily ? { family: candidate.scopeFamily } : {}),
-        },
-        existing_lessons: existing.slice(0, 5).map((l) => (l.rule ? `rule: ${l.rule}` : l.text)),
+        questions: LESSON_JUDGE_QUESTIONS,
       },
-      questions: LESSON_JUDGE_QUESTIONS,
-    });
+      signal,
+    );
     const judgement: Record<string, number> = {};
     for (const [k, a] of Object.entries(result.answers)) {
       if (a.type === "noul") judgement[k] = (a as NoulAnswer).noul;
@@ -782,6 +789,10 @@ export interface LessonNeighbours {
 }
 
 export interface LessonSink {
+  /** Replay durable mutations using prepared memory requests and committed receipts. */
+  withJournal?(journal: LearningJournal): LessonSink;
+  /** Bind journal erasure lineage before retaining any candidate plaintext. */
+  prepareJournal?(domain: OutcomeDomain, meta: boolean): Promise<void>;
   /**
    * Persist a lesson (trusted / unverified served; rejected kept as audit only).
    * `key` makes the write idempotent: the same key and lesson write once.
@@ -1108,6 +1119,7 @@ export interface LessonAdmissionContext {
   /** `lesson` for the producer-domain write, `meta` for its cross-board mirror. */
   target: "lesson" | "meta";
   sink: LessonSink;
+  journal?: LearningJournal;
 }
 
 /**
@@ -1142,8 +1154,13 @@ function asDecision(r: Lesson | null | LessonAdmissionDecision): LessonAdmission
   return "text" in r && "domain" in r ? { lesson: r as Lesson } : (r as LessonAdmissionDecision);
 }
 
-async function runAfterWrite(d: LessonAdmissionDecision, id: string | undefined): Promise<void> {
+async function runAfterWrite(
+  d: LessonAdmissionDecision,
+  id: string | undefined,
+  durable = false,
+): Promise<void> {
   if (!d.afterWrite || !id) return;
+  if (durable) return d.afterWrite(id);
   try {
     await d.afterWrite(id);
   } catch {
@@ -1161,6 +1178,7 @@ function judgeContest(
   d: LessonAdmissionDecision,
   verdict: LessonVerdict,
   sink: LessonSink,
+  durable = false,
 ): LessonAdmissionDecision {
   const against = verdict.contests;
   if (!d.lesson || !against) return d;
@@ -1180,8 +1198,9 @@ function judgeContest(
     afterWrite: async (id) => {
       try {
         await prior?.(id);
-      } catch {
-        // allow-empty-catch: admission's follow-up is best effort; the case below still opens
+      } catch (error) {
+        if (durable) throw error;
+        // Ordinary admission follow-up is best effort; the case below still opens.
       }
       if (!sink.contest) return; // held anyway while `against` is current
       await sink.contest(d.lesson!.domain, id, against, {
@@ -1194,6 +1213,9 @@ function judgeContest(
 
 export interface OutcomeLearnerDeps {
   sink: LessonSink;
+  journal?: LearningJournal;
+  /** Bounded shutdown: cancel between stages; an already-started store operation may finish. */
+  signal?: AbortSignal;
   writer?: LessonWriter;
   judge?: DecisionProvider;
   /** Called with the judge's cost (the writer records its own through modelComplete). */
@@ -1269,67 +1291,134 @@ export async function recordOutcome(
   deps: OutcomeLearnerDeps,
   outcome: Outcome,
 ): Promise<OutcomeRecord> {
-  const { lesson: candidate, unavailable: writerUnavailable } = await writeCandidate(
-    outcome,
-    deps.writer,
+  if (!deps.journal) return recordOutcomeInner(deps, outcome);
+  const journal = deps.journal;
+  if (!deps.sink.withJournal) throw new Error("Durable learning requires a journal-aware sink");
+  const sink = deps.sink.withJournal(journal.child("sink"));
+  await sink.prepareJournal?.(outcome.domain, !!deps.meta);
+  return journal.run(
+    "complete",
+    () => recordOutcomeInner({ ...deps, sink }, outcome),
+    (record) => !record.deferred,
   );
-  // No rule, no lesson: a bare mechanical restatement is never judged or
-  // stored. The outcome waits (a durable caller retries it later).
-  if (!candidate.rule)
+}
+
+async function recordOutcomeInner(
+  deps: OutcomeLearnerDeps,
+  outcome: Outcome,
+): Promise<OutcomeRecord> {
+  const { journal } = deps;
+  const settings = journal
+    ? await journal.run("settings", async () => ({ meta: !!deps.meta, admission: !!deps.admit }))
+    : { meta: !!deps.meta, admission: !!deps.admit };
+  if (settings.admission && !deps.admit)
+    throw new Error("Resume requires the configured lesson admission backend");
+  const admit = settings.admission ? deps.admit : undefined;
+  deps.signal?.throwIfAborted();
+  const makeCandidate = async (): Promise<{
+    candidate: Lesson;
+    leak?: string;
+    unavailable?: Unavailable;
+  }> => {
+    const { lesson: candidate, unavailable } = await writeCandidate(outcome, deps.writer);
+    const leak = mechanicalLeak(candidate.text, outcome);
+    if (!leak) return { candidate, ...(unavailable ? { unavailable } : {}) };
+    const { rule: _rule, category: _category, ...safe } = candidate;
+    return {
+      candidate: { ...safe, text: `[lesson:${candidate.domain}] withheld · ${leak}` },
+      leak,
+    };
+  };
+  const prepared = journal
+    ? await journal.run(
+        "candidate",
+        makeCandidate,
+        (value) => !!value.candidate.rule || !!value.leak,
+      )
+    : await makeCandidate();
+  const { candidate } = prepared;
+  deps.signal?.throwIfAborted();
+  // A missing rule is retryable; never cache an unavailable writer as a final candidate.
+  if (!candidate.rule && !prepared.leak)
     return {
       trust: "unverified",
       reason: `no rule (${candidate.provenance?.no_rule ?? "no writer"})`,
       lesson: candidate,
       deferred: true,
-      ...(writerUnavailable ? { unavailable: writerUnavailable } : {}),
+      ...(prepared.unavailable ? { unavailable: prepared.unavailable } : {}),
     };
-  let existing: Lesson[] = [];
-  try {
-    existing = await deps.sink.recall(outcome.domain, candidate.text, outcome.resolvedAt, {
-      limit: 5,
-    });
-  } catch {
-    // allow-empty-catch: consistency context is best effort
-  }
-  existing = existing.filter((l) => l.trust === "trusted");
-  // Imported lessons near the candidate join the consistency context after
-  // the local trusted ones (none without `deps.imported`: unchanged).
-  let importedShown: Lesson[] = [];
-  if (deps.imported) {
-    try {
-      const near = await deps.imported.neighbours(
-        outcome.domain,
-        candidate.text,
-        outcome.resolvedAt,
-      );
-      importedShown = near
-        .filter((l) => l.trust === "imported" && l.id && l.imported)
-        .slice(0, Math.max(0, 5 - existing.length));
-    } catch {
-      // allow-empty-catch: imported context is best effort; the local judgement stands
+  const judge = async (): Promise<{
+    verdict: LessonVerdict;
+    judgedVerdict: LessonVerdict;
+    contradicted?: Lesson;
+    confirms?: Lesson;
+  }> => {
+    if (prepared.leak) {
+      const verdict: LessonVerdict = { trust: "rejected", reason: prepared.leak, leak: true };
+      return { verdict, judgedVerdict: verdict };
     }
-  }
-  const judgedVerdict = await judgeLesson(candidate, outcome, deps.judge, [
-    ...existing,
-    ...importedShown,
-  ]);
-  // A contradicted IMPORTED lesson never holds a local one: the local outcome
-  // is the newer evidence, so the local lesson is written and the imported
-  // one retired after the write.
-  const contradicted = judgedVerdict.contests
-    ? importedShown.find((l) => l.id === judgedVerdict.contests)
-    : undefined;
-  const verdict: LessonVerdict = contradicted
-    ? (({ contests: _c, ...rest }) => rest)(judgedVerdict)
-    : judgedVerdict;
-  // A trusted local lesson whose rule matches an imported one confirms it.
-  const confirms =
-    verdict.trust === "trusted" && !verdict.contests && !contradicted
-      ? importedShown.find(
-          (l) => tokenJaccard(ruleText(l), ruleText(candidate)) >= IMPORTED_CONFIRM_JACCARD,
-        )
+    let existing: Lesson[] = [];
+    try {
+      existing = await deps.sink.recall(outcome.domain, candidate.text, outcome.resolvedAt, {
+        limit: 5,
+      });
+    } catch {
+      // allow-empty-catch: consistency context is best effort
+    }
+    existing = existing.filter((l) => l.trust === "trusted");
+    // Imported lessons near the candidate join the consistency context after
+    // the local trusted ones (none without `deps.imported`: unchanged).
+    let importedShown: Lesson[] = [];
+    if (deps.imported) {
+      try {
+        const near = await deps.imported.neighbours(
+          outcome.domain,
+          candidate.text,
+          outcome.resolvedAt,
+        );
+        importedShown = near
+          .filter((l) => l.trust === "imported" && l.id && l.imported)
+          .slice(0, Math.max(0, 5 - existing.length));
+      } catch {
+        // allow-empty-catch: imported context is best effort; the local judgement stands
+      }
+    }
+    deps.signal?.throwIfAborted();
+    const judgedVerdict = await judgeLesson(
+      candidate,
+      outcome,
+      deps.judge,
+      [...existing, ...importedShown],
+      deps.signal,
+    );
+    // A contradicted IMPORTED lesson never holds a local one: the local outcome
+    // is the newer evidence, so the local lesson is written and the imported
+    // one retired after the write.
+    const contradicted = judgedVerdict.contests
+      ? importedShown.find((l) => l.id === judgedVerdict.contests)
       : undefined;
-  if (verdict.costUsd) deps.onSpend?.(verdict.costUsd);
+    const verdict: LessonVerdict = contradicted
+      ? (({ contests: _c, ...rest }) => rest)(judgedVerdict)
+      : judgedVerdict;
+    // A trusted local lesson whose rule matches an imported one confirms it.
+    const confirms =
+      verdict.trust === "trusted" && !verdict.contests && !contradicted
+        ? importedShown.find(
+            (l) => tokenJaccard(ruleText(l), ruleText(candidate)) >= IMPORTED_CONFIRM_JACCARD,
+          )
+        : undefined;
+    if (verdict.costUsd) deps.onSpend?.(verdict.costUsd);
+    return {
+      verdict,
+      judgedVerdict,
+      ...(contradicted ? { contradicted } : {}),
+      ...(confirms ? { confirms } : {}),
+    };
+  };
+  const { verdict, judgedVerdict, contradicted, confirms } = journal
+    ? await journal.run("verdict", judge, (value) => value.verdict.trust !== "unverified")
+    : await judge();
+  deps.signal?.throwIfAborted();
   if (deps.deferUnjudged && verdict.trust === "unverified")
     return {
       trust: verdict.trust,
@@ -1356,10 +1445,21 @@ export async function recordOutcome(
       : {}),
   };
   // ── Admission hook: after the judge, before the write. ──
-  const admitted = deps.admit
-    ? asDecision(await deps.admit(judged, { outcome, verdict, target: "lesson", sink: deps.sink }))
+  const admitted = admit
+    ? asDecision(
+        await admit(judged, {
+          outcome,
+          verdict,
+          target: "lesson",
+          sink: deps.sink,
+          ...(journal ? { journal: journal.child("primary-admission") } : {}),
+        }),
+      )
     : { lesson: judged };
-  const decision = verdict.contests ? judgeContest(admitted, verdict, deps.sink) : admitted;
+  deps.signal?.throwIfAborted();
+  const decision = verdict.contests
+    ? judgeContest(admitted, verdict, deps.sink, !!journal)
+    : admitted;
   const lesson = decision.lesson;
   if (!lesson)
     return {
@@ -1370,7 +1470,8 @@ export async function recordOutcome(
       ...(decision.mergedInto ? { mergedInto: decision.mergedInto } : {}),
     };
   const { id } = await deps.sink.write(lesson);
-  await runAfterWrite(decision, id);
+  deps.signal?.throwIfAborted();
+  await runAfterWrite(decision, id, !!journal);
   let metaId: string | undefined;
   // A lesson held unserved (contested) is not mirrored until its case resolves.
   const held = lesson.admission?.state === "contested";
@@ -1382,21 +1483,29 @@ export async function recordOutcome(
       // allow-empty-catch: the local lesson stands; the imported one is reconciled on a later outcome
     }
   }
-  const mirror = deps.meta && id && !held ? metaMirror(lesson, id, verdict) : undefined;
+  const mirror = settings.meta && id && !held ? metaMirror(lesson, id, verdict) : undefined;
   if (mirror) {
     try {
-      const metaDecision = deps.admit
+      const metaDecision = admit
         ? asDecision(
-            await deps.admit(mirror, { outcome, verdict, target: "meta", sink: deps.sink }),
+            await admit(mirror, {
+              outcome,
+              verdict,
+              target: "meta",
+              sink: deps.sink,
+              ...(journal ? { journal: journal.child("meta-admission") } : {}),
+            }),
           )
         : { lesson: mirror };
       // Keyed by the original: a retried mirror of the same lesson writes once.
+      deps.signal?.throwIfAborted();
       if (metaDecision.lesson) {
         metaId = (await deps.sink.write(metaDecision.lesson, { key: `lesson-meta:${id}` })).id;
-        await runAfterWrite(metaDecision, metaId);
+        await runAfterWrite(metaDecision, metaId, !!journal);
       }
-    } catch {
-      // allow-empty-catch: a failed mirror leaves the lesson served in its own domain
+    } catch (error) {
+      // Durable deliveries must resume the mirror before terminal settlement.
+      if (journal) throw error;
     }
   }
   return {
