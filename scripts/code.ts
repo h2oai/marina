@@ -725,7 +725,11 @@ export async function runCodeSession(
     harness.agent !== "marina"
       ? `${harness.agent} (${harness.model ?? "its default model"})`
       : (defaultModel ?? "default model");
-  say(`Starting Marina in ${folderName}…`);
+  // An interactive terminal gets the welcome card (after Code Mode says
+  // whether this is a new session); scripts and --tui keep the plain lines.
+  const card =
+    opts.print === undefined && !opts.tui && !!process.stdin.isTTY && !!process.stderr.isTTY;
+  if (!card) say(`Starting Marina in ${folderName}…`);
   if (verbose) say(fresh ? "DB · ephemeral (deleted on exit)" : `DB · ${dbPath}`);
 
   if (execResolution.refusal) {
@@ -932,10 +936,6 @@ export async function runCodeSession(
     await cleanup(1);
   }
 
-  // An interactive terminal gets the welcome card (after Code Mode says
-  // whether this is a new session); scripts and --tui keep the plain lines.
-  const card =
-    opts.print === undefined && !opts.tui && !!process.stdin.isTTY && !!process.stderr.isTTY;
   if (!card) say(`Marina ${MARINA_VERSION} · ${folderName} · ${agentLabel}`);
   // The provider check asks the SERVER: a key can be valid in the environment
   // and still unusable. The zero-config line above already named a missing key:
