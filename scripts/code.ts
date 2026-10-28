@@ -27,7 +27,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { hostname, tmpdir } from "node:os";
+import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { diffStat } from "../src/coding/unified-diff";
 import { formatAge } from "../src/engine/commands/format-duration";
@@ -42,6 +42,7 @@ import { inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters } from "./code-native";
 import { styleStartupLine, themeFor } from "./code-style";
 import { formatCodePerception, terminalText } from "./code-terminal";
+import { tipLines, welcomeCard } from "./term-frame";
 
 const REPO_ROOT = resolve(import.meta.dir, "..");
 const STDERR_TAIL_LINES = 40;
@@ -487,6 +488,50 @@ function say(line: string): void {
   process.stderr.write(`${styleStartupLine(line, themeFor(stream.isTTY ? stream : undefined))}\n`);
 }
 
+/** The interactive first page: the shared welcome card (`term-frame.ts`) on stderr. */
+function printWelcome(session: { dir: string; agentLabel: string; resumed?: string }): void {
+  const stream = process.stderr;
+  const theme = themeFor(stream);
+  const muted = theme.fg("muted");
+  let user = "";
+  try {
+    user = userInfo().username;
+  } catch {
+    // allow-empty-catch: no passwd entry (containers); the greeting goes without a name.
+  }
+  const home = homedir();
+  const full = session.dir.startsWith(`${home}/`)
+    ? `~${session.dir.slice(home.length)}`
+    : session.dir;
+  // A deep path keeps its end: the folder is the part that says where you are.
+  const where = full.length > 40 ? `…${full.slice(-39)}` : full;
+  const card = welcomeCard(
+    {
+      title: `Marina ${MARINA_VERSION}`,
+      greeting: `${session.resumed ? "Welcome back" : "Welcome"}${user ? `, ${user}` : ""}!`,
+      details: [muted(session.agentLabel), theme.fg("info")(where)],
+      sections: [
+        {
+          title: "Tips for getting started",
+          lines: tipLines(theme, [
+            ["<task>", "say what you want done, in plain words"],
+            ["/plan <request>", "propose first, write nothing"],
+            ["/project", "readiness and the verify recipe"],
+            ["/help", "everything else"],
+          ]),
+        },
+        {
+          title: session.resumed ? "Resuming" : "Session",
+          lines: [muted(session.resumed?.replace(/^Resuming /, "") ?? "New session.")],
+        },
+      ],
+    },
+    theme,
+    { columns: stream.columns || 80, rows: stream.rows || 24 },
+  );
+  stream.write(`\n${card.join("\n")}\n\n`);
+}
+
 /** Where a folder's running server announces itself (persistent sessions only). */
 export function serverInfoPath(projectDirectory: string): string {
   return join(projectDirectory, "server.json");
@@ -887,7 +932,11 @@ export async function runCodeSession(
     await cleanup(1);
   }
 
-  say(`Marina ${MARINA_VERSION} · ${folderName} · ${agentLabel}`);
+  // An interactive terminal gets the welcome card (after Code Mode says
+  // whether this is a new session); scripts and --tui keep the plain lines.
+  const card =
+    opts.print === undefined && !opts.tui && !!process.stdin.isTTY && !!process.stderr.isTTY;
+  if (!card) say(`Marina ${MARINA_VERSION} · ${folderName} · ${agentLabel}`);
   // The provider check asks the SERVER: a key can be valid in the environment
   // and still unusable. The zero-config line above already named a missing key:
   // say it once.
@@ -913,6 +962,7 @@ export async function runCodeSession(
 
   // Resume status: the code_mode_entered metadata says whether a prior session
   // (persistent DB) was picked back up. Ephemeral runs always start clean.
+  let resumed: string | undefined;
   for (const p of entered) {
     const code = (p.data as Record<string, unknown> | undefined)?.code as
       | Record<string, unknown>
@@ -923,14 +973,16 @@ export async function runCodeSession(
       const age = createdAt > 0 ? `${formatAge(Date.now() - createdAt)} ago` : "earlier";
       const workspace = typeof code.workspace === "string" ? code.workspace : dir;
       const title = typeof code.title === "string" && code.title ? `“${code.title}”, ` : "";
-      say(`Resuming ${title}started ${age}${workspace !== dir ? ` in ${workspace}` : ""}.`);
-    } else {
+      resumed = `Resuming ${title}started ${age}${workspace !== dir ? ` in ${workspace}` : ""}.`;
+      if (!card) say(resumed);
+    } else if (!card) {
       say("New session.");
       if (!opts.print)
         say("Tip: /project shows readiness; /diff, /checks and /review follow a task.");
     }
     break;
   }
+  if (card) printWelcome({ dir, agentLabel, resumed });
 
   // Negotiate the host-exec posture with the server. The server independently
   // re-verifies the operator is a loopback-local sovereign before honoring this
@@ -943,6 +995,7 @@ export async function runCodeSession(
 
   sessionConsole = new CodeConsole({
     tui: opts.tui,
+    welcomed: card,
     agent,
     url: `http://localhost:${port}`,
     root: dir,

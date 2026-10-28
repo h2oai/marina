@@ -118,8 +118,8 @@ export function styleCodeEntry(
   ].join("\n");
 }
 
-/** The Code Mode prompt: folder, agent and status in their tones, the chevron in accent. */
-export function stylePrompt(
+/** Where input goes (the input area's rule label): folder, agent and status in their tones. */
+export function styleLocation(
   parts: {
     destination: string;
     folder?: string;
@@ -132,7 +132,7 @@ export function stylePrompt(
 ): string {
   const dot = theme.fg("faint")(" · ");
   if (theme.level === 0) {
-    return `${parts.destination}${parts.badge ? ` · ${parts.badge}` : ""}${parts.more ? " …" : ""} › `;
+    return `${parts.destination}${parts.badge ? ` · ${parts.badge}` : ""}${parts.more ? " …" : ""}`;
   }
   const pieces = parts.folder
     ? [
@@ -143,7 +143,7 @@ export function stylePrompt(
     : [theme.fg("accent2")(parts.destination)];
   const badge = parts.badge ? `${dot}${theme.fg("warning")(parts.badge)}` : "";
   const more = parts.more ? theme.fg("muted")(" …") : "";
-  return `${pieces.join(dot)}${badge}${more} ${theme.bold(theme.fg("accent")("›"))} `;
+  return `${pieces.join(dot)}${badge}${more}`;
 }
 
 function statusTone(status: string, theme: Theme): string {

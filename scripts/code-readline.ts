@@ -3,19 +3,16 @@
 
 import { basename } from "node:path";
 
-import {
-  clearScreenDown,
-  createInterface,
-  cursorTo,
-  type Interface,
-  moveCursor,
-} from "node:readline";
+import { createInterface, type Interface } from "node:readline";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { terminalCompletionItems } from "./code-completion";
 import { colorizeDiff, diffColorEnabled } from "./code-diff";
 import type { CodeEditor, CodeEditorOptions, CodeEditorState } from "./code-editor";
 import { terminalText } from "./code-presentation";
-import { styleCodeEntry, stylePrompt, themeFor } from "./code-style";
+import { styleCodeEntry, styleLocation, themeFor } from "./code-style";
 import type { EntryFormat, TerminalView } from "./code-views";
+import { footerLine, frameCompletion, InputFrame, ruleLine } from "./term-frame";
+import { glyphsFor } from "./term-render";
 import { sanitizeServerText } from "./term-sanitize";
 
 interface Draft {
@@ -25,7 +22,12 @@ interface Draft {
 }
 const empty = (): Draft => ({ text: "", cursor: 0, history: [] });
 
-/** Readline remains the input owner for scrollback, pipes and one-shot approval prompts. */
+/**
+ * Readline remains the input owner for scrollback, pipes and one-shot approval
+ * prompts. On a terminal it sits in the shared input area (`term-frame.ts`):
+ * a rule naming where input goes, the `❯` prompt, a rule, and a footer with
+ * the live status — the same layout as `marina connect`.
+ */
 export class ReadlineCodeEditor implements CodeEditor {
   private rl: Interface;
   private closed = false;
@@ -40,15 +42,24 @@ export class ReadlineCodeEditor implements CodeEditor {
   private history: string[] = [];
   private state?: CodeEditorState;
   private readonly tty: boolean;
-  private readonly resize = () => this.redraw();
+  private readonly frame: InputFrame;
+  /** The rule label and prompt last drawn; the area is redrawn only when they change. */
+  private drawn?: string;
+  /** Candidates of an ambiguous Tab, shown in the footer until the next key. */
+  private choices: string[] = [];
+  private readonly resize = () => this.redraw(true);
   private readonly key = (_text: string, key: { name?: string }) => {
+    if (key.name !== "tab") this.choices = [];
     if (key.name === "f6") this.options.navigate(this.view === "world" ? "coding" : "world");
     if (key.name === "f7") this.options.navigate("approvals");
     if (key.name === "f8") this.options.navigate("panel");
+    // Readline repaints the prompt row with clear-to-end-of-screen; put the footer back.
+    if (this.tty) setImmediate(() => this.drawBelow());
   };
 
   constructor(private options: CodeEditorOptions) {
     this.tty = !!options.input.isTTY && !!options.output.isTTY;
+    this.frame = new InputFrame(options.output, () => this.rl.getCursorPos().rows);
     this.rl = this.create();
     options.output.on("resize", this.resize);
     options.input.on("keypress", this.key);
@@ -62,25 +73,30 @@ export class ReadlineCodeEditor implements CodeEditor {
       terminal: this.tty,
       history,
       historySize: this.view === "approvals" ? 0 : 200,
-      completer: (line: string) => [
-        this.view === "approvals" || this.state?.answer
-          ? []
-          : terminalCompletionItems(
-              line,
-              this.options.connected,
-              this.options.completions?.(),
-              this.view === "world",
-            ).map((entry) => entry.value),
-        line,
-      ],
+      completer: (line: string) => {
+        const matches =
+          this.view === "approvals" || this.state?.answer
+            ? []
+            : terminalCompletionItems(
+                line,
+                this.options.connected,
+                this.options.completions?.(),
+                this.view === "world",
+              ).map((entry) => entry.value);
+        if (!this.tty) return [matches, line];
+        const { fill, choices } = frameCompletion(matches, line);
+        this.choices = choices;
+        return [fill, line];
+      },
     });
-    editor.on("line", this.options.line);
+    editor.on("line", (text: string) => this.accept(text));
     editor.on("history", (entries: string[]) => {
       this.history = [...entries];
     });
     editor.on("SIGINT", this.options.interrupt);
     editor.on("close", () => {
       if (this.replacing) return;
+      this.frame.erase();
       this.closed = true;
       this.options.output.off("resize", this.resize);
       this.options.input.off("keypress", this.key);
@@ -113,8 +129,36 @@ export class ReadlineCodeEditor implements CodeEditor {
     if (view === this.view && !this.closed) this.replace(empty());
   }
 
+  /** A submitted line: the area shrinks to `❯ text` in scrollback, then comes back below it. */
+  private accept(text: string) {
+    if (this.tty && this.frame.visible) {
+      const columns = this.columns();
+      const typed = visibleWidth(this.rl.getPrompt()) + visibleWidth(text);
+      this.frame.eraseSubmitted(Math.floor(Math.max(0, typed - 1) / columns) + 1);
+      this.drawn = undefined;
+      const theme = this.theme();
+      if (text.trim())
+        this.options.output.write(
+          `${theme.fg("muted")(`${glyphsFor(theme).prompt} `)}${terminalText(text.trim())}\n`,
+        );
+    }
+    this.options.line(text);
+    if (!this.frame.visible) this.redraw();
+  }
+
+  private columns(): number {
+    return Math.max(20, (this.options.output as { columns?: number }).columns ?? 80);
+  }
+
+  private theme() {
+    return themeFor(this.tty ? this.options.output : undefined);
+  }
+
   private replace(draft: Draft) {
-    if (this.tty) this.clearPrompt();
+    if (this.tty) {
+      this.frame.erase();
+      this.drawn = undefined;
+    }
     this.replacing = true;
     this.rl.close();
     this.replacing = false;
@@ -130,10 +174,10 @@ export class ReadlineCodeEditor implements CodeEditor {
     this.redraw();
   }
 
-  private redraw() {
+  private redraw(force = false) {
     if (this.closed || !this.tty || !this.state) return;
     const { target, status, focus, answer, multiline, badge, location } = this.state;
-    const columns = (this.options.output as { columns?: number }).columns ?? 80;
+    const columns = this.columns();
     const limit = Math.max(2, Math.floor((columns - 8) / 2));
     const compact = (text: string, length: number) => {
       const chars = [...text];
@@ -151,46 +195,61 @@ export class ReadlineCodeEditor implements CodeEditor {
         : focus === "panel"
           ? "panel control"
           : `${compact(folder, 24)}${agent}${busy}`;
-    const theme = themeFor(this.tty ? this.options.output : undefined);
-    // Starship's two-line prompt: live segments above, the input line below.
-    const above = this.state.statusLine && theme.level > 0 ? `${this.state.statusLine}\n` : "";
-    this.rl.setPrompt(
-      above +
-        stylePrompt(
-          {
-            destination,
-            ...(coding
-              ? {
-                  folder: compact(folder, 24),
-                  agent: agent ? agent.slice(3) : undefined,
-                  status: busy ? busy.slice(3) : undefined,
-                }
-              : {}),
-            badge: badge || undefined,
-            more: !!multiline && !answer,
-          },
-          themeFor(this.tty ? this.options.output : undefined),
-        ),
+    const theme = this.theme();
+    const label = styleLocation(
+      {
+        destination,
+        ...(coding
+          ? {
+              folder: compact(folder, 24),
+              agent: agent ? agent.slice(3) : undefined,
+              status: busy ? busy.slice(3) : undefined,
+            }
+          : {}),
+        badge: badge || undefined,
+        more: !!multiline && !answer,
+      },
+      theme,
     );
+    const g = glyphsFor(theme);
+    const prompt = multiline
+      ? `${theme.fg("muted")(g.ellipsis)} `
+      : `${theme.bold(theme.fg("accent")(g.prompt))} `;
+    const drawn = `${columns}\u0000${label}\u0000${prompt}`;
+    if (!force && this.frame.visible && drawn === this.drawn) {
+      this.drawBelow();
+      return;
+    }
+    this.frame.erase();
+    this.drawn = drawn;
+    this.frame.open([ruleLine(theme, columns, label)], 2);
+    this.rl.setPrompt(prompt);
     this.rl.prompt(true);
+    this.drawBelow();
   }
 
-  private clearPrompt(): number {
-    const rows = this.rl.getCursorPos().rows;
-    cursorTo(this.options.output, 0);
-    if (rows) moveCursor(this.options.output, 0, -rows);
-    clearScreenDown(this.options.output);
-    return rows;
+  /** The rule under the prompt and the footer: live status left, waiting views right. */
+  private drawBelow() {
+    if (this.closed || !this.tty || !this.state) return;
+    const theme = this.theme();
+    const g = glyphsFor(theme);
+    const columns = this.columns();
+    // The live segments are colour-coded; with colour off the footer keeps its hint.
+    const left = this.choices.length
+      ? theme.fg("muted")(this.choices.join("  "))
+      : (theme.level > 0 && this.state.statusLine) ||
+        theme.fg("faint")(`/help ${g.dot} F6 world ${g.dot} ctrl+c interrupts`);
+    const right = this.state.badge ? theme.fg("warning")(this.state.badge) : "";
+    this.frame.drawBelow([ruleLine(theme, columns), footerLine(theme, columns, left, right)]);
   }
 
   print(text: string, format?: EntryFormat) {
-    const rows = this.tty && !this.closed ? this.clearPrompt() : 0;
-    const theme = themeFor(this.tty ? this.options.output : undefined);
+    if (this.tty && !this.closed) this.frame.erase();
+    const theme = this.theme();
     if (format === "styled") {
       // Rendered here (a live panel): vetted SGR survives, nothing else does.
       this.options.output.write(`${sanitizeServerText(text, theme)}\n`);
-      if (rows) this.options.output.write("\n".repeat(rows));
-      this.redraw();
+      this.redraw(true);
       return;
     }
     const safe = terminalText(text);
@@ -199,8 +258,7 @@ export class ReadlineCodeEditor implements CodeEditor {
     this.options.output.write(
       `${format === "diff" ? colorizeDiff(safe, diffColorEnabled(this.options.output), theme) : styleCodeEntry(safe, theme)}\n`,
     );
-    if (rows) this.options.output.write("\n".repeat(rows));
-    this.redraw();
+    this.redraw(true);
   }
 
   close() {

@@ -18,12 +18,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { terminalText } from "../scripts/code-presentation";
 import { until } from "./helpers";
+import { VtScreen } from "./vt-screen";
 
 interface JourneyMetrics {
   journey: string;
   /** Launch to the first interactive prompt. */
   promptMs: number;
-  /** Non-empty lines on screen before the first prompt. */
+  /** Non-empty lines on the first page above the input area. */
   linesBeforePrompt: number;
   /** Keys the person typed (each character, control keys included). */
   keystrokes: number;
@@ -31,16 +32,24 @@ interface JourneyMetrics {
 }
 
 const metrics: JourneyMetrics[] = [];
-const PROMPT = /›\s*$/;
+/** The empty prompt line of the input area (`>` where the locale has no Unicode). */
+const PROMPT_LINE = /^[❯>]\s*$/;
+const COLS = 120;
+const ROWS = 40;
 
 interface Step {
   keys: string;
-  /** Wait until the screen text (since this step began) satisfies this. */
-  until: (text: string) => boolean;
+  /**
+   * Wait until this holds: `text` is what was written since the step began,
+   * control sequences removed; `page` is the screen a person sees now.
+   */
+  until: (text: string, page: string[]) => boolean;
 }
 
-/** The screen as plain text: control sequences removed. */
+/** The output as plain text: control sequences removed. */
 const screen = (raw: string) => terminalText(raw);
+/** The input area is back: its empty prompt is on the page. */
+const atPrompt = (page: string[]) => page.some((l) => PROMPT_LINE.test(l));
 
 async function journey(
   name: string,
@@ -62,11 +71,15 @@ async function journey(
   writeFileSync(join(project, "README.md"), "# demo\n");
   Bun.spawnSync(["git", "init", "-q"], { cwd: project });
   let raw = "";
+  const vt = new VtScreen(COLS, ROWS);
+  const decoder = new TextDecoder();
   await using tty = new Bun.Terminal({
-    cols: 120,
-    rows: 40,
+    cols: COLS,
+    rows: ROWS,
     data(_t, data) {
-      raw = (raw + new TextDecoder().decode(data)).slice(-512 * 1024);
+      const text = decoder.decode(data, { stream: true });
+      vt.write(text);
+      raw = (raw + text).slice(-512 * 1024);
     },
   });
   const started = performance.now();
@@ -92,26 +105,23 @@ async function journey(
   );
   let keystrokes = 0;
   try {
-    // The first prompt: a prompt line, then a moment of quiet (hints may follow it).
-    await until(
-      () => PROMPT.test(screen(raw).trimEnd().split("\n").at(-1) ?? "") || child.exitCode !== null,
-      {
-        timeoutMs: 30_000,
-      },
-    );
+    // The first prompt: the input area is on the page.
+    await until(() => atPrompt(vt.screen()) || child.exitCode !== null, { timeoutMs: 30_000 });
     const promptMs = performance.now() - started;
     if (child.exitCode !== null) throw new Error(`marina exited ${child.exitCode}: ${screen(raw)}`);
-    const atPrompt = screen(raw);
-    const lines = atPrompt.split("\n");
-    const promptLine = lines.findIndex((l) => PROMPT.test(l));
-    const firstScreen = lines.slice(0, promptLine).join("\n");
-    const linesBeforePrompt = lines.slice(0, promptLine).filter((l) => l.trim()).length;
+    const page = vt.screen();
+    const promptLine = page.findIndex((l) => PROMPT_LINE.test(l));
+    // Above the area's top rule: what the first page shows before you type.
+    const firstScreen = page.slice(0, promptLine - 1).join("\n");
+    const linesBeforePrompt = page.slice(0, promptLine - 1).filter((l) => l.trim()).length;
+    // The whole area is on the page: rule, prompt, rule, footer.
+    expect(page.length - promptLine).toBeGreaterThanOrEqual(3);
     await opts.atPrompt?.({ project, home });
     for (const step of steps) {
       const from = raw.length;
       tty.write(step.keys);
       keystrokes += [...step.keys].length;
-      await until(() => step.until(screen(raw.slice(from))), { timeoutMs: 20_000 });
+      await until(() => step.until(screen(raw.slice(from)), vt.screen()), { timeoutMs: 20_000 });
     }
     const exitKeys = opts.exitKeys ?? "/quit\r";
     tty.write(exitKeys);
@@ -139,7 +149,7 @@ afterAll(() => {
 });
 
 describe.skipIf(process.platform === "win32")("terminal journeys", () => {
-  test("start: a short first screen, a plain prompt, and a clean /exit", async () => {
+  test("start: one page — the welcome card, then the input area — and a clean /exit", async () => {
     const {
       metrics: m,
       firstScreen,
@@ -149,13 +159,17 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
       env: { OPENAI_API_KEY: "journey-test-key" },
     });
     expect(m.exitCode).toBe(0);
-    expect(m.linesBeforePrompt).toBeLessThanOrEqual(6);
-    expect(firstScreen).toMatch(/^Marina \d+\.\d+\.\d+ · project · /m);
+    // The card fits the page above the input: its top and bottom borders are both on it.
+    expect(m.linesBeforePrompt).toBeLessThanOrEqual(20);
+    expect(firstScreen).toMatch(/^[╭+]─*-* *Marina \d+\.\d+\.\d+ /m);
+    expect(firstScreen).toMatch(/^[╰+][─-]+[╯+]$/m);
     expect(firstScreen).toContain("New session.");
+    expect(firstScreen).toContain("Tips for getting started");
     // Internals stay off the first screen; they are one command away.
     for (const internal of ["WS ·", "Federate", "Flywheel", "Dependencies:", "[C*", "…·…"])
       expect(text).not.toContain(internal);
-    expect(text).toMatch(/^project · \S.* › /m);
+    // The area's rule names where input goes.
+    expect(text).toMatch(/ project · \S.* [─-]{3}$/m);
     // Regression guard: today the prompt appears in about 2 s.
     expect(m.promptMs).toBeLessThan(15_000);
   }, 60_000);
@@ -165,7 +179,7 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
     expect(m.exitCode).toBe(0);
     expect(firstScreen).toMatch(/No LLM provider key/);
     expect(firstScreen).toContain("marina init");
-    expect(m.linesBeforePrompt).toBeLessThanOrEqual(6);
+    expect(m.linesBeforePrompt).toBeLessThanOrEqual(22);
   }, 60_000);
 
   test("memory: /memory save remembers a line and /memory lists it", async () => {
@@ -174,9 +188,9 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
       [
         {
           keys: "/memory save onramp-note-123\r",
-          until: (t) => /onramp-note-123/i.test(t) && PROMPT.test(t.trimEnd()),
+          until: (t, page) => /onramp-note-123/i.test(t) && atPrompt(page),
         },
-        { keys: "/memory\r", until: (t) => PROMPT.test(t.trimEnd()) },
+        { keys: "/memory\r", until: (_t, page) => atPrompt(page) },
       ],
       { env: { OPENAI_API_KEY: "journey-test-key" } },
     );
@@ -186,7 +200,7 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
   test("model: /model shows the current selection", async () => {
     const { text } = await journey(
       "model",
-      [{ keys: "/model\r", until: (t) => /Model · /.test(t) && PROMPT.test(t.trimEnd()) }],
+      [{ keys: "/model\r", until: (t, page) => /Model · /.test(t) && atPrompt(page) }],
       { env: { OPENAI_API_KEY: "journey-test-key" } },
     );
     expect(text).toContain("Model · ");
@@ -204,7 +218,10 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
 
   test("status: /status answers on screen", async () => {
     const { metrics: m } = await journey("status", [
-      { keys: "/status\r", until: (t) => /session|status/i.test(t) && PROMPT.test(t.trimEnd()) },
+      {
+        keys: "/status\r",
+        until: (t, page) => /session|status/i.test(t) && atPrompt(page),
+      },
     ]);
     expect(m.exitCode).toBe(0);
   }, 60_000);

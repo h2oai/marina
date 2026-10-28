@@ -163,10 +163,13 @@ try {
     const child = Bun.spawn([executable, project], { cwd: project, env, terminal });
     const deadline = setTimeout(() => child.kill("SIGKILL"), 60_000);
     const screen = () => terminalText(raw);
+    // The input area: the prompt (`❯`, or `>` without Unicode) with only the
+    // rule and footer drawn after it. Cursor moves are stripped, so they run on.
+    const atPrompt = () => /[❯>] [─-]{10,}[^❯]*$/.test(screen());
     try {
       await until(() => {
         if (child.exitCode !== null) throw new Error(`Native folder session failed: ${screen()}`);
-        return /›\s*$/.test(screen());
+        return atPrompt();
       });
       if (!screen().includes(`Marina ${MARINA_VERSION}`))
         throw new Error("Native session has no version");
@@ -184,7 +187,7 @@ try {
         await until(() => /[Ss]aved|[Nn]ote #|[Rr]emembered/.test(screen()));
       }
       terminal.write("/cost\r");
-      await until(() => /spent|spend|today/i.test(screen()) && /›\s*$/.test(screen()));
+      await until(() => /spent|spend|today/i.test(screen()) && atPrompt());
       terminal.write("/compact\r");
       await until(() => screen().includes("No active coding agent to compact"));
       terminal.write("/quit\r");

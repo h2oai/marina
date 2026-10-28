@@ -61,13 +61,16 @@ copying unsent drafts into scrollback. It requires interactive input and output;
 `-p` and redirected output keep their existing stream behavior. `printf "…" | marina -p` reads
 the one-shot task from stdin for shell composition. `NO_COLOR=1` disables accents.
 
-The first screen is short: the Marina version, the folder, the agent and its model, whether the
-session is new or resumed, and a one-line hint. With no provider key, one line names the
-missing key and offers `marina init`. `--verbose` adds the database, the server endpoints and
+The first page is a welcome card sized to the terminal: the Marina version, the agent and its
+model, the folder, tips, and whether the session is new or resumed. The input area sits below
+it: a rule naming the folder and status, the `❯` prompt, a rule, and a footer, the same layout
+as `marina connect`. One-shot `-p`, redirected output and `--tui` keep the plain lines. With no
+provider key, one line names the missing key and offers `marina init`. `--verbose` adds the database, the server endpoints and
 the federation address; `/status` and `/project` show the rest whenever you want them.
 
 Inside the terminal, `/help` shows one screen of essentials and `/help all` lists every control;
-Tab completes their names and the `/verify` and `/review` actions. `/quit`, `/exit` and Ctrl+D
+Tab completes their names and the `/verify` and `/review` actions; when several match, the
+footer lists them. `/quit`, `/exit` and Ctrl+D
 leave. Streaming
 output preserves the current draft and cursor, including wrapped lines and terminal resizing.
 The prompt names the folder and what the agent is doing (`myapp · working ›`), and adds what
@@ -146,7 +149,7 @@ Code Mode shares its palette with `marina connect`:
 - **Commands.** Help rows and `/world …` suggestions are drawn in the command colour.
 - **Colour comes from structure.** The colour comes from the entry's label and structure,
   never from bytes in the text.
-- **Live status.** On a colour terminal, the line above the prompt carries the same live segments
+- **Live status.** On a colour terminal, the footer under the prompt carries the same live segments
   as `marina connect`'s status bar (health, agents, tasks, approvals, held actions, spend,
   standing). `MARINA_STATUSLINE` changes it.
 - **Live panels.** `/live [status|agents|spend|alerts|readiness|world|me]` draws the
