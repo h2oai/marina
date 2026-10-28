@@ -6,7 +6,7 @@ import { colorizeDiff } from "../scripts/code-diff";
 import {
   labelStyle,
   styleCodeEntry,
-  stylePrompt,
+  styleLocation,
   styleStartupLine,
   themeFor,
 } from "../scripts/code-style";
@@ -16,6 +16,7 @@ import { plainText } from "../scripts/term-sanitize";
 import { createTheme } from "../scripts/term-theme";
 import { until } from "./helpers";
 import { scopeProcessState } from "./process-state";
+import { VtScreen } from "./vt-screen";
 
 const caps = (over: Partial<TermCaps> = {}): TermCaps => ({
   color: 3,
@@ -74,11 +75,11 @@ describe("Code Mode entry styling", () => {
 });
 
 describe("Code Mode prompt and startup", () => {
-  test("the prompt keeps its words and chevron; colour only on a terminal", () => {
+  test("the input area's label keeps its words; colour only on a terminal", () => {
     const parts = { destination: "proj · ready", folder: "proj", status: "ready" };
-    expect(stylePrompt(parts, plain)).toBe("proj · ready › ");
-    const styled = stylePrompt({ ...parts, badge: "World 1" }, theme);
-    expect(plainText(styled)).toBe("proj · ready · World 1 › ");
+    expect(styleLocation(parts, plain)).toBe("proj · ready");
+    const styled = styleLocation({ ...parts, badge: "World 1" }, theme);
+    expect(plainText(styled)).toBe("proj · ready · World 1");
     expect(styled).toContain(theme.params("warning"));
   });
 
@@ -101,21 +102,27 @@ describe("Code Mode prompt and startup", () => {
   });
 });
 
-describe("Code Mode live status line", () => {
-  async function render(env: Record<string, string | undefined>) {
+describe("Code Mode input area", () => {
+  // `❯`, or `>` where the locale has no Unicode.
+  const PROMPT_LINE = /^[❯>]\s*$/;
+
+  async function render(
+    env: Record<string, string | undefined>,
+    ready: (page: string[]) => boolean,
+    keys?: { text: string[]; until: (page: string[]) => boolean },
+  ) {
     using _env = scopeProcessState({
       env: { TERM: "xterm-256color", COLORTERM: undefined, FORCE_COLOR: undefined, ...env },
     });
     const input = Object.assign(new PassThrough(), { isTTY: true });
-    const output = Object.assign(new PassThrough(), { isTTY: true, columns: 100 });
-    let transcript = "";
-    output.on("data", (data) => {
-      transcript += data.toString();
-    });
+    const output = Object.assign(new PassThrough(), { isTTY: true, columns: 100, rows: 24 });
+    const screen = new VtScreen(100, 24);
+    output.on("data", (data) => screen.write(data.toString()));
     const terminal = new CodeTerminal({
       input,
       output,
       views: true,
+      location: "Local workspace · /work/proj",
       statusLine: () => "● live · ✦ 2 agents",
       line: () => {},
       interrupt: () => {},
@@ -123,10 +130,18 @@ describe("Code Mode live status line", () => {
     });
     try {
       terminal.write("hello", "coding");
-      await until(() => transcript.includes("hello"));
+      await until(() => screen.text().includes("hello"));
       terminal.refreshStatus();
-      await until(() => plainText(transcript).includes("›"));
-      return plainText(transcript);
+      await until(() => ready(screen.screen()));
+      if (keys) {
+        // One key per chunk: readline takes a multi-key chunk as a paste and keeps its tabs.
+        for (const key of keys.text) {
+          input.write(key);
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        await until(() => keys.until(screen.screen()));
+      }
+      return screen.screen();
     } finally {
       terminal.close();
       input.destroy();
@@ -134,13 +149,42 @@ describe("Code Mode live status line", () => {
     }
   }
 
-  test("sits on the line above the prompt on a colour terminal", async () => {
-    const text = await render({ NO_COLOR: undefined });
-    expect(text).toMatch(/● live · ✦ 2 agents\n[^\n]*›/);
+  test("a rule naming the folder, the prompt, a rule, and the live status in the footer", async () => {
+    const page = await render({ NO_COLOR: undefined }, (p) =>
+      p.some((l) => l.includes("2 agents")),
+    );
+    const prompt = page.findIndex((l) => PROMPT_LINE.test(l));
+    expect(prompt).toBeGreaterThan(0);
+    expect(page[prompt - 1]).toMatch(/proj · ready/);
+    expect(page[prompt + 1]).toMatch(/^[─-]+$/);
+    expect(page[prompt + 2]).toContain("● live · ✦ 2 agents");
+    // Output scrolls above the area, never into it.
+    expect(page.slice(0, prompt - 1).join("\n")).toContain("hello");
   });
 
-  test("never appears with colour off (the plain layout is unchanged)", async () => {
-    const text = await render({ NO_COLOR: "1" });
-    expect(text).not.toContain("2 agents");
+  test("the live status never appears with colour off; the footer keeps its hint", async () => {
+    const page = await render({ NO_COLOR: "1" }, (p) => p.some((l) => l.includes("/help")));
+    expect(page.join("\n")).not.toContain("2 agents");
+    expect(page.some((l) => PROMPT_LINE.test(l))).toBe(true);
+  });
+
+  test("Tab completes in place; several matches show in the footer, not over the area", async () => {
+    const page = await render(
+      { NO_COLOR: undefined },
+      (p) => p.some((l) => l.includes("2 agents")),
+      { text: ["/st", "\t", "\t"], until: (p) => p.some((l) => l.includes("/status  /stop")) },
+    );
+    const prompt = page.findIndex((l) => /^[❯>] \/st$/.test(l));
+    expect(prompt).toBeGreaterThan(0);
+    expect(page[prompt + 1]).toMatch(/^[─-]+$/);
+    expect(page[prompt + 2]).toMatch(/^ {2}\/status {2}\/stop$/);
+    // Readline's own listing would have printed below the prompt and torn the area.
+    expect(page.filter((l) => l.includes("/status"))).toHaveLength(1);
+    const unique = await render(
+      { NO_COLOR: undefined },
+      (p) => p.some((l) => l.includes("2 agents")),
+      { text: ["/sta", "\t"], until: (p) => p.some((l) => /^[❯>] \/status$/.test(l)) },
+    );
+    expect(unique.some((l) => l.includes("2 agents"))).toBe(true);
   });
 });

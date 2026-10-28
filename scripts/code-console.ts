@@ -50,6 +50,8 @@ export interface CodeConsoleOptions {
   connected?: boolean;
   sessionId?: string;
   tui?: boolean;
+  /** The welcome card already told the person what to type. */
+  welcomed?: boolean;
   terminalStreams?: Pick<CodeTerminalOptions, "input" | "output">;
   /** Where plain (non-terminal) output goes; default stdout. `-p --json` uses stderr. */
   plainOutput?: NodeJS.WritableStream;
@@ -500,7 +502,7 @@ export class CodeConsole {
       });
     }
     if (interactive && this.terminal) this.startLiveStatus();
-    if (interactive) this.write("Type a task in plain words, or /help.");
+    if (interactive && !this.options.welcomed) this.write("Type a task in plain words, or /help.");
     if (this.options.connected) {
       this.terminal?.setTarget(`marina:${this.sessionId}`);
       this.write(

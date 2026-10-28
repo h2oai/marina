@@ -8,12 +8,12 @@
  * here — `connect.ts` keeps their output plain.
  */
 
-import { visibleWidth } from "@earendil-works/pi-tui";
 import type { CommandCatalogEntry } from "../src/sdk/capabilities";
 import type { MarinaAgent, Perception } from "../src/sdk/client";
 import { MARINA_VERSION } from "../src/version";
 import { runCliCommand } from "./connect-command";
 import type { TermCaps } from "./term-caps";
+import { count, pageBudget, tipLines, type Welcome, welcomeCard } from "./term-frame";
 import { findPanel, PANELS } from "./term-panels";
 import {
   type CliConfig,
@@ -27,14 +27,7 @@ import {
 import { glyphsFor, type RenderOptions, renderPerception, wrap } from "./term-render";
 import { defaultHistoryFile, ReplScreen } from "./term-repl";
 import { httpBase, WorldStatus } from "./term-status";
-import { createTheme, gradientAt, PALETTES, paletteFor, type Theme } from "./term-theme";
-
-const WORDMARK = [
-  "▗▖  ▗▖ ▗▄▖ ▗▄▄▖ ▗▄▄▄▖▗▖  ▗▖ ▗▄▖ ",
-  "▐▛▚▞▜▌▐▌ ▐▌▐▌ ▐▌  █  ▐▛▚▖▐▌▐▌ ▐▌",
-  "▐▌  ▐▌▐▛▀▜▌▐▛▀▚▖  █  ▐▌ ▝▜▌▐▛▀▜▌",
-  "▐▌  ▐▌▐▌ ▐▌▐▌ ▐▌▗▄█▄▖▐▌  ▐▌▐▌ ▐▌",
-];
+import { createTheme, PALETTES, paletteFor, type Theme } from "./term-theme";
 
 /** Plain verbs for the busy line (no whimsy in a shared world). */
 const VERBS: Record<string, string> = {
@@ -76,6 +69,8 @@ export interface InteractiveOptions {
   reconnect?: () => Promise<void>;
   /** Stop the login-time collector and take what it buffered (welcome, look, brief). */
   handoff: () => Perception[];
+  /** The session resumed a cached identity (the card says welcome back). */
+  returning?: boolean;
 }
 
 export async function runInteractive(options: InteractiveOptions): Promise<void> {
@@ -430,77 +425,88 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
     return [...new Set(matches)];
   }
 
-  // ── banner ────────────────────────────────────────────────────────────────
+  // ── first page ────────────────────────────────────────────────────────────
+  // The card, what the world said at login, and the input all fit on the
+  // first page; whatever the login said past that is one ctrl+o away.
   await status.refresh(true, ["world", "health", "system", "profile"]);
-  printBanner();
+  const card = welcomeCard(welcome(), theme, { columns: out.columns || 80, rows: out.rows || 24 });
+  out.write(`\n${card.join("\n")}\n\n`);
   // Same tick: nothing arrives between taking the burst and listening.
   const burst = options
     .handoff()
-    // The pre-login greeting is moot once the banner shows you logged in.
-    .filter((p) => !/Enter your name to begin/i.test(String(p.data?.text ?? "")))
+    .filter((p) => !isLoginNoise(p))
     .flatMap((p) => renderPerception(p, renderOptions(), { own: false }));
-  if (burst.length) out.write(`${burst.join("\n")}\n\n`);
+  if (burst.length) screen.printResult([...burst, ""], pageBudget(out.rows || 24, card.length + 2));
   agent.onPerception(onPerception);
   status.onChange(() => screen.refresh());
   status.start();
   screen.setTitle(`marina · ${status.room() ?? session.name}`);
   screen.show();
 
-  function printBanner() {
+  function welcome(): Welcome {
     const t = theme;
-    const g = glyphsFor(t);
-    const width = Math.min(out.columns || 80, 100);
-    const lines: string[] = [""];
-    if (t.unicode && width >= 50) {
-      const span = WORDMARK[0]!.length + WORDMARK.length * 2;
-      for (const [row, text] of WORDMARK.entries()) {
-        const chars = [...text];
-        lines.push(
-          `  ${chars
-            .map((ch, col) =>
-              ch === " " || t.level < 2
-                ? t.level
-                  ? t.fg("accent")(ch)
-                  : ch
-                : `\x1b[${hexParams(gradientAt(t.palette.gradient, (col + row * 2) / span), t.level)}m${ch}\x1b[0m`,
-            )
-            .join("")}`,
-        );
-      }
-      lines.push("");
-    }
-    const c = segmentContext();
-    const world = status.snapshot.world?.name;
-    const info: string[] = [
-      `${t.fg("accent2")(t.unicode ? "✻" : "*")} ${t.bold("Welcome to Marina")}  ${t.fg("faint")(`v${MARINA_VERSION}`)}`,
-      "",
-      ...(world
-        ? [
-            `  ${t.fg("muted")("world")}    ${t.bold(world)}${status.snapshot.readiness?.profile ? t.fg("muted")(`  ·  ${status.snapshot.readiness.profile} profile`) : ""}`,
-          ]
-        : []),
-      ...(world ? [`  ${t.fg("muted")("world")}    ${t.bold(world)}`] : []),
-      `  ${t.fg("muted")("you")}      ${t.identity(session.name)(session.name)}${c.room ? t.fg("muted")(`  in ${c.room}`) : ""}${status.snapshot.profile ? t.fg("muted")(`  ·  standing ${status.snapshot.profile.standing.toFixed(1)}  ·  rank ${status.snapshot.profile.rank}`) : ""}`,
-      `  ${t.fg("muted")("server")}   ${t.fg("link")(url)}${status.snapshot.health ? t.fg("muted")(`  ·  ${status.snapshot.health.connections} online  ·  ${status.snapshot.health.agents} agents`) : ""}`,
-      "",
-      `  ${t.fg("code")("/help")} ${t.fg("muted")("for help,")} ${t.fg("code")("/status")} ${t.fg("muted")("for the world,")} ${t.fg("code")("next")} ${t.fg("muted")("for what to do")}`,
-    ];
-    const box = g.box;
-    const inner = width - 4;
-    const b = t.fg("accent");
-    lines.push(b(`${box.tl}${box.h.repeat(width - 2)}${box.tr}`));
-    for (const line of info)
-      lines.push(
-        `${b(box.v)} ${line}${" ".repeat(Math.max(0, inner - visibleWidth(line)))} ${b(box.v)}`,
-      );
-    lines.push(b(`${box.bl}${box.h.repeat(width - 2)}${box.br}`), "");
-    out.write(`${lines.join("\n")}\n`);
+    const s = status.snapshot;
+    const dot = t.fg("faint")(" · ");
+    const muted = t.fg("muted");
+    const room = status.room();
+    return {
+      title: `Marina ${MARINA_VERSION}`,
+      greeting: `${options.returning ? "Welcome back" : "Welcome"}, ${session.name}!`,
+      details: [
+        [
+          s.world?.name && t.bold(s.world.name),
+          s.readiness?.profile && muted(`${s.readiness.profile} profile`),
+        ]
+          .filter(Boolean)
+          .join(dot),
+        t.fg("link")(url),
+      ].filter(Boolean),
+      sections: [
+        {
+          title: "Tips for getting started",
+          lines: tipLines(t, [
+            ["next", "what to do now"],
+            ["desire <sentence>", "start a journey"],
+            ["/help", "keys and panels"],
+          ]),
+        },
+        {
+          title: "Right now",
+          lines: [
+            [
+              room && `${muted("in")} ${t.bold(room)}`,
+              s.health &&
+                muted(`${s.health.connections} online · ${count(s.health.agents, "agent")}`),
+            ]
+              .filter(Boolean)
+              .join(dot),
+            ...(s.profile
+              ? [muted(`standing ${s.profile.standing.toFixed(1)} · rank ${s.profile.rank}`)]
+              : []),
+            ...(s.system
+              ? [
+                  muted(
+                    `${count(s.system.tasks.open, "open task")} · ${count(s.system.projects, "project")}`,
+                  ),
+                ]
+              : []),
+          ].filter(Boolean),
+        },
+      ],
+    };
   }
 }
 
-function hexParams(hex: string, level: number): string {
-  const n = Number.parseInt(hex.slice(1), 16);
-  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-  if (level === 3) return `38;2;${r};${g};${b}`;
-  return `38;5;${16 + 36 * Math.round((r / 255) * 5) + 6 * Math.round((g / 255) * 5) + Math.round((b / 255) * 5)}`;
+/**
+ * Login lines the card already says: the pre-login greeting, the session
+ * itself (logged in / reconnected, which carries the token) and joining the
+ * default channel.
+ */
+function isLoginNoise(p: Perception): boolean {
+  const text = String(p.data?.text ?? "");
+  return (
+    /Enter your name to begin/i.test(text) ||
+    typeof p.data?.token === "string" ||
+    /^Joined channel "[^"]+"\.$/.test(text)
+  );
 }

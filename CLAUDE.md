@@ -277,6 +277,7 @@ Compat profiles (`src/net/adapters/compat-profiles.ts`) are self-contained — t
   - `term-render`: `⎿` / `●` / `◆` gutters and Markdown.
   - `term-repl`: the bottom input area, collapse and history.
   - `term-status` / `term-prompt` / `term-panels`: live dashboard data with the session's own bearer token, starship-style `$segment` formats and `/panels`.
+  - `term-frame`: the layout `marina` and `marina connect` share — the welcome card sized to the page (`pageBudget` folds login output behind ctrl+o) and `InputFrame`, the rule / `❯` / rule / footer input area around readline (`code-readline.ts`, `term-repl.ts`). `test/vt-screen.ts` replays output into a screen so tests assert the page a person sees.
   - Pipe and one-shot output to a non-TTY stays plain and byte-identical to the old formatter.
 - `test/helpers.ts` — shared test utilities
 

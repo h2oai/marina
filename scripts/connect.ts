@@ -243,11 +243,13 @@ const cachedToken = loadCachedToken(name) ?? loadCachedToken(requestedName);
 
 let connectedName = name;
 let connectedId = "";
+let returning = false;
 try {
   let session: Awaited<ReturnType<typeof agent.connect>>;
   if (cachedToken) {
     try {
       session = await agent.reconnect(cachedToken);
+      returning = true;
     } catch {
       // Token expired, server restarted, or name mismatch — fall back to
       // a fresh login so the user doesn't have to clear the cache by hand.
@@ -329,6 +331,7 @@ if (rich) {
     url: URL,
     caps,
     capabilities,
+    returning,
     reconnect: async () => {
       const token = agent.getSession()?.token ?? loadCachedToken(connectedName);
       if (!token) throw new Error("no session token");

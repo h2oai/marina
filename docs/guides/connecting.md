@@ -203,6 +203,9 @@ Best for: scripting, quick one-shot commands, piping output between tools.
 
 On a terminal, `marina connect <name>` opens a full-screen-style session:
 
+- **First page.** A welcome card (world, server, tips, and your room, standing and rank) and
+  what the world said at login fit on one page above the input area. Login output that does not
+  fit folds to `… +N lines (ctrl+o to expand)`.
 - **Input area.** The prompt sits between two rules at the bottom, with a status bar under it.
   Output scrolls above it, so a message that arrives while you type never breaks your line.
 - **Your commands.** A command you run shrinks to `❯ command`. Its result hangs off `⎿`, and a
@@ -216,7 +219,7 @@ On a terminal, `marina connect <name>` opens a full-screen-style session:
 
 | Key | Action |
 | --- | --- |
-| `tab` | complete commands and `/panels` |
+| `tab` | complete commands and `/panels`; when several match, the footer lists them |
 | `↑` / `↓` | history, kept in `~/.marina/history/connect` (mode 0600; lines that look like secrets are skipped) |
 | `esc` | stop waiting for a running command (it keeps running on the server, and your next commands wait behind it; late output is labelled with the command it came from) |
 | `ctrl+o` | expand the last collapsed result |

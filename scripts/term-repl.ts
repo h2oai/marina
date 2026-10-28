@@ -13,14 +13,9 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import {
-  clearScreenDown,
-  createInterface,
-  cursorTo,
-  type Interface,
-  moveCursor,
-} from "node:readline";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { createInterface, type Interface } from "node:readline";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { footerLine, frameCompletion, InputFrame, ruleLine } from "./term-frame";
 import { glyphsFor } from "./term-render";
 import type { Theme } from "./term-theme";
 
@@ -72,14 +67,14 @@ export class ReplScreen {
   private chrome: ReplChrome;
   private busy?: { label: string; started: number; frame: number };
   private spinner?: ReturnType<typeof setInterval>;
-  /** Rows drawn above the prompt (status + rule). */
-  private above = 0;
-  private visible = false;
+  private frame: InputFrame;
   private closed = false;
   private interruptAt = 0;
   private notice?: { text: string; until: number };
   private history: string[];
   private collapsed?: string[];
+  /** Candidates of an ambiguous Tab, shown in the footer until the next key. */
+  private choices: string[] = [];
 
   constructor(private options: ReplScreenOptions) {
     this.theme = options.theme;
@@ -96,8 +91,14 @@ export class ReplScreen {
       prompt: this.promptText(),
       completer: options.completer
         ? (line: string, done: (err: Error | null, result: [string[], string]) => void) => {
+            const word = line.trimStart();
             void options.completer!(line).then(
-              (matches) => done(null, [matches, line.trimStart()]),
+              (matches) => {
+                const { fill, choices } = frameCompletion(matches, word);
+                this.choices = choices;
+                done(null, [fill, word]);
+                this.drawBelow();
+              },
               () => done(null, [[], line]),
             );
           }
@@ -112,12 +113,14 @@ export class ReplScreen {
       this.erase();
       options.onClose();
     });
+    this.frame = new InputFrame(options.output, () => this.rl.getCursorPos().rows);
     options.input.on("keypress", this.keypress);
     options.output.on("resize", this.resize);
   }
 
   private readonly keypress = (_s: string, key?: { name?: string; ctrl?: boolean }) => {
     if (this.closed) return;
+    if (key?.name !== "tab") this.choices = [];
     if (key?.ctrl && key.name === "o") {
       this.expand();
       return;
@@ -128,7 +131,7 @@ export class ReplScreen {
   };
 
   private readonly resize = () => {
-    if (this.closed || !this.visible) return;
+    if (this.closed || !this.frame.visible) return;
     this.redraw();
   };
 
@@ -154,7 +157,7 @@ export class ReplScreen {
     const next = this.readChrome();
     const moved = force || next.prompt !== this.chrome.prompt || next.rule !== this.chrome.rule;
     this.chrome = next;
-    if (!this.visible) return;
+    if (!this.frame.visible) return;
     if (moved) this.redraw();
     else this.drawBelow();
   }
@@ -168,16 +171,11 @@ export class ReplScreen {
   /** Draw status (when busy), the top rule, the prompt with the current draft, and the footer. */
   show(): void {
     if (this.closed) return;
-    const out = this.options.output;
     const lines: string[] = [];
     if (this.busy) lines.push(this.busyLine());
     this.chrome = this.readChrome();
-    lines.push(this.rule(this.chrome.rule));
-    this.above = lines.length;
-    out.write(`${lines.join("\n")}\n`);
-    // Reserve the two rows below the prompt so drawing them never scrolls.
-    out.write("\n\n\x1b[2A\r");
-    this.visible = true;
+    lines.push(ruleLine(this.theme, this.columns, this.chrome.rule));
+    this.frame.open(lines, 2);
     this.rl.setPrompt(this.promptText());
     this.rl.prompt(true);
     this.drawBelow();
@@ -185,13 +183,7 @@ export class ReplScreen {
 
   /** Remove the input area; the cursor ends where the area began. */
   private erase(): void {
-    if (!this.visible) return;
-    const out = this.options.output;
-    const rows = this.rl.getCursorPos().rows;
-    cursorTo(out, 0);
-    moveCursor(out, 0, -(rows + this.above));
-    clearScreenDown(out);
-    this.visible = false;
+    this.frame.erase();
   }
 
   private redraw(): void {
@@ -204,29 +196,31 @@ export class ReplScreen {
     if (this.closed || lines.length === 0) {
       return;
     }
-    const wasVisible = this.visible;
+    const wasVisible = this.frame.visible;
     this.erase();
     this.options.output.write(`${lines.join("\n")}\n`);
     if (wasVisible) this.show();
   }
 
   /**
-   * Print one command's result, collapsed past the screen's height. The full
-   * text stays available to ctrl+o until the next collapse.
+   * Print one command's result in at most `rows` rows (by default, what fits
+   * on the screen), collapsing the rest. The full text stays available to
+   * ctrl+o until the next collapse.
    */
-  printResult(lines: string[]): void {
-    const rows = this.options.output.rows || 24;
-    const max = Math.max(12, rows - 10);
-    if (lines.length <= max + 2) {
+  printResult(
+    lines: string[],
+    rows = Math.max(12, (this.options.output.rows || 24) - 10) + 2,
+  ): void {
+    if (lines.length <= rows) {
       this.print(lines);
       return;
     }
     this.collapsed = lines;
-    const hidden = lines.length - max;
+    const shown = Math.max(0, rows - 1);
     const hint = this.theme.fg("faint")(
-      `     ${this.g.ellipsis} +${hidden} lines ${this.theme.fg("muted")("(ctrl+o to expand)")}`,
+      `     ${this.g.ellipsis} +${lines.length - shown} lines ${this.theme.fg("muted")("(ctrl+o to expand)")}`,
     );
-    this.print([...lines.slice(0, max), hint]);
+    this.print([...lines.slice(0, shown), hint]);
   }
 
   expand(): void {
@@ -247,10 +241,7 @@ export class ReplScreen {
     const typed = this.promptWidth() + visibleWidth(line);
     const rows = Math.floor(Math.max(0, typed - 1) / this.columns) + 1;
     const out = this.options.output;
-    cursorTo(out, 0);
-    moveCursor(out, 0, -(rows + this.above));
-    clearScreenDown(out);
-    this.visible = false;
+    this.frame.eraseSubmitted(rows);
     const trimmed = line.trim();
     if (trimmed) {
       // The transient prompt: what you ran, compact, then a breath of space.
@@ -325,14 +316,9 @@ export class ReplScreen {
   }
 
   private tick(): void {
-    if (!this.busy || !this.visible || this.closed) return;
+    if (!this.busy || !this.frame.visible || this.closed) return;
     this.busy.frame++;
-    const out = this.options.output;
-    const rows = this.rl.getCursorPos().rows;
-    out.write(`\x1b7`);
-    cursorTo(out, 0);
-    moveCursor(out, 0, -(rows + this.above));
-    out.write(`\x1b[2K${this.busyLine()}\x1b8`);
+    this.frame.drawAbove(this.busyLine());
   }
 
   private busyLine(): string {
@@ -349,36 +335,21 @@ export class ReplScreen {
     return `${this.theme.fg("accent2")(glyph)} ${this.theme.fg("accent2")(this.busy.label)}${this.theme.fg("faint")(` (${meta})`)}`;
   }
 
-  private rule(label?: string): string {
-    const width = this.columns;
-    const h = this.g.box.h;
-    if (!label || !visibleWidth(label)) return this.theme.fg("border")(h.repeat(width));
-    const tag = ` ${label} `;
-    const right = 3;
-    const left = Math.max(1, width - visibleWidth(tag) - right);
-    return `${this.theme.fg("border")(h.repeat(left))}${tag}${this.theme.fg("border")(h.repeat(right))}`;
-  }
-
   private footer(): string {
     const t = this.theme;
-    const width = this.columns;
     const notice = this.notice && this.notice.until > Date.now() ? this.notice.text : undefined;
     const left = notice
-      ? t.fg("warning")(`  ${notice}`)
-      : `  ${this.chrome.left || t.fg("faint")(`/help ${this.g.dot} tab completes ${this.g.dot} ctrl+o expands`)}`;
-    const right = `${this.chrome.right} `;
-    const gap = width - visibleWidth(left) - visibleWidth(right);
-    if (gap < 1) return truncateToWidth(left, width - 1);
-    return `${left}${" ".repeat(gap)}${right}`;
+      ? t.fg("warning")(notice)
+      : this.choices.length
+        ? t.fg("muted")(this.choices.join("  "))
+        : this.chrome.left ||
+          t.fg("faint")(`/help ${this.g.dot} tab completes ${this.g.dot} ctrl+o expands`);
+    return footerLine(t, this.columns, left, this.chrome.right);
   }
 
   private drawBelow(): void {
-    if (!this.visible || this.closed) return;
-    const out = this.options.output;
-    out.write("\x1b7");
-    out.write(`\x1b[1B\r\x1b[2K${this.theme.fg("border")(this.g.box.h.repeat(this.columns))}`);
-    out.write(`\x1b[1B\r\x1b[2K${this.footer()}`);
-    out.write("\x1b8");
+    if (this.closed) return;
+    this.frame.drawBelow([ruleLine(this.theme, this.columns), this.footer()]);
   }
 
   private promptWidth(): number {
@@ -393,7 +364,7 @@ export class ReplScreen {
 
   clear(): void {
     this.options.output.write("\x1b[2J\x1b[3J\x1b[H");
-    this.visible = false;
+    this.frame.visible = false;
     this.show();
   }
 
