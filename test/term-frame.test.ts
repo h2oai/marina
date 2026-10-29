@@ -126,7 +126,13 @@ describe("narrowing the window", () => {
   const draw = (reflows: boolean) => {
     const vt = new VtScreen(60, 12);
     // Synchronous, so the screen is drawn before the window narrows.
-    const output = { columns: 60, write: (d: string) => (vt.write(String(d)), true) };
+    const output = {
+      columns: 60,
+      write: (d: string) => {
+        vt.write(String(d));
+        return true;
+      },
+    };
     const frame = new InputFrame(output as unknown as NodeJS.WritableStream, () => 0, reflows);
     output.write("earlier output\n");
     frame.open([ruleLine(plain, 60, "proj · ready")], 2);
