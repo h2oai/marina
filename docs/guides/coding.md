@@ -587,7 +587,7 @@ rm -rf /tmp/marina-coding-agent-demo
   project's own `.env` is never read; see
   [where the CLI reads settings](configuration.md#where-the-marina-cli-reads-settings). A
   native agent (`/use claude`, `/use codex`, `/use pi`) needs no Marina key.
-- **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.3, and
+- **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.4, and
   retry.
 - **“Marina is already open in this folder”:** another terminal has this folder's session open
   (the message names its process). Close it, or use `--fresh` for a separate disposable session.

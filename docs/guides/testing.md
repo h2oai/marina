@@ -121,8 +121,8 @@ Before stopping, the wrapper prints the run's live process tree (pid, state, CPU
 time, argv; on Windows there is no listing). Unreaped children and busy processes are marked.
 Bun then lists the files still running, and the final line repeats them. Debug those files
 separately and inspect awaited teardown and synchronous spawns. Bun 1.4.2 could spin in
-`spawnSync` after a garbage collection in large `--isolate` runs; 1.4.3, the pinned
-minimum, fixes it. Keep large build/browser jobs separate
+`spawnSync` after a garbage collection in large `--isolate` runs; 1.4.3 fixes it,
+and 1.4.4 is the pinned minimum. Keep large build/browser jobs separate
 from the SQLite-heavy backend run on constrained machines.
 The full-suite and CI shard wrappers also fail when known closed-database activity, telemetry or event-log
 warnings appear, even if Bun reports passing assertions.
