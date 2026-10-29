@@ -9,6 +9,7 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
+import { mcpServerConfig } from "../scripts/mcp-stdio";
 
 const MARINA = join(import.meta.dir, "..", "scripts", "marina.ts");
 
@@ -115,5 +116,77 @@ describe("marina mcp-stdio lifetime", () => {
     proc.stdin.end();
     expect(await exitWithin(proc, 10_000)).toBe(0);
     expect(fake.deletes).toEqual(["sess-1"]);
+  });
+});
+
+describe("marina mcp-stdio --print-config", () => {
+  const launcher = {
+    compiled: false,
+    execPath: "/opt/bun/bin/bun",
+    script: "/src/scripts/marina.ts",
+  };
+
+  it("names Bun and the script by absolute path, so a bare PATH still launches it", () => {
+    expect(mcpServerConfig([], launcher, {})).toEqual({
+      mcpServers: {
+        marina: {
+          command: "/opt/bun/bin/bun",
+          args: [
+            "--no-env-file",
+            "/src/scripts/marina.ts",
+            "mcp-stdio",
+            "--url",
+            "http://127.0.0.1:3301/mcp",
+          ],
+        },
+      },
+    });
+  });
+
+  it("keeps given target flags, follows MCP_PORT, and runs a compiled binary directly", () => {
+    const given = ["--url", "http://h:9/mcp", "--token", "t"];
+    expect(mcpServerConfig(given, launcher, {}).mcpServers.marina.args.slice(3)).toEqual(given);
+    expect(mcpServerConfig([], launcher, { MCP_PORT: "4401" }).mcpServers.marina.args).toContain(
+      "http://127.0.0.1:4401/mcp",
+    );
+    expect(
+      mcpServerConfig(
+        ["--data-dir", "/d"],
+        { ...launcher, compiled: true, execPath: "/usr/local/bin/marina" },
+        {},
+      ),
+    ).toEqual({
+      mcpServers: {
+        marina: { command: "/usr/local/bin/marina", args: ["mcp-stdio", "--data-dir", "/d"] },
+      },
+    });
+  });
+
+  it("prints the entry for the running checkout", async () => {
+    const proc = Bun.spawn(
+      [
+        process.execPath,
+        "--no-env-file",
+        MARINA,
+        "mcp-stdio",
+        "--print-config",
+        "--url",
+        "http://h:9/mcp",
+      ],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const config = JSON.parse(await new Response(proc.stdout).text());
+    expect(await proc.exited).toBe(0);
+    expect(config.mcpServers.marina.command).toBe(process.execPath);
+    expect(config.mcpServers.marina.args).toEqual([
+      "--no-env-file",
+      MARINA,
+      "mcp-stdio",
+      "--url",
+      "http://h:9/mcp",
+    ]);
   });
 });

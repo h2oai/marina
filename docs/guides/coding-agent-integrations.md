@@ -73,14 +73,23 @@ settings and inspect its reported connection state. Source: [Cursor MCP configur
 Do not paste a bare HTTP `url` entry into a stdio-only desktop configuration. Use that client's
 supported remote-connector UI for a reachable server with a compatible authentication method,
 or launch `marina mcp-stdio`, a stdio bridge that forwards every message to a running world's
-`/mcp` (the full world tool surface; needs `marina` on `PATH`, see `bun run setup:cli`):
+`/mcp` (the full world tool surface). Desktop apps start servers with a minimal `PATH`, where
+`marina` and the `bun` it runs on are often missing, so let Marina write the entry with absolute
+paths:
+
+```bash
+marina mcp-stdio --print-config            # local server on MCP_PORT (default 3301)
+marina mcp-stdio --print-config --url http://127.0.0.1:3301/mcp --token <token>
+```
+
+It prints an entry like this one; paste its `marina` block into the client's `mcpServers`:
 
 ```json
 {
   "mcpServers": {
     "marina": {
-      "command": "marina",
-      "args": ["mcp-stdio", "--url", "http://127.0.0.1:3301/mcp"]
+      "command": "/home/you/.bun/bin/bun",
+      "args": ["--no-env-file", "/home/you/marina/scripts/marina.ts", "mcp-stdio", "--url", "http://127.0.0.1:3301/mcp"]
     }
   }
 }

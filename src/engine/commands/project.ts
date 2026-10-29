@@ -444,7 +444,13 @@ export function projectCommand(deps: {
       // Everything else: the longest leading run of tokens that names a
       // project (quotes and case ignored) is the name, so project names may
       // contain spaces (all use-case projects do).
-      const resolved = resolveProjectPrefix(db, tokens);
+      // `project join <name>` (verb first) reads as `project <name> join`
+      // when no project is named by the leading tokens themselves.
+      let resolved = resolveProjectPrefix(db, tokens);
+      if (!resolved && PROJECT_ACTIONS.has(sub)) {
+        const named = resolveProjectPrefix(db, tokens.slice(1));
+        if (named) resolved = { project: named.project, rest: [rawFirst!, ...named.rest] };
+      }
       if (!resolved) {
         const actionIndex = tokens.findIndex(
           (token, index) => index > 0 && PROJECT_ACTIONS.has(token.toLowerCase()),
