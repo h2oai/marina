@@ -18,6 +18,8 @@
  *                                (targets MARINA_URL, else the instance in MARINA_DATA_DIR)
  *   marina mcp-stdio [--url <mcp-url>] [--token <t>] [--data-dir <dir>]
  *                                stdio MCP bridge to a running Marina's /mcp
+ *   marina mcp-stdio --print-config [...]
+ *                                the bridge's mcpServers entry, by absolute path
  *   marina memory-mcp [...]      stdio MCP server for one Marina memory space
  *   marina learned <verb> [...]  learned bundles: export, import, distill, archive, verify
  *                                (scripts/learned.ts)
@@ -404,6 +406,8 @@ Usage:
                                (targets MARINA_URL, else the instance in MARINA_DATA_DIR)
   marina mcp-stdio [--url <mcp-url>] [--token <t>] [--data-dir <dir>]
                                stdio MCP bridge to a running Marina's /mcp
+  marina mcp-stdio --print-config [...]
+                               print its MCP client config (absolute paths)
   marina memory-mcp [...]      stdio MCP server for one Marina memory space
   marina status [--url <ws-url> | --port <n>]
                                health + capability readiness of the running Marina
@@ -819,7 +823,16 @@ if (import.meta.main) {
       break;
     }
     case "mcp-stdio": {
-      const { runMcpStdio } = await import("./mcp-stdio");
+      const { mcpServerConfig, runMcpStdio } = await import("./mcp-stdio");
+      if (dispatch.rest.includes("--print-config")) {
+        const { IS_COMPILED } = await import("../src/runtime-paths");
+        const config = mcpServerConfig(
+          dispatch.rest.filter((a) => a !== "--print-config"),
+          { compiled: IS_COMPILED, execPath: process.execPath, script: import.meta.path },
+        );
+        console.log(JSON.stringify(config, null, 2));
+        break;
+      }
       // Exit as soon as the bridge ends (stdin EOF): nothing else should keep it alive.
       process.exit(await runMcpStdio(dispatch.rest));
       break;

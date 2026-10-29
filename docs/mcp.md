@@ -308,21 +308,25 @@ The MCP server reads these environment variables at startup:
 ## Claude Desktop Configuration
 
 Claude Desktop launches stdio servers from `claude_desktop_config.json`; a bare `url` entry is not
-a valid stdio configuration. Register Marina through the `marina mcp-stdio` bridge (after
-`bun run setup:cli`, or give the absolute path to `marina`), which forwards every message to the
-running world's `/mcp`:
+a valid stdio configuration. Register Marina through the `marina mcp-stdio` bridge, which forwards
+every message to the running world's `/mcp`. Claude Desktop starts servers with a minimal `PATH`,
+so print the entry with absolute paths instead of writing `"command": "marina"`:
+
+```bash
+marina mcp-stdio --print-config
+```
 
 ```json
 {
   "mcpServers": {
     "marina": {
-      "command": "marina",
-      "args": ["mcp-stdio", "--url", "http://localhost:3301/mcp"]
+      "command": "/home/you/.bun/bin/bun",
+      "args": ["--no-env-file", "/home/you/marina/scripts/marina.ts", "mcp-stdio", "--url", "http://127.0.0.1:3301/mcp"]
     }
   }
 }
 ```
 
-Add `"--token", "<bearer>"` when the transport requires one. Make sure Marina is running
+Pass `--url` and `--token <bearer>` to `--print-config` when the server is elsewhere or the transport requires a bearer. Make sure Marina is running
 (`bun run start`) before connecting. See [coding-agent configuration](guides/coding-agent-integrations.md)
 for other clients.
