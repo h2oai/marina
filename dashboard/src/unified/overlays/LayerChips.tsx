@@ -68,7 +68,8 @@ export const LayerChips = memo(function LayerChips({ hidden, onToggle, onApply }
             key={label}
             type="button"
             aria-pressed={!isHidden}
-            aria-label={`${label} layer, key ${num}`}
+            aria-label={`${num} ${label} layer`}
+            aria-keyshortcuts={String(num)}
             onClick={(e) => {
               // Shift-click: solo this layer (hide all others, show this)
               if (e.shiftKey) {
@@ -101,10 +102,7 @@ export const LayerChips = memo(function LayerChips({ hidden, onToggle, onApply }
             }}
             title={`${label} layer — click to toggle (key ${num}), shift-click to solo`}
           >
-            <span style={{ fontSize: "0.75em" }} aria-hidden="true">
-              {num}
-            </span>
-            <span>{label}</span>
+            <span style={{ fontSize: "0.75em" }}>{num}</span> <span>{label}</span>
           </motion.button>
         );
       })}

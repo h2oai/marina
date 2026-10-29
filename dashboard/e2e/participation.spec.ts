@@ -75,7 +75,7 @@ test("login orients the resident before inline discovery, note helpers and sideb
   // Inline discovery deliberately reuses its fresh client cache. The palette
   // explicitly revalidates, so test the compact wire response through that action.
   await page
-    .getByRole("button", { name: "Search Marina (Ctrl or Command K)", exact: true })
+    .getByRole("button", { name: "Search Marina…", exact: true })
     .click();
   await expect.poll(() => confirmedBytes).toBeGreaterThan(0);
   expect(confirmedBytes).toBeLessThan(manifestBytes / 10);

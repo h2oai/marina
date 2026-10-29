@@ -75,7 +75,7 @@ export function HealthBadge({ report: reportOverride }: { report?: ReadinessRepo
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         aria-describedby={open ? popoverId : undefined}
-        aria-label={`Capability health: ${counts.ok} ok, ${counts.degraded} degraded, ${counts.off} off${counts.optional ? `, ${counts.optional} optional` : ""}`}
+        aria-label={`${counts.ok}/${counts.degraded}/${counts.off} health: ${counts.ok} ok, ${counts.degraded} degraded, ${counts.off} off${counts.optional ? `, ${counts.optional} optional` : ""}`}
         className={`flex items-center gap-1.5 rounded border px-2 py-0.5 transition-colors ${TONE_CLASS[tone]}`}
         title="Capability readiness — click to open Admin → Readiness"
         data-testid="health-badge"
@@ -89,7 +89,7 @@ export function HealthBadge({ report: reportOverride }: { report?: ReadinessRepo
           </span>
           <span className="text-text-dim">/</span>
           <span className={counts.off ? "text-text" : "text-text-dim"}>{counts.off}</span>
-        </span>
+        </span>{" "}
         <span className="hidden xl:inline">health</span>
       </button>
       {/* Padding (not margin) bridges the gap so moving onto the popover keeps it open. */}

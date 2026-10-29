@@ -19,7 +19,7 @@ test("operator discovers commands, drafts work, searches entities, and restores 
   const search = page.getByRole("combobox", { name: "Search commands and world" });
   await expect(search).toBeFocused();
   await search.fill("task");
-  await page.getByRole("option", { name: "Compose task, Coordination", exact: true }).click();
+  await page.getByRole("option", { name: /^Compose task, Coordination\b/ }).click();
   await page.getByLabel("Title", { exact: true }).fill("Review dashboard");
   await page.getByLabel("Description", { exact: true }).fill("Check discovery and navigation");
   await page.getByRole("button", { name: "Fill command" }).click();
@@ -34,7 +34,7 @@ test("operator discovers commands, drafts work, searches entities, and restores 
   await page.getByRole("button", { name: /^Maximize Workspace/ }).click();
   await expect(page.locator("[data-pane-key]")).toHaveCount(3);
   await page.getByRole("button", { name: /^Restore Workspace/ }).click();
-  await page.getByRole("button", { name: "Search Marina (Ctrl or Command K)" }).click();
+  await page.getByRole("button", { name: "Search Marina…" }).click();
   await search.fill("DiscoveryBrowser");
   await expect(page.getByRole("option", { name: /DiscoveryBrowser.*entity/ })).toBeVisible();
   await page.screenshot({ path: "/tmp/marina-ux-global-search.png", fullPage: true });
@@ -49,7 +49,7 @@ test("operator discovers commands, drafts work, searches entities, and restores 
   await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible();
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Search Marina (Ctrl or Command K)" }).click();
+  await page.getByRole("button", { name: "Search Marina…" }).click();
   await expect(search).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
