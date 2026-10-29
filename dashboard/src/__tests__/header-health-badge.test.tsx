@@ -196,7 +196,7 @@ describe("HealthBadge", () => {
     try {
       renderWithProviders(<HealthBadge />);
       const badge = await screen.findByTestId("health-badge");
-      expect(badge).toHaveAccessibleName("Capability health: 1 ok, 1 degraded, 1 off");
+      expect(badge).toHaveAccessibleName("1/1/1 health: 1 ok, 1 degraded, 1 off");
       expect(screen.queryByTestId("health-popover")).toBeNull();
 
       fireEvent.mouseEnter(badge);

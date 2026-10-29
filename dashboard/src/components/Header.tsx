@@ -91,11 +91,13 @@ export function Header({
         type="button"
         onClick={onOpenSearch}
         className="ml-auto flex min-w-0 items-center gap-2 rounded border border-border bg-bg/60 px-3 py-2 text-text-dim hover:text-primary"
-        aria-label="Search Marina (Ctrl or Command K)"
+        aria-keyshortcuts="Control+K Meta+K"
       >
         <Search size={14} />
         <span>Search Marina…</span>
-        <kbd className="hidden sm:inline">⌘ / Ctrl K</kbd>
+        <span className="hidden sm:inline" aria-hidden="true">
+          <kbd>⌘ / Ctrl K</kbd>
+        </span>
       </button>
       <button
         type="button"

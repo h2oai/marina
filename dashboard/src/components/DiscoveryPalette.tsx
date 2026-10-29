@@ -16,6 +16,17 @@ import { requestParticipant } from "../lib/memory-service";
 import { FavoriteCommandButton } from "./CommandFavorites";
 import { CommandFields } from "./CommandFields";
 
+/** A command option's visible text, as its accessible name must contain it (WCAG 2.5.3). */
+function commandOptionText(cmd: {
+  name: string;
+  category: string;
+  aliases: string[];
+  help: string;
+}) {
+  const aliases = cmd.aliases.length ? ` · ${cmd.aliases.join(", ")}` : "";
+  return `${cmd.name}, ${cmd.category}${aliases}. ${cmd.help.split("\n")[0]}`;
+}
+
 export function DiscoveryPalette({ onClose }: { onClose: () => void }) {
   const searchInput = useRef<HTMLInputElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -260,7 +271,7 @@ export function DiscoveryPalette({ onClose }: { onClose: () => void }) {
             {matched.map((cmd, i) => (
               <button
                 key={`command:${cmd.name}`}
-                aria-label={`Compose ${cmd.name}, ${cmd.category}`}
+                aria-label={`Compose ${commandOptionText(cmd)}`}
                 id={`discovery-result-${i}`}
                 role="option"
                 aria-selected={active === i}
@@ -268,11 +279,11 @@ export function DiscoveryPalette({ onClose }: { onClose: () => void }) {
                 onClick={() => choose(i)}
                 className={`block w-full rounded p-2 text-left hover:bg-bg-hover ${active === i ? "bg-bg-hover" : ""}`}
               >
-                <span className="font-mono text-sm text-primary">{cmd.name}</span>
+                <span className="font-mono text-sm text-primary">{cmd.name}</span>{" "}
                 <span className="ml-2 text-xs text-text-dim">
                   {cmd.category}
                   {cmd.aliases.length ? ` · ${cmd.aliases.join(", ")}` : ""}
-                </span>
+                </span>{" "}
                 <span className="block truncate text-xs">{cmd.help.split("\n")[0]}</span>
               </button>
             ))}
@@ -286,8 +297,8 @@ export function DiscoveryPalette({ onClose }: { onClose: () => void }) {
                 onClick={() => chooseHit(hit)}
                 className={`block w-full rounded p-2 text-left hover:bg-bg-hover ${active === matched.length + i ? "bg-bg-hover" : ""}`}
               >
-                <span className="text-sm">{hit.title}</span>
-                <span className="ml-2 text-xs text-primary">{hit.kind}</span>
+                <span className="text-sm">{hit.title}</span>{" "}
+                <span className="ml-2 text-xs text-primary">{hit.kind}</span>{" "}
                 <span className="block text-xs text-text-dim">{hit.detail}</span>
               </button>
             ))}

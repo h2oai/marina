@@ -256,10 +256,10 @@ test("unified panels and modal retain keyboard access", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await page.goto("/dashboard?unified");
   await expect(page.getByRole("region", { name: "World canvas" })).toBeVisible();
-  await page.getByRole("button", { name: "Expand entity panel", exact: true }).press("Enter");
-  await expect(
-    page.getByRole("button", { name: "Collapse entity panel", exact: true }),
-  ).toHaveAttribute("aria-expanded", "true");
+  const entities = page.getByRole("button", { name: /^ENTITIES \d+$/ });
+  await expect(entities).toHaveAttribute("aria-expanded", "false");
+  await entities.press("Enter");
+  await expect(entities).toHaveAttribute("aria-expanded", "true");
   await audit(page, "unified-panels");
   const opener = page.getByRole("button", { name: "Keyboard shortcuts", exact: true });
   await opener.click();

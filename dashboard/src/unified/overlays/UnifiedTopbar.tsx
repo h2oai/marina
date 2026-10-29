@@ -164,7 +164,7 @@ export const UnifiedTopbar = memo(function UnifiedTopbar({
           cursor: "pointer",
         }}
         title="Cycle theme"
-        aria-label={`Cycle theme (current: ${themeName})`}
+        aria-label={`Cycle theme, current ${themeName}`}
       >
         {themeName}
       </button>

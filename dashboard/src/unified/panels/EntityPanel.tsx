@@ -937,7 +937,6 @@ export const EntityPanel = memo(function EntityPanel({
         <button
           type="button"
           aria-expanded={expanded}
-          aria-label={`${expanded ? "Collapse" : "Expand"} entity panel`}
           onClick={() => {
             setExpanded(!expanded);
             onExpandChange?.(!expanded);
@@ -961,7 +960,7 @@ export const EntityPanel = memo(function EntityPanel({
             }}
           >
             ENTITIES
-          </span>
+          </span>{" "}
           <span
             style={{
               marginLeft: "6px",
