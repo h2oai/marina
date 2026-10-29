@@ -58,6 +58,7 @@ export function fredToday(now: Date): string {
 export function fredAsOfDay(cutoff: Date, now: Date): string {
   const c = day(cutoff);
   const t = fredToday(now);
+  // biome-ignore lint/complexity/useMathMinMax: ISO date strings, not numbers
   return c < t ? c : t;
 }
 

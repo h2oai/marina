@@ -18,7 +18,7 @@ function record(value: unknown): Record<string, unknown> {
 function text(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
-function describe(event: RoutingEvent): Omit<ParticipantActivity, "events"> {
+function describeEvent(event: RoutingEvent): Omit<ParticipantActivity, "events"> {
   const payload = record(event.payload);
   const ordinary = { tone: "default" as const };
   switch (event.kind) {
@@ -148,7 +148,7 @@ export function participantActivity(
     ) {
       previous!.text = (previous!.text ?? "") + payload.text;
       previous!.events.push(event);
-    } else blocks.push({ ...describe(event), events: [event] });
+    } else blocks.push({ ...describeEvent(event), events: [event] });
   }
   return blocks;
 }
