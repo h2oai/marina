@@ -362,6 +362,15 @@ describe("Project Command", () => {
       expect(text).toContain("Memory:");
     });
 
+    it("accepts the verb first: project join <name>", () => {
+      engine.processCommand(conn1.entity!, "project create Verb First | Verb order");
+      conn2.clear();
+      engine.processCommand(conn2.entity!, "project join Verb First");
+      expect(conn2.lastText()).toContain('Joined project "Verb First"');
+      engine.processCommand(conn2.entity!, "project status verb first");
+      expect(conn2.lastText()).not.toContain("not found");
+    });
+
     it("should not join twice", () => {
       engine.processCommand(conn1.entity!, "project create JoinOnce | Once");
       // Alice is already the leader/member

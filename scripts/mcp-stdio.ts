@@ -57,6 +57,37 @@ export function resolveMcpTarget(
   return { url: endpoint.mcpUrl, ...(key ? { token: key } : {}) };
 }
 
+/** How this process can launch the bridge again: the compiled binary, or Bun plus the script. */
+export interface BridgeLauncher {
+  compiled: boolean;
+  /** The running binary: the compiled `marina`, or the Bun running the script. */
+  execPath: string;
+  /** Absolute path of `scripts/marina.ts` (ignored when compiled). */
+  script: string;
+}
+
+/**
+ * The `mcpServers` entry that launches this bridge by absolute path. Desktop
+ * MCP clients start servers with a bare PATH, where neither `marina` nor the
+ * `bun` its shebang names may be found, so the entry names the binary itself.
+ * Target flags are kept as given; with none, the local server's MCP port.
+ */
+export function mcpServerConfig(
+  targetArgs: string[],
+  launcher: BridgeLauncher,
+  env: NodeJS.ProcessEnv = process.env,
+): { mcpServers: { marina: { command: string; args: string[] } } } {
+  const hasTarget = targetArgs.some((a) => /^--(url|data-dir)(=|$)/.test(a));
+  const target =
+    hasTarget || env.MARINA_MCP_URL?.trim()
+      ? targetArgs
+      : ["--url", `http://127.0.0.1:${env.MCP_PORT?.trim() || "3301"}/mcp`, ...targetArgs];
+  const args = launcher.compiled
+    ? ["mcp-stdio", ...target]
+    : ["--no-env-file", launcher.script, "mcp-stdio", ...target];
+  return { mcpServers: { marina: { command: launcher.execPath, args } } };
+}
+
 /** Streams the bridge reads and writes; tests pass their own. */
 export interface McpStdioIO {
   stdin?: Readable;
