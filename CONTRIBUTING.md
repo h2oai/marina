@@ -12,7 +12,7 @@ For a concrete input-to-result map, see [tracing a Marina workflow](docs/guides/
 
 ## Development setup
 
-You need [Bun](https://bun.sh) ≥ 1.4.3 (`engines.bun` in `package.json`).
+You need [Bun](https://bun.sh) ≥ 1.4.4 (`engines.bun` in `package.json`).
 The tested release is recorded in `.bun-version` and `packageManager`; CI and
 desktop packaging read `.bun-version`. Both stages of `Dockerfile` use the same
 release. When upgrading Bun, update these values together, update `@types/bun`
