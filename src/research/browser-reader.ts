@@ -149,8 +149,13 @@ export async function openBrowser(opts: BrowserOptions = {}): Promise<BrowserRea
       await page.waitForLoadState("networkidle", { timeout: 6_000 }).catch(() => undefined);
       const status = res?.status() ?? 0;
       const html = await page.content();
-      // allow-empty-catch: innerText is optional; the HTML is the read
-      const text = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+      const text = await page
+        .evaluate(
+          // biome-ignore lint/performance/useDomNodeTextContent: rendered text only, never hidden nodes
+          () => document.body?.innerText ?? "",
+        )
+        // allow-empty-catch: innerText is optional; the HTML is the read
+        .catch(() => "");
       // allow-empty-catch: the title is optional
       const title = await page.title().catch(() => undefined);
       const screenshot = await page

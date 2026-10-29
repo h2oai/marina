@@ -10,7 +10,9 @@ import { openRouterEffortFor } from "../src/net/model/reasoning-effort";
 
 const BASE = "deepseek/deepseek-v4.1-flash";
 const SNAPSHOT = `${BASE}-1017`;
-const lookup = (id: string) => piModels.getModel("openrouter", id);
+const listed = (id: string) => piModels.getModel("openrouter", id);
+// The catalog as it was before pi-ai listed the snapshot, so the fallback stays exercised.
+const lookup = (id: string) => (id === SNAPSHOT ? undefined : listed(id));
 
 describe("dated snapshots the bundled catalog does not list", () => {
   it("strips a -MMDD or -YYYYMMDD suffix, nothing else", () => {
@@ -20,10 +22,10 @@ describe("dated snapshots the bundled catalog does not list", () => {
       expect(snapshotBaseId(id)).toBeUndefined();
   });
 
-  it("the cheap tier's snapshot is not listed yet, and its base is", () => {
-    // When pi-ai lists it, the listed entry wins and this test documents nothing.
-    expect(lookup(SNAPSHOT)).toBeUndefined();
+  it("the base is listed, and a snapshot pi-ai lists itself is returned as listed", () => {
     expect(lookup(BASE)?.reasoning).toBe(true);
+    const own = listed(SNAPSHOT);
+    if (own) expect(catalogModel(listed, SNAPSHOT)).toBe(own);
   });
 
   it("takes the base entry's capabilities under its own id and price", () => {

@@ -191,7 +191,7 @@ export function applyExtraction(
 function trimLedger(ledger: ObligationLedger): void {
   while (ledger.obligations.length > MAX_OBLIGATIONS) {
     const i = ledger.obligations.findIndex((o) => o.status !== "open");
-    ledger.obligations.splice(i >= 0 ? i : 0, 1);
+    ledger.obligations.splice(Math.max(i, 0), 1);
   }
 }
 

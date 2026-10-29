@@ -118,6 +118,7 @@ try {
     assert.deepEqual(restored, snapshot);
     const result = snapshot.attempt.result!;
     // Check answer, timeframe/limits and citation reachability without initiating work.
+    // biome-ignore lint/performance/useDomNodeTextContent: the text a reader sees
     assert((await page.locator("body").innerText()).includes(result.summary));
     await page.getByRole("tab", { name: "Sources", exact: true }).click();
     await page.locator(`a[href="${result.sources[0]!.url}"]`).first().waitFor();

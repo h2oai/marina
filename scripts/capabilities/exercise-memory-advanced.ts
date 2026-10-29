@@ -5,7 +5,7 @@ import { type ExerciseContext, exercises } from "./exercise";
 
 export const receipt = (output: string) => {
   const marker = output.lastIndexOf("Memory service");
-  const start = output.indexOf("{", marker < 0 ? 0 : marker);
+  const start = output.indexOf("{", Math.max(marker, 0));
   assert(start >= 0, output);
   return JSON.parse(output.slice(start)) as { id: string; version: number; space_id: string };
 };
