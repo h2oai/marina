@@ -8,5 +8,7 @@
  */
 
 export * from "./bootstrap";
+export * from "./descriptive";
+export * from "./hash";
 export * from "./paired";
 export * from "./replicates";

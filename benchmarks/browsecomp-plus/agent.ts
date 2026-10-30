@@ -42,6 +42,7 @@ import {
 import { corpusEmbeddingStatus } from "../../src/engine/search-providers/corpus-vectors";
 import { requireFinishedOutput } from "../../src/model/output";
 import { firstMove } from "../../src/retrieval/first-move";
+import { fnv1a32CodeUnits } from "../../src/stats";
 import { BudgetExhausted, type CallSpendGuard, isSpendCapRefusal } from "../call-spend-guard";
 import {
   extractCitations,
@@ -51,7 +52,6 @@ import {
   retrievedDocids,
   searchToolDescription,
 } from "./official";
-
 export interface ChatEndpoint {
   /** Base URL of the Marina server (e.g. http://localhost:3300). */
   baseUrl: string;
@@ -234,12 +234,7 @@ export function toolSchemas(k: number, more: { docPaging?: boolean; searchPaging
 
 /** FNV-1a of the docid → its shard. */
 export function shardOf(docid: string, of: number): number {
-  let h = 2166136261;
-  for (let i = 0; i < docid.length; i++) {
-    h ^= docid.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0) % of;
+  return fnv1a32CodeUnits(docid) % of;
 }
 
 /** Run one tool call against the corpus; returns the JSON text the model sees. */

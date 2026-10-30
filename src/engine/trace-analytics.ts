@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { percentileCeil } from "../stats";
 import type { EngineEvent } from "../types";
 import type { TraceSpanView, TraceStatus, TraceView } from "./trace-projection";
 
@@ -293,8 +294,5 @@ function sum(values: readonly number[]): number {
   return values.reduce((total, value) => total + value, 0);
 }
 
-/** Nearest-rank percentile: simple, deterministic, and well-defined for small samples. */
-function percentile(sorted: readonly number[], proportion: number): number {
-  const rank = Math.max(1, Math.ceil(proportion * sorted.length));
-  return sorted[rank - 1]!;
-}
+/** Nearest-rank percentile (`src/stats`); every caller checks for an empty sample first. */
+const percentile = percentileCeil;

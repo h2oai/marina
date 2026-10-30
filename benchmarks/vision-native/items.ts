@@ -11,6 +11,7 @@
 
 import sharp from "sharp";
 
+import { fnv1a32 } from "../../src/stats";
 export type VisualTaskKind = "count" | "code" | "chart" | "grid" | "dense";
 
 /** The kinds run when none are named (`dense` is the harder counting set). */
@@ -28,9 +29,7 @@ export interface VisualTask {
 
 /** mulberry32 over a string-hashed seed. */
 export function rng(seed: string): { next: () => number; int: (lo: number, hi: number) => number } {
-  let h = 2166136261;
-  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
-  let a = h >>> 0 || 1;
+  let a = fnv1a32(seed) || 1;
   const next = () => {
     a = (a + 0x6d2b79f5) | 0;
     let t = a;

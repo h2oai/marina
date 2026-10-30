@@ -234,3 +234,70 @@ export function legacyArenaWikiBootstrapCi(d: number[], reps = 4000): [number, n
   means.sort((a, b) => a - b);
   return [means[Math.floor(0.025 * reps)]!, means[Math.floor(0.975 * reps)]!];
 }
+
+// ─── 2026-10-30: descriptive summaries and FNV-1a copies routed to src/stats ───
+
+/** src/engine/trace-analytics.ts `percentile` (nearest rank, callers guard empty). */
+export function legacyTracePercentile(sorted: readonly number[], proportion: number): number {
+  const rank = Math.max(1, Math.ceil(proportion * sorted.length));
+  return sorted[rank - 1]!;
+}
+
+/** src/decisions/qualify.ts `percentile` (p on the 0–100 scale, 0 when empty). */
+export function legacyQualifyPercentile(values: number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[index]!;
+}
+
+/** src/engine/evolution-analysis.ts `median` (0 when empty). */
+export function legacyEvolutionMedian(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1]! + sorted[middle]!) / 2 : sorted[middle]!;
+}
+
+/** src/arena/wiki-specialist.ts `quantile` (linear interpolation on n − 1, 0 when empty). */
+export function legacyWikiQuantile(sorted: number[], q: number): number {
+  if (sorted.length === 0) return 0;
+  const at = Math.min(sorted.length - 1, Math.max(0, q * (sorted.length - 1)));
+  const lo = Math.floor(at);
+  const hi = Math.ceil(at);
+  return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (at - lo);
+}
+
+/** src/engine/novelty.ts `rotation` (FNV-1a over code points of `seed:value`). */
+export function legacyNoveltyRotation(seed: string, value: string): number {
+  let hash = 2166136261;
+  for (const c of `${seed}:${value}`) hash = Math.imul(hash ^ c.charCodeAt(0), 16777619);
+  return hash >>> 0;
+}
+
+/** src/stats/replicates.ts `seedFromIds` (FNV-1a over code points of the sorted join). */
+export function legacySeedFromIds(ids: readonly string[]): number {
+  let h = 2166136261;
+  for (const ch of [...ids].sort().join("|")) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** benchmarks/vision-native/items.ts `rng` seed hash (FNV-1a over code points, 0 → 1). */
+export function legacyVisionSeed(seed: string): number {
+  let h = 2166136261;
+  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return h >>> 0 || 1;
+}
+
+/** benchmarks/browsecomp-plus/agent.ts `shardOf` (FNV-1a over UTF-16 code units). */
+export function legacyShardOf(docid: string, of: number): number {
+  let h = 2166136261;
+  for (let i = 0; i < docid.length; i++) {
+    h ^= docid.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % of;
+}

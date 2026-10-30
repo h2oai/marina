@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MARINA_ROOT } from "../runtime-paths";
+import { percentileCeil } from "../stats";
 import { type CalibrationEntry, type CalibrationPoint, fitGateCalibration } from "./calibrate";
 import { type GateCallOptions, type GateIntent, gateToolCall } from "./gate";
 import { BASELINE_QUESTIONS_HASH } from "./gate-questions";
@@ -131,11 +132,12 @@ export interface BackendReport {
   costUsd: number;
 }
 
+/** Nearest-rank percentile of `values`, `p` on the 0–100 scale (`src/stats`). */
 export function percentile(values: number[], p: number): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
-  return sorted[index]!;
+  return percentileCeil(
+    [...values].sort((a, b) => a - b),
+    p / 100,
+  );
 }
 
 const ratio = (num: number, den: number) => (den === 0 ? 0 : num / den);
