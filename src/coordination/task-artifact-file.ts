@@ -41,6 +41,41 @@ function result(text: string): Record<string, unknown> {
  * Existing ordinary file edits are adopted in the same native edit transaction.
  * The caller never has to maintain a separate scalar work record or copy an export.
  */
+const shortHash = (hash: string | null | undefined) => (hash ? `${hash.slice(0, 12)}…` : "absent");
+
+/**
+ * The one wording for "the file is not at the version/hash you supplied". It names
+ * the object, the field the caller filled, what was supplied and what is current,
+ * and the next call — so a stale read is a one-step repair, never a loop. A hash
+ * that is current with a stale version is the signature of a write that was not
+ * followed by a read (a write produces a new version), and says so.
+ */
+export function staleFileRefusal(input: {
+  object: "deliverable" | "journal";
+  path: string;
+  field: string;
+  supplied: { version: string; sha256: string | null };
+  current: { version: string; sha256: string | null } | null;
+  hint?: string;
+}): string {
+  const { object, path, field, supplied, current } = input;
+  const lead = current
+    ? `The ${object} changed since your read: you supplied version ${JSON.stringify(supplied.version)} sha ${shortHash(supplied.sha256)}, the file is at version ${JSON.stringify(current.version)} sha ${shortHash(current.sha256)}.`
+    : `The ${object} ${JSON.stringify(path)} is absent (you supplied version ${JSON.stringify(supplied.version)} sha ${shortHash(supplied.sha256)}).`;
+  const staleVersionOnly =
+    current &&
+    current.sha256 !== null &&
+    current.sha256 === supplied.sha256 &&
+    current.version !== supplied.version;
+  const hints = [
+    input.hint,
+    staleVersionOnly
+      ? "The hash is current but the version is stale: a write produces a new version — read the file after every write."
+      : undefined,
+  ].filter(Boolean);
+  return `${lead}${hints.length ? ` ${hints.join(" ")}` : ""} Re-read ${JSON.stringify(path)} and resend ITS version and hash as ${field}; no file changed.`;
+}
+
 export async function editTaskArtifactFile(
   access: TaskArtifactFileAccess,
   input: {
@@ -63,13 +98,19 @@ export async function editTaskArtifactFile(
   const { content, version } = await access.read(input.path);
   if (version !== input.expected.version || artifactFileHash(content) !== input.expected.sha256)
     throw new Error(
-      "The deliverable changed since your read. Read it before retrying; no edit was applied.",
+      `${staleFileRefusal({
+        object: "deliverable",
+        path: input.path,
+        field: "expected",
+        supplied: input.expected,
+        current: content === null ? null : { version, sha256: artifactFileHash(content) },
+      })} No edit was applied.`,
     );
   const state = result(await access.command(`task work ${input.taskId} show`));
   if (!Number.isSafeInteger(state.revision)) throw new Error("Missing work revision.");
   if (state.revision !== input.expected.revision)
     throw new Error(
-      "Native work changed since your read. Read it before retrying; no edit was applied.",
+      `Native work changed since your read: you supplied revision ${input.expected.revision}, the work is at revision ${state.revision}. Run \`task work ${input.taskId} show\` and resend its revision as expected.revision; no edit was applied.`,
     );
   const artifact = state.artifact as { value: unknown } | undefined;
   const edits: ArtifactEdit[] = [];

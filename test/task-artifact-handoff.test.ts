@@ -298,3 +298,39 @@ test("ordinary-file capture rejects canonical aliases before publishing over the
   expect(f.writes()).toBe(0);
   expect(f.files.get("JOURNAL.md")!.content).toBe(before);
 });
+
+test("a stale-read refusal names the field, both versions and the next call — and the swapped-metadata case", async () => {
+  // Journal metadata supplied as the deliverable's: the loop the measurement saw most.
+  const f = ordinaryFileFixture();
+  const swapped = f.input();
+  swapped.deliverable.expected = {
+    version: swapped.expected.version,
+    sha256: swapped.expected.sha256!,
+  };
+  const err = await publishTaskDeliverableHandoffFile(f.access, swapped).catch(
+    (e: Error) => e.message,
+  );
+  expect(err).toContain("The deliverable changed since your read");
+  expect(err).toContain('you supplied version "3"');
+  expect(err).toContain('the file is at version "7"');
+  expect(err).toContain("You supplied the journal's version and hash");
+  expect(err).toContain("resend ITS version and hash as deliverable.expected");
+  expect(f.writes()).toBe(0);
+
+  // A write without a read: the hash is current, the version one behind.
+  const g = ordinaryFileFixture();
+  const stale = g.input();
+  g.files.get("submission.json")!.version = "8";
+  const hint = await publishTaskDeliverableHandoffFile(g.access, stale).catch(
+    (e: Error) => e.message,
+  );
+  expect(hint).toContain("The hash is current but the version is stale");
+  expect(hint).toContain('"submission.json"');
+
+  // A second identical publication is reported as a no-op, in words.
+  const h = ordinaryFileFixture();
+  await publishTaskDeliverableHandoffFile(h.access, h.input());
+  const again = await publishTaskDeliverableHandoffFile(h.access, h.input());
+  expect(again.changed).toBe(false);
+  expect(again.note).toContain("already published");
+});
