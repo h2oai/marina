@@ -2190,6 +2190,10 @@ export class MarinaDB implements MarinaStores {
     notesDb.touchNote(this.db, id);
   }
 
+  touchNotes(ids: readonly number[]): void {
+    notesDb.touchNotes(this.db, ids);
+  }
+
   recallNotes(
     entityName: string,
     query: string,
@@ -4486,6 +4490,10 @@ export class MarinaDB implements MarinaStores {
   getSetting(key: string): string | undefined {
     return agentsDb.getSetting(this.db, key);
   }
+
+  getSettings(keys: readonly string[]): Record<string, string> {
+    return agentsDb.getSettings(this.db, keys);
+  }
   setSetting(key: string, value: string): void {
     agentsDb.setSetting(this.db, key, value);
   }
@@ -4519,6 +4527,10 @@ export class MarinaDB implements MarinaStores {
   }
   getAllApiKeys(): ApiKeyRow[] {
     return agentsDb.getAllApiKeys(this.db);
+  }
+
+  hasApiKeys(): boolean {
+    return agentsDb.hasApiKeys(this.db);
   }
   deleteApiKey(name: string): void {
     agentsDb.deleteApiKey(this.db, name);

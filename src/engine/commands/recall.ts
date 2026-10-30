@@ -213,8 +213,9 @@ export function recallCommand(deps: {
           for (const tier of unified.tiers)
             for (const item of tier.items) scores.set(item.id, item.score);
           const legacyRows: ScoredNoteRow[] = [];
-          for (const id of unifiedLegacyNoteIds(unified)) {
-            db.touchNote(id);
+          const legacyIds = unifiedLegacyNoteIds(unified);
+          db.touchNotes(legacyIds);
+          for (const id of legacyIds) {
             const note = db.getNote(id);
             if (note) legacyRows.push({ ...note, score: scores.get(String(id)) ?? 0 });
           }
@@ -291,10 +292,8 @@ export function recallCommand(deps: {
         });
       }
 
-      // Touch each returned note to update last_accessed and recall_count.
-      for (const note of results) {
-        db.touchNote(note.id);
-      }
+      // Touch every returned note (last_accessed, recall_count) in one statement.
+      db.touchNotes(results.map((note) => note.id));
 
       // Emit recall trace so the dashboard can animate spreading activation on the graph
       if (results.length > 0) {

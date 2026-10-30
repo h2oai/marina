@@ -14,6 +14,14 @@ import {
 // ─── Settings (runtime key→value config) ────────────────────────────────
 
 /** Read a runtime setting; undefined if unset. */
+/** Several settings in one query (a `/v1` request reads six per call). */
+export function getSettings(db: Database, keys: readonly string[]): Record<string, string> {
+  const rows = db
+    .query("SELECT key, value FROM app_settings WHERE key IN (SELECT value FROM json_each(?))")
+    .all(JSON.stringify(keys)) as { key: string; value: string }[];
+  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+}
+
 export function getSetting(db: Database, key: string): string | undefined {
   const row = db.query("SELECT value FROM app_settings WHERE key = ?").get(key) as {
     value: string;
@@ -548,6 +556,11 @@ export function getApiKeysByProvider(db: Database, provider: string): ApiKeyRow[
   return (
     db.query("SELECT * FROM api_keys WHERE provider = ? ORDER BY name").all(provider) as ApiKeyRow[]
   ).map(decryptRow);
+}
+
+/** Whether any stored key exists — no row is read or decrypted (asked on every command). */
+export function hasApiKeys(db: Database): boolean {
+  return db.query("SELECT 1 FROM api_keys LIMIT 1").get() !== null;
 }
 
 export function getAllApiKeys(db: Database): ApiKeyRow[] {

@@ -95,6 +95,7 @@ export interface AgentsStore {
   getApiKey(name: string): ApiKeyRow | undefined;
   getApiKeysByProvider(provider: string): ApiKeyRow[];
   getAllApiKeys(): ApiKeyRow[];
+  hasApiKeys(): boolean;
   deleteApiKey(name: string): void;
   /** Encrypt any plaintext API-key rows once MARINA_KEY_SECRET is set. */
   migrateApiKeysToEncrypted(): number;
@@ -137,6 +138,7 @@ export const AGENTS_STORE_METHODS = [
   "getApiKey",
   "getApiKeysByProvider",
   "getAllApiKeys",
+  "hasApiKeys",
   "deleteApiKey",
   "migrateApiKeysToEncrypted",
   "auditEncryptedKeys",

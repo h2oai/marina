@@ -66,18 +66,19 @@ const K = {
 /** Read the effective endpoint config, falling back to defaults for unset/invalid. */
 export function getEndpointConfig(db: MarinaDB | undefined): EndpointConfig {
   if (!db) return { ...DEFAULT_ENDPOINT_CONFIG };
-  const mode = db.getSetting(K.mode);
-  const strategy = db.getSetting(K.strategy);
-  const synth = db.getSetting(K.panelSynthesis);
-  const size = Number.parseInt(db.getSetting(K.panelSize) ?? "", 10);
+  const settings = db.getSettings(Object.values(K)); // one query per request, not six
+  const mode = settings[K.mode];
+  const strategy = settings[K.strategy];
+  const synth = settings[K.panelSynthesis];
+  const size = Number.parseInt(settings[K.panelSize] ?? "", 10);
   return {
     mode: mode && MODES.has(mode) ? (mode as EndpointMode) : DEFAULT_ENDPOINT_CONFIG.mode,
-    fallback: (db.getSetting(K.fallback) ?? "1") !== "0",
+    fallback: (settings[K.fallback] ?? "1") !== "0",
     strategy:
       strategy && STRATEGIES.has(strategy)
         ? (strategy as LoadStrategy)
         : DEFAULT_ENDPOINT_CONFIG.strategy,
-    passthruModel: db.getSetting(K.passthruModel) ?? "",
+    passthruModel: settings[K.passthruModel] ?? "",
     panelSize:
       Number.isFinite(size) && size >= 1 ? Math.min(size, 8) : DEFAULT_ENDPOINT_CONFIG.panelSize,
     panelSynthesis:

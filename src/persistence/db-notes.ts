@@ -961,6 +961,16 @@ export function touchNote(db: Database, id: number): void {
   ]);
 }
 
+/** `touchNote` for every hit of one recall in a single statement (one commit, not one per note). */
+export function touchNotes(db: Database, ids: readonly number[]): void {
+  if (ids.length === 0) return;
+  db.run(
+    `UPDATE notes SET last_accessed = ?, recall_count = recall_count + 1
+     WHERE id IN (SELECT value FROM json_each(?))`,
+    [Date.now(), JSON.stringify(ids)],
+  );
+}
+
 /**
  * The ranked-recall scoring expression — THE definition of what "relevant
  * memory" means (importance x recency x FTS relevance + confidence +

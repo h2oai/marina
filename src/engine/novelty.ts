@@ -140,15 +140,20 @@ export function noveltyOpportunities(input: {
       next: "context",
     });
   const seed = `${input.participant}:${Math.floor(input.now / 86_400_000)}`;
+  // Score once per capability; the comparator used to re-tokenize both operands
+  // on every comparison (~2k tokenizations of ~1.5 KB per call).
   const unexplored = capabilities
     .filter((c) => !used.has(c.name))
+    .map((c) => ({
+      c,
+      relevance: relevance(goal, `${c.name} ${c.category} ${c.help}`),
+      rotation: rotation(seed, c.name),
+    }))
     .sort(
       (a, b) =>
-        relevance(goal, `${b.name} ${b.category} ${b.help}`) -
-          relevance(goal, `${a.name} ${a.category} ${a.help}`) ||
-        rotation(seed, a.name) - rotation(seed, b.name) ||
-        a.name.localeCompare(b.name),
-    );
+        b.relevance - a.relevance || a.rotation - b.rotation || a.c.name.localeCompare(b.c.name),
+    )
+    .map(({ c }) => c);
   for (const [index, c] of unexplored.slice(0, 3).entries()) {
     const relevant = relevance(goal, `${c.name} ${c.category} ${c.help}`);
     items.push({

@@ -58,16 +58,18 @@ export function gatherRetrievalContext(
     world: limits.world ?? 5,
   };
 
+  // Every hit is touched once, in one statement, after the tiers are gathered.
+  const touched: number[] = [];
   const personal =
     want.personal > 0 ? db.recallNotes(entity.name, query).slice(0, want.personal) : [];
-  for (const note of personal) db.touchNote(note.id);
+  for (const note of personal) touched.push(note.id);
 
   let guide: NoteRow[] = [];
   if (want.guide > 0) {
     const guidePool = db.getMemoryPool("guide");
     if (guidePool) {
       guide = db.recallPoolNotes(guidePool.id, query).slice(0, want.guide);
-      for (const note of guide) db.touchNote(note.id);
+      for (const note of guide) touched.push(note.id);
     }
   }
 
@@ -82,13 +84,14 @@ export function gatherRetrievalContext(
       if (pool.group_id && !db.getGroupMember(pool.group_id, entity.id)) continue;
       const hits = db.recallPoolNotes(pool.id, query).slice(0, PER_POOL_LIMIT);
       for (const hit of hits) {
-        db.touchNote(hit.id);
+        touched.push(hit.id);
         pools.push({ pool: pool.name, note: hit });
         if (pools.length >= want.pools) break;
       }
       if (pools.length >= want.pools) break;
     }
   }
+  db.touchNotes(touched);
 
   const chronicle =
     want.chronicle > 0 ? db.queryChronicle({ like: query, limit: want.chronicle }) : [];
