@@ -165,8 +165,6 @@ export interface ResearchForecast extends RoundForecast {
   trust?: number;
   roles?: Record<string, string>;
   fallback?: string;
-  /** `none`: the round had no published history, so no baseline was used (no-anchor mode). */
-  anchor?: "none";
   /** How the no-anchor answer was aggregated from the proposals. */
   noAnchor?: NoAnchorAudit;
   /** Judged lessons recalled for the round (injected only under `on`). */
