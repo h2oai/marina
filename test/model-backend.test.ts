@@ -20,6 +20,7 @@ import {
   resetOpenRouterPricesForTests,
 } from "../src/agent/provider-cost";
 import * as arenaForecaster from "../src/arena/model-forecaster";
+import { PROVIDER_MAX_RETRIES } from "../src/engine/constants";
 import { tavilyProvider } from "../src/engine/search-providers/tavily";
 import {
   attachSpendLedger,
@@ -103,13 +104,17 @@ let active: { mockRestore(): void } | undefined;
 /** Mock the provider with a queue of replies (or thrown errors); records each call's model. */
 function provider(queue: (AssistantMessage | Error)[]) {
   active?.mockRestore();
-  const seen: { model: string; apiKey?: string }[] = [];
+  const seen: { model: string; apiKey?: string; maxRetries?: number }[] = [];
   const spy = spyOn(piModels, "completeSimple").mockImplementation((async (
     model: { id: string; provider: string },
     _context: unknown,
-    opts: { apiKey?: string },
+    opts: { apiKey?: string; maxRetries?: number },
   ) => {
-    seen.push({ model: `${model.provider}/${model.id}`, apiKey: opts.apiKey });
+    seen.push({
+      model: `${model.provider}/${model.id}`,
+      apiKey: opts.apiKey,
+      maxRetries: opts.maxRetries,
+    });
     const next = queue.shift() ?? reply();
     if (next instanceof Error) throw next;
     return next;
@@ -560,5 +565,14 @@ describe("completion termination and caller budgets", () => {
     await bounded.turn({ messages: [] }, { maxTokens: 32000 });
     await bounded.turn({ messages: [] }, { maxTokens: 3000 });
     expect(spy.mock.calls.map((c) => c[2]?.maxTokens)).toEqual([32000, 12000, 3000]);
+  });
+});
+
+describe("provider-level retries on src/model calls", () => {
+  it("asks pi-ai for the same Retry-After-aware allowance an agent turn gets", async () => {
+    const mocked = provider([reply()]);
+    const made = modelComplete(SPEC, env(), { maxTokens: 10 });
+    expect(await made.complete("s", "u")).toBe("ok");
+    expect(mocked.seen[0]?.maxRetries).toBe(PROVIDER_MAX_RETRIES);
   });
 });

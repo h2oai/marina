@@ -28,6 +28,7 @@ import type {
 import { prepareHostedModel } from "../agent/hosted-model";
 import { resolveModel } from "../agent/lean-agent-adapter";
 import { piModels } from "../agent/pi-models";
+import { PROVIDER_MAX_RETRIES } from "../engine/constants";
 import { getErrorMessage } from "../engine/errors";
 import { dailyCapRefusal, recordPurposeSpend, type SpendSource } from "../engine/spend-ledger";
 import { beginObservedSpend, withSpendObservation } from "../engine/spend-observation";
@@ -57,7 +58,6 @@ import {
   newModelRequestId,
   traceContextAttributes,
 } from "./trace";
-
 /** Options every `src/model` entry point accepts. */
 export interface ModelCallOptions {
   /** What the call is for — the ledger's purpose row and the span's `purpose`. */
@@ -206,6 +206,11 @@ export async function modelCall(
       const result = await piModels.completeSimple(target.model, request.context, {
         apiKey: target.apiKey,
         maxTokens: request.maxTokens,
+        // pi-ai retries a 408/409/429/5xx inside the request, honouring Retry-After
+        // (bounded, abortable) — but only when asked; its default is 0. Without this
+        // a 429 that names its wait reached Marina's header-blind loop below, whose
+        // one retry after ~1 s lost the call. Same allowance as an agent turn.
+        maxRetries: PROVIDER_MAX_RETRIES,
         onPayload: (payload) => {
           checkOutputPayload(
             payload,
