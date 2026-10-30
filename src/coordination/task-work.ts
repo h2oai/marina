@@ -7,6 +7,7 @@ import { EVIDENCE_REF_FORMS, evidenceRefsIn } from "../decisions/evidence";
 import { tryLog } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { canonicalFederationJson } from "../net/federation-crypto";
+import { recordProseReviewOpinion } from "../outcomes/live";
 import type { MarinaDB } from "../persistence/database";
 import type { TaskRow } from "../persistence/db-tasks";
 import {
@@ -865,6 +866,15 @@ export class TaskWork {
         report: JSON.stringify(report),
         createdAt: now,
         expiresAt: now + WORK_CHECK_TTL_MS,
+      });
+      // The review's verdict is a judge's opinion on the attempt: measured against
+      // the creator's verdict, never delivered as a lesson until earned.
+      recordProseReviewOpinion(this.db, {
+        taskId,
+        model: result.model,
+        outcome: report.outcome,
+        findings: report.findings,
+        at: now,
       });
       return {
         receiptId: receipt.id,

@@ -16,6 +16,7 @@ import {
 } from "../src/coordination/task-prose-review";
 import { TaskWork, WORK_CHECK_TTL_MS, type WorkActor } from "../src/coordination/task-work";
 import { resolveEvidenceSource } from "../src/decisions/evidence";
+import { hasTaskOpinion, recordProseReviewOpinion } from "../src/outcomes/live";
 import { createTestEngine } from "./engine-fixture";
 import { scopeProcessState } from "./process-state";
 
@@ -485,5 +486,61 @@ describe("the reviewer reads the record by access, not by invitation", () => {
       origin: "work",
       status: "current",
     });
+  });
+});
+
+describe("a fresh prose review is a judge's opinion on the attempt", () => {
+  let f: ReturnType<typeof createTestEngine>;
+  beforeEach(() => {
+    f = createTestEngine();
+  });
+  afterEach(async () => {
+    await f.dispose();
+  });
+
+  test("no finding over readable sources is `pass`; a contradiction is `fail`; unverified is no opinion; no attempt, no row", async () => {
+    const owner = { id: f.login("Owner").entityId, name: "Owner" };
+    const peer = { id: f.login("Peer").entityId, name: "Peer" };
+    const tasks = f.engine.taskManager!;
+    const id = tasks.create({ title: "Handoff", creatorId: owner.id, creatorName: owner.name }).id;
+    const ref = `note:${f.db.createNote(owner.name, original)}`;
+    const work = new TaskWork(
+      f.db,
+      (actor, source) => resolveEvidenceSource(f.db, actor, source),
+      undefined,
+      async () => ({ findings: [], limitations: [], model: "served" }),
+    );
+    const judged = () => f.db.listOutcomes({ subjectPrefix: `judged:task:${id}:` });
+    await work.reviewFreshProse(id, owner, { ...input(), refs: [ref] });
+    expect(judged()).toEqual([]);
+    tasks.claim(id, peer.id, peer.name);
+    await work.reviewFreshProse(id, owner, { ...input(), refs: [ref], model: "other" });
+    const [pass] = judged();
+    expect(pass?.source).toBe("task:prose-review");
+    expect(pass?.succeeded).toBe(1);
+    expect(pass?.judge).toBe("prose-review:served");
+    expect(pass?.subject).toMatch(new RegExp(`^judged:task:${id}:Peer:prose:\\d+$`));
+    const ledger = f.db.listJudgeLedger({ judge: "prose-review:served" });
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]!.truth_key).toBe(`task:${id}:Peer:`);
+    const at = Date.now() + 1;
+    recordProseReviewOpinion(f.db, {
+      taskId: id,
+      model: "m",
+      outcome: "unverified",
+      findings: [{ status: "unverified" }],
+      at,
+    });
+    expect(judged()).toHaveLength(1);
+    recordProseReviewOpinion(f.db, {
+      taskId: id,
+      model: "m",
+      outcome: "contradicted",
+      findings: [{ status: "contradicted" }],
+      at: at + 1,
+    });
+    const fail = judged().find((o) => o.judge === "prose-review:m");
+    expect(fail?.succeeded).toBe(0);
+    expect(hasTaskOpinion(f.db, id, "Peer", at)).toBe(false);
   });
 });

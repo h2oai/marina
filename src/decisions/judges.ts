@@ -141,8 +141,9 @@ export function surfaceOfJudgedOutcome(source: string): string {
 export function truthKeyOfJudged(subject: string): string {
   const base = subject.slice("judged:".length);
   if (/:submission:\d+$/.test(base)) return base;
-  // A task attempt (`task:<id>:<claimant>:<t>`): its first verdict after the opinion.
-  return base.startsWith("task:") ? base.replace(/\d+$/, "") : base;
+  // A task attempt (`task:<id>:<claimant>:<t>`, a prose review's `…:prose:<t>`):
+  // its first verdict after the opinion.
+  return base.startsWith("task:") ? base.replace(/(?:prose:)?\d+$/, "") : base;
 }
 
 /** A judged outcome as a ledger opinion (called by `recordResolved`). */

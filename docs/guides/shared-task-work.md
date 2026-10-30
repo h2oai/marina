@@ -521,7 +521,9 @@ must quote the actual target text; contradictions need exact current-source cita
 Unavailable evidence produces uncertainty, not permission to remove a valid quotation.
 A `no-findings` result is an advisory observation, never proof of exhaustive coverage or
 semantic truth. A model can still reason incorrectly; retain source-supported corrections
-and reject unsupported review advice.
+and reject unsupported review advice. Each fresh review's verdict is recorded as that
+model's opinion on the attempt and measured against the creator's eventual verdict
+(`judge stats`); it changes nothing about the submission.
 
 ### Audit prose against the declared evidence
 

@@ -179,12 +179,62 @@ export function hasTaskOpinion(
   if (db.getOutcomeBySubject(taskOpinionSubject(taskId, claimant, submittedAt))) return true;
   const prefix = `judged:${taskBase(taskId, claimant)}:`;
   // Preserve opinions written before submission identities were introduced.
-  return db
-    .listOutcomes({ subjectPrefix: prefix, limit: 20 })
-    .some(
-      (o) =>
-        !o.subject.slice(prefix.length).startsWith("submission:") && o.resolved_at >= submittedAt,
+  // A prose review's opinion (`prose:<t>`) is its own judge, never this one.
+  return db.listOutcomes({ subjectPrefix: prefix, limit: 20 }).some((o) => {
+    const rest = o.subject.slice(prefix.length);
+    return (
+      !rest.startsWith("submission:") && !rest.startsWith("prose:") && o.resolved_at >= submittedAt
     );
+  });
+}
+
+/**
+ * A fresh prose review's verdict on a task attempt as a JUDGED outcome: a
+ * contradiction found is `fail`, no finding over readable sources is `pass`, a
+ * review that left something unchecked (`unverified`) is no opinion. Recorded,
+ * never delivered — `prose-review:<model>` teaches only once it has earned
+ * agreement with creators' verdicts (the attempt's next verdict settles it,
+ * `truthKeyOfJudged`). The task must have a live attempt; the reviewer's own
+ * identity is not the attempt's.
+ */
+export function recordProseReviewOpinion(
+  db: MarinaDB,
+  input: {
+    taskId: number;
+    model: string;
+    outcome: string;
+    findings: ReadonlyArray<{ status: string }>;
+    at: number;
+  },
+): void {
+  const claim = db
+    .getTaskClaims(input.taskId)
+    .find((row) => row.status === "claimed" || row.status === "submitted");
+  if (!claim) return;
+  const opinion = input.findings.some((f) => f.status === "contradicted")
+    ? "fail"
+    : input.outcome === "no-findings"
+      ? "pass"
+      : "none";
+  if (opinion === "none") return;
+  const claimant = claim.entity_name;
+  recordResolved(db, {
+    subject: `judged:${taskBase(input.taskId, claimant)}:prose:${input.at}`,
+    kind: "task",
+    source: "task:prose-review",
+    domain: "tools",
+    owner: claimant,
+    succeeded: opinion === "pass",
+    metric: "prose-review",
+    basis: "judged",
+    judge: `prose-review:${input.model}`,
+    participants: [participantOf(db, claimant)],
+    refs: [
+      `task:${input.taskId}`,
+      ...workRefsFor(db, "task", claimant, taskApproach(db, claimant, input.taskId)),
+    ],
+    resolvedAt: input.at,
+  });
 }
 
 /**

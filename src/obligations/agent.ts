@@ -20,6 +20,7 @@
  */
 
 import type { DecisionProvider } from "../decisions/types";
+import { evidenceReply } from "./evidence-reply";
 import {
   type CompleteText,
   extractObligations,
@@ -106,6 +107,8 @@ export class AgentObligations {
   private unsampled = 0;
   private turn = 0;
   private ambiguous: Array<{ call: ToolCallRecord; ids: string[] }> = [];
+  /** Obligations the WORLD stated (a submit reply's unmet evidence), by task id. */
+  private readonly stated_ = new Map<number, string>();
 
   constructor(private readonly opts: AgentObligationsOptions) {
     this.ledger = newLedger("agent", this.now());
@@ -202,18 +205,62 @@ export class AgentObligations {
     args: unknown,
     ok: boolean,
     isWrite: (n: string, args: unknown) => boolean,
+    resultText?: string,
   ): void {
     if (this.mode() === "off") return;
+    if (resultText) this.observeEvidenceReply(name, resultText);
     const call: ToolCallRecord = { name, args, ok, turn: this.turn };
     this.ledger.callsSeen++;
     const m = matchCall(this.ledger, call, isWrite);
-    if (m.ambiguous.length > 0) this.ambiguous.push({ call, ids: m.ambiguous });
+    // A stated obligation is settled by the world's next reply, never by a judge.
+    const stated = new Set(this.stated_.values());
+    const ambiguous = m.ambiguous.filter((id) => !stated.has(id));
+    if (ambiguous.length > 0) this.ambiguous.push({ call, ids: ambiguous });
   }
 
-  /** The continuation-prompt section (`on` only), or undefined. */
+  /**
+   * The evidence audit at submission, as the world replied, is an obligation
+   * the agent owes with no model call: one per task, open until a later
+   * submission of that task reports nothing unmet. Shown in `observe` too —
+   * the world said it, nothing was inferred.
+   */
+  private observeEvidenceReply(tool: string, text: string): void {
+    const reply = evidenceReply(text);
+    if (!reply) return;
+    const owed = this.stated_.get(reply.taskId);
+    if (reply.unmet === 0) {
+      if (owed) settle(this.ledger, owed, "satisfied", `tool:${tool}`);
+      this.stated_.delete(reply.taskId);
+      return;
+    }
+    if (owed && this.ledger.obligations.some((o) => o.id === owed && o.status === "open")) return;
+    const [id] = applyExtraction(
+      this.ledger,
+      this.turn,
+      {
+        add: [
+          {
+            what: `task ${reply.taskId}: ${reply.unmet} evidence obligation(s) unmet at submission; task work ${reply.taskId} show lists them — attach the evidence, then task submit ${reply.taskId} again`,
+            target: `task:${reply.taskId}`,
+          },
+        ],
+        cancel: [],
+      },
+      new Set<string>(),
+      this.now(),
+    );
+    if (id) this.stated_.set(reply.taskId, id);
+  }
+
+  /**
+   * The continuation-prompt section: every open obligation in `on`; in
+   * `observe` only the ones the world stated. Undefined when there are none.
+   */
   section(): string | undefined {
-    if (this.mode() !== "on") return undefined;
-    const open = openObligations(this.ledger);
+    const mode = this.mode();
+    if (mode === "off") return undefined;
+    const stated = new Set(this.stated_.values());
+    const open = openObligations(this.ledger).filter((o) => mode === "on" || stated.has(o.id));
     if (open.length === 0) return undefined;
     return [
       `[Open obligations — ${open.length}]`,
