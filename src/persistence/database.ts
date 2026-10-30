@@ -380,6 +380,13 @@ import type { AdapterLinkRow, AdapterUserMappingRow, BanRow, UserRow } from "./d
 
 /** How long a connection waits for another process's lock before failing. */
 const OPEN_BUSY_TIMEOUT_MS = 5000;
+/**
+ * WAL frames before SQLite checkpoints inside a write (64 MiB at the 4 KiB page). The
+ * server checkpoints from the `wal-checkpoint` tick job between commands, so this is
+ * the backstop for a process with no tick (CLI, scripts): at the default 1000 pages a
+ * 2 MiB capture paid a second copy of itself plus a checkpoint fsync every other write.
+ */
+export const WAL_AUTOCHECKPOINT_PAGES = 16_384;
 
 export class MarinaDB implements MarinaStores {
   compactMemoryReceipts(options: Parameters<typeof compactMemoryReceipts>[1]) {
@@ -404,6 +411,7 @@ export class MarinaDB implements MarinaStores {
       this.db.exec(`PRAGMA busy_timeout=${OPEN_BUSY_TIMEOUT_MS}`);
       configureMemoryStorage(this.db, options.memoryLimits ?? memoryLimitsFromEnv());
       this.db.exec("PRAGMA journal_mode=WAL");
+      this.db.exec(`PRAGMA wal_autocheckpoint=${WAL_AUTOCHECKPOINT_PAGES}`);
       this.db.exec(
         this.durability === "full" ? "PRAGMA synchronous=FULL" : "PRAGMA synchronous=NORMAL",
       );
@@ -1298,6 +1306,11 @@ export class MarinaDB implements MarinaStores {
 
   tableExists(table: string): boolean {
     return maintenanceDb.tableExists(this.reader, table);
+  }
+
+  /** A PASSIVE WAL checkpoint: never waits on readers or writers; counts are WAL frames. */
+  walCheckpoint(): { busy: boolean; log: number; checkpointed: number } {
+    return maintenanceDb.walCheckpoint(this.db);
   }
 
   tableColumns(table: string): string[] {

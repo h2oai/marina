@@ -456,6 +456,7 @@ describe("Engine tick schedule", () => {
       // ~5 s, floored at 2 ticks so it has a phase of its own (this engine ticks every 60 s).
       { name: "media-video-poll", every: 2, phase: 1 },
       { name: "schedules", every: 10, phase: 3 },
+      { name: "wal-checkpoint", every: 10, phase: 6 },
       { name: "outcome-autoresolve", every: 3600, phase: 3450 },
       { name: "outcome-judge", every: 3600, phase: 3150 },
       { name: "live-promotion", every: 21600, phase: 4200 },

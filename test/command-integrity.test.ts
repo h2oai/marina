@@ -315,6 +315,8 @@ function phaseFixture(
     recordPrimitiveUsage: (row: { success: boolean }) => usage.push(row.success),
     trackActivity: (_name: string, kind: string, value: string, ok?: boolean) =>
       activity.push([kind, value, ok]),
+    // The phase commits a command's bookkeeping in one transaction.
+    transaction: <T>(fn: () => T): T => fn(),
   };
   let phase!: CommandPhaseCoordinator;
   const host: CommandPhaseHost = {
