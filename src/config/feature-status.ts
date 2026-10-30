@@ -79,7 +79,8 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   {
     name: "Shared task work, structured deliverables and declared checks",
     status: "experimental",
-    enable: "Optional `task work`; advisory, no agent-loop or approval changes",
+    enable:
+      "Optional `task work`; evidence audits, scoped edits, actual-text prose assessment and advisory feedback; fresh model review only on request",
     owner: "src/coordination",
   },
   {

@@ -35,7 +35,7 @@ import type { JudgeObservationInput } from "../../persistence/db-decisions";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { isOperatorPrincipal } from "../challenges";
 import { refuseCommand } from "../command-response";
-import { logRejection } from "../errors";
+import { logRejection, tryLog } from "../errors";
 import { Logger } from "../logger";
 import { mayActOn, ownershipRefusal } from "../ownership";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
@@ -201,18 +201,27 @@ export function taskCommand(
       { syntax: "task work <id> retire <revision> <entry_id> <reason>", effect: "write" },
       { syntax: "task work <id> check [fresh]", effect: "write" },
       { syntax: "task work <id> render [revision]", effect: "read" },
+      { syntax: "task work <id> handoff [revision]", effect: "read" },
       { syntax: "task work <id> artifact-edit <revision> <json_edits>", effect: "write" },
       { syntax: "task work <id> artifact-source <revision> <json_selection>", effect: "write" },
       { syntax: "task work <id> artifact-rule <revision> <json_check>", effect: "write" },
       { syntax: "task work <id> artifact-rules <revision> <json_checks>", effect: "write" },
       { syntax: "task work <id> artifact-review <json_questions>", effect: "read" },
+      { syntax: "task work <id> artifact-audit <json_audit>", effect: "read" },
+      { syntax: "task work <id> prose-review <json_review>", effect: "read" },
+      { syntax: "task work <id> prose-review-fresh <json_review>", effect: "execute" },
       { syntax: "task work <id> artifact-assess <json_assessment>", effect: "write" },
+      { syntax: "task work <id> artifact-review-fresh <json_review>", effect: "execute" },
       { syntax: "task work <id> artifact-unrule <revision> <check_id> <reason>", effect: "write" },
+      {
+        syntax: "task work <id> artifact-evidence <revision> <json_plan_or_null>",
+        effect: "write",
+      },
       { syntax: "task work <id> artifact-check [fresh]", effect: "write" },
     ],
     name: "task",
     aliases: [],
-    help: 'Manage tasks with leased create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing|work\n  task create <title> | <description> [standing:N] [bounty]   (also !N; N = 0–10, default 1, paid when another account approves — a person may approve its own agents)\n  task goal <title> | <description> [priority:N]   (also !pN / --priority N)\n  task info <id>   (also show/view)\n  task work <id> [experimental] — optional shared fields, citations, proposals and advisory checks.\n  task work <id> patch <revision> <json_fields> (creator/current claimant); propose uses the same form for collaborators.\n  task work <id> cite <revision> {"field":"traffic","ref":"note:1","quote":"Maximum traffic is 10 percent."}\n  task work <id> expect <revision> {"field":"traffic","op":"lte","expected":10,"citation":"c2"}\n  task work <id> check [fresh] — reuse a current receipt; no model call or approval gate.\n  task work <id> show [revision] | accept <revision> <proposal_id> | retire <revision> <entry_id> <reason>\n  task work <id> artifact-edit <revision> <json_edits> — edit the actual JSON deliverable by path; preserves untouched content.\n  task work <id> artifact-source <revision> <json_selection> — explicitly publish selected readable source values into the deliverable.\n  task work <id> render [revision] — return its exact JSON content and hash.\n  task work <id> artifact-rule <revision> <json_check> | artifact-unrule <revision> <check_id> <reason>\n  task work <id> artifact-rules <revision> <json_checks> — atomic batch of scoped value/evidence checks.\n  task work <id> artifact-review <json_questions> — evidence packet without draft answers or expectations.\n  task work <id> artifact-assess <json_assessment> — compare source-cited answers against the unchanged draft; advisory.\n  task work <id> artifact-check [fresh] — advisory coverage, projection and value checks; no approval or loop changes.\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector priority:7\n  task progress 3 +20\n  task claim 3\n  task heartbeat 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine',
+    help: 'Manage tasks with leased create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing|work\n  task create <title> | <description> [standing:N] [bounty]   (also !N; N = 0–10, default 1, paid when another account approves — a person may approve its own agents)\n  task goal <title> | <description> [priority:N]   (also !pN / --priority N)\n  task info <id>   (also show/view)\n  task work <id> [experimental] — optional shared fields, citations, proposals and advisory checks.\n  task work <id> patch <revision> <json_fields> (creator/current claimant); propose uses the same form for collaborators.\n  task work <id> cite <revision> {"field":"traffic","ref":"note:1","quote":"Maximum traffic is 10 percent."}\n  task work <id> expect <revision> {"field":"traffic","op":"lte","expected":10,"citation":"c2"}\n  task work <id> check [fresh] — reuse a current receipt; no model call or approval gate.\n  task work <id> show [revision] | accept <revision> <proposal_id> | retire <revision> <entry_id> <reason>\n  task work <id> artifact-edit <revision> <json_edits> — edit the actual JSON deliverable by path; preserves untouched content and returns advisory feedback. replace with scopePath binds a current-context list.\n  task work <id> artifact-source <revision> <json_selection> — publish exact readable source values; optional coverage:{id,requirement,scopePath?} retains the evidence requirement atomically.\n  task work <id> render [revision] — return its exact JSON content and hash.\n  task work <id> handoff [revision] — read a Markdown snapshot from that exact artifact; revision-labeled history, no model paraphrase or source validation.\n  task work <id> artifact-rule <revision> <json_check> | artifact-unrule <revision> <check_id> <reason>\n  task work <id> artifact-rules <revision> <json_checks> — atomic batch of scoped value/evidence checks.\n  task work <id> artifact-review <json_questions> — evidence packet without draft answers or expectations.\n  task work <id> artifact-review-fresh <json_review> — explicit model review in a fresh context: {questions:[{id,path,answerType,refs}],model?}; reuses unchanged results.\n  task work <id> prose-review <json_review> | prose-review-fresh <json_review> — optional actual-text assessment: {target:{name,content},refs,model?}; exact source citations, no edits or approval.\n  task work <id> artifact-assess <json_assessment> — compare source-cited answers against the unchanged draft; advisory.\n  task work <id> artifact-evidence <revision> <json_plan_or_null> — optional source-declared fact-bundle and all-quotation audit; explicit schema mappings and fact bindings, no semantic certification.\n  task work <id> artifact-audit <json_audit> — inspect actual file content with an explicit evidence plan: {target:{name,content},plan}; no native artifact, edits or approval required.\n  task work <id> artifact-check [fresh] — advisory coverage, projection and value checks; no approval or loop changes.\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector priority:7\n  task progress 3 +20\n  task claim 3\n  task heartbeat 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine',
     handler: (ctx: RoomContext, input) => {
       const self = ctx.getEntity(input.entity);
       if (!self) return;
@@ -234,8 +243,7 @@ export function taskCommand(
 
       switch (sub) {
         case "work":
-          handleTaskWork(work, ctx, input, { id: self.id, name: self.name });
-          return;
+          return handleTaskWork(work, ctx, input, { id: self.id, name: self.name });
         case "list": {
           const arg = tokens[1]?.toLowerCase();
           const validStatuses = ["open", "completed", "cancelled", "claimed"];
@@ -664,6 +672,14 @@ export function taskCommand(
             submittedAt = tasks.getClaim(id, input.entity)?.submittedAt ?? undefined;
             clearSubmissionAttempts(id, input.entity);
             ctx.send(input.entity, `Submitted work for task #${id}.`);
+            tryLog(logger, "tasks", "Artifact feedback unavailable after submission", () => {
+              const feedback = work?.completionFeedback(id, { id: self.id, name: self.name });
+              if (feedback?.findings.length)
+                ctx.send(
+                  input.entity,
+                  `Task artifact feedback (advisory; work is submitted):\n${JSON.stringify(feedback, null, 2)}`,
+                );
+            });
             if (task && task.creatorId !== input.entity) {
               ctx.send(
                 task.creatorId as EntityId,

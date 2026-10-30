@@ -6,11 +6,110 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ArtifactReviewQuestion } from "../src/coordination/task-artifact-review";
 import { TaskWork } from "../src/coordination/task-work";
 import { resolveEvidenceSource } from "../src/decisions/evidence";
 import { MarinaDB } from "../src/persistence/database";
 import { exportState, importState } from "../src/persistence/export-import";
 import { migrateEmptyTo } from "./schema-replay";
+
+test("combined evidence, following contexts and fresh receipts survive restart and transfer", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "marina-completion-restart-"));
+  const path = join(directory, "world.db");
+  const imported = join(directory, "imported.db");
+  let db: MarinaDB | undefined = new MarinaDB(path);
+  const actor = { id: "owner", name: "Owner" };
+  let calls = 0;
+  try {
+    const taskId = db.createTask({
+      title: "Current supported decision",
+      creatorId: actor.id,
+      creatorName: actor.name,
+    });
+    const quote = "Keep the current version.";
+    const ref = `note:${db.createNote(actor.name, JSON.stringify({ doc_id: "current", statements: [quote] }))}`;
+    const questions: ArtifactReviewQuestion[] = [
+      { id: "choice", path: "/choice", answerType: "string", refs: [ref] },
+    ];
+    const make = () =>
+      new TaskWork(
+        db!,
+        (who, source) => resolveEvidenceSource(db!, who, source),
+        async () => {
+          calls++;
+          return {
+            model: "test",
+            answers: [
+              {
+                id: "choice",
+                status: "answered",
+                value: "keep-current",
+                reason: "The source specifies retention",
+                citations: [{ ref, quote }],
+              },
+            ],
+          };
+        },
+      );
+    let work = make();
+    work.editArtifact(taskId, actor, 0, [
+      {
+        op: "set",
+        path: "",
+        value: { phase: 1, choice: "keep-current", citations: [], changes: [] },
+      },
+      {
+        op: "source",
+        path: "/citations",
+        ref,
+        pick: { doc_id: "/doc_id", quote: "/statements/0" },
+        coverage: {
+          id: "current-support",
+          requirement: "Current version evidence",
+          scopePath: "/phase",
+        },
+      },
+      {
+        op: "replace",
+        path: "/changes",
+        value: ["first correction"],
+        scopePath: "/phase",
+        reason: "This context only",
+      },
+    ]);
+    const first = await work.reviewFreshArtifact(taskId, actor, { questions });
+    expect(calls).toBe(1);
+    db.close();
+    db = new MarinaDB(path);
+    work = make();
+    expect((await work.reviewFreshArtifact(taskId, actor, { questions })).receiptId).toBe(
+      first.receiptId,
+    );
+    expect(calls).toBe(1);
+    db.close();
+    db = undefined;
+    const snapshot = exportState(path);
+    const target = new MarinaDB(imported);
+    target.close();
+    expect(importState(imported, snapshot).errors).toEqual([]);
+    db = new MarinaDB(imported);
+    work = make();
+    expect((await work.reviewFreshArtifact(taskId, actor, { questions })).reused).toBe(true);
+    expect(calls).toBe(1);
+    const changed = work.editArtifact(taskId, actor, 1, [{ op: "set", path: "/phase", value: 2 }]);
+    expect(JSON.parse(changed.content).changes).toEqual([]);
+    expect(changed.feedback.outcome).toBe("unverified");
+    expect(
+      changed.feedback.findings.some((finding) => finding.message.includes("context changed")),
+    ).toBe(true);
+    const rendered = work.renderArtifact(taskId, actor);
+    expect(rendered.projections[0]!.batches[0]!.entries).toEqual(["first correction"]);
+    expect(rendered.rules[0]!.requirement).toBe("Current version evidence");
+  } finally {
+    db?.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("schema-184 tasks upgrade without adopting work records; revisions and receipts survive reopen and export/import", () => {
   const directory = mkdtempSync(join(tmpdir(), "marina-task-work-"));

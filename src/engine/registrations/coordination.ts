@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createArtifactReviewer } from "../../coordination/task-artifact-model-review";
+import { createProseReviewer } from "../../coordination/task-prose-model-review";
 import { TaskWork } from "../../coordination/task-work";
 import { resolveEvidence, resolveEvidenceSource } from "../../decisions/evidence";
 import { judgeEarned } from "../../decisions/judges";
@@ -314,14 +316,18 @@ export function registerCoordinationCommands(engine: Engine): void {
         () => (engine.db ? approachAdvice(engine.db, "work:task") : undefined),
         (evaluator) => !!engine.db && judgeEarned(engine.db, "verify", evaluator),
         engine.db
-          ? new TaskWork(engine.db, (actor, ref) =>
-              resolveEvidenceSource(engine.db!, actor, ref, {
-                canvas: {
-                  db: engine.db!,
-                  entities: { get: (id: never) => engine.entities.get(id) },
-                  canvasGrants: engine.canvasGrants,
-                },
-              }),
+          ? new TaskWork(
+              engine.db,
+              (actor, ref) =>
+                resolveEvidenceSource(engine.db!, actor, ref, {
+                  canvas: {
+                    db: engine.db!,
+                    entities: { get: (id: never) => engine.entities.get(id) },
+                    canvasGrants: engine.canvasGrants,
+                  },
+                }),
+              createArtifactReviewer(process.env, { signal: engine.shutdownSignal }),
+              createProseReviewer(process.env, { signal: engine.shutdownSignal }),
             )
           : undefined,
       ),

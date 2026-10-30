@@ -61,22 +61,22 @@ function action(kind: string, payload: string): WorkAction {
     };
   }
   throw new Error(
-    "Unknown work action. Use show, patch, propose, accept, cite, expect, retire, check, render, artifact-edit, artifact-source, artifact-rule, artifact-rules, artifact-unrule, artifact-check, artifact-review or artifact-assess.",
+    "Unknown work action. Use show, patch, propose, accept, cite, expect, retire, check, render, handoff, artifact-edit, artifact-source, artifact-rule, artifact-rules, artifact-evidence, artifact-unrule, artifact-check, artifact-review, artifact-review-fresh, prose-review, prose-review-fresh, artifact-audit or artifact-assess.",
   );
 }
 
-export function handleTaskWork(
+export async function handleTaskWork(
   work: TaskWork | undefined,
   ctx: RoomContext,
   input: CommandInput,
   actor: WorkActor,
-): void {
+): Promise<void> {
   try {
     if (!work) throw new Error("Shared work requires a persistent world.");
     const match = /^work\s+(\S+)(?:\s+(\S+))?(?:\s+([\s\S]*))?$/i.exec(input.args);
     if (!match)
       throw new Error(
-        "Usage: task work <id> [show|render|patch|propose|accept|cite|expect|retire|check|artifact-edit|artifact-source|artifact-rule|artifact-rules|artifact-unrule|artifact-check|artifact-review|artifact-assess …]",
+        "Usage: task work <id> [show|render|handoff|patch|propose|accept|cite|expect|retire|check|artifact-edit|artifact-source|artifact-rule|artifact-rules|artifact-evidence|artifact-unrule|artifact-check|artifact-review|artifact-review-fresh|prose-review|prose-review-fresh|artifact-audit|artifact-assess …]",
       );
     const taskId = integer(match[1]!);
     const kind = (match[2] ?? "show").toLowerCase();
@@ -85,10 +85,19 @@ export function handleTaskWork(
     if (kind === "show") result = work.show(taskId, actor, rest ? integer(rest, true) : undefined);
     else if (kind === "render")
       result = work.renderArtifact(taskId, actor, rest ? integer(rest, true) : undefined);
+    else if (kind === "handoff")
+      result = work.renderHandoff(taskId, actor, rest ? integer(rest, true) : undefined);
+    else if (kind === "artifact-review-fresh")
+      result = await work.reviewFreshArtifact(taskId, actor, JSON.parse(rest));
     else if (kind === "artifact-review")
       result = work.reviewArtifact(taskId, actor, JSON.parse(rest));
     else if (kind === "artifact-assess")
       result = work.assessArtifact(taskId, actor, JSON.parse(rest));
+    else if (kind === "artifact-audit")
+      result = work.auditArtifactFile(taskId, actor, JSON.parse(rest));
+    else if (kind === "prose-review") result = work.reviewProse(taskId, actor, JSON.parse(rest));
+    else if (kind === "prose-review-fresh")
+      result = await work.reviewFreshProse(taskId, actor, JSON.parse(rest));
     else if (kind === "check" || kind === "artifact-check") {
       if (rest && rest !== "fresh") throw new Error("Usage: task work <id> check [fresh]");
       result =
@@ -107,6 +116,8 @@ export function handleTaskWork(
         result = work.editArtifact(taskId, actor, revision, JSON.parse(payload) as ArtifactEdit[]);
       else if (kind === "artifact-source")
         result = work.publishArtifactSource(taskId, actor, revision, JSON.parse(payload));
+      else if (kind === "artifact-evidence")
+        result = work.declareArtifactEvidence(taskId, actor, revision, JSON.parse(payload));
       else if (kind === "artifact-rule")
         result = work.declareArtifactRule(
           taskId,
