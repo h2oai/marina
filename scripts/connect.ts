@@ -227,9 +227,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * print nothing for several seconds, and exiting on that initial silence
  * dropped its entire reply.
  */
-async function lingerForQuiet(quietMs: number, maxMs: number): Promise<void> {
+async function lingerForQuiet(
+  quietMs: number,
+  maxMs: number,
+  outputBefore = lastOutputAt,
+): Promise<void> {
   const start = Date.now();
-  const outputBefore = lastOutputAt;
   while (Date.now() - start < maxMs) {
     const produced = lastOutputAt !== outputBefore;
     if (produced && Date.now() - lastOutputAt >= quietMs) return;
@@ -290,9 +293,12 @@ if (scripted) {
 
 if (oneShot) {
   // A refused command (typo, usage error) already printed its reply; exit 1.
+  // Snapshot BEFORE the command: its direct reply already counts as output, so
+  // the quiet rule can start (a snapshot taken after it waited the whole cap).
+  const outputBefore = lastOutputAt;
   const ok = await runCliCommand(agent, oneShot);
   // The direct response prints via onPerception; linger for async follow-ups.
-  if (ok && maxLingerMs > 0) await lingerForQuiet(2_500, maxLingerMs);
+  if (ok && maxLingerMs > 0) await lingerForQuiet(2_500, maxLingerMs, outputBefore);
   agent.disconnect();
   process.exit(ok ? 0 : 1);
 }
@@ -304,13 +310,14 @@ const isTTY = process.stdin.isTTY;
 if (!isTTY) {
   const rl = createInterface({ input: process.stdin });
   let failed = false;
+  const outputBefore = lastOutputAt; // the replies count as output (see one-shot)
   for await (const line of rl) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     // A refused line is reported and the script continues with the next one.
     if (!(await runCliCommand(agent, trimmed))) failed = true;
   }
-  if (maxLingerMs > 0) await lingerForQuiet(2_500, maxLingerMs);
+  if (maxLingerMs > 0) await lingerForQuiet(2_500, maxLingerMs, outputBefore);
   agent.disconnect();
   process.exit(failed ? 1 : 0);
 }
