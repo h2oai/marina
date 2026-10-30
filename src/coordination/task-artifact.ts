@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { canonicalFederationJson } from "../net/federation-crypto";
+import type { ArtifactEvidencePlan, auditArtifactEvidence } from "./task-artifact-evidence";
 
 export type ArtifactValue =
   | null
@@ -13,9 +14,16 @@ export type ArtifactValue =
 
 export type ArtifactEdit =
   | { op: "set" | "append"; path: string; value: ArtifactValue }
-  | { op: "replace"; path: string; value: ArtifactValue; reason: string }
+  | { op: "replace"; path: string; value: ArtifactValue; reason: string; scopePath?: string }
   | { op: "remove"; path: string; reason: string }
-  | { op: "source"; path: string; ref: string; pick: Record<string, string> }
+  | {
+      op: "source";
+      path: string;
+      ref: string;
+      pick: Record<string, string>;
+      /** Explicitly retain this selection as a requirement in the same revision. */
+      coverage?: { id: string; requirement: string; scopePath?: string };
+    }
   | {
       op: "project";
       path: string;
@@ -23,6 +31,7 @@ export type ArtifactEdit =
       /** Omit to render the entries already recorded for the current scope. */
       entries?: ArtifactValue[];
       reason: string;
+      followScope?: boolean;
     };
 
 export type ResolvedArtifactEdit = Exclude<ArtifactEdit, { op: "source" }>;
@@ -32,6 +41,9 @@ export interface ArtifactRuleInput {
   path: string;
   op: "required" | "eq" | "oneOf" | "lte" | "gte" | "unique" | "setEquals" | "includesSource";
   expected?: ArtifactValue;
+  requirement?: string;
+  /** Carry the requirement forward as needing renewed evidence when this context changes. */
+  scopePath?: string;
   /** A rule applies only in this authored context; older rules remain in history. */
   when?: { path: string; equals: ArtifactValue };
   /** Evidence coverage compares selected source values, not an authored expected answer. */
@@ -49,6 +61,7 @@ export interface ArtifactRule extends Omit<ArtifactRuleInput, "source"> {
 export interface ArtifactProjection {
   path: string;
   scopePath: string;
+  followScope?: boolean;
   batches: Array<{ scope: ArtifactValue; entries: ArtifactValue[]; revision: number }>;
 }
 
@@ -57,6 +70,8 @@ export interface TaskArtifact {
   pathRevisions: Record<string, number>;
   rules: ArtifactRule[];
   projections?: ArtifactProjection[];
+  evidencePlan?: ArtifactEvidencePlan;
+  evidenceVersions?: Record<string, string | null>;
   lastEdit?: {
     authorId: string;
     operations: Array<{
@@ -80,14 +95,40 @@ export interface ArtifactCheckReport {
     expected?: ArtifactValue;
     actual?: ArtifactValue;
     evidence: string;
+    requirement?: string;
+    needsRenewal?: boolean;
     status: "unverified" | "matches" | "discrepancy" | "inactive";
   }>;
-  coverage?: { declared: number; active: number; matched: number; complete: boolean | null };
+  evidence?: ReturnType<typeof auditArtifactEvidence>;
+  coverage?: {
+    declared: number;
+    active: number;
+    matched: number;
+    /** Carried requirements that still need evidence for the current context. */
+    needsRenewal?: number;
+    complete: boolean | null;
+  };
   projections?: Array<{
     path: string;
     scopePath: string;
     status: "matches" | "discrepancy" | "unverified";
   }>;
+  scope: string;
+}
+
+export interface ArtifactFeedback {
+  advisory: true;
+  checkedRevision: number;
+  outcome: ArtifactCheckReport["outcome"];
+  findings: Array<{
+    id: string;
+    path: string;
+    message: string;
+    /** Suggestions are never applied automatically. */
+    edits?: ArtifactEdit[];
+  }>;
+  /** Interpretive limits of matching checks, not outstanding mechanical requirements. */
+  notices?: Array<{ id: string; path: string; message: string }>;
   scope: string;
 }
 
@@ -162,7 +203,19 @@ export function editTaskArtifact(
   if (!Array.isArray(edits) || !edits.length) throw new Error("Supply a nonempty edits array.");
   const result = structuredClone(artifact);
   const changed = new Set<string>();
-  for (const input of edits) {
+  for (const requested of edits) {
+    const before = structuredClone(result.value);
+    const input =
+      requested?.op === "replace" && requested.scopePath !== undefined
+        ? {
+            op: "project" as const,
+            path: requested.path,
+            scopePath: requested.scopePath,
+            entries: requested.value,
+            reason: requested.reason,
+            followScope: true,
+          }
+        : requested;
     let edit: Exclude<ResolvedArtifactEdit, { op: "project" }>;
     if (input?.op === "project") {
       artifactPath(input.scopePath);
@@ -183,6 +236,22 @@ export function editTaskArtifact(
         projection = { path: input.path, scopePath: input.scopePath, batches: [] };
         (result.projections ??= []).push(projection);
       }
+      if (input.followScope !== undefined) {
+        if (typeof input.followScope !== "boolean") throw new Error("followScope must be boolean.");
+        if (input.followScope !== projection.followScope) changed.add(input.path);
+        projection.followScope = input.followScope;
+      }
+      if (
+        result.projections!.some(
+          (other) =>
+            other !== projection &&
+            (projection.followScope || other.followScope) &&
+            (artifactPathsOverlap(other.path, projection.path) ||
+              artifactPathsOverlap(other.path, projection.scopePath) ||
+              artifactPathsOverlap(other.scopePath, projection.path)),
+        )
+      )
+        throw new Error("Following projections must have independent output and scope paths.");
       const batch = projection.batches.find((entry) => same(entry.scope, scope.value));
       if (input.entries !== undefined) {
         if (!Array.isArray(input.entries)) throw new Error("Projection entries must be an array.");
@@ -218,7 +287,13 @@ export function editTaskArtifact(
       if (typeof edit.reason !== "string" || !edit.reason.trim())
         throw new Error("Replacing a container or removing content requires an explicit reason.");
     }
-    if (edit.op !== "remove") validateArtifactValue(edit.value);
+    if (edit.op !== "remove") {
+      if (!Object.hasOwn(edit, "value"))
+        throw new Error(
+          `${edit.op} requires value. append adds one value; use separate append edits for multiple entries. entries belongs to project. No edit was applied.`,
+        );
+      validateArtifactValue(edit.value);
+    }
     // Check against the original history, not earlier edits in this same atomic batch.
     const conflict = Object.entries(artifact.pathRevisions).find(
       ([path, revision]) => revision > baseRevision && artifactPathsOverlap(path, edit.path),
@@ -253,7 +328,18 @@ export function editTaskArtifact(
         changed.add(edit.path);
       }
     } else {
-      if (prior.present && same(prior.value, edit.value)) continue;
+      if (prior.present && same(prior.value, edit.value)) {
+        followProjectionEdits(
+          result,
+          artifact,
+          before,
+          edit.path,
+          baseRevision,
+          nextRevision,
+          changed,
+        );
+        continue;
+      }
       if (
         edit.op === "set" &&
         prior.present &&
@@ -261,7 +347,7 @@ export function editTaskArtifact(
         typeof prior.value === "object"
       )
         throw new Error(
-          "Set edits a value or adds a member. Edit child paths to preserve existing content, or use replace with a reason.",
+          `Set edits a value or adds a member. Edit child paths to preserve existing content. To replace ${edit.path || "root"}, retry with op:"replace", the same path/value, and a reason explaining the replacement.`,
         );
       if (key === undefined) result.value = structuredClone(edit.value);
       else {
@@ -273,16 +359,100 @@ export function editTaskArtifact(
       }
       changed.add(edit.path);
     }
+    followProjectionEdits(result, artifact, before, edit.path, baseRevision, nextRevision, changed);
   }
   validateArtifactValue(result.value);
   for (const path of changed) result.pathRevisions[path] = nextRevision;
   return { artifact: result, changedPaths: [...changed] };
 }
 
+/** Following a context is explicitly enabled; unknown contexts stay visibly unverified. */
+function followProjectionEdits(
+  result: TaskArtifact,
+  original: TaskArtifact,
+  before: ArtifactValue,
+  editedPath: string,
+  baseRevision: number,
+  nextRevision: number,
+  changed: Set<string>,
+): void {
+  for (const projection of result.projections ?? []) {
+    if (!projection.followScope) continue;
+    const scope = artifactAt(result.value, projection.scopePath);
+    const previous = artifactAt(before, projection.scopePath);
+    const outputEdited = artifactPathsOverlap(editedPath, projection.path);
+    const scopeChanged =
+      scope.present !== previous.present ||
+      (scope.present && previous.present && !same(scope.value, previous.value));
+    if (!outputEdited && !scopeChanged) continue;
+    if (
+      Object.entries(original.pathRevisions).some(
+        ([path, revision]) =>
+          revision > baseRevision &&
+          (artifactPathsOverlap(path, projection.path) ||
+            artifactPathsOverlap(path, projection.scopePath)),
+      )
+    )
+      throw new Error("Scoped output or context changed; read it before retrying.");
+    if (!scope.present)
+      throw new Error(
+        "A following projection needs its scope; disable followScope before removing it.",
+      );
+    if (outputEdited) {
+      const output = artifactAt(result.value, projection.path);
+      if (!output.present || !Array.isArray(output.value))
+        throw new Error(
+          "A following projection needs an array output; disable followScope before removing it.",
+        );
+      const batch = projection.batches.find((entry) => same(entry.scope, scope.value));
+      if (!batch || !same(batch.entries, output.value)) {
+        projection.batches = projection.batches.filter((entry) => !same(entry.scope, scope.value));
+        projection.batches.push({
+          scope: structuredClone(scope.value),
+          entries: structuredClone(output.value),
+          revision: nextRevision,
+        });
+        changed.add(projection.path);
+      }
+    } else {
+      const batch = projection.batches.find((entry) => same(entry.scope, scope.value));
+      // An empty view for an unknown context is NOT recorded as an authored empty batch.
+      const update = editTaskArtifact(
+        { value: result.value, pathRevisions: {}, rules: [] },
+        [
+          {
+            op: "replace",
+            path: projection.path,
+            value: batch?.entries ?? [],
+            reason:
+              "Render the explicitly bound current context; retain other contexts in history.",
+          },
+        ],
+        0,
+        nextRevision,
+      );
+      result.value = update.artifact.value;
+      changed.add(projection.path);
+    }
+  }
+}
+
 export function validateArtifactRule(rule: ArtifactRuleInput): void {
   if (!rule || typeof rule.id !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/.test(rule.id))
     throw new Error("A check needs a stable name, starting with a letter.");
   artifactPath(rule.path);
+  if (
+    rule.requirement !== undefined &&
+    (typeof rule.requirement !== "string" || !rule.requirement.trim())
+  )
+    throw new Error("A requirement must be nonempty text.");
+  if (rule.scopePath !== undefined) {
+    artifactPath(rule.scopePath);
+    if (rule.op !== "includesSource" || rule.when?.path !== rule.scopePath)
+      throw new Error(
+        "Carried evidence requirements need includesSource and a matching context condition.",
+      );
+  }
   if (
     !["required", "eq", "oneOf", "lte", "gte", "unique", "setEquals", "includesSource"].includes(
       rule.op,
@@ -306,7 +476,9 @@ export function validateArtifactRule(rule: ArtifactRuleInput): void {
   if (["oneOf", "setEquals"].includes(rule.op) && !Array.isArray(rule.expected))
     throw new Error("oneOf and setEquals require an expected array.");
   if (["lte", "gte"].includes(rule.op) && typeof rule.expected !== "number")
-    throw new Error("Numeric checks require a finite expected number.");
+    throw new Error(
+      'Numeric checks require a finite expected number. Use expected:6, not expected:"6". No value was coerced; changing the check to required would only test presence.',
+    );
 }
 
 export function validateArtifactSelection(selection: {

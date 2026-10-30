@@ -14,7 +14,9 @@ export interface TaskArtifactFileAccess {
   read(path: string): Promise<{ content: string | null; version: string }>;
   /**
    * Atomically compare version AND hash before writing. Every workspace write, including
-   * ordinary writes and A→B→A, must advance the opaque version. Unmanaged external writes
+   * ordinary writes, A→B→A and path-identity changes, must advance the opaque version.
+   * Versions must distinguish a replaced or retargeted file from its predecessor.
+   * Unmanaged external writes
    * are outside this contract; a content hash alone cannot provide this guarantee.
    */
   compareAndWrite(
@@ -117,5 +119,6 @@ export async function editTaskArtifactFile(
     sha256: edited.sha256,
     content: edited.content,
     changedPaths: edited.changedPaths,
+    feedback: edited.feedback,
   };
 }

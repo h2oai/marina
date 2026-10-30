@@ -3,12 +3,15 @@
 
 import { createHash } from "node:crypto";
 import type { EvidenceSource } from "../decisions/evidence";
+import { tryLog } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import { canonicalFederationJson } from "../net/federation-crypto";
 import type { MarinaDB } from "../persistence/database";
 import type { TaskRow } from "../persistence/db-tasks";
 import {
   type ArtifactCheckReport,
   type ArtifactEdit,
+  type ArtifactFeedback,
   type ArtifactRule,
   type ArtifactRuleInput,
   artifactAt,
@@ -16,11 +19,21 @@ import {
   artifactRuleMatches,
   editTaskArtifact,
   type ResolvedArtifactEdit,
+  type TaskArtifact,
   validateArtifactRule,
   validateArtifactValue,
 } from "./task-artifact";
 import {
+  type ArtifactEvidencePlan,
+  auditArtifactEvidence,
+  evidenceReferenceBinding,
+  validateEvidencePlan,
+} from "./task-artifact-evidence";
+import { artifactFeedback } from "./task-artifact-feedback";
+import { renderArtifactHandoff } from "./task-artifact-handoff";
+import {
   type ArtifactReviewAnswer,
+  type ArtifactReviewer,
   type ArtifactReviewQuestion,
   artifactReviewPacket,
   compareArtifactReview,
@@ -28,6 +41,13 @@ import {
   ruleApplies,
   selectArtifactSource,
 } from "./task-artifact-review";
+import {
+  assessProseReview,
+  type ProseReviewAnswer,
+  type ProseReviewer,
+  type ProseReviewInput,
+  proseReviewPacket,
+} from "./task-prose-review";
 import type {
   CitationStatus,
   TaskWorkDocument,
@@ -43,7 +63,7 @@ import type {
 export type WorkActor = { id: string; name: string };
 export type WorkSourceResolver = (actor: WorkActor, ref: string) => EvidenceSource;
 
-/** Receipts are advisory and local: no judge calls, automatic approval or loop effects. */
+/** Local advisory receipt lifetime; fresh model reviews occur only on explicit request. */
 export const WORK_CHECK_TTL_MS = 60 * 60_000;
 const CHECK_SCOPE =
   "Only registered fields and declared constraints were checked. Source quotations are verified, but interpretation and completeness are not. This is not task approval.";
@@ -58,6 +78,7 @@ const empty = (): TaskWorkDocument => ({
 const digest = (value: unknown) =>
   createHash("sha256").update(canonicalFederationJson(value)).digest("hex");
 const has = (object: object, key: string) => Object.hasOwn(object, key);
+const logger = new Logger();
 
 function requireField(field: string): void {
   if (
@@ -112,9 +133,19 @@ function matches(actual: WorkValue, constraint: WorkConstraint): boolean {
  * changes an agent's prompts, wakes a peer, suppresses a message or grants standing.
  */
 export class TaskWork {
+  private readonly pendingProseReviews = new Map<
+    string,
+    Promise<ReturnType<TaskWork["recordProseReview"]>>
+  >();
+  private readonly pendingReviews = new Map<
+    string,
+    Promise<ReturnType<TaskWork["assessArtifact"]>>
+  >();
   constructor(
     private readonly db: MarinaDB,
     private readonly resolveSource: WorkSourceResolver,
+    private readonly reviewModel?: ArtifactReviewer,
+    private readonly reviewProseModel?: ProseReviewer,
   ) {}
 
   private task(taskId: number, actor: WorkActor): TaskRow {
@@ -199,7 +230,11 @@ export class TaskWork {
         ? {
             artifact: {
               value: artifact.value,
+              ...(artifact.evidencePlan ? { evidencePlan: artifact.evidencePlan } : {}),
               rules: artifact.rules.map((rule) => this.artifactRuleView(rule, actor)),
+              ...(revision === undefined
+                ? { feedback: this.inspectFeedback(taskId, actor, state.revision) }
+                : {}),
             },
           }
         : {}),
@@ -262,46 +297,66 @@ export class TaskWork {
     };
   }
 
+  /** Read-only, exact revision snapshot; no paraphrase, inference, or approval. */
+  renderHandoff(taskId: number, actor: WorkActor, revision?: number) {
+    const {
+      taskId: id,
+      revision: version,
+      content,
+      sha256,
+    } = this.renderArtifact(taskId, actor, revision);
+    return renderArtifactHandoff({ taskId: id, revision: version, content, sha256 });
+  }
+
+  /** Inspect caller-selected file bytes without requiring or changing a native mirror. */
+  auditArtifactFile(
+    taskId: number,
+    actor: WorkActor,
+    input: { target: { name: string; content: string }; plan: ArtifactEvidencePlan },
+  ) {
+    this.task(taskId, actor);
+    if (
+      !input?.target ||
+      typeof input.target.name !== "string" ||
+      !input.target.name.trim() ||
+      typeof input.target.content !== "string"
+    )
+      throw new Error("Supply the actual file name and content for the evidence audit.");
+    const value: unknown = JSON.parse(input.target.content);
+    validateArtifactValue(value);
+    const report = auditArtifactEvidence(value, input.plan, (ref) =>
+      this.resolveSource(actor, ref),
+    );
+    return {
+      taskId,
+      target: {
+        name: input.target.name,
+        sha256: createHash("sha256").update(input.target.content).digest("hex"),
+      },
+      report,
+    };
+  }
+
   /** Explicit publication: selected readable source values become shared artifact content. */
   publishArtifactSource(
     taskId: number,
     actor: WorkActor,
     revision: number,
-    input: { path: string; ref: string; pick: Record<string, string> },
+    input: Omit<Extract<ArtifactEdit, { op: "source" }>, "op">,
   ) {
     return this.editArtifact(taskId, actor, revision, [{ ...input, op: "source" }]);
   }
 
   private resolveArtifactEdit(actor: WorkActor, input: ArtifactEdit): ResolvedArtifactEdit {
     if (input?.op !== "source") return input as ResolvedArtifactEdit;
-    if (
-      typeof input.ref !== "string" ||
-      !input.pick ||
-      typeof input.pick !== "object" ||
-      Array.isArray(input.pick) ||
-      !Object.keys(input.pick).length
-    )
-      throw new Error(
-        "Supply a source reference and a nonempty pick map of output names to source JSON Pointers.",
-      );
     const source = this.resolveSource(actor, input.ref);
     if (source.text === undefined)
       throw new Error("Source unavailable to this reader; nothing was published.");
-    let value: unknown;
-    try {
-      value = JSON.parse(source.text);
-    } catch {
-      value = source.text;
-    }
-    validateArtifactValue(value);
-    const selected = Object.fromEntries(
-      Object.entries(input.pick).map(([key, path]) => {
-        const found = artifactAt(value, path);
-        if (!found.present) throw new Error(`Source path not found: ${path}`);
-        return [key, found.value];
-      }),
-    );
-    return { op: "append", path: input.path, value: selected };
+    return {
+      op: "append",
+      path: input.path,
+      value: selectArtifactSource(source, input, { allowHistorical: input.coverage === undefined }),
+    };
   }
 
   editArtifact(taskId: number, actor: WorkActor, baseRevision: number, edits: ArtifactEdit[]) {
@@ -316,12 +371,55 @@ export class TaskWork {
         throw new Error("Invalid artifact base revision.");
       this.load(taskId, baseRevision);
       if (!Array.isArray(edits) || !edits.length) throw new Error("Supply a nonempty edits array.");
+      const coverageIds = edits.flatMap((edit) =>
+        edit?.op === "source" && edit.coverage ? [edit.coverage.id] : [],
+      );
+      if (new Set(coverageIds).size !== coverageIds.length)
+        throw new Error("Each evidence requirement in a batch needs a distinct coverage id.");
       const edited = editTaskArtifact(
         state.document.artifact ?? { value: null, pathRevisions: {}, rules: [] },
         edits.map((edit) => this.resolveArtifactEdit(actor, edit)),
         baseRevision,
         state.revision + 1,
       );
+      for (const edit of edits) {
+        if (edit.op !== "source" || edit.coverage === undefined) continue;
+        if (baseRevision !== state.revision)
+          throw new Error(
+            "Coverage declarations need the current revision; read before retrying. No edit was applied.",
+          );
+        const coverage = edit.coverage;
+        if (!coverage || typeof coverage.requirement !== "string" || !coverage.requirement.trim())
+          throw new Error("Coverage needs an id and a nonempty requirement.");
+        const context =
+          coverage.scopePath === undefined
+            ? undefined
+            : artifactAt(edited.artifact.value, coverage.scopePath);
+        if (context && !context.present) throw new Error("Coverage context is missing.");
+        const input: ArtifactRuleInput = {
+          id: coverage.id,
+          path: edit.path,
+          op: "includesSource",
+          requirement: coverage.requirement,
+          selection: { ref: edit.ref, pick: edit.pick },
+          ...(context?.present
+            ? {
+                scopePath: coverage.scopePath,
+                when: { path: coverage.scopePath!, equals: context.value },
+              }
+            : {}),
+        };
+        const rule = this.buildArtifactRule(taskId, actor, edited.artifact, input);
+        const previous = edited.artifact.rules.find((entry) => entry.id === rule.id);
+        if (!previous || digest(previous) !== digest(rule)) {
+          edited.artifact.rules = [
+            ...edited.artifact.rules.filter((entry) => entry.id !== rule.id),
+            rule,
+          ];
+          if (!edited.changedPaths.includes(edit.path)) edited.changedPaths.push(edit.path);
+          edited.artifact.pathRevisions[edit.path] = state.revision + 1;
+        }
+      }
       if (!state.document.artifact && !edited.changedPaths.length) {
         edited.changedPaths.push("");
         edited.artifact.pathRevisions[""] = state.revision + 1;
@@ -356,6 +454,74 @@ export class TaskWork {
         ...this.renderArtifact(taskId, actor),
         changedPaths: edited.changedPaths,
         rebased: baseRevision !== state.revision,
+        feedback: this.inspectFeedback(taskId, actor, this.load(taskId).revision),
+      };
+    });
+  }
+
+  /** Bind or remove an optional source-declared evidence plan; never changes the deliverable. */
+  declareArtifactEvidence(
+    taskId: number,
+    actor: WorkActor,
+    expectedRevision: number,
+    plan: ArtifactEvidencePlan | null,
+  ) {
+    return this.db.transaction(() => {
+      const task = this.task(taskId, actor);
+      if (!this.canEdit(task, actor))
+        throw new Error("Only the task creator or current claimant can bind an evidence plan.");
+      const state = this.load(taskId);
+      if (state.revision !== expectedRevision)
+        throw new Error("Work changed; read before binding evidence requirements.");
+      const artifact = state.document.artifact;
+      if (!artifact) throw new Error("Create the artifact before binding evidence requirements.");
+      if (plan !== null) validateEvidencePlan(plan);
+      const versions =
+        plan === null
+          ? undefined
+          : Object.fromEntries(
+              [
+                ...new Set([plan.requirements.ref, ...plan.sources.map((source) => source.ref)]),
+              ].map((ref) => {
+                const source = this.resolveSource(actor, ref);
+                const prior =
+                  artifact.evidencePlan &&
+                  evidenceReferenceBinding(artifact.evidencePlan, ref) ===
+                    evidenceReferenceBinding(plan, ref)
+                    ? (artifact.evidenceVersions?.[ref] ?? null)
+                    : null;
+                return [ref, source.status === "current" ? (source.version ?? null) : prior];
+              }),
+            );
+      if (
+        digest([artifact.evidencePlan ?? null, artifact.evidenceVersions ?? null]) ===
+        digest([plan, versions ?? null])
+      )
+        return {
+          revision: state.revision,
+          changed: false,
+          feedback: this.inspectFeedback(taskId, actor, state.revision),
+        };
+      if (plan === null) {
+        delete artifact.evidencePlan;
+        delete artifact.evidenceVersions;
+      } else {
+        artifact.evidencePlan = structuredClone(plan);
+        artifact.evidenceVersions = versions;
+      }
+      const row = this.db.appendTaskWorkRevision({
+        taskId,
+        expectedRevision,
+        authorId: actor.id,
+        authorName: actor.name,
+        action: "artifact-evidence",
+        document: JSON.stringify(state.document),
+      });
+      if (!row) throw new Error("Work changed while binding evidence requirements.");
+      return {
+        revision: row.revision,
+        changed: true,
+        feedback: this.inspectFeedback(taskId, actor, row.revision),
       };
     });
   }
@@ -373,6 +539,29 @@ export class TaskWork {
       throw new Error("Work changed; read the current artifact before declaring a check.");
     const artifact = state.document.artifact;
     if (!artifact) throw new Error("Create the artifact before declaring a check.");
+    const existing = artifact.rules.find((rule) => rule.id === input.id);
+    const rule = this.buildArtifactRule(taskId, actor, artifact, input);
+    if (existing && digest(existing) === digest(rule))
+      return { revision: state.revision, changed: false };
+    artifact.rules = [...artifact.rules.filter((entry) => entry.id !== rule.id), rule];
+    const row = this.db.appendTaskWorkRevision({
+      taskId,
+      expectedRevision,
+      authorId: actor.id,
+      authorName: actor.name,
+      action: "artifact-rule",
+      document: JSON.stringify(state.document),
+    });
+    if (!row) throw new Error("Artifact changed while saving its check.");
+    return { revision: row.revision, changed: true };
+  }
+
+  private buildArtifactRule(
+    taskId: number,
+    actor: WorkActor,
+    artifact: TaskArtifact,
+    input: ArtifactRuleInput,
+  ): ArtifactRule {
     const authorId = this.db.durableEntityKey(actor.id);
     const existing = artifact.rules.find((rule) => rule.id === input.id);
     if (
@@ -381,11 +570,14 @@ export class TaskWork {
       !this.canEdit(this.task(taskId, actor), actor)
     )
       throw new Error("Only a check's author or task owner can update it.");
+    validateArtifactRule(input);
     const rule: ArtifactRule = {
       id: input.id,
       path: input.path,
       op: input.op,
       authorId,
+      ...(input.requirement !== undefined ? { requirement: input.requirement } : {}),
+      ...(input.scopePath !== undefined ? { scopePath: input.scopePath } : {}),
       ...(input.expected !== undefined ? { expected: input.expected } : {}),
       ...(input.when ? { when: input.when } : {}),
     };
@@ -414,19 +606,7 @@ export class TaskWork {
         end: start + input.source.quote.length,
       };
     }
-    if (existing && digest(existing) === digest(rule))
-      return { revision: state.revision, changed: false };
-    artifact.rules = [...artifact.rules.filter((entry) => entry.id !== rule.id), rule];
-    const row = this.db.appendTaskWorkRevision({
-      taskId,
-      expectedRevision,
-      authorId: actor.id,
-      authorName: actor.name,
-      action: "artifact-rule",
-      document: JSON.stringify(state.document),
-    });
-    if (!row) throw new Error("Artifact changed while saving its check.");
-    return { revision: row.revision, changed: true };
+    return rule;
   }
 
   /** One atomic declaration avoids each tool in a model's batch invalidating the next. */
@@ -502,6 +682,156 @@ export class TaskWork {
     });
   }
 
+  /** Caller supplies actual prose explicitly; the server never reads a host/guest file path. */
+  reviewProse(taskId: number, actor: WorkActor, request: ProseReviewInput) {
+    const task = this.task(taskId, actor);
+    const state = this.load(taskId);
+    return proseReviewPacket({
+      taskId,
+      revision: state.revision,
+      requirements: {
+        title: task.title,
+        description: task.description,
+        prerequisites: task.prerequisites,
+        deliverables: task.deliverables,
+      },
+      artifact: state.document.artifact?.value ?? null,
+      reader: this.db.durableEntityKey(actor.id),
+      request,
+      resolve: (ref) => this.resolveSource(actor, ref),
+    });
+  }
+
+  async reviewFreshProse(
+    taskId: number,
+    actor: WorkActor,
+    input: ProseReviewInput & { model?: string },
+  ) {
+    const packet = this.reviewProse(taskId, actor, input);
+    const model = input.model ?? "marina/default";
+    if (typeof model !== "string" || !model.trim())
+      throw new Error("Supply a nonempty model name.");
+    const cacheKey = digest(["fresh-task-prose-review-v1", packet.fingerprint, model]);
+    const cached = this.db.getTaskWorkCheck(taskId, actor.id, cacheKey, Date.now());
+    if (cached)
+      return {
+        receiptId: cached.id,
+        reused: true,
+        report: JSON.parse(cached.report) as ReturnType<TaskWork["recordProseReview"]>["report"],
+        createdAt: cached.created_at,
+        expiresAt: cached.expires_at,
+      };
+    const pending = this.pendingProseReviews.get(cacheKey);
+    if (pending) return pending;
+    if (!this.reviewProseModel)
+      throw new Error(
+        "Fresh prose review is not configured; packet inspection and submission remain available.",
+      );
+    const review = this.reviewProseModel;
+    const run = async () => {
+      const result = await review(packet, model);
+      return this.recordProseReview(taskId, actor, input, packet.fingerprint, cacheKey, result);
+    };
+    const promise = run();
+    this.pendingProseReviews.set(cacheKey, promise);
+    try {
+      return await promise;
+    } finally {
+      this.pendingProseReviews.delete(cacheKey);
+    }
+  }
+
+  private recordProseReview(
+    taskId: number,
+    actor: WorkActor,
+    input: ProseReviewInput,
+    fingerprint: string,
+    cacheKey: string,
+    result: ProseReviewAnswer & { model: string },
+  ) {
+    return this.db.transaction(() => {
+      // Re-resolve task access, source status/content/access and work after the model await.
+      const packet = this.reviewProse(taskId, actor, input);
+      if (packet.fingerprint !== fingerprint)
+        throw new Error(
+          "Prose review context changed; no assessment was recorded. Read current text and sources.",
+        );
+      const report = {
+        ...assessProseReview(packet, result),
+        context: "fresh" as const,
+        reviewer: actor.name,
+        model: result.model,
+      };
+      const now = Date.now();
+      const receipt = this.db.putTaskWorkCheck({
+        taskId,
+        reviewerId: actor.id,
+        fingerprint: cacheKey,
+        report: JSON.stringify(report),
+        createdAt: now,
+        expiresAt: now + WORK_CHECK_TTL_MS,
+      });
+      return {
+        receiptId: receipt.id,
+        reused: false,
+        report,
+        createdAt: receipt.created_at,
+        expiresAt: receipt.expires_at,
+      };
+    });
+  }
+
+  /** Only explicit requests call a model; simultaneous identical requests share one call. */
+  async reviewFreshArtifact(
+    taskId: number,
+    actor: WorkActor,
+    input: { questions: ArtifactReviewQuestion[]; model?: string },
+  ) {
+    const packet = this.reviewArtifact(taskId, actor, input.questions);
+    if (packet.questions.some((question) => question.answerType === undefined))
+      throw new Error(
+        "Fresh review needs answerType on every question, taken from the task contract rather than the draft answer.",
+      );
+    const model = input.model ?? "marina/default";
+    if (typeof model !== "string" || !model.trim())
+      throw new Error("Supply a nonempty model name.");
+    const cacheKey = digest(["fresh-artifact-review-v2", packet.fingerprint, model]);
+    const cached = this.db.getTaskWorkCheck(taskId, actor.id, cacheKey, Date.now());
+    if (cached)
+      return {
+        receiptId: cached.id,
+        reused: true,
+        report: JSON.parse(cached.report) as ReturnType<TaskWork["assessArtifact"]>["report"],
+        createdAt: cached.created_at,
+        expiresAt: cached.expires_at,
+      };
+    const pending = this.pendingReviews.get(cacheKey);
+    if (pending) return pending;
+    if (!this.reviewModel)
+      throw new Error(
+        "Fresh artifact review is not configured; the evidence packet and ordinary task submission remain available.",
+      );
+    const review = this.reviewModel;
+    const run = async () => {
+      const result = await review(packet, model);
+      // Rebuild the packet after the await: source changes, ACL changes and edits invalidate it.
+      return this.assessArtifact(
+        taskId,
+        actor,
+        { fingerprint: packet.fingerprint, questions: input.questions, answers: result.answers },
+        Date.now(),
+        { cacheKey, model: result.model },
+      );
+    };
+    const promise = run();
+    this.pendingReviews.set(cacheKey, promise);
+    try {
+      return await promise;
+    } finally {
+      this.pendingReviews.delete(cacheKey);
+    }
+  }
+
   assessArtifact(
     taskId: number,
     actor: WorkActor,
@@ -511,6 +841,7 @@ export class TaskWork {
       answers: ArtifactReviewAnswer[];
     },
     now = Date.now(),
+    freshReview?: { cacheKey: string; model: string },
   ) {
     return this.db.transaction(() => {
       const packet = this.reviewArtifact(taskId, actor, input.questions);
@@ -532,15 +863,20 @@ export class TaskWork {
         revision: state.revision,
         reviewer: actor.name,
         checks,
-        outcome: checks.some((check) => check.status === "disagrees")
-          ? "disagreements"
-          : checks.some((check) => check.status === "unverified")
-            ? "unverified"
-            : "agrees-with-assessment",
+        context: freshReview ? ("fresh" as const) : ("caller-supplied" as const),
+        ...(freshReview ? { model: freshReview.model } : {}),
+        outcome: checks.some((check) => check.status === "invalid-answer")
+          ? "invalid-assessment"
+          : checks.some((check) => check.status === "disagrees")
+            ? "disagreements"
+            : checks.some((check) => check.status === "unverified")
+              ? "unverified"
+              : "agrees-with-assessment",
         scope:
           "Compared the draft with supplied source-cited answers. Quotations are checked, not their entailment or coverage. Different authors and an answer-free packet do not prove independent reasoning. This is advisory and does not approve the task.",
       };
-      const fingerprint = digest([packet.fingerprint, input.answers]);
+      const fingerprint =
+        freshReview?.cacheKey ?? digest(["typed-assessment-v2", packet.fingerprint, input.answers]);
       const cached = this.db.getTaskWorkCheck(taskId, actor.id, fingerprint, now);
       if (cached)
         return {
@@ -568,125 +904,192 @@ export class TaskWork {
     });
   }
 
+  /** Read-only handoff/status inspection, also used by successful edits. */
+  artifactStatus(taskId: number, actor: WorkActor) {
+    const { artifact, report } = this.evaluateArtifact(taskId, actor);
+    return { report, feedback: artifactFeedback(artifact, report) };
+  }
+
+  completionFeedback(taskId: number, actor: WorkActor) {
+    this.task(taskId, actor);
+    const state = this.load(taskId);
+    return state.document.artifact
+      ? this.inspectFeedback(taskId, actor, state.revision)
+      : undefined;
+  }
+
+  private inspectFeedback(taskId: number, actor: WorkActor, revision: number): ArtifactFeedback {
+    let feedback: ArtifactFeedback = {
+      advisory: true,
+      checkedRevision: revision,
+      outcome: "unverified",
+      findings: [
+        {
+          id: "feedback-unavailable",
+          path: "",
+          message:
+            "Advisory inspection could not finish. Your edit or submission is retained; artifact-check can report the error when you choose to investigate.",
+        },
+      ],
+      scope: "No completion claim is made. Feedback failures do not block ordinary work.",
+    };
+    tryLog(logger, "tasks", "Artifact feedback unavailable", () => {
+      feedback = this.artifactStatus(taskId, actor).feedback;
+    });
+    return feedback;
+  }
+
+  private evaluateArtifact(taskId: number, actor: WorkActor) {
+    const task = this.task(taskId, actor);
+    const state = this.load(taskId);
+    const artifact = state.document.artifact;
+    if (!artifact) throw new Error("Create an artifact before checking it.");
+    const sources = artifact.rules.map((rule) => {
+      const ref = rule.selection?.ref ?? rule.source?.ref;
+      return ref ? this.resolveSource(actor, ref) : undefined;
+    });
+    const evidence = artifact.evidencePlan
+      ? auditArtifactEvidence(
+          artifact.value,
+          artifact.evidencePlan,
+          (ref) => this.resolveSource(actor, ref),
+          artifact.evidenceVersions ?? {},
+        )
+      : undefined;
+    const fingerprint = digest([
+      "declared-task-artifact-v4",
+      evidence?.fingerprint ?? null,
+      state.revision,
+      artifact,
+      task.title,
+      task.description,
+      task.prerequisites,
+      task.deliverables,
+      sources.map((source) => (source ? [source.status, source.version ?? null] : null)),
+    ]);
+    const checks: ArtifactCheckReport["checks"] = artifact.rules.map((rule, index) => {
+      let actual: ReturnType<typeof artifactAt>;
+      try {
+        actual = artifactAt(artifact.value, rule.path);
+      } catch {
+        actual = { present: false };
+      }
+      const source = sources[index];
+      const evidence =
+        !rule.source && !rule.selection
+          ? "undeclared"
+          : source?.status !== "current"
+            ? source!.status
+            : source.version !==
+                (rule.selection ? rule.selectionVersion : rule.source!.sourceVersion)
+              ? "changed"
+              : "current";
+      const active = ruleApplies(artifact.value, rule);
+      let selection: ReturnType<typeof selectArtifactSource> | undefined;
+      if (rule.selection && evidence === "current")
+        selection = selectArtifactSource(source!, rule.selection);
+      const matches =
+        rule.op === "includesSource"
+          ? !!selection && actual.present && includesSourceSelection(actual.value, selection)
+          : artifactRuleMatches(artifact.value, rule);
+      return {
+        id: rule.id,
+        path: rule.path,
+        op: rule.op,
+        ...(rule.expected !== undefined ? { expected: rule.expected } : {}),
+        ...(selection ? { expected: selection } : {}),
+        ...(actual.present ? { actual: actual.value } : {}),
+        evidence,
+        ...(rule.requirement ? { requirement: rule.requirement } : {}),
+        ...(rule.scopePath !== undefined && !active ? { needsRenewal: true } : {}),
+        status: !active
+          ? "inactive"
+          : (rule.source || rule.selection) && evidence !== "current"
+            ? "unverified"
+            : matches
+              ? "matches"
+              : "discrepancy",
+      };
+    });
+    const projections: NonNullable<ArtifactCheckReport["projections"]> = (
+      artifact.projections ?? []
+    ).map((projection) => {
+      try {
+        const scope = artifactAt(artifact.value, projection.scopePath);
+        const batch = scope.present
+          ? projection.batches.find((entry) => digest(entry.scope) === digest(scope.value))
+          : undefined;
+        const actual = artifactAt(artifact.value, projection.path);
+        return {
+          path: projection.path,
+          scopePath: projection.scopePath,
+          status: !batch
+            ? "unverified"
+            : actual.present && digest(actual.value) === digest(batch.entries)
+              ? "matches"
+              : "discrepancy",
+        };
+      } catch {
+        return { path: projection.path, scopePath: projection.scopePath, status: "unverified" };
+      }
+    });
+    const active = checks.filter((check) => check.status !== "inactive");
+    const coverage = checks.filter(
+      (check) => check.op === "includesSource" && check.status !== "inactive",
+    );
+    const renewals = checks.filter(
+      (check) => check.op === "includesSource" && check.needsRenewal,
+    ).length;
+    const report: ArtifactCheckReport = {
+      contract: "declared-task-artifact-v1",
+      revision: state.revision,
+      checks,
+      projections,
+      ...(evidence ? { evidence } : {}),
+      coverage: {
+        declared: artifact.rules.filter((rule) => rule.op === "includesSource").length,
+        active: coverage.length,
+        matched: coverage.filter((check) => check.status === "matches").length,
+        ...(renewals ? { needsRenewal: renewals } : {}),
+        complete: renewals
+          ? false
+          : coverage.length
+            ? coverage.every((check) => check.status === "matches")
+            : null,
+      },
+      outcome:
+        evidence?.outcome === "discrepancies" ||
+        [...active, ...projections].some((check) => check.status === "discrepancy")
+          ? "discrepancies"
+          : evidence?.outcome === "unverified" ||
+              (!active.length && !projections.length && !evidence) ||
+              checks.some((check) => check.needsRenewal) ||
+              [...active, ...projections].some((check) => check.status === "unverified")
+            ? "unverified"
+            : "matches-declared-checks",
+      scope:
+        "Only listed active checks and recorded projections were evaluated. Coverage concerns declared source selections only; carried requirements remain incomplete until renewed. Null means no current or carried coverage requirements. Matching does not confirm semantic support, missing requirements or task approval. Use an answer-free review packet for a separate evidence assessment.",
+    };
+    return { artifact, report, fingerprint };
+  }
+
   checkArtifact(taskId: number, actor: WorkActor, fresh = false, now = Date.now()) {
     return this.db.transaction(() => {
-      const task = this.task(taskId, actor);
-      const state = this.load(taskId);
-      const artifact = state.document.artifact;
-      if (!artifact) throw new Error("Create an artifact before checking it.");
-      const sources = artifact.rules.map((rule) => {
-        const ref = rule.selection?.ref ?? rule.source?.ref;
-        return ref ? this.resolveSource(actor, ref) : undefined;
-      });
-      const fingerprint = digest([
-        "declared-task-artifact-v2",
-        state.revision,
-        artifact,
-        task.title,
-        task.description,
-        task.prerequisites,
-        task.deliverables,
-        sources.map((source) => (source ? [source.status, source.version ?? null] : null)),
-      ]);
+      const { artifact, report, fingerprint } = this.evaluateArtifact(taskId, actor);
       const cached = fresh
         ? undefined
         : this.db.getTaskWorkCheck(taskId, actor.id, fingerprint, now);
-      if (cached)
+      if (cached) {
+        const stored = JSON.parse(cached.report) as ArtifactCheckReport;
         return {
           receiptId: cached.id,
           reused: true,
           createdAt: cached.created_at,
           expiresAt: cached.expires_at,
-          report: JSON.parse(cached.report) as ArtifactCheckReport,
+          report: stored,
+          feedback: artifactFeedback(artifact, stored),
         };
-      const checks: ArtifactCheckReport["checks"] = artifact.rules.map((rule, index) => {
-        let actual: ReturnType<typeof artifactAt>;
-        try {
-          actual = artifactAt(artifact.value, rule.path);
-        } catch {
-          actual = { present: false };
-        }
-        const source = sources[index];
-        const evidence =
-          !rule.source && !rule.selection
-            ? "undeclared"
-            : source?.status !== "current"
-              ? source!.status
-              : source.version !==
-                  (rule.selection ? rule.selectionVersion : rule.source!.sourceVersion)
-                ? "changed"
-                : "current";
-        const active = ruleApplies(artifact.value, rule);
-        let selection: ReturnType<typeof selectArtifactSource> | undefined;
-        if (rule.selection && evidence === "current")
-          selection = selectArtifactSource(source!, rule.selection);
-        const matches =
-          rule.op === "includesSource"
-            ? !!selection && actual.present && includesSourceSelection(actual.value, selection)
-            : artifactRuleMatches(artifact.value, rule);
-        return {
-          id: rule.id,
-          path: rule.path,
-          op: rule.op,
-          ...(rule.expected !== undefined ? { expected: rule.expected } : {}),
-          ...(selection ? { expected: selection } : {}),
-          ...(actual.present ? { actual: actual.value } : {}),
-          evidence,
-          status: !active
-            ? "inactive"
-            : (rule.source || rule.selection) && evidence !== "current"
-              ? "unverified"
-              : matches
-                ? "matches"
-                : "discrepancy",
-        };
-      });
-      const projections: NonNullable<ArtifactCheckReport["projections"]> = (
-        artifact.projections ?? []
-      ).map((projection) => {
-        try {
-          const scope = artifactAt(artifact.value, projection.scopePath);
-          const batch = scope.present
-            ? projection.batches.find((entry) => digest(entry.scope) === digest(scope.value))
-            : undefined;
-          const actual = artifactAt(artifact.value, projection.path);
-          return {
-            path: projection.path,
-            scopePath: projection.scopePath,
-            status: !batch
-              ? "unverified"
-              : actual.present && digest(actual.value) === digest(batch.entries)
-                ? "matches"
-                : "discrepancy",
-          };
-        } catch {
-          return { path: projection.path, scopePath: projection.scopePath, status: "unverified" };
-        }
-      });
-      const active = checks.filter((check) => check.status !== "inactive");
-      const coverage = checks.filter(
-        (check) => check.op === "includesSource" && check.status !== "inactive",
-      );
-      const report: ArtifactCheckReport = {
-        contract: "declared-task-artifact-v1",
-        revision: state.revision,
-        checks,
-        projections,
-        coverage: {
-          declared: artifact.rules.filter((rule) => rule.op === "includesSource").length,
-          active: coverage.length,
-          matched: coverage.filter((check) => check.status === "matches").length,
-          complete: coverage.length ? coverage.every((check) => check.status === "matches") : null,
-        },
-        outcome: [...active, ...projections].some((check) => check.status === "discrepancy")
-          ? "discrepancies"
-          : (!active.length && !projections.length) ||
-              [...active, ...projections].some((check) => check.status === "unverified")
-            ? "unverified"
-            : "matches-declared-checks",
-        scope:
-          "Only listed active checks and recorded projections were evaluated. Coverage concerns declared source selections only; null means none are active. Matching does not confirm semantic support, missing requirements or task approval. Use an answer-free review packet for a separate evidence assessment.",
-      };
+      }
       const receipt = this.db.putTaskWorkCheck({
         taskId,
         reviewerId: actor.id,
@@ -701,6 +1104,7 @@ export class TaskWork {
         createdAt: receipt.created_at,
         expiresAt: receipt.expires_at,
         report,
+        feedback: artifactFeedback(artifact, report),
       };
     });
   }

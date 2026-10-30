@@ -42,7 +42,7 @@ export function retryDelayMs(attempt: number, baseMs: number, random = Math.rand
 }
 
 const NETWORK =
-  /fetch failed|network|socket hang up|other side closed|\bterminated\b|connection (?:error|reset|refused|closed)|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EPIPE|UND_ERR/i;
+  /fetch failed|network|socket hang up|other side closed|\bterminated\b|connection (?:error|reset|refused|(?:was )?closed)|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EPIPE|UND_ERR/i;
 const SERVER = /\b(?:internal server error|bad gateway|service unavailable|gateway time-?out)\b/i;
 
 export type FailureKind =

@@ -24,7 +24,7 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Resident agents, roles, traits | core | Seeded by the world; `agent spawn` | src/agent |
 | Channels and DMs | core | `channel`, `tell` | src/engine |
 | Tasks | core | `task` | src/engine |
-| Shared task work, structured deliverables and declared checks | experimental | Optional `task work`; advisory, no agent-loop or approval changes | src/coordination |
+| Shared task work, structured deliverables and declared checks | experimental | Optional `task work`; evidence audits, scoped edits, actual-text prose assessment and advisory feedback; fresh model review only on request | src/coordination |
 | Memory (canonical records, unified context) | core | Always on | src/memory |
 | MCP exposure (world tools, capabilities) | core | `MCP_PORT` | src/net/mcp |
 | Model API (`/v1`, passthru) | core | `MODEL_API_KEYS` or `MARINA_OPEN_API=true` | src/net/model-api |

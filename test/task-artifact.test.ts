@@ -144,6 +144,20 @@ describe("structured task deliverables", () => {
     ).toContain("no blocking");
   });
 
+  test("append using project entries returns an actionable error and preserves the entire batch", () => {
+    initial();
+    const before = revision();
+    const malformed = JSON.parse(
+      '{"op":"append","path":"/decisions/0/citations","entries":[{"doc_id":"source","quote":"Exact supporting source."}]}',
+    );
+    expect(() => edit([{ op: "set", path: "/phase", value: 2 }, malformed])).toThrow(
+      "append requires value",
+    );
+    expect(revision()).toBe(before);
+    expect(render().phase).toBe(1);
+    expect(render().decisions[0].citations).toHaveLength(1);
+  });
+
   test("idempotent appends and unchanged edits create no extra revision", () => {
     initial();
     const before = revision();
@@ -357,6 +371,12 @@ describe("structured task deliverables", () => {
     });
     expect(JSON.parse(file!)).toEqual({ items: [{ value: 37, citations: ["peer evidence"] }] });
     expect(updated.content).toBe(file!);
+    expect(updated.feedback).toMatchObject({
+      advisory: true,
+      checkedRevision: updated.revision,
+      outcome: "unverified",
+      findings: expect.arrayContaining([expect.objectContaining({ id: "coverage-undeclared" })]),
+    });
     const before = revision();
     await expect(
       editTaskArtifactFile(access, {

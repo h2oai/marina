@@ -59,8 +59,18 @@ source-version citations, collaborator proposals and deterministic advisory chec
 to existing tasks. It has no agent-loop hooks or automatic review/approval behavior.
 The existing task creator/current claimants own draft edits; other readers can
 contribute proposals and evidence. Sources are resolved under the reader's current
-ACL before views or receipt reuse. Only reference/version/quotation offsets are
-stored, not private source text. A receipt binds the reader, revision, task criteria,
+ACL before views or receipt reuse. Scalar citations store reference/version/quotation
+offsets; explicit artifact `source` edits publish selected content to task readers.
+Source edits can atomically retain evidence-coverage requirements. Scoped array
+replacements can opt into following context changes, preserving earlier batches;
+unknown contexts remain unverified. Edits, handoff views and submission responses
+return advisory gaps without creating an approval condition. Typed review packets
+omit draft values. Optional set questions select their criterion and candidate
+universe from current readable sources, require cited inclusion/exclusion for
+every candidate, and compare unique sets independently of ordering; uncertainty
+stays unverified. Only explicit `artifact-review-fresh` requests call a model in
+a new context, reusing unchanged receipts and rejecting changes during inference.
+A receipt binds the reader, revision, task criteria,
 source state and check implementation, expires after one hour and can be refreshed
 explicitly. Migration 185 adds `task_work_revisions` and `task_work_checks`; the
 former preserves revision history, the latter is recomputable. Account erasure is
@@ -247,3 +257,36 @@ answers already disagree.
 
 `off` everywhere is byte-identical: no call, no field, the same prompts (`test/forecast-arbiter.test.ts`,
 `test/arbiter-verify.test.ts`). The core is pure and tested in `test/arbiter.test.ts`.
+
+Task-work handoff rendering (`task-artifact-handoff.ts`) is a read-only Markdown
+projection of the exact authored JSON at a named revision. It does not synthesize
+current-state prose or validate source currency. The optional client publication
+helper replaces only a named snapshot section using artifact revision/hash and
+journal version/hash guards; outside history is preserved, malformed/nested
+sections are refused, and equal bytes cause no write. Snapshots remain explicitly
+historical when newer revisions appear. No scheduler, completion or approval
+path calls this helper automatically.
+
+The optional `artifact-evidence` plan maps a readable source contract's full
+requirement list to artifact entries and caller-selected fact quotations. Checks
+inspect every selected citation, including extras, and complete per-entry fact
+bundles. Source versions are bound at declaration and stored internally; changed
+sources require explicit renewal. Public views and report fingerprints exclude
+expected private versions. Each read rechecks source access. Advisory feedback
+does not establish entailment, trigger a model, edit values or gate completion.
+
+Optional `prose-review` and `prose-review-fresh` inspect explicitly supplied actual handoff
+text (`task-prose-review.ts`, `task-prose-model-review.ts`). They use a separate candidate-
+aware packet; the existing answer-free artifact reviewer retains its independent packet
+contract. Prose receipts bind text bytes, task requirements, native revision, requesting
+reader and accessible source versions. Source/task/work changes across the model await
+invalidate the result; simultaneous identical calls share inference and current receipts
+expire normally. Exact target/source quotation checks are provenance checks, not semantic
+certification. Missing source access cannot yield a verified result. The optional
+`task-prose-file.ts` adapter rechecks a caller-owned file version/hash before and after
+review without reading server host paths or writing files. Neither review changes task
+submission, scheduler behavior, agent prompts, peer wakes or approval.
+
+An evidence-plan quotation from an unlisted or ambiguous original is unverified. It is
+not labeled false merely because the author's plan lacks that readable original. An
+actual mismatch against a selected readable original remains a discrepancy.

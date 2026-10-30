@@ -660,3 +660,39 @@ the PTY test drives the production terminal renderer through real raw input, Uni
 paste, resizing and shell restoration; Windows skips the unsupported Bun PTY fixture. The PTY
 fixture does not call a model or a world server. Combine it with live coding qualification for
 separate renderer and coding-outcome evidence; neither alone proves a complete daily workflow.
+
+### Complete task qualification
+
+`bun run qualify:tasks --input audited-input.json --output report.json` evaluates a frozen
+task suite and exits with status 1 unless every planned run and phase passes. This command
+scores saved evidence; it does not run agents or call a provider. Keep task corpora, model
+traces, audited inputs and qualification reports in the private audit workspace.
+
+The input contains `planned` (`id`, `caseId`, `phases`), externally authored `contracts`
+(`CompletionContract` in `benchmarks/task-completion.ts`), and `attempts`. Each attempt has
+an `id`, audited `evidence` flags, and `phases` containing `caseId`, `phase`, `submission`,
+`journal` and an external `review` with `status` and `findings`. Infrastructure flags are
+`firstAttempt`, `freshDatabase`, `sourceIntegrity`, `restart`, `handoff` and
+`executionComplete`. Establish these from captured runtime evidence, not worker statements.
+The CLI validates the input and computes scores; it cannot attest the provenance of supplied
+flags or reviews.
+
+Freeze the run manifest, source files, expected values and evidence rubric before execution.
+Publish field meanings and supporting-fact obligations to workers while keeping answers
+private. Each decision declares alternative sufficient fact bundles; every fact in at least
+one bundle must be supported by valid quotations. A fact may have multiple equivalent
+source passages. Independently review those alternatives before running: a private preference
+for one sentence must not turn equivalent support into a failure. Quote validity alone does
+not establish entailment. The finite fact map is not a general semantic judge.
+
+All values, source support, schema, identity, dependencies, unresolved blockers, current-scope
+supersessions and journal markers must pass. An external source-based review must additionally
+confirm reasoning, absence of obsolete claims, and actionable current-state/handoff prose.
+Missing or pending review remains unqualified. A passing native artifact check cannot replace
+any externally declared requirement. This qualification gate does not change runtime agent
+scheduling, optional tool use or submission permissions.
+
+Retain every first attempt, including missing phases and execution failures. Report partial
+scores diagnostically, but require complete success across every phase for qualification.
+After inspecting a failure, retain that task as a regression; use untouched tasks for the next
+fresh qualification. Success applies to the frozen suite, not arbitrary-task reliability.

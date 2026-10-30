@@ -3,8 +3,10 @@
 `task work` is an experimental, optional place to maintain a task's decisions,
 citations and proposed edits. It helps participants see which evidence supports a
 field and reuse a current result for declared checks. People and agents use the
-same commands. It does not run another model, approve a task, change agent loops,
-or require a new approval step. Ordinary `task submit` and `task approve` continue
+same commands. Edits and checks make no model calls. An explicit
+`artifact-review-fresh` request can ask a configured model in a separate context.
+Neither path approves a task, changes agent loops or requires a new approval step.
+Ordinary `task submit` and `task approve` continue
 to work whether or not a task has a work record.
 
 Start with an existing task that you created or currently claim. In this example,
@@ -104,7 +106,7 @@ resolved before reuse. A receipt expires after one hour; `task work 7 check fres
 recomputes immediately. New evidence must be attached to the record to be checked;
 these commands do not monitor outside systems. Retired sources do not invalidate
 current receipts. No background checker, peer wake-up, reply suppression, model
-call or additional turn/token limit is introduced.
+call or additional turn/token limit is introduced by these checks.
 
 Work revisions and receipts survive restart and world export/import. Schema 185
 adds their tables without modifying existing tasks or claims. Account erasure
@@ -145,6 +147,25 @@ It is different from scalar `cite`, which retains a reference and rechecks the
 reader's source access. An inaccessible source or missing selection aborts the
 entire batch. Existing citation entries remain intact. A literal `append` is also
 available for authored values; it does not verify a quotation.
+
+To attach evidence and remember its coverage requirement in one atomic edit, add
+`coverage`. The stable ID identifies the requirement; use a different ID for each
+required source selection. `requirement` explains what the task needs, while the
+optional `scopePath` binds it to the current context:
+
+```text
+task work 7 artifact-source 2 {"path":"/items/0/citations","ref":"note:42","pick":{"doc_id":"/doc_id","quote":"/statements/0"},"coverage":{"id":"capacity-support","requirement":"Include the current measured capacity","scopePath":"/phase"}}
+```
+
+This copies exact values and records the `includesSource` rule in the same
+revision. If either fails, neither is saved. Repeating it unchanged is idempotent.
+When the context changes, feedback marks this requirement as needing renewed
+evidence and coverage stays incomplete until every carried requirement is renewed
+or retired. Attach the new selection using the same coverage ID, or deliberately
+retire the requirement. The earlier rule remains in revision history. Ordinary
+`source` edits without `coverage` still work without declaring a requirement.
+They may deliberately copy accessible historical sources; coverage declarations
+require current evidence and do not certify historical copies as current support.
 
 Declare checks on the deliverable itself:
 
@@ -187,6 +208,28 @@ existing native artifact.
 These operations remain optional. No background verification, mandatory review,
 loop scheduling change or task-approval condition is added.
 
+Successful edits and current `show` responses include advisory `feedback` with
+named outstanding requirements. `artifact-check` includes the same feedback and
+stores a reusable receipt. The file adapter forwards feedback after publishing
+the actual file. When a task already has an artifact, `task submit` reports any
+remaining findings **after accepting the submission**; a finding never blocks it.
+An empty set of checks explicitly reports that no active requirements were checked.
+Feedback inspects declared requirements only: it cannot infer all obligations
+from a natural-language task brief or certify that the declared rules are right.
+
+Type discrepancies identify numbers and booleans supplied as strings; values are
+never coerced. Replacing equality with `required` checks presence only, and an
+inactive condition supplies no verification. A matching authored list also
+reports that membership needs interpretation; matching your own expectation does
+not establish which entries belong in the list. These informational `notices`
+do not count as outstanding `findings` or request repeated checks of unchanged work.
+
+Missing source selections may include a suggested `source` append, which keeps
+existing citations. A mismatched projection may suggest restoring its recorded
+current batch. Suggestions are not executed automatically and are not permission
+to discard other valid evidence. Re-read the current revision before applying
+them. Literal quotations outside declared coverage still need inspection.
+
 ## Evidence coverage and current context
 
 A valid quotation can still omit evidence needed for a decision. Declare the
@@ -212,8 +255,8 @@ sources unverified. Update a rule deliberately after reviewing a changed source.
 Any artifact rule can have `when: {path, equals}`. It is inactive outside that
 context, so an old decision's expectation does not contradict its replacement.
 Inactive rules remain visible in history. No active checks means unverified;
-`coverage.complete: null` means no active evidence-coverage requirement was
-declared. A matching value check alone is not evidence coverage.
+`coverage.complete: null` means no active or carried evidence-coverage requirement
+was declared. A matching value check alone is not evidence coverage.
 
 Keep cumulative history separate from the current deliverable with a `project`
 edit. Record the entries introduced in the current context, rather than carrying
@@ -236,6 +279,26 @@ that accumulated old entries without asking a model to reconstruct the history.
 recorded batch. Ordinary edits remain available and are never blocked by a
 projection discrepancy. Projection entries are authored shared content, not
 proof that a supersession is semantically correct.
+
+For a list that should follow context changes, use an ordinary replacement with
+`scopePath`, or explicitly enable `followScope: true` on a `project` edit:
+
+```text
+task work 7 artifact-edit 6 [{"op":"replace","path":"/superseded","scopePath":"/phase","value":[{"old":"policy-0","new":"policy-1"}],"reason":"Publish only this phase's corrections"}]
+task work 7 artifact-edit 7 [{"op":"set","path":"/phase","value":2}]
+```
+
+Once enabled, changing the scope renders that context's recorded batch. A new
+context renders an empty view but remains **unverified** until entries are
+explicitly supplied; `[]` is a valid explicitly declared empty batch. Ordinary
+edits to the bound list update its current batch while retaining other contexts.
+An explicit whole-file replacement that supplies both scope and output is
+treated as an authored current batch, so file adoption preserves what the author
+wrote. The binding does not decide whether supplied entries are semantically
+current. Returning to a recorded context restores its list. Stale indirect edits
+are refused. Following bindings must have independent output/scope paths.
+To stop following, issue a `project` edit with `followScope: false` before
+removing its scope or output. Existing projections do not follow automatically.
 
 ## Assess evidence separately from the draft
 
@@ -269,8 +332,223 @@ the reviewer has a recorded overlapping contribution, which can be to an older
 value. That conservative flag is not current-value attribution or an independence test. Quotations establish source membership, not
 entailment. Agreement does not override missing support or approve a task.
 
+Supply `answerType` from the task contract: `string`, `number`, `boolean`, `array`,
+`object` or `null`. The answer must contain the derived value in that type; `true`
+is not an answer to a question whose value is a candidate name. A wrong declared
+type is refused with a format explanation and no receipt. For older questions
+without a declared type, incompatible answer/draft types produce
+`invalid-assessment`, not a decision disagreement. Explicit types also let a
+review identify a wrongly typed draft. Omit `question` to use a neutral prompt
+asking for the source-derived current value and disconfirming evidence.
+
+For a finite set, optionally select its criterion and complete candidate list
+directly from a current readable source. For example, if `note:42` is a JSON task
+contract and `note:43` contains current request statuses:
+
+```text
+task work 7 artifact-review-fresh {"questions":[{"id":"pending","path":"/unresolved","answerType":"array","refs":["note:42","note:43"],"set":{"ref":"note:42","criterionPath":"/unresolved_scope","candidatesPath":"/allowed_unresolved_questions"}}]}
+```
+
+This packet includes the selected criterion and candidates, but no draft values.
+The reviewer classifies every candidate as `include`, `exclude` or `unknown`, with
+a reason and current source quotations for each inclusion or exclusion. The
+answer's `membership` array contains `{value,status,reason,citations}` entries.
+An answered set must classify every candidate exactly once, contain no unknowns,
+and return exactly the included values without duplicates. Set comparisons ignore
+order; ordinary array reviews still compare order. An empty result needs evidence
+for excluding every candidate. A future prerequisite, completed request or known
+failure is not automatically a currently unanswered request.
+
+Both `artifact-review`/`artifact-assess` and `artifact-review-fresh` accept this
+option. The contract reference must be in `refs`; inaccessible or superseded
+contract sources are refused. Missing evidence remains unknown. The caller still
+chooses the contract, source coverage and question, and authentic quotations alone
+do not establish that the classification is correct. Review never applies edits,
+blocks submission or approves completion.
+
 Changed work, task requirements, source versions or access invalidate the packet;
 obtain a new one before comparing. Identical assessments can reuse a current
 receipt. Review packets are read-only; assessment receipts are stored separately
 from deliverable revisions. These tools make no model calls and add no mandatory
 review or scheduling behavior.
+
+For an explicitly requested model review, use:
+
+```text
+task work 7 artifact-review-fresh {"questions":[{"id":"eligibility","path":"/items/0/value","answerType":"string","refs":["note:42","note:43"]}]}
+```
+
+An optional `model` property selects an upstream model ID; the default is
+`marina/default`. Agent channels, instrument prefixes and tier aliases are refused
+here because they can introduce context or additional model calls. Every question
+needs an `answerType`. The request contains only
+a new system instruction and the evidence packet, with no conversation history,
+draft values, authored expectations, tools or memory enrichment. It uses the
+instance's normal model routing, spend accounting and output allowance, and
+reports the served model. The recorded native reviewer remains the requester;
+fresh context does not prove unbiased questions, complete evidence or a different
+author. Source access is the requester's access and is rechecked after inference.
+
+The operation returns an assessment and never edits or approves. A changed draft,
+requirement or source/access state during inference rejects the stale assessment.
+Identical current requests reuse a receipt for up to one hour; concurrent
+identical requests share a call. Provider failures, incomplete output and invalid
+answers remain visible failures without a successful receipt or automatic retry.
+No model is called by editing, showing, checking or submitting an artifact.
+
+## Keeping handoffs consistent with the deliverable
+
+`task work 7 handoff` returns a Markdown snapshot generated from the exact JSON
+artifact, with its work revision and content hash. `handoff <revision>` renders a
+historical revision under today's task access rules. No model rewrites the facts,
+no source is newly published, and no work revision or check receipt is created.
+The snapshot is an authored record at that revision, not a live view or evidence
+that its sources and conclusions are still valid.
+
+Use the artifact as the place to maintain current decisions and supporting
+sources. Journal entries can record dated changes, rejected advice, owners and
+next actions, and refer to the artifact for current values. Preserve old entries
+as history. When discussing an earlier statement again, distinguish what was
+true then from what is true now; a new permission or receipt may make the old
+statement false, rather than merely less relevant. Correct current values do not
+repair a contradictory present-tense sentence elsewhere in the handoff.
+
+Clients can optionally use `publishTaskArtifactHandoffFile` from
+`src/coordination/task-artifact-handoff.ts` to publish a named snapshot section in
+a journal. Supply the current artifact revision/hash and journal version/hash.
+It checks those tokens and uses the client's atomic file comparison before
+writing. Only its explicitly selected section is replaced; surrounding authored
+notes remain verbatim. Identical publication does not write or wake peers.
+Historical sections can use distinct names. The helper does not check the truth
+of surrounding prose or regenerate snapshots when later edits occur. Ordinary
+journals, chat, file edits and task submission remain available.
+
+Once a peer has supplied the needed evidence and the artifact is unchanged,
+another identical check adds no new evidence. Reuse its receipt and act on the
+remaining uncertainty. Reopen work for changed facts, an unresolved discrepancy,
+or a substantive peer correction rather than another acknowledgment.
+
+When a source is replaced, record the changed facts and the preserved facts
+separately. A replacement document can reaffirm an earlier measurement or
+decision. Reject advice by identifying the inference its evidence does not
+support; a true premise can support a false recommendation. Check the premise
+again before calling it obsolete. State whether an action is proposed, permitted,
+pending, or evidenced as performed, and name the next owner only for unfinished work.
+
+## Auditing every decision's supporting facts
+
+`task work 7 artifact-evidence 12 <json_plan>` optionally binds an evidence audit
+to the artifact. This reads the complete requirement list from an accessible
+source instead of relying on the contributor to remember a rule for every field.
+Each requirement names alternative sufficient bundles of facts. The contributor
+maps those facts to exact source selections. For example:
+
+```json
+{
+  "requirements": {"ref":"note:1","path":"/requirements","key":"/id","bundles":"/supporting_facts"},
+  "context": {"source":"/phase","target":"/phase"},
+  "targets": {"path":"/decisions","key":"/id","citations":"/citations","document":"/doc_id","quote":"/quote"},
+  "sources": [{"ref":"note:2","document":"/doc_id","text":"/statements"}],
+  "bindings": [{"fact":"eligibility-policy","ref":"note:2","path":"/statements/0"}]
+}
+```
+
+Paths are JSON Pointers; requirement key/bundle paths are relative to each
+requirement, and citation document/quote paths are relative to each citation.
+The example contract's `supporting_facts` is an array of alternatives, such as
+`[["eligibility-policy","actual-result"],["explicit-blocker"]`. Include all
+original source references used by the selected decisions. Bind each fact to
+a nonempty string in the selected source text. A complete source statement can
+support several named facts, but the association is the contributor's judgment.
+
+The audit checks every citation, including unnecessary extras, for an exact
+substring of its named original source. It also reports the missing facts in
+each allowed bundle for every required decision. A derived calculation needs
+its own policy and premises; citations in another decision are not inherited.
+Use source edits to copy exact text rather than retyping quotations. Invalid
+extra citations remain findings even when a sufficient bundle is present.
+
+Read, edit, check and submission feedback reruns this mechanical audit while the
+plan is bound. Declaration records source versions: a reordered or changed source
+cannot silently change a fact binding's meaning. Read the changed source and
+explicitly renew the plan after checking its selections. Current source access
+and versions affect check receipts. A peer
+who cannot read a source gets unverified feedback, without its content. Explicit
+context bindings detect a phase/type mismatch; update the plan for a new task
+context. Read the current revision and plan before changing it, preserving
+peers' useful mappings. Rebinding an identical plan does not create a revision.
+`artifact-evidence <revision> null` explicitly removes the plan.
+
+This is optional, makes no model calls, and never edits the deliverable or gates
+submission. It cannot prove that a fact binding entails its label, that the
+chosen contract is complete, or that an authentic old statement is still true.
+Original-source reasoning and scrutiny of current prose remain necessary.
+
+### Review the actual handoff prose
+
+A correct artifact does not validate extra claims in a journal or next-owner instruction.
+`task work 7 prose-review <json_review>` returns a packet for explicitly supplied text;
+`prose-review-fresh` requests one fresh model assessment through the normal model route:
+
+```json
+{
+  "target": { "name": "handoff.md", "content": "The actual current handoff text." },
+  "reasoningEffort": "low",
+  "refs": ["note:42", "note:43"],
+  "model": "marina/default"
+}
+```
+
+`reasoningEffort` is optional: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or
+`max`, subject to the selected model's supported levels. Omit it to preserve the provider's
+default; an explicit value is forwarded without changing the configured output allowance.
+The effort is part of the packet/cache fingerprint. Reasoning and visible output may share
+the response budget: choose an appropriate effort or set `MARINA_DEFAULT_MAX_TOKENS` for
+more headroom. Truncated and timed-out responses remain failures, with no automatic retry.
+
+The server does not read that name as a host or sandbox path. A file client can use
+`reviewTaskProseFile` with its own authorized reader and the version/hash from its last
+read. It sends the exact captured text and refuses a result if the file changes during
+review. The assessment also binds task requirements, native work, reader access and
+source versions; changes during inference invalidate it. Identical current requests reuse
+an expiring receipt. No file is edited, peer awakened, or task approved.
+
+This review sees the candidate prose and artifact as claims, plus only selected readable
+originals. It is distinct from the answer-free artifact review. It asks for source-based
+counterexamples, including incorrect prospective calculations, invented permission
+limits, changed versus preserved facts and plans described as completed actions. Findings
+must quote the actual target text; contradictions need exact current-source citations.
+Unavailable evidence produces uncertainty, not permission to remove a valid quotation.
+A `no-findings` result is an advisory observation, never proof of exhaustive coverage or
+semantic truth. A model can still reason incorrectly; retain source-supported corrections
+and reject unsupported review advice.
+
+For a prospective claim, keep the starting state, proposed change, resulting state and
+applicable scope distinct. Recompute each affected quantity from its source-defined
+accounting instead of copying a current number into an “after” sentence. `calc` is an
+optional native tool for arithmetic, for example `calc 19 - 5 - 6`. It does not choose the
+correct operands or establish authority. Unused permission, remaining demand and physical
+capacity are different quantities. A positive unused balance does not imply exhaustion.
+Keep the handoff concise and refer to the actual artifact or exact snapshot when useful;
+additional prose still needs support. All these tools remain optional.
+
+Fresh prose review requests a strict JSON response schema for findings and limitations. The selected upstream route must support structured output; an unsupported, malformed or truncated reply fails without an automatic retry or unconstrained fallback. The schema constrains response format, not the truth of findings; exact quotation and live-source checks still apply.
+
+
+Ordinary file workflows can use the same evidence audit without a native artifact copy:
+`task work <id> artifact-audit {"target":{"name":"submission.json","content":"..."},"plan":{...}}`.
+Supply the actual JSON file content and the explicit evidence plan described above. The command
+checks current sources readable by the caller and returns the target hash, quotation checks and
+missing per-entry fact bundles. It does not persist the candidate, infer fact mappings, edit the
+file or approve the task. Each invocation explicitly selects its current source mappings.
+The optional `auditTaskArtifactFile` adapter checks the authorized file version and hash before
+and after this read-only command, so an assessment cannot silently refer to a different file.
+
+For a handoff from an ordinary file, `publishTaskDeliverableHandoffFile` captures the selected
+file directly into a named journal section. It checks task access, both file versions and
+hashes, preserves surrounding notes and skips identical publication. No native artifact import
+is needed. The snapshot names the observed file version and hash; it is historical evidence,
+not a live view or a guarantee of atomic coherence between two files. Adapters remain responsible
+for file authorization, canonical file identity (including aliases), and atomic journal
+compare-and-write. Versions must change on all writes and path-identity changes, including
+retargeting a symlink. The deliverable and journal must have distinct canonical identities. The existing native-revision snapshot adapter remains available.
