@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Database } from "bun:sqlite";
 /** Offline service qualification. Never dispatches a real provider or opens a world database.
  * Run: bun --no-env-file scripts/qualify-investigations.ts /tmp/investigation-qualification
  * Keep measured reports outside this repository; this file is the reproducible harness. */
@@ -30,6 +32,10 @@ const thresholds = {
   rssGrowthBytes: 256 * 1024 * 1024,
   databaseGrowthBytes: 32 * 1024 * 1024,
   captureWriteP95Ms: 200,
+  // A capture is a 2 MiB durable commit, so its floor is the disk's: when a bare SQLite
+  // insert of the same bytes under the same pragmas is slow (shared CI disks take 100–200 ms
+  // per 2 MiB on a bad day), the limit is this many times that instead of the absolute figure.
+  captureWriteOverheadFactor: 3,
 };
 const report: Record<string, unknown> = {
   mode: "simulated; zero provider calls",
@@ -211,6 +217,16 @@ function bounds() {
 
     // Exercise actual JSON byte lengths and physical writes, including UTF-8; no quota counters mocked.
     const payload = "x".repeat(CONTENT_OBJECT_BYTES - 2); // JSON quotes count too.
+    // What this disk charges SQLite for the bytes alone — the same commit under the same
+    // pragmas, no quota check, hash or indexes — so the gate measures Marina's overhead over
+    // the disk rather than the disk itself. One bare commit beside every capture, so both see
+    // the same disk state (cloud disks throttle sustained writes after a burst).
+    const rawTimes: number[] = [];
+    const rawDb = new Database(join(runDirectory, "raw-write.db"));
+    rawDb.exec("PRAGMA journal_mode=WAL");
+    rawDb.exec(db.durability === "full" ? "PRAGMA synchronous=FULL" : "PRAGMA synchronous=NORMAL");
+    rawDb.exec("CREATE TABLE raw (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
+    const rawInsert = rawDb.query("INSERT INTO raw (body) VALUES (?)");
     let stored = 0;
     const writeTimes: number[] = [];
     const storageStarted = performance.now();
@@ -226,6 +242,9 @@ function bounds() {
         const writeStart = performance.now();
         db.storeInvestigationContent(next.id, gen, "quota", payload);
         writeTimes.push(performance.now() - writeStart);
+        const rawStart = performance.now();
+        rawInsert.run(payload);
+        rawTimes.push(performance.now() - rawStart);
         stored += CONTENT_OBJECT_BYTES;
         attemptBytes += CONTENT_OBJECT_BYTES;
       }
@@ -240,10 +259,16 @@ function bounds() {
       n: number;
     };
     assert.equal(storedBytes.n, stored);
+    rawDb.close();
     const writeP95 = percentile(writeTimes, 0.95);
+    const rawWriteP95 = percentile(rawTimes, 0.95);
+    const captureWriteLimitMs = Math.max(
+      thresholds.captureWriteP95Ms,
+      thresholds.captureWriteOverheadFactor * rawWriteP95,
+    );
     assert(
-      writeP95 < thresholds.captureWriteP95Ms,
-      `capture write p95 ${writeP95.toFixed(1)} ms ≥ ${thresholds.captureWriteP95Ms} ms over ${writeTimes.length} writes`,
+      writeP95 < captureWriteLimitMs,
+      `capture write p95 ${writeP95.toFixed(1)} ms ≥ ${captureWriteLimitMs.toFixed(1)} ms over ${writeTimes.length} writes (bare SQLite 2 MiB commit p95 ${rawWriteP95.toFixed(1)} ms × ${thresholds.captureWriteOverheadFactor}, floor ${thresholds.captureWriteP95Ms} ms)`,
     );
     for (const item of db.listInvestigations(owner.key)) db.eraseInvestigation(owner.key, item.id);
     assert.deepEqual(raw.query("SELECT count(*) AS n FROM investigation_content").get(), { n: 0 });
@@ -281,7 +306,9 @@ function bounds() {
       history,
       storage: {
         capturedBytes: stored,
-        captureWriteP95Ms: percentile(writeTimes, 0.95),
+        captureWriteP95Ms: writeP95,
+        rawWriteP95Ms: rawWriteP95,
+        captureWriteLimitMs,
         elapsedMs: performance.now() - storageStarted,
         erased: true,
       },
