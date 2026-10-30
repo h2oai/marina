@@ -224,7 +224,7 @@ function bounds() {
     const rawTimes: number[] = [];
     const rawDb = new Database(join(runDirectory, "raw-write.db"));
     rawDb.exec("PRAGMA journal_mode=WAL");
-    rawDb.exec("PRAGMA synchronous=FULL");
+    rawDb.exec(db.durability === "full" ? "PRAGMA synchronous=FULL" : "PRAGMA synchronous=NORMAL");
     rawDb.exec("CREATE TABLE raw (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
     const rawInsert = rawDb.query("INSERT INTO raw (body) VALUES (?)");
     let stored = 0;
