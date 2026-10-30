@@ -1367,7 +1367,7 @@ async function handleAsset(
             await uploadReply(assets, entity, { filename, mime, ext, data: bodyBytes, eid }),
           );
         } catch (err) {
-          ctx.send(eid, `Upload failed: ${getErrorMessage(err)}`);
+          refuseCommand(ctx, eid, `Upload failed: ${getErrorMessage(err)}`);
         }
         return;
       }
@@ -1430,7 +1430,7 @@ async function handleAsset(
           await uploadReply(assets, entity, { filename, mime, ext, data: bodyBytes, eid }),
         );
       } catch (err) {
-        ctx.send(eid, `Upload failed: ${getErrorMessage(err)}`);
+        refuseCommand(ctx, eid, `Upload failed: ${getErrorMessage(err)}`);
       }
       return;
     }

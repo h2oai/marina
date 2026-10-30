@@ -282,7 +282,7 @@ export function adminCommand(deps: AdminDeps): CommandDef {
               },
             );
           } catch (err) {
-            ctx.send(input.entity, `Export failed: ${getErrorMessage(err)}`);
+            refuseCommand(ctx, input.entity, `Export failed: ${getErrorMessage(err)}`);
           }
           break;
         }
@@ -314,7 +314,11 @@ export function adminCommand(deps: AdminDeps): CommandDef {
           try {
             mkdirSync(SEEDS_DIR, { recursive: true });
           } catch (err) {
-            ctx.send(input.entity, `Could not create ${SEEDS_DIR}/: ${getErrorMessage(err)}`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Could not create ${SEEDS_DIR}/: ${getErrorMessage(err)}`,
+            );
             return;
           }
           const targetDb = join(SEEDS_DIR, `${name}.db`);
@@ -338,7 +342,11 @@ export function adminCommand(deps: AdminDeps): CommandDef {
               unlinkSync(targetDb);
               if (existsSync(targetMeta)) unlinkSync(targetMeta);
             } catch (err) {
-              ctx.send(input.entity, `Could not remove existing snapshot: ${getErrorMessage(err)}`);
+              refuseCommand(
+                ctx,
+                input.entity,
+                `Could not remove existing snapshot: ${getErrorMessage(err)}`,
+              );
               return;
             }
           }
@@ -406,7 +414,7 @@ export function adminCommand(deps: AdminDeps): CommandDef {
               );
             }
           } catch (err) {
-            ctx.send(input.entity, `Snapshot failed: ${getErrorMessage(err)}`);
+            refuseCommand(ctx, input.entity, `Snapshot failed: ${getErrorMessage(err)}`);
           }
           break;
         }
@@ -422,7 +430,11 @@ export function adminCommand(deps: AdminDeps): CommandDef {
               .filter((f) => f.endsWith(".db"))
               .sort();
           } catch (err) {
-            ctx.send(input.entity, `Could not read ${SEEDS_DIR}/: ${getErrorMessage(err)}`);
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Could not read ${SEEDS_DIR}/: ${getErrorMessage(err)}`,
+            );
             return;
           }
           if (files.length === 0) {

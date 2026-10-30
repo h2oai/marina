@@ -9,6 +9,7 @@ import {
 } from "../../forecast/competence";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { requiresPersistence } from "./command-messages";
 
@@ -58,7 +59,11 @@ export function competenceCommand(deps: {
           const cells = competenceMap(deps.db, { family, ...(viewer ? { viewer } : {}) });
           return ctx.send(input.entity, renderMethodRanking(rankMethods(cells, family), family));
         } catch (err) {
-          return ctx.send(input.entity, `Competence map unavailable: ${getErrorMessage(err)}`);
+          return refuseCommand(
+            ctx,
+            input.entity,
+            `Competence map unavailable: ${getErrorMessage(err)}`,
+          );
         }
       }
       const mine = first === "mine";
@@ -74,7 +79,7 @@ export function competenceCommand(deps: {
         });
         ctx.send(input.entity, renderCompetence(cells));
       } catch (err) {
-        ctx.send(input.entity, `Competence map unavailable: ${getErrorMessage(err)}`);
+        refuseCommand(ctx, input.entity, `Competence map unavailable: ${getErrorMessage(err)}`);
       }
     },
   };

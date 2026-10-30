@@ -117,7 +117,7 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
           const family = rest[0]?.replace(/^family:/, "");
           ctx.send(input.entity, renderCompetence(competenceMap(db, family ? { family } : {})));
         })().catch((err) =>
-          ctx.send(input.entity, `Competence map unavailable: ${getErrorMessage(err)}`),
+          refuseCommand(ctx, input.entity, `Competence map unavailable: ${getErrorMessage(err)}`),
         );
       }
       if (sub === "routes" && rest.length <= 1) {
@@ -130,7 +130,7 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
           const view = await loadRouteView(db, family ? { family } : {});
           ctx.send(input.entity, renderRouteView(view.rows, view.notes));
         })().catch((err) =>
-          ctx.send(input.entity, `Route view unavailable: ${getErrorMessage(err)}`),
+          refuseCommand(ctx, input.entity, `Route view unavailable: ${getErrorMessage(err)}`),
         );
       }
       if (sub === "track") {
@@ -230,7 +230,9 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
                 }`,
               )}`,
             );
-          })().catch((err) => ctx.send(input.entity, `Forecast failed: ${getErrorMessage(err)}`));
+          })().catch((err) =>
+            refuseCommand(ctx, input.entity, `Forecast failed: ${getErrorMessage(err)}`),
+          );
         }
         // Refuse before promising research: with nothing to think with, the
         // pipeline would only fail after the "Researching…" line.

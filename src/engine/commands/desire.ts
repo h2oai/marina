@@ -147,7 +147,8 @@ export function desireCommand(deps: {
         // The preserved journey remains useful in world-only mode. The initial
         // response already makes no autonomous-work claim; say why there is
         // no grounding pass.
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           dim(`Model grounding unavailable — ${getErrorMessage(err)} Your journey is preserved.`),
         );

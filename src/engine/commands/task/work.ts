@@ -5,6 +5,7 @@ import type { ArtifactEdit, ArtifactRuleInput } from "../../../coordination/task
 import type { TaskWork, WorkActor } from "../../../coordination/task-work";
 import type { WorkAction, WorkConstraint } from "../../../coordination/task-work-types";
 import type { CommandInput, RoomContext } from "../../../types";
+import { refuseCommand } from "../../command-response";
 import { getErrorMessage } from "../../errors";
 
 function integer(text: string, zero = false): number {
@@ -123,6 +124,6 @@ export function handleTaskWork(
     }
     ctx.send(input.entity, JSON.stringify(result, null, 2));
   } catch (error) {
-    ctx.send(input.entity, `task work: ${getErrorMessage(error)}`);
+    refuseCommand(ctx, input.entity, `task work: ${getErrorMessage(error)}`);
   }
 }

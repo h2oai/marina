@@ -102,7 +102,7 @@ export function runCommand(deps: RunDeps): CommandDef {
             result.newFiles.length > 0 ? ` — new files: ${result.newFiles.join(", ")}` : "";
           ctx.send(eid, `${dim(status)}${files} output: ${result.outputFile}`);
         } catch (err) {
-          ctx.send(eid, fmtError(getErrorMessage(err)));
+          refuseCommand(ctx, eid, fmtError(getErrorMessage(err)));
         }
         return;
       }
@@ -124,7 +124,7 @@ export function runCommand(deps: RunDeps): CommandDef {
           const result = await deps.shellRuntime.execRaw(eid, commandString);
           formatOutput(ctx, eid, commandString, result);
         } catch (err) {
-          ctx.send(eid, fmtError(getErrorMessage(err)));
+          refuseCommand(ctx, eid, fmtError(getErrorMessage(err)));
         }
         return;
       }
@@ -137,7 +137,7 @@ export function runCommand(deps: RunDeps): CommandDef {
         const cmdDisplay = `${binary}${args.length > 0 ? ` ${args.join(" ")}` : ""}`;
         formatOutput(ctx, eid, cmdDisplay, result);
       } catch (err) {
-        ctx.send(eid, fmtError(getErrorMessage(err)));
+        refuseCommand(ctx, eid, fmtError(getErrorMessage(err)));
       }
     },
   };

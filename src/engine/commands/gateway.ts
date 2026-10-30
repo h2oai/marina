@@ -105,7 +105,8 @@ export function gatewayCommand(deps: {
               await runtime.addGateway(name, url);
               ctx.send(input.entity, `Gateway "${name}" connected to ${url}.`);
             } catch (err) {
-              ctx.send(
+              refuseCommand(
+                ctx,
                 input.entity,
                 `Gateway "${name}" saved but failed to connect: ${getErrorMessage(err)}`,
               );
@@ -243,7 +244,8 @@ export function gatewayCommand(deps: {
               await runtime.bridgeChannel(name, channel);
               ctx.send(input.entity, `Channel "${channel}" bridged on gateway "${name}".`);
             } catch (err) {
-              ctx.send(
+              refuseCommand(
+                ctx,
                 input.entity,
                 `Bridge saved but failed to join remote channel: ${getErrorMessage(err)}`,
               );
@@ -299,7 +301,7 @@ export function gatewayCommand(deps: {
             await runtime.sendTell(name, target, message, entity.name);
             ctx.send(input.entity, `Message sent to ${target} via gateway "${name}".`);
           } catch (err) {
-            ctx.send(input.entity, `Send failed: ${getErrorMessage(err)}`);
+            refuseCommand(ctx, input.entity, `Send failed: ${getErrorMessage(err)}`);
           }
           return;
         }

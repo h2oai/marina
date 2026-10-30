@@ -447,7 +447,7 @@ export async function compactSession(
   try {
     result = await handle.compactNow?.();
   } catch (error) {
-    ctx.send(eid, `Context not compacted: ${getErrorMessage(error)}`);
+    refuseCommand(ctx, eid, `Context not compacted: ${getErrorMessage(error)}`);
     return;
   }
   if (!result) {

@@ -362,7 +362,7 @@ export async function doCode(
     );
   } catch (err) {
     failCommandResponse(getErrorMessage(err));
-    ctx.send(eid, fmtError(getErrorMessage(err)));
+    refuseCommand(ctx, eid, fmtError(getErrorMessage(err)));
   }
 }
 

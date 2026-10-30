@@ -866,7 +866,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         }
       } catch (err) {
         failCommandResponse(getErrorMessage(err));
-        ctx.send(input.entity, fmtError(getErrorMessage(err)));
+        refuseCommand(ctx, input.entity, fmtError(getErrorMessage(err)));
       }
     },
   };
