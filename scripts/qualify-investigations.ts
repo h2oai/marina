@@ -219,24 +219,14 @@ function bounds() {
     const payload = "x".repeat(CONTENT_OBJECT_BYTES - 2); // JSON quotes count too.
     // What this disk charges SQLite for the bytes alone — the same commit under the same
     // pragmas, no quota check, hash or indexes — so the gate measures Marina's overhead over
-    // the disk rather than the disk itself.
+    // the disk rather than the disk itself. One bare commit beside every capture, so both see
+    // the same disk state (cloud disks throttle sustained writes after a burst).
     const rawTimes: number[] = [];
     const rawDb = new Database(join(runDirectory, "raw-write.db"));
     rawDb.exec("PRAGMA journal_mode=WAL");
     rawDb.exec("PRAGMA synchronous=FULL");
     rawDb.exec("CREATE TABLE raw (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
     const rawInsert = rawDb.query("INSERT INTO raw (body) VALUES (?)");
-    for (let i = 0; i < 16; i++) {
-      const start = performance.now();
-      rawInsert.run(payload);
-      rawTimes.push(performance.now() - start);
-    }
-    rawDb.close();
-    const rawWriteP95 = percentile(rawTimes, 0.95);
-    const captureWriteLimitMs = Math.max(
-      thresholds.captureWriteP95Ms,
-      thresholds.captureWriteOverheadFactor * rawWriteP95,
-    );
     let stored = 0;
     const writeTimes: number[] = [];
     const storageStarted = performance.now();
@@ -252,6 +242,9 @@ function bounds() {
         const writeStart = performance.now();
         db.storeInvestigationContent(next.id, gen, "quota", payload);
         writeTimes.push(performance.now() - writeStart);
+        const rawStart = performance.now();
+        rawInsert.run(payload);
+        rawTimes.push(performance.now() - rawStart);
         stored += CONTENT_OBJECT_BYTES;
         attemptBytes += CONTENT_OBJECT_BYTES;
       }
@@ -266,7 +259,13 @@ function bounds() {
       n: number;
     };
     assert.equal(storedBytes.n, stored);
+    rawDb.close();
     const writeP95 = percentile(writeTimes, 0.95);
+    const rawWriteP95 = percentile(rawTimes, 0.95);
+    const captureWriteLimitMs = Math.max(
+      thresholds.captureWriteP95Ms,
+      thresholds.captureWriteOverheadFactor * rawWriteP95,
+    );
     assert(
       writeP95 < captureWriteLimitMs,
       `capture write p95 ${writeP95.toFixed(1)} ms ≥ ${captureWriteLimitMs.toFixed(1)} ms over ${writeTimes.length} writes (bare SQLite 2 MiB commit p95 ${rawWriteP95.toFixed(1)} ms × ${thresholds.captureWriteOverheadFactor}, floor ${thresholds.captureWriteP95Ms} ms)`,
