@@ -32,8 +32,8 @@
  *    single-run comparison would have moved.
  */
 
+import { fnv1a32 } from "./hash";
 import { mcnemarExact, mulberry32 } from "./paired";
-
 /** One replicate: item id → correct. */
 export type Replicate = ReadonlyMap<string, boolean>;
 
@@ -219,10 +219,5 @@ export function comparePooled(
 
 /** A stable bootstrap seed from run ids, so the same evidence gives the same interval. */
 export function seedFromIds(ids: readonly string[]): number {
-  let h = 2166136261;
-  for (const ch of [...ids].sort().join("|")) {
-    h ^= ch.charCodeAt(0);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
+  return fnv1a32([...ids].sort().join("|"));
 }

@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { shardOf } from "../benchmarks/browsecomp-plus/agent";
 import { bootstrapMean as deepresearchBootstrapMean } from "../benchmarks/deepresearch/compare";
 import { pairedBootstrap as selectPairedBootstrap } from "../benchmarks/forecasting/select";
 import { bootstrapOverall, weightedOverall } from "../benchmarks/futurex/clean-run";
@@ -18,17 +19,39 @@ import {
   bootstrapMean as transferBootstrapMean,
   twoStageBootstrap,
 } from "../benchmarks/transfer/core";
+import { rng as visionRng } from "../benchmarks/vision-native/items";
+import { percentile as qualifyPercentile } from "../src/decisions/qualify";
+import { median as evolutionMedian } from "../src/engine/evolution-analysis";
 import { wilsonLow } from "../src/learned/format";
-import { lcg32, mulberry32, percentileFloor, resampleMeans, wilsonInterval } from "../src/stats";
+import {
+  fnv1a32,
+  fnv1a32CodeUnits,
+  lcg32,
+  mulberry32,
+  percentileCeil,
+  percentileFloor,
+  quantileInterpolated,
+  resampleMeans,
+  seedFromIds,
+  wilsonInterval,
+} from "../src/stats";
 import {
   legacyArenaWikiBootstrapCi,
   legacyBootstrapOverall,
   legacyDeepresearchBootstrapMean,
+  legacyEvolutionMedian,
   legacyLongmemevalBootstrapInterval,
   legacyMulberry32,
+  legacyNoveltyRotation,
+  legacyQualifyPercentile,
+  legacySeedFromIds,
   legacySelectPairedBootstrap,
+  legacyShardOf,
+  legacyTracePercentile,
   legacyTransferBootstrapMean,
   legacyTwoStageBootstrap,
+  legacyVisionSeed,
+  legacyWikiQuantile,
   legacyWilson95,
   legacyWilsonInterval,
   legacyWilsonLow,
@@ -228,5 +251,65 @@ describe("stats dedupe is bit-identical to the frozen originals", () => {
         same(bootstrapCi(d), legacyArenaWikiBootstrapCi(d));
       }
     }
+  });
+});
+
+describe("descriptive summaries and FNV-1a routed to src/stats are bit-identical", () => {
+  const rand = mulberry32(20261030);
+  const samples: number[][] = [[], [7], [3, 1], [1, 2, 3], [-2.5, 0, 0, 9.75, 1e9]];
+  for (let n = 1; n <= 40; n++)
+    samples.push(Array.from({ length: n }, () => (rand() - 0.5) * 1000));
+  const qs = [0, 0.001, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1];
+
+  test("nearest-rank percentiles: trace-analytics (non-empty) and qualify (0–100 scale)", () => {
+    for (const values of samples) {
+      const sorted = [...values].sort((a, b) => a - b);
+      for (const q of qs) {
+        if (sorted.length > 0) same(percentileCeil(sorted, q), legacyTracePercentile(sorted, q));
+        same(qualifyPercentile(values, q * 100), legacyQualifyPercentile(values, q * 100));
+      }
+    }
+  });
+
+  test("median (evolution analysis) and interpolated quantile (wiki specialist)", () => {
+    for (const values of samples) {
+      same(evolutionMedian(values), legacyEvolutionMedian(values));
+      const sorted = [...values].sort((a, b) => a - b);
+      for (const q of qs) same(quantileInterpolated(sorted, q), legacyWikiQuantile(sorted, q));
+    }
+  });
+
+  test("FNV-1a: code-point and code-unit forms, incl. astral characters", () => {
+    const texts = [
+      "",
+      "a",
+      "marina",
+      "seed:value",
+      "Agent 7/wiki-top10",
+      "naïve café",
+      "😀 shard 𝄞",
+      "\u{1F600}x",
+    ];
+    for (const text of texts) {
+      same(fnv1a32(`:${text}`), legacyNoveltyRotation("", text));
+      same(fnv1a32(`s:${text}`), legacyNoveltyRotation("s", text));
+      same(seedFromIds([text, "b", "a"]), legacySeedFromIds([text, "b", "a"]));
+      same(
+        visionRng(text).next(),
+        (() => {
+          // The legacy rng seeded mulberry32 from the same hash (0 → 1): replay its first draw.
+          let a = legacyVisionSeed(text);
+          a = (a + 0x6d2b79f5) | 0;
+          let t = a;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        })(),
+      );
+      for (const of of [1, 3, 16, 101]) same(shardOf(text, of), legacyShardOf(text, of));
+    }
+    // The two forms differ exactly on characters outside the BMP.
+    expect(fnv1a32CodeUnits("abc")).toBe(fnv1a32("abc"));
+    expect(fnv1a32CodeUnits("😀")).not.toBe(fnv1a32("😀"));
   });
 });

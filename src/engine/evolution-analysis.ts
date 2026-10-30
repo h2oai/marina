@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { median } from "../stats";
+
 export interface EvolutionMetricSample {
   arm: string;
   metric_name: string;
@@ -27,12 +29,7 @@ export interface EvolutionEvidenceSummary {
   limitations: string[];
 }
 
-export function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[middle - 1]! + sorted[middle]!) / 2 : sorted[middle]!;
-}
+export { median };
 
 export function medianAbsoluteDeviation(values: number[]): number {
   if (values.length === 0) return 0;

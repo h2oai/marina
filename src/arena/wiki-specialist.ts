@@ -32,6 +32,7 @@
  * (`scripts/arena-wiki-backtest.ts`).
  */
 
+import { quantileInterpolated } from "../stats";
 import { isExcludedTitle } from "./forecast";
 import { rboLoss } from "./score-shapes";
 
@@ -139,13 +140,7 @@ export function rankingSkill(
   return 1 - rboLoss(predicted, truth, p, depth) / pers;
 }
 
-function quantile(sorted: number[], q: number): number {
-  if (sorted.length === 0) return 0;
-  const at = Math.min(sorted.length - 1, Math.max(0, q * (sorted.length - 1)));
-  const lo = Math.floor(at);
-  const hi = Math.ceil(at);
-  return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (at - lo);
-}
+const quantile = quantileInterpolated;
 
 export interface Projection {
   /** Projected sum of the target week's seven days. */

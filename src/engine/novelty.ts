@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ProductivitySummary } from "../persistence/db-telemetry";
+import { fnv1a32 } from "../stats";
 import type { BenchmarkExecution } from "./benchmark-execution";
-
 export interface NoveltyCapability {
   name: string;
   help?: string;
@@ -49,11 +49,7 @@ function relevance(goal: Set<string>, text: string): number {
   const terms = words(text);
   return Math.min(3, [...goal].filter((w) => terms.has(w)).length);
 }
-function rotation(seed: string, value: string): number {
-  let hash = 2166136261;
-  for (const c of `${seed}:${value}`) hash = Math.imul(hash ^ c.charCodeAt(0), 16777619);
-  return hash >>> 0;
-}
+const rotation = (seed: string, value: string): number => fnv1a32(`${seed}:${value}`);
 export function rankNoveltyOpportunities(
   items: readonly NoveltyOpportunity[],
   limit = 4,
