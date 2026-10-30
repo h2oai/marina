@@ -13,7 +13,6 @@ import { MemoryService } from "../src/memory/service";
 import { worldMemoryService } from "../src/memory/world-service";
 import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
-import { until } from "./helpers";
 
 let directory: string;
 
@@ -688,14 +687,15 @@ it("keeps search rank, record versions and generation on one snapshot during a c
   }
 });
 
-it("paces an in-process caller through a transient rate limit without changing identity", async () => {
+it("never queues an in-process caller behind the network budget, and keeps its identity", async () => {
   const name = "RetryResident";
   db.createUser({ id: crypto.randomUUID(), name });
   const credential = db.issueMemoryCredential(db.getUserByName(name)!.id);
   const world = worldMemoryService(db);
-  // Freeze the budget clock so the initial bucket is exhausted deterministically.
+  // Freeze the budget clock: a network client's bucket would be spent after 100 calls.
   const now = Date.now();
   const time = spyOn(Date, "now").mockReturnValue(now);
+  const consumed = spyOn(RateLimiter.prototype, "consume");
   try {
     for (let i = 0; i < 100; i++) {
       const response = await handleMemoryServiceApi(
@@ -706,20 +706,14 @@ it("paces an in-process caller through a transient rate limit without changing i
       );
       expect(response.status).toBe(200);
     }
-    // The refusal names its wait; the in-process caller waits it out instead of failing.
-    const refused = spyOn(RateLimiter.prototype, "consume");
-    const pending = residentMemoryOperation(db, name, { operation: "capabilities" });
-    try {
-      await until(() => refused.mock.results.some((r) => r.value === false));
-    } finally {
-      refused.mockRestore();
-    }
-    time.mockReturnValue(now + 1100);
-    expect((await pending).ok).toBe(true);
+    // The 101st in-process call is answered at once: no token was ever consumed.
+    expect((await residentMemoryOperation(db, name, { operation: "capabilities" })).ok).toBe(true);
+    expect(consumed).not.toHaveBeenCalled();
     const result = await residentMemoryOperation(db, name, { operation: "me" });
     expect(result.ok).toBe(true);
     expect((result.result as { principal_id: string }).principal_id).toBe(credential.principalId);
   } finally {
+    consumed.mockRestore();
     time.mockRestore();
   }
 });

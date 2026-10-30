@@ -13,10 +13,12 @@ import { retryMemoryOperation } from "../sdk/memory-retry";
 import { worldMemoryService } from "./world-service";
 
 /**
- * In-process callers are paced, not failed, by the per-principal memory
- * budget: a refusal that names its wait (`rate_limited`, the next token) is
- * waited out and the request sent again — safe for any operation, since a
- * refused request never reached its handler. Nothing else is retried here.
+ * The per-principal memory budget paces network clients only; an in-process
+ * caller reaches the handler with no peer and is never queued behind a token
+ * (`handleMemoryServiceApi`). Should a refusal still name a wait (`rate_limited`,
+ * the next token), it is waited out and the request sent again — safe for any
+ * operation, since a refused request never reached its handler. Nothing else is
+ * retried here.
  */
 const paced = <T>(run: () => Promise<T>) => retryMemoryOperation(run, { attempts: 1 });
 

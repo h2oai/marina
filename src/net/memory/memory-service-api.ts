@@ -176,15 +176,20 @@ export async function handleMemoryServiceApi(
         "invalid_credential",
         "A scoped Marina memory credential is required",
       );
-    let limiter = limiters.get(service);
-    if (!limiter) {
+    // The per-principal budget paces NETWORK clients (a peer is set only by the two
+    // listeners). An in-process caller — a resident's own memory operation, lessons
+    // recall, a tick job — is Marina's own code: it is never queued behind a token
+    // (`paced()` in resident-service.ts used to sleep 240 ms per call once the shared
+    // lessons principal had spent its burst).
+    let limiter = peer === undefined ? undefined : limiters.get(service);
+    if (!limiter && peer !== undefined) {
       // 100-request burst, refilled smoothly at 25/s (one token every 40 ms):
       // a throttled caller waits for the next token, not for a whole second.
       limiter = new RateLimiter({ maxTokens: 100, refillRate: 1, refillInterval: 40 });
       limiters.set(service, limiter);
     }
-    limiter.cleanup();
-    if (!limiter.consume(actor.principalId)) {
+    limiter?.cleanup();
+    if (limiter && !limiter.consume(actor.principalId)) {
       const wait = Math.max(1, limiter.retryAfterMs(actor.principalId));
       return new Response(
         JSON.stringify({

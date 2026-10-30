@@ -476,9 +476,10 @@ interface PassBudget {
 }
 
 /**
- * Memory requests one pass makes at most before it stops starting new assets.
- * The indexer spends the OWNER's memory request budget (100 burst, 25/s per
- * principal), so a pass leaves most of it to the owner's own work.
+ * Memory requests one pass makes at most before it stops starting new assets,
+ * so one pass stays short on the tick thread. (The per-principal memory request
+ * budget paces network clients only; this in-process indexer is never queued
+ * behind it.)
  */
 export const MEMORY_OPS_PER_PASS = 40;
 
