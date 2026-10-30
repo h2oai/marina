@@ -5,7 +5,6 @@ import type { NodeProps, NodeTypes } from "@xyflow/react";
 import { createElement, lazy, Suspense } from "react";
 import { AudioNode } from "./AudioNode";
 import { A2UINode } from "./a2ui/A2UINode";
-import { DocumentNode } from "./DocumentNode";
 import { FrameNode } from "./FrameNode";
 import { ImageNode } from "./ImageNode";
 import { IntentBadge } from "./IntentBadge";
@@ -15,6 +14,29 @@ import { TextNode } from "./TextNode";
 import { VideoNode } from "./VideoNode";
 
 const LazyPdfNode = lazy(() => import("./PdfNode"));
+// The rich-text editor (tiptap + prosemirror, ~400 kB) loads with the first document
+// node, not with the dashboard: this registry is reachable from the first paint.
+const LazyDocumentNode = lazy(() =>
+  import("./DocumentNode").then((m) => ({ default: m.DocumentNode })),
+);
+
+function DocumentNodeWrapper(props: NodeProps) {
+  return createElement(
+    Suspense,
+    {
+      fallback: createElement(
+        "div",
+        {
+          className:
+            "rounded-lg bg-gray-900 border border-gray-700 p-4 text-gray-500 text-sm animate-pulse flex items-center justify-center",
+          style: { minWidth: 200, minHeight: 120 },
+        },
+        "Loading editor...",
+      ),
+    },
+    createElement(LazyDocumentNode, props),
+  );
+}
 
 function PdfNodeWrapper(props: NodeProps) {
   return createElement(
@@ -58,7 +80,7 @@ export const nodeTypes: NodeTypes = {
   video: withIntent(VideoNode),
   pdf: withIntent(PdfNodeWrapper),
   audio: withIntent(AudioNode),
-  document: withIntent(DocumentNode),
+  document: withIntent(DocumentNodeWrapper),
   text: withIntent(TextNode),
   embed: withIntent(ReferenceNode),
   frame: withIntent(FrameNode),

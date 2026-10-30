@@ -25,6 +25,12 @@ export default defineConfig({
         // expects manualChunks as a function. Splits heavy vendor libs into
         // their own chunks, matched by module path.
         manualChunks(id: string) {
+          // React and its store shim first: left to the bundler, the 1 kB
+          // `use-sync-external-store` shim (react-query, xyflow) landed inside
+          // vendor-tiptap, and that 400 kB editor chunk became an eager import of
+          // the first paint just to reach it.
+          if (/node_modules\/(react|react-dom|scheduler|use-sync-external-store)\//.test(id))
+            return "vendor-react";
           if (id.includes("node_modules/@tanstack/react-query")) return "vendor-query";
           if (id.includes("node_modules/@xyflow/react")) return "vendor-xyflow";
           if (id.includes("node_modules/@tiptap/")) return "vendor-tiptap";
