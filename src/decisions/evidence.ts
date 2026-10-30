@@ -39,7 +39,15 @@ export interface EvidenceSource {
   /** Hash of the full accessible source, never of a clipped judge excerpt. */
   version?: string;
   text?: string;
+  /**
+   * Why an unavailable source is unavailable, as far as is safe to say: `malformed`
+   * is not a reference Marina resolves at all; `unavailable` is missing, retired or
+   * not readable by this actor — never split, so a reference cannot probe existence.
+   */
+  reason?: "malformed" | "unavailable";
 }
+
+export const EVIDENCE_REF_FORMS = "note:N, task:N, chronicle:N or asset:<id>";
 
 /**
  * An explicitly requested source for shared-work citations. Resolve access on
@@ -85,7 +93,11 @@ export function resolveEvidenceSource(
         text = assetEvidenceText(db, id);
     }
   }
-  if (text === undefined) return { ref, status: "unavailable" };
+  if (text === undefined) {
+    const assetId = parseAssetRefs(ref, 1)[0];
+    const malformed = !numeric && !(assetId && ref === `asset:${assetId}`);
+    return { ref, status: "unavailable", reason: malformed ? "malformed" : "unavailable" };
+  }
   return {
     ref,
     status,

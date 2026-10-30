@@ -59,7 +59,7 @@ export function proseReviewPacket(input: {
     if (source.ref !== ref) throw new Error("Source resolver returned a different reference.");
     return source.status === "current" && source.text !== undefined
       ? { ref, status: source.status, text: source.text, version: source.version }
-      : { ref, status: source.status };
+      : { ref, status: source.status, ...(source.reason ? { reason: source.reason } : {}) };
   });
   const target = {
     ...request.target,
@@ -125,6 +125,14 @@ export function assessProseReview(packet: ProseReviewPacket, answer: ProseReview
   const unavailable = packet.sources
     .filter((source) => source.text === undefined)
     .map((s) => s.ref);
+  const unavailableReasons = Object.fromEntries(
+    packet.sources
+      .filter((source) => source.text === undefined)
+      .map((s) => [s.ref, (s as { reason?: string }).reason ?? "unavailable"]),
+  );
+  // `unverified` means something was NOT checked: a source the reviewer could not read,
+  // or a claim it could not place. The reviewer is asked to list limitations on every
+  // run, so limitations alone are not that signal; they ride along with `no-findings`.
   return {
     advisory: true as const,
     fingerprint: packet.fingerprint,
@@ -133,13 +141,14 @@ export function assessProseReview(packet: ProseReviewPacket, answer: ProseReview
     target: { name: packet.target.name, sha256: packet.target.sha256 },
     outcome: answer.findings.some((finding) => finding.status === "contradicted")
       ? ("findings" as const)
-      : unavailable.length || answer.findings.length || answer.limitations.length
+      : unavailable.length || answer.findings.length
         ? ("unverified" as const)
         : ("no-findings" as const),
+    ...(unavailable.length ? { unavailableReasons } : {}),
     findings: answer.findings,
     limitations: answer.limitations,
     unavailable,
     scope:
-      "Fresh assessment of the supplied prose against selected readable originals. Source selection and model interpretation can be incomplete or wrong. Exact target/source quotations are checked, not entailment or exhaustive coverage. No findings is not approval. No edits, submission gate or peer wake occurs.",
+      "Fresh assessment of the supplied prose against selected readable originals. Source selection and model interpretation can be incomplete or wrong. Exact target/source quotations are checked, not entailment or exhaustive coverage. No findings is not approval; read the limitations. An unavailable source means its claims were NOT checked: publish a readable copy or pass a reference you can read, then review again. No edits, submission gate or peer wake occurs.",
   };
 }
