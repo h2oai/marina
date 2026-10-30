@@ -313,7 +313,7 @@ learning instead of losing it.
   recorded, never applied. Only SHARED work is pooled: every work outcome carries `scope:shared` or
   `scope:owner:<person>` (`src/outcomes/work-refs.ts`, from `workScopeFor`), and a person's work —
   or their agents' — never enters shared evidence. The `agent_decision` signals carry
-  `evidence_live` (the outcomes weighed).
+  `evidence_live` (the outcomes weighed). An EXTERNAL participant has no agent config: its outcomes count under the model it declared at login (`MarinaClient` option `model` → login/auth message `model` → `KnownProperties.declared_model`, `declareParticipantModel`), read by `participantOf`; undeclared, its outcomes carry no model and inform no route.
 - **Work on the competence map.** Task verdicts, judged task grades, Code Mode checks and reported
   requests carry `family:work:<task|code|request>` (plus `:role:<role>`) and `method:model:<model>`,
   the same tags forecasts, arena rounds and benchmark runs use, plus how the work was done: a task

@@ -19,7 +19,7 @@ import { recordJudgeOpinion } from "../decisions/judges";
 import { canonicalFormationName } from "../orchestration/formations/catalogue";
 import type { MarinaDB } from "../persistence/database";
 import type { JudgeObservationInput } from "../persistence/db-decisions";
-import type { EngineEvent } from "../types";
+import type { EngineEvent, EntityId } from "../types";
 import { recordResolved } from "./record";
 import { canScope, type WorkKind, workRefs } from "./work-refs";
 
@@ -143,15 +143,28 @@ export function taskApproach(
 
 /** Who did the work, and on what (an agent's model and role; a person's name only). */
 export function participantOf(
-  db: Pick<MarinaDB, "getAgentConfig">,
+  db: Pick<MarinaDB, "getAgentConfig"> &
+    Partial<Pick<MarinaDB, "findEntityIdByName" | "loadEntity">>,
   name: string,
 ): { agent: string; model?: string; role?: string } {
   const config = db.getAgentConfig(name);
+  // An external participant has no config: its model is what it declared at
+  // login (`KnownProperties.declared_model`), kept with its persisted entity.
+  const model = config?.model ?? declaredModelOf(db, name);
   return {
     agent: name,
-    ...(config?.model ? { model: config.model } : {}),
+    ...(model ? { model } : {}),
     ...(config?.role ? { role: config.role } : {}),
   };
+}
+
+function declaredModelOf(
+  db: Partial<Pick<MarinaDB, "findEntityIdByName" | "loadEntity">>,
+  name: string,
+): string | undefined {
+  const id = db.findEntityIdByName?.(name);
+  const declared = id ? db.loadEntity?.(id as EntityId)?.properties.declared_model : undefined;
+  return typeof declared === "string" && declared ? declared : undefined;
 }
 
 /**

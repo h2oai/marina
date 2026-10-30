@@ -12,7 +12,7 @@ import { getErrorMessage } from "../engine/errors";
 import { onboardParticipant } from "../engine/onboarding";
 import { ownedTraceLinks, runWithTraceLinks } from "../engine/trace-context";
 import { type CodingCommandTarget, parseCodingCommandTarget } from "../sdk/command-target";
-import type { Perception } from "../types";
+import type { EntityId, Perception } from "../types";
 
 export interface ParticipantMessage {
   type: string;
@@ -22,6 +22,8 @@ export interface ParticipantMessage {
   internalToken?: string;
   /** `agent`: the client is an agent, not a person (see `Connection.agent`). */
   principal?: string;
+  /** The model an external agent declares it runs on (`KnownProperties.declared_model`). */
+  model?: string;
   request_id?: string;
   coding_target?: unknown;
   trace_links?: unknown;
@@ -77,6 +79,7 @@ export function handleParticipantMessage(
         },
       }),
     );
+    declareParticipantModel(engine, result.entityId, parsed.model);
     void onboardParticipant(engine, result.entityId, "websocket", false);
     return;
   }
@@ -93,6 +96,7 @@ export function handleParticipantMessage(
       );
       return;
     }
+    declareParticipantModel(engine, result.entityId, parsed.model);
     ws.send(
       JSON.stringify({
         kind: "system",
@@ -250,4 +254,21 @@ export function handleParticipantMessage(
       refuse("You're not logged in. Enter your name to begin.");
     }
   }
+}
+
+/** A model id as providers spell them: `vendor/name[:variant]`, dots, dashes, at most 120 characters. */
+const DECLARED_MODEL = /^[\w./:@-]{1,120}$/;
+
+/**
+ * An external participant's self-declared model, kept on its entity so the
+ * outcome path (`participantOf`) can attribute its task outcomes per model.
+ * A login that declares none clears a stale one; a malformed value is ignored.
+ * Marina's own agents keep their config's model — this never overrides it.
+ */
+export function declareParticipantModel(engine: Engine, entityId: EntityId, model: unknown): void {
+  const entity = engine.entities.get(entityId);
+  if (!entity) return;
+  if (typeof model === "string" && DECLARED_MODEL.test(model))
+    entity.properties.declared_model = model;
+  else if (model === undefined) delete entity.properties.declared_model;
 }

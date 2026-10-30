@@ -63,6 +63,13 @@ export interface ClientOptions {
    * can only remove authority, never add it.
    */
   principal?: "agent" | "person";
+  /**
+   * The model this client runs on (an id such as `openai/gpt-6-luna`), when
+   * the client is an external agent. Marina records it with the participant's
+   * task outcomes so routing evidence counts them per model; a wrong value
+   * only misattributes that evidence, it grants nothing.
+   */
+  model?: string;
 }
 
 export interface CommandOptions {
@@ -227,8 +234,8 @@ export interface TellAndAwaitOptions {
 export class MarinaClient {
   private ws: WebSocket | null = null;
   private url: string;
-  private options: Required<Omit<ClientOptions, "onOpen" | "internalToken">> &
-    Pick<ClientOptions, "onOpen" | "internalToken">;
+  private options: Required<Omit<ClientOptions, "onOpen" | "internalToken" | "model">> &
+    Pick<ClientOptions, "onOpen" | "internalToken" | "model">;
   private session: SessionInfo | null = null;
   private handlers: PerceptionHandler[] = [];
   private connected = false;
@@ -410,6 +417,7 @@ export class MarinaClient {
         name,
         internalToken: this.options.internalToken,
         principal: this.options.principal,
+        ...(this.options.model ? { model: this.options.model } : {}),
       });
     });
   }
@@ -458,6 +466,7 @@ export class MarinaClient {
         token,
         internalToken: this.options.internalToken,
         principal: this.options.principal,
+        ...(this.options.model ? { model: this.options.model } : {}),
       });
     });
   }

@@ -32,6 +32,12 @@ export type EntityKind = "agent" | "npc" | "object";
  * Extends Record<string, unknown> so arbitrary keys still work.
  */
 export interface KnownProperties extends Record<string, unknown> {
+  /**
+   * The model an EXTERNAL participant declared at login (`MarinaClient`
+   * `model`), so its task outcomes count per model in the live routing
+   * evidence. Self-declared: it informs evidence only, never authority.
+   */
+  declared_model?: string;
   // ─── Core ───────────────────────────────────────────────────────────────────
   rank?: number;
   role?: string;

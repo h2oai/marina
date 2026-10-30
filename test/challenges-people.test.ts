@@ -21,6 +21,7 @@ import {
 import { Engine } from "../src/engine/engine";
 import { resetGateContextForTests } from "../src/engine/gate-context";
 import { handleParticipantMessage } from "../src/net/participant-messages";
+import { participantOf } from "../src/outcomes/live";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, until } from "./helpers";
@@ -173,6 +174,30 @@ describe("challenges: people approve, agents never do", () => {
       principal: "agent",
     });
     handleParticipantMessage(w.engine, ws("web-1"), { type: "login", name: "Webby" });
+    // An external agent's declared model rides with its task outcomes (item: per-model evidence).
+    const modelled = new MockConnection("sdk-2");
+    w.engine.addConnection(modelled);
+    handleParticipantMessage(w.engine, ws("sdk-2"), {
+      type: "login",
+      name: "Lunabot",
+      principal: "agent",
+      model: "openai/gpt-6-luna",
+    });
+    const lunaId = w.engine.getConnections().get("sdk-2")!.entity!;
+    expect(w.engine.entities.get(lunaId)!.properties.declared_model).toBe("openai/gpt-6-luna");
+    w.engine.saveWorldState();
+    expect(participantOf(w.db, "Lunabot")).toEqual({
+      agent: "Lunabot",
+      model: "openai/gpt-6-luna",
+    });
+    expect(participantOf(w.db, "Webby")).toEqual({ agent: "Webby" });
+    handleParticipantMessage(w.engine, ws("sdk-2"), {
+      type: "login",
+      name: "Lunabot",
+      principal: "agent",
+      model: "not a model id",
+    });
+    expect(w.engine.entities.get(lunaId)!.properties.declared_model).toBe("openai/gpt-6-luna");
     expect(w.engine.getConnections().get("sdk-1")?.agent).toBe(true);
     expect(w.engine.getConnections().get("web-1")?.agent).toBeUndefined();
   });
