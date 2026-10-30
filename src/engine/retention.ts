@@ -21,6 +21,12 @@
  *
  * Constants live here (not in `constants.ts`) so the policy table and its
  * defaults read as one unit.
+ *
+ * Unbounded by decision (2026-10-30), not by oversight — do not add a policy:
+ * `channel_messages` (a channel's own `retention_hours` prunes it, default
+ * keep everything), `coding_artifacts` (one `exec_decision` per exec is the
+ * audit), `coding_sessions`, `principal_credentials` (revoked rows stay as
+ * history), `routing_sessions`.
  */
 
 import type { MarinaDB } from "../persistence/database";
