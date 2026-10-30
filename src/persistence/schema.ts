@@ -141,6 +141,26 @@ CREATE TABLE task_work_checks (
 );
 CREATE INDEX idx_task_work_checks_expiry ON task_work_checks(expires_at);`,
   },
+  {
+    // Indexes for queries that scanned a growing table or sorted through a temp
+    // B-tree (plans checked on the baseline): name lookups, the agent lineage
+    // walk (`name = ? COLLATE NOCASE` cannot use the BINARY primary-key index),
+    // tasks by creator, the board archive sweep, the chronicle supersession
+    // chain, and the ordered pages of board posts, sessions, submitted claims
+    // and channel messages.
+    version: 186,
+    sql: `CREATE INDEX IF NOT EXISTS idx_channels_name ON channels(name);
+CREATE INDEX IF NOT EXISTS idx_boards_name ON boards(name);
+CREATE INDEX IF NOT EXISTS idx_groups_name ON groups_(name);
+CREATE INDEX IF NOT EXISTS idx_agent_configs_name_nocase ON agent_configs(name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_tasks_creator ON tasks(creator_id, id);
+CREATE INDEX IF NOT EXISTS idx_board_posts_archive ON board_posts(archived, created_at);
+CREATE INDEX IF NOT EXISTS idx_board_posts_page ON board_posts(board_id, archived, pinned, id);
+CREATE INDEX IF NOT EXISTS idx_chronicle_supersedes ON chronicle(supersedes);
+CREATE INDEX IF NOT EXISTS idx_sessions_entity_created ON sessions(entity_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_claims_submitted ON task_claims(status, submitted_at, task_id);
+CREATE INDEX IF NOT EXISTS idx_channel_messages_channel_created ON channel_messages(channel_id, created_at);`,
+  },
 ];
 
 /** Migration 172 body — self-contained so later edits elsewhere never change it. */
