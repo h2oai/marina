@@ -212,6 +212,11 @@ export interface RoomLogRow {
 }
 
 export function appendRoomLog(db: Database, entry: RoomLogInput): number {
+  // Insert and trim in one commit: as two autocommits each was its own fsync.
+  return db.transaction(() => appendAndTrim(db, entry))();
+}
+
+function appendAndTrim(db: Database, entry: RoomLogInput): number {
   const { id } = db
     .query(
       `INSERT INTO room_log (room, entity, kind, content, cause, depth, at)

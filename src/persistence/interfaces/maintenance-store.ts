@@ -7,6 +7,7 @@ import type { ExactKeys } from "./exact-keys";
 /** Retention primitives and snapshots (`db-maintenance.ts`). */
 export interface MaintenanceStore {
   tableExists(table: string): boolean;
+  walCheckpoint(): { busy: boolean; log: number; checkpointed: number };
   tableColumns(table: string): string[];
   deleteBatch(table: string, whereSql: string, params: (string | number)[], limit: number): number;
   snapshot(targetPath: string): {
@@ -22,6 +23,7 @@ export interface MaintenanceStore {
 /** Runtime mirror of `MaintenanceStore`'s method names — the drift test compares it to the facade. */
 export const MAINTENANCE_STORE_METHODS = [
   "tableExists",
+  "walCheckpoint",
   "tableColumns",
   "deleteBatch",
   "snapshot",

@@ -435,6 +435,23 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
+  // Every 10 ticks: move WAL frames into the database between commands (PASSIVE,
+  // never waiting on a reader or writer), so no command's own write pays for a
+  // checkpoint; `WAL_AUTOCHECKPOINT_PAGES` is only the backstop.
+  s.register({
+    name: "wal-checkpoint",
+    every: WAL_CHECKPOINT_INTERVAL,
+    phase: WAL_CHECKPOINT_PHASE,
+    failureMessage: "WAL checkpoint failed",
+    run: () => {
+      const db = host.db;
+      if (!db) return;
+      const result = db.walCheckpoint();
+      if (result.checkpointed > 0)
+        host.logger.debug("db", `WAL checkpoint: ${result.checkpointed}/${result.log} frames`);
+    },
+  });
+
   // Hourly: check the markets that open answers are linked to; a resolved one
   // settles them through the calibration finder (MARINA_OUTCOME_AUTORESOLVE).
   // Also records every completed benchmark run with no outcome yet — runs a
@@ -586,6 +603,11 @@ export const OUTCOME_AUTORESOLVE_PHASE = 3450;
 export const ARENA_FILING_WATCH_INTERVAL = 600;
 /** Its phase within that interval. */
 export const ARENA_FILING_WATCH_PHASE = 420;
+
+/** Ticks between PASSIVE WAL checkpoints (`MarinaDB.walCheckpoint`). */
+export const WAL_CHECKPOINT_INTERVAL = 10;
+/** Its phase: clear of schedules (3), known-at backfill (5), the video poller (1/4) and asset backfill (7). */
+export const WAL_CHECKPOINT_PHASE = 6;
 
 /** Ticks between schedule passes (src/schedules/runner.ts). */
 export const SCHEDULES_INTERVAL = 10;

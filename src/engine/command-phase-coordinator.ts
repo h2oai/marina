@@ -354,16 +354,18 @@ export class CommandPhaseCoordinator {
       failCommandResponse(msg);
       this.host.logger.error("command", `Error in "${input.verb}"`, { error: msg });
       this.host.sendToEntity(entityId, `Command error: ${msg}`);
-      // Track failed command
-      if (this.host.db) {
-        const entity = this.host.entities.get(entityId);
-        if (entity) {
-          tryLog(this.host.logger, "tick", "Activity tracking failed", () => {
-            this.host.db!.trackActivity(entity.name, "command", input.verb, false);
-          });
-        }
-      }
-      recordUsage(false);
+      // Track the failed command and its usage in one commit (see below).
+      const db = this.host.db;
+      if (db) {
+        tryLog(this.host.logger, "tick", "Command bookkeeping failed", () =>
+          db.transaction(() => {
+            tryLog(this.host.logger, "tick", "Activity tracking failed", () => {
+              db.trackActivity(entity.name, "command", input.verb, false);
+            });
+            recordUsage(false);
+          }),
+        );
+      } else recordUsage(false);
       return;
     }
 
@@ -375,31 +377,42 @@ export class CommandPhaseCoordinator {
     // Track quest progress based on command type
     this.trackQuest(entityId, input.verb, routedRaw);
 
-    // Track activity for novelty scoring (with success)
-    if (this.host.db) {
-      const entity = this.host.entities.get(entityId);
-      if (entity) {
-        tryLog(this.host.logger, "tick", "Activity tracking failed", () => {
-          this.host.db!.trackActivity(entity.name, "command", input.verb, !refused);
-          this.host.db!.trackActivity(entity.name, "room_visit", entity.room);
-        });
-      }
-    }
-
+    // Track activity for novelty scoring (with success) and record usage in ONE
+    // commit: as separate autocommits each row was its own fsync under full
+    // durability — most of a command's cost on a shared or public install.
+    // A failing statement is logged and skipped; the others still commit.
+    //
     // NOTE: no self-reported demonstration recording here. Gated commands are
     // unattended dangerous ops (see the gate check above) — self-recording a
     // demonstration on a clean run is exactly the self-certification path that
     // let a standing-only entity auto-unlock a gate. Competence is earned only
     // via operator grant / rank promotion / approved runs.
-    recordUsage(!refused);
-
-    if (isUnloggedForm(def, input)) return;
-    this.host.logEvent({
-      type: "command",
-      entity: entityId,
-      input: commandInputForLog(routedRaw, input, def),
-      timestamp: Date.now(),
-    });
+    const logCommand = () => {
+      if (isUnloggedForm(def, input)) return;
+      this.host.logEvent({
+        type: "command",
+        entity: entityId,
+        input: commandInputForLog(routedRaw, input, def),
+        timestamp: Date.now(),
+      });
+    };
+    const db = this.host.db;
+    if (!db) {
+      recordUsage(!refused);
+      logCommand();
+      return;
+    }
+    tryLog(this.host.logger, "tick", "Command bookkeeping failed", () =>
+      db.transaction(() => {
+        tryLog(this.host.logger, "tick", "Activity tracking failed", () => {
+          db.trackActivity(entity.name, "command", input.verb, !refused);
+          db.trackActivity(entity.name, "room_visit", entity.room);
+        });
+        recordUsage(!refused);
+        // The event row joins the commit; listeners (dashboard, feed) run as before.
+        logCommand();
+      }),
+    );
   }
 
   /**

@@ -6,6 +6,16 @@ import { statSync } from "node:fs";
 
 // ─── Retention primitives and snapshots ────────────────────────────────────
 
+/** Move WAL frames into the database without blocking anyone (`PRAGMA wal_checkpoint(PASSIVE)`). */
+export function walCheckpoint(db: Database): { busy: boolean; log: number; checkpointed: number } {
+  const row = db.query("PRAGMA wal_checkpoint(PASSIVE)").get() as {
+    busy: number;
+    log: number;
+    checkpointed: number;
+  };
+  return { busy: row.busy === 1, log: row.log, checkpointed: row.checkpointed };
+}
+
 export function tableExists(reader: Database, table: string): boolean {
   return (
     reader.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) !==
