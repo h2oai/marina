@@ -287,6 +287,9 @@ describe("bounded retry", () => {
     expect(failureKind("503 Service Unavailable")).toBe("provider");
     expect(failureKind("fetch failed: ECONNRESET")).toBe("network");
     expect(failureKind("Connection error.")).toBe("network");
+    expect(failureKind("The connection was closed.")).toBe("network");
+    expect(failureKind("The connection was closed due to timeout")).toBe("timeout");
+    expect(failureKind("The connection was closed.", true)).toBe("cancelled");
     expect(failureKind("401 invalid x-api-key")).toBe("auth");
     expect(failureKind("insufficient_quota: exceeded your current quota")).toBe("quota");
     expect(failureKind("daily spend cap reached ($50.00)")).toBe("quota");
@@ -306,6 +309,24 @@ describe("bounded retry", () => {
   it("retries a thrown network error", async () => {
     const mocked = provider([new Error("fetch failed"), reply()]);
     expect(await modelComplete(SPEC, env(), { maxTokens: 10 }).complete("s", "u")).toBe("ok");
+    expect(mocked.seen).toHaveLength(2);
+  });
+
+  it("recovers Bun's closed-connection error within the existing retry bound", async () => {
+    const mocked = provider([new Error("The connection was closed."), reply()]);
+    const made = modelComplete(SPEC, env(), { maxTokens: 10 });
+    expect(await made.complete("s", "u")).toBe("ok");
+    expect(mocked.seen).toHaveLength(2);
+  });
+
+  it("does not turn repeated closed connections into an unbounded tool retry", async () => {
+    const mocked = provider([
+      new Error("The connection was closed."),
+      new Error("The connection was closed."),
+      reply(),
+    ]);
+    const turns = modelTurns(SPEC, env());
+    await expect(turns.turn({ messages: [] })).rejects.toThrow("The connection was closed.");
     expect(mocked.seen).toHaveLength(2);
   });
 
