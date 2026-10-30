@@ -120,7 +120,7 @@ export function guideCommand(deps: {
         ctx.send(input.entity, `No guide notes match "${query}".`);
         return;
       }
-      for (const note of results) db.touchNote(note.id);
+      db.touchNotes(results.map((note) => note.id));
       const lines = [header(`Guide: "${query}"`), separator()];
       for (const n of results) {
         lines.push(

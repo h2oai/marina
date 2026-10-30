@@ -1568,7 +1568,8 @@ export class AgentRuntime {
     }
     if (this.db) {
       try {
-        if (this.db.getAllApiKeys().length > 0) return true;
+        // Existence only: `getAllApiKeys` read and decrypted every row, twice per command.
+        if (this.db.hasApiKeys()) return true;
       } catch {
         // DB may be closed during shutdown
       }

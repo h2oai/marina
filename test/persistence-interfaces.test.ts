@@ -37,6 +37,10 @@ function mapSettingsStore(defaultModel = "marina/default"): SettingsStore {
       meta.set(key, value);
     },
     getSetting: (key) => settings.get(key),
+    getSettings: (keys) =>
+      Object.fromEntries(
+        keys.flatMap((key) => (settings.has(key) ? [[key, settings.get(key)!]] : [])),
+      ),
     setSetting: (key, value) => {
       settings.set(key, value);
     },

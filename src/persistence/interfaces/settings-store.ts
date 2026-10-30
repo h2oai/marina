@@ -8,6 +8,7 @@ export interface SettingsStore {
   getMetaValue(key: string): string | undefined;
   setMetaValue(key: string, value: string): void;
   getSetting(key: string): string | undefined;
+  getSettings(keys: readonly string[]): Record<string, string>;
   setSetting(key: string, value: string): void;
   deleteSetting(key: string): void;
   listSettingsByPrefix(prefix: string): { key: string; value: string }[];
@@ -20,6 +21,7 @@ export const SETTINGS_STORE_METHODS = [
   "getMetaValue",
   "setMetaValue",
   "getSetting",
+  "getSettings",
   "setSetting",
   "deleteSetting",
   "listSettingsByPrefix",

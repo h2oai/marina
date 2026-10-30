@@ -99,6 +99,7 @@ export interface NotesStore {
     contradictions: number;
   };
   touchNote(id: number): void;
+  touchNotes(ids: readonly number[]): void;
   recallNotes(
     entityName: string,
     query: string,
@@ -192,6 +193,7 @@ export const NOTES_STORE_METHODS = [
   "consolidateNotes",
   "getMemoryQualitySummary",
   "touchNote",
+  "touchNotes",
   "recallNotes",
   "recallNotesWithType",
   "findSimilarNotes",

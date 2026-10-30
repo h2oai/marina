@@ -27,6 +27,9 @@ const EPHEMERAL_EVENT_TYPES = new Set([
   "agent_thinking_delta",
   "tick",
   "resource_changed",
+  // Already durable in `feed_events` (FeedPublisher writes the row, then re-emits
+  // the event for live listeners); nothing reads the copy back from event_log.
+  "feed_event",
 ]);
 
 /** At most one "no model provider" warning per this interval; the rest are counted. */
