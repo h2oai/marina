@@ -211,6 +211,8 @@ export interface RoundForecast {
   routing?: import("./earned-routes").ArenaRouteDecision;
   /** Required research failed and this is what was filed instead (`research-fallback.ts`). */
   researchFallback?: import("./research-fallback").ResearchFallbackRecord;
+  /** `none`: the round had no published history, so no baseline was used (no-anchor mode). */
+  anchor?: "none";
 }
 
 export interface ForecastOrigin {

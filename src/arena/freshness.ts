@@ -17,7 +17,10 @@ export interface FreshnessAudit {
   asOf: string;
   ok: boolean;
   readings: Record<string, { date?: string; ageDays?: number; maxAgeDays: number }>;
-  /** Refusals: a missing or invalid date, or an observation after the information cutoff. */
+  /**
+   * Refusals: a missing or invalid date (unless a no-anchor research answer to a series with no
+   * published history), or an observation after the information cutoff.
+   */
   issues: string[];
   /**
    * Observations older than their source's usual cadence. Recorded, never a refusal: the
@@ -85,7 +88,10 @@ export function auditForecastFreshness(
     const ageDays =
       date && validDay(date) ? Math.floor((today - Date.parse(date)) / DAY_MS) : undefined;
     readings[id] = { date, ageDays, maxAgeDays };
-    if (ageDays === undefined) issues.push(`${id}: missing or invalid observation date`);
+    // A research answer to a series with no published history has no observation to date.
+    if (ageDays === undefined && forecast.anchor === "none" && !history.length)
+      warnings.push(`${id}: no published history; answered by research without an anchor`);
+    else if (ageDays === undefined) issues.push(`${id}: missing or invalid observation date`);
     else if (ageDays < 0 && round.tracker !== "google_trends")
       issues.push(`${id}: observation is after the information cutoff`);
     else if (ageDays > maxAgeDays)

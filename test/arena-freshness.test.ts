@@ -180,3 +180,20 @@ test("Trends refreshes the entire basket and gives models the same newer vintage
   expect(forecast.freshness?.readings.trends_share_a?.date).toBe("2026-10-03");
   expect(auditForecastFreshness(trendRound, trendLock, forecast).ok).toBe(true);
 });
+
+test("a no-anchor research answer to a series with no published history may be filed", () => {
+  const empty: ArenaLock = { round_id: round.round_id, answer_history: [] };
+  const answer = { topline: { mean: 237, sd: 16.6 }, rules: {}, note: "research" };
+  const refused = auditForecastFreshness(round, empty, answer);
+  expect(refused.ok).toBe(false);
+  expect(refused.issues).toEqual([expect.stringContaining("missing or invalid observation date")]);
+  const filed = auditForecastFreshness(round, empty, { ...answer, anchor: "none" });
+  expect(filed.ok).toBe(true);
+  expect(filed.warnings).toEqual([expect.stringContaining("no published history")]);
+  // With history, the anchor marker never excuses an undated reading.
+  const undated: ArenaLock = {
+    round_id: round.round_id,
+    answer_history: [{ date: "x", value: 1 }],
+  };
+  expect(auditForecastFreshness(round, undated, { ...answer, anchor: "none" }).ok).toBe(false);
+});
