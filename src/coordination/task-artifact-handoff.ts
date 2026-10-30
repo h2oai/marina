@@ -7,6 +7,18 @@ import {
   type TaskArtifactFileAccess,
 } from "./task-artifact-file";
 
+/** `{version, sha256}` as a read returns it (`sha256` null for an absent file). */
+function isFileExpectation(value: unknown): value is { version: string; sha256: string | null } {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    typeof (value as { version?: unknown }).version === "string" &&
+    "sha256" in (value as object) &&
+    ((value as { sha256?: unknown }).sha256 === null ||
+      typeof (value as { sha256?: unknown }).sha256 === "string")
+  );
+}
+
 /** Deterministic snapshot, never a second model-authored account of the same facts. */
 export function renderArtifactHandoff(artifact: {
   taskId: number;
@@ -115,6 +127,22 @@ export async function publishTaskDeliverableHandoffFile(
   if (!Number.isSafeInteger(input.taskId) || input.taskId < 1) throw new Error("Invalid task id.");
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(input.section))
     throw new Error("Use a snapshot section id of 1–64 letters, digits, underscores or hyphens.");
+  // Shape first, so a malformed call gets the contract back, never a TypeError.
+  if (!isFileExpectation(input.expected) || typeof input.path !== "string" || !input.path)
+    throw new Error(
+      "Supply path (the journal) and expected as {version, sha256} from your read of the journal; the deliverable goes in deliverable: {path, expected: {version, sha256}}.",
+    );
+  if (
+    !input.deliverable ||
+    typeof input.deliverable !== "object" ||
+    typeof input.deliverable.path !== "string" ||
+    !input.deliverable.path ||
+    !isFileExpectation(input.deliverable.expected) ||
+    typeof input.deliverable.expected.sha256 !== "string"
+  )
+    throw new Error(
+      "Supply deliverable as {path, expected: {version, sha256}} from your read of the deliverable; `expected` is the journal, `deliverable.expected` is the deliverable.",
+    );
   const journalIdentity = await access.identity(input.path);
   const deliverableIdentity = await access.identity(input.deliverable.path);
   if (!journalIdentity || !deliverableIdentity)

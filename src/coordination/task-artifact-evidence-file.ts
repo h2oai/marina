@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ArtifactEvidencePlan } from "./task-artifact-evidence";
-import { artifactFileHash, type TaskArtifactFileAccess } from "./task-artifact-file";
+import {
+  artifactFileHash,
+  staleFileRefusal,
+  type TaskArtifactFileAccess,
+} from "./task-artifact-file";
 
 /** Optional evidence audit of actual file bytes; never imports, edits or approves them. */
 export async function auditTaskArtifactFile(
@@ -21,7 +25,18 @@ export async function auditTaskArtifactFile(
     file.version !== input.expected.version ||
     artifactFileHash(file.content) !== input.expected.sha256
   )
-    throw new Error("The deliverable is absent or changed since your read; read it before audit.");
+    throw new Error(
+      `${staleFileRefusal({
+        object: "deliverable",
+        path: input.path,
+        field: "expected",
+        supplied: input.expected,
+        current:
+          file.content === null
+            ? null
+            : { version: file.version, sha256: artifactFileHash(file.content) },
+      })} No audit ran.`,
+    );
   const payload = { target: { name: input.path, content: file.content }, plan: input.plan };
   const response = await access.command(
     `task work ${input.taskId} artifact-audit ${JSON.stringify(payload)}`,
