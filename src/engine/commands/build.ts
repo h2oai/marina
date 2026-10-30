@@ -465,7 +465,7 @@ async function handleReload(
     deps.db.markRoomSourceValid(roomIdStr, source.version);
     ctx.send(input.entity, success(`Reloaded room "${roomIdStr}" from v${source.version}.`));
   } catch (err) {
-    ctx.send(input.entity, `${fmtError("Reload failed:")} ${getErrorMessage(err)}`);
+    refuseCommand(ctx, input.entity, `${fmtError("Reload failed:")} ${getErrorMessage(err)}`);
   }
 }
 
@@ -609,7 +609,7 @@ async function handleRevert(
       `Reverted "${roomIdStr}" to v${targetVersion} (saved as v${newVersion}).`,
     );
   } catch (err) {
-    ctx.send(input.entity, `${fmtError("Revert failed:")} ${getErrorMessage(err)}`);
+    refuseCommand(ctx, input.entity, `${fmtError("Revert failed:")} ${getErrorMessage(err)}`);
   }
 }
 
@@ -751,7 +751,11 @@ async function handleTemplateApply(
     });
     ctx.send(input.entity, `Applied template "${templateName}" to create room "${newRoomIdStr}".`);
   } catch (err) {
-    ctx.send(input.entity, `${fmtError("Template apply failed:")} ${getErrorMessage(err)}`);
+    refuseCommand(
+      ctx,
+      input.entity,
+      `${fmtError("Template apply failed:")} ${getErrorMessage(err)}`,
+    );
   }
 }
 
@@ -940,7 +944,7 @@ async function handleCommandReload(
       );
     }
   } catch (err) {
-    ctx.send(input.entity, `${fmtError("Reload failed:")} ${getErrorMessage(err)}`);
+    refuseCommand(ctx, input.entity, `${fmtError("Reload failed:")} ${getErrorMessage(err)}`);
   }
 }
 

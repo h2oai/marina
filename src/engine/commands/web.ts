@@ -336,7 +336,7 @@ async function handleFetch(
     try {
       doc = getCorpusDocument(corpusRef.name, corpusRef.docid, { maxChars: 8_000 });
     } catch (e) {
-      ctx.send(eid, `Corpus fetch failed: ${getErrorMessage(e)}`);
+      refuseCommand(ctx, eid, `Corpus fetch failed: ${getErrorMessage(e)}`);
       return;
     }
     if (!doc) {

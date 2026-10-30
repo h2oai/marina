@@ -86,7 +86,7 @@ export async function handleSwarm(
       trace: { caller: "web.swarm" },
     });
   } catch (e) {
-    ctx.send(eid, `Read swarm unavailable: ${getErrorMessage(e)}`);
+    refuseCommand(ctx, eid, `Read swarm unavailable: ${getErrorMessage(e)}`);
     return;
   }
   running.add(eid);
@@ -160,7 +160,7 @@ export async function handleSwarm(
       ].join("\n"),
     );
   } catch (e) {
-    ctx.send(eid, `Read swarm failed: ${getErrorMessage(e)}`);
+    refuseCommand(ctx, eid, `Read swarm failed: ${getErrorMessage(e)}`);
   } finally {
     running.delete(eid);
   }

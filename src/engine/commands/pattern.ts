@@ -248,7 +248,7 @@ export function patternCommand(deps: PatternCommandDeps = {}): CommandDef {
             );
           }
         } catch (err) {
-          ctx.send(eid, `Could not run the pattern: ${getErrorMessage(err)}`);
+          refuseCommand(ctx, eid, `Could not run the pattern: ${getErrorMessage(err)}`);
         } finally {
           running.delete(eid);
         }
