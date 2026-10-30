@@ -161,6 +161,71 @@ CREATE INDEX IF NOT EXISTS idx_sessions_entity_created ON sessions(entity_id, cr
 CREATE INDEX IF NOT EXISTS idx_task_claims_submitted ON task_claims(status, submitted_at, task_id);
 CREATE INDEX IF NOT EXISTS idx_channel_messages_channel_created ON channel_messages(channel_id, created_at);`,
   },
+  {
+    // `numeric_notes` resolved every row through five index probes (projection →
+    // record → version → content note, plus NOT EXISTS over versions): a count
+    // over the view cost ~100 ms at 50k notes and drove the hourly note jobs.
+    // The two derived facts now live on `notes` — `content_id` (the resolved
+    // content note, NULL when the note is its own content) and `version_note`
+    // (a canonical version row points at it) — kept current by triggers on the
+    // three tables that can change them, so no writer changes; the view is one
+    // optional probe. `notes_au` re-indexed FTS on EVERY notes update (each
+    // recall touch); it now fires on content only.
+    version: 187,
+    sql: `ALTER TABLE notes ADD COLUMN content_id INTEGER;
+ALTER TABLE notes ADD COLUMN version_note INTEGER NOT NULL DEFAULT 0;
+UPDATE notes SET version_note=1 WHERE id IN (SELECT note_id FROM memory_record_versions);
+UPDATE notes SET content_id=(
+  SELECT CASE WHEN p.version IS NULL THEN r.current_note_id ELSE v.note_id END
+  FROM memory_note_projections p
+  LEFT JOIN memory_records r ON r.id=p.record_id
+  LEFT JOIN memory_record_versions v ON v.record_id=p.record_id AND v.version=p.version
+  WHERE p.note_id=notes.id)
+WHERE id IN (SELECT note_id FROM memory_note_projections);
+CREATE TRIGGER numeric_resolution_projection_ai AFTER INSERT ON memory_note_projections BEGIN
+ UPDATE notes SET content_id=(
+  SELECT CASE WHEN new.version IS NULL THEN r.current_note_id ELSE v.note_id END
+  FROM memory_records r LEFT JOIN memory_record_versions v ON v.record_id=new.record_id AND v.version=new.version
+  WHERE r.id=new.record_id) WHERE id=new.note_id;
+END;
+CREATE TRIGGER numeric_resolution_projection_au AFTER UPDATE ON memory_note_projections BEGIN
+ UPDATE notes SET content_id=NULL WHERE id=old.note_id AND old.note_id!=new.note_id;
+ UPDATE notes SET content_id=(
+  SELECT CASE WHEN new.version IS NULL THEN r.current_note_id ELSE v.note_id END
+  FROM memory_records r LEFT JOIN memory_record_versions v ON v.record_id=new.record_id AND v.version=new.version
+  WHERE r.id=new.record_id) WHERE id=new.note_id;
+END;
+CREATE TRIGGER numeric_resolution_projection_ad AFTER DELETE ON memory_note_projections BEGIN
+ UPDATE notes SET content_id=NULL WHERE id=old.note_id;
+END;
+CREATE TRIGGER numeric_resolution_record_current AFTER UPDATE OF current_note_id ON memory_records BEGIN
+ UPDATE notes SET content_id=new.current_note_id
+ WHERE id IN (SELECT note_id FROM memory_note_projections WHERE record_id=new.id AND version IS NULL);
+END;
+CREATE TRIGGER numeric_resolution_version_ai AFTER INSERT ON memory_record_versions BEGIN
+ UPDATE notes SET version_note=1 WHERE id=new.note_id;
+ UPDATE notes SET content_id=new.note_id
+ WHERE id IN (SELECT note_id FROM memory_note_projections WHERE record_id=new.record_id AND version=new.version);
+END;
+CREATE TRIGGER numeric_resolution_version_ad AFTER DELETE ON memory_record_versions BEGIN
+ UPDATE notes SET version_note=0 WHERE id=old.note_id;
+ UPDATE notes SET content_id=NULL
+ WHERE id IN (SELECT note_id FROM memory_note_projections WHERE record_id=old.record_id AND version=old.version);
+END;
+DROP TRIGGER notes_au;
+CREATE TRIGGER notes_au AFTER UPDATE OF content ON notes BEGIN
+  INSERT INTO notes_fts(notes_fts, rowid, content) VALUES('delete', old.id, old.content);
+  INSERT INTO notes_fts(rowid, content) VALUES (new.id, new.content);
+END;
+DROP VIEW numeric_notes;
+CREATE VIEW numeric_notes AS
+ SELECT n.id,n.entity_name,n.room_id,coalesce(c.content,n.content) AS content,n.created_at,
+ coalesce(c.importance,n.importance) AS importance,n.last_accessed,n.note_type,n.pool_id,n.supersedes_id,
+ n.recall_count,n.tier,n.confidence,n.verification_status,n.claim_key,
+ coalesce(c.id,n.id) AS content_id
+ FROM notes n LEFT JOIN notes c ON c.id=n.content_id
+ WHERE n.entity_name NOT LIKE 'memory:%' AND n.version_note=0;`,
+  },
 ];
 
 /** Migration 172 body — self-contained so later edits elsewhere never change it. */
