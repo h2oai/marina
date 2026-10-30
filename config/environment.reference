@@ -559,7 +559,7 @@
 # Removes reasoning blocks (text and provider signature) from assistant messages of earlier runs between prompts; the latest run is untouched, OpenAI Responses-API messages are skipped, and the originals stay in the continuity journal. On by default; `off` keeps every reasoning block.
 # MARINA_DROP_OLD_THINKING_SIGNATURES=on
 
-# Provider-level retries inside one request (transient 5xx, short 429) before the loop's own backoff. 0 disables.
+# Provider-level retries inside one request (408/409/429/5xx, honouring Retry-After) before the loop's own backoff — agent turns and every src/model call (reviews, judges, forecasts). 0 disables.
 # MARINA_PROVIDER_MAX_RETRIES=2
 
 # `on` keeps an agent's own command echoes (memory-service acknowledgements, its `You tell …` receipts) in its world-event buffer. Off by default; messages from others are never filtered.
