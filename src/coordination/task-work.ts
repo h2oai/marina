@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import type { EvidenceSource } from "../decisions/evidence";
+import { EVIDENCE_REF_FORMS } from "../decisions/evidence";
 import { tryLog } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { canonicalFederationJson } from "../net/federation-crypto";
@@ -59,6 +60,13 @@ import type {
   WorkPatch,
   WorkValue,
 } from "./task-work-types";
+
+/** The one wording for a source an edit cannot use: a malformed reference is named as such. */
+function unavailableSource(source: { ref: string; reason?: "malformed" | "unavailable" }): string {
+  return source.reason === "malformed"
+    ? `${JSON.stringify(source.ref)} is not a source reference (use ${EVIDENCE_REF_FORMS})`
+    : `Source ${JSON.stringify(source.ref)} is unavailable to this reader (missing, retired or not readable by you)`;
+}
 
 export type WorkActor = { id: string; name: string };
 export type WorkSourceResolver = (actor: WorkActor, ref: string) => EvidenceSource;
@@ -351,7 +359,7 @@ export class TaskWork {
     if (input?.op !== "source") return input as ResolvedArtifactEdit;
     const source = this.resolveSource(actor, input.ref);
     if (source.text === undefined)
-      throw new Error("Source unavailable to this reader; nothing was published.");
+      throw new Error(`${unavailableSource(source)}; nothing was published.`);
     return {
       op: "append",
       path: input.path,
@@ -1195,7 +1203,7 @@ export class TaskWork {
         throw new Error("A nonempty verbatim quotation is required.");
       const source = this.resolveSource(actor, action.ref);
       if (source.text === undefined || !source.version)
-        throw new Error("Source unavailable to this reader; no citation was removed or replaced.");
+        throw new Error(`${unavailableSource(source)}; no citation was removed or replaced.`);
       const start = source.text.indexOf(action.quote);
       if (start < 0) throw new Error("Quotation is not present in the accessible source.");
       const citation = {

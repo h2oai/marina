@@ -671,15 +671,30 @@ export function taskCommand(
             }
             submittedAt = tasks.getClaim(id, input.entity)?.submittedAt ?? undefined;
             clearSubmissionAttempts(id, input.entity);
-            ctx.send(input.entity, `Submitted work for task #${id}.`);
+            // One reply: the submission, then what the evidence audit still finds
+            // unmet and the exact next call — advisory, never a gate; the work is
+            // submitted either way. The same findings ride on every `task work show`.
+            let feedbackLines: string[] = [];
             tryLog(logger, "tasks", "Artifact feedback unavailable after submission", () => {
-              const feedback = work?.completionFeedback(id, { id: self.id, name: self.name });
-              if (feedback?.findings.length)
-                ctx.send(
-                  input.entity,
-                  `Task artifact feedback (advisory; work is submitted):\n${JSON.stringify(feedback, null, 2)}`,
-                );
+              if (!work) return;
+              const feedback = work.completionFeedback(id, { id: self.id, name: self.name });
+              if (feedback === undefined)
+                feedbackLines = [
+                  `No evidence audit ran: task #${id} has no JSON artifact. \`task work ${id} artifact-edit\` creates one; an evidence plan (\`task work ${id} artifact-evidence\`) binds its facts to sources so the audit can check them.`,
+                ];
+              else if (feedback.findings.length)
+                feedbackLines = [
+                  `Evidence audit (advisory; work is submitted): ${feedback.findings.length} unmet obligation(s) at revision ${feedback.checkedRevision}:`,
+                  ...feedback.findings.map(
+                    (f) => `  - ${f.id}${f.path ? ` @ ${f.path}` : ""}: ${f.message}`,
+                  ),
+                  `Next: \`task work ${id} show\` lists the same findings; attach exact evidence with \`task work ${id} artifact-edit\` (op "source") or bind a plan, then \`task submit ${id}\` again.`,
+                ];
             });
+            ctx.send(
+              input.entity,
+              [`Submitted work for task #${id}.`, ...feedbackLines].join("\n"),
+            );
             if (task && task.creatorId !== input.entity) {
               ctx.send(
                 task.creatorId as EntityId,

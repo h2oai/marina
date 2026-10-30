@@ -85,6 +85,17 @@ test("an unavailable original cannot yield approval or a private-version guessin
   expect(assessProseReview(packet(), { findings: [], limitations: [] }).outcome).toBe(
     "no-findings",
   );
+  // Limitations are asked for on every run; alone they are not "something went unchecked".
+  const limited = assessProseReview(packet(), {
+    findings: [],
+    limitations: ["Model interpretation of the custody wording may be incomplete."],
+  });
+  expect(limited.outcome).toBe("no-findings");
+  expect(limited.limitations).toHaveLength(1);
+  // An unavailable source names why, as far as is safe: here only that it was unavailable.
+  const unread = assessProseReview(p, { findings: [], limitations: [] });
+  expect(unread.outcome).toBe("unverified");
+  expect(unread.unavailableReasons).toEqual({ "note:1": "unavailable" });
 });
 
 describe("optional durable prose review", () => {

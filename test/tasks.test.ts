@@ -78,6 +78,8 @@ describe("Tasks", () => {
     conn2.clear();
     engine.processCommand(conn2.entity!, "task submit 1 I fixed the thing");
     expect(conn2.lastText()).toContain("Submitted work for task #1");
+    // No JSON artifact: the reply says the audit could not run and how to make one.
+    expect(conn2.lastText()).toContain("No evidence audit ran");
   });
 
   it("should approve a submission", () => {
