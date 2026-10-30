@@ -368,7 +368,9 @@ export class TaskWork {
         );
       const state = this.load(taskId);
       if (!Number.isSafeInteger(baseRevision) || baseRevision < 0 || baseRevision > state.revision)
-        throw new Error("Invalid artifact base revision.");
+        throw new Error(
+          `Invalid artifact base revision ${baseRevision}: the work is at revision ${state.revision}. Run \`task work ${taskId} show\` and resend its revision.`,
+        );
       this.load(taskId, baseRevision);
       if (!Array.isArray(edits) || !edits.length) throw new Error("Supply a nonempty edits array.");
       const coverageIds = edits.flatMap((edit) =>
@@ -447,7 +449,7 @@ export class TaskWork {
           })
         )
           throw new Error(
-            "Artifact changed while saving; read the current artifact before retrying.",
+            `Artifact changed while saving: you edited from revision ${baseRevision}, the work is past revision ${state.revision}. Run \`task work ${taskId} show\` and resend its revision.`,
           );
       }
       return {
@@ -472,7 +474,9 @@ export class TaskWork {
         throw new Error("Only the task creator or current claimant can bind an evidence plan.");
       const state = this.load(taskId);
       if (state.revision !== expectedRevision)
-        throw new Error("Work changed; read before binding evidence requirements.");
+        throw new Error(
+          `Work changed: expected revision ${expectedRevision}, current ${state.revision}. Run \`task work ${taskId} show\` and resend its revision before binding evidence requirements.`,
+        );
       const artifact = state.document.artifact;
       if (!artifact) throw new Error("Create the artifact before binding evidence requirements.");
       if (plan !== null) validateEvidencePlan(plan);

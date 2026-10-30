@@ -1,7 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { artifactFileHash, type TaskArtifactFileAccess } from "./task-artifact-file";
+import {
+  artifactFileHash,
+  staleFileRefusal,
+  type TaskArtifactFileAccess,
+} from "./task-artifact-file";
 
 /** Deterministic snapshot, never a second model-authored account of the same facts. */
 export function renderArtifactHandoff(artifact: {
@@ -63,20 +67,29 @@ export async function publishTaskArtifactHandoffFile(
     artifactFileHash(file.content) !== input.expected.sha256
   )
     throw new Error(
-      "The journal changed since your read. Read it before retrying; no file changed.",
+      staleFileRefusal({
+        object: "journal",
+        path: input.path,
+        field: "expected",
+        supplied: input.expected,
+        current: { version: file.version, sha256: artifactFileHash(file.content) },
+      }),
     );
   const response = await access.command(`task work ${input.taskId} handoff`);
   if (response.startsWith("task work:")) throw new Error(response);
   const handoff = JSON.parse(response) as ReturnType<typeof renderArtifactHandoff>;
   if (
     handoff.taskId !== input.taskId ||
-    handoff.revision !== input.expected.revision ||
-    handoff.artifactSha256 !== input.expected.artifactSha256 ||
     typeof handoff.content !== "string" ||
     artifactFileHash(handoff.content) !== handoff.sha256
   )
+    throw new Error("The artifact snapshot is invalid; no file changed.");
+  if (
+    handoff.revision !== input.expected.revision ||
+    handoff.artifactSha256 !== input.expected.artifactSha256
+  )
     throw new Error(
-      "The artifact changed or the snapshot is invalid. Read it before retrying; no file changed.",
+      `The artifact changed since your read: you supplied revision ${input.expected.revision} sha ${input.expected.artifactSha256.slice(0, 12)}…, the current handoff is revision ${handoff.revision} sha ${handoff.artifactSha256.slice(0, 12)}…. Run \`task work ${input.taskId} handoff\` and resend its revision and artifactSha256 as expected; no file changed.`,
     );
   return publishHandoffBlock(access, input, file, handoff);
 }
@@ -116,18 +129,45 @@ export async function publishTaskDeliverableHandoffFile(
   };
   await authorize();
   const source = await access.read(input.deliverable.path);
+  const file = await access.read(input.path);
+  const journalHash = artifactFileHash(file.content);
   if (
     source.content === null ||
     source.version !== input.deliverable.expected.version ||
     artifactFileHash(source.content) !== input.deliverable.expected.sha256
-  )
-    throw new Error("The deliverable is absent or changed since your read; no file changed.");
-  const file = await access.read(input.path);
-  if (
-    file.version !== input.expected.version ||
-    artifactFileHash(file.content) !== input.expected.sha256
-  )
-    throw new Error("The journal changed since your read; no file changed.");
+  ) {
+    // The commonest loop: the journal's version/hash sent as the deliverable's.
+    const swapped =
+      input.deliverable.expected.version === file.version &&
+      input.deliverable.expected.sha256 === journalHash;
+    throw new Error(
+      staleFileRefusal({
+        object: "deliverable",
+        path: input.deliverable.path,
+        field: "deliverable.expected",
+        supplied: input.deliverable.expected,
+        current:
+          source.content === null
+            ? null
+            : { version: source.version, sha256: artifactFileHash(source.content) },
+        ...(swapped
+          ? {
+              hint: `You supplied the journal's version and hash (${JSON.stringify(input.path)}) for the deliverable; \`expected\` is the journal, \`deliverable.expected\` is the deliverable.`,
+            }
+          : {}),
+      }),
+    );
+  }
+  if (file.version !== input.expected.version || journalHash !== input.expected.sha256)
+    throw new Error(
+      staleFileRefusal({
+        object: "journal",
+        path: input.path,
+        field: "expected",
+        supplied: input.expected,
+        current: { version: file.version, sha256: journalHash },
+      }),
+    );
   const fence = "~".repeat(
     [...source.content.matchAll(/~+/g)].reduce((n, m) => Math.max(n, m[0].length + 1), 3),
   );
@@ -177,7 +217,7 @@ async function publishHandoffBlock<T extends { content: string }>(
   },
   file: { content: string | null; version: string },
   handoff: T,
-) {
+): Promise<T & { path: string; section: string; changed: boolean; note?: string }> {
   const start = `<!-- marina-task-snapshot:${input.section}:start -->`;
   const end = `<!-- marina-task-snapshot:${input.section}:end -->`;
   if (handoff.content.includes(start) || handoff.content.includes(end))
@@ -211,9 +251,17 @@ async function publishHandoffBlock<T extends { content: string }>(
       throw new Error(
         "The journal changed while inspecting its snapshot. Read it before retrying.",
       );
-    return { ...handoff, path: input.path, section: input.section, changed: false };
+    return {
+      ...handoff,
+      path: input.path,
+      section: input.section,
+      changed: false,
+      note: `Snapshot "${input.section}" is already published at this version; nothing changed and no peer was woken.`,
+    };
   }
   if (!(await access.compareAndWrite(input.path, input.expected, content)))
-    throw new Error("The journal changed while publishing. Its current contents were preserved.");
+    throw new Error(
+      `The journal changed while publishing (${JSON.stringify(input.path)}); its current contents were preserved. Re-read it and resend its version and hash as expected.`,
+    );
   return { ...handoff, path: input.path, section: input.section, changed: true };
 }
