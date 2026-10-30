@@ -33,6 +33,8 @@ export type ProseSourceOrigin = "request" | "prose" | "work" | "task";
 
 /** The task's recorded history the reviewer may rely on: who did what at which revision. */
 export interface ProseReviewRecord {
+  /** The task's own journal entries — authored claims by named participants, in order. */
+  journal?: Array<{ id: string; author: string; at: number; text: string }>;
   revisions: Array<{ revision: number; author: string; action: string; at: number }>;
   claims: Array<{ entity: string; status: string; submittedAt: number | null }>;
 }

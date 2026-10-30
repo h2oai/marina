@@ -9080,18 +9080,20 @@ Usage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approv
   task work <id> expect <revision> {"field":"traffic","op":"lte","expected":10,"citation":"c2"}
   task work <id> check [fresh] — reuse a current receipt; no model call or approval gate.
   task work <id> show [revision] | accept <revision> <proposal_id> | retire <revision> <entry_id> <reason>
+  task work <id> journal <revision> {"text":"what I did, what is left, what the next owner must know"} — the task's own record; every entry stays in the work document, the handoff snapshot and the prose review read them.
   task work <id> artifact-edit <revision> <json_edits> — edit the actual JSON deliverable by path; preserves untouched content and returns advisory feedback. replace with scopePath binds a current-context list.
-  task work <id> artifact-source <revision> <json_selection> — publish exact readable source values; optional coverage:{id,requirement,scopePath?} retains the evidence requirement atomically.
+  task work <id> artifact-source <revision> <json_selection> — publish exact readable source values; optional id,requirement,scopePath?retains the evidence requirement atomically.
   task work <id> render [revision] — return its exact JSON content and hash.
   task work <id> handoff [revision] — read a Markdown snapshot from that exact artifact; revision-labeled history, no model paraphrase or source validation.
   task work <id> artifact-rule <revision> <json_check> | artifact-unrule <revision> <check_id> <reason>
   task work <id> artifact-rules <revision> <json_checks> — atomic batch of scoped value/evidence checks.
   task work <id> artifact-review <json_questions> — evidence packet without draft answers or expectations.
-  task work <id> artifact-review-fresh <json_review> — explicit model review in a fresh context: {questions:[{id,path,answerType,refs}],model?}; reuses unchanged results.
-  task work <id> prose-review <json_review> | prose-review-fresh <json_review> — optional actual-text assessment: {target:{name,content},refs,model?}; exact source citations, no edits or approval.
+  task work <id> artifact-review-fresh <json_review> — explicit model review in a fresh context: questions:[{id,path,answerType,refs}],model?; reuses unchanged results.
+  task work <id> prose-review <json_review> | prose-review-fresh <json_review> — optional actual-text assessment: name,content,refs,model?; exact source citations, no edits or approval.
+  task work <id> prose-audit <json_audit> — the evidence audit over prose: name,content|journal:true, plan; a fact counts when the prose quotes its bound source selection verbatim; advisory.
   task work <id> artifact-assess <json_assessment> — compare source-cited answers against the unchanged draft; advisory.
   task work <id> artifact-evidence <revision> <json_plan_or_null> — optional source-declared fact-bundle and all-quotation audit; explicit schema mappings and fact bindings, no semantic certification.
-  task work <id> artifact-audit <json_audit> — inspect actual file content with an explicit evidence plan: {target:{name,content},plan}; no native artifact, edits or approval required.
+  task work <id> artifact-audit <json_audit> — inspect actual file content with an explicit evidence name,content,plan; no native artifact, edits or approval required.
   task work <id> artifact-check [fresh] — advisory coverage, projection and value checks; no approval or loop changes.
 
 Examples:
@@ -9289,6 +9291,14 @@ Effect: write.
 - `field-1` (`revision`): text, required.
 - `field-2` (`json constraint`): json, required.
 
+### `task work <id> journal <revision> <json_entry>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`revision`): text, required.
+- `field-2` (`json entry`): json, required.
+
 ### `task work <id> retire <revision> <entry_id> <reason>`
 
 Effect: write.
@@ -9374,6 +9384,13 @@ Effect: read.
 
 - `field-0` (`id`): text, required.
 - `field-1` (`json review`): json, required.
+
+### `task work <id> prose-audit <json_audit>`
+
+Effect: read.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`json audit`): json, required.
 
 ### `task work <id> prose-review-fresh <json_review>`
 

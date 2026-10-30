@@ -32,6 +32,7 @@ function textProperty(value: Record<string, unknown>, key: string): string {
 
 function action(kind: string, payload: string): WorkAction {
   if (kind === "patch" || kind === "propose") return { kind, patch: JSON.parse(payload) };
+  if (kind === "journal") return { kind, text: payload };
   if (kind === "accept") {
     if (!/^p\d+$/.test(payload)) throw new Error("Expected a proposal id, e.g. p3.");
     return { kind, id: payload };
@@ -61,7 +62,7 @@ function action(kind: string, payload: string): WorkAction {
     };
   }
   throw new Error(
-    "Unknown work action. Use show, patch, propose, accept, cite, expect, retire, check, render, handoff, artifact-edit, artifact-source, artifact-rule, artifact-rules, artifact-evidence, artifact-unrule, artifact-check, artifact-review, artifact-review-fresh, prose-review, prose-review-fresh, artifact-audit or artifact-assess.",
+    "Unknown work action. Use show, patch, propose, accept, cite, journal, expect, retire, check, render, handoff, artifact-edit, artifact-source, artifact-rule, artifact-rules, artifact-evidence, artifact-unrule, artifact-check, artifact-review, artifact-review-fresh, prose-review, prose-review-fresh, artifact-audit or artifact-assess.",
   );
 }
 
@@ -76,7 +77,7 @@ export async function handleTaskWork(
     const match = /^work\s+(\S+)(?:\s+(\S+))?(?:\s+([\s\S]*))?$/i.exec(input.args);
     if (!match)
       throw new Error(
-        "Usage: task work <id> [show|render|handoff|patch|propose|accept|cite|expect|retire|check|artifact-edit|artifact-source|artifact-rule|artifact-rules|artifact-evidence|artifact-unrule|artifact-check|artifact-review|artifact-review-fresh|prose-review|prose-review-fresh|artifact-audit|artifact-assess …]",
+        "Usage: task work <id> [show|render|handoff|patch|propose|accept|cite|journal|expect|retire|check|artifact-edit|artifact-source|artifact-rule|artifact-rules|artifact-evidence|artifact-unrule|artifact-check|artifact-review|artifact-review-fresh|prose-review|prose-review-fresh|artifact-audit|artifact-assess …]",
       );
     const taskId = integer(match[1]!);
     const kind = (match[2] ?? "show").toLowerCase();
@@ -96,6 +97,7 @@ export async function handleTaskWork(
     else if (kind === "artifact-audit")
       result = work.auditArtifactFile(taskId, actor, JSON.parse(rest));
     else if (kind === "prose-review") result = work.reviewProse(taskId, actor, JSON.parse(rest));
+    else if (kind === "prose-audit") result = work.auditProse(taskId, actor, JSON.parse(rest));
     else if (kind === "prose-review-fresh")
       result = await work.reviewFreshProse(taskId, actor, JSON.parse(rest));
     else if (kind === "check" || kind === "artifact-check") {

@@ -27,6 +27,7 @@ import {
 import {
   type ArtifactEvidencePlan,
   auditArtifactEvidence,
+  auditProseEvidence,
   evidenceReferenceBinding,
   validateEvidencePlan,
 } from "./task-artifact-evidence";
@@ -87,6 +88,8 @@ const empty = (): TaskWorkDocument => ({
 });
 const digest = (value: unknown) =>
   createHash("sha256").update(canonicalFederationJson(value)).digest("hex");
+/** One journal entry's size; a longer account is several entries. */
+export const MAX_JOURNAL_ENTRY_CHARS = 20_000;
 const has = (object: object, key: string) => Object.hasOwn(object, key);
 const logger = new Logger();
 
@@ -315,7 +318,49 @@ export class TaskWork {
       content,
       sha256,
     } = this.renderArtifact(taskId, actor, revision);
-    return renderArtifactHandoff({ taskId: id, revision: version, content, sha256 });
+    const journal = this.load(taskId, revision).document.journal;
+    return renderArtifactHandoff({ taskId: id, revision: version, content, sha256, journal });
+  }
+
+  /**
+   * The evidence audit over prose: a named text, or the task's own journal (every
+   * entry, in order). The same requirements, bundles and bound selections as the
+   * artifact audit; a fact is supported when the prose quotes its selection verbatim.
+   */
+  auditProse(
+    taskId: number,
+    actor: WorkActor,
+    input: {
+      target?: { name: string; content: string };
+      journal?: boolean;
+      plan: ArtifactEvidencePlan;
+    },
+  ) {
+    this.task(taskId, actor);
+    const state = this.load(taskId);
+    let name: string;
+    let text: string;
+    if (input?.journal) {
+      const entries = state.document.journal ?? [];
+      if (!entries.length) throw new Error("This task has no journal entries to audit.");
+      name = `task:${taskId}:journal`;
+      text = entries.map((e) => `[${e.id} ${e.authorName}] ${e.text}`).join("\n\n");
+    } else if (
+      input?.target &&
+      typeof input.target.name === "string" &&
+      input.target.name.trim() &&
+      typeof input.target.content === "string"
+    ) {
+      name = input.target.name;
+      text = input.target.content;
+    } else throw new Error("Supply target {name, content}, or journal: true, with the plan.");
+    const result = auditProseEvidence(text, input.plan, (ref) => this.resolveSource(actor, ref));
+    return {
+      taskId,
+      revision: state.revision,
+      target: { name, sha256: createHash("sha256").update(text).digest("hex") },
+      ...result,
+    };
   }
 
   /** Inspect caller-selected file bytes without requiring or changing a native mirror. */
@@ -714,6 +759,12 @@ export class TaskWork {
       if (rule.selection?.ref) workRefs.add(rule.selection.ref);
     }
     const record: ProseReviewRecord = {
+      journal: (state.document.journal ?? []).map((entry) => ({
+        id: entry.id,
+        author: entry.authorName,
+        at: entry.at,
+        text: entry.text,
+      })),
       revisions: this.db.listTaskWorkRevisions(taskId, 20).map((r) => ({
         revision: r.revision,
         author: r.author_name,
@@ -1257,6 +1308,21 @@ export class TaskWork {
         )
       )
         document.citations.push({ id: id("c"), authorId, ...citation });
+    } else if (action.kind === "journal") {
+      if (typeof action.text !== "string" || !action.text.trim())
+        throw new Error("A journal entry needs nonempty text.");
+      if (action.text.length > MAX_JOURNAL_ENTRY_CHARS)
+        throw new Error(
+          `A journal entry is at most ${MAX_JOURNAL_ENTRY_CHARS} characters; split it into entries.`,
+        );
+      document.journal ??= [];
+      document.journal.push({
+        id: `j${document.journal.length + 1}`,
+        authorId,
+        authorName: actor.name,
+        at: Date.now(),
+        text: action.text.trim(),
+      });
     } else if (action.kind === "expect") {
       requireField(action.field);
       if (!has(document.fields, action.field))

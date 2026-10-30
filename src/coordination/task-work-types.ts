@@ -44,6 +44,22 @@ export interface TaskWorkDocument {
   proposals: WorkProposal[];
   /** Optional canonical JSON deliverable; old scalar work records remain compatible. */
   artifact?: TaskArtifact;
+  /**
+   * Authored prose, in order: what a participant recorded for whoever comes next
+   * (a handoff, a decision's reasoning, a correction). Each entry is a revision
+   * of the task's own record — durable, attributed, reviewable — not a file a
+   * harness keeps beside the task. Authored claims, never verified fact.
+   */
+  journal?: WorkJournalEntry[];
+}
+
+export interface WorkJournalEntry {
+  /** `j1`, `j2`, … — stable within the task. */
+  id: string;
+  authorId: string;
+  authorName: string;
+  at: number;
+  text: string;
 }
 
 export type WorkAction =
@@ -51,6 +67,7 @@ export type WorkAction =
   | { kind: "propose"; patch: WorkPatch }
   | { kind: "accept"; id: string }
   | { kind: "cite"; field: string; ref: string; quote: string }
+  | { kind: "journal"; text: string }
   | {
       kind: "expect";
       field: string;

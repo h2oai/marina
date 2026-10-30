@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   artifactFileHash,
   type TaskArtifactFileAccess,
@@ -333,4 +333,29 @@ test("a stale-read refusal names the field, both versions and the next call — 
   const again = await publishTaskDeliverableHandoffFile(h.access, h.input());
   expect(again.changed).toBe(false);
   expect(again.note).toContain("already published");
+});
+
+describe("journal entries in the handoff snapshot", () => {
+  test("entries follow the artifact verbatim with author and time; none means no section", () => {
+    const artifact = { taskId: 7, revision: 3, content: '{"a":1}\n', sha256: "abc" };
+    const bare = renderArtifactHandoff(artifact);
+    expect(bare.content).not.toContain("#### Journal");
+    const withJournal = renderArtifactHandoff({
+      ...artifact,
+      journal: [
+        {
+          id: "j1",
+          authorName: "Worker",
+          at: Date.UTC(2026, 9, 30, 12),
+          text: "Read the ledger.\nNext: file it.",
+        },
+      ],
+    });
+    expect(withJournal.content).toContain(
+      "#### Journal\n\n- [j1 Worker 2026-10-30T12:00:00.000Z] Read the ledger.\n  Next: file it.\n",
+    );
+    expect(withJournal.sha256).not.toBe(bare.sha256);
+    expect(withJournal.artifactSha256).toBe("abc");
+    expect("journal" in withJournal).toBe(false);
+  });
 });
