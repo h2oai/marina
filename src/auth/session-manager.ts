@@ -127,6 +127,28 @@ export class SessionManager {
     return this.validateByHash(hashToken(token));
   }
 
+  /**
+   * Why a token would be refused, with no side effect: `unknown` (never issued
+   * by this server, or revoked), `expired` (idle, or past the lifetime cap) or
+   * `active`. The reconnect refusal reads it so a client can tell a lost
+   * session from a stale token.
+   */
+  inspect(
+    token: string,
+  ):
+    | { state: "active" }
+    | { state: "unknown" }
+    | { state: "expired"; reason: "idle" | "lifetime"; at: number } {
+    const tokenHash = hashToken(token);
+    const session = this.sessions.get(tokenHash) ?? this.db?.loadSession(tokenHash);
+    if (!session || !hashesEqual(tokenHash, session.token)) return { state: "unknown" };
+    const now = Date.now();
+    const lifetimeAt = session.createdAt + this.sessionMaxAgeMs;
+    if (now >= lifetimeAt) return { state: "expired", reason: "lifetime", at: lifetimeAt };
+    if (now > session.expiresAt) return { state: "expired", reason: "idle", at: session.expiresAt };
+    return { state: "active" };
+  }
+
   /** Core validation keyed by the at-rest token hash. */
   private validateByHash(tokenHash: string): Session | undefined {
     let session = this.sessions.get(tokenHash);

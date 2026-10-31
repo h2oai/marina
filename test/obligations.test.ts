@@ -31,6 +31,7 @@ import { FULL_MODEL_PREFIX } from "../src/net/model-api/stack";
 import { withTrailingNote } from "../src/net/model-api/upstream";
 import { VERIFY_MODEL_PREFIX } from "../src/net/model-api/verify";
 import { AgentObligations } from "../src/obligations/agent";
+import { evidenceReply } from "../src/obligations/evidence-reply";
 import {
   checkFinalReply,
   EXTRACT_SYSTEM,
@@ -1373,5 +1374,66 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
     });
     expect(seen.map((s) => s.kind)).toEqual(["extract", "main", "check"]);
     expect(resp.headers.get("x-marina-obligations")).toContain("check=handled");
+  });
+});
+
+describe("the world's submit reply as a stated obligation", () => {
+  const submitted = (unmet: number) =>
+    [
+      "Submitted work for task #7.",
+      ...(unmet
+        ? [
+            `Evidence audit (advisory; work is submitted): ${unmet} unmet obligation(s) at revision 3:`,
+            '  - balance @ /items/1: balance: missing facts by allowed bundle: [["cash"]]',
+          ]
+        : []),
+    ].join("\n");
+
+  it("owed with no model call, shown in observe, settled by the next clean submission of that task", () => {
+    const ob = new AgentObligations({
+      complete: async () => {
+        throw new Error("no model call expected");
+      },
+      mode: () => "observe",
+      observeSample: () => 0,
+      now: () => 0,
+    });
+    const write = () => true;
+    ob.observeToolResult(
+      "marina_command",
+      { command: "task submit 7 done" },
+      true,
+      write,
+      submitted(1),
+    );
+    expect(ob.section()).toContain("task 7: 1 evidence obligation(s) unmet");
+    expect(ob.section()).toContain("task submit 7 again");
+    // Repeated: still one obligation; an unrelated write settles nothing.
+    ob.observeToolResult(
+      "marina_command",
+      { command: "task submit 7 done" },
+      true,
+      write,
+      submitted(1),
+    );
+    ob.observeToolResult(
+      "marina_command",
+      { command: "task work 7 artifact-edit 3 {}" },
+      true,
+      write,
+      "ok",
+    );
+    expect(ob.obligations().filter((o) => o.status === "open")).toHaveLength(1);
+    ob.observeToolResult(
+      "marina_command",
+      { command: "task submit 7 done" },
+      true,
+      write,
+      submitted(0),
+    );
+    expect(ob.section()).toBeUndefined();
+    expect(ob.obligations()[0]!.by).toBe("tool:marina_command");
+    expect(evidenceReply("Submitted work for task #9.")).toEqual({ taskId: 9, unmet: 0 });
+    expect(evidenceReply("Task #9 not found.")).toBeUndefined();
   });
 });

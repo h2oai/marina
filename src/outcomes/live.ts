@@ -19,7 +19,7 @@ import { recordJudgeOpinion } from "../decisions/judges";
 import { canonicalFormationName } from "../orchestration/formations/catalogue";
 import type { MarinaDB } from "../persistence/database";
 import type { JudgeObservationInput } from "../persistence/db-decisions";
-import type { EngineEvent } from "../types";
+import type { EngineEvent, EntityId } from "../types";
 import { recordResolved } from "./record";
 import { canScope, type WorkKind, workRefs } from "./work-refs";
 
@@ -143,15 +143,28 @@ export function taskApproach(
 
 /** Who did the work, and on what (an agent's model and role; a person's name only). */
 export function participantOf(
-  db: Pick<MarinaDB, "getAgentConfig">,
+  db: Pick<MarinaDB, "getAgentConfig"> &
+    Partial<Pick<MarinaDB, "findEntityIdByName" | "loadEntity">>,
   name: string,
 ): { agent: string; model?: string; role?: string } {
   const config = db.getAgentConfig(name);
+  // An external participant has no config: its model is what it declared at
+  // login (`KnownProperties.declared_model`), kept with its persisted entity.
+  const model = config?.model ?? declaredModelOf(db, name);
   return {
     agent: name,
-    ...(config?.model ? { model: config.model } : {}),
+    ...(model ? { model } : {}),
     ...(config?.role ? { role: config.role } : {}),
   };
+}
+
+function declaredModelOf(
+  db: Partial<Pick<MarinaDB, "findEntityIdByName" | "loadEntity">>,
+  name: string,
+): string | undefined {
+  const id = db.findEntityIdByName?.(name);
+  const declared = id ? db.loadEntity?.(id as EntityId)?.properties.declared_model : undefined;
+  return typeof declared === "string" && declared ? declared : undefined;
 }
 
 /**
@@ -179,12 +192,62 @@ export function hasTaskOpinion(
   if (db.getOutcomeBySubject(taskOpinionSubject(taskId, claimant, submittedAt))) return true;
   const prefix = `judged:${taskBase(taskId, claimant)}:`;
   // Preserve opinions written before submission identities were introduced.
-  return db
-    .listOutcomes({ subjectPrefix: prefix, limit: 20 })
-    .some(
-      (o) =>
-        !o.subject.slice(prefix.length).startsWith("submission:") && o.resolved_at >= submittedAt,
+  // A prose review's opinion (`prose:<t>`) is its own judge, never this one.
+  return db.listOutcomes({ subjectPrefix: prefix, limit: 20 }).some((o) => {
+    const rest = o.subject.slice(prefix.length);
+    return (
+      !rest.startsWith("submission:") && !rest.startsWith("prose:") && o.resolved_at >= submittedAt
     );
+  });
+}
+
+/**
+ * A fresh prose review's verdict on a task attempt as a JUDGED outcome: a
+ * contradiction found is `fail`, no finding over readable sources is `pass`, a
+ * review that left something unchecked (`unverified`) is no opinion. Recorded,
+ * never delivered — `prose-review:<model>` teaches only once it has earned
+ * agreement with creators' verdicts (the attempt's next verdict settles it,
+ * `truthKeyOfJudged`). The task must have a live attempt; the reviewer's own
+ * identity is not the attempt's.
+ */
+export function recordProseReviewOpinion(
+  db: MarinaDB,
+  input: {
+    taskId: number;
+    model: string;
+    outcome: string;
+    findings: ReadonlyArray<{ status: string }>;
+    at: number;
+  },
+): void {
+  const claim = db
+    .getTaskClaims(input.taskId)
+    .find((row) => row.status === "claimed" || row.status === "submitted");
+  if (!claim) return;
+  const opinion = input.findings.some((f) => f.status === "contradicted")
+    ? "fail"
+    : input.outcome === "no-findings"
+      ? "pass"
+      : "none";
+  if (opinion === "none") return;
+  const claimant = claim.entity_name;
+  recordResolved(db, {
+    subject: `judged:${taskBase(input.taskId, claimant)}:prose:${input.at}`,
+    kind: "task",
+    source: "task:prose-review",
+    domain: "tools",
+    owner: claimant,
+    succeeded: opinion === "pass",
+    metric: "prose-review",
+    basis: "judged",
+    judge: `prose-review:${input.model}`,
+    participants: [participantOf(db, claimant)],
+    refs: [
+      `task:${input.taskId}`,
+      ...workRefsFor(db, "task", claimant, taskApproach(db, claimant, input.taskId)),
+    ],
+    resolvedAt: input.at,
+  });
 }
 
 /**

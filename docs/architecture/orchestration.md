@@ -287,6 +287,21 @@ certification. Missing source access cannot yield a verified result. The optiona
 review without reading server host paths or writing files. Neither review changes task
 submission, scheduler behavior, agent prompts, peer wakes or approval.
 
+`prose-audit` applies the evidence plan's requirements, bundles and bound selections to
+prose (`auditProseEvidence`, sharing the artifact audit's source loading): a fact is
+supported when the prose quotes its selection verbatim, so "supported" means one thing
+for JSON and for sentences. `journal` entries (`WorkJournalEntry`, append-only in the
+work document) are the task's own record; `prose-audit {journal:true}` audits them and
+the prose review packet carries them.
+
+A fresh prose review's verdict is a judge's opinion on the task attempt
+(`recordProseReviewOpinion`, `src/outcomes/live.ts`): a contradiction found is `fail`,
+no finding over readable sources is `pass`, an `unverified` review is no opinion. It is a
+JUDGED outcome (`task:prose-review`, judge `prose-review:<model>`, subject
+`judged:task:<id>:<claimant>:prose:<t>`) settled by the creator's next verdict on the
+attempt, so `judgeAgreement` measures each reviewing model; it is never delivered as a
+lesson until that judge has earned agreement, and never blocks, bounces or approves.
+
 An evidence-plan quotation from an unlisted or ambiguous original is unverified. It is
 not labeled false merely because the author's plan lacks that readable original. An
 actual mismatch against a selected readable original remains a discrepancy.

@@ -100,13 +100,12 @@ const strings = (value: ArtifactValue | undefined): string[] =>
         : [];
 
 /** Audit all selected quotations, including extras, and every source-declared obligation. */
-export function auditArtifactEvidence(
-  value: ArtifactValue,
+/** The plan's sources as the reviewer reads them now: parsed documents, their readable text, ambiguity and unavailability findings — shared by the artifact and prose audits. */
+function loadEvidenceDocuments(
   plan: ArtifactEvidencePlan,
   resolve: (ref: string) => EvidenceSource,
   versions?: Record<string, string | null>,
 ) {
-  validateEvidencePlan(plan);
   const refs = [...new Set([plan.requirements.ref, ...plan.sources.map((s) => s.ref)])];
   const sources = new Map(refs.map((ref) => [ref, resolve(ref)]));
   const parsed = new Map<string, ArtifactValue>();
@@ -156,6 +155,21 @@ export function auditArtifactEvidence(
       "",
       `Multiple sources claim document ${id}; resolve the ambiguous mapping.`,
     );
+  return { sources, parsed, findings, add, unavailable, docs, ambiguous };
+}
+
+export function auditArtifactEvidence(
+  value: ArtifactValue,
+  plan: ArtifactEvidencePlan,
+  resolve: (ref: string) => EvidenceSource,
+  versions?: Record<string, string | null>,
+) {
+  validateEvidencePlan(plan);
+  const { sources, parsed, findings, add, unavailable, docs, ambiguous } = loadEvidenceDocuments(
+    plan,
+    resolve,
+    versions,
+  );
   const requirementsData = parsed.get(plan.requirements.ref);
   const requirements =
     requirementsData === undefined ? undefined : at(requirementsData, plan.requirements.path);
@@ -314,5 +328,106 @@ export function auditArtifactEvidence(
     findings,
     scope:
       "All selected citations and source-declared fact bundles were checked against caller-bound exact selections. Bindings do not prove entailment, current semantic validity or completeness of the task's own contract. No edits, approvals or model calls were made.",
+  };
+}
+
+/**
+ * The prose audit: the same source-declared requirements, fact bundles and exact
+ * bound selections as the artifact audit, applied to a paragraph instead of a
+ * decision row. A fact counts as supported when the prose quotes its bound source
+ * selection verbatim — the prose equivalent of an authentic citation — so
+ * "supported" means one thing whether a model wrote JSON or sentences. Nothing is
+ * inferred from wording; entailment is not proven.
+ */
+export function auditProseEvidence(
+  text: string,
+  plan: ArtifactEvidencePlan,
+  resolve: (ref: string) => EvidenceSource,
+  versions?: Record<string, string | null>,
+) {
+  validateEvidencePlan(plan);
+  if (typeof text !== "string" || !text.trim()) throw new Error("Supply the prose to audit.");
+  const { sources, parsed, findings, add, unavailable, docs, ambiguous } = loadEvidenceDocuments(
+    plan,
+    resolve,
+    versions,
+  );
+  const requirementsData = parsed.get(plan.requirements.ref);
+  const requirements =
+    requirementsData === undefined ? undefined : at(requirementsData, plan.requirements.path);
+  if (!Array.isArray(requirements) || !requirements.length)
+    add(
+      "requirements",
+      "",
+      "No nonempty source requirement list is available; an empty audit is unverified.",
+    );
+  const quoted = new Map<string, { ref: string; selection: string }>();
+  for (const binding of plan.bindings) {
+    const doc = docs.find((d) => d.ref === binding.ref);
+    if (!doc || ambiguous.has(doc.id)) continue;
+    const selection = at(doc.data, binding.path);
+    if (
+      typeof selection !== "string" ||
+      !selection.trim() ||
+      !doc.text.some((t) => t.includes(selection))
+    )
+      continue;
+    if (text.includes(selection)) quoted.set(binding.fact, { ref: binding.ref, selection });
+  }
+  const obligations: Array<{ id: string; missing: string[][]; complete: boolean }> = [];
+  const seen = new Set<string>();
+  for (const [index, requirement] of (Array.isArray(requirements) ? requirements : []).entries()) {
+    const id = at(requirement, plan.requirements.key),
+      bundles = at(requirement, plan.requirements.bundles);
+    if (
+      typeof id !== "string" ||
+      !id.trim() ||
+      seen.has(id) ||
+      !Array.isArray(bundles) ||
+      !bundles.length ||
+      bundles.some(
+        (bundle) =>
+          !Array.isArray(bundle) ||
+          !bundle.length ||
+          bundle.some((f) => typeof f !== "string" || !f.trim()),
+      )
+    ) {
+      add(
+        `requirement:${index}`,
+        "",
+        "A source requirement needs a unique key and nonempty alternatives of named facts.",
+      );
+      continue;
+    }
+    seen.add(id);
+    const missing = (bundles as string[][]).map((bundle) =>
+      bundle.filter((fact) => !quoted.has(fact)),
+    );
+    const complete = missing.some((bundle) => !bundle.length);
+    obligations.push({ id, missing, complete });
+    if (!complete)
+      add(
+        `obligation:${id}`,
+        "",
+        `${id}: missing facts by allowed bundle: ${JSON.stringify(missing)}. Quote each fact's exact bound source selection verbatim in the prose; no fact is read into wording.`,
+      );
+  }
+  return {
+    advisory: true as const,
+    fingerprint: artifactDigest([
+      plan,
+      text,
+      [...sources].map(([ref, s]) => [ref, s.status, s.version ?? null, parsed.has(ref)]),
+    ]),
+    outcome: findings.length
+      ? unavailable.length
+        ? ("unverified" as const)
+        : ("discrepancies" as const)
+      : ("matches-declared-evidence" as const),
+    quoted: [...quoted].map(([fact, { ref }]) => ({ fact, ref })),
+    obligations,
+    findings,
+    scope:
+      "Source-declared fact bundles were checked against exact bound selections quoted verbatim in the prose. Bindings do not prove entailment, current semantic validity or completeness beyond the declared requirements. No edit, submission gate or approval occurs.",
   };
 }

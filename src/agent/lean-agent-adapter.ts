@@ -2331,6 +2331,10 @@ export class LeanAgentAdapter implements AgentHandle {
                 classifyToolRisk(name, (callArgs ?? {}) as Record<string, unknown>) === "read") ||
               readOnlyCall(name, callArgs, { role: "track" })
             ),
+          context.result.content
+            .map((c) => (c.type === "text" ? c.text : ""))
+            .filter(Boolean)
+            .join("\n"),
         );
         let noted: AfterToolCallResult | undefined;
         // The generic Code tool keeps a readable error result for callers.

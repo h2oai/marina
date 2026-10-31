@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { SessionManager } from "../src/auth/session-manager";
+import { reconnectRefusal } from "../src/engine/auth-coordinator";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
@@ -123,9 +124,25 @@ describe("Auth & Session Integration", () => {
       }
     });
 
-    it("should reject invalid token", () => {
+    it("should reject invalid token, saying it was never issued here", () => {
       const result = engine.reconnect("c1", "invalid-token");
-      expect("error" in result).toBe(true);
+      expect("error" in result && result.error).toContain("never issued it or has revoked it");
+      expect("error" in result && result.error).toContain("server up");
+    });
+
+    it("an expired session is refused as expired, with the reason and age", () => {
+      const sessions = new SessionManager(undefined, { sessionTtlMs: -1 });
+      const session = sessions.create("e_1" as EntityId, "Ada");
+      const probe = sessions.inspect(session.token);
+      expect(probe.state).toBe("expired");
+      expect(probe.state === "expired" && probe.reason).toBe("idle");
+      expect(reconnectRefusal(probe, Date.now() - 120_000, Date.now())).toBe(
+        "Invalid or expired session token: the session expired 0 s ago (idle too long) (server up 2 min); log in again for a new token.",
+      );
+      expect(sessions.inspect("nope")).toEqual({ state: "unknown" });
+      expect(reconnectRefusal({ state: "unknown" })).toBe(
+        "Invalid or expired session token: this server never issued it or has revoked it; log in again for a new token.",
+      );
     });
 
     it("should reject banned user on reconnect", () => {

@@ -151,6 +151,13 @@ export interface ClientOptions {
      * can only remove authority, never add it.
      */
     principal?: "agent" | "person";
+    /**
+     * The model this client runs on (an id such as `openai/gpt-6-luna`), when
+     * the client is an external agent. Marina records it with the participant's
+     * task outcomes so routing evidence counts them per model; a wrong value
+     * only misattributes that evidence, it grants nothing.
+     */
+    model?: string;
 }
 export interface CommandOptions {
     signal?: AbortSignal;
@@ -3293,6 +3300,12 @@ export type EntityKind = "agent" | "npc" | "object";
  * Extends Record<string, unknown> so arbitrary keys still work.
  */
 export interface KnownProperties extends Record<string, unknown> {
+    /**
+     * The model an EXTERNAL participant declared at login (`MarinaClient`
+     * `model`), so its task outcomes count per model in the live routing
+     * evidence. Self-declared: it informs evidence only, never authority.
+     */
+    declared_model?: string;
     rank?: number;
     role?: string;
     title?: string;

@@ -48,6 +48,51 @@ describe("optional shared task work", () => {
   const revision = () => fixture.db.getTaskWorkRevision(taskId)?.revision ?? 0;
   const raw = () => (fixture.db as unknown as { db: Database }).db;
   const apply = (who: WorkActor, action: WorkAction) => work.apply(taskId, who, revision(), action);
+
+  test("journal entries are the task's own record and the prose audit reads them", () => {
+    const policy = "Only verified originals count toward liability.";
+    const amount = "The verified liability is 75 dollars.";
+    const contract = source(
+      JSON.stringify({ requirements: [{ key: "liability", facts: [["policy", "amount"]] }] }),
+    );
+    const ledger = source(JSON.stringify({ id: "ledger", statements: [policy, amount] }));
+    const plan = {
+      requirements: { ref: contract, path: "/requirements", key: "/key", bundles: "/facts" },
+      targets: {
+        path: "/items",
+        key: "/key",
+        citations: "/cites",
+        document: "/doc",
+        quote: "/quote",
+      },
+      sources: [{ ref: ledger, document: "/id", text: "/statements" }],
+      bindings: [
+        { fact: "policy", ref: ledger, path: "/statements/0" },
+        { fact: "amount", ref: ledger, path: "/statements/1" },
+      ],
+    };
+    expect(() => work.auditProse(taskId, worker, { journal: true, plan })).toThrow(
+      "no journal entries",
+    );
+    apply(worker, { kind: "journal", text: `Read the ledger: "${policy}" Liability still open.` });
+    apply(worker, { kind: "journal", text: `Confirmed "${amount}" — next owner files it.` });
+    const entries = work.show(taskId, owner).journal ?? [];
+    expect(entries.map((e) => [e.id, e.authorName])).toEqual([
+      ["j1", "Worker"],
+      ["j2", "Worker"],
+    ]);
+    const audited = work.auditProse(taskId, owner, { journal: true, plan });
+    expect(audited.target.name).toBe(`task:${taskId}:journal`);
+    expect(audited.outcome).toBe("matches-declared-evidence");
+    expect(audited.obligations).toEqual([{ id: "liability", missing: [[]], complete: true }]);
+    const named = work.auditProse(taskId, owner, {
+      target: { name: "handoff.md", content: `Liability is 75 dollars; see "${policy}".` },
+      plan,
+    });
+    expect(named.outcome).toBe("discrepancies");
+    expect(named.obligations[0]!.missing).toEqual([["amount"]]);
+    expect(() => work.auditProse(taskId, owner, { plan })).toThrow("journal: true");
+  });
   function source(content: string, shared = true) {
     if (shared && !fixture.db.getMemoryPoolById("work-pool"))
       fixture.db.createMemoryPool("work-pool", "work", owner.name);

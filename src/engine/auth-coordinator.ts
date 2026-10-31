@@ -32,7 +32,12 @@ export type LoginResult = { entityId: EntityId; name: string; token: string } | 
 export interface AuthHost {
   readonly config: { internalAuthToken?: string; authRequired?: boolean; maxLogins?: number };
   readonly db?: MarinaDB;
-  readonly sessionManager?: Pick<SessionManager, "create" | "validate" | "refresh" | "revoke">;
+  readonly sessionManager?: Pick<
+    SessionManager,
+    "create" | "validate" | "refresh" | "revoke" | "inspect"
+  >;
+  /** When this process started; a refused reconnect names it so a restart is visible. */
+  readonly startedAt?: number;
   readonly loginRateLimiter?: Pick<RateLimiter, "consume">;
   readonly connections: Pick<
     ConnectionManager,
@@ -484,7 +489,9 @@ export class AuthCoordinator {
 
     const session = this.host.sessionManager.validate(token);
     if (!session) {
-      return { error: "Invalid or expired session token." };
+      return {
+        error: reconnectRefusal(this.host.sessionManager.inspect(token), this.host.startedAt),
+      };
     }
 
     // Check ban list
@@ -674,4 +681,20 @@ export class AuthCoordinator {
       grantGatesForRank(this.host.db, entity.id, 9);
     }
   }
+}
+
+/** A refused reconnect says which it is — a token this server never issued (or revoked), or one that expired — and when the server started, so a client can tell a restart from a stale token. */
+export function reconnectRefusal(
+  probe: ReturnType<SessionManager["inspect"]>,
+  startedAt?: number,
+  now = Date.now(),
+): string {
+  const ago = (t: number) => {
+    const s = Math.max(0, Math.round((now - t) / 1000));
+    return s < 90 ? `${s} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`;
+  };
+  const started = startedAt === undefined ? "" : ` (server up ${ago(startedAt)})`;
+  if (probe.state === "expired")
+    return `Invalid or expired session token: the session expired ${ago(probe.at)} ago (${probe.reason === "idle" ? "idle too long" : "lifetime cap"})${started}; log in again for a new token.`;
+  return `Invalid or expired session token: this server never issued it or has revoked it${started}; log in again for a new token.`;
 }

@@ -6,6 +6,7 @@ import type { ArtifactValue } from "../src/coordination/task-artifact";
 import {
   type ArtifactEvidencePlan,
   auditArtifactEvidence,
+  auditProseEvidence,
 } from "../src/coordination/task-artifact-evidence";
 import { auditTaskArtifactFile } from "../src/coordination/task-artifact-evidence-file";
 import {
@@ -440,5 +441,43 @@ describe("optional durable evidence plan", () => {
     input.bindings[0]!.path = "/statements/0";
     work.declareArtifactEvidence(taskId, owner, revision(), input);
     expect(work.artifactStatus(taskId, owner).report.evidence!.findings).toEqual([]);
+  });
+});
+
+describe("the same evidence audit over prose", () => {
+  test("a fact counts only when the prose quotes its bound source selection verbatim", () => {
+    const text = `Per the ledger, "${policy}" and "${amount}", so liability is 75 dollars; the balance is 55 after the payment.`;
+    const report = auditProseEvidence(text, plan(), resolve);
+    expect(report.obligations).toEqual([
+      { id: "liability", missing: [[]], complete: true },
+      { id: "balance", missing: [["cash"]], complete: false },
+    ]);
+    expect(report.outcome).toBe("discrepancies");
+    expect(report.findings).toHaveLength(1);
+    expect(report.findings[0]!.id).toBe("obligation:balance");
+    expect(report.findings[0]!.message).toContain("verbatim");
+    expect(report.quoted.map((q) => q.fact)).toEqual(["policy", "amount"]);
+    expect(report.advisory).toBe(true);
+  });
+
+  test("every bundle quoted matches the declared evidence; a paraphrase never counts", () => {
+    const full = `${policy} ${amount} ${cash} Balance: 55.`;
+    const complete = auditProseEvidence(full, plan(), resolve);
+    expect(complete.outcome).toBe("matches-declared-evidence");
+    expect(complete.findings).toEqual([]);
+    expect(complete.quoted).toHaveLength(3);
+    const paraphrased = `${policy} ${amount} A 20 dollar payment was receipted.`;
+    const partial = auditProseEvidence(paraphrased, plan(), resolve);
+    expect(partial.obligations[1]).toEqual({ id: "balance", missing: [["cash"]], complete: false });
+    expect(complete.fingerprint).not.toBe(partial.fingerprint);
+  });
+
+  test("an unreadable requirement source is unverified, and empty prose is refused", () => {
+    const gone = (ref: string): EvidenceSource =>
+      ref === "contract" ? { ref, status: "unavailable", reason: "unavailable" } : resolve(ref);
+    const report = auditProseEvidence(`${policy} ${amount} ${cash}`, plan(), gone);
+    expect(report.outcome).toBe("unverified");
+    expect(report.obligations).toEqual([]);
+    expect(() => auditProseEvidence("   ", plan(), resolve)).toThrow("Supply the prose");
   });
 });

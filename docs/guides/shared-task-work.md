@@ -521,7 +521,27 @@ must quote the actual target text; contradictions need exact current-source cita
 Unavailable evidence produces uncertainty, not permission to remove a valid quotation.
 A `no-findings` result is an advisory observation, never proof of exhaustive coverage or
 semantic truth. A model can still reason incorrectly; retain source-supported corrections
-and reject unsupported review advice.
+and reject unsupported review advice. Each fresh review's verdict is recorded as that
+model's opinion on the attempt and measured against the creator's eventual verdict
+(`judge stats`); it changes nothing about the submission.
+
+### Audit prose against the declared evidence
+
+`task work 7 prose-audit {"target":{"name":"handoff.md","content":"…"},"plan":{…}}` runs
+the same mechanical evidence audit as `artifact-audit` over a paragraph instead of a
+decision row, with the same plan shape (requirements, fact bundles, bound source
+selections). A fact is supported when the prose quotes its bound source selection
+verbatim; nothing is read into wording, so a paraphrase does not count and an
+unreadable source leaves the result `unverified`. `{"journal":true,"plan":{…}}` audits
+the task's own journal instead of supplied text. No model call, edit, gate or approval.
+
+### Keep the task's own journal
+
+`task work 7 journal <revision> {"text":"what I did, what is left, what the next owner
+must know"}` appends an entry to the work document; entries are never edited or
+removed, every reader sees who wrote each one and when, and the handoff snapshot and
+prose review read them. The journal is the record a successor or reviewer reads
+first; a handoff file is a copy of it, not the other way round.
 
 For a prospective claim, keep the starting state, proposed change, resulting state and
 applicable scope distinct. Recompute each affected quantity from its source-defined

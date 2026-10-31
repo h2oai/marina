@@ -19,16 +19,32 @@ function isFileExpectation(value: unknown): value is { version: string; sha256: 
   );
 }
 
-/** Deterministic snapshot, never a second model-authored account of the same facts. */
+/**
+ * Deterministic snapshot, never a second model-authored account of the same facts. The
+ * task's journal entries, when it has any, follow the artifact verbatim with author and
+ * time: the record itself, not a summary of it.
+ */
 export function renderArtifactHandoff(artifact: {
   taskId: number;
   revision: number;
   content: string;
   sha256: string;
+  journal?: ReadonlyArray<{ id: string; authorName: string; at: number; text: string }>;
 }) {
   const fence = "~".repeat(
     [...artifact.content.matchAll(/~+/g)].reduce((n, m) => Math.max(n, m[0].length + 1), 3),
   );
+  const journal = artifact.journal?.length
+    ? [
+        "#### Journal",
+        "",
+        ...artifact.journal.map(
+          (entry) =>
+            `- [${entry.id} ${entry.authorName} ${new Date(entry.at).toISOString()}] ${entry.text.replace(/\r?\n/g, "\n  ")}`,
+        ),
+        "",
+      ]
+    : [];
   const content = [
     `### Recorded task ${artifact.taskId}, work revision ${artifact.revision}`,
     "",
@@ -40,9 +56,11 @@ export function renderArtifactHandoff(artifact: {
     artifact.content.trimEnd(),
     fence,
     "",
+    ...journal,
   ].join("\n");
+  const { journal: _journal, ...rest } = artifact;
   return {
-    ...artifact,
+    ...rest,
     artifactSha256: artifact.sha256,
     content,
     sha256: artifactFileHash(content)!,

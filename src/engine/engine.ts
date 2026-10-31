@@ -518,6 +518,7 @@ export class Engine {
         return engine.db;
       },
       sessionManager: this.sessionManager,
+      startedAt: this.startedAt,
       loginRateLimiter: this.loginRateLimiter,
       connections: this._connections,
       entities: this.entities,
