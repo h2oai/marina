@@ -534,6 +534,8 @@ additional prose still needs support. All these tools remain optional.
 
 Fresh prose review requests a strict JSON response schema for findings and limitations. The selected upstream route must support structured output; an unsupported, malformed or truncated reply fails without an automatic retry or unconstrained fallback. The schema constrains response format, not the truth of findings; exact quotation and live-source checks still apply.
 
+`refs` is optional. The reviewer reads, by its own access, any source the caller lists, every reference the prose itself names (`note:N`, `task:N`, `chronicle:N`, `asset:<id>`), every source the task's work cites (citations, evidence bindings, rule selections) and the task itself, and it is given the task's recorded history (who did what at which revision, claims and submissions) as fact. A claim about a recorded event is therefore checkable whether or not the author listed the source; the report's `references` list says what was read, what could not be, and why each reference was in the packet.
+
 The outcome is `findings` when a quoted claim is contradicted by a cited original, `unverified` when something was **not** checked — a source the reviewer could not read (listed in `unavailable`, with `unavailableReasons` saying why as far as is safe: `malformed` for a reference Marina does not resolve, `unavailable` for one that is missing, retired or not readable by you) or a claim it could not place — and `no-findings` otherwise. Limitations are requested on every run and ride along with any outcome; they do not make a review `unverified`. An unavailable source means its claims were not checked: publish a readable copy or pass a reference you can read, then review again. No outcome is approval.
 
 

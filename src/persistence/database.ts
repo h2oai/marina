@@ -1438,6 +1438,10 @@ export class MarinaDB implements MarinaStores {
     return taskWorkDb.getTaskWorkRevision(this.db, taskId, revision);
   }
 
+  listTaskWorkRevisions(taskId: number, limit?: number) {
+    return taskWorkDb.listTaskWorkRevisions(this.db, taskId, limit);
+  }
+
   appendTaskWorkRevision(
     input: taskWorkDb.TaskWorkRevisionInput,
   ): taskWorkDb.TaskWorkRevisionRow | undefined {

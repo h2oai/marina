@@ -7,7 +7,10 @@ import { canonicalFederationJson } from "../net/federation-crypto";
 
 export interface ProseReviewInput {
   target: { name: string; content: string };
-  refs: string[];
+  /** Extra sources to read. Optional: the reviewer also resolves every reference the
+   *  prose and the task's own work name, by its own access, so a claim about a recorded
+   *  fact is checkable whether or not the author listed the source. */
+  refs?: string[];
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 
@@ -26,6 +29,17 @@ export interface ProseReviewAnswer {
 const hash = (value: unknown) =>
   createHash("sha256").update(canonicalFederationJson(value)).digest("hex");
 
+export type ProseSourceOrigin = "request" | "prose" | "work" | "task";
+
+/** The task's recorded history the reviewer may rely on: who did what at which revision. */
+export interface ProseReviewRecord {
+  revisions: Array<{ revision: number; author: string; action: string; at: number }>;
+  claims: Array<{ entity: string; status: string; submittedAt: number | null }>;
+}
+
+/** Sources named by the prose and the work, read by access, after any the caller listed. */
+export const MAX_PROSE_REVIEW_SOURCES = 24;
+
 export function proseReviewPacket(input: {
   taskId: number;
   revision: number;
@@ -34,32 +48,51 @@ export function proseReviewPacket(input: {
   reader: string;
   request: ProseReviewInput;
   resolve: (ref: string) => EvidenceSource;
+  /** References the task's own work cites (citations, evidence bindings, rule selections). */
+  workRefs?: string[];
+  /** References the prose itself names. */
+  proseRefs?: string[];
+  record?: ProseReviewRecord;
 }) {
   const { request } = input;
+  const listed = request?.refs ?? [];
   if (
     !request?.target ||
     typeof request.target.name !== "string" ||
     !request.target.name.trim() ||
     typeof request.target.content !== "string" ||
     !request.target.content.trim() ||
-    !Array.isArray(request.refs) ||
-    !request.refs.length ||
-    request.refs.some((ref) => typeof ref !== "string" || !ref.trim()) ||
-    new Set(request.refs).size !== request.refs.length
+    !Array.isArray(listed) ||
+    listed.some((ref) => typeof ref !== "string" || !ref.trim()) ||
+    new Set(listed).size !== listed.length
   )
-    throw new Error("Supply the actual named prose text and distinct original source references.");
+    throw new Error(
+      "Supply the actual named prose text; refs, when given, are distinct source references.",
+    );
+  // Every reference the reviewer will read, each with where it came from: the caller's
+  // list first, then what the prose names, then what the work cites, then the task.
+  const origins = new Map<string, ProseSourceOrigin>();
+  const add = (refs: readonly string[] | undefined, origin: ProseSourceOrigin) => {
+    for (const ref of refs ?? []) if (!origins.has(ref)) origins.set(ref, origin);
+  };
+  add(listed, "request");
+  add(input.proseRefs, "prose");
+  add(input.workRefs, "work");
+  add([`task:${input.taskId}`], "task");
+  const refs = [...origins.keys()].slice(0, MAX_PROSE_REVIEW_SOURCES);
   if (
     request.reasoningEffort !== undefined &&
     !["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(request.reasoningEffort)
   )
     throw new Error("Supply a supported reasoningEffort name; model support varies.");
   // Do not send a digest of inaccessible text: it would permit guessing private contents.
-  const sources = request.refs.map((ref) => {
+  const sources = refs.map((ref) => {
     const source = input.resolve(ref);
     if (source.ref !== ref) throw new Error("Source resolver returned a different reference.");
+    const origin = origins.get(ref)!;
     return source.status === "current" && source.text !== undefined
-      ? { ref, status: source.status, text: source.text, version: source.version }
-      : { ref, status: source.status, ...(source.reason ? { reason: source.reason } : {}) };
+      ? { ref, origin, status: source.status, text: source.text, version: source.version }
+      : { ref, origin, status: source.status, ...(source.reason ? { reason: source.reason } : {}) };
   });
   const target = {
     ...request.target,
@@ -74,6 +107,8 @@ export function proseReviewPacket(input: {
     target,
     artifact: input.artifact,
     sources,
+    // Recorded history is fact, not authored claim: the reviewer may rely on it.
+    ...(input.record ? { record: input.record } : {}),
     ...(request.reasoningEffort !== undefined ? { reasoningEffort: request.reasoningEffort } : {}),
   };
   return { ...packet, fingerprint: hash([packet, input.reader]) };
@@ -125,6 +160,13 @@ export function assessProseReview(packet: ProseReviewPacket, answer: ProseReview
   const unavailable = packet.sources
     .filter((source) => source.text === undefined)
     .map((s) => s.ref);
+  // Every reference the review read or could not read, and why it was in the packet.
+  const references = packet.sources.map((s) => ({
+    ref: s.ref,
+    origin: (s as { origin?: ProseSourceOrigin }).origin ?? "request",
+    status: s.text === undefined ? ("unavailable" as const) : ("read" as const),
+    ...((s as { reason?: string }).reason ? { reason: (s as { reason?: string }).reason } : {}),
+  }));
   const unavailableReasons = Object.fromEntries(
     packet.sources
       .filter((source) => source.text === undefined)
@@ -147,8 +189,9 @@ export function assessProseReview(packet: ProseReviewPacket, answer: ProseReview
     ...(unavailable.length ? { unavailableReasons } : {}),
     findings: answer.findings,
     limitations: answer.limitations,
+    references,
     unavailable,
     scope:
-      "Fresh assessment of the supplied prose against selected readable originals. Source selection and model interpretation can be incomplete or wrong. Exact target/source quotations are checked, not entailment or exhaustive coverage. No findings is not approval; read the limitations. An unavailable source means its claims were NOT checked: publish a readable copy or pass a reference you can read, then review again. No edits, submission gate or peer wake occurs.",
+      "Fresh assessment of the supplied prose against the originals this reviewer can read: any the caller listed, every reference the prose names, every source the task's work cites, and the task itself, plus the task's recorded history. Model interpretation can be incomplete or wrong. Exact target/source quotations are checked, not entailment or exhaustive coverage. No findings is not approval; read the limitations. An unavailable source means its claims were NOT checked: publish a readable copy or pass a reference you can read, then review again. No edits, submission gate or peer wake occurs.",
   };
 }

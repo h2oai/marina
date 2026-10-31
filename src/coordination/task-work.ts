@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 import type { EvidenceSource } from "../decisions/evidence";
-import { EVIDENCE_REF_FORMS } from "../decisions/evidence";
+import { EVIDENCE_REF_FORMS, evidenceRefsIn } from "../decisions/evidence";
 import { tryLog } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { canonicalFederationJson } from "../net/federation-crypto";
@@ -44,9 +44,11 @@ import {
 } from "./task-artifact-review";
 import {
   assessProseReview,
+  MAX_PROSE_REVIEW_SOURCES,
   type ProseReviewAnswer,
   type ProseReviewer,
   type ProseReviewInput,
+  type ProseReviewRecord,
   proseReviewPacket,
 } from "./task-prose-review";
 import type {
@@ -698,7 +700,37 @@ export class TaskWork {
   reviewProse(taskId: number, actor: WorkActor, request: ProseReviewInput) {
     const task = this.task(taskId, actor);
     const state = this.load(taskId);
+    // What the work itself cites: citations, evidence bindings and rule selections.
+    const workRefs = new Set<string>();
+    for (const citation of state.document.citations) workRefs.add(citation.ref);
+    const plan = state.document.artifact?.evidencePlan;
+    if (plan) {
+      workRefs.add(plan.requirements.ref);
+      for (const source of plan.sources) workRefs.add(source.ref);
+      for (const binding of plan.bindings) workRefs.add(binding.ref);
+    }
+    for (const rule of state.document.artifact?.rules ?? []) {
+      if (rule.source?.ref) workRefs.add(rule.source.ref);
+      if (rule.selection?.ref) workRefs.add(rule.selection.ref);
+    }
+    const record: ProseReviewRecord = {
+      revisions: this.db.listTaskWorkRevisions(taskId, 20).map((r) => ({
+        revision: r.revision,
+        author: r.author_name,
+        action: r.action,
+        at: r.created_at,
+      })),
+      claims: this.db
+        .getTaskClaims(taskId)
+        .map((c) => ({ entity: c.entity_name, status: c.status, submittedAt: c.submitted_at })),
+    };
     return proseReviewPacket({
+      proseRefs:
+        typeof request?.target?.content === "string"
+          ? evidenceRefsIn(request.target.content, MAX_PROSE_REVIEW_SOURCES)
+          : [],
+      workRefs: [...workRefs],
+      record,
       taskId,
       revision: state.revision,
       requirements: {

@@ -13,6 +13,10 @@ import type { ExactKeys } from "./exact-keys";
 /** Tasks, claims, projects and legacy task-standing reads (`db-tasks.ts`). */
 export interface TasksStore {
   getTaskWorkRevision(taskId: number, revision?: number): TaskWorkRevisionRow | undefined;
+  listTaskWorkRevisions(
+    taskId: number,
+    limit?: number,
+  ): Array<Pick<TaskWorkRevisionRow, "revision" | "author_name" | "action" | "created_at">>;
   appendTaskWorkRevision(input: TaskWorkRevisionInput): TaskWorkRevisionRow | undefined;
   getTaskWorkCheck(
     taskId: number,
@@ -93,6 +97,7 @@ export interface TasksStore {
 /** Runtime mirror of `TasksStore`'s method names — the drift test compares it to the facade. */
 export const TASKS_STORE_METHODS = [
   "getTaskWorkRevision",
+  "listTaskWorkRevisions",
   "appendTaskWorkRevision",
   "getTaskWorkCheck",
   "putTaskWorkCheck",

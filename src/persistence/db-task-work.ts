@@ -89,6 +89,22 @@ export function getTaskWorkRevision(
   );
 }
 
+/** The newest `limit` revisions' metadata (who did what, when) — never their documents. */
+export function listTaskWorkRevisions(
+  db: Database,
+  taskId: number,
+  limit = 20,
+): Array<Pick<TaskWorkRevisionRow, "revision" | "author_name" | "action" | "created_at">> {
+  return db
+    .query(
+      `SELECT revision, author_name, action, created_at FROM task_work_revisions
+       WHERE task_id = ? ORDER BY revision DESC LIMIT ?`,
+    )
+    .all(taskId, Math.max(1, Math.min(200, Math.trunc(limit)))) as Array<
+    Pick<TaskWorkRevisionRow, "revision" | "author_name" | "action" | "created_at">
+  >;
+}
+
 /** Atomic revision comparison prevents one contributor overwriting another's changes. */
 export function appendTaskWorkRevision(
   db: Database,

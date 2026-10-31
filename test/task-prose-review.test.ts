@@ -95,7 +95,7 @@ test("an unavailable original cannot yield approval or a private-version guessin
   // An unavailable source names why, as far as is safe: here only that it was unavailable.
   const unread = assessProseReview(p, { findings: [], limitations: [] });
   expect(unread.outcome).toBe("unverified");
-  expect(unread.unavailableReasons).toEqual({ "note:1": "unavailable" });
+  expect(unread.unavailableReasons).toMatchObject({ "note:1": "unavailable" });
 });
 
 describe("optional durable prose review", () => {
@@ -413,6 +413,84 @@ test("reasoning effort validates before inference and changes the source-bound f
   expect(make(undefined)).not.toHaveProperty("reasoningEffort");
   for (const effort of [null, "", "unbounded", 0, {}])
     expect(() => make(effort)).toThrow("reasoningEffort");
+});
+
+describe("the reviewer reads the record by access, not by invitation", () => {
+  let f: ReturnType<typeof createTestEngine>;
+  let owner: WorkActor;
+  let id: number;
+  beforeEach(() => {
+    f = createTestEngine();
+    owner = { id: f.login("Owner").entityId, name: "Owner" };
+    id = f.engine.taskManager!.create({
+      title: "Handoff",
+      creatorId: owner.id,
+      creatorName: owner.name,
+    }).id;
+  });
+  afterEach(async () => {
+    await f.dispose();
+  });
+
+  test("refs are optional; references named by the prose and the task are read with their origin", () => {
+    const work = new TaskWork(f.db, (actor, source) => resolveEvidenceSource(f.db, actor, source));
+    const receipt = `note:${f.db.createNote(owner.name, "Receipt: the gallery move was logged at 10:40.")}`;
+    f.db.createUser({ id: "stranger", name: "Stranger" });
+    const theirs = `note:${f.db.createNote("Stranger", "A private file the owner cannot read.")}`;
+    work.apply(id, owner, 0, { kind: "patch", patch: { phase: "1" } });
+    const { refs: _omitted, ...request } = { ...input() };
+    const packet = work.reviewProse(id, owner, {
+      ...request,
+      target: {
+        name: "JOURNAL.md",
+        content: `No gallery move is receipted (see ${receipt}); the stranger's note ${theirs} says otherwise.`,
+      },
+    });
+    const byRef = Object.fromEntries(packet.sources.map((s) => [s.ref, s]));
+    expect(byRef[receipt]).toMatchObject({ origin: "prose", status: "current" });
+    expect((byRef[receipt] as { text?: string }).text).toContain("gallery move was logged");
+    expect(byRef[theirs]).toMatchObject({
+      origin: "prose",
+      status: "unavailable",
+      reason: "unavailable",
+    });
+    expect(byRef[`task:${id}`]).toMatchObject({ origin: "task", status: "current" });
+    expect(packet.record?.revisions[0]).toMatchObject({
+      revision: 1,
+      author: "Owner",
+      action: "patch",
+    });
+    const report = assessProseReview(packet, { findings: [], limitations: [] });
+    expect(report.outcome).toBe("unverified");
+    expect(report.references.find((r) => r.ref === receipt)).toMatchObject({
+      origin: "prose",
+      status: "read",
+    });
+    expect(report.references.find((r) => r.ref === theirs)).toMatchObject({
+      status: "unavailable",
+      reason: "unavailable",
+    });
+    expect(JSON.stringify(packet)).not.toContain("private file");
+  });
+
+  test("a source the work cites is read even when neither the caller nor the prose names it", () => {
+    const work = new TaskWork(f.db, (actor, source) => resolveEvidenceSource(f.db, actor, source));
+    const cited = `note:${f.db.createNote(owner.name, "The authority was issued on Tuesday.")}`;
+    const first = work.apply(id, owner, 0, { kind: "patch", patch: { authority: "issued" } });
+    work.apply(id, owner, first.revision, {
+      kind: "cite",
+      field: "authority",
+      ref: cited,
+      quote: "issued on Tuesday",
+    });
+    const packet = work.reviewProse(id, owner, {
+      target: { name: "JOURNAL.md", content: "The authority remains issued." },
+    });
+    expect(packet.sources.find((s) => s.ref === cited)).toMatchObject({
+      origin: "work",
+      status: "current",
+    });
+  });
 });
 
 test("the fresh reviewer's HTTP leg retries a transient failure once, honours Retry-After, never a plain error", async () => {

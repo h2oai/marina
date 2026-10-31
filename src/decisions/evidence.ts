@@ -126,6 +126,27 @@ export function parseEvidenceRefs(text: string): Array<{ kind: NumericEvidenceKi
   return out;
 }
 
+/** Every distinct reference `text` names — `note:N`, `task:N`, `chronicle:N`, `asset:<id>` — in order, capped. */
+export function evidenceRefsIn(text: string, cap = MAX_EVIDENCE_REFS): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of text.matchAll(REF)) {
+    const ref = `${m[1]}:${m[2]}`;
+    if (seen.has(ref)) continue;
+    seen.add(ref);
+    out.push(ref);
+    if (out.length >= cap) return out;
+  }
+  for (const id of parseAssetRefs(text, Math.max(0, cap - out.length))) {
+    const ref = `asset:${id}`;
+    if (!seen.has(ref)) {
+      seen.add(ref);
+      out.push(ref);
+    }
+  }
+  return out;
+}
+
 /** The cited asset's text a reader sees: label, description, OCR, PDF text, transcript. */
 function assetEvidenceText(db: MarinaDB, assetId: string): string | undefined {
   const asset = db.getAsset(assetId);
