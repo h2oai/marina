@@ -373,6 +373,7 @@ Why each override exists (keep this table in sync with `package.json`):
 |----------|------|--------|
 | `qs` `^6.16.1` | floor | Express 5 transitive security advisories (GHSA-6pq8-jhm2-2vcw covers ≤ 6.16.0); `typed-rest-client` pins an older `qs`, so the floor forces the patched version. |
 | `fast-uri` `^3.1.9` | floor | URI scheme spoofing and host confusion advisories (fixed in 3.1.9), reached through `ajv` from `@modelcontextprotocol/sdk` and `@stryker-mutator/core`. |
+| `minimatch` `^11.0.3` | floor | GHSA-g3hv-75wg-m249 (denial of service via globparts amplification, fixed in 11.0.1); `@stryker-mutator/core` declares `~10.2.4`, so the floor forces the patched major (the CLI loads and runs on it). |
 | `postcss-selector-parser` `^7.1.6` | floor | GHSA-rj75-hqrm-r3gf (CPU exhaustion on flat selectors). Expressive Code still pulls parser 6.x through `postcss-nested` 6.x; the site build qualifies compatibility with the patched 7.x parser. Remove when that dependency chain accepts the fix. |
 
 A floor stays only while `check:overrides --strict` reports it `still needed`; once every dependent resolves to the patched version on its own, remove it. Re-add a floor here, with its advisory, if an audit finds a regression.
