@@ -329,20 +329,25 @@ test("truncated, malformed and failed prose reviews do not silently retry or bec
       ],
     }),
     new Response("unsupported response_format", { status: 400 }),
+    // A 503 is transient: tried once more (metered as a call), then it still fails.
     new Response("failed", { status: 503 }),
   ]) {
     let calls = 0;
     const reviewer = createProseReviewer(
-      {},
+      { MARINA_MODEL_RETRY_BASE_MS: "0" },
       {
         token: async () => "local-test-token",
         fetch: async () => {
           calls++;
-          return response;
+          return response.clone();
         },
       },
     );
     await expect(reviewer(packet(), "upstream")).rejects.toThrow();
+    if (response.status === 503) {
+      expect(calls).toBe(2);
+      continue;
+    }
     expect(calls).toBe(1);
   }
 });
@@ -486,4 +491,53 @@ describe("the reviewer reads the record by access, not by invitation", () => {
       status: "current",
     });
   });
+});
+
+test("the fresh reviewer's HTTP leg retries a transient failure once, honours Retry-After, never a plain error", async () => {
+  const ok = () =>
+    Response.json({
+      model: "served",
+      choices: [
+        {
+          finish_reason: "stop",
+          message: { content: JSON.stringify({ findings: [], limitations: [] }) },
+        },
+      ],
+    });
+  const closed = (queue: Array<Error | Response>) => {
+    let calls = 0;
+    return {
+      calls: () => calls,
+      reviewer: createProseReviewer(
+        { MARINA_MODEL_RETRY_BASE_MS: "0" },
+        {
+          token: async () => "local-test-token",
+          fetch: async () => {
+            calls++;
+            const next = queue.shift();
+            if (next instanceof Error) throw next;
+            return next ?? ok();
+          },
+        },
+      ),
+    };
+  };
+  const once = closed([new Error("The connection was closed."), ok()]);
+  expect((await once.reviewer(packet(), "upstream")).model).toBe("served");
+  expect(once.calls()).toBe(2);
+  const throttled = closed([
+    new Response("", { status: 429, headers: { "retry-after": "0" } }),
+    ok(),
+  ]);
+  expect((await throttled.reviewer(packet(), "upstream")).model).toBe("served");
+  expect(throttled.calls()).toBe(2);
+  const twice = closed([
+    new Error("The connection was closed."),
+    new Error("The connection was closed."),
+  ]);
+  await expect(twice.reviewer(packet(), "upstream")).rejects.toThrow("connection was closed");
+  expect(twice.calls()).toBe(2);
+  const plain = closed([new Error("schema rejected")]);
+  await expect(plain.reviewer(packet(), "upstream")).rejects.toThrow("schema rejected");
+  expect(plain.calls()).toBe(1);
 });

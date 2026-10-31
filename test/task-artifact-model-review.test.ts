@@ -68,21 +68,22 @@ test("truncated, malformed and failed fresh responses cannot become assessments 
       choices: [{ finish_reason: "length", message: { content: '{"answers":[]}' } }],
     }),
     Response.json({ choices: [{ finish_reason: "stop", message: { content: "not JSON" } }] }),
+    // A 503 is transient: tried once more (metered as a call), then it still fails.
     new Response("provider failed", { status: 503 }),
   ]) {
     let calls = 0;
     const reviewer = createArtifactReviewer(
-      {},
+      { MARINA_MODEL_RETRY_BASE_MS: "0" },
       {
         token: async () => "local-test-token",
         fetch: async () => {
           calls++;
-          return response;
+          return response.clone();
         },
       },
     );
     await expect(reviewer(packet(), "requested")).rejects.toThrow();
-    expect(calls).toBe(1);
+    expect(calls).toBe(response.status === 503 ? 2 : 1);
   }
 });
 
