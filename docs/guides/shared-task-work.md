@@ -393,7 +393,7 @@ The operation returns an assessment and never edits or approves. A changed draft
 requirement or source/access state during inference rejects the stale assessment.
 Identical current requests reuse a receipt for up to one hour; concurrent
 identical requests share a call. Provider failures, incomplete output and invalid
-answers remain visible failures without a successful receipt or automatic retry.
+answers remain visible failures without a successful receipt. A transient transport failure (a closed connection, a reset, a 429 or 5xx) is tried once more within `MARINA_MODEL_RETRIES`, honouring `Retry-After`, and each attempt is metered as a call; nothing else is retried.
 No model is called by editing, showing, checking or submitting an artifact.
 
 ## Keeping handoffs consistent with the deliverable
@@ -504,7 +504,7 @@ A correct artifact does not validate extra claims in a journal or next-owner ins
 default; an explicit value is forwarded without changing the configured output allowance.
 The effort is part of the packet/cache fingerprint. Reasoning and visible output may share
 the response budget: choose an appropriate effort or set `MARINA_DEFAULT_MAX_TOKENS` for
-more headroom. Truncated and timed-out responses remain failures, with no automatic retry.
+more headroom. Truncated, malformed and timed-out responses remain failures with no retry; only a transient transport failure (a closed connection, a reset, a 429 or 5xx) is tried once more within `MARINA_MODEL_RETRIES`, metered as a call.
 
 The server does not read that name as a host or sandbox path. A file client can use
 `reviewTaskProseFile` with its own authorized reader and the version/hash from its last

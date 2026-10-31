@@ -359,3 +359,38 @@ describe("journal entries in the handoff snapshot", () => {
     expect("journal" in withJournal).toBe(false);
   });
 });
+
+test("a malformed handoff call gets the contract back, never a TypeError", async () => {
+  const f = ordinaryFileFixture();
+  const bad = f.input() as unknown as Record<string, unknown>;
+  bad.expected = '{"version": "20"}'; // a string where an object was wanted
+  bad.deliverable = undefined;
+  const err = await publishTaskDeliverableHandoffFile(f.access, bad as never).catch(
+    (e: Error) => e.message,
+  );
+  expect(err).toContain("Supply path (the journal) and expected as {version, sha256}");
+  const noDeliverable = f.input() as unknown as Record<string, unknown>;
+  noDeliverable.deliverable = undefined;
+  const err2 = await publishTaskDeliverableHandoffFile(f.access, noDeliverable as never).catch(
+    (e: Error) => e.message,
+  );
+  expect(err2).toContain("Supply deliverable as {path, expected: {version, sha256}}");
+  expect(f.writes()).toBe(0);
+});
+
+test("the file audit's stale-read refusal names both versions and the next call", async () => {
+  const { auditTaskArtifactFile } = await import("../src/coordination/task-artifact-evidence-file");
+  const f = ordinaryFileFixture();
+  const stale = f.input();
+  f.files.get("submission.json")!.version = "9";
+  const err = await auditTaskArtifactFile(f.access, {
+    taskId: 1,
+    path: "submission.json",
+    expected: stale.deliverable.expected,
+    plan: { requirements: [], sources: [], bindings: [] } as never,
+  }).catch((e: Error) => e.message);
+  expect(err).toContain("The deliverable changed since your read");
+  expect(err).toContain('you supplied version "7"');
+  expect(err).toContain('the file is at version "9"');
+  expect(err).toContain("No audit ran.");
+});
