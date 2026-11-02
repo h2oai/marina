@@ -5,18 +5,21 @@
  * The dream pass: a harness-run consolidation over ONE agent's own records,
  * run while the agent is idle, on its own cheap budget.
  *
- *   gather → probe-before → propose (one model call) → check → record
+ *   gather → probe-before → propose (one model call) → check →
+ *   apply on a dry view → probe-after → record (→ keep, in `on`)
  *
  * `MARINA_DREAMING`:
  *   - `off`: nothing runs, nothing is written.
- *   - `observe` (default): every stage runs; the accepted op set, the
- *     rejected ops with their reasons and the probe set are recorded in
- *     `memory_dreams` and announced by one chronicle event — and NOTHING is
- *     applied. This is the measurement floor: what a dream would do, on
+ *   - `observe` (default): every stage runs — the accepted ops are applied
+ *     inside a transaction that is always rolled back, the probes are re-run
+ *     on that view, and the op set, rejections and both probe passes are
+ *     recorded in `memory_dreams` and announced by one chronicle event. NOTHING
+ *     stays applied. This is the measurement floor: what a dream would do, on
  *     every install, before any dream is allowed to do it.
- *   - `on`: reserved for the apply path (auto-tier ops in one transaction
- *     with rollback, propose-tier ops as adopt jobs). Until it lands, `on`
- *     behaves as `observe` and says so in the dream record's mode.
+ *   - `on`: auto-tier ops (merge, link, decay) stay applied when every probe
+ *     that passed before still passes after; a lost probe rejects the whole
+ *     set. Supersedes are filed as proposals for the owner (`memory dream
+ *     adopt`). `memory dream rollback <id>` reverses an applied dream.
  *
  * Schedule gates (the `memory-dream` tick job): material (≥ DREAM_MIN_NEW own
  * records since the last dream), quiet (no tool call for DREAM_IDLE_MS),
@@ -31,11 +34,19 @@ import { dailyCapRefusal, dailySpendCapUsd, spentTodayUsd } from "../../engine/s
 import { modelComplete } from "../../model/complete";
 import type { Complete } from "../../model/reply";
 import type { MarinaDB } from "../../persistence/database";
-import { checkOps } from "./check";
-import { probesBefore } from "./probe";
+import { type ApplyResult, applyOps, fileProposals } from "./apply";
+import { checkOps, opIds } from "./check";
+import { probePlan } from "./probe";
 import { proposeOps } from "./propose";
 import { gatherRegion } from "./region";
-import type { DreamMode, DreamOp, DreamSummary, DreamTrigger, StoredDreamOp } from "./types";
+import type {
+  DreamChecks,
+  DreamMode,
+  DreamOp,
+  DreamSummary,
+  DreamTrigger,
+  StoredDreamOp,
+} from "./types";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -56,9 +67,6 @@ export function dreamingMode(env: NodeJS.ProcessEnv = process.env): DreamMode {
   if (v === "on" || v === "true" || v === "1") return "on";
   return "observe";
 }
-
-/** Whether this build can apply a dream. The apply path is the next phase. */
-export const DREAM_APPLY_SUPPORTED = false;
 
 export interface DreamDeps {
   env?: NodeJS.ProcessEnv;
@@ -205,64 +213,94 @@ export async function runDream(
   }
   const checked = checkOps(proposed.ops, region);
   const rejected = [...proposed.rejected, ...checked.rejected];
-  const probes = probesBefore(db, region, checked.accepted);
-  const checks = {
-    proposed: proposed.ops.length + proposed.rejected.length,
-    accepted: checked.accepted.length,
-    rejected: rejected.length,
-    leaving: checked.leaving,
-    regionSize: region.records.length,
-    probesBefore: {
-      pass: probes.filter((p) => p.before === "pass").length,
-      fail: probes.filter((p) => p.before === "fail").length,
-    },
+  const plan = probePlan(db, region, checked.accepted);
+  const commit = mode === "on" && trigger !== "dry-run";
+  let accepted = checked.accepted;
+  let stored: StoredDreamOp[] = accepted.map(storedOp);
+  let view: ApplyResult | undefined;
+  let id: number | undefined;
+  let proposals = 0;
+  const spendUsd = usage?.costUsd ?? 0;
+  const finish = () => {
+    // Apply (or dry-apply) the set and re-run the probes on the result. A set
+    // that loses a probe is rejected whole — fail closed — whatever the mode.
+    if (accepted.length) {
+      view = applyOps(db, entityName, accepted, stored, plan, { commit });
+      if (view.lost.length) {
+        const lost = `probe-after: #${view.lost.join(", #")} no longer retrievable once the set is applied`;
+        for (const op of accepted) rejected.push({ op: op.op, ids: opIds(op), reason: lost });
+        accepted = [];
+        stored = [];
+      } else stored = view.ops;
+    }
+    const probes = view?.probes ?? plan.probes;
+    const applied = commit && stored.some((o) => o.applied || (o.op === "supersede" && o.proposal));
+    const checks: DreamChecks = {
+      proposed: proposed.ops.length + proposed.rejected.length,
+      accepted: accepted.length,
+      rejected: rejected.length,
+      leaving: accepted.length ? checked.leaving : 0,
+      regionSize: region.records.length,
+      probesBefore: {
+        pass: plan.probes.filter((p) => p.before === "pass").length,
+        fail: plan.probes.filter((p) => p.before === "fail").length,
+      },
+      probesAfter: view?.probesAfter ?? null,
+    };
+    const summary: DreamSummary = {
+      ...base,
+      state: trigger === "dry-run" ? "dry-run" : applied ? "applied" : "observed",
+      region: {
+        records: region.records.length,
+        newRecords: region.newRecords,
+        bytes: region.bytes,
+        hash: region.hash,
+      },
+      ops: stored,
+      rejected,
+      probes,
+      checks,
+      model,
+      spendUsd,
+    };
+    if (trigger === "dry-run") return summary;
+    id = db.recordDream({
+      entityName,
+      trigger,
+      mode,
+      state: applied ? "applied" : "observed",
+      regionHash: region.hash,
+      regionCount: region.records.length,
+      regionNew: region.newRecords,
+      regionBytes: region.bytes,
+      ops: stored,
+      rejected,
+      probes,
+      checks,
+      model: model ?? null,
+      spendUsd,
+      createdAt: now,
+    });
+    if (applied) {
+      db.updateDream(id, { appliedAt: now });
+      if (view) proposals = fileProposals(db, entityName, id, view.proposals, now);
+    }
+    const appliedCount = stored.filter((o) => o.applied).length;
+    db.appendChronicle({
+      kind: "event",
+      source: "memory",
+      title: "memory.dream",
+      body: applied
+        ? `${entityName}: ${appliedCount} op(s) applied over ${checks.regionSize} record(s), ${proposals} restatement(s) proposed, ${checks.rejected} rejected, ${checks.leaving} left the active set; memory dream rollback ${id} reverses it`
+        : `${entityName}: ${checks.accepted} op(s) proposed over ${checks.regionSize} record(s), ${checks.rejected} rejected, ${checks.leaving} would leave the active set; observed, nothing applied`,
+      participants: [entityName],
+      refs: [`dream:${id}`],
+    });
+    return { ...summary, id, proposals };
   };
-  const ops = checked.accepted.map(storedOp);
-  const summary: DreamSummary = {
-    ...base,
-    state: trigger === "dry-run" ? "dry-run" : "observed",
-    region: {
-      records: region.records.length,
-      newRecords: region.newRecords,
-      bytes: region.bytes,
-      hash: region.hash,
-    },
-    ops,
-    rejected,
-    probes,
-    checks,
-    model,
-    spendUsd: usage?.costUsd ?? 0,
-  };
-  if (trigger === "dry-run") return summary;
-
-  // Observe: recorded and announced, applied nowhere. (`on` lands with the apply path.)
-  const id = db.recordDream({
-    entityName,
-    trigger,
-    mode,
-    state: "observed",
-    regionHash: region.hash,
-    regionCount: region.records.length,
-    regionNew: region.newRecords,
-    regionBytes: region.bytes,
-    ops,
-    rejected,
-    probes,
-    checks,
-    model: model ?? null,
-    spendUsd: usage?.costUsd ?? 0,
-    createdAt: now,
-  });
-  db.appendChronicle({
-    kind: "event",
-    source: "memory",
-    title: "memory.dream",
-    body: `${entityName}: ${checks.accepted} op(s) proposed over ${checks.regionSize} record(s), ${checks.rejected} rejected, ${checks.leaving} would leave the active set; observed, nothing applied`,
-    participants: [entityName],
-    refs: [`dream:${id}`],
-  });
-  return { ...summary, id };
+  // One transaction around apply, record and proposals: a dream is either
+  // wholly on disk or not at all. (A dry view rolls its savepoint back inside.)
+  return commit ? db.transaction(finish) : finish();
 }
 
 /** The scheduled pass: every candidate through its gates, one dream each at most. */

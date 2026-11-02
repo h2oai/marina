@@ -10,6 +10,7 @@ export interface MemoryDreamsStore {
   getDream(id: number): dreamsDb.DreamRow | undefined;
   listDreams(entityName: string, limit?: number): dreamsDb.DreamRow[];
   lastDreamAt(entityName: string): number | undefined;
+  updateDream(id: number, patch: dreamsDb.DreamUpdate): boolean;
 }
 
 /** Runtime mirror of `MemoryDreamsStore`'s method names — the drift test compares it to the facade. */
@@ -18,6 +19,7 @@ export const MEMORY_DREAMS_STORE_METHODS = [
   "getDream",
   "listDreams",
   "lastDreamAt",
+  "updateDream",
 ] as const satisfies readonly (keyof MemoryDreamsStore)[];
 
 export const MEMORY_DREAMS_STORE_COMPLETE: ExactKeys<

@@ -204,6 +204,75 @@ export function retireNumericNote(
     ]);
 }
 
+/** Reopen a note that `retireNumericNote` closed as superseded (a dream's
+ * rollback): one more version with the pinned text and an open validity,
+ * and the projection follows current again. Deleted notes are not restored. */
+export function restoreNumericNote(db: Database, noteId: number): boolean {
+  const mapping = numericRecord(db, noteId);
+  if (!mapping || mapping.version === null) return false;
+  const { actor } = numericMemoryBinding(db, mapping.entity_name);
+  const record = readMemoryRecord(db, actor, mapping.space_id, mapping.record_id);
+  if (record.metadata.retired_legacy_note_id !== noteId) return false;
+  // The handle is pinned at the version it described before retirement.
+  const pinned = readMemoryRecord(db, actor, mapping.space_id, mapping.record_id, mapping.version);
+  const {
+    retired_legacy_note_id: _r,
+    retired_reason: _reason,
+    superseded_by_legacy_note_id: _k,
+    superseded_by_record_id: _kr,
+    ...metadata
+  } = record.metadata;
+  reviseRecord(
+    db,
+    actor,
+    mapping.space_id,
+    record.id,
+    record.version,
+    {
+      content: pinned.content,
+      importance: pinned.importance,
+      metadata,
+      valid_time: { from: record.valid_time?.from ?? null, until: null },
+    },
+    `numeric:${noteId}:restore:${record.version}`,
+    model(),
+  );
+  db.run("UPDATE memory_note_projections SET version=NULL WHERE note_id=?", [noteId]);
+  return true;
+}
+
+/** Reverse one `reviseNote` (a dream's rollback of an adopted restatement):
+ * the shared record takes one more version with the old note's pinned text,
+ * the old handle follows current again and the new handle is frozen at the
+ * version it described. Nothing is deleted. */
+export function revertNumericRevision(db: Database, newId: number, oldId: number): boolean {
+  const mapping = numericRecord(db, newId);
+  const old = numericRecord(db, oldId);
+  if (!mapping || !old || mapping.record_id !== old.record_id) return false;
+  if (mapping.version !== null || old.version === null) return false;
+  const { actor } = numericMemoryBinding(db, mapping.entity_name);
+  const record = readMemoryRecord(db, actor, mapping.space_id, mapping.record_id);
+  const pinned = readMemoryRecord(db, actor, mapping.space_id, mapping.record_id, old.version);
+  reviseRecord(
+    db,
+    actor,
+    mapping.space_id,
+    record.id,
+    record.version,
+    {
+      content: pinned.content,
+      importance: pinned.importance,
+      metadata: { ...record.metadata, legacy_note_id: oldId },
+      valid_time: { from: record.valid_time?.from ?? null, until: null },
+    },
+    `numeric:${oldId}:revert:${record.version}`,
+    model(),
+  );
+  db.run("UPDATE memory_note_projections SET version=? WHERE note_id=?", [record.version, newId]);
+  db.run("UPDATE memory_note_projections SET version=NULL WHERE note_id=?", [oldId]);
+  return true;
+}
+
 export function verifyNumericNote(
   db: Database,
   noteId: number,

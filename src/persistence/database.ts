@@ -672,6 +672,10 @@ export class MarinaDB implements MarinaStores {
     return dreamsDb.lastDreamAt(this.reader, entityName);
   }
 
+  updateDream(id: number, patch: dreamsDb.DreamUpdate): boolean {
+    return dreamsDb.updateDream(this.db, id, patch);
+  }
+
   verifyEvidenceChain(): evidenceDb.EvidenceVerification {
     return evidenceDb.verifyEvidenceChain(this.reader);
   }
@@ -2057,6 +2061,25 @@ export class MarinaDB implements MarinaStores {
   }
   consolidateNotes(entityName: string, keeperId: number, duplicateIds: number[]): number {
     return notesDb.consolidateNotes(this.db, entityName, keeperId, duplicateIds);
+  }
+  restoreSupersededNote(
+    entityName: string,
+    keeperId: number,
+    noteId: number,
+    priorStatus: "unverified" | "disputed",
+  ): boolean {
+    return notesDb.restoreSupersededNote(this.db, entityName, keeperId, noteId, priorStatus);
+  }
+  setNoteImportance(entityName: string, noteId: number, importance: number): boolean {
+    return notesDb.setNoteImportance(this.db, entityName, noteId, importance);
+  }
+  revertRevision(
+    entityName: string,
+    newId: number,
+    oldId: number,
+    priorStatus: "unverified" | "disputed",
+  ): boolean {
+    return notesDb.revertRevision(this.db, entityName, newId, oldId, priorStatus);
   }
   getMemoryQualitySummary(entityName?: string): {
     total: number;

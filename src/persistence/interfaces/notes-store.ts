@@ -87,6 +87,19 @@ export interface NotesStore {
   ): boolean;
   findMemoryContradictions(entityName: string): notesDb.ContradictionCandidate[];
   consolidateNotes(entityName: string, keeperId: number, duplicateIds: number[]): number;
+  restoreSupersededNote(
+    entityName: string,
+    keeperId: number,
+    noteId: number,
+    priorStatus: "unverified" | "disputed",
+  ): boolean;
+  setNoteImportance(entityName: string, noteId: number, importance: number): boolean;
+  revertRevision(
+    entityName: string,
+    newId: number,
+    oldId: number,
+    priorStatus: "unverified" | "disputed",
+  ): boolean;
   getMemoryQualitySummary(entityName?: string): {
     total: number;
     unverified: number;
@@ -189,6 +202,9 @@ export const NOTES_STORE_METHODS = [
   "updateNoteQuality",
   "findMemoryContradictions",
   "consolidateNotes",
+  "restoreSupersededNote",
+  "setNoteImportance",
+  "revertRevision",
   "getMemoryQualitySummary",
   "touchNote",
   "touchNotes",

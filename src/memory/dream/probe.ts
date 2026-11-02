@@ -5,8 +5,10 @@
  * Rule-based self-probes (MemDream): for every record a dream would take out
  * of the active set, a query built from its most distinctive words whose
  * expected answer is a verbatim span of the record. `before` runs against the
- * live store; `after` (the dry-applied view) comes with the apply path. Only
- * ids and hashes are stored, so a replay can rebuild the set without text.
+ * live store; `after` runs against the applied view inside the apply
+ * transaction (`apply.ts`) — a record a merge folds away passes when its
+ * keeper is retrieved instead. Only ids and hashes are stored, so a replay
+ * can rebuild the set without text.
  */
 
 import { createHash } from "node:crypto";
@@ -36,29 +38,56 @@ export function probeSpan(content: string): string {
   return normalizedWords(content).slice(0, PROBE_SPAN_WORDS).join(" ");
 }
 
+/**
+ * The probe set plus what the record carries only in memory during the pass:
+ * each probe's query text and the record that would carry its span after the
+ * op (a merge's keeper, else itself). Only the probes are stored.
+ */
+export interface ProbePlan {
+  probes: DreamProbe[];
+  queries: Map<number, { query: string; successor?: number }>;
+}
+
+/** Whether a recall's top hits carry the probed record: itself, or its successor. */
+export function probeHit(hits: readonly { id: number }[], itemId: number, successor?: number) {
+  return hits
+    .slice(0, PROBE_RECALL_LIMIT)
+    .some((n) => n.id === itemId || (successor !== undefined && n.id === successor));
+}
+
 /** Probes for every record the accepted ops would take out, run `before` against the live store. */
+export function probePlan(
+  db: MarinaDB,
+  region: DreamRegion,
+  accepted: readonly DreamOp[],
+): ProbePlan {
+  const byId = new Map(region.records.map((r) => [r.id, r]));
+  const targets = new Map<number, number | undefined>();
+  for (const op of accepted)
+    for (const id of leavingIds(op)) targets.set(id, op.op === "merge" ? op.keep : undefined);
+  const probes: DreamProbe[] = [];
+  const queries: ProbePlan["queries"] = new Map();
+  for (const [id, successor] of targets) {
+    const record = byId.get(id);
+    if (!record) continue;
+    const query = probeQuery(record.content);
+    const hits = query ? db.recallNotes(region.entityName, query) : [];
+    queries.set(id, { query, successor });
+    probes.push({
+      itemId: id,
+      queryHash: h(query),
+      spanHash: h(probeSpan(record.content)),
+      before: probeHit(hits, id) ? "pass" : "fail",
+      after: null,
+    });
+  }
+  return { probes, queries };
+}
+
 export function probesBefore(
   db: MarinaDB,
   region: DreamRegion,
   accepted: readonly DreamOp[],
 ): DreamProbe[] {
-  const byId = new Map(region.records.map((r) => [r.id, r]));
-  const targets = new Set<number>();
-  for (const op of accepted) for (const id of leavingIds(op)) targets.add(id);
-  const probes: DreamProbe[] = [];
-  for (const id of targets) {
-    const record = byId.get(id);
-    if (!record) continue;
-    const query = probeQuery(record.content);
-    const hits = query ? db.recallNotes(region.entityName, query) : [];
-    const found = hits.slice(0, PROBE_RECALL_LIMIT).some((n) => n.id === id);
-    probes.push({
-      itemId: id,
-      queryHash: h(query),
-      spanHash: h(probeSpan(record.content)),
-      before: found ? "pass" : "fail",
-      after: null,
-    });
-  }
-  return probes;
+  return probePlan(db, region, accepted).probes;
 }
