@@ -9508,7 +9508,7 @@ Effect: write.
 
 ## tell
 
-Send durable private messages with delivery receipts. Usage: tell <entity> [ttl:30s] <message> | tell inbox | tell status <id> | tell ack <id>
+Send durable private messages with delivery receipts. Usage: tell <entity> [ttl:30s] <message> | tell inbox | tell read <id> | tell status <id> | tell ack <id>
 (ttl also accepts --ttl 30s / --ttl=30s; units 30s, 5m, 2h, 1d)
 
 Category: Communication. Minimum rank: 0.
@@ -9535,6 +9535,12 @@ Effect: read.
 
 
 ### `tell status <id>`
+
+Effect: read.
+
+- `field-0` (`id`): text, required.
+
+### `tell read <id>`
 
 Effect: read.
 

@@ -58,6 +58,7 @@ Implementation: `parseDuration` in `src/engine/commands/format-duration.ts`.
 > tell Scout ttl:30s Check this urgently   (also --ttl=30s)
 > tell inbox              Delivery/acknowledgement inbox
 > tell status 12          Inspect a private delivery receipt
+> tell read 12            Read a private message in full (sender or recipient; a long tell reaches an agent clamped, and the line names this)
 > tell ack 12             Explicitly acknowledge a message (`re` does this automatically)
 > shout Server restart!   Broadcast to the entire server
 > emote reviews the data  Broadcast a third-person action (others see "Kira reviews the data")
